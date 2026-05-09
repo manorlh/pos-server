@@ -1,0 +1,35 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "DB: Run Migrations",
+            "type": "shell",
+            "command": "${workspaceFolder}/server/.venv/bin/python -m alembic upgrade head",
+            "options": {
+                "cwd": "${workspaceFolder}/server",
+                "env": {
+                    "PYTHONPATH": "${workspaceFolder}/server"
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Docker: Start Dependencies",
+            "type": "shell",
+            "command": "docker compose up -d db mqtt",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Docker: Stop",
+            "type": "shell",
+            "command": "docker compose down",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        }
+    ]
+}

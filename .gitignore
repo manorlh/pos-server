@@ -1,0 +1,34 @@
+# ── Server ────────────────────────────────────────────────────────────────────
+server/.venv/
+server/venv/
+server/__pycache__/
+server/**/__pycache__/
+server/**/*.py[cod]
+server/.env
+server/alembic/versions/*.pyc
+
+# ── Client ────────────────────────────────────────────────────────────────────
+client/.next/
+client/node_modules/
+client/.env.local
+client/.env*.local
+client/out/
+client/dist/
+
+# ── Common ────────────────────────────────────────────────────────────────────
+.env
+.env.local
+*.log
+logs/
+.DS_Store
+Thumbs.db
+*.db
+*.sqlite
+*.sqlite3
+.vscode/settings.json
+.idea/
+*.swp
+
+# Claude memory
+memory/
+.claude/

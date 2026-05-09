@@ -1,0 +1,44 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Server: FastAPI",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/server/run.py",
+            "jinja": true,
+            "justMyCode": true,
+            "cwd": "${workspaceFolder}/server",
+            "envFile": "${workspaceFolder}/server/.env",
+            "pythonPath": "${workspaceFolder}/server/.venv/bin/python3",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/server",
+                "UVICORN_RELOAD": "false"
+            }
+        },
+        {
+            "name": "Client: Next.js",
+            "type": "node",
+            "request": "launch",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": [
+                "run",
+                "dev"
+            ],
+            "cwd": "${workspaceFolder}/client",
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Full Stack",
+            "configurations": [
+                "Server: FastAPI",
+                "Client: Next.js"
+            ]
+        }
+    ]
+}
