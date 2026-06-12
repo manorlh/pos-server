@@ -1,7 +1,7 @@
 import uuid
 
 from sqlalchemy import Column, String, Boolean, ForeignKey, DateTime
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -19,6 +19,8 @@ class Company(Base):
     address = Column(String(500), nullable=True)
     city = Column(String(100), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    settings = Column(JSONB, nullable=False, server_default="{}")
+    settings_updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

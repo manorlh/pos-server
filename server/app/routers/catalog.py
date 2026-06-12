@@ -106,6 +106,7 @@ def _copy_product_to_machine(
         return existing
 
     local = Product(
+        tenant_id=machine.tenant_id or global_product.tenant_id,
         merchant_id=global_product.merchant_id,
         company_id=global_product.company_id,
         shop_id=machine.shop_id,
@@ -143,9 +144,17 @@ def _copy_category_to_machine(
     ).first()
 
     if existing:
+        if not existing.is_local_override:
+            existing.image_url = global_cat.image_url
+            existing.description = global_cat.description
+            existing.color = global_cat.color
+            existing.is_active = global_cat.is_active
+            existing.sort_order = global_cat.sort_order
+            db.flush()
         return existing
 
     local = Category(
+        tenant_id=machine.tenant_id or global_cat.tenant_id,
         merchant_id=global_cat.merchant_id,
         company_id=global_cat.company_id,
         shop_id=machine.shop_id,

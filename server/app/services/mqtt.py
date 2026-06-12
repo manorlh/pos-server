@@ -213,6 +213,26 @@ class MQTTService:
             body["hint"] = hint
         self._publish(topic, body)
 
+    def publish_settings_notify(
+        self,
+        merchant_id: str,
+        machine_id: str,
+        *,
+        reason: str = "settings_changed",
+        hint: Optional[str] = None,
+    ):
+        """
+        Lightweight signal for POS to call GET /sync/{machine_id}/settings.
+        """
+        topic = f"pos/{merchant_id}/{machine_id}/settings/notify"
+        body = {
+            "serverTime": datetime.now(timezone.utc).isoformat(),
+            "reason": reason,
+        }
+        if hint:
+            body["hint"] = hint
+        self._publish(topic, body)
+
     def _publish_ack(self, merchant_id: str, machine_id: str, local_id: Optional[str] = None):
         topic = f"pos/{merchant_id}/{machine_id}/sync/ack"
         self._publish(topic, {

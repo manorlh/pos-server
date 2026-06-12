@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.category import Category, CatalogLevel
 from app.models.product import Product
+from app.models.merchant import Merchant
 from app.models.user import User, UserRole
 from app.schemas.category import CategoryCreate, CategoryUpdate, CategoryResponse
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
@@ -113,10 +114,16 @@ def create_category(
     if not merchant_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="merchantId is required")
 
+    merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
+    if not merchant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merchant not found")
+    ensure_same_tenant(merchant.tenant_id, active_tenant_id)
+
     if data.parent_id:
         parent = db.query(Category).filter(Category.id == data.parent_id).first()
         if not parent:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parent category not found")
+        ensure_same_tenant(parent.tenant_id, active_tenant_id)
 
     category = Category(
         tenant_id=active_tenant_id,

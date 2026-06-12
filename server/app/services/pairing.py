@@ -8,9 +8,26 @@ from app.models.pairing_code import PairingCode
 from app.models.pos_machine import POSMachine, PairingStatus
 from app.models.merchant import Merchant
 from app.models.user import User
+from app.models.tenant_membership import TenantMembership
 import uuid
 
 settings = get_settings()
+
+
+def resolve_tenant_id_for_user(db: Session, user_id: uuid.UUID) -> Optional[uuid.UUID]:
+    """Tenant for pairing scope: user.tenant_id, else default membership."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return None
+    if user.tenant_id:
+        return user.tenant_id
+    row = (
+        db.query(TenantMembership.tenant_id)
+        .filter(TenantMembership.user_id == user.id)
+        .order_by(TenantMembership.is_default.desc(), TenantMembership.created_at.asc())
+        .first()
+    )
+    return row[0] if row else None
 
 
 def generate_pairing_code(length: int = None) -> str:
@@ -21,7 +38,11 @@ def generate_pairing_code(length: int = None) -> str:
     return ''.join(secrets.choice(alphabet) for _ in range(length))
 
 
-def create_pairing_code(db: Session, distributor_id: uuid.UUID) -> PairingCode:
+def create_pairing_code(
+    db: Session,
+    distributor_id: uuid.UUID,
+    tenant_id: Optional[uuid.UUID] = None,
+) -> PairingCode:
     """Create a new pairing code"""
     code = generate_pairing_code()
     # Ensure code is unique
@@ -33,8 +54,9 @@ def create_pairing_code(db: Session, distributor_id: uuid.UUID) -> PairingCode:
     pairing_code = PairingCode(
         code=code,
         distributor_id=distributor_id,
+        tenant_id=tenant_id,
         expires_at=expires_at,
-        is_used=False
+        is_used=False,
     )
     db.add(pairing_code)
     db.commit()
@@ -70,15 +92,20 @@ def validate_pairing_code(
     while db.query(POSMachine).filter(POSMachine.mqtt_client_id == mqtt_client_id).first():
         mqtt_client_id = f"pos-{uuid.uuid4().hex[:12]}"
     
+    tenant_id = pairing_code.tenant_id or resolve_tenant_id_for_user(
+        db, pairing_code.distributor_id
+    )
+
     # Create POS machine
     machine_name = machine_name or f"POS Machine {machine_code}"
     pos_machine = POSMachine(
+        tenant_id=tenant_id,
         distributor_id=pairing_code.distributor_id,
         name=machine_name,
         machine_code=machine_code,
         mqtt_client_id=mqtt_client_id,
         pairing_status=PairingStatus.PAIRED,
-        device_info=device_info
+        device_info=device_info,
     )
     db.add(pos_machine)
     

@@ -71,6 +71,14 @@
     "barcode": "ברקוד",
     "stockQty": "כמות במלאי",
     "description": "תיאור",
+    "image": "תמונה",
+    "uploadImage": "העלה תמונה",
+    "replaceImage": "החלף תמונה",
+    "removeImage": "הסר תמונה",
+    "uploading": "מעלה...",
+    "uploadError": "העלאת התמונה נכשלה",
+    "imageHint": "JPEG, PNG, WebP או GIF — עד 5MB",
+    "imagePreview": "תצוגה מקדימה",
     "inStock": "במלאי",
     "outOfStock": "אזל",
     "created": "המוצר נוצר בהצלחה",
@@ -185,7 +193,26 @@
     "address": "כתובת",
     "created": "החברה נוצרה בהצלחה",
     "updated": "החברה עודכנה בהצלחה",
-    "deleted": "החברה נמחקה"
+    "deleted": "החברה נמחקה",
+    "settings": "הגדרות קופה"
+  },
+  "posSettings": {
+    "title": "הגדרות קופה",
+    "companySubtitle": "ברירות מחדל לכל הסניפים תחת החברה",
+    "shopSubtitle": "דריסות לסניף זה (ריק = יורש מהחברה)",
+    "taxRate": "שיעור מע\"מ (%)",
+    "hideOutOfStock": "הסתר מוצרים שאזלו מהמלאי",
+    "language": "שפת ממשק הקופה",
+    "langHe": "עברית",
+    "langEn": "אנגלית",
+    "nayaxTitle": "Nayax (תשלום בכרטיס)",
+    "nayaxEnabled": "הפעל Nayax",
+    "nayaxHost": "כתובת מכשיר",
+    "nayaxPort": "פורט",
+    "nayaxPath": "נתיב SPICy",
+    "override": "דריסה",
+    "inherited": "יורש מהחברה: {value}",
+    "saved": "הגדרות הקופה נשמרו"
   },
   "shops": {
     "title": "סניפים",
@@ -202,7 +229,8 @@
     "address": "כתובת",
     "created": "הסניף נוצר בהצלחה",
     "updated": "הסניף עודכן בהצלחה",
-    "deleted": "הסניף נמחק"
+    "deleted": "הסניף נמחק",
+    "settings": "הגדרות קופה"
   },
   "assortment": {
     "title": "מיון מוצרים לסניף",

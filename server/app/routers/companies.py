@@ -4,11 +4,15 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.company import Company
+from app.models.merchant import Merchant
 from app.models.user import User, UserRole
 from app.schemas.company import CompanyCreate, CompanyUpdate, CompanyResponse
 from app.middleware.auth import get_current_user, get_current_distributor, get_active_tenant_id, ensure_same_tenant
+from app.services.settings_notify import notify_machines_for_company_settings
 
 router = APIRouter(prefix="/companies", tags=["companies"])
+
+_COMPANY_PROFILE_FIELDS = frozenset({"name", "vat_number", "address", "city"})
 
 
 def _check_company_access(user: User, company: Company):
@@ -50,6 +54,11 @@ def create_company(
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    merchant = db.query(Merchant).filter(Merchant.id == data.merchant_id).first()
+    if not merchant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merchant not found")
+    ensure_same_tenant(merchant.tenant_id, active_tenant_id)
+
     company = Company(
         tenant_id=active_tenant_id,
         merchant_id=data.merchant_id,
@@ -94,10 +103,14 @@ def update_company(
     ensure_same_tenant(company.tenant_id, active_tenant_id)
     _check_company_access(current_user, company)
 
-    for field, value in data.model_dump(exclude_unset=True, by_alias=False).items():
+    updates = data.model_dump(exclude_unset=True, by_alias=False)
+    profile_changed = bool(_COMPANY_PROFILE_FIELDS & set(updates.keys()))
+    for field, value in updates.items():
         setattr(company, field, value)
     db.commit()
     db.refresh(company)
+    if profile_changed:
+        notify_machines_for_company_settings(db, str(company.id), reason="company_profile_updated")
     return company
 
 

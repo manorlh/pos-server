@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.product import Product, CatalogLevel
 from app.models.category import Category
+from app.models.merchant import Merchant
 from app.models.user import User, UserRole
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
@@ -96,11 +97,18 @@ def create_product(
     if not merchant_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="merchantId is required")
 
+    merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
+    if not merchant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merchant not found")
+    ensure_same_tenant(merchant.tenant_id, active_tenant_id)
+
     if db.query(Product).filter(Product.merchant_id == merchant_id, Product.sku == data.sku).first():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="SKU already exists for this merchant")
 
-    if not db.query(Category).filter(Category.id == data.category_id).first():
+    category = db.query(Category).filter(Category.id == data.category_id).first()
+    if not category:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Category not found")
+    ensure_same_tenant(category.tenant_id, active_tenant_id)
 
     product = Product(
         tenant_id=active_tenant_id,
@@ -164,6 +172,10 @@ def update_product(
 
     if data.category_id and not db.query(Category).filter(Category.id == data.category_id).first():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Category not found")
+
+    if data.category_id:
+        cat = db.query(Category).filter(Category.id == data.category_id).first()
+        ensure_same_tenant(cat.tenant_id, active_tenant_id)
 
     for field, value in data.model_dump(exclude_unset=True, by_alias=False).items():
         setattr(product, field, value)

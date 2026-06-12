@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_
 from app.database import get_db
 from app.schemas.pos_machine import POSMachineUpdate, POSMachineResponse
 from app.models.pos_machine import POSMachine, PairingStatus
@@ -26,6 +27,21 @@ from app.services.catalog_notify import notify_machine_catalog_changed
 from app.services.shop_validation import shop_belongs_to_merchant
 
 router = APIRouter(prefix="/machines", tags=["machines"])
+
+
+def _scope_machines_by_tenant(query, current_user: User, active_tenant_id):
+    """Include legacy paired machines with null tenant_id for their pairing distributor."""
+    if current_user.role == UserRole.DISTRIBUTOR:
+        return query.filter(
+            or_(
+                POSMachine.tenant_id == active_tenant_id,
+                and_(
+                    POSMachine.tenant_id.is_(None),
+                    POSMachine.distributor_id == current_user.id,
+                ),
+            )
+        )
+    return query.filter(POSMachine.tenant_id == active_tenant_id)
 
 
 def _enrich_machine_status(machine: POSMachine, db: Session) -> Dict[str, Any]:
@@ -74,7 +90,8 @@ def list_machines(
     db: Session = Depends(get_db)
 ):
     """List machines (filtered by merchant/role/distributor)"""
-    query = db.query(POSMachine).filter(POSMachine.tenant_id == active_tenant_id)
+    query = db.query(POSMachine)
+    query = _scope_machines_by_tenant(query, current_user, active_tenant_id)
 
     # Hide decommissioned machines by default. The DELETE endpoint sets
     # is_active=False when the machine has history (transactions / Z-reports /
@@ -113,10 +130,10 @@ def list_unassigned_machines(
 ):
     """List unassigned paired machines (distributor/super_admin only)"""
     query = db.query(POSMachine).filter(
-        POSMachine.tenant_id == active_tenant_id,
         POSMachine.pairing_status == PairingStatus.PAIRED,
-        POSMachine.merchant_id.is_(None)
+        POSMachine.merchant_id.is_(None),
     )
+    query = _scope_machines_by_tenant(query, current_user, active_tenant_id)
     
     # Filter by distributor if not super admin
     if current_user.role != UserRole.SUPER_ADMIN:

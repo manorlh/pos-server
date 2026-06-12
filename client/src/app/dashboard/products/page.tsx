@@ -1,12 +1,14 @@
 'use client';
 
 import { useState } from 'react';
+import Image from 'next/image';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { findBySameId } from '@/lib/entityLookup';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { Product, Category } from '@/lib/types';
+import { ProductImageUpload } from '@/components/product-image-upload';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -16,12 +18,27 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Package } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 
 const EMPTY: Partial<Product> = {
   name: '', sku: '', price: 0, description: '', inStock: true, stockQuantity: 0, catalogLevel: 'global',
 };
+
+function ProductThumbnail({ imageUrl, name }: { imageUrl?: string; name: string }) {
+  if (!imageUrl) {
+    return (
+      <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center shrink-0">
+        <Package className="h-4 w-4 text-muted-foreground" />
+      </div>
+    );
+  }
+  return (
+    <div className="relative h-10 w-10 rounded-md overflow-hidden bg-muted shrink-0">
+      <Image src={imageUrl} alt={name} fill className="object-cover" sizes="40px" />
+    </div>
+  );
+}
 
 export default function ProductsPage() {
   const t = useTranslations('products');
@@ -79,6 +96,7 @@ export default function ProductsPage() {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-14" />
               <TableHead>{t('name')}</TableHead>
               <TableHead>{t('sku')}</TableHead>
               <TableHead>{t('price')}</TableHead>
@@ -92,13 +110,16 @@ export default function ProductsPage() {
             {isLoading
               ? Array.from({ length: 5 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: 7 }).map((_, j) => (
+                    {Array.from({ length: 8 }).map((_, j) => (
                       <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                     ))}
                   </TableRow>
                 ))
               : products.map((p) => (
                   <TableRow key={p.id}>
+                    <TableCell>
+                      <ProductThumbnail imageUrl={p.imageUrl} name={p.name} />
+                    </TableCell>
                     <TableCell className="font-medium">{p.name}</TableCell>
                     <TableCell className="text-muted-foreground">{p.sku}</TableCell>
                     <TableCell>₪{Number(p.price).toFixed(2)}</TableCell>
@@ -136,6 +157,10 @@ export default function ProductsPage() {
             <DialogTitle>{isNew ? t('addTitle') : t('editTitle')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            <ProductImageUpload
+              value={editing.imageUrl}
+              onChange={(url) => setEditing((p) => ({ ...p, imageUrl: url }))}
+            />
             <div className="space-y-1">
               <Label>{t('name')}</Label>
               <Input value={editing.name ?? ''} onChange={(e) => setEditing((p) => ({ ...p, name: e.target.value }))} />

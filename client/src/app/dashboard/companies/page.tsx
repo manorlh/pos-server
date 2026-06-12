@@ -3,7 +3,9 @@
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, fetchCompanySettings, patchCompanySettings } from '@/lib/api';
+import { PosSettingsForm, type PosSettingsFormState } from '@/components/pos-settings-form';
+import type { PosSettingsV1 } from '@/lib/types';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { Company } from '@/lib/types';
 import { Button } from '@/components/ui/button';
@@ -14,7 +16,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Settings2 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 
 const EMPTY: Partial<Company> = { name: '', vatNumber: '', address: '', city: '' };
@@ -24,7 +26,11 @@ export default function CompaniesPage() {
   const tc = useTranslations('common');
   const { user } = useAuth();
   const qc = useQueryClient();
+  const tps = useTranslations('posSettings');
   const [open, setOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsCompanyId, setSettingsCompanyId] = useState<string | null>(null);
+  const [posSettings, setPosSettings] = useState<PosSettingsFormState>({});
   const [editing, setEditing] = useState<Partial<Company>>(EMPTY);
   const isNew = !editing.id;
 
@@ -49,6 +55,28 @@ export default function CompaniesPage() {
   const remove = useMutation({
     mutationFn: (id: string) => api.delete(`/companies/${id}`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['companies'] }); toast.success(t('deleted')); },
+  });
+
+  const openSettings = async (companyId: string) => {
+    setSettingsCompanyId(companyId);
+    setSettingsOpen(true);
+    try {
+      const res = await fetchCompanySettings(companyId);
+      setPosSettings(res.settings ?? {});
+    } catch (err: unknown) {
+      toast.error(axiosErrorToToastMessage(err, tc('error')));
+      setPosSettings({});
+    }
+  };
+
+  const saveSettings = useMutation({
+    mutationFn: (payload: { companyId: string; patch: Partial<PosSettingsV1> }) =>
+      patchCompanySettings(payload.companyId, payload.patch),
+    onSuccess: () => {
+      toast.success(tps('saved'));
+      setSettingsOpen(false);
+    },
+    onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
   });
 
   return (
@@ -95,6 +123,9 @@ export default function CompaniesPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" title={t('settings')} onClick={() => openSettings(c.id)}>
+                          <Settings2 className="h-3.5 w-3.5" />
+                        </Button>
                         <Button variant="ghost" size="icon" onClick={() => { setEditing(c); setOpen(true); }}>
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
@@ -140,6 +171,28 @@ export default function CompaniesPage() {
             <Button variant="outline" onClick={() => setOpen(false)}>{tc('cancel')}</Button>
             <Button onClick={() => save.mutate(editing)} disabled={save.isPending}>
               {save.isPending ? tc('saving') : tc('save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{tps('title')}</DialogTitle>
+            <p className="text-sm text-muted-foreground">{tps('companySubtitle')}</p>
+          </DialogHeader>
+          <PosSettingsForm value={posSettings} onChange={setPosSettings} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSettingsOpen(false)}>{tc('cancel')}</Button>
+            <Button
+              onClick={() =>
+                settingsCompanyId &&
+                saveSettings.mutate({ companyId: settingsCompanyId, patch: posSettings })
+              }
+              disabled={saveSettings.isPending || !settingsCompanyId}
+            >
+              {saveSettings.isPending ? tc('saving') : tc('save')}
             </Button>
           </DialogFooter>
         </DialogContent>

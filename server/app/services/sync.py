@@ -105,6 +105,10 @@ def _serialize_merged_product(
 
     catalog_level = local.catalog_level if local is not None else global_p.catalog_level
     is_local_override = local.is_local_override if local is not None else False
+    if local is not None and local.is_local_override and local.image_url:
+        image_url = local.image_url
+    else:
+        image_url = global_p.image_url
 
     return {
         "id": str(row_id),
@@ -120,7 +124,7 @@ def _serialize_merged_product(
         "description": global_p.description,
         "price": price,
         "sku": global_p.sku,
-        "imageUrl": global_p.image_url,
+        "imageUrl": image_url,
         "inStock": effective_in_stock,
         "isAvailable": bool(is_avail),
         "stockQuantity": stock_qty,

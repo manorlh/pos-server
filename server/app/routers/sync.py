@@ -22,6 +22,16 @@ from app.models.sync_log import SyncLog, SyncAction, SyncDirection, SyncEntityTy
 from app.schemas.product import ProductCreate, ProductResponse, ProductUpdate
 from app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdate
 from app.schemas.pos_user import PosUsersSyncResponse, PosUserSyncRow
+from app.schemas.pos_settings import SettingsSyncResponse
+from app.models.company import Company
+from app.models.shop import Shop
+from app.models.tenant import Tenant
+from app.services.settings_merge import (
+    MANAGED_SETTING_KEYS,
+    build_business_info,
+    effective_settings_updated_at,
+    merge_all_settings_layers,
+)
 from app.schemas.transaction import (
     TransactionsBatchRequest,
     TransactionsBatchResponse,
@@ -686,4 +696,88 @@ def get_pos_users_sync(
         sync_type=sync_type,
         server_time=datetime.now(timezone.utc),
         users=[PosUserSyncRow.model_validate(r) for r in rows],
+    )
+
+
+# ── Settings (server → POS) ───────────────────────────────────────────────────
+
+@router.get(
+    "/{machine_id}/settings",
+    response_model=SettingsSyncResponse,
+    response_model_by_alias=True,
+)
+def get_settings_sync(
+    machine_id: str,
+    since: Optional[str] = Query(None, description="ISO-8601 timestamp for delta sync"),
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """
+    Return merged POS settings for this machine's shop → company hierarchy.
+    POS applies to local SQLite; cloud is source of truth for managed keys.
+    """
+    server_time = datetime.now(timezone.utc)
+
+    if not machine.shop_id:
+        return SettingsSyncResponse(
+            sync_type="full",
+            server_time=server_time,
+            settings_updated_at=server_time,
+            settings={},
+            business_info=None,
+        )
+
+    shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
+    if not shop:
+        return SettingsSyncResponse(
+            sync_type="full",
+            server_time=server_time,
+            settings_updated_at=server_time,
+            settings={},
+            business_info=None,
+        )
+
+    company = db.query(Company).filter(Company.id == shop.company_id).first()
+    if not company:
+        return SettingsSyncResponse(
+            sync_type="full",
+            server_time=server_time,
+            settings_updated_at=server_time,
+            settings={},
+            business_info=None,
+        )
+
+    tenant = None
+    if company.tenant_id:
+        tenant = db.query(Tenant).filter(Tenant.id == company.tenant_id).first()
+
+    watermark = effective_settings_updated_at(company, shop)
+    since_dt: Optional[datetime] = None
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid 'since' timestamp")
+
+    if since_dt and since_dt >= watermark:
+        return SettingsSyncResponse(
+            sync_type="unchanged",
+            server_time=server_time,
+            settings_updated_at=watermark,
+            settings={},
+            business_info=None,
+        )
+
+    all_settings = merge_all_settings_layers(company, shop, tenant)
+    effective = {k: all_settings[k] for k in MANAGED_SETTING_KEYS if k in all_settings}
+    business_info = build_business_info(company, shop, all_settings)
+
+    update_machine_sync_timestamp(db, str(machine.id))
+
+    return SettingsSyncResponse(
+        sync_type="delta" if since_dt else "full",
+        server_time=server_time,
+        settings_updated_at=watermark,
+        settings=effective,
+        business_info=business_info,
     )

@@ -3,7 +3,9 @@
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, fetchShopSettings, patchShopSettings } from '@/lib/api';
+import { PosSettingsForm, type PosSettingsFormState } from '@/components/pos-settings-form';
+import type { PosSettingsV1 } from '@/lib/types';
 import { findBySameId } from '@/lib/entityLookup';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { Shop, Company } from '@/lib/types';
@@ -16,7 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Settings2 } from 'lucide-react';
 
 const EMPTY: Partial<Shop> = { name: '', branchId: '', address: '', city: '' };
 
@@ -24,7 +26,12 @@ export default function ShopsPage() {
   const t = useTranslations('shops');
   const tc = useTranslations('common');
   const qc = useQueryClient();
+  const tps = useTranslations('posSettings');
   const [open, setOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsShopId, setSettingsShopId] = useState<string | null>(null);
+  const [posSettings, setPosSettings] = useState<PosSettingsFormState>({});
+  const [inheritedSettings, setInheritedSettings] = useState<PosSettingsV1 | undefined>();
   const [editing, setEditing] = useState<Partial<Shop>>(EMPTY);
   const isNew = !editing.id;
 
@@ -52,6 +59,30 @@ export default function ShopsPage() {
   const remove = useMutation({
     mutationFn: (id: string) => api.delete(`/shops/${id}`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['shops'] }); toast.success(t('deleted')); },
+  });
+
+  const openSettings = async (shopId: string) => {
+    setSettingsShopId(shopId);
+    setSettingsOpen(true);
+    try {
+      const res = await fetchShopSettings(shopId, true);
+      setPosSettings(res.settings ?? {});
+      setInheritedSettings(res.effective);
+    } catch (err: unknown) {
+      toast.error(axiosErrorToToastMessage(err, tc('error')));
+      setPosSettings({});
+      setInheritedSettings(undefined);
+    }
+  };
+
+  const saveSettings = useMutation({
+    mutationFn: (payload: { shopId: string; patch: Partial<PosSettingsV1> }) =>
+      patchShopSettings(payload.shopId, payload.patch),
+    onSuccess: () => {
+      toast.success(tps('saved'));
+      setSettingsOpen(false);
+    },
+    onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
   });
 
   return (
@@ -100,6 +131,9 @@ export default function ShopsPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" title={t('settings')} onClick={() => openSettings(s.id)}>
+                          <Settings2 className="h-3.5 w-3.5" />
+                        </Button>
                         <Button variant="ghost" size="icon" onClick={() => { setEditing(s); setOpen(true); }}>
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
@@ -161,6 +195,32 @@ export default function ShopsPage() {
             <Button variant="outline" onClick={() => setOpen(false)}>{tc('cancel')}</Button>
             <Button onClick={() => save.mutate(editing)} disabled={save.isPending}>
               {save.isPending ? tc('saving') : tc('save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{tps('title')}</DialogTitle>
+            <p className="text-sm text-muted-foreground">{tps('shopSubtitle')}</p>
+          </DialogHeader>
+          <PosSettingsForm
+            value={posSettings}
+            onChange={setPosSettings}
+            inherited={inheritedSettings}
+            showOverrideHints
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSettingsOpen(false)}>{tc('cancel')}</Button>
+            <Button
+              onClick={() =>
+                settingsShopId && saveSettings.mutate({ shopId: settingsShopId, patch: posSettings })
+              }
+              disabled={saveSettings.isPending || !settingsShopId}
+            >
+              {saveSettings.isPending ? tc('saving') : tc('save')}
             </Button>
           </DialogFooter>
         </DialogContent>

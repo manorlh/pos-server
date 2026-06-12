@@ -52,6 +52,27 @@ export interface Shop {
   updatedAt: string;
 }
 
+/** POS till settings v1 (camelCase keys match server JSONB). */
+export interface PosSettingsV1 {
+  globalTaxRate?: number;
+  hideOutOfStockProducts?: boolean;
+  language?: 'he' | 'en';
+  nayaxEnabled?: boolean;
+  nayaxDeviceHost?: string;
+  nayaxDevicePort?: string;
+  nayaxSpicyPath?: string;
+  businessInfo?: Record<string, unknown>;
+}
+
+export interface EntitySettingsResponse {
+  settings: PosSettingsV1;
+  settingsUpdatedAt: string;
+}
+
+export interface ShopSettingsResponse extends EntitySettingsResponse {
+  effective?: PosSettingsV1;
+}
+
 /** Global product row with optional shop override (GET /shops/{id}/product-overrides). */
 export interface ShopProductCatalogRow {
   globalProductId: string;

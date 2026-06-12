@@ -24,8 +24,11 @@ from app.middleware.auth import (
     ensure_same_tenant,
 )
 from app.services.catalog_notify import notify_machines_for_shop
+from app.services.settings_notify import notify_machines_for_shop_settings
 
 router = APIRouter(prefix="/shops", tags=["shops"])
+
+_SHOP_PROFILE_FIELDS = frozenset({"name", "branch_id", "address", "city"})
 
 
 def _check_shop_access(user: User, shop: Shop, db: Session):
@@ -364,6 +367,7 @@ def create_shop(
     company = db.query(Company).filter(Company.id == data.company_id).first()
     if not company:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Company not found")
+    ensure_same_tenant(company.tenant_id, active_tenant_id)
 
     shop = Shop(
         tenant_id=active_tenant_id,
@@ -409,10 +413,14 @@ def update_shop(
     ensure_same_tenant(shop.tenant_id, active_tenant_id)
     _check_shop_access(current_user, shop, db)
 
-    for field, value in data.model_dump(exclude_unset=True, by_alias=False).items():
+    updates = data.model_dump(exclude_unset=True, by_alias=False)
+    profile_changed = bool(_SHOP_PROFILE_FIELDS & set(updates.keys()))
+    for field, value in updates.items():
         setattr(shop, field, value)
     db.commit()
     db.refresh(shop)
+    if profile_changed:
+        notify_machines_for_shop_settings(db, str(shop.id), reason="shop_profile_updated")
     return shop
 
 

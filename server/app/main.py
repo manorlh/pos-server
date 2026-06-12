@@ -32,6 +32,7 @@ from app.routers import (
     z_reports,
     pos_users,
     tenants,
+    settings as settings_router,
 )
 from app.services.mqtt import mqtt_service
 
@@ -73,6 +74,7 @@ app.include_router(transactions.router, prefix=_prefix)
 app.include_router(z_reports.router, prefix=_prefix)
 app.include_router(pos_users.router, prefix=_prefix)
 app.include_router(tenants.router, prefix=_prefix)
+app.include_router(settings_router.router, prefix=_prefix)
 
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────

@@ -7,6 +7,8 @@ from app.schemas.pairing_code import PairingCodeCreate, PairingCodeResponse, Pai
 from app.schemas.pos_machine import POSMachineResponse
 from app.models.pairing_code import PairingCode
 from app.models.merchant import Merchant
+from app.models.pos_machine import POSMachine
+from app.models.shop import Shop
 from app.models.user import User
 from app.middleware.auth import get_current_distributor, get_active_tenant_id, ensure_same_tenant
 from app.services.pairing import (
@@ -30,7 +32,7 @@ def generate_pairing_code(
 ):
     """Generate a pairing code (distributor/super_admin only)"""
     ensure_same_tenant(current_user.tenant_id, active_tenant_id)
-    pairing_code = create_pairing_code(db, current_user.id)
+    pairing_code = create_pairing_code(db, current_user.id, tenant_id=active_tenant_id)
     return pairing_code
 
 
@@ -78,15 +80,13 @@ def list_pairing_codes(
     db: Session = Depends(get_db)
 ):
     """List pairing codes (distributor/super_admin only)"""
-    query = db.query(PairingCode)
-    
+    query = db.query(PairingCode).filter(PairingCode.tenant_id == active_tenant_id)
+
     # Filter by distributor if not super admin
     if current_user.role.value != "super_admin":
         query = query.filter(PairingCode.distributor_id == current_user.id)
-    
-    codes = query.order_by(PairingCode.created_at.desc()).all()
-    codes = [c for c in codes if c.pos_machine is None or c.pos_machine.tenant_id == active_tenant_id]
-    return codes
+
+    return query.order_by(PairingCode.created_at.desc()).all()
 
 
 @router.get("/codes/{code_id}", response_model=PairingCodeResponse)
@@ -111,8 +111,7 @@ def get_pairing_code(
             detail="Access denied"
         )
     
-    if code.pos_machine and code.pos_machine.tenant_id is not None:
-        ensure_same_tenant(code.pos_machine.tenant_id, active_tenant_id)
+    ensure_same_tenant(code.tenant_id, active_tenant_id)
     return code
 
 
@@ -140,9 +139,23 @@ def assign_machine(
     if current_user.role.value != "super_admin" and merchant.distributor_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
+    machine_uuid = uuid_mod.UUID(str(machine_id))
+    machine_row = db.query(POSMachine).filter(POSMachine.id == machine_uuid).first()
+    if not machine_row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+    ensure_same_tenant(machine_row.tenant_id, active_tenant_id)
+    if current_user.role.value != "super_admin" and machine_row.distributor_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    if sid is not None:
+        shop = db.query(Shop).filter(Shop.id == sid).first()
+        if not shop:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
+        ensure_same_tenant(shop.tenant_id, active_tenant_id)
+
     machine = assign_machine_to_merchant(
         db,
-        uuid_mod.UUID(str(machine_id)),
+        machine_uuid,
         mid,
         shop_id=sid,
     )
