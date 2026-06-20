@@ -29,6 +29,7 @@ class ProductBase(BaseModel):
 
 
 class ProductCreate(ProductBase):
+    sku: Optional[str] = Field(None, min_length=1)
     merchant_id: Optional[uuid.UUID] = Field(None, alias="merchantId")
     company_id: Optional[uuid.UUID] = Field(None, alias="companyId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
@@ -74,6 +75,8 @@ class ProductResponse(BaseModel):
     description: Optional[str]
     price: Decimal
     sku: str
+    global_sku: Optional[str] = Field(None, alias="globalSku")
+    sku_auto_assigned: bool = Field(False, alias="skuAutoAssigned")
     category_id: uuid.UUID = Field(..., alias="categoryId")
     image_url: Optional[str] = Field(None, alias="imageUrl")
     in_stock: bool = Field(..., alias="inStock")

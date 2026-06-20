@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple
 import uuid
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -6,11 +6,14 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.user import User, UserRole
 from app.models.pos_machine import POSMachine
+from app.models.pairing_session import PairingSession
 from app.models.tenant_membership import TenantMembership
 from app.services.clerk_auth import verify_clerk_token
 from app.services.auth import decode_token, decode_jwt_payload
+from app.services.pairing_mobile import get_valid_pairing_session
 
 security = HTTPBearer()
+pairing_session_security = HTTPBearer(auto_error=True)
 
 
 def get_current_user(
@@ -24,6 +27,12 @@ def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Use machine-specific endpoints with this token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if payload and payload.get("type") == "pairing_session":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Use mobile pairing endpoints with this token",
             headers={"WWW-Authenticate": "Bearer"},
         )
     return _resolve_user_from_bearer_token(token, db)
@@ -217,3 +226,51 @@ def get_active_tenant_id(
 def ensure_same_tenant(entity_tenant_id: Optional[uuid.UUID], active_tenant_id: uuid.UUID) -> None:
     if entity_tenant_id is not None and entity_tenant_id != active_tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant_forbidden")
+
+
+def get_pairing_session_user(
+    credentials: HTTPAuthorizationCredentials = Depends(pairing_session_security),
+    db: Session = Depends(get_db),
+) -> Tuple[PairingSession, User]:
+    """Mobile field-install: pairing_session JWT only."""
+    token = credentials.credentials
+    payload = decode_jwt_payload(token)
+    if not payload or payload.get("type") != "pairing_session":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Pairing session token required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    jti = payload.get("jti")
+    if not jti:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid pairing session token",
+        )
+    session = get_valid_pairing_session(db, str(jti))
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Pairing session expired or revoked",
+        )
+    try:
+        distributor_id = uuid.UUID(str(payload.get("sub")))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid pairing session token",
+        ) from exc
+    if session.distributor_id != distributor_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid pairing session token",
+        )
+    user = db.query(User).filter(User.id == distributor_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive user")
+    if user.role not in (UserRole.DISTRIBUTOR, UserRole.SUPER_ADMIN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Distributor access required")
+    token_tenant = payload.get("tenant_id")
+    if token_tenant and str(session.tenant_id) != str(token_tenant):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid pairing session token")
+    return session, user

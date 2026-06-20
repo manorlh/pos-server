@@ -27,3 +27,9 @@ class Merchant(Base):
     machines = relationship("POSMachine", back_populates="merchant")
     products = relationship("Product", back_populates="merchant")
     categories = relationship("Category", back_populates="merchant")
+    sku_sequence = relationship(
+        "MerchantSkuSequence",
+        back_populates="merchant",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )

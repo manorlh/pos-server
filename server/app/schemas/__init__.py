@@ -4,7 +4,7 @@ from app.schemas.merchant import MerchantCreate, MerchantUpdate, MerchantRespons
 from app.schemas.company import CompanyCreate, CompanyUpdate, CompanyResponse
 from app.schemas.shop import ShopCreate, ShopUpdate, ShopResponse
 from app.schemas.pos_machine import POSMachineCreate, POSMachineUpdate, POSMachineResponse, PairingStatus
-from app.schemas.pairing_code import PairingCodeCreate, PairingCodeResponse, PairingCodeValidate, MachineAssignRequest
+from app.schemas.pairing_code import PairingCodeCreate, PairingCodeGenerateRequest, PairingCodeResponse, PairingCodeValidate, MachineAssignRequest
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse
 from app.schemas.category import CategoryCreate, CategoryUpdate, CategoryResponse
 from app.schemas.transaction import (
@@ -30,7 +30,7 @@ __all__ = [
     "CompanyCreate", "CompanyUpdate", "CompanyResponse",
     "ShopCreate", "ShopUpdate", "ShopResponse",
     "POSMachineCreate", "POSMachineUpdate", "POSMachineResponse", "PairingStatus",
-    "PairingCodeCreate", "PairingCodeResponse", "PairingCodeValidate", "MachineAssignRequest",
+    "PairingCodeCreate", "PairingCodeGenerateRequest", "PairingCodeResponse", "PairingCodeValidate", "MachineAssignRequest",
     "ProductCreate", "ProductUpdate", "ProductResponse",
     "CategoryCreate", "CategoryUpdate", "CategoryResponse",
     "TransactionItemIn", "TransactionIn", "TransactionsBatchRequest",

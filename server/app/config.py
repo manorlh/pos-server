@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     # Pairing
     pairing_code_length: int = 8
     pairing_code_expiry_minutes: int = 15
+    pairing_session_expire_hours: int = 12
+    device_pairing_nonce_expire_minutes: int = 15
+    pairing_mobile_app_base_url: str = "http://localhost:3002"
 
     # Machine Auth
     machine_token_expire_days: int = 365

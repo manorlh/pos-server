@@ -40,6 +40,39 @@ export interface Company {
   updatedAt: string;
 }
 
+export interface PairingSessionCreateResponse {
+  sessionId: string;
+  sessionToken: string;
+  expiresAt: string;
+  mobileUrl: string;
+  sessionExpireHours: number;
+}
+
+export interface PairingSessionSummary {
+  id: string;
+  expiresAt: string;
+  machinesPairedCount: number;
+  createdAt: string;
+}
+
+export interface MobileContextResponse {
+  sessionExpiresAt: string;
+  sessionExpireHours: number;
+  machinesPairedCount: number;
+  defaultCompanyId?: string | null;
+  defaultShopId?: string | null;
+  companies: Array<{ id: string; name: string; merchantId: string }>;
+  shops: Array<{ id: string; name: string; companyId: string }>;
+}
+
+export interface MobileClaimResponse {
+  ok: boolean;
+  machineId: string;
+  machineCode: string;
+  companyName: string;
+  shopName: string;
+}
+
 export interface Shop {
   id: string;
   companyId: string;
@@ -144,6 +177,8 @@ export interface Product {
   description?: string;
   price: number;
   sku: string;
+  globalSku?: string;
+  skuAutoAssigned?: boolean;
   imageUrl?: string;
   inStock: boolean;
   /** Global row: informational only; shop POS uses assortment `isAvailable` on overrides. */

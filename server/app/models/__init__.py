@@ -6,6 +6,8 @@ from app.models.company import Company
 from app.models.shop import Shop
 from app.models.pos_machine import POSMachine, PairingStatus
 from app.models.pairing_code import PairingCode
+from app.models.pairing_session import PairingSession
+from app.models.device_pairing_request import DevicePairingRequest, DevicePairingStatus
 from app.models.category import Category, CatalogLevel as CategoryCatalogLevel
 from app.models.product import Product, CatalogLevel as ProductCatalogLevel
 from app.models.sync_log import SyncLog, SyncDirection, SyncEntityType, SyncAction, SyncStatus
@@ -25,6 +27,8 @@ __all__ = [
     "Shop",
     "POSMachine", "PairingStatus",
     "PairingCode",
+    "PairingSession",
+    "DevicePairingRequest", "DevicePairingStatus",
     "Category", "CategoryCatalogLevel",
     "Product", "ProductCatalogLevel",
     "SyncLog", "SyncDirection", "SyncEntityType", "SyncAction", "SyncStatus",

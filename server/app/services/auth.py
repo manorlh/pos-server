@@ -42,6 +42,25 @@ def create_machine_token(machine_id: str, expires_days: int = None) -> str:
     return create_access_token(data, expires_delta)
 
 
+def create_pairing_session_token(
+    distributor_id: str,
+    tenant_id: str,
+    jti: str,
+    expires_hours: int | None = None,
+) -> str:
+    """Scoped JWT for mobile field-install (no Clerk on phone)."""
+    if expires_hours is None:
+        expires_hours = settings.pairing_session_expire_hours
+    expires_delta = timedelta(hours=expires_hours)
+    data = {
+        "sub": distributor_id,
+        "tenant_id": tenant_id,
+        "jti": jti,
+        "type": "pairing_session",
+    }
+    return create_access_token(data, expires_delta)
+
+
 def decode_token(token: str) -> Optional[TokenData]:
     """Decode and validate a JWT token"""
     try:

@@ -21,8 +21,10 @@ import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, Package } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 
+type SkuMode = 'auto' | 'manual';
+
 const EMPTY: Partial<Product> = {
-  name: '', sku: '', price: 0, description: '', inStock: true, stockQuantity: 0, catalogLevel: 'global',
+  name: '', price: 0, description: '', inStock: true, stockQuantity: 0, catalogLevel: 'global',
 };
 
 function ProductThumbnail({ imageUrl, name }: { imageUrl?: string; name: string }) {
@@ -40,6 +42,19 @@ function ProductThumbnail({ imageUrl, name }: { imageUrl?: string; name: string 
   );
 }
 
+function buildSavePayload(
+  p: Partial<Product>,
+  merchantId: string | undefined,
+  skuMode: SkuMode,
+  isNew: boolean,
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = { ...p, merchantId: p.merchantId ?? merchantId };
+  if (isNew && skuMode === 'auto') {
+    delete payload.sku;
+  }
+  return payload;
+}
+
 export default function ProductsPage() {
   const t = useTranslations('products');
   const tc = useTranslations('common');
@@ -47,7 +62,9 @@ export default function ProductsPage() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Partial<Product>>(EMPTY);
+  const [skuMode, setSkuMode] = useState<SkuMode>('auto');
   const isNew = !editing.id;
+  const skuReadOnly = !isNew && editing.skuAutoAssigned === true;
 
   const { data: products = [], isLoading } = useQuery<Product[]>({
     queryKey: ['products'],
@@ -60,9 +77,11 @@ export default function ProductsPage() {
   });
 
   const save = useMutation({
-    mutationFn: (p: Partial<Product>) => {
-      const payload = { ...p, merchantId: p.merchantId ?? user?.merchantId };
-      return p.id ? api.put(`/products/${p.id}`, payload) : api.post('/products', payload);
+    mutationFn: (args: { product: Partial<Product>; mode: SkuMode }) => {
+      const payload = buildSavePayload(args.product, user?.merchantId, args.mode, !args.product.id);
+      return args.product.id
+        ? api.put(`/products/${args.product.id}`, payload)
+        : api.post('/products', payload);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['products'] });
@@ -77,7 +96,11 @@ export default function ProductsPage() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['products'] }); toast.success(t('deleted')); },
   });
 
-  const openNew = () => { setEditing(EMPTY); setOpen(true); };
+  const openNew = () => {
+    setEditing(EMPTY);
+    setSkuMode('auto');
+    setOpen(true);
+  };
   const openEdit = (p: Product) => { setEditing(p); setOpen(true); };
 
   return (
@@ -98,6 +121,7 @@ export default function ProductsPage() {
             <TableRow>
               <TableHead className="w-14" />
               <TableHead>{t('name')}</TableHead>
+              <TableHead>{t('globalSku')}</TableHead>
               <TableHead>{t('sku')}</TableHead>
               <TableHead>{t('price')}</TableHead>
               <TableHead>{t('category')}</TableHead>
@@ -110,7 +134,7 @@ export default function ProductsPage() {
             {isLoading
               ? Array.from({ length: 5 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: 8 }).map((_, j) => (
+                    {Array.from({ length: 9 }).map((_, j) => (
                       <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                     ))}
                   </TableRow>
@@ -121,6 +145,7 @@ export default function ProductsPage() {
                       <ProductThumbnail imageUrl={p.imageUrl} name={p.name} />
                     </TableCell>
                     <TableCell className="font-medium">{p.name}</TableCell>
+                    <TableCell className="text-muted-foreground font-mono text-sm">{p.globalSku ?? '—'}</TableCell>
                     <TableCell className="text-muted-foreground">{p.sku}</TableCell>
                     <TableCell>₪{Number(p.price).toFixed(2)}</TableCell>
                     <TableCell>{categories.find((c) => c.id === p.categoryId)?.name ?? '—'}</TableCell>
@@ -165,10 +190,51 @@ export default function ProductsPage() {
               <Label>{t('name')}</Label>
               <Input value={editing.name ?? ''} onChange={(e) => setEditing((p) => ({ ...p, name: e.target.value }))} />
             </div>
+            {isNew ? (
+              <div className="space-y-2">
+                <Label>{t('skuMode')}</Label>
+                <Select value={skuMode} onValueChange={(v) => setSkuMode(v as SkuMode)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto" label={t('skuModeAuto')}>{t('skuModeAuto')}</SelectItem>
+                    <SelectItem value="manual" label={t('skuModeManual')}>{t('skuModeManual')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
+                <Label>{t('globalSku')}</Label>
+                {isNew ? (
+                  <>
+                    <Input disabled placeholder={t('skuAssignedOnSave')} />
+                    <p className="text-xs text-muted-foreground">{t('globalSkuHint')}</p>
+                  </>
+                ) : (
+                  <Input value={editing.globalSku ?? ''} disabled />
+                )}
+              </div>
+              <div className="space-y-1">
                 <Label>{t('sku')}</Label>
-                <Input value={editing.sku ?? ''} onChange={(e) => setEditing((p) => ({ ...p, sku: e.target.value }))} />
+                {isNew && skuMode === 'auto' ? (
+                  <>
+                    <Input disabled placeholder={t('skuAssignedOnSave')} />
+                    <p className="text-xs text-muted-foreground">{t('skuAutoHint')}</p>
+                  </>
+                ) : (
+                  <>
+                    <Input
+                      value={editing.sku ?? ''}
+                      disabled={skuReadOnly}
+                      onChange={(e) => setEditing((p) => ({ ...p, sku: e.target.value }))}
+                    />
+                    {skuReadOnly ? (
+                      <p className="text-xs text-muted-foreground">{t('skuAutoReadOnly')}</p>
+                    ) : null}
+                  </>
+                )}
               </div>
               <div className="space-y-1">
                 <Label>{t('price')}</Label>
@@ -214,7 +280,10 @@ export default function ProductsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{tc('cancel')}</Button>
-            <Button onClick={() => save.mutate(editing)} disabled={save.isPending}>
+            <Button
+              onClick={() => save.mutate({ product: editing, mode: skuMode })}
+              disabled={save.isPending || (isNew && skuMode === 'manual' && !editing.sku?.trim())}
+            >
               {save.isPending ? tc('saving') : tc('save')}
             </Button>
           </DialogFooter>

@@ -3,7 +3,13 @@ import uuid as uuid_mod
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.schemas.pairing_code import PairingCodeCreate, PairingCodeResponse, PairingCodeValidate, MachineAssignRequest
+from app.schemas.pairing_code import (
+    PairingCodeCreate,
+    PairingCodeGenerateRequest,
+    PairingCodeResponse,
+    PairingCodeValidate,
+    MachineAssignRequest,
+)
 from app.schemas.pos_machine import POSMachineResponse
 from app.models.pairing_code import PairingCode
 from app.models.merchant import Merchant
@@ -12,9 +18,11 @@ from app.models.shop import Shop
 from app.models.user import User
 from app.middleware.auth import get_current_distributor, get_active_tenant_id, ensure_same_tenant
 from app.services.pairing import (
+    PairingAssignmentError,
     create_pairing_code,
     validate_pairing_code,
     assign_machine_to_merchant,
+    resolve_pairing_assignment,
 )
 from app.services.shop_validation import shop_belongs_to_merchant
 from app.services.auth import create_machine_token
@@ -26,13 +34,48 @@ settings = get_settings()
 
 @router.post("/generate", response_model=PairingCodeResponse, status_code=status.HTTP_201_CREATED)
 def generate_pairing_code(
+    body: PairingCodeGenerateRequest = PairingCodeGenerateRequest(),
     current_user: User = Depends(get_current_distributor),  # Distributor or super admin
     active_tenant_id: uuid_mod.UUID = Depends(get_active_tenant_id),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """Generate a pairing code (distributor/super_admin only)"""
+    """Generate a pairing code (distributor/super_admin only). Optional company/shop pre-assigns on validate."""
     ensure_same_tenant(current_user.tenant_id, active_tenant_id)
-    pairing_code = create_pairing_code(db, current_user.id, tenant_id=active_tenant_id)
+
+    try:
+        merchant_id, shop_id = resolve_pairing_assignment(
+            db,
+            active_tenant_id,
+            company_id=body.company_id,
+            shop_id=body.shop_id,
+        )
+    except PairingAssignmentError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    if merchant_id is not None:
+        merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
+        if not merchant:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merchant not found")
+        ensure_same_tenant(merchant.tenant_id, active_tenant_id)
+        if current_user.role.value != "super_admin" and merchant.distributor_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    try:
+        pairing_code = create_pairing_code(
+            db,
+            current_user.id,
+            tenant_id=active_tenant_id,
+            merchant_id=merchant_id,
+            shop_id=shop_id,
+        )
+    except PairingAssignmentError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     return pairing_code
 
 

@@ -35,3 +35,9 @@ class Tenant(Base):
 
     memberships = relationship("TenantMembership", back_populates="tenant", cascade="all, delete-orphan")
     merchants = relationship("Merchant", back_populates="tenant")
+    sku_sequence = relationship(
+        "TenantSkuSequence",
+        back_populates="tenant",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )

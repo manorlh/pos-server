@@ -23,6 +23,7 @@ class POSMachine(Base):
     merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True, index=True)
     distributor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    pairing_session_id = Column(UUID(as_uuid=True), ForeignKey("pairing_sessions.id"), nullable=True, index=True)
     name = Column(String(255), nullable=False)
     machine_code = Column(String(100), unique=True, nullable=False, index=True)
     mqtt_client_id = Column(String(255), unique=True, nullable=True)

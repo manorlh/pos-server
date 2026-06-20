@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { PosMachine, Shop, Merchant } from '@/lib/types';
+import { PosMachine, Shop, Merchant, Company } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { normalizePosMachine } from '@/lib/posMachine';
 import { findBySameId } from '@/lib/entityLookup';
@@ -17,8 +17,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
-import { Monitor, Wifi, WifiOff, Send, KeyRound, RefreshCw, Link2, Store, Info, Trash2 } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { Monitor, Wifi, WifiOff, Send, KeyRound, RefreshCw, Link2, Store, Info, Trash2, Smartphone } from 'lucide-react';
+import { formatDistanceToNow, format } from 'date-fns';
+import { QRCodeSVG } from 'qrcode.react';
+import type { PairingSessionCreateResponse } from '@/lib/types';
 import { he } from 'date-fns/locale';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
@@ -41,6 +43,9 @@ export default function MachinesPage() {
   const [selectedMachine, setSelectedMachine] = useState<PosMachine | null>(null);
   const [machineCode, setMachineCode] = useState('');
   const [pairingCode, setPairingCode] = useState<string | null>(null);
+  const [pairCompanyId, setPairCompanyId] = useState('');
+  const [pairShopId, setPairShopId] = useState('');
+  const [pairPreAssignLabel, setPairPreAssignLabel] = useState<string | null>(null);
 
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignMerchantId, setAssignMerchantId] = useState('');
@@ -51,6 +56,9 @@ export default function MachinesPage() {
   const [editShopId, setEditShopId] = useState('');
 
   const [removeOpen, setRemoveOpen] = useState(false);
+  const [fieldInstallOpen, setFieldInstallOpen] = useState(false);
+  const [fieldSession, setFieldSession] = useState<PairingSessionCreateResponse | null>(null);
+  const [fieldPairedCount, setFieldPairedCount] = useState(0);
   // Pre-checked when the dialog opens so the warning copy can tell the operator
   // upfront whether the row will be hard-deleted or only decommissioned.
   const [removeMachineHasHistory, setRemoveMachineHasHistory] = useState(false);
@@ -84,6 +92,18 @@ export default function MachinesPage() {
     queryFn: () => api.get('/merchants').then((r) => r.data),
   });
 
+  const { data: companies = [] } = useQuery<Company[]>({
+    queryKey: ['companies'],
+    queryFn: () => api.get('/companies').then((r) => r.data),
+  });
+
+  const { data: pairShops = [] } = useQuery<Shop[]>({
+    queryKey: ['shops', 'byCompany', pairCompanyId],
+    queryFn: () =>
+      api.get('/shops', { params: { companyId: pairCompanyId } }).then((r) => r.data),
+    enabled: !!pairCompanyId && pairOpen,
+  });
+
   const { data: assignShops = [] } = useQuery<Shop[]>({
     queryKey: ['shops', 'byMerchant', assignMerchantId],
     queryFn: () =>
@@ -100,9 +120,41 @@ export default function MachinesPage() {
     enabled: !!selectedMachine?.merchantId && shopEditOpen,
   });
 
+  const resetPairDialog = () => {
+    setMachineCode('');
+    setPairingCode(null);
+    setPairCompanyId('');
+    setPairShopId('');
+    setPairPreAssignLabel(null);
+  };
+
   const generateCode = useMutation({
-    mutationFn: (code: string) => api.post('/pairing/generate', { machineCode: code }),
+    mutationFn: (payload: { companyId?: string; shopId?: string }) =>
+      api.post('/pairing/generate', {
+        ...(payload.companyId ? { companyId: payload.companyId } : {}),
+        ...(payload.shopId ? { shopId: payload.shopId } : {}),
+      }),
     onSuccess: (res) => setPairingCode(res.data.code),
+    onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
+  });
+
+  const createFieldSession = useMutation({
+    mutationFn: () => api.post<PairingSessionCreateResponse>('/pairing/sessions'),
+    onSuccess: (res) => {
+      setFieldSession(res.data);
+      setFieldPairedCount(0);
+    },
+    onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, t('fieldInstall.startError'))),
+  });
+
+  const revokeFieldSession = useMutation({
+    mutationFn: (sessionId: string) => api.delete(`/pairing/sessions/${sessionId}`),
+    onSuccess: () => {
+      setFieldSession(null);
+      setFieldPairedCount(0);
+      setFieldInstallOpen(false);
+      toast.success(t('fieldInstall.sessionEnded'));
+    },
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
   });
 
@@ -223,6 +275,22 @@ export default function MachinesPage() {
     return () => window.clearInterval(tmr);
   }, []);
 
+  useEffect(() => {
+    if (!fieldInstallOpen || !fieldSession?.sessionId) return;
+    const poll = () => {
+      void api
+        .get<Array<{ id: string; machinesPairedCount: number }>>('/pairing/sessions/active')
+        .then((r) => {
+          const row = r.data.find((s) => s.id === fieldSession.sessionId);
+          if (row) setFieldPairedCount(row.machinesPairedCount);
+        })
+        .catch(() => undefined);
+    };
+    poll();
+    const tmr = window.setInterval(poll, 5000);
+    return () => window.clearInterval(tmr);
+  }, [fieldInstallOpen, fieldSession?.sessionId]);
+
   const isMqttOnline = (m: PosMachine): boolean => {
     if (!m.lastHeartbeatAt) return false;
     const ts = new Date(m.lastHeartbeatAt).getTime();
@@ -237,16 +305,30 @@ export default function MachinesPage() {
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
         </div>
-        <Button
-          onClick={() => {
-            setMachineCode('');
-            setPairingCode(null);
-            setPairOpen(true);
-          }}
-          size="sm"
-        >
-          <KeyRound className="h-4 w-4 ms-1" /> {t('generateCode')}
-        </Button>
+        <div className="flex gap-2">
+          {canAssignMachine ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setFieldSession(null);
+                setFieldPairedCount(0);
+                setFieldInstallOpen(true);
+              }}
+            >
+              <Smartphone className="h-4 w-4 ms-1" /> {t('fieldInstall.btn')}
+            </Button>
+          ) : null}
+          <Button
+            onClick={() => {
+              resetPairDialog();
+              setPairOpen(true);
+            }}
+            size="sm"
+          >
+            <KeyRound className="h-4 w-4 ms-1" /> {t('generateCode')}
+          </Button>
+        </div>
       </div>
 
       {showAssignHelp ? (
@@ -433,8 +515,14 @@ export default function MachinesPage() {
         </div>
       )}
 
-      <Dialog open={pairOpen} onOpenChange={setPairOpen}>
-        <DialogContent className="max-w-sm">
+      <Dialog
+        open={pairOpen}
+        onOpenChange={(open) => {
+          setPairOpen(open);
+          if (!open) resetPairDialog();
+        }}
+      >
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{t('pairTitle')}</DialogTitle>
           </DialogHeader>
@@ -443,7 +531,17 @@ export default function MachinesPage() {
               <p className="text-muted-foreground text-sm">{t('pairInstruction')}</p>
               <p className="text-4xl font-mono font-bold tracking-widest text-primary">{pairingCode}</p>
               <p className="text-xs text-muted-foreground">{t('pairExpiry')}</p>
-              <Button variant="outline" size="sm" onClick={() => setPairingCode(null)}>
+              {pairPreAssignLabel ? (
+                <p className="text-sm text-muted-foreground">{t('pairPreAssigned', { target: pairPreAssignLabel })}</p>
+              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setPairingCode(null);
+                  setPairPreAssignLabel(null);
+                }}
+              >
                 <RefreshCw className="h-3.5 w-3.5 me-1" /> {t('generateNew')}
               </Button>
             </div>
@@ -458,11 +556,86 @@ export default function MachinesPage() {
                 />
                 <p className="text-xs text-muted-foreground">{t('machineCodeHint')}</p>
               </div>
+              <div className="space-y-3 rounded-lg border border-dashed p-3">
+                <div>
+                  <p className="text-sm font-medium">{t('pairAssignOptional')}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{t('pairAssignHint')}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>{t('selectCompanyOptional')}</Label>
+                  <Select
+                    value={pairCompanyId}
+                    onValueChange={(v) => {
+                      setPairCompanyId(v ?? '');
+                      setPairShopId('');
+                    }}
+                    itemToStringLabel={(v) => {
+                      if (v == null || v === '') return '';
+                      return findBySameId(companies, String(v))?.name ?? String(v);
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={t('selectCompanyOptional')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {companies.map((c) => (
+                        <SelectItem key={c.id} value={c.id} label={c.name}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>{t('selectShopOptional')}</Label>
+                  <Select
+                    value={pairShopId}
+                    onValueChange={(v) => setPairShopId(v ?? '')}
+                    disabled={!pairCompanyId}
+                    itemToStringLabel={(v) => {
+                      if (v == null || v === '') return '';
+                      return findBySameId(pairShops, String(v))?.name ?? String(v);
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={t('selectShopOptional')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {pairShops.map((s) => (
+                        <SelectItem key={s.id} value={s.id} label={s.name}>
+                          {s.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setPairOpen(false)}>
                   {tc('cancel')}
                 </Button>
-                <Button onClick={() => generateCode.mutate(machineCode)} disabled={!machineCode || generateCode.isPending}>
+                <Button
+                  onClick={() => {
+                    const companyName = pairCompanyId
+                      ? findBySameId(companies, pairCompanyId)?.name
+                      : undefined;
+                    const shopName = pairShopId
+                      ? findBySameId(pairShops, pairShopId)?.name
+                      : undefined;
+                    if (companyName && shopName) {
+                      setPairPreAssignLabel(`${companyName} — ${shopName}`);
+                    } else if (companyName) {
+                      setPairPreAssignLabel(companyName);
+                    } else {
+                      setPairPreAssignLabel(null);
+                    }
+                    generateCode.mutate({
+                      ...(pairCompanyId ? { companyId: pairCompanyId } : {}),
+                      ...(pairShopId ? { shopId: pairShopId } : {}),
+                    });
+                  }}
+                  disabled={!machineCode || generateCode.isPending}
+                >
                   {t('generate')}
                 </Button>
               </DialogFooter>
@@ -662,6 +835,70 @@ export default function MachinesPage() {
               {pushCatalog.isPending ? t('pushing') : t('pushNow')}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={fieldInstallOpen}
+        onOpenChange={(open) => {
+          setFieldInstallOpen(open);
+          if (!open) {
+            setFieldSession(null);
+            setFieldPairedCount(0);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('fieldInstall.title')}</DialogTitle>
+          </DialogHeader>
+          {!fieldSession ? (
+            <div className="space-y-4 py-2">
+              <p className="text-sm text-muted-foreground">{t('fieldInstall.subtitle')}</p>
+              <p className="text-sm text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 rounded-md p-3">
+                {t('fieldInstall.securityHint')}
+              </p>
+              <Button
+                className="w-full"
+                onClick={() => createFieldSession.mutate()}
+                disabled={createFieldSession.isPending}
+              >
+                {createFieldSession.isPending ? t('fieldInstall.starting') : t('fieldInstall.start')}
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-4 py-2 text-center">
+              <p className="text-sm text-muted-foreground">{t('fieldInstall.subtitle')}</p>
+              <div className="flex justify-center">
+                <QRCodeSVG value={fieldSession.mobileUrl} size={220} level="M" />
+              </div>
+              <p className="text-sm font-medium">
+                {t('fieldInstall.sessionTtl', {
+                  expiresAt: format(new Date(fieldSession.expiresAt), 'HH:mm dd/MM/yyyy'),
+                  hours: fieldSession.sessionExpireHours,
+                })}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {formatDistanceToNow(new Date(fieldSession.expiresAt), { addSuffix: true, locale: he })}
+              </p>
+              <p className="text-sm">{t('fieldInstall.pairedCount', { count: fieldPairedCount })}</p>
+              <p className="text-xs text-amber-800 dark:text-amber-200">{t('fieldInstall.securityHint')}</p>
+              <Button variant="outline" size="sm" asChild>
+                <a href={fieldSession.mobileUrl} target="_blank" rel="noopener noreferrer">
+                  {t('fieldInstall.openMobileLink')}
+                </a>
+              </Button>
+              <DialogFooter className="sm:justify-center">
+                <Button
+                  variant="destructive"
+                  onClick={() => revokeFieldSession.mutate(fieldSession.sessionId)}
+                  disabled={revokeFieldSession.isPending}
+                >
+                  {revokeFieldSession.isPending ? t('fieldInstall.ending') : t('fieldInstall.endSession')}
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

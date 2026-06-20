@@ -16,6 +16,7 @@ from app.database import get_db
 from app.middleware.auth import get_pos_machine_for_sync_path
 from app.models.category import Category, CatalogLevel as CategoryCatalogLevel
 from app.models.pos_machine import POSMachine
+from app.models.merchant import Merchant
 from app.models.pos_user import PosUser
 from app.models.product import Product, CatalogLevel
 from app.models.sync_log import SyncLog, SyncAction, SyncDirection, SyncEntityType, SyncStatus
@@ -43,6 +44,8 @@ from app.schemas.z_report import (
     ZReportUpsertResponse,
 )
 from app.services.catalog_notify import notify_all_machines_for_merchant
+from app.services.sku_sequence import resolve_sku_for_create
+from app.services.tenant_sku_sequence import allocate_global_sku
 from app.services.sync import (
     get_categories_for_sync,
     get_products_for_sync,
@@ -320,14 +323,19 @@ def machine_create_cloud_product(
             detail="Machine must be assigned to a merchant",
         )
 
-    if db.query(Product).filter(
-        Product.merchant_id == machine.merchant_id,
-        Product.sku == data.sku,
-    ).first():
+    final_sku, sku_auto_assigned = resolve_sku_for_create(
+        db, machine.merchant_id, data.sku
+    )
+    tenant_id = machine.tenant_id
+    if not tenant_id and machine.merchant_id:
+        merchant = db.query(Merchant).filter(Merchant.id == machine.merchant_id).first()
+        tenant_id = merchant.tenant_id if merchant else None
+    if not tenant_id:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="SKU already exists for this merchant",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Machine tenant context required for global SKU",
         )
+    global_sku = allocate_global_sku(db, tenant_id)
 
     cat = db.query(Category).filter(Category.id == data.category_id).first()
     if not cat or cat.merchant_id != machine.merchant_id:
@@ -349,7 +357,9 @@ def machine_create_cloud_product(
         name=data.name,
         description=data.description,
         price=data.price,
-        sku=data.sku,
+        sku=final_sku,
+        global_sku=global_sku,
+        sku_auto_assigned=sku_auto_assigned,
         image_url=data.image_url,
         in_stock=data.in_stock,
         is_available=True,

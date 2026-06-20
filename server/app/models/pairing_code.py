@@ -15,6 +15,8 @@ class PairingCode(Base):
     code = Column(String(50), unique=True, nullable=False, index=True)
     distributor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True)
+    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=True)
+    shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True)
     pos_machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id"), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     is_used = Column(Boolean, default=False, nullable=False)

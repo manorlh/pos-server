@@ -63,6 +63,8 @@
     "editTitle": "ערוך מוצר",
     "name": "שם",
     "sku": "מק\"ט",
+    "globalSku": "מק\"ט גלובלי",
+    "globalSkuHint": "מוקצה אוטומטית לכל הארגון — לחיפוש ודיווח",
     "price": "מחיר (₪)",
     "category": "קטגוריה",
     "selectCategory": "בחר קטגוריה",
@@ -85,7 +87,13 @@
     "updated": "המוצר עודכן בהצלחה",
     "deleted": "המוצר נמחק",
     "saveError": "שגיאה בשמירת המוצר",
-    "noCategories": "אין קטגוריות — צור קטגוריה תחילה"
+    "noCategories": "אין קטגוריות — צור קטגוריה תחילה",
+    "skuMode": "סדרת מק\"ט",
+    "skuModeAuto": "אוטומטי (סדרה)",
+    "skuModeManual": "ידני",
+    "skuAutoHint": "מק\"ט יוקצה אוטומטית בעת השמירה",
+    "skuAssignedOnSave": "יוקצה בעת השמירה",
+    "skuAutoReadOnly": "מק\"ט שהוקצה על ידי המערכת — לא ניתן לעריכה"
   },
   "categories": {
     "title": "קטגוריות",
@@ -113,6 +121,10 @@
     "machineCode": "קוד מכשיר",
     "machineCodePlaceholder": "לדוגמה: MACHINE-001",
     "machineCodeHint": "קוד המכשיר של טרמינל ה-POS לביצוע ההתאמה",
+    "pairAssignOptional": "שיוך מראש (אופציונלי)",
+    "pairAssignHint": "אם תבחר חברה ו/או סניף, המכשיר ישויך אוטומטית מיד לאחר ההתאמה ב-POS",
+    "selectCompanyOptional": "חברה (אופציונלי)",
+    "pairPreAssigned": "לאחר ההתאמה המכשיר ישויך אוטומטית ל־{target}",
     "generate": "צור",
     "pushCatalog": "דחוף קטלוג",
     "pushTitle": "דחיפת קטלוג",
@@ -178,7 +190,22 @@
     "removing": "מסיר…",
     "removedHard": "המכשיר נמחק לחלוטין",
     "removedSoft": "המכשיר הוסר. ההיסטוריה נשמרה.",
-    "removeNoPermission": "רק מפיץ או מנהל-על יכולים להסיר מכשיר."
+    "removeNoPermission": "רק מפיץ או מנהל-על יכולים להסיר מכשיר.",
+    "fieldInstall": {
+      "btn": "התקנה מהירה בשטח",
+      "title": "התקנה מהירה בשטח",
+      "subtitle": "סרוק QR זה מהטלפון של המתקין — ללא התחברות. לאחר מכן סרוק QR מכל קופה.",
+      "sessionTtl": "תוקף הסשן: עד {expiresAt} ({hours} שעות)",
+      "securityHint": "סרוק QR זה רק מהטלפון של המתקין. אל תשתף צילום מסך. לחץ \"סיום התקנה\" בסיום.",
+      "pairedCount": "קופות שויכו בסשן זה: {count}",
+      "start": "התחל התקנה",
+      "starting": "יוצר סשן...",
+      "endSession": "סיום התקנה",
+      "ending": "מסיים...",
+      "sessionEnded": "סשן ההתקנה הסתיים",
+      "startError": "יצירת סשן ההתקנה נכשלה",
+      "openMobileLink": "פתח בטלפון"
+    }
   },
   "companies": {
     "title": "חברות",

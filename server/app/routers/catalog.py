@@ -100,6 +100,7 @@ def _copy_product_to_machine(
             existing.image_url = global_product.image_url
             existing.tax_rate = global_product.tax_rate
             existing.barcode = global_product.barcode
+            existing.global_sku = global_product.global_sku
         existing.in_stock = global_product.in_stock
         existing.stock_quantity = global_product.stock_quantity
         db.flush()
@@ -119,6 +120,8 @@ def _copy_product_to_machine(
         description=global_product.description,
         price=global_product.price,
         sku=global_product.sku,
+        global_sku=global_product.global_sku,
+        sku_auto_assigned=global_product.sku_auto_assigned,
         image_url=global_product.image_url,
         in_stock=global_product.in_stock,
         stock_quantity=global_product.stock_quantity,

@@ -102,6 +102,10 @@ See `.env.example` for all available configuration options:
 - `MQTT_BROKER_PORT`: MQTT broker port
 - `PAIRING_CODE_LENGTH`: Length of pairing codes (default: 8)
 - `PAIRING_CODE_EXPIRY_MINUTES`: Pairing code expiration (default: 15)
+- `PAIRING_SESSION_EXPIRE_HOURS`: Mobile field-install session TTL (default: 12)
+- `DEVICE_PAIRING_NONCE_EXPIRE_MINUTES`: POS device QR nonce TTL (default: 15)
+- `PAIRING_MOBILE_APP_BASE_URL`: Base URL for Session QR links (e.g. `http://localhost:3002`)
+- `NEXT_PUBLIC_APP_URL`: Same origin for dashboard (client); used if API omits full mobile URL
 
 ## API Documentation
 
@@ -293,6 +297,13 @@ poetry run alembic downgrade -1
 ### Pairing
 - `POST /api/v1/pairing/generate` - Generate pairing code
 - `POST /api/v1/pairing/validate` - Validate pairing code (public)
+- `POST /api/v1/pairing/sessions` - Start 12h mobile field-install session (distributor)
+- `GET /api/v1/pairing/sessions/active` - List active install sessions
+- `DELETE /api/v1/pairing/sessions/{id}` - Revoke install session
+- `POST /api/v1/pairing/device/register` - POS registers device QR nonce (public)
+- `GET /api/v1/pairing/device/{nonce}/status` - POS polls for credentials (public, one-time)
+- `GET /api/v1/pairing/mobile/context` - Mobile picker data (pairing session JWT)
+- `POST /api/v1/pairing/mobile/claim` - Mobile claims POS device (pairing session JWT)
 - `GET /api/v1/pairing/codes` - List pairing codes
 - `POST /api/v1/pairing/machines/{machine_id}/assign` - Assign machine to merchant
 

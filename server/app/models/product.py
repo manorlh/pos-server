@@ -40,6 +40,8 @@ class Product(Base):
     description = Column(String(1000), nullable=True)
     price = Column(Numeric(10, 2), nullable=False)
     sku = Column(String(100), nullable=False, index=True)
+    global_sku = Column(String(100), nullable=True, index=True)
+    sku_auto_assigned = Column(Boolean, default=False, nullable=False)
     image_url = Column(String(500), nullable=True)
     in_stock = Column(Boolean, default=True, nullable=False)
     # Merchandising: when False, POS still lists the product but marks it unavailable for sale.
