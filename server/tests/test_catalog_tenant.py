@@ -12,7 +12,6 @@ def test_copy_product_to_machine_sets_tenant_id() -> None:
     machine.tenant_id = tenant_id
 
     global_product = MagicMock()
-    global_product.merchant_id = uuid.uuid4()
     global_product.company_id = None
     global_product.category_id = uuid.uuid4()
     global_product.id = uuid.uuid4()
@@ -44,7 +43,6 @@ def test_copy_category_to_machine_sets_tenant_id() -> None:
     machine.tenant_id = tenant_id
 
     global_cat = MagicMock()
-    global_cat.merchant_id = uuid.uuid4()
     global_cat.company_id = None
     global_cat.tenant_id = tenant_id
     global_cat.name = "Drinks"

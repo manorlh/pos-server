@@ -36,7 +36,6 @@ class PosUser(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True)
-    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False, index=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=False, index=True)
 
     username = Column(String(64), nullable=False)
@@ -56,5 +55,4 @@ class PosUser(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
-    merchant = relationship("Merchant")
     shop = relationship("Shop")

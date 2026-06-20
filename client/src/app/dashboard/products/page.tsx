@@ -5,7 +5,7 @@ import Image from 'next/image';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { findBySameId } from '@/lib/entityLookup';
+import { entitySelectItems } from '@/lib/selectItems';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { Product, Category } from '@/lib/types';
 import { ProductImageUpload } from '@/components/product-image-upload';
@@ -44,11 +44,11 @@ function ProductThumbnail({ imageUrl, name }: { imageUrl?: string; name: string 
 
 function buildSavePayload(
   p: Partial<Product>,
-  merchantId: string | undefined,
+  companyId: string | undefined,
   skuMode: SkuMode,
   isNew: boolean,
 ): Record<string, unknown> {
-  const payload: Record<string, unknown> = { ...p, merchantId: p.merchantId ?? merchantId };
+  const payload: Record<string, unknown> = { ...p, companyId: p.companyId ?? companyId };
   if (isNew && skuMode === 'auto') {
     delete payload.sku;
   }
@@ -78,7 +78,7 @@ export default function ProductsPage() {
 
   const save = useMutation({
     mutationFn: (args: { product: Partial<Product>; mode: SkuMode }) => {
-      const payload = buildSavePayload(args.product, user?.merchantId, args.mode, !args.product.id);
+      const payload = buildSavePayload(args.product, user?.companyId, args.mode, !args.product.id);
       return args.product.id
         ? api.put(`/products/${args.product.id}`, payload)
         : api.post('/products', payload);
@@ -193,7 +193,14 @@ export default function ProductsPage() {
             {isNew ? (
               <div className="space-y-2">
                 <Label>{t('skuMode')}</Label>
-                <Select value={skuMode} onValueChange={(v) => setSkuMode(v as SkuMode)}>
+                <Select
+                  value={skuMode}
+                  onValueChange={(v) => setSkuMode(v as SkuMode)}
+                  items={[
+                    { value: 'auto', label: t('skuModeAuto') },
+                    { value: 'manual', label: t('skuModeManual') },
+                  ]}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -247,10 +254,7 @@ export default function ProductsPage() {
               <Select
                 value={editing.categoryId ?? ''}
                 onValueChange={(v) => setEditing((p) => ({ ...p, categoryId: v ?? undefined }))}
-                itemToStringLabel={(v) => {
-                  if (v == null || v === '') return '';
-                  return findBySameId(categories, String(v))?.name ?? String(v);
-                }}
+                items={entitySelectItems(categories)}
               >
                 <SelectTrigger><SelectValue placeholder={t('selectCategory')} /></SelectTrigger>
                 <SelectContent>

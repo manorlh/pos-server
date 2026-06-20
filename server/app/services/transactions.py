@@ -91,7 +91,6 @@ def get_or_create_trading_day(
     new_td = TradingDay(
         id=trading_day_id or uuid.uuid4(),
         tenant_id=machine.tenant_id,
-        merchant_id=machine.merchant_id,
         machine_id=machine.id,
         shop_id=machine.shop_id,
         day_date=day_date,
@@ -114,7 +113,6 @@ def _serialize_tx_for_upsert(
         "id": tx.id,
         "tenant_id": machine.tenant_id,
         "machine_id": machine.id,
-        "merchant_id": machine.merchant_id,
         "shop_id": machine.shop_id,
         "trading_day_id": trading_day_id,
         "transaction_number": tx.transaction_number,
@@ -189,7 +187,7 @@ def upsert_transactions(
             update_cols = {
                 k: stmt.excluded[k]
                 for k in row.keys()
-                if k not in ("id", "tenant_id", "machine_id", "merchant_id", "server_received_at")
+                if k not in ("id", "tenant_id", "machine_id", "server_received_at")
             }
             stmt = stmt.on_conflict_do_update(index_elements=[Transaction.id], set_=update_cols)
             db.execute(stmt)
@@ -292,7 +290,6 @@ def apply_z_report(
         trading_day_id=td.id,
         tenant_id=machine.tenant_id,
         machine_id=machine.id,
-        merchant_id=machine.merchant_id,
         shop_id=machine.shop_id,
         day_date=z.day_date,
         total_sales=z.total_sales,
@@ -331,13 +328,13 @@ def apply_z_report(
 
 # ── MQTT publish helpers (server -> dashboard heads-up) ──────────────────────
 
-def publish_transactions_synced(merchant_id: Optional[uuid.UUID], machine_id: uuid.UUID, count: int) -> None:
+def publish_transactions_synced(tenant_id: Optional[uuid.UUID], machine_id: uuid.UUID, count: int) -> None:
     """Lightweight signal for future dashboard live updates."""
     from app.services.mqtt import mqtt_service
 
-    if not merchant_id:
+    if not tenant_id:
         return
-    topic = f"pos/{merchant_id}/{machine_id}/transactions/synced"
+    topic = f"pos/{tenant_id}/{machine_id}/transactions/synced"
     mqtt_service._publish(topic, {
         "serverTime": datetime.now(timezone.utc).isoformat(),
         "count": count,
@@ -345,16 +342,16 @@ def publish_transactions_synced(merchant_id: Optional[uuid.UUID], machine_id: uu
 
 
 def publish_z_report_closed(
-    merchant_id: Optional[uuid.UUID],
+    tenant_id: Optional[uuid.UUID],
     machine_id: uuid.UUID,
     z_report_id: uuid.UUID,
     trading_day_id: uuid.UUID,
 ) -> None:
     from app.services.mqtt import mqtt_service
 
-    if not merchant_id:
+    if not tenant_id:
         return
-    topic = f"pos/{merchant_id}/{machine_id}/z-report/closed"
+    topic = f"pos/{tenant_id}/{machine_id}/z-report/closed"
     mqtt_service._publish(topic, {
         "serverTime": datetime.now(timezone.utc).isoformat(),
         "zReportId": str(z_report_id),

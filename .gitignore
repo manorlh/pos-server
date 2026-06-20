@@ -5,6 +5,7 @@ server/__pycache__/
 server/**/__pycache__/
 server/**/*.py[cod]
 server/.env
+server/certs/
 server/alembic/versions/*.pyc
 
 # ── Client ────────────────────────────────────────────────────────────────────

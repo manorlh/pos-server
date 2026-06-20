@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.pairing_code import (
-    PairingCodeCreate,
     PairingCodeGenerateRequest,
     PairingCodeResponse,
     PairingCodeValidate,
@@ -12,30 +11,28 @@ from app.schemas.pairing_code import (
 )
 from app.schemas.pos_machine import POSMachineResponse
 from app.models.pairing_code import PairingCode
-from app.models.merchant import Merchant
 from app.models.pos_machine import POSMachine
 from app.models.shop import Shop
+from app.models.company import Company
 from app.models.user import User
 from app.middleware.auth import get_current_distributor, get_active_tenant_id, ensure_same_tenant
 from app.services.pairing import (
     PairingAssignmentError,
     create_pairing_code,
     validate_pairing_code,
-    assign_machine_to_merchant,
+    assign_machine_to_shop,
     resolve_pairing_assignment,
 )
-from app.services.shop_validation import shop_belongs_to_merchant
 from app.services.auth import create_machine_token
-from app.config import get_settings
+from app.services.mqtt_broker import machine_mqtt_connection_info
 
 router = APIRouter(prefix="/pairing", tags=["pairing"])
-settings = get_settings()
 
 
 @router.post("/generate", response_model=PairingCodeResponse, status_code=status.HTTP_201_CREATED)
 def generate_pairing_code(
     body: PairingCodeGenerateRequest = PairingCodeGenerateRequest(),
-    current_user: User = Depends(get_current_distributor),  # Distributor or super admin
+    current_user: User = Depends(get_current_distributor),
     active_tenant_id: uuid_mod.UUID = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
@@ -43,7 +40,7 @@ def generate_pairing_code(
     ensure_same_tenant(current_user.tenant_id, active_tenant_id)
 
     try:
-        merchant_id, shop_id = resolve_pairing_assignment(
+        company_id, shop_id = resolve_pairing_assignment(
             db,
             active_tenant_id,
             company_id=body.company_id,
@@ -55,20 +52,18 @@ def generate_pairing_code(
             detail=str(exc),
         ) from exc
 
-    if merchant_id is not None:
-        merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
-        if not merchant:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merchant not found")
-        ensure_same_tenant(merchant.tenant_id, active_tenant_id)
-        if current_user.role.value != "super_admin" and merchant.distributor_id != current_user.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    if company_id is not None:
+        company = db.query(Company).filter(Company.id == company_id).first()
+        if not company:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+        ensure_same_tenant(company.tenant_id, active_tenant_id)
 
     try:
         pairing_code = create_pairing_code(
             db,
             current_user.id,
             tenant_id=active_tenant_id,
-            merchant_id=merchant_id,
+            company_id=company_id,
             shop_id=shop_id,
         )
     except PairingAssignmentError as exc:
@@ -84,48 +79,33 @@ def validate_pairing(
     pairing_data: PairingCodeValidate,
     db: Session = Depends(get_db)
 ):
-    """Validate and activate pairing code (public endpoint for desktop client)"""
+    """Validate and activate pairing code (public endpoint for desktop client)."""
     machine = validate_pairing_code(
         db,
         pairing_data.code,
         pairing_data.device_info,
         pairing_data.machine_name
     )
-    
+
     if not machine:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired pairing code"
         )
-    
-    # Generate machine authentication token
+
     machine_token = create_machine_token(str(machine.id))
-    
-    # Return machine credentials
-    return {
-        "machineId": str(machine.id),
-        "machineCode": machine.machine_code,
-        "merchantId": str(machine.merchant_id) if machine.merchant_id else None,
-        "shopId": str(machine.shop_id) if machine.shop_id else None,
-        "accessToken": machine_token,
-        "mqttClientId": machine.mqtt_client_id,
-        "mqttUsername": machine.mqtt_client_id,  # Using client ID as username
-        "mqttPassword": machine_token,  # Using token as password (can be improved)
-        "apiUrl": f"{settings.api_v1_prefix}",
-        "mqttBrokerUrl": f"{settings.mqtt_broker_host}:{settings.mqtt_broker_port}",
-    }
+    return machine_mqtt_connection_info(machine=machine, access_token=machine_token)
 
 
 @router.get("/codes", response_model=List[PairingCodeResponse])
 def list_pairing_codes(
-    current_user: User = Depends(get_current_distributor),  # Distributor or super admin
+    current_user: User = Depends(get_current_distributor),
     active_tenant_id: uuid_mod.UUID = Depends(get_active_tenant_id),
     db: Session = Depends(get_db)
 ):
-    """List pairing codes (distributor/super_admin only)"""
+    """List pairing codes (distributor/super_admin only)."""
     query = db.query(PairingCode).filter(PairingCode.tenant_id == active_tenant_id)
 
-    # Filter by distributor if not super admin
     if current_user.role.value != "super_admin":
         query = query.filter(PairingCode.distributor_id == current_user.id)
 
@@ -135,25 +115,18 @@ def list_pairing_codes(
 @router.get("/codes/{code_id}", response_model=PairingCodeResponse)
 def get_pairing_code(
     code_id: str,
-    current_user: User = Depends(get_current_distributor),  # Distributor or super admin
+    current_user: User = Depends(get_current_distributor),
     active_tenant_id: uuid_mod.UUID = Depends(get_active_tenant_id),
     db: Session = Depends(get_db)
 ):
-    """Get pairing code details"""
+    """Get pairing code details."""
     code = db.query(PairingCode).filter(PairingCode.id == code_id).first()
     if not code:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Pairing code not found"
-        )
-    
-    # Check permissions
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pairing code not found")
+
     if current_user.role.value != "super_admin" and code.distributor_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
     ensure_same_tenant(code.tenant_id, active_tenant_id)
     return code
 
@@ -162,25 +135,16 @@ def get_pairing_code(
 def assign_machine(
     machine_id: str,
     assign_data: MachineAssignRequest,
-    current_user: User = Depends(get_current_distributor),  # Distributor or super admin
+    current_user: User = Depends(get_current_distributor),
     active_tenant_id: uuid_mod.UUID = Depends(get_active_tenant_id),
     db: Session = Depends(get_db)
 ):
-    """Assign paired machine to merchant (distributor/super_admin only)"""
-    mid = uuid_mod.UUID(str(assign_data.merchant_id))
+    """Assign paired machine to a shop (distributor/super_admin only)."""
     sid = assign_data.shop_id
-    if sid is not None and not shop_belongs_to_merchant(db, sid, mid):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="shopId does not belong to this merchant",
-        )
-
-    merchant = db.query(Merchant).filter(Merchant.id == mid).first()
-    if not merchant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merchant not found")
-    ensure_same_tenant(merchant.tenant_id, active_tenant_id)
-    if current_user.role.value != "super_admin" and merchant.distributor_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    shop = db.query(Shop).filter(Shop.id == sid).first()
+    if not shop:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
+    ensure_same_tenant(shop.tenant_id, active_tenant_id)
 
     machine_uuid = uuid_mod.UUID(str(machine_id))
     machine_row = db.query(POSMachine).filter(POSMachine.id == machine_uuid).first()
@@ -190,24 +154,12 @@ def assign_machine(
     if current_user.role.value != "super_admin" and machine_row.distributor_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    if sid is not None:
-        shop = db.query(Shop).filter(Shop.id == sid).first()
-        if not shop:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
-        ensure_same_tenant(shop.tenant_id, active_tenant_id)
-
-    machine = assign_machine_to_merchant(
-        db,
-        machine_uuid,
-        mid,
-        shop_id=sid,
-    )
+    machine = assign_machine_to_shop(db, machine_uuid, sid)
 
     if not machine:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Failed to assign machine. Machine may not exist or is not in paired status."
+            detail="Failed to assign machine. Machine may not exist or is not in paired status.",
         )
-    
-    return machine
 
+    return machine

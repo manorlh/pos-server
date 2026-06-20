@@ -16,7 +16,6 @@ from app.database import get_db
 from app.middleware.auth import get_pos_machine_for_sync_path
 from app.models.category import Category, CatalogLevel as CategoryCatalogLevel
 from app.models.pos_machine import POSMachine
-from app.models.merchant import Merchant
 from app.models.pos_user import PosUser
 from app.models.product import Product, CatalogLevel
 from app.models.sync_log import SyncLog, SyncAction, SyncDirection, SyncEntityType, SyncStatus
@@ -43,7 +42,7 @@ from app.schemas.z_report import (
     ZReportMissingResponse,
     ZReportUpsertResponse,
 )
-from app.services.catalog_notify import notify_all_machines_for_merchant
+from app.services.catalog_notify import notify_all_machines_for_tenant
 from app.services.sku_sequence import resolve_sku_for_create
 from app.services.tenant_sku_sequence import allocate_global_sku
 from app.services.sync import (
@@ -95,6 +94,19 @@ class CatalogSyncResponse(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _require_assigned_machine(machine: POSMachine) -> None:
+    if not machine.shop_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Machine must be assigned to a shop",
+        )
+    if not machine.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Machine tenant context required",
+        )
+
+
 def _apply_product_change(
     item: CatalogChangeItem, machine: POSMachine, db: Session
 ) -> SyncStatus:
@@ -144,7 +156,6 @@ def _apply_product_change(
         # New product from POS — create as local catalog entry
         product = Product(
             tenant_id=machine.tenant_id,
-            merchant_id=machine.merchant_id,
             shop_id=machine.shop_id,
             pos_machine_id=machine.id,
             catalog_level=CatalogLevel.LOCAL,
@@ -196,7 +207,6 @@ def _apply_category_change(
     else:
         cat = Category(
             tenant_id=machine.tenant_id,
-            merchant_id=machine.merchant_id,
             shop_id=machine.shop_id,
             pos_machine_id=machine.id,
             catalog_level=CategoryCatalogLevel.LOCAL,
@@ -236,11 +246,11 @@ def get_catalog_sync(
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid 'since' timestamp")
 
-    mid = str(machine.merchant_id) if machine.merchant_id else None
+    tid = str(machine.tenant_id) if machine.tenant_id else None
     mqid = str(machine.id)
 
-    products = get_products_for_sync(db, mid, mqid, since=since_dt)
-    categories = get_categories_for_sync(db, mid, mqid, since=since_dt)
+    products = get_products_for_sync(db, tid, mqid, since=since_dt)
+    categories = get_categories_for_sync(db, tid, mqid, since=since_dt)
     if since_dt and products:
         categories = merge_categories_referenced_by_products(db, machine, products, categories)
 
@@ -317,36 +327,22 @@ def machine_create_cloud_product(
     db: Session = Depends(get_db),
 ):
     """POS: create a global catalog product on the cloud (source of truth)."""
-    if not machine.merchant_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Machine must be assigned to a merchant",
-        )
+    _require_assigned_machine(machine)
 
     final_sku, sku_auto_assigned = resolve_sku_for_create(
-        db, machine.merchant_id, data.sku
+        db, machine.tenant_id, data.sku
     )
-    tenant_id = machine.tenant_id
-    if not tenant_id and machine.merchant_id:
-        merchant = db.query(Merchant).filter(Merchant.id == machine.merchant_id).first()
-        tenant_id = merchant.tenant_id if merchant else None
-    if not tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Machine tenant context required for global SKU",
-        )
-    global_sku = allocate_global_sku(db, tenant_id)
+    global_sku = allocate_global_sku(db, machine.tenant_id)
 
     cat = db.query(Category).filter(Category.id == data.category_id).first()
-    if not cat or cat.merchant_id != machine.merchant_id:
+    if not cat or cat.tenant_id != machine.tenant_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Category not found for this merchant",
+            detail="Category not found for this tenant",
         )
 
     product = Product(
         tenant_id=machine.tenant_id,
-        merchant_id=machine.merchant_id,
         company_id=data.company_id,
         shop_id=data.shop_id,
         pos_machine_id=None,
@@ -370,7 +366,7 @@ def machine_create_cloud_product(
     db.add(product)
     db.commit()
     db.refresh(product)
-    notify_all_machines_for_merchant(db, str(machine.merchant_id), reason="product_created")
+    notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="product_created")
     return product
 
 
@@ -386,23 +382,18 @@ def machine_create_cloud_category(
     db: Session = Depends(get_db),
 ):
     """POS: create a global category on the cloud (source of truth)."""
-    if not machine.merchant_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Machine must be assigned to a merchant",
-        )
+    _require_assigned_machine(machine)
 
     if data.parent_id:
         parent = db.query(Category).filter(Category.id == data.parent_id).first()
-        if not parent or parent.merchant_id != machine.merchant_id:
+        if not parent or parent.tenant_id != machine.tenant_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Parent category not found for this merchant",
+                detail="Parent category not found for this tenant",
             )
 
     category = Category(
         tenant_id=machine.tenant_id,
-        merchant_id=machine.merchant_id,
         company_id=data.company_id,
         shop_id=data.shop_id,
         pos_machine_id=None,
@@ -418,13 +409,13 @@ def machine_create_cloud_category(
     db.add(category)
     db.commit()
     db.refresh(category)
-    notify_all_machines_for_merchant(db, str(machine.merchant_id), reason="category_created")
+    notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="category_created")
     return category
 
 
 def _machine_may_edit_global_product(machine: POSMachine, product: Product) -> None:
-    if not machine.merchant_id or product.merchant_id != machine.merchant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Product not in machine merchant")
+    if not machine.tenant_id or product.tenant_id != machine.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Product not in machine tenant")
     if product.pos_machine_id is not None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -435,8 +426,8 @@ def _machine_may_edit_global_product(machine: POSMachine, product: Product) -> N
 
 
 def _machine_may_edit_global_category(machine: POSMachine, category: Category) -> None:
-    if not machine.merchant_id or category.merchant_id != machine.merchant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Category not in machine merchant")
+    if not machine.tenant_id or category.tenant_id != machine.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Category not in machine tenant")
     if category.pos_machine_id is not None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -467,7 +458,7 @@ def machine_update_cloud_product(
 
     db.commit()
     db.refresh(product)
-    notify_all_machines_for_merchant(db, str(machine.merchant_id), reason="product_updated")
+    notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="product_updated")
     return product
 
 
@@ -483,10 +474,10 @@ def machine_delete_cloud_product(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
     _machine_may_edit_global_product(machine, product)
 
-    mid = str(product.merchant_id)
+    tid = str(product.tenant_id)
     db.delete(product)
     db.commit()
-    notify_all_machines_for_merchant(db, mid, reason="product_deleted")
+    notify_all_machines_for_tenant(db, tid, reason="product_deleted")
     return None
 
 
@@ -505,7 +496,7 @@ def machine_update_cloud_category(
 
     if data.parent_id is not None:
         parent = db.query(Category).filter(Category.id == data.parent_id).first()
-        if not parent or parent.merchant_id != machine.merchant_id:
+        if not parent or parent.tenant_id != machine.tenant_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parent category not found")
 
     for field, value in data.model_dump(exclude_unset=True, by_alias=False).items():
@@ -513,7 +504,7 @@ def machine_update_cloud_category(
 
     db.commit()
     db.refresh(category)
-    notify_all_machines_for_merchant(db, str(machine.merchant_id), reason="category_updated")
+    notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="category_updated")
     return category
 
 
@@ -535,10 +526,10 @@ def machine_delete_cloud_category(
             detail="Category has associated products",
         )
 
-    mid = str(category.merchant_id)
+    tid = str(category.tenant_id)
     db.delete(category)
     db.commit()
-    notify_all_machines_for_merchant(db, mid, reason="category_deleted")
+    notify_all_machines_for_tenant(db, tid, reason="category_deleted")
     return None
 
 
@@ -556,11 +547,7 @@ def post_transactions(
     db: Session = Depends(get_db),
 ):
     """Idempotent transactions upsert. Same id retried returns status='duplicate'."""
-    if not machine.merchant_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Machine must be assigned to a merchant",
-        )
+    _require_assigned_machine(machine)
 
     results = upsert_transactions(db, machine, body.transactions)
 
@@ -580,7 +567,7 @@ def post_transactions(
     db.commit()
 
     if accepted_count > 0:
-        publish_transactions_synced(machine.merchant_id, machine.id, accepted_count)
+        publish_transactions_synced(machine.tenant_id, machine.id, accepted_count)
 
     return TransactionsBatchResponse(
         server_time=datetime.now(timezone.utc),
@@ -607,11 +594,7 @@ def post_z_report(
     Returns 409 with missing transaction ids if any expected tx is not yet on the cloud
     (POS must flush those tx and retry).
     """
-    if not machine.merchant_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Machine must be assigned to a merchant",
-        )
+    _require_assigned_machine(machine)
 
     missing, stale = check_z_report_preconditions(db, machine, body)
     if missing or stale:
@@ -637,7 +620,7 @@ def post_z_report(
     db.refresh(z_report)
 
     if outcome == "accepted":
-        publish_z_report_closed(machine.merchant_id, machine.id, z_report.id, z_report.trading_day_id)
+        publish_z_report_closed(machine.tenant_id, machine.id, z_report.id, z_report.trading_day_id)
 
     return ZReportUpsertResponse(
         status=outcome,

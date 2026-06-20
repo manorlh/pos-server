@@ -6,6 +6,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
 import { Html5Qrcode } from 'html5-qrcode';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
@@ -18,8 +19,9 @@ import {
 } from '@/lib/pairingSessionApi';
 import type { MobileClaimResponse, MobileContextResponse } from '@/lib/types';
 import { findBySameId } from '@/lib/entityLookup';
+import { entitySelectItems } from '@/lib/selectItems';
 
-type ClaimRow = MobileClaimResponse & { at: string };
+type ClaimRow = MobileClaimResponse & { at: string; machineName: string };
 
 export function MobilePairContent() {
   const searchParams = useSearchParams();
@@ -33,6 +35,7 @@ export function MobilePairContent() {
   const [message, setMessage] = useState<string | null>(null);
   const [claims, setClaims] = useState<ClaimRow[]>([]);
   const [pendingConfirm, setPendingConfirm] = useState<{ nonce: string } | null>(null);
+  const [confirmMachineName, setConfirmMachineName] = useState('');
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const [, setTick] = useState(0);
 
@@ -124,6 +127,7 @@ export function MobilePairContent() {
           try {
             const parsed = JSON.parse(decoded.trim()) as { nonce?: string };
             if (!parsed.nonce) throw new Error('invalid');
+            setConfirmMachineName('');
             setPendingConfirm({ nonce: parsed.nonce });
           } catch {
             setMessage('QR לא תקין או פג תוקף');
@@ -136,6 +140,11 @@ export function MobilePairContent() {
 
   const confirmClaim = async () => {
     if (!pendingConfirm || !companyId || !shopId) return;
+    const name = confirmMachineName.trim();
+    if (!name) {
+      setMessage('יש להזין שם לקופה');
+      return;
+    }
     setBusy(true);
     setMessage(null);
     try {
@@ -143,11 +152,13 @@ export function MobilePairContent() {
         deviceNonce: pendingConfirm.nonce,
         companyId,
         shopId,
+        machineName: name,
       });
-      setClaims((prev) => [{ ...res, at: new Date().toISOString() }, ...prev]);
+      setClaims((prev) => [{ ...res, machineName: name, at: new Date().toISOString() }, ...prev]);
       setPendingConfirm(null);
+      setConfirmMachineName('');
       void loadContext(companyId);
-      setMessage(`✓ ${res.machineCode} — ${res.shopName}`);
+      setMessage(`✓ ${name} (${res.machineCode}) — ${res.shopName}`);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : 'שגיאה בשיוך');
     } finally {
@@ -187,7 +198,11 @@ export function MobilePairContent() {
       <div className="space-y-3 rounded-lg border p-4">
         <div className="space-y-2">
           <Label>חברה</Label>
-          <Select value={companyId} onValueChange={(v) => void onCompanyChange(v ?? '')}>
+          <Select
+            value={companyId}
+            onValueChange={(v) => void onCompanyChange(v ?? '')}
+            items={entitySelectItems(ctx.companies)}
+          >
             <SelectTrigger>
               <SelectValue placeholder="בחר חברה" />
             </SelectTrigger>
@@ -206,6 +221,7 @@ export function MobilePairContent() {
             value={shopId}
             onValueChange={(v) => void onShopChange(v ?? '')}
             disabled={!companyId}
+            items={entitySelectItems(ctx.shops)}
           >
             <SelectTrigger>
               <SelectValue placeholder="בחר סניף" />
@@ -242,11 +258,33 @@ export function MobilePairContent() {
           <p className="text-sm text-muted-foreground">
             {companyName} — {shopName}
           </p>
+          <div className="space-y-2">
+            <Label htmlFor="confirm-machine-name">שם הקופה</Label>
+            <Input
+              id="confirm-machine-name"
+              value={confirmMachineName}
+              onChange={(e) => setConfirmMachineName(e.target.value)}
+              placeholder="לדוגמה: קופה ראשית"
+              disabled={busy}
+              autoFocus
+            />
+          </div>
           <div className="flex gap-2">
-            <Button className="flex-1" onClick={() => void confirmClaim()} disabled={busy}>
+            <Button
+              className="flex-1"
+              onClick={() => void confirmClaim()}
+              disabled={busy || !confirmMachineName.trim()}
+            >
               {busy ? 'משייך...' : 'אשר'}
             </Button>
-            <Button variant="outline" className="flex-1" onClick={() => setPendingConfirm(null)}>
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => {
+                setPendingConfirm(null);
+                setConfirmMachineName('');
+              }}
+            >
               ביטול
             </Button>
           </div>
@@ -261,7 +299,10 @@ export function MobilePairContent() {
           <ul className="space-y-1 text-sm">
             {claims.map((c) => (
               <li key={`${c.machineId}-${c.at}`} className="rounded border px-3 py-2">
-                <span className="font-mono">{c.machineCode}</span> — {c.shopName}
+                <span className="font-medium">{c.machineName}</span>
+                <span className="text-muted-foreground"> · </span>
+                <span className="font-mono text-xs">{c.machineCode}</span>
+                <span className="text-muted-foreground"> — {c.shopName}</span>
               </li>
             ))}
           </ul>

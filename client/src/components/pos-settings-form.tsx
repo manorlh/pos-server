@@ -111,6 +111,10 @@ export function PosSettingsForm({ value, onChange, inherited, showOverrideHints 
         <Select
           value={value.language ?? inherited?.language ?? 'he'}
           onValueChange={(v) => set('language', v as 'he' | 'en')}
+          items={[
+            { value: 'he', label: t('langHe') },
+            { value: 'en', label: t('langEn') },
+          ]}
         >
           <SelectTrigger>
             <SelectValue />

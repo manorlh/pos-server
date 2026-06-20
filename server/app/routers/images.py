@@ -25,7 +25,7 @@ _MAX_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 _IMAGE_ROLES = (
     UserRole.SUPER_ADMIN,
     UserRole.DISTRIBUTOR,
-    UserRole.MERCHANT_ADMIN,
+    UserRole.COMPANY_MANAGER,
     UserRole.COMPANY_MANAGER,
 )
 

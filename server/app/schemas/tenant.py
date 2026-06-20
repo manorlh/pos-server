@@ -41,6 +41,7 @@ class TenantOut(BaseModel):
     default_currency: str = Field(..., alias="defaultCurrency")
     locale: str
     settings: Optional[dict]
+    created_by_user_id: Optional[uuid.UUID] = Field(None, alias="createdBy")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 

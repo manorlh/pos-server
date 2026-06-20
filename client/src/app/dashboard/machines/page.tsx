@@ -4,12 +4,13 @@ import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { PosMachine, Shop, Merchant, Company } from '@/lib/types';
+import { PosMachine, Shop, Company } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { normalizePosMachine } from '@/lib/posMachine';
 import { findBySameId } from '@/lib/entityLookup';
+import { entitySelectItems } from '@/lib/selectItems';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -48,7 +49,6 @@ export default function MachinesPage() {
   const [pairPreAssignLabel, setPairPreAssignLabel] = useState<string | null>(null);
 
   const [assignOpen, setAssignOpen] = useState(false);
-  const [assignMerchantId, setAssignMerchantId] = useState('');
   const [assignShopId, setAssignShopId] = useState('');
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
@@ -67,7 +67,7 @@ export default function MachinesPage() {
     authHydrated && (me?.role === 'distributor' || me?.role === 'super_admin');
   const canEditAssignedShop =
     authHydrated &&
-    (me?.role === 'merchant_admin' || me?.role === 'distributor' || me?.role === 'super_admin');
+    (me?.role === 'company_manager' || me?.role === 'distributor' || me?.role === 'super_admin');
   const canRemoveMachine =
     authHydrated && (me?.role === 'distributor' || me?.role === 'super_admin');
   const showAssignHelp =
@@ -87,11 +87,6 @@ export default function MachinesPage() {
     queryFn: () => api.get('/shops').then((r) => r.data),
   });
 
-  const { data: merchants = [] } = useQuery<Merchant[]>({
-    queryKey: ['merchants'],
-    queryFn: () => api.get('/merchants').then((r) => r.data),
-  });
-
   const { data: companies = [] } = useQuery<Company[]>({
     queryKey: ['companies'],
     queryFn: () => api.get('/companies').then((r) => r.data),
@@ -102,22 +97,6 @@ export default function MachinesPage() {
     queryFn: () =>
       api.get('/shops', { params: { companyId: pairCompanyId } }).then((r) => r.data),
     enabled: !!pairCompanyId && pairOpen,
-  });
-
-  const { data: assignShops = [] } = useQuery<Shop[]>({
-    queryKey: ['shops', 'byMerchant', assignMerchantId],
-    queryFn: () =>
-      api.get('/shops', { params: { merchantId: assignMerchantId } }).then((r) => r.data),
-    enabled: !!assignMerchantId && assignOpen,
-  });
-
-  const { data: editShops = [] } = useQuery<Shop[]>({
-    queryKey: ['shops', 'byMerchant', selectedMachine?.merchantId],
-    queryFn: () =>
-      api
-        .get('/shops', { params: { merchantId: selectedMachine!.merchantId } })
-        .then((r) => r.data),
-    enabled: !!selectedMachine?.merchantId && shopEditOpen,
   });
 
   const resetPairDialog = () => {
@@ -183,22 +162,16 @@ export default function MachinesPage() {
   const assignMachine = useMutation({
     mutationFn: ({
       machineId,
-      merchantId,
       shopId,
     }: {
       machineId: string;
-      merchantId: string;
-      shopId?: string;
+      shopId: string;
     }) =>
-      api.post(`/pairing/machines/${machineId}/assign`, {
-        merchantId,
-        ...(shopId ? { shopId } : {}),
-      }),
+      api.post(`/pairing/machines/${machineId}/assign`, { shopId }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['machines'] });
       toast.success(t('assignSuccess'));
       setAssignOpen(false);
-      setAssignMerchantId('');
       setAssignShopId('');
       setSelectedMachine(null);
     },
@@ -237,7 +210,6 @@ export default function MachinesPage() {
 
   const openAssign = (m: PosMachine) => {
     setSelectedMachine(m);
-    setAssignMerchantId('');
     setAssignShopId('');
     setAssignOpen(true);
   };
@@ -256,7 +228,7 @@ export default function MachinesPage() {
 
   /**
    * Open the remove dialog. We treat any non-`paired` machine as "probably has
-   * history" — once a machine has been assigned to a merchant it has almost
+   * history" — once a machine has been assigned to a shop it has almost
    * certainly produced sync_logs, so the soft-delete copy is the safe default.
    * The server still re-checks authoritatively before deleting.
    */
@@ -447,21 +419,12 @@ export default function MachinesPage() {
                     </div>
                   </div>
                 ) : null}
-                {m.merchantId && (
-                  <p className="text-xs text-muted-foreground">
-                    {t('merchant')}: {merchants.find((x) => x.id === m.merchantId)?.name ?? m.merchantId}
-                  </p>
-                )}
-                {m.pairingStatus === 'assigned' ? (
+                {m.pairingStatus === 'assigned' || m.shopId ? (
                   <p className="text-xs text-muted-foreground">
                     {t('shop')}:{' '}
                     {m.shopId
                       ? shops.find((s) => s.id === m.shopId)?.name ?? m.shopId
                       : t('shopNotSet')}
-                  </p>
-                ) : m.shopId ? (
-                  <p className="text-xs text-muted-foreground">
-                    {t('shop')}: {shops.find((s) => s.id === m.shopId)?.name ?? m.shopId}
                   </p>
                 ) : null}
                 <div className="flex flex-col gap-2">
@@ -481,7 +444,7 @@ export default function MachinesPage() {
                       {m.pairingStatus === 'paired' && !canAssignMachine ? (
                         <p className="text-xs text-amber-700 dark:text-amber-500">{t('assignNoPermission')}</p>
                       ) : null}
-                      {m.pairingStatus === 'assigned' && canEditAssignedShop && m.merchantId ? (
+                      {m.pairingStatus === 'assigned' && canEditAssignedShop ? (
                         <Button variant="outline" size="sm" className="w-full" onClick={() => openShopEdit(m)}>
                           <Store className="h-3.5 w-3.5 me-1" />
                           {t('changeShop')}
@@ -569,10 +532,7 @@ export default function MachinesPage() {
                       setPairCompanyId(v ?? '');
                       setPairShopId('');
                     }}
-                    itemToStringLabel={(v) => {
-                      if (v == null || v === '') return '';
-                      return findBySameId(companies, String(v))?.name ?? String(v);
-                    }}
+                    items={entitySelectItems(companies)}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder={t('selectCompanyOptional')} />
@@ -592,10 +552,7 @@ export default function MachinesPage() {
                     value={pairShopId}
                     onValueChange={(v) => setPairShopId(v ?? '')}
                     disabled={!pairCompanyId}
-                    itemToStringLabel={(v) => {
-                      if (v == null || v === '') return '';
-                      return findBySameId(pairShops, String(v))?.name ?? String(v);
-                    }}
+                    items={entitySelectItems(pairShops)}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder={t('selectShopOptional')} />
@@ -654,49 +611,17 @@ export default function MachinesPage() {
               {t('assignDesc')} <strong>{selectedMachine?.name}</strong>
             </p>
             <div className="space-y-2">
-              <Label>{t('selectMerchant')}</Label>
+              <Label>{t('selectShop')}</Label>
               <Select
-                value={assignMerchantId}
-                onValueChange={(v) => {
-                  setAssignMerchantId(v ?? '');
-                  setAssignShopId('');
-                }}
-                itemToStringLabel={(v) => {
-                  if (v == null || v === '') return '';
-                  return findBySameId(merchants, String(v))?.name ?? String(v);
-                }}
+                value={assignShopId}
+                onValueChange={(v) => setAssignShopId(v ?? '')}
+                items={entitySelectItems(shops)}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder={t('selectMerchant')} />
+                  <SelectValue placeholder={t('selectShop')} />
                 </SelectTrigger>
                 <SelectContent>
-                  {merchants.map((mer) => (
-                    <SelectItem key={mer.id} value={mer.id} label={mer.name}>
-                      {mer.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>{t('selectShopOptional')}</Label>
-              <Select
-                value={assignShopId || '__none__'}
-                onValueChange={(v) => setAssignShopId(v == null || v === '__none__' ? '' : v)}
-                disabled={!assignMerchantId}
-                itemToStringLabel={(v) => {
-                  if (v == null || v === '' || v === '__none__') return t('noShop');
-                  return findBySameId(assignShops, String(v))?.name ?? String(v);
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={t('selectShopOptional')} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__" label={t('noShop')}>
-                    {t('noShop')}
-                  </SelectItem>
-                  {assignShops.map((s) => (
+                  {shops.map((s) => (
                     <SelectItem key={s.id} value={s.id} label={s.name}>
                       {s.name}
                     </SelectItem>
@@ -710,13 +635,12 @@ export default function MachinesPage() {
               {tc('cancel')}
             </Button>
             <Button
-              disabled={!selectedMachine || !assignMerchantId || assignMachine.isPending}
+              disabled={!selectedMachine || !assignShopId || assignMachine.isPending}
               onClick={() =>
                 selectedMachine &&
                 assignMachine.mutate({
                   machineId: selectedMachine.id,
-                  merchantId: assignMerchantId,
-                  shopId: assignShopId || undefined,
+                  shopId: assignShopId,
                 })
               }
             >
@@ -738,10 +662,7 @@ export default function MachinesPage() {
               <Select
                 value={editShopId || '__none__'}
                 onValueChange={(v) => setEditShopId(v == null || v === '__none__' ? '' : v)}
-                itemToStringLabel={(v) => {
-                  if (v == null || v === '' || v === '__none__') return t('noShop');
-                  return findBySameId(editShops, String(v))?.name ?? String(v);
-                }}
+                items={[{ value: '__none__', label: t('noShop') }, ...entitySelectItems(shops)]}
               >
                 <SelectTrigger>
                   <SelectValue placeholder={t('selectShopOptional')} />
@@ -750,7 +671,7 @@ export default function MachinesPage() {
                   <SelectItem value="__none__" label={t('noShop')}>
                     {t('noShop')}
                   </SelectItem>
-                  {editShops.map((s) => (
+                  {shops.map((s) => (
                     <SelectItem key={s.id} value={s.id} label={s.name}>
                       {s.name}
                     </SelectItem>
@@ -792,9 +713,10 @@ export default function MachinesPage() {
                 <Select
                   value={pushTarget}
                   onValueChange={(v) => setPushTarget(v as 'machine' | 'shop')}
-                  itemToStringLabel={(v) =>
-                    v === 'shop' ? t('pushAllInShop') : t('pushThisDevice')
-                  }
+                  items={[
+                    { value: 'machine', label: t('pushThisDevice') },
+                    { value: 'shop', label: t('pushAllInShop') },
+                  ]}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -883,11 +805,14 @@ export default function MachinesPage() {
               </p>
               <p className="text-sm">{t('fieldInstall.pairedCount', { count: fieldPairedCount })}</p>
               <p className="text-xs text-amber-800 dark:text-amber-200">{t('fieldInstall.securityHint')}</p>
-              <Button variant="outline" size="sm" asChild>
-                <a href={fieldSession.mobileUrl} target="_blank" rel="noopener noreferrer">
-                  {t('fieldInstall.openMobileLink')}
-                </a>
-              </Button>
+              <a
+                href={fieldSession.mobileUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={buttonVariants({ variant: 'outline', size: 'sm' })}
+              >
+                {t('fieldInstall.openMobileLink')}
+              </a>
               <DialogFooter className="sm:justify-center">
                 <Button
                   variant="destructive"

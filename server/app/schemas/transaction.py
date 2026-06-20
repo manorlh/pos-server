@@ -110,8 +110,8 @@ class TransactionItemOut(BaseModel):
 
 class TransactionOut(BaseModel):
     id: uuid.UUID
+    tenant_id: Optional[uuid.UUID] = Field(None, alias="tenantId")
     machine_id: uuid.UUID = Field(..., alias="machineId")
-    merchant_id: uuid.UUID = Field(..., alias="merchantId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     trading_day_id: Optional[uuid.UUID] = Field(None, alias="tradingDayId")
 

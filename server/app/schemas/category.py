@@ -33,7 +33,6 @@ class CategoryBase(BaseModel):
 
 
 class CategoryCreate(CategoryBase):
-    merchant_id: Optional[uuid.UUID] = Field(None, alias="merchantId")
     company_id: Optional[uuid.UUID] = Field(None, alias="companyId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     pos_machine_id: Optional[uuid.UUID] = Field(None, alias="posMachineId")
@@ -69,7 +68,7 @@ class CategoryUpdate(BaseModel):
 
 class CategoryResponse(BaseModel):
     id: uuid.UUID
-    merchant_id: uuid.UUID = Field(..., alias="merchantId")
+    tenant_id: Optional[uuid.UUID] = Field(None, alias="tenantId")
     company_id: Optional[uuid.UUID] = Field(None, alias="companyId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     catalog_level: str = Field(..., alias="catalogLevel")

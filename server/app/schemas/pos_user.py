@@ -82,7 +82,7 @@ class PosUserResetPin(BaseModel):
 
 class PosUserResponse(BaseModel):
     id: uuid.UUID
-    merchant_id: uuid.UUID = Field(..., alias="merchantId")
+    tenant_id: Optional[uuid.UUID] = Field(None, alias="tenantId")
     shop_id: uuid.UUID = Field(..., alias="shopId")
     username: str
     first_name: Optional[str] = Field(None, alias="firstName")

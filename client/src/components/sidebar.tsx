@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
@@ -8,6 +9,7 @@ import { useClerk, useUser } from '@clerk/nextjs';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
   LayoutDashboard,
   Package,
@@ -23,9 +25,27 @@ import {
   Receipt,
   FileText,
   IdCard,
+  Plus,
 } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,15 +55,21 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { entitySelectItems } from '@/lib/selectItems';
+import { toast } from 'sonner';
 
 export function Sidebar() {
   const t = useTranslations('nav');
+  const tc = useTranslations('common');
   const pathname = usePathname();
   const router = useRouter();
   const queryClient = useQueryClient();
   const { signOut } = useClerk();
   const { user: clerkUser } = useUser();
   const { user: internalUser, tenants, activeTenantId, setActiveTenant, fetchUser, clearUser } = useAuth();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newTenantName, setNewTenantName] = useState('');
+  const [creating, setCreating] = useState(false);
 
   const displayName = clerkUser?.username ?? clerkUser?.firstName ?? internalUser?.username ?? '??';
   const displayRole = internalUser?.role ?? '';
@@ -56,14 +82,24 @@ export function Sidebar() {
   };
 
   const handleCreateTenant = async () => {
-    const name = window.prompt('Tenant name');
+    const name = newTenantName.trim();
     if (!name) return;
-    const slugBase = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const slugBase = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const slug = `${slugBase || 'tenant'}-${Date.now().toString().slice(-5)}`;
-    await api.post('/tenants', { name: name.trim(), slug });
-    await fetchUser();
-    queryClient.clear();
-    router.refresh();
+    setCreating(true);
+    try {
+      await api.post('/tenants', { name, slug });
+      await fetchUser();
+      queryClient.clear();
+      router.refresh();
+      setCreateOpen(false);
+      setNewTenantName('');
+      toast.success(t('tenantCreated'));
+    } catch (err: unknown) {
+      toast.error(axiosErrorToToastMessage(err, tc('error')));
+    } finally {
+      setCreating(false);
+    }
   };
 
   const nav = [
@@ -86,87 +122,125 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="flex flex-col w-60 border-s bg-card h-full">
-      <div className="px-4 py-5">
-        <span className="text-lg font-bold tracking-tight">POS Cloud</span>
-        <div className="mt-3 space-y-2">
-          <select
-            className="w-full rounded-md border bg-background px-2 py-1 text-sm"
-            value={activeTenantId ?? ''}
-            onChange={(e) => handleTenantSwitch(e.target.value)}
-          >
-            {tenants.map((tenant) => (
-              <option key={tenant.id} value={tenant.id}>
-                {tenant.name}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={handleCreateTenant}
-            className="w-full rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
-          >
-            + Create tenant
-          </button>
+    <>
+      <aside className="flex flex-col w-60 border-s bg-card h-full">
+        <div className="px-4 py-5">
+          <span className="text-lg font-bold tracking-tight">POS Cloud</span>
+          <div className="mt-3 space-y-2">
+            <Select
+              value={activeTenantId ?? ''}
+              onValueChange={(v) => handleTenantSwitch(v ?? '')}
+              items={entitySelectItems(tenants)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={t('selectTenant')} />
+              </SelectTrigger>
+              <SelectContent align="start">
+                {tenants.map((tenant) => (
+                  <SelectItem key={tenant.id} value={tenant.id} label={tenant.name}>
+                    {tenant.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={() => setCreateOpen(true)}
+            >
+              <Plus className="size-3.5" />
+              {t('createTenant')}
+            </Button>
+          </div>
         </div>
-      </div>
-      <Separator />
-      <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
-        {nav.map(({ href, label, icon: Icon }) => (
-          <Link
-            key={href}
-            href={href}
-            className={cn(
-              'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-              pathname === href
-                ? 'bg-primary text-primary-foreground'
-                : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-            )}
-          >
-            <Icon className="h-4 w-4 shrink-0" />
-            {label}
-            {pathname === href && <ChevronLeft className="me-auto h-3 w-3" />}
-          </Link>
-        ))}
-      </nav>
-      <Separator />
-      <div className="p-3">
-        <DropdownMenu>
-          <DropdownMenuTrigger className="w-full flex items-center gap-3 px-2 py-1.5 rounded-md text-sm font-medium transition-colors hover:bg-muted">
-            <Avatar className="h-8 w-8 shrink-0">
-              <AvatarFallback className="text-xs">
-                {displayName.slice(0, 2).toUpperCase()}
-              </AvatarFallback>
-            </Avatar>
-            <div className="flex-1 min-w-0 text-start">
-              <p className="text-sm font-medium truncate">{displayName}</p>
-              <p className="text-xs text-muted-foreground truncate">{displayRole}</p>
-            </div>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent side="top" align="start" className="w-52">
-            <DropdownMenuGroup>
-              <DropdownMenuLabel className="font-normal">
-                <p className="text-sm font-medium">{displayName}</p>
-                <p className="text-xs text-muted-foreground">{displayRole}</p>
-              </DropdownMenuLabel>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem onClick={() => router.push('/dashboard/profile')} className="cursor-pointer">
-                <User className="h-4 w-4" />
-                {t('profile')}
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem onClick={handleSignOut} className="flex items-center gap-2 text-destructive focus:text-destructive cursor-pointer">
-                <LogOut className="h-4 w-4" />
-                {t('signout')}
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-    </aside>
+        <Separator />
+        <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
+          {nav.map(({ href, label, icon: Icon }) => (
+            <Link
+              key={href}
+              href={href}
+              className={cn(
+                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                pathname === href
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+              )}
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              {label}
+              {pathname === href && <ChevronLeft className="me-auto h-3 w-3" />}
+            </Link>
+          ))}
+        </nav>
+        <Separator />
+        <div className="p-3">
+          <DropdownMenu>
+            <DropdownMenuTrigger className="w-full flex items-center gap-3 px-2 py-1.5 rounded-md text-sm font-medium transition-colors hover:bg-muted">
+              <Avatar className="h-8 w-8 shrink-0">
+                <AvatarFallback className="text-xs">
+                  {displayName.slice(0, 2).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0 text-start">
+                <p className="text-sm font-medium truncate">{displayName}</p>
+                <p className="text-xs text-muted-foreground truncate">{displayRole}</p>
+              </div>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" className="w-52">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel className="font-normal">
+                  <p className="text-sm font-medium">{displayName}</p>
+                  <p className="text-xs text-muted-foreground">{displayRole}</p>
+                </DropdownMenuLabel>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuItem onClick={() => router.push('/dashboard/profile')} className="cursor-pointer">
+                  <User className="h-4 w-4" />
+                  {t('profile')}
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuItem onClick={handleSignOut} className="flex items-center gap-2 text-destructive focus:text-destructive cursor-pointer">
+                  <LogOut className="h-4 w-4" />
+                  {t('signout')}
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </aside>
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t('createTenantTitle')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="tenant-name">{t('tenantName')}</Label>
+            <Input
+              id="tenant-name"
+              value={newTenantName}
+              onChange={(e) => setNewTenantName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleCreateTenant();
+              }}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={creating}>
+              {tc('cancel')}
+            </Button>
+            <Button onClick={() => void handleCreateTenant()} disabled={creating || !newTenantName.trim()}>
+              {creating ? tc('saving') : tc('add')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

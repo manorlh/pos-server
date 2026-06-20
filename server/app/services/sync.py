@@ -43,7 +43,6 @@ def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[s
         "globalProductId": str(p.global_product_id) if p.global_product_id else None,
         "catalogLevel": p.catalog_level.value if hasattr(p.catalog_level, "value") else p.catalog_level,
         "isLocalOverride": p.is_local_override,
-        "merchantId": str(p.merchant_id),
         "companyId": str(p.company_id) if p.company_id else None,
         "shopId": str(p.shop_id) if p.shop_id else None,
         "posMachineId": str(p.pos_machine_id) if p.pos_machine_id else None,
@@ -116,7 +115,6 @@ def _serialize_merged_product(
         "globalProductId": str(global_p.id),
         "catalogLevel": catalog_level.value if hasattr(catalog_level, "value") else catalog_level,
         "isLocalOverride": is_local_override,
-        "merchantId": str(global_p.merchant_id),
         "companyId": str(global_p.company_id) if global_p.company_id else None,
         "shopId": str(machine_shop_id),
         "posMachineId": str(local.pos_machine_id) if local and local.pos_machine_id else None,
@@ -144,7 +142,6 @@ def _serialize_category(c: Category) -> Dict[str, Any]:
     return {
         "id": str(c.id),
         "catalogLevel": c.catalog_level.value if hasattr(c.catalog_level, "value") else c.catalog_level,
-        "merchantId": str(c.merchant_id),
         "companyId": str(c.company_id) if c.company_id else None,
         "shopId": str(c.shop_id) if c.shop_id else None,
         "posMachineId": str(c.pos_machine_id) if c.pos_machine_id else None,
@@ -160,18 +157,19 @@ def _serialize_category(c: Category) -> Dict[str, Any]:
     }
 
 
-def _resolve_merchant_id_for_machine(db: Session, machine: POSMachine) -> Optional[str]:
-    mid = str(machine.merchant_id) if machine.merchant_id else None
-    if mid or not machine.shop_id:
-        return mid
+def _resolve_tenant_id_for_machine(db: Session, machine: POSMachine) -> Optional[str]:
+    if machine.tenant_id:
+        return str(machine.tenant_id)
+    if not machine.shop_id:
+        return None
     shop = (
         db.query(Shop)
         .options(joinedload(Shop.company))
         .filter(Shop.id == machine.shop_id)
         .first()
     )
-    if shop and shop.company:
-        return str(shop.company.merchant_id)
+    if shop and shop.tenant_id:
+        return str(shop.tenant_id)
     return None
 
 
@@ -184,10 +182,10 @@ def merge_categories_referenced_by_products(
     """
     Delta sync can return updated products while omitting categories (unchanged since `since`).
     POS SQLite requires every product.categoryId to exist. Add any missing referenced categories
-    and their parent chain for this merchant.
+    and their parent chain for this tenant.
     """
-    mid = _resolve_merchant_id_for_machine(db, machine)
-    if not mid or not products:
+    tid = _resolve_tenant_id_for_machine(db, machine)
+    if not tid or not products:
         return categories
 
     all_ids: Set[uuid_mod.UUID] = set()
@@ -211,11 +209,11 @@ def merge_categories_referenced_by_products(
     if not all_ids:
         return categories
 
-    mid_uuid = uuid_mod.UUID(str(mid)) if isinstance(mid, str) else mid
+    tid_uuid = uuid_mod.UUID(str(tid)) if isinstance(tid, str) else tid
     existing_ids = {str(c.get("id")) for c in categories if c.get("id")}
     rows = (
         db.query(Category)
-        .filter(Category.id.in_(all_ids), Category.merchant_id == mid_uuid)
+        .filter(Category.id.in_(all_ids), Category.tenant_id == tid_uuid)
         .order_by(Category.sort_order)
         .all()
     )
@@ -233,11 +231,11 @@ def merge_categories_referenced_by_products(
 
 def _products_merged_for_shop_machine(
     db: Session,
-    merchant_id: str,
+    tenant_id: str,
     machine: POSMachine,
     since: Optional[datetime],
 ) -> List[Dict[str, Any]]:
-    mid = uuid_mod.UUID(str(merchant_id)) if isinstance(merchant_id, str) else merchant_id
+    tid = uuid_mod.UUID(str(tenant_id)) if isinstance(tenant_id, str) else tenant_id
     shop_id = machine.shop_id
     mqid = machine.id
 
@@ -249,7 +247,7 @@ def _products_merged_for_shop_machine(
             .join(Product, Product.id == ShopProductOverride.global_product_id)
             .filter(
                 ShopProductOverride.shop_id == shop_id,
-                Product.merchant_id == mid,
+                Product.tenant_id == tid,
                 Product.catalog_level == CatalogLevel.GLOBAL,
                 Product.pos_machine_id.is_(None),
             )
@@ -284,43 +282,34 @@ def _products_merged_for_shop_machine(
 
 def get_products_for_sync(
     db: Session,
-    merchant_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
     pos_machine_id: Optional[str] = None,
     since: Optional[datetime] = None,
 ) -> List[Dict[str, Any]]:
     """
     Return products for a machine.
     If `since` is provided only return products updated after that timestamp (delta sync).
-    If `pos_machine_id` is None returns global (merchant-level) products.
+    If `pos_machine_id` is None returns global (tenant-level) products.
     If the machine has `shop_id`, returns merged **assigned** globals + overrides + machine-local
     stock and POS-only rows; otherwise returns only rows owned by that machine (legacy).
     """
     if pos_machine_id is None:
         query = db.query(Product).filter(Product.pos_machine_id.is_(None))
-        if merchant_id:
-            query = query.filter(Product.merchant_id == merchant_id)
+        if tenant_id:
+            query = query.filter(Product.tenant_id == tenant_id)
         if since:
             query = query.filter(Product.updated_at > since)
         return [_serialize_product(p) for p in query.all()]
 
     machine = db.query(POSMachine).filter(POSMachine.id == pos_machine_id).first()
     if machine and machine.shop_id:
-        mid = merchant_id or (str(machine.merchant_id) if machine.merchant_id else None)
-        if not mid and machine.shop_id:
-            shop = (
-                db.query(Shop)
-                .options(joinedload(Shop.company))
-                .filter(Shop.id == machine.shop_id)
-                .first()
-            )
-            if shop and shop.company:
-                mid = str(shop.company.merchant_id)
-        if mid:
-            return _products_merged_for_shop_machine(db, mid, machine, since)
+        tid = tenant_id or _resolve_tenant_id_for_machine(db, machine)
+        if tid:
+            return _products_merged_for_shop_machine(db, tid, machine, since)
 
     query = db.query(Product).filter(Product.pos_machine_id == pos_machine_id)
-    if merchant_id:
-        query = query.filter(Product.merchant_id == merchant_id)
+    if tenant_id:
+        query = query.filter(Product.tenant_id == tenant_id)
     if since:
         query = query.filter(Product.updated_at > since)
 
@@ -329,37 +318,26 @@ def get_products_for_sync(
 
 def get_categories_for_sync(
     db: Session,
-    merchant_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
     pos_machine_id: Optional[str] = None,
     since: Optional[datetime] = None,
 ) -> List[Dict[str, Any]]:
     """
     Return categories for a machine with optional delta filter.
 
-    Machines **with** `shop_id` receive **global** merchant categories (same IDs as on merged
+    Machines **with** `shop_id` receive **global** tenant categories (same IDs as on merged
     products' `categoryId`). Machines **without** `shop_id` keep legacy behavior: only
     machine-local category rows.
     """
     if pos_machine_id:
         machine = db.query(POSMachine).filter(POSMachine.id == pos_machine_id).first()
         if machine and machine.shop_id:
-            mid = merchant_id
-            if not mid and machine.merchant_id:
-                mid = str(machine.merchant_id)
-            if not mid:
-                shop = (
-                    db.query(Shop)
-                    .options(joinedload(Shop.company))
-                    .filter(Shop.id == machine.shop_id)
-                    .first()
-                )
-                if shop and shop.company:
-                    mid = str(shop.company.merchant_id)
-            if mid:
+            tid = tenant_id or _resolve_tenant_id_for_machine(db, machine)
+            if tid:
                 q = (
                     db.query(Category)
                     .filter(
-                        Category.merchant_id == mid,
+                        Category.tenant_id == tid,
                         Category.catalog_level == CategoryCatalogLevel.GLOBAL,
                         Category.pos_machine_id.is_(None),
                     )
@@ -369,8 +347,8 @@ def get_categories_for_sync(
                 return [_serialize_category(c) for c in q.order_by(Category.sort_order).all()]
 
     query = db.query(Category)
-    if merchant_id:
-        query = query.filter(Category.merchant_id == merchant_id)
+    if tenant_id:
+        query = query.filter(Category.tenant_id == tenant_id)
     if pos_machine_id:
         query = query.filter(Category.pos_machine_id == pos_machine_id)
     else:
@@ -400,11 +378,11 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
     Best-effort watermark for the newest cloud-side catalog change that should be visible to this machine.
     Used to compute whether the machine's latest pull may be stale.
     """
-    mid = _resolve_merchant_id_for_machine(db, machine)
-    if not mid:
+    tid = _resolve_tenant_id_for_machine(db, machine)
+    if not tid:
         return None
 
-    mid_uuid = uuid_mod.UUID(str(mid)) if isinstance(mid, str) else mid
+    tid_uuid = uuid_mod.UUID(str(tid)) if isinstance(tid, str) else tid
     points: List[datetime] = []
 
     if machine.shop_id:
@@ -413,7 +391,7 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
             .join(ShopProductOverride, ShopProductOverride.global_product_id == Product.id)
             .filter(
                 ShopProductOverride.shop_id == machine.shop_id,
-                Product.merchant_id == mid_uuid,
+                Product.tenant_id == tid_uuid,
                 Product.catalog_level == CatalogLevel.GLOBAL,
                 Product.pos_machine_id.is_(None),
             )
@@ -427,7 +405,7 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
         category_max = (
             db.query(func.max(Category.updated_at))
             .filter(
-                Category.merchant_id == mid_uuid,
+                Category.tenant_id == tid_uuid,
                 Category.catalog_level == CategoryCatalogLevel.GLOBAL,
                 Category.pos_machine_id.is_(None),
             )

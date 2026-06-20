@@ -18,7 +18,6 @@ from app.database import engine, Base
 from app.routers import (
     auth,
     users,
-    merchants,
     machines,
     pairing,
     pairing_mobile,
@@ -35,6 +34,8 @@ from app.routers import (
     tenants,
     settings as settings_router,
 )
+import asyncio
+
 from app.services.mqtt import mqtt_service
 
 settings = get_settings()
@@ -43,7 +44,7 @@ settings = get_settings()
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
-    title="POS Cloud Server",
+    title="POS Cloud",
     description="Cloud POS management platform — FastAPI backend with MQTT catalog notify + HTTP catalog pull",
     version="0.2.0",
 )
@@ -61,7 +62,6 @@ _prefix = settings.api_v1_prefix
 
 app.include_router(auth.router, prefix=_prefix)
 app.include_router(users.router, prefix=_prefix)
-app.include_router(merchants.router, prefix=_prefix)
 app.include_router(companies.router, prefix=_prefix)
 app.include_router(shops.router, prefix=_prefix)
 app.include_router(machines.router, prefix=_prefix)
@@ -83,10 +83,12 @@ app.include_router(settings_router.router, prefix=_prefix)
 
 @app.on_event("startup")
 async def startup_event():
-    try:
-        mqtt_service.connect()
-    except Exception as exc:
-        print(f"Warning: Could not connect to MQTT broker: {exc}")
+    for attempt in range(1, 4):
+        if mqtt_service.connect():
+            return
+        if attempt < 3:
+            await asyncio.sleep(2)
+    print(f"Warning: Could not connect to MQTT broker: {mqtt_service.last_error}")
 
 
 @app.on_event("shutdown")
@@ -98,9 +100,12 @@ async def shutdown_event():
 
 @app.get("/")
 def root():
-    return {"message": "POS Cloud Server", "version": "0.2.0", "docs": "/docs"}
+    return {"message": "POS Cloud", "version": "0.2.0", "docs": "/docs"}
 
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy", "mqtt_connected": mqtt_service.connected}
+    body = {"status": "healthy", "mqtt_connected": mqtt_service.connected}
+    if mqtt_service.last_error:
+        body["mqtt_last_error"] = mqtt_service.last_error
+    return body

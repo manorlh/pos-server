@@ -24,12 +24,11 @@ class PairingCodeValidate(BaseModel):
 
 
 class MachineAssignRequest(BaseModel):
-    """JSON body uses camelCase (merchantId, shopId) from the dashboard."""
+    """JSON body uses camelCase (shopId) from the dashboard."""
 
     model_config = ConfigDict(populate_by_name=True)
 
-    merchant_id: uuid.UUID = Field(..., alias="merchantId")
-    shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
+    shop_id: uuid.UUID = Field(..., alias="shopId")
 
 
 class PairingCodeResponse(BaseModel):
@@ -38,7 +37,7 @@ class PairingCodeResponse(BaseModel):
     id: uuid.UUID
     code: str
     distributor_id: uuid.UUID
-    merchant_id: Optional[uuid.UUID] = Field(None, alias="merchantId")
+    company_id: Optional[uuid.UUID] = Field(None, alias="companyId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     pos_machine_id: Optional[uuid.UUID] = Field(None, alias="posMachineId")
     expires_at: datetime = Field(..., alias="expiresAt")

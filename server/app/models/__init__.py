@@ -1,7 +1,6 @@
 from app.models.user import User, UserRole
 from app.models.tenant import Tenant, TenantStatus
 from app.models.tenant_membership import TenantMembership, TenantMembershipRole
-from app.models.merchant import Merchant
 from app.models.company import Company
 from app.models.shop import Shop
 from app.models.pos_machine import POSMachine, PairingStatus
@@ -17,12 +16,13 @@ from app.models.transaction import Transaction, TransactionStatus
 from app.models.transaction_item import TransactionItem
 from app.models.z_report import ZReport
 from app.models.pos_user import PosUser, PosUserRole
+from app.models.tenant_sku_sequence import TenantSkuSequence
+from app.models.tenant_local_sku_sequence import TenantLocalSkuSequence
 
 __all__ = [
     "User", "UserRole",
     "Tenant", "TenantStatus",
     "TenantMembership", "TenantMembershipRole",
-    "Merchant",
     "Company",
     "Shop",
     "POSMachine", "PairingStatus",
@@ -38,4 +38,6 @@ __all__ = [
     "TransactionItem",
     "ZReport",
     "PosUser", "PosUserRole",
+    "TenantSkuSequence",
+    "TenantLocalSkuSequence",
 ]

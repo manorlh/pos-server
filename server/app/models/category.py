@@ -19,7 +19,6 @@ class Category(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True)
-    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False, index=True)
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True, index=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True, index=True)
     pos_machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id"), nullable=True)
@@ -37,9 +36,8 @@ class Category(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    merchant = relationship("Merchant", back_populates="categories")
     company = relationship("Company", back_populates="categories")
     shop = relationship("Shop", back_populates="categories")
     pos_machine = relationship("POSMachine", back_populates="categories")
-    parent = relationship("Category", remote_side=[id], backref="children")
+    parent = relationship("Category", remote_side="Category.id", backref="children")
     products = relationship("Product", back_populates="category")

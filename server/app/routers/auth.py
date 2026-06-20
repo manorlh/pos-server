@@ -38,7 +38,7 @@ def login(
             "sub": user.username,
             "user_id": str(user.id),
             "role": user.role.value,
-            "merchant_id": str(user.merchant_id) if user.merchant_id else None,
+            "tenant_id": str(user.tenant_id) if user.tenant_id else None,
         },
         expires_delta=access_token_expires,
     )

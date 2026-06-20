@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 class TradingDayOut(BaseModel):
     id: uuid.UUID
-    merchant_id: uuid.UUID = Field(..., alias="merchantId")
+    tenant_id: Optional[uuid.UUID] = Field(None, alias="tenantId")
     machine_id: uuid.UUID = Field(..., alias="machineId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     day_date: date = Field(..., alias="dayDate")

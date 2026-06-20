@@ -1,3 +1,4 @@
+import uuid as uuid_mod
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -7,6 +8,7 @@ from app.database import get_db
 from app.schemas.pos_machine import POSMachineUpdate, POSMachineResponse
 from app.models.pos_machine import POSMachine, PairingStatus
 from app.models.user import User, UserRole
+from app.models.shop import Shop
 from app.models.transaction import Transaction
 from app.models.z_report import ZReport
 from app.models.trading_day import TradingDay
@@ -17,14 +19,15 @@ from app.models.category import Category
 from app.middleware.auth import (
     get_current_user,
     get_current_distributor,
-    get_current_merchant,
+    get_current_machine_admin,
     get_pos_machine_from_machine_token,
     get_active_tenant_id,
     ensure_same_tenant,
 )
 from app.services.sync import update_machine_sync_timestamp, get_catalog_change_watermark_for_machine
 from app.services.catalog_notify import notify_machine_catalog_changed
-from app.services.shop_validation import shop_belongs_to_merchant
+from app.services.shop_validation import shop_belongs_to_company
+from app.services.mqtt_broker import machine_mqtt_refresh_info
 
 router = APIRouter(prefix="/machines", tags=["machines"])
 
@@ -52,14 +55,13 @@ def _enrich_machine_status(machine: POSMachine, db: Session) -> Dict[str, Any]:
         if last_sync_at is None:
             catalog_pull_stale = True
         else:
-            # Allow tiny clock skew between processes.
             catalog_pull_stale = (last_sync_at + timedelta(seconds=5)) < last_catalog_change_at
 
     return {
         "id": machine.id,
         "name": machine.name,
         "machineCode": machine.machine_code,
-        "merchantId": machine.merchant_id,
+        "tenantId": machine.tenant_id,
         "shopId": machine.shop_id,
         "distributorId": machine.distributor_id,
         "mqttClientId": machine.mqtt_client_id,
@@ -75,86 +77,96 @@ def _enrich_machine_status(machine: POSMachine, db: Session) -> Dict[str, Any]:
     }
 
 
+def _check_machine_list_access(current_user: User, machine: POSMachine, db: Session) -> bool:
+    if current_user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
+        return True
+    if current_user.role == UserRole.COMPANY_MANAGER and machine.shop_id:
+        shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
+        return shop is not None and shop.company_id == current_user.company_id
+    if current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
+        return machine.shop_id == current_user.shop_id
+    return False
+
+
 @router.get("", response_model=List[POSMachineResponse])
 def list_machines(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
-    merchant_id: Optional[str] = Query(None),
-    distributor_id: Optional[str] = Query(None),
+    shop_id: Optional[str] = Query(None, alias="shopId"),
+    tenant_id: Optional[str] = Query(None, alias="tenantId"),
+    distributor_id: Optional[str] = Query(None, alias="distributorId"),
     include_inactive: bool = Query(
         False,
-        description="Include decommissioned (is_active=false) machines. Defaults to false so the dashboard doesn't show removed devices.",
+        description="Include decommissioned (is_active=false) machines.",
     ),
     current_user: User = Depends(get_current_user),
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db)
 ):
-    """List machines (filtered by merchant/role/distributor)"""
+    """List machines (filtered by shop/tenant/role/distributor)."""
     query = db.query(POSMachine)
-    query = _scope_machines_by_tenant(query, current_user, active_tenant_id)
+    scope_tid = active_tenant_id
+    if tenant_id:
+        try:
+            scope_tid = uuid_mod.UUID(str(tenant_id))
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tenantId")
+    query = _scope_machines_by_tenant(query, current_user, scope_tid)
 
-    # Hide decommissioned machines by default. The DELETE endpoint sets
-    # is_active=False when the machine has history (transactions / Z-reports /
-    # etc.) that we don't want to lose, so they should disappear from the
-    # default UI but remain queryable for audits.
     if not include_inactive:
         query = query.filter(POSMachine.is_active.is_(True))
-    
-    # Role-based filtering
-    if current_user.role == UserRole.MERCHANT_ADMIN:
-        # Merchants can only see machines in their merchant
-        if current_user.merchant_id:
-            query = query.filter(POSMachine.merchant_id == current_user.merchant_id)
-    elif current_user.role == UserRole.DISTRIBUTOR:
-        # Distributors can see machines they paired
+
+    if current_user.role == UserRole.DISTRIBUTOR:
         query = query.filter(POSMachine.distributor_id == current_user.id)
+    elif current_user.role == UserRole.COMPANY_MANAGER:
+        company_shop_ids = db.query(Shop.id).filter(Shop.company_id == current_user.company_id)
+        query = query.filter(POSMachine.shop_id.in_(company_shop_ids))
+    elif current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
+        query = query.filter(POSMachine.shop_id == current_user.shop_id)
     elif current_user.role != UserRole.SUPER_ADMIN:
-        # Other roles cannot see machines
         return []
-    
-    # Additional filters
-    if merchant_id:
-        query = query.filter(POSMachine.merchant_id == merchant_id)
+
+    if shop_id:
+        query = query.filter(POSMachine.shop_id == shop_id)
     if distributor_id:
         query = query.filter(POSMachine.distributor_id == distributor_id)
-    
+
     machines = query.offset(skip).limit(limit).all()
     return [_enrich_machine_status(m, db) for m in machines]
 
 
 @router.get("/unassigned", response_model=List[POSMachineResponse])
 def list_unassigned_machines(
-    current_user: User = Depends(get_current_distributor),  # Distributor or super admin
+    current_user: User = Depends(get_current_distributor),
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db)
 ):
-    """List unassigned paired machines (distributor/super_admin only)"""
+    """List unassigned paired machines (distributor/super_admin only)."""
     query = db.query(POSMachine).filter(
         POSMachine.pairing_status == PairingStatus.PAIRED,
-        POSMachine.merchant_id.is_(None),
+        POSMachine.shop_id.is_(None),
     )
     query = _scope_machines_by_tenant(query, current_user, active_tenant_id)
-    
-    # Filter by distributor if not super admin
+
     if current_user.role != UserRole.SUPER_ADMIN:
         query = query.filter(POSMachine.distributor_id == current_user.id)
-    
-    machines = query.all()
-    return machines
+
+    return query.all()
 
 
 @router.get("/me")
 def get_my_machine(
     machine: POSMachine = Depends(get_pos_machine_from_machine_token),
 ):
-    """POS desktop: resolve merchant/shop after assignment using machine JWT only."""
+    """POS desktop: resolve shop/tenant and MQTT broker endpoint using machine JWT only."""
     return {
         "machineId": str(machine.id),
         "machineCode": machine.machine_code,
-        "merchantId": str(machine.merchant_id) if machine.merchant_id else None,
+        "tenantId": str(machine.tenant_id) if machine.tenant_id else None,
         "shopId": str(machine.shop_id) if machine.shop_id else None,
         "pairingStatus": machine.pairing_status.value if hasattr(machine.pairing_status, "value") else machine.pairing_status,
         "mqttClientId": machine.mqtt_client_id,
+        **machine_mqtt_refresh_info(),
     }
 
 
@@ -165,34 +177,18 @@ def get_machine(
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db)
 ):
-    """Get machine details"""
+    """Get machine details."""
     machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
     if not machine:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Machine not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
     ensure_same_tenant(machine.tenant_id, active_tenant_id)
-    
-    # Check permissions
-    if current_user.role == UserRole.MERCHANT_ADMIN:
-        if machine.merchant_id != current_user.merchant_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied"
-            )
-    elif current_user.role == UserRole.DISTRIBUTOR:
+
+    if current_user.role == UserRole.DISTRIBUTOR:
         if machine.distributor_id != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied"
-            )
-    elif current_user.role != UserRole.SUPER_ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied"
-        )
-    
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    elif not _check_machine_list_access(current_user, machine, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
     return _enrich_machine_status(machine, db)
 
 
@@ -200,59 +196,44 @@ def get_machine(
 def update_machine(
     machine_id: str,
     machine_data: POSMachineUpdate,
-    current_user: User = Depends(get_current_merchant),  # Merchant, distributor, or super admin
+    current_user: User = Depends(get_current_machine_admin),
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db)
 ):
-    """Update machine"""
+    """Update machine."""
     machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
     if not machine:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Machine not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
     ensure_same_tenant(machine.tenant_id, active_tenant_id)
-    
-    # Check permissions
-    if current_user.role == UserRole.MERCHANT_ADMIN:
-        if machine.merchant_id != current_user.merchant_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied"
-            )
-    elif current_user.role == UserRole.DISTRIBUTOR:
+
+    if current_user.role == UserRole.DISTRIBUTOR:
         if machine.distributor_id != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied"
-            )
-    
-    # Update fields (internal keys from model_dump without alias)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    elif not _check_machine_list_access(current_user, machine, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
     update_data = machine_data.model_dump(exclude_unset=True, by_alias=False)
 
     if "shop_id" in update_data:
         sid = update_data["shop_id"]
-        effective_merchant = update_data.get("merchant_id", machine.merchant_id)
         if sid is not None:
-            if not effective_merchant:
+            shop = db.query(Shop).filter(Shop.id == sid).first()
+            if not shop:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Shop not found")
+            ensure_same_tenant(shop.tenant_id, active_tenant_id)
+            if current_user.role == UserRole.COMPANY_MANAGER:
+                if shop.company_id != current_user.company_id:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+            if not shop_belongs_to_company(db, sid, shop.company_id):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Assign a merchant before setting shopId",
+                    detail="shopId does not belong to its company",
                 )
-            if not shop_belongs_to_merchant(db, sid, effective_merchant):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="shopId does not belong to this merchant",
-                )
+            machine.tenant_id = shop.tenant_id or machine.tenant_id
+            machine.pairing_status = PairingStatus.ASSIGNED
 
     for field, value in update_data.items():
         setattr(machine, field, value)
-
-    if machine.shop_id and machine.merchant_id:
-        if not shop_belongs_to_merchant(db, machine.shop_id, machine.merchant_id):
-            machine.shop_id = None
-    elif machine.shop_id and not machine.merchant_id:
-        machine.shop_id = None
 
     db.commit()
     db.refresh(machine)
@@ -260,13 +241,6 @@ def update_machine(
 
 
 def _machine_has_history(db: Session, machine_id: str) -> bool:
-    """
-    True if the machine has any rows we must preserve for audit / accounting:
-    transactions, Z-reports, trading days, or sync logs.
-
-    Each table is queried with a `LIMIT 1` exists check so this stays O(1)
-    regardless of history size.
-    """
     if db.query(Transaction.id).filter(Transaction.machine_id == machine_id).first():
         return True
     if db.query(ZReport.id).filter(ZReport.machine_id == machine_id).first():
@@ -281,47 +255,20 @@ def _machine_has_history(db: Session, machine_id: str) -> bool:
 @router.delete("/{machine_id}")
 def delete_machine(
     machine_id: str,
-    current_user: User = Depends(get_current_distributor),  # Distributor or super admin
+    current_user: User = Depends(get_current_distributor),
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db)
 ):
-    """
-    Remove a POS device.
-
-    Two modes, chosen automatically:
-
-    - **hard**: machine has no transactions / Z-reports / trading days / sync
-      logs → the row is fully deleted (along with pending pairing codes and
-      machine-level catalog overrides).
-    - **soft (decommission)**: machine has history → the row is kept so the
-      historical FKs (transactions.machine_id, z_reports.machine_id, …) stay
-      valid, but it is marked `is_active=False`, unpaired, and stripped of its
-      MQTT credentials so it can no longer connect, sync, or appear in the
-      dashboard list.
-
-    This avoids the foreign-key violation a naive `db.delete()` would hit on
-    any machine that has ever closed a Z, while still letting the operator
-    cleanly remove the device from the dashboard.
-    """
+    """Remove a POS device (hard or soft delete depending on history)."""
     machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
     if not machine:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Machine not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
     ensure_same_tenant(machine.tenant_id, active_tenant_id)
 
-    # Check permissions
     if current_user.role == UserRole.DISTRIBUTOR:
         if machine.distributor_id != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied"
-            )
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    # Always clean up rows that don't constitute history and would block a
-    # hard delete. Pairing codes are short-lived and machine-scoped catalog
-    # overrides have no meaning once the device is gone.
     db.query(PairingCode).filter(PairingCode.pos_machine_id == machine_id).delete(
         synchronize_session=False
     )
@@ -333,18 +280,13 @@ def delete_machine(
     )
 
     if _machine_has_history(db, machine_id):
-        # Soft-delete: keep the row so historical FKs remain valid, but
-        # decommission it so it disappears from listings, can't be reassigned,
-        # and can't reconnect over MQTT.
         machine.is_active = False
         machine.pairing_status = PairingStatus.UNPAIRED
-        machine.merchant_id = None
         machine.shop_id = None
         machine.mqtt_client_id = None
         db.commit()
         return {"deleted": True, "mode": "soft", "machineId": str(machine.id)}
 
-    # Hard delete: no history, safe to drop the row entirely.
     db.delete(machine)
     db.commit()
     return {"deleted": True, "mode": "hard", "machineId": machine_id}
@@ -353,42 +295,43 @@ def delete_machine(
 @router.post("/{machine_id}/sync", status_code=status.HTTP_200_OK)
 def trigger_sync(
     machine_id: str,
-    current_user: User = Depends(get_current_merchant),  # Merchant, distributor, or super admin
+    current_user: User = Depends(get_current_machine_admin),
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db)
 ):
-    """Trigger manual sync for a machine"""
+    """Trigger manual sync for a machine."""
     machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
     if not machine:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Machine not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
     ensure_same_tenant(machine.tenant_id, active_tenant_id)
-    
+
     if machine.pairing_status != PairingStatus.ASSIGNED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Machine must be assigned to a merchant before syncing"
+            detail="Machine must be assigned to a shop before syncing",
         )
-    
-    if not machine.merchant_id:
+
+    if not machine.shop_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Machine is not assigned to a merchant"
+            detail="Machine is not assigned to a shop",
         )
-    
-    # Check permissions
-    if current_user.role == UserRole.MERCHANT_ADMIN:
-        if machine.merchant_id != current_user.merchant_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied"
-            )
-    
+
+    if not machine.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Machine tenant context required for sync",
+        )
+
+    if current_user.role == UserRole.DISTRIBUTOR:
+        if machine.distributor_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    elif not _check_machine_list_access(current_user, machine, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
     update_machine_sync_timestamp(db, str(machine.id))
     notify_machine_catalog_changed(
-        str(machine.merchant_id),
+        str(machine.tenant_id),
         str(machine.id),
         reason="manual_sync",
     )
@@ -396,4 +339,3 @@ def trigger_sync(
     return {
         "message": "Catalog change notification sent; POS should pull via GET /sync/{machineId}/catalog",
     }
-

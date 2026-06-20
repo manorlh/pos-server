@@ -5,24 +5,21 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.category import Category, CatalogLevel
 from app.models.product import Product
-from app.models.merchant import Merchant
 from app.models.user import User, UserRole
 from app.schemas.category import CategoryCreate, CategoryUpdate, CategoryResponse
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
-from app.services.catalog_notify import notify_all_machines_for_merchant, notify_machine_catalog_changed
+from app.services.catalog_notify import notify_all_machines_for_tenant, notify_machine_catalog_changed
 
 router = APIRouter(prefix="/categories", tags=["categories"])
 
-_MERCHANT_ROLES = (
+_CATALOG_ROLES = (
     UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR,
-    UserRole.MERCHANT_ADMIN, UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER,
+    UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER,
 )
 
 
 def _check_access(user: User, category: Category):
     if user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
-        return
-    if user.role == UserRole.MERCHANT_ADMIN and category.merchant_id == user.merchant_id:
         return
     if user.role == UserRole.COMPANY_MANAGER and category.company_id == user.company_id:
         return
@@ -48,20 +45,19 @@ def _check_circular(db: Session, category_id: str, parent_id: str) -> bool:
 
 
 def _trigger_catalog_notify(db: Session, category: Category):
-    mid = str(category.merchant_id) if category.merchant_id else None
-    if not mid:
+    tid = str(category.tenant_id) if category.tenant_id else None
+    if not tid:
         return
     if category.pos_machine_id:
-        notify_machine_catalog_changed(mid, str(category.pos_machine_id), reason="category_change")
+        notify_machine_catalog_changed(tid, str(category.pos_machine_id), reason="category_change")
     else:
-        notify_all_machines_for_merchant(db, mid, reason="category_change")
+        notify_all_machines_for_tenant(db, tid, reason="category_change")
 
 
 @router.get("", response_model=List[CategoryResponse])
 def list_categories(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=200),
-    merchant_id: Optional[str] = Query(None, alias="merchantId"),
     company_id: Optional[str] = Query(None, alias="companyId"),
     shop_id: Optional[str] = Query(None, alias="shopId"),
     pos_machine_id: Optional[str] = Query(None, alias="posMachineId"),
@@ -75,15 +71,11 @@ def list_categories(
 ):
     query = db.query(Category).filter(Category.tenant_id == active_tenant_id)
 
-    if current_user.role == UserRole.MERCHANT_ADMIN:
-        query = query.filter(Category.merchant_id == current_user.merchant_id)
-    elif current_user.role == UserRole.COMPANY_MANAGER:
+    if current_user.role == UserRole.COMPANY_MANAGER:
         query = query.filter(Category.company_id == current_user.company_id)
     elif current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
         query = query.filter(Category.shop_id == current_user.shop_id)
 
-    if merchant_id:
-        query = query.filter(Category.merchant_id == merchant_id)
     if company_id:
         query = query.filter(Category.company_id == company_id)
     if shop_id:
@@ -107,17 +99,10 @@ def create_category(
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    if current_user.role not in _MERCHANT_ROLES:
+    if current_user.role not in _CATALOG_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
-    merchant_id = data.merchant_id or current_user.merchant_id
-    if not merchant_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="merchantId is required")
-
-    merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
-    if not merchant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merchant not found")
-    ensure_same_tenant(merchant.tenant_id, active_tenant_id)
+    company_id = data.company_id or current_user.company_id
 
     if data.parent_id:
         parent = db.query(Category).filter(Category.id == data.parent_id).first()
@@ -127,8 +112,7 @@ def create_category(
 
     category = Category(
         tenant_id=active_tenant_id,
-        merchant_id=merchant_id,
-        company_id=data.company_id,
+        company_id=company_id,
         shop_id=data.shop_id,
         pos_machine_id=data.pos_machine_id,
         catalog_level=data.catalog_level,
@@ -171,7 +155,7 @@ def update_category(
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    if current_user.role not in _MERCHANT_ROLES:
+    if current_user.role not in _CATALOG_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
     category = db.query(Category).filter(Category.id == category_id).first()
@@ -202,7 +186,7 @@ def delete_category(
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    if current_user.role not in _MERCHANT_ROLES:
+    if current_user.role not in _CATALOG_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
     category = db.query(Category).filter(Category.id == category_id).first()
@@ -216,14 +200,14 @@ def delete_category(
     if db.query(Category).filter(Category.parent_id == category_id).count():
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Category has child categories")
 
-    merchant_id = str(category.merchant_id) if category.merchant_id else None
+    tenant_id = str(category.tenant_id) if category.tenant_id else None
     machine_id = str(category.pos_machine_id) if category.pos_machine_id else None
 
     db.delete(category)
     db.commit()
 
-    if merchant_id:
+    if tenant_id:
         if machine_id:
-            notify_machine_catalog_changed(merchant_id, machine_id, reason="category_deleted")
+            notify_machine_catalog_changed(tenant_id, machine_id, reason="category_deleted")
         else:
-            notify_all_machines_for_merchant(db, merchant_id, reason="category_deleted")
+            notify_all_machines_for_tenant(db, tenant_id, reason="category_deleted")

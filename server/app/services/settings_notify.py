@@ -8,9 +8,9 @@ from app.services.mqtt import mqtt_service
 
 def _notify_machines(db: Session, machines: list, reason: str) -> None:
     for m in machines:
-        mid = str(m.merchant_id) if m.merchant_id else None
-        if mid:
-            mqtt_service.publish_settings_notify(mid, str(m.id), reason=reason)
+        tid = str(m.tenant_id) if m.tenant_id else None
+        if tid:
+            mqtt_service.publish_settings_notify(tid, str(m.id), reason=reason)
 
 
 def notify_machines_for_shop_settings(db: Session, shop_id: str, reason: str) -> None:

@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { entitySelectItems } from '@/lib/selectItems';
 import { Shop, ShopProductCatalogCandidate, ShopProductCatalogRow } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -240,6 +241,7 @@ export default function ShopAssortmentPage() {
               setSearch('');
               setSearchInput('');
             }}
+            items={entitySelectItems(shops)}
           >
             <SelectTrigger>
               <SelectValue placeholder={t('selectShopPlaceholder')} />

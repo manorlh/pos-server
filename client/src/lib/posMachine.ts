@@ -20,7 +20,7 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     id: String(raw.id ?? ''),
     name: String(raw.name ?? ''),
     machineCode: String(raw.machineCode ?? raw.machine_code ?? ''),
-    merchantId: (raw.merchantId ?? raw.merchant_id) as string | undefined,
+    tenantId: (raw.tenantId ?? raw.tenant_id) as string | undefined,
     shopId: (raw.shopId ?? raw.shop_id) as string | undefined,
     pairingStatus,
     mqttClientId: (raw.mqttClientId ?? raw.mqtt_client_id) as string | undefined,

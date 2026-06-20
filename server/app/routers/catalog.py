@@ -108,7 +108,6 @@ def _copy_product_to_machine(
 
     local = Product(
         tenant_id=machine.tenant_id or global_product.tenant_id,
-        merchant_id=global_product.merchant_id,
         company_id=global_product.company_id,
         shop_id=machine.shop_id,
         pos_machine_id=machine.id,
@@ -140,7 +139,7 @@ def _copy_category_to_machine(
 ) -> Category:
     """Create (or reuse) a LOCAL copy of a global category for a machine."""
     existing = db.query(Category).filter(
-        Category.merchant_id == global_cat.merchant_id,
+        Category.tenant_id == global_cat.tenant_id,
         Category.name == global_cat.name,
         Category.pos_machine_id == machine.id,
         Category.catalog_level == CategoryCatalogLevel.LOCAL,
@@ -158,7 +157,6 @@ def _copy_category_to_machine(
 
     local = Category(
         tenant_id=machine.tenant_id or global_cat.tenant_id,
-        merchant_id=global_cat.merchant_id,
         company_id=global_cat.company_id,
         shop_id=machine.shop_id,
         pos_machine_id=machine.id,
@@ -191,7 +189,7 @@ def push_catalog(
     """
     if current_user.role not in (
         UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR,
-        UserRole.MERCHANT_ADMIN, UserRole.COMPANY_MANAGER,
+        UserRole.COMPANY_MANAGER,
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
@@ -213,8 +211,8 @@ def push_catalog(
         Product.catalog_level == CatalogLevel.GLOBAL,
         Product.tenant_id == active_tenant_id,
     )
-    if current_user.role in (UserRole.MERCHANT_ADMIN, UserRole.COMPANY_MANAGER):
-        prod_query = prod_query.filter(Product.merchant_id == current_user.merchant_id)
+    if current_user.role == UserRole.COMPANY_MANAGER:
+        prod_query = prod_query.filter(Product.company_id == current_user.company_id)
     if isinstance(body.product_ids, list) and body.product_ids:
         prod_query = prod_query.filter(Product.id.in_(body.product_ids))
     global_products = prod_query.all()
@@ -224,8 +222,8 @@ def push_catalog(
         Category.catalog_level == CategoryCatalogLevel.GLOBAL,
         Category.tenant_id == active_tenant_id,
     )
-    if current_user.role in (UserRole.MERCHANT_ADMIN, UserRole.COMPANY_MANAGER):
-        cat_query = cat_query.filter(Category.merchant_id == current_user.merchant_id)
+    if current_user.role == UserRole.COMPANY_MANAGER:
+        cat_query = cat_query.filter(Category.company_id == current_user.company_id)
     if isinstance(body.category_ids, list) and body.category_ids:
         cat_query = cat_query.filter(Category.id.in_(body.category_ids))
     global_categories = cat_query.all()
@@ -262,9 +260,9 @@ def push_catalog(
     db.commit()
 
     for machine in machines:
-        if machine.merchant_id:
+        if machine.tenant_id:
             notify_machine_catalog_changed(
-                str(machine.merchant_id),
+                str(machine.tenant_id),
                 str(machine.id),
                 reason="catalog_push",
             )

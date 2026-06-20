@@ -12,12 +12,15 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 30
     
-    # MQTT
+    # MQTT (local Mosquitto or EMQX Cloud — Serverless requires TLS on 8883)
     mqtt_broker_host: str = "localhost"
     mqtt_broker_port: int = 1883
     mqtt_broker_username: str = ""
     mqtt_broker_password: str = ""
     mqtt_client_id: str = "pos-server"
+    mqtt_tls_enabled: bool = False
+    mqtt_tls_ca_cert_path: str = ""  # path to EMQX server CA .crt (from Console → Overview)
+    mqtt_tls_ca_cert: str = ""  # PEM string alternative (useful on Render without a file mount)
     
     # Application
     api_v1_prefix: str = "/api/v1"
@@ -38,6 +41,7 @@ class Settings(BaseSettings):
     # Clerk
     clerk_secret_key: str = ""
     clerk_jwks_url: str = ""   # e.g. https://<your-clerk-domain>/.well-known/jwks.json
+    allow_self_service_signup: bool = True
 
     # Cloudinary
     cloudinary_cloud_name: str = ""

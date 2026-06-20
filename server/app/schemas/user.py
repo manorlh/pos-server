@@ -10,7 +10,6 @@ class UserBase(BaseModel):
     username: str
     role: UserRole = UserRole.CASHIER
     tenant_id: Optional[uuid.UUID] = None
-    merchant_id: Optional[uuid.UUID] = None
     company_id: Optional[uuid.UUID] = None
     shop_id: Optional[uuid.UUID] = None
 
@@ -24,7 +23,6 @@ class UserUpdate(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
     role: Optional[UserRole] = None
-    merchant_id: Optional[uuid.UUID] = None
     company_id: Optional[uuid.UUID] = None
     shop_id: Optional[uuid.UUID] = None
     is_active: Optional[bool] = None

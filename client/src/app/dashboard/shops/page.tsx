@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, fetchShopSettings, patchShopSettings } from '@/lib/api';
 import { PosSettingsForm, type PosSettingsFormState } from '@/components/pos-settings-form';
 import type { PosSettingsV1 } from '@/lib/types';
-import { findBySameId } from '@/lib/entityLookup';
+import { entitySelectItems } from '@/lib/selectItems';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { Shop, Company } from '@/lib/types';
 import { Button } from '@/components/ui/button';
@@ -164,10 +164,7 @@ export default function ShopsPage() {
               <Select
                 value={editing.companyId ?? ''}
                 onValueChange={(v) => setEditing((s) => ({ ...s, companyId: v ?? undefined }))}
-                itemToStringLabel={(v) => {
-                  if (v == null || v === '') return '';
-                  return findBySameId(companies, String(v))?.name ?? String(v);
-                }}
+                items={entitySelectItems(companies)}
               >
                 <SelectTrigger><SelectValue placeholder={t('selectCompany')} /></SelectTrigger>
                 <SelectContent>

@@ -25,7 +25,6 @@ class POSMachineCreate(POSMachineBase):
 
 class POSMachineUpdate(BaseModel):
     name: Optional[str] = None
-    merchant_id: Optional[uuid.UUID] = Field(None, alias="merchantId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     is_active: Optional[bool] = Field(None, alias="isActive")
 
@@ -36,7 +35,7 @@ class POSMachineResponse(POSMachineBase):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     id: uuid.UUID
-    merchant_id: Optional[uuid.UUID] = Field(None, alias="merchantId")
+    tenant_id: Optional[uuid.UUID] = Field(None, alias="tenantId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     distributor_id: uuid.UUID = Field(..., alias="distributorId")
     mqtt_client_id: Optional[str] = Field(None, alias="mqttClientId")

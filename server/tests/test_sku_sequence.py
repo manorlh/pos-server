@@ -4,14 +4,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from app.models.merchant_sku_sequence import DEFAULT_SKU_SEQUENCE_START
+from app.models.tenant_local_sku_sequence import DEFAULT_SKU_SEQUENCE_START
 from app.services.sku_sequence import (
     compute_initial_next_value,
     resolve_sku_for_create,
 )
 
 
-def test_compute_initial_next_value_empty_merchant() -> None:
+def test_compute_initial_next_value_empty_tenant() -> None:
     db = MagicMock()
     db.query.return_value.filter.return_value.all.return_value = []
     assert compute_initial_next_value(db, uuid.uuid4()) == DEFAULT_SKU_SEQUENCE_START

@@ -180,7 +180,7 @@ def device_register(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    check_rate_limit(request, "device_register", max_calls=10, window_seconds=60)
+    check_rate_limit(request, "device_register", max_calls=100, window_seconds=60)
     row = register_device_pairing_request(
         db,
         device_info=body.device_info,
@@ -192,11 +192,8 @@ def device_register(
 @router.get("/device/{nonce}/status")
 def device_poll_status(
     nonce: str,
-    request: Request,
     db: Session = Depends(get_db),
 ):
-    check_rate_limit(request, "device_poll", max_calls=120, window_seconds=60)
-    check_rate_limit_by_key(f"poll:{nonce}", max_calls=120, window_seconds=60)
     poll_status, payload = poll_device_credentials(db, nonce)
     if poll_status == "waiting":
         return DevicePollWaitingResponse()

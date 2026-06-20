@@ -36,10 +36,6 @@ def _check_shop_access(user: User, shop: Shop, db: Session):
         return
     if user.role == UserRole.DISTRIBUTOR:
         return
-    if user.role == UserRole.MERCHANT_ADMIN:
-        company = db.query(Company).filter(Company.id == shop.company_id).first()
-        if company and company.merchant_id == user.merchant_id:
-            return
     if user.role == UserRole.COMPANY_MANAGER and shop.company_id == user.company_id:
         return
     if user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER) and shop.id == user.shop_id:
@@ -81,7 +77,8 @@ def list_shop_product_overrides(
         .join(Product, Product.id == ShopProductOverride.global_product_id)
         .filter(
             ShopProductOverride.shop_id == shop.id,
-            Product.merchant_id == company.merchant_id,
+            Product.tenant_id == shop.tenant_id,
+            Product.company_id == shop.company_id,
             Product.catalog_level == CatalogLevel.GLOBAL,
             Product.pos_machine_id.is_(None),
         )
@@ -117,7 +114,7 @@ def list_shop_product_catalog_candidates(
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """Global products for this merchant **not** yet assigned to the shop (library for Add)."""
+    """Global products for this company **not** yet assigned to the shop (library for Add)."""
     shop = db.query(Shop).filter(Shop.id == shop_id).first()
     if not shop:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
@@ -134,7 +131,8 @@ def list_shop_product_catalog_candidates(
     )
 
     q = db.query(Product).filter(
-        Product.merchant_id == company.merchant_id,
+        Product.tenant_id == shop.tenant_id,
+        Product.company_id == shop.company_id,
         Product.catalog_level == CatalogLevel.GLOBAL,
         Product.pos_machine_id.is_(None),
         ~Product.id.in_(assigned_ids),
@@ -181,8 +179,8 @@ def assign_shop_product(
     g = db.query(Product).filter(Product.id == global_product_id).first()
     if not g or g.catalog_level != CatalogLevel.GLOBAL or g.pos_machine_id is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Global product not found")
-    if g.merchant_id != company.merchant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Product not in shop merchant")
+    if g.tenant_id != shop.tenant_id or g.company_id != shop.company_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Product not in shop company")
 
     ovr = (
         db.query(ShopProductOverride)
@@ -274,8 +272,8 @@ def upsert_shop_product_override(
     g = db.query(Product).filter(Product.id == global_product_id).first()
     if not g or g.catalog_level != CatalogLevel.GLOBAL or g.pos_machine_id is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Global product not found")
-    if g.merchant_id != company.merchant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Product not in shop merchant")
+    if g.tenant_id != shop.tenant_id or g.company_id != shop.company_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Product not in shop company")
 
     payload = body.model_dump(exclude_unset=True, by_alias=False)
     if not payload:
@@ -320,7 +318,6 @@ def upsert_shop_product_override(
 @router.get("", response_model=List[ShopResponse])
 def list_shops(
     company_id: Optional[str] = Query(None, alias="companyId"),
-    merchant_id: Optional[str] = Query(None, alias="merchantId"),
     current_user: User = Depends(get_current_user),
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -331,25 +328,8 @@ def list_shops(
         query = query.filter(Shop.company_id == current_user.company_id)
     elif current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
         query = query.filter(Shop.id == current_user.shop_id)
-    elif current_user.role == UserRole.MERCHANT_ADMIN:
-        # Shops whose company belongs to this merchant
-        company_ids = db.query(Company.id).filter(Company.merchant_id == current_user.merchant_id)
-        query = query.filter(Shop.company_id.in_(company_ids))
     elif company_id:
         query = query.filter(Shop.company_id == company_id)
-
-    if merchant_id:
-        try:
-            mid = uuid_mod.UUID(str(merchant_id))
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid merchantId")
-        if current_user.role == UserRole.MERCHANT_ADMIN:
-            if current_user.merchant_id != mid:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-        elif current_user.role not in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-        m_company_ids = db.query(Company.id).filter(Company.merchant_id == mid)
-        query = query.filter(Shop.company_id.in_(m_company_ids))
 
     return query.all()
 
@@ -361,7 +341,7 @@ def create_shop(
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    if current_user.role not in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR, UserRole.MERCHANT_ADMIN, UserRole.COMPANY_MANAGER):
+    if current_user.role not in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR, UserRole.COMPANY_MANAGER):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
     company = db.query(Company).filter(Company.id == data.company_id).first()

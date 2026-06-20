@@ -1,5 +1,5 @@
 /**
- * Internal user store — holds role + merchantId fetched from /auth/me.
+ * Internal user store — holds role + scope ids fetched from /auth/me.
  * Identity (username, email) comes from Clerk's useUser() hook.
  */
 import { create } from 'zustand';
@@ -10,7 +10,6 @@ interface InternalUser {
   username: string;
   role: string;
   tenantId?: string;
-  merchantId?: string;
   companyId?: string;
   shopId?: string;
 }
@@ -68,7 +67,6 @@ export const useAuth = create<AuthState>((set) => ({
           username: data.username,
           role: data.role,
           tenantId: data.tenantId ?? data.tenant_id,
-          merchantId: data.merchantId ?? data.merchant_id,
           companyId: data.companyId ?? data.company_id,
           shopId: data.shopId ?? data.shop_id,
         },

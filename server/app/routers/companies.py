@@ -4,7 +4,6 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.company import Company
-from app.models.merchant import Merchant
 from app.models.user import User, UserRole
 from app.schemas.company import CompanyCreate, CompanyUpdate, CompanyResponse
 from app.middleware.auth import get_current_user, get_current_distributor, get_active_tenant_id, ensure_same_tenant
@@ -19,8 +18,6 @@ def _check_company_access(user: User, company: Company):
     if user.role == UserRole.SUPER_ADMIN:
         return
     if user.role == UserRole.DISTRIBUTOR:
-        return  # Distributor sees all companies (filtered by their merchants below)
-    if user.role == UserRole.MERCHANT_ADMIN and company.merchant_id == user.merchant_id:
         return
     if user.role in (UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER, UserRole.CASHIER):
         if company.id == user.company_id:
@@ -30,19 +27,14 @@ def _check_company_access(user: User, company: Company):
 
 @router.get("", response_model=List[CompanyResponse])
 def list_companies(
-    merchant_id: Optional[str] = Query(None, alias="merchantId"),
     current_user: User = Depends(get_current_user),
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
     query = db.query(Company).filter(Company.tenant_id == active_tenant_id)
 
-    if current_user.role == UserRole.MERCHANT_ADMIN:
-        query = query.filter(Company.merchant_id == current_user.merchant_id)
-    elif current_user.role in (UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER, UserRole.CASHIER):
+    if current_user.role in (UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER, UserRole.CASHIER):
         query = query.filter(Company.id == current_user.company_id)
-    elif merchant_id:
-        query = query.filter(Company.merchant_id == merchant_id)
 
     return query.all()
 
@@ -54,14 +46,8 @@ def create_company(
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    merchant = db.query(Merchant).filter(Merchant.id == data.merchant_id).first()
-    if not merchant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merchant not found")
-    ensure_same_tenant(merchant.tenant_id, active_tenant_id)
-
     company = Company(
         tenant_id=active_tenant_id,
-        merchant_id=data.merchant_id,
         name=data.name,
         vat_number=data.vat_number,
         address=data.address,

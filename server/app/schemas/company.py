@@ -16,7 +16,7 @@ class CompanyBase(BaseModel):
 
 
 class CompanyCreate(CompanyBase):
-    merchant_id: uuid.UUID = Field(..., alias="merchantId")
+    pass
 
 
 class CompanyUpdate(BaseModel):
@@ -32,7 +32,7 @@ class CompanyUpdate(BaseModel):
 
 class CompanyResponse(BaseModel):
     id: uuid.UUID
-    merchant_id: uuid.UUID = Field(..., alias="merchantId")
+    tenant_id: Optional[uuid.UUID] = Field(None, alias="tenantId")
     name: str
     vat_number: Optional[str] = Field(None, alias="vatNumber")
     address: Optional[str]

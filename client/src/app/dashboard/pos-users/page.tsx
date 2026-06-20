@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { findBySameId } from '@/lib/entityLookup';
+import { entitySelectItems } from '@/lib/selectItems';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
   PosUser, PosUserCreate, PosUserUpdate, PosUserRole, Shop,
@@ -197,10 +198,7 @@ export default function PosUsersPage() {
           <Select
             value={shopId}
             onValueChange={(v) => setShopId(v ?? '')}
-            itemToStringLabel={(v) => {
-              if (v == null || v === '') return '';
-              return findBySameId(shops, String(v))?.name ?? String(v);
-            }}
+            items={entitySelectItems(shops)}
           >
             <SelectTrigger><SelectValue placeholder={t('selectShopPlaceholder')} /></SelectTrigger>
             <SelectContent>
@@ -341,9 +339,7 @@ export default function PosUsersPage() {
                 <Select
                   value={editing.role}
                   onValueChange={(v) => setEditing((u) => ({ ...u, role: v as PosUserRole }))}
-                  itemToStringLabel={(v) =>
-                    ALL_ROLES.includes(v as PosUserRole) ? t(`roles.${v as PosUserRole}`) : String(v)
-                  }
+                  items={ALL_ROLES.map((r) => ({ value: r, label: t(`roles.${r}`) }))}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>

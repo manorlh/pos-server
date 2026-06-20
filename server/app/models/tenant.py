@@ -1,7 +1,7 @@
 import uuid
 import enum
 
-from sqlalchemy import Column, String, DateTime, Enum as SQLEnum
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -30,11 +30,12 @@ class Tenant(Base):
     default_currency = Column(String(8), nullable=False, default="ILS")
     locale = Column(String(32), nullable=False, default="en")
     settings = Column(JSONB, nullable=True)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
     memberships = relationship("TenantMembership", back_populates="tenant", cascade="all, delete-orphan")
-    merchants = relationship("Merchant", back_populates="tenant")
     sku_sequence = relationship(
         "TenantSkuSequence",
         back_populates="tenant",

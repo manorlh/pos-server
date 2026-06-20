@@ -35,7 +35,12 @@
     "transactions": "עסקאות",
     "zReports": "דוחות Z",
     "posUsers": "קופאים (POS)",
-    "signout": "יציאה"
+    "signout": "יציאה",
+    "selectTenant": "בחר ארגון",
+    "createTenant": "צור ארגון",
+    "createTenantTitle": "ארגון חדש",
+    "tenantName": "שם הארגון",
+    "tenantCreated": "הארגון נוצר בהצלחה"
   },
   "profile": {
     "title": "פרופיל",

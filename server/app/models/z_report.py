@@ -24,7 +24,6 @@ class ZReport(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True)
     trading_day_id = Column(UUID(as_uuid=True), ForeignKey("trading_days.id"), nullable=False)
     machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id"), nullable=False, index=True)
-    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False, index=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True, index=True)
 
     day_date = Column(Date, nullable=False)
@@ -50,5 +49,4 @@ class ZReport(Base):
 
     trading_day = relationship("TradingDay", back_populates="z_report")
     machine = relationship("POSMachine")
-    merchant = relationship("Merchant")
     shop = relationship("Shop")

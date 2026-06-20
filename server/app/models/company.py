@@ -13,7 +13,6 @@ class Company(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True)
-    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False, index=True)
     name = Column(String(255), nullable=False)
     vat_number = Column(String(20), nullable=True)       # Israeli ח.פ / ע.מ
     address = Column(String(500), nullable=True)
@@ -25,7 +24,6 @@ class Company(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    merchant = relationship("Merchant", back_populates="companies")
     shops = relationship("Shop", back_populates="company")
     users = relationship("User", back_populates="company", foreign_keys="User.company_id")
     products = relationship("Product", back_populates="company")

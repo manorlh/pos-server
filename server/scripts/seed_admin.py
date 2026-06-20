@@ -1,5 +1,5 @@
 """
-Creates the initial super_admin user and a default merchant.
+Creates the initial super_admin user and a default tenant + company.
 Run once: python -m scripts.seed_admin
 """
 import sys
@@ -8,14 +8,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from app.database import SessionLocal
 from app.models.user import User, UserRole
-from app.models.merchant import Merchant
+from app.models.tenant import Tenant
+from app.models.company import Company
+from app.models.tenant_membership import TenantMembership, TenantMembershipRole
 from app.services.auth import get_password_hash
 import uuid
 
 USERNAME = "admin"
 PASSWORD = "admin123"
 EMAIL = "admin@pos.localhost.com"
-MERCHANT_NAME = "Default Merchant"
+TENANT_NAME = "Default Tenant"
+COMPANY_NAME = "Default Company"
 
 
 def main():
@@ -24,55 +27,90 @@ def main():
         existing = db.query(User).filter(User.username == USERNAME).first()
         if existing:
             print(f"User '{USERNAME}' already exists.")
-            if not existing.merchant_id:
-                # Ensure a merchant exists and link it
-                merchant = db.query(Merchant).first()
-                if not merchant:
-                    merchant = Merchant(
+            if not existing.tenant_id:
+                tenant = db.query(Tenant).first()
+                if not tenant:
+                    tenant = Tenant(
                         id=uuid.uuid4(),
-                        name=MERCHANT_NAME,
-                        distributor_id=existing.id,
+                        name=TENANT_NAME,
+                        slug="default-tenant",
                     )
-                    db.add(merchant)
+                    db.add(tenant)
                     db.flush()
-                existing.merchant_id = merchant.id
+                existing.tenant_id = tenant.id
+                membership = (
+                    db.query(TenantMembership)
+                    .filter(
+                        TenantMembership.user_id == existing.id,
+                        TenantMembership.tenant_id == tenant.id,
+                    )
+                    .first()
+                )
+                if not membership:
+                    db.add(
+                        TenantMembership(
+                            tenant_id=tenant.id,
+                            user_id=existing.id,
+                            role=TenantMembershipRole.TENANT_ADMIN,
+                            is_default=True,
+                        )
+                    )
+                company = db.query(Company).filter(Company.tenant_id == tenant.id).first()
+                if not company:
+                    company = Company(
+                        id=uuid.uuid4(),
+                        tenant_id=tenant.id,
+                        name=COMPANY_NAME,
+                        is_active=True,
+                    )
+                    db.add(company)
                 db.commit()
-                print(f"Linked admin to merchant: {MERCHANT_NAME} ({merchant.id})")
+                print(f"Linked admin to tenant: {TENANT_NAME} ({tenant.id})")
             else:
-                print("Already linked to a merchant — nothing to do.")
+                print("Already linked to a tenant — nothing to do.")
             return
 
-        # Create admin user first (without merchant_id)
         admin_id = uuid.uuid4()
+        tenant = Tenant(id=uuid.uuid4(), name=TENANT_NAME, slug="default-tenant")
+        db.add(tenant)
+        db.flush()
+
         user = User(
             id=admin_id,
             email=EMAIL,
             username=USERNAME,
             hashed_password=get_password_hash(PASSWORD),
             role=UserRole.SUPER_ADMIN,
+            tenant_id=tenant.id,
             is_active=True,
         )
         db.add(user)
-        db.flush()  # write user so we have the ID
-
-        # Create merchant with admin as distributor
-        merchant = Merchant(
-            id=uuid.uuid4(),
-            name=MERCHANT_NAME,
-            distributor_id=admin_id,
-        )
-        db.add(merchant)
         db.flush()
 
-        # Link merchant back to admin
-        user.merchant_id = merchant.id
+        db.add(
+            TenantMembership(
+                tenant_id=tenant.id,
+                user_id=admin_id,
+                role=TenantMembershipRole.TENANT_ADMIN,
+                is_default=True,
+            )
+        )
+
+        company = Company(
+            id=uuid.uuid4(),
+            tenant_id=tenant.id,
+            name=COMPANY_NAME,
+            is_active=True,
+        )
+        db.add(company)
         db.commit()
 
-        print(f"Created super_admin user:")
+        print("Created super_admin user:")
         print(f"  username   : {USERNAME}")
         print(f"  password   : {PASSWORD}")
         print(f"  email      : {EMAIL}")
-        print(f"  merchant   : {MERCHANT_NAME} ({merchant.id})")
+        print(f"  tenant     : {TENANT_NAME} ({tenant.id})")
+        print(f"  company    : {COMPANY_NAME} ({company.id})")
     finally:
         db.close()
 

@@ -4,9 +4,9 @@ import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { findBySameId } from '@/lib/entityLookup';
+import { entitySelectItems } from '@/lib/selectItems';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { User, UserRole, Company, Shop, Merchant } from '@/lib/types';
+import { User, UserRole, Company, Shop } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,11 +20,10 @@ import { toast } from 'sonner';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
 
 const ALL_ROLES: UserRole[] = [
-  'super_admin', 'distributor', 'merchant_admin',
+  'super_admin', 'distributor',
   'company_manager', 'shop_manager', 'cashier',
 ];
 
-const ROLE_NEEDS_MERCHANT: UserRole[] = ['merchant_admin', 'company_manager', 'shop_manager', 'cashier'];
 const ROLE_NEEDS_COMPANY: UserRole[] = ['company_manager', 'shop_manager', 'cashier'];
 const ROLE_NEEDS_SHOP: UserRole[] = ['shop_manager', 'cashier'];
 
@@ -34,7 +33,6 @@ interface UserForm {
   username: string;
   password: string;
   role: UserRole;
-  merchantId?: string;
   companyId?: string;
   shopId?: string;
   isActive?: boolean;
@@ -42,7 +40,7 @@ interface UserForm {
 
 const EMPTY: UserForm = {
   email: '', username: '', password: '', role: 'cashier',
-  merchantId: undefined, companyId: undefined, shopId: undefined,
+  companyId: undefined, shopId: undefined,
 };
 
 export default function UsersPage() {
@@ -59,11 +57,6 @@ export default function UsersPage() {
     queryFn: () => api.get('/users').then((r) => r.data),
   });
 
-  const { data: merchants = [] } = useQuery<Merchant[]>({
-    queryKey: ['merchants'],
-    queryFn: () => api.get('/merchants').then((r) => r.data),
-  });
-
   const { data: companies = [] } = useQuery<Company[]>({
     queryKey: ['companies'],
     queryFn: () => api.get('/companies').then((r) => r.data),
@@ -74,9 +67,7 @@ export default function UsersPage() {
     queryFn: () => api.get('/shops').then((r) => r.data),
   });
 
-  const filteredCompanies = editing.merchantId
-    ? companies.filter((c) => c.merchantId === editing.merchantId)
-    : companies;
+  const filteredCompanies = companies;
 
   const filteredShops = editing.companyId
     ? shops.filter((s) => s.companyId === editing.companyId)
@@ -113,7 +104,7 @@ export default function UsersPage() {
   const openEdit = (u: User) => {
     setEditing({
       id: u.id, email: u.email, username: u.username, password: '',
-      role: u.role, merchantId: u.merchantId, companyId: u.companyId,
+      role: u.role, companyId: u.companyId,
       shopId: u.shopId, isActive: u.isActive,
     });
     setOpen(true);
@@ -123,7 +114,6 @@ export default function UsersPage() {
     setEditing((prev) => ({
       ...prev,
       role,
-      merchantId: ROLE_NEEDS_MERCHANT.includes(role) ? prev.merchantId : undefined,
       companyId: ROLE_NEEDS_COMPANY.includes(role) ? prev.companyId : undefined,
       shopId: ROLE_NEEDS_SHOP.includes(role) ? prev.shopId : undefined,
     }));
@@ -132,7 +122,6 @@ export default function UsersPage() {
   const scopeName = (u: User) => {
     if (u.shopId) return shops.find((s) => s.id === u.shopId)?.name;
     if (u.companyId) return companies.find((c) => c.id === u.companyId)?.name;
-    if (u.merchantId) return merchants.find((m) => m.id === u.merchantId)?.name;
     return '—';
   };
 
@@ -236,9 +225,7 @@ export default function UsersPage() {
                 <Select
                   value={editing.role}
                   onValueChange={(v) => handleRoleChange(v as UserRole)}
-                  itemToStringLabel={(v) =>
-                    ALL_ROLES.includes(v as UserRole) ? t(`roles.${v as UserRole}`) : String(v)
-                  }
+                  items={ALL_ROLES.map((r) => ({ value: r, label: t(`roles.${r}`) }))}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -250,39 +237,13 @@ export default function UsersPage() {
               </div>
             </div>
 
-            {ROLE_NEEDS_MERCHANT.includes(editing.role) && (
-              <div className="space-y-1">
-                <Label>{t('merchant')}</Label>
-                <Select
-                  value={editing.merchantId ?? ''}
-                  onValueChange={(v) =>
-                    setEditing((u) => ({ ...u, merchantId: v || undefined, companyId: undefined, shopId: undefined }))
-                  }
-                  itemToStringLabel={(v) => {
-                    if (v == null || v === '') return '';
-                    return findBySameId(merchants, String(v))?.name ?? String(v);
-                  }}
-                >
-                  <SelectTrigger><SelectValue placeholder={t('selectMerchant')} /></SelectTrigger>
-                  <SelectContent>
-                    {merchants.map((m) => (
-                      <SelectItem key={m.id} value={m.id} label={m.name}>{m.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
             {ROLE_NEEDS_COMPANY.includes(editing.role) && (
               <div className="space-y-1">
                 <Label>{t('company')}</Label>
                 <Select
                   value={editing.companyId ?? ''}
                   onValueChange={(v) => setEditing((u) => ({ ...u, companyId: v || undefined, shopId: undefined }))}
-                  itemToStringLabel={(v) => {
-                    if (v == null || v === '') return '';
-                    return findBySameId(filteredCompanies, String(v))?.name ?? String(v);
-                  }}
+                  items={entitySelectItems(filteredCompanies)}
                 >
                   <SelectTrigger><SelectValue placeholder={t('selectCompany')} /></SelectTrigger>
                   <SelectContent>
@@ -300,10 +261,7 @@ export default function UsersPage() {
                 <Select
                   value={editing.shopId ?? ''}
                   onValueChange={(v) => setEditing((u) => ({ ...u, shopId: v || undefined }))}
-                  itemToStringLabel={(v) => {
-                    if (v == null || v === '') return '';
-                    return findBySameId(filteredShops, String(v))?.name ?? String(v);
-                  }}
+                  items={entitySelectItems(filteredShops)}
                 >
                   <SelectTrigger><SelectValue placeholder={t('selectShop')} /></SelectTrigger>
                   <SelectContent>
@@ -321,7 +279,10 @@ export default function UsersPage() {
                 <Select
                   value={editing.isActive ? 'active' : 'inactive'}
                   onValueChange={(v) => setEditing((u) => ({ ...u, isActive: v === 'active' }))}
-                  itemToStringLabel={(v) => (v === 'active' ? tc('active') : tc('inactive'))}
+                  items={[
+                    { value: 'active', label: tc('active') },
+                    { value: 'inactive', label: tc('inactive') },
+                  ]}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>

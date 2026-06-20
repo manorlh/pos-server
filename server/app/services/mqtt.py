@@ -2,38 +2,58 @@
 MQTT service — manages the broker connection and pub/sub logic.
 
 Topics subscribed (POS → Server):
-  pos/{merchant_id}/{machine_id}/sync/request      POS wake-up (server sends catalog/notify only)
-  pos/{merchant_id}/{machine_id}/catalog/update    Deprecated: ignored (cloud is source of truth)
-  pos/{merchant_id}/{machine_id}/heartbeat         POS online signal
+  pos/{tenant_id}/{machine_id}/sync/request      POS wake-up (server sends catalog/notify only)
+  pos/{tenant_id}/{machine_id}/catalog/update    Deprecated: ignored (cloud is source of truth)
+  pos/{tenant_id}/{machine_id}/heartbeat         POS online signal
 
 Topics published (Server → POS):
-  pos/{merchant_id}/{machine_id}/catalog/notify    lightweight: POS should GET /sync/.../catalog
-  pos/{merchant_id}/{machine_id}/sync/ack            optional ACK for legacy clients
+  pos/{tenant_id}/{machine_id}/catalog/notify    lightweight: POS should GET /sync/.../catalog
+  pos/{tenant_id}/{machine_id}/sync/ack            optional ACK for legacy clients
 """
 import json
 import logging
 from datetime import datetime, timezone
+from threading import Event
 from typing import Callable, List, Optional
 
 import paho.mqtt.client as mqtt
 
 from app.config import get_settings
+from app.services.mqtt_broker import apply_mqtt_tls
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def _mqtt_rc_message(rc: int) -> str:
+    messages = {
+        1: "incorrect protocol version",
+        2: "invalid client identifier",
+        3: "server unavailable",
+        4: "bad username or password",
+        5: "not authorized",
+    }
+    return messages.get(rc, "unknown error")
 
 
 class MQTTService:
     def __init__(self):
         self.client: Optional[mqtt.Client] = None
         self.connected = False
+        self.last_error: Optional[str] = None
         self._message_callbacks: List[Callable] = []
+        self._connect_event = Event()
 
     # ── Connection lifecycle ──────────────────────────────────────────────────
 
-    def connect(self):
+    def connect(self, timeout: float = 15.0) -> bool:
+        """Connect to broker. Returns True when MQTT session is up (waits for CONNACK)."""
         if self.connected:
-            return
+            return True
+
+        self._teardown_client()
+        self.last_error = None
+        self._connect_event.clear()
 
         self.client = mqtt.Client(client_id=settings.mqtt_client_id)
 
@@ -43,34 +63,72 @@ class MQTTService:
                 settings.mqtt_broker_password,
             )
 
+        apply_mqtt_tls(self.client)
+
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
         self.client.on_disconnect = self._on_disconnect
 
         try:
-            self.client.connect(settings.mqtt_broker_host, settings.mqtt_broker_port, keepalive=60)
+            # connect_async avoids blocking SSL handshake issues during uvicorn startup.
+            self.client.connect_async(
+                settings.mqtt_broker_host,
+                settings.mqtt_broker_port,
+                keepalive=60,
+            )
             self.client.loop_start()
-            logger.info("Connected to MQTT broker at %s:%s", settings.mqtt_broker_host, settings.mqtt_broker_port)
+
+            if not self._connect_event.wait(timeout=timeout):
+                self.last_error = f"timed out after {timeout}s"
+                logger.error("MQTT connect timed out after %ss", timeout)
+                self._teardown_client()
+                return False
+
+            if not self.connected:
+                self._teardown_client()
+                return False
+
+            scheme = "mqtts" if settings.mqtt_tls_enabled else "mqtt"
+            logger.info(
+                "Connected to MQTT broker at %s://%s:%s",
+                scheme,
+                settings.mqtt_broker_host,
+                settings.mqtt_broker_port,
+            )
+            return True
         except Exception as exc:
+            self.last_error = str(exc)
             logger.error("Failed to connect to MQTT broker: %s", exc)
-            raise
+            self._teardown_client()
+            return False
+
+    def _teardown_client(self) -> None:
+        if self.client:
+            try:
+                self.client.loop_stop()
+                self.client.disconnect()
+            except Exception:
+                pass
+        self.client = None
+        self.connected = False
 
     def disconnect(self):
-        if self.client:
-            self.client.loop_stop()
-            self.client.disconnect()
-            self.connected = False
-            logger.info("Disconnected from MQTT broker")
+        self._teardown_client()
+        logger.info("Disconnected from MQTT broker")
 
     # ── Internal callbacks ────────────────────────────────────────────────────
 
     def _on_connect(self, client, userdata, flags, rc):
         if rc == 0:
             self.connected = True
+            self.last_error = None
             logger.info("MQTT client connected")
             self._subscribe_all()
         else:
-            logger.error("MQTT connect failed, rc=%s", rc)
+            self.connected = False
+            self.last_error = f"rc={rc} ({_mqtt_rc_message(rc)})"
+            logger.error("MQTT connect failed, rc=%s (%s)", rc, _mqtt_rc_message(rc))
+        self._connect_event.set()
 
     def _on_disconnect(self, client, userdata, rc):
         self.connected = False
@@ -106,7 +164,7 @@ class MQTTService:
         if len(parts) < 4 or parts[0] != "pos":
             return
 
-        _, merchant_id, machine_id, msg_type = parts[0], parts[1], parts[2], parts[3]
+        _, tenant_id, machine_id, msg_type = parts[0], parts[1], parts[2], parts[3]
 
         if msg_type == "heartbeat":
             self._handle_heartbeat(machine_id)
@@ -116,9 +174,9 @@ class MQTTService:
         sub = parts[4]
 
         if msg_type == "sync" and sub == "request":
-            self._handle_sync_request(merchant_id, machine_id, payload)
+            self._handle_sync_request(tenant_id, machine_id, payload)
         elif msg_type == "catalog" and sub == "update":
-            self._handle_catalog_update(merchant_id, machine_id, payload)
+            self._handle_catalog_update(tenant_id, machine_id, payload)
 
     def _handle_heartbeat(self, machine_id: str):
         from app.database import SessionLocal
@@ -131,7 +189,7 @@ class MQTTService:
             db.close()
         logger.debug("Heartbeat from machine %s", machine_id)
 
-    def _handle_sync_request(self, merchant_id: str, machine_id: str, payload: dict):
+    def _handle_sync_request(self, tenant_id: str, machine_id: str, payload: dict):
         """POS asked to sync — tell it to pull catalog over HTTP (no payload on MQTT)."""
         from app.database import SessionLocal
         from app.services.sync import update_machine_sync_timestamp
@@ -144,19 +202,19 @@ class MQTTService:
 
         hint = "delta" if payload.get("lastSyncedAt") else "full"
         self.publish_catalog_notify(
-            merchant_id,
+            tenant_id,
             machine_id,
             reason="sync_request",
             hint=hint,
         )
         logger.info("Catalog notify sent to machine %s (hint=%s)", machine_id, hint)
 
-    def _handle_catalog_update(self, merchant_id: str, machine_id: str, payload: dict):
+    def _handle_catalog_update(self, tenant_id: str, machine_id: str, payload: dict):
         """POS → server catalog via MQTT is disabled; cloud is source of truth (use HTTP APIs)."""
         logger.info(
-            "Ignoring catalog/update from machine %s (use cloud APIs first); topic merchant=%s",
+            "Ignoring catalog/update from machine %s (use cloud APIs first); topic tenant=%s",
             machine_id,
-            merchant_id,
+            tenant_id,
         )
 
     # ── Publish helpers ───────────────────────────────────────────────────────
@@ -174,7 +232,7 @@ class MQTTService:
 
     def publish_catalog_notify(
         self,
-        merchant_id: str,
+        tenant_id: str,
         machine_id: str,
         *,
         reason: str = "catalog_changed",
@@ -183,7 +241,7 @@ class MQTTService:
         """
         Lightweight signal for POS to call GET /sync/{machine_id}/catalog.
         """
-        topic = f"pos/{merchant_id}/{machine_id}/catalog/notify"
+        topic = f"pos/{tenant_id}/{machine_id}/catalog/notify"
         body = {
             "serverTime": datetime.now(timezone.utc).isoformat(),
             "reason": reason,
@@ -194,7 +252,7 @@ class MQTTService:
 
     def publish_pos_users_notify(
         self,
-        merchant_id: str,
+        tenant_id: str,
         machine_id: str,
         *,
         reason: str = "pos_users_changed",
@@ -204,7 +262,7 @@ class MQTTService:
         Lightweight signal for POS to call GET /sync/{machine_id}/pos-users.
         Same body shape as catalog/notify so the POS handler is symmetrical.
         """
-        topic = f"pos/{merchant_id}/{machine_id}/pos-users/notify"
+        topic = f"pos/{tenant_id}/{machine_id}/pos-users/notify"
         body = {
             "serverTime": datetime.now(timezone.utc).isoformat(),
             "reason": reason,
@@ -215,7 +273,7 @@ class MQTTService:
 
     def publish_settings_notify(
         self,
-        merchant_id: str,
+        tenant_id: str,
         machine_id: str,
         *,
         reason: str = "settings_changed",
@@ -224,7 +282,7 @@ class MQTTService:
         """
         Lightweight signal for POS to call GET /sync/{machine_id}/settings.
         """
-        topic = f"pos/{merchant_id}/{machine_id}/settings/notify"
+        topic = f"pos/{tenant_id}/{machine_id}/settings/notify"
         body = {
             "serverTime": datetime.now(timezone.utc).isoformat(),
             "reason": reason,
@@ -233,8 +291,8 @@ class MQTTService:
             body["hint"] = hint
         self._publish(topic, body)
 
-    def _publish_ack(self, merchant_id: str, machine_id: str, local_id: Optional[str] = None):
-        topic = f"pos/{merchant_id}/{machine_id}/sync/ack"
+    def _publish_ack(self, tenant_id: str, machine_id: str, local_id: Optional[str] = None):
+        topic = f"pos/{tenant_id}/{machine_id}/sync/ack"
         self._publish(topic, {
             "serverTime": datetime.now(timezone.utc).isoformat(),
             "localId": local_id,

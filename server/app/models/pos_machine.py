@@ -20,7 +20,6 @@ class POSMachine(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True)
-    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True, index=True)
     distributor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     pairing_session_id = Column(UUID(as_uuid=True), ForeignKey("pairing_sessions.id"), nullable=True, index=True)
@@ -35,8 +34,6 @@ class POSMachine(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
-    # Relationships
-    merchant = relationship("Merchant", back_populates="machines")
     shop = relationship("Shop", back_populates="machines")
     distributor = relationship("User", foreign_keys=[distributor_id])
     products = relationship("Product", back_populates="pos_machine")

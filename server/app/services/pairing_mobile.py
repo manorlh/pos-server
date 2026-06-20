@@ -15,11 +15,12 @@ from app.models.device_pairing_request import DevicePairingRequest, DevicePairin
 from app.models.pairing_session import PairingSession
 from app.models.pos_machine import POSMachine
 from app.models.shop import Shop
-from app.models.user import User, UserRole
+from app.models.user import User
 from app.services.auth import create_machine_token, create_pairing_session_token
+from app.services.mqtt_broker import machine_mqtt_connection_info
 from app.services.pairing import (
     PairingAssignmentError,
-    assign_machine_to_merchant,
+    assign_machine_to_shop,
     create_pos_machine,
     resolve_pairing_assignment,
 )
@@ -46,18 +47,7 @@ def _generate_device_nonce() -> str:
 def build_machine_credentials_payload(machine: POSMachine) -> Dict[str, Any]:
     """Same shape as POST /pairing/validate response."""
     machine_token = create_machine_token(str(machine.id))
-    return {
-        "machineId": str(machine.id),
-        "machineCode": machine.machine_code,
-        "merchantId": str(machine.merchant_id) if machine.merchant_id else None,
-        "shopId": str(machine.shop_id) if machine.shop_id else None,
-        "accessToken": machine_token,
-        "mqttClientId": machine.mqtt_client_id,
-        "mqttUsername": machine.mqtt_client_id,
-        "mqttPassword": machine_token,
-        "apiUrl": settings.api_v1_prefix,
-        "mqttBrokerUrl": f"{settings.mqtt_broker_host}:{settings.mqtt_broker_port}",
-    }
+    return machine_mqtt_connection_info(machine=machine, access_token=machine_token)
 
 
 def build_mobile_url(session_token: str) -> str:
@@ -223,7 +213,7 @@ def claim_device_pairing(
         raise PairingMobileError("Device pairing request expired")
 
     try:
-        merchant_id, resolved_shop_id = resolve_pairing_assignment(
+        resolved_company_id, resolved_shop_id = resolve_pairing_assignment(
             db,
             session.tenant_id,
             company_id=company_id,
@@ -232,20 +222,15 @@ def claim_device_pairing(
     except PairingAssignmentError as exc:
         raise PairingMobileError(str(exc)) from exc
 
-    if merchant_id is None or resolved_shop_id is None:
+    if resolved_shop_id is None:
         raise PairingMobileError("shopId is required")
-
-    if distributor.role == UserRole.DISTRIBUTOR:
-        from app.models.merchant import Merchant
-
-        merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
-        if not merchant or merchant.distributor_id != distributor.id:
-            raise PairingMobileError("Access denied")
 
     company = db.query(Company).filter(Company.id == company_id).first()
     shop = db.query(Shop).filter(Shop.id == resolved_shop_id).first()
     if not company or not shop:
         raise PairingMobileError("Company or shop not found")
+    if company.tenant_id != session.tenant_id:
+        raise PairingMobileError("Access denied")
 
     resolved_machine_name = machine_name or row.machine_name
     pos_machine = create_pos_machine(
@@ -257,12 +242,7 @@ def claim_device_pairing(
         pairing_session_id=session.id,
     )
 
-    assigned = assign_machine_to_merchant(
-        db,
-        pos_machine.id,
-        merchant_id,
-        shop_id=resolved_shop_id,
-    )
+    assigned = assign_machine_to_shop(db, pos_machine.id, resolved_shop_id)
     if not assigned:
         raise PairingMobileError("Failed to assign machine")
 
@@ -273,7 +253,7 @@ def claim_device_pairing(
     row.credentials_payload = credentials
     row.claimed_at = _utcnow()
     session.machines_paired_count = (session.machines_paired_count or 0) + 1
-    session.default_company_id = company_id
+    session.default_company_id = resolved_company_id or company_id
     session.default_shop_id = resolved_shop_id
     db.commit()
     db.refresh(row)
@@ -324,17 +304,12 @@ def list_companies_for_pairing_session(
     session: PairingSession,
     distributor: User,
 ) -> List[Company]:
-    q = db.query(Company).filter(Company.tenant_id == session.tenant_id)
-    if distributor.role == UserRole.DISTRIBUTOR:
-        from app.models.merchant import Merchant
-
-        merchant_ids = (
-            db.query(Merchant.id)
-            .filter(Merchant.distributor_id == distributor.id, Merchant.tenant_id == session.tenant_id)
-            .subquery()
-        )
-        q = q.filter(Company.merchant_id.in_(merchant_ids))
-    return q.order_by(Company.name.asc()).all()
+    return (
+        db.query(Company)
+        .filter(Company.tenant_id == session.tenant_id)
+        .order_by(Company.name.asc())
+        .all()
+    )
 
 
 def list_shops_for_pairing_session(
@@ -346,14 +321,4 @@ def list_shops_for_pairing_session(
     q = db.query(Shop).filter(Shop.tenant_id == session.tenant_id)
     if company_id:
         q = q.filter(Shop.company_id == company_id)
-    if distributor.role == UserRole.DISTRIBUTOR:
-        from app.models.merchant import Merchant
-
-        merchant_ids = (
-            db.query(Merchant.id)
-            .filter(Merchant.distributor_id == distributor.id, Merchant.tenant_id == session.tenant_id)
-            .subquery()
-        )
-        company_ids = db.query(Company.id).filter(Company.merchant_id.in_(merchant_ids)).subquery()
-        q = q.filter(Shop.company_id.in_(company_ids))
     return q.order_by(Shop.name.asc()).all()

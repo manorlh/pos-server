@@ -32,7 +32,7 @@ router = APIRouter(tags=["settings"])
 COMPANY_SETTINGS_WRITE_ROLES = {
     UserRole.SUPER_ADMIN,
     UserRole.DISTRIBUTOR,
-    UserRole.MERCHANT_ADMIN,
+    UserRole.COMPANY_MANAGER,
     UserRole.COMPANY_MANAGER,
 }
 

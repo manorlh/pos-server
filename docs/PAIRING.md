@@ -129,12 +129,11 @@ Phone parses `nonce` and calls claim API; POS polls status by `nonce`.
 | PATCH | Pairing Session JWT | `/mobile/session` | Update default company/shop on session |
 | POST | Pairing Session JWT | `/mobile/claim` | Body: `deviceNonce`, `companyId`, **`shopId` required** |
 | POST | Public (rate limited) | `/device/register` | POS registers; returns `deviceNonce` |
-| GET | Public (rate limited) | `/device/{nonce}/status` | Poll: `waiting` or credentials once; then `410 Gone` |
+| GET | Public | `/device/{nonce}/status` | Poll: `waiting` or credentials once; then `410 Gone` |
 
 ### Rate limits (`server/app/middleware/rate_limit.py`)
 
-- `device/register`: 10/min per IP
-- `device/{nonce}/status`: 120/min per IP + per nonce
+- `device/register`: 100/min per IP
 - `mobile/claim`: 60/min per session `jti`
 
 ---

@@ -4,12 +4,12 @@ from typing import Optional
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.middleware.auth import get_current_user, get_active_tenant_id
 from app.models.pos_machine import POSMachine
+from app.models.shop import Shop
 from app.models.transaction import Transaction
 from app.models.user import User, UserRole
 from app.schemas.transaction import (
@@ -22,20 +22,16 @@ from app.schemas.transaction import (
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
 
-def _scope_by_user(query, current_user: User):
-    """Scope a Transaction query by RBAC. Returns None if user has no access."""
+def _scope_by_user(query, current_user: User, db: Session):
     if current_user.role == UserRole.SUPER_ADMIN:
         return query
     if current_user.role == UserRole.DISTRIBUTOR:
         return query.join(POSMachine, POSMachine.id == Transaction.machine_id).filter(
             POSMachine.distributor_id == current_user.id
         )
-    if current_user.role == UserRole.MERCHANT_ADMIN and current_user.merchant_id:
-        return query.filter(Transaction.merchant_id == current_user.merchant_id)
     if current_user.role == UserRole.COMPANY_MANAGER and current_user.company_id:
-        return query.join(POSMachine, POSMachine.id == Transaction.machine_id).filter(
-            POSMachine.merchant_id == current_user.merchant_id
-        )
+        shop_ids = db.query(Shop.id).filter(Shop.company_id == current_user.company_id)
+        return query.filter(Transaction.shop_id.in_(shop_ids))
     if current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER) and current_user.shop_id:
         return query.filter(Transaction.shop_id == current_user.shop_id)
     return None
@@ -53,9 +49,8 @@ def list_transactions(
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """List transactions (paginated, scoped by user RBAC). Default range: last 30 days."""
     query = db.query(Transaction).filter(Transaction.tenant_id == active_tenant_id)
-    query = _scope_by_user(query, current_user)
+    query = _scope_by_user(query, current_user, db)
     if query is None:
         return TransactionListResponse(page=page, page_size=page_size, total=0, items=[])
 
@@ -95,13 +90,12 @@ def get_transaction(
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """Single transaction with items."""
     query = (
         db.query(Transaction)
         .options(joinedload(Transaction.items))
         .filter(Transaction.id == transaction_id, Transaction.tenant_id == active_tenant_id)
     )
-    query = _scope_by_user(query, current_user)
+    query = _scope_by_user(query, current_user, db)
     if query is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
     tx = query.first()

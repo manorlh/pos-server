@@ -11,7 +11,6 @@ export interface User {
   email: string;
   username: string;
   role: UserRole;
-  merchantId?: string;
   companyId?: string;
   shopId?: string;
   isActive: boolean;
@@ -19,18 +18,8 @@ export interface User {
   updatedAt: string;
 }
 
-export interface Merchant {
-  id: string;
-  name: string;
-  distributorId: string;
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface Company {
   id: string;
-  merchantId: string;
   name: string;
   vatNumber?: string;
   address?: string;
@@ -61,7 +50,7 @@ export interface MobileContextResponse {
   machinesPairedCount: number;
   defaultCompanyId?: string | null;
   defaultShopId?: string | null;
-  companies: Array<{ id: string; name: string; merchantId: string }>;
+  companies: Array<{ id: string; name: string }>;
   shops: Array<{ id: string; name: string; companyId: string }>;
 }
 
@@ -132,7 +121,7 @@ export interface PosMachine {
   id: string;
   name: string;
   machineCode: string;
-  merchantId?: string;
+  tenantId?: string;
   shopId?: string;
   pairingStatus: 'unpaired' | 'paired' | 'assigned';
   mqttClientId?: string;
@@ -150,7 +139,6 @@ export type CatalogLevel = 'global' | 'local';
 
 export interface Category {
   id: string;
-  merchantId: string;
   companyId?: string;
   shopId?: string;
   catalogLevel: CatalogLevel;
@@ -167,7 +155,6 @@ export interface Category {
 
 export interface Product {
   id: string;
-  merchantId: string;
   companyId?: string;
   shopId?: string;
   categoryId: string;
@@ -243,7 +230,6 @@ export interface TransactionItem {
 export interface Transaction {
   id: string;
   machineId: string;
-  merchantId: string;
   shopId?: string;
   tradingDayId?: string;
   transactionNumber: string;
@@ -278,7 +264,6 @@ export interface TransactionListResponse {
 
 export interface TradingDay {
   id: string;
-  merchantId: string;
   machineId: string;
   shopId?: string;
   dayDate: string;
@@ -298,7 +283,6 @@ export interface ZReport {
   id: string;
   tradingDayId: string;
   machineId: string;
-  merchantId: string;
   shopId?: string;
   dayDate: string;
   totalSales?: number;
@@ -329,7 +313,6 @@ export type PosUserRole = 'cashier' | 'shop_manager';
 
 export interface PosUser {
   id: string;
-  merchantId: string;
   shopId: string;
   username: string;
   firstName?: string | null;

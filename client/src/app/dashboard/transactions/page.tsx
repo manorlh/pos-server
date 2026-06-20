@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { entitySelectItems } from '@/lib/selectItems';
 import {
   PosMachine,
   Shop,
@@ -111,7 +112,11 @@ export default function TransactionsPage() {
       <div className="rounded-lg border bg-card p-4 grid gap-3 md:grid-cols-4">
         <div className="space-y-1">
           <Label className="text-xs">{t('filterMachine')}</Label>
-          <Select value={machineId} onValueChange={(v) => { setMachineId(v ?? 'all'); setPage(1); }}>
+          <Select
+            value={machineId}
+            onValueChange={(v) => { setMachineId(v ?? 'all'); setPage(1); }}
+            items={[{ value: 'all', label: t('all') }, ...entitySelectItems(machines)]}
+          >
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">{t('all')}</SelectItem>
@@ -123,7 +128,11 @@ export default function TransactionsPage() {
         </div>
         <div className="space-y-1">
           <Label className="text-xs">{t('filterShop')}</Label>
-          <Select value={shopId} onValueChange={(v) => { setShopId(v ?? 'all'); setPage(1); }}>
+          <Select
+            value={shopId}
+            onValueChange={(v) => { setShopId(v ?? 'all'); setPage(1); }}
+            items={[{ value: 'all', label: t('all') }, ...entitySelectItems(shops)]}
+          >
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">{t('all')}</SelectItem>

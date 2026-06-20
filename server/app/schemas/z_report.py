@@ -64,8 +64,8 @@ class ZReportOut(BaseModel):
 
     id: uuid.UUID
     trading_day_id: uuid.UUID = Field(..., alias="tradingDayId")
+    tenant_id: Optional[uuid.UUID] = Field(None, alias="tenantId")
     machine_id: uuid.UUID = Field(..., alias="machineId")
-    merchant_id: uuid.UUID = Field(..., alias="merchantId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     day_date: date = Field(..., alias="dayDate")
     total_sales: Optional[Decimal] = Field(None, alias="totalSales")

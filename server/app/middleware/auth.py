@@ -9,11 +9,14 @@ from app.models.pos_machine import POSMachine
 from app.models.pairing_session import PairingSession
 from app.models.tenant_membership import TenantMembership
 from app.services.clerk_auth import verify_clerk_token
+from app.services.clerk_provision import resolve_clerk_user
+from app.config import get_settings
 from app.services.auth import decode_token, decode_jwt_payload
 from app.services.pairing_mobile import get_valid_pairing_session
 
 security = HTTPBearer()
 pairing_session_security = HTTPBearer(auto_error=True)
+settings = get_settings()
 
 
 def get_current_user(
@@ -50,20 +53,18 @@ def get_current_distributor(current_user: User = Depends(get_current_user)) -> U
     return current_user
 
 
-def get_current_merchant(current_user: User = Depends(get_current_user)) -> User:
+def get_current_machine_admin(current_user: User = Depends(get_current_user)) -> User:
     allowed = [
-        UserRole.MERCHANT_ADMIN, UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER,
+        UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER,
         UserRole.DISTRIBUTOR, UserRole.SUPER_ADMIN,
     ]
     if current_user.role not in allowed:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Merchant access required")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Machine admin access required")
     return current_user
 
 
 def _check_machine_access(user: User, machine: POSMachine):
     if user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
-        return
-    if user.role == UserRole.MERCHANT_ADMIN and machine.merchant_id == user.merchant_id:
         return
     if user.role == UserRole.COMPANY_MANAGER and machine.shop and machine.shop.company_id == user.company_id:
         return
@@ -114,17 +115,11 @@ def _resolve_user_from_bearer_token(token: str, db: Session) -> User:
     """Shared user resolution for Clerk and legacy username tokens (raises on failure)."""
     clerk_user_id = verify_clerk_token(token)
     if clerk_user_id:
-        user = db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
-        if user is None:
-            user = (
-                db.query(User)
-                .filter(User.clerk_user_id.is_(None), User.role == UserRole.SUPER_ADMIN)
-                .first()
-            )
-            if user:
-                user.clerk_user_id = clerk_user_id
-                db.commit()
-                db.refresh(user)
+        user = resolve_clerk_user(
+            db,
+            clerk_user_id,
+            allow_self_service=settings.allow_self_service_signup,
+        )
         if user is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

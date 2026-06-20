@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.middleware.auth import get_current_user, get_active_tenant_id
 from app.models.pos_machine import POSMachine
+from app.models.shop import Shop
 from app.models.user import User, UserRole
 from app.models.z_report import ZReport
 from app.schemas.z_report import ZReportListResponse, ZReportOut
@@ -17,19 +18,16 @@ from app.schemas.z_report import ZReportListResponse, ZReportOut
 router = APIRouter(prefix="/z-reports", tags=["z-reports"])
 
 
-def _scope_by_user(query, current_user: User):
+def _scope_by_user(query, current_user: User, db: Session):
     if current_user.role == UserRole.SUPER_ADMIN:
         return query
     if current_user.role == UserRole.DISTRIBUTOR:
         return query.join(POSMachine, POSMachine.id == ZReport.machine_id).filter(
             POSMachine.distributor_id == current_user.id
         )
-    if current_user.role == UserRole.MERCHANT_ADMIN and current_user.merchant_id:
-        return query.filter(ZReport.merchant_id == current_user.merchant_id)
     if current_user.role == UserRole.COMPANY_MANAGER and current_user.company_id:
-        return query.join(POSMachine, POSMachine.id == ZReport.machine_id).filter(
-            POSMachine.merchant_id == current_user.merchant_id
-        )
+        shop_ids = db.query(Shop.id).filter(Shop.company_id == current_user.company_id)
+        return query.filter(ZReport.shop_id.in_(shop_ids))
     if current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER) and current_user.shop_id:
         return query.filter(ZReport.shop_id == current_user.shop_id)
     return None
@@ -48,7 +46,7 @@ def list_z_reports(
     db: Session = Depends(get_db),
 ):
     query = db.query(ZReport).filter(ZReport.tenant_id == active_tenant_id)
-    query = _scope_by_user(query, current_user)
+    query = _scope_by_user(query, current_user, db)
     if query is None:
         return ZReportListResponse(page=page, page_size=page_size, total=0, items=[])
 
@@ -89,7 +87,7 @@ def get_z_report(
     db: Session = Depends(get_db),
 ):
     query = db.query(ZReport).filter(ZReport.id == z_report_id, ZReport.tenant_id == active_tenant_id)
-    query = _scope_by_user(query, current_user)
+    query = _scope_by_user(query, current_user, db)
     if query is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Z-report not found")
     z = query.first()

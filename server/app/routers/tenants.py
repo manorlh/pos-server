@@ -109,6 +109,7 @@ def create_tenant(
         timezone=body.timezone,
         default_currency=body.default_currency,
         locale=body.locale,
+        created_by_user_id=current_user.id,
     )
     db.add(tenant)
     db.flush()

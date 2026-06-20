@@ -17,14 +17,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, Settings2 } from 'lucide-react';
-import { useAuth } from '@/lib/auth';
 
 const EMPTY: Partial<Company> = { name: '', vatNumber: '', address: '', city: '' };
 
 export default function CompaniesPage() {
   const t = useTranslations('companies');
   const tc = useTranslations('common');
-  const { user } = useAuth();
   const qc = useQueryClient();
   const tps = useTranslations('posSettings');
   const [open, setOpen] = useState(false);
@@ -41,8 +39,7 @@ export default function CompaniesPage() {
 
   const save = useMutation({
     mutationFn: (c: Partial<Company>) => {
-      const payload = { ...c, merchantId: c.merchantId ?? user?.merchantId };
-      return c.id ? api.put(`/companies/${c.id}`, payload) : api.post('/companies', payload);
+      return c.id ? api.put(`/companies/${c.id}`, c) : api.post('/companies', c);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['companies'] });

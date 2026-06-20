@@ -73,7 +73,6 @@ class MobileCompanyRow(BaseModel):
 
     id: uuid.UUID
     name: str
-    merchant_id: uuid.UUID = Field(..., alias="merchantId")
 
 
 class MobileShopRow(BaseModel):

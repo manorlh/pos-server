@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
-from app.models.company import Company
 from app.models.pos_user import PosUser, PosUserRole
 from app.models.shop import Shop
 from app.models.user import User, UserRole
@@ -45,10 +44,6 @@ def _check_read(user: User, shop: Shop, db: Session) -> None:
         return
     if user.role == UserRole.DISTRIBUTOR:
         return
-    if user.role == UserRole.MERCHANT_ADMIN:
-        company = db.query(Company).filter(Company.id == shop.company_id).first()
-        if company and company.merchant_id == user.merchant_id:
-            return
     if user.role == UserRole.COMPANY_MANAGER and shop.company_id == user.company_id:
         return
     if user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER) and shop.id == user.shop_id:
@@ -61,13 +56,6 @@ def _check_write(user: User, shop: Shop, db: Session) -> None:
     if user.role == UserRole.CASHIER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
     _check_read(user, shop, db)
-
-
-def _resolve_merchant_id_for_shop(db: Session, shop: Shop) -> uuid_mod.UUID:
-    company = db.query(Company).filter(Company.id == shop.company_id).first()
-    if not company or not company.merchant_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Shop has no merchant")
-    return company.merchant_id
 
 
 # ── List / Create ────────────────────────────────────────────────────────────
@@ -106,7 +94,6 @@ def create_pos_user(
     shop = _get_shop_or_404(db, shop_id)
     ensure_same_tenant(shop.tenant_id, active_tenant_id)
     _check_write(current_user, shop, db)
-    merchant_id = _resolve_merchant_id_for_shop(db, shop)
 
     existing = (
         db.query(PosUser)
@@ -133,7 +120,6 @@ def create_pos_user(
 
     user = PosUser(
         tenant_id=active_tenant_id,
-        merchant_id=merchant_id,
         shop_id=shop.id,
         username=data.username,
         first_name=data.first_name,

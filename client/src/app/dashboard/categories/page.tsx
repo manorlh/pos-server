@@ -15,14 +15,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
-import { useAuth } from '@/lib/auth';
 
 const EMPTY: Partial<Category> = { name: '', description: '', color: '#6366f1', catalogLevel: 'global' };
 
 export default function CategoriesPage() {
   const t = useTranslations('categories');
   const tc = useTranslations('common');
-  const { user } = useAuth();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Partial<Category>>(EMPTY);
@@ -35,8 +33,7 @@ export default function CategoriesPage() {
 
   const save = useMutation({
     mutationFn: (c: Partial<Category>) => {
-      const payload = { ...c, merchantId: c.merchantId ?? user?.merchantId };
-      return c.id ? api.put(`/categories/${c.id}`, payload) : api.post('/categories', payload);
+      return c.id ? api.put(`/categories/${c.id}`, c) : api.post('/categories', c);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['categories'] });

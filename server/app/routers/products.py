@@ -6,26 +6,23 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.product import Product, CatalogLevel
 from app.models.category import Category
-from app.models.merchant import Merchant
 from app.models.user import User, UserRole
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
-from app.services.catalog_notify import notify_all_machines_for_merchant, notify_machine_catalog_changed
+from app.services.catalog_notify import notify_all_machines_for_tenant, notify_machine_catalog_changed
 from app.services.sku_sequence import resolve_sku_for_create
 from app.services.tenant_sku_sequence import allocate_global_sku
 
 router = APIRouter(prefix="/products", tags=["products"])
 
-_MERCHANT_ROLES = (
+_CATALOG_ROLES = (
     UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR,
-    UserRole.MERCHANT_ADMIN, UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER,
+    UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER,
 )
 
 
 def _check_product_access(user: User, product: Product):
     if user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
-        return
-    if user.role == UserRole.MERCHANT_ADMIN and product.merchant_id == user.merchant_id:
         return
     if user.role == UserRole.COMPANY_MANAGER and product.company_id == user.company_id:
         return
@@ -35,20 +32,19 @@ def _check_product_access(user: User, product: Product):
 
 
 def _trigger_catalog_notify(db: Session, product: Product):
-    mid = str(product.merchant_id) if product.merchant_id else None
-    if not mid:
+    tid = str(product.tenant_id) if product.tenant_id else None
+    if not tid:
         return
     if product.pos_machine_id:
-        notify_machine_catalog_changed(mid, str(product.pos_machine_id), reason="product_change")
+        notify_machine_catalog_changed(tid, str(product.pos_machine_id), reason="product_change")
     else:
-        notify_all_machines_for_merchant(db, mid, reason="product_change")
+        notify_all_machines_for_tenant(db, tid, reason="product_change")
 
 
 @router.get("", response_model=List[ProductResponse])
 def list_products(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=200),
-    merchant_id: Optional[str] = Query(None, alias="merchantId"),
     company_id: Optional[str] = Query(None, alias="companyId"),
     shop_id: Optional[str] = Query(None, alias="shopId"),
     pos_machine_id: Optional[str] = Query(None, alias="posMachineId"),
@@ -62,15 +58,11 @@ def list_products(
 ):
     query = db.query(Product).filter(Product.tenant_id == active_tenant_id)
 
-    if current_user.role == UserRole.MERCHANT_ADMIN:
-        query = query.filter(Product.merchant_id == current_user.merchant_id)
-    elif current_user.role == UserRole.COMPANY_MANAGER:
+    if current_user.role == UserRole.COMPANY_MANAGER:
         query = query.filter(Product.company_id == current_user.company_id)
     elif current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
         query = query.filter(Product.shop_id == current_user.shop_id)
 
-    if merchant_id:
-        query = query.filter(Product.merchant_id == merchant_id)
     if company_id:
         query = query.filter(Product.company_id == company_id)
     if shop_id:
@@ -104,19 +96,10 @@ def create_product(
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    if current_user.role not in _MERCHANT_ROLES:
+    if current_user.role not in _CATALOG_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
-    merchant_id = data.merchant_id or current_user.merchant_id
-    if not merchant_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="merchantId is required")
-
-    merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
-    if not merchant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merchant not found")
-    ensure_same_tenant(merchant.tenant_id, active_tenant_id)
-
-    final_sku, sku_auto_assigned = resolve_sku_for_create(db, merchant_id, data.sku)
+    final_sku, sku_auto_assigned = resolve_sku_for_create(db, active_tenant_id, data.sku)
 
     global_sku = None
     if data.catalog_level == CatalogLevel.GLOBAL or data.catalog_level == "global":
@@ -127,10 +110,11 @@ def create_product(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Category not found")
     ensure_same_tenant(category.tenant_id, active_tenant_id)
 
+    company_id = data.company_id or current_user.company_id
+
     product = Product(
         tenant_id=active_tenant_id,
-        merchant_id=merchant_id,
-        company_id=data.company_id,
+        company_id=company_id,
         shop_id=data.shop_id,
         pos_machine_id=data.pos_machine_id,
         category_id=data.category_id,
@@ -180,7 +164,7 @@ def update_product(
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    if current_user.role not in _MERCHANT_ROLES:
+    if current_user.role not in _CATALOG_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
     product = db.query(Product).filter(Product.id == product_id).first()
@@ -211,13 +195,13 @@ def update_product(
         new_sku = str(updates["sku"]).strip()
         if new_sku != product.sku:
             if db.query(Product).filter(
-                Product.merchant_id == product.merchant_id,
+                Product.tenant_id == product.tenant_id,
                 Product.sku == new_sku,
                 Product.id != product.id,
             ).first():
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="SKU already exists for this merchant",
+                    detail="SKU already exists for this tenant",
                 )
         updates["sku"] = new_sku
 
@@ -237,7 +221,7 @@ def delete_product(
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    if current_user.role not in _MERCHANT_ROLES:
+    if current_user.role not in _CATALOG_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
     product = db.query(Product).filter(Product.id == product_id).first()
@@ -246,14 +230,14 @@ def delete_product(
     ensure_same_tenant(product.tenant_id, active_tenant_id)
     _check_product_access(current_user, product)
 
-    merchant_id = str(product.merchant_id) if product.merchant_id else None
+    tenant_id = str(product.tenant_id) if product.tenant_id else None
     machine_id = str(product.pos_machine_id) if product.pos_machine_id else None
 
     db.delete(product)
     db.commit()
 
-    if merchant_id:
+    if tenant_id:
         if machine_id:
-            notify_machine_catalog_changed(merchant_id, machine_id, reason="product_deleted")
+            notify_machine_catalog_changed(tenant_id, machine_id, reason="product_deleted")
         else:
-            notify_all_machines_for_merchant(db, merchant_id, reason="product_deleted")
+            notify_all_machines_for_tenant(db, tenant_id, reason="product_deleted")

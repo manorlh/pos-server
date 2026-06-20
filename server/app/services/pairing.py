@@ -6,12 +6,11 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models.pairing_code import PairingCode
 from app.models.pos_machine import POSMachine, PairingStatus
-from app.models.merchant import Merchant
 from app.models.company import Company
 from app.models.shop import Shop
 from app.models.user import User
 from app.models.tenant_membership import TenantMembership
-from app.services.shop_validation import shop_belongs_to_merchant
+from app.services.shop_validation import shop_belongs_to_company
 import uuid
 
 settings = get_settings()
@@ -45,7 +44,7 @@ def resolve_pairing_assignment(
 ) -> Tuple[Optional[uuid.UUID], Optional[uuid.UUID]]:
     """
     Resolve optional pre-assignment from dashboard company/shop picks.
-    Returns (merchant_id, shop_id) or (None, None) when neither is set.
+    Returns (company_id, shop_id) or (None, None) when neither is set.
     """
     if company_id is None and shop_id is None:
         return None, None
@@ -61,14 +60,14 @@ def resolve_pairing_assignment(
             raise PairingAssignmentError("Shop does not belong to this company")
         if company.tenant_id != tenant_id:
             raise PairingAssignmentError("tenant_forbidden")
-        return company.merchant_id, shop_id
+        return shop.company_id, shop_id
 
     company = db.query(Company).filter(Company.id == company_id).first()
     if not company:
         raise PairingAssignmentError("Company not found")
     if company.tenant_id != tenant_id:
         raise PairingAssignmentError("tenant_forbidden")
-    return company.merchant_id, None
+    return company_id, None
 
 
 def generate_pairing_code(length: int = None) -> str:
@@ -83,17 +82,17 @@ def create_pairing_code(
     db: Session,
     distributor_id: uuid.UUID,
     tenant_id: Optional[uuid.UUID] = None,
-    merchant_id: Optional[uuid.UUID] = None,
+    company_id: Optional[uuid.UUID] = None,
     shop_id: Optional[uuid.UUID] = None,
 ) -> PairingCode:
-    """Create a new pairing code, optionally with merchant/shop pre-assignment."""
+    """Create a new pairing code, optionally with company/shop pre-assignment."""
     code = generate_pairing_code()
     while db.query(PairingCode).filter(PairingCode.code == code).first():
         code = generate_pairing_code()
 
-    if shop_id is not None and merchant_id is not None:
-        if not shop_belongs_to_merchant(db, shop_id, merchant_id):
-            raise PairingAssignmentError("Shop does not belong to this merchant")
+    if shop_id is not None and company_id is not None:
+        if not shop_belongs_to_company(db, shop_id, company_id):
+            raise PairingAssignmentError("Shop does not belong to this company")
 
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.pairing_code_expiry_minutes)
 
@@ -101,7 +100,7 @@ def create_pairing_code(
         code=code,
         distributor_id=distributor_id,
         tenant_id=tenant_id,
-        merchant_id=merchant_id,
+        company_id=company_id,
         shop_id=shop_id,
         expires_at=expires_at,
         is_used=False,
@@ -149,12 +148,11 @@ def validate_pairing_code(
     db.commit()
     db.refresh(pos_machine)
 
-    if pairing_code.merchant_id:
-        assigned = assign_machine_to_merchant(
+    if pairing_code.shop_id:
+        assigned = assign_machine_to_shop(
             db,
             pos_machine.id,
-            pairing_code.merchant_id,
-            shop_id=pairing_code.shop_id,
+            pairing_code.shop_id,
         )
         if assigned:
             pos_machine = assigned
@@ -171,7 +169,7 @@ def create_pos_machine(
     machine_name: Optional[str] = None,
     pairing_session_id: Optional[uuid.UUID] = None,
 ) -> POSMachine:
-    """Create a new POS machine row in PAIRED status (not yet assigned to merchant)."""
+    """Create a new POS machine row in PAIRED status (not yet assigned to a shop)."""
     machine_code = f"MACHINE-{uuid.uuid4().hex[:8].upper()}"
     while db.query(POSMachine).filter(POSMachine.machine_code == machine_code).first():
         machine_code = f"MACHINE-{uuid.uuid4().hex[:8].upper()}"
@@ -196,13 +194,12 @@ def create_pos_machine(
     return pos_machine
 
 
-def assign_machine_to_merchant(
+def assign_machine_to_shop(
     db: Session,
     machine_id: uuid.UUID,
-    merchant_id: uuid.UUID,
-    shop_id: Optional[uuid.UUID] = None,
+    shop_id: uuid.UUID,
 ) -> Optional[POSMachine]:
-    """Assign a paired machine to a merchant and optionally a shop."""
+    """Assign a paired machine to a shop."""
     machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
     if not machine:
         return None
@@ -210,10 +207,13 @@ def assign_machine_to_merchant(
     if machine.pairing_status != PairingStatus.PAIRED:
         return None
 
-    machine.merchant_id = merchant_id
-    merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
-    machine.tenant_id = merchant.tenant_id if merchant else machine.tenant_id
+    shop = db.query(Shop).filter(Shop.id == shop_id).first()
+    if not shop:
+        return None
+
     machine.shop_id = shop_id
+    if shop.tenant_id:
+        machine.tenant_id = shop.tenant_id
     machine.pairing_status = PairingStatus.ASSIGNED
     db.commit()
     db.refresh(machine)
