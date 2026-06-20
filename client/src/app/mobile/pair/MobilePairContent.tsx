@@ -30,12 +30,12 @@ export function MobilePairContent() {
   const [ctx, setCtx] = useState<MobileContextResponse | null>(null);
   const [companyId, setCompanyId] = useState('');
   const [shopId, setShopId] = useState('');
+  const [machineName, setMachineName] = useState('');
   const [scanOpen, setScanOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [claims, setClaims] = useState<ClaimRow[]>([]);
   const [pendingConfirm, setPendingConfirm] = useState<{ nonce: string } | null>(null);
-  const [confirmMachineName, setConfirmMachineName] = useState('');
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const [, setTick] = useState(0);
 
@@ -113,6 +113,10 @@ export function MobilePairContent() {
       setMessage('בחר חברה וסניף לפני הסריקה');
       return;
     }
+    if (!machineName.trim()) {
+      setMessage('יש להזין שם לקופה לפני הסריקה');
+      return;
+    }
     setMessage(null);
     setScanOpen(true);
     await new Promise((r) => setTimeout(r, 150));
@@ -127,7 +131,6 @@ export function MobilePairContent() {
           try {
             const parsed = JSON.parse(decoded.trim()) as { nonce?: string };
             if (!parsed.nonce) throw new Error('invalid');
-            setConfirmMachineName('');
             setPendingConfirm({ nonce: parsed.nonce });
           } catch {
             setMessage('QR לא תקין או פג תוקף');
@@ -140,7 +143,7 @@ export function MobilePairContent() {
 
   const confirmClaim = async () => {
     if (!pendingConfirm || !companyId || !shopId) return;
-    const name = confirmMachineName.trim();
+    const name = machineName.trim();
     if (!name) {
       setMessage('יש להזין שם לקופה');
       return;
@@ -156,7 +159,7 @@ export function MobilePairContent() {
       });
       setClaims((prev) => [{ ...res, machineName: name, at: new Date().toISOString() }, ...prev]);
       setPendingConfirm(null);
-      setConfirmMachineName('');
+      setMachineName('');
       void loadContext(companyId);
       setMessage(`✓ ${name} (${res.machineCode}) — ${res.shopName}`);
     } catch (e) {
@@ -235,10 +238,25 @@ export function MobilePairContent() {
             </SelectContent>
           </Select>
         </div>
+        <div className="space-y-2">
+          <Label htmlFor="machine-name">שם הקופה</Label>
+          <Input
+            id="machine-name"
+            value={machineName}
+            onChange={(e) => setMachineName(e.target.value)}
+            placeholder="לדוגמה: קופה ראשית"
+            disabled={busy || scanOpen || !!pendingConfirm}
+            autoComplete="off"
+          />
+        </div>
       </div>
 
       {!scanOpen && !pendingConfirm ? (
-        <Button className="w-full h-14 text-lg" onClick={() => void startScanner()} disabled={busy}>
+        <Button
+          className="w-full h-14 text-lg"
+          onClick={() => void startScanner()}
+          disabled={busy || !companyId || !shopId || !machineName.trim()}
+        >
           סרוק QR מהקופה
         </Button>
       ) : null}
@@ -258,32 +276,21 @@ export function MobilePairContent() {
           <p className="text-sm text-muted-foreground">
             {companyName} — {shopName}
           </p>
-          <div className="space-y-2">
-            <Label htmlFor="confirm-machine-name">שם הקופה</Label>
-            <Input
-              id="confirm-machine-name"
-              value={confirmMachineName}
-              onChange={(e) => setConfirmMachineName(e.target.value)}
-              placeholder="לדוגמה: קופה ראשית"
-              disabled={busy}
-              autoFocus
-            />
-          </div>
+          <p className="text-sm">
+            שם הקופה: <span className="font-medium">{machineName.trim()}</span>
+          </p>
           <div className="flex gap-2">
             <Button
               className="flex-1"
               onClick={() => void confirmClaim()}
-              disabled={busy || !confirmMachineName.trim()}
+              disabled={busy || !machineName.trim()}
             >
               {busy ? 'משייך...' : 'אשר'}
             </Button>
             <Button
               variant="outline"
               className="flex-1"
-              onClick={() => {
-                setPendingConfirm(null);
-                setConfirmMachineName('');
-              }}
+              onClick={() => setPendingConfirm(null)}
             >
               ביטול
             </Button>
