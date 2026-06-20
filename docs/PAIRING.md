@@ -147,7 +147,8 @@ PAIRING_CODE_LENGTH=8
 PAIRING_CODE_EXPIRY_MINUTES=15
 PAIRING_SESSION_EXPIRE_HOURS=12
 DEVICE_PAIRING_NONCE_EXPIRE_MINUTES=15
-PAIRING_MOBILE_APP_BASE_URL=http://localhost:3002   # Client origin for Session QR links
+PAIRING_MOBILE_APP_BASE_URL=https://pos-cloud-app.vercel.app   # Client origin for Session QR links
+CORS_ORIGINS=["https://pos-cloud-app.vercel.app","http://localhost:3000","http://localhost:3002"]
 JWT_SECRET_KEY=...
 ```
 
@@ -257,7 +258,7 @@ UNPAIRED → (validate/claim) → PAIRED → (assign) → ASSIGNED
 3. Restart **API** after code deploy (pre-assign bug was “old server ignored body” — same class of issue)
 4. Rebuild/restart **client** (`npm run dev` port 3002 by default)
 5. Rebuild **pos-desktop** for QR onboarding + new IPC
-6. CORS: client origin in `CORS_ORIGINS` if API and client differ
+6. CORS: `https://pos-cloud-app.vercel.app` in `CORS_ORIGINS` on Fly
 
 ---
 
