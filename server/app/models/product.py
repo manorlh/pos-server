@@ -45,6 +45,8 @@ class Product(Base):
     stock_quantity = Column(Integer, default=0, nullable=False)
     barcode = Column(String(100), nullable=True)
     tax_rate = Column(Numeric(5, 2), nullable=True)
+    voucher_id = Column(UUID(as_uuid=True), ForeignKey("vouchers.id"), nullable=True, index=True)
+    track_stock = Column(Boolean, default=False, nullable=False, server_default="false")
 
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
@@ -54,3 +56,4 @@ class Product(Base):
     pos_machine = relationship("POSMachine", back_populates="products")
     category = relationship("Category", back_populates="products")
     global_product = relationship("Product", remote_side="Product.id")
+    voucher = relationship("Voucher", back_populates="products")

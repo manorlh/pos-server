@@ -1,6 +1,6 @@
 """POS till settings v1 — keys align with pos-desktop SQLite `settings` table."""
 from datetime import datetime
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -15,6 +15,17 @@ class PosSettingsV1Patch(BaseModel):
     nayax_device_host: Optional[str] = Field(None, alias="nayaxDeviceHost")
     nayax_device_port: Optional[str] = Field(None, alias="nayaxDevicePort")
     nayax_spicy_path: Optional[str] = Field(None, alias="nayaxSpicyPath")
+    out_of_stock_policy: Optional[Literal["block", "warn", "allow"]] = Field(
+        None, alias="outOfStockPolicy"
+    )
+    tips_enabled: Optional[bool] = Field(None, alias="tipsEnabled")
+    cash_tips_enabled: Optional[bool] = Field(None, alias="cashTipsEnabled")
+    tip_presets: Optional[List[int]] = Field(None, alias="tipPresets")
+    tip_distribution: Optional[Literal["direct", "equal_pool", "by_sales"]] = Field(
+        None, alias="tipDistribution"
+    )
+    receipt_printer_name: Optional[str] = Field(None, alias="receiptPrinterName")
+    drawer_printer_name: Optional[str] = Field(None, alias="drawerPrinterName")
     business_info: Optional[Dict[str, Any]] = Field(None, alias="businessInfo")
 
     class Config:

@@ -13,7 +13,9 @@ from app.models.user import User, UserRole
 from app.schemas.shop import ShopCreate, ShopUpdate, ShopResponse
 from app.schemas.shop_product_override import (
     ShopProductCatalogCandidate,
+    ShopProductCatalogCandidateListResponse,
     ShopProductCatalogRow,
+    ShopProductCatalogRowListResponse,
     ShopProductOverrideUpsert,
     ShopProductOverrideWriteResponse,
 )
@@ -29,6 +31,19 @@ from app.services.settings_notify import notify_machines_for_shop_settings
 router = APIRouter(prefix="/shops", tags=["shops"])
 
 _SHOP_PROFILE_FIELDS = frozenset({"name", "branch_id", "address", "city"})
+
+
+def _global_product_company_scope(shop: Shop):
+    """Tenant-wide catalog (company_id null) or products scoped to the shop's company."""
+    return or_(Product.company_id.is_(None), Product.company_id == shop.company_id)
+
+
+def _global_product_allowed_for_shop(product: Product, shop: Shop) -> bool:
+    if product.tenant_id != shop.tenant_id:
+        return False
+    if product.company_id is None:
+        return True
+    return product.company_id == shop.company_id
 
 
 def _check_shop_access(user: User, shop: Shop, db: Session):
@@ -52,11 +67,11 @@ def _check_shop_override_write(user: User, shop: Shop, db: Session) -> None:
     _check_shop_access(user, shop, db)
 
 
-@router.get("/{shop_id}/product-overrides", response_model=List[ShopProductCatalogRow])
+@router.get("/{shop_id}/product-overrides", response_model=ShopProductCatalogRowListResponse)
 def list_shop_product_overrides(
     shop_id: str,
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=200),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=200, alias="pageSize"),
     current_user: User = Depends(get_current_user),
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -72,24 +87,28 @@ def list_shop_product_overrides(
     if not company:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Company not found")
 
-    q = (
+    base_q = (
         db.query(ShopProductOverride, Product)
         .join(Product, Product.id == ShopProductOverride.global_product_id)
         .filter(
             ShopProductOverride.shop_id == shop.id,
             Product.tenant_id == shop.tenant_id,
-            Product.company_id == shop.company_id,
+            _global_product_company_scope(shop),
             Product.catalog_level == CatalogLevel.GLOBAL,
             Product.pos_machine_id.is_(None),
         )
-        .order_by(Product.name)
-        .offset(skip)
-        .limit(limit)
+    )
+    total = base_q.count()
+    page_rows = (
+        base_q.order_by(Product.name)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
     )
 
-    rows: List[ShopProductCatalogRow] = []
-    for ovr, p in q.all():
-        rows.append(
+    items: List[ShopProductCatalogRow] = []
+    for ovr, p in page_rows:
+        items.append(
             ShopProductCatalogRow(
                 global_product_id=p.id,
                 name=p.name,
@@ -101,20 +120,20 @@ def list_shop_product_overrides(
                 is_available=ovr.is_available,
             )
         )
-    return rows
+    return ShopProductCatalogRowListResponse(page=page, page_size=page_size, total=total, items=items)
 
 
-@router.get("/{shop_id}/product-catalog-candidates", response_model=List[ShopProductCatalogCandidate])
+@router.get("/{shop_id}/product-catalog-candidates", response_model=ShopProductCatalogCandidateListResponse)
 def list_shop_product_catalog_candidates(
     shop_id: str,
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=200),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=200, alias="pageSize"),
     search: Optional[str] = Query(None, description="Filter by name or SKU (contains, case-insensitive)"),
     current_user: User = Depends(get_current_user),
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """Global products for this company **not** yet assigned to the shop (library for Add)."""
+    """Global products for this shop's company (or tenant-wide) not yet assigned (library for Add)."""
     shop = db.query(Shop).filter(Shop.id == shop_id).first()
     if not shop:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
@@ -132,7 +151,7 @@ def list_shop_product_catalog_candidates(
 
     q = db.query(Product).filter(
         Product.tenant_id == shop.tenant_id,
-        Product.company_id == shop.company_id,
+        _global_product_company_scope(shop),
         Product.catalog_level == CatalogLevel.GLOBAL,
         Product.pos_machine_id.is_(None),
         ~Product.id.in_(assigned_ids),
@@ -140,18 +159,30 @@ def list_shop_product_catalog_candidates(
     if search and search.strip():
         term = f"%{search.strip()}%"
         q = q.filter(or_(Product.name.ilike(term), Product.sku.ilike(term)))
-    q = q.order_by(Product.name).offset(skip).limit(limit)
 
-    return [
-        ShopProductCatalogCandidate(
-            global_product_id=p.id,
-            name=p.name,
-            sku=p.sku,
-            category_id=p.category_id,
-            global_price=float(p.price),
-        )
-        for p in q.all()
-    ]
+    total = q.count()
+    products = (
+        q.order_by(Product.name)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    return ShopProductCatalogCandidateListResponse(
+        page=page,
+        page_size=page_size,
+        total=total,
+        items=[
+            ShopProductCatalogCandidate(
+                global_product_id=p.id,
+                name=p.name,
+                sku=p.sku,
+                category_id=p.category_id,
+                global_price=float(p.price),
+            )
+            for p in products
+        ],
+    )
 
 
 @router.post(
@@ -179,7 +210,7 @@ def assign_shop_product(
     g = db.query(Product).filter(Product.id == global_product_id).first()
     if not g or g.catalog_level != CatalogLevel.GLOBAL or g.pos_machine_id is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Global product not found")
-    if g.tenant_id != shop.tenant_id or g.company_id != shop.company_id:
+    if not _global_product_allowed_for_shop(g, shop):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Product not in shop company")
 
     ovr = (
@@ -272,7 +303,7 @@ def upsert_shop_product_override(
     g = db.query(Product).filter(Product.id == global_product_id).first()
     if not g or g.catalog_level != CatalogLevel.GLOBAL or g.pos_machine_id is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Global product not found")
-    if g.tenant_id != shop.tenant_id or g.company_id != shop.company_id:
+    if not _global_product_allowed_for_shop(g, shop):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Product not in shop company")
 
     payload = body.model_dump(exclude_unset=True, by_alias=False)

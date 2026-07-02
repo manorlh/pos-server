@@ -10,6 +10,7 @@ from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.routers.companies import _check_company_access
 from app.routers.shops import _check_shop_access
+from app.routers.tenants import _can_manage_tenant
 from app.schemas.pos_settings import (
     EntitySettingsResponse,
     PosSettingsV1Patch,
@@ -25,6 +26,7 @@ from app.services.settings_merge import (
 from app.services.settings_notify import (
     notify_machines_for_company_settings,
     notify_machines_for_shop_settings,
+    notify_machines_for_tenant_settings,
 )
 
 router = APIRouter(tags=["settings"])
@@ -49,6 +51,62 @@ def _check_shop_settings_write(user: User, shop: Shop, db: Session) -> None:
     if user.role == UserRole.CASHIER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
     _check_shop_access(user, shop, db)
+
+
+@router.get(
+    "/tenants/{tenant_id}/settings",
+    response_model=EntitySettingsResponse,
+    response_model_by_alias=True,
+)
+def get_tenant_settings(
+    tenant_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    if not _can_manage_tenant(current_user, tenant.id, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+    return EntitySettingsResponse(
+        settings=tenant.settings or {},
+        settings_updated_at=tenant.settings_updated_at,
+    )
+
+
+@router.patch(
+    "/tenants/{tenant_id}/settings",
+    response_model=EntitySettingsResponse,
+    response_model_by_alias=True,
+)
+def patch_tenant_settings(
+    tenant_id: str,
+    data: PosSettingsV1Patch,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    if not _can_manage_tenant(current_user, tenant.id, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+
+    patch = patch_to_camel_dict(data)
+    if not patch:
+        return EntitySettingsResponse(
+            settings=tenant.settings or {},
+            settings_updated_at=tenant.settings_updated_at,
+        )
+
+    tenant.settings = patch_settings_json(tenant.settings, patch)
+    tenant.settings_updated_at = utc_now()
+    db.commit()
+    db.refresh(tenant)
+    notify_machines_for_tenant_settings(db, str(tenant.id), reason="tenant_settings_updated")
+    return EntitySettingsResponse(
+        settings=tenant.settings or {},
+        settings_updated_at=tenant.settings_updated_at,
+    )
 
 
 @router.get(

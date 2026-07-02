@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, Literal
+from typing import List, Optional, Literal
 import uuid
 from decimal import Decimal
 from datetime import datetime
@@ -16,6 +16,8 @@ class ProductBase(BaseModel):
     stock_quantity: int = Field(0, ge=0, alias="stockQuantity")
     barcode: Optional[str] = None
     tax_rate: Optional[Decimal] = Field(None, ge=0, alias="taxRate")
+    voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
+    track_stock: bool = Field(False, alias="trackStock")
 
     @field_validator("name", "sku")
     @classmethod
@@ -49,6 +51,8 @@ class ProductUpdate(BaseModel):
     barcode: Optional[str] = None
     tax_rate: Optional[Decimal] = Field(None, ge=0, alias="taxRate")
     is_local_override: Optional[bool] = Field(None, alias="isLocalOverride")
+    voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
+    track_stock: Optional[bool] = Field(None, alias="trackStock")
 
     @field_validator("name", "sku")
     @classmethod
@@ -83,9 +87,21 @@ class ProductResponse(BaseModel):
     stock_quantity: int = Field(..., alias="stockQuantity")
     barcode: Optional[str]
     tax_rate: Optional[Decimal] = Field(None, alias="taxRate")
+    voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
+    track_stock: bool = Field(False, alias="trackStock")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 
     class Config:
         from_attributes = True
+        populate_by_name = True
+
+
+class ProductListResponse(BaseModel):
+    page: int
+    page_size: int = Field(..., alias="pageSize")
+    total: int
+    items: List[ProductResponse]
+
+    class Config:
         populate_by_name = True

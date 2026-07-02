@@ -20,6 +20,7 @@ import paho.mqtt.client as mqtt
 
 from app.config import get_settings
 from app.services.mqtt_broker import apply_mqtt_tls
+from app.observability.context import reset_request_context, set_request_context
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -166,17 +167,21 @@ class MQTTService:
 
         _, tenant_id, machine_id, msg_type = parts[0], parts[1], parts[2], parts[3]
 
-        if msg_type == "heartbeat":
-            self._handle_heartbeat(machine_id)
-            return
-        if len(parts) < 5:
-            return
-        sub = parts[4]
+        tokens = set_request_context(tenant_id=tenant_id, machine_id=machine_id)
+        try:
+            if msg_type == "heartbeat":
+                self._handle_heartbeat(machine_id)
+                return
+            if len(parts) < 5:
+                return
+            sub = parts[4]
 
-        if msg_type == "sync" and sub == "request":
-            self._handle_sync_request(tenant_id, machine_id, payload)
-        elif msg_type == "catalog" and sub == "update":
-            self._handle_catalog_update(tenant_id, machine_id, payload)
+            if msg_type == "sync" and sub == "request":
+                self._handle_sync_request(tenant_id, machine_id, payload)
+            elif msg_type == "catalog" and sub == "update":
+                self._handle_catalog_update(tenant_id, machine_id, payload)
+        finally:
+            reset_request_context(tokens)
 
     def _handle_heartbeat(self, machine_id: str):
         from app.database import SessionLocal
@@ -289,6 +294,25 @@ class MQTTService:
         }
         if hint:
             body["hint"] = hint
+        self._publish(topic, body)
+
+    def publish_close_day_notify(
+        self,
+        tenant_id: str,
+        machine_id: str,
+        request_id: str,
+        initiated_by: str,
+        message: Optional[str] = None,
+    ):
+        """Signal POS to open close-day flow for a cloud-initiated request."""
+        topic = f"pos/{tenant_id}/{machine_id}/close-day/notify"
+        body = {
+            "requestId": request_id,
+            "serverTime": datetime.now(timezone.utc).isoformat(),
+            "initiatedBy": initiated_by,
+        }
+        if message:
+            body["message"] = message
         self._publish(topic, body)
 
     def _publish_ack(self, tenant_id: str, machine_id: str, local_id: Optional[str] = None):

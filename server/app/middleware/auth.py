@@ -13,10 +13,22 @@ from app.services.clerk_provision import resolve_clerk_user
 from app.config import get_settings
 from app.services.auth import decode_token, decode_jwt_payload
 from app.services.pairing_mobile import get_valid_pairing_session
+from app.observability.context import set_request_context
 
 security = HTTPBearer()
 pairing_session_security = HTTPBearer(auto_error=True)
 settings = get_settings()
+
+
+def _bind_user_context(user: User) -> None:
+    set_request_context(user_id=str(user.id))
+
+
+def _bind_machine_context(machine: POSMachine) -> None:
+    kwargs: dict[str, str] = {"machine_id": str(machine.id)}
+    if machine.tenant_id is not None:
+        kwargs["tenant_id"] = str(machine.tenant_id)
+    set_request_context(**kwargs)
 
 
 def get_current_user(
@@ -99,6 +111,7 @@ def get_pos_machine_for_sync_path(
         # old machine token stops working.
         if not machine.is_active:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Machine has been removed")
+        _bind_machine_context(machine)
         return machine
 
     current_user = _resolve_user_from_bearer_token(token, db)
@@ -108,6 +121,7 @@ def get_pos_machine_for_sync_path(
     if not machine.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Machine has been removed")
     _check_machine_access(current_user, machine)
+    _bind_machine_context(machine)
     return machine
 
 
@@ -127,12 +141,14 @@ def _resolve_user_from_bearer_token(token: str, db: Session) -> User:
             )
         if not user.is_active:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive user")
+        _bind_user_context(user)
         return user
 
     token_data = decode_token(token)
     if token_data and token_data.username:
         user = db.query(User).filter(User.username == token_data.username).first()
         if user and user.is_active:
+            _bind_user_context(user)
             return user
 
     raise HTTPException(
@@ -169,6 +185,7 @@ def get_pos_machine_from_machine_token(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
     if not machine.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Machine has been removed")
+    _bind_machine_context(machine)
     return machine
 
 
@@ -186,7 +203,9 @@ def get_active_tenant_id(
             .all()
         )
         if len(single) == 1:
-            return single[0][0]
+            tenant_id = single[0][0]
+            set_request_context(tenant_id=str(tenant_id))
+            return tenant_id
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing X-Tenant-Id header",
@@ -200,6 +219,7 @@ def get_active_tenant_id(
         ) from exc
 
     if current_user.role == UserRole.SUPER_ADMIN:
+        set_request_context(tenant_id=str(tenant_id))
         return tenant_id
 
     membership = (
@@ -215,6 +235,7 @@ def get_active_tenant_id(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="tenant_forbidden",
         )
+    set_request_context(tenant_id=str(tenant_id))
     return tenant_id
 
 
@@ -268,4 +289,5 @@ def get_pairing_session_user(
     token_tenant = payload.get("tenant_id")
     if token_tenant and str(session.tenant_id) != str(token_tenant):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid pairing session token")
+    set_request_context(user_id=str(user.id), tenant_id=str(session.tenant_id))
     return session, user

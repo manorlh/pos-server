@@ -1,5 +1,6 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -121,6 +122,7 @@ def create_category(
         color=data.color,
         image_url=data.image_url,
         parent_id=data.parent_id,
+        voucher_id=data.voucher_id,
         is_active=data.is_active,
         sort_order=data.sort_order,
     )
@@ -170,8 +172,18 @@ def update_category(
         if not db.query(Category).filter(Category.id == data.parent_id).first():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parent category not found")
 
-    for field, value in data.model_dump(exclude_unset=True, by_alias=False).items():
+    patch = data.model_dump(exclude_unset=True, by_alias=False)
+    voucher_changed = "voucher_id" in patch and patch["voucher_id"] != category.voucher_id
+
+    for field, value in patch.items():
         setattr(category, field, value)
+
+    # Products inherit the category voucher when they have none of their own. Their own
+    # updated_at is unchanged by a category edit, so bump it to keep delta sync correct.
+    if voucher_changed:
+        db.query(Product).filter(Product.category_id == category.id).update(
+            {Product.updated_at: func.now()}, synchronize_session=False
+        )
 
     db.commit()
     db.refresh(category)

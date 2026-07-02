@@ -8,10 +8,9 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.middleware.auth import get_current_user, get_active_tenant_id
-from app.models.pos_machine import POSMachine
-from app.models.shop import Shop
 from app.models.transaction import Transaction
-from app.models.user import User, UserRole
+from app.models.user import User
+from app.services.scoping import scope_transactions_by_user
 from app.schemas.transaction import (
     TransactionListItem,
     TransactionListResponse,
@@ -20,21 +19,6 @@ from app.schemas.transaction import (
 
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
-
-
-def _scope_by_user(query, current_user: User, db: Session):
-    if current_user.role == UserRole.SUPER_ADMIN:
-        return query
-    if current_user.role == UserRole.DISTRIBUTOR:
-        return query.join(POSMachine, POSMachine.id == Transaction.machine_id).filter(
-            POSMachine.distributor_id == current_user.id
-        )
-    if current_user.role == UserRole.COMPANY_MANAGER and current_user.company_id:
-        shop_ids = db.query(Shop.id).filter(Shop.company_id == current_user.company_id)
-        return query.filter(Transaction.shop_id.in_(shop_ids))
-    if current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER) and current_user.shop_id:
-        return query.filter(Transaction.shop_id == current_user.shop_id)
-    return None
 
 
 @router.get("", response_model=TransactionListResponse)
@@ -50,7 +34,7 @@ def list_transactions(
     db: Session = Depends(get_db),
 ):
     query = db.query(Transaction).filter(Transaction.tenant_id == active_tenant_id)
-    query = _scope_by_user(query, current_user, db)
+    query = scope_transactions_by_user(query, current_user, db)
     if query is None:
         return TransactionListResponse(page=page, page_size=page_size, total=0, items=[])
 
@@ -92,10 +76,10 @@ def get_transaction(
 ):
     query = (
         db.query(Transaction)
-        .options(joinedload(Transaction.items))
+        .options(joinedload(Transaction.items), joinedload(Transaction.issued_vouchers))
         .filter(Transaction.id == transaction_id, Transaction.tenant_id == active_tenant_id)
     )
-    query = _scope_by_user(query, current_user, db)
+    query = scope_transactions_by_user(query, current_user, db)
     if query is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
     tx = query.first()

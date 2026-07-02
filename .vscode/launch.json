@@ -9,7 +9,7 @@
             "jinja": true,
             "justMyCode": true,
             "cwd": "${workspaceFolder}/server",
-            "envFile": "${workspaceFolder}/server/.env",
+            "envFile": "${workspaceFolder}/server/.env.local",
             "pythonPath": "${workspaceFolder}/server/.venv/bin/python3",
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/server",

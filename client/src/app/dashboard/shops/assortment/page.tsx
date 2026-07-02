@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { entitySelectItems } from '@/lib/selectItems';
-import { Shop, ShopProductCatalogCandidate, ShopProductCatalogRow } from '@/lib/types';
+import { Shop, ShopProductCatalogCandidate, ShopProductCatalogCandidateListResponse, ShopProductCatalogRow, ShopProductCatalogRowListResponse } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -187,8 +187,8 @@ export default function ShopAssortmentPage() {
   const qc = useQueryClient();
   const [shopId, setShopId] = useState<string>('');
   const [tab, setTab] = useState<'assortment' | 'library'>('assortment');
-  const [skip, setSkip] = useState(0);
-  const [librarySkip, setLibrarySkip] = useState(0);
+  const [page, setPage] = useState(1);
+  const [libraryPage, setLibraryPage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
 
@@ -197,30 +197,33 @@ export default function ShopAssortmentPage() {
     queryFn: () => api.get('/shops').then((r) => r.data),
   });
 
-  const { data: rows = [], isLoading } = useQuery<ShopProductCatalogRow[]>({
-    queryKey: ['shop-product-overrides', shopId, skip],
+  const { data: assortmentData, isLoading } = useQuery<ShopProductCatalogRowListResponse>({
+    queryKey: ['shop-product-overrides', shopId, page],
     enabled: !!shopId && tab === 'assortment',
     queryFn: () =>
       api
-        .get(`/shops/${shopId}/product-overrides`, { params: { skip, limit: PAGE_SIZE } })
+        .get(`/shops/${shopId}/product-overrides`, { params: { page, pageSize: PAGE_SIZE } })
         .then((r) => r.data),
   });
 
-  const { data: candidates = [], isLoading: loadingCandidates } = useQuery<ShopProductCatalogCandidate[]>({
-    queryKey: ['shop-product-candidates', shopId, librarySkip, search],
+  const rows = assortmentData?.items ?? [];
+  const assortmentTotal = assortmentData?.total ?? 0;
+  const assortmentTotalPages = Math.max(1, Math.ceil(assortmentTotal / PAGE_SIZE));
+
+  const { data: candidatesData, isLoading: loadingCandidates } = useQuery<ShopProductCatalogCandidateListResponse>({
+    queryKey: ['shop-product-candidates', shopId, libraryPage, search],
     enabled: !!shopId && tab === 'library',
     queryFn: () =>
       api
         .get(`/shops/${shopId}/product-catalog-candidates`, {
-          params: { skip: librarySkip, limit: PAGE_SIZE, ...(search.trim() ? { search: search.trim() } : {}) },
+          params: { page: libraryPage, pageSize: PAGE_SIZE, ...(search.trim() ? { search: search.trim() } : {}) },
         })
         .then((r) => r.data),
   });
 
-  const hasMore = rows.length === PAGE_SIZE;
-  const canPrev = skip > 0;
-  const libHasMore = candidates.length === PAGE_SIZE;
-  const libCanPrev = librarySkip > 0;
+  const candidates = candidatesData?.items ?? [];
+  const libraryTotal = candidatesData?.total ?? 0;
+  const libraryTotalPages = Math.max(1, Math.ceil(libraryTotal / PAGE_SIZE));
 
   return (
     <div className="space-y-4">
@@ -236,8 +239,8 @@ export default function ShopAssortmentPage() {
             value={shopId || undefined}
             onValueChange={(v) => {
               setShopId(v ?? '');
-              setSkip(0);
-              setLibrarySkip(0);
+              setPage(1);
+              setLibraryPage(1);
               setSearch('');
               setSearchInput('');
             }}
@@ -284,15 +287,19 @@ export default function ShopAssortmentPage() {
             <>
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm text-muted-foreground">
-                  {t('pageInfo', { from: skip + 1, to: skip + rows.length })}
+                  {t('pageInfo', {
+                    page: String(page),
+                    pages: String(assortmentTotalPages),
+                    total: String(assortmentTotal),
+                  })}
                 </p>
                 <div className="flex gap-2">
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={!canPrev}
-                    onClick={() => setSkip((s) => Math.max(0, s - PAGE_SIZE))}
+                    disabled={page <= 1 || isLoading}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
                   >
                     <ChevronRight className="h-4 w-4 rotate-180" />
                   </Button>
@@ -300,8 +307,8 @@ export default function ShopAssortmentPage() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={!hasMore}
-                    onClick={() => setSkip((s) => s + PAGE_SIZE)}
+                    disabled={page >= assortmentTotalPages || isLoading}
+                    onClick={() => setPage((p) => p + 1)}
                   >
                     <ChevronRight className="h-4 w-4" />
                   </Button>
@@ -356,22 +363,26 @@ export default function ShopAssortmentPage() {
                   <Label>{t('search')}</Label>
                   <Input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder={t('searchPlaceholder')} />
                 </div>
-                <Button type="button" size="sm" onClick={() => { setSearch(searchInput); setLibrarySkip(0); }}>
+                <Button type="button" size="sm" onClick={() => { setSearch(searchInput); setLibraryPage(1); }}>
                   {t('applySearch')}
                 </Button>
               </div>
 
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm text-muted-foreground">
-                  {t('pageInfo', { from: librarySkip + 1, to: librarySkip + candidates.length })}
+                  {t('pageInfo', {
+                    page: String(libraryPage),
+                    pages: String(libraryTotalPages),
+                    total: String(libraryTotal),
+                  })}
                 </p>
                 <div className="flex gap-2">
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={!libCanPrev}
-                    onClick={() => setLibrarySkip((s) => Math.max(0, s - PAGE_SIZE))}
+                    disabled={libraryPage <= 1 || loadingCandidates}
+                    onClick={() => setLibraryPage((p) => Math.max(1, p - 1))}
                   >
                     <ChevronRight className="h-4 w-4 rotate-180" />
                   </Button>
@@ -379,8 +390,8 @@ export default function ShopAssortmentPage() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={!libHasMore}
-                    onClick={() => setLibrarySkip((s) => s + PAGE_SIZE)}
+                    disabled={libraryPage >= libraryTotalPages || loadingCandidates}
+                    onClick={() => setLibraryPage((p) => p + 1)}
                   >
                     <ChevronRight className="h-4 w-4" />
                   </Button>

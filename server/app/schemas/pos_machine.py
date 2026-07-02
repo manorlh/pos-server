@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Dict, Any
 import uuid
@@ -46,6 +46,12 @@ class POSMachineResponse(POSMachineBase):
     last_sync_at: Optional[datetime] = Field(None, alias="lastSyncAt")
     last_catalog_change_at: Optional[datetime] = Field(None, alias="lastCatalogChangeAt")
     catalog_pull_stale: Optional[bool] = Field(None, alias="catalogPullStale")
+    trading_day_status: Optional[str] = Field(None, alias="tradingDayStatus")
+    trading_day_id: Optional[uuid.UUID] = Field(None, alias="tradingDayId")
+    day_date: Optional[date] = Field(None, alias="dayDate")
+    opened_at: Optional[datetime] = Field(None, alias="openedAt")
+    opened_by: Optional[str] = Field(None, alias="openedBy")
+    close_day_pending: Optional[bool] = Field(None, alias="closeDayPending")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 

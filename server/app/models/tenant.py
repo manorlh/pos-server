@@ -30,6 +30,7 @@ class Tenant(Base):
     default_currency = Column(String(8), nullable=False, default="ILS")
     locale = Column(String(32), nullable=False, default="en")
     settings = Column(JSONB, nullable=True)
+    settings_updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

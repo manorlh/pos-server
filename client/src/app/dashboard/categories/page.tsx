@@ -5,7 +5,7 @@ import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { Category } from '@/lib/types';
+import { Category, Voucher, PaginatedResponse } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
 
@@ -31,9 +32,17 @@ export default function CategoriesPage() {
     queryFn: () => api.get('/categories').then((r) => r.data),
   });
 
+  const { data: vouchersData } = useQuery<PaginatedResponse<Voucher>>({
+    queryKey: ['vouchers'],
+    queryFn: () => api.get('/vouchers', { params: { page: 1, pageSize: 200 } }).then((r) => r.data),
+  });
+  const vouchers = vouchersData?.items ?? [];
+
   const save = useMutation({
     mutationFn: (c: Partial<Category>) => {
-      return c.id ? api.put(`/categories/${c.id}`, c) : api.post('/categories', c);
+      // Send voucherId explicitly (null when cleared) so the API can unset it.
+      const payload = { ...c, voucherId: c.voucherId ?? null };
+      return c.id ? api.put(`/categories/${c.id}`, payload) : api.post('/categories', payload);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['categories'] });
@@ -145,6 +154,27 @@ export default function CategoriesPage() {
                 <Input type="number" value={editing.sortOrder ?? 0}
                   onChange={(e) => setEditing((c) => ({ ...c, sortOrder: parseInt(e.target.value) }))} />
               </div>
+            </div>
+            <div className="space-y-1">
+              <Label>{t('voucher')}</Label>
+              <Select
+                value={editing.voucherId ?? '__none__'}
+                onValueChange={(v) =>
+                  setEditing((c) => ({
+                    ...c,
+                    voucherId: !v || v === '__none__' ? undefined : v,
+                  }))
+                }
+              >
+                <SelectTrigger><SelectValue placeholder={t('noVoucher')} /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">{t('noVoucher')}</SelectItem>
+                  {vouchers.map((v) => (
+                    <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t('voucherHint')}</p>
             </div>
           </div>
           <DialogFooter>

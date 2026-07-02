@@ -5,6 +5,29 @@ import uuid
 
 from pydantic import BaseModel, Field
 
+from app.schemas.stock import StockMovementIn
+
+
+class IssuedVoucherIn(BaseModel):
+    """Issued שובר from POS — id is client-generated UUID (serial)."""
+
+    id: uuid.UUID
+    transaction_item_id: Optional[uuid.UUID] = Field(None, alias="transactionItemId")
+    voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
+    product_id: Optional[uuid.UUID] = Field(None, alias="productId")
+    product_name: Optional[str] = Field(None, alias="productName")
+    quantity: Decimal = Field(1, ge=0)
+    unit_value: Optional[Decimal] = Field(None, alias="unitValue")
+    face_value: Optional[Decimal] = Field(None, alias="faceValue")
+    issued_at: datetime = Field(..., alias="issuedAt")
+    expires_at: Optional[datetime] = Field(None, alias="expiresAt")
+    status: Literal["issued", "voided", "redeemed"] = "issued"
+    reprint_count: int = Field(0, ge=0, alias="reprintCount")
+    last_printed_at: Optional[datetime] = Field(None, alias="lastPrintedAt")
+
+    class Config:
+        populate_by_name = True
+
 
 class TransactionItemIn(BaseModel):
     """Single item line incoming from POS. id is client-generated UUID."""
@@ -40,6 +63,8 @@ class TransactionIn(BaseModel):
     amount_tendered: Optional[Decimal] = Field(None, alias="amountTendered")
     change_amount: Optional[Decimal] = Field(None, alias="changeAmount")
     total_amount: Decimal = Field(0, alias="totalAmount")
+    tip_amount: Decimal = Field(0, ge=0, alias="tipAmount")
+    tip_payment_method: Optional[Literal["cash", "card"]] = Field(None, alias="tipPaymentMethod")
     total_discount: Optional[Decimal] = Field(None, alias="totalDiscount")
     document_discount: Optional[Decimal] = Field(None, alias="documentDiscount")
     wht_deduction: Optional[Decimal] = Field(None, alias="whtDeduction")
@@ -60,6 +85,8 @@ class TransactionIn(BaseModel):
     updated_at: datetime = Field(..., alias="updatedAt")
 
     items: List[TransactionItemIn] = Field(default_factory=list)
+    issued_vouchers: List[IssuedVoucherIn] = Field(default_factory=list, alias="issuedVouchers")
+    stock_movements: List[StockMovementIn] = Field(default_factory=list, alias="stockMovements")
 
     class Config:
         populate_by_name = True
@@ -87,8 +114,6 @@ class TransactionsBatchResponse(BaseModel):
         populate_by_name = True
 
 
-# ── Read / dashboard ──────────────────────────────────────────────────────────
-
 class TransactionItemOut(BaseModel):
     id: uuid.UUID
     product_id: Optional[uuid.UUID] = Field(None, alias="productId")
@@ -102,6 +127,30 @@ class TransactionItemOut(BaseModel):
     transaction_type: Optional[int] = Field(None, alias="transactionType")
     line_discount: Optional[Decimal] = Field(None, alias="lineDiscount")
     notes: Optional[str]
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+
+
+class IssuedVoucherOut(BaseModel):
+    id: uuid.UUID
+    tenant_id: Optional[uuid.UUID] = Field(None, alias="tenantId")
+    shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
+    machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
+    transaction_id: uuid.UUID = Field(..., alias="transactionId")
+    transaction_item_id: Optional[uuid.UUID] = Field(None, alias="transactionItemId")
+    voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
+    product_id: Optional[uuid.UUID] = Field(None, alias="productId")
+    product_name: Optional[str] = Field(None, alias="productName")
+    quantity: Decimal
+    unit_value: Optional[Decimal] = Field(None, alias="unitValue")
+    face_value: Optional[Decimal] = Field(None, alias="faceValue")
+    issued_at: datetime = Field(..., alias="issuedAt")
+    expires_at: Optional[datetime] = Field(None, alias="expiresAt")
+    status: str
+    reprint_count: int = Field(..., alias="reprintCount")
+    last_printed_at: Optional[datetime] = Field(None, alias="lastPrintedAt")
 
     class Config:
         from_attributes = True
@@ -125,6 +174,8 @@ class TransactionOut(BaseModel):
     amount_tendered: Optional[Decimal] = Field(None, alias="amountTendered")
     change_amount: Optional[Decimal] = Field(None, alias="changeAmount")
     total_amount: Decimal = Field(..., alias="totalAmount")
+    tip_amount: Decimal = Field(0, alias="tipAmount")
+    tip_payment_method: Optional[str] = Field(None, alias="tipPaymentMethod")
     total_discount: Optional[Decimal] = Field(None, alias="totalDiscount")
     document_discount: Optional[Decimal] = Field(None, alias="documentDiscount")
     wht_deduction: Optional[Decimal] = Field(None, alias="whtDeduction")
@@ -142,6 +193,7 @@ class TransactionOut(BaseModel):
     server_received_at: datetime = Field(..., alias="serverReceivedAt")
 
     items: List[TransactionItemOut] = Field(default_factory=list)
+    issued_vouchers: List[IssuedVoucherOut] = Field(default_factory=list, alias="issuedVouchers")
 
     class Config:
         from_attributes = True
@@ -159,6 +211,7 @@ class TransactionListItem(BaseModel):
     status: str
     payment_method: Optional[str] = Field(None, alias="paymentMethod")
     total_amount: Decimal = Field(..., alias="totalAmount")
+    tip_amount: Decimal = Field(0, alias="tipAmount")
     cashier_id: Optional[str] = Field(None, alias="cashierId")
     created_at: datetime = Field(..., alias="createdAt")
     server_received_at: datetime = Field(..., alias="serverReceivedAt")

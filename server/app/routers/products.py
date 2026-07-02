@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.product import Product, CatalogLevel
 from app.models.category import Category
+from app.models.voucher import Voucher
 from app.models.user import User, UserRole
-from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse
+from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, ProductListResponse
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
 from app.services.catalog_notify import notify_all_machines_for_tenant, notify_machine_catalog_changed
 from app.services.sku_sequence import resolve_sku_for_create
@@ -31,6 +32,15 @@ def _check_product_access(user: User, product: Product):
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
 
+def _validate_voucher_id(db: Session, voucher_id, active_tenant_id):
+    if voucher_id is None:
+        return
+    voucher = db.query(Voucher).filter(Voucher.id == voucher_id).first()
+    if not voucher:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Voucher not found")
+    ensure_same_tenant(voucher.tenant_id, active_tenant_id)
+
+
 def _trigger_catalog_notify(db: Session, product: Product):
     tid = str(product.tenant_id) if product.tenant_id else None
     if not tid:
@@ -41,10 +51,10 @@ def _trigger_catalog_notify(db: Session, product: Product):
         notify_all_machines_for_tenant(db, tid, reason="product_change")
 
 
-@router.get("", response_model=List[ProductResponse])
+@router.get("", response_model=ProductListResponse)
 def list_products(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=200),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=200, alias="pageSize"),
     company_id: Optional[str] = Query(None, alias="companyId"),
     shop_id: Optional[str] = Query(None, alias="shopId"),
     pos_machine_id: Optional[str] = Query(None, alias="posMachineId"),
@@ -86,7 +96,14 @@ def list_products(
             )
         )
 
-    return query.order_by(Product.name).offset(skip).limit(limit).all()
+    total = query.count()
+    items = (
+        query.order_by(Product.name)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return ProductListResponse(page=page, page_size=page_size, total=total, items=items)
 
 
 @router.post("", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
@@ -109,6 +126,7 @@ def create_product(
     if not category:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Category not found")
     ensure_same_tenant(category.tenant_id, active_tenant_id)
+    _validate_voucher_id(db, data.voucher_id, active_tenant_id)
 
     company_id = data.company_id or current_user.company_id
 
@@ -133,6 +151,8 @@ def create_product(
         stock_quantity=data.stock_quantity,
         barcode=data.barcode,
         tax_rate=data.tax_rate,
+        voucher_id=data.voucher_id,
+        track_stock=data.track_stock,
     )
     db.add(product)
     db.commit()
@@ -179,6 +199,9 @@ def update_product(
     if data.category_id:
         cat = db.query(Category).filter(Category.id == data.category_id).first()
         ensure_same_tenant(cat.tenant_id, active_tenant_id)
+
+    if "voucher_id" in data.model_dump(exclude_unset=True, by_alias=False):
+        _validate_voucher_id(db, data.voucher_id, active_tenant_id)
 
     updates = data.model_dump(exclude_unset=True, by_alias=False)
     if product.sku_auto_assigned and "sku" in updates and updates["sku"] != product.sku:

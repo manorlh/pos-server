@@ -23,6 +23,7 @@ from app.schemas.product import ProductCreate, ProductResponse, ProductUpdate
 from app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdate
 from app.schemas.pos_user import PosUsersSyncResponse, PosUserSyncRow
 from app.schemas.pos_settings import SettingsSyncResponse
+from app.schemas.stock import StockLevelOut, StockSyncResponse
 from app.models.company import Company
 from app.models.shop import Shop
 from app.models.tenant import Tenant
@@ -42,13 +43,16 @@ from app.schemas.z_report import (
     ZReportMissingResponse,
     ZReportUpsertResponse,
 )
+from app.schemas.close_day import CloseDayAckIn, CloseDayAckResponse
 from app.services.catalog_notify import notify_all_machines_for_tenant
 from app.services.sku_sequence import resolve_sku_for_create
 from app.services.tenant_sku_sequence import allocate_global_sku
 from app.services.sync import (
     get_categories_for_sync,
     get_products_for_sync,
+    get_vouchers_for_sync,
     merge_categories_referenced_by_products,
+    merge_vouchers_referenced_by_products,
     update_machine_sync_timestamp,
 )
 from app.services.transactions import (
@@ -59,6 +63,8 @@ from app.services.transactions import (
     publish_z_report_closed,
     upsert_transactions,
 )
+from app.services.stock import effective_stock_updated_at, get_levels_for_shop
+from app.services.close_day import apply_close_day_ack, complete_close_day_item_for_z_report
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -87,6 +93,7 @@ class CatalogSyncResponse(BaseModel):
     server_time: str = Field(..., alias="serverTime")
     products: List[Dict[str, Any]]
     categories: List[Dict[str, Any]]
+    vouchers: List[Dict[str, Any]] = Field(default_factory=list)
 
     class Config:
         populate_by_name = True
@@ -251,8 +258,10 @@ def get_catalog_sync(
 
     products = get_products_for_sync(db, tid, mqid, since=since_dt)
     categories = get_categories_for_sync(db, tid, mqid, since=since_dt)
+    vouchers = get_vouchers_for_sync(db, tid, since=since_dt)
     if since_dt and products:
         categories = merge_categories_referenced_by_products(db, machine, products, categories)
+        vouchers = merge_vouchers_referenced_by_products(db, products, vouchers)
 
     update_machine_sync_timestamp(db, mqid)
 
@@ -261,6 +270,7 @@ def get_catalog_sync(
         server_time=datetime.now(timezone.utc).isoformat(),
         products=products,
         categories=categories,
+        vouchers=vouchers,
     )
 
 
@@ -607,6 +617,13 @@ def post_z_report(
         )
 
     z_report, outcome = apply_z_report(db, machine, body)
+    if body.close_day_request_id:
+        complete_close_day_item_for_z_report(
+            db,
+            machine.id,
+            body.close_day_request_id,
+            z_report.id,
+        )
     db.add(SyncLog(
         machine_id=machine.id,
         direction=SyncDirection.POS_TO_SERVER,
@@ -641,6 +658,32 @@ def get_current_trading_day(
 ):
     """Helper for POS recovery after restart — returns the open trading day if any."""
     return find_open_trading_day(db, machine.id)
+
+
+@router.post(
+    "/{machine_id}/close-day/ack",
+    response_model=CloseDayAckResponse,
+    response_model_by_alias=True,
+)
+def post_close_day_ack(
+    machine_id: str,
+    body: CloseDayAckIn,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """POS acknowledges cloud-initiated close-day command."""
+    _require_assigned_machine(machine)
+    item = apply_close_day_ack(
+        db,
+        machine,
+        request_id=body.request_id,
+        phase=body.phase,
+        z_report_id=body.z_report_id,
+        error_code=body.error_code,
+        error_message=body.error_message,
+    )
+    status_val = item.status.value if hasattr(item.status, "value") else item.status
+    return CloseDayAckResponse(ok=True, item_status=status_val)
 
 
 # ── POS users (server → POS) ──────────────────────────────────────────────────
@@ -744,7 +787,7 @@ def get_settings_sync(
     if company.tenant_id:
         tenant = db.query(Tenant).filter(Tenant.id == company.tenant_id).first()
 
-    watermark = effective_settings_updated_at(company, shop)
+    watermark = effective_settings_updated_at(company, shop, tenant)
     since_dt: Optional[datetime] = None
     if since:
         try:
@@ -773,4 +816,67 @@ def get_settings_sync(
         settings_updated_at=watermark,
         settings=effective,
         business_info=business_info,
+    )
+
+
+# ── Stock (server → POS) ──────────────────────────────────────────────────────
+
+@router.get(
+    "/{machine_id}/stock",
+    response_model=StockSyncResponse,
+    response_model_by_alias=True,
+)
+def get_stock_sync(
+    machine_id: str,
+    since: Optional[str] = Query(None, description="ISO-8601 timestamp for delta sync"),
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """Return per-shop stock levels for this machine's shop (delta by updated_at)."""
+    server_time = datetime.now(timezone.utc)
+
+    if not machine.shop_id:
+        return StockSyncResponse(
+            sync_type="full",
+            server_time=server_time,
+            stock_updated_at=server_time,
+            levels=[],
+        )
+
+    watermark = effective_stock_updated_at(db, machine.shop_id)
+    since_dt: Optional[datetime] = None
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid 'since' timestamp")
+
+    if since_dt and since_dt >= watermark:
+        return StockSyncResponse(
+            sync_type="unchanged",
+            server_time=server_time,
+            stock_updated_at=watermark,
+            levels=[],
+        )
+
+    levels = get_levels_for_shop(db, machine.shop_id, since=since_dt)
+    out = [
+        StockLevelOut(
+            product_id=l.product_id,
+            product_name=l.product.name if l.product else None,
+            sku=l.product.sku if l.product else None,
+            quantity=l.quantity,
+            reorder_min=l.reorder_min,
+            reorder_max=l.reorder_max,
+            reorder_opt=l.reorder_opt,
+            updated_at=l.updated_at,
+        )
+        for l in levels
+    ]
+
+    return StockSyncResponse(
+        sync_type="delta" if since_dt else "full",
+        server_time=server_time,
+        stock_updated_at=watermark,
+        levels=out,
     )

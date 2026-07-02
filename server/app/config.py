@@ -1,9 +1,17 @@
-from pydantic_settings import BaseSettings
-from typing import List
 from functools import lru_cache
+from typing import List
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        # `.env.local` overrides `.env` for local docker db/mqtt without touching prod secrets.
+        env_file=(".env", ".env.local"),
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
     # Database
     database_url: str
     
@@ -25,6 +33,9 @@ class Settings(BaseSettings):
     # Application
     api_v1_prefix: str = "/api/v1"
     debug: bool = True
+    log_level: str = "INFO"
+    log_request_bodies: bool = False
+    log_body_max_bytes: int = 4096
     cors_origins: List[str] = ["http://localhost:3000", "http://localhost:8080"]
     port: int = 8001
     
@@ -47,10 +58,6 @@ class Settings(BaseSettings):
     cloudinary_cloud_name: str = ""
     cloudinary_api_key: str = ""
     cloudinary_api_secret: str = ""
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
 
 
 @lru_cache()

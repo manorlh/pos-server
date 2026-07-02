@@ -28,6 +28,7 @@ from app.services.sync import update_machine_sync_timestamp, get_catalog_change_
 from app.services.catalog_notify import notify_machine_catalog_changed
 from app.services.shop_validation import shop_belongs_to_company
 from app.services.mqtt_broker import machine_mqtt_refresh_info
+from app.services.close_day import get_open_trading_days_for_machines, get_pending_close_day_machine_ids
 
 router = APIRouter(prefix="/machines", tags=["machines"])
 
@@ -47,7 +48,13 @@ def _scope_machines_by_tenant(query, current_user: User, active_tenant_id):
     return query.filter(POSMachine.tenant_id == active_tenant_id)
 
 
-def _enrich_machine_status(machine: POSMachine, db: Session) -> Dict[str, Any]:
+def _enrich_machine_status(
+    machine: POSMachine,
+    db: Session,
+    *,
+    open_trading_days: Optional[Dict[uuid_mod.UUID, TradingDay]] = None,
+    pending_close_ids: Optional[set] = None,
+) -> Dict[str, Any]:
     last_catalog_change_at = get_catalog_change_watermark_for_machine(db, machine)
     last_sync_at = machine.last_sync_at
     catalog_pull_stale = False
@@ -57,7 +64,25 @@ def _enrich_machine_status(machine: POSMachine, db: Session) -> Dict[str, Any]:
         else:
             catalog_pull_stale = (last_sync_at + timedelta(seconds=5)) < last_catalog_change_at
 
-    return {
+    open_td = None
+    if open_trading_days is not None:
+        open_td = open_trading_days.get(machine.id)
+    else:
+        from app.services.transactions import find_open_trading_day
+        open_td = find_open_trading_day(db, machine.id)
+
+    if open_td is not None:
+        trading_day_status = "open"
+    else:
+        trading_day_status = "none"
+
+    close_day_pending = False
+    if pending_close_ids is not None:
+        close_day_pending = machine.id in pending_close_ids
+    else:
+        close_day_pending = machine.id in get_pending_close_day_machine_ids(db, [machine.id])
+
+    result: Dict[str, Any] = {
         "id": machine.id,
         "name": machine.name,
         "machineCode": machine.machine_code,
@@ -72,9 +97,28 @@ def _enrich_machine_status(machine: POSMachine, db: Session) -> Dict[str, Any]:
         "lastSyncAt": machine.last_sync_at,
         "lastCatalogChangeAt": last_catalog_change_at,
         "catalogPullStale": catalog_pull_stale,
+        "tradingDayStatus": trading_day_status,
+        "tradingDayId": open_td.id if open_td else None,
+        "dayDate": open_td.day_date if open_td else None,
+        "openedAt": open_td.opened_at if open_td else None,
+        "openedBy": open_td.opened_by if open_td else None,
+        "closeDayPending": close_day_pending,
         "createdAt": machine.created_at,
         "updatedAt": machine.updated_at,
     }
+    return result
+
+
+def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict[str, Any]]:
+    if not machines:
+        return []
+    ids = [m.id for m in machines]
+    open_days = get_open_trading_days_for_machines(db, ids)
+    pending_ids = get_pending_close_day_machine_ids(db, ids)
+    return [
+        _enrich_machine_status(m, db, open_trading_days=open_days, pending_close_ids=pending_ids)
+        for m in machines
+    ]
 
 
 def _check_machine_list_access(current_user: User, machine: POSMachine, db: Session) -> bool:
@@ -132,7 +176,7 @@ def list_machines(
         query = query.filter(POSMachine.distributor_id == distributor_id)
 
     machines = query.offset(skip).limit(limit).all()
-    return [_enrich_machine_status(m, db) for m in machines]
+    return _enrich_machines_batch(machines, db)
 
 
 @router.get("/unassigned", response_model=List[POSMachineResponse])

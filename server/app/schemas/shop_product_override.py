@@ -1,5 +1,5 @@
 import uuid
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -48,3 +48,21 @@ class ShopProductOverrideWriteResponse(BaseModel):
     override_price: Optional[float] = Field(default=None, serialization_alias="overridePrice")
     is_listed: bool = Field(serialization_alias="isListed")
     is_available: bool = Field(serialization_alias="isAvailable")
+
+
+class ShopProductCatalogCandidateListResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    page: int
+    page_size: int = Field(serialization_alias="pageSize")
+    total: int
+    items: List[ShopProductCatalogCandidate]
+
+
+class ShopProductCatalogRowListResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    page: int
+    page_size: int = Field(serialization_alias="pageSize")
+    total: int
+    items: List[ShopProductCatalogRow]

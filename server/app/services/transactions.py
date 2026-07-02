@@ -24,9 +24,12 @@ from app.models.product import Product
 from app.models.trading_day import TradingDay, TradingDayStatus
 from app.models.transaction import Transaction, TransactionStatus
 from app.models.transaction_item import TransactionItem
+from app.models.issued_voucher import IssuedVoucher, IssuedVoucherStatus
+from app.models.stock_movement import StockMovementReason
 from app.models.z_report import ZReport
 from app.schemas.transaction import TransactionIn, TransactionUpsertResult
 from app.schemas.z_report import ZReportIn
+from app.services.stock import apply_movement
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,18 @@ def _safe_item_product_id(db: Session, pid: Optional[uuid.UUID]) -> Optional[uui
         return None
     row = db.query(Product.id).filter(Product.id == pid).first()
     return pid if row else None
+
+
+def _safe_voucher_id(db: Session, vid: Optional[uuid.UUID]) -> Optional[uuid.UUID]:
+    if vid is None:
+        return None
+    from app.models.voucher import Voucher
+    row = db.query(Voucher.id).filter(Voucher.id == vid).first()
+    return vid if row else None
+
+
+def _safe_issued_product_id(db: Session, pid: Optional[uuid.UUID]) -> Optional[uuid.UUID]:
+    return _safe_item_product_id(db, pid)
 
 
 # ── Trading day helpers ──────────────────────────────────────────────────────
@@ -123,6 +138,8 @@ def _serialize_tx_for_upsert(
         "amount_tendered": tx.amount_tendered,
         "change_amount": tx.change_amount,
         "total_amount": tx.total_amount or 0,
+        "tip_amount": tx.tip_amount or 0,
+        "tip_payment_method": tx.tip_payment_method,
         "total_discount": tx.total_discount,
         "document_discount": tx.document_discount,
         "wht_deduction": tx.wht_deduction,
@@ -216,6 +233,51 @@ def upsert_transactions(
                     for it in tx.items
                 ])
 
+            db.query(IssuedVoucher).filter(
+                IssuedVoucher.transaction_id == tx.id
+            ).delete(synchronize_session=False)
+            if tx.issued_vouchers:
+                db.bulk_save_objects([
+                    IssuedVoucher(
+                        id=iv.id,
+                        tenant_id=machine.tenant_id,
+                        shop_id=machine.shop_id,
+                        machine_id=machine.id,
+                        transaction_id=tx.id,
+                        transaction_item_id=iv.transaction_item_id,
+                        voucher_id=_safe_voucher_id(db, iv.voucher_id),
+                        product_id=_safe_issued_product_id(db, iv.product_id),
+                        product_name=iv.product_name,
+                        quantity=iv.quantity,
+                        unit_value=iv.unit_value,
+                        face_value=iv.face_value,
+                        issued_at=iv.issued_at,
+                        expires_at=iv.expires_at,
+                        status=IssuedVoucherStatus(iv.status) if iv.status else IssuedVoucherStatus.ISSUED,
+                        reprint_count=iv.reprint_count,
+                        last_printed_at=iv.last_printed_at,
+                    )
+                    for iv in tx.issued_vouchers
+                ])
+
+            if tx.stock_movements and machine.shop_id and machine.tenant_id:
+                for sm in tx.stock_movements:
+                    reason = StockMovementReason(sm.reason)
+                    apply_movement(
+                        db,
+                        movement_id=sm.id,
+                        tenant_id=machine.tenant_id,
+                        shop_id=machine.shop_id,
+                        product_id=sm.product_id,
+                        delta=sm.delta,
+                        reason=reason,
+                        occurred_at=sm.occurred_at,
+                        transaction_id=tx.id,
+                        transaction_item_id=sm.transaction_item_id,
+                        machine_id=machine.id,
+                        note=sm.note,
+                    )
+
             is_duplicate = previous is not None and (
                 previous.updated_at is not None
                 and tx.updated_at is not None
@@ -296,6 +358,9 @@ def apply_z_report(
         total_refunds=z.total_refunds,
         total_cash_sales=z.total_cash_sales,
         total_card_sales=z.total_card_sales,
+        total_tips=z.total_tips,
+        total_cash_tips=z.total_cash_tips,
+        total_card_tips=z.total_card_tips,
         transactions_count=z.transactions_count,
         opening_cash=z.opening_cash,
         closing_cash=z.closing_cash,

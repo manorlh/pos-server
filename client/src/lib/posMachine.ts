@@ -30,6 +30,12 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     lastSyncAt: (raw.lastSyncAt ?? raw.last_sync_at) as string | undefined,
     lastCatalogChangeAt: (raw.lastCatalogChangeAt ?? raw.last_catalog_change_at) as string | undefined,
     catalogPullStale: Boolean(raw.catalogPullStale ?? raw.catalog_pull_stale ?? false),
+    tradingDayStatus: (raw.tradingDayStatus ?? raw.trading_day_status) as PosMachine['tradingDayStatus'],
+    tradingDayId: (raw.tradingDayId ?? raw.trading_day_id) as string | undefined,
+    dayDate: (raw.dayDate ?? raw.day_date) as string | undefined,
+    openedAt: (raw.openedAt ?? raw.opened_at) as string | undefined,
+    openedBy: (raw.openedBy ?? raw.opened_by) as string | undefined,
+    closeDayPending: Boolean(raw.closeDayPending ?? raw.close_day_pending ?? false),
     createdAt: String(raw.createdAt ?? raw.created_at ?? ''),
     updatedAt: String(raw.updatedAt ?? raw.updated_at ?? ''),
   };

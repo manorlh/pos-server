@@ -29,6 +29,7 @@ class Category(Base):
     color = Column(String(7), nullable=True)
     image_url = Column(String(500), nullable=True)
     parent_id = Column(UUID(as_uuid=True), ForeignKey("categories.id"), nullable=True)
+    voucher_id = Column(UUID(as_uuid=True), ForeignKey("vouchers.id"), nullable=True, index=True)
     is_active = Column(Boolean, default=True, nullable=False)
     sort_order = Column(Integer, default=0, nullable=False)
 
@@ -41,3 +42,4 @@ class Category(Base):
     pos_machine = relationship("POSMachine", back_populates="categories")
     parent = relationship("Category", remote_side="Category.id", backref="children")
     products = relationship("Product", back_populates="category")
+    voucher = relationship("Voucher")

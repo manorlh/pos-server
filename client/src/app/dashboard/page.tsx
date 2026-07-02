@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Package, Tag, Monitor, Activity } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SalesStats } from '@/components/dashboard/sales-stats';
 
 function StatCard({
   title,
@@ -37,7 +38,10 @@ function StatCard({
 
 export default function DashboardPage() {
   const t = useTranslations('dashboard');
-  const products = useQuery({ queryKey: ['products'], queryFn: () => api.get('/products').then((r) => r.data) });
+  const products = useQuery({
+    queryKey: ['products-count'],
+    queryFn: () => api.get('/products', { params: { page: 1, pageSize: 1 } }).then((r) => r.data.total as number),
+  });
   const categories = useQuery({ queryKey: ['categories'], queryFn: () => api.get('/categories').then((r) => r.data) });
   const machines = useQuery({ queryKey: ['machines'], queryFn: () => api.get('/machines').then((r) => r.data) });
 
@@ -47,8 +51,11 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-bold">{t('title')}</h1>
         <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
       </div>
+
+      <SalesStats />
+
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <StatCard title={t('products')} value={products.data?.length} icon={Package} isLoading={products.isLoading} />
+        <StatCard title={t('products')} value={products.data} icon={Package} isLoading={products.isLoading} />
         <StatCard title={t('categories')} value={categories.data?.length} icon={Tag} isLoading={categories.isLoading} />
         <StatCard title={t('machines')} value={machines.data?.length} icon={Monitor} isLoading={machines.isLoading} />
         <StatCard

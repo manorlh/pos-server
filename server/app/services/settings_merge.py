@@ -17,6 +17,13 @@ MANAGED_SETTING_KEYS = (
     "nayaxDeviceHost",
     "nayaxDevicePort",
     "nayaxSpicyPath",
+    "outOfStockPolicy",
+    "tipsEnabled",
+    "cashTipsEnabled",
+    "tipPresets",
+    "tipDistribution",
+    "receiptPrinterName",
+    "drawerPrinterName",
 )
 
 
@@ -65,6 +72,7 @@ def merge_settings(
 def effective_settings_updated_at(
     company: Company,
     shop: Optional[Shop] = None,
+    tenant: Optional[Tenant] = None,
 ) -> datetime:
     stamps = [
         company.settings_updated_at,
@@ -72,6 +80,8 @@ def effective_settings_updated_at(
     ]
     if shop:
         stamps.extend([shop.settings_updated_at, shop.updated_at])
+    if tenant:
+        stamps.extend([tenant.settings_updated_at, tenant.updated_at])
     return max(stamps)
 
 

@@ -8,12 +8,15 @@ import { useTranslations } from 'next-intl';
 import { useClerk, useUser } from '@clerk/nextjs';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
-import { api } from '@/lib/api';
+import { api, fetchTenantSettings, patchTenantSettings } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { PosSettingsForm } from '@/components/pos-settings-form';
+import type { PosSettingsV1 } from '@/lib/types';
 import {
   LayoutDashboard,
   Package,
   Tag,
+  Ticket,
   Monitor,
   Building2,
   Store,
@@ -26,6 +29,9 @@ import {
   FileText,
   IdCard,
   Plus,
+  Settings2,
+  Boxes,
+  Coins,
 } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -61,6 +67,7 @@ import { toast } from 'sonner';
 export function Sidebar() {
   const t = useTranslations('nav');
   const tc = useTranslations('common');
+  const tps = useTranslations('posSettings');
   const pathname = usePathname();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -70,6 +77,36 @@ export function Sidebar() {
   const [createOpen, setCreateOpen] = useState(false);
   const [newTenantName, setNewTenantName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [tenantSettings, setTenantSettings] = useState<PosSettingsV1>({});
+  const [savingSettings, setSavingSettings] = useState(false);
+
+  const openTenantSettings = async () => {
+    if (!activeTenantId) return;
+    setTenantSettings({});
+    setSettingsOpen(true);
+    try {
+      const res = await fetchTenantSettings(activeTenantId);
+      setTenantSettings(res.settings ?? {});
+    } catch (err: unknown) {
+      toast.error(axiosErrorToToastMessage(err, tc('error')));
+      setSettingsOpen(false);
+    }
+  };
+
+  const handleSaveTenantSettings = async () => {
+    if (!activeTenantId) return;
+    setSavingSettings(true);
+    try {
+      await patchTenantSettings(activeTenantId, tenantSettings);
+      toast.success(tps('saved'));
+      setSettingsOpen(false);
+    } catch (err: unknown) {
+      toast.error(axiosErrorToToastMessage(err, tc('error')));
+    } finally {
+      setSavingSettings(false);
+    }
+  };
 
   const displayName = clerkUser?.username ?? clerkUser?.firstName ?? internalUser?.username ?? '??';
   const displayRole = internalUser?.role ?? '';
@@ -106,10 +143,13 @@ export function Sidebar() {
     { href: '/dashboard', label: t('overview'), icon: LayoutDashboard },
     { href: '/dashboard/products', label: t('products'), icon: Package },
     { href: '/dashboard/categories', label: t('categories'), icon: Tag },
+    { href: '/dashboard/vouchers', label: t('vouchers'), icon: Ticket },
     { href: '/dashboard/machines', label: t('machines'), icon: Monitor },
     { href: '/dashboard/companies', label: t('companies'), icon: Building2 },
     { href: '/dashboard/shops', label: t('shops'), icon: Store },
     { href: '/dashboard/shops/assortment', label: t('assortment'), icon: ListFilter },
+    { href: '/dashboard/shops/stock', label: t('stock'), icon: Boxes },
+    { href: '/dashboard/tips', label: t('tips'), icon: Coins },
     { href: '/dashboard/transactions', label: t('transactions'), icon: Receipt },
     { href: '/dashboard/z-reports', label: t('zReports'), icon: FileText },
     { href: '/dashboard/pos-users', label: t('posUsers'), icon: IdCard },
@@ -143,16 +183,29 @@ export function Sidebar() {
                 ))}
               </SelectContent>
             </Select>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="w-full"
-              onClick={() => setCreateOpen(true)}
-            >
-              <Plus className="size-3.5" />
-              {t('createTenant')}
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                onClick={() => setCreateOpen(true)}
+              >
+                <Plus className="size-3.5" />
+                {t('createTenant')}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="size-8 shrink-0"
+                disabled={!activeTenantId}
+                title={tps('tenantTitle')}
+                onClick={() => void openTenantSettings()}
+              >
+                <Settings2 className="size-3.5" />
+              </Button>
+            </div>
           </div>
         </div>
         <Separator />
@@ -237,6 +290,24 @@ export function Sidebar() {
             </Button>
             <Button onClick={() => void handleCreateTenant()} disabled={creating || !newTenantName.trim()}>
               {creating ? tc('saving') : tc('add')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{tps('tenantTitle')}</DialogTitle>
+            <p className="text-sm text-muted-foreground">{tps('tenantSubtitle')}</p>
+          </DialogHeader>
+          <PosSettingsForm value={tenantSettings} onChange={setTenantSettings} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSettingsOpen(false)}>
+              {tc('cancel')}
+            </Button>
+            <Button onClick={() => void handleSaveTenantSettings()} disabled={savingSettings}>
+              {savingSettings ? tc('saving') : tc('save')}
             </Button>
           </DialogFooter>
         </DialogContent>

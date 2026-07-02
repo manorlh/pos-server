@@ -7,7 +7,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { entitySelectItems } from '@/lib/selectItems';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { Product, Category } from '@/lib/types';
+import { Product, Category, ProductListResponse, Voucher, PaginatedResponse } from '@/lib/types';
 import { ProductImageUpload } from '@/components/product-image-upload';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,11 +17,14 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, Package } from 'lucide-react';
+import { Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 
 type SkuMode = 'auto' | 'manual';
+
+const PAGE_SIZE = 100;
 
 const EMPTY: Partial<Product> = {
   name: '', price: 0, description: '', inStock: true, stockQuantity: 0, catalogLevel: 'global',
@@ -63,18 +66,32 @@ export default function ProductsPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Partial<Product>>(EMPTY);
   const [skuMode, setSkuMode] = useState<SkuMode>('auto');
+  const [page, setPage] = useState(1);
   const isNew = !editing.id;
   const skuReadOnly = !isNew && editing.skuAutoAssigned === true;
 
-  const { data: products = [], isLoading } = useQuery<Product[]>({
-    queryKey: ['products'],
-    queryFn: () => api.get('/products').then((r) => r.data),
+  const { data, isLoading } = useQuery<ProductListResponse>({
+    queryKey: ['products', page],
+    queryFn: () =>
+      api
+        .get('/products', { params: { page, pageSize: PAGE_SIZE } })
+        .then((r) => r.data),
   });
+
+  const products = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const { data: categories = [] } = useQuery<Category[]>({
     queryKey: ['categories'],
     queryFn: () => api.get('/categories').then((r) => r.data),
   });
+
+  const { data: vouchersData } = useQuery<PaginatedResponse<Voucher>>({
+    queryKey: ['vouchers'],
+    queryFn: () => api.get('/vouchers', { params: { page: 1, pageSize: 200 } }).then((r) => r.data),
+  });
+  const vouchers = vouchersData?.items ?? [];
 
   const save = useMutation({
     mutationFn: (args: { product: Partial<Product>; mode: SkuMode }) => {
@@ -93,7 +110,10 @@ export default function ProductsPage() {
 
   const remove = useMutation({
     mutationFn: (id: string) => api.delete(`/products/${id}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['products'] }); toast.success(t('deleted')); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['products'] });
+      toast.success(t('deleted'));
+    },
   });
 
   const openNew = () => {
@@ -139,7 +159,15 @@ export default function ProductsPage() {
                     ))}
                   </TableRow>
                 ))
-              : products.map((p) => (
+              : products.length === 0
+                ? (
+                    <TableRow>
+                      <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                        {tc('noResults')}
+                      </TableCell>
+                    </TableRow>
+                  )
+                : products.map((p) => (
                   <TableRow key={p.id}>
                     <TableCell>
                       <ProductThumbnail imageUrl={p.imageUrl} name={p.name} />
@@ -175,6 +203,32 @@ export default function ProductsPage() {
           </TableBody>
         </Table>
       </div>
+
+      {total > 0 && (
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">
+            {t('pageInfo', { page: String(page), pages: String(totalPages) })}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm" variant="outline"
+              disabled={page <= 1 || isLoading}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              <ChevronRight className="h-4 w-4" />
+              {t('previousPage')}
+            </Button>
+            <Button
+              size="sm" variant="outline"
+              disabled={page >= totalPages || isLoading}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            >
+              {t('nextPage')}
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-md">
@@ -265,6 +319,36 @@ export default function ProductsPage() {
                   )}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>{t('voucher')}</Label>
+              <Select
+                value={editing.voucherId ?? '__none__'}
+                onValueChange={(v) =>
+                  setEditing((p) => ({
+                    ...p,
+                    voucherId: !v || v === '__none__' ? undefined : v,
+                  }))
+                }
+              >
+                <SelectTrigger><SelectValue placeholder={t('noVoucher')} /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">{t('noVoucher')}</SelectItem>
+                  {vouchers.map((v) => (
+                    <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center justify-between gap-4 rounded-md border p-3">
+              <div>
+                <Label>{t('trackStock')}</Label>
+                <p className="text-xs text-muted-foreground">{t('trackStockHint')}</p>
+              </div>
+              <Switch
+                checked={editing.trackStock ?? false}
+                onCheckedChange={(c) => setEditing((p) => ({ ...p, trackStock: c }))}
+              />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">

@@ -33,6 +33,9 @@ class ZReport(Base):
     total_refunds = Column(Numeric(12, 2), nullable=True)
     total_cash_sales = Column(Numeric(12, 2), nullable=True)
     total_card_sales = Column(Numeric(12, 2), nullable=True)
+    total_tips = Column(Numeric(12, 2), nullable=True)
+    total_cash_tips = Column(Numeric(12, 2), nullable=True)
+    total_card_tips = Column(Numeric(12, 2), nullable=True)
     transactions_count = Column(Integer, nullable=True)
 
     opening_cash = Column(Numeric(12, 2), nullable=True)

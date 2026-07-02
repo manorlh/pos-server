@@ -69,7 +69,7 @@ def list_users(
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    query = _apply_scope_filter(db.query(User), current_user, db).filter(User.tenant_id == active_tenant_id)
+    query = _apply_scope_filter(db.query(User), current_user).filter(User.tenant_id == active_tenant_id)
 
     if company_id:
         query = query.filter(User.company_id == company_id)

@@ -74,6 +74,9 @@ export interface Shop {
   updatedAt: string;
 }
 
+export type OutOfStockPolicy = 'block' | 'warn' | 'allow';
+export type TipDistribution = 'direct' | 'equal_pool' | 'by_sales';
+
 /** POS till settings v1 (camelCase keys match server JSONB). */
 export interface PosSettingsV1 {
   globalTaxRate?: number;
@@ -83,6 +86,13 @@ export interface PosSettingsV1 {
   nayaxDeviceHost?: string;
   nayaxDevicePort?: string;
   nayaxSpicyPath?: string;
+  outOfStockPolicy?: OutOfStockPolicy;
+  tipsEnabled?: boolean;
+  cashTipsEnabled?: boolean;
+  tipPresets?: number[];
+  tipDistribution?: TipDistribution;
+  receiptPrinterName?: string;
+  drawerPrinterName?: string;
   businessInfo?: Record<string, unknown>;
 }
 
@@ -131,6 +141,12 @@ export interface PosMachine {
   lastSyncAt?: string;
   lastCatalogChangeAt?: string;
   catalogPullStale?: boolean;
+  tradingDayStatus?: 'open' | 'closed' | 'none';
+  tradingDayId?: string;
+  dayDate?: string;
+  openedAt?: string;
+  openedBy?: string;
+  closeDayPending?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -147,6 +163,7 @@ export interface Category {
   color?: string;
   imageUrl?: string;
   parentId?: string;
+  voucherId?: string;
   isActive: boolean;
   sortOrder: number;
   createdAt: string;
@@ -173,9 +190,100 @@ export interface Product {
   stockQuantity: number;
   barcode?: string;
   taxRate?: number;
+  voucherId?: string;
+  trackStock?: boolean;
   createdAt: string;
   updatedAt: string;
 }
+
+export interface StockLevel {
+  productId: string;
+  productName?: string;
+  sku?: string;
+  quantity: number;
+  reorderMin?: number | null;
+  reorderMax?: number | null;
+  reorderOpt?: number | null;
+  updatedAt: string;
+}
+
+export interface TipCashierRow {
+  cashierId?: string | null;
+  cashierName?: string | null;
+  workerNumber?: string | null;
+  tipsCollected: number;
+  cashTips: number;
+  cardTips: number;
+  salesTotal: number;
+  transactionCount: number;
+  amountOwed: number;
+}
+
+export interface TipsReport {
+  shopId: string;
+  distribution: TipDistribution;
+  fromDate?: string | null;
+  toDate?: string | null;
+  totalTips: number;
+  totalCashTips: number;
+  totalCardTips: number;
+  totalSales: number;
+  cashiers: TipCashierRow[];
+}
+
+export type ValueDisplayMode = 'product_price' | 'fixed' | 'none';
+
+export interface Voucher {
+  id: string;
+  tenantId: string;
+  name: string;
+  isActive: boolean;
+  title?: string;
+  subtitle?: string;
+  bodyText?: string;
+  footerText?: string;
+  validityDays?: number;
+  validFrom?: string;
+  validUntil?: string;
+  valueDisplayMode: ValueDisplayMode;
+  displayValue?: number;
+  printBarcode: boolean;
+  printQr: boolean;
+  language?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IssuedVoucher {
+  id: string;
+  tenantId?: string;
+  shopId?: string;
+  machineId?: string;
+  transactionId: string;
+  transactionItemId?: string;
+  voucherId?: string;
+  productId?: string;
+  productName?: string;
+  quantity: number;
+  unitValue?: number;
+  faceValue?: number;
+  issuedAt: string;
+  expiresAt?: string;
+  status: 'issued' | 'voided' | 'redeemed';
+  reprintCount: number;
+  lastPrintedAt?: string;
+}
+
+export interface PaginatedResponse<T> {
+  page: number;
+  pageSize: number;
+  total: number;
+  items: T[];
+}
+
+export type ProductListResponse = PaginatedResponse<Product>;
+export type ShopProductCatalogRowListResponse = PaginatedResponse<ShopProductCatalogRow>;
+export type ShopProductCatalogCandidateListResponse = PaginatedResponse<ShopProductCatalogCandidate>;
 
 export interface PairingCode {
   id: string;
@@ -305,6 +413,69 @@ export interface ZReportListResponse {
   pageSize: number;
   total: number;
   items: ZReport[];
+}
+
+export interface CloseDayRequestItem {
+  id: string;
+  machineId: string;
+  machineName?: string;
+  tradingDayId?: string;
+  zReportId?: string;
+  status: string;
+  errorCode?: string;
+  errorMessage?: string;
+  sentAt?: string;
+  receivedAt?: string;
+  completedAt?: string;
+  failedAt?: string;
+}
+
+export interface CloseDayRequest {
+  id: string;
+  requestId?: string;
+  status: string;
+  shopId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  items: CloseDayRequestItem[];
+}
+
+export interface CloseDayCreateResponse {
+  requestId: string;
+  status: string;
+  items: CloseDayRequestItem[];
+}
+
+export interface DashboardStats {
+  grossRevenue: number;
+  netRevenue: number;
+  transactionsCount: number;
+  averageBasket: number;
+  itemsSold: number;
+  refundsCount: number;
+  refundsAmount: number;
+  tipsCash: number;
+  tipsCard: number;
+  paymentCash: number;
+  paymentCard: number;
+  from: string;
+  to: string;
+  generatedAt: string;
+}
+
+export interface DashboardBreakdownRow {
+  id: string;
+  name: string;
+  grossRevenue: number;
+  netRevenue: number;
+  transactionsCount: number;
+}
+
+export interface DashboardBreakdown {
+  groupBy: 'company' | 'shop';
+  rows: DashboardBreakdownRow[];
+  from: string;
+  to: string;
 }
 
 // ── POS users (per-shop till operators) ────────────────────────────────────────

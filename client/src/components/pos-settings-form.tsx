@@ -126,6 +126,149 @@ export function PosSettingsForm({ value, onChange, inherited, showOverrideHints 
         </Select>
       </div>
 
+      <div className="space-y-1">
+        <Label>
+          {t('outOfStockPolicy')}
+          {overrideBadge('outOfStockPolicy')}
+        </Label>
+        <Select
+          value={value.outOfStockPolicy ?? inherited?.outOfStockPolicy ?? 'allow'}
+          onValueChange={(v) =>
+            set('outOfStockPolicy', v as PosSettingsFormState['outOfStockPolicy'])
+          }
+          items={[
+            { value: 'allow', label: t('oosAllow') },
+            { value: 'warn', label: t('oosWarn') },
+            { value: 'block', label: t('oosBlock') },
+          ]}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="allow" label={t('oosAllow')}>{t('oosAllow')}</SelectItem>
+            <SelectItem value="warn" label={t('oosWarn')}>{t('oosWarn')}</SelectItem>
+            <SelectItem value="block" label={t('oosBlock')}>{t('oosBlock')}</SelectItem>
+          </SelectContent>
+        </Select>
+        {inheritedHint('outOfStockPolicy')}
+      </div>
+
+      <div className="border-t pt-4 space-y-3">
+        <p className="text-sm font-medium">{t('tipsTitle')}</p>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <Label>
+              {t('tipsEnabled')}
+              {overrideBadge('tipsEnabled')}
+            </Label>
+            {inheritedHint('tipsEnabled')}
+          </div>
+          <Switch
+            checked={value.tipsEnabled ?? inherited?.tipsEnabled ?? false}
+            onCheckedChange={(c) => set('tipsEnabled', c)}
+          />
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <Label>
+              {t('cashTipsEnabled')}
+              {overrideBadge('cashTipsEnabled')}
+            </Label>
+            {inheritedHint('cashTipsEnabled')}
+          </div>
+          <Switch
+            checked={value.cashTipsEnabled ?? inherited?.cashTipsEnabled ?? false}
+            onCheckedChange={(c) => set('cashTipsEnabled', c)}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label>
+            {t('tipPresets')}
+            {overrideBadge('tipPresets')}
+          </Label>
+          <Input
+            placeholder={
+              (inherited?.tipPresets ?? [10, 12, 15]).join(', ')
+            }
+            value={
+              value.tipPresets !== undefined
+                ? value.tipPresets.join(', ')
+                : ''
+            }
+            onChange={(e) => {
+              const raw = e.target.value.trim();
+              if (!raw) {
+                set('tipPresets', undefined);
+                return;
+              }
+              const nums = raw
+                .split(',')
+                .map((s) => parseInt(s.trim(), 10))
+                .filter((n) => !Number.isNaN(n) && n >= 0 && n <= 100);
+              set('tipPresets', nums.length ? nums : undefined);
+            }}
+          />
+          {inheritedHint('tipPresets')}
+        </div>
+        <div className="space-y-1">
+          <Label>
+            {t('tipDistribution')}
+            {overrideBadge('tipDistribution')}
+          </Label>
+          <Select
+            value={value.tipDistribution ?? inherited?.tipDistribution ?? 'direct'}
+            onValueChange={(v) =>
+              set('tipDistribution', v as PosSettingsFormState['tipDistribution'])
+            }
+            items={[
+              { value: 'direct', label: t('distDirect') },
+              { value: 'equal_pool', label: t('distEqual') },
+              { value: 'by_sales', label: t('distBySales') },
+            ]}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="direct" label={t('distDirect')}>{t('distDirect')}</SelectItem>
+              <SelectItem value="equal_pool" label={t('distEqual')}>{t('distEqual')}</SelectItem>
+              <SelectItem value="by_sales" label={t('distBySales')}>{t('distBySales')}</SelectItem>
+            </SelectContent>
+          </Select>
+          {inheritedHint('tipDistribution')}
+        </div>
+      </div>
+
+      <div className="border-t pt-4 space-y-3">
+        <p className="text-sm font-medium">{t('printersTitle')}</p>
+        <p className="text-xs text-muted-foreground">{t('printersDesc')}</p>
+        <div className="space-y-1">
+          <Label>
+            {t('receiptPrinter')}
+            {overrideBadge('receiptPrinterName')}
+          </Label>
+          <Input
+            placeholder={placeholderFor('receiptPrinterName', value, inherited) || 'BB'}
+            value={value.receiptPrinterName ?? ''}
+            onChange={(e) => set('receiptPrinterName', e.target.value || undefined)}
+          />
+          {inheritedHint('receiptPrinterName')}
+        </div>
+        <div className="space-y-1">
+          <Label>
+            {t('drawerPrinter')}
+            {overrideBadge('drawerPrinterName')}
+          </Label>
+          <Input
+            placeholder={placeholderFor('drawerPrinterName', value, inherited) || 'BBILL'}
+            value={value.drawerPrinterName ?? ''}
+            onChange={(e) => set('drawerPrinterName', e.target.value || undefined)}
+          />
+          {inheritedHint('drawerPrinterName')}
+        </div>
+      </div>
+
       <div className="border-t pt-4 space-y-3">
         <p className="text-sm font-medium">{t('nayaxTitle')}</p>
         <div className="flex items-center justify-between gap-4">

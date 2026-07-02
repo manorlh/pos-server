@@ -28,6 +28,9 @@ class ZReportIn(BaseModel):
     total_refunds: Optional[Decimal] = Field(None, alias="totalRefunds")
     total_cash_sales: Optional[Decimal] = Field(None, alias="totalCashSales")
     total_card_sales: Optional[Decimal] = Field(None, alias="totalCardSales")
+    total_tips: Optional[Decimal] = Field(None, alias="totalTips")
+    total_cash_tips: Optional[Decimal] = Field(None, alias="totalCashTips")
+    total_card_tips: Optional[Decimal] = Field(None, alias="totalCardTips")
     transactions_count: Optional[int] = Field(None, alias="transactionsCount")
 
     # POS sends the list of transaction IDs it expects to be present on the cloud.
@@ -36,6 +39,9 @@ class ZReportIn(BaseModel):
 
     # Full ZReportData blob from POS (passes through to z_reports.payload).
     payload: Optional[dict] = None
+
+    # Links cloud-initiated close-day request (belt-and-suspenders completion).
+    close_day_request_id: Optional[uuid.UUID] = Field(None, alias="closeDayRequestId")
 
 
 class ZReportUpsertResponse(BaseModel):
@@ -72,6 +78,9 @@ class ZReportOut(BaseModel):
     total_refunds: Optional[Decimal] = Field(None, alias="totalRefunds")
     total_cash_sales: Optional[Decimal] = Field(None, alias="totalCashSales")
     total_card_sales: Optional[Decimal] = Field(None, alias="totalCardSales")
+    total_tips: Optional[Decimal] = Field(None, alias="totalTips")
+    total_cash_tips: Optional[Decimal] = Field(None, alias="totalCashTips")
+    total_card_tips: Optional[Decimal] = Field(None, alias="totalCardTips")
     transactions_count: Optional[int] = Field(None, alias="transactionsCount")
     opening_cash: Optional[Decimal] = Field(None, alias="openingCash")
     closing_cash: Optional[Decimal] = Field(None, alias="closingCash")

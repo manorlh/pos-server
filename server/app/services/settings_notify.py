@@ -1,6 +1,7 @@
 """Notify POS machines via MQTT that settings for their shop/company changed."""
 from sqlalchemy.orm import Session
 
+from app.models.company import Company
 from app.models.pos_machine import POSMachine
 from app.models.shop import Shop
 from app.services.mqtt import mqtt_service
@@ -27,6 +28,27 @@ def notify_machines_for_company_settings(db: Session, company_id: str, reason: s
     shop_ids = [
         str(row[0])
         for row in db.query(Shop.id).filter(Shop.company_id == company_id).all()
+    ]
+    if not shop_ids:
+        return
+    machines = db.query(POSMachine).filter(
+        POSMachine.shop_id.in_(shop_ids),
+        POSMachine.is_active.is_(True),
+    ).all()
+    _notify_machines(db, machines, reason)
+
+
+def notify_machines_for_tenant_settings(db: Session, tenant_id: str, reason: str) -> None:
+    """Notify all active machines in every shop of every company under this tenant."""
+    company_ids = [
+        str(row[0])
+        for row in db.query(Company.id).filter(Company.tenant_id == tenant_id).all()
+    ]
+    if not company_ids:
+        return
+    shop_ids = [
+        str(row[0])
+        for row in db.query(Shop.id).filter(Shop.company_id.in_(company_ids)).all()
     ]
     if not shop_ids:
         return

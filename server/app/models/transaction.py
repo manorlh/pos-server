@@ -50,6 +50,8 @@ class Transaction(Base):
     amount_tendered = Column(Numeric(12, 2), nullable=True)
     change_amount = Column(Numeric(12, 2), nullable=True)
     total_amount = Column(Numeric(12, 2), nullable=False, server_default="0")
+    tip_amount = Column(Numeric(12, 2), nullable=False, server_default="0")
+    tip_payment_method = Column(String(10), nullable=True)
     total_discount = Column(Numeric(12, 2), nullable=True)
     document_discount = Column(Numeric(12, 2), nullable=True)
     wht_deduction = Column(Numeric(12, 2), nullable=True)
@@ -73,6 +75,12 @@ class Transaction(Base):
     trading_day = relationship("TradingDay", back_populates="transactions")
     items = relationship(
         "TransactionItem",
+        back_populates="transaction",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    issued_vouchers = relationship(
+        "IssuedVoucher",
         back_populates="transaction",
         cascade="all, delete-orphan",
         passive_deletes=True,

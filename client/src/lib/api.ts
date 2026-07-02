@@ -1,6 +1,16 @@
 import axios from 'axios';
 import { useAuth } from './auth';
-import type { EntitySettingsResponse, PosSettingsV1, ShopSettingsResponse } from './types';
+import type {
+  CloseDayCreateResponse,
+  CloseDayRequest,
+  DashboardBreakdown,
+  DashboardStats,
+  EntitySettingsResponse,
+  PosSettingsV1,
+  ShopSettingsResponse,
+  StockLevel,
+  TipsReport,
+} from './types';
 
 export const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL,
@@ -90,6 +100,19 @@ export async function uploadProductImage(
   return { url: result.secure_url, publicId: result.public_id ?? '' };
 }
 
+export async function fetchTenantSettings(tenantId: string): Promise<EntitySettingsResponse> {
+  const { data } = await api.get<EntitySettingsResponse>(`/tenants/${tenantId}/settings`);
+  return data;
+}
+
+export async function patchTenantSettings(
+  tenantId: string,
+  patch: Partial<PosSettingsV1>,
+): Promise<EntitySettingsResponse> {
+  const { data } = await api.patch<EntitySettingsResponse>(`/tenants/${tenantId}/settings`, patch);
+  return data;
+}
+
 export async function fetchCompanySettings(companyId: string): Promise<EntitySettingsResponse> {
   const { data } = await api.get<EntitySettingsResponse>(`/companies/${companyId}/settings`);
   return data;
@@ -121,10 +144,81 @@ export async function patchShopSettings(
   return data;
 }
 
+export async function fetchShopStock(shopId: string): Promise<StockLevel[]> {
+  const { data } = await api.get<StockLevel[]>(`/shops/${shopId}/stock`);
+  return data;
+}
+
+export async function postGoodsReceipt(
+  shopId: string,
+  body: { productId: string; quantity: number; note?: string },
+): Promise<StockLevel> {
+  const { data } = await api.post<StockLevel>(`/shops/${shopId}/stock/goods-receipt`, body);
+  return data;
+}
+
+export async function postStockAdjustment(
+  shopId: string,
+  body: { productId: string; delta: number; note?: string },
+): Promise<StockLevel> {
+  const { data } = await api.post<StockLevel>(`/shops/${shopId}/stock/adjustment`, body);
+  return data;
+}
+
+export async function postStocktake(
+  shopId: string,
+  body: { productId: string; quantity: number; note?: string },
+): Promise<StockLevel> {
+  const { data } = await api.post<StockLevel>(`/shops/${shopId}/stock/stocktake`, body);
+  return data;
+}
+
+export async function fetchTipsReport(
+  shopId: string,
+  params: { from?: string; to?: string; tradingDayId?: string },
+): Promise<TipsReport> {
+  const { data } = await api.get<TipsReport>(`/shops/${shopId}/tips/report`, { params });
+  return data;
+}
+
+export async function fetchDashboardStats(params: {
+  from?: string;
+  to?: string;
+  companyId?: string;
+  shopId?: string;
+  machineId?: string;
+}): Promise<DashboardStats> {
+  const { data } = await api.get<DashboardStats>('/dashboard/stats', { params });
+  return data;
+}
+
+export async function fetchDashboardBreakdown(params: {
+  from?: string;
+  to?: string;
+  companyId?: string;
+}): Promise<DashboardBreakdown> {
+  const { data } = await api.get<DashboardBreakdown>('/dashboard/breakdown', { params });
+  return data;
+}
+
+export async function postCloseDay(payload: {
+  machineIds?: string[];
+  shopId?: string;
+}): Promise<CloseDayCreateResponse> {
+  const { data } = await api.post('/machines/close-day', payload);
+  return data;
+}
+
+export async function fetchCloseDayRequest(requestId: string): Promise<CloseDayRequest> {
+  const { data } = await api.get(`/close-day-requests/${requestId}`);
+  return data;
+}
+
 // Attach Clerk JWT on every request
 api.interceptors.request.use(async (config) => {
   const headers = await getAuthHeaders();
   Object.assign(config.headers, headers);
+  config.headers['X-Request-Id'] = crypto.randomUUID();
   return config;
 });
 

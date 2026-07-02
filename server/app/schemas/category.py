@@ -11,6 +11,7 @@ class CategoryBase(BaseModel):
     color: Optional[str] = Field(None, pattern=r"^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$")
     image_url: Optional[str] = Field(None, alias="imageUrl")
     parent_id: Optional[uuid.UUID] = Field(None, alias="parentId")
+    voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
     is_active: bool = Field(True, alias="isActive")
     sort_order: int = Field(0, alias="sortOrder")
 
@@ -45,6 +46,7 @@ class CategoryUpdate(BaseModel):
     color: Optional[str] = Field(None, pattern=r"^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$")
     image_url: Optional[str] = Field(None, alias="imageUrl")
     parent_id: Optional[uuid.UUID] = Field(None, alias="parentId")
+    voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
     is_active: Optional[bool] = Field(None, alias="isActive")
     sort_order: Optional[int] = Field(None, alias="sortOrder")
 
@@ -77,6 +79,7 @@ class CategoryResponse(BaseModel):
     color: Optional[str]
     image_url: Optional[str] = Field(None, alias="imageUrl")
     parent_id: Optional[uuid.UUID] = Field(None, alias="parentId")
+    voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
     is_active: bool = Field(..., alias="isActive")
     sort_order: int = Field(..., alias="sortOrder")
     created_at: datetime = Field(..., alias="createdAt")

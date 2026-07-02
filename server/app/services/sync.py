@@ -21,6 +21,7 @@ from app.models.pos_machine import POSMachine
 from app.models.product import Product, CatalogLevel
 from app.models.shop import Shop
 from app.models.shop_product_override import ShopProductOverride
+from app.models.voucher import Voucher
 
 
 # ── Serializers ──────────────────────────────────────────────────────────────
@@ -33,11 +34,22 @@ def _aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
     return dt
 
 
+def _effective_voucher_id(p: Product) -> Optional[uuid_mod.UUID]:
+    """Product-level voucher wins; otherwise inherit the product's category voucher."""
+    if p.voucher_id:
+        return p.voucher_id
+    category = p.category
+    if category is not None and category.voucher_id:
+        return category.voucher_id
+    return None
+
+
 def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[str, Any]:
     if shop_listed is None:
         in_stock = p.in_stock
     else:
         in_stock = bool(p.in_stock and shop_listed)
+    eff_voucher_id = _effective_voucher_id(p)
     row: Dict[str, Any] = {
         "id": str(p.id),
         "globalProductId": str(p.global_product_id) if p.global_product_id else None,
@@ -58,6 +70,8 @@ def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[s
         "stockQuantity": p.stock_quantity,
         "barcode": p.barcode,
         "taxRate": float(p.tax_rate) if p.tax_rate is not None else None,
+        "voucherId": str(eff_voucher_id) if eff_voucher_id else None,
+        "trackStock": bool(p.track_stock),
         "createdAt": p.created_at.isoformat() if p.created_at else None,
         "updatedAt": p.updated_at.isoformat() if p.updated_at else None,
     }
@@ -130,6 +144,8 @@ def _serialize_merged_product(
         "stockQuantity": stock_qty,
         "barcode": global_p.barcode,
         "taxRate": float(global_p.tax_rate) if global_p.tax_rate is not None else None,
+        "voucherId": str(_effective_voucher_id(global_p)) if _effective_voucher_id(global_p) else None,
+        "trackStock": bool(global_p.track_stock),
         "shopListed": shop_listed,
         "createdAt": (local.created_at if local else global_p.created_at).isoformat()
         if (local and local.created_at) or global_p.created_at
@@ -154,6 +170,29 @@ def _serialize_category(c: Category) -> Dict[str, Any]:
         "sortOrder": c.sort_order,
         "createdAt": c.created_at.isoformat() if c.created_at else None,
         "updatedAt": c.updated_at.isoformat() if c.updated_at else None,
+    }
+
+
+def _serialize_voucher(v: Voucher) -> Dict[str, Any]:
+    mode = v.value_display_mode
+    return {
+        "id": str(v.id),
+        "name": v.name,
+        "isActive": v.is_active,
+        "title": v.title,
+        "subtitle": v.subtitle,
+        "bodyText": v.body_text,
+        "footerText": v.footer_text,
+        "validityDays": v.validity_days,
+        "validFrom": v.valid_from.isoformat() if v.valid_from else None,
+        "validUntil": v.valid_until.isoformat() if v.valid_until else None,
+        "valueDisplayMode": mode.value if hasattr(mode, "value") else mode,
+        "displayValue": float(v.display_value) if v.display_value is not None else None,
+        "printBarcode": v.print_barcode,
+        "printQr": v.print_qr,
+        "language": v.language,
+        "createdAt": v.created_at.isoformat() if v.created_at else None,
+        "updatedAt": v.updated_at.isoformat() if v.updated_at else None,
     }
 
 
@@ -227,6 +266,37 @@ def merge_categories_referenced_by_products(
     return merged
 
 
+def merge_vouchers_referenced_by_products(
+    db: Session,
+    products: List[Dict[str, Any]],
+    vouchers: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Delta sync: include voucher templates referenced by synced products."""
+    voucher_ids: Set[uuid_mod.UUID] = set()
+    for p in products:
+        raw = p.get("voucherId")
+        if not raw:
+            continue
+        try:
+            voucher_ids.add(uuid_mod.UUID(str(raw)))
+        except (ValueError, TypeError):
+            continue
+
+    if not voucher_ids:
+        return vouchers
+
+    existing_ids = {str(v.get("id")) for v in vouchers if v.get("id")}
+    rows = db.query(Voucher).filter(Voucher.id.in_(voucher_ids)).all()
+    merged = list(vouchers)
+    seen = set(existing_ids)
+    for r in rows:
+        sid = str(r.id)
+        if sid not in seen:
+            merged.append(_serialize_voucher(r))
+            seen.add(sid)
+    return merged
+
+
 # ── Query helpers ─────────────────────────────────────────────────────────────
 
 def _products_merged_for_shop_machine(
@@ -245,6 +315,7 @@ def _products_merged_for_shop_machine(
         assigned_rows = (
             db.query(ShopProductOverride, Product)
             .join(Product, Product.id == ShopProductOverride.global_product_id)
+            .options(joinedload(Product.category))
             .filter(
                 ShopProductOverride.shop_id == shop_id,
                 Product.tenant_id == tid,
@@ -255,7 +326,12 @@ def _products_merged_for_shop_machine(
             .all()
         )
 
-    locals_list = db.query(Product).filter(Product.pos_machine_id == mqid).all()
+    locals_list = (
+        db.query(Product)
+        .options(joinedload(Product.category))
+        .filter(Product.pos_machine_id == mqid)
+        .all()
+    )
     by_global: Dict[Any, Product] = {}
     pos_only: List[Product] = []
     for loc in locals_list:
@@ -294,7 +370,9 @@ def get_products_for_sync(
     stock and POS-only rows; otherwise returns only rows owned by that machine (legacy).
     """
     if pos_machine_id is None:
-        query = db.query(Product).filter(Product.pos_machine_id.is_(None))
+        query = db.query(Product).options(joinedload(Product.category)).filter(
+            Product.pos_machine_id.is_(None)
+        )
         if tenant_id:
             query = query.filter(Product.tenant_id == tenant_id)
         if since:
@@ -307,7 +385,9 @@ def get_products_for_sync(
         if tid:
             return _products_merged_for_shop_machine(db, tid, machine, since)
 
-    query = db.query(Product).filter(Product.pos_machine_id == pos_machine_id)
+    query = db.query(Product).options(joinedload(Product.category)).filter(
+        Product.pos_machine_id == pos_machine_id
+    )
     if tenant_id:
         query = query.filter(Product.tenant_id == tenant_id)
     if since:
@@ -357,6 +437,21 @@ def get_categories_for_sync(
         query = query.filter(Category.updated_at > since)
 
     return [_serialize_category(c) for c in query.order_by(Category.sort_order).all()]
+
+
+def get_vouchers_for_sync(
+    db: Session,
+    tenant_id: Optional[str] = None,
+    since: Optional[datetime] = None,
+) -> List[Dict[str, Any]]:
+    """Return active voucher templates for a tenant."""
+    if not tenant_id:
+        return []
+    tid = uuid_mod.UUID(str(tenant_id)) if isinstance(tenant_id, str) else tenant_id
+    query = db.query(Voucher).filter(Voucher.tenant_id == tid, Voucher.is_active.is_(True))
+    if since:
+        query = query.filter(Voucher.updated_at > since)
+    return [_serialize_voucher(v) for v in query.order_by(Voucher.name).all()]
 
 
 def update_machine_sync_timestamp(db: Session, machine_id: str) -> None:
@@ -411,12 +506,17 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
             )
             .scalar()
         )
+        voucher_max = (
+            db.query(func.max(Voucher.updated_at))
+            .filter(Voucher.tenant_id == tid_uuid)
+            .scalar()
+        )
         local_product_max = (
             db.query(func.max(Product.updated_at))
             .filter(Product.pos_machine_id == machine.id)
             .scalar()
         )
-        points.extend([product_max, override_max, category_max, local_product_max])
+        points.extend([product_max, override_max, category_max, voucher_max, local_product_max])
     else:
         local_product_max = (
             db.query(func.max(Product.updated_at))
@@ -428,7 +528,12 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
             .filter(Category.pos_machine_id == machine.id)
             .scalar()
         )
-        points.extend([local_product_max, local_category_max])
+        voucher_max = (
+            db.query(func.max(Voucher.updated_at))
+            .filter(Voucher.tenant_id == tid_uuid)
+            .scalar()
+        )
+        points.extend([local_product_max, local_category_max, voucher_max])
 
     points = [p for p in points if p is not None]
     if not points:

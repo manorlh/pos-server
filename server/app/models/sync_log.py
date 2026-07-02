@@ -17,6 +17,7 @@ class SyncDirection(str, enum.Enum):
 class SyncEntityType(str, enum.Enum):
     PRODUCTS = "products"
     CATEGORIES = "categories"
+    VOUCHERS = "vouchers"
     TRANSACTIONS = "transactions"
     Z_REPORT = "z_report"
 

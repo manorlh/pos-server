@@ -1,5 +1,13 @@
-import uvicorn
 import os
+from pathlib import Path
+
+import uvicorn
+from dotenv import load_dotenv
+
+_server_dir = Path(__file__).resolve().parent
+load_dotenv(_server_dir / ".env")
+load_dotenv(_server_dir / ".env.local", override=True)
+
 from app.config import get_settings
 
 if __name__ == "__main__":

@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
-import { PosMachine, Shop, Company } from '@/lib/types';
+import { api, fetchCloseDayRequest, postCloseDay } from '@/lib/api';
+import { CloseDayRequest, PosMachine, Shop, Company } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { normalizePosMachine } from '@/lib/posMachine';
 import { findBySameId } from '@/lib/entityLookup';
@@ -18,7 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
-import { Monitor, Wifi, WifiOff, Send, KeyRound, RefreshCw, Link2, Store, Info, Trash2, Smartphone } from 'lucide-react';
+import { Monitor, Wifi, WifiOff, Send, KeyRound, RefreshCw, Link2, Store, Info, Trash2, Smartphone, CalendarClock } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
 import { QRCodeSVG } from 'qrcode.react';
 import type { PairingSessionCreateResponse } from '@/lib/types';
@@ -50,6 +50,7 @@ export default function MachinesPage() {
 
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignShopId, setAssignShopId] = useState('');
+  const [filterShopId, setFilterShopId] = useState<string>('all');
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   const [shopEditOpen, setShopEditOpen] = useState(false);
@@ -63,6 +64,13 @@ export default function MachinesPage() {
   // upfront whether the row will be hard-deleted or only decommissioned.
   const [removeMachineHasHistory, setRemoveMachineHasHistory] = useState(false);
 
+  const [closeDayOpen, setCloseDayOpen] = useState(false);
+  const [closeDayTarget, setCloseDayTarget] = useState<'machine' | 'shop'>('machine');
+  const [selectedMachineIds, setSelectedMachineIds] = useState<Set<string>>(new Set());
+  const [closeProgressOpen, setCloseProgressOpen] = useState(false);
+  const [closeProgressRequestId, setCloseProgressRequestId] = useState<string | null>(null);
+  const [closeProgressData, setCloseProgressData] = useState<CloseDayRequest | null>(null);
+
   const canAssignMachine =
     authHydrated && (me?.role === 'distributor' || me?.role === 'super_admin');
   const canEditAssignedShop =
@@ -70,6 +78,12 @@ export default function MachinesPage() {
     (me?.role === 'company_manager' || me?.role === 'distributor' || me?.role === 'super_admin');
   const canRemoveMachine =
     authHydrated && (me?.role === 'distributor' || me?.role === 'super_admin');
+  const canCloseDay =
+    authHydrated &&
+    (me?.role === 'company_manager' ||
+      me?.role === 'shop_manager' ||
+      me?.role === 'distributor' ||
+      me?.role === 'super_admin');
   const showAssignHelp =
     authHydrated && (me?.role === 'super_admin' || me?.role === 'distributor');
 
@@ -97,6 +111,12 @@ export default function MachinesPage() {
     queryFn: () =>
       api.get('/shops', { params: { companyId: pairCompanyId } }).then((r) => r.data),
     enabled: !!pairCompanyId && pairOpen,
+  });
+
+  const visibleMachines = machines.filter((m) => {
+    if (filterShopId === 'all') return true;
+    if (filterShopId === '__none__') return !m.shopId;
+    return m.shopId === filterShopId;
   });
 
   const resetPairDialog = () => {
@@ -155,6 +175,19 @@ export default function MachinesPage() {
     onSuccess: () => {
       toast.success(t('pushSuccess'));
       setPushOpen(false);
+    },
+    onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
+  });
+
+  const closeDayMutation = useMutation({
+    mutationFn: (payload: { machineIds?: string[]; shopId?: string }) => postCloseDay(payload),
+    onSuccess: (data) => {
+      setCloseProgressRequestId(data.requestId);
+      setCloseProgressData({ id: data.requestId, status: data.status, items: data.items });
+      setCloseProgressOpen(true);
+      setCloseDayOpen(false);
+      setSelectedMachineIds(new Set());
+      qc.invalidateQueries({ queryKey: ['machines'] });
     },
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
   });
@@ -226,6 +259,21 @@ export default function MachinesPage() {
     setPushOpen(true);
   };
 
+  const openCloseDay = (m: PosMachine) => {
+    setSelectedMachine(m);
+    setCloseDayTarget(m.shopId ? 'machine' : 'machine');
+    setCloseDayOpen(true);
+  };
+
+  const toggleMachineSelected = (id: string) => {
+    setSelectedMachineIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   /**
    * Open the remove dialog. We treat any non-`paired` machine as "probably has
    * history" — once a machine has been assigned to a shop it has almost
@@ -269,6 +317,73 @@ export default function MachinesPage() {
     if (!Number.isFinite(ts)) return false;
     return nowMs - ts <= MQTT_ONLINE_WINDOW_MS;
   };
+
+  const canCloseMachine = (m: PosMachine): boolean =>
+    m.pairingStatus === 'assigned' &&
+    m.tradingDayStatus === 'open' &&
+    isMqttOnline(m) &&
+    !m.closeDayPending;
+
+  const tradingDayBadgeVariant = (m: PosMachine): 'default' | 'secondary' | 'outline' => {
+    if (m.closeDayPending) return 'secondary';
+    if (m.tradingDayStatus === 'open') return 'default';
+    return 'outline';
+  };
+
+  const tradingDayLabel = (m: PosMachine): string => {
+    if (m.closeDayPending) return t('tradingDayPending');
+    if (m.tradingDayStatus === 'open') return t('tradingDayOpen');
+    return t('tradingDayNone');
+  };
+
+  const closeItemStatusLabel = (status: string): string => {
+    const map: Record<string, string> = {
+      pending: t('closeDayItemStatus.pending'),
+      sent: t('closeDayItemStatus.sent'),
+      received: t('closeDayItemStatus.received'),
+      completed: t('closeDayItemStatus.completed'),
+      failed: t('closeDayItemStatus.failed'),
+      cancelled: t('closeDayItemStatus.cancelled'),
+      expired: t('closeDayItemStatus.expired'),
+    };
+    return map[status] ?? status;
+  };
+
+  const bulkCloseTargets = visibleMachines.filter((m) => selectedMachineIds.has(m.id) && canCloseMachine(m));
+
+  const selectableMachines = visibleMachines.filter(
+    (m) => m.pairingStatus === 'assigned',
+  );
+  const allSelectableSelected =
+    selectableMachines.length > 0 &&
+    selectableMachines.every((m) => selectedMachineIds.has(m.id));
+  const someSelectableSelected =
+    selectableMachines.some((m) => selectedMachineIds.has(m.id)) && !allSelectableSelected;
+
+  const toggleSelectAll = () => {
+    if (allSelectableSelected) {
+      setSelectedMachineIds(new Set());
+    } else {
+      setSelectedMachineIds(new Set(selectableMachines.map((m) => m.id)));
+    }
+  };
+
+  useEffect(() => {
+    if (!closeProgressOpen || !closeProgressRequestId) return;
+    const terminal = new Set(['completed', 'failed', 'cancelled', 'expired']);
+    const poll = () => {
+      void fetchCloseDayRequest(closeProgressRequestId)
+        .then((data) => {
+          setCloseProgressData(data);
+          const allDone = data.items.every((item) => terminal.has(item.status));
+          if (allDone) qc.invalidateQueries({ queryKey: ['machines'] });
+        })
+        .catch(() => undefined);
+    };
+    poll();
+    const tmr = window.setInterval(poll, 2000);
+    return () => window.clearInterval(tmr);
+  }, [closeProgressOpen, closeProgressRequestId, qc]);
 
   return (
     <div className="space-y-4">
@@ -322,6 +437,38 @@ export default function MachinesPage() {
         </div>
       ) : null}
 
+      {!isLoading && machines.length > 0 ? (
+        <div className="max-w-sm space-y-1">
+          <Label>{t('filterByShop')}</Label>
+          <Select
+            value={filterShopId}
+            onValueChange={(v) => setFilterShopId(v ?? 'all')}
+            items={[
+              { value: 'all', label: t('allShops') },
+              { value: '__none__', label: t('shopUnassignedFilter') },
+              ...entitySelectItems(shops),
+            ]}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder={t('allShops')} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all" label={t('allShops')}>
+                {t('allShops')}
+              </SelectItem>
+              <SelectItem value="__none__" label={t('shopUnassignedFilter')}>
+                {t('shopUnassignedFilter')}
+              </SelectItem>
+              {shops.map((s) => (
+                <SelectItem key={s.id} value={s.id} label={s.name}>
+                  {s.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      ) : null}
+
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {Array.from({ length: 3 }).map((_, i) => (
@@ -340,14 +487,78 @@ export default function MachinesPage() {
           <Monitor className="h-12 w-12 opacity-30" />
           <p className="text-center">{t('noMachines')}</p>
         </div>
+      ) : visibleMachines.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground gap-3">
+          <Monitor className="h-12 w-12 opacity-30" />
+          <p className="text-center">{t('noMachinesForShop')}</p>
+        </div>
       ) : (
+        <>
+          {canCloseDay && selectableMachines.length > 0 ? (
+            <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur">
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-primary"
+                  checked={allSelectableSelected}
+                  ref={(el) => {
+                    if (el) el.indeterminate = someSelectableSelected;
+                  }}
+                  onChange={toggleSelectAll}
+                  aria-label={allSelectableSelected ? t('deselectAll') : t('selectAll')}
+                />
+                <span>
+                  {allSelectableSelected ? t('deselectAll') : t('selectAll')}
+                  <span className="text-muted-foreground">
+                    {' '}
+                    ({t('selectedCount', {
+                      selected: selectableMachines.filter((m) => selectedMachineIds.has(m.id)).length,
+                      total: selectableMachines.length,
+                    })})
+                  </span>
+                </span>
+              </label>
+              {selectedMachineIds.size > 0 ? (
+                <>
+                  <span className="hidden h-4 w-px bg-border sm:block" aria-hidden />
+                  <span className="text-sm text-muted-foreground">
+                    {t('closeDayBulk', { count: bulkCloseTargets.length })}
+                  </span>
+                  <Button
+                    size="sm"
+                    disabled={bulkCloseTargets.length === 0 || closeDayMutation.isPending}
+                    onClick={() =>
+                      closeDayMutation.mutate({ machineIds: bulkCloseTargets.map((m) => m.id) })
+                    }
+                  >
+                    <CalendarClock className="h-4 w-4 me-1" />
+                    {closeDayMutation.isPending ? t('closeDaySending') : t('closeDayConfirm')}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setSelectedMachineIds(new Set())}>
+                    {tc('cancel')}
+                  </Button>
+                </>
+              ) : null}
+            </div>
+          ) : null}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {machines.map((m) => (
+          {visibleMachines.map((m) => (
             <Card key={m.id}>
               <CardHeader className="flex flex-row items-start justify-between pb-2">
-                <div>
+                <div className="flex items-start gap-2 min-w-0">
+                  {canCloseDay && m.pairingStatus === 'assigned' ? (
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 shrink-0 accent-primary"
+                      checked={selectedMachineIds.has(m.id)}
+                      onChange={() => toggleMachineSelected(m.id)}
+                      aria-label={m.name}
+                    />
+                  ) : null}
+                  <div className="min-w-0">
                   <CardTitle className="text-base">{m.name}</CardTitle>
                   <p className="text-xs text-muted-foreground">{m.machineCode}</p>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -419,6 +630,19 @@ export default function MachinesPage() {
                     </div>
                   </div>
                 ) : null}
+                <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground">{t('tradingDayStatusLabel')}</span>
+                    <Badge variant={tradingDayBadgeVariant(m)}>{tradingDayLabel(m)}</Badge>
+                  </div>
+                  {m.tradingDayStatus === 'open' && m.openedAt ? (
+                    <div className="text-xs text-muted-foreground">
+                      {t('tradingDayOpenedAt')}{' '}
+                      {formatDistanceToNow(new Date(m.openedAt), { addSuffix: true, locale: he })}
+                      {m.openedBy ? ` · ${t('tradingDayOpenedBy')} ${m.openedBy}` : null}
+                    </div>
+                  ) : null}
+                </div>
                 {m.pairingStatus === 'assigned' || m.shopId ? (
                   <p className="text-xs text-muted-foreground">
                     {t('shop')}:{' '}
@@ -450,6 +674,17 @@ export default function MachinesPage() {
                           {t('changeShop')}
                         </Button>
                       ) : null}
+                      {canCloseDay ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => openCloseDay(m)}
+                          disabled={!canCloseMachine(m)}
+                        >
+                          <CalendarClock className="h-3.5 w-3.5 me-1" /> {t('closeDay')}
+                        </Button>
+                      ) : null}
                       <Button
                         variant="outline"
                         size="sm"
@@ -476,6 +711,7 @@ export default function MachinesPage() {
             </Card>
           ))}
         </div>
+        </>
       )}
 
       <Dialog
@@ -755,6 +991,103 @@ export default function MachinesPage() {
             >
               <Send className="h-3.5 w-3.5 me-1" />
               {pushCatalog.isPending ? t('pushing') : t('pushNow')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={closeDayOpen} onOpenChange={setCloseDayOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('closeDayTitle')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">{t('closeDayScopeIntro')}</p>
+            {selectedMachine?.shopId ? (
+              <div className="space-y-2">
+                <Label>{t('pushScopeLabel')}</Label>
+                <Select
+                  value={closeDayTarget}
+                  onValueChange={(v) => setCloseDayTarget(v as 'machine' | 'shop')}
+                  items={[
+                    { value: 'machine', label: t('closeDayThisDevice') },
+                    { value: 'shop', label: t('closeDayAllOpenInShop') },
+                  ]}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="machine" label={t('closeDayThisDevice')}>
+                      {t('closeDayThisDevice')}
+                    </SelectItem>
+                    <SelectItem value="shop" label={t('closeDayAllOpenInShop')}>
+                      {t('closeDayAllOpenInShop')}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">{t('pushThisDeviceOnlyHint')}</p>
+            )}
+            <p className="text-sm text-muted-foreground">{t('closeDayProgressHint')}</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCloseDayOpen(false)}>
+              {tc('cancel')}
+            </Button>
+            <Button
+              onClick={() => {
+                if (!selectedMachine) return;
+                if (closeDayTarget === 'shop' && selectedMachine.shopId) {
+                  closeDayMutation.mutate({ shopId: selectedMachine.shopId });
+                } else {
+                  closeDayMutation.mutate({ machineIds: [selectedMachine.id] });
+                }
+              }}
+              disabled={closeDayMutation.isPending || !selectedMachine || !canCloseMachine(selectedMachine)}
+            >
+              <CalendarClock className="h-3.5 w-3.5 me-1" />
+              {closeDayMutation.isPending ? t('closeDaySending') : t('closeDayConfirm')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={closeProgressOpen} onOpenChange={setCloseProgressOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t('closeDayProgressTitle')}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">{t('closeDayProgressHint')}</p>
+          <div className="max-h-72 overflow-y-auto space-y-2 py-2">
+            {(closeProgressData?.items ?? []).map((item) => (
+              <div
+                key={item.id}
+                className="flex items-start justify-between gap-2 rounded-md border px-3 py-2 text-sm"
+              >
+                <div className="min-w-0">
+                  <p className="font-medium truncate">{item.machineName ?? item.machineId}</p>
+                  {item.errorMessage ? (
+                    <p className="text-xs text-destructive mt-0.5">{item.errorMessage}</p>
+                  ) : null}
+                </div>
+                <Badge variant={item.status === 'completed' ? 'default' : item.status === 'failed' ? 'outline' : 'secondary'}>
+                  {closeItemStatusLabel(item.status)}
+                </Badge>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button
+              onClick={() => {
+                setCloseProgressOpen(false);
+                setCloseProgressRequestId(null);
+                setCloseProgressData(null);
+                qc.invalidateQueries({ queryKey: ['machines'] });
+              }}
+            >
+              {t('closeDayDismiss')}
             </Button>
           </DialogFooter>
         </DialogContent>
