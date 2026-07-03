@@ -2,6 +2,7 @@ import uuid as uuid_mod
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
 from sqlalchemy.exc import IntegrityError
@@ -25,8 +26,13 @@ from app.middleware.auth import (
     get_pos_machine_from_machine_token,
     get_active_tenant_id,
     ensure_same_tenant,
+    security,
 )
-from app.services.sync import update_machine_sync_timestamp, get_catalog_change_watermark_for_machine
+from app.services.sync import (
+    update_machine_sync_timestamp,
+    update_machine_heartbeat_timestamp,
+    get_catalog_change_watermark_for_machine,
+)
 from app.services.catalog_notify import notify_machine_catalog_changed
 from app.services.shop_validation import shop_belongs_to_company
 from app.services.mqtt_broker import machine_mqtt_refresh_info
@@ -203,6 +209,7 @@ def list_unassigned_machines(
 @router.get("/me")
 def get_my_machine(
     machine: POSMachine = Depends(get_pos_machine_from_machine_token),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     """POS desktop: resolve shop/tenant and MQTT broker endpoint using machine JWT only."""
     return {
@@ -212,7 +219,20 @@ def get_my_machine(
         "shopId": str(machine.shop_id) if machine.shop_id else None,
         "pairingStatus": machine.pairing_status.value if hasattr(machine.pairing_status, "value") else machine.pairing_status,
         "mqttClientId": machine.mqtt_client_id,
-        **machine_mqtt_refresh_info(),
+        **machine_mqtt_refresh_info(machine=machine, access_token=credentials.credentials),
+    }
+
+
+@router.post("/me/heartbeat")
+def post_my_heartbeat(
+    machine: POSMachine = Depends(get_pos_machine_from_machine_token),
+    db: Session = Depends(get_db),
+):
+    """POS desktop: periodic online signal over HTTP (replaces MQTT heartbeat publish)."""
+    update_machine_heartbeat_timestamp(db, str(machine.id))
+    return {
+        "ok": True,
+        "serverTime": datetime.now(timezone.utc).isoformat(),
     }
 
 

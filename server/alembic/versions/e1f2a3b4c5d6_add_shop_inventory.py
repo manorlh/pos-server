@@ -7,7 +7,7 @@ Create Date: 2026-06-27 12:00:00.000000
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, ENUM
 
 
 revision = "e1f2a3b4c5d6"
@@ -15,7 +15,10 @@ down_revision = "c0d1e2f3a4b5"
 branch_labels = None
 depends_on = None
 
-stock_movement_reason = sa.Enum(
+# create_type=False: we create/drop the enum explicitly with checkfirst below.
+# Otherwise create_table() would auto-emit a second CREATE TYPE (without
+# checkfirst) and fail with "type already exists".
+stock_movement_reason = ENUM(
     "sale",
     "refund",
     "goods_receipt",
@@ -23,6 +26,7 @@ stock_movement_reason = sa.Enum(
     "stocktake",
     "wastage",
     name="stockmovementreason",
+    create_type=False,
 )
 
 

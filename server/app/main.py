@@ -45,6 +45,7 @@ from app.routers import (
     tips,
     dashboard,
     close_day,
+    mqtt_auth,
 )
 from app.services.mqtt import mqtt_service
 
@@ -93,6 +94,7 @@ app.include_router(z_reports.router, prefix=_prefix)
 app.include_router(pos_users.router, prefix=_prefix)
 app.include_router(tenants.router, prefix=_prefix)
 app.include_router(settings_router.router, prefix=_prefix)
+app.include_router(mqtt_auth.router, prefix=_prefix)
 
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────

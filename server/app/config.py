@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     mqtt_tls_enabled: bool = False
     mqtt_tls_ca_cert_path: str = ""  # path to EMQX server CA .crt (from Console → Overview)
     mqtt_tls_ca_cert: str = ""  # PEM string alternative (useful on Render without a file mount)
+    # POS broker auth: machine_jwt = per-device JWT + EMQX HTTP /mqtt/auth (subscribe-only,
+    # scoped topics). shared = legacy single broker login (no per-device isolation).
+    mqtt_pos_auth_mode: str = "machine_jwt"
+    mqtt_http_auth_secret: str = ""  # optional shared secret EMQX sends as X-MQTT-Auth-Secret
     
     # Application
     api_v1_prefix: str = "/api/v1"

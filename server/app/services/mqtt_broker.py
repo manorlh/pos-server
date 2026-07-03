@@ -11,6 +11,7 @@ import paho.mqtt.client as mqtt
 
 from app.config import get_settings
 from app.models.pos_machine import POSMachine
+from app.services.mqtt_auth import machine_mqtt_topic_prefix
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -61,6 +62,27 @@ def apply_mqtt_tls(client: mqtt.Client) -> None:
     client.tls_set(**tls_kwargs)
 
 
+def _pos_mqtt_credentials(
+    *,
+    machine: POSMachine,
+    access_token: str,
+) -> tuple[str, str]:
+    """
+    Credentials the POS desktop uses to connect to the broker.
+
+    machine_jwt (default): username=mqtt_client_id, password=machine JWT.
+      Requires EMQX HTTP auth pointing at POST /api/v1/mqtt/auth — subscribe-only,
+      scoped to pos/{tenant}/{machine}/#.
+
+    shared: legacy single broker login when mqtt_pos_auth_mode=shared and
+      MQTT_BROKER_USERNAME is set (no per-device topic isolation).
+    """
+    mode = (settings.mqtt_pos_auth_mode or "machine_jwt").strip().lower()
+    if mode == "shared" and settings.mqtt_broker_username:
+        return settings.mqtt_broker_username, settings.mqtt_broker_password
+    return machine.mqtt_client_id, access_token
+
+
 def machine_mqtt_connection_info(
     *,
     machine: POSMachine,
@@ -69,18 +91,8 @@ def machine_mqtt_connection_info(
 ) -> Dict[str, Any]:
     """Credentials payload shared by legacy and mobile pairing flows."""
     prefix = api_url_prefix if api_url_prefix is not None else settings.api_v1_prefix
-
-    # EMQX Serverless authenticates against a single shared broker credential,
-    # not per-machine username/password. Hand the POS the shared broker login
-    # (with a unique per-machine client id, which the broker requires) so it can
-    # actually connect. Fall back to per-machine creds only when no broker
-    # username is configured (e.g. anonymous local Mosquitto in dev).
-    if settings.mqtt_broker_username:
-        mqtt_username = settings.mqtt_broker_username
-        mqtt_password = settings.mqtt_broker_password
-    else:
-        mqtt_username = machine.mqtt_client_id
-        mqtt_password = access_token
+    mqtt_username, mqtt_password = _pos_mqtt_credentials(machine=machine, access_token=access_token)
+    topic_prefix = machine_mqtt_topic_prefix(machine)
 
     return {
         "machineId": str(machine.id),
@@ -91,20 +103,34 @@ def machine_mqtt_connection_info(
         "mqttClientId": machine.mqtt_client_id,
         "mqttUsername": mqtt_username,
         "mqttPassword": mqtt_password,
+        "mqttTopicPrefix": topic_prefix,
         "apiUrl": prefix,
         "mqttBrokerUrl": mqtt_broker_url(),
         "mqttTls": settings.mqtt_tls_enabled,
     }
 
 
-def machine_mqtt_refresh_info() -> Dict[str, Any]:
-    """Broker endpoint + shared credentials for GET /machines/me so POS can
-    refresh connection details (incl. auth) without re-pairing."""
+def machine_mqtt_refresh_info(
+    *,
+    machine: Optional[POSMachine] = None,
+    access_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Broker endpoint for GET /machines/me so POS can refresh without re-pairing."""
     info: Dict[str, Any] = {
         "mqttBrokerUrl": mqtt_broker_url(),
         "mqttTls": settings.mqtt_tls_enabled,
     }
-    if settings.mqtt_broker_username:
+    if machine is not None and access_token:
+        mqtt_username, mqtt_password = _pos_mqtt_credentials(
+            machine=machine,
+            access_token=access_token,
+        )
+        info["mqttUsername"] = mqtt_username
+        info["mqttPassword"] = mqtt_password
+        topic_prefix = machine_mqtt_topic_prefix(machine)
+        if topic_prefix:
+            info["mqttTopicPrefix"] = topic_prefix
+    elif (settings.mqtt_pos_auth_mode or "").strip().lower() == "shared" and settings.mqtt_broker_username:
         info["mqttUsername"] = settings.mqtt_broker_username
         info["mqttPassword"] = settings.mqtt_broker_password
     return info
