@@ -102,3 +102,31 @@ def test_mqtt_auth_denies_wrong_username() -> None:
         db,
         {"username": "wrong-client", "password": token, "action": "subscribe", "topic": f"pos/{tid}/{mid}/x"},
     )
+
+
+def test_mqtt_auth_denies_invalid_password() -> None:
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
+    assert not evaluate_mqtt_http_auth(
+        db,
+        {"username": "pos-x", "password": "not-a-jwt", "action": ""},
+    )
+
+
+def test_mqtt_auth_allows_trusted_server_credential_publish() -> None:
+    from unittest.mock import patch
+
+    db = MagicMock()
+    with patch("app.services.mqtt_auth.settings") as mock_settings:
+        mock_settings.mqtt_broker_username = "pos-server"
+        mock_settings.mqtt_broker_password = "broker-secret"
+        # Server can publish to any pos topic.
+        assert evaluate_mqtt_http_auth(
+            db,
+            {
+                "username": "pos-server",
+                "password": "broker-secret",
+                "action": "publish",
+                "topic": "pos/any/any/catalog/notify",
+            },
+        )

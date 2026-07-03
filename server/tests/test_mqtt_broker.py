@@ -61,7 +61,7 @@ def _make_machine() -> MagicMock:
     return machine
 
 
-def test_machine_mqtt_connection_info_uses_per_machine_jwt_by_default() -> None:
+def test_machine_mqtt_connection_info_uses_per_machine_jwt() -> None:
     machine = _make_machine()
 
     with patch("app.services.mqtt_broker.settings") as mock_settings:
@@ -69,9 +69,6 @@ def test_machine_mqtt_connection_info_uses_per_machine_jwt_by_default() -> None:
         mock_settings.mqtt_broker_host = "broker.emqxsl.com"
         mock_settings.mqtt_broker_port = 8883
         mock_settings.mqtt_tls_enabled = True
-        mock_settings.mqtt_pos_auth_mode = "machine_jwt"
-        mock_settings.mqtt_broker_username = "pos-server"
-        mock_settings.mqtt_broker_password = "broker-secret"
         payload = machine_mqtt_connection_info(machine=machine, access_token="jwt-token")
 
     assert payload["mqttBrokerUrl"] == "broker.emqxsl.com:8883"
@@ -85,23 +82,6 @@ def test_machine_mqtt_connection_info_uses_per_machine_jwt_by_default() -> None:
     assert payload["accessToken"] == "jwt-token"
 
 
-def test_machine_mqtt_connection_info_shared_mode() -> None:
-    machine = _make_machine()
-
-    with patch("app.services.mqtt_broker.settings") as mock_settings:
-        mock_settings.api_v1_prefix = "/api/v1"
-        mock_settings.mqtt_broker_host = "broker.emqxsl.com"
-        mock_settings.mqtt_broker_port = 8883
-        mock_settings.mqtt_tls_enabled = True
-        mock_settings.mqtt_pos_auth_mode = "shared"
-        mock_settings.mqtt_broker_username = "pos-server"
-        mock_settings.mqtt_broker_password = "broker-secret"
-        payload = machine_mqtt_connection_info(machine=machine, access_token="jwt-token")
-
-    assert payload["mqttUsername"] == "pos-server"
-    assert payload["mqttPassword"] == "broker-secret"
-
-
 def test_machine_mqtt_refresh_info_includes_per_machine_credentials() -> None:
     machine = _make_machine()
 
@@ -109,9 +89,6 @@ def test_machine_mqtt_refresh_info_includes_per_machine_credentials() -> None:
         mock_settings.mqtt_broker_host = "broker.emqxsl.com"
         mock_settings.mqtt_broker_port = 8883
         mock_settings.mqtt_tls_enabled = True
-        mock_settings.mqtt_pos_auth_mode = "machine_jwt"
-        mock_settings.mqtt_broker_username = "pos-server"
-        mock_settings.mqtt_broker_password = "broker-secret"
         info = machine_mqtt_refresh_info(machine=machine, access_token="jwt-token")
 
     assert info == {
@@ -121,3 +98,13 @@ def test_machine_mqtt_refresh_info_includes_per_machine_credentials() -> None:
         "mqttPassword": "jwt-token",
         "mqttTopicPrefix": f"pos/{machine.tenant_id}/{machine.id}/",
     }
+
+
+def test_machine_mqtt_refresh_info_without_machine_omits_credentials() -> None:
+    with patch("app.services.mqtt_broker.settings") as mock_settings:
+        mock_settings.mqtt_broker_host = "broker.emqxsl.com"
+        mock_settings.mqtt_broker_port = 8883
+        mock_settings.mqtt_tls_enabled = True
+        info = machine_mqtt_refresh_info()
+
+    assert info == {"mqttBrokerUrl": "broker.emqxsl.com:8883", "mqttTls": True}

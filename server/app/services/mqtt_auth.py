@@ -7,10 +7,22 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models.pos_machine import POSMachine
 from app.services.auth import decode_jwt_payload
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
+
+
+def _is_trusted_server_credential(username: str, password: str) -> bool:
+    """The backend connects with the shared broker login to publish notifies.
+    Grant it full access so EMQX can route every client through HTTP auth."""
+    return bool(
+        settings.mqtt_broker_username
+        and username == settings.mqtt_broker_username
+        and password == settings.mqtt_broker_password
+    )
 
 
 def machine_mqtt_topic_prefix(machine: POSMachine) -> Optional[str]:
@@ -56,6 +68,10 @@ def evaluate_mqtt_http_auth(
     password = str(body.get("password") or "")
     action = str(body.get("action") or "").lower().strip()
     topic = str(body.get("topic") or "").strip()
+
+    # Trusted backend (server) — full pub/sub for publishing notifies.
+    if _is_trusted_server_credential(username, password):
+        return True
 
     machine = _machine_from_mqtt_credentials(db, username=username, password=password)
     if not machine:
