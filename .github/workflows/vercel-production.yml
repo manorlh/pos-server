@@ -1,0 +1,46 @@
+name: Deploy Cloud Client to Vercel
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'client/**'
+      - '.github/workflows/vercel-production.yml'
+
+concurrency:
+  group: vercel-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    env:
+      VERCEL_ORG_ID: team_HPmzNBavpmCWmFSMx8tKlzbn
+      VERCEL_PROJECT_ID: prj_kvvlLUx1hWcUAQcuGfjiUFR6GUh2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@54
+
+      - name: Deploy to Vercel production
+        id: deploy
+        run: |
+          deployment_url=$(vercel deploy --prod --yes --token="$VERCEL_TOKEN")
+          echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+      - name: Point pos-cloud-app.vercel.app at production
+        run: vercel alias set "${{ steps.deploy.outputs.deployment_url }}" pos-cloud-app.vercel.app --token="$VERCEL_TOKEN"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
