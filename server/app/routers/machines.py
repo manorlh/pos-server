@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
+from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.schemas.pos_machine import POSMachineUpdate, POSMachineResponse
 from app.models.pos_machine import POSMachine, PairingStatus
@@ -14,6 +15,7 @@ from app.models.z_report import ZReport
 from app.models.trading_day import TradingDay
 from app.models.sync_log import SyncLog
 from app.models.pairing_code import PairingCode
+from app.models.device_pairing_request import DevicePairingRequest
 from app.models.product import Product
 from app.models.category import Category
 from app.middleware.auth import (
@@ -316,6 +318,12 @@ def delete_machine(
     db.query(PairingCode).filter(PairingCode.pos_machine_id == machine_id).delete(
         synchronize_session=False
     )
+    # Detach transient pairing requests so the FK doesn't block a hard delete.
+    # These are pairing artifacts, not sales history, so clearing the reference
+    # is safe (the column is nullable).
+    db.query(DevicePairingRequest).filter(
+        DevicePairingRequest.pos_machine_id == machine_id
+    ).update({DevicePairingRequest.pos_machine_id: None}, synchronize_session=False)
     db.query(Product).filter(Product.pos_machine_id == machine_id).delete(
         synchronize_session=False
     )
@@ -323,7 +331,7 @@ def delete_machine(
         synchronize_session=False
     )
 
-    if _machine_has_history(db, machine_id):
+    def _soft_delete() -> Dict[str, Any]:
         machine.is_active = False
         machine.pairing_status = PairingStatus.UNPAIRED
         machine.shop_id = None
@@ -331,8 +339,20 @@ def delete_machine(
         db.commit()
         return {"deleted": True, "mode": "soft", "machineId": str(machine.id)}
 
+    if _machine_has_history(db, machine_id):
+        return _soft_delete()
+
     db.delete(machine)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Another table still references this machine (e.g. issued vouchers,
+        # stock movements). Fall back to a soft delete instead of 500ing.
+        db.rollback()
+        machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
+        if not machine:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+        return _soft_delete()
     return {"deleted": True, "mode": "hard", "machineId": machine_id}
 
 
