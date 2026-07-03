@@ -69,6 +69,19 @@ def machine_mqtt_connection_info(
 ) -> Dict[str, Any]:
     """Credentials payload shared by legacy and mobile pairing flows."""
     prefix = api_url_prefix if api_url_prefix is not None else settings.api_v1_prefix
+
+    # EMQX Serverless authenticates against a single shared broker credential,
+    # not per-machine username/password. Hand the POS the shared broker login
+    # (with a unique per-machine client id, which the broker requires) so it can
+    # actually connect. Fall back to per-machine creds only when no broker
+    # username is configured (e.g. anonymous local Mosquitto in dev).
+    if settings.mqtt_broker_username:
+        mqtt_username = settings.mqtt_broker_username
+        mqtt_password = settings.mqtt_broker_password
+    else:
+        mqtt_username = machine.mqtt_client_id
+        mqtt_password = access_token
+
     return {
         "machineId": str(machine.id),
         "machineCode": machine.machine_code,
@@ -76,8 +89,8 @@ def machine_mqtt_connection_info(
         "shopId": str(machine.shop_id) if machine.shop_id else None,
         "accessToken": access_token,
         "mqttClientId": machine.mqtt_client_id,
-        "mqttUsername": machine.mqtt_client_id,
-        "mqttPassword": access_token,
+        "mqttUsername": mqtt_username,
+        "mqttPassword": mqtt_password,
         "apiUrl": prefix,
         "mqttBrokerUrl": mqtt_broker_url(),
         "mqttTls": settings.mqtt_tls_enabled,
@@ -85,8 +98,13 @@ def machine_mqtt_connection_info(
 
 
 def machine_mqtt_refresh_info() -> Dict[str, Any]:
-    """Broker endpoint for GET /machines/me so POS can refresh without re-pairing."""
-    return {
+    """Broker endpoint + shared credentials for GET /machines/me so POS can
+    refresh connection details (incl. auth) without re-pairing."""
+    info: Dict[str, Any] = {
         "mqttBrokerUrl": mqtt_broker_url(),
         "mqttTls": settings.mqtt_tls_enabled,
     }
+    if settings.mqtt_broker_username:
+        info["mqttUsername"] = settings.mqtt_broker_username
+        info["mqttPassword"] = settings.mqtt_broker_password
+    return info
