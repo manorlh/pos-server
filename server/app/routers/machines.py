@@ -2,12 +2,11 @@ import uuid as uuid_mod
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
 from sqlalchemy.exc import IntegrityError
 from app.database import get_db
-from app.schemas.pos_machine import POSMachineUpdate, POSMachineResponse
+from app.schemas.pos_machine import POSMachineUpdate, POSMachineResponse, MachineHeartbeatBody
 from app.models.pos_machine import POSMachine, PairingStatus
 from app.models.user import User, UserRole
 from app.models.shop import Shop
@@ -26,16 +25,18 @@ from app.middleware.auth import (
     get_pos_machine_from_machine_token,
     get_active_tenant_id,
     ensure_same_tenant,
-    security,
 )
 from app.services.sync import (
     update_machine_sync_timestamp,
-    update_machine_heartbeat_timestamp,
+    update_machine_heartbeat,
     get_catalog_change_watermark_for_machine,
 )
 from app.services.catalog_notify import notify_machine_catalog_changed
 from app.services.shop_validation import shop_belongs_to_company
-from app.services.mqtt_broker import machine_mqtt_refresh_info
+from app.services.realtime_info import (
+    machine_realtime_connection_info,
+    machine_realtime_refresh_info,
+)
 from app.services.close_day import get_open_trading_days_for_machines, get_pending_close_day_machine_ids
 
 router = APIRouter(prefix="/machines", tags=["machines"])
@@ -102,6 +103,7 @@ def _enrich_machine_status(
         "deviceInfo": machine.device_info,
         "isActive": machine.is_active,
         "lastHeartbeatAt": machine.last_heartbeat_at,
+        "mqttConnected": machine.mqtt_connected,
         "lastSyncAt": machine.last_sync_at,
         "lastCatalogChangeAt": last_catalog_change_at,
         "catalogPullStale": catalog_pull_stale,
@@ -206,12 +208,29 @@ def list_unassigned_machines(
     return query.all()
 
 
+@router.get("/me/ably-auth")
+def get_my_ably_auth(
+    machine: POSMachine = Depends(get_pos_machine_from_machine_token),
+):
+    """POS desktop: Ably token (subscribe-only on this machine's channel)."""
+    from app.services.ably_notify import create_token_request_for_machine, is_enabled
+
+    if not is_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Realtime notify is not configured",
+        )
+    try:
+        return create_token_request_for_machine(machine)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
 @router.get("/me")
 def get_my_machine(
     machine: POSMachine = Depends(get_pos_machine_from_machine_token),
-    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
-    """POS desktop: resolve shop/tenant and MQTT broker endpoint using machine JWT only."""
+    """POS desktop: resolve shop/tenant and realtime (Ably) endpoint using machine JWT only."""
     return {
         "machineId": str(machine.id),
         "machineCode": machine.machine_code,
@@ -219,17 +238,19 @@ def get_my_machine(
         "shopId": str(machine.shop_id) if machine.shop_id else None,
         "pairingStatus": machine.pairing_status.value if hasattr(machine.pairing_status, "value") else machine.pairing_status,
         "mqttClientId": machine.mqtt_client_id,
-        **machine_mqtt_refresh_info(machine=machine, access_token=credentials.credentials),
+        **machine_realtime_refresh_info(machine=machine),
     }
 
 
 @router.post("/me/heartbeat")
 def post_my_heartbeat(
+    body: MachineHeartbeatBody | None = None,
     machine: POSMachine = Depends(get_pos_machine_from_machine_token),
     db: Session = Depends(get_db),
 ):
     """POS desktop: periodic online signal over HTTP (replaces MQTT heartbeat publish)."""
-    update_machine_heartbeat_timestamp(db, str(machine.id))
+    mqtt_connected = body.mqtt_connected if body is not None else None
+    update_machine_heartbeat(db, str(machine.id), mqtt_connected=mqtt_connected)
     return {
         "ok": True,
         "serverTime": datetime.now(timezone.utc).isoformat(),

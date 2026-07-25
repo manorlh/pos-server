@@ -27,6 +27,7 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     deviceInfo: (raw.deviceInfo ?? raw.device_info) as Record<string, unknown> | undefined,
     isActive: Boolean(raw.isActive ?? raw.is_active ?? true),
     lastHeartbeatAt: (raw.lastHeartbeatAt ?? raw.last_heartbeat_at) as string | undefined,
+    mqttConnected: (raw.mqttConnected ?? raw.mqtt_connected) as boolean | null | undefined,
     lastSyncAt: (raw.lastSyncAt ?? raw.last_sync_at) as string | undefined,
     lastCatalogChangeAt: (raw.lastCatalogChangeAt ?? raw.last_catalog_change_at) as string | undefined,
     catalogPullStale: Boolean(raw.catalogPullStale ?? raw.catalog_pull_stale ?? false),

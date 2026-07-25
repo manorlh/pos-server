@@ -30,6 +30,7 @@ class POSMachine(Base):
     device_info = Column(JSON, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     last_heartbeat_at = Column(DateTime(timezone=True), nullable=True)
+    mqtt_connected = Column(Boolean, nullable=True)
     last_sync_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

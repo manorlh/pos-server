@@ -44,6 +44,8 @@ export default function MachinesPage() {
   const [selectedMachine, setSelectedMachine] = useState<PosMachine | null>(null);
   const [machineCode, setMachineCode] = useState('');
   const [pairingCode, setPairingCode] = useState<string | null>(null);
+  const [pairingCodeId, setPairingCodeId] = useState<string | null>(null);
+  const [pairingComplete, setPairingComplete] = useState(false);
   const [pairCompanyId, setPairCompanyId] = useState('');
   const [pairShopId, setPairShopId] = useState('');
   const [pairPreAssignLabel, setPairPreAssignLabel] = useState<string | null>(null);
@@ -122,9 +124,17 @@ export default function MachinesPage() {
   const resetPairDialog = () => {
     setMachineCode('');
     setPairingCode(null);
+    setPairingCodeId(null);
+    setPairingComplete(false);
     setPairCompanyId('');
     setPairShopId('');
     setPairPreAssignLabel(null);
+  };
+
+  const finishPairDialog = () => {
+    qc.invalidateQueries({ queryKey: ['machines'] });
+    setPairOpen(false);
+    resetPairDialog();
   };
 
   const generateCode = useMutation({
@@ -133,7 +143,11 @@ export default function MachinesPage() {
         ...(payload.companyId ? { companyId: payload.companyId } : {}),
         ...(payload.shopId ? { shopId: payload.shopId } : {}),
       }),
-    onSuccess: (res) => setPairingCode(res.data.code),
+    onSuccess: (res) => {
+      setPairingCode(res.data.code);
+      setPairingCodeId(res.data.id);
+      setPairingComplete(false);
+    },
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
   });
 
@@ -152,6 +166,7 @@ export default function MachinesPage() {
       setFieldSession(null);
       setFieldPairedCount(0);
       setFieldInstallOpen(false);
+      qc.invalidateQueries({ queryKey: ['machines'] });
       toast.success(t('fieldInstall.sessionEnded'));
     },
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
@@ -311,17 +326,43 @@ export default function MachinesPage() {
     return () => window.clearInterval(tmr);
   }, [fieldInstallOpen, fieldSession?.sessionId]);
 
-  const isMqttOnline = (m: PosMachine): boolean => {
+  // Poll until the POS consumes the pairing code, then refresh the machines list.
+  useEffect(() => {
+    if (!pairOpen || !pairingCodeId || pairingComplete) return;
+    const poll = () => {
+      void api
+        .get<{ isUsed: boolean }>(`/pairing/codes/${pairingCodeId}`)
+        .then((r) => {
+          if (r.data.isUsed) {
+            setPairingComplete(true);
+            qc.invalidateQueries({ queryKey: ['machines'] });
+          }
+        })
+        .catch(() => undefined);
+    };
+    poll();
+    const tmr = window.setInterval(poll, 2500);
+    return () => window.clearInterval(tmr);
+  }, [pairOpen, pairingCodeId, pairingComplete, qc]);
+
+  const isDeviceOnline = (m: PosMachine): boolean => {
     if (!m.lastHeartbeatAt) return false;
     const ts = new Date(m.lastHeartbeatAt).getTime();
     if (!Number.isFinite(ts)) return false;
     return nowMs - ts <= MQTT_ONLINE_WINDOW_MS;
   };
 
+  const isMqttConnected = (m: PosMachine): boolean | null => {
+    if (!isDeviceOnline(m)) return false;
+    if (m.mqttConnected === true) return true;
+    if (m.mqttConnected === false) return false;
+    return null;
+  };
+
   const canCloseMachine = (m: PosMachine): boolean =>
     m.pairingStatus === 'assigned' &&
     m.tradingDayStatus === 'open' &&
-    isMqttOnline(m) &&
+    isDeviceOnline(m) &&
     !m.closeDayPending;
 
   const tradingDayBadgeVariant = (m: PosMachine): 'default' | 'secondary' | 'outline' => {
@@ -576,15 +617,33 @@ export default function MachinesPage() {
                 </div>
                 <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
                   <div className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground">{t('deviceStatus')}</span>
+                    <Badge variant={isDeviceOnline(m) ? 'default' : 'outline'}>
+                      {isDeviceOnline(m) ? t('deviceOnline') : t('deviceOffline')}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
                     <span className="text-muted-foreground">{t('mqttStatus')}</span>
-                    <Badge variant={isMqttOnline(m) ? 'default' : 'outline'}>
-                      {isMqttOnline(m) ? t('mqttOnline') : t('mqttOffline')}
+                    <Badge
+                      variant={
+                        isMqttConnected(m) === true
+                          ? 'default'
+                          : isMqttConnected(m) === false
+                            ? 'outline'
+                            : 'secondary'
+                      }
+                    >
+                      {isMqttConnected(m) === true
+                        ? t('mqttOnline')
+                        : isMqttConnected(m) === false
+                          ? t('mqttOffline')
+                          : t('mqttUnknown')}
                     </Badge>
                   </div>
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     {m.lastHeartbeatAt ? (
                       <>
-                        <Wifi className={`h-3.5 w-3.5 ${isMqttOnline(m) ? 'text-green-500' : ''}`} />
+                        <Wifi className={`h-3.5 w-3.5 ${isDeviceOnline(m) ? 'text-green-500' : ''}`} />
                         {t('lastSeen')}{' '}
                         {formatDistanceToNow(new Date(m.lastHeartbeatAt), { addSuffix: true, locale: he })}
                       </>
@@ -727,22 +786,40 @@ export default function MachinesPage() {
           </DialogHeader>
           {pairingCode ? (
             <div className="text-center space-y-3 py-4">
-              <p className="text-muted-foreground text-sm">{t('pairInstruction')}</p>
-              <p className="text-4xl font-mono font-bold tracking-widest text-primary">{pairingCode}</p>
-              <p className="text-xs text-muted-foreground">{t('pairExpiry')}</p>
+              {pairingComplete ? (
+                <>
+                  <p className="text-sm font-medium text-primary">{t('pairComplete')}</p>
+                  <p className="text-xs text-muted-foreground">{t('pairCompleteHint')}</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-muted-foreground text-sm">{t('pairInstruction')}</p>
+                  <p className="text-4xl font-mono font-bold tracking-widest text-primary">{pairingCode}</p>
+                  <p className="text-xs text-muted-foreground">{t('pairExpiry')}</p>
+                  <p className="text-sm text-muted-foreground animate-pulse">{t('pairWaiting')}</p>
+                </>
+              )}
               {pairPreAssignLabel ? (
                 <p className="text-sm text-muted-foreground">{t('pairPreAssigned', { target: pairPreAssignLabel })}</p>
               ) : null}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setPairingCode(null);
-                  setPairPreAssignLabel(null);
-                }}
-              >
-                <RefreshCw className="h-3.5 w-3.5 me-1" /> {t('generateNew')}
-              </Button>
+              {pairingComplete ? (
+                <Button className="w-full" onClick={finishPairDialog}>
+                  {t('pairFinish')}
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setPairingCode(null);
+                    setPairingCodeId(null);
+                    setPairingComplete(false);
+                    setPairPreAssignLabel(null);
+                  }}
+                >
+                  <RefreshCw className="h-3.5 w-3.5 me-1" /> {t('generateNew')}
+                </Button>
+              )}
             </div>
           ) : (
             <>

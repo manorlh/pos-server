@@ -461,11 +461,23 @@ def update_machine_sync_timestamp(db: Session, machine_id: str) -> None:
         db.commit()
 
 
-def update_machine_heartbeat_timestamp(db: Session, machine_id: str) -> None:
+def update_machine_heartbeat(
+    db: Session,
+    machine_id: str,
+    *,
+    mqtt_connected: Optional[bool] = None,
+) -> None:
     machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
     if machine:
         machine.last_heartbeat_at = datetime.now(timezone.utc)
+        if mqtt_connected is not None:
+            machine.mqtt_connected = mqtt_connected
         db.commit()
+
+
+def update_machine_heartbeat_timestamp(db: Session, machine_id: str) -> None:
+    """Backward-compatible alias."""
+    update_machine_heartbeat(db, machine_id)
 
 
 def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -> Optional[datetime]:

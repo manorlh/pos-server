@@ -17,7 +17,7 @@ from app.models.pos_machine import POSMachine
 from app.models.shop import Shop
 from app.models.user import User
 from app.services.auth import create_machine_token, create_pairing_session_token
-from app.services.mqtt_broker import machine_mqtt_connection_info
+from app.services.realtime_info import machine_realtime_connection_info
 from app.services.pairing import (
     PairingAssignmentError,
     assign_machine_to_shop,
@@ -47,7 +47,7 @@ def _generate_device_nonce() -> str:
 def build_machine_credentials_payload(machine: POSMachine) -> Dict[str, Any]:
     """Same shape as POST /pairing/validate response."""
     machine_token = create_machine_token(str(machine.id))
-    return machine_mqtt_connection_info(machine=machine, access_token=machine_token)
+    return machine_realtime_connection_info(machine=machine, access_token=machine_token)
 
 
 def build_mobile_url(session_token: str) -> str:

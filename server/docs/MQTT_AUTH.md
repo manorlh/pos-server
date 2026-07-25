@@ -1,4 +1,4 @@
-# MQTT authentication (EMQX)
+# MQTT authentication (EMQX HTTP external auth)
 
 POS devices connect to the broker **read-only** and **scoped to their own machine**:
 
@@ -7,7 +7,7 @@ POS devices connect to the broker **read-only** and **scoped to their own machin
 - **Allowed:** subscribe to `pos/{tenant}/{machine}/#`
 - **Denied:** all publish, and any other topic
 
-The backend (`pos-server`) still connects with the shared broker login
+The backend (`pos-server`) connects with the shared broker login
 (`MQTT_BROKER_USERNAME` / `MQTT_BROKER_PASSWORD`) to publish `notify` messages.
 
 Both are validated by the server endpoint **`POST /api/v1/mqtt/auth`**, which EMQX
@@ -28,14 +28,15 @@ as header `X-MQTT-Auth-Secret` so only EMQX can call the endpoint.
 
 ## EMQX Console setup (one-time)
 
-Requires EMQX **Dedicated** (paid) or self-hosted — HTTP external auth is not on Serverless.
+Requires EMQX **Dedicated** (or self-hosted) — HTTP external auth is not available
+on Serverless free tier.
 
 Dashboard → **Access Control**.
 
 ### 1. Authentication → Create → HTTP Server
 
 - Method: `POST`
-- URL: `https://pos-cloud-api.fly.dev/api/v1/mqtt/auth`
+- URL: `https://<your-api>/api/v1/mqtt/auth`
 - Headers: `Content-Type: application/json` (+ `X-MQTT-Auth-Secret: <secret>` if set)
 - Body:
   ```json
@@ -51,19 +52,23 @@ Dashboard → **Access Control**.
 
 - Same URL / method / headers / body as above.
 
-Keep (or add) the built-in credential for `pos-server` if you prefer the backend
-to authenticate via EMQX's built-in DB instead of HTTP — the HTTP endpoint also
-accepts it, so either works.
+Disable or remove built-in-database authentication for POS clients if it conflicts.
+The HTTP endpoint also accepts the `pos-server` broker login for publish access.
 
 ## Rollout
 
-1. Set `MQTT_HTTP_AUTH_SECRET` on pos-server (Fly secrets).
-2. Deploy `pos-server`.
-3. Configure EMQX Authentication + Authorization (above).
-4. POS devices refresh credentials from `GET /machines/me` on reconnect — no re-pairing required.
+1. Deploy `pos-server` with `MQTT_HTTP_AUTH_SECRET` (recommended).
+2. Configure EMQX Authentication + Authorization (above).
+3. POS devices refresh credentials from `GET /machines/me` on reconnect — no
+   re-pairing required (`mqttPassword` becomes the machine JWT).
+
+## Revoking a device
+
+Deactivate or delete the machine — JWT validation fails → broker rejects.
+
+No per-user provisioning in EMQX is required.
 
 ## Notes
 
-- Heartbeat is **HTTP** (`POST /machines/me/heartbeat`), not MQTT, so dashboard
-  online status works even if MQTT is down.
-- Revoking a device = deactivating the machine (JWT check fails → broker rejects).
+- Heartbeat is **HTTP** (`POST /machines/me/heartbeat`), not MQTT.
+- Legacy HMAC broker passwords are still accepted briefly during fleet migration.

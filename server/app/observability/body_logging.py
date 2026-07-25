@@ -18,7 +18,7 @@ SENSITIVE_KEYS = frozenset(
         "pairing_code",
         "authorization",
         "clerk_secret_key",
-        "mqtt_broker_password",
+        "ably_api_key",
     }
 )
 

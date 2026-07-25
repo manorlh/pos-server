@@ -1,5 +1,4 @@
 import warnings
-import asyncio
 import logging
 
 from fastapi import FastAPI
@@ -13,9 +12,6 @@ from app.middleware.request_context import RequestContextMiddleware
 configure_logging()
 logger = logging.getLogger(__name__)
 
-# FastAPI attaches body models inside generated unions; Pydantic 2.12+ then warns that
-# `Field(alias=...)` on those inner arms has no effect (validation still uses the real model).
-# The warning's `module` is unset; `message=` uses re.match from the start of the text.
 warnings.filterwarnings(
     "ignore",
     category=UnsupportedFieldAttributeWarning,
@@ -45,18 +41,16 @@ from app.routers import (
     tips,
     dashboard,
     close_day,
-    mqtt_auth,
 )
-from app.services.mqtt import mqtt_service
+from app.services.ably_notify import is_enabled as ably_enabled
 
 settings = get_settings()
 
-# Create all database tables (Alembic handles migrations in prod)
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="POS Cloud",
-    description="Cloud POS management platform — FastAPI backend with MQTT catalog notify + HTTP catalog pull",
+    description="Cloud POS management platform — Ably realtime notify + HTTP catalog pull",
     version="0.2.0",
 )
 
@@ -69,7 +63,6 @@ app.add_middleware(
 )
 app.add_middleware(RequestContextMiddleware)
 
-# ── Routers ───────────────────────────────────────────────────────────────────
 _prefix = settings.api_v1_prefix
 
 app.include_router(auth.router, prefix=_prefix)
@@ -94,27 +87,7 @@ app.include_router(z_reports.router, prefix=_prefix)
 app.include_router(pos_users.router, prefix=_prefix)
 app.include_router(tenants.router, prefix=_prefix)
 app.include_router(settings_router.router, prefix=_prefix)
-app.include_router(mqtt_auth.router, prefix=_prefix)
 
-
-# ── Lifecycle ─────────────────────────────────────────────────────────────────
-
-@app.on_event("startup")
-async def startup_event():
-    for attempt in range(1, 4):
-        if mqtt_service.connect():
-            return
-        if attempt < 3:
-            await asyncio.sleep(2)
-    logger.warning("Could not connect to MQTT broker: %s", mqtt_service.last_error)
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    mqtt_service.disconnect()
-
-
-# ── Health ────────────────────────────────────────────────────────────────────
 
 @app.get("/")
 def root():
@@ -123,7 +96,5 @@ def root():
 
 @app.get("/health")
 def health_check():
-    body = {"status": "healthy", "mqtt_connected": mqtt_service.connected}
-    if mqtt_service.last_error:
-        body["mqtt_last_error"] = mqtt_service.last_error
+    body = {"status": "healthy", "ably_enabled": ably_enabled()}
     return body

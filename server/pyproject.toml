@@ -16,7 +16,7 @@ pydantic-settings = "^2.1.0"
 python-jose = {extras = ["cryptography"], version = "^3.3.0"}
 passlib = {extras = ["bcrypt"], version = "^1.7.4"}
 bcrypt = "4.0.1"
-paho-mqtt = "^1.6.1"
+ably = "^3.1.2"
 python-dotenv = "^1.0.0"
 alembic = "^1.12.1"
 cloudinary = "^1.36.0"

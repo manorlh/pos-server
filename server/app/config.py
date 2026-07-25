@@ -20,19 +20,8 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 30
     
-    # MQTT (local Mosquitto or EMQX Cloud — Serverless requires TLS on 8883)
-    mqtt_broker_host: str = "localhost"
-    mqtt_broker_port: int = 1883
-    mqtt_broker_username: str = ""
-    mqtt_broker_password: str = ""
-    mqtt_client_id: str = "pos-server"
-    mqtt_tls_enabled: bool = False
-    mqtt_tls_ca_cert_path: str = ""  # path to EMQX server CA .crt (from Console → Overview)
-    mqtt_tls_ca_cert: str = ""  # PEM string alternative (useful on Render without a file mount)
-    # POS devices authenticate per-device: username=mqttClientId, password=machine JWT.
-    # EMQX validates via HTTP Authentication/Authorization → POST {API}/mqtt/auth
-    # (subscribe-only, scoped to pos/{tenant}/{machine}/#).
-    mqtt_http_auth_secret: str = ""  # optional shared secret EMQX sends as X-MQTT-Auth-Secret
+    # Ably realtime notify (per-machine channel + token auth from GET /machines/me/ably-auth)
+    ably_api_key: str = ""
     
     # Application
     api_v1_prefix: str = "/api/v1"

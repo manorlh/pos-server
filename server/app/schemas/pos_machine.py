@@ -31,6 +31,14 @@ class POSMachineUpdate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class MachineHeartbeatBody(BaseModel):
+    """POS desktop HTTP heartbeat payload."""
+
+    mqtt_connected: Optional[bool] = Field(None, alias="mqttConnected")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class POSMachineResponse(POSMachineBase):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -43,6 +51,7 @@ class POSMachineResponse(POSMachineBase):
     device_info: Optional[Dict[str, Any]] = Field(None, alias="deviceInfo")
     is_active: bool = Field(..., alias="isActive")
     last_heartbeat_at: Optional[datetime] = Field(None, alias="lastHeartbeatAt")
+    mqtt_connected: Optional[bool] = Field(None, alias="mqttConnected")
     last_sync_at: Optional[datetime] = Field(None, alias="lastSyncAt")
     last_catalog_change_at: Optional[datetime] = Field(None, alias="lastCatalogChangeAt")
     catalog_pull_stale: Optional[bool] = Field(None, alias="catalogPullStale")

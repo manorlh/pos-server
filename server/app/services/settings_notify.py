@@ -1,17 +1,17 @@
-"""Notify POS machines via MQTT that settings for their shop/company changed."""
+"""Notify POS machines via Ably that settings for their shop/company changed."""
 from sqlalchemy.orm import Session
 
 from app.models.company import Company
 from app.models.pos_machine import POSMachine
 from app.models.shop import Shop
-from app.services.mqtt import mqtt_service
+from app.services.ably_notify import publish_settings_notify
 
 
 def _notify_machines(db: Session, machines: list, reason: str) -> None:
     for m in machines:
         tid = str(m.tenant_id) if m.tenant_id else None
         if tid:
-            mqtt_service.publish_settings_notify(tid, str(m.id), reason=reason)
+            publish_settings_notify(tid, str(m.id), reason=reason)
 
 
 def notify_machines_for_shop_settings(db: Session, shop_id: str, reason: str) -> None:

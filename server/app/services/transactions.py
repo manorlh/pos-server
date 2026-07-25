@@ -395,15 +395,11 @@ def apply_z_report(
 
 def publish_transactions_synced(tenant_id: Optional[uuid.UUID], machine_id: uuid.UUID, count: int) -> None:
     """Lightweight signal for future dashboard live updates."""
-    from app.services.mqtt import mqtt_service
+    from app.services.ably_notify import publish_transactions_synced as ably_tx_synced
 
     if not tenant_id:
         return
-    topic = f"pos/{tenant_id}/{machine_id}/transactions/synced"
-    mqtt_service._publish(topic, {
-        "serverTime": datetime.now(timezone.utc).isoformat(),
-        "count": count,
-    })
+    ably_tx_synced(str(tenant_id), str(machine_id), count)
 
 
 def publish_z_report_closed(
@@ -412,13 +408,8 @@ def publish_z_report_closed(
     z_report_id: uuid.UUID,
     trading_day_id: uuid.UUID,
 ) -> None:
-    from app.services.mqtt import mqtt_service
+    from app.services.ably_notify import publish_z_report_closed as ably_z_closed
 
     if not tenant_id:
         return
-    topic = f"pos/{tenant_id}/{machine_id}/z-report/closed"
-    mqtt_service._publish(topic, {
-        "serverTime": datetime.now(timezone.utc).isoformat(),
-        "zReportId": str(z_report_id),
-        "tradingDayId": str(trading_day_id),
-    })
+    ably_z_closed(str(tenant_id), str(machine_id), str(z_report_id), str(trading_day_id))

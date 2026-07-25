@@ -138,6 +138,7 @@ export interface PosMachine {
   deviceInfo?: Record<string, unknown>;
   isActive: boolean;
   lastHeartbeatAt?: string;
+  mqttConnected?: boolean | null;
   lastSyncAt?: string;
   lastCatalogChangeAt?: string;
   catalogPullStale?: boolean;

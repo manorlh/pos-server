@@ -24,7 +24,7 @@ from app.services.pairing import (
     resolve_pairing_assignment,
 )
 from app.services.auth import create_machine_token
-from app.services.mqtt_broker import machine_mqtt_connection_info
+from app.services.realtime_info import machine_realtime_connection_info
 
 router = APIRouter(prefix="/pairing", tags=["pairing"])
 
@@ -94,7 +94,7 @@ def validate_pairing(
         )
 
     machine_token = create_machine_token(str(machine.id))
-    return machine_mqtt_connection_info(machine=machine, access_token=machine_token)
+    return machine_realtime_connection_info(machine=machine, access_token=machine_token)
 
 
 @router.get("/codes", response_model=List[PairingCodeResponse])

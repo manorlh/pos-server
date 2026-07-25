@@ -172,7 +172,7 @@ def create_close_day_request(
     *,
     shop_id: Optional[uuid.UUID] = None,
 ) -> CloseDayRequest:
-    from app.services.mqtt import mqtt_service
+    from app.services.ably_notify import publish_close_day_notify
 
     now = datetime.now(timezone.utc)
     machine_ids = [m.id for m in machines]
@@ -220,7 +220,7 @@ def create_close_day_request(
             item.error_message = "Machine is offline (no recent MQTT heartbeat)"
             item.failed_at = now
         else:
-            mqtt_service.publish_close_day_notify(
+            publish_close_day_notify(
                 str(machine.tenant_id),
                 str(machine.id),
                 str(request.id),
