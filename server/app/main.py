@@ -41,6 +41,7 @@ from app.routers import (
     tips,
     dashboard,
     close_day,
+    tax_reports,
 )
 from app.services.ably_notify import is_enabled as ably_enabled
 
@@ -78,6 +79,7 @@ app.include_router(categories.router, prefix=_prefix)
 app.include_router(vouchers.router, prefix=_prefix)
 app.include_router(stock.router, prefix=_prefix)
 app.include_router(tips.router, prefix=_prefix)
+app.include_router(tax_reports.router, prefix=_prefix)
 app.include_router(dashboard.router, prefix=_prefix)
 app.include_router(catalog.router, prefix=_prefix)
 app.include_router(sync.router, prefix=_prefix)

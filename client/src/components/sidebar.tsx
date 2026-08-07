@@ -27,6 +27,7 @@ import {
   User,
   Receipt,
   FileText,
+  FileBarChart,
   IdCard,
   Plus,
   Settings2,
@@ -150,8 +151,9 @@ export function Sidebar() {
     { href: '/dashboard/shops/assortment', label: t('assortment'), icon: ListFilter },
     { href: '/dashboard/shops/stock', label: t('stock'), icon: Boxes },
     { href: '/dashboard/tips', label: t('tips'), icon: Coins },
+    { href: '/dashboard/tax-reports', label: t('taxReports'), icon: FileText },
     { href: '/dashboard/transactions', label: t('transactions'), icon: Receipt },
-    { href: '/dashboard/z-reports', label: t('zReports'), icon: FileText },
+    { href: '/dashboard/z-reports', label: t('zReports'), icon: FileBarChart },
     { href: '/dashboard/pos-users', label: t('posUsers'), icon: IdCard },
     { href: '/dashboard/users', label: t('users'), icon: Users },
   ];

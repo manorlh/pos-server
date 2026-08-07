@@ -31,6 +31,7 @@ class POSMachine(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     last_heartbeat_at = Column(DateTime(timezone=True), nullable=True)
     mqtt_connected = Column(Boolean, nullable=True)
+    app_version = Column(String(32), nullable=True)
     last_sync_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

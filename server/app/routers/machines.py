@@ -104,6 +104,7 @@ def _enrich_machine_status(
         "isActive": machine.is_active,
         "lastHeartbeatAt": machine.last_heartbeat_at,
         "mqttConnected": machine.mqtt_connected,
+        "appVersion": machine.app_version,
         "lastSyncAt": machine.last_sync_at,
         "lastCatalogChangeAt": last_catalog_change_at,
         "catalogPullStale": catalog_pull_stale,
@@ -250,7 +251,13 @@ def post_my_heartbeat(
 ):
     """POS desktop: periodic online signal over HTTP (replaces MQTT heartbeat publish)."""
     mqtt_connected = body.mqtt_connected if body is not None else None
-    update_machine_heartbeat(db, str(machine.id), mqtt_connected=mqtt_connected)
+    app_version = body.app_version if body is not None else None
+    update_machine_heartbeat(
+        db,
+        str(machine.id),
+        mqtt_connected=mqtt_connected,
+        app_version=app_version,
+    )
     return {
         "ok": True,
         "serverTime": datetime.now(timezone.utc).isoformat(),

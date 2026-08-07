@@ -10,6 +10,7 @@ import type {
   ShopSettingsResponse,
   StockLevel,
   TipsReport,
+  TaxOpenFormatPreview,
 } from './types';
 
 export const api = axios.create({
@@ -178,6 +179,31 @@ export async function fetchTipsReport(
   params: { from?: string; to?: string; tradingDayId?: string },
 ): Promise<TipsReport> {
   const { data } = await api.get<TipsReport>(`/shops/${shopId}/tips/report`, { params });
+  return data;
+}
+
+export type TaxOpenFormatParams = {
+  scope: 'shop' | 'company';
+  shopId?: string;
+  companyId?: string;
+  mode: 'date-range' | 'year';
+  from?: string;
+  to?: string;
+  year?: number;
+};
+
+export async function fetchTaxOpenFormatPreview(
+  params: TaxOpenFormatParams,
+): Promise<TaxOpenFormatPreview> {
+  const { data } = await api.get<TaxOpenFormatPreview>('/reports/tax/openformat/preview', { params });
+  return data;
+}
+
+export async function downloadTaxOpenFormat(params: TaxOpenFormatParams): Promise<Blob> {
+  const { data } = await api.get<Blob>('/reports/tax/openformat', {
+    params,
+    responseType: 'blob',
+  });
   return data;
 }
 

@@ -466,12 +466,15 @@ def update_machine_heartbeat(
     machine_id: str,
     *,
     mqtt_connected: Optional[bool] = None,
+    app_version: Optional[str] = None,
 ) -> None:
     machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
     if machine:
         machine.last_heartbeat_at = datetime.now(timezone.utc)
         if mqtt_connected is not None:
             machine.mqtt_connected = mqtt_connected
+        if app_version is not None:
+            machine.app_version = app_version[:32] if app_version else None
         db.commit()
 
 

@@ -232,6 +232,19 @@ export interface TipsReport {
   cashiers: TipCashierRow[];
 }
 
+export interface TaxOpenFormatPreview {
+  transactionCount: number;
+  recordCounts: Record<string, number>;
+  businessInfo: {
+    vatNumber?: string;
+    companyName?: string;
+    companyCity?: string;
+    branchId?: string;
+  };
+  globalTaxRate: number;
+  dateRange: { year?: number; from?: string; to?: string };
+}
+
 export type ValueDisplayMode = 'product_price' | 'fixed' | 'none';
 
 export interface Voucher {
