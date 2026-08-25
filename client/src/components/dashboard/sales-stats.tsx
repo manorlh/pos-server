@@ -42,13 +42,12 @@ import {
 
 const POLL_MS = 10_000;
 const ALL = 'all';
-const CHART_COLORS = [
-  'var(--chart-1)',
-  'var(--chart-2)',
-  'var(--chart-3)',
-  'var(--chart-4)',
-  'var(--chart-5)',
-];
+/** Hex fallbacks — Recharts SVG fill is unreliable with bare CSS variables in some browsers. */
+const CHART_COLORS = ['#3b82f6', '#14b8a6', '#f59e0b', '#ef4444', '#a855f7'];
+const PAYMENT_COLORS = {
+  cash: '#10b981',
+  card: '#3b82f6',
+} as const;
 
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('he-IL', {
@@ -182,8 +181,8 @@ export function SalesStats() {
   const paymentChartData = useMemo(() => {
     if (!stats.data) return [];
     return [
-      { name: t('cash'), value: stats.data.paymentCash },
-      { name: t('card'), value: stats.data.paymentCard },
+      { name: t('cash'), value: stats.data.paymentCash, color: PAYMENT_COLORS.cash },
+      { name: t('card'), value: stats.data.paymentCard, color: PAYMENT_COLORS.card },
     ].filter((row) => row.value > 0);
   }, [stats.data, t]);
 
@@ -415,8 +414,8 @@ export function SalesStats() {
                       outerRadius={72}
                       paddingAngle={2}
                     >
-                      {paymentChartData.map((_, index) => (
-                        <Cell key={index} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                      {paymentChartData.map((row) => (
+                        <Cell key={row.name} fill={row.color} />
                       ))}
                     </Pie>
                     <Tooltip
@@ -424,6 +423,20 @@ export function SalesStats() {
                     />
                   </PieChart>
                 </ResponsiveContainer>
+              </div>
+              <div className="mt-2 flex flex-wrap justify-center gap-4 text-xs text-muted-foreground">
+                {paymentChartData.map((row) => (
+                  <div key={row.name} className="flex items-center gap-1.5">
+                    <span
+                      className="inline-block size-2.5 rounded-full"
+                      style={{ backgroundColor: row.color }}
+                      aria-hidden
+                    />
+                    <span>
+                      {row.name}: {formatCurrency(row.value)}
+                    </span>
+                  </div>
+                ))}
               </div>
             </CardContent>
           </Card>
