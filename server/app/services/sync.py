@@ -17,7 +17,14 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.category import Category, CatalogLevel as CategoryCatalogLevel
+from app.models.customer import Customer
 from app.models.pos_machine import POSMachine
+from app.services.machine_health import (
+    normalize_battery_percent,
+    normalize_battery_status,
+    normalize_clock_skew_ms,
+    normalize_serial_number,
+)
 from app.models.product import Product, CatalogLevel
 from app.models.shop import Shop
 from app.models.shop_product_override import ShopProductOverride
@@ -72,6 +79,9 @@ def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[s
         "taxRate": float(p.tax_rate) if p.tax_rate is not None else None,
         "voucherId": str(eff_voucher_id) if eff_voucher_id else None,
         "trackStock": bool(p.track_stock),
+        "isOpenPrice": bool(p.is_open_price),
+        "isWeighed": bool(p.is_weighed),
+        "unitLabel": p.unit_label,
         "createdAt": p.created_at.isoformat() if p.created_at else None,
         "updatedAt": p.updated_at.isoformat() if p.updated_at else None,
     }
@@ -146,6 +156,13 @@ def _serialize_merged_product(
         "taxRate": float(global_p.tax_rate) if global_p.tax_rate is not None else None,
         "voucherId": str(_effective_voucher_id(global_p)) if _effective_voucher_id(global_p) else None,
         "trackStock": bool(global_p.track_stock),
+        "isOpenPrice": bool(global_p.is_open_price),
+        # Taken from the global row, like every other product *description* field: a
+        # shop override carries price and availability, never what the thing is or how
+        # it is measured. A shop selling the same SKU by the piece would be a different
+        # product, not an override.
+        "isWeighed": bool(global_p.is_weighed),
+        "unitLabel": global_p.unit_label,
         "shopListed": shop_listed,
         "createdAt": (local.created_at if local else global_p.created_at).isoformat()
         if (local and local.created_at) or global_p.created_at
@@ -193,6 +210,34 @@ def _serialize_voucher(v: Voucher) -> Dict[str, Any]:
         "language": v.language,
         "createdAt": v.created_at.isoformat() if v.created_at else None,
         "updatedAt": v.updated_at.isoformat() if v.updated_at else None,
+    }
+
+
+def _serialize_customer(c: Customer) -> Dict[str, Any]:
+    """
+    One customer row for the till.
+
+    `isActive` and `deleted` are two different facts and both are shipped. `isActive`
+    false is the merchant archiving a customer they still have on file; `deleted` is
+    the customer being removed. The till needs both because it must stop *offering* an
+    archived customer while still being able to render a document already issued to a
+    deleted one.
+    """
+    return {
+        "id": str(c.id),
+        "name": c.name,
+        "vatNumber": c.vat_number,
+        "phone": c.phone,
+        "email": c.email,
+        "address": c.address,
+        "addressNumber": c.address_number,
+        "city": c.city,
+        "postalCode": c.postal_code,
+        "country": c.country,
+        "isActive": bool(c.is_active),
+        "deleted": c.deleted_at is not None,
+        "createdAt": c.created_at.isoformat() if c.created_at else None,
+        "updatedAt": c.updated_at.isoformat() if c.updated_at else None,
     }
 
 
@@ -454,6 +499,32 @@ def get_vouchers_for_sync(
     return [_serialize_voucher(v) for v in query.order_by(Voucher.name).all()]
 
 
+def get_customers_for_sync(
+    db: Session,
+    tenant_id: Optional[str] = None,
+    since: Optional[datetime] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Return the tenant's customers for a machine, with optional delta filter.
+
+    Deliberately unlike `get_vouchers_for_sync`, which filters `is_active` in the
+    query: this one returns **every** row, archived and deleted included, and lets the
+    till decide what to do with the flags. A filtered query cannot express a deletion
+    at all — a row that stops being returned is indistinguishable from a row that has
+    not changed, so on a delta pull the till would keep offering a customer forever
+    after the merchant removed them. Shipping the tombstone is the only way a delta
+    sync can propagate a removal, and it is the same reason
+    `get_pos_users_sync` returns deactivated users rather than hiding them.
+    """
+    if not tenant_id:
+        return []
+    tid = uuid_mod.UUID(str(tenant_id)) if isinstance(tenant_id, str) else tenant_id
+    query = db.query(Customer).filter(Customer.tenant_id == tid)
+    if since:
+        query = query.filter(Customer.updated_at > since)
+    return [_serialize_customer(c) for c in query.order_by(Customer.name).all()]
+
+
 def update_machine_sync_timestamp(db: Session, machine_id: str) -> None:
     machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
     if machine:
@@ -467,15 +538,53 @@ def update_machine_heartbeat(
     *,
     mqtt_connected: Optional[bool] = None,
     app_version: Optional[str] = None,
+    serial_number: Optional[str] = None,
+    battery_percent: Optional[int] = None,
+    battery_status: Optional[str] = None,
+    clock_skew_ms: Optional[int] = None,
 ) -> None:
+    """
+    Record a heartbeat, plus whatever device health came with it.
+
+    Every health argument is "None means the till did not say", so an older build
+    that omits them leaves the last known values in place rather than wiping them.
+    The one field that is deliberately allowed to *stay* null after a report is
+    battery_percent — a device that reports "I could not read the battery" is not
+    reporting 0%, and last_health_report_at is what tells the two apart.
+    """
     machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
-    if machine:
-        machine.last_heartbeat_at = datetime.now(timezone.utc)
-        if mqtt_connected is not None:
-            machine.mqtt_connected = mqtt_connected
-        if app_version is not None:
-            machine.app_version = app_version[:32] if app_version else None
-        db.commit()
+    if not machine:
+        return
+
+    now = datetime.now(timezone.utc)
+    machine.last_heartbeat_at = now
+    if mqtt_connected is not None:
+        machine.mqtt_connected = mqtt_connected
+    if app_version is not None:
+        machine.app_version = app_version[:32] if app_version else None
+
+    reported_health = False
+
+    serial = normalize_serial_number(serial_number)
+    if serial:
+        # Refreshed from every heartbeat, not written once at pairing: a unit that
+        # was swapped out on the counter must not keep reporting the old serial.
+        machine.serial_number = serial
+        reported_health = True
+    if battery_percent is not None:
+        machine.battery_percent = normalize_battery_percent(battery_percent)
+        reported_health = True
+    if battery_status is not None:
+        machine.battery_status = normalize_battery_status(battery_status)
+        reported_health = True
+    if clock_skew_ms is not None:
+        machine.clock_skew_ms = normalize_clock_skew_ms(clock_skew_ms)
+        reported_health = True
+
+    if reported_health:
+        machine.last_health_report_at = now
+
+    db.commit()
 
 
 def update_machine_heartbeat_timestamp(db: Session, machine_id: str) -> None:
@@ -494,6 +603,15 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
 
     tid_uuid = uuid_mod.UUID(str(tid)) if isinstance(tid, str) else tid
     points: List[datetime] = []
+
+    # Customers ride the catalog payload, so a customer edit has to move the
+    # watermark too — otherwise the till's last pull keeps looking fresh and the new
+    # customer does not reach the counter until something unrelated changes.
+    customer_max = (
+        db.query(func.max(Customer.updated_at))
+        .filter(Customer.tenant_id == tid_uuid)
+        .scalar()
+    )
 
     if machine.shop_id:
         product_max = (
@@ -531,7 +649,10 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
             .filter(Product.pos_machine_id == machine.id)
             .scalar()
         )
-        points.extend([product_max, override_max, category_max, voucher_max, local_product_max])
+        points.extend([
+            product_max, override_max, category_max, voucher_max,
+            local_product_max, customer_max,
+        ])
     else:
         local_product_max = (
             db.query(func.max(Product.updated_at))
@@ -548,7 +669,7 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
             .filter(Voucher.tenant_id == tid_uuid)
             .scalar()
         )
-        points.extend([local_product_max, local_category_max, voucher_max])
+        points.extend([local_product_max, local_category_max, voucher_max, customer_max])
 
     points = [p for p in points if p is not None]
     if not points:

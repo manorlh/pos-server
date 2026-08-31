@@ -1,7 +1,17 @@
 import uuid
 import enum
 
-from sqlalchemy import Column, String, Boolean, ForeignKey, JSON, Enum as SQLEnum, DateTime
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    Enum as SQLEnum,
+    ForeignKey,
+    JSON,
+    SmallInteger,
+    String,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -13,6 +23,13 @@ class PairingStatus(str, enum.Enum):
     UNPAIRED = "unpaired"
     PAIRED = "paired"
     ASSIGNED = "assigned"
+
+
+# Values the till may report for `battery_status`. Anything else is stored as
+# "unknown" rather than rejected: a heartbeat carrying an unexpected string is
+# still a live terminal saying hello, and dropping it would take the machine
+# offline on the dashboard for a reason that has nothing to do with the machine.
+BATTERY_STATUSES = ("charging", "discharging", "full", "not_charging", "unknown")
 
 
 class POSMachine(Base):
@@ -33,6 +50,32 @@ class POSMachine(Base):
     mqtt_connected = Column(Boolean, nullable=True)
     app_version = Column(String(32), nullable=True)
     last_sync_at = Column(DateTime(timezone=True), nullable=True)
+
+    # ── Device identity and health ────────────────────────────────────────────
+    # First-class columns rather than keys inside `device_info`, because these are
+    # the things a distributor sorts and filters a fleet by: "which tills are
+    # running flat", "which till has a drifting clock", "which physical box is
+    # standing on that counter". None of that is answerable from a JSON blob.
+
+    # The terminal's hardware serial, e.g. "F2003183A700217". Indexed: support
+    # gets handed a serial off the back of a unit and needs the machine row.
+    serial_number = Column(String(64), nullable=True, index=True)
+
+    # NULL means the device could not read the battery, which is NOT 0. Never
+    # coerce one into the other — "unknown charge" and "about to die" call for
+    # opposite reactions from whoever is watching the fleet.
+    battery_percent = Column(SmallInteger, nullable=True)
+    battery_status = Column(String(16), nullable=True)
+
+    # Device clock minus server clock, in milliseconds. SIGNED: negative means
+    # the device is behind. BigInteger because a terminal that came up with an
+    # unset clock is out by decades, which overflows a 32-bit int in ms.
+    clock_skew_ms = Column(BigInteger, nullable=True)
+
+    # When health was last actually reported. Distinct from last_heartbeat_at,
+    # which an older till build bumps while sending none of the fields above —
+    # without this there is no way to tell a fresh 4% reading from a stale one.
+    last_health_report_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

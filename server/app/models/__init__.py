@@ -14,11 +14,13 @@ from app.models.shop_product_override import ShopProductOverride
 from app.models.trading_day import TradingDay, TradingDayStatus
 from app.models.transaction import Transaction, TransactionStatus
 from app.models.transaction_item import TransactionItem
+from app.models.transaction_payment import TransactionPayment
 from app.models.z_report import ZReport
 from app.models.pos_user import PosUser, PosUserRole
 from app.models.tenant_sku_sequence import TenantSkuSequence
 from app.models.tenant_local_sku_sequence import TenantLocalSkuSequence
 from app.models.voucher import Voucher, ValueDisplayMode
+from app.models.customer import Customer
 from app.models.issued_voucher import IssuedVoucher, IssuedVoucherStatus
 from app.models.stock_level import StockLevel
 from app.models.close_day import CloseDayRequest, CloseDayRequestItem, CloseDayRequestStatus, CloseDayItemStatus
@@ -40,11 +42,13 @@ __all__ = [
     "TradingDay", "TradingDayStatus",
     "Transaction", "TransactionStatus",
     "TransactionItem",
+    "TransactionPayment",
     "ZReport",
     "PosUser", "PosUserRole",
     "TenantSkuSequence",
     "TenantLocalSkuSequence",
     "Voucher", "ValueDisplayMode",
+    "Customer",
     "IssuedVoucher", "IssuedVoucherStatus",
     "StockLevel",
     "StockMovement", "StockMovementReason",

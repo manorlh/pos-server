@@ -76,7 +76,13 @@ def get_transaction(
 ):
     query = (
         db.query(Transaction)
-        .options(joinedload(Transaction.items), joinedload(Transaction.issued_vouchers))
+        .options(
+            joinedload(Transaction.items),
+            # Eager: TransactionOut serialises the tender legs, and a lazy load here
+            # would fire a query per document view.
+            joinedload(Transaction.payments),
+            joinedload(Transaction.issued_vouchers),
+        )
         .filter(Transaction.id == transaction_id, Transaction.tenant_id == active_tenant_id)
     )
     query = scope_transactions_by_user(query, current_user, db)

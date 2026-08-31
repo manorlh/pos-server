@@ -12,7 +12,9 @@ from app.models.company import Company
 from app.models.shop import Shop
 from app.models.transaction import Transaction, TransactionStatus
 from app.models.transaction_item import TransactionItem
+from app.models.transaction_payment import TransactionPayment
 from app.schemas.dashboard import DashboardBreakdownRow, DashboardStatsResponse
+from app.services.tenders import tender_amount_expr, tender_method_expr
 
 SALE_STATUSES = (
     TransactionStatus.COMPLETED,
@@ -102,12 +104,30 @@ def compute_sales_summary(
     refunds_count = int(refund_agg.count or 0)
     net = gross - refunds_amount
 
+    # Tender split from the tender rows, not from `transactions.payment_method`: a
+    # document paid ₪50 cash and the rest by card used to land its whole total in one
+    # of the two buckets.
+    #
+    # The fallback for a document with no leg rows is its own `total_amount`, which is
+    # what this function has always summed here. That keeps every existing figure
+    # byte-identical and confines the change to documents that actually have legs.
+    # Note the asymmetry it inherits: `gross_revenue` is gross of `document_discount`,
+    # while a leg amount is the money actually collected — so on a *discounted*
+    # split-tender document the two buckets sum to slightly less than its gross. The
+    # buckets have always described collected money and the gross figure has always
+    # described billed money; this only makes the gap visible where a discount exists.
+    method_expr = tender_method_expr()
     payment_rows = (
-        sale_q.with_entities(
-            Transaction.payment_method,
-            func.coalesce(func.sum(Transaction.total_amount), 0).label("amount"),
+        sale_q.outerjoin(
+            TransactionPayment, TransactionPayment.transaction_id == Transaction.id
         )
-        .group_by(Transaction.payment_method)
+        .with_entities(
+            method_expr.label("method"),
+            func.coalesce(
+                func.sum(tender_amount_expr(fallback=Transaction.total_amount)), 0
+            ).label("amount"),
+        )
+        .group_by(method_expr)
         .all()
     )
     payment_cash = 0.0
@@ -133,6 +153,11 @@ def compute_sales_summary(
     tips_cash = 0.0
     tips_card = 0.0
     for tip_method, pay_method, amount in tip_rows:
+        # Tips stay a document-level fact — they are not tender legs — so this is
+        # unchanged. The one difference split tender makes is that a mixed document's
+        # `payment_method` reads "mixed", so the fallback matches neither branch and
+        # the tip goes uncounted rather than being attributed to a tender it may not
+        # have been left on. A till that sends `tipPaymentMethod` is unaffected.
         m = (tip_method or pay_method or "").lower()
         amt = _to_float(amount)
         if m == "cash":

@@ -14,6 +14,23 @@ router = APIRouter(prefix="/companies", tags=["companies"])
 _COMPANY_PROFILE_FIELDS = frozenset({"name", "vat_number", "address", "city"})
 
 
+def _check_company_write(user: User, company: Company) -> None:
+    """
+    Company access for a write.
+
+    Mirrors `_check_shop_override_write` in the shops router: reading a company is
+    reasonable for anyone attached to it, editing it is not. Without this a cashier
+    could rename the company and change the VAT number that every receipt is printed
+    with.
+    """
+    if user.role == UserRole.CASHIER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions",
+        )
+    _check_company_access(user, company)
+
+
 def _check_company_access(user: User, company: Company):
     if user.role == UserRole.SUPER_ADMIN:
         return
@@ -87,7 +104,7 @@ def update_company(
     if not company:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
     ensure_same_tenant(company.tenant_id, active_tenant_id)
-    _check_company_access(current_user, company)
+    _check_company_write(current_user, company)
 
     updates = data.model_dump(exclude_unset=True, by_alias=False)
     profile_changed = bool(_COMPANY_PROFILE_FIELDS & set(updates.keys()))

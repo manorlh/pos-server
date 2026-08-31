@@ -24,7 +24,14 @@ MANAGED_SETTING_KEYS = (
     "tipDistribution",
     "receiptPrinterName",
     "drawerPrinterName",
+    "brandLogoUrl",
+    "brandHeroUrl",
 )
+
+#: White-label keys. Written at any layer, but only by BRANDING_WRITE_ROLES
+#: (see app/routers/settings.py) — a shop manager must not repaint the
+#: distributor's brand on the tills in their store.
+BRANDING_SETTING_KEYS = ("brandLogoUrl", "brandHeroUrl")
 
 
 def _as_dict(value: Any) -> Dict[str, Any]:

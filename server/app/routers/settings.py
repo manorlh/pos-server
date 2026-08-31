@@ -1,4 +1,6 @@
-"""Company and shop POS settings (dashboard CRUD)."""
+"""Tenant, company and shop POS settings (dashboard CRUD)."""
+from typing import Any, Dict
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
@@ -17,6 +19,7 @@ from app.schemas.pos_settings import (
     ShopSettingsResponse,
 )
 from app.services.settings_merge import (
+    BRANDING_SETTING_KEYS,
     effective_settings_updated_at,
     merge_settings,
     patch_settings_json,
@@ -51,6 +54,56 @@ def _check_shop_settings_write(user: User, shop: Shop, db: Session) -> None:
     if user.role == UserRole.CASHIER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
     _check_shop_access(user, shop, db)
+
+
+# White label is the distributor's (or the merchant's) identity, not the store's.
+# A shop manager may set printer names for their branch but must not repaint the
+# brand on the tills; a cashier may write nothing at any level.
+BRANDING_WRITE_ROLES = {
+    UserRole.SUPER_ADMIN,
+    UserRole.DISTRIBUTOR,
+}
+"""
+Who may change the white label.
+
+COMPANY_MANAGER is deliberately absent, and the reason is a chain rather than a
+single check. `_ensure_membership_for_user_home_tenant` auto-grants TENANT_ADMIN to
+every company manager, and it runs on GET /tenants/mine, which the dashboard calls on
+every load. `_can_manage_tenant` accepts TENANT_ADMIN. So with company_manager in this
+set, both guards on the tenant endpoint passed and one merchant could replace the
+distributor's brand on every terminal in the tenant — including tills belonging to
+other merchants entirely.
+
+Branding is the distributor's asset. It is the one tenant-level setting whose whole
+purpose is that the people below cannot change it, which is exactly why it needs a
+narrower rule than the printer names and tax rates alongside it. Company managers keep
+every other company-level setting they had.
+"""
+
+
+def _branding_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
+    """Branding keys the caller explicitly sent, keeping an explicit `null`.
+
+    `patch_to_camel_dict` drops `None`, so a null can never delete a key through it.
+    Branding needs deletion: `null` unsets this layer (inherit again), while `""`
+    stores an empty string (deliberately no image, overriding any inherited URL).
+    """
+    raw = data.model_dump(exclude_unset=True, by_alias=True)
+    return {key: raw[key] for key in BRANDING_SETTING_KEYS if key in raw}
+
+
+def _check_branding_write(user: User, branding: Dict[str, Any]) -> None:
+    if branding and user.role not in BRANDING_WRITE_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions to change branding",
+        )
+
+
+def _build_patch(data: PosSettingsV1Patch, user: User) -> Dict[str, Any]:
+    branding = _branding_patch(data)
+    _check_branding_write(user, branding)
+    return {**patch_to_camel_dict(data), **branding}
 
 
 @router.get(
@@ -91,7 +144,7 @@ def patch_tenant_settings(
     if not _can_manage_tenant(current_user, tenant.id, db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
-    patch = patch_to_camel_dict(data)
+    patch = _build_patch(data, current_user)
     if not patch:
         return EntitySettingsResponse(
             settings=tenant.settings or {},
@@ -150,7 +203,7 @@ def patch_company_settings(
     _check_company_access(current_user, company)
     _check_company_settings_write(current_user, company)
 
-    patch = patch_to_camel_dict(data)
+    patch = _build_patch(data, current_user)
     if not patch:
         return EntitySettingsResponse(
             settings=company.settings or {},
@@ -221,7 +274,7 @@ def patch_shop_settings(
     ensure_same_tenant(shop.tenant_id, active_tenant_id)
     _check_shop_settings_write(current_user, shop, db)
 
-    patch = patch_to_camel_dict(data)
+    patch = _build_patch(data, current_user)
     if not patch:
         return ShopSettingsResponse(
             settings=shop.settings or {},

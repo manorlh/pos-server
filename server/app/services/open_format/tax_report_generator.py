@@ -9,7 +9,7 @@ import zipfile
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from io import BytesIO
-from typing import Any, Dict, List, Optional, TypedDict, Union
+from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
 
 from app.services.open_format.defaults import DEFAULT_SOFTWARE_INFO, DEFAULT_TAX_REPORT_CONFIG, SoftwareInfo, TaxReportConfig
 from app.services.open_format.israeli_tax_id import normalize_israeli_9_digit
@@ -416,10 +416,32 @@ def build_d120_record(
     link_id7: str,
     *,
     doc_type: Optional[int] = None,
+    payment_method: Optional[str] = None,
+    payment_amount_override: Optional[float] = None,
 ) -> str:
+    """
+    One payment record (D120) — one *tender leg* of the document.
+
+    `payment_method` / `payment_amount_override` are how a split-tender document
+    describes each of its legs. Both default to the document-level values, so a
+    single-tender document produces exactly the record it produced before split
+    tender existed, to the byte.
+
+    The payment-type code table is deliberately left as it was: card → 3, everything
+    else → 1. The מבנה אחיד field has further codes (cheque, bank transfer, vouchers)
+    and this system now stores whatever tender string the till sends, but mapping new
+    strings onto tax codes is a filing decision, not a refactor, and a wrong code is
+    not something the merchant finds out about from us. Unrecognised tenders keep
+    landing on 1 exactly as they did before.
+    """
     cart = transaction.get("cart") or {}
-    payment_amount = float(cart.get("totalAmount") or 0)
-    payment_type = 3 if transaction.get("paymentMethod") == "card" else 1
+    payment_amount = (
+        float(payment_amount_override)
+        if payment_amount_override is not None
+        else float(cart.get("totalAmount") or 0)
+    )
+    method = payment_method if payment_method is not None else transaction.get("paymentMethod")
+    payment_type = 3 if method == "card" else 1
     doc_type_val = doc_type if doc_type is not None else transaction.get("documentType")
     doc_production_date = _parse_dt(
         transaction.get("documentProductionDate"),
@@ -449,6 +471,59 @@ def build_d120_record(
     record += pad_right(str(branch_id), 7) if branch_id else pad_right("", 7)
     record += doc_date_str + link + pad_right("", 60)
     return record[:222]
+
+
+def resolve_payment_legs(
+    transaction: Dict[str, Any]
+) -> List[Tuple[Optional[str], Optional[float]]]:
+    """
+    The (method, amount) pairs to write as D120 records for one document.
+
+    A `None` in either slot means "use the document-level value", which is how a
+    single-tender document keeps producing byte-identical output.
+
+    **The amounts are apportioned, and that is on purpose.** D120 has always been
+    written with `cart.totalAmount` — the *gross* of the line totals — while
+    `documentDiscount` is carried separately on C100 (fields 1220/1221) and C100's own
+    final-amount field 1223 is that same gross figure. So on a discounted document the
+    payment record and the document record agree with each other today, and both are
+    gross. Writing raw tender-leg amounts (which are the money actually collected, i.e.
+    net of the discount) would make the payment records stop summing to the document
+    record for exactly those documents — a whole-file validation failure, on a legal
+    filing, to fix a number that is questionable for an unrelated reason.
+
+    So the legs are scaled to the document total that C100 already declares, with the
+    rounding remainder pushed onto the last leg so the sum is exact. When there is no
+    document discount — the overwhelmingly common case — gross equals net and the
+    scaling is the identity, so each record carries the real money on the real tender.
+    What this change actually fixes is the *code*: card money is now coded 3 and cash
+    money 1 on the same document, instead of the whole document taking one code.
+
+    The right long-term fix is for C100 field 1223 to be net of the document discount
+    and for D120 to carry raw leg amounts. That is a change to what the business
+    declares it billed, and it needs the owner's accountant, not this function.
+    """
+    legs = transaction.get("payments") or []
+    if len(legs) <= 1:
+        return [(None, None)]
+
+    cart = transaction.get("cart") or {}
+    target = float(cart.get("totalAmount") or 0)
+    raw = [float(leg.get("amount") or 0) for leg in legs]
+    raw_total = sum(raw)
+    if raw_total <= 0:
+        return [(None, None)]
+
+    out: List[Tuple[Optional[str], Optional[float]]] = []
+    running = 0.0
+    for index, leg in enumerate(legs):
+        if index == len(legs) - 1:
+            amount = round(target - running, 2)
+        else:
+            amount = round(target * (raw[index] / raw_total), 2)
+            running += amount
+        out.append((leg.get("method"), amount))
+    return out
 
 
 def build_z900_record(
@@ -576,18 +651,25 @@ def generate_tax_report(
             record_number += 1
             line_number += 1
 
-        bkmv_lines.append(
-            build_d120_record(
-                transaction,
-                1,
-                business_info["vatNumber"],
-                record_number,
-                link_id7,
-                doc_type=doc_type,
+        # One payment record per tender leg. A single-tender document still produces
+        # exactly one, with the document-level method and amount, as before.
+        for payment_line, (leg_method, leg_amount) in enumerate(
+            resolve_payment_legs(transaction), start=1
+        ):
+            bkmv_lines.append(
+                build_d120_record(
+                    transaction,
+                    payment_line,
+                    business_info["vatNumber"],
+                    record_number,
+                    link_id7,
+                    doc_type=doc_type,
+                    payment_method=leg_method,
+                    payment_amount_override=leg_amount,
+                )
             )
-        )
-        record_counts["D120"] += 1
-        record_number += 1
+            record_counts["D120"] += 1
+            record_number += 1
 
     for product in collect_unique_products_for_m100(transactions):
         bkmv_lines.append(build_m100_record(business_info["vatNumber"], record_number, product))

@@ -19,17 +19,25 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.models.customer import Customer
 from app.models.pos_machine import POSMachine
 from app.models.product import Product
 from app.models.trading_day import TradingDay, TradingDayStatus
 from app.models.transaction import Transaction, TransactionStatus
 from app.models.transaction_item import TransactionItem
+from app.models.transaction_payment import TransactionPayment
 from app.models.issued_voucher import IssuedVoucher, IssuedVoucherStatus
 from app.models.stock_movement import StockMovementReason
 from app.models.z_report import ZReport
-from app.schemas.transaction import TransactionIn, TransactionUpsertResult
+from app.schemas.transaction import TransactionIn, TransactionPaymentIn, TransactionUpsertResult
 from app.schemas.z_report import ZReportIn
 from app.services.stock import apply_movement
+from app.services.tenders import (
+    UNKNOWN_PAYMENT_METHOD,
+    derive_payment_method,
+    expected_tender_total,
+    reconciliation_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +63,92 @@ def _safe_voucher_id(db: Session, vid: Optional[uuid.UUID]) -> Optional[uuid.UUI
 
 def _safe_issued_product_id(db: Session, pid: Optional[uuid.UUID]) -> Optional[uuid.UUID]:
     return _safe_item_product_id(db, pid)
+
+
+def _resolve_customer_ref_id(
+    db: Session, raw: Optional[str], tenant_id: Optional[uuid.UUID]
+) -> Optional[uuid.UUID]:
+    """
+    Turn the till's free-text `customerId` into a real FK, or into nothing.
+
+    Same shape as `_safe_item_product_id`, and for the same reason: the till's value
+    is not trusted to be a key in this database. Three cases resolve to null rather
+    than to an error — a non-UUID string (a legacy desktop wrote a name there), a
+    UUID naming no customer, and a UUID naming a customer of a *different* tenant.
+    The last one is the one that matters: without the tenant predicate a machine
+    could staple another merchant's customer, name and ח.פ. included, onto its own
+    tax invoice by guessing a UUID.
+
+    Deleted customers deliberately still resolve. A till that has been offline for a
+    week can push a sale for a customer removed yesterday, and the document must not
+    lose the identity it was issued to — which is why deletion is a tombstone on the
+    row rather than a DELETE (see `app/models/customer.py`).
+    """
+    if not raw or tenant_id is None:
+        return None
+    try:
+        candidate = uuid.UUID(str(raw))
+    except (ValueError, AttributeError, TypeError):
+        return None
+    row = (
+        db.query(Customer.id)
+        .filter(Customer.id == candidate, Customer.tenant_id == tenant_id)
+        .first()
+    )
+    return candidate if row else None
+
+
+def _normalized_payment_legs(tx: TransactionIn) -> List[TransactionPaymentIn]:
+    """
+    The tender legs to persist for one document — always at least one.
+
+    A till that sends only `paymentMethod` gets a single synthesised leg for the
+    document's whole collectable amount. That is the entire point of doing it here:
+    every reporting and export path downstream then has exactly one code path, and
+    "does this document have legs?" never becomes a branch in an aggregation.
+
+    The synthesised leg's id is derived deterministically from the document id via
+    UUID5, not randomly. Pushes are idempotent by document id and the legs are
+    replaced on every push, so a random id would mint a new primary key on each
+    retry — harmless today, but it makes the same document look different every time
+    it is re-pushed, and that is the sort of thing that turns a duplicate-detection
+    question into an afternoon.
+    """
+    if tx.payments:
+        return sorted(tx.payments, key=lambda p: (p.sequence, str(p.id)))
+    return [
+        TransactionPaymentIn(
+            id=uuid.uuid5(uuid.NAMESPACE_URL, f"tender:{tx.id}:1"),
+            sequence=1,
+            method=(tx.payment_method or UNKNOWN_PAYMENT_METHOD),
+            amount=expected_tender_total(
+                total_amount=tx.total_amount or 0,
+                document_discount=tx.document_discount,
+                document_type=tx.document_type,
+                refund_of_transaction_id=tx.refund_of_transaction_id,
+            ),
+            nayax_meta=tx.nayax_meta,
+        )
+    ]
+
+
+def _tender_rejection_reason(tx: TransactionIn) -> Optional[str]:
+    """
+    Why this document's `payments` array cannot be accepted, or None.
+
+    Only checked when the till actually sent an array. A synthesised leg cannot
+    mismatch by construction, so an older till build is never rejected by a rule it
+    has never heard of.
+    """
+    if not tx.payments:
+        return None
+    expected = expected_tender_total(
+        total_amount=tx.total_amount or 0,
+        document_discount=tx.document_discount,
+        document_type=tx.document_type,
+        refund_of_transaction_id=tx.refund_of_transaction_id,
+    )
+    return reconciliation_error(expected, [p.amount for p in tx.payments])
 
 
 # ── Trading day helpers ──────────────────────────────────────────────────────
@@ -123,7 +217,20 @@ def _serialize_tx_for_upsert(
     tx: TransactionIn,
     machine: POSMachine,
     trading_day_id: uuid.UUID,
+    *,
+    payment_method: Optional[str] = None,
+    customer_ref_id: Optional[uuid.UUID] = None,
 ) -> Dict:
+    """
+    Flatten one incoming document into the row the upsert writes.
+
+    `payment_method` and `customer_ref_id` are the two values the *server* decides
+    rather than copies: the first is derived from the tender legs, the second is the
+    till's `customer_id` after it has been checked against this tenant's customers.
+    Both default to the pre-split behaviour — the till's own `payment_method`, and no
+    customer link — so a caller that has neither still produces the row this function
+    produced before split tender existed.
+    """
     return {
         "id": tx.id,
         "tenant_id": machine.tenant_id,
@@ -134,7 +241,10 @@ def _serialize_tx_for_upsert(
         "status": tx.status,
         "document_type": tx.document_type,
         "document_production_date": tx.document_production_date,
-        "payment_method": tx.payment_method,
+        # Derived from the tender legs, not copied from the till: a document with two
+        # tenders must not keep claiming to be a cash sale. Falls back to whatever the
+        # till sent when there are no legs at all.
+        "payment_method": payment_method if payment_method is not None else tx.payment_method,
         "amount_tendered": tx.amount_tendered,
         "change_amount": tx.change_amount,
         "total_amount": tx.total_amount or 0,
@@ -144,6 +254,7 @@ def _serialize_tx_for_upsert(
         "document_discount": tx.document_discount,
         "wht_deduction": tx.wht_deduction,
         "customer_id": tx.customer_id,
+        "customer_ref_id": customer_ref_id,
         "cashier_id": tx.cashier_id,
         "branch_id": tx.branch_id,
         "notes": tx.notes,
@@ -163,10 +274,34 @@ def upsert_transactions(
     Idempotently upsert a batch of transactions and their items.
 
     For each tx:
+      - Reject the document outright if its `payments` array does not reconcile.
       - Resolve / auto-open trading_day.
       - INSERT ... ON CONFLICT (id) DO UPDATE SET ... — `status` reports 'accepted' for new rows
         and 'duplicate' for rows that already existed at the same updated_at.
       - Replace items atomically: DELETE existing items by transaction_id, then INSERT the new list.
+      - Replace tender legs the same way, synthesising one from `paymentMethod` when the
+        till sent no array.
+
+    **Why an unbalanced `payments` array is rejected rather than stored with a flag.**
+    A document whose tenders do not sum to its total cannot be audited: it is either
+    money the shop took and cannot account for, or an amount it never took. Stored, it
+    goes straight into the next OpenFormat filing, where the payment records (D120)
+    would no longer add up to the document record (C100) — and a validator that
+    rejects the file rejects the whole period, not the one bad row. A boolean flag on
+    the row would only help if something queried it, and nothing does.
+
+    Rejecting costs nothing here because of how the two halves of this system already
+    behave. The result is per-document, so the rest of the batch still lands. The till
+    keeps its own copy: `OutboxSync` marks a rejected row failed and does **not**
+    clear it, so the document survives locally with its trace intact, and because the
+    upsert is keyed on the client-generated id, a corrected client can re-push the
+    same document and have it accepted. The reason string travels back in the batch
+    response and into `sync_logs.conflict_note`, so the failure is visible rather than
+    sitting in a column nobody reads.
+
+    The legacy path is deliberately exempt: a till that sends only `paymentMethod` has
+    its single leg synthesised from the document's own amount, so it cannot fail a
+    reconciliation rule it has never heard of.
     """
     results: List[TransactionUpsertResult] = []
     if not transactions:
@@ -180,6 +315,20 @@ def upsert_transactions(
 
     for tx in transactions:
         try:
+            # Before anything is written, so a rejected document leaves no trace at
+            # all — not even an auto-opened trading day.
+            tender_problem = _tender_rejection_reason(tx)
+            if tender_problem is not None:
+                logger.warning("Rejecting transaction %s: %s", tx.id, tender_problem)
+                results.append(TransactionUpsertResult(
+                    id=tx.id,
+                    status="rejected",
+                    reason=tender_problem,
+                ))
+                continue
+
+            legs = _normalized_payment_legs(tx)
+
             day_date_value: Optional[date] = None
             if tx.day_date:
                 try:
@@ -199,7 +348,17 @@ def upsert_transactions(
 
             previous = existing_map.get(tx.id)
 
-            row = _serialize_tx_for_upsert(tx, machine, td.id)
+            row = _serialize_tx_for_upsert(
+                tx,
+                machine,
+                td.id,
+                payment_method=derive_payment_method(
+                    [leg.method for leg in legs], fallback=tx.payment_method
+                ),
+                customer_ref_id=_resolve_customer_ref_id(
+                    db, tx.customer_id, machine.tenant_id
+                ),
+            )
             stmt = pg_insert(Transaction).values(**row)
             update_cols = {
                 k: stmt.excluded[k]
@@ -232,6 +391,32 @@ def upsert_transactions(
                     )
                     for it in tx.items
                 ])
+
+            # Tender legs are replaced atomically, exactly like items: a re-push is
+            # the whole document, so the legs it carries are the whole truth about
+            # how it was paid. Merging would leave a leg from a superseded attempt
+            # behind and break the reconciliation the push was just checked against.
+            db.query(TransactionPayment).filter(
+                TransactionPayment.transaction_id == tx.id
+            ).delete(synchronize_session=False)
+            db.bulk_save_objects([
+                TransactionPayment(
+                    id=leg.id,
+                    transaction_id=tx.id,
+                    sequence=leg.sequence,
+                    # Lower-cased and trimmed on the way in, so the stored tender is
+                    # canonical. The schema's min_length lets a whitespace-only
+                    # string through, and the column is NOT NULL; more usefully,
+                    # every consumer that matches a tender by name — the payment-type
+                    # code in the OpenFormat export most of all — compares against
+                    # lower case, and a till sending "Card" must not quietly file its
+                    # card money as cash.
+                    method=((leg.method or "").strip().lower() or UNKNOWN_PAYMENT_METHOD)[:50],
+                    amount=leg.amount,
+                    nayax_meta=leg.nayax_meta,
+                )
+                for leg in legs
+            ])
 
             db.query(IssuedVoucher).filter(
                 IssuedVoucher.transaction_id == tx.id

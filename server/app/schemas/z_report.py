@@ -91,6 +91,12 @@ class ZReportOut(BaseModel):
     closed_at: datetime = Field(..., alias="closedAt")
     created_at: datetime = Field(..., alias="createdAt")
 
+    # Filled in by the list endpoint so a Z-report history table can name the
+    # terminal and branch without a lookup per row. Left None on the single-report
+    # read, where the caller already knows which machine it asked about.
+    machine_name: Optional[str] = Field(None, alias="machineName")
+    shop_name: Optional[str] = Field(None, alias="shopName")
+
 
 class ZReportListResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)

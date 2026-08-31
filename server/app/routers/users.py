@@ -2,7 +2,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.schemas.user import UserCreate, UserUpdate, UserResponse
+from app.schemas.user import UserCreate, UserUpdate, UserResponse, CurrentUserResponse
 from app.models.user import User, UserRole
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
 from app.services.auth import get_password_hash, get_user_by_username
@@ -15,6 +15,16 @@ ROLE_LEVEL = {
     UserRole.COMPANY_MANAGER: 3,
     UserRole.DISTRIBUTOR: 4,
     UserRole.SUPER_ADMIN: 5,
+}
+
+#: Roles that may read the staff list at all. A dashboard cashier is a shop *viewer*
+#: — it already reads transactions, Z-reports and the tax export — and enumerating the
+#: company's staff is not part of that job.
+USER_READ_ROLES = {
+    UserRole.SUPER_ADMIN,
+    UserRole.DISTRIBUTOR,
+    UserRole.COMPANY_MANAGER,
+    UserRole.SHOP_MANAGER,
 }
 
 CREATABLE_ROLES = {
@@ -53,12 +63,29 @@ def _apply_scope_filter(query, actor: User):
     return query.filter(User.id == actor.id)
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get("/me", response_model=CurrentUserResponse, response_model_by_alias=True)
 def get_current_user_info(current_user: User = Depends(get_current_user)):
-    return current_user
+    """
+    Who is connected, and what they may do.
+
+    The capabilities are computed from the same constants the endpoints enforce, so
+    the dashboard renders what the server will actually accept instead of offering
+    every role and letting the save 403.
+    """
+    creatable = CREATABLE_ROLES.get(current_user.role, set())
+    return CurrentUserResponse.model_validate(current_user).model_copy(
+        update={
+            # Highest first: the create dialog should lead with the most senior role
+            # the caller can actually delegate.
+            "creatable_roles": sorted(creatable, key=lambda r: ROLE_LEVEL[r], reverse=True),
+            "can_read_users": current_user.role in USER_READ_ROLES,
+            "can_manage_users": bool(creatable),
+            "can_manage_pos_users": current_user.role != UserRole.CASHIER,
+        }
+    )
 
 
-@router.get("", response_model=List[UserResponse])
+@router.get("", response_model=List[UserResponse], response_model_by_alias=True)
 def list_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
@@ -69,6 +96,9 @@ def list_users(
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    if current_user.role not in USER_READ_ROLES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+
     query = _apply_scope_filter(db.query(User), current_user).filter(User.tenant_id == active_tenant_id)
 
     if company_id:
@@ -81,7 +111,7 @@ def list_users(
     return query.order_by(User.created_at.desc()).offset(skip).limit(limit).all()
 
 
-@router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED, response_model_by_alias=True)
 def create_user(
     user_data: UserCreate,
     current_user: User = Depends(get_current_user),
@@ -126,7 +156,7 @@ def create_user(
     return db_user
 
 
-@router.get("/{user_id}", response_model=UserResponse)
+@router.get("/{user_id}", response_model=UserResponse, response_model_by_alias=True)
 def get_user(
     user_id: str,
     current_user: User = Depends(get_current_user),
@@ -138,13 +168,17 @@ def get_user(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     ensure_same_tenant(user.tenant_id, active_tenant_id)
 
+    # Reading yourself is always fine — that is what /me is for, and the dialog uses
+    # it. Reading anyone else is the same disclosure the list makes.
+    if current_user.role not in USER_READ_ROLES and current_user.id != user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
     if not _check_scope_access(current_user, user) and current_user.id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     return user
 
 
-@router.put("/{user_id}", response_model=UserResponse)
+@router.put("/{user_id}", response_model=UserResponse, response_model_by_alias=True)
 def update_user(
     user_id: str,
     user_data: UserUpdate,
@@ -196,30 +230,77 @@ def update_user(
     return user
 
 
+def _authorise_activation_change(current_user: User, user: User, verb: str) -> None:
+    """The guards shared by deactivate and reactivate."""
+    if current_user.id == user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot {verb} yourself",
+        )
+    if not _check_scope_access(current_user, user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    if ROLE_LEVEL[current_user.role] <= ROLE_LEVEL[user.role]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Cannot {verb} a user with equal or higher role",
+        )
+
+
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_user(
+def deactivate_user(
     user_id: str,
     current_user: User = Depends(get_current_user),
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    """
+    Soft delete: flips `is_active` to false. Mirrors what POS users already do.
+
+    This used to be `db.delete(user)`, which was wrong twice over. Seven tables carry
+    a FK to `users.id`, two of them NOT NULL — `pos_machines.distributor_id` and
+    `close_day_requests.initiated_by_user_id` — so deleting a distributor who had ever
+    paired a terminal either failed with an integrity error or took the terminals with
+    it. And it destroyed the audit trail: "who ordered that close-day" has no answer
+    once the row is gone.
+
+    Deactivating is also what the word means operationally. Staff leave; the documents
+    they touched do not.
+    """
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     ensure_same_tenant(user.tenant_id, active_tenant_id)
+    _authorise_activation_change(current_user, user, "deactivate")
 
-    if current_user.id == user.id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete yourself")
+    if user.is_active:
+        user.is_active = False
+        db.commit()
 
-    if not _check_scope_access(current_user, user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    if ROLE_LEVEL[current_user.role] <= ROLE_LEVEL[user.role]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot delete a user with equal or higher role",
-        )
+@router.post("/{user_id}/activate", response_model=UserResponse, response_model_by_alias=True)
+def activate_user(
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Bring a deactivated user back.
 
-    db.delete(user)
-    db.commit()
+    Same authority as deactivating: if you were allowed to switch someone off, you are
+    allowed to switch them on. Without this, a mis-click was permanent for everyone
+    below super_admin, which is the kind of thing that makes people avoid the button
+    that keeps the staff list honest.
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    ensure_same_tenant(user.tenant_id, active_tenant_id)
+    _authorise_activation_change(current_user, user, "activate")
+
+    if not user.is_active:
+        user.is_active = True
+        db.commit()
+    db.refresh(user)
+    return user
     return None

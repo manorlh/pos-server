@@ -29,6 +29,30 @@ class IssuedVoucherIn(BaseModel):
         populate_by_name = True
 
 
+class TransactionPaymentIn(BaseModel):
+    """
+    One tender leg incoming from POS. id is a client-generated UUID.
+
+    `amount` is the money applied to the document on this tender, **not** the money
+    handed over: ₪100 offered against a ₪50 bill is `amount: 50`, with the ₪100 and
+    the ₪50 change staying in the document's `amountTendered` / `changeAmount`.
+
+    Tips are not tender legs. A tip stays on the document (`tipAmount` +
+    `tipPaymentMethod`) exactly as it is today, so the legs of a document sum to the
+    document itself and nothing else. Sending the tip inside a leg would break the
+    reconciliation check below and reject the push.
+    """
+
+    id: uuid.UUID
+    sequence: int = Field(1, ge=1, description="Order the tenders were taken in, 1-based")
+    method: str = Field(..., min_length=1, max_length=50)
+    amount: Decimal = Field(..., ge=0)
+    nayax_meta: Optional[dict] = Field(None, alias="nayaxMeta")
+
+    class Config:
+        populate_by_name = True
+
+
 class TransactionItemIn(BaseModel):
     """Single item line incoming from POS. id is client-generated UUID."""
 
@@ -85,6 +109,10 @@ class TransactionIn(BaseModel):
     updated_at: datetime = Field(..., alias="updatedAt")
 
     items: List[TransactionItemIn] = Field(default_factory=list)
+    # Optional on purpose. A till build that knows nothing about split tender sends
+    # only `paymentMethod` and keeps working exactly as before — the server
+    # synthesises the single leg it implies, so reporting has one code path.
+    payments: List[TransactionPaymentIn] = Field(default_factory=list)
     issued_vouchers: List[IssuedVoucherIn] = Field(default_factory=list, alias="issuedVouchers")
     stock_movements: List[StockMovementIn] = Field(default_factory=list, alias="stockMovements")
 
@@ -127,6 +155,18 @@ class TransactionItemOut(BaseModel):
     transaction_type: Optional[int] = Field(None, alias="transactionType")
     line_discount: Optional[Decimal] = Field(None, alias="lineDiscount")
     notes: Optional[str]
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+
+
+class TransactionPaymentOut(BaseModel):
+    id: uuid.UUID
+    sequence: int
+    method: str
+    amount: Decimal
+    nayax_meta: Optional[dict] = Field(None, alias="nayaxMeta")
 
     class Config:
         from_attributes = True
@@ -181,6 +221,7 @@ class TransactionOut(BaseModel):
     wht_deduction: Optional[Decimal] = Field(None, alias="whtDeduction")
 
     customer_id: Optional[str] = Field(None, alias="customerId")
+    customer_ref_id: Optional[uuid.UUID] = Field(None, alias="customerRefId")
     cashier_id: Optional[str] = Field(None, alias="cashierId")
     branch_id: Optional[str] = Field(None, alias="branchId")
     notes: Optional[str]
@@ -193,6 +234,7 @@ class TransactionOut(BaseModel):
     server_received_at: datetime = Field(..., alias="serverReceivedAt")
 
     items: List[TransactionItemOut] = Field(default_factory=list)
+    payments: List[TransactionPaymentOut] = Field(default_factory=list)
     issued_vouchers: List[IssuedVoucherOut] = Field(default_factory=list, alias="issuedVouchers")
 
     class Config:

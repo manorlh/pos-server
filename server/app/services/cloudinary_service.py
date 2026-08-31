@@ -12,7 +12,7 @@ from fastapi import HTTPException, status
 
 from app.config import Settings, get_settings
 
-ImageResource = Literal["products", "categories"]
+ImageResource = Literal["products", "categories", "branding"]
 
 
 @dataclass(frozen=True)

@@ -33,6 +33,12 @@ def list_vouchers(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    # Reads are gated like the writes below. The filter was tenant-only, so a cashier —
+    # whose every other view is scoped to one shop — could enumerate the whole tenant's
+    # voucher templates, including those of shops it has nothing to do with.
+    if current_user.role not in _CATALOG_ROLES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+
     query = db.query(Voucher).filter(Voucher.tenant_id == active_tenant_id)
     if is_active is not None:
         query = query.filter(Voucher.is_active == is_active)
@@ -87,6 +93,9 @@ def get_voucher(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    if current_user.role not in _CATALOG_ROLES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+
     voucher = db.query(Voucher).filter(Voucher.id == voucher_id).first()
     if not voucher:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voucher not found")

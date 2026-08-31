@@ -11,6 +11,7 @@ from app.models.user import User, UserRole
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, ProductListResponse
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
 from app.services.catalog_notify import notify_all_machines_for_tenant, notify_machine_catalog_changed
+from app.services.product_validation import validate_open_price_update
 from app.services.sku_sequence import resolve_sku_for_create
 from app.services.tenant_sku_sequence import allocate_global_sku
 
@@ -153,6 +154,9 @@ def create_product(
         tax_rate=data.tax_rate,
         voucher_id=data.voucher_id,
         track_stock=data.track_stock,
+        is_open_price=data.is_open_price,
+        is_weighed=data.is_weighed,
+        unit_label=data.unit_label,
     )
     db.add(product)
     db.commit()
@@ -204,6 +208,7 @@ def update_product(
         _validate_voucher_id(db, data.voucher_id, active_tenant_id)
 
     updates = data.model_dump(exclude_unset=True, by_alias=False)
+    validate_open_price_update(product, updates)
     if product.sku_auto_assigned and "sku" in updates and updates["sku"] != product.sku:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

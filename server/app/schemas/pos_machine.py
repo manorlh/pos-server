@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import AliasChoices, BaseModel, Field, ConfigDict
 from typing import Optional, Dict, Any
 import uuid
 from app.models.pos_machine import PairingStatus as ModelPairingStatus
@@ -32,10 +32,37 @@ class POSMachineUpdate(BaseModel):
 
 
 class MachineHeartbeatBody(BaseModel):
-    """POS desktop HTTP heartbeat payload."""
+    """
+    HTTP heartbeat payload from a till (Android) or the POS desktop.
 
-    mqtt_connected: Optional[bool] = Field(None, alias="mqttConnected")
+    Every field is optional on purpose. An older build in the field sends a strict
+    subset, and a heartbeat is the one call that must never 422 — a terminal that
+    cannot say "I am here" shows up on the dashboard as dead, which is a far worse
+    lie than a missing battery reading.
+    """
+
+    # The Android till calls this `realtimeConnected`; the desktop has always sent
+    # `mqttConnected`. Same fact, same column — accept both spellings rather than
+    # asking either shipped client to change.
+    mqtt_connected: Optional[bool] = Field(
+        None,
+        validation_alias=AliasChoices("mqttConnected", "realtimeConnected", "mqtt_connected"),
+        serialization_alias="mqttConnected",
+    )
     app_version: Optional[str] = Field(None, alias="appVersion", max_length=32)
+
+    # Outbox depth. Accepted and logged rather than stored: it is a live number that
+    # is stale the moment it lands, and the machine's real backlog is derivable from
+    # what has actually been pushed.
+    pending_count: Optional[int] = Field(None, alias="pendingCount", ge=0)
+
+    serial_number: Optional[str] = Field(None, alias="serialNumber", max_length=64)
+    # No ge/le bound here deliberately: an out-of-range reading is clamped in the
+    # service, not rejected. See MachineHeartbeatBody's docstring.
+    battery_percent: Optional[int] = Field(None, alias="batteryPercent")
+    battery_status: Optional[str] = Field(None, alias="batteryStatus", max_length=32)
+    # Signed; negative means the device is behind the server.
+    clock_skew_ms: Optional[int] = Field(None, alias="clockSkewMs")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -55,6 +82,13 @@ class POSMachineResponse(POSMachineBase):
     mqtt_connected: Optional[bool] = Field(None, alias="mqttConnected")
     app_version: Optional[str] = Field(None, alias="appVersion")
     last_sync_at: Optional[datetime] = Field(None, alias="lastSyncAt")
+    serial_number: Optional[str] = Field(None, alias="serialNumber")
+    # Null means "the device could not read it", never "flat". The dashboard must
+    # render it as unknown rather than as 0%.
+    battery_percent: Optional[int] = Field(None, alias="batteryPercent")
+    battery_status: Optional[str] = Field(None, alias="batteryStatus")
+    clock_skew_ms: Optional[int] = Field(None, alias="clockSkewMs")
+    last_health_report_at: Optional[datetime] = Field(None, alias="lastHealthReportAt")
     last_catalog_change_at: Optional[datetime] = Field(None, alias="lastCatalogChangeAt")
     catalog_pull_stale: Optional[bool] = Field(None, alias="catalogPullStale")
     trading_day_status: Optional[str] = Field(None, alias="tradingDayStatus")

@@ -2,11 +2,28 @@
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+#: Max characters for a branding image URL stored in settings JSONB.
+BRAND_IMAGE_URL_MAX_LEN = 500
+
+
+def _validate_brand_url(v: Optional[str]) -> Optional[str]:
+    """Branding URLs must be absolute https:// (Android blocks cleartext) or "" (= no image)."""
+    if v is None:
+        return None
+    v = v.strip()
+    if v == "":
+        return ""
+    if not v.startswith("https://"):
+        raise ValueError("Branding image URL must be an absolute https:// URL")
+    if len(v) > BRAND_IMAGE_URL_MAX_LEN:
+        raise ValueError(f"Branding image URL must be at most {BRAND_IMAGE_URL_MAX_LEN} characters")
+    return v
 
 
 class PosSettingsV1Patch(BaseModel):
-    """Partial update for company/shop settings JSONB."""
+    """Partial update for tenant/company/shop settings JSONB."""
 
     global_tax_rate: Optional[int] = Field(None, alias="globalTaxRate", ge=0, le=100)
     hide_out_of_stock_products: Optional[bool] = Field(None, alias="hideOutOfStockProducts")
@@ -27,6 +44,16 @@ class PosSettingsV1Patch(BaseModel):
     receipt_printer_name: Optional[str] = Field(None, alias="receiptPrinterName")
     drawer_printer_name: Optional[str] = Field(None, alias="drawerPrinterName")
     business_info: Optional[Dict[str, Any]] = Field(None, alias="businessInfo")
+    # ── White label (distributor branding shown on the till) ──────────────────
+    # "" = deliberately no image at this level (overrides an inherited URL);
+    # explicit null in a PATCH body = unset this level so it inherits again.
+    brand_logo_url: Optional[str] = Field(None, alias="brandLogoUrl")
+    brand_hero_url: Optional[str] = Field(None, alias="brandHeroUrl")
+
+    @field_validator("brand_logo_url", "brand_hero_url")
+    @classmethod
+    def _check_brand_urls(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_brand_url(v)
 
     class Config:
         populate_by_name = True

@@ -45,6 +45,11 @@ class Transaction(Base):
 
     document_type = Column(Integer, nullable=True)
     document_production_date = Column(DateTime(timezone=True), nullable=True)
+    # Kept populated for every document, including split-tender ones, because an
+    # older till build and every existing report and export still read it. The
+    # authoritative breakdown now lives in `payments`; this is the single-value
+    # summary of it — the tender name for a one-leg document, and the literal
+    # "mixed" for a document with more than one. See `derive_payment_method`.
     payment_method = Column(String(50), nullable=True)
 
     amount_tendered = Column(Numeric(12, 2), nullable=True)
@@ -56,7 +61,15 @@ class Transaction(Base):
     document_discount = Column(Numeric(12, 2), nullable=True)
     wht_deduction = Column(Numeric(12, 2), nullable=True)
 
+    # Free text as sent by the till — a cloud customer UUID on a current build, but
+    # historically anything the client had. Never rejected on ingest; see
+    # `customer_ref_id` for the validated link.
     customer_id = Column(String(100), nullable=True)
+    # The resolved link, written server-side: set only when `customer_id` parses as a
+    # UUID **and** names a customer of this machine's tenant. This is the column the
+    # receipt and tax-export code joins on, so an unresolvable reference reads as
+    # "no customer" instead of silently producing a tax invoice addressed to nobody.
+    customer_ref_id = Column(UUID(as_uuid=True), ForeignKey("customers.id"), nullable=True, index=True)
     cashier_id = Column(String(100), nullable=True)
     branch_id = Column(String(100), nullable=True)
     notes = Column(Text, nullable=True)
@@ -85,4 +98,12 @@ class Transaction(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    payments = relationship(
+        "TransactionPayment",
+        back_populates="transaction",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="TransactionPayment.sequence",
+    )
+    customer = relationship("Customer", foreign_keys=[customer_ref_id])
     refund_of = relationship("Transaction", remote_side="Transaction.id")

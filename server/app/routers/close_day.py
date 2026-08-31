@@ -60,7 +60,10 @@ def post_close_day(
 )
 def get_close_day_request_detail(
     request_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
+    # Matches the POST that creates these. It was `get_current_user`, so any tenant
+    # member — a cashier included — could read any close-day request in the tenant,
+    # which names the machines and shop being closed.
+    current_user: User = Depends(get_current_machine_admin),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):

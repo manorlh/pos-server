@@ -45,10 +45,12 @@ from app.schemas.z_report import (
 )
 from app.schemas.close_day import CloseDayAckIn, CloseDayAckResponse
 from app.services.catalog_notify import notify_all_machines_for_tenant
+from app.services.product_validation import validate_open_price_update
 from app.services.sku_sequence import resolve_sku_for_create
 from app.services.tenant_sku_sequence import allocate_global_sku
 from app.services.sync import (
     get_categories_for_sync,
+    get_customers_for_sync,
     get_products_for_sync,
     get_vouchers_for_sync,
     merge_categories_referenced_by_products,
@@ -94,6 +96,10 @@ class CatalogSyncResponse(BaseModel):
     products: List[Dict[str, Any]]
     categories: List[Dict[str, Any]]
     vouchers: List[Dict[str, Any]] = Field(default_factory=list)
+    # Business customers, so the till can put a name and a ח.פ. on a חשבונית מס.
+    # Defaulted rather than required: an older till build ignores the key, and this
+    # response is also produced for machines with no tenant resolved at all.
+    customers: List[Dict[str, Any]] = Field(default_factory=list)
 
     class Config:
         populate_by_name = True
@@ -178,6 +184,9 @@ def _apply_product_change(
             barcode=item.data.get("barcode"),
             tax_rate=item.data.get("taxRate"),
             category_id=item.data.get("categoryId"),
+            is_open_price=bool(item.data.get("isOpenPrice", False)),
+            is_weighed=bool(item.data.get("isWeighed", False)),
+            unit_label=(item.data.get("unitLabel") or None),
         )
         db.add(product)
 
@@ -259,6 +268,11 @@ def get_catalog_sync(
     products = get_products_for_sync(db, tid, mqid, since=since_dt)
     categories = get_categories_for_sync(db, tid, mqid, since=since_dt)
     vouchers = get_vouchers_for_sync(db, tid, since=since_dt)
+    # Same `since` semantics as everything else in this payload: on a delta pull only
+    # customers touched after `since` come back. Unlike products there is no merge
+    # step, because nothing in the payload references a customer by id — a customer is
+    # attached to a *document*, which travels the other way.
+    customers = get_customers_for_sync(db, tid, since=since_dt)
     if since_dt and products:
         categories = merge_categories_referenced_by_products(db, machine, products, categories)
         vouchers = merge_vouchers_referenced_by_products(db, products, vouchers)
@@ -271,6 +285,7 @@ def get_catalog_sync(
         products=products,
         categories=categories,
         vouchers=vouchers,
+        customers=customers,
     )
 
 
@@ -372,6 +387,9 @@ def machine_create_cloud_product(
         stock_quantity=data.stock_quantity,
         barcode=data.barcode,
         tax_rate=data.tax_rate,
+        is_open_price=data.is_open_price,
+        is_weighed=data.is_weighed,
+        unit_label=data.unit_label,
     )
     db.add(product)
     db.commit()
@@ -463,7 +481,9 @@ def machine_update_cloud_product(
     if data.category_id and not db.query(Category).filter(Category.id == data.category_id).first():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Category not found")
 
-    for field, value in data.model_dump(exclude_unset=True, by_alias=False).items():
+    updates = data.model_dump(exclude_unset=True, by_alias=False)
+    validate_open_price_update(product, updates)
+    for field, value in updates.items():
         setattr(product, field, value)
 
     db.commit()

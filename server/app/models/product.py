@@ -47,6 +47,23 @@ class Product(Base):
     tax_rate = Column(Numeric(5, 2), nullable=True)
     voucher_id = Column(UUID(as_uuid=True), ForeignKey("vouchers.id"), nullable=True, index=True)
     track_stock = Column(Boolean, default=False, nullable=False, server_default="false")
+    # "General item": the cashier types the amount at the till. `price` is then only the
+    # starting suggestion the till pre-fills, never the amount charged on its own.
+    is_open_price = Column(Boolean, default=False, nullable=False, server_default="false")
+    # Sold by weight or volume rather than by the piece: the till's cart quantity is a
+    # decimal, so 0.734 ק"ג is a valid line and `price` is per unit of `unit_label`.
+    #
+    # Orthogonal to `is_open_price` and deliberately compatible with it — see the note
+    # on `unit_label`. Shop stock copes with either: `stock_levels.quantity` and
+    # `stock_movements.delta` are already Numeric(12,3). (The legacy per-product
+    # `stock_quantity` counter above is still an Integer, but that column is not what
+    # a shop's on-hand is read from.)
+    is_weighed = Column(Boolean, default=False, nullable=False, server_default="false")
+    # What one unit of `price` buys: ק"ג, ליטר, יח'. Free text, not an enum, because the
+    # merchant's own label is what has to appear on the receipt and the shelf, and a
+    # closed list would need a migration for the first shop that sells by the מטר.
+    # Nullable: a product that has not been given one falls back to the till's default.
+    unit_label = Column(String(16), nullable=True)
 
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

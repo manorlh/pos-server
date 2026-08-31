@@ -10,6 +10,7 @@ from app.models.company import Company
 from app.models.shop import Shop
 from app.models.user import User
 from app.models.tenant_membership import TenantMembership
+from app.services.machine_health import serial_from_device_info
 from app.services.shop_validation import shop_belongs_to_company
 import uuid
 
@@ -188,6 +189,12 @@ def create_pos_machine(
         mqtt_client_id=mqtt_client_id,
         pairing_status=PairingStatus.PAIRED,
         device_info=device_info,
+        # The till already puts its serial in `device_info` at pairing time, on both
+        # the code path (POST /pairing/validate) and the QR path (POST
+        # /pairing/device/register → claim). Lift it into the column so a machine is
+        # identifiable by the number printed on the box from the moment it is paired,
+        # rather than only after its first heartbeat. Heartbeats then keep it fresh.
+        serial_number=serial_from_device_info(device_info),
     )
     db.add(pos_machine)
     db.flush()

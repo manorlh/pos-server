@@ -122,7 +122,13 @@ def load_transactions_for_tax_export(
 ) -> List[Transaction]:
     query = (
         db.query(Transaction)
-        .options(joinedload(Transaction.items))
+        .options(
+            joinedload(Transaction.items),
+            # Eager, not lazy: a 50k-document export would otherwise fire two extra
+            # queries per document while building the payment and customer records.
+            joinedload(Transaction.payments),
+            joinedload(Transaction.customer),
+        )
         .filter(
             Transaction.tenant_id == tenant_id,
             Transaction.created_at >= start,
@@ -194,6 +200,54 @@ def _build_cart_from_items(items, global_tax_rate: float) -> Dict[str, Any]:
     }
 
 
+def _payments_for_open_format(tx: Transaction) -> List[Dict[str, Any]]:
+    """
+    The document's tender legs, in the order they were taken.
+
+    Sorted here rather than relying on the relationship's `order_by`, because the
+    export must number the same document's payment records identically on every run
+    and a tie on `sequence` (two legs a client numbered the same) would otherwise be
+    resolved by whatever order the rows came back in.
+    """
+    legs = list(tx.payments or [])
+    legs.sort(key=lambda p: (p.sequence or 0, str(p.id)))
+    return [
+        {
+            "id": str(leg.id),
+            "sequence": leg.sequence,
+            "method": leg.method,
+            "amount": _decimal_to_float(leg.amount),
+        }
+        for leg in legs
+    ]
+
+
+def _customer_for_open_format(tx: Transaction) -> Dict[str, Any]:
+    """
+    The customer block for the C100 document record.
+
+    Falls back to "לקוח כללי" — the general customer — exactly as before whenever the
+    document has no resolved customer, which is every walk-in sale and every document
+    written before customers existed. Only `customer_ref_id` is consulted: the raw
+    `customer_id` string is unvalidated free text and must never reach a tax filing.
+    """
+    customer = tx.customer
+    if customer is None:
+        return {"name": "לקוח כללי"}
+    return {
+        "name": customer.name or "לקוח כללי",
+        "vatNumber": customer.vat_number or None,
+        "phone": customer.phone or None,
+        "address": {
+            "street": customer.address or "",
+            "houseNumber": customer.address_number or "",
+            "city": customer.city or "",
+            "zipCode": customer.postal_code or "",
+            "country": customer.country or "",
+        },
+    }
+
+
 def transform_transaction_for_open_format(tx: Transaction, global_tax_rate: float) -> Dict[str, Any]:
     status_val = tx.status.value if hasattr(tx.status, "value") else str(tx.status)
     doc_date = tx.document_production_date or tx.created_at
@@ -209,8 +263,13 @@ def transform_transaction_for_open_format(tx: Transaction, global_tax_rate: floa
         "branchId": tx.branch_id,
         "refundOfTransactionId": str(tx.refund_of_transaction_id) if tx.refund_of_transaction_id else None,
         "createdAt": tx.created_at.isoformat() if tx.created_at else None,
+        # Tender legs. A single-tender document produces the same single D120 payment
+        # record it always has; a split-tender one produces one per leg, each with its
+        # own payment-type code. See `resolve_payment_legs` for how the amounts are
+        # apportioned and why.
+        "payments": _payments_for_open_format(tx),
         "cashier": {"name": tx.cashier_id or ""},
-        "customer": {"name": "לקוח כללי"},
+        "customer": _customer_for_open_format(tx),
         "cart": _build_cart_from_items(tx.items, global_tax_rate),
     }
 

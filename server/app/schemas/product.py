@@ -18,6 +18,22 @@ class ProductBase(BaseModel):
     tax_rate: Optional[Decimal] = Field(None, ge=0, alias="taxRate")
     voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
     track_stock: bool = Field(False, alias="trackStock")
+    # "General item": the cashier types the amount at the till, so `price` is only the
+    # suggestion the till pre-fills.
+    is_open_price: bool = Field(False, alias="isOpenPrice")
+    # Sold by weight/volume: the till's cart quantity is a decimal for this product and
+    # `price` is per `unitLabel`.
+    #
+    # `isWeighed` and `isOpenPrice` are both allowed on the same product, and that is a
+    # decision rather than an oversight: they describe different halves of a cart line.
+    # `isWeighed` governs the *quantity* the cashier enters, `isOpenPrice` governs the
+    # *amount*. Loose goods weighed on a scale the till cannot read — the cashier types
+    # the money the scale printed — is precisely both at once, and it is an ordinary deli
+    # counter, not a corner case. Forbidding the pair would block a real configuration;
+    # silently ignoring one of the two flags would leave the till guessing which keypad
+    # to open.
+    is_weighed: bool = Field(False, alias="isWeighed")
+    unit_label: Optional[str] = Field(None, max_length=16, alias="unitLabel")
 
     @field_validator("name", "sku")
     @classmethod
@@ -53,6 +69,9 @@ class ProductUpdate(BaseModel):
     is_local_override: Optional[bool] = Field(None, alias="isLocalOverride")
     voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
     track_stock: Optional[bool] = Field(None, alias="trackStock")
+    is_open_price: Optional[bool] = Field(None, alias="isOpenPrice")
+    is_weighed: Optional[bool] = Field(None, alias="isWeighed")
+    unit_label: Optional[str] = Field(None, max_length=16, alias="unitLabel")
 
     @field_validator("name", "sku")
     @classmethod
@@ -89,6 +108,9 @@ class ProductResponse(BaseModel):
     tax_rate: Optional[Decimal] = Field(None, alias="taxRate")
     voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
     track_stock: bool = Field(False, alias="trackStock")
+    is_open_price: bool = Field(False, alias="isOpenPrice")
+    is_weighed: bool = Field(False, alias="isWeighed")
+    unit_label: Optional[str] = Field(None, alias="unitLabel")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 

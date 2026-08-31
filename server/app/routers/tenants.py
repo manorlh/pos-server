@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, get_current_distributor
 from app.models.tenant import Tenant
 from app.models.tenant_membership import TenantMembership, TenantMembershipRole
 from app.models.user import User, UserRole
@@ -30,12 +30,16 @@ def _ensure_membership_for_user_home_tenant(db: Session, user: User) -> None:
     tenant = db.query(Tenant).filter(Tenant.id == user.tenant_id).first()
     if not tenant:
         return
+    # SHOP_MANAGER deliberately absent: tenant_admin carries PATCH /tenants/{id} and
+    # tenant-wide POS settings, which fan out to every machine in every shop of the
+    # tenant. That is not a single shop's manager's decision to make. It used to be
+    # granted here, and this function runs on GET /tenants/mine — which the dashboard
+    # calls on every load, so the escalation was automatic and silent.
     if user.role in (
         UserRole.SUPER_ADMIN,
         UserRole.DISTRIBUTOR,
         UserRole.MERCHANT_ADMIN,
         UserRole.COMPANY_MANAGER,
-        UserRole.SHOP_MANAGER,
     ):
         role = TenantMembershipRole.TENANT_ADMIN
     else:
@@ -96,7 +100,16 @@ def list_my_tenants(
 @router.post("", response_model=TenantOut, status_code=status.HTTP_201_CREATED)
 def create_tenant(
     body: TenantCreate,
-    current_user: User = Depends(get_current_user),
+    # Distributor or super_admin only. This was `get_current_user`, i.e. any
+    # authenticated identity down to a cashier — and the caller is inserted below as
+    # TENANT_OWNER, which `_can_manage_tenant` then honours for PATCH /tenants/{id}
+    # and for tenant-wide POS settings that propagate to every machine in every shop.
+    # A cashier could mint itself an org and administer it.
+    #
+    # Self-service signup is unaffected: `clerk_provision` already creates a new
+    # identity as DISTRIBUTOR with its own tenant, so it never reaches this endpoint
+    # to get one.
+    current_user: User = Depends(get_current_distributor),
     db: Session = Depends(get_db),
 ):
     existing = db.query(Tenant).filter((Tenant.name == body.name) | (Tenant.slug == body.slug)).first()

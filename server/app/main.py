@@ -36,12 +36,14 @@ from app.routers import (
     pos_users,
     tenants,
     vouchers,
+    customers,
     stock,
     settings as settings_router,
     tips,
     dashboard,
     close_day,
     tax_reports,
+    reports,
 )
 from app.services.ably_notify import is_enabled as ably_enabled
 
@@ -77,9 +79,13 @@ app.include_router(pairing_mobile.router, prefix=_prefix)
 app.include_router(products.router, prefix=_prefix)
 app.include_router(categories.router, prefix=_prefix)
 app.include_router(vouchers.router, prefix=_prefix)
+app.include_router(customers.router, prefix=_prefix)
 app.include_router(stock.router, prefix=_prefix)
 app.include_router(tips.router, prefix=_prefix)
 app.include_router(tax_reports.router, prefix=_prefix)
+# After tax_reports: both mount under /reports, and the literal /reports/tax/...
+# routes must win over /reports/{machine_id}/shop-transactions.
+app.include_router(reports.router, prefix=_prefix)
 app.include_router(dashboard.router, prefix=_prefix)
 app.include_router(catalog.router, prefix=_prefix)
 app.include_router(sync.router, prefix=_prefix)

@@ -45,7 +45,7 @@ def login(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get("/me", response_model=UserResponse, response_model_by_alias=True)
 def get_me(current_user: User = Depends(get_current_user)):
     """Return the internal user record for the authenticated Clerk user."""
     return current_user

@@ -106,6 +106,13 @@ def _enrich_machine_status(
         "mqttConnected": machine.mqtt_connected,
         "appVersion": machine.app_version,
         "lastSyncAt": machine.last_sync_at,
+        "serialNumber": machine.serial_number,
+        # Passed through untouched. A null battery reading means the device could
+        # not read it and must render as unknown, not as 0%.
+        "batteryPercent": machine.battery_percent,
+        "batteryStatus": machine.battery_status,
+        "clockSkewMs": machine.clock_skew_ms,
+        "lastHealthReportAt": machine.last_health_report_at,
         "lastCatalogChangeAt": last_catalog_change_at,
         "catalogPullStale": catalog_pull_stale,
         "tradingDayStatus": trading_day_status,
@@ -249,14 +256,23 @@ def post_my_heartbeat(
     machine: POSMachine = Depends(get_pos_machine_from_machine_token),
     db: Session = Depends(get_db),
 ):
-    """POS desktop: periodic online signal over HTTP (replaces MQTT heartbeat publish)."""
-    mqtt_connected = body.mqtt_connected if body is not None else None
-    app_version = body.app_version if body is not None else None
+    """
+    Till / POS desktop: periodic online signal over HTTP (replaces MQTT heartbeat publish).
+
+    Also the channel for device health — serial, battery, clock skew — because it is
+    the one call every terminal already makes on a timer whether or not anything has
+    happened. Every field in the body is optional: an older till build sends a subset
+    and must not be turned away.
+    """
     update_machine_heartbeat(
         db,
         str(machine.id),
-        mqtt_connected=mqtt_connected,
-        app_version=app_version,
+        mqtt_connected=body.mqtt_connected if body is not None else None,
+        app_version=body.app_version if body is not None else None,
+        serial_number=body.serial_number if body is not None else None,
+        battery_percent=body.battery_percent if body is not None else None,
+        battery_status=body.battery_status if body is not None else None,
+        clock_skew_ms=body.clock_skew_ms if body is not None else None,
     )
     return {
         "ok": True,

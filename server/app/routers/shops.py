@@ -26,6 +26,7 @@ from app.middleware.auth import (
     ensure_same_tenant,
 )
 from app.services.catalog_notify import notify_machines_for_shop
+from app.services.pos_user_defaults import ensure_default_pos_user
 from app.services.settings_notify import notify_machines_for_shop_settings
 
 router = APIRouter(prefix="/shops", tags=["shops"])
@@ -390,6 +391,10 @@ def create_shop(
         is_active=data.is_active,
     )
     db.add(shop)
+    # Flush to materialise shop.id, then seed the default POS user in the same transaction
+    # so a shop can never exist without an operator a till can sign in as.
+    db.flush()
+    ensure_default_pos_user(db, shop)
     db.commit()
     db.refresh(shop)
     return shop
@@ -422,7 +427,11 @@ def update_shop(
     if not shop:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
     ensure_same_tenant(shop.tenant_id, active_tenant_id)
-    _check_shop_access(current_user, shop, db)
+    # The write helper, not the read one. `_check_shop_access` admits CASHIER — correct
+    # for GET, wrong here: it let a cashier rename its own shop and edit its profile.
+    # `_check_shop_override_write` already existed for exactly this and was simply not
+    # called on this endpoint.
+    _check_shop_override_write(current_user, shop, db)
 
     updates = data.model_dump(exclude_unset=True, by_alias=False)
     profile_changed = bool(_SHOP_PROFILE_FIELDS & set(updates.keys()))

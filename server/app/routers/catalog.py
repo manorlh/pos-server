@@ -101,6 +101,7 @@ def _copy_product_to_machine(
             existing.tax_rate = global_product.tax_rate
             existing.barcode = global_product.barcode
             existing.global_sku = global_product.global_sku
+            existing.is_open_price = global_product.is_open_price
         existing.in_stock = global_product.in_stock
         existing.stock_quantity = global_product.stock_quantity
         db.flush()
@@ -126,6 +127,7 @@ def _copy_product_to_machine(
         stock_quantity=global_product.stock_quantity,
         barcode=global_product.barcode,
         tax_rate=global_product.tax_rate,
+        is_open_price=global_product.is_open_price,
     )
     db.add(local)
     db.flush()
