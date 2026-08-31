@@ -1,14 +1,22 @@
 /**
- * Internal user store — holds role + scope ids fetched from /auth/me.
- * Identity (username, email) comes from Clerk's useUser() hook.
+ * Internal user store — holds role, scope ids and capabilities fetched from
+ * /users/me. Identity (username, email) comes from Clerk's useUser() hook.
  */
 import { create } from 'zustand';
 import { api } from './api';
+import type { UserCapabilities, UserRole } from './types';
 
-interface InternalUser {
+/**
+ * `role` is the server's enum, not a free string, so a typo in a comparison at a
+ * call site is a compile error rather than a silently-false permission check.
+ *
+ * The capability flags come straight from the server and are never recomputed
+ * here; see `UserCapabilities`.
+ */
+interface InternalUser extends UserCapabilities {
   id: string;
   username: string;
-  role: string;
+  role: UserRole;
   tenantId?: string;
   companyId?: string;
   shopId?: string;
@@ -39,8 +47,10 @@ export const useAuth = create<AuthState>((set) => ({
 
   fetchUser: async () => {
     try {
+      // /users/me, not /auth/me: only the former carries the capability flags,
+      // and both return the same user record otherwise.
       const [{ data }, { data: tenantRows }] = await Promise.all([
-        api.get('/auth/me'),
+        api.get('/users/me'),
         api.get('/tenants/mine'),
       ]);
       const tenants = (tenantRows ?? []).map((t: any) => ({
@@ -69,6 +79,14 @@ export const useAuth = create<AuthState>((set) => ({
           tenantId: data.tenantId ?? data.tenant_id,
           companyId: data.companyId ?? data.company_id,
           shopId: data.shopId ?? data.shop_id,
+          // Deny by default. A response without these fields is a server that
+          // predates them, and the safe reading of "unknown" is "not allowed" —
+          // hiding an entry the caller may in fact use is recoverable, offering
+          // one they may not is the bug this replaced.
+          creatableRoles: Array.isArray(data.creatableRoles) ? data.creatableRoles : [],
+          canReadUsers: data.canReadUsers === true,
+          canManageUsers: data.canManageUsers === true,
+          canManagePosUsers: data.canManagePosUsers === true,
         },
         tenants,
         activeTenantId,

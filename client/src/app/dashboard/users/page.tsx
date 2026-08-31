@@ -1,13 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { activateUser, api, deactivateUser } from '@/lib/api';
 import { entitySelectItems } from '@/lib/selectItems';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { User, UserRole, Company, Shop } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
+import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,12 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
-
-const ALL_ROLES: UserRole[] = [
-  'super_admin', 'distributor',
-  'company_manager', 'shop_manager', 'cashier',
-];
+import { Plus, Pencil, UserRoundCheck, UserRoundX } from 'lucide-react';
 
 const ROLE_NEEDS_COMPANY: UserRole[] = ['company_manager', 'shop_manager', 'cashier'];
 const ROLE_NEEDS_SHOP: UserRole[] = ['shop_manager', 'cashier'];
@@ -33,9 +29,10 @@ interface UserForm {
   username: string;
   password: string;
   role: UserRole;
+  /** The role the edited user already had. See `roleOptions`. */
+  originalRole?: UserRole;
   companyId?: string;
   shopId?: string;
-  isActive?: boolean;
 }
 
 const EMPTY: UserForm = {
@@ -43,28 +40,74 @@ const EMPTY: UserForm = {
   companyId: undefined, shopId: undefined,
 };
 
+/**
+ * `GET /users` is the one response in this app still serialised snake_case:
+ * `UserResponse` on the server carries no camelCase aliases, unlike
+ * `ShopResponse`, `PosUserResponse` and the rest. Read `isActive` straight off
+ * the row and it is `undefined` — every user would render as deactivated, which
+ * is precisely the signal this page now hangs on. Normalise on the way in, the
+ * same way `lib/auth` already does for `/users/me`.
+ */
+function normalizeUser(row: Record<string, unknown>): User {
+  const str = (camel: string, snake: string): string | undefined => {
+    const v = row[camel] ?? row[snake];
+    return v == null ? undefined : String(v);
+  };
+  return {
+    id: String(row.id),
+    email: String(row.email ?? ''),
+    username: String(row.username ?? ''),
+    role: row.role as UserRole,
+    companyId: str('companyId', 'company_id'),
+    shopId: str('shopId', 'shop_id'),
+    isActive: Boolean(row.isActive ?? row.is_active),
+    createdAt: str('createdAt', 'created_at') ?? '',
+    updatedAt: str('updatedAt', 'updated_at') ?? '',
+  };
+}
+
+function isForbidden(err: unknown): boolean {
+  return (err as { response?: { status?: number } })?.response?.status === 403;
+}
+
 export default function UsersPage() {
   const t = useTranslations('users');
   const tc = useTranslations('common');
-  const { user: me } = useAuth();
+  const { user: me, authHydrated } = useAuth();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<UserForm>(EMPTY);
   const isNew = !editing.id;
 
-  const { data: users = [], isLoading } = useQuery<User[]>({
+  // Straight from GET /users/me. Nothing here re-derives who may do what: that
+  // rule set lives in the server's users router and only it can be right.
+  const canRead = me?.canReadUsers === true;
+  const canManage = me?.canManageUsers === true;
+  const creatableRoles = useMemo<UserRole[]>(() => me?.creatableRoles ?? [], [me]);
+
+  const {
+    data: users = [],
+    isLoading,
+    isError,
+    error,
+  } = useQuery<User[]>({
     queryKey: ['users'],
-    queryFn: () => api.get('/users').then((r) => r.data),
+    queryFn: () => api.get('/users').then((r) => (r.data as unknown[]).map((row) => normalizeUser(row as Record<string, unknown>))),
+    enabled: canRead,
   });
 
+  // Both exist only to name the scope column and fill the dialog's pickers, so
+  // they follow the same gate rather than firing for a caller with no table.
   const { data: companies = [] } = useQuery<Company[]>({
     queryKey: ['companies'],
     queryFn: () => api.get('/companies').then((r) => r.data),
+    enabled: canRead,
   });
 
   const { data: shops = [] } = useQuery<Shop[]>({
     queryKey: ['shops'],
     queryFn: () => api.get('/shops').then((r) => r.data),
+    enabled: canRead,
   });
 
   const filteredCompanies = companies;
@@ -75,14 +118,21 @@ export default function UsersPage() {
 
   const save = useMutation({
     mutationFn: (u: UserForm) => {
-      const { password, ...rest } = u;
+      // `originalRole` is local bookkeeping for the role picker, never a field.
+      const payload: Record<string, unknown> = {
+        email: u.email,
+        username: u.username,
+        role: u.role,
+        companyId: u.companyId,
+        shopId: u.shopId,
+      };
       if (u.id) {
         // Update: only send password if changed
-        const payload: Record<string, unknown> = { ...rest };
-        if (password) payload.password = password;
+        if (u.password) payload.password = u.password;
         return api.put(`/users/${u.id}`, payload);
       }
-      return api.post('/users', u);
+      payload.password = u.password;
+      return api.post('/users', payload);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['users'] });
@@ -92,11 +142,13 @@ export default function UsersPage() {
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
   });
 
-  const remove = useMutation({
-    mutationFn: (id: string) => api.delete(`/users/${id}`),
-    onSuccess: () => {
+  /** One switch, both ways. Deactivating destroys nothing and activating undoes it. */
+  const setActive = useMutation({
+    mutationFn: ({ id, active }: { id: string; active: boolean }) =>
+      active ? activateUser(id) : deactivateUser(id),
+    onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ['users'] });
-      toast.success(t('deleted'));
+      toast.success(vars.active ? t('activated') : t('deactivated'));
     },
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
   });
@@ -104,11 +156,40 @@ export default function UsersPage() {
   const openEdit = (u: User) => {
     setEditing({
       id: u.id, email: u.email, username: u.username, password: '',
-      role: u.role, companyId: u.companyId,
-      shopId: u.shopId, isActive: u.isActive,
+      role: u.role, originalRole: u.role, companyId: u.companyId,
+      shopId: u.shopId,
     });
     setOpen(true);
   };
+
+  const openCreate = () => {
+    // Lead with the least authority the caller can delegate — `creatableRoles`
+    // arrives highest-first, so the last entry is the safest default.
+    setEditing({ ...EMPTY, role: creatableRoles[creatableRoles.length - 1] ?? 'cashier' });
+    setOpen(true);
+  };
+
+  /**
+   * The role picker offers exactly what the server said this caller may assign.
+   *
+   * One extra entry: when editing someone whose current role is not in that set
+   * — a shop manager looking at a peer shop manager, say — the role still has to
+   * appear, or the field renders blank and misstates what the row is today. It
+   * is shown disabled, so the truth is visible without the UI offering a change
+   * the server would refuse.
+   */
+  const roleOptions = useMemo(() => {
+    const options = creatableRoles.map((r) => ({ value: r, label: t(`roles.${r}`), assignable: true }));
+    const current = editing.originalRole;
+    if (current && !creatableRoles.includes(current)) {
+      options.push({
+        value: current,
+        label: `${t(`roles.${current}`)} — ${t('roleNotAssignable')}`,
+        assignable: false,
+      });
+    }
+    return options;
+  }, [creatableRoles, editing.originalRole, t]);
 
   const handleRoleChange = (role: UserRole) => {
     setEditing((prev) => ({
@@ -125,7 +206,14 @@ export default function UsersPage() {
     return '—';
   };
 
-  const canManage = me && me.role !== 'cashier';
+  // Hidden nav is not access control: a cashier can still type the URL. Say why
+  // the table is missing instead of rendering an empty one, which would read as
+  // "this company has no staff".
+  const denied = authHydrated && !canRead;
+  const loadFailed = isError;
+  // Before /users/me answers, the list query is disabled and therefore not
+  // "loading" — show the skeleton anyway rather than flashing "no users".
+  const listLoading = !authHydrated || isLoading;
 
   return (
     <div className="space-y-4">
@@ -134,13 +222,22 @@ export default function UsersPage() {
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
         </div>
-        {canManage && (
-          <Button onClick={() => { setEditing(EMPTY); setOpen(true); }} size="sm">
+        {canManage && creatableRoles.length > 0 && (
+          <Button onClick={openCreate} size="sm">
             <Plus className="h-4 w-4 ms-1" /> {t('add')}
           </Button>
         )}
       </div>
 
+      {denied || loadFailed ? (
+        <ReportErrorState
+          message={
+            denied || isForbidden(error)
+              ? t('forbidden')
+              : axiosErrorToToastMessage(error, tc('error'))
+          }
+        />
+      ) : (
       <div className="rounded-lg border bg-card overflow-hidden">
         <Table>
           <TableHeader>
@@ -150,11 +247,11 @@ export default function UsersPage() {
               <TableHead>{t('role')}</TableHead>
               <TableHead>{t('scope')}</TableHead>
               <TableHead>{tc('status')}</TableHead>
-              {canManage && <TableHead className="w-20" />}
+              {canManage && <TableHead className="w-40" />}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading
+            {listLoading
               ? Array.from({ length: 3 }).map((_, i) => (
                   <TableRow key={i}>
                     {Array.from({ length: canManage ? 6 : 5 }).map((_, j) => (
@@ -162,8 +259,19 @@ export default function UsersPage() {
                     ))}
                   </TableRow>
                 ))
+              : users.length === 0
+              ? (
+                  <TableRow>
+                    <TableCell colSpan={canManage ? 6 : 5} className="text-center text-muted-foreground py-8">
+                      {t('noUsers')}
+                    </TableCell>
+                  </TableRow>
+                )
               : users.map((u) => (
-                  <TableRow key={u.id}>
+                  // Deactivated staff stay in the list — that is the whole point
+                  // of a reversible switch — but read as switched off, not as a
+                  // failure. Dimmed row, muted badge; nothing here is red.
+                  <TableRow key={u.id} className={u.isActive ? undefined : 'opacity-60'}>
                     <TableCell className="font-medium">{u.username}</TableCell>
                     <TableCell className="text-muted-foreground">{u.email}</TableCell>
                     <TableCell>
@@ -171,21 +279,50 @@ export default function UsersPage() {
                     </TableCell>
                     <TableCell>{scopeName(u)}</TableCell>
                     <TableCell>
-                      <Badge variant={u.isActive ? 'outline' : 'destructive'}>
+                      <Badge
+                        variant="outline"
+                        className={u.isActive ? undefined : 'border-dashed text-muted-foreground'}
+                      >
                         {u.isActive ? tc('active') : tc('inactive')}
                       </Badge>
                     </TableCell>
                     {canManage && (
                       <TableCell>
-                        <div className="flex gap-1">
-                          <Button variant="ghost" size="icon" onClick={() => openEdit(u)}>
+                        <div className="flex items-center gap-1">
+                          <Button variant="ghost" size="icon" title={tc('edit')} onClick={() => openEdit(u)}>
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
                           {me?.id !== u.id && (
-                            <Button variant="ghost" size="icon" onClick={() => remove.mutate(u.id)}
-                              className="text-destructive hover:text-destructive">
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
+                            u.isActive ? (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="gap-1 text-muted-foreground hover:text-foreground"
+                                disabled={setActive.isPending}
+                                onClick={() => {
+                                  if (window.confirm(t('deactivateConfirm', { username: u.username }))) {
+                                    setActive.mutate({ id: u.id, active: false });
+                                  }
+                                }}
+                              >
+                                <UserRoundX className="h-3.5 w-3.5" />
+                                {t('deactivate')}
+                              </Button>
+                            ) : (
+                              // No confirm on the way back: restoring an account
+                              // the caller just switched off is the cheap,
+                              // reversible direction.
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="gap-1"
+                                disabled={setActive.isPending}
+                                onClick={() => setActive.mutate({ id: u.id, active: true })}
+                              >
+                                <UserRoundCheck className="h-3.5 w-3.5" />
+                                {t('activate')}
+                              </Button>
+                            )
                           )}
                         </div>
                       </TableCell>
@@ -195,6 +332,7 @@ export default function UsersPage() {
           </TableBody>
         </Table>
       </div>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-md">
@@ -225,12 +363,14 @@ export default function UsersPage() {
                 <Select
                   value={editing.role}
                   onValueChange={(v) => handleRoleChange(v as UserRole)}
-                  items={ALL_ROLES.map((r) => ({ value: r, label: t(`roles.${r}`) }))}
+                  items={roleOptions.map(({ value, label }) => ({ value, label }))}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {ALL_ROLES.map((r) => (
-                      <SelectItem key={r} value={r} label={t(`roles.${r}`)}>{t(`roles.${r}`)}</SelectItem>
+                    {roleOptions.map((o) => (
+                      <SelectItem key={o.value} value={o.value} label={o.label} disabled={!o.assignable}>
+                        {o.label}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -273,25 +413,13 @@ export default function UsersPage() {
               </div>
             )}
 
-            {!isNew && (
-              <div className="space-y-1">
-                <Label>{tc('status')}</Label>
-                <Select
-                  value={editing.isActive ? 'active' : 'inactive'}
-                  onValueChange={(v) => setEditing((u) => ({ ...u, isActive: v === 'active' }))}
-                  items={[
-                    { value: 'active', label: tc('active') },
-                    { value: 'inactive', label: tc('inactive') },
-                  ]}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="active" label={tc('active')}>{tc('active')}</SelectItem>
-                    <SelectItem value="inactive" label={tc('inactive')}>{tc('inactive')}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+            {/*
+              The status picker that used to sit here is gone. It sent
+              `isActive` in the PUT body, which the server's `UserUpdate` — no
+              camelCase aliases, no `populate_by_name` — dropped on the floor, so
+              it silently did nothing. Activation now has one control that works:
+              the row's Deactivate/Activate switch.
+            */}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{tc('cancel')}</Button>

@@ -1,5 +1,35 @@
 import type { PosMachine } from '@/lib/types';
 
+const BATTERY_STATUSES = ['charging', 'discharging', 'full', 'not_charging', 'unknown'] as const;
+
+/**
+ * Number-or-null, never number-or-zero.
+ *
+ * `batteryPercent` and `clockSkewMs` are nullable and null carries meaning ("the
+ * device could not read it"), so they must not go through `Number(raw ?? 0)` the
+ * way the boolean fields go through `Boolean(...)`. A missing battery reading
+ * rendered as 0% is a false low-battery alarm on a distributor's dashboard.
+ */
+function nullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function nullableString(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const s = String(value).trim();
+  return s === '' ? null : s;
+}
+
+function batteryStatus(value: unknown): PosMachine['batteryStatus'] {
+  const s = nullableString(value)?.toLowerCase();
+  if (!s) return null;
+  return (BATTERY_STATUSES as readonly string[]).includes(s)
+    ? (s as PosMachine['batteryStatus'])
+    : 'unknown';
+}
+
 /** Normalize GET /machines rows (camelCase or snake_case, enum quirks). */
 export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
   const pairingRaw = raw.pairingStatus ?? raw.pairing_status;
@@ -37,6 +67,11 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     openedAt: (raw.openedAt ?? raw.opened_at) as string | undefined,
     openedBy: (raw.openedBy ?? raw.opened_by) as string | undefined,
     closeDayPending: Boolean(raw.closeDayPending ?? raw.close_day_pending ?? false),
+    serialNumber: nullableString(raw.serialNumber ?? raw.serial_number),
+    batteryPercent: nullableNumber(raw.batteryPercent ?? raw.battery_percent),
+    batteryStatus: batteryStatus(raw.batteryStatus ?? raw.battery_status),
+    clockSkewMs: nullableNumber(raw.clockSkewMs ?? raw.clock_skew_ms),
+    lastHealthReportAt: nullableString(raw.lastHealthReportAt ?? raw.last_health_report_at),
     createdAt: String(raw.createdAt ?? raw.created_at ?? ''),
     updatedAt: String(raw.updatedAt ?? raw.updated_at ?? ''),
   };

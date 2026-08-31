@@ -169,7 +169,9 @@ export default function PosUsersPage() {
     setOpenReset(true);
   };
 
-  const canManage = me && me.role !== 'cashier';
+  // The server decides, not a role comparison here: `canManagePosUsers` is
+  // computed by the same code that guards the write endpoints.
+  const canManage = me?.canManagePosUsers === true;
 
   const handleSave = () => {
     if (!editing.username.trim()) return toast.error(tc('error'));

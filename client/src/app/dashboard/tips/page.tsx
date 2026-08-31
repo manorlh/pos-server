@@ -1,11 +1,33 @@
 'use client';
 
-import { useState } from 'react';
+/**
+ * Two tip reports that answer different questions, kept on one page behind a
+ * mode switch:
+ *
+ * * **Distribution** (`GET /shops/{id}/tips/report`) — "who is owed what" under the
+ *   shop's tip-distribution policy. Unchanged; it is keyed on a trading day and has
+ *   no meaningful hour dimension.
+ * * **Range** (`GET /reports/tips`) — "how much tip money came in, on what tender,
+ *   when". This is the one that takes the hour-of-day window, because the question
+ *   it answers ("what do the evening shifts collect") is an hourly question.
+ */
+
+import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
-import { api, fetchTipsReport } from '@/lib/api';
+import { Banknote, Coins, CreditCard, Wallet } from 'lucide-react';
+import { api, fetchTipsRangeReport, fetchTipsReport } from '@/lib/api';
+import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { entitySelectItems } from '@/lib/selectItems';
-import type { Shop, TipsReport } from '@/lib/types';
+import { formatCurrency, formatQuantity } from '@/lib/format';
+import { WHOLE_DAY, daysBackIso, hourQueryParams, todayIso } from '@/lib/reportWindow';
+import type { Shop, TipMethod, TipsRangeReport, TipsReport } from '@/lib/types';
+import { ALL, ReportFilters, type ReportFiltersState } from '@/components/dashboard/report-filters';
+import { ReportStatCard } from '@/components/dashboard/report-stat-card';
+import {
+  ReportErrorState,
+  ReportWindowSummary,
+} from '@/components/dashboard/report-window-summary';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -14,33 +36,84 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+type Mode = 'distribution' | 'range';
+
+const METHOD_ICON: Record<TipMethod, React.ElementType> = {
+  cash: Banknote,
+  card: CreditCard,
+  other: Coins,
+};
 
 export default function TipsReportPage() {
   const t = useTranslations('tips');
   const tc = useTranslations('common');
+  const [mode, setMode] = useState<Mode>('distribution');
+
+  // ── Distribution report (per shop, per trading day) ──
   const [shopId, setShopId] = useState('');
   const [from, setFrom] = useState(todayIso());
   const [to, setTo] = useState(todayIso());
   const [runKey, setRunKey] = useState(0);
+
+  // ── Range report (day range × hour band) ──
+  const [rangeFilters, setRangeFilters] = useState<ReportFiltersState>({
+    from: daysBackIso(6),
+    to: todayIso(),
+    shopId: ALL,
+    machineId: ALL,
+    hours: WHOLE_DAY,
+  });
+  const [appliedRange, setAppliedRange] = useState<ReportFiltersState | null>(null);
 
   const { data: shops = [] } = useQuery<Shop[]>({
     queryKey: ['shops'],
     queryFn: () => api.get('/shops').then((r) => r.data),
   });
 
-  const { data: report, isLoading, isFetching } = useQuery<TipsReport>({
+  const {
+    data: report,
+    isLoading,
+    isFetching,
+    isError,
+    error,
+  } = useQuery<TipsReport>({
     queryKey: ['tips-report', shopId, from, to, runKey],
     queryFn: () => fetchTipsReport(shopId, { from, to }),
-    enabled: Boolean(shopId) && Boolean(from) && Boolean(to) && runKey > 0,
+    enabled:
+      mode === 'distribution' &&
+      Boolean(shopId) &&
+      Boolean(from) &&
+      Boolean(to) &&
+      runKey > 0,
+  });
+
+  const rangeParams = useMemo(() => {
+    if (!appliedRange) return null;
+    return {
+      from: appliedRange.from,
+      to: appliedRange.to,
+      ...(appliedRange.shopId !== ALL ? { shopId: appliedRange.shopId } : {}),
+      ...(appliedRange.machineId !== ALL ? { machineId: appliedRange.machineId } : {}),
+      ...hourQueryParams(appliedRange.hours),
+    };
+  }, [appliedRange]);
+
+  const rangeQuery = useQuery<TipsRangeReport>({
+    queryKey: ['report-tips', rangeParams],
+    queryFn: () => fetchTipsRangeReport(rangeParams!),
+    enabled: mode === 'range' && rangeParams !== null,
   });
 
   const distLabel = (d: string) => {
     if (d === 'equal_pool') return t('distEqual');
     if (d === 'by_sales') return t('distBySales');
     return t('distDirect');
+  };
+
+  const methodLabel = (m: TipMethod) => {
+    if (m === 'cash') return t('cashTips');
+    if (m === 'card') return t('cardTips');
+    return t('otherTips');
   };
 
   return (
@@ -50,92 +123,276 @@ export default function TipsReportPage() {
         <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
       </div>
 
-      <div className="flex flex-wrap gap-4 items-end">
-        <div className="space-y-1 min-w-[200px]">
-          <Label>{t('shop')}</Label>
-          <Select value={shopId} onValueChange={(v) => v && setShopId(v)} items={entitySelectItems(shops)}>
-            <SelectTrigger>
-              <SelectValue placeholder={t('selectShop')} />
-            </SelectTrigger>
-            <SelectContent>
-              {shops.map((s) => (
-                <SelectItem key={s.id} value={s.id} label={s.name}>
-                  {s.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <Label>{t('from')}</Label>
-          <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        </div>
-        <div className="space-y-1">
-          <Label>{t('to')}</Label>
-          <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        </div>
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label={t('modeLabel')}>
         <Button
-          disabled={!shopId || !from || !to || isFetching}
-          onClick={() => setRunKey((k) => k + 1)}
+          role="tab"
+          aria-selected={mode === 'distribution'}
+          variant={mode === 'distribution' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setMode('distribution')}
         >
-          {isFetching ? tc('loading') : t('runReport')}
+          {t('modeDistribution')}
+        </Button>
+        <Button
+          role="tab"
+          aria-selected={mode === 'range'}
+          variant={mode === 'range' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setMode('range')}
+        >
+          {t('modeRange')}
         </Button>
       </div>
+      <p className="text-muted-foreground text-xs">
+        {mode === 'distribution' ? t('modeDistributionHint') : t('modeRangeHint')}
+      </p>
 
-      {runKey === 0 ? (
-        <p className="text-muted-foreground text-sm py-8 text-center">{t('selectFilters')}</p>
-      ) : isLoading ? (
-        <Skeleton className="h-48 w-full" />
-      ) : report ? (
-        <div className="space-y-4">
-          <div className="flex flex-wrap gap-2 items-center">
-            <Badge variant="outline">{distLabel(report.distribution)}</Badge>
-            <span className="text-sm text-muted-foreground">
-              {t('summary', {
-                tips: report.totalTips.toFixed(2),
-                cash: report.totalCashTips.toFixed(2),
-                card: report.totalCardTips.toFixed(2),
-              })}
-            </span>
+      {mode === 'distribution' ? (
+        <>
+          <div className="flex flex-wrap gap-4 items-end">
+            <div className="space-y-1 min-w-[200px]">
+              <Label>{t('shop')}</Label>
+              <Select value={shopId} onValueChange={(v) => v && setShopId(v)} items={entitySelectItems(shops)}>
+                <SelectTrigger>
+                  <SelectValue placeholder={t('selectShop')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {shops.map((s) => (
+                    <SelectItem key={s.id} value={s.id} label={s.name}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>{t('from')}</Label>
+              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>{t('to')}</Label>
+              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            </div>
+            <Button
+              disabled={!shopId || !from || !to || isFetching}
+              onClick={() => setRunKey((k) => k + 1)}
+            >
+              {isFetching ? tc('loading') : t('runReport')}
+            </Button>
           </div>
-          <div className="rounded-lg border bg-card overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('cashier')}</TableHead>
-                  <TableHead>{t('workerNumber')}</TableHead>
-                  <TableHead>{t('tipsCollected')}</TableHead>
-                  <TableHead>{t('cashTips')}</TableHead>
-                  <TableHead>{t('cardTips')}</TableHead>
-                  <TableHead>{t('sales')}</TableHead>
-                  <TableHead>{t('amountOwed')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {report.cashiers.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                      {tc('noResults')}
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  report.cashiers.map((row, i) => (
-                    <TableRow key={row.cashierId ?? `row-${i}`}>
-                      <TableCell className="font-medium">{row.cashierName ?? '—'}</TableCell>
-                      <TableCell>{row.workerNumber ?? '—'}</TableCell>
-                      <TableCell>₪{Number(row.tipsCollected).toFixed(2)}</TableCell>
-                      <TableCell>₪{Number(row.cashTips).toFixed(2)}</TableCell>
-                      <TableCell>₪{Number(row.cardTips).toFixed(2)}</TableCell>
-                      <TableCell>₪{Number(row.salesTotal).toFixed(2)}</TableCell>
-                      <TableCell className="font-semibold">₪{Number(row.amountOwed).toFixed(2)}</TableCell>
+
+          {runKey === 0 ? (
+            <p className="text-muted-foreground text-sm py-8 text-center">{t('selectFilters')}</p>
+          ) : isLoading ? (
+            <Skeleton className="h-48 w-full" />
+          ) : isError ? (
+            <ReportErrorState message={axiosErrorToToastMessage(error, tc('error'))} />
+          ) : report ? (
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-2 items-center">
+                <Badge variant="outline">{distLabel(report.distribution)}</Badge>
+                <span className="text-sm text-muted-foreground">
+                  {t('summary', {
+                    tips: formatCurrency(report.totalTips),
+                    cash: formatCurrency(report.totalCashTips),
+                    card: formatCurrency(report.totalCardTips),
+                  })}
+                </span>
+              </div>
+              <div className="rounded-lg border bg-card overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('cashier')}</TableHead>
+                      <TableHead>{t('workerNumber')}</TableHead>
+                      <TableHead>{t('tipsCollected')}</TableHead>
+                      <TableHead>{t('cashTips')}</TableHead>
+                      <TableHead>{t('cardTips')}</TableHead>
+                      <TableHead>{t('sales')}</TableHead>
+                      <TableHead>{t('amountOwed')}</TableHead>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </div>
-      ) : null}
+                  </TableHeader>
+                  <TableBody>
+                    {report.cashiers.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                          {tc('noResults')}
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      report.cashiers.map((row, i) => (
+                        <TableRow key={row.cashierId ?? `row-${i}`}>
+                          <TableCell className="font-medium">{row.cashierName ?? '—'}</TableCell>
+                          <TableCell>{row.workerNumber ?? '—'}</TableCell>
+                          <TableCell>{formatCurrency(row.tipsCollected)}</TableCell>
+                          <TableCell>{formatCurrency(row.cashTips)}</TableCell>
+                          <TableCell>{formatCurrency(row.cardTips)}</TableCell>
+                          <TableCell>{formatCurrency(row.salesTotal)}</TableCell>
+                          <TableCell className="font-semibold">{formatCurrency(row.amountOwed)}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <ReportFilters
+            value={rangeFilters}
+            onChange={setRangeFilters}
+            onRun={() => setAppliedRange(rangeFilters)}
+            isFetching={rangeQuery.isFetching}
+          />
+
+          {!appliedRange ? (
+            <p className="text-muted-foreground py-12 text-center text-sm">{t('rangeSelectFilters')}</p>
+          ) : rangeQuery.isLoading ? (
+            <div className="space-y-4">
+              <Skeleton className="h-24 w-full" />
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Skeleton key={i} className="h-28 w-full" />
+                ))}
+              </div>
+              <Skeleton className="h-64 w-full" />
+            </div>
+          ) : rangeQuery.isError ? (
+            <ReportErrorState message={axiosErrorToToastMessage(rangeQuery.error, tc('error'))} />
+          ) : rangeQuery.data ? (
+            <div className="space-y-4">
+              <ReportWindowSummary
+                window={rangeQuery.data.window}
+                generatedAt={rangeQuery.data.generatedAt}
+              />
+
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <ReportStatCard
+                  title={t('tipsTotal')}
+                  value={formatCurrency(rangeQuery.data.tipsTotal)}
+                  icon={Wallet}
+                  emphasis
+                />
+                <ReportStatCard
+                  title={t('cashTips')}
+                  value={formatCurrency(rangeQuery.data.tipsCash)}
+                  icon={Banknote}
+                />
+                <ReportStatCard
+                  title={t('cardTips')}
+                  value={formatCurrency(rangeQuery.data.tipsCard)}
+                  icon={CreditCard}
+                />
+                <ReportStatCard
+                  title={t('otherTips')}
+                  value={formatCurrency(rangeQuery.data.tipsOther)}
+                  icon={Coins}
+                />
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+                <div className="rounded-lg border bg-card overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>{t('method')}</TableHead>
+                        <TableHead className="text-end">{t('amount')}</TableHead>
+                        <TableHead className="text-end">{t('tippedDocuments')}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {rangeQuery.data.byMethod.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={3} className="text-center text-muted-foreground py-8">
+                            {t('rangeNoRows')}
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        rangeQuery.data.byMethod.map((row) => {
+                          const Icon = METHOD_ICON[row.method] ?? Coins;
+                          return (
+                            <TableRow key={row.method}>
+                              <TableCell className="font-medium">
+                                <span className="flex items-center gap-2">
+                                  <Icon className="h-4 w-4 text-muted-foreground" aria-hidden />
+                                  {methodLabel(row.method)}
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-end tabular-nums">
+                                {formatCurrency(row.amount)}
+                              </TableCell>
+                              <TableCell className="text-end tabular-nums">
+                                {formatQuantity(row.documentCount)}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                <div className="rounded-lg border bg-card overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>{t('cashier')}</TableHead>
+                        <TableHead>{t('workerNumber')}</TableHead>
+                        <TableHead className="text-end">{t('tipsTotal')}</TableHead>
+                        <TableHead className="text-end">{t('cashTips')}</TableHead>
+                        <TableHead className="text-end">{t('cardTips')}</TableHead>
+                        <TableHead className="text-end">{t('otherTips')}</TableHead>
+                        <TableHead className="text-end">{t('tippedDocuments')}</TableHead>
+                        <TableHead className="text-end">{t('salesNet')}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {rangeQuery.data.byCashier.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                            {t('rangeNoRows')}
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        rangeQuery.data.byCashier.map((row, i) => (
+                          <TableRow key={row.cashierId ?? `row-${i}`}>
+                            <TableCell className="font-medium">
+                              {row.cashierName ?? t('unknownCashier')}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground text-xs">
+                              {row.workerNumber ?? '—'}
+                            </TableCell>
+                            <TableCell className="text-end font-semibold tabular-nums">
+                              {formatCurrency(row.tipsTotal)}
+                            </TableCell>
+                            <TableCell className="text-end tabular-nums">
+                              {formatCurrency(row.tipsCash)}
+                            </TableCell>
+                            <TableCell className="text-end tabular-nums">
+                              {formatCurrency(row.tipsCard)}
+                            </TableCell>
+                            <TableCell className="text-end tabular-nums">
+                              {formatCurrency(row.tipsOther)}
+                            </TableCell>
+                            <TableCell className="text-end tabular-nums">
+                              {formatQuantity(row.tippedDocumentCount)}
+                            </TableCell>
+                            <TableCell className="text-end tabular-nums">
+                              {formatCurrency(row.salesNet)}
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }

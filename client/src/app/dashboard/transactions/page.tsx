@@ -28,29 +28,9 @@ import {
 } from '@/components/ui/dialog';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { normalizePosMachine } from '@/lib/posMachine';
+import { formatCurrency, formatDateTime } from '@/lib/format';
 
 const PAGE_SIZE = 50;
-
-function formatCurrency(amount: number | null | undefined): string {
-  if (amount === null || amount === undefined) return '—';
-  const n = typeof amount === 'string' ? parseFloat(amount) : amount;
-  if (Number.isNaN(n)) return '—';
-  return new Intl.NumberFormat('he-IL', {
-    style: 'currency',
-    currency: 'ILS',
-    maximumFractionDigits: 2,
-  }).format(n);
-}
-
-function formatDateTime(iso: string | undefined | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleString('he-IL', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit',
-  });
-}
 
 function statusVariant(s: TransactionStatus): 'default' | 'secondary' | 'outline' | 'destructive' {
   switch (s) {

@@ -19,6 +19,11 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { Monitor, Wifi, WifiOff, Send, KeyRound, RefreshCw, Link2, Store, Info, Trash2, Smartphone, CalendarClock } from 'lucide-react';
+import {
+  ClockDriftBanner,
+  ClockSkewChip,
+  MachineHealthPanel,
+} from '@/components/dashboard/machine-health';
 import { formatDistanceToNow, format } from 'date-fns';
 import { QRCodeSVG } from 'qrcode.react';
 import type { PairingSessionCreateResponse } from '@/lib/types';
@@ -478,6 +483,8 @@ export default function MachinesPage() {
         </div>
       ) : null}
 
+      {!isLoading ? <ClockDriftBanner machines={visibleMachines} /> : null}
+
       {!isLoading && machines.length > 0 ? (
         <div className="max-w-sm space-y-1">
           <Label>{t('filterByShop')}</Label>
@@ -599,6 +606,7 @@ export default function MachinesPage() {
                   <div className="min-w-0">
                   <CardTitle className="text-base">{m.name}</CardTitle>
                   <p className="text-xs text-muted-foreground">{m.machineCode}</p>
+                  <div className="mt-1"><ClockSkewChip machine={m} /></div>
                   </div>
                 </div>
               </CardHeader>
@@ -654,6 +662,7 @@ export default function MachinesPage() {
                     )}
                   </div>
                 </div>
+                <MachineHealthPanel machine={m} />
                 <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-muted-foreground">{t('syncPullStatus')}</span>

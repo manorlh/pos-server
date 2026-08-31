@@ -33,6 +33,9 @@ import {
   Settings2,
   Boxes,
   Coins,
+  Package2,
+  UserRoundCheck,
+  Palette,
 } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -74,7 +77,8 @@ export function Sidebar() {
   const queryClient = useQueryClient();
   const { signOut } = useClerk();
   const { user: clerkUser } = useUser();
-  const { user: internalUser, tenants, activeTenantId, setActiveTenant, fetchUser, clearUser } = useAuth();
+  const { user: internalUser, tenants, activeTenantId, authHydrated, setActiveTenant, fetchUser, clearUser } =
+    useAuth();
   const [createOpen, setCreateOpen] = useState(false);
   const [newTenantName, setNewTenantName] = useState('');
   const [creating, setCreating] = useState(false);
@@ -140,6 +144,21 @@ export function Sidebar() {
     }
   };
 
+  // Branding writes are refused for anyone below a company manager
+  // (BRANDING_WRITE_ROLES in the server's settings router), so the entry is
+  // hidden rather than leading to a page whose Save button always 403s.
+  const canManageBranding =
+    authHydrated &&
+    (internalUser?.role === 'super_admin' ||
+      internalUser?.role === 'distributor' ||
+      internalUser?.role === 'company_manager');
+
+  // Staff entries follow the server's own answer (GET /users/me), not a role
+  // guess here. A dashboard cashier is a shop viewer: /users 403s for it, so the
+  // entry would be a link to a permission error.
+  const canReadUsers = authHydrated && internalUser?.canReadUsers === true;
+  const canManagePosUsers = authHydrated && internalUser?.canManagePosUsers === true;
+
   const nav = [
     { href: '/dashboard', label: t('overview'), icon: LayoutDashboard },
     { href: '/dashboard/products', label: t('products'), icon: Package },
@@ -150,12 +169,19 @@ export function Sidebar() {
     { href: '/dashboard/shops', label: t('shops'), icon: Store },
     { href: '/dashboard/shops/assortment', label: t('assortment'), icon: ListFilter },
     { href: '/dashboard/shops/stock', label: t('stock'), icon: Boxes },
+    { href: '/dashboard/product-sales', label: t('productSales'), icon: Package2 },
+    { href: '/dashboard/cashier-sales', label: t('cashierSales'), icon: UserRoundCheck },
     { href: '/dashboard/tips', label: t('tips'), icon: Coins },
     { href: '/dashboard/tax-reports', label: t('taxReports'), icon: FileText },
     { href: '/dashboard/transactions', label: t('transactions'), icon: Receipt },
     { href: '/dashboard/z-reports', label: t('zReports'), icon: FileBarChart },
-    { href: '/dashboard/pos-users', label: t('posUsers'), icon: IdCard },
-    { href: '/dashboard/users', label: t('users'), icon: Users },
+    ...(canManagePosUsers
+      ? [{ href: '/dashboard/pos-users', label: t('posUsers'), icon: IdCard }]
+      : []),
+    ...(canReadUsers ? [{ href: '/dashboard/users', label: t('users'), icon: Users }] : []),
+    ...(canManageBranding
+      ? [{ href: '/dashboard/branding', label: t('branding'), icon: Palette }]
+      : []),
   ];
 
   const handleSignOut = async () => {

@@ -18,6 +18,27 @@ export interface User {
   updatedAt: string;
 }
 
+/**
+ * What the server will actually let the caller do, as reported by `GET /users/me`.
+ *
+ * These are not re-derived in the dashboard on purpose: the role→permission rules
+ * live in the users router, and a UI that guesses them offers authority the caller
+ * does not have and then blames them for the 403.
+ */
+export interface UserCapabilities {
+  /** Exactly the roles this caller may assign, highest first. Empty = none. */
+  creatableRoles: UserRole[];
+  /** May read the staff list at all. False for a dashboard cashier. */
+  canReadUsers: boolean;
+  /** May create / edit / deactivate staff. */
+  canManageUsers: boolean;
+  /** May manage till operators (קופאים). */
+  canManagePosUsers: boolean;
+}
+
+/** `GET /users/me` — the caller's own record plus its capabilities. */
+export interface CurrentUser extends User, UserCapabilities {}
+
 export interface Company {
   id: string;
   name: string;
@@ -94,6 +115,32 @@ export interface PosSettingsV1 {
   receiptPrinterName?: string;
   drawerPrinterName?: string;
   businessInfo?: Record<string, unknown>;
+  /** White label: logo the till shows in its own UI. '' = deliberately no logo. */
+  brandLogoUrl?: string;
+  /** White label: full-screen image the till shows for ~2s while it starts up. */
+  brandHeroUrl?: string;
+}
+
+/**
+ * PATCH body for POS settings. Branding keys accept an explicit `null`, which
+ * unsets them at that level so the level above is inherited again — distinct
+ * from `''`, which is stored and means "deliberately no image here".
+ */
+export type PosSettingsPatch = Partial<
+  Omit<PosSettingsV1, 'brandLogoUrl' | 'brandHeroUrl'>
+> & {
+  brandLogoUrl?: string | null;
+  brandHeroUrl?: string | null;
+};
+
+export type BrandingImageKind = 'logo' | 'hero';
+
+export interface BrandingUploadResult {
+  url: string;
+  publicId: string;
+  width: number;
+  height: number;
+  bytes: number;
 }
 
 export interface EntitySettingsResponse {
@@ -148,6 +195,18 @@ export interface PosMachine {
   openedAt?: string;
   openedBy?: string;
   closeDayPending?: boolean;
+  /** Hardware serial the till reports on its heartbeat (or at pairing). */
+  serialNumber?: string | null;
+  /**
+   * 0..100, or `null` when the device could not read the battery at all.
+   * `null` is NOT zero — render it as unknown, never as a flat battery.
+   */
+  batteryPercent?: number | null;
+  batteryStatus?: 'charging' | 'discharging' | 'full' | 'not_charging' | 'unknown' | null;
+  /** Signed. Negative = the device clock is BEHIND the server. Can be huge. */
+  clockSkewMs?: number | null;
+  /** Null on a till that has never sent a health report. */
+  lastHealthReportAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -420,6 +479,10 @@ export interface ZReport {
   payload?: Record<string, unknown> | null;
   closedAt: string;
   createdAt: string;
+  /** Filled in by GET /z-reports so the history table can name the terminal. */
+  machineName?: string | null;
+  /** Filled in by GET /z-reports; null on the single-report read. */
+  shopName?: string | null;
 }
 
 export interface ZReportListResponse {
@@ -525,4 +588,135 @@ export interface PosUserUpdate {
   role?: PosUserRole;
   isActive?: boolean;
   pin?: string;
+}
+
+// ── Operational reports (GET /reports/products, /reports/cashiers, /reports/tips) ──
+
+/**
+ * The window the server actually used, echoed on every report response.
+ *
+ * `from`/`to` are calendar days in `timezone`; `fromHour`/`toHour` (when present)
+ * narrow every one of those days to the same hour band — `fromHour` inclusive,
+ * `toHour` exclusive, `fromHour > toHour` wrapping past midnight. Both are null
+ * when no hour filter applied. `windowStart`/`windowEnd` are the absolute UTC
+ * bounds of the outer day range (end exclusive); with an hour filter the covered
+ * set is a subset of that span, not the whole of it.
+ *
+ * The timezone is resolved server-side (tz param → tenant → Asia/Jerusalem), so
+ * the UI must display it rather than assume the reader's own zone.
+ */
+export interface ReportWindowOut {
+  from: string;
+  to: string;
+  fromHour?: number | null;
+  toHour?: number | null;
+  timezone: string;
+  windowStart: string;
+  windowEnd: string;
+}
+
+export interface ProductSalesRow {
+  productId?: string | null;
+  productName?: string | null;
+  sku?: string | null;
+  unitsSold: number;
+  unitsRefunded: number;
+  /** unitsSold - unitsRefunded. What actually left the shop. */
+  unitsNet: number;
+  gross: number;
+  discounts: number;
+  /** Always >= 0 and SUBTRACTS from net; a credit note never adds to takings. */
+  refunds: number;
+  /** gross - discounts - refunds */
+  net: number;
+  linesSold: number;
+  linesRefunded: number;
+}
+
+export interface ProductSalesTotals {
+  unitsSold: number;
+  unitsRefunded: number;
+  unitsNet: number;
+  gross: number;
+  discounts: number;
+  refunds: number;
+  net: number;
+  productCount: number;
+}
+
+export interface ProductSalesReport {
+  window: ReportWindowOut;
+  generatedAt: string;
+  /** True when the row cap trimmed the tail. `totals` still cover every row. */
+  truncated: boolean;
+  rowLimit: number;
+  totals: ProductSalesTotals;
+  rows: ProductSalesRow[];
+}
+
+export interface CashierSalesRow {
+  /** Null for documents with no cashier, or a cashier that is not a pos_user. */
+  cashierId?: string | null;
+  cashierName?: string | null;
+  workerNumber?: string | null;
+  documentCount: number;
+  salesCount: number;
+  refundsCount: number;
+  gross: number;
+  discounts: number;
+  refunds: number;
+  /** gross - discounts - refunds */
+  net: number;
+  averageBasket: number;
+  /** cashNet + cardNet + otherNet === net. */
+  cashNet: number;
+  cardNet: number;
+  otherNet: number;
+  tips: number;
+}
+
+export interface CashierSalesReport {
+  window: ReportWindowOut;
+  generatedAt: string;
+  /** Same shape as a row; the per-cashier identity fields are null on it. */
+  totals: CashierSalesRow;
+  rows: CashierSalesRow[];
+}
+
+export type TipMethod = 'cash' | 'card' | 'other';
+
+export interface TipMethodRow {
+  method: TipMethod;
+  amount: number;
+  documentCount: number;
+}
+
+export interface TipsByCashierRow {
+  cashierId?: string | null;
+  cashierName?: string | null;
+  workerNumber?: string | null;
+  tipsTotal: number;
+  tipsCash: number;
+  tipsCard: number;
+  tipsOther: number;
+  /** Documents that carried a non-zero tip. */
+  tippedDocumentCount: number;
+  /** Net takings by this cashier over the window, for a tips-to-sales ratio. */
+  salesNet: number;
+}
+
+/**
+ * GET /reports/tips — "how much tip money came in, on what tender, when".
+ * Distinct from the per-shop `TipsReport`, which answers "who is owed what"
+ * under the shop's tip-distribution policy.
+ */
+export interface TipsRangeReport {
+  window: ReportWindowOut;
+  generatedAt: string;
+  tipsTotal: number;
+  tipsCash: number;
+  tipsCard: number;
+  tipsOther: number;
+  byMethod: TipMethodRow[];
+  byCashier: TipsByCashierRow[];
 }

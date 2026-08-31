@@ -14,7 +14,8 @@
     "deleted": "נמחק בהצלחה",
     "yes": "כן",
     "no": "לא",
-    "noResults": "אין תוצאות"
+    "noResults": "אין תוצאות",
+    "loading": "טוען..."
   },
   "auth": {
     "title": "POS Cloud",
@@ -47,7 +48,10 @@
     "createTenant": "צור ארגון",
     "createTenantTitle": "ארגון חדש",
     "tenantName": "שם הארגון",
-    "tenantCreated": "הארגון נוצר בהצלחה"
+    "tenantCreated": "הארגון נוצר בהצלחה",
+    "productSales": "מכירות לפי מוצר",
+    "cashierSales": "מכירות לפי קופאי",
+    "branding": "מיתוג (White Label)"
   },
   "profile": {
     "title": "פרופיל",
@@ -187,7 +191,21 @@
     "distDirect": "ישיר — כל קופאי שומר את שלו",
     "distEqual": "חלוקה שווה",
     "distBySales": "לפי היקף מכירות",
-    "summary": "סה״כ טיפים ₪{tips} (מזומן ₪{cash}, אשראי ₪{card})"
+    "summary": "סה״כ טיפים {tips} (מזומן {cash}, אשראי {card})",
+    "modeLabel": "סוג דוח",
+    "modeDistribution": "חלוקת טיפים (סניף)",
+    "modeRange": "טיפים לפי טווח ושעות",
+    "modeDistributionHint": "מי זכאי לְמה, לפי מדיניות חלוקת הטיפים של הסניף. מחושב לפי ימי מסחר — ללא סינון שעות.",
+    "modeRangeHint": "כמה כסף טיפים נכנס, באיזה אמצעי תשלום ואצל מי. כאן יש סינון שעות שחוזר בכל יום בטווח.",
+    "otherTips": "טיפים אחר",
+    "tipsTotal": "סה״כ טיפים",
+    "method": "אמצעי תשלום",
+    "amount": "סכום",
+    "tippedDocuments": "מסמכים עם טיפ",
+    "salesNet": "מכירות נטו",
+    "rangeSelectFilters": "בחרו טווח תאריכים וחלון שעות, ולחצו \"הצג דוח\"",
+    "rangeNoRows": "לא נמצאו טיפים בטווח שנבחר",
+    "unknownCashier": "ללא קופאי"
   },
   "taxReports": {
     "title": "דוחות מס (ממשק פתוח)",
@@ -233,13 +251,12 @@
     "deleted": "הקטגוריה נמחקה"
   },
   "vouchers": {
-    "title": "שוברים",
+    "title": "כותרת להדפסה",
     "subtitle": "נהל תבניות שובר להדפסה בקופה",
     "add": "הוסף שובר",
     "addTitle": "הוסף שובר",
     "editTitle": "ערוך שובר",
     "name": "שם",
-    "title": "כותרת להדפסה",
     "printSubtitle": "כותרת משנה",
     "bodyText": "תנאים / הוראות",
     "footerText": "כותרת תחתונה",
@@ -394,6 +411,34 @@
       "sessionEnded": "סשן ההתקנה הסתיים",
       "startError": "יצירת סשן ההתקנה נכשלה",
       "openMobileLink": "פתח בטלפון"
+    },
+    "health": {
+      "title": "בריאות המכשיר",
+      "serialNumber": "מספר סידורי",
+      "battery": "סוללה",
+      "batteryPercent": "{pct}%",
+      "batteryUnknown": "לא ידוע",
+      "batteryUnknownNote": "המכשיר לא הצליח לקרוא את מצב הסוללה. זה אינו 0% ואינו סוללה ריקה.",
+      "batteryStatus": {
+        "charging": "בטעינה",
+        "discharging": "בשימוש",
+        "full": "טעונה במלואה",
+        "notCharging": "לא בטעינה",
+        "unknown": "לא ידוע"
+      },
+      "clockSkew": "פער שעון",
+      "skewNoData": "אין נתון",
+      "skewInSync": "מסונכרן (פער {duration})",
+      "skewAhead": "מקדים את השרת ב-{duration}",
+      "skewBehind": "מפגר אחרי השרת ב-{duration}",
+      "skewNotable": "פער שעון מורגש",
+      "skewSevere": "סחיפת שעון חמורה",
+      "lastReport": "דיווח בריאות אחרון {ago} ({at})",
+      "neverReported": "טרם התקבל דיווח בריאות",
+      "noData": "טרם התקבל דיווח בריאות מהמכשיר — אין נתוני סוללה, שעון או מספר סידורי. אין כאן תקלה, רק היעדר נתונים.",
+      "driftBannerTitle": "שעונים חורגים: {severe} חמורים, {notable} מורגשים",
+      "driftBannerMore": "ועוד {count} מכשירים",
+      "driftBannerWhy": "שעון שחורג פוגע בחתימת המסמכים ובשיוך לימי מסחר. פער של 2 דקות הוא מורגש, 15 דקות הוא חמור."
     }
   },
   "companies": {
@@ -569,7 +614,18 @@
     "expectedCash": "צפוי בקופה",
     "actualCash": "בפועל בקופה",
     "closedAt": "נסגר ב",
-    "rawPayload": "מטען מלא (JSON)"
+    "rawPayload": "מטען מלא (JSON)",
+    "filterMachines": "מכשירים",
+    "allMachines": "כל המכשירים",
+    "machineSelected": "{count} מכשירים נבחרו",
+    "machinePickerHint": "ניתן לבחור כמה מכשירים. ללא בחירה — כל המכשירים.",
+    "clearMachineFilter": "נקה בחירה",
+    "noMachines": "אין מכשירים",
+    "filterClosedFrom": "נסגר מ־(תאריך ושעה)",
+    "filterClosedTo": "נסגר עד (תאריך ושעה)",
+    "dayDateFilterHint": "\"מתאריך\"/\"עד תאריך\" מסננים את יום המסחר שהקופה דיווחה עליו, ולא את מועד הסגירה בפועל.",
+    "closedAtFilterHint": "סינון לפי מועד הסגירה בפועל, בדיוק של דקה. הזמן שמוזן נקרא לפי אזור הזמן של הדפדפן ({tz}) ונשלח לשרת כזמן מוחלט.",
+    "clearClosedFilter": "נקה סינון שעת סגירה"
   },
   "users": {
     "title": "משתמשים",
@@ -591,7 +647,14 @@
     "selectShop": "בחר סניף",
     "created": "המשתמש נוצר בהצלחה",
     "updated": "המשתמש עודכן בהצלחה",
-    "deleted": "המשתמש נמחק",
+    "deactivate": "השבת",
+    "activate": "הפעל מחדש",
+    "deactivateConfirm": "להשבית את {username}? הגישה שלו לדשבורד תיחסם, ההיסטוריה והרישומים יישמרו, וניתן להפעיל מחדש בכל עת.",
+    "deactivated": "המשתמש הושבת. ניתן להפעיל מחדש מהרשימה.",
+    "activated": "המשתמש הופעל מחדש",
+    "noUsers": "לא נמצאו משתמשים.",
+    "forbidden": "אין לך הרשאה לצפות ברשימת המשתמשים.",
+    "roleNotAssignable": "אין לך הרשאה להקצות תפקיד זה",
     "roles": {
       "super_admin": "מנהל מערכת",
       "distributor": "מפיץ",
@@ -639,5 +702,133 @@
       "cashier": "קופאי",
       "shop_manager": "מנהל סניף"
     }
+  },
+  "reports": {
+    "filters": {
+      "shop": "סניף",
+      "machine": "מכשיר",
+      "allShops": "כל הסניפים",
+      "allMachines": "כל המכשירים",
+      "from": "מתאריך",
+      "to": "עד תאריך",
+      "hoursTitle": "שעות בכל יום בטווח",
+      "hoursBoundsHint": "שעת ההתחלה כלולה, שעת הסיום אינה כלולה. 00:00–24:00 = כל היום.",
+      "wholeDayReset": "כל היום",
+      "daysMultiplier": "× {days} ימים",
+      "eachDay": "אותו חלון שעות, בכל יום בנפרד",
+      "run": "הצג דוח",
+      "running": "טוען...",
+      "semanticWholeDay": "ללא סינון שעות — הדוח כולל את כל שעות היום, בכל אחד מימי הטווח.",
+      "semanticSingleDay": "יום אחד בלבד ({date}), בין {band}. זהו רצף אחד ורציף.",
+      "semanticRepeats": "שימו לב: זה אינו רצף זמן אחד. חלון השעות {band} נבדק בנפרד בכל אחד מ-{days} הימים בטווח — {hoursPerDay} שעות ביום, {totalHours} שעות בסך הכול. השעות שמחוץ לחלון (למשל הבקרים) אינן נכללות בדוח.",
+      "semanticWrap": "החלון גם חוצה חצות: מ-{fromHour} של אותו יום ועד {toHour} של הבוקר שלמחרת.",
+      "semanticInvalid": "שעת ההתחלה ושעת הסיום חייבות להיות שונות. לכל היום בחרו 00:00–24:00."
+    },
+    "window": {
+      "dayRange": "{from} — {to} · {days} ימים",
+      "hourBandEachDay": "{band} בכל יום",
+      "wholeDay": "כל שעות היום",
+      "timezone": "אזור זמן: {tz}",
+      "subsetNote": "חלון השעות {band} נמדד בנפרד בכל אחד מ-{days} הימים, ולכן הדוח מכסה רק חלק מהזמן שבין הגבולות שלמטה.",
+      "wrapNote": "החלון חוצה חצות ונמשך אל היום שלמחרת.",
+      "absoluteBounds": "גבולות טווח הימים: {start} עד {end} (לפי {tz}; סוף הטווח אינו כלול).",
+      "generatedAt": "הופק ב-{at}"
+    },
+    "truncated": {
+      "title": "הדוח נחתך: מוצגות {visibleRows} שורות בלבד (תקרה {rowLimit}).",
+      "body": "הסיכומים מחושבים על כל השורות לפני החיתוך, ולכן סכום השורות המוצגות לא יתאים לסיכומים. להצגת הזנב הגדילו את תקרת השורות או צמצמו את הטווח.",
+      "bodyWithCount": "סך הכול {totalCount} שורות תואמות. הסיכומים מחושבים על כולן לפני החיתוך, ולכן סכום השורות המוצגות לא יתאים לסיכומים. להצגת הזנב הגדילו את תקרת השורות או צמצמו את הטווח."
+    }
+  },
+  "productSales": {
+    "title": "מכירות לפי מוצר",
+    "subtitle": "יחידות וכספים לכל מוצר, בטווח תאריכים ובחלון שעות שחוזר בכל יום",
+    "rowLimit": "תקרת שורות",
+    "selectFilters": "בחרו טווח תאריכים וחלון שעות, ולחצו \"הצג דוח\"",
+    "noRows": "לא נמצאו מכירות בטווח שנבחר",
+    "unknownProduct": "מוצר לא מזוהה",
+    "footerTotals": "סה״כ",
+    "footerTotalsTruncated": "סה״כ — כל השורות, כולל אלה שנחתכו",
+    "totals": {
+      "net": "נטו",
+      "netFormula": "ברוטו פחות הנחות פחות החזרים",
+      "gross": "ברוטו",
+      "discounts": "הנחות",
+      "refunds": "החזרים",
+      "refundsNote": "מופחת מהנטו",
+      "unitsNet": "יחידות נטו",
+      "unitsBreakdown": "נמכרו {sold} · הוחזרו {refunded} · {products} מוצרים"
+    },
+    "col": {
+      "product": "מוצר",
+      "sku": "מק״ט",
+      "unitsSold": "יח׳ שנמכרו",
+      "unitsRefunded": "יח׳ שהוחזרו",
+      "unitsNet": "יח׳ נטו",
+      "gross": "ברוטו",
+      "discounts": "הנחות",
+      "refunds": "החזרים",
+      "net": "נטו"
+    }
+  },
+  "cashierSales": {
+    "title": "מכירות לפי קופאי",
+    "subtitle": "ביצועי קופאים בטווח תאריכים ובחלון שעות שחוזר בכל יום",
+    "selectFilters": "בחרו טווח תאריכים וחלון שעות, ולחצו \"הצג דוח\"",
+    "noRows": "לא נמצאו מכירות בטווח שנבחר",
+    "unknownCashier": "ללא קופאי",
+    "footerTotals": "סה״כ",
+    "tenderBarLabel": "מזומן {cash}, אשראי {card}, אחר {other}",
+    "totals": {
+      "net": "נטו",
+      "netFormula": "ברוטו פחות הנחות פחות החזרים",
+      "gross": "ברוטו",
+      "refunds": "החזרים",
+      "refundsCount": "{count} מסמכי החזר",
+      "documents": "מסמכים",
+      "documentsBreakdown": "{sales} מכירות · {refunds} החזרים",
+      "averageBasket": "ממוצע לעסקה",
+      "tips": "טיפים: {tips}"
+    },
+    "reconcile": {
+      "title": "התאמת אמצעי תשלום: מזומן + אשראי + אחר = נטו",
+      "note": "שלושת אמצעי התשלום מסתכמים בדיוק לנטו. כל אחד מהם הוא מכירות בניכוי הנחות ובניכוי החזרים שהוחזרו באותו אמצעי תשלום."
+    },
+    "col": {
+      "cashier": "קופאי",
+      "workerNumber": "מספר עובד",
+      "documents": "מסמכים",
+      "gross": "ברוטו",
+      "discounts": "הנחות",
+      "refunds": "החזרים",
+      "net": "נטו",
+      "cashNet": "מזומן נטו",
+      "cardNet": "אשראי נטו",
+      "otherNet": "אחר נטו",
+      "tips": "טיפים"
+    }
+  },
+  "branding": {
+    "title": "מיתוג הקופה",
+    "subtitle": "לוגו ותמונת פתיחה שיוצגו על כל הקופות בארגון",
+    "imagesTitle": "תמונות מיתוג",
+    "logoTitle": "לוגו",
+    "logoWhere": "מוצג בקופה עצמה — בראש מסך המכירה ובמסך הכניסה של הקופאי.",
+    "logoHint": "PNG / JPEG / WebP, עד 2MB, לפחות 64×64 פיקסלים. מומלץ PNG עם רקע שקוף.",
+    "heroTitle": "תמונת פתיחה",
+    "heroWhere": "מוצגת על מסך מלא בעת הפעלת הקופה, למשך כשתי שניות, בזמן שהקופה נטענת.",
+    "heroHint": "PNG / JPEG / WebP, עד 5MB, לפחות 480×320 פיקסלים. מומלצת תמונה לרוחב.",
+    "upload": "העלה תמונה",
+    "replace": "החלף תמונה",
+    "remove": "הסר תמונה",
+    "uploading": "מעלה...",
+    "switchedOff": "מבוטל",
+    "saved": "הגדרות המיתוג נשמרו",
+    "propagationNote": "השינוי נשלח לקופות בסנכרון ההגדרות הבא. כל העלאה יוצרת כתובת חדשה לתמונה, כך שקופה לא תציג גרסה ישנה מהמטמון.",
+    "noPermission": "אין לך הרשאה לערוך את מיתוג הקופות. פנה למפיץ או למנהל החברה.",
+    "errorTooLarge": "הקובץ גדול מדי. הגודל המרבי הוא {mb}MB.",
+    "errorTooSmall": "התמונה קטנה מדי ({width}×{height}). הגודל המזערי הוא {minWidth}×{minHeight} פיקסלים.",
+    "errorUnreadable": "לא ניתן לקרוא את התמונה. העלה קובץ PNG, JPEG או WebP תקין.",
+    "errorUpload": "העלאת התמונה נכשלה"
   }
 }

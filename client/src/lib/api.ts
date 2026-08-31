@@ -1,16 +1,22 @@
 import axios from 'axios';
 import { useAuth } from './auth';
 import type {
+  CashierSalesReport,
   CloseDayCreateResponse,
   CloseDayRequest,
   DashboardBreakdown,
   DashboardStats,
+  BrandingImageKind,
+  BrandingUploadResult,
   EntitySettingsResponse,
-  PosSettingsV1,
+  PosSettingsPatch,
+  ProductSalesReport,
   ShopSettingsResponse,
   StockLevel,
+  TipsRangeReport,
   TipsReport,
   TaxOpenFormatPreview,
+  ZReportListResponse,
 } from './types';
 
 export const api = axios.create({
@@ -101,6 +107,47 @@ export async function uploadProductImage(
   return { url: result.secure_url, publicId: result.public_id ?? '' };
 }
 
+/**
+ * Branding images go through pos-server rather than straight to Cloudinary: the
+ * size and dimension limits a POS terminal needs are enforced server-side, and a
+ * signed direct upload would skip them. The returned URL is unique per upload,
+ * so a replaced image never collides with a cached copy on the till.
+ */
+export async function uploadBrandingImage(
+  file: File,
+  kind: BrandingImageKind,
+): Promise<BrandingUploadResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const { data } = await api.post<BrandingUploadResult>('/images/branding', form, {
+    params: { kind },
+    // Let the browser set multipart/form-data with its own boundary.
+    headers: { 'Content-Type': undefined },
+  });
+  return data;
+}
+
+/**
+ * Take a dashboard user out of service. `DELETE /users/{id}` is a soft deactivate
+ * — it flips `is_active` to false and returns 204 — so nothing is destroyed and
+ * the documents the user touched keep pointing at a row that still exists.
+ */
+export async function deactivateUser(userId: string): Promise<void> {
+  await api.delete(`/users/${userId}`);
+}
+
+/**
+ * The other half of the same switch. Same authority as deactivating: not
+ * yourself, in scope, and strictly below your own role level.
+ *
+ * The 200 body is the refreshed user, but callers refetch the list rather than
+ * trust it — `UserResponse` is still serialised snake_case (see the note in the
+ * users page), so the shape would need normalising to be usable.
+ */
+export async function activateUser(userId: string): Promise<void> {
+  await api.post(`/users/${userId}/activate`);
+}
+
 export async function fetchTenantSettings(tenantId: string): Promise<EntitySettingsResponse> {
   const { data } = await api.get<EntitySettingsResponse>(`/tenants/${tenantId}/settings`);
   return data;
@@ -108,7 +155,7 @@ export async function fetchTenantSettings(tenantId: string): Promise<EntitySetti
 
 export async function patchTenantSettings(
   tenantId: string,
-  patch: Partial<PosSettingsV1>,
+  patch: PosSettingsPatch,
 ): Promise<EntitySettingsResponse> {
   const { data } = await api.patch<EntitySettingsResponse>(`/tenants/${tenantId}/settings`, patch);
   return data;
@@ -121,7 +168,7 @@ export async function fetchCompanySettings(companyId: string): Promise<EntitySet
 
 export async function patchCompanySettings(
   companyId: string,
-  patch: Partial<PosSettingsV1>,
+  patch: PosSettingsPatch,
 ): Promise<EntitySettingsResponse> {
   const { data } = await api.patch<EntitySettingsResponse>(`/companies/${companyId}/settings`, patch);
   return data;
@@ -139,7 +186,7 @@ export async function fetchShopSettings(
 
 export async function patchShopSettings(
   shopId: string,
-  patch: Partial<PosSettingsV1>,
+  patch: PosSettingsPatch,
 ): Promise<ShopSettingsResponse> {
   const { data } = await api.patch<ShopSettingsResponse>(`/shops/${shopId}/settings`, patch);
   return data;
@@ -179,6 +226,71 @@ export async function fetchTipsReport(
   params: { from?: string; to?: string; tradingDayId?: string },
 ): Promise<TipsReport> {
   const { data } = await api.get<TipsReport>(`/shops/${shopId}/tips/report`, { params });
+  return data;
+}
+
+/**
+ * Query params shared by GET /reports/products, /reports/cashiers, /reports/tips.
+ *
+ * `from`/`to` are calendar days; `fromHour`/`toHour` narrow EVERY day in that
+ * range to the same hour band (inclusive/exclusive, wrapping past midnight when
+ * fromHour > toHour). The server 400s if only one of the hour pair is sent — use
+ * `hourQueryParams` in `lib/reportWindow` to build them.
+ */
+export type ReportWindowParams = {
+  from?: string;
+  to?: string;
+  fromHour?: number;
+  toHour?: number;
+  /** IANA zone. Omit to let the server resolve tenant → Asia/Jerusalem. */
+  tz?: string;
+  shopId?: string;
+  machineId?: string;
+};
+
+export async function fetchProductSalesReport(
+  params: ReportWindowParams & { cashierId?: string; limit?: number },
+): Promise<ProductSalesReport> {
+  const { data } = await api.get<ProductSalesReport>('/reports/products', { params });
+  return data;
+}
+
+export async function fetchCashierSalesReport(
+  params: ReportWindowParams,
+): Promise<CashierSalesReport> {
+  const { data } = await api.get<CashierSalesReport>('/reports/cashiers', { params });
+  return data;
+}
+
+export async function fetchTipsRangeReport(
+  params: ReportWindowParams,
+): Promise<TipsRangeReport> {
+  const { data } = await api.get<TipsRangeReport>('/reports/tips', { params });
+  return data;
+}
+
+export type ZReportListParams = {
+  /** Repeatable. Serialised as `machineIds=a&machineIds=b` (no `[]` suffix). */
+  machineIds?: string[];
+  shopId?: string;
+  /** Filters `day_date` — the trading day the till filed the close under. */
+  from?: string;
+  to?: string;
+  /** ISO datetimes on `closed_at`; naive values are read as UTC server-side. */
+  closedFrom?: string;
+  closedTo?: string;
+  page?: number;
+  pageSize?: number;
+};
+
+export async function fetchZReports(params: ZReportListParams): Promise<ZReportListResponse> {
+  const { data } = await api.get<ZReportListResponse>('/z-reports', {
+    params,
+    // FastAPI reads a repeated `List[UUID]` query param as `machineIds=a&machineIds=b`.
+    // Axios' default array format is `machineIds[]=a`, which FastAPI would ignore
+    // entirely — the filter would silently do nothing.
+    paramsSerializer: { indexes: null },
+  });
   return data;
 }
 
