@@ -13,6 +13,7 @@ from app.models.transaction import Transaction
 from app.models.user import User
 from app.schemas.dashboard import DashboardBreakdownResponse, DashboardStatsResponse
 from app.services.dashboard_stats import compute_breakdown, compute_sales_summary
+from app.services.company_hierarchy import descendant_company_ids
 from app.services.scoping import scope_transactions_by_user
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -43,7 +44,12 @@ def _scoped_company_query(
     query = db.query(Transaction).filter(Transaction.tenant_id == active_tenant_id)
     query = scope_transactions_by_user(query, current_user, db)
     if query is not None and company_id:
-        shop_ids = db.query(Shop.id).filter(Shop.company_id == company_id)
+        # Asking for a holding company means the group: its own shops and its
+        # subsidiaries'. The role scope above still bounds what the caller may see, so
+        # widening the *filter* cannot widen access.
+        shop_ids = db.query(Shop.id).filter(
+            Shop.company_id.in_(descendant_company_ids(db, company_id))
+        )
         query = query.filter(Transaction.shop_id.in_(shop_ids))
     return query
 

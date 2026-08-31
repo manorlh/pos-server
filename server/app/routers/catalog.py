@@ -15,6 +15,7 @@ from app.models.user import User, UserRole
 from app.models.shop_product_override import ShopProductOverride
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
 from app.services.catalog_notify import notify_machine_catalog_changed
+from app.services.company_hierarchy import company_scope_ids
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
 
@@ -214,7 +215,9 @@ def push_catalog(
         Product.tenant_id == active_tenant_id,
     )
     if current_user.role == UserRole.COMPANY_MANAGER:
-        prod_query = prod_query.filter(Product.company_id == current_user.company_id)
+        prod_query = prod_query.filter(
+            Product.company_id.in_(company_scope_ids(db, current_user))
+        )
     if isinstance(body.product_ids, list) and body.product_ids:
         prod_query = prod_query.filter(Product.id.in_(body.product_ids))
     global_products = prod_query.all()
@@ -225,7 +228,9 @@ def push_catalog(
         Category.tenant_id == active_tenant_id,
     )
     if current_user.role == UserRole.COMPANY_MANAGER:
-        cat_query = cat_query.filter(Category.company_id == current_user.company_id)
+        cat_query = cat_query.filter(
+            Category.company_id.in_(company_scope_ids(db, current_user))
+        )
     if isinstance(body.category_ids, list) and body.category_ids:
         cat_query = cat_query.filter(Category.id.in_(body.category_ids))
     global_categories = cat_query.all()

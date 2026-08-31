@@ -70,7 +70,11 @@ def _resolve_scope_entities(
     if not company_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="companyId is required when scope=company")
     company = _get_company_or_404(db, company_id, active_tenant_id)
-    _check_company_access(current_user, company)
+    # Permission follows the company tree (a group manager may pull a subsidiary's
+    # file). Attribution does not: `company.id` is passed straight through, so the
+    # export still contains only the shops of *that* company — the one whose ח.פ. is
+    # on the documents. A group's file must never absorb a subsidiary's invoices.
+    _check_company_access(current_user, company, db)
     return company, None, company.id, None
 
 

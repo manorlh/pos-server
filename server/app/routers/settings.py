@@ -13,6 +13,7 @@ from app.models.user import User, UserRole
 from app.routers.companies import _check_company_access
 from app.routers.shops import _check_shop_access
 from app.routers.tenants import _can_manage_tenant
+from app.services.company_hierarchy import user_covers_company
 from app.schemas.pos_settings import (
     EntitySettingsResponse,
     PosSettingsV1Patch,
@@ -42,9 +43,11 @@ COMPANY_SETTINGS_WRITE_ROLES = {
 }
 
 
-def _check_company_settings_write(user: User, company: Company) -> None:
+def _check_company_settings_write(user: User, company: Company, db: Session) -> None:
     if user.role in COMPANY_SETTINGS_WRITE_ROLES:
-        if user.role == UserRole.COMPANY_MANAGER and company.id != user.company_id:
+        if user.role == UserRole.COMPANY_MANAGER and not user_covers_company(
+            db, user, company.id
+        ):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
         return
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
@@ -177,7 +180,7 @@ def get_company_settings(
     if not company:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
     ensure_same_tenant(company.tenant_id, active_tenant_id)
-    _check_company_access(current_user, company)
+    _check_company_access(current_user, company, db)
     return EntitySettingsResponse(
         settings=company.settings or {},
         settings_updated_at=company.settings_updated_at,
@@ -200,8 +203,8 @@ def patch_company_settings(
     if not company:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
     ensure_same_tenant(company.tenant_id, active_tenant_id)
-    _check_company_access(current_user, company)
-    _check_company_settings_write(current_user, company)
+    _check_company_access(current_user, company, db)
+    _check_company_settings_write(current_user, company, db)
 
     patch = _build_patch(data, current_user)
     if not patch:

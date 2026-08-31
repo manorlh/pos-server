@@ -12,6 +12,7 @@ from app.services.clerk_auth import verify_clerk_token
 from app.services.clerk_provision import resolve_clerk_user
 from app.config import get_settings
 from app.services.auth import decode_token, decode_jwt_payload
+from app.services.company_hierarchy import user_covers_company
 from app.services.pairing_mobile import get_valid_pairing_session
 from app.observability.context import set_request_context
 
@@ -75,10 +76,14 @@ def get_current_machine_admin(current_user: User = Depends(get_current_user)) ->
     return current_user
 
 
-def _check_machine_access(user: User, machine: POSMachine):
+def _check_machine_access(user: User, machine: POSMachine, db: Session):
     if user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
         return
-    if user.role == UserRole.COMPANY_MANAGER and machine.shop and machine.shop.company_id == user.company_id:
+    if (
+        user.role == UserRole.COMPANY_MANAGER
+        and machine.shop
+        and user_covers_company(db, user, machine.shop.company_id)
+    ):
         return
     if user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER) and machine.shop_id == user.shop_id:
         return
@@ -120,7 +125,7 @@ def get_pos_machine_for_sync_path(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
     if not machine.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Machine has been removed")
-    _check_machine_access(current_user, machine)
+    _check_machine_access(current_user, machine, db)
     _bind_machine_context(machine)
     return machine
 

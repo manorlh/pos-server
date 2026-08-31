@@ -5,7 +5,9 @@ from app.database import get_db
 from app.schemas.user import UserCreate, UserUpdate, UserResponse, CurrentUserResponse
 from app.models.user import User, UserRole
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
+from app.models.shop import Shop
 from app.services.auth import get_password_hash, get_user_by_username
+from app.services.company_hierarchy import company_scope_ids, user_covers_company
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -39,25 +41,68 @@ CREATABLE_ROLES = {
 }
 
 
-def _check_scope_access(actor: User, target: User) -> bool:
+def _check_scope_access(actor: User, target: User, db: Session) -> bool:
     if actor.role == UserRole.SUPER_ADMIN:
         return True
     if actor.role == UserRole.DISTRIBUTOR:
         return True
     if actor.role == UserRole.COMPANY_MANAGER:
-        return target.company_id is not None and target.company_id == actor.company_id
+        # Staff of the group *and* of its subsidiaries. A group manager who cannot
+        # manage the staff of the companies they own is locked out of their own org.
+        return target.company_id is not None and user_covers_company(
+            db, actor, target.company_id
+        )
     if actor.role == UserRole.SHOP_MANAGER:
         return target.shop_id is not None and target.shop_id == actor.shop_id
     return actor.id == target.id
 
 
-def _apply_scope_filter(query, actor: User):
+def _ensure_assignment_in_scope(actor: User, db: Session, *, company_id, shop_id) -> None:
+    """
+    A caller may only place a user in a company (or shop) their own scope covers.
+
+    Both `POST /users` and `PUT /users/{id}` accept `companyId` / `shopId`, and both
+    need this: reading a user is scoped by `_check_scope_access`, but *writing* their
+    company decides which scope they land in afterwards. Before nested companies the
+    create path pinned a company manager's users to `actor.company_id` and the update
+    path checked nothing at all — so a manager could move a cashier they control into
+    another company. With a group tree there are now several companies a manager may
+    legitimately assign into, which is precisely why the rule has to be one function
+    used by both paths instead of a line in each.
+    """
+    if actor.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
+        return  # tenant-level roles; the tenant guard is what bounds them
+
+    if company_id is not None and not user_covers_company(db, actor, company_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot assign user to another company",
+        )
+
+    if shop_id is None:
+        return
+    if actor.role == UserRole.SHOP_MANAGER:
+        if shop_id != actor.shop_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot assign user to another shop",
+            )
+        return
+    shop = db.query(Shop).filter(Shop.id == shop_id).first()
+    if not shop or not user_covers_company(db, actor, shop.company_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot assign user to another company's shop",
+        )
+
+
+def _apply_scope_filter(query, actor: User, db: Session):
     if actor.role == UserRole.SUPER_ADMIN:
         return query
     if actor.role == UserRole.DISTRIBUTOR:
         return query
     if actor.role == UserRole.COMPANY_MANAGER:
-        return query.filter(User.company_id == actor.company_id)
+        return query.filter(User.company_id.in_(company_scope_ids(db, actor)))
     if actor.role == UserRole.SHOP_MANAGER:
         return query.filter(User.shop_id == actor.shop_id)
     return query.filter(User.id == actor.id)
@@ -99,7 +144,7 @@ def list_users(
     if current_user.role not in USER_READ_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
-    query = _apply_scope_filter(db.query(User), current_user).filter(User.tenant_id == active_tenant_id)
+    query = _apply_scope_filter(db.query(User), current_user, db).filter(User.tenant_id == active_tenant_id)
 
     if company_id:
         query = query.filter(User.company_id == company_id)
@@ -127,9 +172,11 @@ def create_user(
 
     if current_user.role != UserRole.SUPER_ADMIN:
         if current_user.role == UserRole.COMPANY_MANAGER:
-            if user_data.company_id and user_data.company_id != current_user.company_id:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot assign user to another company")
-            user_data.company_id = current_user.company_id
+            _ensure_assignment_in_scope(
+                current_user, db, company_id=user_data.company_id, shop_id=user_data.shop_id
+            )
+            # Unspecified still means "my own company", not "any subsidiary".
+            user_data.company_id = user_data.company_id or current_user.company_id
         elif current_user.role == UserRole.SHOP_MANAGER:
             user_data.company_id = current_user.company_id
             if user_data.shop_id and user_data.shop_id != current_user.shop_id:
@@ -172,7 +219,7 @@ def get_user(
     # it. Reading anyone else is the same disclosure the list makes.
     if current_user.role not in USER_READ_ROLES and current_user.id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
-    if not _check_scope_access(current_user, user) and current_user.id != user.id:
+    if not _check_scope_access(current_user, user, db) and current_user.id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     return user
@@ -194,7 +241,7 @@ def update_user(
     is_self = current_user.id == user.id
 
     if not is_self:
-        if not _check_scope_access(current_user, user):
+        if not _check_scope_access(current_user, user, db):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
         if ROLE_LEVEL[current_user.role] <= ROLE_LEVEL[user.role]:
             raise HTTPException(
@@ -209,6 +256,17 @@ def update_user(
         update_data.pop("company_id", None)
         update_data.pop("shop_id", None)
         update_data.pop("is_active", None)
+
+    # Same rule as on create: moving a user between companies or shops is bounded by
+    # what the caller covers. `is_self` for a non-super-admin has already had both
+    # fields dropped above.
+    if "company_id" in update_data or "shop_id" in update_data:
+        _ensure_assignment_in_scope(
+            current_user,
+            db,
+            company_id=update_data.get("company_id"),
+            shop_id=update_data.get("shop_id"),
+        )
 
     if "role" in update_data:
         new_role = update_data["role"]
@@ -230,14 +288,14 @@ def update_user(
     return user
 
 
-def _authorise_activation_change(current_user: User, user: User, verb: str) -> None:
+def _authorise_activation_change(current_user: User, user: User, verb: str, db: Session) -> None:
     """The guards shared by deactivate and reactivate."""
     if current_user.id == user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot {verb} yourself",
         )
-    if not _check_scope_access(current_user, user):
+    if not _check_scope_access(current_user, user, db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     if ROLE_LEVEL[current_user.role] <= ROLE_LEVEL[user.role]:
         raise HTTPException(
@@ -270,7 +328,7 @@ def deactivate_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     ensure_same_tenant(user.tenant_id, active_tenant_id)
-    _authorise_activation_change(current_user, user, "deactivate")
+    _authorise_activation_change(current_user, user, "deactivate", db)
 
     if user.is_active:
         user.is_active = False
@@ -296,7 +354,7 @@ def activate_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     ensure_same_tenant(user.tenant_id, active_tenant_id)
-    _authorise_activation_change(current_user, user, "activate")
+    _authorise_activation_change(current_user, user, "activate", db)
 
     if not user.is_active:
         user.is_active = True

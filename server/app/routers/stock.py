@@ -12,6 +12,7 @@ from app.models.shop import Shop
 from app.models.stock_movement import StockMovementReason
 from app.models.user import User, UserRole
 from app.routers.shops import _check_shop_access
+from app.services.company_hierarchy import user_covers_company
 from app.schemas.stock import (
     AdjustmentRequest,
     GoodsReceiptRequest,
@@ -37,10 +38,10 @@ _STOCK_WRITE_ROLES = {
 }
 
 
-def _check_stock_write(user: User, shop: Shop) -> None:
+def _check_stock_write(user: User, shop: Shop, db: Session) -> None:
     if user.role not in _STOCK_WRITE_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
-    if user.role == UserRole.COMPANY_MANAGER and shop.company_id != user.company_id:
+    if user.role == UserRole.COMPANY_MANAGER and not user_covers_company(db, user, shop.company_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     if user.role == UserRole.SHOP_MANAGER and shop.id != user.shop_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
@@ -93,7 +94,7 @@ def goods_receipt(
 ):
     shop = _get_shop_or_404(db, shop_id, active_tenant_id)
     _check_shop_access(current_user, shop, db)
-    _check_stock_write(current_user, shop)
+    _check_stock_write(current_user, shop, db)
 
     apply_movement(
         db,
@@ -140,7 +141,7 @@ def adjustment(
 ):
     shop = _get_shop_or_404(db, shop_id, active_tenant_id)
     _check_shop_access(current_user, shop, db)
-    _check_stock_write(current_user, shop)
+    _check_stock_write(current_user, shop, db)
 
     if body.delta == 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Delta cannot be zero")
@@ -190,7 +191,7 @@ def stocktake(
 ):
     shop = _get_shop_or_404(db, shop_id, active_tenant_id)
     _check_shop_access(current_user, shop, db)
-    _check_stock_write(current_user, shop)
+    _check_stock_write(current_user, shop, db)
 
     level = set_quantity(
         db,

@@ -140,10 +140,9 @@ def resolve_machines_for_close_day(
     if current_user.role == UserRole.DISTRIBUTOR:
         query = query.filter(POSMachine.distributor_id == current_user.id)
     elif current_user.role == UserRole.COMPANY_MANAGER:
-        from app.models.shop import Shop
+        from app.services.company_hierarchy import visible_shop_ids
 
-        shop_ids = db.query(Shop.id).filter(Shop.company_id == current_user.company_id)
-        query = query.filter(POSMachine.shop_id.in_(shop_ids))
+        query = query.filter(POSMachine.shop_id.in_(visible_shop_ids(db, current_user)))
     elif current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
         query = query.filter(POSMachine.shop_id == current_user.shop_id)
     elif current_user.role != UserRole.SUPER_ADMIN:

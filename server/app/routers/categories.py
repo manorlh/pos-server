@@ -7,9 +7,16 @@ from app.database import get_db
 from app.models.category import Category, CatalogLevel
 from app.models.product import Product
 from app.models.user import User, UserRole
-from app.schemas.category import CategoryCreate, CategoryUpdate, CategoryResponse
+from app.schemas.category import (
+    CategoryCreate,
+    CategoryReorderRequest,
+    CategoryReorderResponse,
+    CategoryResponse,
+    CategoryUpdate,
+)
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
 from app.services.catalog_notify import notify_all_machines_for_tenant, notify_machine_catalog_changed
+from app.services.company_hierarchy import company_scope_ids, user_covers_company
 
 router = APIRouter(prefix="/categories", tags=["categories"])
 
@@ -19,10 +26,12 @@ _CATALOG_ROLES = (
 )
 
 
-def _check_access(user: User, category: Category):
+def _check_access(user: User, category: Category, db: Session):
     if user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
         return
-    if user.role == UserRole.COMPANY_MANAGER and category.company_id == user.company_id:
+    if user.role == UserRole.COMPANY_MANAGER and user_covers_company(
+        db, user, category.company_id
+    ):
         return
     if user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER) and category.shop_id == user.shop_id:
         return
@@ -55,6 +64,30 @@ def _trigger_catalog_notify(db: Session, category: Category):
         notify_all_machines_for_tenant(db, tid, reason="category_change")
 
 
+def _trigger_catalog_notify_batch(db: Session, categories: List[Category]) -> None:
+    """`_trigger_catalog_notify` for several categories at once, collapsed.
+
+    Same signals as the single-row writes emit — one reorder must not publish a
+    tenant-wide fan-out once per moved category.
+    """
+    tenant_wide: set = set()
+    machine_scoped: set = set()
+    for category in categories:
+        tid = str(category.tenant_id) if category.tenant_id else None
+        if not tid:
+            continue
+        if category.pos_machine_id:
+            machine_scoped.add((tid, str(category.pos_machine_id)))
+        else:
+            tenant_wide.add(tid)
+
+    for tid in tenant_wide:
+        notify_all_machines_for_tenant(db, tid, reason="category_change")
+    for tid, machine_id in machine_scoped:
+        if tid not in tenant_wide:  # already covered by the tenant-wide notify
+            notify_machine_catalog_changed(tid, machine_id, reason="category_change")
+
+
 @router.get("", response_model=List[CategoryResponse])
 def list_categories(
     skip: int = Query(0, ge=0),
@@ -73,7 +106,7 @@ def list_categories(
     query = db.query(Category).filter(Category.tenant_id == active_tenant_id)
 
     if current_user.role == UserRole.COMPANY_MANAGER:
-        query = query.filter(Category.company_id == current_user.company_id)
+        query = query.filter(Category.company_id.in_(company_scope_ids(db, current_user)))
     elif current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
         query = query.filter(Category.shop_id == current_user.shop_id)
 
@@ -133,6 +166,65 @@ def create_category(
     return category
 
 
+@router.put("/reorder", response_model=CategoryReorderResponse)
+def reorder_categories(
+    data: CategoryReorderRequest,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Set the position of several categories in one transaction.
+
+    Reordering used to mean N separate `PUT /categories/{id}` calls: not atomic, and two
+    dashboards dragging at once could interleave into an order neither of them chose.
+    Here every position lands or none does.
+
+    Declared **above** `PUT /categories/{category_id}` on purpose — routes match in
+    declaration order, and the other way round `reorder` is swallowed as a category id.
+    """
+    if current_user.role not in _CATALOG_ROLES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+
+    ids = [item.id for item in data.order]
+
+    # Tenant filter in the *lookup*, not in a check afterwards: an id belonging to
+    # another tenant simply does not come back, and the count check below turns that
+    # into a 404. A caller can neither renumber nor probe for another tenant's rows.
+    rows = (
+        db.query(Category)
+        .filter(Category.id.in_(ids), Category.tenant_id == active_tenant_id)
+        .all()
+    )
+    by_id = {row.id: row for row in rows}
+    if len(by_id) != len(ids):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="One or more categories not found",
+        )
+
+    # Role scoping on top of the tenant scope: a company manager reorders their own
+    # (and their subsidiaries') categories, a shop manager their shop's.
+    for row in rows:
+        _check_access(current_user, row, db)
+
+    moved = []
+    for item in data.order:
+        row = by_id[item.id]
+        if row.sort_order != item.sort_order:
+            row.sort_order = item.sort_order
+            moved.append(row)
+
+    # One commit for the whole batch: the session has held every change until now, so a
+    # failure anywhere above leaves the previous order intact.
+    db.commit()
+
+    if moved:
+        _trigger_catalog_notify_batch(db, moved)
+
+    return CategoryReorderResponse(updated=len(data.order))
+
+
 @router.get("/{category_id}", response_model=CategoryResponse)
 def get_category(
     category_id: str,
@@ -145,7 +237,7 @@ def get_category(
     if not category:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
     ensure_same_tenant(category.tenant_id, active_tenant_id)
-    _check_access(current_user, category)
+    _check_access(current_user, category, db)
     return category
 
 
@@ -164,7 +256,7 @@ def update_category(
     if not category:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
     ensure_same_tenant(category.tenant_id, active_tenant_id)
-    _check_access(current_user, category)
+    _check_access(current_user, category, db)
 
     if data.parent_id is not None:
         if _check_circular(db, category_id, str(data.parent_id)):
@@ -205,7 +297,7 @@ def delete_category(
     if not category:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
     ensure_same_tenant(category.tenant_id, active_tenant_id)
-    _check_access(current_user, category)
+    _check_access(current_user, category, db)
 
     if db.query(Product).filter(Product.category_id == category_id).count():
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Category has associated products")

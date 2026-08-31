@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, Literal
+from typing import List, Literal, Optional
 import uuid
 import re
 from datetime import datetime
@@ -66,6 +66,42 @@ class CategoryUpdate(BaseModel):
 
     class Config:
         populate_by_name = True
+
+
+class CategoryReorderItem(BaseModel):
+    id: uuid.UUID
+    sort_order: int = Field(..., alias="sortOrder")
+
+    class Config:
+        populate_by_name = True
+
+
+class CategoryReorderRequest(BaseModel):
+    """One atomic reorder. `order` is the new positions, not a delta."""
+
+    order: List[CategoryReorderItem] = Field(..., min_length=1)
+
+    @field_validator("order")
+    @classmethod
+    def validate_unique_ids(cls, v):
+        seen = set()
+        for item in v:
+            if item.id in seen:
+                # Two positions for one category has no correct answer, and silently
+                # applying the last one would make the result depend on list order.
+                raise ValueError(f"Duplicate category id: {item.id}")
+            seen.add(item.id)
+        return v
+
+    class Config:
+        populate_by_name = True
+
+
+class CategoryReorderResponse(BaseModel):
+    #: How many categories were repositioned — always `len(order)` on success, since a
+    #: reorder is all-or-nothing. Deliberately not a count of rows that happened to
+    #: change value: re-sending the current order is a valid no-op, not a failure.
+    updated: int
 
 
 class CategoryResponse(BaseModel):

@@ -8,6 +8,7 @@ it protects, which is how the three defects they cover got there.
 from __future__ import annotations
 
 import inspect
+import uuid
 from unittest.mock import MagicMock
 
 import pytest
@@ -119,7 +120,7 @@ def test_deactivating_and_activating_need_the_same_authority() -> None:
 def test_nobody_can_switch_themselves_off(verb: str) -> None:
     me = _user(UserRole.DISTRIBUTOR, id="same")
     with pytest.raises(HTTPException) as e:
-        users_router._authorise_activation_change(me, me, verb)
+        users_router._authorise_activation_change(me, me, verb, MagicMock())
     assert e.value.status_code == 400
 
 
@@ -129,7 +130,7 @@ def test_a_peer_cannot_be_deactivated() -> None:
     a = _user(UserRole.SHOP_MANAGER, id="a", shop_id="s1")
     b = _user(UserRole.SHOP_MANAGER, id="b", shop_id="s1")
     with pytest.raises(HTTPException) as e:
-        users_router._authorise_activation_change(a, b, "deactivate")
+        users_router._authorise_activation_change(a, b, "deactivate", MagicMock())
     assert e.value.status_code == 403
 
 
@@ -180,3 +181,82 @@ def test_every_user_endpoint_serialises_by_alias() -> None:
     for decorator in re.findall(r"@router\.(?:get|post|put)\([^)]*response_model=[^)]*\)", src, re.S):
         if "UserResponse" in decorator:
             assert "response_model_by_alias=True" in decorator, decorator[:90]
+
+
+# ── Where a user may be placed ───────────────────────────────────────────────
+
+class _ShopLookup:
+    """A session that returns one shop by id, over a company tree with no children."""
+
+    def __init__(self, shop=None):
+        self.info: dict = {}
+        self._shop = shop
+
+    def query(self, *_entities):
+        return self
+
+    def filter(self, *_criteria):
+        return self
+
+    def first(self):
+        return self._shop
+
+    def execute(self, _statement):
+        # The company hierarchy walk: no descendants, so the caller covers only the
+        # company they are attached to.
+        return iter(())
+
+
+def _shop(company_id):
+    s = MagicMock()
+    s.id = uuid.uuid4()
+    s.company_id = company_id
+    return s
+
+
+def test_a_company_manager_cannot_move_a_user_into_another_company() -> None:
+    # `PUT /users/{id}` accepts companyId and used to apply it unchecked: the read
+    # guard only asks where the user is *now*, not where they are being sent.
+    mine, theirs = uuid.uuid4(), uuid.uuid4()
+    actor = _user(UserRole.COMPANY_MANAGER, company_id=mine)
+    with pytest.raises(HTTPException) as e:
+        users_router._ensure_assignment_in_scope(
+            actor, _ShopLookup(), company_id=theirs, shop_id=None
+        )
+    assert e.value.status_code == 403
+
+
+def test_a_company_manager_may_place_a_user_in_a_subsidiary(monkeypatch) -> None:
+    group, sub = uuid.uuid4(), uuid.uuid4()
+    monkeypatch.setattr(users_router, "user_covers_company", lambda _db, _a, cid: cid in (group, sub))
+    actor = _user(UserRole.COMPANY_MANAGER, company_id=group)
+    users_router._ensure_assignment_in_scope(
+        actor, _ShopLookup(_shop(sub)), company_id=sub, shop_id=uuid.uuid4()
+    )
+
+
+def test_a_shop_outside_the_callers_companies_is_refused() -> None:
+    mine, theirs = uuid.uuid4(), uuid.uuid4()
+    actor = _user(UserRole.COMPANY_MANAGER, company_id=mine)
+    with pytest.raises(HTTPException) as e:
+        users_router._ensure_assignment_in_scope(
+            actor, _ShopLookup(_shop(theirs)), company_id=None, shop_id=uuid.uuid4()
+        )
+    assert e.value.status_code == 403
+
+
+def test_a_shop_manager_may_only_use_their_own_shop() -> None:
+    own = uuid.uuid4()
+    actor = _user(UserRole.SHOP_MANAGER, company_id=uuid.uuid4(), shop_id=own)
+    users_router._ensure_assignment_in_scope(actor, _ShopLookup(), company_id=None, shop_id=own)
+    with pytest.raises(HTTPException) as e:
+        users_router._ensure_assignment_in_scope(
+            actor, _ShopLookup(), company_id=None, shop_id=uuid.uuid4()
+        )
+    assert e.value.status_code == 403
+
+
+def test_both_write_paths_use_the_same_placement_rule() -> None:
+    # One rule, two callers: create used to pin the company and update checked nothing.
+    for fn in (users_router.create_user, users_router.update_user):
+        assert "_ensure_assignment_in_scope" in inspect.getsource(fn)

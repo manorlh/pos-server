@@ -154,11 +154,11 @@ def test_company_write_helper_denies_a_cashier_and_admits_a_shop_manager() -> No
     company = MagicMock(id="c1")
     with pytest.raises(HTTPException) as e:
         companies_router._check_company_write(
-            _user(UserRole.CASHIER, company_id="c1"), company
+            _user(UserRole.CASHIER, company_id="c1"), company, MagicMock()
         )
     assert e.value.status_code == 403
     companies_router._check_company_write(
-        _user(UserRole.SHOP_MANAGER, company_id="c1"), company
+        _user(UserRole.SHOP_MANAGER, company_id="c1"), company, MagicMock()
     )
 
 
@@ -166,5 +166,18 @@ def test_company_reads_still_admit_a_cashier() -> None:
     # The fix must not lock a cashier out of reading its own company; every receipt
     # shows the company name and VAT number.
     companies_router._check_company_access(
-        _user(UserRole.CASHIER, company_id="c1"), MagicMock(id="c1")
+        _user(UserRole.CASHIER, company_id="c1"), MagicMock(id="c1"), MagicMock()
     )
+
+
+def test_company_access_on_your_own_company_costs_no_query() -> None:
+    # The company guards take a Session now because a group manager's reach follows
+    # companies.parent_company_id. The overwhelmingly common case — acting on your own
+    # company — must still be answered without touching the database, or every request
+    # in the system grows a recursive CTE.
+    db = MagicMock()
+    companies_router._check_company_access(
+        _user(UserRole.COMPANY_MANAGER, company_id="c1"), MagicMock(id="c1"), db
+    )
+    db.execute.assert_not_called()
+    db.query.assert_not_called()

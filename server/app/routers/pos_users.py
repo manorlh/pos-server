@@ -20,6 +20,7 @@ from app.schemas.pos_user import (
     PosUserCreate, PosUserUpdate, PosUserResetPin, PosUserResponse,
 )
 from app.services.auth import get_password_hash
+from app.services.company_hierarchy import user_covers_company
 from app.services.pos_user_notify import notify_machines_for_shop_pos_users
 
 
@@ -44,7 +45,7 @@ def _check_read(user: User, shop: Shop, db: Session) -> None:
         return
     if user.role == UserRole.DISTRIBUTOR:
         return
-    if user.role == UserRole.COMPANY_MANAGER and shop.company_id == user.company_id:
+    if user.role == UserRole.COMPANY_MANAGER and user_covers_company(db, user, shop.company_id):
         return
     if user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER) and shop.id == user.shop_id:
         return

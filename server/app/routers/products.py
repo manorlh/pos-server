@@ -11,6 +11,7 @@ from app.models.user import User, UserRole
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, ProductListResponse
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
 from app.services.catalog_notify import notify_all_machines_for_tenant, notify_machine_catalog_changed
+from app.services.company_hierarchy import company_scope_ids, user_covers_company
 from app.services.product_validation import validate_open_price_update
 from app.services.sku_sequence import resolve_sku_for_create
 from app.services.tenant_sku_sequence import allocate_global_sku
@@ -23,10 +24,12 @@ _CATALOG_ROLES = (
 )
 
 
-def _check_product_access(user: User, product: Product):
+def _check_product_access(user: User, product: Product, db: Session):
     if user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
         return
-    if user.role == UserRole.COMPANY_MANAGER and product.company_id == user.company_id:
+    if user.role == UserRole.COMPANY_MANAGER and user_covers_company(
+        db, user, product.company_id
+    ):
         return
     if user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER) and product.shop_id == user.shop_id:
         return
@@ -70,7 +73,7 @@ def list_products(
     query = db.query(Product).filter(Product.tenant_id == active_tenant_id)
 
     if current_user.role == UserRole.COMPANY_MANAGER:
-        query = query.filter(Product.company_id == current_user.company_id)
+        query = query.filter(Product.company_id.in_(company_scope_ids(db, current_user)))
     elif current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
         query = query.filter(Product.shop_id == current_user.shop_id)
 
@@ -176,7 +179,7 @@ def get_product(
     if not product:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
     ensure_same_tenant(product.tenant_id, active_tenant_id)
-    _check_product_access(current_user, product)
+    _check_product_access(current_user, product, db)
     return product
 
 
@@ -195,7 +198,7 @@ def update_product(
     if not product:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
     ensure_same_tenant(product.tenant_id, active_tenant_id)
-    _check_product_access(current_user, product)
+    _check_product_access(current_user, product, db)
 
     if data.category_id and not db.query(Category).filter(Category.id == data.category_id).first():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Category not found")
@@ -256,7 +259,7 @@ def delete_product(
     if not product:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
     ensure_same_tenant(product.tenant_id, active_tenant_id)
-    _check_product_access(current_user, product)
+    _check_product_access(current_user, product, db)
 
     tenant_id = str(product.tenant_id) if product.tenant_id else None
     machine_id = str(product.pos_machine_id) if product.pos_machine_id else None

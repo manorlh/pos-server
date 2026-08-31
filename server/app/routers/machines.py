@@ -32,6 +32,7 @@ from app.services.sync import (
     get_catalog_change_watermark_for_machine,
 )
 from app.services.catalog_notify import notify_machine_catalog_changed
+from app.services.company_hierarchy import user_covers_company, visible_shop_ids
 from app.services.shop_validation import shop_belongs_to_company
 from app.services.realtime_info import (
     machine_realtime_connection_info,
@@ -144,7 +145,7 @@ def _check_machine_list_access(current_user: User, machine: POSMachine, db: Sess
         return True
     if current_user.role == UserRole.COMPANY_MANAGER and machine.shop_id:
         shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
-        return shop is not None and shop.company_id == current_user.company_id
+        return shop is not None and user_covers_company(db, current_user, shop.company_id)
     if current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
         return machine.shop_id == current_user.shop_id
     return False
@@ -181,8 +182,7 @@ def list_machines(
     if current_user.role == UserRole.DISTRIBUTOR:
         query = query.filter(POSMachine.distributor_id == current_user.id)
     elif current_user.role == UserRole.COMPANY_MANAGER:
-        company_shop_ids = db.query(Shop.id).filter(Shop.company_id == current_user.company_id)
-        query = query.filter(POSMachine.shop_id.in_(company_shop_ids))
+        query = query.filter(POSMachine.shop_id.in_(visible_shop_ids(db, current_user)))
     elif current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
         query = query.filter(POSMachine.shop_id == current_user.shop_id)
     elif current_user.role != UserRole.SUPER_ADMIN:
@@ -332,7 +332,7 @@ def update_machine(
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Shop not found")
             ensure_same_tenant(shop.tenant_id, active_tenant_id)
             if current_user.role == UserRole.COMPANY_MANAGER:
-                if shop.company_id != current_user.company_id:
+                if not user_covers_company(db, current_user, shop.company_id):
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
             if not shop_belongs_to_company(db, sid, shop.company_id):
                 raise HTTPException(
