@@ -24,6 +24,8 @@ interface Crumb {
   key: string;
   label: string;
   href?: string;
+  /** Runs instead of the default navigation on a plain left click. */
+  onNavigate?: () => void;
 }
 
 export function Breadcrumbs() {
@@ -37,8 +39,16 @@ export function Breadcrumbs() {
   const tenantName =
     tenants.find((tenant) => tenant.id === activeTenantId)?.name ?? t('organization');
 
+  /**
+   * The root crumb means "the whole organization", so it has to *drop* the scope
+   * rather than carry it: with the scope appended, clicking the organization's own
+   * name left you still looking at a single shop. It stays a real anchor so
+   * middle-click and open-in-new-tab keep working, but a plain click goes through
+   * `clear()`, which also forgets the remembered scope — otherwise the next reload
+   * would restore the branch the user just stepped out of.
+   */
   const crumbs: Crumb[] = [
-    { key: 'tenant', label: tenantName, href: `/dashboard${scope.scopeQuery}` },
+    { key: 'tenant', label: tenantName, href: '/dashboard', onNavigate: scope.clear },
   ];
 
   for (const company of scope.companyPath) {
@@ -93,6 +103,22 @@ export function Breadcrumbs() {
               {crumb.href && !last ? (
                 <Link
                   href={crumb.href}
+                  onClick={(event) => {
+                    if (!crumb.onNavigate) return;
+                    // Modified clicks belong to the browser: they open a new tab,
+                    // which must not change the scope in this one.
+                    if (
+                      event.metaKey ||
+                      event.ctrlKey ||
+                      event.shiftKey ||
+                      event.altKey ||
+                      event.button !== 0
+                    ) {
+                      return;
+                    }
+                    event.preventDefault();
+                    crumb.onNavigate();
+                  }}
                   className="max-w-[14rem] truncate rounded hover:text-foreground hover:underline"
                 >
                   {crumb.label}

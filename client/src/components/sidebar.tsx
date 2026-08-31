@@ -8,6 +8,7 @@ import { useTranslations } from 'next-intl';
 import { useClerk, useUser } from '@clerk/nextjs';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
+import { useScopeQuery } from '@/lib/scope';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
@@ -59,6 +60,9 @@ export function Sidebar() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { signOut } = useClerk();
+  // Nav links carry the scope, so picking a company and moving to another page
+  // holds your position in the hierarchy instead of snapping back to "all".
+  const scopeQuery = useScopeQuery((state) => state.query);
   const { user: clerkUser } = useUser();
   const { user: internalUser, tenants, activeTenantId, authHydrated, setActiveTenant, fetchUser, clearUser } =
     useAuth();
@@ -205,7 +209,7 @@ export function Sidebar() {
               return (
                 <Link
                   key={item.href}
-                  href={item.href}
+                  href={`${item.href}${scopeQuery}`}
                   className={cn(
                     'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
                     active
@@ -244,7 +248,7 @@ export function Sidebar() {
                       return (
                         <Link
                           key={item.href}
-                          href={item.href}
+                          href={`${item.href}${scopeQuery}`}
                           className={cn(
                             'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
                             active

@@ -43,6 +43,7 @@ import {
   useState,
 } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { create } from 'zustand';
 import { useQuery } from '@tanstack/react-query';
 import { fetchCompanies, fetchMachines, fetchShops } from './api';
 import { useAuth } from './auth';
@@ -126,6 +127,25 @@ function isDrillRoute(pathname: string): boolean {
   return DRILL_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
+/**
+ * The scope a drill-down path already states.
+ *
+ * `/dashboard/shops/<id>` names its shop in the path, so also writing
+ * `?shop=<id>` would put the same id in the URL twice. Ancestors are *not* in
+ * the path, so those still travel as query params: a shop page keeps
+ * `?company=` because nothing in `/dashboard/shops/<id>` says which company it
+ * belongs to. Only `[id]` routes live under these prefixes, so a segment here
+ * is always an id and never a sibling page name.
+ */
+function pathScope(pathname: string): Partial<ScopeSelection> {
+  const match = /^\/dashboard\/(companies|shops|machines)\/([^/]+)/.exec(pathname);
+  if (!match) return {};
+  const id = decodeURIComponent(match[2]);
+  if (match[1] === 'companies') return { companyId: id };
+  if (match[1] === 'shops') return { shopId: id };
+  return { machineId: id };
+}
+
 function drillHrefFor(level: Exclude<ScopeLevel, 'tenant'>, id: string): string {
   if (level === 'company') return `/dashboard/companies/${id}`;
   if (level === 'shop') return `/dashboard/shops/${id}`;
@@ -187,9 +207,26 @@ export interface ScopeContextValue extends ScopeSelection {
   registerSpec: (id: string, spec: PageScopeSpec | null) => void;
   resolution: PageScopeResolution | null;
 
-  /** A query string carrying the current scope, for links that should preserve it. */
-  scopeQuery: string;
 }
+
+/**
+ * The scope query string, mirrored outside the React context.
+ *
+ * The sidebar renders *outside* `ScopeProvider` — it is a sibling of the `<main>`
+ * the provider wraps, so the shell keeps painting while the provider's
+ * `useSearchParams` sits behind its Suspense boundary. The sidebar still needs the
+ * scope to build links that hold the user's position, so the provider publishes it
+ * here instead. This is a mirror for link-building only: the URL remains the
+ * source of truth, and before the provider mounts the query is simply empty, which
+ * yields plain unscoped links rather than broken ones.
+ */
+export const useScopeQuery = create<{
+  query: string;
+  publish: (query: string) => void;
+}>((set) => ({
+  query: '',
+  publish: (query) => set((prev) => (prev.query === query ? prev : { query })),
+}));
 
 const ScopeContext = createContext<ScopeContextValue | null>(null);
 
@@ -199,14 +236,16 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
   const searchParams = useSearchParams();
   const activeTenantId = useAuth((s) => s.activeTenantId);
 
-  const urlSelection = useMemo<ScopeSelection>(
-    () => ({
-      companyId: searchParams.get(SCOPE_PARAM.company) || null,
-      shopId: searchParams.get(SCOPE_PARAM.shop) || null,
-      machineId: searchParams.get(SCOPE_PARAM.machine) || null,
-    }),
-    [searchParams],
-  );
+  // The path is the stronger statement: on `/dashboard/shops/<id>` the route
+  // *is* the shop, so it wins over any `?shop=` that lingers in the query.
+  const urlSelection = useMemo<ScopeSelection>(() => {
+    const implied = pathScope(pathname);
+    return {
+      companyId: implied.companyId ?? (searchParams.get(SCOPE_PARAM.company) || null),
+      shopId: implied.shopId ?? (searchParams.get(SCOPE_PARAM.shop) || null),
+      machineId: implied.machineId ?? (searchParams.get(SCOPE_PARAM.machine) || null),
+    };
+  }, [pathname, searchParams]);
 
   const [specEntry, setSpecEntry] = useState<{ id: string; spec: PageScopeSpec } | null>(null);
   const spec = specEntry?.spec ?? null;
@@ -240,13 +279,16 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
   const commit = useCallback(
     (next: ScopeSelection, mode: 'push' | 'replace') => {
       const params = new URLSearchParams(searchParams.toString());
-      const apply = (key: string, value: string | null) => {
-        if (value) params.set(key, value);
+      const implied = pathScope(pathname);
+      // A level the path already names is dropped from the query rather than
+      // repeated, so the id never appears twice in one URL.
+      const apply = (key: string, value: string | null, impliedByPath: boolean) => {
+        if (value && !impliedByPath) params.set(key, value);
         else params.delete(key);
       };
-      apply(SCOPE_PARAM.company, next.companyId);
-      apply(SCOPE_PARAM.shop, next.shopId);
-      apply(SCOPE_PARAM.machine, next.machineId);
+      apply(SCOPE_PARAM.company, next.companyId, !!implied.companyId);
+      apply(SCOPE_PARAM.shop, next.shopId, !!implied.shopId);
+      apply(SCOPE_PARAM.machine, next.machineId, !!implied.machineId);
       const query = params.toString();
       const href = query ? `${pathname}?${query}` : pathname;
       writeStored(activeTenantId, next);
@@ -493,6 +535,11 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
     return query ? `?${query}` : '';
   }, [urlSelection]);
 
+  const publishScopeQuery = useScopeQuery((state) => state.publish);
+  useEffect(() => {
+    publishScopeQuery(scopeQuery);
+  }, [publishScopeQuery, scopeQuery]);
+
   const value = useMemo<ScopeContextValue>(
     () => ({
       ...urlSelection,
@@ -519,7 +566,6 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
       spec,
       registerSpec,
       resolution,
-      scopeQuery,
     }),
     [
       clear,
@@ -533,7 +579,6 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
       path,
       registerSpec,
       resolution,
-      scopeQuery,
       setCompany,
       setMachine,
       setScope,
