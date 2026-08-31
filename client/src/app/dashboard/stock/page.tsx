@@ -5,8 +5,9 @@ import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, fetchShopStock, postGoodsReceipt, postStockAdjustment, postStocktake } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { entitySelectItems } from '@/lib/selectItems';
-import type { Product, ProductListResponse, Shop, StockLevel } from '@/lib/types';
+import { usePageScope } from '@/lib/scope';
+import { ScopeGate } from '@/components/dashboard/scope-gate';
+import type { Product, ProductListResponse, StockLevel } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -58,18 +59,16 @@ export default function ShopStockPage() {
   const t = useTranslations('stock');
   const tc = useTranslations('common');
   const qc = useQueryClient();
-  const [shopId, setShopId] = useState<string>('');
+  // Stock is held per shop; there is no company-level or per-device stock, so the
+  // page asks for a shop and says so rather than showing an empty table.
+  const { resolution, effective } = usePageScope({ maxLevel: 'shop', minLevel: 'shop' });
+  const shopId = effective.shopId ?? '';
   const [actionOpen, setActionOpen] = useState(false);
   const [actionKind, setActionKind] = useState<ActionKind>('receipt');
   const [productId, setProductId] = useState('');
   const [quantity, setQuantity] = useState('');
   const [delta, setDelta] = useState('');
   const [note, setNote] = useState('');
-
-  const { data: shops = [] } = useQuery<Shop[]>({
-    queryKey: ['shops'],
-    queryFn: () => api.get('/shops').then((r) => r.data),
-  });
 
   const { data: productsData, isError: productsError } = useQuery<ProductListResponse>({
     queryKey: ['products', 'stock-tracked'],
@@ -188,22 +187,7 @@ export default function ShopStockPage() {
         </div>
       </div>
 
-      <div className="max-w-sm space-y-1">
-        <Label>{t('shop')}</Label>
-        <Select value={shopId} onValueChange={(v) => v && setShopId(v)} items={entitySelectItems(shops)}>
-          <SelectTrigger>
-            <SelectValue placeholder={t('selectShop')} />
-          </SelectTrigger>
-          <SelectContent>
-            {shops.map((s) => (
-              <SelectItem key={s.id} value={s.id} label={s.name}>
-                {s.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
+      <ScopeGate resolution={resolution}>
       <div className="rounded-lg border bg-card overflow-hidden">
         <Table>
           <TableHeader>
@@ -216,13 +200,7 @@ export default function ShopStockPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {!shopId ? (
-              <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                  {t('selectShopHint')}
-                </TableCell>
-              </TableRow>
-            ) : isLoading ? (
+            {isLoading ? (
               Array.from({ length: 4 }).map((_, i) => (
                 <TableRow key={i}>
                   {Array.from({ length: 5 }).map((_, j) => (
@@ -284,6 +262,7 @@ export default function ShopStockPage() {
           </TableBody>
         </Table>
       </div>
+      </ScopeGate>
 
       <Dialog open={actionOpen} onOpenChange={setActionOpen}>
         <DialogContent className="max-w-sm">

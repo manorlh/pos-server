@@ -5,6 +5,8 @@ import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { usePageScope } from '@/lib/scope';
+import { ScopeIgnoredNote } from '@/components/dashboard/scope-gate';
 import { Voucher, PaginatedResponse } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,6 +31,9 @@ const EMPTY: Partial<Voucher> = {
 export default function VouchersPage() {
   const t = useTranslations('vouchers');
   const tc = useTranslations('common');
+  // Vouchers are tenant-level print templates (`Voucher.tenantId`); a company or
+  // shop in scope does not narrow the list.
+  const { resolution } = usePageScope({ maxLevel: 'tenant' });
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Partial<Voucher>>(EMPTY);
@@ -72,6 +77,10 @@ export default function VouchersPage() {
           <Plus className="h-4 w-4 ms-1" /> {t('add')}
         </Button>
       </div>
+
+      {resolution.status === 'ok' && resolution.ignoredDeeper ? (
+        <ScopeIgnoredNote maxLevel={resolution.maxLevel} />
+      ) : null}
 
       <div className="rounded-lg border bg-card overflow-hidden">
         <Table>

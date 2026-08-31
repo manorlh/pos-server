@@ -1,14 +1,14 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { findBySameId } from '@/lib/entityLookup';
-import { entitySelectItems } from '@/lib/selectItems';
+import { usePageScope } from '@/lib/scope';
+import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
-  PosUser, PosUserCreate, PosUserUpdate, PosUserRole, Shop,
+  PosUser, PosUserCreate, PosUserUpdate, PosUserRole,
 } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
@@ -56,7 +56,10 @@ export default function PosUsersPage() {
   const { user: me } = useAuth();
   const qc = useQueryClient();
 
-  const [shopId, setShopId] = useState<string>('');
+  // Till operators belong to a shop and to nothing else, so the page needs one
+  // before it can show or create anything.
+  const { scope, resolution, effective } = usePageScope({ maxLevel: 'shop', minLevel: 'shop' });
+  const shopId = effective.shopId ?? '';
   const [includeInactive, setIncludeInactive] = useState(false);
 
   const [openEdit, setOpenEdit] = useState(false);
@@ -67,16 +70,8 @@ export default function PosUsersPage() {
 
   const isNew = !editing.id;
 
-  // Shops the dashboard user can see (server already RBAC-scopes /shops).
-  const { data: shops = [] } = useQuery<Shop[]>({
-    queryKey: ['shops'],
-    queryFn: () => api.get('/shops').then((r) => r.data),
-  });
-
-  const selectedShop = useMemo(
-    () => (shopId ? findBySameId(shops, shopId) : undefined),
-    [shopId, shops],
-  );
+  // Named from the shared scope's own shop list (server-RBAC-scoped /shops).
+  const selectedShop = scope.shop;
 
   const { data: users = [], isLoading } = useQuery<PosUser[]>({
     queryKey: ['pos-users', shopId, includeInactive],
@@ -194,24 +189,8 @@ export default function PosUsersPage() {
         )}
       </div>
 
-      <div className="rounded-lg border bg-card p-4 flex flex-wrap items-end gap-4">
-        <div className="space-y-1 min-w-[220px]">
-          <Label>{t('selectShop')}</Label>
-          <Select
-            value={shopId}
-            onValueChange={(v) => setShopId(v ?? '')}
-            items={entitySelectItems(shops)}
-          >
-            <SelectTrigger><SelectValue placeholder={t('selectShopPlaceholder')} /></SelectTrigger>
-            <SelectContent>
-              {shops.map((s) => (
-                <SelectItem key={s.id} value={s.id} label={s.name}>{s.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        {shopId && (
+      <ScopeGate resolution={resolution}>
+        <div className="rounded-lg border bg-card p-4 flex flex-wrap items-end gap-4">
           <div className="flex items-center gap-2">
             <Switch
               id="include-inactive"
@@ -220,12 +199,8 @@ export default function PosUsersPage() {
             />
             <Label htmlFor="include-inactive" className="cursor-pointer">{t('showInactive')}</Label>
           </div>
-        )}
-      </div>
+        </div>
 
-      {!shopId ? (
-        <p className="text-sm text-muted-foreground">{t('pickShopHint')}</p>
-      ) : (
         <div className="rounded-lg border bg-card overflow-hidden">
           <Table>
             <TableHeader>
@@ -299,7 +274,7 @@ export default function PosUsersPage() {
             </TableBody>
           </Table>
         </div>
-      )}
+      </ScopeGate>
 
       {/* Create / edit dialog */}
       <Dialog open={openEdit} onOpenChange={setOpenEdit}>

@@ -1,0 +1,199 @@
+'use client';
+
+/**
+ * Create / edit a shop. Shared by the shops list and the shop drill-down page.
+ *
+ * The company field here is part of the record being edited — which company the
+ * shop belongs to — and is not the dashboard's shared scope. It stays a field on
+ * the form for that reason; it is not one of the per-page scope pickers that were
+ * removed. It does show the company tree, so picking a parent or a child company
+ * is unambiguous.
+ */
+
+import { useState } from 'react';
+import { useTranslations } from 'next-intl';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { api, fetchCompanies } from '@/lib/api';
+import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { buildCompanyTree, companyPathLabel, MAX_TREE_INDENT_DEPTH } from '@/lib/companyTree';
+import type { Company, Shop } from '@/lib/types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+
+const EMPTY: Partial<Shop> = { name: '', branchId: '', address: '', city: '' };
+
+export function ShopFormDialog({
+  shop,
+  open,
+  onOpenChange,
+  onSaved,
+  /** Preselected company for a new shop — the company in scope, usually. */
+  defaultCompanyId,
+}: {
+  shop: Partial<Shop> | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSaved?: (saved: Shop) => void;
+  defaultCompanyId?: string | null;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm">
+        {/*
+          Mounted only while open: the form seeds its draft in `useState`, so no
+          effect is needed to re-sync it, and closing discards the draft.
+        */}
+        {open ? (
+          <ShopForm
+            shop={shop}
+            defaultCompanyId={defaultCompanyId}
+            onOpenChange={onOpenChange}
+            onSaved={onSaved}
+          />
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ShopForm({
+  shop,
+  defaultCompanyId,
+  onOpenChange,
+  onSaved,
+}: {
+  shop: Partial<Shop> | null;
+  defaultCompanyId?: string | null;
+  onOpenChange: (open: boolean) => void;
+  onSaved?: (saved: Shop) => void;
+}) {
+  const t = useTranslations('shops');
+  const tc = useTranslations('common');
+  const qc = useQueryClient();
+  const [draft, setDraft] = useState<Partial<Shop>>(
+    () => shop ?? { ...EMPTY, companyId: defaultCompanyId ?? undefined },
+  );
+  const isNew = !draft.id;
+
+  const { data: companies = [] } = useQuery<Company[]>({
+    queryKey: ['companies'],
+    queryFn: fetchCompanies,
+  });
+  const tree = buildCompanyTree(companies);
+
+  const save = useMutation({
+    mutationFn: async (s: Partial<Shop>) => {
+      const { data } = s.id
+        ? await api.put<Shop>(`/shops/${s.id}`, s)
+        : await api.post<Shop>('/shops', s);
+      return data;
+    },
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['shops'] });
+      toast.success(isNew ? t('created') : t('updated'));
+      onOpenChange(false);
+      onSaved?.(data);
+    },
+    onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
+  });
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>{isNew ? t('addTitle') : t('editTitle')}</DialogTitle>
+      </DialogHeader>
+      <div className="space-y-3">
+        <div className="space-y-1">
+          <Label>{t('name')}</Label>
+          <Input
+            value={draft.name ?? ''}
+            onChange={(e) => setDraft((s) => ({ ...s, name: e.target.value }))}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label>{t('company')}</Label>
+          <Select
+            value={draft.companyId ?? ''}
+            onValueChange={(v) => setDraft((s) => ({ ...s, companyId: (v as string) ?? undefined }))}
+            items={tree.flat.map((node) => ({
+              value: node.company.id,
+              label: companyPathLabel(tree, node.company.id, node.company.name),
+            }))}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder={t('selectCompany')} />
+            </SelectTrigger>
+            <SelectContent>
+              {tree.flat.map((node) => (
+                <SelectItem
+                  key={node.company.id}
+                  value={node.company.id}
+                  label={companyPathLabel(tree, node.company.id, node.company.name)}
+                >
+                  <span
+                    style={{
+                      paddingInlineStart: `${
+                        Math.min(node.depth, MAX_TREE_INDENT_DEPTH) * 0.85
+                      }rem`,
+                    }}
+                  >
+                    {node.depth > 0 ? '↳ ' : ''}
+                    {node.company.name}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <Label>{t('branchId')}</Label>
+            <Input
+              value={draft.branchId ?? ''}
+              placeholder={t('branchIdPlaceholder')}
+              onChange={(e) => setDraft((s) => ({ ...s, branchId: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label>{t('city')}</Label>
+            <Input
+              value={draft.city ?? ''}
+              onChange={(e) => setDraft((s) => ({ ...s, city: e.target.value }))}
+            />
+          </div>
+        </div>
+        <div className="space-y-1">
+          <Label>{t('address')}</Label>
+          <Input
+            value={draft.address ?? ''}
+            onChange={(e) => setDraft((s) => ({ ...s, address: e.target.value }))}
+          />
+        </div>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={() => onOpenChange(false)}>
+          {tc('cancel')}
+        </Button>
+        <Button onClick={() => save.mutate(draft)} disabled={save.isPending}>
+          {save.isPending ? tc('saving') : tc('save')}
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}

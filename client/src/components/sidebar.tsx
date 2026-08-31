@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
@@ -8,34 +8,17 @@ import { useTranslations } from 'next-intl';
 import { useClerk, useUser } from '@clerk/nextjs';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
-import { api, fetchTenantSettings, patchTenantSettings } from '@/lib/api';
+import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { PosSettingsForm } from '@/components/pos-settings-form';
-import type { PosSettingsV1 } from '@/lib/types';
+import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
+import { NAV_SECTIONS, findNavEntry, findNavSectionId, type NavItem } from '@/lib/navigation';
 import {
-  LayoutDashboard,
-  Package,
-  Tag,
-  Ticket,
-  Monitor,
-  Building2,
-  Store,
-  Users,
-  ListFilter,
   LogOut,
   ChevronLeft,
+  ChevronDown,
   User,
-  Receipt,
-  FileText,
-  FileBarChart,
-  IdCard,
   Plus,
   Settings2,
-  Boxes,
-  Coins,
-  Package2,
-  UserRoundCheck,
-  Palette,
 } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -82,36 +65,9 @@ export function Sidebar() {
   const [createOpen, setCreateOpen] = useState(false);
   const [newTenantName, setNewTenantName] = useState('');
   const [creating, setCreating] = useState(false);
+  // Tenant-level POS settings use the same dialog as the company and shop levels
+  // (see `EntityPosSettingsDialog`); the three used to be three copies.
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [tenantSettings, setTenantSettings] = useState<PosSettingsV1>({});
-  const [savingSettings, setSavingSettings] = useState(false);
-
-  const openTenantSettings = async () => {
-    if (!activeTenantId) return;
-    setTenantSettings({});
-    setSettingsOpen(true);
-    try {
-      const res = await fetchTenantSettings(activeTenantId);
-      setTenantSettings(res.settings ?? {});
-    } catch (err: unknown) {
-      toast.error(axiosErrorToToastMessage(err, tc('error')));
-      setSettingsOpen(false);
-    }
-  };
-
-  const handleSaveTenantSettings = async () => {
-    if (!activeTenantId) return;
-    setSavingSettings(true);
-    try {
-      await patchTenantSettings(activeTenantId, tenantSettings);
-      toast.success(tps('saved'));
-      setSettingsOpen(false);
-    } catch (err: unknown) {
-      toast.error(axiosErrorToToastMessage(err, tc('error')));
-    } finally {
-      setSavingSettings(false);
-    }
-  };
 
   const displayName = clerkUser?.username ?? clerkUser?.firstName ?? internalUser?.username ?? '??';
   const displayRole = internalUser?.role ?? '';
@@ -159,30 +115,31 @@ export function Sidebar() {
   const canReadUsers = authHydrated && internalUser?.canReadUsers === true;
   const canManagePosUsers = authHydrated && internalUser?.canManagePosUsers === true;
 
-  const nav = [
-    { href: '/dashboard', label: t('overview'), icon: LayoutDashboard },
-    { href: '/dashboard/products', label: t('products'), icon: Package },
-    { href: '/dashboard/categories', label: t('categories'), icon: Tag },
-    { href: '/dashboard/vouchers', label: t('vouchers'), icon: Ticket },
-    { href: '/dashboard/machines', label: t('machines'), icon: Monitor },
-    { href: '/dashboard/companies', label: t('companies'), icon: Building2 },
-    { href: '/dashboard/shops', label: t('shops'), icon: Store },
-    { href: '/dashboard/shops/assortment', label: t('assortment'), icon: ListFilter },
-    { href: '/dashboard/shops/stock', label: t('stock'), icon: Boxes },
-    { href: '/dashboard/product-sales', label: t('productSales'), icon: Package2 },
-    { href: '/dashboard/cashier-sales', label: t('cashierSales'), icon: UserRoundCheck },
-    { href: '/dashboard/tips', label: t('tips'), icon: Coins },
-    { href: '/dashboard/tax-reports', label: t('taxReports'), icon: FileText },
-    { href: '/dashboard/transactions', label: t('transactions'), icon: Receipt },
-    { href: '/dashboard/z-reports', label: t('zReports'), icon: FileBarChart },
-    ...(canManagePosUsers
-      ? [{ href: '/dashboard/pos-users', label: t('posUsers'), icon: IdCard }]
-      : []),
-    ...(canReadUsers ? [{ href: '/dashboard/users', label: t('users'), icon: Users }] : []),
-    ...(canManageBranding
-      ? [{ href: '/dashboard/branding', label: t('branding'), icon: Palette }]
-      : []),
-  ];
+  // Same three gates as before, now expressed once and applied to the grouped
+  // table in lib/navigation. Nobody gains an entry they did not already have.
+  const allows = (item: NavItem): boolean => {
+    if (item.gate === 'canReadUsers') return canReadUsers;
+    if (item.gate === 'canManagePosUsers') return canManagePosUsers;
+    if (item.gate === 'branding') return canManageBranding;
+    return true;
+  };
+
+  const sections = useMemo(
+    () =>
+      NAV_SECTIONS.map((section) => ({
+        ...section,
+        items: section.items.filter(allows),
+      })).filter((section) => section.items.length > 0),
+    // `allows` closes over the three capability flags; recompute when they change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canReadUsers, canManagePosUsers, canManageBranding],
+  );
+
+  const activeEntry = findNavEntry(pathname);
+  const activeSectionId = findNavSectionId(pathname);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const isOpen = (sectionId: string) =>
+    sectionId === activeSectionId ? true : collapsed[sectionId] !== true;
 
   const handleSignOut = async () => {
     clearUser();
@@ -229,7 +186,7 @@ export function Sidebar() {
                 className="size-8 shrink-0"
                 disabled={!activeTenantId}
                 title={tps('tenantTitle')}
-                onClick={() => void openTenantSettings()}
+                onClick={() => setSettingsOpen(true)}
               >
                 <Settings2 className="size-3.5" />
               </Button>
@@ -237,23 +194,74 @@ export function Sidebar() {
           </div>
         </div>
         <Separator />
-        <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
-          {nav.map(({ href, label, icon: Icon }) => (
-            <Link
-              key={href}
-              href={href}
-              className={cn(
-                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                pathname === href
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-              )}
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              {label}
-              {pathname === href && <ChevronLeft className="me-auto h-3 w-3" />}
-            </Link>
-          ))}
+        <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-3">
+          {sections.map((section) => {
+            // A single-entry section (Overview) is the whole thing — a heading
+            // above one link would be noise, so it renders bare.
+            if (section.items.length === 1 && section.id === 'overview') {
+              const item = section.items[0];
+              const Icon = item.icon;
+              const active = activeEntry?.href === item.href;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                    active
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                  )}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  {t(item.labelKey)}
+                  {active && <ChevronLeft className="me-auto h-3 w-3" />}
+                </Link>
+              );
+            }
+
+            const open = isOpen(section.id);
+            return (
+              <div key={section.id} className="space-y-0.5">
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  onClick={() =>
+                    setCollapsed((prev) => ({ ...prev, [section.id]: open }))
+                  }
+                  className="flex w-full items-center gap-1.5 rounded-md px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70 transition-colors hover:text-foreground"
+                >
+                  <ChevronDown
+                    className={cn('h-3 w-3 transition-transform', !open && 'rotate-90')}
+                    aria-hidden
+                  />
+                  {t(section.labelKey)}
+                </button>
+                {open
+                  ? section.items.map((item) => {
+                      const Icon = item.icon;
+                      const active = activeEntry?.href === item.href;
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          className={cn(
+                            'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                            active
+                              ? 'bg-primary text-primary-foreground'
+                              : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                          )}
+                        >
+                          <Icon className="h-4 w-4 shrink-0" />
+                          {t(item.labelKey)}
+                          {active && <ChevronLeft className="me-auto h-3 w-3" />}
+                        </Link>
+                      );
+                    })
+                  : null}
+              </div>
+            );
+          })}
         </nav>
         <Separator />
         <div className="p-3">
@@ -323,23 +331,12 @@ export function Sidebar() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{tps('tenantTitle')}</DialogTitle>
-            <p className="text-sm text-muted-foreground">{tps('tenantSubtitle')}</p>
-          </DialogHeader>
-          <PosSettingsForm value={tenantSettings} onChange={setTenantSettings} />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSettingsOpen(false)}>
-              {tc('cancel')}
-            </Button>
-            <Button onClick={() => void handleSaveTenantSettings()} disabled={savingSettings}>
-              {savingSettings ? tc('saving') : tc('save')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <EntityPosSettingsDialog
+        level="tenant"
+        entityId={activeTenantId}
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+      />
     </>
   );
 }

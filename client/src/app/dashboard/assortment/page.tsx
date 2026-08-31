@@ -5,10 +5,10 @@ import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { entitySelectItems } from '@/lib/selectItems';
+import { usePageScope } from '@/lib/scope';
+import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { cn } from '@/lib/utils';
 import {
-  Shop,
   ShopProductCatalogCandidate,
   ShopProductCatalogCandidateListResponse,
   ShopProductCatalogRow,
@@ -28,7 +28,6 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { ChevronRight, Pencil, Plus, Trash2 } from 'lucide-react';
 
@@ -375,7 +374,10 @@ export default function ShopAssortmentPage() {
   const t = useTranslations('assortment');
   const tc = useTranslations('common');
   const qc = useQueryClient();
-  const [shopId, setShopId] = useState<string>('');
+  // Assortment is a per-shop concept and nothing else: a device does not have its
+  // own assortment, and a company-wide one would not be a thing the till can read.
+  const { resolution, effective } = usePageScope({ maxLevel: 'shop', minLevel: 'shop' });
+  const shopId = effective.shopId ?? '';
   const [tab, setTab] = useState<'assortment' | 'library'>('assortment');
   const [page, setPage] = useState(1);
   const [libraryPage, setLibraryPage] = useState(1);
@@ -385,10 +387,24 @@ export default function ShopAssortmentPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
 
-  const { data: shops = [] } = useQuery<Shop[]>({
-    queryKey: ['shops'],
-    queryFn: () => api.get('/shops').then((r) => r.data),
-  });
+  /**
+   * Paging, the search box and any open dialog belong to the shop that was in
+   * scope when they were set; a scope change is a different shop, so they start
+   * over. Done by tracking which shop the view state belongs to and resetting
+   * during render — React's own answer for "adjust state when input changes" —
+   * rather than in an effect, which would render the previous shop's page number
+   * against the new shop's rows for one frame.
+   */
+  const [stateForShopId, setStateForShopId] = useState(shopId);
+  if (stateForShopId !== shopId) {
+    setStateForShopId(shopId);
+    setPage(1);
+    setLibraryPage(1);
+    setSearch('');
+    setSearchInput('');
+    setEditOpen(false);
+    setEditingRow(null);
+  }
 
   const { data: assortmentData, isLoading } = useQuery<ShopProductCatalogRowListResponse>({
     queryKey: ['shop-product-overrides', shopId, page],
@@ -442,39 +458,7 @@ export default function ShopAssortmentPage() {
         <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
       </div>
 
-      <div className="flex flex-wrap items-end gap-4 max-w-md">
-        <div className="space-y-2 flex-1 min-w-[200px]">
-          <Label>{t('selectShop')}</Label>
-          <Select
-            value={shopId || undefined}
-            onValueChange={(v) => {
-              setShopId(v ?? '');
-              setPage(1);
-              setLibraryPage(1);
-              setSearch('');
-              setSearchInput('');
-              setEditOpen(false);
-              setEditingRow(null);
-            }}
-            items={entitySelectItems(shops)}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder={t('selectShopPlaceholder')} />
-            </SelectTrigger>
-            <SelectContent>
-              {shops.map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  {s.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      {!shopId ? (
-        <p className="text-muted-foreground text-sm">{t('pickShopHint')}</p>
-      ) : (
+      <ScopeGate resolution={resolution}>
         <>
           <div className="flex gap-2 border-b pb-2">
             <Button
@@ -669,7 +653,7 @@ export default function ShopAssortmentPage() {
             </>
           )}
         </>
-      )}
+      </ScopeGate>
     </div>
   );
 }

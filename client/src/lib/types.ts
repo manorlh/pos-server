@@ -45,9 +45,72 @@ export interface Company {
   vatNumber?: string;
   address?: string;
   city?: string;
+  /**
+   * Parent company, for tenants that nest their legal entities. Nullable on the
+   * wire and `undefined` on a server that predates the column, so treat both as
+   * "this company is a root" — see `buildCompanyTree`, which never drops a row
+   * whose parent it cannot resolve.
+   */
+  parentCompanyId?: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+// ── Dashboard scope (organization ▸ company ▸ shop ▸ device) ───────────────────
+
+/**
+ * How deep the dashboard's shared scope currently points.
+ *
+ * The tenant is always in scope (it is the `X-Tenant-Id` header); the three
+ * deeper levels are the shared selection every page reads instead of carrying its
+ * own pickers. Ordered shallow → deep; compare with `SCOPE_LEVEL_ORDER`.
+ */
+export type ScopeLevel = 'tenant' | 'company' | 'shop' | 'machine';
+
+/** The scope as it lives in the URL query and in localStorage. */
+export interface ScopeSelection {
+  companyId: string | null;
+  shopId: string | null;
+  machineId: string | null;
+}
+
+/**
+ * One company plus its position in the tenant's company tree.
+ *
+ * `depth` is how far to indent. `parentMissing` marks a company whose
+ * `parentCompanyId` points at something the caller cannot see (a parent in
+ * another tenant, or one filtered out by role scoping): the row is still shown,
+ * as a root, flagged — dropping it would hide a real company.
+ */
+export interface CompanyTreeNode {
+  company: Company;
+  depth: number;
+  children: CompanyTreeNode[];
+  parentMissing: boolean;
+}
+
+/** Flat, depth-first render list plus the lookups the UI needs. */
+export interface CompanyTree {
+  roots: CompanyTreeNode[];
+  /** Depth-first order — render this directly for an indented list. */
+  flat: CompanyTreeNode[];
+  byId: Map<string, CompanyTreeNode>;
+  /** False when no company has a parent — the common case; render it flat. */
+  nested: boolean;
+}
+
+// ── Category ordering ─────────────────────────────────────────────────────────
+
+/** One row of `PUT /categories/reorder`. */
+export interface CategoryReorderEntry {
+  id: string;
+  sortOrder: number;
+}
+
+/** `PUT /categories/reorder` → how many rows the server actually moved. */
+export interface CategoryReorderResponse {
+  updated: number;
 }
 
 export interface PairingSessionCreateResponse {

@@ -1,6 +1,20 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+/**
+ * Today's takings for whatever the shared scope points at.
+ *
+ * This panel used to carry its own company and shop dropdowns — two more copies
+ * of the pickers that were on every other page. They are gone: the scope bar in
+ * the dashboard shell is the only place a company or shop is chosen, and clicking
+ * a bar in the breakdown moves that shared scope rather than a local `useState`,
+ * so drilling in here also updates the URL, the breadcrumbs and every other page.
+ *
+ * One honest caveat is surfaced rather than hidden: the server's `companyId`
+ * filter matches a company's own shops, not its descendants', so a parent company
+ * with child companies gets a note saying the roll-up covers its own shops only.
+ */
+
+import { useMemo } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import {
@@ -24,24 +38,15 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { api, fetchDashboardBreakdown, fetchDashboardStats } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
-import { entitySelectItems } from '@/lib/selectItems';
-import type { Company, DashboardBreakdownRow, Shop } from '@/lib/types';
+import { fetchDashboardBreakdown, fetchDashboardStats } from '@/lib/api';
+import { useScope } from '@/lib/scope';
+import { companyChildren } from '@/lib/companyTree';
+import type { DashboardBreakdownRow, ScopeSelection } from '@/lib/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 
 const POLL_MS = 10_000;
-const ALL = 'all';
 /** Hex fallbacks — Recharts SVG fill is unreliable with bare CSS variables in some browsers. */
 const CHART_COLORS = ['#3b82f6', '#14b8a6', '#f59e0b', '#ef4444', '#a855f7'];
 const PAYMENT_COLORS = {
@@ -104,46 +109,23 @@ function StatCard({
   );
 }
 
-export function SalesStats() {
+export function SalesStats({ scope: override }: { scope?: ScopeSelection }) {
   const t = useTranslations('dashboard.sales');
-  const role = useAuth((s) => s.user?.role);
+  const tScope = useTranslations('scope');
+  const scope = useScope();
   const dayBounds = useMemo(() => getLocalDayBounds(), []);
 
-  const [companyId, setCompanyId] = useState<string>(ALL);
-  const [shopId, setShopId] = useState<string>(ALL);
-
-  const companies = useQuery<Company[]>({
-    queryKey: ['dashboard-companies'],
-    queryFn: () => api.get('/companies').then((r) => r.data),
-  });
-
-  // A single-company scope (e.g. company_manager, or a one-company tenant) drills to shops directly.
-  const effectiveCompanyId = useMemo(() => {
-    if (companyId !== ALL) return companyId;
-    if (companies.data && companies.data.length === 1) return companies.data[0].id;
-    return undefined;
-  }, [companyId, companies.data]);
-
-  const shops = useQuery<Shop[]>({
-    queryKey: ['dashboard-shops', effectiveCompanyId ?? ALL],
-    queryFn: () =>
-      api
-        .get('/shops', { params: effectiveCompanyId ? { companyId: effectiveCompanyId } : undefined })
-        .then((r) => r.data),
-  });
-
-  // Reset shop selection whenever the company scope changes.
-  useEffect(() => {
-    setShopId(ALL);
-  }, [companyId]);
+  // A drill-down page passes its own route entity; the overview uses the bar.
+  const selection: ScopeSelection = override ?? scope.selection;
 
   const statsParams = useMemo(
     () => ({
       ...dayBounds,
-      companyId: effectiveCompanyId,
-      shopId: shopId !== ALL ? shopId : undefined,
+      companyId: selection.companyId ?? undefined,
+      shopId: selection.shopId ?? undefined,
+      machineId: selection.machineId ?? undefined,
     }),
-    [dayBounds, effectiveCompanyId, shopId],
+    [dayBounds, selection.companyId, selection.machineId, selection.shopId],
   );
 
   const stats = useQuery({
@@ -154,29 +136,28 @@ export function SalesStats() {
     refetchOnWindowFocus: true,
   });
 
-  // Breakdown: by company at the top level, by shop once a company is in scope.
-  // Hidden entirely when a single shop is selected (the KPIs already represent it).
+  /**
+   * Breakdown: by company at the top level, by shop once a company is in scope,
+   * and nothing at all once a single shop or device is — the KPIs above already
+   * represent exactly that one row.
+   */
   const breakdownMode: 'company' | 'shop' | null = useMemo(() => {
-    if (shopId !== ALL) return null;
-    if (effectiveCompanyId) return 'shop';
-    return 'company';
-  }, [shopId, effectiveCompanyId]);
+    if (selection.shopId || selection.machineId) return null;
+    return selection.companyId ? 'shop' : 'company';
+  }, [selection.companyId, selection.machineId, selection.shopId]);
 
   const breakdown = useQuery({
-    queryKey: ['dashboard-breakdown', dayBounds, breakdownMode, effectiveCompanyId ?? ALL],
+    queryKey: ['dashboard-breakdown', dayBounds, breakdownMode, selection.companyId ?? 'all'],
     queryFn: () =>
       fetchDashboardBreakdown({
         ...dayBounds,
-        companyId: breakdownMode === 'shop' ? effectiveCompanyId : undefined,
+        companyId: breakdownMode === 'shop' ? selection.companyId ?? undefined : undefined,
       }),
     enabled: breakdownMode !== null,
     placeholderData: keepPreviousData,
     refetchInterval: POLL_MS,
     refetchOnWindowFocus: true,
   });
-
-  const showCompanySelect = (companies.data?.length ?? 0) > 1;
-  const showShopSelect = !!effectiveCompanyId && (shops.data?.length ?? 0) > 1;
 
   const paymentChartData = useMemo(() => {
     if (!stats.data) return [];
@@ -189,13 +170,16 @@ export function SalesStats() {
   const breakdownRows = breakdown.data?.rows ?? [];
   const breakdownInitialLoad = breakdown.isPending && breakdownRows.length === 0;
 
+  // Clicking a bar moves the shared scope, so the drill-in is shareable and
+  // reversible with the browser's Back button.
   const handleBarClick = (row: DashboardBreakdownRow) => {
-    if (breakdownMode === 'company') {
-      setCompanyId(row.id);
-    } else if (breakdownMode === 'shop') {
-      setShopId(row.id);
-    }
+    if (override) return;
+    if (breakdownMode === 'company') scope.setCompany(row.id);
+    else if (breakdownMode === 'shop') scope.setShop(row.id);
   };
+
+  const hasChildCompanies =
+    !!selection.companyId && companyChildren(scope.tree, selection.companyId).length > 0;
 
   if (stats.isError) {
     return (
@@ -207,62 +191,18 @@ export function SalesStats() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <h2 className="text-lg font-semibold">{t('title')}</h2>
-          <Badge variant="secondary" className="text-xs">
-            {t('live')}
-          </Badge>
-        </div>
-
-        <div className="flex flex-wrap items-end gap-3 ms-auto">
-          {showCompanySelect ? (
-            <div className="space-y-1">
-              <Label className="text-xs">{t('company')}</Label>
-              <Select
-                value={companyId}
-                onValueChange={(v) => setCompanyId((v as string) ?? ALL)}
-                items={[{ value: ALL, label: t('allCompanies') }, ...entitySelectItems(companies.data ?? [])]}
-              >
-                <SelectTrigger size="sm" className="min-w-44">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>{t('allCompanies')}</SelectItem>
-                  {(companies.data ?? []).map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          ) : null}
-
-          {showShopSelect ? (
-            <div className="space-y-1">
-              <Label className="text-xs">{t('shop')}</Label>
-              <Select
-                value={shopId}
-                onValueChange={(v) => setShopId((v as string) ?? ALL)}
-                items={[{ value: ALL, label: t('allShops') }, ...entitySelectItems(shops.data ?? [])]}
-              >
-                <SelectTrigger size="sm" className="min-w-44">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>{t('allShops')}</SelectItem>
-                  {(shops.data ?? []).map((s) => (
-                    <SelectItem key={s.id} value={s.id}>
-                      {s.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          ) : null}
-        </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-lg font-semibold">{t('title')}</h2>
+        <Badge variant="secondary" className="text-xs">
+          {t('live')}
+        </Badge>
       </div>
+
+      {hasChildCompanies ? (
+        <p className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          {tScope('companyRollupDirectOnly')}
+        </p>
+      ) : null}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <StatCard
@@ -341,7 +281,7 @@ export function SalesStats() {
                 <CardTitle className="text-sm font-medium text-muted-foreground">
                   {breakdownMode === 'company' ? t('byCompany') : t('byShop')}
                 </CardTitle>
-                {breakdownRows.length > 0 ? (
+                {breakdownRows.length > 0 && !override ? (
                   <span className="text-xs text-muted-foreground">{t('drillHint')}</span>
                 ) : null}
               </div>
@@ -380,7 +320,7 @@ export function SalesStats() {
                       <Bar
                         dataKey="grossRevenue"
                         radius={[0, 4, 4, 0]}
-                        cursor="pointer"
+                        cursor={override ? 'default' : 'pointer'}
                         onClick={(data: unknown) => handleBarClick((data as { payload: DashboardBreakdownRow }).payload)}
                       >
                         {breakdownRows.map((_, index) => (

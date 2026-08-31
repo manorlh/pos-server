@@ -6,6 +6,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { activateUser, api, deactivateUser } from '@/lib/api';
 import { entitySelectItems } from '@/lib/selectItems';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { usePageScope } from '@/lib/scope';
+import { ScopeIgnoredNote } from '@/components/dashboard/scope-gate';
 import { User, UserRole, Company, Shop } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
@@ -74,6 +76,10 @@ export default function UsersPage() {
   const t = useTranslations('users');
   const tc = useTranslations('common');
   const { user: me, authHydrated } = useAuth();
+  // `GET /users` takes no scope filters — the server decides which staff a caller
+  // may see from their own role. So the shared scope does not narrow this list,
+  // and the page says so instead of implying the selection was applied.
+  const { resolution } = usePageScope({ maxLevel: 'tenant' });
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<UserForm>(EMPTY);
@@ -228,6 +234,10 @@ export default function UsersPage() {
           </Button>
         )}
       </div>
+
+      {resolution.status === 'ok' && resolution.ignoredDeeper ? (
+        <ScopeIgnoredNote maxLevel={resolution.maxLevel} />
+      ) : null}
 
       {denied || loadFailed ? (
         <ReportErrorState

@@ -6,6 +6,8 @@ import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { entitySelectItems } from '@/lib/selectItems';
+import { usePageScope } from '@/lib/scope';
+import { ScopeIgnoredNote } from '@/components/dashboard/scope-gate';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { Product, Category, ProductListResponse, Voucher, PaginatedResponse } from '@/lib/types';
 import { ProductImageUpload } from '@/components/product-image-upload';
@@ -62,6 +64,13 @@ export default function ProductsPage() {
   const t = useTranslations('products');
   const tc = useTranslations('common');
   const { user } = useAuth();
+  /**
+   * This is the tenant's *global* catalogue — one list of master products, not a
+   * per-shop one. A shop or device in scope cannot narrow it, so rather than
+   * pretend otherwise the page says the scope is not filtering here; per-shop
+   * price, listing and availability live on the assortment page.
+   */
+  const { resolution } = usePageScope({ maxLevel: 'tenant' });
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Partial<Product>>(EMPTY);
@@ -134,6 +143,10 @@ export default function ProductsPage() {
           <Plus className="h-4 w-4 ms-1" /> {t('add')}
         </Button>
       </div>
+
+      {resolution.status === 'ok' && resolution.ignoredDeeper ? (
+        <ScopeIgnoredNote maxLevel={resolution.maxLevel} />
+      ) : null}
 
       <div className="rounded-lg border bg-card overflow-hidden">
         <Table>

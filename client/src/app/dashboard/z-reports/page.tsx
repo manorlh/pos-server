@@ -3,31 +3,27 @@
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
-import { api, fetchZReports, type ZReportListParams } from '@/lib/api';
-import { entitySelectItems } from '@/lib/selectItems';
+import { fetchZReports, type ZReportListParams } from '@/lib/api';
+import { usePageScope } from '@/lib/scope';
+import { findBySameId } from '@/lib/entityLookup';
+import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
-import { PosMachine, Shop, ZReport, ZReportListResponse } from '@/lib/types';
+import { ZReport, ZReportListResponse } from '@/lib/types';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
-import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { ChevronLeft, ChevronRight, Monitor, X } from 'lucide-react';
-import { normalizePosMachine } from '@/lib/posMachine';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 const PAGE_SIZE = 50;
-const ALL = 'all';
 
 /** The zone a `datetime-local` input's value is read in — the browser's own. */
 const BROWSER_TZ = (() => {
@@ -54,9 +50,14 @@ function localInputToIso(value: string): string | undefined {
 export default function ZReportsPage() {
   const t = useTranslations('zReports');
   const tc = useTranslations('common');
-  const [machineIds, setMachineIds] = useState<string[]>([]);
-  const [machinePickerOpen, setMachinePickerOpen] = useState(false);
-  const [shopId, setShopId] = useState<string>(ALL);
+  // `GET /z-reports` filters by shopId and machineIds; there is no company filter.
+  const { scope, resolution, effective } = usePageScope({
+    maxLevel: 'machine',
+    unsupported: ['company'],
+  });
+  const shopId = effective.shopId;
+  const machineId = effective.machineId;
+
   const [from, setFrom] = useState<string>('');
   const [to, setTo] = useState<string>('');
   const [closedFrom, setClosedFrom] = useState<string>('');
@@ -64,24 +65,21 @@ export default function ZReportsPage() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<ZReport | null>(null);
 
-  const { data: machines = [] } = useQuery<PosMachine[]>({
-    queryKey: ['machines'],
-    queryFn: async () => {
-      const { data } = await api.get('/machines');
-      const list = Array.isArray(data) ? data : [];
-      return list.map((row: Record<string, unknown>) => normalizePosMachine(row));
-    },
-  });
-
-  const { data: shops = [] } = useQuery<Shop[]>({
-    queryKey: ['shops'],
-    queryFn: () => api.get('/shops').then((r) => r.data),
-  });
+  // Same reasoning as the transactions list: a new scope is a new result set, so
+  // the page number resets during render rather than one frame later.
+  const scopeKey = `${shopId ?? ''}|${machineId ?? ''}`;
+  const [pageScopeKey, setPageScopeKey] = useState(scopeKey);
+  if (pageScopeKey !== scopeKey) {
+    setPageScopeKey(scopeKey);
+    setPage(1);
+  }
 
   const params = useMemo<ZReportListParams>(() => {
     const p: ZReportListParams = { page, pageSize: PAGE_SIZE };
-    if (machineIds.length > 0) p.machineIds = machineIds;
-    if (shopId !== ALL) p.shopId = shopId;
+    // The endpoint takes a repeatable machineIds; the scope names one device, so
+    // it goes in as a single-element list rather than through a second parameter.
+    if (machineId) p.machineIds = [machineId];
+    if (shopId) p.shopId = shopId;
     if (from) p.from = from;
     if (to) p.to = to;
     const cf = localInputToIso(closedFrom);
@@ -89,7 +87,7 @@ export default function ZReportsPage() {
     if (cf) p.closedFrom = cf;
     if (ct) p.closedTo = ct;
     return p;
-  }, [machineIds, shopId, from, to, closedFrom, closedTo, page]);
+  }, [machineId, shopId, from, to, closedFrom, closedTo, page]);
 
   const { data, isLoading, isFetching, isError, error } = useQuery<ZReportListResponse>({
     queryKey: ['z-reports', params],
@@ -101,18 +99,6 @@ export default function ZReportsPage() {
 
   const resetPage = () => setPage(1);
 
-  const toggleMachine = (id: string) => {
-    resetPage();
-    setMachineIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-  };
-
-  const machineFilterLabel =
-    machineIds.length === 0
-      ? t('allMachines')
-      : machineIds.length === 1
-        ? machines.find((m) => m.id === machineIds[0])?.name ?? t('machineSelected', { count: 1 })
-        : t('machineSelected', { count: machineIds.length });
-
   const hasClosedFilter = Boolean(closedFrom || closedTo);
 
   return (
@@ -122,36 +108,9 @@ export default function ZReportsPage() {
         <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
       </div>
 
+      <ScopeGate resolution={resolution}>
       <div className="rounded-lg border bg-card p-4 space-y-3">
-        <div className="grid gap-3 md:grid-cols-4">
-          <div className="space-y-1">
-            <Label className="text-xs">{t('filterMachines')}</Label>
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full justify-between font-normal"
-              onClick={() => setMachinePickerOpen(true)}
-            >
-              <span className="truncate">{machineFilterLabel}</span>
-              <Monitor className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden />
-            </Button>
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">{t('filterShop')}</Label>
-            <Select
-              value={shopId}
-              onValueChange={(v) => { setShopId(v ?? ALL); resetPage(); }}
-              items={[{ value: ALL, label: t('all') }, ...entitySelectItems(shops)]}
-            >
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL} label={t('all')}>{t('all')}</SelectItem>
-                {shops.map((s) => (
-                  <SelectItem key={s.id} value={s.id} label={s.name}>{s.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        <div className="grid gap-3 md:grid-cols-2">
           <div className="space-y-1">
             <Label className="text-xs">{t('filterFrom')}</Label>
             <Input
@@ -193,30 +152,15 @@ export default function ZReportsPage() {
           {t('closedAtFilterHint', { tz: BROWSER_TZ })}
         </p>
 
-        {machineIds.length > 0 || hasClosedFilter ? (
+        {hasClosedFilter ? (
           <div className="flex flex-wrap items-center gap-2">
-            {machineIds.map((id) => (
-              <Badge key={id} variant="secondary" className="gap-1">
-                {machines.find((m) => m.id === id)?.name ?? id.slice(0, 8)}
-                <button
-                  type="button"
-                  onClick={() => toggleMachine(id)}
-                  aria-label={tc('delete')}
-                  className="cursor-pointer opacity-70 hover:opacity-100"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </Badge>
-            ))}
-            {hasClosedFilter ? (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => { setClosedFrom(''); setClosedTo(''); resetPage(); }}
-              >
-                {t('clearClosedFilter')}
-              </Button>
-            ) : null}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => { setClosedFrom(''); setClosedTo(''); resetPage(); }}
+            >
+              {t('clearClosedFilter')}
+            </Button>
           </div>
         ) : null}
       </div>
@@ -258,8 +202,8 @@ export default function ZReportsPage() {
               data.items.map((z) => {
                 const disc = z.discrepancy ?? 0;
                 const machineName =
-                  z.machineName ?? machines.find((m) => m.id === z.machineId)?.name;
-                const shopName = z.shopName ?? shops.find((s) => s.id === z.shopId)?.name;
+                  z.machineName ?? findBySameId(scope.machines, z.machineId)?.name;
+                const shopName = z.shopName ?? findBySameId(scope.shops, z.shopId)?.name;
                 return (
                   <TableRow key={z.id} className="cursor-pointer" onClick={() => setSelected(z)}>
                     <TableCell>{formatDate(z.dayDate)}</TableCell>
@@ -309,46 +253,7 @@ export default function ZReportsPage() {
           </Button>
         </div>
       )}
-
-      <Dialog open={machinePickerOpen} onOpenChange={setMachinePickerOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>{t('filterMachines')}</DialogTitle>
-          </DialogHeader>
-          <p className="text-muted-foreground text-xs">{t('machinePickerHint')}</p>
-          <div className="max-h-72 space-y-1 overflow-y-auto rounded-md border p-2">
-            {machines.length === 0 ? (
-              <p className="text-muted-foreground py-4 text-center text-sm">{t('noMachines')}</p>
-            ) : (
-              machines.map((m) => (
-                <label
-                  key={m.id}
-                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted"
-                >
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 accent-primary"
-                    checked={machineIds.includes(m.id)}
-                    onChange={() => toggleMachine(m.id)}
-                  />
-                  <span className="min-w-0 flex-1 truncate">{m.name}</span>
-                  <span className="text-muted-foreground text-xs">{m.machineCode}</span>
-                </label>
-              ))
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              disabled={machineIds.length === 0}
-              onClick={() => { setMachineIds([]); resetPage(); }}
-            >
-              {t('clearMachineFilter')}
-            </Button>
-            <Button onClick={() => setMachinePickerOpen(false)}>{tc('save')}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      </ScopeGate>
 
       <Dialog open={!!selected} onOpenChange={(open) => { if (!open) setSelected(null); }}>
         <DialogContent className="max-w-2xl">
@@ -370,7 +275,7 @@ export default function ZReportsPage() {
                   <Label className="text-xs">{t('machine')}</Label>
                   <div>
                     {selected.machineName
-                      ?? machines.find((m) => m.id === selected.machineId)?.name
+                      ?? findBySameId(scope.machines, selected.machineId)?.name
                       ?? selected.machineId.slice(0, 8)}
                   </div>
                 </div>
@@ -378,7 +283,7 @@ export default function ZReportsPage() {
                   <Label className="text-xs">{t('shop')}</Label>
                   <div>
                     {selected.shopName
-                      ?? shops.find((s) => s.id === selected.shopId)?.name
+                      ?? findBySameId(scope.shops, selected.shopId)?.name
                       ?? '—'}
                   </div>
                 </div>

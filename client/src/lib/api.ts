@@ -2,15 +2,20 @@ import axios from 'axios';
 import { useAuth } from './auth';
 import type {
   CashierSalesReport,
+  CategoryReorderEntry,
+  CategoryReorderResponse,
   CloseDayCreateResponse,
   CloseDayRequest,
+  Company,
   DashboardBreakdown,
   DashboardStats,
   BrandingImageKind,
   BrandingUploadResult,
   EntitySettingsResponse,
+  PosMachine,
   PosSettingsPatch,
   ProductSalesReport,
+  Shop,
   ShopSettingsResponse,
   StockLevel,
   TipsRangeReport,
@@ -18,6 +23,7 @@ import type {
   TaxOpenFormatPreview,
   ZReportListResponse,
 } from './types';
+import { normalizePosMachine } from './posMachine';
 
 export const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL,
@@ -146,6 +152,47 @@ export async function deactivateUser(userId: string): Promise<void> {
  */
 export async function activateUser(userId: string): Promise<void> {
   await api.post(`/users/${userId}/activate`);
+}
+
+/**
+ * The three lists the shared dashboard scope is built from.
+ *
+ * They keep the query keys the pages already used (`['companies']`, `['shops']`,
+ * `['machines']`) on purpose: the scope bar and every page now read the same
+ * cache entry, so making the scope global did not add a single extra request.
+ */
+export async function fetchCompanies(): Promise<Company[]> {
+  const { data } = await api.get<Company[]>('/companies');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function fetchShops(companyId?: string): Promise<Shop[]> {
+  const { data } = await api.get<Shop[]>('/shops', {
+    params: companyId ? { companyId } : undefined,
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+/** `GET /machines`, normalised — the raw rows mix camelCase and snake_case. */
+export async function fetchMachines(): Promise<PosMachine[]> {
+  const { data } = await api.get('/machines');
+  const list = Array.isArray(data) ? data : [];
+  return list.map((row: Record<string, unknown>) => normalizePosMachine(row));
+}
+
+/**
+ * Persist a whole category order in one request.
+ *
+ * `PUT /categories/reorder` is atomic server-side, so the entire visible order
+ * goes in a single body rather than one PUT per moved row: N requests would leave
+ * the tills reading a half-applied order if any of them failed, and would fire a
+ * catalog notification per row.
+ */
+export async function reorderCategories(
+  order: CategoryReorderEntry[],
+): Promise<CategoryReorderResponse> {
+  const { data } = await api.put<CategoryReorderResponse>('/categories/reorder', { order });
+  return data;
 }
 
 export async function fetchTenantSettings(tenantId: string): Promise<EntitySettingsResponse> {

@@ -1,89 +1,87 @@
 'use client';
 
-import { useState } from 'react';
+/**
+ * The shops in scope.
+ *
+ * The list follows the scope bar — every shop in the tenant, or just the ones
+ * under the company in scope (including its child companies), or the single shop
+ * that is selected. And like the companies list, a row now opens the shop rather
+ * than an edit dialog; editing stayed on the row as an explicit action.
+ */
+
+import { useMemo, useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, fetchShopSettings, patchShopSettings } from '@/lib/api';
-import { PosSettingsForm, type PosSettingsFormState } from '@/components/pos-settings-form';
-import type { PosSettingsV1 } from '@/lib/types';
-import { entitySelectItems } from '@/lib/selectItems';
+import { api, fetchCompanies, fetchMachines, fetchShops } from '@/lib/api';
+import { usePageScope } from '@/lib/scope';
+import { buildCompanyTree, companyPathLabel, companySubtreeIds } from '@/lib/companyTree';
+import { findBySameId, sameId } from '@/lib/entityLookup';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { Shop, Company } from '@/lib/types';
+import { ShopFormDialog } from '@/components/dashboard/shop-form-dialog';
+import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
+import { ScopeIgnoredNote } from '@/components/dashboard/scope-gate';
+import { Company, PosMachine, Shop } from '@/lib/types';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, Settings2 } from 'lucide-react';
-
-const EMPTY: Partial<Shop> = { name: '', branchId: '', address: '', city: '' };
+import { Plus, Pencil, Trash2, Settings2, ChevronLeft } from 'lucide-react';
 
 export default function ShopsPage() {
   const t = useTranslations('shops');
   const tc = useTranslations('common');
   const qc = useQueryClient();
-  const tps = useTranslations('posSettings');
-  const [open, setOpen] = useState(false);
+  const router = useRouter();
+
+  // A device in scope does not narrow a list of shops, so `shop` is as deep as
+  // this page reads; selecting one pins the list to it.
+  const { resolution, effective } = usePageScope({ maxLevel: 'shop' });
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [editing, setEditing] = useState<Partial<Shop> | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsShopId, setSettingsShopId] = useState<string | null>(null);
-  const [posSettings, setPosSettings] = useState<PosSettingsFormState>({});
-  const [inheritedSettings, setInheritedSettings] = useState<PosSettingsV1 | undefined>();
-  const [editing, setEditing] = useState<Partial<Shop>>(EMPTY);
-  const isNew = !editing.id;
 
   const { data: shops = [], isLoading } = useQuery<Shop[]>({
     queryKey: ['shops'],
-    queryFn: () => api.get('/shops').then((r) => r.data),
+    queryFn: () => fetchShops(),
   });
 
   const { data: companies = [] } = useQuery<Company[]>({
     queryKey: ['companies'],
-    queryFn: () => api.get('/companies').then((r) => r.data),
+    queryFn: fetchCompanies,
   });
 
-  const save = useMutation({
-    mutationFn: (s: Partial<Shop>) =>
-      s.id ? api.put(`/shops/${s.id}`, s) : api.post('/shops', s),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['shops'] });
-      toast.success(isNew ? t('created') : t('updated'));
-      setOpen(false);
-    },
-    onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
+  const { data: machines = [] } = useQuery<PosMachine[]>({
+    queryKey: ['machines'],
+    queryFn: fetchMachines,
   });
+
+  const tree = useMemo(() => buildCompanyTree(companies), [companies]);
+
+  const rows = useMemo(() => {
+    if (effective.shopId) return shops.filter((shop) => sameId(shop.id, effective.shopId));
+    if (effective.companyId) {
+      const ids = companySubtreeIds(tree, effective.companyId);
+      return shops.filter((shop) => ids.some((id) => sameId(id, shop.companyId)));
+    }
+    return shops;
+  }, [effective.companyId, effective.shopId, shops, tree]);
 
   const remove = useMutation({
     mutationFn: (id: string) => api.delete(`/shops/${id}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['shops'] }); toast.success(t('deleted')); },
-  });
-
-  const openSettings = async (shopId: string) => {
-    setSettingsShopId(shopId);
-    setSettingsOpen(true);
-    try {
-      const res = await fetchShopSettings(shopId, true);
-      setPosSettings(res.settings ?? {});
-      setInheritedSettings(res.effective);
-    } catch (err: unknown) {
-      toast.error(axiosErrorToToastMessage(err, tc('error')));
-      setPosSettings({});
-      setInheritedSettings(undefined);
-    }
-  };
-
-  const saveSettings = useMutation({
-    mutationFn: (payload: { shopId: string; patch: Partial<PosSettingsV1> }) =>
-      patchShopSettings(payload.shopId, payload.patch),
     onSuccess: () => {
-      toast.success(tps('saved'));
-      setSettingsOpen(false);
+      qc.invalidateQueries({ queryKey: ['shops'] });
+      toast.success(t('deleted'));
     },
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
   });
+
+  const machineCount = (shopId: string) =>
+    machines.filter((machine) => sameId(machine.shopId, shopId)).length;
 
   return (
     <div className="space-y-4">
@@ -92,10 +90,20 @@ export default function ShopsPage() {
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
         </div>
-        <Button onClick={() => { setEditing(EMPTY); setOpen(true); }} size="sm">
+        <Button
+          onClick={() => {
+            setEditing(null);
+            setEditOpen(true);
+          }}
+          size="sm"
+        >
           <Plus className="h-4 w-4 ms-1" /> {t('add')}
         </Button>
       </div>
+
+      {resolution.status === 'ok' && resolution.ignoredDeeper ? (
+        <ScopeIgnoredNote maxLevel={resolution.maxLevel} />
+      ) : null}
 
       <div className="rounded-lg border bg-card overflow-hidden">
         <Table>
@@ -105,123 +113,137 @@ export default function ShopsPage() {
               <TableHead>{t('company')}</TableHead>
               <TableHead>{t('branchId')}</TableHead>
               <TableHead>{t('city')}</TableHead>
+              <TableHead>{t('machinesCount')}</TableHead>
               <TableHead>{tc('status')}</TableHead>
-              <TableHead className="w-20" />
+              <TableHead className="w-28" />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading
-              ? Array.from({ length: 3 }).map((_, i) => (
-                  <TableRow key={i}>
-                    {Array.from({ length: 6 }).map((_, j) => (
-                      <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              : shops.map((s) => (
-                  <TableRow key={s.id}>
-                    <TableCell className="font-medium">{s.name}</TableCell>
-                    <TableCell>{companies.find((c) => c.id === s.companyId)?.name ?? '—'}</TableCell>
+            {isLoading ? (
+              Array.from({ length: 3 }).map((_, i) => (
+                <TableRow key={i}>
+                  {Array.from({ length: 7 }).map((_, j) => (
+                    <TableCell key={j}>
+                      <Skeleton className="h-4 w-full" />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
+            ) : rows.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                  {t('empty')}
+                </TableCell>
+              </TableRow>
+            ) : (
+              rows.map((s) => {
+                const href = `/dashboard/shops/${s.id}`;
+                const company = findBySameId(companies, s.companyId);
+                return (
+                  <TableRow
+                    key={s.id}
+                    className="cursor-pointer"
+                    onClick={() => router.push(href)}
+                    title={t('openHint')}
+                  >
+                    <TableCell className="font-medium">
+                      <Link
+                        href={href}
+                        className="hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {s.name}
+                      </Link>
+                    </TableCell>
+                    <TableCell>
+                      {company ? (
+                        <Link
+                          href={`/dashboard/companies/${company.id}`}
+                          className="hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                          // The full path, so a shop under a nested company is
+                          // unambiguous without opening the company.
+                          title={companyPathLabel(tree, company.id, company.name)}
+                        >
+                          {company.name}
+                        </Link>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">{s.branchId ?? '—'}</TableCell>
                     <TableCell>{s.city ?? '—'}</TableCell>
+                    <TableCell className="tabular-nums">{machineCount(s.id)}</TableCell>
                     <TableCell>
                       <Badge variant={s.isActive ? 'outline' : 'destructive'}>
                         {s.isActive ? tc('active') : tc('inactive')}
                       </Badge>
                     </TableCell>
-                    <TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
                       <div className="flex gap-1">
-                        <Button variant="ghost" size="icon" title={t('settings')} onClick={() => openSettings(s.id)}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title={t('open')}
+                          onClick={() => router.push(href)}
+                        >
+                          <ChevronLeft className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title={t('settings')}
+                          onClick={() => {
+                            setSettingsShopId(s.id);
+                            setSettingsOpen(true);
+                          }}
+                        >
                           <Settings2 className="h-3.5 w-3.5" />
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => { setEditing(s); setOpen(true); }}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title={tc('edit')}
+                          onClick={() => {
+                            setEditing(s);
+                            setEditOpen(true);
+                          }}
+                        >
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => remove.mutate(s.id)}
-                          className="text-destructive hover:text-destructive">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title={tc('delete')}
+                          onClick={() => remove.mutate(s.id)}
+                          className="text-destructive hover:text-destructive"
+                        >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                );
+              })
+            )}
           </TableBody>
         </Table>
       </div>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>{isNew ? t('addTitle') : t('editTitle')}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1">
-              <Label>{t('name')}</Label>
-              <Input value={editing.name ?? ''} onChange={(e) => setEditing((s) => ({ ...s, name: e.target.value }))} />
-            </div>
-            <div className="space-y-1">
-              <Label>{t('company')}</Label>
-              <Select
-                value={editing.companyId ?? ''}
-                onValueChange={(v) => setEditing((s) => ({ ...s, companyId: v ?? undefined }))}
-                items={entitySelectItems(companies)}
-              >
-                <SelectTrigger><SelectValue placeholder={t('selectCompany')} /></SelectTrigger>
-                <SelectContent>
-                  {companies.map((c) => <SelectItem key={c.id} value={c.id} label={c.name}>{c.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label>{t('branchId')}</Label>
-                <Input value={editing.branchId ?? ''} placeholder={t('branchIdPlaceholder')}
-                  onChange={(e) => setEditing((s) => ({ ...s, branchId: e.target.value }))} />
-              </div>
-              <div className="space-y-1">
-                <Label>{t('city')}</Label>
-                <Input value={editing.city ?? ''} onChange={(e) => setEditing((s) => ({ ...s, city: e.target.value }))} />
-              </div>
-            </div>
-            <div className="space-y-1">
-              <Label>{t('address')}</Label>
-              <Input value={editing.address ?? ''} onChange={(e) => setEditing((s) => ({ ...s, address: e.target.value }))} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>{tc('cancel')}</Button>
-            <Button onClick={() => save.mutate(editing)} disabled={save.isPending}>
-              {save.isPending ? tc('saving') : tc('save')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <p className="text-xs text-muted-foreground">{t('openHint')}</p>
 
-      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{tps('title')}</DialogTitle>
-            <p className="text-sm text-muted-foreground">{tps('shopSubtitle')}</p>
-          </DialogHeader>
-          <PosSettingsForm
-            value={posSettings}
-            onChange={setPosSettings}
-            inherited={inheritedSettings}
-            showOverrideHints
-          />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSettingsOpen(false)}>{tc('cancel')}</Button>
-            <Button
-              onClick={() =>
-                settingsShopId && saveSettings.mutate({ shopId: settingsShopId, patch: posSettings })
-              }
-              disabled={saveSettings.isPending || !settingsShopId}
-            >
-              {saveSettings.isPending ? tc('saving') : tc('save')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ShopFormDialog
+        shop={editing}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        defaultCompanyId={effective.companyId}
+      />
+      <EntityPosSettingsDialog
+        level="shop"
+        entityId={settingsShopId}
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+      />
     </div>
   );
 }

@@ -4,10 +4,10 @@ import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { entitySelectItems } from '@/lib/selectItems';
+import { usePageScope } from '@/lib/scope';
+import { findBySameId } from '@/lib/entityLookup';
+import { ScopeGate } from '@/components/dashboard/scope-gate';
 import {
-  PosMachine,
-  Shop,
   Transaction,
   TransactionListResponse,
   TransactionStatus,
@@ -21,13 +21,9 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
-import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { normalizePosMachine } from '@/lib/posMachine';
 import { formatCurrency, formatDateTime } from '@/lib/format';
 
 const PAGE_SIZE = 50;
@@ -44,31 +40,35 @@ function statusVariant(s: TransactionStatus): 'default' | 'secondary' | 'outline
 
 export default function TransactionsPage() {
   const t = useTranslations('transactions');
-  const [machineId, setMachineId] = useState<string>('all');
-  const [shopId, setShopId] = useState<string>('all');
+  // `GET /transactions` filters by machineId and shopId. There is no companyId
+  // filter, so a company in scope is called out instead of being dropped, which
+  // would have shown the whole tenant under a company heading.
+  const { scope, resolution, effective } = usePageScope({
+    maxLevel: 'machine',
+    unsupported: ['company'],
+  });
+  const shopId = effective.shopId;
+  const machineId = effective.machineId;
+
   const [from, setFrom] = useState<string>('');
   const [to, setTo] = useState<string>('');
   const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const { data: machines = [] } = useQuery<PosMachine[]>({
-    queryKey: ['machines'],
-    queryFn: async () => {
-      const { data } = await api.get('/machines');
-      const list = Array.isArray(data) ? data : [];
-      return list.map((row: Record<string, unknown>) => normalizePosMachine(row));
-    },
-  });
-
-  const { data: shops = [] } = useQuery<Shop[]>({
-    queryKey: ['shops'],
-    queryFn: () => api.get('/shops').then((r) => r.data),
-  });
+  // A scope change is a different set of documents; page 7 of the old set is
+  // meaningless in the new one. Reset during render, not in an effect, so no
+  // request ever goes out for "page 7 of the shop we just switched to".
+  const scopeKey = `${shopId ?? ''}|${machineId ?? ''}`;
+  const [pageScopeKey, setPageScopeKey] = useState(scopeKey);
+  if (pageScopeKey !== scopeKey) {
+    setPageScopeKey(scopeKey);
+    setPage(1);
+  }
 
   const params = useMemo(() => {
     const p: Record<string, string | number> = { page, pageSize: PAGE_SIZE };
-    if (machineId !== 'all') p.machineId = machineId;
-    if (shopId !== 'all') p.shopId = shopId;
+    if (machineId) p.machineId = machineId;
+    if (shopId) p.shopId = shopId;
     if (from) p.from = from;
     if (to) p.to = to;
     return p;
@@ -89,39 +89,8 @@ export default function TransactionsPage() {
         <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
       </div>
 
-      <div className="rounded-lg border bg-card p-4 grid gap-3 md:grid-cols-4">
-        <div className="space-y-1">
-          <Label className="text-xs">{t('filterMachine')}</Label>
-          <Select
-            value={machineId}
-            onValueChange={(v) => { setMachineId(v ?? 'all'); setPage(1); }}
-            items={[{ value: 'all', label: t('all') }, ...entitySelectItems(machines)]}
-          >
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t('all')}</SelectItem>
-              {machines.map((m) => (
-                <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs">{t('filterShop')}</Label>
-          <Select
-            value={shopId}
-            onValueChange={(v) => { setShopId(v ?? 'all'); setPage(1); }}
-            items={[{ value: 'all', label: t('all') }, ...entitySelectItems(shops)]}
-          >
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t('all')}</SelectItem>
-              {shops.map((s) => (
-                <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <ScopeGate resolution={resolution}>
+      <div className="rounded-lg border bg-card p-4 grid gap-3 md:grid-cols-2 lg:max-w-lg">
         <div className="space-y-1">
           <Label className="text-xs">{t('filterFrom')}</Label>
           <Input
@@ -169,7 +138,7 @@ export default function TransactionsPage() {
               </TableRow>
             ) : (
               data.items.map((tx) => {
-                const machine = machines.find((m) => m.id === tx.machineId);
+                const machine = findBySameId(scope.machines, tx.machineId);
                 return (
                   <TableRow key={tx.id} className="cursor-pointer" onClick={() => setSelectedId(tx.id)}>
                     <TableCell>{formatDateTime(tx.createdAt)}</TableCell>
@@ -223,6 +192,7 @@ export default function TransactionsPage() {
           </div>
         </div>
       )}
+      </ScopeGate>
 
       <TransactionDetailsDialog id={selectedId} onClose={() => setSelectedId(null)} />
     </div>

@@ -7,6 +7,8 @@ import { toast } from 'sonner';
 import { fetchTenantSettings, patchTenantSettings } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
+import { usePageScope } from '@/lib/scope';
+import { ScopeIgnoredNote } from '@/components/dashboard/scope-gate';
 import type { BrandingImageKind, EntitySettingsResponse, PosSettingsPatch } from '@/lib/types';
 import { BrandingImageField } from '@/components/branding-image-field';
 import { Button } from '@/components/ui/button';
@@ -29,6 +31,9 @@ export default function BrandingPage() {
   const tc = useTranslations('common');
   const qc = useQueryClient();
   const activeTenantId = useAuth((s) => s.activeTenantId);
+  // Branding is stored on the tenant and reaches every till in it; a company or
+  // shop in scope does not make it narrower, which the note says out loud.
+  const { resolution } = usePageScope({ maxLevel: 'tenant' });
   const role = useAuth((s) => s.user?.role);
   const authHydrated = useAuth((s) => s.authHydrated);
   const [draft, setDraft] = useState<BrandingDraft>({});
@@ -92,6 +97,10 @@ export default function BrandingPage() {
         <h1 className="text-2xl font-bold">{t('title')}</h1>
         <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
       </div>
+
+      {resolution.status === 'ok' && resolution.ignoredDeeper ? (
+        <ScopeIgnoredNote maxLevel={resolution.maxLevel} />
+      ) : null}
 
       <Card>
         <CardHeader>

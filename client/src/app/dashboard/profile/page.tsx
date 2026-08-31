@@ -7,9 +7,13 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { useAuth } from '@/lib/auth';
+import { usePageScope } from '@/lib/scope';
 
 export default function ProfilePage() {
   const t = useTranslations('profile');
+  // The signed-in user's own account: nothing about it is scoped, and `silent`
+  // keeps the bar from explaining a selection that was never going to apply.
+  usePageScope({ maxLevel: 'tenant', silent: true });
   const { signOut } = useClerk();
   const { user: clerkUser } = useUser();
   const { user: internalUser, clearUser } = useAuth();

@@ -1,13 +1,15 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, fetchCloseDayRequest, postCloseDay } from '@/lib/api';
+import { api, fetchCloseDayRequest, fetchMachines, postCloseDay } from '@/lib/api';
 import { CloseDayRequest, PosMachine, Shop, Company } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
-import { normalizePosMachine } from '@/lib/posMachine';
-import { findBySameId } from '@/lib/entityLookup';
+import { usePageScope } from '@/lib/scope';
+import { ScopeGate } from '@/components/dashboard/scope-gate';
+import { findBySameId, sameId } from '@/lib/entityLookup';
 import { entitySelectItems } from '@/lib/selectItems';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -43,6 +45,10 @@ export default function MachinesPage() {
   const tc = useTranslations('common');
   const qc = useQueryClient();
   const { user: me, authHydrated } = useAuth();
+  // The list narrows to whatever the bar points at — a company (via its shops), a
+  // shop, or one device. Its own "filter by shop" dropdown is gone; that was the
+  // duplicate the shared scope replaces.
+  const { scope, resolution, effective } = usePageScope({ maxLevel: 'machine' });
   const [pairOpen, setPairOpen] = useState(false);
   const [pushOpen, setPushOpen] = useState(false);
   const [pushTarget, setPushTarget] = useState<'machine' | 'shop'>('machine');
@@ -57,7 +63,6 @@ export default function MachinesPage() {
 
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignShopId, setAssignShopId] = useState('');
-  const [filterShopId, setFilterShopId] = useState<string>('all');
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   const [shopEditOpen, setShopEditOpen] = useState(false);
@@ -96,11 +101,7 @@ export default function MachinesPage() {
 
   const { data: machines = [], isLoading } = useQuery<PosMachine[]>({
     queryKey: ['machines'],
-    queryFn: async () => {
-      const { data } = await api.get('/machines');
-      const list = Array.isArray(data) ? data : [];
-      return list.map((row: Record<string, unknown>) => normalizePosMachine(row));
-    },
+    queryFn: fetchMachines,
   });
 
   const { data: shops = [] } = useQuery<Shop[]>({
@@ -120,11 +121,18 @@ export default function MachinesPage() {
     enabled: !!pairCompanyId && pairOpen,
   });
 
-  const visibleMachines = machines.filter((m) => {
-    if (filterShopId === 'all') return true;
-    if (filterShopId === '__none__') return !m.shopId;
-    return m.shopId === filterShopId;
-  });
+  /**
+   * Machines in scope. A device in scope is that device alone; a shop is its
+   * machines; a company is every machine in every shop under it (the scope's
+   * `machineOptions` already resolves the subtree).
+   */
+  const visibleMachines = effective.machineId
+    ? machines.filter((m) => sameId(m.id, effective.machineId))
+    : effective.shopId
+      ? machines.filter((m) => sameId(m.shopId, effective.shopId))
+      : effective.companyId
+        ? machines.filter((m) => scope.machineOptions.some((o) => sameId(o.id, m.id)))
+        : machines;
 
   const resetPairDialog = () => {
     setMachineCode('');
@@ -483,39 +491,8 @@ export default function MachinesPage() {
         </div>
       ) : null}
 
+      <ScopeGate resolution={resolution}>
       {!isLoading ? <ClockDriftBanner machines={visibleMachines} /> : null}
-
-      {!isLoading && machines.length > 0 ? (
-        <div className="max-w-sm space-y-1">
-          <Label>{t('filterByShop')}</Label>
-          <Select
-            value={filterShopId}
-            onValueChange={(v) => setFilterShopId(v ?? 'all')}
-            items={[
-              { value: 'all', label: t('allShops') },
-              { value: '__none__', label: t('shopUnassignedFilter') },
-              ...entitySelectItems(shops),
-            ]}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder={t('allShops')} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all" label={t('allShops')}>
-                {t('allShops')}
-              </SelectItem>
-              <SelectItem value="__none__" label={t('shopUnassignedFilter')}>
-                {t('shopUnassignedFilter')}
-              </SelectItem>
-              {shops.map((s) => (
-                <SelectItem key={s.id} value={s.id} label={s.name}>
-                  {s.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      ) : null}
 
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -604,7 +581,12 @@ export default function MachinesPage() {
                     />
                   ) : null}
                   <div className="min-w-0">
-                  <CardTitle className="text-base">{m.name}</CardTitle>
+                  <CardTitle className="text-base">
+                    {/* A device is a place you can go into now, not just a card. */}
+                    <Link href={`/dashboard/machines/${m.id}`} className="hover:underline">
+                      {m.name}
+                    </Link>
+                  </CardTitle>
                   <p className="text-xs text-muted-foreground">{m.machineCode}</p>
                   <div className="mt-1"><ClockSkewChip machine={m} /></div>
                   </div>
@@ -781,6 +763,7 @@ export default function MachinesPage() {
         </div>
         </>
       )}
+      </ScopeGate>
 
       <Dialog
         open={pairOpen}

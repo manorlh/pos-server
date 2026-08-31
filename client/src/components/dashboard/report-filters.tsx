@@ -3,6 +3,12 @@
 /**
  * Filter bar shared by the three windowed reports (products, cashiers, tips).
  *
+ * It used to carry shop and machine dropdowns as well. Those are gone: the shop
+ * and the device come from the dashboard's shared scope now, so running the same
+ * report for the same branch across three pages no longer means re-picking it
+ * three times. What is left here is the part that genuinely belongs to a report
+ * and not to a position in the hierarchy — the day range and the hour band.
+ *
  * Its main job beyond collecting values is making the hour-window semantic
  * impossible to misread. `fromHour`/`toHour` do NOT describe one contiguous
  * stretch of time — they describe the same band of hours on *every* day in the
@@ -13,12 +19,7 @@
  */
 
 import { useTranslations } from 'next-intl';
-import { useQuery } from '@tanstack/react-query';
 import { CalendarClock, Clock, Info } from 'lucide-react';
-import { api } from '@/lib/api';
-import { entitySelectItems } from '@/lib/selectItems';
-import { normalizePosMachine } from '@/lib/posMachine';
-import type { PosMachine, Shop } from '@/lib/types';
 import { formatHour } from '@/lib/format';
 import {
   HOUR_OPTIONS_FROM,
@@ -46,13 +47,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
-export const ALL = 'all';
-
 export interface ReportFiltersState {
   from: string;
   to: string;
-  shopId: string;
-  machineId: string;
   hours: HourWindow;
 }
 
@@ -116,20 +113,6 @@ export function ReportFilters({
 }: ReportFiltersProps) {
   const t = useTranslations('reports.filters');
 
-  const { data: shops = [] } = useQuery<Shop[]>({
-    queryKey: ['shops'],
-    queryFn: () => api.get('/shops').then((r) => r.data),
-  });
-
-  const { data: machines = [] } = useQuery<PosMachine[]>({
-    queryKey: ['machines'],
-    queryFn: async () => {
-      const { data } = await api.get('/machines');
-      const list = Array.isArray(data) ? data : [];
-      return list.map((row: Record<string, unknown>) => normalizePosMachine(row));
-    },
-  });
-
   const set = (patch: Partial<ReportFiltersState>) => onChange({ ...value, ...patch });
 
   const days = dayCount(value.from, value.to);
@@ -170,51 +153,7 @@ export function ReportFilters({
 
   return (
     <div className="rounded-lg border bg-card p-4 space-y-4">
-      <div className="grid gap-3 md:grid-cols-4">
-        <div className="space-y-1">
-          <Label className="text-xs">{t('shop')}</Label>
-          <Select
-            value={value.shopId}
-            onValueChange={(v) => set({ shopId: v ?? ALL })}
-            items={[{ value: ALL, label: t('allShops') }, ...entitySelectItems(shops)]}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL} label={t('allShops')}>
-                {t('allShops')}
-              </SelectItem>
-              {shops.map((s) => (
-                <SelectItem key={s.id} value={s.id} label={s.name}>
-                  {s.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs">{t('machine')}</Label>
-          <Select
-            value={value.machineId}
-            onValueChange={(v) => set({ machineId: v ?? ALL })}
-            items={[{ value: ALL, label: t('allMachines') }, ...entitySelectItems(machines)]}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL} label={t('allMachines')}>
-                {t('allMachines')}
-              </SelectItem>
-              {machines.map((m) => (
-                <SelectItem key={m.id} value={m.id} label={m.name}>
-                  {m.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <div className="grid gap-3 md:grid-cols-2 lg:max-w-lg">
         <div className="space-y-1">
           <Label className="text-xs">{t('from')}</Label>
           <Input type="date" value={value.from} onChange={(e) => set({ from: e.target.value })} />
