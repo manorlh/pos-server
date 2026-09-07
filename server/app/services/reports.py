@@ -1136,6 +1136,7 @@ def build_day_summary_report(
         contributors.setdefault(day, []).append(
             DaySummaryContributor(
                 z_report_id=z.id,
+                shop_sequence_number=z.shop_sequence_number,
                 machine_id=z.machine_id,
                 machine_name=z.machine.name if z.machine else None,
                 shop_id=z.shop_id,

@@ -174,6 +174,7 @@ function DayRow({ row }: { row: DaySummaryRow }) {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead>{t('drill.zNumber')}</TableHead>
                     <TableHead>{t('drill.machine')}</TableHead>
                     <TableHead>{t('drill.shop')}</TableHead>
                     <TableHead className="text-end">{t('drill.net')}</TableHead>
@@ -189,6 +190,9 @@ function DayRow({ row }: { row: DaySummaryRow }) {
                 <TableBody>
                   {row.contributors.map((c) => (
                     <TableRow key={c.zReportId}>
+                      <TableCell className="font-medium tabular-nums">
+                        {c.shopSequenceNumber ?? '—'}
+                      </TableCell>
                       <TableCell className="font-medium">
                         {c.machineName ?? c.machineId}
                         {c.unattended ? (

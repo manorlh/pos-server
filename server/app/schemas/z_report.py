@@ -57,6 +57,14 @@ class ZReportUpsertResponse(BaseModel):
     z_report_id: uuid.UUID = Field(..., alias="zReportId")
     trading_day_id: uuid.UUID = Field(..., alias="tradingDayId")
     server_time: datetime = Field(..., alias="serverTime")
+    #: The shop's Z number for this close, assigned by the server.
+    #:
+    #: Returned so the till can store it and print it on a reprint. It cannot be on the
+    #: paper torn off at close: no till knows what the other tills in the shop have
+    #: closed, and an offline close has nobody to ask. Returned on a duplicate too —
+    #: with the number the first close was given — so a till that never saw the original
+    #: acknowledgement still ends up holding the right one.
+    shop_sequence_number: Optional[int] = Field(None, alias="shopSequenceNumber")
 
 
 class ZReportMissingResponse(BaseModel):
@@ -78,6 +86,9 @@ class ZReportOut(BaseModel):
     machine_id: uuid.UUID = Field(..., alias="machineId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     day_date: date = Field(..., alias="dayDate")
+    #: The shop's Z counter. Null on a Z from a terminal with no shop, and on closes
+    #: filed before the column existed and outside the migration's backfill.
+    shop_sequence_number: Optional[int] = Field(None, alias="shopSequenceNumber")
     total_sales: Optional[Decimal] = Field(None, alias="totalSales")
     total_refunds: Optional[Decimal] = Field(None, alias="totalRefunds")
     total_cash_sales: Optional[Decimal] = Field(None, alias="totalCashSales")

@@ -28,6 +28,19 @@ class ZReport(Base):
 
     day_date = Column(Date, nullable=False)
 
+    #: The shop's own Z counter — 1, 2, 3 … across every till in the shop.
+    #:
+    #: A Z already has a globally unique `id`, but a UUID is not a number a bookkeeper
+    #: can read off one report and check against the previous one. This is, and a gap in
+    #: it means a close is missing.
+    #:
+    #: Allocated by the cloud, not the till: no till can know what the others in the
+    #: shop have closed, least of all offline. The consequence is that the paper torn
+    #: off at close does not carry it — the till learns it from the upsert
+    #: acknowledgement, so a reprint does. Nullable because a terminal that is not
+    #: assigned to a shop has no shop sequence to draw from.
+    shop_sequence_number = Column(Integer, nullable=True)
+
     # Snapshot totals (denormalised from items at close time for fast list queries)
     total_sales = Column(Numeric(12, 2), nullable=True)
     total_refunds = Column(Numeric(12, 2), nullable=True)

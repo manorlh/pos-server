@@ -18,6 +18,7 @@ from app.models.transaction_item import TransactionItem
 from app.models.transaction_payment import TransactionPayment
 from app.models.z_report import ZReport
 from app.models.pos_user import PosUser, PosUserRole
+from app.models.shop_z_sequence import ShopZSequence
 from app.models.tenant_sku_sequence import TenantSkuSequence
 from app.models.tenant_local_sku_sequence import TenantLocalSkuSequence
 from app.models.voucher import Voucher, ValueDisplayMode

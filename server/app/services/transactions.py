@@ -33,6 +33,7 @@ from app.models.stock_movement import StockMovementReason
 from app.models.z_report import ZReport
 from app.schemas.transaction import TransactionIn, TransactionPaymentIn, TransactionUpsertResult
 from app.schemas.z_report import ZReportIn
+from app.services.z_sequence import allocate_shop_z_number
 from app.services.stock import apply_movement
 from app.services.tenders import (
     UNKNOWN_PAYMENT_METHOD,
@@ -636,6 +637,11 @@ def apply_z_report(
         machine_id=machine.id,
         shop_id=machine.shop_id,
         day_date=z.day_date,
+        # Drawn here and only here: the duplicate check above has already returned, so a
+        # retried close reuses the number it was given rather than advancing the shop's
+        # run. Rolls back with the rest of the transaction if this close fails, which is
+        # what keeps the sequence gapless.
+        shop_sequence_number=allocate_shop_z_number(db, machine.shop_id),
         total_sales=z.total_sales,
         total_refunds=z.total_refunds,
         total_cash_sales=z.total_cash_sales,

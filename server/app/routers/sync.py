@@ -922,6 +922,9 @@ def post_z_report(
         status=outcome,
         z_report_id=z_report.id,
         trading_day_id=z_report.trading_day_id,
+        # Read off the stored row rather than recomputed, so a duplicate close is told
+        # the number the *first* close was given.
+        shop_sequence_number=z_report.shop_sequence_number,
         server_time=datetime.now(timezone.utc),
     )
 

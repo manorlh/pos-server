@@ -196,6 +196,8 @@ export default function ZReportsPage() {
         <Table>
           <TableHeader>
             <TableRow>
+              {/* First column: it is the document's name, not an attribute of it. */}
+              <TableHead>{t('zNumber')}</TableHead>
               <TableHead>{t('dayDate')}</TableHead>
               <TableHead>{t('machine')}</TableHead>
               <TableHead>{t('shop')}</TableHead>
@@ -213,12 +215,12 @@ export default function ZReportsPage() {
             {isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={11}><Skeleton className="h-6 w-full" /></TableCell>
+                  <TableCell colSpan={12}><Skeleton className="h-6 w-full" /></TableCell>
                 </TableRow>
               ))
             ) : !data || data.items.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={11} className="text-center text-muted-foreground py-6">
+                <TableCell colSpan={12} className="text-center text-muted-foreground py-6">
                   {t('noReports')}
                 </TableCell>
               </TableRow>
@@ -230,6 +232,11 @@ export default function ZReportsPage() {
                 const shopName = z.shopName ?? findBySameId(scope.shops, z.shopId)?.name;
                 return (
                   <TableRow key={z.id} className="cursor-pointer" onClick={() => setSelected(z)}>
+                    <TableCell className="font-medium tabular-nums">
+                      {/* An em dash, not a 0: a shopless or pre-numbering Z has no
+                          number, and a 0 would read as one. */}
+                      {z.shopSequenceNumber ?? '—'}
+                    </TableCell>
                     <TableCell>{formatDate(z.dayDate)}</TableCell>
                     <TableCell>{machineName ?? z.machineId.slice(0, 8)}</TableCell>
                     <TableCell className="text-muted-foreground">{shopName ?? '—'}</TableCell>
@@ -282,11 +289,23 @@ export default function ZReportsPage() {
       <Dialog open={!!selected} onOpenChange={(open) => { if (!open) setSelected(null); }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{t('details')}</DialogTitle>
+            {/* Titled by the shop's Z number when it has one, because that is how the
+                report will be referred to in a conversation with an accountant. */}
+            <DialogTitle>
+              {selected?.shopSequenceNumber
+                ? t('detailsNumbered', { number: selected.shopSequenceNumber })
+                : t('details')}
+            </DialogTitle>
           </DialogHeader>
           {selected && (
             <div className="space-y-4 text-sm">
               <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs">{t('zNumber')}</Label>
+                  <div className="font-medium tabular-nums">
+                    {selected.shopSequenceNumber ?? '—'}
+                  </div>
+                </div>
                 <div>
                   <Label className="text-xs">{t('dayDate')}</Label>
                   <div>{formatDate(selected.dayDate)}</div>

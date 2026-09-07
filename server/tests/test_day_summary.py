@@ -39,6 +39,7 @@ class _Z:
     id: uuid.UUID = field(default_factory=uuid.uuid4)
     closed_at: datetime = datetime(2026, 9, 7, 22, 0, tzinfo=timezone.utc)
     unattended: bool = False
+    shop_sequence_number: Optional[int] = 1
 
     total_sales: Optional[Decimal] = Decimal("100.00")
     total_refunds: Optional[Decimal] = Decimal("0.00")
@@ -302,6 +303,19 @@ class TestVatIsWithheldUnlessComplete:
 # ── Drill-down ───────────────────────────────────────────────────────────────
 
 class TestDrillDown:
+    def test_each_contributor_carries_the_shop_z_number(self):
+        """
+        The number a bookkeeper actually quotes. The UUID is the link; this is the name.
+        """
+        out = _run([_Z(shop_sequence_number=47)])
+
+        assert out.days[0].contributors[0].shop_sequence_number == 47
+
+    def test_a_shopless_z_reports_no_number_rather_than_zero(self):
+        out = _run([_Z(shop_id=None, shop=None, shop_sequence_number=None)])
+
+        assert out.days[0].contributors[0].shop_sequence_number is None
+
     def test_each_contributor_carries_the_id_the_z_endpoint_takes(self):
         z = _Z()
         out = _run([z])

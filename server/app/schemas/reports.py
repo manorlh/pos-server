@@ -261,6 +261,9 @@ class DaySummaryContributor(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     z_report_id: uuid.UUID = Field(..., alias="zReportId")
+    #: The shop's Z number, which is what a bookkeeper will quote. Null on a Z from a
+    #: terminal with no shop.
+    shop_sequence_number: Optional[int] = Field(None, alias="shopSequenceNumber")
     machine_id: uuid.UUID = Field(..., alias="machineId")
     machine_name: Optional[str] = Field(None, alias="machineName")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
