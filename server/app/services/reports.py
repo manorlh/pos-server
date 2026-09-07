@@ -43,7 +43,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from fastapi import HTTPException, status
 from sqlalchemy import Integer, String, and_, case, cast, func, or_
-from sqlalchemy.orm import Query, Session
+from sqlalchemy.orm import Query, Session, joinedload
 
 from app.models.pos_machine import POSMachine
 from app.models.pos_user import PosUser
@@ -52,10 +52,15 @@ from app.models.tenant import Tenant
 from app.models.transaction import Transaction
 from app.models.transaction_item import TransactionItem
 from app.models.transaction_payment import TransactionPayment
+from app.models.z_report import ZReport
 from app.models.user import User
 from app.schemas.reports import (
     CashierSalesReportResponse,
     CashierSalesRow,
+    DaySummaryContributor,
+    DaySummaryReportResponse,
+    DaySummaryRow,
+    DaySummaryTotals,
     ProductSalesReportResponse,
     ProductSalesRow,
     ProductSalesTotals,
@@ -66,7 +71,7 @@ from app.schemas.reports import (
     TipsRangeReportResponse,
 )
 from app.services.dashboard_stats import SALE_STATUSES
-from app.services.scoping import scope_transactions_by_user
+from app.services.scoping import scope_query_by_user, scope_transactions_by_user
 from app.services.tenders import CREDIT_NOTE_DOCUMENT_TYPE as _CREDIT_NOTE_DOCUMENT_TYPE
 from app.services.tenders import normalize_tender as _normalize_tender
 from app.services.tenders import (
@@ -933,3 +938,238 @@ def load_shop_transactions_for_machine(
             )
         )
     return out, truncated
+
+
+# ── Day summary ───────────────────────────────────────────────────────────────
+#
+# Several tills' Z reports, rolled into one figure per trading day.
+#
+# Deliberately built on Z reports and not on transactions. A Z is the till's own
+# declaration of what its day came to — the same numbers on the paper the shop keeps —
+# so a summary made of them agrees with those documents by construction. Summing
+# transactions instead would drift the moment a till's document set and its Z disagree
+# (a sale that never synced, a purge, a clock skew), and the manager would have two
+# irreconcilable answers with nothing to say which was right.
+#
+# The consequence is that a day with no Z is absent rather than zero: an open day has
+# not declared anything yet. That is the honest answer, and it is why this is a summary
+# of closed days and not a live figure.
+
+#: One Z per till per day, so this bounds a year of a large chain rather than a page.
+MAX_DAY_SUMMARY_Z_REPORTS = 5_000
+
+
+def _z_vat(z: ZReport) -> Optional[Decimal]:
+    """
+    The VAT a Z declared, from its payload blob.
+
+    `taxCollected` is where the till puts it; there is no column. Absent on Z reports
+    filed before the till sent it, and a non-numeric value is treated as absent rather
+    than coerced — the payload is client-supplied JSON, and a report that silently reads
+    garbage as 0.00 understates a tax figure.
+    """
+    payload = z.payload or {}
+    raw = payload.get("taxCollected")
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        return Decimal(str(raw))
+    except (ArithmeticError, ValueError):
+        return None
+
+
+@dataclass
+class _Accumulator:
+    """Running totals for one day (or for the whole range)."""
+
+    sales: Decimal = Decimal("0")
+    refunds: Decimal = Decimal("0")
+    cash_sales: Decimal = Decimal("0")
+    card_sales: Decimal = Decimal("0")
+    tips: Decimal = Decimal("0")
+    cash_tips: Decimal = Decimal("0")
+    card_tips: Decimal = Decimal("0")
+    transactions_count: int = 0
+    opening_cash: Decimal = Decimal("0")
+    expected_cash: Decimal = Decimal("0")
+    vat: Decimal = Decimal("0")
+    vat_missing: int = 0
+    actual_cash: Decimal = Decimal("0")
+    uncounted: int = 0
+    #: Z reports rolled in. Zero means there is nothing to reconcile and nothing to
+    #: declare, which is not the same as a reconciliation that came to zero.
+    z_count: int = 0
+
+    def add(self, z: ZReport) -> None:
+        self.z_count += 1
+        self.sales += _dec_or_zero(z.total_sales)
+        self.refunds += _dec_or_zero(z.total_refunds)
+        self.cash_sales += _dec_or_zero(z.total_cash_sales)
+        self.card_sales += _dec_or_zero(z.total_card_sales)
+        self.tips += _dec_or_zero(z.total_tips)
+        self.cash_tips += _dec_or_zero(z.total_cash_tips)
+        self.card_tips += _dec_or_zero(z.total_card_tips)
+        self.transactions_count += int(z.transactions_count or 0)
+        self.opening_cash += _dec_or_zero(z.opening_cash)
+        self.expected_cash += _dec_or_zero(z.expected_cash)
+
+        vat = _z_vat(z)
+        if vat is None:
+            self.vat_missing += 1
+        else:
+            self.vat += vat
+
+        # `actual_cash` is NULL when nobody counted — an unattended close, or a Z from
+        # before the till sent a count. Both make the day's variance unknowable, and
+        # neither may be read as zero.
+        if z.actual_cash is None:
+            self.uncounted += 1
+        else:
+            self.actual_cash += _dec_or_zero(z.actual_cash)
+
+    def to_totals(self) -> DaySummaryTotals:
+        # An empty selection has no variance and no VAT to report. Returning 0.00 would
+        # show a day nobody closed as balanced and exempt, which reads as a finding
+        # rather than as the absence of one.
+        counted = self.z_count > 0 and self.uncounted == 0
+        declared_vat = self.z_count > 0 and self.vat_missing == 0
+        return DaySummaryTotals(
+            sales=_to_float(self.sales),
+            refunds=_to_float(self.refunds),
+            net=_to_float(self.sales - self.refunds),
+            cash_sales=_to_float(self.cash_sales),
+            card_sales=_to_float(self.card_sales),
+            transactions_count=self.transactions_count,
+            tips=_to_float(self.tips),
+            cash_tips=_to_float(self.cash_tips),
+            card_tips=_to_float(self.card_tips),
+            opening_cash=_to_float(self.opening_cash),
+            expected_cash=_to_float(self.expected_cash),
+            vat=_to_float(self.vat) if declared_vat else None,
+            vat_missing_count=self.vat_missing,
+            actual_cash=_to_float(self.actual_cash) if counted else None,
+            variance=_to_float(self.actual_cash - self.expected_cash) if counted else None,
+            uncounted_count=self.uncounted,
+        )
+
+
+def _dec_or_zero(value) -> Decimal:
+    return Decimal(str(value)) if value is not None else Decimal("0")
+
+
+def build_day_summary_report(
+    db: Session,
+    current_user: User,
+    tenant_id: Optional[uuid_mod.UUID],
+    window: ReportWindow,
+    *,
+    shop_ids: Optional[Sequence[uuid_mod.UUID]] = None,
+    machine_ids: Optional[Sequence[uuid_mod.UUID]] = None,
+) -> DaySummaryReportResponse:
+    """
+    Z reports in the range, grouped by the trading day they were filed under.
+
+    Filtered on `day_date` rather than on `closed_at`: a shift that runs past midnight
+    files its Z the next morning, and the merchant asking about Monday means Monday's
+    trading, not what happened to close between 00:00 and 23:59 on Monday.
+
+    `shop_ids` and `machine_ids` narrow the selection and combine as an intersection —
+    asking for a shop and a machine outside it is a contradiction and correctly returns
+    nothing, rather than quietly widening to either.
+    """
+    query = (
+        db.query(ZReport)
+        .options(joinedload(ZReport.machine), joinedload(ZReport.shop))
+        .filter(ZReport.tenant_id == tenant_id)
+        .filter(ZReport.day_date >= window.from_date)
+        .filter(ZReport.day_date <= window.to_date)
+    )
+    scoped = scope_query_by_user(
+        query,
+        current_user,
+        db,
+        shop_column=ZReport.shop_id,
+        machine_column=ZReport.machine_id,
+    )
+    if scoped is None:
+        # No access is an empty report, not an error — same as every other report here.
+        return DaySummaryReportResponse(
+            window=window.to_schema(),
+            generated_at=datetime.now(timezone.utc),
+            totals=_Accumulator().to_totals(),
+            days=[],
+        )
+    query = scoped
+
+    if shop_ids:
+        query = query.filter(ZReport.shop_id.in_(list(shop_ids)))
+    if machine_ids:
+        query = query.filter(ZReport.machine_id.in_(list(machine_ids)))
+
+    rows: List[ZReport] = (
+        query.order_by(ZReport.day_date.desc(), ZReport.closed_at.desc())
+        .limit(MAX_DAY_SUMMARY_Z_REPORTS + 1)
+        .all()
+    )
+    if len(rows) > MAX_DAY_SUMMARY_Z_REPORTS:
+        # Refused rather than truncated. A silently short list reads as "this is the
+        # whole range", and the totals under it would be wrong with no sign of it.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Too many Z reports in range (over {MAX_DAY_SUMMARY_Z_REPORTS}). "
+                "Narrow the date range, or select fewer shops."
+            ),
+        )
+
+    per_day: Dict[date, _Accumulator] = {}
+    contributors: Dict[date, List[DaySummaryContributor]] = {}
+    machines_seen: Dict[date, set] = {}
+    overall = _Accumulator()
+
+    for z in rows:
+        day = z.day_date
+        acc = per_day.setdefault(day, _Accumulator())
+        acc.add(z)
+        overall.add(z)
+        machines_seen.setdefault(day, set()).add(z.machine_id)
+        contributors.setdefault(day, []).append(
+            DaySummaryContributor(
+                z_report_id=z.id,
+                machine_id=z.machine_id,
+                machine_name=z.machine.name if z.machine else None,
+                shop_id=z.shop_id,
+                shop_name=z.shop.name if z.shop else None,
+                closed_at=z.closed_at,
+                unattended=bool(z.unattended),
+                uncounted=z.actual_cash is None,
+                sales=_to_float(_dec_or_zero(z.total_sales)),
+                refunds=_to_float(_dec_or_zero(z.total_refunds)),
+                net=_to_float(_dec_or_zero(z.total_sales) - _dec_or_zero(z.total_refunds)),
+                cash_sales=_to_float(_dec_or_zero(z.total_cash_sales)),
+                card_sales=_to_float(_dec_or_zero(z.total_card_sales)),
+                tips=_to_float(_dec_or_zero(z.total_tips)),
+                transactions_count=int(z.transactions_count or 0),
+                expected_cash=_to_float(_dec_or_zero(z.expected_cash)),
+                actual_cash=_to_float(z.actual_cash) if z.actual_cash is not None else None,
+                discrepancy=_to_float(z.discrepancy) if z.discrepancy is not None else None,
+            )
+        )
+
+    days = [
+        DaySummaryRow(
+            day_date=day,
+            machine_count=len(machines_seen.get(day, ())),
+            z_report_count=len(contributors.get(day, ())),
+            totals=acc.to_totals(),
+            contributors=contributors.get(day, []),
+        )
+        for day, acc in sorted(per_day.items(), reverse=True)
+    ]
+
+    return DaySummaryReportResponse(
+        window=window.to_schema(),
+        generated_at=datetime.now(timezone.utc),
+        totals=overall.to_totals(),
+        days=days,
+    )

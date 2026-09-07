@@ -194,3 +194,113 @@ class ShopTransactionsResponse(BaseModel):
 
     server_time: str = Field(..., alias="serverTime")
     transactions: List[ShopTransactionRow]
+
+
+# ── 2f. Day summary — several tills' Z reports rolled into one day ────────────
+#
+# Named "day summary" (סיכום יומי) and not "union Z". A Z report is a fiscal
+# document a single terminal issues once and cannot reissue; this is a read over
+# several of them. Giving it a Z-like name would invite someone to treat it as a
+# filing, or to expect printing it to close anything.
+
+class DaySummaryTotals(BaseModel):
+    """
+    One day's takings across every contributing terminal.
+
+    Money fields are plain sums. The two nullable ones are the point of this schema:
+    a figure that cannot be computed completely is returned as `null` with a count of
+    what was missing, never as a partial sum. An understated total that looks like a
+    total is worse than an obvious gap — the manager reconciling the day would have no
+    way to tell.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    sales: float = 0.0
+    refunds: float = 0.0
+    #: `sales - refunds`. Precomputed so every caller subtracts the same way.
+    net: float = 0.0
+    cash_sales: float = Field(0.0, alias="cashSales")
+    card_sales: float = Field(0.0, alias="cardSales")
+    transactions_count: int = Field(0, alias="transactionsCount")
+
+    tips: float = 0.0
+    cash_tips: float = Field(0.0, alias="cashTips")
+    card_tips: float = Field(0.0, alias="cardTips")
+
+    opening_cash: float = Field(0.0, alias="openingCash")
+    expected_cash: float = Field(0.0, alias="expectedCash")
+
+    #: Null unless *every* contributing Z reported its VAT.
+    #:
+    #: VAT is read from the Z payload (`taxCollected`), which older reports predate.
+    #: Summing only the ones that have it would understate the day's VAT while
+    #: presenting it as the day's VAT.
+    vat: Optional[float] = None
+    vat_missing_count: int = Field(0, alias="vatMissingCount")
+
+    #: Null unless *every* contributing Z was actually counted.
+    #:
+    #: An unattended close leaves `actual_cash` NULL on purpose — nobody opened the
+    #: drawer. Treating that as zero would make a day containing one unattended till
+    #: report a variance that nobody verified, which is exactly the lie the
+    #: `unattended` flag was added to stop.
+    actual_cash: Optional[float] = Field(None, alias="actualCash")
+    variance: Optional[float] = None
+    uncounted_count: int = Field(0, alias="uncountedCount")
+
+
+class DaySummaryContributor(BaseModel):
+    """
+    One Z report behind a day's figures, and the drill-down target.
+
+    `zReportId` is what `GET /z-reports/{id}` takes, so the summary never has to
+    restate a Z's contents — the reader follows the link to the document itself.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    z_report_id: uuid.UUID = Field(..., alias="zReportId")
+    machine_id: uuid.UUID = Field(..., alias="machineId")
+    machine_name: Optional[str] = Field(None, alias="machineName")
+    shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
+    shop_name: Optional[str] = Field(None, alias="shopName")
+    closed_at: Optional[datetime] = Field(None, alias="closedAt")
+    unattended: bool = False
+    #: True when this Z has no counted cash, i.e. it is why `variance` is null.
+    uncounted: bool = False
+
+    sales: float = 0.0
+    refunds: float = 0.0
+    net: float = 0.0
+    cash_sales: float = Field(0.0, alias="cashSales")
+    card_sales: float = Field(0.0, alias="cardSales")
+    tips: float = 0.0
+    transactions_count: int = Field(0, alias="transactionsCount")
+    expected_cash: float = Field(0.0, alias="expectedCash")
+    actual_cash: Optional[float] = Field(None, alias="actualCash")
+    discrepancy: Optional[float] = None
+
+
+class DaySummaryRow(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    day_date: date = Field(..., alias="dayDate")
+    #: Distinct terminals that filed a Z for this day, not the number of Z reports.
+    #: A till that ran two shifts files two, and "3 tills" is the useful figure.
+    machine_count: int = Field(0, alias="machineCount")
+    z_report_count: int = Field(0, alias="zReportCount")
+    totals: DaySummaryTotals
+    contributors: List[DaySummaryContributor] = Field(default_factory=list)
+
+
+class DaySummaryReportResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: Echoed back like every other report here, so the UI labels the range with the
+    #: server's resolved timezone rather than its own guess about it.
+    window: ReportWindowOut
+    generated_at: datetime = Field(..., alias="generatedAt")
+    #: Rolled across every day in the range, under the same completeness rules.
+    totals: DaySummaryTotals
+    days: List[DaySummaryRow]

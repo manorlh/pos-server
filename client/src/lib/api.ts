@@ -2,6 +2,7 @@ import axios from 'axios';
 import { useAuth } from './auth';
 import type {
   CashierSalesReport,
+  DaySummaryReport,
   CategoryReorderEntry,
   CategoryReorderResponse,
   CloseDayCreateResponse,
@@ -21,6 +22,7 @@ import type {
   TipsRangeReport,
   TipsReport,
   TaxOpenFormatPreview,
+  ZReport,
   ZReportListResponse,
 } from './types';
 import { normalizePosMachine } from './posMachine';
@@ -340,6 +342,30 @@ export async function fetchCashierSalesReport(
   return data;
 }
 
+/**
+ * Day summary over a range, optionally narrowed to shops and/or tills.
+ *
+ * `shopIds`/`machineIds` are repeated query params and combine as an intersection,
+ * matching the server. Axios serialises arrays as `shopIds[]=…` by default, which
+ * FastAPI does not read, so they are expanded explicitly.
+ */
+export async function fetchDaySummaryReport(params: {
+  from: string;
+  to: string;
+  tz?: string;
+  shopIds?: string[];
+  machineIds?: string[];
+}): Promise<DaySummaryReport> {
+  const search = new URLSearchParams();
+  search.set('from', params.from);
+  search.set('to', params.to);
+  if (params.tz) search.set('tz', params.tz);
+  for (const id of params.shopIds ?? []) search.append('shopIds', id);
+  for (const id of params.machineIds ?? []) search.append('machineIds', id);
+  const { data } = await api.get<DaySummaryReport>(`/reports/day-summary?${search.toString()}`);
+  return data;
+}
+
 export async function fetchTipsRangeReport(
   params: ReportWindowParams,
 ): Promise<TipsRangeReport> {
@@ -360,6 +386,18 @@ export type ZReportListParams = {
   page?: number;
   pageSize?: number;
 };
+
+/**
+ * One Z report by id.
+ *
+ * Exists so the day summary can hand the reader the document itself rather than a
+ * restatement of it. The list read cannot stand in: a Z from six weeks ago is not on
+ * the page the reader happens to be looking at.
+ */
+export async function fetchZReport(id: string): Promise<ZReport> {
+  const { data } = await api.get<ZReport>(`/z-reports/${id}`);
+  return data;
+}
 
 export async function fetchZReports(params: ZReportListParams): Promise<ZReportListResponse> {
   const { data } = await api.get<ZReportListResponse>('/z-reports', {

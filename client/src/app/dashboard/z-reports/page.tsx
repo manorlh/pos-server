@@ -2,8 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { fetchZReports, type ZReportListParams } from '@/lib/api';
+import { fetchZReport, fetchZReports, type ZReportListParams } from '@/lib/api';
 import { usePageScope } from '@/lib/scope';
 import { findBySameId } from '@/lib/entityLookup';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
@@ -64,6 +65,29 @@ export default function ZReportsPage() {
   const [closedTo, setClosedTo] = useState<string>('');
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<ZReport | null>(null);
+
+  /*
+   * `?zReportId=` opens one report's dialog directly.
+   *
+   * This is how the day summary links to a contributing Z. Fetched by id rather than
+   * looked up in the current page of results, because the report being linked to is
+   * usually not on it — a summary of last month drills into Z reports that are
+   * several pages back, or filtered out entirely by the scope.
+   */
+  const searchParams = useSearchParams();
+  const linkedId = searchParams.get('zReportId');
+  const { data: linked } = useQuery({
+    queryKey: ['z-report', linkedId],
+    queryFn: () => fetchZReport(linkedId!),
+    enabled: !!linkedId,
+  });
+  // Adopted once. Without the guard, closing the dialog while the parameter is still
+  // in the URL would immediately reopen it and the close button would look broken.
+  const [adoptedId, setAdoptedId] = useState<string | null>(null);
+  if (linked && linked.id !== adoptedId) {
+    setAdoptedId(linked.id);
+    setSelected(linked);
+  }
 
   // Same reasoning as the transactions list: a new scope is a new result set, so
   // the page number resets during render rather than one frame later.

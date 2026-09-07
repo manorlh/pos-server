@@ -17,7 +17,7 @@ Z-report history (a list of past Z reports over a range, scopeable by machine)
 already lives at `GET /z-reports`; it is extended there rather than duplicated here.
 """
 from datetime import date, datetime, timezone
-from typing import Optional
+from typing import List, Optional
 import uuid
 
 from fastapi import APIRouter, Depends, Query
@@ -33,6 +33,7 @@ from app.models.pos_machine import POSMachine
 from app.models.user import User
 from app.schemas.reports import (
     CashierSalesReportResponse,
+    DaySummaryReportResponse,
     ProductSalesReportResponse,
     ShopTransactionsResponse,
     TipsRangeReportResponse,
@@ -42,6 +43,7 @@ from app.services.reports import (
     PRODUCT_ROWS_MAX,
     SHOP_TRANSACTIONS_MAX_HOURS,
     build_cashier_sales_report,
+    build_day_summary_report,
     build_product_sales_report,
     build_tips_range_report,
     load_shop_transactions_for_machine,
@@ -204,4 +206,61 @@ def get_shop_transactions(
     return ShopTransactionsResponse(
         server_time=datetime.now(timezone.utc).isoformat(),
         transactions=rows,
+    )
+
+
+@router.get(
+    "/day-summary",
+    response_model=DaySummaryReportResponse,
+    response_model_by_alias=True,
+)
+def get_day_summary_report(
+    from_date: Optional[date] = Query(None, alias="from", description=_FROM_DESC),
+    to_date: Optional[date] = Query(None, alias="to", description=_TO_DESC),
+    tz: Optional[str] = Query(None, description=_TZ_DESC),
+    shop_ids: Optional[List[uuid.UUID]] = Query(
+        None,
+        alias="shopIds",
+        description="Restrict to these shops. Repeatable. Combines with machineIds as an intersection.",
+    ),
+    machine_ids: Optional[List[uuid.UUID]] = Query(
+        None,
+        alias="machineIds",
+        description="Restrict to these tills. Repeatable. Combines with shopIds as an intersection.",
+    ),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Several tills' closed days rolled into one figure per trading day (סיכום יומי).
+
+    Dashboard-only (Clerk/user JWT). Built from Z reports, so it agrees with the paper
+    each till printed — and so a day nobody has closed yet is **absent rather than
+    zero**, because an open day has not declared anything.
+
+    Each day lists the Z reports behind it; follow `zReportId` to `GET /z-reports/{id}`
+    for the document itself rather than a restatement of it.
+
+    Two figures are withheld instead of approximated. `variance` is null unless every
+    contributing Z was actually counted — an unattended close has no counted cash, and
+    reporting the shortfall as zero is the specific lie the `unattended` flag exists to
+    prevent. `vat` is null unless every contributing Z declared it, since older reports
+    predate the field and a partial sum presented as the day's VAT understates it. Both
+    carry a count of what was missing.
+
+    This is a management report, not a fiscal document: it is not a Z, it closes
+    nothing, and it is deliberately not printable.
+
+    No `fromHour`/`toHour`: a Z covers a whole trading day, so narrowing it to an hour
+    would be meaningless. Days are selected on `day_date`, the day the till filed the
+    close under — a shift that runs past midnight still belongs to the day it started.
+    """
+    window = resolve_report_window(
+        db, active_tenant_id,
+        from_date=from_date, to_date=to_date, tz=tz,
+    )
+    return build_day_summary_report(
+        db, current_user, active_tenant_id, window,
+        shop_ids=shop_ids, machine_ids=machine_ids,
     )

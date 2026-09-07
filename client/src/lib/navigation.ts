@@ -18,6 +18,7 @@ import type { ElementType } from 'react';
 import {
   Boxes,
   Building2,
+  CalendarRange,
   Coins,
   FileBarChart,
   FileText,
@@ -85,6 +86,9 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: '/dashboard/transactions', labelKey: 'transactions', icon: Receipt },
       { href: '/dashboard/z-reports', labelKey: 'zReports', icon: FileBarChart },
+      // Sits next to the closing reports it is made of, so the relationship is
+      // obvious: this is a roll-up of those, not a separate kind of document.
+      { href: '/dashboard/day-summary', labelKey: 'daySummary', icon: CalendarRange },
       { href: '/dashboard/product-sales', labelKey: 'productSales', icon: Package2 },
       { href: '/dashboard/cashier-sales', labelKey: 'cashierSales', icon: UserRoundCheck },
       { href: '/dashboard/tips', labelKey: 'tips', icon: Coins },

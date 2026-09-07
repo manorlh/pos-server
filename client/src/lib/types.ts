@@ -794,3 +794,80 @@ export interface TipsRangeReport {
   byMethod: TipMethodRow[];
   byCashier: TipsByCashierRow[];
 }
+
+// ── Day summary (סיכום יומי) ────────────────────────────────────────────────
+//
+// Several tills' Z reports rolled into one figure per trading day. Not a Z: it
+// closes nothing, it is not a fiscal document, and it is deliberately not
+// printable.
+
+/**
+ * One day's takings across every contributing terminal.
+ *
+ * `vat` and `variance` are `null` when they could not be computed for *every*
+ * contributing Z — see the count beside each. The UI must render those as "not
+ * available" rather than falling back to 0, because both nulls are load-bearing: a
+ * day containing an unattended close has no counted cash, and showing it as balanced
+ * is the exact claim the server refuses to make.
+ */
+export interface DaySummaryTotals {
+  sales: number;
+  refunds: number;
+  /** `sales - refunds`, precomputed server-side so nobody subtracts differently. */
+  net: number;
+  cashSales: number;
+  cardSales: number;
+  transactionsCount: number;
+  tips: number;
+  cashTips: number;
+  cardTips: number;
+  openingCash: number;
+  expectedCash: number;
+  /** Null unless every contributing Z declared its VAT. */
+  vat: number | null;
+  vatMissingCount: number;
+  /** Null unless every contributing Z was actually counted. */
+  actualCash: number | null;
+  variance: number | null;
+  uncountedCount: number;
+}
+
+/** One Z report behind a day's figures. `zReportId` is the drill-down target. */
+export interface DaySummaryContributor {
+  zReportId: string;
+  machineId: string;
+  machineName?: string | null;
+  shopId?: string | null;
+  shopName?: string | null;
+  closedAt?: string | null;
+  unattended: boolean;
+  /** True when this Z has no counted cash, i.e. it is why `variance` is null. */
+  uncounted: boolean;
+  sales: number;
+  refunds: number;
+  net: number;
+  cashSales: number;
+  cardSales: number;
+  tips: number;
+  transactionsCount: number;
+  expectedCash: number;
+  actualCash: number | null;
+  discrepancy: number | null;
+}
+
+export interface DaySummaryRow {
+  dayDate: string;
+  /** Distinct terminals, not Z reports — a till running two shifts files two. */
+  machineCount: number;
+  zReportCount: number;
+  totals: DaySummaryTotals;
+  contributors: DaySummaryContributor[];
+}
+
+export interface DaySummaryReport {
+  window: ReportWindowOut;
+  generatedAt: string;
+  totals: DaySummaryTotals;
+  /** Newest first. A day nobody closed is absent, not a zero row. */
+  days: DaySummaryRow[];
+}
