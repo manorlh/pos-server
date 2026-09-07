@@ -55,6 +55,9 @@ def test_dashboard_reports_require_a_user_token_and_a_tenant() -> None:
         "/api/v1/reports/products",
         "/api/v1/reports/cashiers",
         "/api/v1/reports/tips",
+        # Reads across every till in a shop, so a machine token reaching it would see
+        # the whole chain's takings from one paired terminal.
+        "/api/v1/reports/day-summary",
         "/api/v1/z-reports",
     ):
         deps = _auth_dependencies(path)
@@ -105,3 +108,17 @@ def test_shop_transactions_response_matches_the_shipped_till_contract() -> None:
 def test_heartbeat_is_machine_token_only() -> None:
     deps = _auth_dependencies("/api/v1/machines/me/heartbeat")
     assert deps == {"get_pos_machine_from_machine_token"}
+
+
+def test_day_summary_scope_parameters_are_narrowing_only() -> None:
+    """
+    `shopIds`/`machineIds` narrow a selection the user's role already permits — they
+    are applied *after* `scope_query_by_user`, never instead of it. Asserted here
+    because the failure mode is silent: a distributor passing another distributor's
+    shop id would simply get that shop's takings.
+    """
+    schema = app.openapi()["paths"]["/api/v1/reports/day-summary"]["get"]
+    names = {p["name"] for p in schema.get("parameters", [])}
+    assert names == {"from", "to", "tz", "shopIds", "machineIds", "X-Tenant-Id"}
+    # No tenantId parameter: the tenant comes from the header the caller is a member of.
+    assert "tenantId" not in names

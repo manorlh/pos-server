@@ -347,6 +347,47 @@ class TestEdges:
         assert t.transactions_count == 0
         assert t.opening_cash == 0.0
 
+    def test_the_role_scoped_query_is_the_one_that_runs(self):
+        """
+        Not a tautology — this was a real gap.
+
+        `scope_query_by_user` returns a *narrowed* query, and an earlier version of
+        these tests patched it to the identity, so replacing `query = scoped` with
+        `query = query` (i.e. dropping role scoping entirely and reading every
+        tenant's tills) passed every assertion. Here the scoped query hands back
+        different rows, so using the unscoped one produces the wrong answer.
+        """
+        db = _Db([_Z(total_sales=Decimal("999.00"))])  # what an unscoped read sees
+        permitted = _Query([_Z(total_sales=Decimal("100.00"))])  # what this user may see
+
+        with patch.object(R, "scope_query_by_user", side_effect=lambda *a, **k: permitted):
+            out = R.build_day_summary_report(db, _user(), uuid.uuid4(), _window())
+
+        assert out.totals.sales == 100.00
+
+    def test_narrowing_filters_are_applied_to_the_scoped_query(self):
+        """
+        `shopIds`/`machineIds` must narrow what the role already allows, rather than
+        being applied to an unscoped query alongside it.
+        """
+        db = _Db([_Z()])
+        permitted = _Query([_Z()])
+
+        with patch.object(R, "scope_query_by_user", side_effect=lambda *a, **k: permitted):
+            R.build_day_summary_report(
+                db,
+                _user(),
+                uuid.uuid4(),
+                _window(),
+                shop_ids=[uuid.uuid4()],
+                machine_ids=[uuid.uuid4()],
+            )
+
+        # Both narrowing filters landed on the scoped query, not on the raw one.
+        assert permitted.filters == 2
+        # tenant + from + to were applied before scoping.
+        assert db.q.filters == 3
+
     def test_no_access_is_an_empty_report_not_an_error(self):
         out = _run([_Z()], scoped=False)
 
