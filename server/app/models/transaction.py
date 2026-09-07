@@ -55,6 +55,29 @@ class Transaction(Base):
     amount_tendered = Column(Numeric(12, 2), nullable=True)
     change_amount = Column(Numeric(12, 2), nullable=True)
     total_amount = Column(Numeric(12, 2), nullable=False, server_default="0")
+
+    # ── VAT as of issue, not as of reading ────────────────────────────────────
+    #
+    # These were derived at export time from the gross and the *current* rate, which
+    # means a rate change silently rewrote every document already issued. Israel moved
+    # 17% → 18% in January 2025; the next change would have re-stated every historical
+    # receipt at the new rate. The split a customer was actually charged is a fact about
+    # the moment of sale, so it is stored with the sale.
+    #
+    # `vat_rate` is the fraction in force at issue (0.18), and it is the field that
+    # makes the other two auditable — without it you cannot tell a correct 17% document
+    # from a wrong 18% one.
+    #
+    # Nullable: documents issued before this carry none, and back-filling them would
+    # invent a rate we cannot know was theirs.
+    net_amount = Column(Numeric(12, 2), nullable=True)
+    vat_amount = Column(Numeric(12, 2), nullable=True)
+    vat_rate = Column(Numeric(6, 4), nullable=True)
+
+    #: The register this document was issued on, as the business numbers its registers.
+    #: Stamped by the server from the machine, so the document carries it rather than
+    #: only being joinable to it — an audit reads the document.
+    pos_number = Column(String(50), nullable=True)
     tip_amount = Column(Numeric(12, 2), nullable=False, server_default="0")
     tip_payment_method = Column(String(10), nullable=True)
     total_discount = Column(Numeric(12, 2), nullable=True)

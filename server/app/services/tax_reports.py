@@ -164,6 +164,29 @@ def load_transactions_for_tax_export(
 
 
 def _build_cart_from_items(items, global_tax_rate: float) -> Dict[str, Any]:
+    """
+    The cart block of a C100/D120 document record.
+
+    **Deliberately does not use the document's stored `net_amount` / `vat_amount`**,
+    even though those now exist and are more truthful about what the customer paid.
+
+    This block's fields are defined in *gross* terms with the discount carried
+    separately: `totalAmount` is the gross of the line totals and becomes C100 field
+    1223, `subtotal` becomes 1219 with 1220/1221 subtracting the discount from it, and
+    `resolve_payment_legs` scales D120 amounts to this same `totalAmount` so the payment
+    records sum to the document record. Substituting the post-discount split here would
+    feed 1221 a subtotal the discount had already been taken out of and subtract it a
+    second time — a corrupted filing, not an improvement.
+
+    There is a real defect underneath: on a discounted document field 1222 declares VAT
+    extracted from the gross, so the business reports more output VAT than it collected.
+    Correcting it means changing 1223 to be net of the discount and D120 to carry raw
+    leg amounts — i.e. changing what the business declares it billed. That is the
+    accountant's call, and `resolve_payment_legs` already says so in as many words.
+
+    The stored split is used everywhere it is safe to: it is on the document for audit,
+    and reporting reads it. It stops here, at the filing boundary, on purpose.
+    """
     tax_rate = global_tax_rate / 100.0
     cart_items: List[Dict[str, Any]] = []
     gross_total = 0.0

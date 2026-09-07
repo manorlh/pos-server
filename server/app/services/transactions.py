@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
@@ -295,6 +296,15 @@ def _serialize_tx_for_upsert(
         "amount_tendered": tx.amount_tendered,
         "change_amount": tx.change_amount,
         "total_amount": tx.total_amount or 0,
+        # Stored as the till computed them, so a later VAT rate change cannot re-state
+        # a document that has already been issued. See `_vat_split` for why an older
+        # till that sends none gets nulls rather than a server-side guess.
+        **_vat_split(tx),
+        # Stamped onto the document rather than left to a join. An audit reads the
+        # document, and the register a receipt was issued on is part of what it says.
+        # `machine_code` is the fallback because this system generated it for pairing —
+        # it identifies the terminal, just not in the numbering the business uses.
+        "pos_number": machine.pos_number or machine.machine_code,
         "tip_amount": tx.tip_amount or 0,
         "tip_payment_method": tx.tip_payment_method,
         "total_discount": tx.total_discount,
@@ -309,6 +319,33 @@ def _serialize_tx_for_upsert(
         "nayax_meta": tx.nayax_meta,
         "created_at": tx.created_at,
         "updated_at": tx.updated_at,
+    }
+
+
+def _vat_split(tx: TransactionIn) -> dict:
+    """
+    The net / VAT / rate triple to store against a document.
+
+    Taken from the till and nowhere else. The till is the authority on what it actually
+    charged: it printed the receipt, and its VAT line is what the customer holds. The
+    server *could* re-derive a rate from the company or shop configuration, but that is
+    a different source and it can disagree with the paper — a shop whose rate was
+    changed mid-day would have documents re-stated to figures no receipt shows.
+
+    So an older till that sends nothing gets three nulls rather than a guess, and the
+    tax export keeps deriving those the way it always has. `vat_rate` is what makes the
+    stored pair auditable: without it you cannot tell a correct 17% document from a
+    wrong 18% one.
+
+    A tip carries no VAT — it is not consideration for a supply — and `total_amount` is
+    already exclusive of it, so nothing needs excluding here.
+    """
+    if tx.vat_amount is None or tx.net_amount is None:
+        return {"net_amount": None, "vat_amount": None, "vat_rate": None}
+    return {
+        "net_amount": tx.net_amount,
+        "vat_amount": tx.vat_amount,
+        "vat_rate": tx.vat_rate,
     }
 
 

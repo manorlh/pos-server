@@ -87,6 +87,12 @@ class TransactionIn(BaseModel):
     amount_tendered: Optional[Decimal] = Field(None, alias="amountTendered")
     change_amount: Optional[Decimal] = Field(None, alias="changeAmount")
     total_amount: Decimal = Field(0, alias="totalAmount")
+    #: The VAT split as the till computed it at the moment of sale. Optional so an
+    #: older build keeps working; when absent the server derives it from the gross and
+    #: the machine's current rate, which is what every document used to do.
+    net_amount: Optional[Decimal] = Field(None, alias="netAmount")
+    vat_amount: Optional[Decimal] = Field(None, alias="vatAmount")
+    vat_rate: Optional[Decimal] = Field(None, alias="vatRate")
     tip_amount: Decimal = Field(0, ge=0, alias="tipAmount")
     tip_payment_method: Optional[Literal["cash", "card"]] = Field(None, alias="tipPaymentMethod")
     total_discount: Optional[Decimal] = Field(None, alias="totalDiscount")

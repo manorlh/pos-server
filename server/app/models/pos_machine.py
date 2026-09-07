@@ -43,6 +43,11 @@ class POSMachine(Base):
     pairing_session_id = Column(UUID(as_uuid=True), ForeignKey("pairing_sessions.id"), nullable=True, index=True)
     name = Column(String(255), nullable=False)
     machine_code = Column(String(100), unique=True, nullable=False, index=True)
+    #: Register number as the *business* numbers its registers — till 1, 2, 3 in a
+    #: branch. Distinct from `machine_code`, which is a pairing identifier this system
+    #: generated and which means nothing to a bookkeeper. Nullable until somebody sets
+    #: it; documents fall back to `machine_code` so the field is never empty.
+    pos_number = Column(String(50), nullable=True)
     mqtt_client_id = Column(String(255), unique=True, nullable=True)
     pairing_status = Column(SQLEnum(PairingStatus, values_callable=lambda x: [e.value for e in x]), nullable=False, default=PairingStatus.UNPAIRED)
     device_info = Column(JSON, nullable=True)
