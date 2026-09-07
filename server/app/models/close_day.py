@@ -42,6 +42,13 @@ class CloseDayRequest(Base):
         nullable=False,
         default=CloseDayRequestStatus.PENDING,
     )
+    #: When an undelivered instruction stops being worth delivering.
+    #:
+    #: A close now *waits* for a till that is offline rather than failing on the spot,
+    #: so it needs a horizon. Without one, an instruction issued tonight would still be
+    #: sitting there for a terminal that reappears in March, and would close a day
+    #: whose Z nobody is expecting any more.
+    expires_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

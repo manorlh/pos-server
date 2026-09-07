@@ -93,7 +93,7 @@ def validate_pairing(
             detail="Invalid or expired pairing code"
         )
 
-    machine_token = create_machine_token(str(machine.id))
+    machine_token = create_machine_token(str(machine.id), machine.token_version or 1)
     return machine_realtime_connection_info(machine=machine, access_token=machine_token)
 
 

@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Enum as SQLEnum,
     ForeignKey,
+    Integer,
     JSON,
     SmallInteger,
     String,
@@ -46,6 +47,15 @@ class POSMachine(Base):
     pairing_status = Column(SQLEnum(PairingStatus, values_callable=lambda x: [e.value for e in x]), nullable=False, default=PairingStatus.UNPAIRED)
     device_info = Column(JSON, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+
+    # Bumped whenever this terminal is unpaired. Machine tokens carry the version
+    # they were minted at, so revoking is permanent: a machine that is later
+    # re-paired gets a new version, and every token issued before it stays dead
+    # even though the row is active again.
+    #
+    # Existing tokens in the field carry no version claim at all. Those are read as
+    # version 1 — the default — so nothing that is paired today stops working.
+    token_version = Column(Integer, default=1, nullable=False, server_default="1")
     last_heartbeat_at = Column(DateTime(timezone=True), nullable=True)
     mqtt_connected = Column(Boolean, nullable=True)
     app_version = Column(String(32), nullable=True)

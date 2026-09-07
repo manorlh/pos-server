@@ -46,7 +46,7 @@ def _generate_device_nonce() -> str:
 
 def build_machine_credentials_payload(machine: POSMachine) -> Dict[str, Any]:
     """Same shape as POST /pairing/validate response."""
-    machine_token = create_machine_token(str(machine.id))
+    machine_token = create_machine_token(str(machine.id), machine.token_version or 1)
     return machine_realtime_connection_info(machine=machine, access_token=machine_token)
 
 

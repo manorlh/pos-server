@@ -20,6 +20,8 @@ interface InternalUser extends UserCapabilities {
   tenantId?: string;
   companyId?: string;
   shopId?: string;
+  /** Whether this person holds a till PIN. Never the PIN or its hash. */
+  hasTillPin?: boolean;
 }
 
 export interface TenantSummary {

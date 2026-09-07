@@ -33,13 +33,28 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return encoded_jwt
 
 
-def create_machine_token(machine_id: str, expires_days: int = None) -> str:
-    """Create a JWT token for machine authentication"""
-    if expires_days is None:
-        expires_days = settings.machine_token_expire_days
-    expires_delta = timedelta(days=expires_days)
-    data = {"sub": machine_id, "type": "machine"}
-    return create_access_token(data, expires_delta)
+def create_machine_token(machine_id: str, token_version: int = 1) -> str:
+    """
+    Mint a machine token that does not expire on its own.
+
+    A terminal is not a person: it does not sign in each morning, and an expiry is
+    not a security control for it — it is a scheduled outage. A till whose token
+    lapsed at 6am on a Sunday is simply a till that cannot trade, and nobody is on
+    site to re-pair it.
+
+    Not expiring is only safe because revocation is checked on *every* request
+    rather than trusted to the clock: `get_pos_machine_for_sync_path` and
+    `get_pos_machine_from_machine_token` both load the row and refuse an inactive
+    machine. `token_version` closes the remaining gap — unpairing bumps it, so a
+    terminal that is later re-paired and made active again does not resurrect the
+    tokens it held before.
+
+    Old tokens carry no `tv` claim. Those are read as version 1, which is the column
+    default, so every terminal paired before this change keeps working untouched.
+    """
+    data = {"sub": machine_id, "type": "machine", "tv": int(token_version or 1)}
+    # Deliberately no `exp`: python-jose only enforces the claim when it is present.
+    return jwt.encode(data, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
 def create_pairing_session_token(
@@ -88,6 +103,12 @@ def authenticate_user(db: Session, username: str, password: str) -> Optional[Use
     """Authenticate a user by username and password"""
     user = db.query(User).filter(User.username == username).first()
     if not user:
+        return None
+    if not user.hashed_password:
+        # Invited and Clerk-provisioned accounts carry no local password. Passing
+        # None to passlib raises rather than returning False, which would turn a
+        # wrong-credentials attempt into a 500 and, worse, distinguish these
+        # accounts from ordinary ones by the shape of the failure.
         return None
     if not verify_password(password, user.hashed_password):
         return None

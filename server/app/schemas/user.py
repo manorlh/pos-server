@@ -29,7 +29,17 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str
+    #: Optional so a user can be invited by email alone.
+    #:
+    #: Setting one is not neutral: `POST /auth/login` is live and accepts
+    #: username + password, so choosing somebody's password means being able to sign
+    #: in as them. For a system whose audit trail says "Yossi authorised this", that
+    #: is exactly what must not be possible. An invited user gets no password, signs
+    #: in with Clerk when they are ready, and authorises at a till with their own PIN.
+    password: Optional[str] = None
+    #: Optional too — derived from the email when omitted. Nobody should have to
+    #: invent a login name for a person who may never type one.
+    username: Optional[str] = None
 
 
 class UserUpdate(BaseModel):
@@ -70,11 +80,24 @@ class CurrentUserResponse(UserBase):
     #: Whether this user may manage till operators.
     can_manage_pos_users: bool = Field(False, alias="canManagePosUsers")
 
+    #: Till-PIN state. The hash itself is never sent anywhere — this is only enough
+    #: for the dashboard to say "you can authorise actions at a till" or offer to
+    #: set a PIN.
+    has_till_pin: bool = Field(False, alias="hasTillPin")
+    #: Scopes this user could hold at a till, so the dashboard can explain what a
+    #: PIN would actually let them do rather than describing it vaguely.
+    till_scopes: List[str] = Field(default_factory=list, alias="tillScopes")
+
 
 class UserResponse(UserBase):
     # Responses may include legacy seeded addresses (e.g. admin@pos.local).
     # Keep creation/update validation strict while avoiding response serialization failures.
     email: str
+
+    #: Whether this person holds a till PIN, so the staff list can show who is able
+    #: to authorise actions at a terminal. Derived from the hash's presence — the
+    #: hash itself is never serialised anywhere.
+    has_till_pin: bool = Field(False, alias="hasTillPin")
     id: uuid.UUID
     is_active: bool = Field(..., alias="isActive")
     created_at: datetime = Field(..., alias="createdAt")

@@ -1,7 +1,7 @@
 import uuid
 
 from sqlalchemy import (
-    Column, ForeignKey, Numeric, Integer, Date,
+    Boolean, Column, ForeignKey, Numeric, Integer, Date,
     DateTime, UniqueConstraint, Index,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -37,6 +37,14 @@ class ZReport(Base):
     total_cash_tips = Column(Numeric(12, 2), nullable=True)
     total_card_tips = Column(Numeric(12, 2), nullable=True)
     transactions_count = Column(Integer, nullable=True)
+
+    #: Closed by a manager from the cloud with nobody at the drawer.
+    #:
+    #: Matters because `actual_cash` is then left NULL rather than copied from
+    #: `expected_cash`. Copying it made every unattended Z assert a variance of exactly
+    #: zero — a shop with a real shortfall got a document claiming it balanced. Null
+    #: says "nobody counted", which is the truth, and this flag says why.
+    unattended = Column(Boolean, nullable=False, default=False, server_default="false")
 
     opening_cash = Column(Numeric(12, 2), nullable=True)
     closing_cash = Column(Numeric(12, 2), nullable=True)

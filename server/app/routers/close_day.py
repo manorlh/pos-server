@@ -15,6 +15,7 @@ from app.schemas.close_day import (
     CloseDayRequestOut,
 )
 from app.services.close_day import (
+    expire_overdue_close_day_items,
     create_close_day_request,
     create_response_out,
     get_close_day_request,
@@ -42,6 +43,7 @@ def post_close_day(
         active_tenant_id,
         machine_ids=body.machine_ids,
         shop_id=body.shop_id,
+        shop_ids=body.shop_ids,
     )
     request = create_close_day_request(
         db,
@@ -67,6 +69,12 @@ def get_close_day_request_detail(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    # Retire anything the terminals never collected, so an operator watching this
+    # screen sees a stalled instruction turn into `expired` rather than sitting on
+    # `pending` for ever. Lazy because there is no scheduler in this service.
+    if expire_overdue_close_day_items(db):
+        db.commit()
+
     request = get_close_day_request(db, request_id, active_tenant_id)
     if request is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")

@@ -143,6 +143,37 @@ export async function deactivateUser(userId: string): Promise<void> {
 }
 
 /**
+ * Choose your own till PIN.
+ *
+ * Yours, so it is usable immediately — nobody else knows it. Compare
+ * `assignTillPin`, which always lands as temporary because the person setting it
+ * is not the person it belongs to.
+ */
+export async function setMyTillPin(pin: string): Promise<void> {
+  await api.put('/users/me/till-pin', { pin });
+}
+
+export async function clearMyTillPin(): Promise<void> {
+  await api.delete('/users/me/till-pin');
+}
+
+/**
+ * Issue somebody a temporary till PIN.
+ *
+ * Always temporary: the till makes them replace it before it authorises anything.
+ * That is what keeps "Yossi approved this" honest — otherwise it would only ever
+ * mean "somebody who knew the PIN typed into this form".
+ */
+export async function assignTillPin(userId: string, pin: string): Promise<void> {
+  await api.post(`/users/${userId}/till-pin`, { pin });
+}
+
+/** Take away someone's ability to authorise anything at a till. */
+export async function revokeTillPin(userId: string): Promise<void> {
+  await api.delete(`/users/${userId}/till-pin`);
+}
+
+/**
  * The other half of the same switch. Same authority as deactivating: not
  * yourself, in scope, and strictly below your own role level.
  *
@@ -389,6 +420,12 @@ export async function fetchDashboardBreakdown(params: {
 export async function postCloseDay(payload: {
   machineIds?: string[];
   shopId?: string;
+  /**
+   * Several shops at once. Combines with the other two as a union on the server and
+   * is deduplicated, so a till named directly *and* covered by a chosen shop is only
+   * closed once.
+   */
+  shopIds?: string[];
 }): Promise<CloseDayCreateResponse> {
   const { data } = await api.post('/machines/close-day', payload);
   return data;

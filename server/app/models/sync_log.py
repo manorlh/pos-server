@@ -40,6 +40,10 @@ class SyncLog(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id"), nullable=False, index=True)
+    # The person behind the machine, when there was one. Null for unattended sync
+    # (catalog pulls, transaction uploads); set for anything a human elevated to do,
+    # so the log can answer "who changed this price" rather than only "which till".
+    actor_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
     direction = Column(SQLEnum(SyncDirection, values_callable=lambda x: [e.value for e in x]), nullable=False)
     entity_type = Column(SQLEnum(SyncEntityType, values_callable=lambda x: [e.value for e in x]), nullable=False)
     entity_id = Column(UUID(as_uuid=True), nullable=True)

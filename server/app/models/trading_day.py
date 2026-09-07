@@ -2,8 +2,8 @@ import uuid
 import enum
 
 from sqlalchemy import (
-    Column, String, ForeignKey, Numeric, Date,
-    Enum as SQLEnum, DateTime, UniqueConstraint, Index,
+    Column, String, ForeignKey, Integer, Numeric, Date,
+    Enum as SQLEnum, DateTime, Index, text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -18,12 +18,31 @@ class TradingDayStatus(str, enum.Enum):
 
 
 class TradingDay(Base):
-    """A POS shift / trading day envelope. One open row per (machine, day_date)."""
+    """
+    A POS shift / trading day envelope, authored by the till.
+
+    Identity is the row's own id, which the till generates. It is deliberately *not*
+    `(machine_id, day_date)`: two shifts on one calendar date is ordinary retail, and
+    keying on the date made the evening shift indistinguishable from the morning's —
+    its sales attached to a day that was already closed and Z'd, and its own Z came
+    back as a duplicate that the till read as success and purged behind.
+
+    What actually has to be true is enforced instead: **at most one open day per
+    machine**, as a partial unique index. `day_date` survives as a reporting
+    attribute, and `sequence_number` orders a machine's days so a gap is visible.
+    """
 
     __tablename__ = "trading_days"
     __table_args__ = (
-        UniqueConstraint("machine_id", "day_date", name="uq_trading_day_machine_date"),
         Index("ix_trading_days_machine_status", "machine_id", "status"),
+        # The real invariant. A till may have many days on one date, but only ever
+        # one open at a time.
+        Index(
+            "uq_trading_day_one_open",
+            "machine_id",
+            unique=True,
+            postgresql_where=text("status = 'open'"),
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -32,6 +51,9 @@ class TradingDay(Base):
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True, index=True)
 
     day_date = Column(Date, nullable=False)
+    #: Per-machine counter, assigned by the till. Nullable for days that predate it.
+    #: Makes "day 7 is missing" answerable, which a date alone cannot.
+    sequence_number = Column(Integer, nullable=True)
     opened_at = Column(DateTime(timezone=True), nullable=False)
     closed_at = Column(DateTime(timezone=True), nullable=True)
 

@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Set
 import uuid
 
 from fastapi import HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.close_day import (
@@ -122,6 +123,87 @@ def _item_to_out(item: CloseDayRequestItem, machine_name: Optional[str] = None) 
     }
 
 
+#: How long an undelivered instruction stays worth delivering.
+#:
+#: Long enough to cover a till that is off overnight and comes back for the morning
+#: shift; short enough that it cannot close a day nobody is expecting a Z for any more.
+CLOSE_DAY_TTL_HOURS = 36
+
+
+def expire_overdue_close_day_items(db: Session, *, now: Optional[datetime] = None) -> int:
+    """
+    Retire instructions that were never collected.
+
+    Lazy rather than scheduled: there is no scheduler in this service, and a sweep that
+    only runs when somebody looks is enough for a horizon measured in hours. Called
+    from the read and create paths, so a dashboard that is open sees it happen.
+
+    Only undelivered work expires. An item a till has already acknowledged is its
+    business to finish or fail, and overwriting that would lose the fact that a terminal
+    tried.
+    """
+    now = now or datetime.now(timezone.utc)
+    items = (
+        db.query(CloseDayRequestItem)
+        .join(CloseDayRequest, CloseDayRequestItem.request_id == CloseDayRequest.id)
+        .filter(
+            CloseDayRequestItem.status.in_(
+                [CloseDayItemStatus.PENDING, CloseDayItemStatus.SENT]
+            ),
+            CloseDayRequest.expires_at.is_not(None),
+            CloseDayRequest.expires_at < now,
+        )
+        .all()
+    )
+    for item in items:
+        item.status = CloseDayItemStatus.EXPIRED
+        item.error_code = "expired"
+        item.error_message = "The terminal did not collect this instruction in time"
+        item.failed_at = now
+        db.add(item)
+    if items:
+        for request in {item.request for item in items if item.request is not None}:
+            _recompute_request_status(request)
+    return len(items)
+
+
+def take_pending_close_day_for_machine(
+    db: Session, machine: POSMachine, *, now: Optional[datetime] = None
+) -> Optional[CloseDayRequestItem]:
+    """
+    The instruction this terminal should act on, if any — the pull half of delivery.
+
+    Called from the heartbeat, which every till already sends on a timer. That is what
+    makes an offline terminal a non-problem: nothing has to reach it, it asks. Ably
+    stays as the fast path for a till that is awake, but it is no longer the only one,
+    and a dropped notification is no longer a close that never happens.
+
+    Marks the item SENT on handing it over, so the dashboard can tell "waiting for the
+    till" from "the till has it".
+    """
+    now = now or datetime.now(timezone.utc)
+    expire_overdue_close_day_items(db, now=now)
+    item = (
+        db.query(CloseDayRequestItem)
+        .join(CloseDayRequest, CloseDayRequestItem.request_id == CloseDayRequest.id)
+        .filter(
+            CloseDayRequestItem.machine_id == machine.id,
+            CloseDayRequestItem.status.in_(
+                [CloseDayItemStatus.PENDING, CloseDayItemStatus.SENT]
+            ),
+        )
+        .order_by(CloseDayRequestItem.created_at.asc())
+        .first()
+    )
+    if item is None:
+        return None
+    if item.status == CloseDayItemStatus.PENDING:
+        item.status = CloseDayItemStatus.SENT
+        item.sent_at = now
+        db.add(item)
+    return item
+
+
 def resolve_machines_for_close_day(
     db: Session,
     current_user: User,
@@ -129,9 +211,26 @@ def resolve_machines_for_close_day(
     *,
     machine_ids: Optional[List[uuid.UUID]] = None,
     shop_id: Optional[uuid.UUID] = None,
+    shop_ids: Optional[List[uuid.UUID]] = None,
 ) -> List[POSMachine]:
-    if not machine_ids and not shop_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provide machineIds or shopId")
+    """
+    Resolve a close-day selection to a set of machines.
+
+    Three ways to say it, and they combine: named machines, one shop, or several
+    shops. `shop_id` is kept beside `shop_ids` because the shipped dashboard sends
+    the singular form; it is folded into the list rather than handled twice.
+
+    The result is a *set* — picking two shops that happen to share a terminal, or
+    naming a machine that is also in a chosen shop, must not queue two closes for it.
+    """
+    wanted_shops = list(shop_ids or [])
+    if shop_id and shop_id not in wanted_shops:
+        wanted_shops.append(shop_id)
+    if not machine_ids and not wanted_shops:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide machineIds, shopId or shopIds",
+        )
 
     query = db.query(POSMachine).filter(
         POSMachine.is_active.is_(True),
@@ -150,14 +249,24 @@ def resolve_machines_for_close_day(
 
     query = query.filter(POSMachine.tenant_id == active_tenant_id)
 
-    if shop_id:
-        query = query.filter(POSMachine.shop_id == shop_id)
+    # Named machines OR machines in a chosen shop — a union, not an intersection, so
+    # "these two tills plus everything in the Dizengoff branch" means what it says.
+    clauses = []
+    if wanted_shops:
+        clauses.append(POSMachine.shop_id.in_(wanted_shops))
     if machine_ids:
-        query = query.filter(POSMachine.id.in_(machine_ids))
+        clauses.append(POSMachine.id.in_(machine_ids))
+    query = query.filter(or_(*clauses) if len(clauses) > 1 else clauses[0])
 
     machines = query.all()
-    if machine_ids and len(machines) != len(set(machine_ids)):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="One or more machines not found")
+    if machine_ids:
+        found = {m.id for m in machines}
+        missing = set(machine_ids) - found
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="One or more machines not found",
+            )
     if not machines:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No eligible machines")
     return machines
@@ -170,6 +279,7 @@ def create_close_day_request(
     machines: List[POSMachine],
     *,
     shop_id: Optional[uuid.UUID] = None,
+    ttl_hours: Optional[int] = None,
 ) -> CloseDayRequest:
     from app.services.ably_notify import publish_close_day_notify
 
@@ -183,6 +293,7 @@ def create_close_day_request(
         initiated_by_user_id=current_user.id,
         shop_id=shop_id,
         status=CloseDayRequestStatus.PENDING,
+        expires_at=now + timedelta(hours=ttl_hours or CLOSE_DAY_TTL_HOURS),
     )
     db.add(request)
     db.flush()
@@ -214,10 +325,13 @@ def create_close_day_request(
             item.error_message = "Machine missing tenant context"
             item.failed_at = now
         elif not machine_is_mqtt_online(machine, now):
-            item.status = CloseDayItemStatus.FAILED
-            item.error_code = "machine_offline"
-            item.error_message = "Machine is offline (no recent MQTT heartbeat)"
-            item.failed_at = now
+            # Offline is a delay, not a failure. It used to fail here on a
+            # ninety-second heartbeat window, so a till that happened to be
+            # mid-reboot was written off and nothing ever told it. The instruction
+            # stays PENDING and the terminal collects it on its next heartbeat —
+            # which it sends on a timer regardless — so it closes when it wakes.
+            # `expires_at` is what stops this waiting forever.
+            item.status = CloseDayItemStatus.PENDING
         else:
             publish_close_day_notify(
                 str(machine.tenant_id),

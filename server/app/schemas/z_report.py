@@ -21,6 +21,10 @@ class ZReportIn(BaseModel):
     expected_cash: Optional[Decimal] = Field(None, alias="expectedCash")
     actual_cash: Optional[Decimal] = Field(None, alias="actualCash")
     discrepancy: Optional[Decimal] = None
+    #: Closed from the cloud with nobody at the drawer. When true the server ignores
+    #: any counted figure and stores NULL, so the Z cannot claim a variance of zero
+    #: that nobody verified.
+    unattended: bool = False
     opened_by: Optional[str] = Field(None, alias="openedBy")
     closed_by: Optional[str] = Field(None, alias="closedBy")
 

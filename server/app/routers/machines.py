@@ -38,7 +38,11 @@ from app.services.realtime_info import (
     machine_realtime_connection_info,
     machine_realtime_refresh_info,
 )
-from app.services.close_day import get_open_trading_days_for_machines, get_pending_close_day_machine_ids
+from app.services.close_day import (
+    get_open_trading_days_for_machines,
+    get_pending_close_day_machine_ids,
+    take_pending_close_day_for_machine,
+)
 
 router = APIRouter(prefix="/machines", tags=["machines"])
 
@@ -274,10 +278,24 @@ def post_my_heartbeat(
         battery_status=body.battery_status if body is not None else None,
         clock_skew_ms=body.clock_skew_ms if body is not None else None,
     )
-    return {
+    # The pull half of remote close-day. Every till already calls this on a timer, so
+    # it is the one channel that does not care whether the terminal was reachable when
+    # a manager pressed the button — a till that was off simply finds the instruction
+    # when it comes back. Ably still notifies an awake till instantly; this is what
+    # makes a missed notification a delay rather than a close that never happens.
+    pending = take_pending_close_day_for_machine(db, machine)
+    db.commit()
+
+    response = {
         "ok": True,
         "serverTime": datetime.now(timezone.utc).isoformat(),
     }
+    if pending is not None:
+        response["pendingCloseDay"] = {
+            "requestId": str(pending.request_id),
+            "tradingDayId": str(pending.trading_day_id) if pending.trading_day_id else None,
+        }
+    return response
 
 
 @router.get("/{machine_id}", response_model=POSMachineResponse)
@@ -400,6 +418,11 @@ def delete_machine(
         machine.pairing_status = PairingStatus.UNPAIRED
         machine.shop_id = None
         machine.mqtt_client_id = None
+        # Machine tokens do not expire, so unpairing is the revocation. Bumping the
+        # version kills every token this terminal was ever issued, for good: if the
+        # row is later reactivated and re-paired, it mints at the new version and
+        # the old ones stay dead.
+        machine.token_version = (machine.token_version or 1) + 1
         db.commit()
         return {"deleted": True, "mode": "soft", "machineId": str(machine.id)}
 

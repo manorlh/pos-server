@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { activateUser, api, deactivateUser } from '@/lib/api';
+import { activateUser, api, assignTillPin, deactivateUser, revokeTillPin } from '@/lib/api';
 import { entitySelectItems } from '@/lib/selectItems';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
@@ -20,7 +20,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, Pencil, UserRoundCheck, UserRoundX } from 'lucide-react';
+import { Plus, Pencil, UserRoundCheck, UserRoundX, KeyRound } from 'lucide-react';
+import { TillPinDialog } from '@/components/dashboard/till-pin-dialog';
 
 const ROLE_NEEDS_COMPANY: UserRole[] = ['company_manager', 'shop_manager', 'cashier'];
 const ROLE_NEEDS_SHOP: UserRole[] = ['shop_manager', 'cashier'];
@@ -63,6 +64,7 @@ function normalizeUser(row: Record<string, unknown>): User {
     companyId: str('companyId', 'company_id'),
     shopId: str('shopId', 'shop_id'),
     isActive: Boolean(row.isActive ?? row.is_active),
+    hasTillPin: Boolean(row.hasTillPin ?? row.has_till_pin),
     createdAt: str('createdAt', 'created_at') ?? '',
     updatedAt: str('updatedAt', 'updated_at') ?? '',
   };
@@ -75,6 +77,8 @@ function isForbidden(err: unknown): boolean {
 export default function UsersPage() {
   const t = useTranslations('users');
   const tc = useTranslations('common');
+  const tp = useTranslations('tillPin');
+  const [pinTarget, setPinTarget] = useState<User | null>(null);
   const { user: me, authHydrated } = useAuth();
   // `GET /users` takes no scope filters — the server decides which staff a caller
   // may see from their own role. So the shared scope does not narrow this list,
@@ -149,6 +153,25 @@ export default function UsersPage() {
   });
 
   /** One switch, both ways. Deactivating destroys nothing and activating undoes it. */
+  const issuePin = useMutation({
+    mutationFn: ({ id, pin }: { id: string; pin: string }) => assignTillPin(id, pin),
+    onSuccess: () => {
+      setPinTarget(null);
+      toast.success(tp('issued'));
+      qc.invalidateQueries({ queryKey: ['users'] });
+    },
+    onError: (err) => toast.error(axiosErrorToToastMessage(err, tp('issueFailed'))),
+  });
+
+  const revokePin = useMutation({
+    mutationFn: (id: string) => revokeTillPin(id),
+    onSuccess: () => {
+      toast.success(tp('revoked'));
+      qc.invalidateQueries({ queryKey: ['users'] });
+    },
+    onError: (err) => toast.error(axiosErrorToToastMessage(err, tp('revokeFailed'))),
+  });
+
   const setActive = useMutation({
     mutationFn: ({ id, active }: { id: string; active: boolean }) =>
       active ? activateUser(id) : deactivateUser(id),
@@ -257,6 +280,7 @@ export default function UsersPage() {
               <TableHead>{t('role')}</TableHead>
               <TableHead>{t('scope')}</TableHead>
               <TableHead>{tc('status')}</TableHead>
+              <TableHead>{tp('column')}</TableHead>
               {canManage && <TableHead className="w-40" />}
             </TableRow>
           </TableHeader>
@@ -264,7 +288,7 @@ export default function UsersPage() {
             {listLoading
               ? Array.from({ length: 3 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: canManage ? 6 : 5 }).map((_, j) => (
+                    {Array.from({ length: canManage ? 7 : 6 }).map((_, j) => (
                       <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                     ))}
                   </TableRow>
@@ -272,7 +296,7 @@ export default function UsersPage() {
               : users.length === 0
               ? (
                   <TableRow>
-                    <TableCell colSpan={canManage ? 6 : 5} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={canManage ? 7 : 6} className="text-center text-muted-foreground py-8">
                       {t('noUsers')}
                     </TableCell>
                   </TableRow>
@@ -296,9 +320,39 @@ export default function UsersPage() {
                         {u.isActive ? tc('active') : tc('inactive')}
                       </Badge>
                     </TableCell>
+                    <TableCell>
+                      {u.hasTillPin ? (
+                        <Badge variant="default">{tp('stateSet')}</Badge>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">{tp('stateNone')}</span>
+                      )}
+                    </TableCell>
                     {canManage && (
                       <TableCell>
                         <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title={u.hasTillPin ? tp('reissue') : tp('issue')}
+                            onClick={() => setPinTarget(u)}
+                          >
+                            <KeyRound className="h-3.5 w-3.5" />
+                          </Button>
+                          {u.hasTillPin && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title={tp('revoke')}
+                              disabled={revokePin.isPending}
+                              onClick={() => {
+                                if (window.confirm(tp('revokeConfirm', { username: u.username }))) {
+                                  revokePin.mutate(u.id);
+                                }
+                              }}
+                            >
+                              <UserRoundX className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                           <Button variant="ghost" size="icon" title={tc('edit')} onClick={() => openEdit(u)}>
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
@@ -439,6 +493,19 @@ export default function UsersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <TillPinDialog
+        open={pinTarget !== null}
+        title={pinTarget?.hasTillPin ? tp('reissue') : tp('issue')}
+        description={tp('issueBlurb', { username: pinTarget?.username ?? '' })}
+        saving={issuePin.isPending}
+        onSubmit={(pin) => {
+          if (pinTarget) issuePin.mutate({ id: pinTarget.id, pin });
+        }}
+        onOpenChange={(next) => {
+          if (!next) setPinTarget(null);
+        }}
+      />
     </div>
   );
 }

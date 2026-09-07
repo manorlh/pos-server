@@ -1,8 +1,14 @@
+import re
+import uuid
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.user import UserCreate, UserUpdate, UserResponse, CurrentUserResponse
+from app.schemas.elevation import TillPinAssign, TillPinSet, TillPinState
+from app.services.elevation import PinPolicyError, clear_till_pin, set_till_pin
+from app.services.permissions import till_grantable_scopes
 from app.models.user import User, UserRole
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
 from app.models.shop import Shop
@@ -126,8 +132,128 @@ def get_current_user_info(current_user: User = Depends(get_current_user)):
             "can_read_users": current_user.role in USER_READ_ROLES,
             "can_manage_users": bool(creatable),
             "can_manage_pos_users": current_user.role != UserRole.CASHIER,
+            "has_till_pin": bool(current_user.till_pin_hash),
+            "till_scopes": sorted(
+                scope.value for scope in till_grantable_scopes(current_user.role)
+            ),
         }
     )
+
+
+# ── Till PIN ──────────────────────────────────────────────────────────────────
+# Declared before the `/{user_id}` variants so the literal "me" is not swallowed
+# by the path parameter.
+
+
+def _till_pin_state(user: User) -> TillPinState:
+    return TillPinState(
+        has_pin=bool(user.till_pin_hash),
+        set_at=user.till_pin_set_at,
+    )
+
+
+@router.put("/me/till-pin", response_model=TillPinState, response_model_by_alias=True)
+def set_my_till_pin(
+    data: TillPinSet,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Choose your own till PIN."""
+    try:
+        set_till_pin(db, current_user, data.pin)
+    except PinPolicyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    db.commit()
+    db.refresh(current_user)
+    return _till_pin_state(current_user)
+
+
+@router.delete("/me/till-pin", response_model=TillPinState, response_model_by_alias=True)
+def clear_my_till_pin(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    clear_till_pin(db, current_user)
+    db.commit()
+    db.refresh(current_user)
+    return _till_pin_state(current_user)
+
+
+def _authorise_till_pin_admin(current_user: User, target: User, db: Session) -> None:
+    """
+    Same bar as editing the user: you may manage them, and they are not your equal
+    or senior. Issuing someone a till PIN is handing out authority in their name, so
+    it must not be easier than changing their role.
+    """
+    if current_user.id == target.id:
+        return
+    if not _check_scope_access(current_user, target, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    if ROLE_LEVEL[current_user.role] <= ROLE_LEVEL[target.role]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot modify a user with equal or higher role",
+        )
+
+
+@router.post(
+    "/{user_id}/till-pin", response_model=TillPinState, response_model_by_alias=True
+)
+def assign_till_pin(
+    user_id: str,
+    data: TillPinAssign,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Set somebody else's till PIN.
+
+    What is set here is exactly what they type at the till — there is no first-use
+    change step. So whoever sets it knows it, and an approval recorded against that
+    person is only as strong as how the PIN was passed to them. Deliberate: see
+    `_authorise_till_pin_admin`, which is why this needs the same authority as
+    changing their role.
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    ensure_same_tenant(user.tenant_id, active_tenant_id)
+    _authorise_till_pin_admin(current_user, user, db)
+
+    try:
+        set_till_pin(db, user, data.pin)
+    except PinPolicyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    db.commit()
+    db.refresh(user)
+    return _till_pin_state(user)
+
+
+@router.delete(
+    "/{user_id}/till-pin", response_model=TillPinState, response_model_by_alias=True
+)
+def revoke_till_pin(
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Take away someone's ability to authorise anything at a till."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    ensure_same_tenant(user.tenant_id, active_tenant_id)
+    _authorise_till_pin_admin(current_user, user, db)
+
+    clear_till_pin(db, user)
+    db.commit()
+    db.refresh(user)
+    return _till_pin_state(user)
 
 
 @router.get("", response_model=List[UserResponse], response_model_by_alias=True)
@@ -154,6 +280,17 @@ def list_users(
         query = query.filter(User.role == role)
 
     return query.order_by(User.created_at.desc()).offset(skip).limit(limit).all()
+
+
+def _derive_username(db: Session, email: str) -> str:
+    """A login name from the email's local part, suffixed until it is free."""
+    base = re.sub(r"[^a-zA-Z0-9_]", "_", email.split("@", 1)[0]).strip("_")[:80]
+    base = re.sub(r"_+", "_", base) or "user"
+    for attempt in range(12):
+        candidate = base if attempt == 0 else f"{base}_{uuid.uuid4().hex[:4]}"
+        if not db.query(User.id).filter(User.username == candidate[:100]).first():
+            return candidate[:100]
+    return f"user_{uuid.uuid4().hex[:8]}"
 
 
 @router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED, response_model_by_alias=True)
@@ -183,15 +320,23 @@ def create_user(
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot assign user to another shop")
             user_data.shop_id = current_user.shop_id
 
-    if get_user_by_username(db, user_data.username):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists")
-    if db.query(User).filter(User.email == user_data.email).first():
+    # Lowercase on the way in. Clerk sign-in claims an invited row by *lowered*
+    # email, so storing `Yossi@` and `yossi@` as two rows would let one of them be
+    # unclaimable — and which one the linker found would be arbitrary.
+    email = str(user_data.email).strip().lower()
+    if db.query(User).filter(func.lower(User.email) == email).first():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already exists")
 
+    username = (user_data.username or "").strip() or _derive_username(db, email)
+    if get_user_by_username(db, username):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists")
+
     db_user = User(
-        email=user_data.email,
-        username=user_data.username,
-        hashed_password=get_password_hash(user_data.password),
+        email=email,
+        username=username,
+        hashed_password=(
+            get_password_hash(user_data.password) if user_data.password else None
+        ),
         role=user_data.role,
         tenant_id=active_tenant_id,
         company_id=user_data.company_id,

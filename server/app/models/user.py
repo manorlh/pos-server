@@ -1,7 +1,7 @@
 import uuid
 import enum
 
-from sqlalchemy import Column, String, Boolean, ForeignKey, Enum as SQLEnum, DateTime
+from sqlalchemy import Column, String, Boolean, ForeignKey, Enum as SQLEnum, DateTime, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -31,6 +31,26 @@ class User(Base):
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+
+    # ── Till PIN ──────────────────────────────────────────────────────────────
+    # A separate credential from cloud sign-in, for authorising actions at a till.
+    # It is bcrypt (a human secret, unlike the session token) and it must NEVER be
+    # sent to a device: `pos_users.pin_hash` is shipped so shift login works
+    # offline, but elevation is verified in the cloud only, so this hash has no
+    # reason to leave the server. The sync code next door is easy to imitate by
+    # accident — don't.
+    till_pin_hash = Column(String(255), nullable=True)
+    till_pin_set_at = Column(DateTime(timezone=True), nullable=True)
+    # Lockout counters live here, deliberately apart from cloud sign-in: a cashier
+    # guessing PINs at a counter must not be able to lock their manager out of the
+    # dashboard.
+    till_pin_failed_count = Column(Integer, default=0, nullable=False, server_default="0")
+    till_pin_locked_until = Column(DateTime(timezone=True), nullable=True)
+
+    @property
+    def has_till_pin(self) -> bool:
+        """Whether this person can authorise anything at a till. Never the hash."""
+        return bool(self.till_pin_hash)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

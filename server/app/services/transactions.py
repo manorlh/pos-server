@@ -16,6 +16,7 @@ from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -173,25 +174,50 @@ def get_or_create_trading_day(
     trading_day_id: Optional[uuid.UUID],
     day_date: Optional[date],
     opened_at: Optional[datetime] = None,
+    opening_cash=None,
+    opened_by: Optional[str] = None,
+    sequence_number: Optional[int] = None,
+    status: TradingDayStatus = TradingDayStatus.OPEN,
 ) -> TradingDay:
     """
-    Resolve a TradingDay by id (preferred) or by (machine_id, day_date).
-    If no row exists, auto-open one. Idempotent thanks to UNIQUE (machine_id, day_date).
+    Resolve a TradingDay **by its id only**, creating it if unknown.
+
+    Idempotent by id, exactly like a transaction: the till generates the id, so a
+    retried upload lands on the same row and a day the cloud has not heard of yet is
+    simply created.
+
+    There is deliberately no fallback to `(machine_id, day_date)`. That fallback is
+    what silently merged two shifts on one calendar date: the evening's sales matched
+    the morning's already-closed day, and the evening's Z then came back `duplicate`
+    — which the till read as success before purging the documents behind it. A date
+    is a reporting attribute, never an identity.
+
+    An unknown id with no `day_date` still falls back to today in UTC, which is only
+    reachable for a payload carrying neither — the till always sends both.
     """
     td: Optional[TradingDay] = None
     if trading_day_id:
         td = db.query(TradingDay).filter(TradingDay.id == trading_day_id).first()
-    if td is None and day_date is not None:
-        td = (
+    if td is not None:
+        return td
+
+    # No id at all — an older sale, or one written in the window between a day
+    # closing and the next opening. It belongs to whatever day this machine has open,
+    # which is what the till meant. Creating a fresh open day for it instead would
+    # manufacture a phantom that no Z will ever close, and would collide with the
+    # one-open-day rule the moment the real day is reported.
+    if trading_day_id is None:
+        open_day = (
             db.query(TradingDay)
             .filter(
                 TradingDay.machine_id == machine.id,
-                TradingDay.day_date == day_date,
+                TradingDay.status == TradingDayStatus.OPEN,
             )
+            .order_by(TradingDay.opened_at.desc())
             .first()
         )
-    if td is not None:
-        return td
+        if open_day is not None:
+            return open_day
 
     if day_date is None:
         # Last resort: today in UTC.
@@ -203,11 +229,32 @@ def get_or_create_trading_day(
         machine_id=machine.id,
         shop_id=machine.shop_id,
         day_date=day_date,
+        sequence_number=sequence_number,
         opened_at=opened_at or datetime.now(timezone.utc),
-        status=TradingDayStatus.OPEN,
+        opening_cash=opening_cash,
+        opened_by=opened_by,
+        status=status,
     )
     db.add(new_td)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # The only unique rule here is "one open day per machine". Losing that race
+        # means another request created this machine's open day first; adopting it is
+        # correct and is what the caller wanted. Never a 500.
+        db.rollback()
+        existing = (
+            db.query(TradingDay)
+            .filter(
+                TradingDay.machine_id == machine.id,
+                TradingDay.status == TradingDayStatus.OPEN,
+            )
+            .order_by(TradingDay.opened_at.desc())
+            .first()
+        )
+        if existing is None:
+            raise
+        return existing
     return new_td
 
 
@@ -314,6 +361,12 @@ def upsert_transactions(
     }
 
     for tx in transactions:
+        # Each transaction gets its own SAVEPOINT. Without one, a single failure left
+        # the session in a rolled-back state: every later transaction in the batch was
+        # then rejected with a PendingRollbackError, and the router's commit raised —
+        # turning one bad row into a 500 the till retries forever, which blocks the
+        # outbox and therefore the day's close.
+        savepoint = db.begin_nested()
         try:
             # Before anything is written, so a rejected document leaves no trace at
             # all — not even an auto-opened trading day.
@@ -468,12 +521,15 @@ def upsert_transactions(
                 and tx.updated_at is not None
                 and previous.updated_at >= tx.updated_at
             )
+            savepoint.commit()
             results.append(TransactionUpsertResult(
                 id=tx.id,
                 status="duplicate" if is_duplicate else "accepted",
                 server_received_at=datetime.now(timezone.utc),
             ))
         except Exception as exc:
+            if savepoint.is_active:
+                savepoint.rollback()
             logger.exception("Failed to upsert transaction %s: %s", tx.id, exc)
             results.append(TransactionUpsertResult(
                 id=tx.id,
@@ -526,6 +582,10 @@ def apply_z_report(
         trading_day_id=z.trading_day_id,
         day_date=z.day_date,
         opened_at=z.opened_at,
+        # A day the cloud never heard of is being closed right now, so it is created
+        # closed. Inserting it open and closing it one statement later would trip the
+        # one-open-day rule on a machine that already has a day open.
+        status=TradingDayStatus.CLOSED,
     )
 
     existing = db.query(ZReport).filter(ZReport.trading_day_id == td.id).first()
@@ -550,8 +610,15 @@ def apply_z_report(
         opening_cash=z.opening_cash,
         closing_cash=z.closing_cash,
         expected_cash=z.expected_cash,
-        actual_cash=z.actual_cash,
-        discrepancy=z.discrepancy,
+        # Nobody counted the drawer on an unattended close, so the count and the
+        # variance are stored as unknown rather than as the expected figure. The till
+        # used to send expected-as-counted, which made every remote Z assert a variance
+        # of exactly zero — a shop with a real shortfall got a document saying it
+        # balanced. Enforced here and not only on the device, so an older till build
+        # cannot reintroduce the lie.
+        actual_cash=None if z.unattended else z.actual_cash,
+        discrepancy=None if z.unattended else z.discrepancy,
+        unattended=z.unattended,
         payload=z.payload,
         closed_at=z.closed_at,
     )
@@ -559,13 +626,16 @@ def apply_z_report(
 
     td.status = TradingDayStatus.CLOSED
     td.closed_at = z.closed_at
-    if z.closing_cash is not None:
+    if z.closing_cash is not None and not z.unattended:
         td.closing_cash = z.closing_cash
     if z.expected_cash is not None:
         td.expected_cash = z.expected_cash
-    if z.actual_cash is not None:
+    # Same rule as the Z row above: an unattended close leaves the count and the
+    # variance unknown on the day as well, or the dashboard would show a reconciled
+    # drawer nobody opened.
+    if z.actual_cash is not None and not z.unattended:
         td.actual_cash = z.actual_cash
-    if z.discrepancy is not None:
+    if z.discrepancy is not None and not z.unattended:
         td.discrepancy = z.discrepancy
     if z.opened_by:
         td.opened_by = td.opened_by or z.opened_by

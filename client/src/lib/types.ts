@@ -14,6 +14,12 @@ export interface User {
   companyId?: string;
   shopId?: string;
   isActive: boolean;
+  /**
+   * Whether this person holds a till PIN — the credential that lets them authorise
+   * an action at a terminal without signing into the dashboard. Never the PIN or
+   * its hash, only whether one exists.
+   */
+  hasTillPin?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -34,6 +40,11 @@ export interface UserCapabilities {
   canManageUsers: boolean;
   /** May manage till operators (קופאים). */
   canManagePosUsers: boolean;
+  /**
+   * What this caller could authorise at a till once they set a PIN. Empty means a
+   * PIN would buy them nothing, so the profile page says so instead of offering it.
+   */
+  tillScopes?: string[];
 }
 
 /** `GET /users/me` — the caller's own record plus its capabilities. */

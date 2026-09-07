@@ -77,7 +77,11 @@ export default function MachinesPage() {
   const [removeMachineHasHistory, setRemoveMachineHasHistory] = useState(false);
 
   const [closeDayOpen, setCloseDayOpen] = useState(false);
-  const [closeDayTarget, setCloseDayTarget] = useState<'machine' | 'shop'>('machine');
+  const [closeDayTarget, setCloseDayTarget] = useState<'machine' | 'shop' | 'shops'>('machine');
+  // Which shops a multi-shop close covers. Separate from the machine selection: a
+  // manager closing "Dizengoff and Ramat Aviv" is naming places, not terminals, and
+  // should not have to know which tills are in them.
+  const [closeDayShopIds, setCloseDayShopIds] = useState<Set<string>>(new Set());
   const [selectedMachineIds, setSelectedMachineIds] = useState<Set<string>>(new Set());
   const [closeProgressOpen, setCloseProgressOpen] = useState(false);
   const [closeProgressRequestId, setCloseProgressRequestId] = useState<string | null>(null);
@@ -208,7 +212,8 @@ export default function MachinesPage() {
   });
 
   const closeDayMutation = useMutation({
-    mutationFn: (payload: { machineIds?: string[]; shopId?: string }) => postCloseDay(payload),
+    mutationFn: (payload: { machineIds?: string[]; shopId?: string; shopIds?: string[] }) =>
+      postCloseDay(payload),
     onSuccess: (data) => {
       setCloseProgressRequestId(data.requestId);
       setCloseProgressData({ id: data.requestId, status: data.status, items: data.items });
@@ -1077,10 +1082,11 @@ export default function MachinesPage() {
                 <Label>{t('pushScopeLabel')}</Label>
                 <Select
                   value={closeDayTarget}
-                  onValueChange={(v) => setCloseDayTarget(v as 'machine' | 'shop')}
+                  onValueChange={(v) => setCloseDayTarget(v as 'machine' | 'shop' | 'shops')}
                   items={[
                     { value: 'machine', label: t('closeDayThisDevice') },
                     { value: 'shop', label: t('closeDayAllOpenInShop') },
+                    { value: 'shops', label: t('closeDaySelectedShops') },
                   ]}
                 >
                   <SelectTrigger>
@@ -1093,12 +1099,46 @@ export default function MachinesPage() {
                     <SelectItem value="shop" label={t('closeDayAllOpenInShop')}>
                       {t('closeDayAllOpenInShop')}
                     </SelectItem>
+                    <SelectItem value="shops" label={t('closeDaySelectedShops')}>
+                      {t('closeDaySelectedShops')}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">{t('pushThisDeviceOnlyHint')}</p>
             )}
+            {closeDayTarget === 'shops' ? (
+              <div className="space-y-2">
+                <Label>{t('closeDaySelectedShops')}</Label>
+                <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-2">
+                  {shops.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">{t('closeDayNoShops')}</p>
+                  ) : (
+                    shops.map((shop) => (
+                      <label key={shop.id} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={closeDayShopIds.has(shop.id)}
+                          onChange={(e) => {
+                            setCloseDayShopIds((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(shop.id);
+                              else next.delete(shop.id);
+                              return next;
+                            });
+                          }}
+                        />
+                        {shop.name}
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : null}
+            {/* Says plainly that an offline till is not a failure — it closes when it
+                comes back, or expires if it never does. */}
+            <p className="text-sm text-muted-foreground">{t('closeDayOfflineHint')}</p>
             <p className="text-sm text-muted-foreground">{t('closeDayProgressHint')}</p>
           </div>
           <DialogFooter>
@@ -1107,6 +1147,11 @@ export default function MachinesPage() {
             </Button>
             <Button
               onClick={() => {
+                if (closeDayTarget === 'shops') {
+                  if (closeDayShopIds.size === 0) return;
+                  closeDayMutation.mutate({ shopIds: Array.from(closeDayShopIds) });
+                  return;
+                }
                 if (!selectedMachine) return;
                 if (closeDayTarget === 'shop' && selectedMachine.shopId) {
                   closeDayMutation.mutate({ shopId: selectedMachine.shopId });
@@ -1114,7 +1159,12 @@ export default function MachinesPage() {
                   closeDayMutation.mutate({ machineIds: [selectedMachine.id] });
                 }
               }}
-              disabled={closeDayMutation.isPending || !selectedMachine || !canCloseMachine(selectedMachine)}
+              disabled={
+                closeDayMutation.isPending ||
+                (closeDayTarget === 'shops'
+                  ? closeDayShopIds.size === 0
+                  : !selectedMachine || !canCloseMachine(selectedMachine))
+              }
             >
               <CalendarClock className="h-3.5 w-3.5 me-1" />
               {closeDayMutation.isPending ? t('closeDaySending') : t('closeDayConfirm')}

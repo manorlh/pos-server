@@ -235,6 +235,31 @@ def user_covers_company(db: Session, user: User, company_id) -> bool:
     return target in set(descendant_company_ids(db, own))
 
 
+def user_may_use_machine(db: Session, user: User, machine) -> bool:
+    """
+    Is this user in charge of the shop `machine` stands in?
+
+    One definition, two callers: the dashboard's machine RBAC check and the till's
+    elevation grant. They must never diverge — a person who cannot touch a machine
+    from a desk must not be able to elevate at it by walking up to it.
+    """
+    role = getattr(user, "role", None)
+    if role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
+        return True
+    shop = getattr(machine, "shop", None)
+    if role == UserRole.COMPANY_MANAGER and shop is not None:
+        return user_covers_company(db, user, shop.company_id)
+    if role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
+        own_shop = getattr(user, "shop_id", None)
+        machine_shop = getattr(machine, "shop_id", None)
+        return (
+            own_shop is not None
+            and machine_shop is not None
+            and str(own_shop) == str(machine_shop)
+        )
+    return False
+
+
 def visible_shop_ids(db: Session, user: User) -> Query:
     """`Shop.id` query for every shop under this user's company scope.
 

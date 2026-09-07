@@ -40,7 +40,22 @@ class Settings(BaseSettings):
     pairing_mobile_app_base_url: str = "http://localhost:3002"
 
     # Machine Auth
-    machine_token_expire_days: int = 365
+    # There is deliberately no machine-token lifetime setting. Machine tokens do not
+    # expire: a terminal is not a person, and an expiry only ever produced an outage
+    # nobody was on site to fix. Revocation is `pos_machines.token_version`, bumped
+    # when an admin unpairs, and checked on every request.
+
+    # Till elevation (a manager authorising an action at a terminal)
+    # Idle window: slides forward on every authorised call, so someone actively
+    # working never expires mid-task. Only walking away expires.
+    elevated_session_idle_minutes: int = 15
+    # Hard ceiling sliding cannot pass, so a grant never outlives a shift.
+    elevated_session_absolute_hours: int = 8
+    # Counted per user, not per IP: every till in a shop shares one NAT address.
+    till_pin_max_attempts: int = 5
+    till_pin_lockout_minutes: int = 5
+    till_pin_min_length: int = 4
+    till_pin_max_length: int = 12
 
     # Clerk
     clerk_secret_key: str = ""

@@ -10,12 +10,17 @@ from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.middleware.auth import get_pos_machine_for_sync_path
+from app.middleware.auth import get_pos_machine_for_sync_path, require_elevated
+from app.models.elevated_session import ElevatedSession
+from app.models.shop_product_override import ShopProductOverride
+from app.services.permissions import Scope
 from app.models.category import Category, CatalogLevel as CategoryCatalogLevel
 from app.models.pos_machine import POSMachine
+from app.models.trading_day import TradingDay, TradingDayStatus
 from app.models.pos_user import PosUser
 from app.models.product import Product, CatalogLevel
 from app.models.sync_log import SyncLog, SyncAction, SyncDirection, SyncEntityType, SyncStatus
@@ -37,7 +42,7 @@ from app.schemas.transaction import (
     TransactionsBatchRequest,
     TransactionsBatchResponse,
 )
-from app.schemas.trading_day import TradingDayOut
+from app.schemas.trading_day import TradingDayOpenIn, TradingDayOut
 from app.schemas.z_report import (
     ZReportIn,
     ZReportMissingResponse,
@@ -340,6 +345,128 @@ def post_catalog_changes(
     }
 
 
+# ── Catalog editing from the till ─────────────────────────────────────────────
+#
+# These endpoints used to take a machine token and nothing else, and to write
+# tenant-wide GLOBAL rows: a till in one shop could rename, reprice or delete a
+# product belonging to a different company in the same tenant, and every write was
+# pushed to every till. Nothing in the shipped Android app ever called them.
+#
+# They now require two credentials — the machine token says which till, an
+# `X-Elevation-Token` grant says which manager authorised it — and they write at
+# *shop* scope:
+#
+#   * a new product becomes a tenant master **plus an assortment row for this
+#     shop**, so it is listed exactly where it was created. (Without that row the
+#     catalog sync would not serve it back, so a product created from a till was
+#     previously invisible on the till that created it.)
+#   * price and availability changes write this shop's `shop_product_overrides`
+#     row and never touch the master, so one shop cannot reprice the chain.
+#   * the master's own fields — name, barcode, category — may only be edited when
+#     the product is listed in this shop and nowhere else, i.e. when it is
+#     effectively this shop's own item.
+#   * "delete" unlists from this shop. The master survives, which is both the right
+#     meaning ("take it off my till", not "erase it from the chain") and the only
+#     safe one: `transaction_items.product_id` is a foreign key with no ON DELETE,
+#     so removing a product that has ever been sold raises IntegrityError.
+#
+# Categories have no shop tier at all — `get_categories_for_sync` serves tenant
+# globals to any machine with a shop — so a till may add one, but may only rename
+# or remove one whose products all belong to this shop alone.
+
+
+def _audit(
+    db: Session,
+    *,
+    machine: POSMachine,
+    session: ElevatedSession,
+    entity: SyncEntityType,
+    action: SyncAction,
+    entity_id,
+    note: Optional[str] = None,
+) -> None:
+    """Record who did this, not only which till it came from."""
+    db.add(
+        SyncLog(
+            machine_id=machine.id,
+            actor_user_id=session.user_id,
+            direction=SyncDirection.POS_TO_SERVER,
+            entity_type=entity,
+            entity_id=entity_id,
+            action=action,
+            status=SyncStatus.SUCCESS,
+            conflict_note=note,
+        )
+    )
+
+
+def _shop_or_400(db: Session, machine: POSMachine) -> Shop:
+    shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
+    if shop is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Machine must be assigned to a shop",
+        )
+    return shop
+
+
+def _listed_shop_ids(db: Session, product_id) -> List[Any]:
+    rows = (
+        db.query(ShopProductOverride.shop_id)
+        .filter(
+            ShopProductOverride.global_product_id == product_id,
+            ShopProductOverride.is_listed.is_(True),
+        )
+        .all()
+    )
+    return [r[0] for r in rows]
+
+
+def _product_belongs_only_to(db: Session, product: Product, shop_id) -> bool:
+    """
+    Is this product listed in `shop_id` and nowhere else?
+
+    The test for "this shop's own item". A product listed in no shop at all fails
+    it deliberately: an unlisted master is still chain data, and editing it from one
+    till is not obviously that shop's business.
+    """
+    listed = {str(s) for s in _listed_shop_ids(db, product.id)}
+    return listed == {str(shop_id)}
+
+
+def _override_for(db: Session, shop_id, product_id) -> Optional[ShopProductOverride]:
+    return (
+        db.query(ShopProductOverride)
+        .filter(
+            ShopProductOverride.shop_id == shop_id,
+            ShopProductOverride.global_product_id == product_id,
+        )
+        .first()
+    )
+
+
+#: Fields a till may change on *any* product listed in its shop. They map onto the
+#: assortment row, so they change what this shop sells and charges without touching
+#: what anyone else does.
+_OVERRIDE_FIELDS = {"price", "is_available", "is_listed"}
+
+
+def _machine_editable_product(db: Session, machine: POSMachine, product_id: str) -> Product:
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+    if not machine.tenant_id or product.tenant_id != machine.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Product not in machine tenant"
+        )
+    if product.pos_machine_id is not None and str(product.pos_machine_id) != str(machine.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Product belongs to another terminal",
+        )
+    return product
+
+
 @router.post(
     "/{machine_id}/products",
     response_model=ProductResponse,
@@ -349,14 +476,14 @@ def machine_create_cloud_product(
     machine_id: str,
     data: ProductCreate,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    session: ElevatedSession = Depends(require_elevated(Scope.CATALOG_WRITE)),
     db: Session = Depends(get_db),
 ):
-    """POS: create a global catalog product on the cloud (source of truth)."""
+    """Create a product from the till, listed in the till's own shop."""
     _require_assigned_machine(machine)
+    shop = _shop_or_400(db, machine)
 
-    final_sku, sku_auto_assigned = resolve_sku_for_create(
-        db, machine.tenant_id, data.sku
-    )
+    final_sku, sku_auto_assigned = resolve_sku_for_create(db, machine.tenant_id, data.sku)
     global_sku = allocate_global_sku(db, machine.tenant_id)
 
     cat = db.query(Category).filter(Category.id == data.category_id).first()
@@ -368,11 +495,13 @@ def machine_create_cloud_product(
 
     product = Product(
         tenant_id=machine.tenant_id,
-        company_id=data.company_id,
-        shop_id=data.shop_id,
+        # Derived from the till's own shop, never read from the request body: a
+        # machine token must not let the caller choose whose catalog it writes into.
+        company_id=shop.company_id,
+        shop_id=None,
         pos_machine_id=None,
         category_id=data.category_id,
-        global_product_id=data.global_product_id,
+        global_product_id=None,
         catalog_level=CatalogLevel.GLOBAL,
         is_local_override=False,
         name=data.name,
@@ -392,77 +521,30 @@ def machine_create_cloud_product(
         unit_label=data.unit_label,
     )
     db.add(product)
+    db.flush()
+
+    # The assortment row is what makes it appear on the till that just created it.
+    db.add(
+        ShopProductOverride(
+            shop_id=shop.id,
+            global_product_id=product.id,
+            price=None,
+            is_listed=True,
+            is_available=True,
+        )
+    )
+    _audit(
+        db,
+        machine=machine,
+        session=session,
+        entity=SyncEntityType.PRODUCTS,
+        action=SyncAction.CREATE,
+        entity_id=product.id,
+    )
     db.commit()
     db.refresh(product)
     notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="product_created")
     return product
-
-
-@router.post(
-    "/{machine_id}/categories",
-    response_model=CategoryResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-def machine_create_cloud_category(
-    machine_id: str,
-    data: CategoryCreate,
-    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    db: Session = Depends(get_db),
-):
-    """POS: create a global category on the cloud (source of truth)."""
-    _require_assigned_machine(machine)
-
-    if data.parent_id:
-        parent = db.query(Category).filter(Category.id == data.parent_id).first()
-        if not parent or parent.tenant_id != machine.tenant_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Parent category not found for this tenant",
-            )
-
-    category = Category(
-        tenant_id=machine.tenant_id,
-        company_id=data.company_id,
-        shop_id=data.shop_id,
-        pos_machine_id=None,
-        catalog_level=CategoryCatalogLevel.GLOBAL,
-        name=data.name,
-        description=data.description,
-        color=data.color,
-        image_url=data.image_url,
-        parent_id=data.parent_id,
-        is_active=data.is_active,
-        sort_order=data.sort_order,
-    )
-    db.add(category)
-    db.commit()
-    db.refresh(category)
-    notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="category_created")
-    return category
-
-
-def _machine_may_edit_global_product(machine: POSMachine, product: Product) -> None:
-    if not machine.tenant_id or product.tenant_id != machine.tenant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Product not in machine tenant")
-    if product.pos_machine_id is not None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Machine-local catalog rows cannot be edited via this endpoint",
-        )
-    if product.catalog_level != CatalogLevel.GLOBAL:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only global catalog products")
-
-
-def _machine_may_edit_global_category(machine: POSMachine, category: Category) -> None:
-    if not machine.tenant_id or category.tenant_id != machine.tenant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Category not in machine tenant")
-    if category.pos_machine_id is not None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Machine-local categories cannot be edited via this endpoint",
-        )
-    if category.catalog_level != CategoryCatalogLevel.GLOBAL:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only global categories")
 
 
 @router.put("/{machine_id}/products/{product_id}", response_model=ProductResponse)
@@ -471,21 +553,63 @@ def machine_update_cloud_product(
     product_id: str,
     data: ProductUpdate,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    session: ElevatedSession = Depends(require_elevated(Scope.CATALOG_WRITE)),
     db: Session = Depends(get_db),
 ):
-    product = db.query(Product).filter(Product.id == product_id).first()
-    if not product:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
-    _machine_may_edit_global_product(machine, product)
+    """
+    Change a product from the till.
 
-    if data.category_id and not db.query(Category).filter(Category.id == data.category_id).first():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Category not found")
+    Price and availability land on this shop's assortment row. Anything else is a
+    change to the chain's master record, so it is allowed only for a product this
+    shop alone lists.
+    """
+    _require_assigned_machine(machine)
+    shop = _shop_or_400(db, machine)
+    product = _machine_editable_product(db, machine, product_id)
 
     updates = data.model_dump(exclude_unset=True, by_alias=False)
-    validate_open_price_update(product, updates)
-    for field, value in updates.items():
-        setattr(product, field, value)
+    master_fields = {k: v for k, v in updates.items() if k not in _OVERRIDE_FIELDS}
+    override_fields = {k: v for k, v in updates.items() if k in _OVERRIDE_FIELDS}
 
+    if master_fields and not _product_belongs_only_to(db, product, shop.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="shared_product_master_readonly",
+        )
+
+    if master_fields:
+        if master_fields.get("category_id") and not db.query(Category).filter(
+            Category.id == master_fields["category_id"]
+        ).first():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Category not found"
+            )
+        validate_open_price_update(product, master_fields)
+        for field, value in master_fields.items():
+            setattr(product, field, value)
+
+    if override_fields:
+        override = _override_for(db, shop.id, product.id)
+        if override is None:
+            override = ShopProductOverride(
+                shop_id=shop.id,
+                global_product_id=product.id,
+                is_listed=True,
+                is_available=True,
+            )
+            db.add(override)
+        for field, value in override_fields.items():
+            setattr(override, field, value)
+
+    _audit(
+        db,
+        machine=machine,
+        session=session,
+        entity=SyncEntityType.PRODUCTS,
+        action=SyncAction.UPDATE,
+        entity_id=product.id,
+        note="master" if master_fields else "shop_override",
+    )
     db.commit()
     db.refresh(product)
     notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="product_updated")
@@ -497,18 +621,126 @@ def machine_delete_cloud_product(
     machine_id: str,
     product_id: str,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    session: ElevatedSession = Depends(require_elevated(Scope.CATALOG_WRITE)),
     db: Session = Depends(get_db),
 ):
-    product = db.query(Product).filter(Product.id == product_id).first()
-    if not product:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
-    _machine_may_edit_global_product(machine, product)
+    """
+    Take a product off this shop's tills.
 
-    tid = str(product.tenant_id)
-    db.delete(product)
+    Unlists rather than deletes. The master row is chain data and may be referenced
+    by issued invoices — `transaction_items.product_id` has no ON DELETE, so a hard
+    delete of anything ever sold raises IntegrityError rather than removing it.
+    """
+    _require_assigned_machine(machine)
+    shop = _shop_or_400(db, machine)
+    product = _machine_editable_product(db, machine, product_id)
+
+    override = _override_for(db, shop.id, product.id)
+    if override is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Product not listed in this shop"
+        )
+    override.is_listed = False
+    db.add(override)
+
+    _audit(
+        db,
+        machine=machine,
+        session=session,
+        entity=SyncEntityType.PRODUCTS,
+        action=SyncAction.DELETE,
+        entity_id=product.id,
+        note="unlisted_from_shop",
+    )
     db.commit()
-    notify_all_machines_for_tenant(db, tid, reason="product_deleted")
+    notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="product_deleted")
     return None
+
+
+def _category_belongs_only_to(db: Session, category: Category, shop_id) -> bool:
+    """True when every product in this category is listed by this shop alone."""
+    products = db.query(Product).filter(Product.category_id == category.id).all()
+    for product in products:
+        if not _product_belongs_only_to(db, product, shop_id):
+            return False
+    return True
+
+
+def _machine_editable_category(db: Session, machine: POSMachine, category_id: str) -> Category:
+    category = db.query(Category).filter(Category.id == category_id).first()
+    if not category:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+    if not machine.tenant_id or category.tenant_id != machine.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Category not in machine tenant"
+        )
+    if category.pos_machine_id is not None and str(category.pos_machine_id) != str(machine.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Category belongs to another terminal",
+        )
+    return category
+
+
+@router.post(
+    "/{machine_id}/categories",
+    response_model=CategoryResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def machine_create_cloud_category(
+    machine_id: str,
+    data: CategoryCreate,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    session: ElevatedSession = Depends(require_elevated(Scope.CATALOG_WRITE)),
+    db: Session = Depends(get_db),
+):
+    """
+    Add a category from the till.
+
+    Tenant-wide, because `get_categories_for_sync` serves tenant globals to every
+    machine that has a shop — there is no shop tier for categories to live in. That
+    is acceptable for *adding* one (additive, and invisible until something is filed
+    under it) but not for renaming one, which is why the edit path is narrower.
+    """
+    _require_assigned_machine(machine)
+    shop = _shop_or_400(db, machine)
+
+    if data.parent_id:
+        parent = db.query(Category).filter(Category.id == data.parent_id).first()
+        if not parent or parent.tenant_id != machine.tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Parent category not found for this tenant",
+            )
+
+    category = Category(
+        tenant_id=machine.tenant_id,
+        company_id=shop.company_id,
+        shop_id=None,
+        pos_machine_id=None,
+        catalog_level=CategoryCatalogLevel.GLOBAL,
+        name=data.name,
+        description=data.description,
+        color=data.color,
+        image_url=data.image_url,
+        parent_id=data.parent_id,
+        is_active=data.is_active,
+        sort_order=data.sort_order,
+    )
+    db.add(category)
+    db.flush()
+    _audit(
+        db,
+        machine=machine,
+        session=session,
+        entity=SyncEntityType.CATEGORIES,
+        action=SyncAction.CREATE,
+        entity_id=category.id,
+    )
+    db.commit()
+    db.refresh(category)
+    notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="category_created")
+    return category
 
 
 @router.put("/{machine_id}/categories/{category_id}", response_model=CategoryResponse)
@@ -517,21 +749,36 @@ def machine_update_cloud_category(
     category_id: str,
     data: CategoryUpdate,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    session: ElevatedSession = Depends(require_elevated(Scope.CATALOG_WRITE)),
     db: Session = Depends(get_db),
 ):
-    category = db.query(Category).filter(Category.id == category_id).first()
-    if not category:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
-    _machine_may_edit_global_category(machine, category)
+    _require_assigned_machine(machine)
+    shop = _shop_or_400(db, machine)
+    category = _machine_editable_category(db, machine, category_id)
+
+    if not _category_belongs_only_to(db, category, shop.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="shared_category_readonly"
+        )
 
     if data.parent_id is not None:
         parent = db.query(Category).filter(Category.id == data.parent_id).first()
         if not parent or parent.tenant_id != machine.tenant_id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parent category not found")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Parent category not found"
+            )
 
     for field, value in data.model_dump(exclude_unset=True, by_alias=False).items():
         setattr(category, field, value)
 
+    _audit(
+        db,
+        machine=machine,
+        session=session,
+        entity=SyncEntityType.CATEGORIES,
+        action=SyncAction.UPDATE,
+        entity_id=category.id,
+    )
     db.commit()
     db.refresh(category)
     notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="category_updated")
@@ -543,13 +790,17 @@ def machine_delete_cloud_category(
     machine_id: str,
     category_id: str,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    session: ElevatedSession = Depends(require_elevated(Scope.CATALOG_WRITE)),
     db: Session = Depends(get_db),
 ):
-    category = db.query(Category).filter(Category.id == category_id).first()
-    if not category:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
-    _machine_may_edit_global_category(machine, category)
+    _require_assigned_machine(machine)
+    shop = _shop_or_400(db, machine)
+    category = _machine_editable_category(db, machine, category_id)
 
+    if not _category_belongs_only_to(db, category, shop.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="shared_category_readonly"
+        )
     if db.query(Product).filter(Product.category_id == category_id).count():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -557,6 +808,14 @@ def machine_delete_cloud_category(
         )
 
     tid = str(category.tenant_id)
+    _audit(
+        db,
+        machine=machine,
+        session=session,
+        entity=SyncEntityType.CATEGORIES,
+        action=SyncAction.DELETE,
+        entity_id=category.id,
+    )
     db.delete(category)
     db.commit()
     notify_all_machines_for_tenant(db, tid, reason="category_deleted")
@@ -665,6 +924,97 @@ def post_z_report(
         trading_day_id=z_report.trading_day_id,
         server_time=datetime.now(timezone.utc),
     )
+
+
+@router.post("/{machine_id}/trading-day", response_model=TradingDayOut)
+def machine_report_trading_day(
+    machine_id: str,
+    data: TradingDayOpenIn,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """
+    Record a day the till has already opened.
+
+    Deliberately *not* "open a day": the till opens days on its own and starts selling
+    at once, online or not. This only tells the cloud what happened, so a dashboard can
+    see an open till before its first sale and a manager's remote close stops failing
+    with `no_open_day` on exactly the till that needs it.
+
+    Idempotent by id, like a transaction. Three cases:
+
+    * unknown id — create it, with the real opening time, float and cashier;
+    * known and still open — correct those three fields. A sale can beat this event to
+      the server, and the day it creates carries an opening time inferred from that
+      sale. This is the till's own account, so it wins;
+    * known and closed — return it untouched. A late open event must never resurrect a
+      day that has already filed its Z.
+
+    A second *open* day on the same machine is refused with 409 rather than left to the
+    partial unique index, so the till gets an answer it can act on instead of a 500.
+    """
+    _require_assigned_machine(machine)
+
+    existing = db.query(TradingDay).filter(TradingDay.id == data.id).first()
+    if existing is not None:
+        if str(existing.machine_id) != str(machine.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="trading_day_belongs_to_another_machine",
+            )
+        if existing.status == TradingDayStatus.OPEN:
+            existing.opened_at = data.opened_at
+            if data.opening_cash is not None:
+                existing.opening_cash = data.opening_cash
+            if data.opened_by:
+                existing.opened_by = data.opened_by
+            if data.sequence_number is not None:
+                existing.sequence_number = data.sequence_number
+            db.add(existing)
+            db.commit()
+            db.refresh(existing)
+        return existing
+
+    clash = (
+        db.query(TradingDay)
+        .filter(
+            TradingDay.machine_id == machine.id,
+            TradingDay.status == TradingDayStatus.OPEN,
+        )
+        .first()
+    )
+    if clash is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"another_day_is_open:{clash.id}",
+        )
+
+    day = TradingDay(
+        id=data.id,
+        tenant_id=machine.tenant_id,
+        machine_id=machine.id,
+        shop_id=machine.shop_id,
+        day_date=data.day_date,
+        sequence_number=data.sequence_number,
+        opened_at=data.opened_at,
+        opening_cash=data.opening_cash,
+        opened_by=data.opened_by,
+        status=TradingDayStatus.OPEN,
+    )
+    db.add(day)
+    try:
+        db.commit()
+    except IntegrityError:
+        # Lost the race with a concurrent report — the `clash` query above is
+        # check-then-insert, so two in-flight requests can both pass it. The partial
+        # unique index is the real arbiter; turn its error into the same 409 rather
+        # than the 500 this endpoint exists to avoid.
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="another_day_is_open"
+        )
+    db.refresh(day)
+    return day
 
 
 @router.get(

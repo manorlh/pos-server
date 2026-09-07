@@ -12,8 +12,11 @@ from app.services.clerk_auth import verify_clerk_token
 from app.services.clerk_provision import resolve_clerk_user
 from app.config import get_settings
 from app.services.auth import decode_token, decode_jwt_payload
-from app.services.company_hierarchy import user_covers_company
+from app.services.company_hierarchy import user_covers_company, user_may_use_machine
 from app.services.pairing_mobile import get_valid_pairing_session
+from app.models.elevated_session import ElevatedSession
+from app.services.elevation import resolve_session, session_has_scope
+from app.services.permissions import Scope
 from app.observability.context import set_request_context
 
 security = HTTPBearer()
@@ -77,17 +80,37 @@ def get_current_machine_admin(current_user: User = Depends(get_current_user)) ->
 
 
 def _check_machine_access(user: User, machine: POSMachine, db: Session):
-    if user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
-        return
-    if (
-        user.role == UserRole.COMPANY_MANAGER
-        and machine.shop
-        and user_covers_company(db, user, machine.shop.company_id)
-    ):
-        return
-    if user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER) and machine.shop_id == user.shop_id:
-        return
-    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    # The rule itself lives in company_hierarchy so the till's elevation grant and
+    # this dashboard check cannot drift apart.
+    if not user_may_use_machine(db, user, machine):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+
+def _require_current_token_version(payload: dict, machine: POSMachine) -> None:
+    """
+    Refuse a token minted before this terminal was last unpaired.
+
+    Machine tokens no longer expire, so this is what makes revocation real: an admin
+    unpairing bumps `token_version`, and every token issued under the old one stops
+    working the instant it is next used — permanently, even if the terminal is
+    re-paired and its row becomes active again.
+
+    A token with no `tv` claim was minted before versioning existed and is read as
+    version 1, matching the column default, so terminals paired before this change
+    keep working until somebody actually unpairs them.
+    """
+    presented = payload.get("tv", 1)
+    current = getattr(machine, "token_version", 1) or 1
+    try:
+        presented = int(presented)
+    except (TypeError, ValueError):
+        presented = 0
+    if presented != int(current):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Machine token revoked; re-pair this terminal",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 def get_pos_machine_for_sync_path(
@@ -116,6 +139,7 @@ def get_pos_machine_for_sync_path(
         # old machine token stops working.
         if not machine.is_active:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Machine has been removed")
+        _require_current_token_version(payload, machine)
         _bind_machine_context(machine)
         return machine
 
@@ -190,8 +214,66 @@ def get_pos_machine_from_machine_token(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
     if not machine.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Machine has been removed")
+    _require_current_token_version(payload, machine)
     _bind_machine_context(machine)
     return machine
+
+
+ELEVATION_HEADER = "X-Elevation-Token"
+
+
+def require_elevated(scope: Scope):
+    """
+    Build a dependency that demands a live grant for `scope` at *this* machine.
+
+    Two credentials, not one. `Authorization` still carries the machine token — it
+    says which till is calling and, through the machine's shop, caps how far any
+    grant can reach. The `X-Elevation-Token` header carries the grant itself, which
+    says which person authorised this and what they may do. Neither is sufficient:
+    a stolen machine token cannot write without a person, and a leaked grant is
+    useless without the paired till it was issued to.
+
+    The machine-token check is `get_pos_machine_for_sync_path`, so these endpoints
+    keep the same 403 for a token whose `sub` does not match the path, and the same
+    lockout for a decommissioned till.
+    """
+
+    def dependency(
+        machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+        elevation_token: Optional[str] = Header(None, alias=ELEVATION_HEADER),
+        db: Session = Depends(get_db),
+    ) -> ElevatedSession:
+        if not elevation_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="elevation_required",
+                headers={"WWW-Authenticate": ELEVATION_HEADER},
+            )
+        session = resolve_session(db, elevation_token)
+        if session is None:
+            # Expired, revoked, unknown, or held by someone since deactivated or
+            # demoted. Not distinguished on the wire: the till's only useful
+            # response to any of them is to ask for a PIN again.
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="elevation_expired",
+                headers={"WWW-Authenticate": ELEVATION_HEADER},
+            )
+        if str(session.machine_id) != str(machine.id):
+            # A grant is bound to the till it was issued at, so one cannot be
+            # carried to a second terminal in the same shop.
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="elevation_wrong_machine",
+            )
+        if not session_has_scope(session, scope):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"elevation_missing_scope:{scope.value}",
+            )
+        return session
+
+    return dependency
 
 
 def get_active_tenant_id(

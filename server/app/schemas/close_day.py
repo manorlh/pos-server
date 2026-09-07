@@ -10,7 +10,11 @@ from pydantic import BaseModel, Field, ConfigDict
 
 class CloseDayCreateIn(BaseModel):
     machine_ids: Optional[List[uuid.UUID]] = Field(None, alias="machineIds")
+    #: One shop, kept because the shipped dashboard sends it.
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
+    #: Several shops. Combines with the other two as a union, deduplicated, so a till
+    #: named directly *and* covered by a chosen shop is only closed once.
+    shop_ids: Optional[List[uuid.UUID]] = Field(None, alias="shopIds")
 
     model_config = ConfigDict(populate_by_name=True)
 

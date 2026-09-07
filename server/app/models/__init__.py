@@ -6,6 +6,7 @@ from app.models.shop import Shop
 from app.models.pos_machine import POSMachine, PairingStatus
 from app.models.pairing_code import PairingCode
 from app.models.pairing_session import PairingSession
+from app.models.elevated_session import ElevatedSession
 from app.models.device_pairing_request import DevicePairingRequest, DevicePairingStatus
 from app.models.category import Category, CatalogLevel as CategoryCatalogLevel
 from app.models.product import Product, CatalogLevel as ProductCatalogLevel
@@ -27,6 +28,7 @@ from app.models.close_day import CloseDayRequest, CloseDayRequestItem, CloseDayR
 
 __all__ = [
     "User", "UserRole",
+    "ElevatedSession",
     "Tenant", "TenantStatus",
     "TenantMembership", "TenantMembershipRole",
     "Company",
