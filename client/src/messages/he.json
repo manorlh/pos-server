@@ -565,7 +565,8 @@
     },
     "closeDaySelectedShops": "סניפים נבחרים",
     "closeDayNoShops": "אין סניפים להצגה",
-    "closeDayOfflineHint": "קופה שאינה מחוברת אינה נכשלת — הבקשה ממתינה לה והיא תיסגר כשתתחבר. אם לא התחברה בזמן, הבקשה תסומן כפגת תוקף."
+    "closeDayOfflineHint": "קופה שאינה מחוברת אינה נכשלת — הבקשה ממתינה לה והיא תיסגר כשתתחבר. אם לא התחברה בזמן, הבקשה תסומן כפגת תוקף.",
+    "pendingAsOf": "נכון ל־{when}"
   },
   "companies": {
     "title": "חברות",
@@ -1072,5 +1073,28 @@
       "title": "אין ימים סגורים בטווח",
       "body": "הסיכום מבוסס על דוחות הסגירה של הקופות, ולכן יום שטרם נסגר אינו מופיע כאן — עדיין אין לו נתונים מוצהרים."
     }
+  },
+  "machineStatus": {
+    "status": {
+      "online": "מקוון ומסונכרן",
+      "pending_sync": "מקוון · עסקאות ממתינות",
+      "close_pending": "ממתין לסגירת יום",
+      "offline": "לא מקוון",
+      "offline_with_unsynced": "לא מקוון · עסקאות שלא נשלחו",
+      "day_closed": "יום עסקים סגור",
+      "retired": "הוצא משימוש",
+      "not_paired": "לא משויך"
+    },
+    "flag": {
+      "day_open_past_its_date": "יום פתוח מתאריך קודם",
+      "catalog_behind": "קטלוג לא עודכן",
+      "clock_skewed": "שעון לא מסונכרן",
+      "low_battery": "סוללה חלשה",
+      "realtime_down": "ערוץ פקודות מנותק"
+    },
+    "pendingDocuments": "{count} עסקאות לא נשלחו",
+    "pendingAsOf": "נכון ל־{when}",
+    "filterAll": "כל הסטטוסים",
+    "summary": "{online} מתוך {total} תקינים"
   }
 }

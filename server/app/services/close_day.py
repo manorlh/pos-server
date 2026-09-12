@@ -19,9 +19,14 @@ from app.models.pos_machine import POSMachine, PairingStatus
 from app.models.trading_day import TradingDay, TradingDayStatus
 from app.models.user import User, UserRole
 from app.models.z_report import ZReport
+from app.services.machine_status import ONLINE_WINDOW_SEC, is_online
 from app.services.transactions import find_open_trading_day
 
-MQTT_ONLINE_WINDOW_SEC = 90
+#: Kept as a re-export so existing callers and tests keep their name, but there is now
+#: exactly one definition of the window and it lives in `machine_status`. Two copies of
+#: this threshold meant the dashboard and this module could disagree about whether a
+#: terminal was reachable.
+MQTT_ONLINE_WINDOW_SEC = ONLINE_WINDOW_SEC
 PENDING_ITEM_STATUSES = (
     CloseDayItemStatus.PENDING,
     CloseDayItemStatus.SENT,
@@ -30,13 +35,8 @@ PENDING_ITEM_STATUSES = (
 
 
 def machine_is_mqtt_online(machine: POSMachine, now: Optional[datetime] = None) -> bool:
-    if not machine.last_heartbeat_at:
-        return False
-    ref = now or datetime.now(timezone.utc)
-    hb = machine.last_heartbeat_at
-    if hb.tzinfo is None:
-        hb = hb.replace(tzinfo=timezone.utc)
-    return (ref - hb).total_seconds() <= MQTT_ONLINE_WINDOW_SEC
+    """Delegates, so this and the dashboard's status light cannot drift apart."""
+    return is_online(machine.last_heartbeat_at, now=now)
 
 
 def get_pending_close_day_machine_ids(db: Session, machine_ids: List[uuid.UUID]) -> Set[uuid.UUID]:

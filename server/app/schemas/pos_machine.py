@@ -56,6 +56,10 @@ class MachineHeartbeatBody(BaseModel):
     # what has actually been pushed.
     pending_count: Optional[int] = Field(None, alias="pendingCount", ge=0)
 
+    # Undelivered sales only, as opposed to the whole outbox above. Optional like
+    # everything here: a till predating this field simply does not send it.
+    pending_documents: Optional[int] = Field(None, alias="pendingDocuments", ge=0)
+
     serial_number: Optional[str] = Field(None, alias="serialNumber", max_length=64)
     # No ge/le bound here deliberately: an out-of-range reading is clamped in the
     # service, not rejected. See MachineHeartbeatBody's docstring.

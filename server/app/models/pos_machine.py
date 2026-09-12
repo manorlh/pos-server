@@ -82,6 +82,22 @@ class POSMachine(Base):
     battery_percent = Column(SmallInteger, nullable=True)
     battery_status = Column(String(16), nullable=True)
 
+    # Outbox depth as the terminal last reported it, with the moment it said so.
+    #
+    # Stored, unlike before, because the dashboard's status light needs it. The earlier
+    # reasoning — that it is stale the moment it lands — is still correct and is exactly
+    # why `pending_count_at` sits beside it: this is a last-known reading, like the
+    # battery percentage, and the UI must say "as of HH:MM" rather than present it as
+    # live. It must never gate a close: that check reads the real documents.
+    #
+    # `pending_documents` counts undelivered *sales* only. `pending_count` is the whole
+    # outbox, which also carries trading-day rows and close-day acknowledgements — a
+    # till stuck on one acknowledgement is not a till holding unsynced takings, and a
+    # status light that cannot tell them apart cries wolf.
+    pending_count = Column(Integer, nullable=True)
+    pending_documents = Column(Integer, nullable=True)
+    pending_count_at = Column(DateTime(timezone=True), nullable=True)
+
     # Device clock minus server clock, in milliseconds. SIGNED: negative means
     # the device is behind. BigInteger because a terminal that came up with an
     # unset clock is out by decades, which overflows a 32-bit int in ms.

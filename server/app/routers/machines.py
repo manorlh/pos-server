@@ -38,6 +38,7 @@ from app.services.realtime_info import (
     machine_realtime_connection_info,
     machine_realtime_refresh_info,
 )
+from app.services.machine_status import StatusInput, resolve_status
 from app.services.close_day import (
     get_open_trading_days_for_machines,
     get_pending_close_day_machine_ids,
@@ -129,6 +130,36 @@ def _enrich_machine_status(
         "createdAt": machine.created_at,
         "updatedAt": machine.updated_at,
     }
+
+    # Resolved server-side so the dashboard, the close-day gate and anything added later
+    # all read one definition. The raw fields above stay, because a detail panel still
+    # wants the underlying readings.
+    resolved = resolve_status(
+        StatusInput(
+            is_active=bool(machine.is_active),
+            pairing_status=(
+                machine.pairing_status.value
+                if hasattr(machine.pairing_status, "value")
+                else machine.pairing_status
+            ),
+            last_heartbeat_at=machine.last_heartbeat_at,
+            trading_day_open=open_td is not None,
+            day_date=open_td.day_date if open_td else None,
+            close_day_pending=close_day_pending,
+            pending_documents=machine.pending_documents,
+            pending_count=machine.pending_count,
+            pending_count_at=machine.pending_count_at,
+            catalog_pull_stale=catalog_pull_stale,
+            clock_skew_ms=machine.clock_skew_ms,
+            battery_percent=machine.battery_percent,
+            mqtt_connected=machine.mqtt_connected,
+        )
+    )
+    result["status"] = resolved.status
+    result["online"] = resolved.online
+    result["statusFlags"] = resolved.flags
+    result["pendingDocuments"] = resolved.pending_documents
+    result["pendingAsOf"] = resolved.pending_as_of
     return result
 
 
@@ -277,6 +308,8 @@ def post_my_heartbeat(
         battery_percent=body.battery_percent if body is not None else None,
         battery_status=body.battery_status if body is not None else None,
         clock_skew_ms=body.clock_skew_ms if body is not None else None,
+        pending_count=body.pending_count if body is not None else None,
+        pending_documents=body.pending_documents if body is not None else None,
     )
     # The pull half of remote close-day. Every till already calls this on a timer, so
     # it is the one channel that does not care whether the terminal was reachable when

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useMemo, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -31,6 +31,12 @@ import { QRCodeSVG } from 'qrcode.react';
 import type { PairingSessionCreateResponse } from '@/lib/types';
 import { he } from 'date-fns/locale';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  MachineStatusDot,
+  MachineStatusFlags,
+  MachineStatusLabel,
+  machineStatus,
+} from '@/components/dashboard/machine-status';
 
 const statusColor: Record<string, 'default' | 'secondary' | 'outline'> = {
   assigned: 'default',
@@ -42,6 +48,7 @@ const MQTT_ONLINE_WINDOW_MS = 90 * 1000;
 
 export default function MachinesPage() {
   const t = useTranslations('machines');
+  const tStatus = useTranslations('machineStatus');
   const tc = useTranslations('common');
   const qc = useQueryClient();
   const { user: me, authHydrated } = useAuth();
@@ -130,6 +137,8 @@ export default function MachinesPage() {
    * machines; a company is every machine in every shop under it (the scope's
    * `machineOptions` already resolves the subtree).
    */
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
+
   const visibleMachines = effective.machineId
     ? machines.filter((m) => sameId(m.id, effective.machineId))
     : effective.shopId
@@ -363,7 +372,17 @@ export default function MachinesPage() {
     return () => window.clearInterval(tmr);
   }, [pairOpen, pairingCodeId, pairingComplete, qc]);
 
+  /*
+   * The server decides this now.
+   *
+   * It used to be recomputed here from `lastHeartbeatAt` against a 90-second constant
+   * copied from `close_day.py`. Two copies of one threshold is how a dashboard ends up
+   * telling a manager a till is reachable while the close-day gate refuses it. Falls
+   * back to the old local calculation only for a payload from a server that predates
+   * `online`, so a mid-deploy page does not show every terminal as offline.
+   */
   const isDeviceOnline = (m: PosMachine): boolean => {
+    if (typeof m.online === 'boolean') return m.online;
     if (!m.lastHeartbeatAt) return false;
     const ts = new Date(m.lastHeartbeatAt).getTime();
     if (!Number.isFinite(ts)) return false;
@@ -407,6 +426,26 @@ export default function MachinesPage() {
     };
     return map[status] ?? status;
   };
+
+  /*
+   * Status filter, applied after the scope filter.
+   *
+   * Counts come from `visibleMachines` rather than the filtered list, so selecting one
+   * status does not rewrite the tallies underneath it — the point of the strip is to
+   * see the whole picture while looking at one slice of it.
+   */
+  const statusCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const m of visibleMachines) {
+      const s = machineStatus(m);
+      counts.set(s, (counts.get(s) ?? 0) + 1);
+    }
+    return counts;
+  }, [visibleMachines]);
+
+  const shownMachines = statusFilter
+    ? visibleMachines.filter((m) => machineStatus(m) === statusFilter)
+    : visibleMachines;
 
   const bulkCloseTargets = visibleMachines.filter((m) => selectedMachineIds.has(m.id) && canCloseMachine(m));
 
@@ -499,6 +538,54 @@ export default function MachinesPage() {
       <ScopeGate resolution={resolution}>
       {!isLoading ? <ClockDriftBanner machines={visibleMachines} /> : null}
 
+      {/*
+        Status tallies, doubling as a filter.
+
+        Ordered by the resolver's own precedence so the states that need attention sit
+        first and a shop with one sick till does not have to hunt for it among thirty
+        healthy rows. A status with no terminals is omitted rather than shown as zero —
+        a row of zeroes is noise, and their absence is already the answer.
+      */}
+      {!isLoading && visibleMachines.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setStatusFilter(null)}
+            className={`rounded-full border px-3 py-1 text-xs ${
+              statusFilter === null ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'
+            }`}
+          >
+            {tStatus('filterAll')} ({visibleMachines.length})
+          </button>
+          {(
+            [
+              'offline_with_unsynced',
+              'offline',
+              'pending_sync',
+              'close_pending',
+              'day_closed',
+              'online',
+              'not_paired',
+              'retired',
+            ] as const
+          )
+            .filter((s) => (statusCounts.get(s) ?? 0) > 0)
+            .map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setStatusFilter(statusFilter === s ? null : s)}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs ${
+                  statusFilter === s ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'
+                }`}
+              >
+                <MachineStatusDot m={{ status: s } as PosMachine} />
+                {tStatus(`status.${s}`)} ({statusCounts.get(s)})
+              </button>
+            ))}
+        </div>
+      ) : null}
+
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {Array.from({ length: 3 }).map((_, i) => (
@@ -572,7 +659,7 @@ export default function MachinesPage() {
             </div>
           ) : null}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {visibleMachines.map((m) => (
+          {shownMachines.map((m) => (
             <Card key={m.id}>
               <CardHeader className="flex flex-row items-start justify-between pb-2">
                 <div className="flex items-start gap-2 min-w-0">
@@ -613,10 +700,21 @@ export default function MachinesPage() {
                 <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-muted-foreground">{t('deviceStatus')}</span>
-                    <Badge variant={isDeviceOnline(m) ? 'default' : 'outline'}>
-                      {isDeviceOnline(m) ? t('deviceOnline') : t('deviceOffline')}
-                    </Badge>
+                    <MachineStatusLabel m={m} />
                   </div>
+                  {/* Secondary conditions sit under the light rather than in it: a till
+                      trading normally with a drifted clock is still green, with a badge. */}
+                  <MachineStatusFlags m={m} />
+                  {m.pendingAsOf && (m.pendingDocuments ?? 0) > 0 ? (
+                    <div className="text-muted-foreground text-xs">
+                      {t('pendingAsOf', {
+                        when: formatDistanceToNow(new Date(m.pendingAsOf), {
+                          addSuffix: true,
+                          locale: he,
+                        }),
+                      })}
+                    </div>
+                  ) : null}
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-muted-foreground">{t('mqttStatus')}</span>
                     <Badge

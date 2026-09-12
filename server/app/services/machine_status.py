@@ -1,0 +1,214 @@
+"""
+The terminal status light.
+
+One resolver, server-side, because "is this till online" was being decided in two
+places with the same ninety-second constant copied into each — `close_day.py` and the
+dashboard's machines page. Two copies of a threshold is one refactor away from a
+dashboard that says a terminal is reachable while the close-day gate says it is not.
+
+**Primary status is a single value with strict precedence**, not a set of independent
+lights. The four colours a merchant expects (online-and-synced, online-with-pending,
+offline, closed) do not sit on one axis: the first three describe connectivity and sync,
+the fourth describes the trading day. A terminal can be offline *and* holding unsynced
+sales, which in a four-state model shows the same red as a tidy powered-off till while
+being the single most alarming state there is — money on a device nobody can reach.
+
+So the order below is by what the manager has to *do*, with one deliberate exception:
+`DAY_CLOSED` outranks `OFFLINE`. A till that has finished its day and been switched off
+is behaving correctly and must not look like a fault; the shop would learn to ignore a
+row of red lights every evening, which is how a real outage gets missed.
+
+`OFFLINE_WITH_UNSYNCED` still outranks `DAY_CLOSED`, because undelivered documents on a
+closed day mean a close that drained less than it should have — anomalous whatever the
+day says.
+
+Secondary flags never change the colour. They are for things worth showing next to a
+terminal that is otherwise fine: a clock that has drifted, a catalog it has not pulled,
+a day it left open. Folding those into the light would make the light mean nothing.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional
+
+#: How long after its last heartbeat a terminal is still considered online.
+#:
+#: The till beats on a timer well inside this. The window is a compromise that cannot be
+#: escaped by any amount of logic: a terminal that dies one second after a beat looks
+#: healthy until the window lapses. Widening it hides outages, narrowing it turns an
+#: ordinary missed beat into a false alarm.
+ONLINE_WINDOW_SEC = 90
+
+
+class MachineStatus:
+    """Primary status values, highest precedence first."""
+
+    NOT_PAIRED = "not_paired"
+    RETIRED = "retired"
+    OFFLINE_WITH_UNSYNCED = "offline_with_unsynced"
+    DAY_CLOSED = "day_closed"
+    OFFLINE = "offline"
+    PENDING_SYNC = "pending_sync"
+    CLOSE_PENDING = "close_pending"
+    ONLINE = "online"
+
+
+class MachineFlag:
+    """Secondary conditions. Shown beside the status; never instead of it."""
+
+    DAY_OPEN_PAST_ITS_DATE = "day_open_past_its_date"
+    CATALOG_BEHIND = "catalog_behind"
+    CLOCK_SKEWED = "clock_skewed"
+    LOW_BATTERY = "low_battery"
+    REALTIME_DOWN = "realtime_down"
+
+
+#: Beyond this, a document's timestamps land in the wrong trading day often enough to
+#: matter. Two minutes is far more drift than NTP ever leaves and far less than the
+#: window in which a receipt's time would look wrong to a customer.
+CLOCK_SKEW_TOLERANCE_MS = 120_000
+
+LOW_BATTERY_PERCENT = 15
+
+
+@dataclass
+class StatusInput:
+    """Everything the resolver reads. Deliberately plain values, not an ORM row."""
+
+    is_active: bool = True
+    pairing_status: Optional[str] = None
+    last_heartbeat_at: Optional[datetime] = None
+    trading_day_open: bool = False
+    day_date: Optional[object] = None
+    close_day_pending: bool = False
+    pending_documents: Optional[int] = None
+    pending_count: Optional[int] = None
+    pending_count_at: Optional[datetime] = None
+    catalog_pull_stale: bool = False
+    clock_skew_ms: Optional[int] = None
+    battery_percent: Optional[int] = None
+    mqtt_connected: Optional[bool] = None
+
+
+@dataclass
+class StatusResult:
+    status: str
+    online: bool
+    #: Undelivered documents as last reported, and when that reading was taken. Null
+    #: when the terminal has never reported one — which is not the same as zero.
+    pending_documents: Optional[int] = None
+    pending_as_of: Optional[datetime] = None
+    flags: List[str] = field(default_factory=list)
+
+
+def is_online(last_heartbeat_at: Optional[datetime], *, now: Optional[datetime] = None) -> bool:
+    """
+    The single definition. Everything that asks "is this terminal reachable" asks here.
+
+    A naive timestamp is read as UTC: every heartbeat is stamped by the server in UTC,
+    but a row that has been through a driver which drops tzinfo would otherwise raise on
+    the subtraction and take the whole machine list down with it.
+    """
+    if last_heartbeat_at is None:
+        return False
+    reference = now or datetime.now(timezone.utc)
+    beat = last_heartbeat_at
+    if beat.tzinfo is None:
+        beat = beat.replace(tzinfo=timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    return (reference - beat) <= timedelta(seconds=ONLINE_WINDOW_SEC)
+
+
+def _undelivered(data: StatusInput) -> int:
+    """
+    Undelivered documents, as last reported.
+
+    Falls back to the whole outbox depth for a till that predates the split, because
+    "some outbox rows, kind unknown" is still much closer to the truth than zero. Never
+    guesses when the terminal has said nothing at all.
+    """
+    if data.pending_documents is not None:
+        return data.pending_documents
+    if data.pending_count is not None:
+        return data.pending_count
+    return 0
+
+
+def resolve_status(data: StatusInput, *, now: Optional[datetime] = None) -> StatusResult:
+    """The primary status and any secondary flags, from one reading of one terminal."""
+    online = is_online(data.last_heartbeat_at, now=now)
+    undelivered = _undelivered(data)
+
+    status = _primary(data, online=online, undelivered=undelivered)
+
+    return StatusResult(
+        status=status,
+        online=online,
+        pending_documents=(
+            data.pending_documents
+            if data.pending_documents is not None
+            else data.pending_count
+        ),
+        pending_as_of=data.pending_count_at,
+        flags=_flags(data, now=now),
+    )
+
+
+def _primary(data: StatusInput, *, online: bool, undelivered: int) -> str:
+    # A terminal that was never paired has no meaningful connectivity to report, and a
+    # retired one is not expected to beat. Both come first so neither shows as a fault.
+    if not data.is_active:
+        return MachineStatus.RETIRED
+    if data.pairing_status != "assigned" or data.last_heartbeat_at is None:
+        return MachineStatus.NOT_PAIRED
+
+    # Money on a terminal nobody can reach. Outranks everything below, including a
+    # closed day, because undelivered documents after a close mean the close drained
+    # less than it claimed.
+    if not online and undelivered > 0:
+        return MachineStatus.OFFLINE_WITH_UNSYNCED
+
+    # Deliberately above OFFLINE: a till switched off after its day is correct
+    # behaviour, and painting it red every evening trains the shop to ignore red.
+    if not data.trading_day_open:
+        return MachineStatus.DAY_CLOSED
+
+    if not online:
+        return MachineStatus.OFFLINE
+
+    if undelivered > 0:
+        return MachineStatus.PENDING_SYNC
+
+    # Only once the terminal is otherwise healthy: a queued close is information, not a
+    # fault, and it would be a strange thing to show over an unsynced backlog.
+    if data.close_day_pending:
+        return MachineStatus.CLOSE_PENDING
+
+    return MachineStatus.ONLINE
+
+
+def _flags(data: StatusInput, *, now: Optional[datetime]) -> List[str]:
+    flags: List[str] = []
+
+    # A day still open on a date that has passed. This is what a dead terminal leaves
+    # behind — nothing can close it, and today it is visible only to someone who goes
+    # looking for it.
+    if data.trading_day_open and data.day_date is not None:
+        reference = (now or datetime.now(timezone.utc)).date()
+        if data.day_date < reference:
+            flags.append(MachineFlag.DAY_OPEN_PAST_ITS_DATE)
+
+    if data.catalog_pull_stale:
+        flags.append(MachineFlag.CATALOG_BEHIND)
+    if data.clock_skew_ms is not None and abs(data.clock_skew_ms) > CLOCK_SKEW_TOLERANCE_MS:
+        flags.append(MachineFlag.CLOCK_SKEWED)
+    if data.battery_percent is not None and data.battery_percent <= LOW_BATTERY_PERCENT:
+        flags.append(MachineFlag.LOW_BATTERY)
+    # Only meaningful while the terminal is actually reachable: an offline till has no
+    # realtime channel by definition, and saying so twice adds nothing.
+    if is_online(data.last_heartbeat_at, now=now) and data.mqtt_connected is False:
+        flags.append(MachineFlag.REALTIME_DOWN)
+
+    return flags

@@ -542,6 +542,8 @@ def update_machine_heartbeat(
     battery_percent: Optional[int] = None,
     battery_status: Optional[str] = None,
     clock_skew_ms: Optional[int] = None,
+    pending_count: Optional[int] = None,
+    pending_documents: Optional[int] = None,
 ) -> None:
     """
     Record a heartbeat, plus whatever device health came with it.
@@ -562,6 +564,16 @@ def update_machine_heartbeat(
         machine.mqtt_connected = mqtt_connected
     if app_version is not None:
         machine.app_version = app_version[:32] if app_version else None
+
+    # Outbox depth, stamped so the dashboard can say how old the reading is. Written
+    # together: a count without its timestamp cannot be told apart from a stale one, and
+    # the status light leans on exactly that distinction when a terminal goes quiet.
+    if pending_count is not None or pending_documents is not None:
+        if pending_count is not None:
+            machine.pending_count = pending_count
+        if pending_documents is not None:
+            machine.pending_documents = pending_documents
+        machine.pending_count_at = now
 
     reported_health = False
 

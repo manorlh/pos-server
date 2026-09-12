@@ -269,6 +269,32 @@ export interface PosMachine {
   openedAt?: string;
   openedBy?: string;
   closeDayPending?: boolean;
+  /**
+   * The terminal's resolved status, decided server-side.
+   *
+   * A single value with strict precedence, not a set of independent lights — see
+   * `app/services/machine_status.py`. The dashboard renders it; it must not re-derive
+   * it, because the close-day gate reads the same definition and the two drifting apart
+   * is how a manager is told a till is reachable when it is not.
+   */
+  status?:
+    | 'not_paired'
+    | 'retired'
+    | 'offline_with_unsynced'
+    | 'day_closed'
+    | 'offline'
+    | 'pending_sync'
+    | 'close_pending'
+    | 'online';
+  online?: boolean;
+  /** Secondary conditions. Shown beside the status, never instead of it. */
+  statusFlags?: Array<
+    'day_open_past_its_date' | 'catalog_behind' | 'clock_skewed' | 'low_battery' | 'realtime_down'
+  >;
+  /** Undelivered sales as last reported. Null means never reported, which is not zero. */
+  pendingDocuments?: number | null;
+  /** When that reading was taken — the UI must say "as of", not present it as live. */
+  pendingAsOf?: string | null;
   /** Hardware serial the till reports on its heartbeat (or at pairing). */
   serialNumber?: string | null;
   /**
