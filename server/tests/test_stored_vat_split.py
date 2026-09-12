@@ -30,8 +30,10 @@ def _item(total_price, unit_price=None, discount=None):
     )
 
 
-def _tx(net=None, vat=None, document_discount=None, items=None):
+def _tx(net=None, vat=None, document_discount=None, items=None, document_type=320):
     return SimpleNamespace(
+        document_type=document_type,
+        refund_of_transaction_id=None,
         net_amount=Decimal(net) if net is not None else None,
         vat_amount=Decimal(vat) if vat is not None else None,
         vat_rate=None,
@@ -40,42 +42,38 @@ def _tx(net=None, vat=None, document_discount=None, items=None):
     )
 
 
-class TestTheFilingStaysOnTheGrossConvention:
+class TestTheFilingUsesTheStoredSplit:
     """
-    The stored split is deliberately *not* wired into the OpenFormat export.
+    The export now uses the document's stored split.
 
-    That block's fields are gross with the discount carried separately: `totalAmount`
-    becomes C100 field 1223, `subtotal` becomes 1219 and 1220/1221 subtract the discount
-    from it, and D120 leg amounts are scaled to `totalAmount` so the payment records sum
-    to the document record. Feeding the post-discount split in would subtract the
-    discount twice and desynchronise D120 from C100 — a corrupted legal filing.
-
-    These tests exist so that "obvious improvement" is not made by accident. Changing
-    what a filing declares needs the owner's accountant.
+    This class previously asserted the opposite — that the filing deliberately stayed on
+    the pre-discount gross — as a guard against "improving" a tax export whose field
+    semantics had not been checked against the spec. Reading the spec (מבנה אחיד 1.31,
+    C100 section 4.3) settled it: 1221 is "לאחר הנחות ללא מע\"מ", 1222 is the document's
+    VAT and 1223 is "כולל מע\"מ", so the gross reading was not a defensible convention,
+    it was wrong. The guard did its job — it stopped the change being made blind — and
+    the detailed identity tests now live in tests/test_open_format_discount.py.
     """
 
-    def test_the_document_total_is_the_gross_line_sum_not_the_stored_split(self):
+    def test_the_document_total_is_what_was_settled(self):
         cart = _build_cart_from_items(
-            _tx(net="8.47", vat="1.53", document_discount="2.00",
-                items=[_item("12.00")]).items,
+            _tx(net="8.47", vat="1.53", document_discount="2.00", items=[_item("12.00")]),
             global_tax_rate=18.0,
         )
 
-        assert cart["totalAmount"] == 12.00
-        assert round(cart["subtotal"], 2) == 10.17
-        assert round(cart["taxAmount"], 2) == 1.83
+        assert cart["totalAmount"] == 10.00
+        assert cart["subtotal"] == 8.47
+        assert cart["taxAmount"] == 1.53
 
-    def test_the_discount_is_carried_by_c100_not_folded_into_the_cart(self):
-        """`discountAmount` stays 0 here; fields 1220/1221 apply `documentDiscount`."""
+    def test_the_discount_is_carried_so_c100_can_rebuild_field_1219(self):
         cart = _build_cart_from_items(
-            _tx(document_discount="2.00", items=[_item("12.00")]).items,
-            global_tax_rate=18.0,
+            _tx(document_discount="2.00", items=[_item("12.00")]), global_tax_rate=18.0
         )
 
-        assert cart["discountAmount"] == 0
+        assert cart["discountAmount"] == 2.00
 
     def test_subtotal_and_tax_still_sum_to_the_document_total(self):
-        cart = _build_cart_from_items(_tx(items=[_item("118.00")]).items, global_tax_rate=18.0)
+        cart = _build_cart_from_items(_tx(items=[_item("118.00")]), global_tax_rate=18.0)
 
         assert round(cart["subtotal"] + cart["taxAmount"], 2) == cart["totalAmount"]
 

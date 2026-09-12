@@ -315,12 +315,28 @@ def build_c100_record(
     f1216 = doc_date_str
     f1217 = format_amount(0)
     f1218 = pad_right("ILS", 3)
-    subtotal = float(cart.get("subtotal") or 0)
+    # The document's money, per the מבנה אחיד definitions:
+    #   1219 סכום המסמך לפני הנחת מסמך      — before the discount, excluding VAT
+    #   1220 הנחת מסמך                       — the discount, negative (הבהרה 5: a
+    #                                          discount *reduces* the document amount)
+    #   1221 סכום המסמך לאחר הנחות ללא מע"מ  — after the discount, excluding VAT
+    #   1222 סכום המע"מ במסמך                — the VAT actually on the document
+    #   1223 סכום המסמך כולל מע"מ            — what the customer actually paid
+    #
+    # 1221, 1222 and 1223 come from the cart block, which now reports the settled
+    # figures. 1219 is *derived* from 1221 rather than read separately, so the two
+    # identities an inspector can check hold by construction and not by coincidence:
+    #
+    #   1219 - |1220| == 1221      and      1221 + 1222 == 1223
+    #
+    # Previously all three were the pre-discount gross, so a discounted document
+    # declared VAT and turnover it never took, and 1221 + 1222 did not equal 1223.
+    net_after_discount = float(cart.get("subtotal") or 0)
     tax_amount = float(cart.get("taxAmount") or 0)
     total_amount = float(cart.get("totalAmount") or 0)
-    f1219 = format_amount(subtotal)
+    f1219 = format_amount(net_after_discount + doc_disc_excl_vat)
     f1220 = format_amount(-doc_disc_excl_vat if doc_disc_excl_vat > 0 else 0)
-    f1221 = format_amount(subtotal - doc_disc_excl_vat)
+    f1221 = format_amount(net_after_discount)
     f1222 = format_amount(tax_amount)
     f1223 = format_amount(total_amount)
     wht = float(transaction.get("whtDeduction") or 0)
@@ -482,26 +498,19 @@ def resolve_payment_legs(
     A `None` in either slot means "use the document-level value", which is how a
     single-tender document keeps producing byte-identical output.
 
-    **The amounts are apportioned, and that is on purpose.** D120 has always been
-    written with `cart.totalAmount` — the *gross* of the line totals — while
-    `documentDiscount` is carried separately on C100 (fields 1220/1221) and C100's own
-    final-amount field 1223 is that same gross figure. So on a discounted document the
-    payment record and the document record agree with each other today, and both are
-    gross. Writing raw tender-leg amounts (which are the money actually collected, i.e.
-    net of the discount) would make the payment records stop summing to the document
-    record for exactly those documents — a whole-file validation failure, on a legal
-    filing, to fix a number that is questionable for an unrelated reason.
+    **The amounts are apportioned to the document total, and that is on purpose.**
+    `cart.totalAmount` is now the money actually settled — C100 field 1223 — so the
+    scaling is the identity whenever the tender legs already sum to it, which is the
+    normal case. It is kept because it is what guarantees the invariant an inspector
+    checks: the D120 records for a document must sum to that document's 1223, exactly.
+    Apportioning with the rounding remainder pushed onto the last leg makes that hold
+    unconditionally, including when a split-tender document's legs drift by an agora
+    from the total after a discount was apportioned across them.
 
-    So the legs are scaled to the document total that C100 already declares, with the
-    rounding remainder pushed onto the last leg so the sum is exact. When there is no
-    document discount — the overwhelmingly common case — gross equals net and the
-    scaling is the identity, so each record carries the real money on the real tender.
-    What this change actually fixes is the *code*: card money is now coded 3 and cash
-    money 1 on the same document, instead of the whole document taking one code.
-
-    The right long-term fix is for C100 field 1223 to be net of the document discount
-    and for D120 to carry raw leg amounts. That is a change to what the business
-    declares it billed, and it needs the owner's accountant, not this function.
+    This used to scale to the *gross* of the line totals, because 1223 was that gross.
+    Both were wrong together, so they agreed with each other while overstating what the
+    customer paid on every discounted document. 1223 is now the settled figure and the
+    legs follow it.
     """
     legs = transaction.get("payments") or []
     if len(legs) <= 1:

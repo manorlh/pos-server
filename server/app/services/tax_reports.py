@@ -21,6 +21,7 @@ from app.services.open_format.tax_report_generator import (
     generate_tax_report,
 )
 from app.services.settings_merge import build_business_info, merge_all_settings_layers
+from app.services.tenders import CREDIT_NOTE_DOCUMENT_TYPE
 
 MAX_TRANSACTIONS_PER_EXPORT = 50_000
 
@@ -163,30 +164,39 @@ def load_transactions_for_tax_export(
     return query.all()
 
 
-def _build_cart_from_items(items, global_tax_rate: float) -> Dict[str, Any]:
+def _build_cart_from_items(tx: Transaction, global_tax_rate: float) -> Dict[str, Any]:
     """
     The cart block of a C100/D120 document record.
 
-    **Deliberately does not use the document's stored `net_amount` / `vat_amount`**,
-    even though those now exist and are more truthful about what the customer paid.
+    The three money figures are the ones the document was actually settled at, **after
+    discounts**, because that is what the מבנה אחיד spec asks for:
 
-    This block's fields are defined in *gross* terms with the discount carried
-    separately: `totalAmount` is the gross of the line totals and becomes C100 field
-    1223, `subtotal` becomes 1219 with 1220/1221 subtracting the discount from it, and
-    `resolve_payment_legs` scales D120 amounts to this same `totalAmount` so the payment
-    records sum to the document record. Substituting the post-discount split here would
-    feed 1221 a subtotal the discount had already been taken out of and subtract it a
-    second time — a corrupted filing, not an improvement.
+    * `subtotal`  → C100 field 1221, "סכום המסמך לאחר הנחות ללא מע\"מ"
+    * `taxAmount` → field 1222, "סכום המע\"מ במסמך"
+    * `totalAmount` → field 1223, "סכום המסמך כולל מע\"מ", and the D120 payment total
 
-    There is a real defect underneath: on a discounted document field 1222 declares VAT
-    extracted from the gross, so the business reports more output VAT than it collected.
-    Correcting it means changing 1223 to be net of the discount and D120 to carry raw
-    leg amounts — i.e. changing what the business declares it billed. That is the
-    accountant's call, and `resolve_payment_legs` already says so in as many words.
+    This block used to report the *gross* of the line totals for all three and leave
+    `discountAmount` at 0, which broke a discounted document three ways at once: 1222
+    declared VAT on money the customer never paid, 1223 overstated the turnover, and
+    1221 + 1222 no longer equalled 1223 — an internal contradiction on every discounted
+    document, which is exactly the sort of thing an inspector's tooling checks. On a
+    ₪12.00 basket sold for ₪10.00 it declared ₪1.83 of VAT instead of ₪1.53 and ₪12.00
+    of turnover instead of ₪10.00.
 
-    The stored split is used everywhere it is safe to: it is on the document for audit,
-    and reporting reads it. It stops here, at the filing boundary, on purpose.
+    Taken from the document's own stored split wherever it exists: that pair is what the
+    till printed and handed the customer, so a filing built from it agrees with the paper
+    by construction and a later VAT-rate change cannot re-state it.
+
+    `discountAmount` is returned gross so the caller can reconstruct field 1219 as
+    1221 + the discount, keeping 1219 − 1220 = 1221 exact. Note it carries *all*
+    discounts, line and basket together, because that is what the till sends as one
+    figure; the per-line breakdown is reported separately in D110 field 1266 against
+    line totals that are themselves gross, so the two views stay consistent.
+
+    `items` deliberately keep their gross line totals — D110 reports each line's own
+    discount in 1266 and must not have it subtracted twice.
     """
+    items = tx.items
     tax_rate = global_tax_rate / 100.0
     cart_items: List[Dict[str, Any]] = []
     gross_total = 0.0
@@ -212,15 +222,48 @@ def _build_cart_from_items(items, global_tax_rate: float) -> Dict[str, Any]:
             }
         )
 
-    subtotal = gross_total / (1 + tax_rate) if tax_rate > 0 else gross_total
-    tax_amount = gross_total - subtotal
+    discount = _decimal_to_float(tx.document_discount) or 0.0
+    net, vat = _document_split(tx, gross_total, discount, tax_rate)
+
     return {
         "items": cart_items,
-        "subtotal": subtotal,
-        "taxAmount": tax_amount,
-        "totalAmount": gross_total,
-        "discountAmount": 0,
+        "subtotal": net,
+        "taxAmount": vat,
+        # The sum of the two halves rather than the line total, so the record reconciles
+        # exactly. These are the same number on an undiscounted document.
+        "totalAmount": round(net + vat, 2),
+        "discountAmount": discount,
     }
+
+
+def _document_split(
+    tx: Transaction, gross_total: float, discount: float, tax_rate: float
+) -> Tuple[float, float]:
+    """
+    The document's net and VAT, after discounts.
+
+    Prefers what the till stored at the point of sale. Falls back to deriving it for
+    documents issued before those columns existed — but derives it from the money
+    actually settled (`gross_total - discount`), not from the gross, which is the whole
+    bug this replaces.
+
+    A credit note is the exception: its `total_amount` is already net of the apportioned
+    discount (see the conventions note at the top of `app/services/reports.py`), so
+    subtracting the discount again would credit back money that was never refunded.
+    """
+    if tx.net_amount is not None and tx.vat_amount is not None:
+        return _decimal_to_float(tx.net_amount), _decimal_to_float(tx.vat_amount)
+
+    settled = gross_total if _is_credit_note(tx) else gross_total - discount
+    net = settled / (1 + tax_rate) if tax_rate > 0 else settled
+    return round(net, 2), round(settled - net, 2)
+
+
+def _is_credit_note(tx: Transaction) -> bool:
+    return (
+        tx.document_type == CREDIT_NOTE_DOCUMENT_TYPE
+        or tx.refund_of_transaction_id is not None
+    )
 
 
 def _payments_for_open_format(tx: Transaction) -> List[Dict[str, Any]]:
@@ -293,7 +336,7 @@ def transform_transaction_for_open_format(tx: Transaction, global_tax_rate: floa
         "payments": _payments_for_open_format(tx),
         "cashier": {"name": tx.cashier_id or ""},
         "customer": _customer_for_open_format(tx),
-        "cart": _build_cart_from_items(tx.items, global_tax_rate),
+        "cart": _build_cart_from_items(tx, global_tax_rate),
     }
 
 
