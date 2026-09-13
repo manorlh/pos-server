@@ -23,8 +23,13 @@ import { toast } from 'sonner';
 import { Plus, Pencil, UserRoundCheck, UserRoundX, KeyRound } from 'lucide-react';
 import { TillPinDialog } from '@/components/dashboard/till-pin-dialog';
 
-const ROLE_NEEDS_COMPANY: UserRole[] = ['company_manager', 'shop_manager', 'cashier'];
-const ROLE_NEEDS_SHOP: UserRole[] = ['shop_manager', 'cashier'];
+// A shift supervisor belongs to one shop, exactly like the cashiers they cover
+// for: leave it off these lists and the dialog hides both pickers, so the user is
+// created unattached and their PIN authorises nothing at any till.
+const ROLE_NEEDS_COMPANY: UserRole[] = [
+  'company_manager', 'shop_manager', 'shift_supervisor', 'cashier',
+];
+const ROLE_NEEDS_SHOP: UserRole[] = ['shop_manager', 'shift_supervisor', 'cashier'];
 
 interface UserForm {
   id?: string;
@@ -438,6 +443,14 @@ export default function UsersPage() {
                     ))}
                   </SelectContent>
                 </Select>
+                {/*
+                  אחמ"ש reads as "senior cashier" and says nothing about what the
+                  role actually buys — till authority, no desk. Roles whose name
+                  already carries that get no hint and render nothing here.
+                */}
+                {t.has(`roleHints.${editing.role}`) && (
+                  <p className="text-muted-foreground text-xs">{t(`roleHints.${editing.role}`)}</p>
+                )}
               </div>
             </div>
 

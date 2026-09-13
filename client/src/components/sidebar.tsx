@@ -56,6 +56,8 @@ export function Sidebar() {
   const t = useTranslations('nav');
   const tc = useTranslations('common');
   const tps = useTranslations('posSettings');
+  // Same list the staff table renders, so the footer never disagrees with it.
+  const roleLabel = useTranslations('users.roles');
   const pathname = usePathname();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -74,7 +76,10 @@ export function Sidebar() {
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const displayName = clerkUser?.username ?? clerkUser?.firstName ?? internalUser?.username ?? '??';
-  const displayRole = internalUser?.role ?? '';
+  // The enum value used to be printed as-is, which put "shift_supervisor" in
+  // Latin under the user's name on an otherwise Hebrew screen.
+  const displayRole =
+    internalUser?.role && roleLabel.has(internalUser.role) ? roleLabel(internalUser.role) : '';
 
   const handleTenantSwitch = (tenantId: string) => {
     if (!tenantId || tenantId === activeTenantId) return;

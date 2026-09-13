@@ -89,6 +89,13 @@ export const useAuth = create<AuthState>((set) => ({
           canReadUsers: data.canReadUsers === true,
           canManageUsers: data.canManageUsers === true,
           canManagePosUsers: data.canManagePosUsers === true,
+          // `/users/me` has been sending both of these all along; dropping them
+          // here left the profile's PIN card permanently closed — no till scopes
+          // meant "a PIN would buy you nothing", and the state badge read "none"
+          // however many PINs the person had set. A shift supervisor authorises
+          // only at a till, so for them that card is the whole feature.
+          hasTillPin: data.hasTillPin === true,
+          tillScopes: Array.isArray(data.tillScopes) ? data.tillScopes : [],
         },
         tenants,
         activeTenantId,

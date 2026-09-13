@@ -1,9 +1,19 @@
+/**
+ * Listed most senior first, matching the server's `ROLE_LEVEL`, so a reader does
+ * not have to guess where a role sits relative to its neighbours.
+ *
+ * `shift_supervisor` (אחמ"ש) is the odd one: it outranks a cashier only at a
+ * till, where it may authorise a refund, a discount or the close of the day. It
+ * administers nothing from the dashboard, which is why none of the dashboard's
+ * role gates grew to include it.
+ */
 export type UserRole =
   | 'super_admin'
   | 'distributor'
   | 'merchant_admin'
   | 'company_manager'
   | 'shop_manager'
+  | 'shift_supervisor'
   | 'cashier';
 
 export interface User {

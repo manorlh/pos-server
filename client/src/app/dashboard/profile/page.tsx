@@ -17,6 +17,9 @@ import { usePageScope } from '@/lib/scope';
 
 export default function ProfilePage() {
   const t = useTranslations('profile');
+  // The staff list owns the one Hebrew name per role; a second copy under
+  // `profile` would be the copy that goes stale when a role is added.
+  const roleLabel = useTranslations('users.roles');
   // The signed-in user's own account: nothing about it is scoped, and `silent`
   // keeps the bar from explaining a selection that was never going to apply.
   usePageScope({ maxLevel: 'tenant', silent: true });
@@ -30,7 +33,15 @@ export default function ProfilePage() {
   // A PIN is only worth offering to someone who could actually authorise something
   // with it. A dashboard cashier can hold no till scopes, so they are told that
   // rather than given a control that would do nothing.
-  const canHoldPin = (internalUser?.tillScopes?.length ?? 0) > 0;
+  const tillScopes = internalUser?.tillScopes ?? [];
+  const canHoldPin = tillScopes.length > 0;
+  // Named, not summarised: a shift supervisor and a shop manager both carry a PIN,
+  // and the only thing separating them is which of these lines they get. A scope
+  // this build has no name for is skipped rather than printed raw — the server may
+  // ship one before the dashboard learns the word for it.
+  const scopeLabels = tillScopes
+    .filter((scope) => tp.has(`scopes.${scope}`))
+    .map((scope) => ({ scope, label: tp(`scopes.${scope}`) }));
 
   const savePin = useMutation({
     mutationFn: (pin: string) => setMyTillPin(pin),
@@ -53,7 +64,7 @@ export default function ProfilePage() {
 
   const displayName = clerkUser?.fullName ?? clerkUser?.username ?? internalUser?.username ?? '—';
   const email = clerkUser?.primaryEmailAddress?.emailAddress ?? '—';
-  const role = internalUser?.role ?? '—';
+  const role = internalUser?.role;
 
   const handleSignOut = async () => {
     clearUser();
@@ -84,7 +95,7 @@ export default function ProfilePage() {
 
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">{t('role')}</span>
-            <Badge variant="outline">{role}</Badge>
+            <Badge variant="outline">{role && roleLabel.has(role) ? roleLabel(role) : '—'}</Badge>
           </div>
         </CardContent>
         <CardFooter>
@@ -101,11 +112,23 @@ export default function ProfilePage() {
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">{tp('ownBlurb')}</p>
           {canHoldPin ? (
-            <div className="flex items-center gap-2">
-              <Badge variant={hasPin ? 'default' : 'outline'}>
-                {hasPin ? tp('stateSet') : tp('stateNone')}
-              </Badge>
-            </div>
+            <>
+              <div className="flex items-center gap-2">
+                <Badge variant={hasPin ? 'default' : 'outline'}>
+                  {hasPin ? tp('stateSet') : tp('stateNone')}
+                </Badge>
+              </div>
+              {scopeLabels.length > 0 ? (
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">{tp('scopesTitle')}</p>
+                  <ul className="text-sm text-muted-foreground list-disc list-inside space-y-0.5">
+                    {scopeLabels.map(({ scope, label }) => (
+                      <li key={scope}>{label}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </>
           ) : (
             <p className="text-sm text-muted-foreground">{tp('noScopes')}</p>
           )}
