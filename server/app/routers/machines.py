@@ -43,6 +43,7 @@ from app.services.machine_status import StatusInput, resolve_status
 from app.services.administrative_close import reconstruct_z_report
 from app.services.pairing import create_pairing_code
 from app.services.transactions import find_open_trading_day
+from app.services.permission_matrix import SHOP_SCOPED_ROLES
 from app.services.close_day import (
     get_open_trading_days_for_machines,
     get_pending_close_day_machine_ids,
@@ -185,7 +186,7 @@ def _check_machine_list_access(current_user: User, machine: POSMachine, db: Sess
     if current_user.role == UserRole.COMPANY_MANAGER and machine.shop_id:
         shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
         return shop is not None and user_covers_company(db, current_user, shop.company_id)
-    if current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
+    if current_user.role in SHOP_SCOPED_ROLES:
         return machine.shop_id == current_user.shop_id
     return False
 
@@ -222,7 +223,7 @@ def list_machines(
         query = query.filter(POSMachine.distributor_id == current_user.id)
     elif current_user.role == UserRole.COMPANY_MANAGER:
         query = query.filter(POSMachine.shop_id.in_(visible_shop_ids(db, current_user)))
-    elif current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
+    elif current_user.role in SHOP_SCOPED_ROLES:
         query = query.filter(POSMachine.shop_id == current_user.shop_id)
     elif current_user.role != UserRole.SUPER_ADMIN:
         return []

@@ -21,6 +21,7 @@ from app.models.user import User, UserRole
 from app.models.z_report import ZReport
 from app.services.machine_status import ONLINE_WINDOW_SEC, is_online
 from app.services.transactions import find_open_trading_day
+from app.services.permission_matrix import SHOP_SCOPED_ROLES
 
 #: Kept as a re-export so existing callers and tests keep their name, but there is now
 #: exactly one definition of the window and it lives in `machine_status`. Two copies of
@@ -242,7 +243,7 @@ def resolve_machines_for_close_day(
         from app.services.company_hierarchy import visible_shop_ids
 
         query = query.filter(POSMachine.shop_id.in_(visible_shop_ids(db, current_user)))
-    elif current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
+    elif current_user.role in SHOP_SCOPED_ROLES:
         query = query.filter(POSMachine.shop_id == current_user.shop_id)
     elif current_user.role != UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")

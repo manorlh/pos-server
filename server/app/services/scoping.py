@@ -13,6 +13,7 @@ from app.models.pos_machine import POSMachine
 from app.models.transaction import Transaction
 from app.models.user import User, UserRole
 from app.services.company_hierarchy import visible_shop_ids
+from app.services.permission_matrix import SHOP_SCOPED_ROLES
 
 
 def scope_query_by_user(
@@ -39,7 +40,7 @@ def scope_query_by_user(
         # Every shop under this manager's company *and its subsidiaries*: a group
         # manager sees the group's trading companies.
         return query.filter(shop_column.in_(visible_shop_ids(db, current_user)))
-    if current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER) and current_user.shop_id:
+    if current_user.role in SHOP_SCOPED_ROLES and current_user.shop_id:
         return query.filter(shop_column == current_user.shop_id)
     return None
 

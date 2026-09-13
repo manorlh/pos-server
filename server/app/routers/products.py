@@ -8,7 +8,7 @@ from app.models.product import Product, CatalogLevel
 from app.models.category import Category
 from app.models.voucher import Voucher
 from app.models.user import User, UserRole
-from app.services.permission_matrix import Action, Resource, roles_for
+from app.services.permission_matrix import SHOP_SCOPED_ROLES, Action, Resource, roles_for
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, ProductListResponse
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
 from app.services.catalog_notify import notify_all_machines_for_tenant, notify_machine_catalog_changed
@@ -31,7 +31,7 @@ def _check_product_access(user: User, product: Product, db: Session):
         db, user, product.company_id
     ):
         return
-    if user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER) and product.shop_id == user.shop_id:
+    if user.role in SHOP_SCOPED_ROLES and product.shop_id == user.shop_id:
         return
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
@@ -74,7 +74,7 @@ def list_products(
 
     if current_user.role == UserRole.COMPANY_MANAGER:
         query = query.filter(Product.company_id.in_(company_scope_ids(db, current_user)))
-    elif current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
+    elif current_user.role in SHOP_SCOPED_ROLES:
         query = query.filter(Product.shop_id == current_user.shop_id)
 
     if company_id:

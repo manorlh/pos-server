@@ -87,6 +87,20 @@ _MATRIX: Dict[Tuple[Resource, Action], FrozenSet[UserRole]] = {
 }
 
 
+#: Roles whose whole world is one shop.
+#:
+#: `role in (SHOP_MANAGER, CASHIER)` was written out in twelve places — routers, scoping,
+#: the company hierarchy, the close-day service. Adding a role meant finding all twelve,
+#: and missing one does not raise: the role simply falls through to whatever branch comes
+#: next, which is usually broader. Naming the set makes adding a role a one-line change
+#: with a test that proves the set grew.
+SHOP_SCOPED_ROLES: FrozenSet[UserRole] = frozenset({
+    UserRole.SHOP_MANAGER,
+    UserRole.SHIFT_SUPERVISOR,
+    UserRole.CASHIER,
+})
+
+
 def roles_for(resource: Resource, action: Action) -> FrozenSet[UserRole]:
     """The roles permitted, for a caller that wants the set rather than a yes/no."""
     return _MATRIX.get((resource, action), frozenset())

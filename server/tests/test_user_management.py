@@ -66,7 +66,14 @@ def test_me_reports_exactly_what_the_caller_may_create() -> None:
     for role, expected in users_router.CREATABLE_ROLES.items():
         assert set(expected) == set(users_router.CREATABLE_ROLES[role])
 
-    assert users_router.CREATABLE_ROLES[UserRole.SHOP_MANAGER] == {UserRole.CASHIER}
+    # A shop manager staffs their own shop, supervisors included: routing an אחמ"ש
+    # appointment through head office would leave a branch unable to cover a shift.
+    assert users_router.CREATABLE_ROLES[UserRole.SHOP_MANAGER] == {
+        UserRole.SHIFT_SUPERVISOR,
+        UserRole.CASHIER,
+    }
+    # A supervisor's authority is at the register, not at a desk.
+    assert users_router.CREATABLE_ROLES[UserRole.SHIFT_SUPERVISOR] == set()
     assert users_router.CREATABLE_ROLES[UserRole.CASHIER] == set()
 
 

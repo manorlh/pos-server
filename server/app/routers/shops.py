@@ -29,6 +29,7 @@ from app.services.catalog_notify import notify_machines_for_shop
 from app.services.company_hierarchy import company_scope_ids, user_covers_company
 from app.services.pos_user_defaults import ensure_default_pos_user
 from app.services.settings_notify import notify_machines_for_shop_settings
+from app.services.permission_matrix import SHOP_SCOPED_ROLES
 
 router = APIRouter(prefix="/shops", tags=["shops"])
 
@@ -55,7 +56,7 @@ def _check_shop_access(user: User, shop: Shop, db: Session):
         return
     if user.role == UserRole.COMPANY_MANAGER and user_covers_company(db, user, shop.company_id):
         return
-    if user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER) and shop.id == user.shop_id:
+    if user.role in SHOP_SCOPED_ROLES and shop.id == user.shop_id:
         return
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
@@ -360,7 +361,7 @@ def list_shops(
     if current_user.role == UserRole.COMPANY_MANAGER:
         # The group's own shops plus every subsidiary's.
         query = query.filter(Shop.company_id.in_(company_scope_ids(db, current_user)))
-    elif current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
+    elif current_user.role in SHOP_SCOPED_ROLES:
         query = query.filter(Shop.id == current_user.shop_id)
     elif company_id:
         query = query.filter(Shop.company_id == company_id)

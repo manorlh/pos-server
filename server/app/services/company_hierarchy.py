@@ -42,6 +42,7 @@ from sqlalchemy.orm import Query, Session, aliased
 from app.models.company import Company
 from app.models.shop import Shop
 from app.models.user import User, UserRole
+from app.services.permission_matrix import SHOP_SCOPED_ROLES
 
 MAX_COMPANY_DEPTH = 4
 """Maximum number of parent edges above a company: a chain of at most 5 companies.
@@ -249,7 +250,7 @@ def user_may_use_machine(db: Session, user: User, machine) -> bool:
     shop = getattr(machine, "shop", None)
     if role == UserRole.COMPANY_MANAGER and shop is not None:
         return user_covers_company(db, user, shop.company_id)
-    if role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
+    if role in SHOP_SCOPED_ROLES:
         own_shop = getattr(user, "shop_id", None)
         machine_shop = getattr(machine, "shop_id", None)
         return (

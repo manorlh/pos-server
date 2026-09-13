@@ -7,7 +7,7 @@ from app.database import get_db
 from app.models.category import Category, CatalogLevel
 from app.models.product import Product
 from app.models.user import User, UserRole
-from app.services.permission_matrix import Action, Resource, roles_for
+from app.services.permission_matrix import SHOP_SCOPED_ROLES, Action, Resource, roles_for
 from app.schemas.category import (
     CategoryCreate,
     CategoryReorderRequest,
@@ -33,7 +33,7 @@ def _check_access(user: User, category: Category, db: Session):
         db, user, category.company_id
     ):
         return
-    if user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER) and category.shop_id == user.shop_id:
+    if user.role in SHOP_SCOPED_ROLES and category.shop_id == user.shop_id:
         return
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
@@ -107,7 +107,7 @@ def list_categories(
 
     if current_user.role == UserRole.COMPANY_MANAGER:
         query = query.filter(Category.company_id.in_(company_scope_ids(db, current_user)))
-    elif current_user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER):
+    elif current_user.role in SHOP_SCOPED_ROLES:
         query = query.filter(Category.shop_id == current_user.shop_id)
 
     if company_id:

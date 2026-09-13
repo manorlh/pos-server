@@ -35,14 +35,27 @@ class Scope(str, enum.Enum):
     """A named capability a till can be elevated to hold, as `resource:action`."""
 
     CATALOG_WRITE = "catalog:write"
+    #: Give money back. The reason `PER_ACTION_SCOPES` exists.
+    REFUND = "refund"
+    #: Take money off a sale — a basket discount or a line discount.
+    DISCOUNT = "discount"
+    #: End the trading day and print the Z.
+    DAY_CLOSE = "day:close"
 
 
 #: Scopes that must be re-authorised for every single action rather than held for
-#: the life of a session. Empty today: the only scope is catalog editing, where a
-#: PIN per product would be exactly the friction the sliding window exists to
-#: avoid. Approving a refund is the case this exists for — one action, so one PIN
-#: is cheap and is what retail staff expect.
-PER_ACTION_SCOPES: FrozenSet[Scope] = frozenset()
+#: the life of a session.
+#:
+#: Catalog editing is deliberately *not* here: a PIN per product would be exactly the
+#: friction the sliding window exists to avoid. The three that are here each hand money
+#: back or end a day, and a session-length grant would let one PIN cover an afternoon of
+#: them — a supervisor walks away and the till keeps their authority. One action, one
+#: PIN, one name against it, which is also what retail staff already expect.
+PER_ACTION_SCOPES: FrozenSet[Scope] = frozenset({
+    Scope.REFUND,
+    Scope.DISCOUNT,
+    Scope.DAY_CLOSE,
+})
 
 
 #: Which roles may be elevated to which scopes at a till.
@@ -51,11 +64,28 @@ PER_ACTION_SCOPES: FrozenSet[Scope] = frozenset()
 #: catalog from a desk may edit it from a till. `CASHIER` is absent rather than
 #: mapped to an empty set so that a new role added to `UserRole` gets nothing until
 #: someone thinks about it.
+_MANAGER_SCOPES = frozenset({
+    Scope.CATALOG_WRITE,
+    Scope.REFUND,
+    Scope.DISCOUNT,
+    Scope.DAY_CLOSE,
+})
+
+#: What a shift supervisor (אחמ"ש) may authorise: the money decisions and the close of
+#: the day, and nothing that reshapes the catalog. That line is the role — a supervisor
+#: covers the floor, a manager decides what the shop sells.
+_SUPERVISOR_SCOPES = frozenset({
+    Scope.REFUND,
+    Scope.DISCOUNT,
+    Scope.DAY_CLOSE,
+})
+
 _TILL_SCOPES_BY_ROLE: dict[UserRole, FrozenSet[Scope]] = {
-    UserRole.SUPER_ADMIN: frozenset({Scope.CATALOG_WRITE}),
-    UserRole.DISTRIBUTOR: frozenset({Scope.CATALOG_WRITE}),
-    UserRole.COMPANY_MANAGER: frozenset({Scope.CATALOG_WRITE}),
-    UserRole.SHOP_MANAGER: frozenset({Scope.CATALOG_WRITE}),
+    UserRole.SUPER_ADMIN: _MANAGER_SCOPES,
+    UserRole.DISTRIBUTOR: _MANAGER_SCOPES,
+    UserRole.COMPANY_MANAGER: _MANAGER_SCOPES,
+    UserRole.SHOP_MANAGER: _MANAGER_SCOPES,
+    UserRole.SHIFT_SUPERVISOR: _SUPERVISOR_SCOPES,
 }
 
 

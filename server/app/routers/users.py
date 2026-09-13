@@ -19,10 +19,13 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 ROLE_LEVEL = {
     UserRole.CASHIER: 1,
-    UserRole.SHOP_MANAGER: 2,
-    UserRole.COMPANY_MANAGER: 3,
-    UserRole.DISTRIBUTOR: 4,
-    UserRole.SUPER_ADMIN: 5,
+    # Above a cashier and below a manager: may authorise a refund or a discount at the
+    # register, may not administer anything from a desk.
+    UserRole.SHIFT_SUPERVISOR: 2,
+    UserRole.SHOP_MANAGER: 3,
+    UserRole.COMPANY_MANAGER: 4,
+    UserRole.DISTRIBUTOR: 5,
+    UserRole.SUPER_ADMIN: 6,
 }
 
 #: Roles that may read the staff list at all. A dashboard cashier is a shop *viewer*
@@ -39,10 +42,17 @@ CREATABLE_ROLES = {
     UserRole.SUPER_ADMIN: {r for r in UserRole if r != UserRole.MERCHANT_ADMIN},
     UserRole.DISTRIBUTOR: {
         UserRole.COMPANY_MANAGER,
-        UserRole.SHOP_MANAGER, UserRole.CASHIER,
+        UserRole.SHOP_MANAGER, UserRole.SHIFT_SUPERVISOR, UserRole.CASHIER,
     },
-    UserRole.COMPANY_MANAGER: {UserRole.SHOP_MANAGER, UserRole.CASHIER},
-    UserRole.SHOP_MANAGER: {UserRole.CASHIER},
+    UserRole.COMPANY_MANAGER: {
+        UserRole.SHOP_MANAGER, UserRole.SHIFT_SUPERVISOR, UserRole.CASHIER,
+    },
+    # A shop manager staffs their own shop, supervisors included — that is the whole
+    # point of the role, and routing it through head office would leave a branch unable
+    # to cover a shift.
+    UserRole.SHOP_MANAGER: {UserRole.SHIFT_SUPERVISOR, UserRole.CASHIER},
+    # No dashboard administration at all: a supervisor's authority is at the register.
+    UserRole.SHIFT_SUPERVISOR: set(),
     UserRole.CASHIER: set(),
 }
 

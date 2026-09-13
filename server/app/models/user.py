@@ -15,6 +15,10 @@ class UserRole(str, enum.Enum):
     MERCHANT_ADMIN = "merchant_admin"  # legacy DB value; migrated to company_manager
     COMPANY_MANAGER = "company_manager"
     SHOP_MANAGER = "shop_manager"
+    #: אחמ"ש — a senior cashier who may authorise the things a cashier may not: a
+    #: refund, a discount, closing the day. Deliberately has no dashboard write access
+    #: at all; its whole purpose is at the register, through elevation.
+    SHIFT_SUPERVISOR = "shift_supervisor"
     CASHIER = "cashier"
 
 

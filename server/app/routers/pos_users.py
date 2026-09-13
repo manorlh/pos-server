@@ -22,6 +22,7 @@ from app.schemas.pos_user import (
 from app.services.auth import get_password_hash
 from app.services.company_hierarchy import user_covers_company
 from app.services.pos_user_notify import notify_machines_for_shop_pos_users
+from app.services.permission_matrix import SHOP_SCOPED_ROLES
 
 
 router = APIRouter(prefix="/shops", tags=["pos-users"])
@@ -47,7 +48,7 @@ def _check_read(user: User, shop: Shop, db: Session) -> None:
         return
     if user.role == UserRole.COMPANY_MANAGER and user_covers_company(db, user, shop.company_id):
         return
-    if user.role in (UserRole.SHOP_MANAGER, UserRole.CASHIER) and shop.id == user.shop_id:
+    if user.role in SHOP_SCOPED_ROLES and shop.id == user.shop_id:
         return
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
