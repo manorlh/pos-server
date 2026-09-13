@@ -40,6 +40,10 @@ class Resource(str, enum.Enum):
     BRANDING = "branding"
     #: Moving a company under another in the group tree.
     COMPANY_TREE = "company_tree"
+    #: Till operators — creating them, editing them, resetting their PINs. Staffing is a
+    #: manager's job: an operator's PIN is what authorises sales, and whoever can mint
+    #: one can decide who rings up money.
+    POS_USER = "pos_user"
 
 
 class Action(str, enum.Enum):
@@ -77,6 +81,17 @@ _MATRIX: Dict[Tuple[Resource, Action], FrozenSet[UserRole]] = {
     (Resource.BRANDING, Action.WRITE): frozenset({
         UserRole.SUPER_ADMIN,
         UserRole.DISTRIBUTOR,
+    }),
+    # Deliberately excludes the shift supervisor. The role authorises money decisions at
+    # the register; it does not decide who is allowed to work the register. Written as an
+    # inclusion because the previous rule was `role != CASHIER`, and a negation silently
+    # admitted every role added afterwards — which is exactly how the supervisor got this
+    # right without anyone choosing to give it.
+    (Resource.POS_USER, Action.WRITE): frozenset({
+        UserRole.SUPER_ADMIN,
+        UserRole.DISTRIBUTOR,
+        UserRole.COMPANY_MANAGER,
+        UserRole.SHOP_MANAGER,
     }),
     # Re-parenting a company rearranges who can see whose takings, so it stays with the
     # roles that own the hierarchy rather than anyone inside it.

@@ -8,6 +8,9 @@ should not have still passes every test that only checks the rights it should.
 """
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timezone
+
 import pytest
 
 from app.models.user import UserRole
@@ -114,6 +117,89 @@ class TestItAdministersNothing:
 
     def test_it_cannot_read_the_staff_list(self):
         assert SUP not in USER_READ_ROLES
+
+
+class TestItCannotStaffTheTills:
+    """
+    Found by review, not by design: `can_manage_pos_users` was `role != CASHIER`, so the
+    supervisor inherited the right to create till operators and reset their PINs the
+    moment the role existed. An operator's PIN is what authorises sales, so whoever can
+    mint one decides who rings up money — that is a manager's call, not a supervisor's.
+    """
+
+    def test_a_supervisor_may_not_manage_till_operators(self):
+        assert may(SUP, Resource.POS_USER, Action.WRITE) is False
+
+    def test_a_shop_manager_still_may(self):
+        assert may(UserRole.SHOP_MANAGER, Resource.POS_USER, Action.WRITE) is True
+
+    def test_a_cashier_still_may_not(self):
+        assert may(UserRole.CASHIER, Resource.POS_USER, Action.WRITE) is False
+
+    def test_the_legacy_role_is_not_quietly_privileged_either(self):
+        """
+        `merchant_admin` appears in no other grid entry, so the old negation had been
+        granting it something the rest of the system never did. Nobody holds the role —
+        checked against the production database — so denying it is consistency, not a
+        revocation.
+        """
+        assert may(UserRole.MERCHANT_ADMIN, Resource.POS_USER, Action.WRITE) is False
+
+    def test_the_endpoint_itself_refuses_a_supervisor(self):
+        """
+        Calls the real guard rather than re-reading the grid.
+
+        An earlier version of this test compared `may(...)` with a constant derived from
+        `may(...)` — it was comparing the grid to itself, and reverting the endpoint to the
+        old `role != CASHIER` exclusion passed it. Mutation testing caught that; this
+        exercises `_check_write`.
+        """
+        from unittest.mock import MagicMock
+
+        from fastapi import HTTPException
+
+        from app.routers.pos_users import _check_write
+
+        user, shop = MagicMock(), MagicMock()
+        user.role = SUP
+        user.shop_id = shop.id
+
+        with pytest.raises(HTTPException) as e:
+            _check_write(user, shop, MagicMock())
+
+        assert e.value.status_code == 403
+
+    def test_the_endpoint_still_admits_a_shop_manager(self):
+        """The guard must refuse the supervisor without refusing everyone."""
+        from unittest.mock import MagicMock
+
+        from app.routers.pos_users import _check_write
+
+        user, shop = MagicMock(), MagicMock()
+        user.role = UserRole.SHOP_MANAGER
+        user.shop_id = shop.id
+
+        _check_write(user, shop, MagicMock())  # must not raise
+
+    def test_what_users_me_advertises_matches_what_the_endpoint_enforces(self):
+        """
+        Calls the real `/users/me` handler. The dashboard reads `canManagePosUsers` to
+        decide whether to show the button; if that answer came from anywhere but the grid,
+        the UI would offer a button whose save then 403s.
+        """
+        from app.models.user import User as UserModel
+        from app.routers.users import get_current_user_info
+
+        for role in UserRole:
+            caller = UserModel(
+                id=uuid.uuid4(), username=f"u-{role.value}", email=f"{role.value}@x.test",
+                role=role, tenant_id=uuid.uuid4(),
+                is_active=True, created_at=datetime(2026, 9, 13, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 9, 13, tzinfo=timezone.utc),
+            )
+            advertised = get_current_user_info(current_user=caller).can_manage_pos_users
+
+            assert advertised == may(role, Resource.POS_USER, Action.WRITE), role
 
 
 class TestWhereItSitsInTheHierarchy:

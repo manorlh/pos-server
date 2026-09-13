@@ -8,6 +8,8 @@ from app.database import get_db
 from app.schemas.user import UserCreate, UserUpdate, UserResponse, CurrentUserResponse
 from app.schemas.elevation import TillPinAssign, TillPinSet, TillPinState
 from app.services.elevation import PinPolicyError, clear_till_pin, set_till_pin
+from app.services.permission_matrix import Action, Resource, may
+from app.services.permission_matrix import roles_for as _roles_for
 from app.services.permissions import till_grantable_scopes
 from app.models.user import User, UserRole
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
@@ -16,6 +18,9 @@ from app.services.auth import get_password_hash, get_user_by_username
 from app.services.company_hierarchy import company_scope_ids, user_covers_company
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+#: Named so a test can prove what `/users/me` advertises is what the endpoint enforces.
+POS_USER_WRITE_ROLES = _roles_for(Resource.POS_USER, Action.WRITE)
 
 ROLE_LEVEL = {
     UserRole.CASHIER: 1,
@@ -141,7 +146,9 @@ def get_current_user_info(current_user: User = Depends(get_current_user)):
             "creatable_roles": sorted(creatable, key=lambda r: ROLE_LEVEL[r], reverse=True),
             "can_read_users": current_user.role in USER_READ_ROLES,
             "can_manage_users": bool(creatable),
-            "can_manage_pos_users": current_user.role != UserRole.CASHIER,
+            # Same grid the endpoint enforces on, so the dashboard cannot offer a
+            # button the save would then refuse.
+            "can_manage_pos_users": may(current_user.role, Resource.POS_USER, Action.WRITE),
             "has_till_pin": bool(current_user.till_pin_hash),
             "till_scopes": sorted(
                 scope.value for scope in till_grantable_scopes(current_user.role)

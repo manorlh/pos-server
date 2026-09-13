@@ -22,7 +22,7 @@ from app.schemas.pos_user import (
 from app.services.auth import get_password_hash
 from app.services.company_hierarchy import user_covers_company
 from app.services.pos_user_notify import notify_machines_for_shop_pos_users
-from app.services.permission_matrix import SHOP_SCOPED_ROLES
+from app.services.permission_matrix import SHOP_SCOPED_ROLES, Action, Resource, may
 
 
 router = APIRouter(prefix="/shops", tags=["pos-users"])
@@ -54,8 +54,16 @@ def _check_read(user: User, shop: Shop, db: Session) -> None:
 
 
 def _check_write(user: User, shop: Shop, db: Session) -> None:
-    """Cashiers cannot manage other POS users."""
-    if user.role == UserRole.CASHIER:
+    """
+    Who may staff a shop's tills.
+
+    Was `role != CASHIER`, which reads as "everyone except cashiers" and behaves as
+    "everyone added from now on". The shift supervisor inherited the right to create till
+    operators and reset their PINs without anyone deciding to grant it — and an operator's
+    PIN is what authorises sales, so whoever can mint one decides who rings up money.
+    Asking the grid instead means a new role gets nothing until it is listed.
+    """
+    if not may(user.role, Resource.POS_USER, Action.WRITE):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
     _check_read(user, shop, db)
 
