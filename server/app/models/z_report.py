@@ -2,7 +2,7 @@ import uuid
 
 from sqlalchemy import (
     Boolean, Column, ForeignKey, Numeric, Integer, Date,
-    DateTime, UniqueConstraint, Index,
+    DateTime, String, UniqueConstraint, Index,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -58,6 +58,19 @@ class ZReport(Base):
     #: zero — a shop with a real shortfall got a document claiming it balanced. Null
     #: says "nobody counted", which is the truth, and this flag says why.
     unattended = Column(Boolean, nullable=False, default=False, server_default="false")
+
+    #: Built by the cloud from the documents it holds, because the terminal that owned
+    #: this day could not close it — it died, or was replaced, and a Z can otherwise
+    #: only be issued by the terminal itself.
+    #:
+    #: Never silently equivalent to a terminal-issued Z. `actual_cash` is NULL (nobody
+    #: counted a drawer), `reconstructed_by` names the person who authorised it, and
+    #: `reconstruction_basis` records what the figures were built from — how many
+    #: documents the cloud held, when the terminal was last heard from, and what backlog
+    #: it last reported. Without that, a reader has no way to judge how complete it is.
+    reconstructed = Column(Boolean, nullable=False, default=False, server_default="false")
+    reconstructed_by = Column(String(255), nullable=True)
+    reconstruction_basis = Column(JSONB, nullable=True)
 
     opening_cash = Column(Numeric(12, 2), nullable=True)
     closing_cash = Column(Numeric(12, 2), nullable=True)

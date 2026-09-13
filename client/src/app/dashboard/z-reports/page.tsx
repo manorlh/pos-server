@@ -11,6 +11,7 @@ import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
 import { ZReport, ZReportListResponse } from '@/lib/types';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -236,6 +237,13 @@ export default function ZReportsPage() {
                       {/* An em dash, not a 0: a shopless or pre-numbering Z has no
                           number, and a 0 would read as one. */}
                       {z.shopSequenceNumber ?? '—'}
+                      {/* A reconstructed Z was built by the cloud, not printed by the
+                          terminal. Never left implicit. */}
+                      {z.reconstructed ? (
+                        <Badge variant="outline" className="ms-2 text-[11px]">
+                          {t('reconstructed')}
+                        </Badge>
+                      ) : null}
                     </TableCell>
                     <TableCell>{formatDate(z.dayDate)}</TableCell>
                     <TableCell>{machineName ?? z.machineId.slice(0, 8)}</TableCell>

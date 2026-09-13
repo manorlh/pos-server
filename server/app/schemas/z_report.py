@@ -89,6 +89,13 @@ class ZReportOut(BaseModel):
     #: The shop's Z counter. Null on a Z from a terminal with no shop, and on closes
     #: filed before the column existed and outside the migration's backfill.
     shop_sequence_number: Optional[int] = Field(None, alias="shopSequenceNumber")
+    #: Built by the cloud for a day whose terminal could not close it, rather than issued
+    #: and printed by the terminal. Surfaced everywhere a Z is read: a reader must never
+    #: have to guess which kind of document they are looking at.
+    reconstructed: bool = False
+    reconstructed_by: Optional[str] = Field(None, alias="reconstructedBy")
+    #: What it was built from — documents held, last heartbeat, last reported backlog.
+    reconstruction_basis: Optional[dict] = Field(None, alias="reconstructionBasis")
     total_sales: Optional[Decimal] = Field(None, alias="totalSales")
     total_refunds: Optional[Decimal] = Field(None, alias="totalRefunds")
     total_cash_sales: Optional[Decimal] = Field(None, alias="totalCashSales")

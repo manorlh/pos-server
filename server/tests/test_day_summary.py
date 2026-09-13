@@ -40,6 +40,7 @@ class _Z:
     closed_at: datetime = datetime(2026, 9, 7, 22, 0, tzinfo=timezone.utc)
     unattended: bool = False
     shop_sequence_number: Optional[int] = 1
+    reconstructed: bool = False
 
     total_sales: Optional[Decimal] = Decimal("100.00")
     total_refunds: Optional[Decimal] = Decimal("0.00")

@@ -1143,6 +1143,7 @@ def build_day_summary_report(
                 shop_name=z.shop.name if z.shop else None,
                 closed_at=z.closed_at,
                 unattended=bool(z.unattended),
+                reconstructed=bool(z.reconstructed),
                 uncounted=z.actual_cash is None,
                 sales=_to_float(_dec_or_zero(z.total_sales)),
                 refunds=_to_float(_dec_or_zero(z.total_refunds)),

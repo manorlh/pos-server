@@ -1,6 +1,7 @@
 import uuid as uuid_mod
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
@@ -39,6 +40,9 @@ from app.services.realtime_info import (
     machine_realtime_refresh_info,
 )
 from app.services.machine_status import StatusInput, resolve_status
+from app.services.administrative_close import reconstruct_z_report
+from app.services.pairing import create_pairing_code
+from app.services.transactions import find_open_trading_day
 from app.services.close_day import (
     get_open_trading_days_for_machines,
     get_pending_close_day_machine_ids,
@@ -522,4 +526,124 @@ def trigger_sync(
 
     return {
         "message": "Catalog change notification sent; POS should pull via GET /sync/{machineId}/catalog",
+    }
+
+
+class ReconstructCloseBody(BaseModel):
+    """Options for closing a dead terminal's day from the cloud."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: Skip the "terminal has been silent long enough" guard.
+    #:
+    #: For the case where the operator knows the unit is unusable — smashed, stolen,
+    #: returned to the distributor — and is not going to wait two hours to say so. It is
+    #: recorded in the Z's reconstruction basis, because "a human overrode the guard" is
+    #: part of how complete the document is.
+    force: bool = False
+    #: Free text kept with the document — why this was done, by whom, in their words.
+    note: Optional[str] = Field(None, max_length=500)
+
+
+@router.post("/{machine_id}/trading-day/reconstruct-close")
+def reconstruct_close_trading_day(
+    machine_id: uuid_mod.UUID,
+    body: ReconstructCloseBody | None = None,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Close a trading day whose terminal can no longer close it.
+
+    Produces a Z built from the documents the cloud already holds, marked `reconstructed`
+    and attributed to the caller, with `actual_cash` left unknown because nobody counted
+    a drawer. See `app/services/administrative_close.py` for why each of those matters.
+
+    Guarded: refuses while the terminal is still online, or has been seen within the last
+    two hours, unless `force` is passed — a day closed under a working till would leave a
+    cashier selling into a day the cloud thinks has ended.
+
+    Idempotent. A day that already has a Z returns it rather than filing a second fiscal
+    document or burning another shop Z number.
+    """
+    machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+    ensure_same_tenant(machine.tenant_id, active_tenant_id)
+
+    day = find_open_trading_day(db, machine.id)
+    if day is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="no_open_trading_day"
+        )
+
+    options = body or ReconstructCloseBody()
+    z_report, created = reconstruct_z_report(
+        db,
+        machine,
+        day,
+        current_user,
+        force=options.force,
+        note=options.note,
+    )
+    db.commit()
+    db.refresh(z_report)
+
+    return {
+        "created": created,
+        "zReportId": str(z_report.id),
+        "tradingDayId": str(z_report.trading_day_id),
+        "shopSequenceNumber": z_report.shop_sequence_number,
+        "reconstructed": bool(z_report.reconstructed),
+        "basis": z_report.reconstruction_basis,
+    }
+
+
+@router.post("/{machine_id}/replacement-code")
+def create_replacement_pairing_code(
+    machine_id: uuid_mod.UUID,
+    current_user: User = Depends(get_current_distributor),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    A pairing code that hands this terminal's identity to a replacement device.
+
+    The new unit adopts the same machine row — same id, same `machine_code`, same shop
+    and register number — so documents already filed against it still point at the till
+    the shop knows, and the day's reporting does not split across two machines. Pairing
+    bumps `token_version`, which kills whatever token the old unit still holds.
+
+    Refuses while the terminal has an open trading day: the replacement has none of that
+    day's records and its Z would declare a fraction of what was actually taken. Close
+    the day first with `reconstruct-close`.
+    """
+    machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+    ensure_same_tenant(machine.tenant_id, active_tenant_id)
+
+    # Checked here as well as at redemption so the operator is told now, while they are
+    # looking at the screen, rather than when the engineer is standing at the counter
+    # with a new terminal in their hand.
+    if find_open_trading_day(db, machine.id) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="open_trading_day — close this terminal's day before replacing it.",
+        )
+
+    code = create_pairing_code(
+        db,
+        current_user.id,
+        tenant_id=machine.tenant_id,
+        company_id=None,
+        shop_id=None,
+        target_machine_id=machine.id,
+    )
+    return {
+        "code": code.code,
+        "expiresAt": code.expires_at,
+        "replacesMachineId": str(machine.id),
+        "machineCode": machine.machine_code,
     }

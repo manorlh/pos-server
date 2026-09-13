@@ -195,7 +195,11 @@ function DayRow({ row }: { row: DaySummaryRow }) {
                       </TableCell>
                       <TableCell className="font-medium">
                         {c.machineName ?? c.machineId}
-                        {c.unattended ? (
+                        {c.reconstructed ? (
+                          <Badge variant="outline" className="ms-2 text-xs">
+                            {t('drill.reconstructed')}
+                          </Badge>
+                        ) : c.unattended ? (
                           <Badge variant="outline" className="ms-2 text-xs">
                             {t('drill.unattended')}
                           </Badge>

@@ -1,4 +1,5 @@
 import secrets
+import uuid
 import string
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
@@ -10,6 +11,7 @@ from app.models.company import Company
 from app.models.shop import Shop
 from app.models.user import User
 from app.models.tenant_membership import TenantMembership
+from app.models.trading_day import TradingDay, TradingDayStatus
 from app.services.machine_health import serial_from_device_info
 from app.services.shop_validation import shop_belongs_to_company
 import uuid
@@ -85,8 +87,14 @@ def create_pairing_code(
     tenant_id: Optional[uuid.UUID] = None,
     company_id: Optional[uuid.UUID] = None,
     shop_id: Optional[uuid.UUID] = None,
+    target_machine_id: Optional[uuid.UUID] = None,
 ) -> PairingCode:
-    """Create a new pairing code, optionally with company/shop pre-assignment."""
+    """
+    Create a new pairing code, optionally with company/shop pre-assignment.
+
+    `target_machine_id` makes it a *replacement* code: the device that redeems it adopts
+    that existing machine row rather than creating a new one. See `validate_pairing_code`.
+    """
     code = generate_pairing_code()
     while db.query(PairingCode).filter(PairingCode.code == code).first():
         code = generate_pairing_code()
@@ -103,6 +111,7 @@ def create_pairing_code(
         tenant_id=tenant_id,
         company_id=company_id,
         shop_id=shop_id,
+        target_machine_id=target_machine_id,
         expires_at=expires_at,
         is_used=False,
     )
@@ -134,13 +143,23 @@ def validate_pairing_code(
         db, pairing_code.distributor_id
     )
 
-    pos_machine = create_pos_machine(
-        db,
-        distributor_id=pairing_code.distributor_id,
-        tenant_id=tenant_id,
-        device_info=device_info,
-        machine_name=machine_name,
-    )
+    if pairing_code.target_machine_id is not None:
+        pos_machine = adopt_machine(
+            db,
+            pairing_code.target_machine_id,
+            device_info=device_info,
+            machine_name=machine_name,
+        )
+        if pos_machine is None:
+            return None
+    else:
+        pos_machine = create_pos_machine(
+            db,
+            distributor_id=pairing_code.distributor_id,
+            tenant_id=tenant_id,
+            device_info=device_info,
+            machine_name=machine_name,
+        )
 
     pairing_code.is_used = True
     pairing_code.used_at = datetime.now(timezone.utc)
@@ -224,4 +243,65 @@ def assign_machine_to_shop(
     machine.pairing_status = PairingStatus.ASSIGNED
     db.commit()
     db.refresh(machine)
+    return machine
+
+
+def adopt_machine(
+    db: Session,
+    machine_id: uuid.UUID,
+    *,
+    device_info: Optional[dict] = None,
+    machine_name: Optional[str] = None,
+) -> Optional[POSMachine]:
+    """
+    Hand an existing terminal's identity to a replacement device.
+
+    The row keeps its id, its `machine_code`, its shop and its register number, so every
+    document already filed against it still refers to the till the shop knows, and the
+    day's reporting does not split across two machines halfway through an afternoon.
+
+    Two things are deliberate:
+
+    * **`token_version` is bumped.** Machine tokens do not expire, so this is the
+      revocation: the unit being replaced is holding a token that would otherwise keep
+      working, and a terminal that was lost rather than broken is a terminal in someone
+      else's hands.
+    * **An open trading day blocks the adoption.** The replacement would inherit a day it
+      has no records for, and its Z — computed from its own local rows — would declare a
+      fraction of what the shop actually took. The day must be closed first, which is what
+      `administrative_close` is for.
+
+    `device_info` and the name are refreshed, because the hardware genuinely changed.
+    """
+    machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
+    if machine is None:
+        return None
+
+    open_day = (
+        db.query(TradingDay)
+        .filter(
+            TradingDay.machine_id == machine.id,
+            TradingDay.status == TradingDayStatus.OPEN,
+        )
+        .first()
+    )
+    if open_day is not None:
+        raise PairingAssignmentError(
+            "This terminal still has an open trading day. Close it first — a replacement "
+            "cannot issue a Z for sales it never saw."
+        )
+
+    if device_info:
+        machine.device_info = device_info
+    if machine_name:
+        machine.name = machine_name
+    machine.pairing_status = PairingStatus.PAIRED if machine.shop_id is None else PairingStatus.ASSIGNED
+    machine.is_active = True
+    machine.token_version = (machine.token_version or 1) + 1
+    # The replacement has reported nothing yet; carrying the dead unit's last backlog
+    # forward would show the new terminal as holding sales it has never seen.
+    machine.pending_count = None
+    machine.pending_documents = None
+    machine.pending_count_at = None
+    db.flush()
     return machine

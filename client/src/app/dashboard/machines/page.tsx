@@ -31,6 +31,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import type { PairingSessionCreateResponse } from '@/lib/types';
 import { he } from 'date-fns/locale';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DeadTillRecovery } from '@/components/dashboard/dead-till-recovery';
 import {
   MachineStatusDot,
   MachineStatusFlags,
@@ -705,6 +706,11 @@ export default function MachinesPage() {
                   {/* Secondary conditions sit under the light rather than in it: a till
                       trading normally with a drifted clock is still green, with a badge. */}
                   <MachineStatusFlags m={m} />
+                  {/* Only for a terminal that is actually unreachable — offering it on a
+                      healthy till invites closing a day out from under a cashier. */}
+                  {!isDeviceOnline(m) && m.pairingStatus === 'assigned' ? (
+                    <DeadTillRecovery m={m} />
+                  ) : null}
                   {m.pendingAsOf && (m.pendingDocuments ?? 0) > 0 ? (
                     <div className="text-muted-foreground text-xs">
                       {t('pendingAsOf', {

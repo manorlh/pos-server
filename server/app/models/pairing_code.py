@@ -18,6 +18,17 @@ class PairingCode(Base):
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True)
     pos_machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id"), nullable=True)
+
+    #: A terminal this code *replaces*.
+    #:
+    #: Normally validating a pairing code creates a new machine row. When this is set the
+    #: new device adopts the named row instead — same id, same machine_code, same shop,
+    #: same register number — so a terminal swapped out on the counter keeps the identity
+    #: its documents and its shop's reporting already refer to. Pairing bumps
+    #: `token_version` on adoption, which kills every token the dead unit held.
+    target_machine_id = Column(
+        UUID(as_uuid=True), ForeignKey("pos_machines.id"), nullable=True
+    )
     expires_at = Column(DateTime(timezone=True), nullable=False)
     is_used = Column(Boolean, default=False, nullable=False)
     used_at = Column(DateTime(timezone=True), nullable=True)

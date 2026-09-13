@@ -394,6 +394,42 @@ export type ZReportListParams = {
  * restatement of it. The list read cannot stand in: a Z from six weeks ago is not on
  * the page the reader happens to be looking at.
  */
+/**
+ * Close a dead terminal's trading day from the cloud.
+ *
+ * Produces a Z built from the documents the cloud holds, marked `reconstructed`. Refused
+ * while the terminal is still online or was seen in the last two hours, unless forced.
+ */
+export async function reconstructCloseTradingDay(
+  machineId: string,
+  body: { force?: boolean; note?: string } = {},
+): Promise<{
+  created: boolean;
+  zReportId: string;
+  shopSequenceNumber: number | null;
+  reconstructed: boolean;
+  basis: Record<string, unknown> | null;
+}> {
+  const { data } = await api.post(`/machines/${machineId}/trading-day/reconstruct-close`, body);
+  return data;
+}
+
+/**
+ * A pairing code that hands this terminal's identity to a replacement device.
+ *
+ * Refused while the terminal has an open trading day — the replacement has none of that
+ * day's records and could not issue a truthful Z for it.
+ */
+export async function createReplacementCode(machineId: string): Promise<{
+  code: string;
+  expiresAt: string;
+  replacesMachineId: string;
+  machineCode: string;
+}> {
+  const { data } = await api.post(`/machines/${machineId}/replacement-code`, {});
+  return data;
+}
+
 export async function fetchZReport(id: string): Promise<ZReport> {
   const { data } = await api.get<ZReport>(`/z-reports/${id}`);
   return data;

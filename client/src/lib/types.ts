@@ -586,6 +586,14 @@ export interface ZReport {
    * from a terminal with no shop, and on closes that predate the column.
    */
   shopSequenceNumber?: number | null;
+  /**
+   * Built by the cloud for a day whose terminal could not close it, rather than issued
+   * and printed by the terminal. Always shown: a reader must never have to guess which
+   * kind of document they are looking at.
+   */
+  reconstructed?: boolean;
+  reconstructedBy?: string | null;
+  reconstructionBasis?: Record<string, unknown> | null;
   /** Filled in by GET /z-reports so the history table can name the terminal. */
   machineName?: string | null;
   /** Filled in by GET /z-reports; null on the single-report read. */
@@ -868,6 +876,8 @@ export interface DaySummaryTotals {
 /** One Z report behind a day's figures. `zReportId` is the drill-down target. */
 export interface DaySummaryContributor {
   zReportId: string;
+  /** This till's day was closed from the cloud, not by the terminal. */
+  reconstructed?: boolean;
   /** The shop's Z number. Null on a Z from a terminal with no shop. */
   shopSequenceNumber?: number | null;
   machineId: string;

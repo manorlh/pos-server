@@ -270,6 +270,9 @@ class DaySummaryContributor(BaseModel):
     shop_name: Optional[str] = Field(None, alias="shopName")
     closed_at: Optional[datetime] = Field(None, alias="closedAt")
     unattended: bool = False
+    #: Built by the cloud because the terminal could not close its own day. Shown in the
+    #: drill-down so a day whose figures rest on a reconstruction says so on its face.
+    reconstructed: bool = False
     #: True when this Z has no counted cash, i.e. it is why `variance` is null.
     uncounted: bool = False
 
