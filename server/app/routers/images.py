@@ -18,6 +18,7 @@ import cloudinary.uploader
 
 from app.middleware.auth import get_active_tenant_id, get_current_user
 from app.models.user import User, UserRole
+from app.services.permission_matrix import Action, Resource, roles_for
 from app.services.cloudinary_service import build_upload_params, configure_cloudinary, upload_folder
 from app.services.image_validation import ALLOWED_BRANDING_CONTENT_TYPES, read_image_dimensions
 
@@ -26,21 +27,14 @@ router = APIRouter(prefix="/images", tags=["images"])
 
 _ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 _MAX_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
-_IMAGE_ROLES = (
-    UserRole.SUPER_ADMIN,
-    UserRole.DISTRIBUTOR,
-    UserRole.COMPANY_MANAGER,
-)
+_IMAGE_ROLES = roles_for(Resource.IMAGE, Action.WRITE)
 
 BrandingKind = Literal["logo", "hero"]
 
 # Only the roles that may *write* branding settings may upload branding images —
 # see BRANDING_WRITE_ROLES in app/routers/settings.py. Kept in sync deliberately:
 # an upload a caller could never save is just a way to fill someone's Cloudinary.
-_BRANDING_ROLES = (
-    UserRole.SUPER_ADMIN,
-    UserRole.DISTRIBUTOR,
-)
+_BRANDING_ROLES = roles_for(Resource.BRANDING, Action.WRITE)
 
 # A till is a ~1.9 GB Android device, often on cellular, that fetches these on
 # startup. Limits are per kind: a logo is a small mark, a hero is a full screen.

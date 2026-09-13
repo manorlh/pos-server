@@ -6,16 +6,16 @@ from app.database import get_db
 from app.models.voucher import Voucher
 from app.models.product import Product
 from app.models.user import User, UserRole
+from app.services.permission_matrix import Action, Resource, roles_for
 from app.schemas.voucher import VoucherCreate, VoucherUpdate, VoucherResponse, VoucherListResponse
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
 from app.services.catalog_notify import notify_all_machines_for_tenant
 
 router = APIRouter(prefix="/vouchers", tags=["vouchers"])
 
-_CATALOG_ROLES = (
-    UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR,
-    UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER,
-)
+#: From the shared grid — see `app/services/permission_matrix.py`. This used to
+#: be a tuple retyped in five routers, each one an edit away from disagreeing.
+_CATALOG_ROLES = roles_for(Resource.CATALOG, Action.WRITE)
 
 
 def _trigger_catalog_notify(db: Session, tenant_id):

@@ -7,6 +7,7 @@ from app.database import get_db
 from app.models.category import Category, CatalogLevel
 from app.models.product import Product
 from app.models.user import User, UserRole
+from app.services.permission_matrix import Action, Resource, roles_for
 from app.schemas.category import (
     CategoryCreate,
     CategoryReorderRequest,
@@ -20,10 +21,9 @@ from app.services.company_hierarchy import company_scope_ids, user_covers_compan
 
 router = APIRouter(prefix="/categories", tags=["categories"])
 
-_CATALOG_ROLES = (
-    UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR,
-    UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER,
-)
+#: From the shared grid — see `app/services/permission_matrix.py`. This used to
+#: be a tuple retyped in five routers, each one an edit away from disagreeing.
+_CATALOG_ROLES = roles_for(Resource.CATALOG, Action.WRITE)
 
 
 def _check_access(user: User, category: Category, db: Session):

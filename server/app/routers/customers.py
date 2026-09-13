@@ -31,6 +31,7 @@ from app.database import get_db
 from app.middleware.auth import get_active_tenant_id, get_current_user, ensure_same_tenant
 from app.models.customer import Customer
 from app.models.user import User, UserRole
+from app.services.permission_matrix import Action, Resource, roles_for
 from app.schemas.customer import (
     CustomerCreate,
     CustomerListResponse,
@@ -41,10 +42,9 @@ from app.services.catalog_notify import notify_all_machines_for_tenant
 
 router = APIRouter(prefix="/customers", tags=["customers"])
 
-_CATALOG_ROLES = (
-    UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR,
-    UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER,
-)
+#: From the shared grid — see `app/services/permission_matrix.py`. This used to
+#: be a tuple retyped in five routers, each one an edit away from disagreeing.
+_CATALOG_ROLES = roles_for(Resource.CUSTOMER, Action.WRITE)
 
 
 def _require_role(current_user: User) -> None:

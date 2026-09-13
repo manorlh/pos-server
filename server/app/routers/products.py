@@ -8,6 +8,7 @@ from app.models.product import Product, CatalogLevel
 from app.models.category import Category
 from app.models.voucher import Voucher
 from app.models.user import User, UserRole
+from app.services.permission_matrix import Action, Resource, roles_for
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, ProductListResponse
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
 from app.services.catalog_notify import notify_all_machines_for_tenant, notify_machine_catalog_changed
@@ -18,10 +19,9 @@ from app.services.tenant_sku_sequence import allocate_global_sku
 
 router = APIRouter(prefix="/products", tags=["products"])
 
-_CATALOG_ROLES = (
-    UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR,
-    UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER,
-)
+#: From the shared grid — see `app/services/permission_matrix.py`. This used to
+#: be a tuple retyped in five routers, each one an edit away from disagreeing.
+_CATALOG_ROLES = roles_for(Resource.CATALOG, Action.WRITE)
 
 
 def _check_product_access(user: User, product: Product, db: Session):

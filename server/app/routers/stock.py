@@ -11,6 +11,7 @@ from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_s
 from app.models.shop import Shop
 from app.models.stock_movement import StockMovementReason
 from app.models.user import User, UserRole
+from app.services.permission_matrix import Action, Resource, roles_for
 from app.routers.shops import _check_shop_access
 from app.services.company_hierarchy import user_covers_company
 from app.schemas.stock import (
@@ -30,12 +31,7 @@ from app.services.stock import (
 
 router = APIRouter(tags=["stock"])
 
-_STOCK_WRITE_ROLES = {
-    UserRole.SUPER_ADMIN,
-    UserRole.DISTRIBUTOR,
-    UserRole.COMPANY_MANAGER,
-    UserRole.SHOP_MANAGER,
-}
+_STOCK_WRITE_ROLES = roles_for(Resource.STOCK, Action.WRITE)
 
 
 def _check_stock_write(user: User, shop: Shop, db: Session) -> None:

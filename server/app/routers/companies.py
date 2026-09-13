@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.company import Company
 from app.models.user import User, UserRole
+from app.services.permission_matrix import Action, Resource, roles_for
 from app.schemas.company import CompanyCreate, CompanyUpdate, CompanyResponse
 from app.middleware.auth import get_current_user, get_current_distributor, get_active_tenant_id, ensure_same_tenant
 from app.services.company_hierarchy import (
@@ -26,7 +27,7 @@ _COMPANY_PROFILE_FIELDS = frozenset({"name", "vat_number", "address", "city"})
 #: managers every shop, till, transaction and staff row underneath, so it is an
 #: org-structure decision and not part of editing a company's profile — even though a
 #: company manager may edit that profile.
-_REPARENT_ROLES = frozenset({UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR})
+_REPARENT_ROLES = roles_for(Resource.COMPANY_TREE, Action.WRITE)
 
 #: Sentinel: `parentCompanyId` absent from the request body, which is not the same
 #: request as `"parentCompanyId": null` (detach from the group).
