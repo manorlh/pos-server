@@ -480,3 +480,352 @@ def test_trading_day_carries_a_sequence_number():
     # Nullable: days opened before this have no number, and inventing one would
     # fabricate a fiscal ordering that never existed.
     assert column.nullable is True
+
+
+# ── Per-action grants are single-use ──────────────────────────────────────────
+#
+# The gap these cover: `PER_ACTION_SCOPES` was declared and enforced nowhere on the
+# server, so a grant for `refund` stayed good for the whole idle window and "one PIN,
+# one refund" lived only in the Android client's in-memory bookkeeping. An older or
+# modified APK honoured none of it — one PIN bought an afternoon of refunds.
+
+
+class _Grant:
+    """A stored grant. A real object, not a MagicMock: absent means absent."""
+
+    def __init__(self, scopes, consumed_at=None, grant_id=None):
+        self.id = grant_id or uuid.uuid4()
+        self.scopes = list(scopes)
+        self.per_action_consumed_at = consumed_at
+        self.machine_id = uuid.uuid4()
+        self.user_id = uuid.uuid4()
+
+
+class _ConsumeSession(_Session):
+    """Hands back one row under `FOR UPDATE`, and counts how it was asked for."""
+
+    def __init__(self, locked_row):
+        super().__init__()
+        self.locked_row = locked_row
+        self.locks = 0
+        self.populate_existing_calls = 0
+        self.flushes = 0
+
+    def query(self, *_entities):
+        outer = self
+
+        class _Q:
+            def filter(self, *_c):
+                return self
+
+            def populate_existing(self):
+                outer.populate_existing_calls += 1
+                return self
+
+            def with_for_update(self):
+                outer.locks += 1
+                return self
+
+            def first(self):
+                return outer.locked_row
+
+        return _Q()
+
+    def flush(self):
+        self.flushes += 1
+
+
+def test_a_refund_grant_authorises_exactly_one_refund():
+    grant = _Grant(["refund"])
+    db = _ConsumeSession(grant)
+
+    assert elevation.session_has_scope(grant, Scope.REFUND) is True
+    assert elevation.consume_per_action_use(db, grant) is True
+
+    assert elevation.session_has_scope(grant, Scope.REFUND) is False
+    assert elevation.consume_per_action_use(db, grant) is False
+
+
+def test_one_pin_buys_one_action_not_one_of_each_kind():
+    """
+    A supervisor who typed a PIN to approve a refund did not also approve a discount.
+    The thing spent is the PIN, so the whole per-action half of the grant goes at once.
+    """
+    grant = _Grant(["refund", "discount", "day:close"])
+    db = _ConsumeSession(grant)
+
+    assert elevation.consume_per_action_use(db, grant) is True
+
+    assert elevation.session_has_scope(grant, Scope.REFUND) is False
+    assert elevation.session_has_scope(grant, Scope.DISCOUNT) is False
+    assert elevation.session_has_scope(grant, Scope.DAY_CLOSE) is False
+
+
+def test_a_session_scope_is_never_spent_and_never_locks_a_row():
+    """
+    `catalog:write` exists so a manager editing twenty prices types one PIN. If
+    consuming touched it, the sliding window would be pointless.
+    """
+    grant = _Grant(["catalog:write"])
+    db = _ConsumeSession(grant)
+
+    for _ in range(3):
+        assert elevation.consume_per_action_use(db, grant) is True
+
+    assert grant.per_action_consumed_at is None
+    assert elevation.session_has_scope(grant, Scope.CATALOG_WRITE) is True
+    assert db.locks == 0
+
+
+def test_spending_the_refund_half_leaves_catalog_write_working():
+    """A mixed grant loses only the half that was spent."""
+    grant = _Grant(["catalog:write", "refund"])
+    db = _ConsumeSession(grant)
+
+    assert elevation.consume_per_action_use(db, grant) is True
+
+    assert elevation.session_has_scope(grant, Scope.REFUND) is False
+    assert elevation.session_has_scope(grant, Scope.CATALOG_WRITE) is True
+
+
+def test_a_spent_grant_still_slides_its_window_for_the_session_half():
+    """
+    Resolution is about liveness, not about what is left. A mixed grant whose refund
+    has been used is still a live session for the catalog, and must keep sliding.
+    """
+    row = _live_row(_user(), scopes=("catalog:write", "refund"))
+    row.per_action_consumed_at = _now()
+    before = row.expires_at
+
+    assert elevation.resolve_session(_LookupSession(row), "token") is row
+    assert row.expires_at > before
+
+
+def test_a_concurrent_request_that_already_spent_the_grant_wins():
+    """
+    The race. Two requests present the same token; each loaded the row before the
+    other wrote to it, so both hold a copy saying "unspent". Trusting the copy in hand
+    lets both refunds through, which is the entire failure this feature exists to stop.
+    The locked re-read is what decides it.
+    """
+    shared_id = uuid.uuid4()
+    in_hand = _Grant(["refund"], grant_id=shared_id)
+    as_committed_by_the_other_request = _Grant(
+        ["refund"], consumed_at=_now(), grant_id=shared_id
+    )
+    db = _ConsumeSession(as_committed_by_the_other_request)
+
+    assert elevation.consume_per_action_use(db, in_hand) is False
+    assert db.locks == 1
+
+
+def test_the_grant_is_re_read_under_the_lock_rather_than_reused_from_the_session():
+    """
+    `populate_existing` is not decoration. Without it SQLAlchemy returns the stale
+    identity-map copy and the freshly locked row is read for nothing — the lock is
+    taken, the SQL is correct, and the stale value is still what gets checked. There
+    is no way to observe that without a database, so the call is asserted directly.
+    """
+    grant = _Grant(["refund"])
+    db = _ConsumeSession(grant)
+
+    elevation.consume_per_action_use(db, grant)
+
+    assert db.populate_existing_calls == 1
+
+
+def test_the_consuming_lock_compiles_to_select_for_update():
+    """The ORM call is only as good as the SQL it produces."""
+    from sqlalchemy.dialects import postgresql
+    from sqlalchemy.orm import sessionmaker
+
+    from app.models.elevated_session import ElevatedSession
+
+    session = sessionmaker()()
+    sql = str(
+        session.query(ElevatedSession)
+        .filter(ElevatedSession.id == uuid.uuid4())
+        .with_for_update()
+        .statement.compile(dialect=postgresql.dialect())
+    )
+
+    assert "FOR UPDATE" in sql
+
+
+def test_a_till_is_told_what_is_left_not_what_was_granted():
+    """
+    A device still shown a spent `refund` offers the button and is refused on press.
+    What it is told is what it can still do.
+    """
+    grant = _Grant(["catalog:write", "refund"], consumed_at=_now())
+
+    assert elevation.usable_scopes(grant) == ["catalog:write"]
+
+
+# ── The gate spends what it authorised ────────────────────────────────────────
+
+
+def _elevated_dependency_call(dependency, *, grant, db, token="token", machine=None):
+    """Invoke a `require_elevated` / `elevation_if_offered` dependency directly."""
+    target = machine or MagicMock()
+    if machine is None:
+        target.id = grant.machine_id if grant is not None else uuid.uuid4()
+    return dependency(machine=target, elevation_token=token, db=db)
+
+
+def test_a_per_action_endpoint_spends_the_grant_it_just_authorised(monkeypatch):
+    """
+    The server-side half of "one PIN, one refund". Without it the rule is whatever the
+    APK in the shop chooses to enforce.
+    """
+    from app.middleware import auth as auth_module
+
+    grant = _Grant(["refund"])
+    db = _ConsumeSession(grant)
+    monkeypatch.setattr(auth_module, "resolve_session", lambda *_a, **_k: grant)
+    dependency = auth_module.require_elevated(Scope.REFUND)
+
+    assert _elevated_dependency_call(dependency, grant=grant, db=db) is grant
+
+    with pytest.raises(HTTPException) as exc:
+        _elevated_dependency_call(dependency, grant=grant, db=db)
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "elevation_already_used"
+
+
+def test_a_catalog_endpoint_may_be_called_all_afternoon(monkeypatch):
+    from app.middleware import auth as auth_module
+
+    grant = _Grant(["catalog:write"])
+    db = _ConsumeSession(grant)
+    monkeypatch.setattr(auth_module, "resolve_session", lambda *_a, **_k: grant)
+    dependency = auth_module.require_elevated(Scope.CATALOG_WRITE)
+
+    for _ in range(3):
+        assert _elevated_dependency_call(dependency, grant=grant, db=db) is grant
+
+
+def test_a_scope_never_granted_is_a_different_answer_from_one_already_spent(monkeypatch):
+    """
+    403 means fetch a different person; 401 means the same person types their PIN
+    again. Collapsing them sends the till to the wrong remedy.
+    """
+    from app.middleware import auth as auth_module
+
+    never_granted = _Grant(["catalog:write"])
+    monkeypatch.setattr(auth_module, "resolve_session", lambda *_a, **_k: never_granted)
+    with pytest.raises(HTTPException) as exc:
+        _elevated_dependency_call(
+            auth_module.require_elevated(Scope.REFUND),
+            grant=never_granted,
+            db=_ConsumeSession(never_granted),
+        )
+    assert exc.value.status_code == 403
+
+    spent = _Grant(["refund"], consumed_at=_now())
+    monkeypatch.setattr(auth_module, "resolve_session", lambda *_a, **_k: spent)
+    with pytest.raises(HTTPException) as exc:
+        _elevated_dependency_call(
+            auth_module.require_elevated(Scope.REFUND),
+            grant=spent,
+            db=_ConsumeSession(spent),
+        )
+    assert exc.value.status_code == 401
+
+
+# ── Elevation that is offered, not demanded ───────────────────────────────────
+
+
+def test_a_close_with_no_token_is_not_refused():
+    """
+    The till operator is a `pos_users` row — a different enum from the cloud roles
+    grants come from — so a manager-operated till holds the authority already and
+    elevates for nothing. Demanding a token would lock it out of closing its own day.
+    """
+    from app.middleware import auth as auth_module
+
+    dependency = auth_module.elevation_if_offered(Scope.DAY_CLOSE)
+    assert dependency(machine=MagicMock(), elevation_token=None, db=_Session()) is None
+
+
+def test_an_offered_token_is_checked_as_strictly_as_a_demanded_one(monkeypatch):
+    """A bad claim of approval fails the request rather than being quietly dropped."""
+    from app.middleware import auth as auth_module
+
+    monkeypatch.setattr(auth_module, "resolve_session", lambda *_a, **_k: None)
+    with pytest.raises(HTTPException) as exc:
+        auth_module.elevation_if_offered(Scope.DAY_CLOSE)(
+            machine=MagicMock(), elevation_token="stale", db=_Session()
+        )
+    assert exc.value.status_code == 401
+
+
+def test_offering_a_token_does_not_by_itself_spend_it(monkeypatch):
+    """
+    The Z upsert can still answer 409 and send the till away to flush its outbox.
+    Spending on the way in would burn the manager's PIN on a close that did not
+    happen, and the retry would arrive with nothing left to present.
+    """
+    from app.middleware import auth as auth_module
+
+    grant = _Grant(["day:close"])
+    db = _ConsumeSession(grant)
+    monkeypatch.setattr(auth_module, "resolve_session", lambda *_a, **_k: grant)
+
+    machine = MagicMock()
+    machine.id = grant.machine_id
+    resolved = auth_module.elevation_if_offered(Scope.DAY_CLOSE)(
+        machine=machine, elevation_token="token", db=db
+    )
+
+    assert resolved is grant
+    assert grant.per_action_consumed_at is None
+    assert elevation.session_has_scope(grant, Scope.DAY_CLOSE) is True
+
+
+def test_a_grant_cannot_be_carried_to_the_next_terminal(monkeypatch):
+    """
+    Untested until the gate's checks were pulled into one helper, and the easiest
+    thing to lose there: a grant is bound to the till it was issued at, so a manager
+    elevating at register 1 has not elevated register 2 beside it.
+    """
+    from app.middleware import auth as auth_module
+
+    grant = _Grant(["catalog:write"])
+    monkeypatch.setattr(auth_module, "resolve_session", lambda *_a, **_k: grant)
+    other_terminal = MagicMock()
+    other_terminal.id = uuid.uuid4()
+
+    with pytest.raises(HTTPException) as exc:
+        auth_module.require_elevated(Scope.CATALOG_WRITE)(
+            machine=other_terminal, elevation_token="token", db=_ConsumeSession(grant)
+        )
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "elevation_wrong_machine"
+
+
+def test_a_gated_endpoint_with_no_token_at_all_says_so(monkeypatch):
+    from app.middleware import auth as auth_module
+
+    with pytest.raises(HTTPException) as exc:
+        auth_module.require_elevated(Scope.CATALOG_WRITE)(
+            machine=MagicMock(), elevation_token=None, db=_Session()
+        )
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "elevation_required"
+
+
+def test_a_dead_grant_is_reported_as_expired_whatever_killed_it(monkeypatch):
+    """
+    Revoked, expired, unknown, demoted and deactivated are one answer on the wire:
+    the till's only useful response to any of them is to ask for a PIN again.
+    """
+    from app.middleware import auth as auth_module
+
+    monkeypatch.setattr(auth_module, "resolve_session", lambda *_a, **_k: None)
+    with pytest.raises(HTTPException) as exc:
+        auth_module.require_elevated(Scope.CATALOG_WRITE)(
+            machine=MagicMock(), elevation_token="dead", db=_Session()
+        )
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "elevation_expired"

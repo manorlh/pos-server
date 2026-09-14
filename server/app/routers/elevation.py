@@ -36,6 +36,7 @@ from app.services.elevation import (
     pin_lockout_remaining,
     resolve_session,
     revoke_session,
+    usable_scopes,
     verify_till_pin,
 )
 from app.services.permissions import parse_scopes
@@ -160,7 +161,9 @@ def read_current_elevation(
     user = session.user
     db.commit()
     return ElevationStatus(
-        scopes=list(session.scopes or []),
+        # What is *left*, not what was granted: a per-action scope already spent would
+        # otherwise keep the till offering a button the next request refuses.
+        scopes=usable_scopes(session),
         expires_at=session.expires_at,
         absolute_expires_at=session.absolute_expires_at,
         user_name=_display_name(user),

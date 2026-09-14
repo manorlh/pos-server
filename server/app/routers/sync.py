@@ -14,12 +14,19 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.middleware.auth import get_pos_machine_for_sync_path, require_elevated
+from app.middleware.auth import (
+    ELEVATION_HEADER,
+    elevation_if_offered,
+    get_pos_machine_for_sync_path,
+    require_elevated,
+)
 from app.models.elevated_session import ElevatedSession
 from app.models.shop_product_override import ShopProductOverride
 from app.services.permissions import Scope
 from app.models.category import Category, CatalogLevel as CategoryCatalogLevel
+from app.models.elevated_session import ElevatedSession
 from app.models.pos_machine import POSMachine
+from app.services.elevation import consume_per_action_use
 from app.models.trading_day import TradingDay, TradingDayStatus
 from app.models.pos_user import PosUser
 from app.models.product import Product, CatalogLevel
@@ -876,17 +883,28 @@ def post_z_report(
     machine_id: str,
     body: ZReportIn,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    approval: Optional[ElevatedSession] = Depends(elevation_if_offered(Scope.DAY_CLOSE)),
     db: Session = Depends(get_db),
 ):
     """
     Close a trading day with a Z-report. Idempotent: a retry returns status='duplicate'.
     Returns 409 with missing transaction ids if any expected tx is not yet on the cloud
     (POS must flush those tx and retry).
+
+    Elevation is accepted, never demanded. The operator at the till is a `pos_users` row,
+    which is not the enum grants are issued from, so a manager-operated till closes its
+    own day presenting nothing — and must keep doing so. When a grant *is* presented it
+    is checked as strictly as anywhere else, and the person who gave the PIN is recorded
+    on the document.
     """
     _require_assigned_machine(machine)
 
     missing, stale = check_z_report_preconditions(db, machine, body)
     if missing or stale:
+        # Returned before the grant is spent on purpose. A 409 means "push those
+        # documents and come straight back"; burning the PIN here would charge the
+        # manager for a close that did not happen and leave the retry with nothing to
+        # present.
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
             content=ZReportMissingResponse(
@@ -895,7 +913,20 @@ def post_z_report(
             ).model_dump(by_alias=True, mode="json"),
         )
 
-    z_report, outcome = apply_z_report(db, machine, body)
+    approved_by = None
+    if approval is not None:
+        # Spent only now the close is certain. `consume_per_action_use` locks the row
+        # and returns False if a concurrent request got there first, so one PIN closes
+        # one day even if the till retries in parallel.
+        if not consume_per_action_use(db, approval):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="elevation_expired",
+                headers={"WWW-Authenticate": ELEVATION_HEADER},
+            )
+        approved_by = approval.user_id
+
+    z_report, outcome = apply_z_report(db, machine, body, approved_by_user_id=approved_by)
     if body.close_day_request_id:
         complete_close_day_item_for_z_report(
             db,

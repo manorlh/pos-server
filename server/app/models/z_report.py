@@ -72,6 +72,15 @@ class ZReport(Base):
     reconstructed_by = Column(String(255), nullable=True)
     reconstruction_basis = Column(JSONB, nullable=True)
 
+    #: Who authorised this close, when the till's own operator could not.
+    #:
+    #: Filled from a live elevation grant presented with the close, so it names a
+    #: person the server itself authenticated moments earlier — not a name the device
+    #: chose. Nullable because the common close needs no second person: a till whose
+    #: operator is a manager closes its own day, and null there means "none was
+    #: required", not "missing".
+    approved_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
     opening_cash = Column(Numeric(12, 2), nullable=True)
     closing_cash = Column(Numeric(12, 2), nullable=True)
     expected_cash = Column(Numeric(12, 2), nullable=True)

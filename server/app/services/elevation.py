@@ -19,6 +19,13 @@ Re-checked on *every* use, not just at grant time: that the session is unrevoked
 and unexpired, that the user is still active, and that their role still permits the
 scopes they are holding. A manager demoted or deactivated mid-session therefore
 stops being able to act immediately, rather than at the end of their window.
+
+A grant has two halves that live by different rules. Session scopes (`catalog:write`)
+slide their idle window on every use, which is the whole point: a manager editing
+twenty prices types one PIN. Per-action scopes (`PER_ACTION_SCOPES` — refund,
+discount, day close) are spent by the first action that uses them and never answer
+again; the rule is enforced *here*, on the server, because the alternative is
+trusting whichever APK the device happens to be running.
 """
 
 from __future__ import annotations
@@ -26,7 +33,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -36,7 +43,11 @@ from app.models.pos_machine import POSMachine
 from app.models.user import User
 from app.services.auth import get_password_hash, verify_password
 from app.services.company_hierarchy import user_may_use_machine
-from app.services.permissions import Scope, till_grantable_scopes
+from app.services.permissions import (
+    Scope,
+    requires_per_action_reauth,
+    till_grantable_scopes,
+)
 
 settings = get_settings()
 
@@ -242,7 +253,7 @@ def resolve_session(db: Session, raw_token: str) -> Optional[ElevatedSession]:
 
     # A demotion must bite immediately, not at the end of the window.
     still_allowed = till_grantable_scopes(user.role)
-    held = {scope for scope in Scope if scope.value in (session.scopes or [])}
+    held = session_scopes(session)
     if not held or not held.issubset(still_allowed):
         return None
 
@@ -255,8 +266,91 @@ def resolve_session(db: Session, raw_token: str) -> Optional[ElevatedSession]:
     return session
 
 
+def session_scopes(session: ElevatedSession) -> Set[Scope]:
+    """The scopes named on the row, as `Scope` values. Unknown strings are dropped."""
+    return {scope for scope in Scope if scope.value in (session.scopes or [])}
+
+
+def per_action_spent(session: ElevatedSession) -> bool:
+    """True once this grant's single per-action use has been taken."""
+    return session.per_action_consumed_at is not None
+
+
 def session_has_scope(session: ElevatedSession, scope: Scope) -> bool:
-    return scope.value in (session.scopes or [])
+    """
+    Does this grant still authorise `scope`?
+
+    A per-action scope stops answering the moment the grant is spent, so every caller
+    inherits the one-PIN-one-action rule from here rather than each remembering to
+    check it. A session scope is untouched: `catalog:write` on a grant whose refund
+    has already been used keeps working until the idle window closes.
+    """
+    if scope.value not in (session.scopes or []):
+        return False
+    if requires_per_action_reauth(scope) and per_action_spent(session):
+        return False
+    return True
+
+
+def usable_scopes(session: ElevatedSession) -> List[str]:
+    """
+    What this grant can still do, as wire strings, for reporting back to the till.
+
+    Distinct from the `scopes` column, which records what was granted and never
+    changes. A device shown a spent `refund` would offer the button and then be
+    refused, so what it is told is what is left.
+    """
+    return [
+        scope.value
+        for scope in Scope
+        if scope.value in (session.scopes or []) and session_has_scope(session, scope)
+    ]
+
+
+def consume_per_action_use(db: Session, session: ElevatedSession) -> bool:
+    """
+    Spend this grant's one per-action use. False means it was already spent.
+
+    **Why the whole per-action half goes at once** rather than one scope at a time:
+    the thing being spent is the PIN, not the scope. A supervisor who typed a PIN to
+    approve a refund did not also approve a discount, so a grant holding both is
+    finished after either. Session scopes on the same grant are untouched — that is
+    `session_has_scope`'s job, and it reads the same column.
+
+    **Why the row is re-read under `FOR UPDATE`** rather than trusting the `session`
+    object the caller already holds: that object was loaded before this request
+    decided to act, and a second request presenting the same token may have spent the
+    grant in between. Locking and re-reading is what makes "exactly once" true under
+    concurrency instead of merely usually true — the same reason
+    `z_sequence.allocate_shop_z_number` locks its counter row. `populate_existing`
+    matters as much as the lock: without it SQLAlchemy hands back the stale identity-map
+    copy and the freshly locked row is read for nothing.
+
+    Callers must consume *before* acting, and only once they are sure the action is
+    really happening — a request rejected on a precondition must leave the grant
+    unspent, or the till's retry finds the manager's PIN already burned.
+    """
+    if not any(
+        requires_per_action_reauth(scope) for scope in session_scopes(session)
+    ):
+        # Nothing consumable here. Answering True keeps callers from having to know
+        # which kind of grant they were handed.
+        return True
+
+    locked = (
+        db.query(ElevatedSession)
+        .filter(ElevatedSession.id == session.id)
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
+    if locked is None or locked.per_action_consumed_at is not None:
+        return False
+
+    locked.per_action_consumed_at = _now()
+    db.add(locked)
+    db.flush()
+    return True
 
 
 def revoke_session(db: Session, session: ElevatedSession) -> None:

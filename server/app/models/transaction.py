@@ -100,6 +100,20 @@ class Transaction(Base):
     refund_of_transaction_id = Column(UUID(as_uuid=True), ForeignKey("transactions.id"), nullable=True)
     nayax_meta = Column(JSONB, nullable=True)
 
+    #: Who authorised the thing a cashier may not do alone — the refund, or the money
+    #: taken off the price. `cashier_id` says who rang it up; this says who allowed it,
+    #: and they are rarely the same person.
+    #:
+    #: A cloud `users` row, not a `pos_users` one: authority lives on `users` and
+    #: pointing at the till's own operator table would record a name with no permissions
+    #: behind it. Written only after `app.services.approvals` has verified the claim.
+    #:
+    #: Nullable, and null on the overwhelming majority of rows. Most documents need no
+    #: approval at all, and a till operated by someone who already holds the authority
+    #: never produces a second name. Null means "nobody had to approve this", not
+    #: "we lost track of who did".
+    approved_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
     # Timestamps from POS
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)

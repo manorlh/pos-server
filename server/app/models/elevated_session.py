@@ -71,6 +71,16 @@ class ElevatedSession(Base):
     #: Hard ceiling that sliding cannot pass, so a grant can never outlive a shift.
     absolute_expires_at = Column(DateTime(timezone=True), nullable=False)
 
+    #: When this grant's one per-action use was spent, or NULL while it is unspent.
+    #:
+    #: A timestamp rather than a boolean because the question an audit asks is *when*
+    #: a refund was authorised, and a flag would answer only *whether*. Set once and
+    #: never cleared: re-authorising means a new PIN and therefore a new row.
+    #:
+    #: Meaningless on a grant that holds no per-action scope, which is why a
+    #: `catalog:write` session never reads it — see `session_has_scope`.
+    per_action_consumed_at = Column(DateTime(timezone=True), nullable=True)
+
     revoked_at = Column(DateTime(timezone=True), nullable=True)
     last_used_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

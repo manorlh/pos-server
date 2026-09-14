@@ -107,6 +107,14 @@ class TransactionIn(BaseModel):
     refund_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="refundOfTransactionId")
     nayax_meta: Optional[dict] = Field(None, alias="nayaxMeta")
 
+    #: The cloud `users` row the till says authorised this document — the person who
+    #: typed a PIN for the refund or the discount. Optional, and absent is the ordinary
+    #: case: a till whose own operator already holds the authority approves nothing.
+    #:
+    #: A claim, not a fact, until `app.services.approvals` has checked it against that
+    #: user's standing permissions. A claim that fails takes the document down with it.
+    approved_by_user_id: Optional[uuid.UUID] = Field(None, alias="approvedByUserId")
+
     # Trading day envelope — POS sends its own trading_day_id; server resolves/auto-opens.
     trading_day_id: Optional[uuid.UUID] = Field(None, alias="tradingDayId")
     day_date: Optional[str] = Field(None, alias="dayDate", description="ISO date YYYY-MM-DD for trading day resolution")
@@ -234,6 +242,8 @@ class TransactionOut(BaseModel):
 
     refund_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="refundOfTransactionId")
     nayax_meta: Optional[dict] = Field(None, alias="nayaxMeta")
+    #: Verified at ingest, so what comes back out is a name the server stood behind.
+    approved_by_user_id: Optional[uuid.UUID] = Field(None, alias="approvedByUserId")
 
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")

@@ -33,6 +33,7 @@ from app.models.stock_movement import StockMovementReason
 from app.models.z_report import ZReport
 from app.schemas.transaction import TransactionIn, TransactionPaymentIn, TransactionUpsertResult
 from app.schemas.z_report import ZReportIn
+from app.services.approvals import ApprovalRejected, verify_document_approver
 from app.services.z_sequence import allocate_shop_z_number
 from app.services.stock import apply_movement
 from app.services.tenders import (
@@ -269,16 +270,19 @@ def _serialize_tx_for_upsert(
     *,
     payment_method: Optional[str] = None,
     customer_ref_id: Optional[uuid.UUID] = None,
+    approved_by_user_id: Optional[uuid.UUID] = None,
 ) -> Dict:
     """
     Flatten one incoming document into the row the upsert writes.
 
-    `payment_method` and `customer_ref_id` are the two values the *server* decides
-    rather than copies: the first is derived from the tender legs, the second is the
-    till's `customer_id` after it has been checked against this tenant's customers.
-    Both default to the pre-split behaviour — the till's own `payment_method`, and no
-    customer link — so a caller that has neither still produces the row this function
-    produced before split tender existed.
+    `payment_method`, `customer_ref_id` and `approved_by_user_id` are the values the
+    *server* decides rather than copies: the first is derived from the tender legs,
+    the second is the till's `customer_id` after it has been checked against this
+    tenant's customers, and the third is the till's claimed approver after
+    `app.services.approvals` has verified they could have approved this. All three
+    default to the pre-existing behaviour — the till's own `payment_method`, no
+    customer link, no approver — so a caller that passes none still produces the row
+    this function produced before any of them existed.
     """
     return {
         "id": tx.id,
@@ -318,6 +322,7 @@ def _serialize_tx_for_upsert(
         "notes": tx.notes,
         "refund_of_transaction_id": tx.refund_of_transaction_id,
         "nayax_meta": tx.nayax_meta,
+        "approved_by_user_id": approved_by_user_id,
         "created_at": tx.created_at,
         "updated_at": tx.updated_at,
     }
@@ -360,6 +365,7 @@ def upsert_transactions(
 
     For each tx:
       - Reject the document outright if its `payments` array does not reconcile.
+      - Reject it outright if it claims an approver who could not have approved it.
       - Resolve / auto-open trading_day.
       - INSERT ... ON CONFLICT (id) DO UPDATE SET ... — `status` reports 'accepted' for new rows
         and 'duplicate' for rows that already existed at the same updated_at.
@@ -418,6 +424,22 @@ def upsert_transactions(
                 ))
                 continue
 
+            # Also before anything is written, and for the same reason the tender
+            # check is: a document whose claim of approval is false must leave no
+            # trace, least of all a stored copy of itself with the claim quietly
+            # stripped out. Stripping would turn a lie into a plausible ordinary
+            # document, which is the one outcome worse than rejecting.
+            try:
+                approved_by_user_id = verify_document_approver(db, machine, tx)
+            except ApprovalRejected as bad_claim:
+                logger.warning("Rejecting transaction %s: %s", tx.id, bad_claim)
+                results.append(TransactionUpsertResult(
+                    id=tx.id,
+                    status="rejected",
+                    reason=str(bad_claim),
+                ))
+                continue
+
             legs = _normalized_payment_legs(tx)
 
             day_date_value: Optional[date] = None
@@ -449,6 +471,7 @@ def upsert_transactions(
                 customer_ref_id=_resolve_customer_ref_id(
                     db, tx.customer_id, machine.tenant_id
                 ),
+                approved_by_user_id=approved_by_user_id,
             )
             stmt = pg_insert(Transaction).values(**row)
             update_cols = {
@@ -609,10 +632,17 @@ def apply_z_report(
     db: Session,
     machine: POSMachine,
     z: ZReportIn,
+    *,
+    approved_by_user_id: Optional[uuid.UUID] = None,
 ) -> Tuple[ZReport, str]:
     """
     Idempotent close: returns (z_report, status) where status is 'accepted' or 'duplicate'.
     Caller must check_z_report_preconditions first; this assumes preconditions hold.
+
+    `approved_by_user_id` is the person an elevation grant named at close time, or None
+    when the till's own operator had the authority and nothing was elevated — which is
+    the ordinary close. A duplicate returns before the row is touched, so a retry
+    cannot rewrite the approver the first close recorded.
     """
     td = get_or_create_trading_day(
         db,
@@ -662,6 +692,7 @@ def apply_z_report(
         actual_cash=None if z.unattended else z.actual_cash,
         discrepancy=None if z.unattended else z.discrepancy,
         unattended=z.unattended,
+        approved_by_user_id=approved_by_user_id,
         payload=z.payload,
         closed_at=z.closed_at,
     )

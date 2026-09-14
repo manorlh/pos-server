@@ -15,8 +15,12 @@ from app.services.auth import decode_token, decode_jwt_payload
 from app.services.company_hierarchy import user_covers_company, user_may_use_machine
 from app.services.pairing_mobile import get_valid_pairing_session
 from app.models.elevated_session import ElevatedSession
-from app.services.elevation import resolve_session, session_has_scope
-from app.services.permissions import Scope
+from app.services.elevation import (
+    consume_per_action_use,
+    resolve_session,
+    session_has_scope,
+)
+from app.services.permissions import Scope, requires_per_action_reauth
 from app.observability.context import set_request_context
 
 security = HTTPBearer()
@@ -222,6 +226,51 @@ def get_pos_machine_from_machine_token(
 ELEVATION_HEADER = "X-Elevation-Token"
 
 
+def _elevation_401(detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=detail,
+        headers={"WWW-Authenticate": ELEVATION_HEADER},
+    )
+
+
+def _checked_grant(
+    db: Session, machine: POSMachine, raw_token: str, scope: Scope
+) -> ElevatedSession:
+    """
+    Resolve `raw_token` into a grant good for `scope` at `machine`, or raise.
+
+    Does not spend a per-action grant — resolving is not acting. The caller decides
+    when the action is actually happening and calls `consume_per_action_use` then.
+    """
+    session = resolve_session(db, raw_token)
+    if session is None:
+        # Expired, revoked, unknown, or held by someone since deactivated or
+        # demoted. Not distinguished on the wire: the till's only useful response
+        # to any of them is to ask for a PIN again.
+        raise _elevation_401("elevation_expired")
+    if str(session.machine_id) != str(machine.id):
+        # A grant is bound to the till it was issued at, so one cannot be carried
+        # to a second terminal in the same shop.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="elevation_wrong_machine",
+        )
+    if not session_has_scope(session, scope):
+        # Two different refusals wearing one check. A scope never granted is a 403:
+        # this person cannot authorise this, and a different person is needed. A
+        # per-action scope already spent is a 401: the same person can, they just
+        # have to type their PIN again, which is exactly what one-PIN-one-action
+        # means.
+        if scope.value in (session.scopes or []):
+            raise _elevation_401("elevation_already_used")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"elevation_missing_scope:{scope.value}",
+        )
+    return session
+
+
 def require_elevated(scope: Scope):
     """
     Build a dependency that demands a live grant for `scope` at *this* machine.
@@ -236,6 +285,12 @@ def require_elevated(scope: Scope):
     The machine-token check is `get_pos_machine_for_sync_path`, so these endpoints
     keep the same 403 for a token whose `sub` does not match the path, and the same
     lockout for a decommissioned till.
+
+    A per-action scope is spent here, in the dependency: for these endpoints the
+    request *is* the action, so there is no later point at which the decision to act
+    is still open. An endpoint that can still refuse the work after authenticating —
+    the Z upsert, which may answer 409 and ask the till to flush and retry — must use
+    `elevation_if_offered` and consume for itself, or a retry finds the PIN burned.
     """
 
     def dependency(
@@ -244,34 +299,44 @@ def require_elevated(scope: Scope):
         db: Session = Depends(get_db),
     ) -> ElevatedSession:
         if not elevation_token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="elevation_required",
-                headers={"WWW-Authenticate": ELEVATION_HEADER},
-            )
-        session = resolve_session(db, elevation_token)
-        if session is None:
-            # Expired, revoked, unknown, or held by someone since deactivated or
-            # demoted. Not distinguished on the wire: the till's only useful
-            # response to any of them is to ask for a PIN again.
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="elevation_expired",
-                headers={"WWW-Authenticate": ELEVATION_HEADER},
-            )
-        if str(session.machine_id) != str(machine.id):
-            # A grant is bound to the till it was issued at, so one cannot be
-            # carried to a second terminal in the same shop.
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="elevation_wrong_machine",
-            )
-        if not session_has_scope(session, scope):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"elevation_missing_scope:{scope.value}",
-            )
+            raise _elevation_401("elevation_required")
+        session = _checked_grant(db, machine, elevation_token, scope)
+        if requires_per_action_reauth(scope) and not consume_per_action_use(db, session):
+            # Lost a race with another request holding the same token. The read above
+            # said unspent; the locked re-read said otherwise, and the locked one wins.
+            raise _elevation_401("elevation_already_used")
         return session
+
+    return dependency
+
+
+def elevation_if_offered(scope: Scope):
+    """
+    Build a dependency that accepts a grant for `scope` if one is presented, else None.
+
+    For endpoints elevation cannot be made mandatory on. The person standing at a
+    till is a `pos_users` row — admin, manager or cashier — and that enum is not the
+    cloud `users` enum grants are issued from. A till whose own operator already has
+    the authority never elevates at all, so demanding a token here would break the
+    ordinary case: a manager-operated till closing its own day.
+
+    So: absent means "no claim of approval", which is normal and proceeds. Present
+    means the claim is checked as strictly as `require_elevated` checks it, and a bad
+    token fails the request rather than being quietly ignored — a token that is
+    expired, for the wrong till, or already spent is a signal, not noise.
+
+    Deliberately does *not* consume. The caller acts first on its own preconditions
+    and consumes only when the action is certain.
+    """
+
+    def dependency(
+        machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+        elevation_token: Optional[str] = Header(None, alias=ELEVATION_HEADER),
+        db: Session = Depends(get_db),
+    ) -> Optional[ElevatedSession]:
+        if not elevation_token:
+            return None
+        return _checked_grant(db, machine, elevation_token, scope)
 
     return dependency
 
