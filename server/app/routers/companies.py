@@ -1,12 +1,22 @@
 from typing import List, Optional
+import uuid as uuid_mod
+
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.company import Company
+from app.models.pos_machine import POSMachine
+from app.models.shop import Shop
 from app.models.user import User, UserRole
 from app.services.permission_matrix import Action, Resource, roles_for
-from app.schemas.company import CompanyCreate, CompanyUpdate, CompanyResponse
+from app.schemas.company import (
+    CompanyCreate,
+    CompanyResponse,
+    CompanyUpdate,
+    ParentOption,
+    ParentOptionsResponse,
+)
 from app.middleware.auth import get_current_user, get_current_distributor, get_active_tenant_id, ensure_same_tenant
 from app.services.company_hierarchy import (
     MAX_COMPANY_DEPTH,
@@ -124,6 +134,93 @@ def _resolve_parent_company(
             detail=f"Company nesting cannot exceed {MAX_COMPANY_DEPTH + 1} levels",
         )
     return parent
+
+
+@router.get("/parent-options", response_model=ParentOptionsResponse, response_model_by_alias=True)
+def get_parent_options(
+    company_id: Optional[uuid_mod.UUID] = Query(None, alias="companyId"),
+    current_user: User = Depends(get_current_distributor),
+    active_tenant_id = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Which companies may be this one's parent, and what a move would carry.
+
+    Exists so the picker cannot offer something the save would refuse. The rules — no
+    self, no descendant, and the combined chain within `MAX_COMPANY_DEPTH` — are the same
+    ones `_resolve_parent_company` enforces on write, asked here rather than reimplemented
+    in the dashboard, where they would drift the first time either changed.
+
+    Impossible parents are returned *disabled with a reason* rather than omitted. A
+    picker that silently drops a company leaves the operator hunting for one they can
+    see on the page behind the dialog; "would exceed 5 levels" answers the question.
+
+    Omit `companyId` for a company being created. Nothing exists under it yet, so
+    everything in the tenant is a candidate and the move counts are zero — which is
+    precisely why setting a parent at creation is safe and moving one later is not.
+
+    Distributor-only, matching the write path: re-parenting rearranges who can see whose
+    takings, so even the list of possibilities is not a company manager's business.
+    """
+    companies = (
+        db.query(Company)
+        .filter(Company.tenant_id == active_tenant_id)
+        .order_by(Company.name)
+        .all()
+    )
+
+    moving: Optional[Company] = None
+    blocked: set = set()
+    height = 0
+    moves_shops = moves_machines = moves_companies = 0
+
+    if company_id is not None:
+        moving = db.query(Company).filter(Company.id == company_id).first()
+        if not moving:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+        ensure_same_tenant(moving.tenant_id, active_tenant_id)
+        subtree = descendant_company_ids(db, moving.id)
+        # Its own subtree, itself included: adopting any of them builds a cycle.
+        blocked = {str(cid) for cid in subtree}
+        height = subtree_height(db, moving.id)
+        moves_companies = max(len(subtree) - 1, 0)
+        shop_ids = [
+            row[0]
+            for row in db.query(Shop.id).filter(Shop.company_id.in_(subtree)).all()
+        ]
+        moves_shops = len(shop_ids)
+        moves_machines = (
+            db.query(POSMachine).filter(POSMachine.shop_id.in_(shop_ids)).count()
+            if shop_ids
+            else 0
+        )
+
+    options = []
+    for candidate in companies:
+        depth = company_depth(db, candidate.id)
+        allowed, reason = True, None
+        if str(candidate.id) in blocked:
+            allowed = False
+            reason = (
+                "itself" if moving is not None and candidate.id == moving.id
+                else "already below this company"
+            )
+        elif depth + 1 + height > MAX_COMPANY_DEPTH:
+            allowed = False
+            reason = f"would exceed {MAX_COMPANY_DEPTH + 1} levels"
+        options.append(
+            ParentOption(id=candidate.id, name=candidate.name, depth=depth,
+                         allowed=allowed, reason=reason)
+        )
+
+    return ParentOptionsResponse(
+        options=options,
+        moves_shops=moves_shops,
+        moves_machines=moves_machines,
+        moves_companies=moves_companies,
+        # Detaching only means something for a company that currently has a parent.
+        may_detach=moving is not None and moving.parent_company_id is not None,
+    )
 
 
 @router.get("", response_model=List[CompanyResponse])

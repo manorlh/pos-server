@@ -4,18 +4,19 @@
  * Create / edit a company. Shared by the companies list and the company
  * drill-down page, so "edit" means the same form wherever it is reached from.
  *
- * `parentCompanyId` is deliberately **not** editable here. The field is read from
- * the company response and rendered on the drill-down page, but re-parenting a
- * company moves every shop, till and receipt underneath it, and the write path
- * for it is not something this dashboard can claim to have verified. Showing the
- * link and leaving the move to a deliberate operation is the safer half.
+ * `parentCompanyId` is offered **on create only**. A company that does not exist yet
+ * has no shops, tills or receipts under it, so choosing its place in the group costs
+ * nothing and is exactly when the operator knows the answer. *Moving* an existing
+ * company is the dangerous half — it carries everything underneath — so it lives on
+ * the drill-down page as a deliberate action with a confirmation that names what
+ * moves, rather than as a quiet dropdown in an edit form.
  */
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api } from '@/lib/api';
+import { api, fetchParentOptions } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import type { Company } from '@/lib/types';
 import { Button } from '@/components/ui/button';
@@ -74,6 +75,14 @@ function CompanyForm({
   const [draft, setDraft] = useState<Partial<Company>>(() => company ?? EMPTY);
   const isNew = !draft.id;
 
+  // Only while creating: on an existing company this picker would be the quiet
+  // dropdown the module comment argues against.
+  const { data: parents } = useQuery({
+    queryKey: ['company-parent-options', 'new'],
+    queryFn: () => fetchParentOptions(),
+    enabled: isNew,
+  });
+
   const save = useMutation({
     mutationFn: async (c: Partial<Company>) => {
       const payload = {
@@ -81,6 +90,9 @@ function CompanyForm({
         vatNumber: c.vatNumber,
         address: c.address,
         city: c.city,
+        // Only ever sent when creating. An edit must not carry it, or saving a name
+        // change would silently re-assert a parent the operator never looked at.
+        ...(c.id ? {} : { parentCompanyId: c.parentCompanyId || null }),
       };
       const { data } = c.id
         ? await api.put<Company>(`/companies/${c.id}`, payload)
@@ -109,6 +121,34 @@ function CompanyForm({
             onChange={(e) => setDraft((c) => ({ ...c, name: e.target.value }))}
           />
         </div>
+
+        {/* Create only. An empty value means a top-level company, which is the common
+            case, so it leads rather than hiding behind a toggle. */}
+        {isNew && (parents?.options.length ?? 0) > 0 ? (
+          <div className="space-y-1">
+            <Label htmlFor="company-parent">{t('parentLabel')}</Label>
+            <select
+              id="company-parent"
+              className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
+              value={draft.parentCompanyId ?? ''}
+              onChange={(e) =>
+                setDraft({ ...draft, parentCompanyId: e.target.value || null })
+              }
+            >
+              <option value="">{t('parentNone')}</option>
+              {parents!.options.map((o) => (
+                <option key={o.id} value={o.id} disabled={!o.allowed}>
+                  {/* Indented by depth so a group and its subsidiary do not read as
+                      peers, and disabled rows say why rather than vanishing. */}
+                  {'\u00A0'.repeat(o.depth * 3)}
+                  {o.name}
+                  {o.allowed ? '' : ` — ${o.reason ?? ''}`}
+                </option>
+              ))}
+            </select>
+            <p className="text-muted-foreground text-xs">{t('parentHint')}</p>
+          </div>
+        ) : null}
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1">
             <Label>{t('vat')}</Label>

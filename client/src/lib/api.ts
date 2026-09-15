@@ -22,6 +22,7 @@ import type {
   TipsRangeReport,
   TipsReport,
   TaxOpenFormatPreview,
+  ParentOptions,
   ZReport,
   ZReportListResponse,
 } from './types';
@@ -427,6 +428,23 @@ export async function createReplacementCode(machineId: string): Promise<{
   machineCode: string;
 }> {
   const { data } = await api.post(`/machines/${machineId}/replacement-code`, {});
+  return data;
+}
+
+/**
+ * Which companies may be this one's parent, and what a move would carry with it.
+ *
+ * Asked of the server rather than computed here: the no-self, no-descendant and
+ * depth rules are the ones the save enforces, and a second copy in TypeScript would
+ * drift the first time either changed — offering a parent the save then refuses.
+ *
+ * Omit `companyId` when creating: nothing exists under a company that does not exist,
+ * so every company is a candidate and the move counts are zero.
+ */
+export async function fetchParentOptions(companyId?: string): Promise<ParentOptions> {
+  const { data } = await api.get<ParentOptions>('/companies/parent-options', {
+    params: companyId ? { companyId } : undefined,
+  });
   return data;
 }
 

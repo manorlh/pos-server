@@ -17,7 +17,7 @@ import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
-import { Building2, ChevronLeft, Monitor, Pencil, Settings2, Store } from 'lucide-react';
+import { MoveRight, Building2, ChevronLeft, Monitor, Pencil, Settings2, Store } from 'lucide-react';
 import { api, fetchCompanies, fetchMachines, fetchShops } from '@/lib/api';
 import { usePageScope, useSyncScopeFromRoute } from '@/lib/scope';
 import { buildCompanyTree, companyChildren, companyPath, companySubtreeIds } from '@/lib/companyTree';
@@ -25,6 +25,7 @@ import { findBySameId, sameId } from '@/lib/entityLookup';
 import { useAuth } from '@/lib/auth';
 import { SalesStats } from '@/components/dashboard/sales-stats';
 import { CompanyFormDialog } from '@/components/dashboard/company-form-dialog';
+import { CompanyMoveDialog } from '@/components/dashboard/company-move-dialog';
 import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -88,6 +89,10 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
   });
 
   const companies = companiesQuery.data;
+  const [moveOpen, setMoveOpen] = useState(false);
+  const myRole = useAuth((s) => s.user?.role);
+  const canMoveCompany = myRole === 'super_admin' || myRole === 'distributor';
+
   const tree = useMemo(() => buildCompanyTree(companies ?? []), [companies]);
   const company = findBySameId(companies ?? [], id);
   const path = companyPath(tree, id);
@@ -159,6 +164,14 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
           )}
         </div>
         <div className="flex gap-2">
+          {/* Distributor and super admin only, matching the endpoint. Showing it to a
+              company manager would offer a button whose save 403s. */}
+          {canMoveCompany ? (
+            <Button variant="outline" size="sm" onClick={() => setMoveOpen(true)}>
+              <MoveRight className="h-3.5 w-3.5" aria-hidden />
+              {t('move')}
+            </Button>
+          ) : null}
           <Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)}>
             <Settings2 className="h-3.5 w-3.5" aria-hidden />
             {t('settings')}
@@ -305,6 +318,10 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
       </Card>
 
       <CompanyFormDialog company={company} open={editOpen} onOpenChange={setEditOpen} />
+      {canMoveCompany && company ? (
+        <CompanyMoveDialog company={company} open={moveOpen} onOpenChange={setMoveOpen} />
+      ) : null}
+
       <EntityPosSettingsDialog
         level="company"
         entityId={company.id}

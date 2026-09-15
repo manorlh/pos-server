@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field
-from typing import Optional
+from pydantic import BaseModel, ConfigDict, Field
+from typing import List, Optional
 import uuid
 from datetime import datetime
 
@@ -50,3 +50,33 @@ class CompanyResponse(BaseModel):
     class Config:
         from_attributes = True
         populate_by_name = True
+
+
+class ParentOption(BaseModel):
+    """One candidate parent, and why it may or may not be chosen."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: uuid.UUID
+    name: str
+    #: Edges above this company, so the picker can indent the tree rather than show a
+    #: flat list in which "NORTH trading" and "NORTH kiosks" look like peers.
+    depth: int
+    allowed: bool
+    #: Why not, when `allowed` is false — shown beside the disabled row. A picker that
+    #: silently omits impossible parents leaves the operator wondering where a company
+    #: went; one that says "would exceed 5 levels" answers the question.
+    reason: Optional[str] = None
+
+
+class ParentOptionsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    options: List[ParentOption]
+    #: What a move would carry with it. Zero for a company being created, which is the
+    #: whole reason setting a parent at creation is safe and moving one later is not.
+    moves_shops: int = Field(0, alias="movesShops")
+    moves_machines: int = Field(0, alias="movesMachines")
+    moves_companies: int = Field(0, alias="movesCompanies")
+    #: True when this company may be detached to sit at the top level.
+    may_detach: bool = Field(True, alias="mayDetach")

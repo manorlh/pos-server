@@ -926,3 +926,24 @@ export interface DaySummaryReport {
   /** Newest first. A day nobody closed is absent, not a zero row. */
   days: DaySummaryRow[];
 }
+
+
+/** One candidate parent for a company, with the reason it cannot be chosen. */
+export interface ParentOption {
+  id: string;
+  name: string;
+  /** Edges above it, so the picker can indent rather than show a flat list. */
+  depth: number;
+  allowed: boolean;
+  /** Present only when `allowed` is false. */
+  reason?: string | null;
+}
+
+export interface ParentOptions {
+  options: ParentOption[];
+  /** What a move would carry. All zero for a company being created. */
+  movesShops: number;
+  movesMachines: number;
+  movesCompanies: number;
+  mayDetach: boolean;
+}
