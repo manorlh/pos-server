@@ -36,7 +36,7 @@ from __future__ import annotations
 import uuid
 from typing import Dict, List, Optional, Tuple
 
-from sqlalchemy import literal, select
+from sqlalchemy import literal, or_, select
 from sqlalchemy.orm import Query, Session, aliased
 
 from app.models.company import Company
@@ -221,6 +221,79 @@ def company_scope_ids(db: Session, user: User) -> List[uuid.UUID]:
         return descendant_company_ids(db, own)
     parsed = _as_uuid(own)
     return [parsed] if parsed is not None else []
+
+
+def catalog_company_ids(db: Session, user: User) -> Optional[List[uuid.UUID]]:
+    """
+    Which companies' catalog rows this user may see. `None` means "no company filter".
+
+    Separate from `company_scope_ids` because the catalog flows in the opposite direction
+    to management. A manager manages *downwards* — their company and its subsidiaries —
+    but a catalog is inherited *downwards*, which means a shop reads it *upwards*: a
+    product defined on the holding company is sold by every branch beneath it, so those
+    branches must be able to see it.
+
+    So a company-level user gets their subtree (what they manage) **and** their ancestors
+    (what they inherit), and a shop-level user gets their own company and its ancestors.
+    A sibling company's products are in neither, which is the isolation that matters.
+
+    Callers must pair this with "or the row has no company at all": a tenant-wide global
+    product belongs to everyone and is stored with a null `company_id`, so filtering on
+    membership alone hides it from every merchant-side role — which is exactly the bug
+    this function exists to end.
+    """
+    role = getattr(user, "role", None)
+    if role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
+        return None
+
+    if role == UserRole.COMPANY_MANAGER:
+        own = getattr(user, "company_id", None)
+        return _dedupe(descendant_company_ids(db, own) + ancestor_company_ids(db, own))
+
+    if role in SHOP_SCOPED_ROLES:
+        # A shop user has no company of their own; theirs is the one their shop sits in.
+        shop_id = getattr(user, "shop_id", None)
+        if shop_id is None:
+            return []
+        row = db.query(Shop.company_id).filter(Shop.id == shop_id).first()
+        company_id = row[0] if row else None
+        if company_id is None:
+            return []
+        return _dedupe([company_id] + ancestor_company_ids(db, company_id))
+
+    return []
+
+
+def _dedupe(ids: List[uuid.UUID]) -> List[uuid.UUID]:
+    """Order-preserving, so a caller's `IN (...)` is stable between requests."""
+    seen, out = set(), []
+    for i in ids:
+        if i is not None and str(i) not in seen:
+            seen.add(str(i))
+            out.append(i)
+    return out
+
+
+def catalog_visibility_filter(db: Session, user: User, model):
+    """
+    The SQL predicate for "catalog rows this user may see", or None for no restriction.
+
+    Lives here rather than in each router because the `NULL company` half is the whole
+    bug: filtering on membership alone hides every tenant-wide global row, and that half
+    was invisible to tests while the routers each wrote their own `or_`. One function,
+    one place to test, and products and categories cannot drift — a product visible under
+    a category that is not would render grouped beneath nothing.
+
+    `model` is `Product` or `Category`; both carry `company_id` with the same meaning.
+    """
+    ids = catalog_company_ids(db, user)
+    if ids is None:
+        return None
+    if not ids:
+        # Nothing of their own, so globals only. Not "everything" — that distinction is
+        # the difference between an empty catalog and a tenant-wide leak.
+        return model.company_id.is_(None)
+    return or_(model.company_id.is_(None), model.company_id.in_(ids))
 
 
 def user_covers_company(db: Session, user: User, company_id) -> bool:

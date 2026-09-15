@@ -1,6 +1,6 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy import func
+from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -17,7 +17,11 @@ from app.schemas.category import (
 )
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
 from app.services.catalog_notify import notify_all_machines_for_tenant, notify_machine_catalog_changed
-from app.services.company_hierarchy import company_scope_ids, user_covers_company
+from app.services.company_hierarchy import (
+    catalog_visibility_filter,
+    company_scope_ids,
+    user_covers_company,
+)
 
 router = APIRouter(prefix="/categories", tags=["categories"])
 
@@ -105,10 +109,12 @@ def list_categories(
 ):
     query = db.query(Category).filter(Category.tenant_id == active_tenant_id)
 
-    if current_user.role == UserRole.COMPANY_MANAGER:
-        query = query.filter(Category.company_id.in_(company_scope_ids(db, current_user)))
-    elif current_user.role in SHOP_SCOPED_ROLES:
-        query = query.filter(Category.shop_id == current_user.shop_id)
+    # Same rule as products, and it has to be the same or the two disagree: a product
+    # visible under a category that is not would render grouped beneath nothing. See
+    # `catalog_company_ids` for why the scope reads upwards.
+    catalog_filter = catalog_visibility_filter(db, current_user, Category)
+    if catalog_filter is not None:
+        query = query.filter(catalog_filter)
 
     if company_id:
         query = query.filter(Category.company_id == company_id)

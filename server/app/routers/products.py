@@ -12,7 +12,11 @@ from app.services.permission_matrix import SHOP_SCOPED_ROLES, Action, Resource, 
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, ProductListResponse
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
 from app.services.catalog_notify import notify_all_machines_for_tenant, notify_machine_catalog_changed
-from app.services.company_hierarchy import company_scope_ids, user_covers_company
+from app.services.company_hierarchy import (
+    catalog_visibility_filter,
+    company_scope_ids,
+    user_covers_company,
+)
 from app.services.product_validation import validate_open_price_update
 from app.services.sku_sequence import resolve_sku_for_create
 from app.services.tenant_sku_sequence import allocate_global_sku
@@ -72,10 +76,14 @@ def list_products(
 ):
     query = db.query(Product).filter(Product.tenant_id == active_tenant_id)
 
-    if current_user.role == UserRole.COMPANY_MANAGER:
-        query = query.filter(Product.company_id.in_(company_scope_ids(db, current_user)))
-    elif current_user.role in SHOP_SCOPED_ROLES:
-        query = query.filter(Product.shop_id == current_user.shop_id)
+    # A tenant-wide product carries no company at all, so membership alone hid every
+    # global row from every merchant-side role: a shop manager authorised to edit the
+    # catalog saw an empty one. Globals belong to everybody in the tenant; anything
+    # company-scoped is bounded by `catalog_company_ids`, which reads *upwards* because
+    # a catalog is inherited downwards.
+    catalog_filter = catalog_visibility_filter(db, current_user, Product)
+    if catalog_filter is not None:
+        query = query.filter(catalog_filter)
 
     if company_id:
         query = query.filter(Product.company_id == company_id)
