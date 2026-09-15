@@ -127,3 +127,37 @@ class ZReportListResponse(BaseModel):
     page_size: int = Field(..., alias="pageSize")
     total: int
     items: List[ZReportOut]
+
+
+class LastCloseReference(BaseModel):
+    """
+    What the cloud last knew about this terminal's cash, offered as a *reference*.
+
+    Deliberately not a figure to prefill anything with. `expected_cash` is opening plus
+    the cash sales the cloud received; a terminal that died holding unsynced sales makes
+    it an understatement, and cash is exactly what cannot be recovered from the acquirer
+    afterwards. Worse, the case where it is most wrong is the case where we know least —
+    documents push within seconds of a sale, so unsynced ones mean the network was down,
+    and the heartbeat carrying `outstanding_documents` runs on that same network. An
+    outage costs us the documents and an accurate count of what is missing at once.
+
+    `outstanding_documents` is a count, never an amount: "3 documents" could be twelve
+    shekels or twelve hundred. It is here so a person counting a drawer can see there may
+    be more, not so anything can compute with it.
+
+    The physical drawer is the authority. This exists to inform whoever counts it.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: Null when this terminal has never closed a day.
+    expected_cash: Optional[Decimal] = Field(None, alias="expectedCash")
+    closed_at: Optional[datetime] = Field(None, alias="closedAt")
+    day_date: Optional[date] = Field(None, alias="dayDate")
+    #: True when the close was rebuilt by the cloud rather than filed by the terminal —
+    #: the case in which `expected_cash` is least certain.
+    reconstructed: bool = False
+    #: Documents behind the figure, and what the terminal last said it still held.
+    documents_counted: Optional[int] = Field(None, alias="documentsCounted")
+    outstanding_documents: Optional[int] = Field(None, alias="outstandingDocuments")
+    outstanding_as_of: Optional[datetime] = Field(None, alias="outstandingAsOf")

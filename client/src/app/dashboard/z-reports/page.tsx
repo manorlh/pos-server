@@ -307,6 +307,27 @@ export default function ZReportsPage() {
           </DialogHeader>
           {selected && (
             <div className="space-y-4 text-sm">
+              {/* Stated once, at the top, where someone reading the document sees it
+                  before the numbers rather than after. */}
+              {selected.reconstructed ? (
+                <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs dark:border-amber-800 dark:bg-amber-950">
+                  <p className="font-medium">{t('reconstructedNotice')}</p>
+                  <p className="mt-1">
+                    {t('reconstructedBasis', {
+                      documents: Number(selected.reconstructionBasis?.documentsOnCloud ?? 0),
+                    })}
+                  </p>
+                  {Number(selected.reconstructionBasis?.lastReportedPendingDocuments ?? 0) > 0 ? (
+                    <p className="mt-1 font-medium">
+                      {t('reconstructedOutstanding', {
+                        count: Number(
+                          selected.reconstructionBasis?.lastReportedPendingDocuments ?? 0,
+                        ),
+                      })}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">{t('zNumber')}</Label>
@@ -348,7 +369,18 @@ export default function ZReportsPage() {
                 </div>
                 <div>
                   <Label className="text-xs">{t('expectedCash')}</Label>
-                  <div>{formatCurrency(selected.expectedCash)}</div>
+                  <div>
+                    {/* On a reconstructed close this is "at least": it counts only the
+                        cash sales the cloud received, and a till that died holding
+                        unsynced ones makes it an understatement. Saying so here is the
+                        difference between a figure someone reconciles against and one
+                        they trust. */}
+                    {selected.reconstructed
+                      ? t('expectedCashAtLeast', {
+                          amount: formatCurrency(selected.expectedCash),
+                        })
+                      : formatCurrency(selected.expectedCash)}
+                  </div>
                 </div>
                 <div>
                   <Label className="text-xs">{t('actualCash')}</Label>

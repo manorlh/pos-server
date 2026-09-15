@@ -26,6 +26,7 @@ from app.services.permissions import Scope
 from app.models.category import Category, CatalogLevel as CategoryCatalogLevel
 from app.models.elevated_session import ElevatedSession
 from app.models.pos_machine import POSMachine
+from app.models.z_report import ZReport
 from app.services.elevation import consume_per_action_use
 from app.models.trading_day import TradingDay, TradingDayStatus
 from app.models.pos_user import PosUser
@@ -51,6 +52,7 @@ from app.schemas.transaction import (
 )
 from app.schemas.trading_day import TradingDayOpenIn, TradingDayOut
 from app.schemas.z_report import (
+    LastCloseReference,
     ZReportIn,
     ZReportMissingResponse,
     ZReportUpsertResponse,
@@ -1062,6 +1064,58 @@ def get_current_trading_day(
 ):
     """Helper for POS recovery after restart — returns the open trading day if any."""
     return find_open_trading_day(db, machine.id)
+
+
+@router.get(
+    "/{machine_id}/last-close",
+    response_model=LastCloseReference,
+    response_model_by_alias=True,
+)
+def get_last_close_reference(
+    machine_id: str,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """
+    What the cloud last knew about this terminal's cash — as a reference, not an answer.
+
+    For the replacement case: a terminal died mid-day, a new unit adopted its identity,
+    and someone is about to open a day on it. They need to know what the previous close
+    came to. They must *not* be handed it as a prefilled float.
+
+    `expectedCash` is opening plus the cash sales the cloud received. A terminal that
+    died holding unsynced sales makes it an understatement, and cash is exactly what
+    cannot be recovered from the acquirer later. The case where it is most wrong is also
+    the case where we know least: documents push within seconds, so unsynced ones mean
+    the network was down, and the heartbeat carrying the outstanding count runs on that
+    same network.
+
+    So the response carries its own uncertainty — whether the close was reconstructed,
+    how many documents it was built from, and what the terminal last said it still held.
+    The count is a count, never an amount. The drawer is the authority; this informs
+    whoever counts it.
+    """
+    z = (
+        db.query(ZReport)
+        .filter(ZReport.machine_id == machine.id)
+        .order_by(ZReport.closed_at.desc())
+        .first()
+    )
+    if z is None:
+        # Never closed a day. Null rather than zero: "nothing to compare against" is a
+        # different statement from "the drawer should be empty".
+        return LastCloseReference()
+
+    basis = z.reconstruction_basis or {}
+    return LastCloseReference(
+        expected_cash=z.expected_cash,
+        closed_at=z.closed_at,
+        day_date=z.day_date,
+        reconstructed=bool(z.reconstructed),
+        documents_counted=basis.get("documentsOnCloud", z.transactions_count),
+        outstanding_documents=basis.get("lastReportedPendingDocuments"),
+        outstanding_as_of=basis.get("lastReportedPendingAt"),
+    )
 
 
 @router.post(

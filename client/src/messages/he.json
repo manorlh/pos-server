@@ -780,7 +780,11 @@
     "clearClosedFilter": "נקה סינון שעת סגירה",
     "zNumber": "מספר Z",
     "detailsNumbered": "דוח Z מספר {number}",
-    "reconstructed": "דוח משוחזר"
+    "reconstructed": "דוח משוחזר",
+    "expectedCashAtLeast": "לפחות {amount}",
+    "reconstructedNotice": "דוח זה שוחזר בענן — המסופון לא הפיק אותו בעצמו.",
+    "reconstructedBasis": "הסכומים מבוססים על {documents} מסמכים שהגיעו לענן. לא נספר מזומן, ולכן לא מוצג הפרש.",
+    "reconstructedOutstanding": "שימו לב: המסופון דיווח לאחרונה על {count} מסמכים שטרם נשלחו — ייתכן שהסכומים בפועל גבוהים יותר."
   },
   "users": {
     "title": "משתמשים",
