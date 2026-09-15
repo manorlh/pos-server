@@ -268,9 +268,42 @@ def resolve_machines_for_close_day(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="One or more machines not found",
             )
+
+    machines = _drop_shop_machines_without_an_open_day(db, machines, machine_ids)
+
     if not machines:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No eligible machines")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No machines with an open trading day",
+        )
     return machines
+
+
+def _drop_shop_machines_without_an_open_day(
+    db: Session, machines: List[POSMachine], machine_ids: Optional[List[uuid.UUID]]
+) -> List[POSMachine]:
+    """
+    Keep a shop's already-closed tills out of the request, but not a named one.
+
+    "Close the Dizengoff branch" means "close what is open there". Queuing an item for
+    each till that had already closed produced a request reporting four failures and two
+    successes on a six-till shop that behaved perfectly — and a result screen that cries
+    wolf is one people stop reading.
+
+    A till the operator ticked *by name* is deliberately kept. They pointed at that
+    terminal, so silently dropping it answers nothing; the `no_open_day` item tells them
+    why it did not close, which is the thing they actually wanted to know.
+    """
+    named = {str(mid) for mid in (machine_ids or [])}
+    shop_derived = [m for m in machines if str(m.id) not in named]
+    if not shop_derived:
+        return machines
+
+    open_days = get_open_trading_days_for_machines(db, [m.id for m in shop_derived])
+    return [
+        m for m in machines
+        if str(m.id) in named or m.id in open_days
+    ]
 
 
 def create_close_day_request(
