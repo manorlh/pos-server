@@ -567,7 +567,29 @@
     "closeDaySelectedShops": "סניפים נבחרים",
     "closeDayNoShops": "אין סניפים להצגה",
     "closeDayOfflineHint": "קופה שאינה מחוברת אינה נכשלת — הבקשה ממתינה לה והיא תיסגר כשתתחבר. אם לא התחברה בזמן, הבקשה תסומן כפגת תוקף.",
-    "pendingAsOf": "נכון ל־{when}"
+    "pendingAsOf": "נכון ל־{when}",
+    "addMachine": "הוסף קופה",
+    "addMachineToShop": "הוסף קופה לסניף {shop}",
+    "search": "חיפוש קופה",
+    "searchPlaceholder": "חיפוש לפי שם קופה או קוד מכשיר",
+    "noMachinesForSearch": "אין קופות התואמות לסינון או לחיפוש.",
+    "groupUnassigned": "לא משויך",
+    "groupUnassignedHint": "קופות ללא סניף — שייכו אותן כדי שיופיעו תחת החברה והסניף שלהן ויכללו בדוחות.",
+    "groupMachineCount": "{count} קופות",
+    "groupToggle": "הצג או הסתר את קופות הסניף",
+    "companyUnknown": "חברה לא ידועה",
+    "rowToggle": "הצג פרטים נוספים",
+    "rowActions": "פעולות",
+    "columns": {
+      "select": "בחירה",
+      "status": "סטטוס",
+      "terminal": "קופה",
+      "flags": "התראות",
+      "tradingDay": "יום מסחר",
+      "pending": "ממתין לשליחה",
+      "lastSeen": "נראה לאחרונה",
+      "actions": "פעולות"
+    }
   },
   "companies": {
     "title": "חברות",

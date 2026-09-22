@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo, useEffect, useState } from 'react';
-import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, fetchCloseDayRequest, fetchMachines, postCloseDay } from '@/lib/api';
@@ -15,35 +14,20 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
-import { Monitor, Wifi, WifiOff, Send, KeyRound, RefreshCw, Link2, Store, Info, Trash2, Smartphone, CalendarClock } from 'lucide-react';
-import {
-  ClockDriftBanner,
-  ClockSkewChip,
-  MachineHealthPanel,
-} from '@/components/dashboard/machine-health';
+import { Monitor, Plus, RefreshCw, Info, Trash2, Smartphone, CalendarClock, Search, Send } from 'lucide-react';
+import { ClockDriftBanner } from '@/components/dashboard/machine-health';
 import { formatDistanceToNow, format } from 'date-fns';
 import { QRCodeSVG } from 'qrcode.react';
 import type { PairingSessionCreateResponse } from '@/lib/types';
 import { he } from 'date-fns/locale';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { DeadTillRecovery } from '@/components/dashboard/dead-till-recovery';
-import {
-  MachineStatusDot,
-  MachineStatusFlags,
-  MachineStatusLabel,
-  machineStatus,
-} from '@/components/dashboard/machine-status';
-
-const statusColor: Record<string, 'default' | 'secondary' | 'outline'> = {
-  assigned: 'default',
-  paired: 'secondary',
-  unpaired: 'outline',
-};
+import { MachineStatusDot, machineStatus } from '@/components/dashboard/machine-status';
+import { MachinesTable } from '@/components/dashboard/machines/machines-table';
 
 const MQTT_ONLINE_WINDOW_MS = 90 * 1000;
 
@@ -139,6 +123,7 @@ export default function MachinesPage() {
    * `machineOptions` already resolves the subtree).
    */
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
 
   const visibleMachines = effective.machineId
     ? machines.filter((m) => sameId(m.id, effective.machineId))
@@ -156,6 +141,20 @@ export default function MachinesPage() {
     setPairCompanyId('');
     setPairShopId('');
     setPairPreAssignLabel(null);
+  };
+
+  /**
+   * "Add a terminal" from a group header. The company and shop are already known at
+   * that point, so the operator never has to re-pick them — choosing the wrong branch
+   * in the dialog is exactly the mistake this removes. The label is provisional; the
+   * generate step recomputes it from the loaded lists.
+   */
+  const openPairForShop = (shop: Shop, companyLabel: string) => {
+    resetPairDialog();
+    setPairCompanyId(shop.companyId);
+    setPairShopId(shop.id);
+    setPairPreAssignLabel(companyLabel ? `${companyLabel} — ${shop.name}` : shop.name);
+    setPairOpen(true);
   };
 
   const finishPairDialog = () => {
@@ -390,30 +389,11 @@ export default function MachinesPage() {
     return nowMs - ts <= MQTT_ONLINE_WINDOW_MS;
   };
 
-  const isMqttConnected = (m: PosMachine): boolean | null => {
-    if (!isDeviceOnline(m)) return false;
-    if (m.mqttConnected === true) return true;
-    if (m.mqttConnected === false) return false;
-    return null;
-  };
-
   const canCloseMachine = (m: PosMachine): boolean =>
     m.pairingStatus === 'assigned' &&
     m.tradingDayStatus === 'open' &&
     isDeviceOnline(m) &&
     !m.closeDayPending;
-
-  const tradingDayBadgeVariant = (m: PosMachine): 'default' | 'secondary' | 'outline' => {
-    if (m.closeDayPending) return 'secondary';
-    if (m.tradingDayStatus === 'open') return 'default';
-    return 'outline';
-  };
-
-  const tradingDayLabel = (m: PosMachine): string => {
-    if (m.closeDayPending) return t('tradingDayPending');
-    if (m.tradingDayStatus === 'open') return t('tradingDayOpen');
-    return t('tradingDayNone');
-  };
 
   const closeItemStatusLabel = (status: string): string => {
     const map: Record<string, string> = {
@@ -444,9 +424,21 @@ export default function MachinesPage() {
     return counts;
   }, [visibleMachines]);
 
-  const shownMachines = statusFilter
-    ? visibleMachines.filter((m) => machineStatus(m) === statusFilter)
-    : visibleMachines;
+  /*
+   * Search narrows the rows, never the tallies or the selection. It matches the two
+   * things printed on the row — the terminal's name and the code on its sticker — so
+   * an operator holding a device can find it without knowing which branch it is in.
+   */
+  const searchTerm = search.trim().toLowerCase();
+
+  const shownMachines = (
+    statusFilter ? visibleMachines.filter((m) => machineStatus(m) === statusFilter) : visibleMachines
+  ).filter(
+    (m) =>
+      searchTerm === '' ||
+      m.name.toLowerCase().includes(searchTerm) ||
+      m.machineCode.toLowerCase().includes(searchTerm),
+  );
 
   const bulkCloseTargets = visibleMachines.filter((m) => selectedMachineIds.has(m.id) && canCloseMachine(m));
 
@@ -512,7 +504,9 @@ export default function MachinesPage() {
             }}
             size="sm"
           >
-            <KeyRound className="h-4 w-4 ms-1" /> {t('generateCode')}
+            {/* Named for what the operator wants, not for the mechanism that does it:
+                the pairing code is a step inside "add a terminal", not the goal. */}
+            <Plus className="h-4 w-4 ms-1" /> {t('addMachine')}
           </Button>
         </div>
       </div>
@@ -584,6 +578,24 @@ export default function MachinesPage() {
                 {tStatus(`status.${s}`)} ({statusCounts.get(s)})
               </button>
             ))}
+        </div>
+      ) : null}
+
+      {!isLoading && visibleMachines.length > 0 ? (
+        <div className="relative max-w-sm">
+          <Search
+            className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden
+          />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t('searchPlaceholder')}
+            aria-label={t('search')}
+            // Both sides restated: the base input's shared `px` is dropped the moment
+            // one logical side is overridden, which would leave no end padding.
+            className="ps-9 pe-2.5"
+          />
         </div>
       ) : null}
 
@@ -659,217 +671,37 @@ export default function MachinesPage() {
               ) : null}
             </div>
           ) : null}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {shownMachines.map((m) => (
-            <Card key={m.id}>
-              <CardHeader className="flex flex-row items-start justify-between pb-2">
-                <div className="flex items-start gap-2 min-w-0">
-                  {canCloseDay && m.pairingStatus === 'assigned' ? (
-                    <input
-                      type="checkbox"
-                      className="mt-1 h-4 w-4 shrink-0 accent-primary"
-                      checked={selectedMachineIds.has(m.id)}
-                      onChange={() => toggleMachineSelected(m.id)}
-                      aria-label={m.name}
-                    />
-                  ) : null}
-                  <div className="min-w-0">
-                  <CardTitle className="text-base">
-                    {/* A device is a place you can go into now, not just a card. */}
-                    <Link href={`/dashboard/machines/${m.id}`} className="hover:underline">
-                      {m.name}
-                    </Link>
-                  </CardTitle>
-                  <p className="text-xs text-muted-foreground">{m.machineCode}</p>
-                  <div className="mt-1"><ClockSkewChip machine={m} /></div>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
-                  <span className="text-muted-foreground shrink-0">{t('statusLabel')}</span>
-                  <Badge variant={statusColor[m.pairingStatus] ?? 'outline'} className="shrink-0">
-                    {m.pairingStatus === 'unpaired'
-                      ? t('pairingStatusLabels.unpaired')
-                      : m.pairingStatus === 'paired'
-                        ? t('pairingStatusLabels.paired')
-                        : m.pairingStatus === 'assigned'
-                          ? t('pairingStatusLabels.assigned')
-                          : m.pairingStatus}
-                  </Badge>
-                </div>
-                <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">{t('deviceStatus')}</span>
-                    <MachineStatusLabel m={m} />
-                  </div>
-                  {/* Secondary conditions sit under the light rather than in it: a till
-                      trading normally with a drifted clock is still green, with a badge. */}
-                  <MachineStatusFlags m={m} />
-                  {/* Only for a terminal that is actually unreachable — offering it on a
-                      healthy till invites closing a day out from under a cashier. */}
-                  {!isDeviceOnline(m) && m.pairingStatus === 'assigned' ? (
-                    <DeadTillRecovery m={m} />
-                  ) : null}
-                  {m.pendingAsOf && (m.pendingDocuments ?? 0) > 0 ? (
-                    <div className="text-muted-foreground text-xs">
-                      {t('pendingAsOf', {
-                        when: formatDistanceToNow(new Date(m.pendingAsOf), {
-                          addSuffix: true,
-                          locale: he,
-                        }),
-                      })}
-                    </div>
-                  ) : null}
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">{t('mqttStatus')}</span>
-                    <Badge
-                      variant={
-                        isMqttConnected(m) === true
-                          ? 'default'
-                          : isMqttConnected(m) === false
-                            ? 'outline'
-                            : 'secondary'
-                      }
-                    >
-                      {isMqttConnected(m) === true
-                        ? t('mqttOnline')
-                        : isMqttConnected(m) === false
-                          ? t('mqttOffline')
-                          : t('mqttUnknown')}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    {m.lastHeartbeatAt ? (
-                      <>
-                        <Wifi className={`h-3.5 w-3.5 ${isDeviceOnline(m) ? 'text-green-500' : ''}`} />
-                        {t('lastSeen')}{' '}
-                        {formatDistanceToNow(new Date(m.lastHeartbeatAt), { addSuffix: true, locale: he })}
-                      </>
-                    ) : (
-                      <>
-                        <WifiOff className="h-3.5 w-3.5" /> {t('neverSeen')}
-                      </>
-                    )}
-                  </div>
-                </div>
-                <MachineHealthPanel machine={m} />
-                <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">{t('syncPullStatus')}</span>
-                    <Badge variant={m.lastSyncAt ? 'secondary' : 'outline'}>
-                      {m.lastSyncAt ? t('synced') : t('neverSynced')}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    {m.lastSyncAt ? (
-                      <>
-                        <Wifi className="h-3.5 w-3.5 text-green-500" />
-                        {t('lastSync')}{' '}
-                        {formatDistanceToNow(new Date(m.lastSyncAt), { addSuffix: true, locale: he })}
-                      </>
-                    ) : (
-                      <>
-                        <WifiOff className="h-3.5 w-3.5" /> {t('neverSynced')}
-                      </>
-                    )}
-                  </div>
-                </div>
-                {m.lastCatalogChangeAt ? (
-                  <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-muted-foreground">{t('catalogFreshness')}</span>
-                      <Badge variant={m.catalogPullStale ? 'outline' : 'default'}>
-                        {m.catalogPullStale ? t('catalogStale') : t('catalogUpToDate')}
-                      </Badge>
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      {t('lastCloudChange')}{' '}
-                      {formatDistanceToNow(new Date(m.lastCatalogChangeAt), { addSuffix: true, locale: he })}
-                    </div>
-                  </div>
-                ) : null}
-                <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">{t('tradingDayStatusLabel')}</span>
-                    <Badge variant={tradingDayBadgeVariant(m)}>{tradingDayLabel(m)}</Badge>
-                  </div>
-                  {m.tradingDayStatus === 'open' && m.openedAt ? (
-                    <div className="text-xs text-muted-foreground">
-                      {t('tradingDayOpenedAt')}{' '}
-                      {formatDistanceToNow(new Date(m.openedAt), { addSuffix: true, locale: he })}
-                      {m.openedBy ? ` · ${t('tradingDayOpenedBy')} ${m.openedBy}` : null}
-                    </div>
-                  ) : null}
-                </div>
-                {m.pairingStatus === 'assigned' || m.shopId ? (
-                  <p className="text-xs text-muted-foreground">
-                    {t('shop')}:{' '}
-                    {m.shopId
-                      ? shops.find((s) => s.id === m.shopId)?.name ?? m.shopId
-                      : t('shopNotSet')}
-                  </p>
-                ) : null}
-                <div className="flex flex-col gap-2">
-                  {!authHydrated ? (
-                    <>
-                      <Skeleton className="h-9 w-full" />
-                      <Skeleton className="h-9 w-full" />
-                    </>
-                  ) : (
-                    <>
-                      {m.pairingStatus === 'paired' && canAssignMachine ? (
-                        <Button variant="secondary" size="sm" className="w-full" onClick={() => openAssign(m)}>
-                          <Link2 className="h-3.5 w-3.5 me-1" />
-                          {t('assignToMerchant')}
-                        </Button>
-                      ) : null}
-                      {m.pairingStatus === 'paired' && !canAssignMachine ? (
-                        <p className="text-xs text-amber-700 dark:text-amber-500">{t('assignNoPermission')}</p>
-                      ) : null}
-                      {m.pairingStatus === 'assigned' && canEditAssignedShop ? (
-                        <Button variant="outline" size="sm" className="w-full" onClick={() => openShopEdit(m)}>
-                          <Store className="h-3.5 w-3.5 me-1" />
-                          {t('changeShop')}
-                        </Button>
-                      ) : null}
-                      {canCloseDay ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full"
-                          onClick={() => openCloseDay(m)}
-                          disabled={!canCloseMachine(m)}
-                        >
-                          <CalendarClock className="h-3.5 w-3.5 me-1" /> {t('closeDay')}
-                        </Button>
-                      ) : null}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => openPush(m)}
-                        disabled={m.pairingStatus !== 'assigned'}
-                      >
-                        <Send className="h-3.5 w-3.5 me-1" /> {t('pushCatalog')}
-                      </Button>
-                      {canRemoveMachine ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive border-destructive/40"
-                          onClick={() => openRemove(m)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5 me-1" /> {t('remove')}
-                        </Button>
-                      ) : null}
-                    </>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        {shownMachines.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-3 py-16 text-muted-foreground">
+            <Monitor className="h-10 w-10 opacity-30" />
+            <p className="text-center">{t('noMachinesForSearch')}</p>
+          </div>
+        ) : (
+          <MachinesTable
+            machines={shownMachines}
+            shops={shops}
+            companies={companies}
+            permissions={{
+              authHydrated,
+              canAssignMachine,
+              canEditAssignedShop,
+              canRemoveMachine,
+              canCloseDay,
+            }}
+            actions={{
+              onAssign: openAssign,
+              onEditShop: openShopEdit,
+              onPush: openPush,
+              onCloseDay: openCloseDay,
+              onRemove: openRemove,
+            }}
+            isDeviceOnline={isDeviceOnline}
+            canCloseMachine={canCloseMachine}
+            selectedMachineIds={selectedMachineIds}
+            onToggleSelected={toggleMachineSelected}
+            onAddMachineToShop={openPairForShop}
+          />
+        )}
         </>
       )}
       </ScopeGate>
