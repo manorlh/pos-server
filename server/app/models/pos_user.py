@@ -2,7 +2,7 @@ import uuid
 import enum
 
 from sqlalchemy import (
-    Column, String, Boolean, ForeignKey,
+    Column, String, Boolean, ForeignKey, Integer,
     Enum as SQLEnum, DateTime, UniqueConstraint, Index,
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -51,6 +51,16 @@ class PosUser(Base):
     )
 
     is_active = Column(Boolean, nullable=False, default=True)
+
+    #: Wrong PINs typed at an *elevation* prompt, and the lockout they earn.
+    #:
+    #: Only the cloud-checked path counts here. The till's own sign-in verifies the same
+    #: PIN offline against the synced hash and cannot report to anyone; that is the
+    #: price of a till that works without a network, and a lockout here does not pretend
+    #: to close it. What it does stop is guessing a manager's PIN through the approval
+    #: prompt from a till that is online, which is otherwise unlimited.
+    pin_failed_count = Column(Integer, nullable=False, default=0, server_default="0")
+    pin_locked_until = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

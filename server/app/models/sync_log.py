@@ -44,6 +44,12 @@ class SyncLog(Base):
     # (catalog pulls, transaction uploads); set for anything a human elevated to do,
     # so the log can answer "who changed this price" rather than only "which till".
     actor_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+    #: The till user who made a catalog change on their own authority, with no grant.
+    #: Set instead of `actor_user_id`, never beside it: exactly one of the two names the
+    #: person, and a row with neither is a write nobody signed for.
+    actor_pos_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("pos_users.id"), nullable=True, index=True
+    )
     direction = Column(SQLEnum(SyncDirection, values_callable=lambda x: [e.value for e in x]), nullable=False)
     entity_type = Column(SQLEnum(SyncEntityType, values_callable=lambda x: [e.value for e in x]), nullable=False)
     entity_id = Column(UUID(as_uuid=True), nullable=True)

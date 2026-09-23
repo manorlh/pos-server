@@ -266,6 +266,11 @@ def _live_row(user, *, scopes=("catalog:write",), **kw):
     row.absolute_expires_at = kw.get("absolute_expires_at", _now() + timedelta(hours=4))
     row.scopes = list(scopes)
     row.user = user
+    # A cloud account's grant. Set explicitly: an unset MagicMock attribute is a
+    # truthy mock, which would read as "held by a till user" and test the wrong branch.
+    row.user_id = user.id if user is not None else None
+    row.pos_user_id = None
+    row.pos_user = None
     row.machine_id = kw.get("machine_id", uuid.uuid4())
     return row
 
@@ -304,12 +309,17 @@ def test_resolve_refuses_an_unknown_or_empty_token():
 # ── The endpoint gate ─────────────────────────────────────────────────────────
 
 
-def test_every_till_catalog_endpoint_still_requires_elevation():
+def test_every_till_catalog_endpoint_still_requires_catalog_authority():
     """
     Structural guard. These six endpoints once took a machine token and nothing
     else, and could rewrite any product in the tenant. If a future edit drops the
     dependency they go back to exactly that, silently — so assert the signature
     rather than trusting review.
+
+    Stricter than it used to be. The old check accepted *any* `Depends`, so swapping
+    the gate for an unrelated dependency would have passed it. It now has to be the
+    dependency `require_catalog_authority` builds — a grant, or a signed-in operator
+    whose role the cloud itself confirms.
     """
     from app.routers import sync as sync_router
 
@@ -323,11 +333,32 @@ def test_every_till_catalog_endpoint_still_requires_elevation():
     ]
     for handler in gated:
         params = inspect.signature(handler).parameters
-        assert "session" in params, f"{handler.__name__} lost its elevation parameter"
-        default = params["session"].default
-        assert getattr(default, "dependency", None) is not None, (
-            f"{handler.__name__} no longer depends on require_elevated"
+        assert "actor" in params, f"{handler.__name__} lost its authority parameter"
+        dependency = getattr(params["actor"].default, "dependency", None)
+        assert dependency is not None, f"{handler.__name__} no longer depends on anything"
+        assert dependency.__qualname__.startswith("require_catalog_authority."), (
+            f"{handler.__name__} is gated by {dependency.__qualname__}, "
+            "not require_catalog_authority"
         )
+
+
+def test_the_unguarded_batch_catalog_write_stays_retired():
+    """
+    `POST /sync/{id}/catalog` wrote with a machine token alone and looked rows up by id
+    with no tenant check, so any paired till could rewrite any tenant's catalog. It is
+    closed. Guard both halves: it answers 410, and the helpers it wrote through are gone
+    so nothing can quietly wire them back in.
+    """
+    from app.routers import sync as sync_router
+
+    with pytest.raises(HTTPException) as exc:
+        sync_router.post_catalog_changes("m", machine=MagicMock())
+    assert exc.value.status_code == 410
+
+    params = inspect.signature(sync_router.post_catalog_changes).parameters
+    assert "body" not in params, "the retired endpoint must not parse a change batch"
+    assert not hasattr(sync_router, "_apply_product_change")
+    assert not hasattr(sync_router, "_apply_category_change")
 
 
 def test_till_catalog_endpoints_never_read_scope_from_the_request_body():

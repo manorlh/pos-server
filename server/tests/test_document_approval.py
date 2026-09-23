@@ -339,12 +339,15 @@ class _ZDb:
         pass
 
 
-def _grant(scopes=("day:close",)):
+def _grant(scopes=("day:close",), *, by_till_user=False):
+    """A grant held by a cloud account, or — `by_till_user` — by a till user."""
+    holder = uuid.uuid4()
     return SimpleNamespace(
         id=uuid.uuid4(),
         scopes=list(scopes),
         per_action_consumed_at=None,
-        user_id=uuid.uuid4(),
+        user_id=None if by_till_user else holder,
+        pos_user_id=holder if by_till_user else None,
     )
 
 
@@ -363,8 +366,11 @@ def _close(monkeypatch, *, approval, db=None, missing=(), outcome="accepted"):
     captured: dict = {}
     z_row = _z_report_row()
 
-    def _fake_apply(_db, _machine, _body, *, approved_by_user_id=None):
+    def _fake_apply(
+        _db, _machine, _body, *, approved_by_user_id=None, approved_by_pos_user_id=None
+    ):
         captured["approved_by_user_id"] = approved_by_user_id
+        captured["approved_by_pos_user_id"] = approved_by_pos_user_id
         return z_row, outcome
 
     monkeypatch.setattr(
@@ -406,6 +412,22 @@ class TestClosingTheDay:
         )
 
         assert captured["approved_by_user_id"] == grant.user_id
+        assert captured["approved_by_pos_user_id"] is None
+
+    def test_a_till_user_grant_puts_the_till_user_on_the_z(self, monkeypatch):
+        """
+        A manager who approved by typing their till username has no cloud account to
+        name. The close must carry *them*, in the till-user column — not silently no
+        approver at all, which is what reading `user_id` alone would produce.
+        """
+        grant = _grant(by_till_user=True)
+
+        _response, captured = _close(
+            monkeypatch, approval=grant, db=_ZDb(locked_grant=grant)
+        )
+
+        assert captured["approved_by_pos_user_id"] == grant.pos_user_id
+        assert captured["approved_by_user_id"] is None
 
     def test_one_pin_closes_one_day(self, monkeypatch):
         """The second close needs the manager back at the till, not the same token."""

@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Optional, Tuple
 import uuid
 from fastapi import Depends, Header, HTTPException, status
@@ -6,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.user import User, UserRole
 from app.models.pos_machine import POSMachine
+from app.models.pos_user import PosUser
 from app.models.pairing_session import PairingSession
 from app.models.tenant_membership import TenantMembership
 from app.services.clerk_auth import verify_clerk_token
@@ -20,7 +22,7 @@ from app.services.elevation import (
     resolve_session,
     session_has_scope,
 )
-from app.services.permissions import Scope, requires_per_action_reauth
+from app.services.permissions import Scope, pos_user_till_scopes, requires_per_action_reauth
 from app.observability.context import set_request_context
 
 security = HTTPBearer()
@@ -306,6 +308,94 @@ def require_elevated(scope: Scope):
             # said unspent; the locked re-read said otherwise, and the locked one wins.
             raise _elevation_401("elevation_already_used")
         return session
+
+    return dependency
+
+
+#: Which till user is signed in at the calling till. Sent on catalog writes so a shop
+#: manager's own authority can stand in for a grant. See `require_catalog_authority`.
+POS_USER_HEADER = "X-Pos-User-Id"
+
+
+@dataclass(frozen=True)
+class CatalogActor:
+    """
+    Who a catalog write is attributed to. Exactly one field is set.
+
+    `user_id` when a cloud account's grant authorised it; `pos_user_id` when a till user
+    did — through a grant they took by username, or on their own signature with none.
+    """
+
+    user_id: Optional[uuid.UUID] = None
+    pos_user_id: Optional[uuid.UUID] = None
+
+
+def _operator_with_authority(
+    db: Session, machine: POSMachine, raw_id: Optional[str], scope: Scope
+) -> Optional[PosUser]:
+    """The signed-in till user named by `raw_id`, if they may do `scope` at `machine` alone."""
+    if not raw_id or machine.shop_id is None:
+        return None
+    try:
+        pos_user_id = uuid.UUID(str(raw_id).strip())
+    except ValueError:
+        return None
+    operator = (
+        db.query(PosUser)
+        .filter(
+            PosUser.id == pos_user_id,
+            # Their own shop only. A till cannot lend its authority to a user from
+            # another shop by naming them, because the name has to resolve *here*.
+            PosUser.shop_id == machine.shop_id,
+            PosUser.is_active.is_(True),
+        )
+        .first()
+    )
+    if operator is None or scope not in pos_user_till_scopes(operator.role):
+        return None
+    return operator
+
+
+def require_catalog_authority(scope: Scope = Scope.CATALOG_WRITE):
+    """
+    Build a dependency that accepts a grant for `scope`, *or* a signed-in operator who holds it.
+
+    `require_elevated` demanded a grant from everybody, so a shop manager signed in at
+    their own till typed their own PIN a second time to fix a price. That second PIN
+    was never what bounded the damage: every catalog endpoint confines a till's write to
+    the till's shop by itself — price and listing land on the shop's override row, a
+    master another shop lists answers 403, a category rename lands on the shop's own
+    override. What the grant added was a name for the audit, and the signed-in operator
+    is a name.
+
+    **What this trusts.** The till's word for who is signed in — the same word the cloud
+    already takes for `cashier_id` on every document it files. Bounded by the machine
+    token (a till speaks only for its own shop) and by the cloud's own roster: the
+    operator must be an active till user of this machine's shop whose role, read here
+    and not from the till, carries `scope`. A till naming a cashier gets nothing.
+
+    **Order.** A grant, when presented, wins and is checked exactly as strictly as
+    before — a cashier's till with a manager's grant attributes the write to the manager.
+    With neither a usable grant nor an operator who holds the scope, the answer is the
+    same 401 `elevation_required`, which is what makes the till ask for someone who does.
+    """
+
+    def dependency(
+        machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+        elevation_token: Optional[str] = Header(None, alias=ELEVATION_HEADER),
+        operator_id: Optional[str] = Header(None, alias=POS_USER_HEADER),
+        db: Session = Depends(get_db),
+    ) -> CatalogActor:
+        if elevation_token:
+            session = _checked_grant(db, machine, elevation_token, scope)
+            if requires_per_action_reauth(scope) and not consume_per_action_use(db, session):
+                raise _elevation_401("elevation_already_used")
+            return CatalogActor(user_id=session.user_id, pos_user_id=session.pos_user_id)
+
+        operator = _operator_with_authority(db, machine, operator_id, scope)
+        if operator is None:
+            raise _elevation_401("elevation_required")
+        return CatalogActor(pos_user_id=operator.id)
 
     return dependency
 

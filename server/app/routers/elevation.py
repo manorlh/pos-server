@@ -2,8 +2,9 @@
 Till elevation: a named person authorising a narrow action at a terminal.
 
 Every route here authenticates the *machine* through its own token — the till says
-which terminal is asking — and then authenticates the *person* with an email and a
-till PIN, verified here rather than on the device. The device therefore never has
+which terminal is asking — and then authenticates the *person* with a till PIN and
+either an email (a cloud account) or a till username (someone working this till's own
+shop), verified here rather than on the device. The device therefore never has
 to be trusted to have checked anything, which is the whole point: a compromised
 till saying "a manager approved this" would be worth nothing.
 """
@@ -23,6 +24,7 @@ from app.middleware.auth import (
     get_pos_machine_from_machine_token,
 )
 from app.models.pos_machine import POSMachine
+from app.models.pos_user import PosUser
 from app.models.user import User
 from app.schemas.elevation import (
     ElevationRequest,
@@ -33,10 +35,13 @@ from app.services.auth import get_password_hash, verify_password
 from app.services.elevation import (
     create_session,
     grantable_scopes,
+    grantable_scopes_for_pos_user,
     pin_lockout_remaining,
+    pos_user_lockout_remaining,
     resolve_session,
     revoke_session,
     usable_scopes,
+    verify_pos_user_pin,
     verify_till_pin,
 )
 from app.services.permissions import parse_scopes
@@ -104,15 +109,70 @@ def _authenticate(db: Session, email: str, pin: str) -> User:
     return user
 
 
+def _pos_user_display_name(pos_user: PosUser) -> str:
+    full = " ".join(p for p in (pos_user.first_name, pos_user.last_name) if p)
+    return full or pos_user.username
+
+
+def _locked(remaining) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="pin_locked",
+        headers={"Retry-After": str(max(1, math.ceil(remaining.total_seconds())))},
+    )
+
+
+def _authenticate_pos_user(
+    db: Session, machine: POSMachine, username: str, pin: str
+) -> PosUser:
+    """
+    Resolve and verify a till user of *this till's shop*, or raise.
+
+    Looked up only among the machine's own shop, so a username typed at Dizengoff can
+    never match somebody at Ramat Aviv who happens to share it — usernames are unique
+    per shop, not per tenant. Case-insensitive for the same reason email is: `Dana` and
+    `dana` should not behave differently at a till than they do at sign-in.
+
+    Unknown, inactive and wrong-PIN all answer identically, with the decoy hash burned
+    for the first two, exactly as the email path does.
+    """
+    pos_user = (
+        db.query(PosUser)
+        .filter(
+            PosUser.shop_id == machine.shop_id,
+            func.lower(PosUser.username) == (username or "").strip().lower(),
+        )
+        .first()
+    )
+    if pos_user is None or not pos_user.is_active or not pos_user.pin_hash:
+        verify_password(pin or "", _TIMING_DECOY)
+        raise _invalid_credentials()
+
+    remaining = pos_user_lockout_remaining(pos_user)
+    if remaining is not None:
+        raise _locked(remaining)
+
+    if not verify_pos_user_pin(db, pos_user, pin):
+        db.commit()
+        raise _invalid_credentials()
+    return pos_user
+
+
 @router.post("/sessions", response_model=ElevationResponse)
 def create_elevation(
     data: ElevationRequest,
     machine: POSMachine = Depends(get_pos_machine_from_machine_token),
     db: Session = Depends(get_db),
 ):
-    """Exchange an email + till PIN for a scoped, short-lived grant at this machine."""
+    """Exchange an email or till username, plus a till PIN, for a scoped short-lived grant."""
     _require_assigned(machine)
-    user = _authenticate(db, data.email, data.pin)
+
+    user: Optional[User] = None
+    pos_user: Optional[PosUser] = None
+    if data.username:
+        pos_user = _authenticate_pos_user(db, machine, data.username, data.pin)
+    else:
+        user = _authenticate(db, data.email, data.pin)
 
     requested = parse_scopes(data.scopes)
     if not requested:
@@ -121,23 +181,31 @@ def create_elevation(
             status_code=status.HTTP_400_BAD_REQUEST, detail="no_recognised_scopes"
         )
 
-    granted = grantable_scopes(db, user, machine, requested)
+    if pos_user is not None:
+        granted = grantable_scopes_for_pos_user(pos_user, machine, requested)
+    else:
+        granted = grantable_scopes(db, user, machine, requested)
     if not granted:
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="not_permitted_here"
         )
 
-    raw, session = create_session(db, user, machine, granted)
+    raw, session = create_session(db, user, machine, granted, pos_user=pos_user)
     db.commit()
     db.refresh(session)
+    if pos_user is not None:
+        name, email, login = _pos_user_display_name(pos_user), None, pos_user.username
+    else:
+        name, email, login = _display_name(user), user.email, user.email
     return ElevationResponse(
         token=raw,
         scopes=[scope.value for scope in granted],
         expires_at=session.expires_at,
         absolute_expires_at=session.absolute_expires_at,
-        user_name=_display_name(user),
-        user_email=user.email,
+        user_name=name,
+        user_email=email,
+        user_login=login,
     )
 
 
@@ -158,7 +226,10 @@ def read_current_elevation(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="elevation_expired"
         )
-    user = session.user
+    if session.pos_user_id is not None:
+        name, email = _pos_user_display_name(session.pos_user), None
+    else:
+        name, email = _display_name(session.user), session.user.email
     db.commit()
     return ElevationStatus(
         # What is *left*, not what was granted: a per-action scope already spent would
@@ -166,8 +237,8 @@ def read_current_elevation(
         scopes=usable_scopes(session),
         expires_at=session.expires_at,
         absolute_expires_at=session.absolute_expires_at,
-        user_name=_display_name(user),
-        user_email=user.email,
+        user_name=name,
+        user_email=email,
     )
 
 

@@ -12,6 +12,7 @@ from app.models.category import Category, CatalogLevel as CategoryCatalogLevel
 from app.models.product import Product, CatalogLevel as ProductCatalogLevel
 from app.models.sync_log import SyncLog, SyncDirection, SyncEntityType, SyncAction, SyncStatus
 from app.models.shop_product_override import ShopProductOverride
+from app.models.shop_category_override import ShopCategoryOverride
 from app.models.trading_day import TradingDay, TradingDayStatus
 from app.models.transaction import Transaction, TransactionStatus
 from app.models.transaction_item import TransactionItem
@@ -42,6 +43,7 @@ __all__ = [
     "Product", "ProductCatalogLevel",
     "SyncLog", "SyncDirection", "SyncEntityType", "SyncAction", "SyncStatus",
     "ShopProductOverride",
+    "ShopCategoryOverride",
     "TradingDay", "TradingDayStatus",
     "Transaction", "TransactionStatus",
     "TransactionItem",

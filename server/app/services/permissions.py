@@ -28,6 +28,7 @@ from __future__ import annotations
 import enum
 from typing import FrozenSet, Iterable, List
 
+from app.models.pos_user import PosUserRole
 from app.models.user import UserRole
 
 
@@ -92,6 +93,45 @@ _TILL_SCOPES_BY_ROLE: dict[UserRole, FrozenSet[Scope]] = {
 def till_grantable_scopes(role: UserRole) -> FrozenSet[Scope]:
     """Every scope `role` is permitted to hold at a till. Empty for roles with none."""
     return _TILL_SCOPES_BY_ROLE.get(role, frozenset())
+
+
+#: What a *till user* may do on their own signature, or authorise for someone else.
+#:
+#: The till decides the same question locally in `TillAuthority` (Android), which is
+#: what lets a shop manager refund with no prompt at all; this is the cloud's copy of
+#: that table, consulted when a till user's authority reaches the server — a username
+#: typed at the approval prompt, or a catalog write sent with no grant. The two must
+#: agree, and they are kept one-to-one on purpose: the bug this replaces was the till
+#: recognising `"admin"` and `"manager"`, strings `PosUserRole` has never contained,
+#: so every shop manager in the field was treated as a cashier.
+#:
+#: A shop manager gets the full manager set, catalog included. A till user belongs to
+#: exactly one shop and every catalog write from a till is already bounded to that shop
+#: by the endpoint itself (the override table for price and listing, a 403 on any
+#: master another shop also lists), so the grant was never what contained the damage.
+#:
+#: `CASHIER` is absent rather than mapped to an empty set, matching
+#: `_TILL_SCOPES_BY_ROLE`: a role added to `PosUserRole` gets nothing until somebody
+#: decides what it should get.
+_POS_USER_SCOPES_BY_ROLE: dict[PosUserRole, FrozenSet[Scope]] = {
+    PosUserRole.SHOP_MANAGER: _MANAGER_SCOPES,
+}
+
+
+def pos_user_till_scopes(role) -> FrozenSet[Scope]:
+    """
+    Every scope a till user with `role` may hold. Empty for roles with none.
+
+    Accepts the enum or its wire string, because the value arrives both ways — from the
+    ORM as `PosUserRole` and, in tests and older rows, as a bare string. An unrecognised
+    string gets nothing, which is the direction to fail in.
+    """
+    if not isinstance(role, PosUserRole):
+        try:
+            role = PosUserRole(str(role).strip().lower())
+        except ValueError:
+            return frozenset()
+    return _POS_USER_SCOPES_BY_ROLE.get(role, frozenset())
 
 
 def parse_scopes(raw: Iterable[str]) -> List[Scope]:

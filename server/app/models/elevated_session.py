@@ -19,7 +19,7 @@ request. Human secrets (`users.till_pin_hash`) still get bcrypt.
 
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Index, String
+from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -37,6 +37,12 @@ class ElevatedSession(Base):
         Index("ix_elevated_sessions_token", "token_hash"),
         Index("ix_elevated_sessions_user_created", "user_id", "created_at"),
         Index("ix_elevated_sessions_machine_created", "machine_id", "created_at"),
+        # Exactly one holder. A row naming both would leave "who approved this"
+        # with two answers; a row naming neither would be authority held by nobody.
+        CheckConstraint(
+            "(user_id IS NULL) <> (pos_user_id IS NULL)",
+            name="ck_elevated_sessions_one_holder",
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -45,10 +51,21 @@ class ElevatedSession(Base):
     #: time, and never stored anywhere on the server or on the device's disk.
     token_hash = Column(String(64), nullable=False, unique=True)
 
-    #: The dashboard user who authenticated. Not a `pos_users` row: authorisation
-    #: (roles, company descent) lives on `users`, and building elevation on
-    #: `PosUserRole` would mean a second permission model beside the real one.
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    #: The cloud account that authenticated, when a manager typed an email.
+    #:
+    #: Null when the grant was taken by a till user instead (`pos_user_id`). That second
+    #: path exists because the person a cashier fetches is usually standing in the same
+    #: shop with a till login of their own, and making them type an email address on a
+    #: 360dp keypad to approve one refund is friction with nothing bought by it. Its
+    #: authority comes from `permissions.pos_user_till_scopes`, which is kept a strict
+    #: mirror of the till's own `TillAuthority` so the two cannot disagree about who a
+    #: shop manager is.
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+
+    #: The till user who authenticated, when they typed a username. See `user_id`.
+    pos_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("pos_users.id"), nullable=True, index=True
+    )
 
     #: The till that asked. Its shop is the ceiling: even a distributor's grant
     #: reaches no further than the machine standing in front of them.
@@ -86,5 +103,6 @@ class ElevatedSession(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     user = relationship("User")
+    pos_user = relationship("PosUser")
     machine = relationship("POSMachine")
     shop = relationship("Shop")

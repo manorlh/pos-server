@@ -80,6 +80,12 @@ class ZReport(Base):
     #: operator is a manager closes its own day, and null there means "none was
     #: required", not "missing".
     approved_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    #: The till user whose grant closed the day, when the approver typed a username.
+    #: Mutually exclusive with `approved_by_user_id` for the same reason a grant has one
+    #: holder: a close approved by two people is a close nobody can be asked about.
+    approved_by_pos_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("pos_users.id"), nullable=True
+    )
 
     opening_cash = Column(Numeric(12, 2), nullable=True)
     closing_cash = Column(Numeric(12, 2), nullable=True)

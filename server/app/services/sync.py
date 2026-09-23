@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 import uuid as uuid_mod
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.category import Category, CatalogLevel as CategoryCatalogLevel
@@ -28,6 +28,7 @@ from app.services.machine_health import (
 from app.models.product import Product, CatalogLevel
 from app.models.shop import Shop
 from app.models.shop_product_override import ShopProductOverride
+from app.models.shop_category_override import ShopCategoryOverride
 from app.models.voucher import Voucher
 
 
@@ -171,14 +172,27 @@ def _serialize_merged_product(
     }
 
 
-def _serialize_category(c: Category) -> Dict[str, Any]:
+def _serialize_category(
+    c: Category, override: Optional[ShopCategoryOverride] = None
+) -> Dict[str, Any]:
+    """
+    One category as a till sees it, with the till's own shop's name for it if it has one.
+
+    `updatedAt` is the later of the category's and the override's, so that whatever a
+    till stores reflects the change it was actually sent for.
+    """
+    name = override.name if override is not None and override.name else c.name
+    updated = c.updated_at
+    if override is not None and override.updated_at is not None:
+        if updated is None or _as_utc(override.updated_at) > _as_utc(updated):
+            updated = override.updated_at
     return {
         "id": str(c.id),
         "catalogLevel": c.catalog_level.value if hasattr(c.catalog_level, "value") else c.catalog_level,
         "companyId": str(c.company_id) if c.company_id else None,
         "shopId": str(c.shop_id) if c.shop_id else None,
         "posMachineId": str(c.pos_machine_id) if c.pos_machine_id else None,
-        "name": c.name,
+        "name": name,
         "description": c.description,
         "color": c.color,
         "imageUrl": c.image_url,
@@ -186,8 +200,13 @@ def _serialize_category(c: Category) -> Dict[str, Any]:
         "isActive": c.is_active,
         "sortOrder": c.sort_order,
         "createdAt": c.created_at.isoformat() if c.created_at else None,
-        "updatedAt": c.updated_at.isoformat() if c.updated_at else None,
+        "updatedAt": updated.isoformat() if updated else None,
     }
+
+
+def _as_utc(value: datetime) -> datetime:
+    """SQLite hands timestamps back naive; compare them as the UTC they were written as."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
 def _serialize_voucher(v: Voucher) -> Dict[str, Any]:
@@ -441,6 +460,32 @@ def get_products_for_sync(
     return [_serialize_product(p) for p in query.all()]
 
 
+def overrides_changed_since(
+    overrides: Dict[Any, ShopCategoryOverride], since: datetime
+) -> List[Any]:
+    """Ids of the categories whose *shop override* changed after `since`."""
+    return [
+        category_id
+        for category_id, override in overrides.items()
+        if override.updated_at is not None and _as_utc(override.updated_at) > _as_utc(since)
+    ]
+
+
+def category_delta_filter(since: datetime, renamed_here: List[Any]):
+    """
+    Which categories a delta pull must resend.
+
+    A shop renaming its own button touches only the override row, so the category's own
+    timestamp cannot be the only thing a delta looks at — the rename would reach this
+    shop's tills only on their next full pull, which for a till left running can be
+    days.
+    """
+    changed = Category.updated_at > since
+    if not renamed_here:
+        return changed
+    return or_(changed, Category.id.in_(renamed_here))
+
+
 def get_categories_for_sync(
     db: Session,
     tenant_id: Optional[str] = None,
@@ -467,9 +512,20 @@ def get_categories_for_sync(
                         Category.pos_machine_id.is_(None),
                     )
                 )
+                overrides = {
+                    o.category_id: o
+                    for o in db.query(ShopCategoryOverride).filter(
+                        ShopCategoryOverride.shop_id == machine.shop_id
+                    )
+                }
                 if since:
-                    q = q.filter(Category.updated_at > since)
-                return [_serialize_category(c) for c in q.order_by(Category.sort_order).all()]
+                    q = q.filter(
+                        category_delta_filter(since, overrides_changed_since(overrides, since))
+                    )
+                return [
+                    _serialize_category(c, overrides.get(c.id))
+                    for c in q.order_by(Category.sort_order).all()
+                ]
 
     query = db.query(Category)
     if tenant_id:
