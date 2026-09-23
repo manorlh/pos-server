@@ -120,8 +120,9 @@ def _require_assigned_machine(machine: POSMachine) -> None:
         )
 
 
+# ── Endpoints ─────────────────────────────────────────────────────────────────
 
-
+@router.get("/{machine_id}/catalog", response_model=CatalogSyncResponse)
 def get_catalog_sync(
     machine_id: str,
     since: Optional[str] = Query(None, description="ISO-8601 timestamp for delta sync"),
