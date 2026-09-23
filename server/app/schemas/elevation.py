@@ -1,5 +1,6 @@
 """Wire shapes for till elevation. camelCase out, either case in, like the rest."""
 
+import uuid
 from datetime import datetime
 from typing import List, Optional
 
@@ -11,12 +12,16 @@ _WIRE = ConfigDict(populate_by_name=True, from_attributes=True)
 class ElevationRequest(BaseModel):
     model_config = _WIRE
 
-    #: Who is approving: a cloud account's email, or the till username of someone in
-    #: this till's own shop. Exactly one. The username is the everyday path — the person
-    #: a cashier fetches is standing in the shop with a till login of their own — and
-    #: the email stays for approvers who have none, like a distributor.
+    #: Who is approving — exactly one of these:
+    #:
+    #: * `pos_user_id` — a till user picked from the roster the till already holds. The
+    #:   everyday path: the person a cashier fetches is standing in the shop, their name
+    #:   is already on the device, and one tap on it replaces typing anything at all.
+    #: * `username` — the same person, typed, for a till whose roster is stale.
+    #: * `email` — a cloud account, for approvers with no till login, like a distributor.
     email: Optional[EmailStr] = None
     username: Optional[str] = None
+    pos_user_id: Optional[uuid.UUID] = Field(default=None, alias="posUserId")
     pin: str
     #: What the till wants to do. Names it does not recognise are ignored rather
     #: than rejected, so a newer device asking for a scope this server has not
@@ -25,10 +30,13 @@ class ElevationRequest(BaseModel):
 
     @model_validator(mode="after")
     def _exactly_one_identity(self):
-        has_email = self.email is not None
-        has_username = bool((self.username or "").strip())
-        if has_email == has_username:
-            raise ValueError("send exactly one of email or username")
+        given = [
+            self.email is not None,
+            bool((self.username or "").strip()),
+            self.pos_user_id is not None,
+        ]
+        if sum(given) != 1:
+            raise ValueError("send exactly one of email, username or posUserId")
         return self
 
 

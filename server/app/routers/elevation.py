@@ -123,12 +123,18 @@ def _locked(remaining) -> HTTPException:
 
 
 def _authenticate_pos_user(
-    db: Session, machine: POSMachine, username: str, pin: str
+    db: Session,
+    machine: POSMachine,
+    pin: str,
+    *,
+    username: Optional[str] = None,
+    pos_user_id=None,
 ) -> PosUser:
     """
-    Resolve and verify a till user of *this till's shop*, or raise.
+    Resolve and verify a till user of *this till's shop*, by roster id or username.
 
-    Looked up only among the machine's own shop, so a username typed at Dizengoff can
+    Looked up only among the machine's own shop — for an id as much as a username, so a
+    till cannot aim the prompt at another shop's manager by sending their id — so a username typed at Dizengoff can
     never match somebody at Ramat Aviv who happens to share it — usernames are unique
     per shop, not per tenant. Case-insensitive for the same reason email is: `Dana` and
     `dana` should not behave differently at a till than they do at sign-in.
@@ -136,11 +142,16 @@ def _authenticate_pos_user(
     Unknown, inactive and wrong-PIN all answer identically, with the decoy hash burned
     for the first two, exactly as the email path does.
     """
+    who = (
+        PosUser.id == pos_user_id
+        if pos_user_id is not None
+        else func.lower(PosUser.username) == (username or "").strip().lower()
+    )
     pos_user = (
         db.query(PosUser)
         .filter(
             PosUser.shop_id == machine.shop_id,
-            func.lower(PosUser.username) == (username or "").strip().lower(),
+            who,
         )
         .first()
     )
@@ -169,8 +180,10 @@ def create_elevation(
 
     user: Optional[User] = None
     pos_user: Optional[PosUser] = None
-    if data.username:
-        pos_user = _authenticate_pos_user(db, machine, data.username, data.pin)
+    if data.pos_user_id is not None or data.username:
+        pos_user = _authenticate_pos_user(
+            db, machine, data.pin, username=data.username, pos_user_id=data.pos_user_id
+        )
     else:
         user = _authenticate(db, data.email, data.pin)
 

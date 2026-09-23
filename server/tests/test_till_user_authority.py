@@ -273,6 +273,30 @@ class TestUsernameElevation:
         assert grant.pos_user_id == dana.id
         assert grant.user_id is None
 
+    def test_a_manager_picked_from_the_roster_approves_by_id(self):
+        machine = _machine()
+        dana = _pos_user(machine.shop_id)
+        db = _FakeDb(dana, _pos_user(machine.shop_id, username="moshe"))
+
+        response = _elevate(db, machine, pos_user_id=str(dana.id))
+
+        assert response.user_login == "dana"
+        grant = next(o for o in db.added if isinstance(o, ElevatedSession))
+        assert grant.pos_user_id == dana.id
+
+    def test_an_id_from_another_shop_is_not_found(self):
+        """
+        An id is no weaker a boundary than a name: a till sending another shop's
+        manager's id must not reach them, whatever that manager could approve.
+        """
+        machine = _machine()
+        elsewhere = _pos_user(uuid.uuid4())
+        db = _FakeDb(elsewhere)
+
+        with pytest.raises(HTTPException) as exc:
+            _elevate(db, machine, pos_user_id=str(elsewhere.id))
+        assert exc.value.status_code == 401
+
     def test_the_username_is_not_case_sensitive(self):
         machine = _machine()
         db = _FakeDb(_pos_user(machine.shop_id, username="Dana"))
@@ -335,6 +359,8 @@ class TestUsernameElevation:
             {"pin": "4815"},
             {"pin": "4815", "username": "dana", "email": "dana@shop.co.il"},
             {"pin": "4815", "username": "   "},
+            {"pin": "4815", "username": "dana", "posUserId": str(uuid.uuid4())},
+            {"pin": "4815", "email": "dana@shop.co.il", "posUserId": str(uuid.uuid4())},
         ],
     )
     def test_exactly_one_identity_is_required(self, body):
