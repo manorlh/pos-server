@@ -40,6 +40,7 @@ import {
   WifiOff,
 } from 'lucide-react';
 import type { PosMachine } from '@/lib/types';
+import { registerNumberOf } from '@/lib/registerNumber';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -114,6 +115,21 @@ function mqttState(m: PosMachine, online: boolean): boolean | null {
   if (m.mqttConnected === true) return true;
   if (m.mqttConnected === false) return false;
   return null;
+}
+
+/**
+ * What the row calls a terminal: "קופה 2" when it has a register number, with the
+ * free-text name kept beside it only when the name says something the number does not
+ * (a name typed as "קופה 2" is not repeated). Without a number — no shop — the name
+ * alone, exactly as before; never "קופה 0".
+ */
+export function useMachineLabel(m: PosMachine): { primary: string; secondary: string | null } {
+  const t = useTranslations('machines');
+  const n = registerNumberOf(m);
+  if (n === null) return { primary: m.name, secondary: null };
+  const primary = t('registerLabel', { number: n });
+  const name = m.name.trim();
+  return { primary, secondary: name && name !== primary ? name : null };
 }
 
 function MachineRowMenu({
@@ -302,6 +318,7 @@ export function MachineRow({
   const detailsId = `machine-details-${m.id}`;
   const selectable = permissions.canCloseDay && m.pairingStatus === 'assigned';
   const hasPending = !!m.pendingAsOf && (m.pendingDocuments ?? 0) > 0;
+  const label = useMachineLabel(m);
 
   return (
     <div className="border-b last:border-b-0">
@@ -315,7 +332,7 @@ export function MachineRow({
               className="h-4 w-4 shrink-0 accent-primary"
               checked={selected}
               onChange={() => onToggleSelected(m.id)}
-              aria-label={m.name}
+              aria-label={label.secondary ? `${label.primary} · ${label.secondary}` : label.primary}
             />
           ) : (
             <span className="block h-4 w-4" aria-hidden />
@@ -340,9 +357,12 @@ export function MachineRow({
           {/* A device is a place you can go into now, not just a row. */}
           <Link
             href={`/dashboard/machines/${m.id}`}
-            className="block truncate font-medium hover:underline"
+            className="flex min-w-0 items-baseline gap-1.5 hover:underline"
           >
-            {m.name}
+            <span className="shrink-0 font-medium">{label.primary}</span>
+            {label.secondary ? (
+              <span className="truncate text-xs text-muted-foreground">{label.secondary}</span>
+            ) : null}
           </Link>
           <p className="truncate text-xs text-muted-foreground" dir="ltr">
             {m.machineCode}

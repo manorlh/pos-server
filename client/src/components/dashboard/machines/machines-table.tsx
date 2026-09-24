@@ -7,7 +7,7 @@
  * are already in the react-query cache for the scope bar, so the whole hierarchy is a
  * client-side join with no extra request and no new endpoint to keep in step.
  *
- * Three ordering decisions worth stating, because they are what make the page usable at
+ * Four ordering decisions worth stating, because they are what make the page usable at
  * thirty terminals:
  *
  * * Groups sort by company path, then shop name, with Hebrew collation — the label the
@@ -18,6 +18,8 @@
  * * A terminal pointing at a shop this caller cannot see still gets its own group
  *   rather than being dropped or silently folded into "unassigned". Hiding a till from
  *   the person responsible for it is the worse failure.
+ * * Within a shop, terminals sort by register number — till 1, 2, 3 — which is how the
+ *   shop itself refers to them. The few without a number follow, by name.
  *
  * Collapsed groups persist per shop in localStorage. The stored value is read while
  * rendering the group rather than pushed in from an effect: the machines query has not
@@ -31,6 +33,7 @@ import { useTranslations } from 'next-intl';
 import type { Company, PosMachine, Shop } from '@/lib/types';
 import { buildCompanyTree, companyPathLabel } from '@/lib/companyTree';
 import { findBySameId } from '@/lib/entityLookup';
+import { compareByRegisterNumber } from '@/lib/registerNumber';
 import { machineStatus } from '@/components/dashboard/machine-status';
 import {
   MachineGroupHeader,
@@ -169,7 +172,9 @@ export function MachinesTable({
 
     const list = [...byKey.values()];
     for (const group of list) {
-      group.machines.sort((a, b) => a.name.localeCompare(b.name, 'he-IL', { sensitivity: 'base' }));
+      // Register number first — the shop's tills read 1, 2, 3 — then by name for the
+      // few without one.
+      group.machines.sort(compareByRegisterNumber);
       const counts = new Map<MachineStatusValue, number>();
       for (const m of group.machines) {
         const s = machineStatus(m);

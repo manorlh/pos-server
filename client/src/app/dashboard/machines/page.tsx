@@ -10,6 +10,7 @@ import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { findBySameId, sameId } from '@/lib/entityLookup';
 import { entitySelectItems } from '@/lib/selectItems';
+import { registerNumberOf } from '@/lib/registerNumber';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -115,6 +116,19 @@ export default function MachinesPage() {
     queryFn: () =>
       api.get('/shops', { params: { companyId: pairCompanyId } }).then((r) => r.data),
     enabled: !!pairCompanyId && pairOpen,
+  });
+
+  /*
+   * The register number a till paired into the chosen shop would get. A peek — the
+   * server allocates nothing until a machine actually lands in the shop — so choosing
+   * a shop and cancelling costs the shop's numbering nothing. Never cached: another
+   * till paired meanwhile moves it on.
+   */
+  const { data: pairNextRegister } = useQuery<{ shopId: string; nextRegisterNumber: number }>({
+    queryKey: ['shops', pairShopId, 'next-register-number'],
+    queryFn: () => api.get(`/shops/${pairShopId}/next-register-number`).then((r) => r.data),
+    enabled: !!pairShopId && pairOpen,
+    staleTime: 0,
   });
 
   /**
@@ -425,9 +439,10 @@ export default function MachinesPage() {
   }, [visibleMachines]);
 
   /*
-   * Search narrows the rows, never the tallies or the selection. It matches the two
-   * things printed on the row — the terminal's name and the code on its sticker — so
-   * an operator holding a device can find it without knowing which branch it is in.
+   * Search narrows the rows, never the tallies or the selection. It matches what is
+   * printed on the row — the register label ("קופה 2"), the terminal's name and the
+   * code on its sticker — so an operator holding a device can find it without knowing
+   * which branch it is in.
    */
   const searchTerm = search.trim().toLowerCase();
 
@@ -437,7 +452,9 @@ export default function MachinesPage() {
     (m) =>
       searchTerm === '' ||
       m.name.toLowerCase().includes(searchTerm) ||
-      m.machineCode.toLowerCase().includes(searchTerm),
+      m.machineCode.toLowerCase().includes(searchTerm) ||
+      (registerNumberOf(m) !== null &&
+        t('registerLabel', { number: registerNumberOf(m)! }).includes(searchTerm)),
   );
 
   const bulkCloseTargets = visibleMachines.filter((m) => selectedMachineIds.has(m.id) && canCloseMachine(m));
@@ -811,6 +828,15 @@ export default function MachinesPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  {pairShopId &&
+                  pairNextRegister &&
+                  sameId(pairNextRegister.shopId, pairShopId) ? (
+                    <p className="text-xs text-muted-foreground">
+                      {t('pairNextRegister', {
+                        label: t('registerLabel', { number: pairNextRegister.nextRegisterNumber }),
+                      })}
+                    </p>
+                  ) : null}
                 </div>
               </div>
               <DialogFooter>

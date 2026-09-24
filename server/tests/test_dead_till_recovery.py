@@ -38,6 +38,9 @@ def _machine(**kw):
         name="F20",
         device_info=None,
         machine_code="MACHINE-AB12",
+        # The row has always had this column; the fixture now carries it because
+        # adoption reads it (the replacement keeps the till's register number).
+        pos_number="2",
         is_active=True,
         pairing_status=None,
         pending_count=0,

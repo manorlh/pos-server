@@ -13,6 +13,7 @@ from app.models.user import User
 from app.models.tenant_membership import TenantMembership
 from app.models.trading_day import TradingDay, TradingDayStatus
 from app.services.machine_health import serial_from_device_info
+from app.services.register_number import assign_register_number, set_machine_shop
 from app.services.shop_validation import shop_belongs_to_company
 import uuid
 
@@ -237,7 +238,11 @@ def assign_machine_to_shop(
     if not shop:
         return None
 
-    machine.shop_id = shop_id
+    # Also settles the register number: the shop's next one, or the one this machine
+    # already holds in this shop. Every pairing flow that lands a till in a shop —
+    # the assign endpoint, a code pre-assigned to a shop, a field install — comes
+    # through here.
+    set_machine_shop(db, machine, shop_id)
     if shop.tenant_id:
         machine.tenant_id = shop.tenant_id
     machine.pairing_status = PairingStatus.ASSIGNED
@@ -303,5 +308,9 @@ def adopt_machine(
     machine.pending_count = None
     machine.pending_documents = None
     machine.pending_count_at = None
+    # Same row, so the same register number — the replacement is the till the shop
+    # already calls "register 2". This keeps it; it only draws a number if the row is
+    # in a shop and somehow never got one.
+    assign_register_number(db, machine)
     db.flush()
     return machine

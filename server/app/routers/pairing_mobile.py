@@ -13,6 +13,7 @@ from app.middleware.auth import (
 )
 from app.middleware.rate_limit import check_rate_limit, check_rate_limit_by_key
 from app.models.pairing_session import PairingSession
+from app.models.shop import Shop
 from app.models.user import User
 from app.schemas.pairing_mobile import (
     DevicePollWaitingResponse,
@@ -40,6 +41,7 @@ from app.services.pairing_mobile import (
     revoke_pairing_session,
     update_pairing_session_defaults,
 )
+from app.services.register_number import peek_next_register_number
 
 router = APIRouter(prefix="/pairing", tags=["pairing-mobile"])
 settings = get_settings()
@@ -171,7 +173,31 @@ def mobile_claim(
         machine_code=machine.machine_code,
         company_name=company.name,
         shop_name=shop.name,
+        pos_number=machine.pos_number,
     )
+
+
+@router.get("/mobile/shops/{shop_id}/next-register-number")
+def mobile_next_register_number(
+    shop_id: uuid_mod.UUID,
+    session_user: tuple = Depends(get_pairing_session_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Field install: the register number the next till claimed into this shop would get.
+
+    The field-install page authenticates with a pairing-session token, not a dashboard
+    login, so it cannot call `GET /shops/{id}/next-register-number`. Same peek, scoped
+    to the session's tenant. Never allocates.
+    """
+    session, _user = session_user
+    shop = db.query(Shop).filter(Shop.id == shop_id).first()
+    if not shop or shop.tenant_id != session.tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
+    return {
+        "shopId": str(shop.id),
+        "nextRegisterNumber": peek_next_register_number(db, shop.id),
+    }
 
 
 @router.post("/device/register", response_model=DeviceRegisterResponse, status_code=status.HTTP_201_CREATED)

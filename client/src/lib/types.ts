@@ -165,6 +165,8 @@ export interface MobileClaimResponse {
   machineCode: string;
   companyName: string;
   shopName: string;
+  /** The register number the claimed till was given in that shop. */
+  posNumber?: string | null;
 }
 
 export interface Shop {
@@ -264,6 +266,13 @@ export interface PosMachine {
   machineCode: string;
   tenantId?: string;
   shopId?: string;
+  /**
+   * Register number in its shop ("קופה 2"), allocated by the server from the shop's own
+   * run and never reused. Text on the wire because documents copy it verbatim; always a
+   * plain integer when set. Null when the machine has no shop. Read it through
+   * `registerNumberOf`, which never yields 0.
+   */
+  posNumber?: string | null;
   pairingStatus: 'unpaired' | 'paired' | 'assigned';
   mqttClientId?: string;
   deviceInfo?: Record<string, unknown>;

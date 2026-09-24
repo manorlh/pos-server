@@ -28,6 +28,7 @@ from app.middleware.auth import (
 from app.services.catalog_notify import notify_machines_for_shop
 from app.services.company_hierarchy import company_scope_ids, user_covers_company
 from app.services.pos_user_defaults import ensure_default_pos_user
+from app.services.register_number import peek_next_register_number, set_machine_shop
 from app.services.settings_notify import notify_machines_for_shop_settings
 from app.services.permission_matrix import SHOP_SCOPED_ROLES
 
@@ -403,6 +404,32 @@ def create_shop(
     return shop
 
 
+@router.get("/{shop_id}/next-register-number")
+def get_next_register_number(
+    shop_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The register number this shop's next till would get — for prefilling "קופה 3".
+
+    A peek, not an allocation: nothing is locked or written, so opening a pairing
+    dialog and cancelling it leaves the shop's numbering exactly as it was. The number
+    is actually drawn when a machine lands in the shop, and if another till gets there
+    first this one gets the next.
+    """
+    shop = db.query(Shop).filter(Shop.id == shop_id).first()
+    if not shop:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
+    ensure_same_tenant(shop.tenant_id, active_tenant_id)
+    _check_shop_access(current_user, shop, db)
+    return {
+        "shopId": str(shop.id),
+        "nextRegisterNumber": peek_next_register_number(db, shop.id),
+    }
+
+
 @router.get("/{shop_id}", response_model=ShopResponse)
 def get_shop(
     shop_id: str,
@@ -458,5 +485,10 @@ def delete_shop(
     if not shop:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
     ensure_same_tenant(shop.tenant_id, active_tenant_id)
+    # The ORM would null these machines' `shop_id` on its own when the shop goes; doing
+    # it here instead also drops their register numbers, which mean nothing without the
+    # shop. The shop's counter row goes with it (ON DELETE CASCADE).
+    for machine in list(shop.machines):
+        set_machine_shop(db, machine, None)
     db.delete(shop)
     db.commit()

@@ -66,6 +66,8 @@ class MobileClaimResponse(BaseModel):
     machine_code: str = Field(..., alias="machineCode")
     company_name: str = Field(..., alias="companyName")
     shop_name: str = Field(..., alias="shopName")
+    #: The register number the claimed till was given in that shop.
+    pos_number: Optional[str] = Field(None, alias="posNumber")
 
 
 class MobileCompanyRow(BaseModel):

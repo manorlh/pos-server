@@ -12,6 +12,7 @@ from sqlalchemy import (
     JSON,
     SmallInteger,
     String,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -35,6 +36,12 @@ BATTERY_STATUSES = ("charging", "discharging", "full", "not_charging", "unknown"
 
 class POSMachine(Base):
     __tablename__ = "pos_machines"
+    __table_args__ = (
+        # A plain unique constraint is already "where both are non-null" in Postgres:
+        # NULLs compare distinct, so any number of shopless or unnumbered machines
+        # coexist, while two tills in one shop can never both be "register 2".
+        UniqueConstraint("shop_id", "pos_number", name="uq_pos_machines_shop_pos_number"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True)
@@ -45,8 +52,14 @@ class POSMachine(Base):
     machine_code = Column(String(100), unique=True, nullable=False, index=True)
     #: Register number as the *business* numbers its registers — till 1, 2, 3 in a
     #: branch. Distinct from `machine_code`, which is a pairing identifier this system
-    #: generated and which means nothing to a bookkeeper. Nullable until somebody sets
-    #: it; documents fall back to `machine_code` so the field is never empty.
+    #: generated and which means nothing to a bookkeeper.
+    #:
+    #: Allocated from the shop's `shop_register_sequences` counter whenever the machine
+    #: gets a shop (`app.services.register_number`), so it is never reused within a
+    #: shop and always belongs to the *current* `shop_id`: a machine that changes shop
+    #: gives its number up and draws the new shop's next one. Null exactly when there
+    #: is no shop. Stored as text because `transactions.pos_number` is text and a
+    #: document copies it verbatim; documents fall back to `machine_code` when null.
     pos_number = Column(String(50), nullable=True)
     mqtt_client_id = Column(String(255), unique=True, nullable=True)
     pairing_status = Column(SQLEnum(PairingStatus, values_callable=lambda x: [e.value for e in x]), nullable=False, default=PairingStatus.UNPAIRED)

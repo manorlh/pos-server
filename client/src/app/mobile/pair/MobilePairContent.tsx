@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -13,6 +14,7 @@ import {
   claimDevice,
   clearPairingSessionToken,
   fetchMobileContext,
+  fetchMobileNextRegisterNumber,
   getPairingSessionToken,
   patchMobileSession,
   setPairingSessionToken,
@@ -24,6 +26,7 @@ import { entitySelectItems } from '@/lib/selectItems';
 type ClaimRow = MobileClaimResponse & { at: string; machineName: string };
 
 export function MobilePairContent() {
+  const t = useTranslations('machines');
   const searchParams = useSearchParams();
   const [tokenReady, setTokenReady] = useState(false);
   const [fatal, setFatal] = useState<string | null>(null);
@@ -38,6 +41,35 @@ export function MobilePairContent() {
   const [pendingConfirm, setPendingConfirm] = useState<{ nonce: string } | null>(null);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const [, setTick] = useState(0);
+  // The name this form filled in itself, so a later suggestion may replace it while
+  // anything the installer typed is left alone.
+  const autoNameRef = useRef<string | null>(null);
+  const [suggestedName, setSuggestedName] = useState<string | null>(null);
+
+  /*
+   * Suggest "קופה {n}" from the shop's next register number — only while the name is
+   * empty or still the suggestion. A peek: nothing is allocated until the claim, and
+   * the till gets its number from the server either way, so a stale suggestion costs a
+   * mismatched label at worst, never a wrong number.
+   */
+  const suggestName = useCallback(
+    async (sid: string) => {
+      if (!sid) return;
+      try {
+        const { nextRegisterNumber } = await fetchMobileNextRegisterNumber(sid);
+        const suggested = t('registerLabel', { number: nextRegisterNumber });
+        const previousSuggestion = autoNameRef.current;
+        autoNameRef.current = suggested;
+        setSuggestedName(suggested);
+        setMachineName((prev) =>
+          prev.trim() === '' || prev === previousSuggestion ? suggested : prev,
+        );
+      } catch {
+        /* a suggestion is not worth an error on the installer's screen */
+      }
+    },
+    [t],
+  );
 
   useEffect(() => {
     const t = searchParams.get('t');
@@ -67,6 +99,11 @@ export function MobilePairContent() {
     if (!tokenReady) return;
     void loadContext();
   }, [tokenReady, loadContext]);
+
+  useEffect(() => {
+    if (!tokenReady || !shopId) return;
+    void suggestName(shopId);
+  }, [tokenReady, shopId, suggestName]);
 
   useEffect(() => {
     if (!ctx?.sessionExpiresAt) return;
@@ -161,6 +198,8 @@ export function MobilePairContent() {
       setPendingConfirm(null);
       setMachineName('');
       void loadContext(companyId);
+      // The shop has moved on by one; suggest the next till's number.
+      void suggestName(shopId);
       setMessage(`✓ ${name} (${res.machineCode}) — ${res.shopName}`);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : 'שגיאה בשיוך');
@@ -248,6 +287,9 @@ export function MobilePairContent() {
             disabled={busy || scanOpen || !!pendingConfirm}
             autoComplete="off"
           />
+          {machineName !== '' && machineName === suggestedName ? (
+            <p className="text-xs text-muted-foreground">{t('registerNameSuggested')}</p>
+          ) : null}
         </div>
       </div>
 
@@ -306,6 +348,12 @@ export function MobilePairContent() {
           <ul className="space-y-1 text-sm">
             {claims.map((c) => (
               <li key={`${c.machineId}-${c.at}`} className="rounded border px-3 py-2">
+                {c.posNumber && t('registerLabel', { number: c.posNumber }) !== c.machineName ? (
+                  <>
+                    <span className="font-medium">{t('registerLabel', { number: c.posNumber })}</span>
+                    <span className="text-muted-foreground"> · </span>
+                  </>
+                ) : null}
                 <span className="font-medium">{c.machineName}</span>
                 <span className="text-muted-foreground"> · </span>
                 <span className="font-mono text-xs">{c.machineCode}</span>

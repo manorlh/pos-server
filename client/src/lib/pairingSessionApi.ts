@@ -57,6 +57,18 @@ export function fetchMobileContext(companyId?: string): Promise<MobileContextRes
   return pairingFetch<MobileContextResponse>(`/pairing/mobile/context${q}`);
 }
 
+/**
+ * The register number the next till claimed into `shopId` would get. A peek: the
+ * server allocates nothing until a claim lands, so asking costs the shop nothing.
+ */
+export function fetchMobileNextRegisterNumber(
+  shopId: string,
+): Promise<{ shopId: string; nextRegisterNumber: number }> {
+  return pairingFetch<{ shopId: string; nextRegisterNumber: number }>(
+    `/pairing/mobile/shops/${encodeURIComponent(shopId)}/next-register-number`,
+  );
+}
+
 export function patchMobileSession(payload: {
   companyId?: string;
   shopId?: string;

@@ -22,6 +22,7 @@ import { he } from 'date-fns/locale';
 import { api, fetchMachines, fetchShops, fetchZReports } from '@/lib/api';
 import { usePageScope, useSyncScopeFromRoute } from '@/lib/scope';
 import { findBySameId } from '@/lib/entityLookup';
+import { registerNumberOf } from '@/lib/registerNumber';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
 import { MachineHealthPanel, ClockSkewChip } from '@/components/dashboard/machine-health';
 import { SalesStats } from '@/components/dashboard/sales-stats';
@@ -69,6 +70,9 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
 
   const machine = findBySameId(machinesQuery.data ?? [], id);
   const shop = findBySameId(shopsQuery.data ?? [], machine?.shopId);
+  const registerNumber = machine ? registerNumberOf(machine) : null;
+  const registerLabel =
+    registerNumber !== null ? tMachines('registerLabel', { number: registerNumber }) : null;
 
   // Same as the shop page: the route drives the shared scope, and the shop and
   // company fill in as they resolve so the breadcrumb trail is complete.
@@ -128,7 +132,12 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <Monitor className="h-5 w-5 text-muted-foreground" aria-hidden />
-            <h1 className="text-2xl font-bold">{machine.name}</h1>
+            {/* The register number is how the shop names this till; the free-text
+                name stays beside it when it says something else. No shop, no number. */}
+            <h1 className="text-2xl font-bold">{registerLabel ?? machine.name}</h1>
+            {registerLabel && machine.name.trim() !== registerLabel ? (
+              <span className="text-base text-muted-foreground">{machine.name}</span>
+            ) : null}
             <Badge variant="outline">
               {tMachines(`pairingStatusLabels.${machine.pairingStatus}`)}
             </Badge>
@@ -154,7 +163,13 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
       </div>
 
       <Card>
-        <CardContent className="grid grid-cols-2 gap-4 pt-4 sm:grid-cols-4">
+        <CardContent className="grid grid-cols-2 gap-4 pt-4 sm:grid-cols-4 lg:grid-cols-5">
+          {registerNumber !== null ? (
+            <Field
+              label={t('registerNumber')}
+              value={<span className="tabular-nums">{registerNumber}</span>}
+            />
+          ) : null}
           <Field label={t('machineCode')} value={<span className="font-mono">{machine.machineCode}</span>} />
           <Field
             label={tMachines('lastSeen')}

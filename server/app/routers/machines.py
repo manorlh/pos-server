@@ -42,6 +42,7 @@ from app.services.realtime_info import (
 from app.services.machine_status import StatusInput, resolve_status
 from app.services.administrative_close import reconstruct_z_report
 from app.services.pairing import create_pairing_code
+from app.services.register_number import set_machine_shop
 from app.services.transactions import find_open_trading_day
 from app.services.permission_matrix import SHOP_SCOPED_ROLES
 from app.services.close_day import (
@@ -108,6 +109,7 @@ def _enrich_machine_status(
         "machineCode": machine.machine_code,
         "tenantId": machine.tenant_id,
         "shopId": machine.shop_id,
+        "posNumber": machine.pos_number,
         "distributorId": machine.distributor_id,
         "mqttClientId": machine.mqtt_client_id,
         "pairingStatus": machine.pairing_status,
@@ -397,6 +399,9 @@ def update_machine(
                 )
             machine.tenant_id = shop.tenant_id or machine.tenant_id
             machine.pairing_status = PairingStatus.ASSIGNED
+        # Not a plain setattr: changing shop gives up this shop's register number
+        # and draws the new shop's next one.
+        set_machine_shop(db, machine, update_data.pop("shop_id"))
 
     for field, value in update_data.items():
         setattr(machine, field, value)
@@ -454,7 +459,9 @@ def delete_machine(
     def _soft_delete() -> Dict[str, Any]:
         machine.is_active = False
         machine.pairing_status = PairingStatus.UNPAIRED
-        machine.shop_id = None
+        # Leaves the shop, so it gives up its register number. The number is not
+        # handed to anyone else: the shop's counter has already moved past it.
+        set_machine_shop(db, machine, None)
         machine.mqtt_client_id = None
         # Machine tokens do not expire, so unpairing is the revocation. Bumping the
         # version kills every token this terminal was ever issued, for good: if the

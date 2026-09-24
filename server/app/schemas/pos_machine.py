@@ -77,6 +77,9 @@ class POSMachineResponse(POSMachineBase):
     id: uuid.UUID
     tenant_id: Optional[uuid.UUID] = Field(None, alias="tenantId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
+    #: The register number in its shop — "קופה 2". Null when the machine has no shop.
+    #: Text, because documents copy it verbatim; it is always a plain integer when set.
+    pos_number: Optional[str] = Field(None, alias="posNumber")
     distributor_id: uuid.UUID = Field(..., alias="distributorId")
     mqtt_client_id: Optional[str] = Field(None, alias="mqttClientId")
     pairing_status: ModelPairingStatus = Field(..., alias="pairingStatus")
