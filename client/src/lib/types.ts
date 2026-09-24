@@ -192,8 +192,23 @@ export interface PosSettingsV1 {
   nayaxDevicePort?: string;
   nayaxSpicyPath?: string;
   outOfStockPolicy?: OutOfStockPolicy;
+  /**
+   * Legacy tip switches. The server still reads them as the fallback for the
+   * per-option `pay*Tips` keys below, so they stay in the type, but the
+   * dashboard no longer writes them.
+   */
   tipsEnabled?: boolean;
   cashTipsEnabled?: boolean;
+  // Which payment buttons the till shows, and whether each asks for a tip.
+  // What each option is lives in lib/paymentOptions.ts.
+  payFastCashEnabled?: boolean;
+  payFastCashTips?: boolean;
+  payCashEnabled?: boolean;
+  payCashTips?: boolean;
+  payFastCardEnabled?: boolean;
+  payFastCardTips?: boolean;
+  payCardEnabled?: boolean;
+  payCardTips?: boolean;
   tipPresets?: number[];
   tipDistribution?: TipDistribution;
   receiptPrinterName?: string;
@@ -205,16 +220,32 @@ export interface PosSettingsV1 {
   brandHeroUrl?: string;
 }
 
+export type PaymentOptionSettingKey =
+  | 'payFastCashEnabled'
+  | 'payFastCashTips'
+  | 'payCashEnabled'
+  | 'payCashTips'
+  | 'payFastCardEnabled'
+  | 'payFastCardTips'
+  | 'payCardEnabled'
+  | 'payCardTips';
+
 /**
  * PATCH body for POS settings. Branding keys accept an explicit `null`, which
  * unsets them at that level so the level above is inherited again — distinct
  * from `''`, which is stored and means "deliberately no image here".
+ *
+ * The payment-option keys take `null` for the same reason: a switch has no
+ * empty state, so without it a layer that once overrode a key could never go
+ * back to inheriting it.
  */
 export type PosSettingsPatch = Partial<
-  Omit<PosSettingsV1, 'brandLogoUrl' | 'brandHeroUrl'>
+  Omit<PosSettingsV1, 'brandLogoUrl' | 'brandHeroUrl' | PaymentOptionSettingKey>
 > & {
   brandLogoUrl?: string | null;
   brandHeroUrl?: string | null;
+} & {
+  [K in PaymentOptionSettingKey]?: boolean | null;
 };
 
 export type BrandingImageKind = 'logo' | 'hero';

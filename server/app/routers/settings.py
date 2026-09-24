@@ -1,5 +1,5 @@
 """Tenant, company and shop POS settings (dashboard CRUD)."""
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -19,8 +19,15 @@ from app.schemas.pos_settings import (
     PosSettingsV1Patch,
     ShopSettingsResponse,
 )
+from app.services.payment_options import (
+    PAYMENT_OPTION_ALLOWED_KEYS,
+    PAYMENT_OPTION_SETTING_KEYS,
+    any_allowed,
+    resolve_payment_options,
+)
 from app.services.settings_merge import (
     BRANDING_SETTING_KEYS,
+    deep_merge_settings,
     effective_settings_updated_at,
     merge_settings,
     patch_settings_json,
@@ -103,10 +110,71 @@ def _check_branding_write(user: User, branding: Dict[str, Any]) -> None:
         )
 
 
+def _payment_options_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
+    """Payment option keys the caller explicitly sent, keeping an explicit `null`.
+
+    Same reason as branding: the dashboard's "reset to inherited" on these keys
+    sends `null`, meaning remove the key from this layer so the parent's value
+    shows through again. `false` is not a substitute — it overrides, and hides.
+    """
+    raw = data.model_dump(exclude_unset=True, by_alias=True)
+    return {key: raw[key] for key in PAYMENT_OPTION_SETTING_KEYS if key in raw}
+
+
 def _build_patch(data: PosSettingsV1Patch, user: User) -> Dict[str, Any]:
     branding = _branding_patch(data)
     _check_branding_write(user, branding)
-    return {**patch_to_camel_dict(data), **branding}
+    return {**patch_to_camel_dict(data), **branding, **_payment_options_patch(data)}
+
+
+#: Stable code for the dashboard to match on; the message is for people and may change.
+#: `msg` rather than `message` because that is the key the dashboard's generic error
+#: formatter (client/src/lib/apiError.ts) already reads from FastAPI's own 422 items,
+#: so an unhandled toast still shows words rather than a JSON blob.
+NO_PAYMENT_OPTION_DETAIL = {
+    "code": "no_payment_option_allowed",
+    "msg": (
+        "At least one payment option must stay allowed "
+        "(fast cash, cash, fast card or card): with none, the till cannot take payment."
+    ),
+}
+
+
+def _check_leaves_a_payment_option(
+    parent_layers: List[Any], current: Any, patch: Dict[str, Any]
+) -> None:
+    """Refuse a write that would leave this layer's tills no way to take payment.
+
+    Only the layer being written is checked, against its own parents. A tenant or
+    company write can still leave a child shop with nothing allowed (the child's
+    own overrides are not looked at here); the till shows a blocking message in
+    that case, which is accepted for now rather than fanning this check out over
+    every shop below. The check also only runs when the patch changes one of this
+    layer's allowed keys (a new value, or a `null` that removes a stored one). The
+    dashboard sends the whole form on every save, so without that a shop emptied
+    from above could not even save a printer name through the API.
+    """
+    stored = current if isinstance(current, dict) else {}
+    if not any(
+        key in patch and patch[key] != stored.get(key) for key in PAYMENT_OPTION_ALLOWED_KEYS
+    ):
+        return
+    after = deep_merge_settings(*parent_layers, patch_settings_json(current, patch))
+    if not any_allowed(after):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=dict(NO_PAYMENT_OPTION_DETAIL),
+        )
+
+
+def _tenant_of(company: Company, db: Session):
+    if not company.tenant_id:
+        return None
+    return db.query(Tenant).filter(Tenant.id == company.tenant_id).first()
+
+
+def _settings_of(entity: Any) -> Any:
+    return entity.settings if entity is not None else None
 
 
 @router.get(
@@ -154,6 +222,7 @@ def patch_tenant_settings(
             settings_updated_at=tenant.settings_updated_at,
         )
 
+    _check_leaves_a_payment_option([], tenant.settings, patch)
     tenant.settings = patch_settings_json(tenant.settings, patch)
     tenant.settings_updated_at = utc_now()
     db.commit()
@@ -213,6 +282,9 @@ def patch_company_settings(
             settings_updated_at=company.settings_updated_at,
         )
 
+    _check_leaves_a_payment_option(
+        [_settings_of(_tenant_of(company, db))], company.settings, patch
+    )
     company.settings = patch_settings_json(company.settings, patch)
     company.settings_updated_at = utc_now()
     db.commit()
@@ -246,11 +318,15 @@ def get_shop_settings(
     if include_effective:
         company = db.query(Company).filter(Company.id == shop.company_id).first()
         if company:
-            tenant = None
-            if company.tenant_id:
-                tenant = db.query(Tenant).filter(Tenant.id == company.tenant_id).first()
+            tenant = _tenant_of(company, db)
             # Inherited preview = company (+ tenant) defaults without shop overrides.
             effective = merge_settings(company, tenant=tenant)
+            # Payment options resolved here, so the dashboard shows what the shop
+            # would actually get and never carries its own copy of the rule. Only
+            # this preview is resolved: `settings` below stays the shop's raw JSON,
+            # so a key the shop never set still reads as inherited, not overridden.
+            # Tips as chosen, not as effective: see resolve_payment_options.
+            effective.update(resolve_payment_options(effective, effective=False))
 
     return ShopSettingsResponse(
         settings=shop.settings or {},
@@ -284,6 +360,11 @@ def patch_shop_settings(
             settings_updated_at=shop.settings_updated_at,
         )
 
+    company = db.query(Company).filter(Company.id == shop.company_id).first()
+    tenant = _tenant_of(company, db) if company else None
+    _check_leaves_a_payment_option(
+        [_settings_of(tenant), _settings_of(company)], shop.settings, patch
+    )
     shop.settings = patch_settings_json(shop.settings, patch)
     shop.settings_updated_at = utc_now()
     db.commit()

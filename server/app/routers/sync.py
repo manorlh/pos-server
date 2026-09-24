@@ -48,6 +48,7 @@ from app.services.settings_merge import (
     effective_settings_updated_at,
     merge_all_settings_layers,
 )
+from app.services.payment_options import legacy_tip_flags, resolve_payment_options
 from app.schemas.transaction import (
     TransactionsBatchRequest,
     TransactionsBatchResponse,
@@ -1147,6 +1148,15 @@ def get_settings_sync(
 
     all_settings = merge_all_settings_layers(company, shop, tenant)
     effective = {k: all_settings[k] for k in MANAGED_SETTING_KEYS if k in all_settings}
+    # The payment option keys always go out, resolved, so the till never has to
+    # guess what an absent key means. The legacy pair is overwritten with values
+    # derived from them: a till still on an APK that predates the per-option keys
+    # reads only tipsEnabled/cashTipsEnabled, and should still ask for a tip where
+    # the merchant turned one on through the new keys alone. View only — nothing
+    # here is written back to any layer's stored settings.
+    payment_options = resolve_payment_options(all_settings)
+    effective.update(payment_options)
+    effective.update(legacy_tip_flags(payment_options))
     business_info = build_business_info(company, shop, all_settings)
 
     update_machine_sync_timestamp(db, str(machine.id))
