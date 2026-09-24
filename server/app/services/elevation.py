@@ -40,11 +40,13 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models.elevated_session import ElevatedSession
 from app.models.pos_machine import POSMachine
+from app.models.pos_user import PosUser
 from app.models.user import User
 from app.services.auth import get_password_hash, verify_password
 from app.services.company_hierarchy import user_may_use_machine
 from app.services.permissions import (
     Scope,
+    pos_user_till_scopes,
     requires_per_action_reauth,
     till_grantable_scopes,
 )
@@ -161,6 +163,41 @@ def verify_till_pin(db: Session, user: User, pin: str) -> bool:
     return False
 
 
+def pos_user_lockout_remaining(pos_user: PosUser) -> Optional[timedelta]:
+    """How long until this till user may try a PIN at the approval prompt again."""
+    until = _aware(pos_user.pin_locked_until)
+    if until is None:
+        return None
+    remaining = until - _now()
+    return remaining if remaining.total_seconds() > 0 else None
+
+
+def verify_pos_user_pin(db: Session, pos_user: PosUser, pin: str) -> bool:
+    """
+    Check a till user's PIN at the approval prompt, recording the attempt.
+
+    The same shape and the same limits as `verify_till_pin`, against the hash the till
+    user signs in with — there is one PIN per person, and it is the one set in the
+    cloud. Callers consult `pos_user_lockout_remaining` first, for the same reason.
+    """
+    if not pos_user.pin_hash:
+        return False
+    if verify_password(pin or "", pos_user.pin_hash):
+        pos_user.pin_failed_count = 0
+        pos_user.pin_locked_until = None
+        db.add(pos_user)
+        return True
+
+    pos_user.pin_failed_count = int(pos_user.pin_failed_count or 0) + 1
+    if pos_user.pin_failed_count >= settings.till_pin_max_attempts:
+        pos_user.pin_locked_until = _now() + timedelta(
+            minutes=settings.till_pin_lockout_minutes
+        )
+        pos_user.pin_failed_count = 0
+    db.add(pos_user)
+    return False
+
+
 # ── The grant ─────────────────────────────────────────────────────────────────
 
 
@@ -183,20 +220,55 @@ def grantable_scopes(
     return [scope for scope in requested if scope in allowed]
 
 
+def pos_user_may_use_machine(pos_user: PosUser, machine: POSMachine) -> bool:
+    """
+    A till user belongs to one shop, and only that shop's tills answer to them.
+
+    Much narrower than `user_may_use_machine`, deliberately: a cloud account's reach
+    follows the company tree, a till user's is the one shop the dashboard put them in.
+    """
+    return (
+        bool(pos_user.is_active)
+        and machine.shop_id is not None
+        and str(pos_user.shop_id) == str(machine.shop_id)
+    )
+
+
+def grantable_scopes_for_pos_user(
+    pos_user: PosUser, machine: POSMachine, requested: Iterable[Scope]
+) -> List[Scope]:
+    """`grantable_scopes` for a till user: their role's ceiling ∩ what was asked, at their own shop."""
+    if not pos_user_may_use_machine(pos_user, machine):
+        return []
+    allowed = pos_user_till_scopes(pos_user.role)
+    return [scope for scope in requested if scope in allowed]
+
+
 def create_session(
-    db: Session, user: User, machine: POSMachine, scopes: Iterable[Scope]
+    db: Session,
+    user: Optional[User],
+    machine: POSMachine,
+    scopes: Iterable[Scope],
+    *,
+    pos_user: Optional[PosUser] = None,
 ) -> Tuple[str, ElevatedSession]:
     """
     Issue a grant, returning the raw token (shown once) and the stored row.
 
+    Held by exactly one of `user` (a cloud account) or `pos_user` (a till user); the
+    table enforces the same with a CHECK, so passing both or neither fails loudly.
+
     The shop is copied from the machine rather than referenced through it, so a
     later reassignment of the machine to another shop cannot move a live grant.
     """
+    if (user is None) == (pos_user is None):
+        raise ValueError("a grant has exactly one holder")
     raw = secrets.token_urlsafe(32)
     now = _now()
     session = ElevatedSession(
         token_hash=_hash_token(raw),
-        user_id=user.id,
+        user_id=user.id if user is not None else None,
+        pos_user_id=pos_user.id if pos_user is not None else None,
         machine_id=machine.id,
         shop_id=machine.shop_id,
         tenant_id=machine.tenant_id,
@@ -247,12 +319,22 @@ def resolve_session(db: Session, raw_token: str) -> Optional[ElevatedSession]:
     if not session_is_live(session, at=now):
         return None
 
-    user = session.user
-    if user is None or not user.is_active:
-        return None
+    # A demotion, a deactivation or — for a till user — a move to another shop must
+    # bite immediately, not at the end of the window. Whichever kind of person holds
+    # the grant, their authority is re-read from their own row on every use.
+    if session.pos_user_id is not None:
+        pos_user = session.pos_user
+        if pos_user is None or not pos_user.is_active:
+            return None
+        if str(pos_user.shop_id) != str(session.shop_id):
+            return None
+        still_allowed = pos_user_till_scopes(pos_user.role)
+    else:
+        user = session.user
+        if user is None or not user.is_active:
+            return None
+        still_allowed = till_grantable_scopes(user.role)
 
-    # A demotion must bite immediately, not at the end of the window.
-    still_allowed = till_grantable_scopes(user.role)
     held = session_scopes(session)
     if not held or not held.issubset(still_allowed):
         return None

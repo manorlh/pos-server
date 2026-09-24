@@ -2,7 +2,7 @@
 REST sync endpoint — used by POS as HTTP fallback when MQTT is unavailable.
 
 GET  /sync/{machine_id}/catalog?since=ISO_TS   → full or delta catalog
-POST /sync/{machine_id}/catalog                → batch of POS-side catalog changes
+POST /sync/{machine_id}/catalog                → retired (410); see `post_catalog_changes`
 """
 import logging
 from datetime import datetime, timezone
@@ -16,12 +16,14 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.middleware.auth import (
     ELEVATION_HEADER,
+    CatalogActor,
     elevation_if_offered,
     get_pos_machine_for_sync_path,
-    require_elevated,
+    require_catalog_authority,
 )
 from app.models.elevated_session import ElevatedSession
 from app.models.shop_product_override import ShopProductOverride
+from app.models.shop_category_override import ShopCategoryOverride
 from app.services.permissions import Scope
 from app.models.category import Category, CatalogLevel as CategoryCatalogLevel
 from app.models.elevated_session import ElevatedSession
@@ -58,7 +60,7 @@ from app.schemas.z_report import (
     ZReportUpsertResponse,
 )
 from app.schemas.close_day import CloseDayAckIn, CloseDayAckResponse
-from app.services.catalog_notify import notify_all_machines_for_tenant
+from app.services.catalog_notify import notify_all_machines_for_tenant, notify_machines_for_shop
 from app.services.product_validation import validate_open_price_update
 from app.services.sku_sequence import resolve_sku_for_create
 from app.services.tenant_sku_sequence import allocate_global_sku
@@ -88,22 +90,6 @@ router = APIRouter(prefix="/sync", tags=["sync"])
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
-class CatalogChangeItem(BaseModel):
-    action: Literal["create", "update", "delete"]
-    entity: Literal["product", "category"]
-    local_id: str = Field(..., alias="localId")
-    cloud_id: Optional[str] = Field(None, alias="cloudId")
-    updated_at: str = Field(..., alias="updatedAt")
-    data: Optional[Dict[str, Any]] = None
-
-    class Config:
-        populate_by_name = True
-
-
-class CatalogBatchRequest(BaseModel):
-    changes: List[CatalogChangeItem]
-
-
 class CatalogSyncResponse(BaseModel):
     sync_type: str = Field(..., alias="syncType")
     server_time: str = Field(..., alias="serverTime")
@@ -132,124 +118,6 @@ def _require_assigned_machine(machine: POSMachine) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Machine tenant context required",
         )
-
-
-def _apply_product_change(
-    item: CatalogChangeItem, machine: POSMachine, db: Session
-) -> SyncStatus:
-    """
-    Apply a single product change coming from the POS.
-    Conflict rule: latest updated_at wins.
-    """
-    incoming_ts = datetime.fromisoformat(item.updated_at.replace("Z", "+00:00"))
-
-    if item.action == "delete":
-        if item.cloud_id:
-            product = db.query(Product).filter(Product.id == item.cloud_id).first()
-            if product:
-                db.delete(product)
-        return SyncStatus.SUCCESS
-
-    if not item.data:
-        return SyncStatus.FAILED
-
-    # Find existing record
-    product: Optional[Product] = None
-    if item.cloud_id:
-        product = db.query(Product).filter(Product.id == item.cloud_id).first()
-
-    if product:
-        # Conflict resolution: only apply if incoming is newer
-        if product.updated_at and incoming_ts <= product.updated_at.replace(tzinfo=timezone.utc):
-            return SyncStatus.CONFLICT_RESOLVED
-        # Apply update
-        allowed = (
-            "name",
-            "description",
-            "price",
-            "image_url",
-            "in_stock",
-            "is_available",
-            "stock_quantity",
-            "barcode",
-            "tax_rate",
-        )
-        for key in allowed:
-            camel = "".join(w.capitalize() if i else w for i, w in enumerate(key.split("_")))
-            if camel in item.data:
-                setattr(product, key, item.data[camel])
-        product.is_local_override = True
-    else:
-        # New product from POS — create as local catalog entry
-        product = Product(
-            tenant_id=machine.tenant_id,
-            shop_id=machine.shop_id,
-            pos_machine_id=machine.id,
-            catalog_level=CatalogLevel.LOCAL,
-            is_local_override=True,
-            name=item.data.get("name", ""),
-            description=item.data.get("description"),
-            price=item.data.get("price", 0),
-            sku=item.data.get("sku", item.local_id),
-            image_url=item.data.get("imageUrl"),
-            in_stock=item.data.get("inStock", True),
-            is_available=item.data.get("isAvailable", True),
-            stock_quantity=item.data.get("stockQuantity", 0),
-            barcode=item.data.get("barcode"),
-            tax_rate=item.data.get("taxRate"),
-            category_id=item.data.get("categoryId"),
-            is_open_price=bool(item.data.get("isOpenPrice", False)),
-            is_weighed=bool(item.data.get("isWeighed", False)),
-            unit_label=(item.data.get("unitLabel") or None),
-        )
-        db.add(product)
-
-    return SyncStatus.SUCCESS
-
-
-def _apply_category_change(
-    item: CatalogChangeItem, machine: POSMachine, db: Session
-) -> SyncStatus:
-    incoming_ts = datetime.fromisoformat(item.updated_at.replace("Z", "+00:00"))
-
-    if item.action == "delete":
-        if item.cloud_id:
-            cat = db.query(Category).filter(Category.id == item.cloud_id).first()
-            if cat:
-                db.delete(cat)
-        return SyncStatus.SUCCESS
-
-    if not item.data:
-        return SyncStatus.FAILED
-
-    cat: Optional[Category] = None
-    if item.cloud_id:
-        cat = db.query(Category).filter(Category.id == item.cloud_id).first()
-
-    if cat:
-        if cat.updated_at and incoming_ts <= cat.updated_at.replace(tzinfo=timezone.utc):
-            return SyncStatus.CONFLICT_RESOLVED
-        allowed = ("name", "description", "color", "image_url", "is_active", "sort_order")
-        for key in allowed:
-            camel = "".join(w.capitalize() if i else w for i, w in enumerate(key.split("_")))
-            if camel in item.data:
-                setattr(cat, key, item.data[camel])
-    else:
-        cat = Category(
-            tenant_id=machine.tenant_id,
-            shop_id=machine.shop_id,
-            pos_machine_id=machine.id,
-            catalog_level=CategoryCatalogLevel.LOCAL,
-            name=item.data.get("name", ""),
-            description=item.data.get("description"),
-            color=item.data.get("color"),
-            image_url=item.data.get("imageUrl"),
-            is_active=item.data.get("isActive", True),
-            sort_order=item.data.get("sortOrder", 0),
-        )
-        db.add(cat)
-
-    return SyncStatus.SUCCESS
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -303,55 +171,24 @@ def get_catalog_sync(
     )
 
 
-@router.post("/{machine_id}/catalog", status_code=status.HTTP_200_OK)
+@router.post("/{machine_id}/catalog", status_code=status.HTTP_410_GONE)
 def post_catalog_changes(
     machine_id: str,
-    body: CatalogBatchRequest,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    db: Session = Depends(get_db),
 ):
     """
-    Optional batch upload from POS (legacy). Prefer creating catalog via cloud APIs first.
+    Retired. Catalog changes from a till go through the per-entity endpoints below.
+
+    This was the original batch upload, and it wrote with nothing but a machine token:
+    it looked products and categories up by id **with no tenant check**, so any paired
+    till could rename, reprice or delete any tenant's catalog by guessing or harvesting
+    an id. Neither client calls it — the Android till only ever GETs this path, and the
+    desktop POS refuses to queue catalog writes at all — so it is closed rather than
+    repaired: a second write path beside the guarded ones is a second thing to keep
+    guarded. Still authenticates, so an unpaired caller gets the usual 401/403 and a
+    paired one learns the path is gone rather than that it is forbidden.
     """
-
-    results = {"applied": 0, "conflicts": 0, "failed": 0}
-    logs: List[SyncLog] = []
-
-    for item in body.changes:
-        try:
-            if item.entity == "product":
-                result_status = _apply_product_change(item, machine, db)
-            else:
-                result_status = _apply_category_change(item, machine, db)
-
-            logs.append(SyncLog(
-                machine_id=machine.id,
-                direction=SyncDirection.POS_TO_SERVER,
-                entity_type=SyncEntityType.PRODUCTS if item.entity == "product" else SyncEntityType.CATEGORIES,
-                action=SyncAction(item.action),
-                status=result_status,
-                payload=item.model_dump(by_alias=True),
-            ))
-
-            if result_status == SyncStatus.SUCCESS:
-                results["applied"] += 1
-            elif result_status == SyncStatus.CONFLICT_RESOLVED:
-                results["conflicts"] += 1
-            else:
-                results["failed"] += 1
-
-        except Exception as e:
-            logger.error(f"Error applying catalog change {item.local_id}: {e}")
-            results["failed"] += 1
-
-    db.bulk_save_objects(logs)
-    db.commit()
-    update_machine_sync_timestamp(db, machine_id)
-
-    return {
-        "serverTime": datetime.now(timezone.utc).isoformat(),
-        **results,
-    }
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail="catalog_batch_retired")
 
 
 # ── Catalog editing from the till ─────────────────────────────────────────────
@@ -388,7 +225,7 @@ def _audit(
     db: Session,
     *,
     machine: POSMachine,
-    session: ElevatedSession,
+    actor: CatalogActor,
     entity: SyncEntityType,
     action: SyncAction,
     entity_id,
@@ -398,7 +235,8 @@ def _audit(
     db.add(
         SyncLog(
             machine_id=machine.id,
-            actor_user_id=session.user_id,
+            actor_user_id=actor.user_id,
+            actor_pos_user_id=actor.pos_user_id,
             direction=SyncDirection.POS_TO_SERVER,
             entity_type=entity,
             entity_id=entity_id,
@@ -454,6 +292,10 @@ def _override_for(db: Session, shop_id, product_id) -> Optional[ShopProductOverr
     )
 
 
+#: The one category field with a shop-level meaning. See `machine_update_cloud_category`.
+_CATEGORY_OVERRIDE_FIELDS = {"name"}
+
+
 #: Fields a till may change on *any* product listed in its shop. They map onto the
 #: assortment row, so they change what this shop sells and charges without touching
 #: what anyone else does.
@@ -485,7 +327,7 @@ def machine_create_cloud_product(
     machine_id: str,
     data: ProductCreate,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    session: ElevatedSession = Depends(require_elevated(Scope.CATALOG_WRITE)),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
     db: Session = Depends(get_db),
 ):
     """Create a product from the till, listed in the till's own shop."""
@@ -545,7 +387,7 @@ def machine_create_cloud_product(
     _audit(
         db,
         machine=machine,
-        session=session,
+        actor=actor,
         entity=SyncEntityType.PRODUCTS,
         action=SyncAction.CREATE,
         entity_id=product.id,
@@ -562,7 +404,7 @@ def machine_update_cloud_product(
     product_id: str,
     data: ProductUpdate,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    session: ElevatedSession = Depends(require_elevated(Scope.CATALOG_WRITE)),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
     db: Session = Depends(get_db),
 ):
     """
@@ -613,7 +455,7 @@ def machine_update_cloud_product(
     _audit(
         db,
         machine=machine,
-        session=session,
+        actor=actor,
         entity=SyncEntityType.PRODUCTS,
         action=SyncAction.UPDATE,
         entity_id=product.id,
@@ -630,7 +472,7 @@ def machine_delete_cloud_product(
     machine_id: str,
     product_id: str,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    session: ElevatedSession = Depends(require_elevated(Scope.CATALOG_WRITE)),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
     db: Session = Depends(get_db),
 ):
     """
@@ -655,7 +497,7 @@ def machine_delete_cloud_product(
     _audit(
         db,
         machine=machine,
-        session=session,
+        actor=actor,
         entity=SyncEntityType.PRODUCTS,
         action=SyncAction.DELETE,
         entity_id=product.id,
@@ -700,7 +542,7 @@ def machine_create_cloud_category(
     machine_id: str,
     data: CategoryCreate,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    session: ElevatedSession = Depends(require_elevated(Scope.CATALOG_WRITE)),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
     db: Session = Depends(get_db),
 ):
     """
@@ -741,7 +583,7 @@ def machine_create_cloud_category(
     _audit(
         db,
         machine=machine,
-        session=session,
+        actor=actor,
         entity=SyncEntityType.CATEGORIES,
         action=SyncAction.CREATE,
         entity_id=category.id,
@@ -758,40 +600,73 @@ def machine_update_cloud_category(
     category_id: str,
     data: CategoryUpdate,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    session: ElevatedSession = Depends(require_elevated(Scope.CATALOG_WRITE)),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
     db: Session = Depends(get_db),
 ):
+    """
+    Rename a category *for this shop*.
+
+    A category has no shop tier — `get_categories_for_sync` hands every tenant category
+    to every till with a shop — so writing the category row renamed it on every till in
+    the tenant. The old guard, "every product in it is listed only here", did not stop
+    that: it was vacuously true for an empty category, which is exactly the one a shop
+    is most likely to be tidying, and even when it held, the other tills still showed
+    the new name.
+
+    So a rename from a till lands on this shop's `shop_category_overrides` row, the way
+    a till's price change lands on its `shop_product_overrides` row, and the tenant
+    category is never written. Renaming back to the tenant's own name clears the
+    override rather than storing a copy that would silently stop following a later
+    rename from the dashboard. Every other field is tenant-wide display data with no
+    shop-level meaning, and stays the dashboard's to change.
+    """
     _require_assigned_machine(machine)
     shop = _shop_or_400(db, machine)
     category = _machine_editable_category(db, machine, category_id)
 
-    if not _category_belongs_only_to(db, category, shop.id):
+    updates = data.model_dump(exclude_unset=True, by_alias=False)
+    tenant_fields = sorted(k for k in updates if k not in _CATEGORY_OVERRIDE_FIELDS)
+    if tenant_fields:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="shared_category_readonly"
         )
 
-    if data.parent_id is not None:
-        parent = db.query(Category).filter(Category.id == data.parent_id).first()
-        if not parent or parent.tenant_id != machine.tenant_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="Parent category not found"
-            )
-
-    for field, value in data.model_dump(exclude_unset=True, by_alias=False).items():
-        setattr(category, field, value)
+    override = (
+        db.query(ShopCategoryOverride)
+        .filter(
+            ShopCategoryOverride.shop_id == shop.id,
+            ShopCategoryOverride.category_id == category.id,
+        )
+        .first()
+    )
+    if "name" in updates:
+        name = (updates["name"] or "").strip()
+        if override is None:
+            override = ShopCategoryOverride(shop_id=shop.id, category_id=category.id)
+            db.add(override)
+        override.name = None if name == category.name else name
+        # Set explicitly: `onupdate` does not fire on an INSERT, and the till's delta
+        # pull finds this change by this timestamp and nothing else.
+        override.updated_at = datetime.now(timezone.utc)
 
     _audit(
         db,
         machine=machine,
-        session=session,
+        actor=actor,
         entity=SyncEntityType.CATEGORIES,
         action=SyncAction.UPDATE,
         entity_id=category.id,
+        note="shop_override",
     )
     db.commit()
     db.refresh(category)
-    notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="category_updated")
-    return category
+    # This shop's tills only: no other shop's button changed.
+    notify_machines_for_shop(db, str(shop.id), reason="category_updated")
+
+    response = CategoryResponse.model_validate(category)
+    if override is not None and override.name:
+        response.name = override.name
+    return response
 
 
 @router.delete("/{machine_id}/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -799,7 +674,7 @@ def machine_delete_cloud_category(
     machine_id: str,
     category_id: str,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    session: ElevatedSession = Depends(require_elevated(Scope.CATALOG_WRITE)),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
     db: Session = Depends(get_db),
 ):
     _require_assigned_machine(machine)
@@ -820,7 +695,7 @@ def machine_delete_cloud_category(
     _audit(
         db,
         machine=machine,
-        session=session,
+        actor=actor,
         entity=SyncEntityType.CATEGORIES,
         action=SyncAction.DELETE,
         entity_id=category.id,
@@ -916,6 +791,7 @@ def post_z_report(
         )
 
     approved_by = None
+    approved_by_pos_user = None
     if approval is not None:
         # Spent only now the close is certain. `consume_per_action_use` locks the row
         # and returns False if a concurrent request got there first, so one PIN closes
@@ -927,8 +803,15 @@ def post_z_report(
                 headers={"WWW-Authenticate": ELEVATION_HEADER},
             )
         approved_by = approval.user_id
+        approved_by_pos_user = approval.pos_user_id
 
-    z_report, outcome = apply_z_report(db, machine, body, approved_by_user_id=approved_by)
+    z_report, outcome = apply_z_report(
+        db,
+        machine,
+        body,
+        approved_by_user_id=approved_by,
+        approved_by_pos_user_id=approved_by_pos_user,
+    )
     if body.close_day_request_id:
         complete_close_day_item_for_z_report(
             db,

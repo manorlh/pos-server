@@ -1,9 +1,10 @@
 """Wire shapes for till elevation. camelCase out, either case in, like the rest."""
 
+import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 _WIRE = ConfigDict(populate_by_name=True, from_attributes=True)
 
@@ -11,12 +12,32 @@ _WIRE = ConfigDict(populate_by_name=True, from_attributes=True)
 class ElevationRequest(BaseModel):
     model_config = _WIRE
 
-    email: EmailStr
+    #: Who is approving — exactly one of these:
+    #:
+    #: * `pos_user_id` — a till user picked from the roster the till already holds. The
+    #:   everyday path: the person a cashier fetches is standing in the shop, their name
+    #:   is already on the device, and one tap on it replaces typing anything at all.
+    #: * `username` — the same person, typed, for a till whose roster is stale.
+    #: * `email` — a cloud account, for approvers with no till login, like a distributor.
+    email: Optional[EmailStr] = None
+    username: Optional[str] = None
+    pos_user_id: Optional[uuid.UUID] = Field(default=None, alias="posUserId")
     pin: str
     #: What the till wants to do. Names it does not recognise are ignored rather
     #: than rejected, so a newer device asking for a scope this server has not
     #: shipped still gets a session for the rest.
     scopes: List[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _exactly_one_identity(self):
+        given = [
+            self.email is not None,
+            bool((self.username or "").strip()),
+            self.pos_user_id is not None,
+        ]
+        if sum(given) != 1:
+            raise ValueError("send exactly one of email, username or posUserId")
+        return self
 
 
 class ElevationResponse(BaseModel):
@@ -31,7 +52,11 @@ class ElevationResponse(BaseModel):
     #: Who the audit trail will name. Sent back so the till can show "elevated as
     #: Yossi" rather than echoing the typed email, which may differ in case.
     user_name: str = Field(alias="userName")
-    user_email: str = Field(alias="userEmail")
+    #: Null when a till user approved — they have no email.
+    user_email: Optional[str] = Field(default=None, alias="userEmail")
+    #: What the till should offer next time, exactly as the server matched it: the
+    #: username for a till user, the email for a cloud account.
+    user_login: str = Field(alias="userLogin")
 
 
 class ElevationStatus(BaseModel):
@@ -41,7 +66,7 @@ class ElevationStatus(BaseModel):
     expires_at: datetime = Field(alias="expiresAt")
     absolute_expires_at: datetime = Field(alias="absoluteExpiresAt")
     user_name: str = Field(alias="userName")
-    user_email: str = Field(alias="userEmail")
+    user_email: Optional[str] = Field(default=None, alias="userEmail")
 
 
 class TillPinSet(BaseModel):

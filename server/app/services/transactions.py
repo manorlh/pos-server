@@ -634,6 +634,7 @@ def apply_z_report(
     z: ZReportIn,
     *,
     approved_by_user_id: Optional[uuid.UUID] = None,
+    approved_by_pos_user_id: Optional[uuid.UUID] = None,
 ) -> Tuple[ZReport, str]:
     """
     Idempotent close: returns (z_report, status) where status is 'accepted' or 'duplicate'.
@@ -643,6 +644,9 @@ def apply_z_report(
     when the till's own operator had the authority and nothing was elevated — which is
     the ordinary close. A duplicate returns before the row is touched, so a retry
     cannot rewrite the approver the first close recorded.
+
+    `approved_by_pos_user_id` is the same thing when the approver typed a till username
+    rather than an email. At most one of the two is set, because a grant has one holder.
     """
     td = get_or_create_trading_day(
         db,
@@ -693,6 +697,7 @@ def apply_z_report(
         discrepancy=None if z.unattended else z.discrepancy,
         unattended=z.unattended,
         approved_by_user_id=approved_by_user_id,
+        approved_by_pos_user_id=approved_by_pos_user_id,
         payload=z.payload,
         closed_at=z.closed_at,
     )
