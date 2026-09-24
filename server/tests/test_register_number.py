@@ -695,7 +695,7 @@ class TestMigration:
         buf = io.StringIO()
         cfg = Config(os.path.join(here, "alembic.ini"), output_buffer=buf)
         cfg.set_main_option("script_location", os.path.join(here, "alembic"))
-        command.upgrade(cfg, "a3b4c5d6e7f8:c5d6e7f8a9b0", sql=True)
+        command.upgrade(cfg, "b4c5d6e7f8a9:c5d6e7f8a9b0", sql=True)
         return " ".join(buf.getvalue().split())
 
     def test_it_is_the_only_head_and_follows_a3b4c5d6e7f8(self):
@@ -708,7 +708,7 @@ class TestMigration:
         script = ScriptDirectory.from_config(cfg)
 
         assert script.get_heads() == ["c5d6e7f8a9b0"]
-        assert script.get_revision("c5d6e7f8a9b0").down_revision == "a3b4c5d6e7f8"
+        assert script.get_revision("c5d6e7f8a9b0").down_revision == "b4c5d6e7f8a9"
 
     def test_backfill_numbers_per_shop_in_creation_order_with_id_tiebreak(self, sql):
         assert "PARTITION BY m.shop_id ORDER BY m.created_at, m.id" in sql

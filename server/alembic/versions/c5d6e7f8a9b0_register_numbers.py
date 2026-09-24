@@ -39,7 +39,7 @@ if absent, the backfill only touches machines that have no number yet (continuin
 shop's run above any number already present), and the seed only ever raises a counter.
 
 Revision ID: c5d6e7f8a9b0
-Revises: a3b4c5d6e7f8
+Revises: b4c5d6e7f8a9
 Create Date: 2026-09-25 10:00:00.000000
 """
 
@@ -51,7 +51,7 @@ from sqlalchemy.dialects.postgresql import UUID
 
 
 revision = "c5d6e7f8a9b0"
-down_revision = "a3b4c5d6e7f8"
+down_revision = "b4c5d6e7f8a9"
 branch_labels = None
 depends_on = None
 
