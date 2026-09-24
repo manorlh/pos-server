@@ -23,6 +23,10 @@ class ShopProductOverride(Base):
     is_listed = Column(Boolean, nullable=False, default=True)
     # When listed: allow adding to cart on POS (default True for new assortment rows).
     is_available = Column(Boolean, nullable=False, default=True)
+    # Created by the product's shop scope (app/services/product_shop_scope.py) rather
+    # than by hand. The scope only ever touches rows carrying this flag; a hand-added
+    # row is never listed, unlisted or deleted by it.
+    assigned_by_rule = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

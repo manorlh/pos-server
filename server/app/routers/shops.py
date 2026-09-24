@@ -26,7 +26,12 @@ from app.middleware.auth import (
     ensure_same_tenant,
 )
 from app.services.catalog_notify import notify_machines_for_shop
-from app.services.company_hierarchy import company_scope_ids, user_covers_company
+from app.services.company_hierarchy import (
+    ancestor_company_ids,
+    company_scope_ids,
+    user_covers_company,
+)
+from app.services.product_shop_scope import product_allowed_in_shop, reconcile_shops
 from app.services.pos_user_defaults import ensure_default_pos_user
 from app.services.register_number import peek_next_register_number, set_machine_shop
 from app.services.settings_notify import notify_machines_for_shop_settings
@@ -37,17 +42,19 @@ router = APIRouter(prefix="/shops", tags=["shops"])
 _SHOP_PROFILE_FIELDS = frozenset({"name", "branch_id", "address", "city"})
 
 
-def _global_product_company_scope(shop: Shop):
-    """Tenant-wide catalog (company_id null) or products scoped to the shop's company."""
-    return or_(Product.company_id.is_(None), Product.company_id == shop.company_id)
+def _global_product_company_scope(db: Session, shop: Shop):
+    """
+    Tenant-wide catalog (company_id null), or products of the shop's company or of any
+    company above it: a catalog is inherited downwards, so a holding company's product
+    is one its branches sell. A sibling company's products match neither.
+    """
+    company_ids = [shop.company_id] + ancestor_company_ids(db, shop.company_id)
+    return or_(Product.company_id.is_(None), Product.company_id.in_(company_ids))
 
 
-def _global_product_allowed_for_shop(product: Product, shop: Shop) -> bool:
-    if product.tenant_id != shop.tenant_id:
-        return False
-    if product.company_id is None:
-        return True
-    return product.company_id == shop.company_id
+def _global_product_allowed_for_shop(db: Session, product: Product, shop: Shop) -> bool:
+    """Same tenant, and the shop's company is the product's company or beneath it."""
+    return product_allowed_in_shop(db, product, shop)
 
 
 def _check_shop_access(user: User, shop: Shop, db: Session):
@@ -97,7 +104,7 @@ def list_shop_product_overrides(
         .filter(
             ShopProductOverride.shop_id == shop.id,
             Product.tenant_id == shop.tenant_id,
-            _global_product_company_scope(shop),
+            _global_product_company_scope(db, shop),
             Product.catalog_level == CatalogLevel.GLOBAL,
             Product.pos_machine_id.is_(None),
         )
@@ -155,7 +162,7 @@ def list_shop_product_catalog_candidates(
 
     q = db.query(Product).filter(
         Product.tenant_id == shop.tenant_id,
-        _global_product_company_scope(shop),
+        _global_product_company_scope(db, shop),
         Product.catalog_level == CatalogLevel.GLOBAL,
         Product.pos_machine_id.is_(None),
         ~Product.id.in_(assigned_ids),
@@ -214,7 +221,7 @@ def assign_shop_product(
     g = db.query(Product).filter(Product.id == global_product_id).first()
     if not g or g.catalog_level != CatalogLevel.GLOBAL or g.pos_machine_id is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Global product not found")
-    if not _global_product_allowed_for_shop(g, shop):
+    if not _global_product_allowed_for_shop(db, g, shop):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Product not in shop company")
 
     ovr = (
@@ -307,7 +314,7 @@ def upsert_shop_product_override(
     g = db.query(Product).filter(Product.id == global_product_id).first()
     if not g or g.catalog_level != CatalogLevel.GLOBAL or g.pos_machine_id is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Global product not found")
-    if not _global_product_allowed_for_shop(g, shop):
+    if not _global_product_allowed_for_shop(db, g, shop):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Product not in shop company")
 
     payload = body.model_dump(exclude_unset=True, by_alias=False)
@@ -334,7 +341,14 @@ def upsert_shop_product_override(
     if "price" in payload:
         ovr.price = payload["price"]
     if "is_listed" in payload:
-        ovr.is_listed = bool(payload["is_listed"])
+        listed = bool(payload["is_listed"])
+        if listed != ovr.is_listed and ovr.assigned_by_rule:
+            # Somebody chose, by hand, whether this shop shows the product. From here
+            # on the row is theirs: the product's shop scope never lists or unlists a
+            # hand-managed row, so it cannot undo that choice on the next shop event.
+            # A price edit alone does not do this — that is what per-shop prices are.
+            ovr.assigned_by_rule = False
+        ovr.is_listed = listed
     if "is_available" in payload:
         ovr.is_available = bool(payload["is_available"])
 
@@ -399,6 +413,9 @@ def create_shop(
     # so a shop can never exist without an operator a till can sign in as.
     db.flush()
     ensure_default_pos_user(db, shop)
+    # A new shop receives every product whose "all shops of company X" rule covers it.
+    # No till can be paired to it yet, so there is nobody to notify.
+    reconcile_shops(db, [shop])
     db.commit()
     db.refresh(shop)
     return shop
@@ -465,12 +482,21 @@ def update_shop(
 
     updates = data.model_dump(exclude_unset=True, by_alias=False)
     profile_changed = bool(_SHOP_PROFILE_FIELDS & set(updates.keys()))
+    was_active, old_company_id = shop.is_active, shop.company_id
     for field, value in updates.items():
         setattr(shop, field, value)
+    # Back into a rule's scope: reactivated, or (should the company ever become
+    # editable here) moved to another company. `reconcile_shops` also finds the rules
+    # that covered the old company, through the rows they created.
+    touched = set()
+    if (shop.is_active and not was_active) or str(shop.company_id) != str(old_company_id):
+        touched = reconcile_shops(db, [shop])
     db.commit()
     db.refresh(shop)
     if profile_changed:
         notify_machines_for_shop_settings(db, str(shop.id), reason="shop_profile_updated")
+    for touched_shop_id in touched:
+        notify_machines_for_shop(db, touched_shop_id, reason="shop_scope_rule")
     return shop
 
 
