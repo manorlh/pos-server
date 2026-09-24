@@ -33,6 +33,7 @@ from app.services.sync import (
     get_catalog_change_watermark_for_machine,
 )
 from app.services.catalog_notify import notify_machine_catalog_changed
+from app.routers.shops import _check_shop_access
 from app.services.company_hierarchy import user_covers_company, visible_shop_ids
 from app.services.shop_validation import shop_belongs_to_company
 from app.services.realtime_info import (
@@ -389,9 +390,12 @@ def update_machine(
             if not shop:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Shop not found")
             ensure_same_tenant(shop.tenant_id, active_tenant_id)
-            if current_user.role == UserRole.COMPANY_MANAGER:
-                if not user_covers_company(db, current_user, shop.company_id):
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+            # Only into a shop the caller manages. This used to check company managers
+            # alone, so a shop manager — who passes the machine check above for a till
+            # in their own shop — could seat that till in any shop of the tenant,
+            # another company's included, and draw that shop's register number.
+            if current_user.role not in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
+                _check_shop_access(current_user, shop, db)
             if not shop_belongs_to_company(db, sid, shop.company_id):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,

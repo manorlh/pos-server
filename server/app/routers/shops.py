@@ -398,6 +398,14 @@ def create_shop(
     if not company:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Company not found")
     ensure_same_tenant(company.tenant_id, active_tenant_id)
+    # Management flows downwards: a company manager opens shops in their own company or
+    # a subsidiary, never in a sibling's or a parent's. Checked before anything is
+    # written, because creating a shop seeds its operator and runs every product rule
+    # that covers the new shop, filling it with that company's catalog.
+    if current_user.role == UserRole.COMPANY_MANAGER and not user_covers_company(
+        db, current_user, company.id
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     shop = Shop(
         tenant_id=active_tenant_id,

@@ -27,7 +27,13 @@ from app.schemas.product import (
     ShopScopePreviewResponse,
     ShopScopePreviewShop,
 )
-from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
+from app.middleware.auth import (
+    _check_machine_access,
+    ensure_same_tenant,
+    get_active_tenant_id,
+    get_current_user,
+)
+from app.models.pos_machine import POSMachine
 from app.services import product_shop_scope as scope_svc
 from app.services.catalog_notify import (
     notify_all_machines_for_tenant,
@@ -60,6 +66,43 @@ def _check_product_access(user: User, product: Product, db: Session):
     if user.role in SHOP_SCOPED_ROLES and product.shop_id == user.shop_id:
         return
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+
+def _check_catalog_placement(
+    db: Session,
+    user: User,
+    active_tenant_id,
+    *,
+    company_id,
+    shop_id=None,
+    pos_machine_id=None,
+) -> None:
+    """
+    403 unless a new catalog row (product or category) lands inside the caller's scope.
+
+    A new row names up to three owners — a company, a shop, a till — and each one decides
+    who may see, edit or sell it afterwards. Reading an existing row is already scoped
+    (`_check_product_access`, the categories router's `_check_access`); this is the same
+    rule on the way in, so a manager cannot create a row in a sibling's or a parent's
+    company, or put one on another company's shop or till. Tenant-wide roles are bounded
+    by the tenant guard alone, as everywhere else. Call it before anything is written.
+    """
+    if user.role in _TENANT_WIDE_ROLES:
+        return
+    if company_id is not None and not user_covers_company(db, user, company_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    if shop_id is not None:
+        shop = db.query(Shop).filter(Shop.id == shop_id).first()
+        if not shop:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Shop not found")
+        ensure_same_tenant(shop.tenant_id, active_tenant_id)
+        _check_shop_access(user, shop, db)
+    if pos_machine_id is not None:
+        machine = db.query(POSMachine).filter(POSMachine.id == pos_machine_id).first()
+        if not machine:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Machine not found")
+        ensure_same_tenant(machine.tenant_id, active_tenant_id)
+        _check_machine_access(user, machine, db)
 
 
 def _validate_voucher_id(db: Session, voucher_id, active_tenant_id):
@@ -273,6 +316,17 @@ def create_product(
     if current_user.role not in _CATALOG_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
+    company_id = data.company_id or current_user.company_id
+    # Before the SKU allocators below, which advance tenant counters.
+    _check_catalog_placement(
+        db,
+        current_user,
+        active_tenant_id,
+        company_id=company_id,
+        shop_id=data.shop_id,
+        pos_machine_id=data.pos_machine_id,
+    )
+
     final_sku, sku_auto_assigned = resolve_sku_for_create(db, active_tenant_id, data.sku)
 
     global_sku = None
@@ -284,8 +338,6 @@ def create_product(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Category not found")
     ensure_same_tenant(category.tenant_id, active_tenant_id)
     _validate_voucher_id(db, data.voucher_id, active_tenant_id)
-
-    company_id = data.company_id or current_user.company_id
 
     product = Product(
         tenant_id=active_tenant_id,

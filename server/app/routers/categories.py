@@ -16,6 +16,7 @@ from app.schemas.category import (
     CategoryUpdate,
 )
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
+from app.routers.products import _check_catalog_placement
 from app.services.catalog_notify import notify_all_machines_for_tenant, notify_machine_catalog_changed
 from app.services.company_hierarchy import (
     catalog_visibility_filter,
@@ -143,6 +144,15 @@ def create_category(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
     company_id = data.company_id or current_user.company_id
+    # The same rule as a new product: only into a company, shop or till the caller covers.
+    _check_catalog_placement(
+        db,
+        current_user,
+        active_tenant_id,
+        company_id=company_id,
+        shop_id=data.shop_id,
+        pos_machine_id=data.pos_machine_id,
+    )
 
     if data.parent_id:
         parent = db.query(Category).filter(Category.id == data.parent_id).first()
