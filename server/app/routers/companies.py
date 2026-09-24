@@ -27,6 +27,8 @@ from app.services.company_hierarchy import (
     subtree_height,
     user_covers_company,
 )
+from app.services.catalog_notify import notify_machines_for_shop
+from app.services.product_shop_scope import reconcile_company_subtree
 from app.services.settings_notify import notify_machines_for_company_settings
 
 router = APIRouter(prefix="/companies", tags=["companies"])
@@ -300,9 +302,10 @@ def update_company(
     # Only an actual *move* is gated. A dashboard that PUTs the whole company back,
     # `parentCompanyId` included, is not restructuring anything, and 403-ing a company
     # manager for echoing a field they were shown would break every profile edit.
-    if requested_parent is not _UNCHANGED and not _same_parent(
+    moved = requested_parent is not _UNCHANGED and not _same_parent(
         requested_parent, company.parent_company_id
-    ):
+    )
+    if moved:
         if current_user.role not in _REPARENT_ROLES:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -316,9 +319,19 @@ def update_company(
     profile_changed = bool(_COMPANY_PROFILE_FIELDS & set(updates.keys()))
     for field, value in updates.items():
         setattr(company, field, value)
+    touched = set()
+    if moved:
+        # The shops beneath this company now sit under different ancestors, so the
+        # "all shops of X, sub-companies included" rules that reach them have changed:
+        # the new parent's rules add rows, the old parent's rule rows are unlisted.
+        db.flush()
+        invalidate_company_hierarchy_cache(db)
+        touched = reconcile_company_subtree(db, company.id)
     db.commit()
     db.refresh(company)
     invalidate_company_hierarchy_cache(db)
+    for shop_id in touched:
+        notify_machines_for_shop(db, shop_id, reason="company_moved")
     if profile_changed:
         notify_machines_for_company_settings(db, str(company.id), reason="company_profile_updated")
     return company

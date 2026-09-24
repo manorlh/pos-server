@@ -1,17 +1,39 @@
-from typing import Optional
+import uuid as uuid_mod
+from types import SimpleNamespace
+from typing import Iterable, List, Optional, Set
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.company import Company
 from app.models.product import Product, CatalogLevel
 from app.models.category import Category
+from app.models.shop import Shop
+from app.models.shop_product_override import ShopProductOverride
 from app.models.voucher import Voucher
 from app.models.user import User, UserRole
+from app.routers.shops import _check_shop_access, _check_shop_override_write
 from app.services.permission_matrix import SHOP_SCOPED_ROLES, Action, Resource, roles_for
-from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, ProductListResponse
+from app.schemas.product import (
+    ProductCreate,
+    ProductListResponse,
+    ProductResponse,
+    ProductShopRow,
+    ProductUpdate,
+    ShopPriceIn,
+    ShopScopeIn,
+    ShopScopePreviewRequest,
+    ShopScopePreviewResponse,
+    ShopScopePreviewShop,
+)
 from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_same_tenant
-from app.services.catalog_notify import notify_all_machines_for_tenant, notify_machine_catalog_changed
+from app.services import product_shop_scope as scope_svc
+from app.services.catalog_notify import (
+    notify_all_machines_for_tenant,
+    notify_machine_catalog_changed,
+    notify_machines_for_shop,
+)
 from app.services.company_hierarchy import (
     catalog_visibility_filter,
     company_scope_ids,
@@ -57,6 +79,129 @@ def _trigger_catalog_notify(db: Session, product: Product):
         notify_machine_catalog_changed(tid, str(product.pos_machine_id), reason="product_change")
     else:
         notify_all_machines_for_tenant(db, tid, reason="product_change")
+
+
+# ── Where a product is sold ──────────────────────────────────────────────────
+#
+# The rule itself lives in app/services/product_shop_scope.py. What is here is the HTTP
+# half: validating the request, and refusing the *whole* request when it would put the
+# product on a shop the caller may not write assortment for — never silently dropping
+# that shop and saving the rest.
+
+_TENANT_WIDE_ROLES = (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR)
+
+
+def _require_global_catalog_product(product) -> None:
+    if product.catalog_level not in (CatalogLevel.GLOBAL, "global") or product.pos_machine_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Shops can only be chosen for a global catalog product",
+        )
+
+
+def _validate_scope_company(db: Session, user: User, product, company_id, active_tenant_id) -> None:
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Scope company not found")
+    ensure_same_tenant(company.tenant_id, active_tenant_id)
+    if str(company.tenant_id) != str(product.tenant_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Scope company not found")
+    if user.role not in _TENANT_WIDE_ROLES and not user_covers_company(db, user, company.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Scope company is outside your companies")
+    if not scope_svc.scope_company_allowed(db, product, company.id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This product cannot be sold in that company's shops",
+        )
+
+
+def _load_explicit_shops(db: Session, product, shop_ids, active_tenant_id) -> List[Shop]:
+    ids = list(shop_ids)
+    if not ids:
+        return []
+    shops = db.query(Shop).filter(Shop.id.in_(ids)).all()
+    found = {str(s.id): s for s in shops}
+    missing = [str(i) for i in ids if str(i) not in found]
+    if missing:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Shop not found")
+    ordered = [found[str(i)] for i in ids]
+    for shop in ordered:
+        ensure_same_tenant(shop.tenant_id, active_tenant_id)
+        if not scope_svc.product_allowed_in_shop(db, product, shop):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Product not in shop company")
+    return ordered
+
+
+def _require_shop_writes(db: Session, user: User, shop_ids: Iterable) -> None:
+    """403 unless the caller may write assortment for every one of these shops."""
+    ids = sorted({str(i) for i in shop_ids})
+    if not ids:
+        return
+    shops = db.query(Shop).filter(Shop.id.in_(ids)).all()
+    for shop in shops:
+        _check_shop_override_write(user, shop, db)
+
+
+def _scope_target_shops(db: Session, product, scope: ShopScopeIn, active_tenant_id) -> List[Shop]:
+    """Validate the scope's company or shops, and return the shops it would sell in."""
+    if scope.mode == scope_svc.MODE_COMPANY:
+        return scope_svc.shops_for_company_scope(
+            db, product, scope.company_id, scope.include_subcompanies, active_only=True
+        )
+    return _load_explicit_shops(db, product, scope.shop_ids or [], active_tenant_id)
+
+
+def _apply_shop_scope(
+    db: Session, user: User, product: Product, scope: ShopScopeIn, active_tenant_id
+) -> Set[str]:
+    _require_global_catalog_product(product)
+    if scope.mode == scope_svc.MODE_COMPANY:
+        _validate_scope_company(db, user, product, scope.company_id, active_tenant_id)
+    targets = _scope_target_shops(db, product, scope, active_tenant_id)
+
+    scope_svc.set_scope_fields(product, scope.mode, scope.company_id, scope.include_subcompanies)
+    plan = scope_svc.plan_scope_change(db, product, scope.mode, shop_ids=[s.id for s in targets])
+    # Every shop the scope sells in, plus every shop the change would unlist.
+    _require_shop_writes(db, user, {str(s.id) for s in targets} | plan.shop_ids())
+    return scope_svc.execute_plan(db, product, plan)
+
+
+def _apply_shop_prices(
+    db: Session, user: User, product: Product, prices: List[ShopPriceIn], active_tenant_id
+) -> Set[str]:
+    if not prices:
+        return set()
+    _require_global_catalog_product(product)
+    db.flush()  # rows the scope just created must be visible to the lookups below
+    rows = []
+    for entry in prices:
+        shop = db.query(Shop).filter(Shop.id == entry.shop_id).first()
+        if not shop:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Shop not found")
+        ensure_same_tenant(shop.tenant_id, active_tenant_id)
+        _check_shop_override_write(user, shop, db)
+        row = (
+            db.query(ShopProductOverride)
+            .filter(
+                ShopProductOverride.shop_id == shop.id,
+                ShopProductOverride.global_product_id == product.id,
+            )
+            .first()
+        )
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Product is not sold in that shop",
+            )
+        rows.append((row, entry.price))
+    for row, price in rows:
+        row.price = price  # None = back to the product's base price
+    return {str(row.shop_id) for row, _ in rows}
+
+
+def _notify_shops(db: Session, shop_ids: Iterable[str], reason: str) -> None:
+    for shop_id in shop_ids:
+        notify_machines_for_shop(db, shop_id, reason=reason)
 
 
 @router.get("", response_model=ProductListResponse)
@@ -169,9 +314,21 @@ def create_product(
         is_weighed=data.is_weighed,
         unit_label=data.unit_label,
     )
+    # An explicit id so the shop rows below can reference it before the insert.
+    product.id = uuid_mod.uuid4()
     db.add(product)
+    if data.shop_scope is not None:
+        _apply_shop_scope(db, current_user, product, data.shop_scope, active_tenant_id)
+    if data.shop_prices:
+        if data.shop_scope is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="shopPrices needs shopScope on a new product",
+            )
+        _apply_shop_prices(db, current_user, product, data.shop_prices, active_tenant_id)
     db.commit()
     db.refresh(product)
+    # Tenant-wide notify already covers every shop the scope touched.
     _trigger_catalog_notify(db, product)
     return product
 
@@ -219,6 +376,9 @@ def update_product(
         _validate_voucher_id(db, data.voucher_id, active_tenant_id)
 
     updates = data.model_dump(exclude_unset=True, by_alias=False)
+    # Not columns: applied through the scope service below, after the product's own fields.
+    updates.pop("shop_scope", None)
+    updates.pop("shop_prices", None)
     validate_open_price_update(product, updates)
     if product.sku_auto_assigned and "sku" in updates and updates["sku"] != product.sku:
         raise HTTPException(
@@ -247,10 +407,117 @@ def update_product(
     for field, value in updates.items():
         setattr(product, field, value)
 
+    if data.shop_scope is not None:
+        _apply_shop_scope(db, current_user, product, data.shop_scope, active_tenant_id)
+    if data.shop_prices:
+        _apply_shop_prices(db, current_user, product, data.shop_prices, active_tenant_id)
+
     db.commit()
     db.refresh(product)
     _trigger_catalog_notify(db, product)
     return product
+
+
+@router.post("/shop-scope/preview", response_model=ShopScopePreviewResponse)
+def preview_shop_scope(
+    body: ShopScopePreviewRequest,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "Will appear in 4 shops, on 11 tills" — before saving. Read-only, and refused exactly
+    where the save would be, so the form cannot promise what the save would reject.
+    """
+    if current_user.role not in _CATALOG_ROLES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+
+    if body.product_id is not None:
+        product = db.query(Product).filter(Product.id == body.product_id).first()
+        if not product:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+        ensure_same_tenant(product.tenant_id, active_tenant_id)
+        _check_product_access(current_user, product, db)
+        _require_global_catalog_product(product)
+    else:
+        # A product not created yet: the company it will be created with (see create).
+        product = SimpleNamespace(
+            id=None,
+            tenant_id=active_tenant_id,
+            company_id=body.company_id or current_user.company_id,
+        )
+
+    scope = body.shop_scope
+    if scope.mode == scope_svc.MODE_COMPANY:
+        _validate_scope_company(db, current_user, product, scope.company_id, active_tenant_id)
+    shops = _scope_target_shops(db, product, scope, active_tenant_id)
+    _require_shop_writes(db, current_user, [s.id for s in shops])
+
+    return ShopScopePreviewResponse(
+        shop_count=len(shops),
+        machine_count=scope_svc.machine_count(db, [s.id for s in shops]),
+        shops=[ShopScopePreviewShop(id=s.id, name=s.name, company_id=s.company_id) for s in shops],
+    )
+
+
+@router.get("/{product_id}/shops", response_model=List[ProductShopRow])
+def list_product_shops(
+    product_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Every shop this product is assigned to, listed or not, with its price there.
+
+    A shop's price is edited with the existing
+    `PUT /shops/{shopId}/product-overrides/{productId}` and body `{"price": n | null}`
+    (null = back to the base price) — the same write the assortment page makes.
+    """
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+    ensure_same_tenant(product.tenant_id, active_tenant_id)
+    _check_product_access(current_user, product, db)
+
+    rows = (
+        db.query(ShopProductOverride)
+        .filter(ShopProductOverride.global_product_id == product.id)
+        .all()
+    )
+    shop_ids = [r.shop_id for r in rows]
+    shops = {str(s.id): s for s in db.query(Shop).filter(Shop.id.in_(shop_ids)).all()} if shop_ids else {}
+    company_ids = list({s.company_id for s in shops.values()})
+    companies = (
+        {str(c.id): c for c in db.query(Company).filter(Company.id.in_(company_ids)).all()}
+        if company_ids
+        else {}
+    )
+
+    out: List[ProductShopRow] = []
+    for row in rows:
+        shop = shops.get(str(row.shop_id))
+        if shop is None:
+            continue
+        try:
+            _check_shop_access(current_user, shop, db)
+        except HTTPException:
+            continue  # a shop outside the caller's reach is not theirs to see
+        company = companies.get(str(shop.company_id))
+        out.append(
+            ProductShopRow(
+                shop_id=shop.id,
+                shop_name=shop.name,
+                company_id=shop.company_id,
+                company_name=company.name if company else None,
+                price=float(row.price) if row.price is not None else None,
+                effective_price=float(row.price if row.price is not None else product.price),
+                is_listed=bool(row.is_listed),
+                assigned_by_rule=bool(row.assigned_by_rule),
+            )
+        )
+    out.sort(key=lambda r: ((r.company_name or ""), r.shop_name))
+    return out
 
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -1,8 +1,79 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import List, Optional, Literal
 import uuid
 from decimal import Decimal
 from datetime import datetime
+
+
+class ShopScopeIn(BaseModel):
+    """
+    Where a global product is sold. Two shapes:
+
+    * ``{"mode": "company", "companyId": ..., "includeSubcompanies": bool}`` — a rule:
+      every active shop of that company (and its sub-companies, if asked), including
+      shops opened later.
+    * ``{"mode": "shops", "shopIds": [...]}`` — exactly these shops, nothing added later.
+    """
+
+    mode: Literal["company", "shops"]
+    company_id: Optional[uuid.UUID] = Field(None, alias="companyId")
+    include_subcompanies: bool = Field(False, alias="includeSubcompanies")
+    shop_ids: Optional[List[uuid.UUID]] = Field(None, alias="shopIds")
+
+    @model_validator(mode="after")
+    def _shape_matches_mode(self):
+        if self.mode == "company":
+            if self.company_id is None:
+                raise ValueError("companyId is required when mode is 'company'")
+            if self.shop_ids:
+                raise ValueError("shopIds is only allowed when mode is 'shops'")
+        else:
+            if self.shop_ids is None:
+                raise ValueError("shopIds is required when mode is 'shops'")
+            if self.company_id is not None or self.include_subcompanies:
+                raise ValueError("companyId/includeSubcompanies are only allowed when mode is 'company'")
+            # Order-preserving de-duplication; a repeated id is not an error, just noise.
+            seen, out = set(), []
+            for sid in self.shop_ids:
+                if sid not in seen:
+                    seen.add(sid)
+                    out.append(sid)
+            self.shop_ids = out
+        return self
+
+    class Config:
+        populate_by_name = True
+
+
+class ShopPriceIn(BaseModel):
+    """A per-shop price. ``price: null`` means "the product's base price"."""
+
+    shop_id: uuid.UUID = Field(..., alias="shopId")
+    price: Optional[Decimal] = Field(None, ge=0)
+
+    class Config:
+        populate_by_name = True
+
+
+def _no_repeated_shop(prices):
+    if prices is None:
+        return prices
+    ids = [p.shop_id for p in prices]
+    if len(ids) != len(set(ids)):
+        raise ValueError("shopPrices names the same shop twice")
+    return prices
+
+
+class ShopScopeOut(BaseModel):
+    """The stored scope. For ``shops`` mode the list itself is `GET /products/{id}/shops`."""
+
+    mode: Literal["company", "shops"]
+    company_id: Optional[uuid.UUID] = Field(None, alias="companyId")
+    include_subcompanies: bool = Field(False, alias="includeSubcompanies")
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
 
 
 class ProductBase(BaseModel):
@@ -53,6 +124,15 @@ class ProductCreate(ProductBase):
     pos_machine_id: Optional[uuid.UUID] = Field(None, alias="posMachineId")
     catalog_level: Literal["global", "local"] = Field("global", alias="catalogLevel")
     global_product_id: Optional[uuid.UUID] = Field(None, alias="globalProductId")
+    # Optional: omitted keeps today's behaviour (the product is on no shop until one is
+    # added from the assortment page).
+    shop_scope: Optional[ShopScopeIn] = Field(None, alias="shopScope")
+    shop_prices: Optional[List[ShopPriceIn]] = Field(None, alias="shopPrices")
+
+    @field_validator("shop_prices")
+    @classmethod
+    def _prices_name_each_shop_once(cls, v):
+        return _no_repeated_shop(v)
 
 
 class ProductUpdate(BaseModel):
@@ -72,6 +152,14 @@ class ProductUpdate(BaseModel):
     is_open_price: Optional[bool] = Field(None, alias="isOpenPrice")
     is_weighed: Optional[bool] = Field(None, alias="isWeighed")
     unit_label: Optional[str] = Field(None, max_length=16, alias="unitLabel")
+    # Omitted: the scope is left exactly as it is.
+    shop_scope: Optional[ShopScopeIn] = Field(None, alias="shopScope")
+    shop_prices: Optional[List[ShopPriceIn]] = Field(None, alias="shopPrices")
+
+    @field_validator("shop_prices")
+    @classmethod
+    def _prices_name_each_shop_once(cls, v):
+        return _no_repeated_shop(v)
 
     @field_validator("name", "sku")
     @classmethod
@@ -111,6 +199,7 @@ class ProductResponse(BaseModel):
     is_open_price: bool = Field(False, alias="isOpenPrice")
     is_weighed: bool = Field(False, alias="isWeighed")
     unit_label: Optional[str] = Field(None, alias="unitLabel")
+    shop_scope: Optional[ShopScopeOut] = Field(None, alias="shopScope")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 
@@ -124,6 +213,52 @@ class ProductListResponse(BaseModel):
     page_size: int = Field(..., alias="pageSize")
     total: int
     items: List[ProductResponse]
+
+    class Config:
+        populate_by_name = True
+
+
+class ProductShopRow(BaseModel):
+    """One shop a product is assigned to, listed or not."""
+
+    shop_id: uuid.UUID = Field(..., alias="shopId")
+    shop_name: str = Field(..., alias="shopName")
+    company_id: uuid.UUID = Field(..., alias="companyId")
+    company_name: Optional[str] = Field(None, alias="companyName")
+    # Floats on the wire, like `ShopProductCatalogRow`: a Decimal serialises as a string.
+    price: Optional[float] = None
+    effective_price: float = Field(..., alias="effectivePrice")
+    is_listed: bool = Field(..., alias="isListed")
+    assigned_by_rule: bool = Field(..., alias="assignedByRule")
+
+    class Config:
+        populate_by_name = True
+
+
+class ShopScopePreviewRequest(BaseModel):
+    shop_scope: ShopScopeIn = Field(..., alias="shopScope")
+    # The product being edited, or — for one not created yet — the company it will
+    # belong to. Either decides which shops it may be sold in at all.
+    product_id: Optional[uuid.UUID] = Field(None, alias="productId")
+    company_id: Optional[uuid.UUID] = Field(None, alias="companyId")
+
+    class Config:
+        populate_by_name = True
+
+
+class ShopScopePreviewShop(BaseModel):
+    id: uuid.UUID
+    name: str
+    company_id: uuid.UUID = Field(..., alias="companyId")
+
+    class Config:
+        populate_by_name = True
+
+
+class ShopScopePreviewResponse(BaseModel):
+    shop_count: int = Field(..., alias="shopCount")
+    machine_count: int = Field(..., alias="machineCount")
+    shops: List[ShopScopePreviewShop]
 
     class Config:
         populate_by_name = True

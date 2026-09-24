@@ -38,5 +38,5 @@ class Company(Base):
     )
     shops = relationship("Shop", back_populates="company")
     users = relationship("User", back_populates="company", foreign_keys="User.company_id")
-    products = relationship("Product", back_populates="company")
+    products = relationship("Product", back_populates="company", foreign_keys="Product.company_id")
     categories = relationship("Category", back_populates="company")

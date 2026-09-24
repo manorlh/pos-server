@@ -362,8 +362,53 @@ export interface Product {
   taxRate?: number;
   voucherId?: string;
   trackStock?: boolean;
+  /**
+   * Where a global product is sold. `null` for a product managed by hand from the
+   * assortment page (every product created before this existed). For `shops` mode the
+   * list itself comes from `GET /products/{id}/shops`.
+   */
+  shopScope?: ShopScope | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type ShopScopeMode = 'company' | 'shops';
+
+export interface ShopScope {
+  mode: ShopScopeMode;
+  companyId?: string | null;
+  includeSubcompanies?: boolean;
+}
+
+/** Body of `shopScope` on product create/update. */
+export type ShopScopeInput =
+  | { mode: 'company'; companyId: string; includeSubcompanies: boolean }
+  | { mode: 'shops'; shopIds: string[] };
+
+/** Body of `shopPrices` on product create/update. `price: null` = the base price. */
+export interface ShopPriceInput {
+  shopId: string;
+  price: number | null;
+}
+
+/** One row of `GET /products/{id}/shops`. */
+export interface ProductShopRow {
+  shopId: string;
+  shopName: string;
+  companyId: string;
+  companyName?: string | null;
+  /** The shop's own price, or null when it sells at the base price. */
+  price: number | null;
+  effectivePrice: number;
+  isListed: boolean;
+  assignedByRule: boolean;
+}
+
+/** `POST /products/shop-scope/preview`. */
+export interface ShopScopePreview {
+  shopCount: number;
+  machineCount: number;
+  shops: { id: string; name: string; companyId: string }[];
 }
 
 export interface StockLevel {

@@ -1,15 +1,37 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Image from 'next/image';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, fetchCompanies, fetchShops } from '@/lib/api';
 import { entitySelectItems } from '@/lib/selectItems';
 import { usePageScope } from '@/lib/scope';
 import { ScopeIgnoredNote } from '@/components/dashboard/scope-gate';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { Product, Category, ProductListResponse, Voucher, PaginatedResponse } from '@/lib/types';
+import {
+  Product,
+  Category,
+  Company,
+  ProductListResponse,
+  ProductShopRow,
+  Shop,
+  ShopPriceInput,
+  ShopScopeInput,
+  Voucher,
+  PaginatedResponse,
+} from '@/lib/types';
+import { buildCompanyTree } from '@/lib/companyTree';
+import {
+  ProductShopPricesTable,
+  ShopPriceOverridesEditor,
+  ShopScopeSection,
+  draftFromProduct,
+  scopeInputFromDraft,
+  shopPricesFromDraft,
+  useShopScopePreview,
+  type ScopeDraft,
+} from '@/components/dashboard/product-shop-scope';
 import { ProductImageUpload } from '@/components/product-image-upload';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -52,11 +74,18 @@ function buildSavePayload(
   companyId: string | undefined,
   skuMode: SkuMode,
   isNew: boolean,
+  shopScope: ShopScopeInput | undefined,
+  shopPrices: ShopPriceInput[] | undefined,
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = { ...p, companyId: p.companyId ?? companyId };
   if (isNew && skuMode === 'auto') {
     delete payload.sku;
   }
+  // The product as loaded carries the stored scope (without its shop list); echoing it
+  // back is not a scope change. Only a scope the form actually set is sent.
+  delete payload.shopScope;
+  if (shopScope) payload.shopScope = shopScope;
+  if (shopPrices && shopPrices.length > 0) payload.shopPrices = shopPrices;
   return payload;
 }
 
@@ -76,8 +105,12 @@ export default function ProductsPage() {
   const [editing, setEditing] = useState<Partial<Product>>(EMPTY);
   const [skuMode, setSkuMode] = useState<SkuMode>('auto');
   const [page, setPage] = useState(1);
+  /** null = the section has not been touched: a saved scope is left exactly as it is. */
+  const [scopeDraft, setScopeDraft] = useState<ScopeDraft | null>(null);
+  const [newShopPrices, setNewShopPrices] = useState<Record<string, string>>({});
   const isNew = !editing.id;
   const skuReadOnly = !isNew && editing.skuAutoAssigned === true;
+  const isGlobal = (editing.catalogLevel ?? 'global') === 'global';
 
   const { data, isLoading } = useQuery<ProductListResponse>({
     queryKey: ['products', page],
@@ -102,15 +135,64 @@ export default function ProductsPage() {
   });
   const vouchers = vouchersData?.items ?? [];
 
+  const { data: companies = [] } = useQuery<Company[]>({
+    queryKey: ['companies'],
+    queryFn: fetchCompanies,
+  });
+  const { data: shops = [] } = useQuery<Shop[]>({
+    queryKey: ['shops'],
+    queryFn: () => fetchShops(),
+  });
+  const tree = useMemo(() => buildCompanyTree(companies), [companies]);
+
+  const productShops = useQuery<ProductShopRow[]>({
+    queryKey: ['product-shops', editing.id],
+    enabled: open && !!editing.id && isGlobal,
+    queryFn: () => api.get(`/products/${editing.id}/shops`).then((r) => r.data),
+  });
+
+  // The company the product belongs to (or will, on create — see buildSavePayload).
+  const productCompanyId = editing.companyId ?? user?.companyId ?? null;
+  const defaultScopeCompanyId = productCompanyId ?? tree.roots[0]?.company.id ?? '';
+  // New products default to "all shops of the product's company". A shop-level user
+  // may only write their own shop's assortment, so for them that default would be
+  // refused whenever the company has another shop; they start on their own shop.
+  const shopLevelUser = !!user?.shopId && (user.role === 'shop_manager' || user.role === 'shift_supervisor');
+  const newProductDraft: ScopeDraft = shopLevelUser
+    ? { mode: 'shops', companyId: defaultScopeCompanyId, includeSubcompanies: false, shopIds: [user!.shopId!] }
+    : { mode: 'company', companyId: defaultScopeCompanyId, includeSubcompanies: false, shopIds: [] };
+  const draft: ScopeDraft =
+    scopeDraft ??
+    (isNew
+      ? newProductDraft
+      : draftFromProduct(editing.shopScope, productShops.data, defaultScopeCompanyId));
+  const scopeInput = scopeInputFromDraft(draft, tree);
+  const preview = useShopScopePreview(
+    open && isGlobal ? scopeInput : undefined,
+    editing.id,
+    productCompanyId,
+  );
+  // A saved "only these shops" list is read from the product's rows; wait for them.
+  const scopeLoading =
+    !isNew && editing.shopScope?.mode === 'shops' && productShops.isLoading;
+
   const save = useMutation({
-    mutationFn: (args: { product: Partial<Product>; mode: SkuMode }) => {
-      const payload = buildSavePayload(args.product, user?.companyId, args.mode, !args.product.id);
+    mutationFn: (args: {
+      product: Partial<Product>;
+      mode: SkuMode;
+      shopScope?: ShopScopeInput;
+      shopPrices?: ShopPriceInput[];
+    }) => {
+      const payload = buildSavePayload(
+        args.product, user?.companyId, args.mode, !args.product.id, args.shopScope, args.shopPrices,
+      );
       return args.product.id
         ? api.put(`/products/${args.product.id}`, payload)
         : api.post('/products', payload);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['products'] });
+      qc.invalidateQueries({ queryKey: ['product-shops'] });
       toast.success(isNew ? t('created') : t('updated'));
       setOpen(false);
     },
@@ -128,9 +210,26 @@ export default function ProductsPage() {
   const openNew = () => {
     setEditing(EMPTY);
     setSkuMode('auto');
+    setScopeDraft(null);
+    setNewShopPrices({});
     setOpen(true);
   };
-  const openEdit = (p: Product) => { setEditing(p); setOpen(true); };
+  const openEdit = (p: Product) => {
+    setEditing(p);
+    setScopeDraft(null);
+    setNewShopPrices({});
+    setOpen(true);
+  };
+
+  const submit = () => {
+    const sendScope = isGlobal && (isNew || scopeDraft !== null);
+    const shopScope = sendScope ? scopeInput : undefined;
+    const shopPrices =
+      isNew && shopScope
+        ? shopPricesFromDraft(newShopPrices, (preview.data?.shops ?? []).map((s) => s.id))
+        : undefined;
+    save.mutate({ product: editing, mode: skuMode, shopScope, shopPrices });
+  };
 
   return (
     <div className="space-y-4">
@@ -244,7 +343,7 @@ export default function ProductsPage() {
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{isNew ? t('addTitle') : t('editTitle')}</DialogTitle>
           </DialogHeader>
@@ -378,12 +477,47 @@ export default function ProductsPage() {
               <Label>{t('description')}</Label>
               <Input value={editing.description ?? ''} onChange={(e) => setEditing((p) => ({ ...p, description: e.target.value }))} />
             </div>
+            {isGlobal ? (
+              <ShopScopeSection
+                draft={draft}
+                onChange={setScopeDraft}
+                tree={tree}
+                companies={companies}
+                shops={shops}
+                productCompanyId={productCompanyId}
+                showManual={!isNew && !editing.shopScope}
+                disabled={scopeLoading}
+                preview={preview}
+              />
+            ) : null}
+            {isGlobal && isNew && scopeInput ? (
+              <ShopPriceOverridesEditor
+                shops={preview.data?.shops ?? []}
+                basePrice={Number(editing.price ?? 0)}
+                prices={newShopPrices}
+                onChange={setNewShopPrices}
+              />
+            ) : null}
+            {isGlobal && !isNew && editing.id ? (
+              <ProductShopPricesTable
+                productId={editing.id}
+                basePrice={Number(editing.price ?? 0)}
+                rows={productShops.data}
+                isLoading={productShops.isLoading}
+              />
+            ) : null}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{tc('cancel')}</Button>
             <Button
-              onClick={() => save.mutate({ product: editing, mode: skuMode })}
-              disabled={save.isPending || (isNew && skuMode === 'manual' && !editing.sku?.trim())}
+              onClick={submit}
+              disabled={
+                save.isPending ||
+                scopeLoading ||
+                // Per-shop prices are matched to the preview's shops; wait for it.
+                (isNew && Object.values(newShopPrices).some((v) => v.trim() !== '') && preview.isFetching) ||
+                (isNew && skuMode === 'manual' && !editing.sku?.trim())
+              }
             >
               {save.isPending ? tc('saving') : tc('save')}
             </Button>

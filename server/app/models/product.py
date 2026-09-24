@@ -65,12 +65,37 @@ class Product(Base):
     # Nullable: a product that has not been given one falls back to the till's default.
     unit_label = Column(String(16), nullable=True)
 
+    # Where a global product is sold. Null is every product that predates this: its
+    # shops are whatever rows somebody added by hand on the assortment page. "company"
+    # is a rule — every shop of `shop_scope_company_id` (and, if asked, of the
+    # companies beneath it), including shops opened later. "shops" is an explicit list
+    # and adds nothing on its own. All of it is applied in
+    # app/services/product_shop_scope.py and nowhere else.
+    shop_scope_mode = Column(String(16), nullable=True)
+    shop_scope_company_id = Column(
+        UUID(as_uuid=True), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    shop_scope_include_subcompanies = Column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
-    company = relationship("Company", back_populates="products")
+    company = relationship("Company", back_populates="products", foreign_keys=[company_id])
     shop = relationship("Shop", back_populates="products")
     pos_machine = relationship("POSMachine", back_populates="products")
     category = relationship("Category", back_populates="products")
     global_product = relationship("Product", remote_side="Product.id")
     voucher = relationship("Voucher", back_populates="products")
+
+    @property
+    def shop_scope(self):
+        """The scope as the API shows it, or None for a hand-managed product."""
+        if not self.shop_scope_mode:
+            return None
+        return {
+            "mode": self.shop_scope_mode,
+            "company_id": self.shop_scope_company_id,
+            "include_subcompanies": bool(self.shop_scope_include_subcompanies),
+        }
