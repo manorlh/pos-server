@@ -209,6 +209,8 @@ export interface PosSettingsV1 {
   payFastCardTips?: boolean;
   payCardEnabled?: boolean;
   payCardTips?: boolean;
+  payManualCardEnabled?: boolean;
+  payManualCardTips?: boolean;
   tipPresets?: number[];
   tipDistribution?: TipDistribution;
   receiptPrinterName?: string;
@@ -228,7 +230,9 @@ export type PaymentOptionSettingKey =
   | 'payFastCardEnabled'
   | 'payFastCardTips'
   | 'payCardEnabled'
-  | 'payCardTips';
+  | 'payCardTips'
+  | 'payManualCardEnabled'
+  | 'payManualCardTips';
 
 /**
  * PATCH body for POS settings. Branding keys accept an explicit `null`, which

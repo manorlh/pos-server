@@ -55,13 +55,15 @@ def _tips(resolved: dict) -> dict:
     return {o.name: resolved[o.tips_key] for o in PAYMENT_OPTIONS}
 
 
-ALL_ALLOWED = {"fastCash": True, "cash": True, "fastCard": True, "card": True}
-NO_TIPS = {"fastCash": False, "cash": False, "fastCard": False, "card": False}
+# What a shop that set nothing gets: the four original options, and not manual card,
+# which is opt-in because the acquirer has to enable keyed entry for the merchant.
+ALL_ALLOWED = {"fastCash": True, "cash": True, "fastCard": True, "card": True, "manualCard": False}
+NO_TIPS = {"fastCash": False, "cash": False, "fastCard": False, "card": False, "manualCard": False}
 
 
 # ── The options themselves ───────────────────────────────────────────────────
 
-def test_the_four_options_and_their_keys_are_the_contract() -> None:
+def test_the_options_and_their_keys_are_the_contract() -> None:
     # Renaming any of these strands the till and the dashboard, which read them
     # by name. The tender is what the stored document says; it never changes.
     assert [(o.name, o.tender, o.allowed_key, o.tips_key) for o in PAYMENT_OPTIONS] == [
@@ -69,11 +71,12 @@ def test_the_four_options_and_their_keys_are_the_contract() -> None:
         ("cash", "cash", "payCashEnabled", "payCashTips"),
         ("fastCard", "card", "payFastCardEnabled", "payFastCardTips"),
         ("card", "card", "payCardEnabled", "payCardTips"),
+        ("manualCard", "card", "payManualCardEnabled", "payManualCardTips"),
     ]
 
 
 def test_payment_option_keys_are_managed_and_therefore_synced() -> None:
-    assert len(PAYMENT_OPTION_SETTING_KEYS) == 8
+    assert len(PAYMENT_OPTION_SETTING_KEYS) == 10
     for key in PAYMENT_OPTION_SETTING_KEYS:
         assert key in MANAGED_SETTING_KEYS
     # The legacy pair stays managed: layers hold it, and it is the fallback.
@@ -81,7 +84,7 @@ def test_payment_option_keys_are_managed_and_therefore_synced() -> None:
     assert "cashTipsEnabled" in MANAGED_SETTING_KEYS
 
 
-def test_patch_schema_accepts_all_eight_and_the_legacy_pair() -> None:
+def test_patch_schema_accepts_every_option_key_and_the_legacy_pair() -> None:
     body = {key: False for key in PAYMENT_OPTION_SETTING_KEYS}
     body.update({"tipsEnabled": True, "cashTipsEnabled": True})
     assert patch_to_camel_dict(PosSettingsV1Patch.model_validate(body)) == body
@@ -91,6 +94,43 @@ def test_patch_schema_leaves_unsent_payment_keys_unset() -> None:
     # Unsent must stay absent, never become False: a stored False hides the option.
     data = PosSettingsV1Patch.model_validate({"payCashTips": True})
     assert patch_to_camel_dict(data) == {"payCashTips": True}
+
+
+# ── Manual card: opt-in ──────────────────────────────────────────────────────
+
+def test_manual_card_is_not_offered_until_switched_on() -> None:
+    # Keyed entry is a telephone-order transaction the acquirer has to enable, and a
+    # shop that never asked for it must not find the button on its tills.
+    assert resolve_payment_options({})["payManualCardEnabled"] is False
+    assert resolve_payment_options({"payManualCardEnabled": True})["payManualCardEnabled"] is True
+
+
+def test_manual_card_is_not_switched_on_by_a_string() -> None:
+    assert resolve_payment_options({"payManualCardEnabled": "true"})["payManualCardEnabled"] is False
+
+
+def test_manual_card_tips_follow_the_card_rule_once_it_is_on() -> None:
+    assert resolve_payment_options({"tipsEnabled": True})["payManualCardTips"] is False
+    on = resolve_payment_options({"tipsEnabled": True, "payManualCardEnabled": True})
+    assert on["payManualCardTips"] is True
+    assert resolve_payment_options(
+        {"tipsEnabled": True, "payManualCardEnabled": True, "payManualCardTips": False}
+    )["payManualCardTips"] is False
+
+
+def test_manual_card_switched_on_at_the_shop_beats_the_company_off() -> None:
+    # Through the real sync path, so the layer merge is the one the till gets.
+    resp = _sync({"payManualCardEnabled": False}, {"payManualCardEnabled": True})
+    assert resp.settings["payManualCardEnabled"] is True
+    resp = _sync({"payManualCardEnabled": True}, {})
+    assert resp.settings["payManualCardEnabled"] is True
+
+
+def test_manual_card_alone_is_enough_to_keep_a_layer_payable() -> None:
+    from app.services.payment_options import any_allowed
+
+    assert any_allowed({**ALL_OFF, "payManualCardEnabled": True}) is True
+    assert any_allowed(ALL_OFF) is False
 
 
 # ── Parity with the till (one test per row) ──────────────────────────────────
@@ -103,12 +143,12 @@ def test_parity_1_nothing_set_all_allowed_no_tips() -> None:
 
 def test_parity_2_tips_enabled_covers_card_paths_only() -> None:
     r = resolve_payment_options({"tipsEnabled": True})
-    assert _tips(r) == {"fastCash": False, "cash": False, "fastCard": True, "card": True}
+    assert _tips(r) == {"fastCash": False, "cash": False, "fastCard": True, "card": True, "manualCard": False}
 
 
 def test_parity_3_tips_and_cash_tips_cover_all_four() -> None:
     r = resolve_payment_options({"tipsEnabled": True, "cashTipsEnabled": True})
-    assert _tips(r) == {"fastCash": True, "cash": True, "fastCard": True, "card": True}
+    assert _tips(r) == {"fastCash": True, "cash": True, "fastCard": True, "card": True, "manualCard": False}
 
 
 def test_parity_4_cash_tips_alone_turns_nothing_on() -> None:
@@ -118,7 +158,7 @@ def test_parity_4_cash_tips_alone_turns_nothing_on() -> None:
 
 def test_parity_5_new_tips_key_beats_legacy_off() -> None:
     r = resolve_payment_options({"payFastCashTips": True, "tipsEnabled": False})
-    assert _tips(r) == {"fastCash": True, "cash": False, "fastCard": False, "card": False}
+    assert _tips(r) == {"fastCash": True, "cash": False, "fastCard": False, "card": False, "manualCard": False}
 
 
 def test_parity_6_new_tips_key_beats_legacy_on() -> None:
@@ -262,11 +302,14 @@ def _sync(company_settings: dict, shop_settings: dict, tenant_settings=None):
         return get_settings_sync(machine_id=str(machine.id), since=None, machine=machine, db=db)
 
 
-def test_sync_carries_all_eight_resolved_keys_when_nothing_is_set() -> None:
+def test_sync_carries_every_resolved_key_when_nothing_is_set() -> None:
     resp = _sync({}, {})
     for option in PAYMENT_OPTIONS:
-        assert resp.settings[option.allowed_key] is True
+        # Each option's own default, sent explicitly: a till must never have to
+        # guess what an absent key means.
+        assert resp.settings[option.allowed_key] is option.allowed_by_default
         assert resp.settings[option.tips_key] is False
+    assert resp.settings["payManualCardEnabled"] is False
     assert resp.settings["tipsEnabled"] is False
     assert resp.settings["cashTipsEnabled"] is False
 
@@ -286,6 +329,8 @@ def test_sync_resolves_across_layers_and_derives_the_legacy_pair() -> None:
         "payFastCardTips": True,
         "payCardEnabled": True,
         "payCardTips": False,
+        "payManualCardEnabled": False,
+        "payManualCardTips": False,
     }
     assert resp.settings["tipsEnabled"] is True
     assert resp.settings["cashTipsEnabled"] is True  # from fastCash, not the stored key

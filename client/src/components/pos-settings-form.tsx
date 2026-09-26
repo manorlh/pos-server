@@ -203,7 +203,7 @@ export function PosSettingsForm({
             opt.enabledKey,
             value,
             inherited,
-            PAYMENT_OPTION_FALLBACK.enabled,
+            opt.enabledByDefault,
           );
           const tips = resolvePaymentOptionKey(
             opt.tipsKey,

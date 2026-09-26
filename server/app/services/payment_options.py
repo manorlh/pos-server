@@ -1,4 +1,4 @@
-"""The four ways a till takes payment, and which of them a merchant lets it offer.
+"""The ways a till takes payment, and which of them a merchant lets it offer.
 
 This is the one place the payment options and their settings rule are defined.
 The dashboard views and the till sync both read resolved values from here; the
@@ -12,6 +12,14 @@ any of them still says `paymentMethod` "cash" or "card" — nothing fiscal moves
     cash       cash keypad, another amount, change computed  -> cash
     fastCard   one tap, card, single payment                 -> card
     card       card, instalments picker first                -> card
+    manualCard card number keyed on the terminal's own screen -> card
+
+`manualCard` is the one option that is **off unless switched on**. Keying a card
+number is a telephone-order transaction the acquirer has to enable on the merchant's
+profile, and it carries more fraud risk than a card that is present; a shop that
+never asked for it must not find it on its tills. The number is typed on the payment
+terminal's secure screen, never in this system: nothing here or on the till ever
+sees it.
 
 Each option has two flat top-level setting keys, one saying whether the till
 offers it and one saying whether it asks for a tip. Flat rather than one nested
@@ -31,14 +39,20 @@ class PaymentOption:
     tender: Literal["cash", "card"]
     allowed_key: str
     tips_key: str
+    #: What an unset allowed key means. True for the four original options, so every
+    #: shop that predates these settings keeps them; False for anything opt-in.
+    allowed_by_default: bool = True
 
 
 FAST_CASH = PaymentOption("fastCash", "cash", "payFastCashEnabled", "payFastCashTips")
 CASH = PaymentOption("cash", "cash", "payCashEnabled", "payCashTips")
 FAST_CARD = PaymentOption("fastCard", "card", "payFastCardEnabled", "payFastCardTips")
 CARD = PaymentOption("card", "card", "payCardEnabled", "payCardTips")
+MANUAL_CARD = PaymentOption(
+    "manualCard", "card", "payManualCardEnabled", "payManualCardTips", allowed_by_default=False
+)
 
-PAYMENT_OPTIONS: Tuple[PaymentOption, ...] = (FAST_CASH, CASH, FAST_CARD, CARD)
+PAYMENT_OPTIONS: Tuple[PaymentOption, ...] = (FAST_CASH, CASH, FAST_CARD, CARD, MANUAL_CARD)
 
 PAYMENT_OPTION_ALLOWED_KEYS: Tuple[str, ...] = tuple(o.allowed_key for o in PAYMENT_OPTIONS)
 PAYMENT_OPTION_SETTING_KEYS: Tuple[str, ...] = tuple(
@@ -59,9 +73,10 @@ def _stored_bool(merged: Mapping[str, Any], key: str) -> Optional[bool]:
 
 
 def is_allowed(merged: Mapping[str, Any], option: PaymentOption) -> bool:
-    # Unset means offered: every tenant that predates these keys keeps all four.
+    # Unset means the option's default: offered for the original four, so every
+    # tenant that predates these keys keeps them; not offered for an opt-in one.
     stored = _stored_bool(merged, option.allowed_key)
-    return True if stored is None else stored
+    return option.allowed_by_default if stored is None else stored
 
 
 def _legacy_asks_for_tip(merged: Mapping[str, Any], option: PaymentOption) -> bool:

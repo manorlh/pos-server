@@ -50,6 +50,8 @@ class PosSettingsV1Patch(BaseModel):
     pay_fast_card_tips: Optional[bool] = Field(None, alias="payFastCardTips")
     pay_card_enabled: Optional[bool] = Field(None, alias="payCardEnabled")
     pay_card_tips: Optional[bool] = Field(None, alias="payCardTips")
+    pay_manual_card_enabled: Optional[bool] = Field(None, alias="payManualCardEnabled")
+    pay_manual_card_tips: Optional[bool] = Field(None, alias="payManualCardTips")
     tip_presets: Optional[List[int]] = Field(None, alias="tipPresets")
     tip_distribution: Optional[Literal["direct", "equal_pool", "by_sales"]] = Field(
         None, alias="tipDistribution"
