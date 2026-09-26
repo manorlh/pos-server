@@ -35,6 +35,8 @@ class ShopProductCatalogRow(BaseModel):
     effective_available: bool = Field(serialization_alias="effectiveAvailable")
     # What this shop would get if it set nothing: the shop's company, else the product.
     inherited_available: bool = Field(serialization_alias="inheritedAvailable")
+    # The company's built-in general item: it cannot be unlisted or removed here.
+    is_general: bool = Field(default=False, serialization_alias="isGeneral")
 
 
 class ShopProductOverrideUpsert(BaseModel):

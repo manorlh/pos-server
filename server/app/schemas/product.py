@@ -128,6 +128,10 @@ class ProductCreate(ProductBase):
     # added from the assortment page).
     shop_scope: Optional[ShopScopeIn] = Field(None, alias="shopScope")
     shop_prices: Optional[List[ShopPriceIn]] = Field(None, alias="shopPrices")
+    # Accepted only so that asking for a general item is refused out loud rather than
+    # silently ignored: every company's one general item is built in (see
+    # app/services/general_item.py).
+    is_general: Optional[bool] = Field(None, alias="isGeneral")
 
     @field_validator("shop_prices")
     @classmethod
@@ -152,6 +156,9 @@ class ProductUpdate(BaseModel):
     is_open_price: Optional[bool] = Field(None, alias="isOpenPrice")
     is_weighed: Optional[bool] = Field(None, alias="isWeighed")
     unit_label: Optional[str] = Field(None, max_length=16, alias="unitLabel")
+    # Never changes. Echoing the current value (a form sending the product back) is
+    # fine; anything else is refused — see app/services/general_item.py.
+    is_general: Optional[bool] = Field(None, alias="isGeneral")
     # Omitted: the scope is left exactly as it is.
     shop_scope: Optional[ShopScopeIn] = Field(None, alias="shopScope")
     shop_prices: Optional[List[ShopPriceIn]] = Field(None, alias="shopPrices")
@@ -199,6 +206,8 @@ class ProductResponse(BaseModel):
     is_open_price: bool = Field(False, alias="isOpenPrice")
     is_weighed: bool = Field(False, alias="isWeighed")
     unit_label: Optional[str] = Field(None, alias="unitLabel")
+    # The company's built-in "פריט כללי", which the till's calculator sells through.
+    is_general: bool = Field(False, alias="isGeneral")
     shop_scope: Optional[ShopScopeOut] = Field(None, alias="shopScope")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")

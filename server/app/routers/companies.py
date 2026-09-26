@@ -28,6 +28,7 @@ from app.services.company_hierarchy import (
     user_covers_company,
 )
 from app.services.catalog_notify import notify_machines_for_shop
+from app.services.general_item import ensure_general_item, remove_general_item_with_company
 from app.services.product_shop_scope import reconcile_company_subtree
 from app.services.settings_notify import notify_machines_for_company_settings
 
@@ -261,6 +262,11 @@ def create_company(
         is_active=data.is_active,
     )
     db.add(company)
+    db.flush()
+    # Every company has its general item from the start, in the same transaction, so
+    # there is never a company whose tills' calculator has nothing to sell through.
+    # A new company has no shops, so nobody to notify.
+    ensure_general_item(db, company)
     db.commit()
     db.refresh(company)
     invalidate_company_hierarchy_cache(db)
@@ -362,6 +368,9 @@ def delete_company(
             detail="Company has child companies",
         )
 
+    # The company's own general item goes with it — otherwise it would outlive its
+    # company as an undeletable tenant-wide product.
+    remove_general_item_with_company(db, company)
     db.delete(company)
     db.commit()
     invalidate_company_hierarchy_cache(db)

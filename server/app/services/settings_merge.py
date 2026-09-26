@@ -25,7 +25,8 @@ MANAGED_SETTING_KEYS = (
     # payFastCashEnabled, payFastCashTips, payCashEnabled, ... — the eight payment
     # option keys, spelled out once in payment_options.py.
     *PAYMENT_OPTION_SETTING_KEYS,
-    # sellSearchEnabled, sellScanEnabled — spelled out once in sell_screen.py.
+    # sellSearchEnabled, sellScanEnabled, sellCalculatorEnabled — spelled out once in
+    # sell_screen.py.
     *SELL_SCREEN_SETTING_KEYS,
     "tipPresets",
     "tipDistribution",

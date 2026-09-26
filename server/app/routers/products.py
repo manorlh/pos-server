@@ -34,6 +34,7 @@ from app.middleware.auth import (
     get_current_user,
 )
 from app.models.pos_machine import POSMachine
+from app.services import general_item
 from app.services import product_shop_scope as scope_svc
 from app.services.catalog_notify import (
     notify_all_machines_for_tenant,
@@ -315,6 +316,7 @@ def create_product(
 ):
     if current_user.role not in _CATALOG_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+    general_item.check_general_item_create(data)
 
     company_id = data.company_id or current_user.company_id
     # Before the SKU allocators below, which advance tenant counters.
@@ -365,6 +367,8 @@ def create_product(
         is_open_price=data.is_open_price,
         is_weighed=data.is_weighed,
         unit_label=data.unit_label,
+        # Only `ensure_general_item` makes a general item (the request cannot ask).
+        is_general=False,
     )
     # An explicit id so the shop rows below can reference it before the insert.
     product.id = uuid_mod.uuid4()
@@ -431,6 +435,11 @@ def update_product(
     # Not columns: applied through the scope service below, after the product's own fields.
     updates.pop("shop_scope", None)
     updates.pop("shop_prices", None)
+    # What the general item is stays fixed; only its echo is accepted. Checked before
+    # anything is written. `is_general` itself is never written from a request.
+    general_item.check_general_item_update(product, updates)
+    general_item.check_general_item_scope(product, data.shop_scope)
+    updates.pop("is_general", None)
     validate_open_price_update(product, updates)
     if product.sku_auto_assigned and "sku" in updates and updates["sku"] != product.sku:
         raise HTTPException(
@@ -459,7 +468,9 @@ def update_product(
     for field, value in updates.items():
         setattr(product, field, value)
 
-    if data.shop_scope is not None:
+    # The general item's scope can only be restated (checked above), and restating it
+    # has nothing to apply — so it never asks for write access to every shop.
+    if data.shop_scope is not None and not general_item.is_general(product):
         _apply_shop_scope(db, current_user, product, data.shop_scope, active_tenant_id)
     if data.shop_prices:
         _apply_shop_prices(db, current_user, product, data.shop_prices, active_tenant_id)
@@ -491,6 +502,8 @@ def preview_shop_scope(
         ensure_same_tenant(product.tenant_id, active_tenant_id)
         _check_product_access(current_user, product, db)
         _require_global_catalog_product(product)
+        # Refused where the save would refuse it.
+        general_item.check_general_item_scope(product, body.shop_scope)
     else:
         # A product not created yet: the company it will be created with (see create).
         product = SimpleNamespace(
@@ -587,6 +600,7 @@ def delete_product(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
     ensure_same_tenant(product.tenant_id, active_tenant_id)
     _check_product_access(current_user, product, db)
+    general_item.refuse_general_item_delete(product)
 
     tenant_id = str(product.tenant_id) if product.tenant_id else None
     machine_id = str(product.pos_machine_id) if product.pos_machine_id else None

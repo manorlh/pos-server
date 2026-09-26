@@ -1,6 +1,7 @@
-"""Sell-screen tools a till shows: search (sellSearchEnabled) and scan (sellScanEnabled).
+"""Sell-screen tools a till shows: search (sellSearchEnabled), scan (sellScanEnabled)
+and the calculator (sellCalculatorEnabled).
 
-Both are on unless a layer switches them off. The till reads the same rule in
+All three are on unless a layer switches them off. The till reads the same rule in
 Kotlin (posSettingsOf), so "unset or not a bool -> shown" is the contract with it.
 Style matches the rest of tests/: no database, no client; handlers are called
 directly with mocked sessions.
@@ -32,6 +33,7 @@ from app.services.settings_merge import (
 
 SEARCH = "sellSearchEnabled"
 SCAN = "sellScanEnabled"
+CALC = "sellCalculatorEnabled"
 
 
 def _ts() -> datetime:
@@ -100,7 +102,7 @@ def _sync(company_settings: dict, shop_settings: dict, tenant_settings=None):
 # ── Keys, schema, merge ──────────────────────────────────────────────────────
 
 def test_the_keys_are_the_wire_names_the_till_and_dashboard_read() -> None:
-    assert SELL_SCREEN_SETTING_KEYS == (SEARCH, SCAN)
+    assert SELL_SCREEN_SETTING_KEYS == (SEARCH, SCAN, CALC)
 
 
 def test_both_keys_are_managed_and_therefore_synced() -> None:
@@ -125,19 +127,22 @@ def test_patch_schema_refuses_a_non_bool() -> None:
 # ── Resolution ───────────────────────────────────────────────────────────────
 
 def test_unset_resolves_to_shown() -> None:
-    assert resolve_sell_screen({}) == {SEARCH: True, SCAN: True}
+    assert resolve_sell_screen({}) == {SEARCH: True, SCAN: True, CALC: True}
 
 
 def test_false_resolves_to_hidden() -> None:
-    assert resolve_sell_screen({SEARCH: False, SCAN: False}) == {SEARCH: False, SCAN: False}
-    assert resolve_sell_screen({SEARCH: False}) == {SEARCH: False, SCAN: True}
-    assert resolve_sell_screen({SCAN: False}) == {SEARCH: True, SCAN: False}
+    assert resolve_sell_screen({SEARCH: False, SCAN: False}) == {
+        SEARCH: False, SCAN: False, CALC: True,
+    }
+    assert resolve_sell_screen({SEARCH: False}) == {SEARCH: False, SCAN: True, CALC: True}
+    assert resolve_sell_screen({SCAN: False}) == {SEARCH: True, SCAN: False, CALC: True}
+    assert resolve_sell_screen({CALC: False}) == {SEARCH: True, SCAN: True, CALC: False}
 
 
 @pytest.mark.parametrize("junk", ["false", "False", 0, 1, None, "", [], {}])
 def test_a_non_bool_value_counts_as_unset(junk) -> None:
-    resolved = resolve_sell_screen({SEARCH: junk, SCAN: junk})
-    assert resolved == {SEARCH: True, SCAN: True}
+    resolved = resolve_sell_screen({SEARCH: junk, SCAN: junk, CALC: junk})
+    assert resolved == {SEARCH: True, SCAN: True, CALC: True}
     for value in resolved.values():
         assert value is True
 
@@ -249,6 +254,7 @@ def test_null_resets_the_shop_so_it_inherits_again() -> None:
     assert resolve_sell_screen(merge_all_settings_layers(company, shop)) == {
         SEARCH: True,
         SCAN: True,
+        CALC: True,
     }
 
     res = _patch_shop(shop, db, {SEARCH: None})
@@ -294,3 +300,51 @@ def test_null_resets_at_the_company_and_the_tenant_too() -> None:
             db=db,
         )
     assert SEARCH not in tenant.settings
+
+
+# ── The calculator tab (sellCalculatorEnabled) ───────────────────────────────
+
+
+def test_calculator_is_managed_and_accepted_by_the_patch_schema() -> None:
+    assert CALC in MANAGED_SETTING_KEYS
+    assert PosSettingsV1Patch.model_validate({CALC: False}).model_dump(
+        exclude_unset=True, by_alias=True
+    ) == {CALC: False}
+    with pytest.raises(Exception):
+        PosSettingsV1Patch.model_validate({CALC: "maybe"})
+
+
+def test_calculator_reaches_the_till_as_true_when_nothing_sets_it() -> None:
+    resp = _sync({}, {})
+    assert resp.settings[CALC] is True
+
+
+def test_calculator_off_at_any_layer_reaches_the_till_and_the_nearest_wins() -> None:
+    assert _sync({}, {}, {CALC: False}).settings[CALC] is False
+    assert _sync({CALC: False}, {}).settings[CALC] is False
+    assert _sync({CALC: False}, {CALC: True}).settings[CALC] is True
+    assert _sync({CALC: "no"}, {}).settings[CALC] is True  # not a bool: unset
+
+
+def test_calculator_null_resets_the_shop_to_inherit() -> None:
+    _, company, shop, db = _hierarchy({}, {CALC: False}, {})
+    _patch_shop(shop, db, {CALC: True})
+    assert shop.settings == {CALC: True}
+    assert resolve_sell_screen(merge_all_settings_layers(company, shop))[CALC] is True
+    _patch_shop(shop, db, {CALC: None})
+    assert CALC not in shop.settings
+    assert resolve_sell_screen(merge_all_settings_layers(company, shop))[CALC] is False
+
+
+def test_calculator_inherited_preview_is_resolved_for_the_dashboard() -> None:
+    _, _, shop, db = _hierarchy({}, {}, {})
+    with patch("app.routers.settings._check_shop_access"):
+        res = get_shop_settings(
+            shop_id=str(shop.id),
+            include_effective=True,
+            current_user=_user(UserRole.SHOP_MANAGER),
+            active_tenant_id=shop.tenant_id,
+            db=db,
+        )
+    assert res.effective[CALC] is True
+    assert CALC not in res.settings

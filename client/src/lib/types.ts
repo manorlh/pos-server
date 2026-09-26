@@ -216,6 +216,7 @@ export interface PosSettingsV1 {
   // Optional tools on the till's sell screen. Unset = shown; see lib/sellScreen.ts.
   sellSearchEnabled?: boolean;
   sellScanEnabled?: boolean;
+  sellCalculatorEnabled?: boolean;
   tipPresets?: number[];
   tipDistribution?: TipDistribution;
   receiptPrinterName?: string;
@@ -239,7 +240,10 @@ export type PaymentOptionSettingKey =
   | 'payManualCardEnabled'
   | 'payManualCardTips';
 
-export type SellScreenSettingKey = 'sellSearchEnabled' | 'sellScanEnabled';
+export type SellScreenSettingKey =
+  | 'sellSearchEnabled'
+  | 'sellScanEnabled'
+  | 'sellCalculatorEnabled';
 
 /** Switch keys whose PATCH accepts `null` (= unset this layer, inherit again). */
 export type ResettableSwitchKey = PaymentOptionSettingKey | SellScreenSettingKey;
@@ -296,6 +300,8 @@ export interface ShopProductCatalogRow {
   inheritedAvailable: boolean;
   /** What this shop's tills get when the till itself sets nothing — resolved on the server. */
   effectiveAvailable: boolean;
+  /** The company's built-in general item: it cannot be hidden in or removed from a shop. */
+  isGeneral?: boolean;
 }
 
 /** Global product not yet in shop assortment (GET .../product-catalog-candidates). */
@@ -418,6 +424,12 @@ export interface Product {
   taxRate?: number;
   voucherId?: string;
   trackStock?: boolean;
+  /**
+   * The company's built-in general item ("פריט כללי"), which the till's calculator
+   * sells through. Every company has exactly one; it cannot be deleted, and whether it
+   * is open price, its VAT and where it is sold are fixed by the server.
+   */
+  isGeneral?: boolean;
   /**
    * Where a global product is sold. `null` for a product managed by hand from the
    * assortment page (every product created before this existed). For `shops` mode the

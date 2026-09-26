@@ -27,6 +27,7 @@ from app.middleware.auth import (
 )
 from app.services.catalog_notify import notify_machines_for_shop
 from app.services import product_availability as availability
+from app.services import general_item
 from app.services.company_hierarchy import (
     ancestor_company_ids,
     company_scope_ids,
@@ -138,6 +139,7 @@ def list_shop_product_overrides(
                 is_available=ovr.is_available,
                 effective_available=levels[availability.Level.SHOP].available,
                 inherited_available=levels[availability.Level.COMPANY].available,
+                is_general=general_item.is_general(p),
             )
         )
     return ShopProductCatalogRowListResponse(page=page, page_size=page_size, total=total, items=items)
@@ -175,6 +177,9 @@ def list_shop_product_catalog_candidates(
         Product.catalog_level == CatalogLevel.GLOBAL,
         Product.pos_machine_id.is_(None),
         ~Product.id.in_(assigned_ids),
+        # A parent company's general item is not this shop's to add: its own company
+        # has one (app/services/general_item.py).
+        or_(Product.is_general.is_(False), Product.company_id == shop.company_id),
     )
     if search and search.strip():
         term = f"%{search.strip()}%"
@@ -232,6 +237,7 @@ def assign_shop_product(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Global product not found")
     if not _global_product_allowed_for_shop(db, g, shop):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Product not in shop company")
+    general_item.refuse_general_item_in_foreign_shop(g, shop)
 
     ovr = (
         db.query(ShopProductOverride)
@@ -291,6 +297,9 @@ def unassign_shop_product(
     )
     if not ovr:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not in shop assortment")
+    general_item.refuse_general_item_unlist(
+        db.query(Product).filter(Product.id == ovr.global_product_id).first()
+    )
 
     db.delete(ovr)
     db.commit()
@@ -346,6 +355,9 @@ def upsert_shop_product_override(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Product not in shop assortment — use POST to assign first",
         )
+
+    if "is_listed" in payload and not payload["is_listed"]:
+        general_item.refuse_general_item_unlist(g)
 
     if "price" in payload:
         ovr.price = payload["price"]

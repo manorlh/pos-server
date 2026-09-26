@@ -56,6 +56,7 @@ class PosSettingsV1Patch(BaseModel):
     # Unset = shown. Resolution lives in app/services/sell_screen.py.
     sell_search_enabled: Optional[bool] = Field(None, alias="sellSearchEnabled")
     sell_scan_enabled: Optional[bool] = Field(None, alias="sellScanEnabled")
+    sell_calculator_enabled: Optional[bool] = Field(None, alias="sellCalculatorEnabled")
     tip_presets: Optional[List[int]] = Field(None, alias="tipPresets")
     tip_distribution: Optional[Literal["direct", "equal_pool", "by_sales"]] = Field(
         None, alias="tipDistribution"

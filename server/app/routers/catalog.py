@@ -129,6 +129,9 @@ def _copy_product_to_machine(
         barcode=global_product.barcode,
         tax_rate=global_product.tax_rate,
         is_open_price=global_product.is_open_price,
+        # Never flagged on a till's copy: one flagged row per company (the unique
+        # index). The sync reads the copy's `isGeneral` through its global row.
+        is_general=False,
     )
     db.add(local)
     db.flush()

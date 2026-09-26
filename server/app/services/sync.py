@@ -37,6 +37,7 @@ from app.models.shop import Shop
 from app.models.shop_product_override import ShopProductOverride
 from app.models.shop_category_override import ShopCategoryOverride
 from app.models.voucher import Voucher
+from app.services import general_item
 from app.services import product_availability as availability
 
 
@@ -58,6 +59,20 @@ def _effective_voucher_id(p: Product) -> Optional[uuid_mod.UUID]:
     if category is not None and category.voucher_id:
         return category.voucher_id
     return None
+
+
+def _is_general(p: Product) -> bool:
+    """
+    The till's `isGeneral`: the company's built-in general item (see
+    app/services/general_item.py). A machine-local copy of it (catalog push) is not
+    itself flagged — the unique index allows one flagged row per company — so it is
+    read through the global row it copies.
+    """
+    if general_item.is_general(p):
+        return True
+    if getattr(p, "global_product_id", None) is None:
+        return False
+    return general_item.is_general(getattr(p, "global_product", None))
 
 
 def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[str, Any]:
@@ -93,6 +108,7 @@ def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[s
         "isOpenPrice": bool(p.is_open_price),
         "isWeighed": bool(p.is_weighed),
         "unitLabel": p.unit_label,
+        "isGeneral": _is_general(p),
         "createdAt": p.created_at.isoformat() if p.created_at else None,
         "updatedAt": p.updated_at.isoformat() if p.updated_at else None,
     }
@@ -184,6 +200,9 @@ def _serialize_merged_product(
         # product, not an override.
         "isWeighed": bool(global_p.is_weighed),
         "unitLabel": global_p.unit_label,
+        # From the global row like the rest of what the product *is*: a till's local
+        # copy of the general item is still the general item.
+        "isGeneral": general_item.is_general(global_p),
         "shopListed": shop_listed,
         "createdAt": (local.created_at if local else global_p.created_at).isoformat()
         if (local and local.created_at) or global_p.created_at

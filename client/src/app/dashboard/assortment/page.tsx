@@ -242,8 +242,16 @@ function AssortmentEditDialog({
                 </Label>
                 <p className="text-xs text-muted-foreground mt-0.5">{t('listedHint')}</p>
               </div>
-              <Switch id="assort-listed" checked={listed} onCheckedChange={setListed} />
+              <Switch
+                id="assort-listed"
+                checked={listed}
+                onCheckedChange={setListed}
+                disabled={row.isGeneral === true}
+              />
             </div>
+            {row.isGeneral ? (
+              <p className="text-xs text-muted-foreground">{t('systemItemListedHint')}</p>
+            ) : null}
             <div className="space-y-2">
               <div>
                 <Label className="text-sm">{t('availableForSale')}</Label>
@@ -298,7 +306,12 @@ function AssortmentRow({
 
   return (
     <TableRow className="cursor-pointer" onClick={onEdit}>
-      <TableCell className="font-medium">{row.name}</TableCell>
+      <TableCell className="font-medium">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span>{row.name}</span>
+          {row.isGeneral ? <Badge variant="secondary">{t('systemItemBadge')}</Badge> : null}
+        </div>
+      </TableCell>
       <TableCell className="text-muted-foreground text-sm font-mono">{row.sku}</TableCell>
       <TableCell>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -328,17 +341,20 @@ function AssortmentRow({
           <Pencil className="h-3.5 w-3.5 ms-1" />
           {t('editOverrides')}
         </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className="text-destructive hover:text-destructive"
-          disabled={removing}
-          onClick={onRemove}
-          title={t('removeFromShop')}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
+        {/* The general item stays in every shop of its company; the server refuses removal. */}
+        {row.isGeneral ? null : (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="text-destructive hover:text-destructive"
+            disabled={removing}
+            onClick={onRemove}
+            title={t('removeFromShop')}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        )}
       </TableCell>
     </TableRow>
   );

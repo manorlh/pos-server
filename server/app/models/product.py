@@ -3,7 +3,7 @@ import enum
 
 from sqlalchemy import (
     Column, String, Boolean, ForeignKey, Numeric, Integer,
-    Enum as SQLEnum, DateTime, UniqueConstraint,
+    Enum as SQLEnum, DateTime, Index, UniqueConstraint, text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -21,6 +21,15 @@ class Product(Base):
     __tablename__ = "products"
     __table_args__ = (
         UniqueConstraint("tenant_id", "sku", name="uq_product_sku_tenant"),
+        # At most one built-in general item per company (see `is_general`). Partial, so
+        # it constrains nothing else. Created by migration e7f8a9b0c1d2.
+        Index(
+            "uq_products_general_per_company",
+            "company_id",
+            unique=True,
+            postgresql_where=text("is_general"),
+            sqlite_where=text("is_general"),
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -64,6 +73,12 @@ class Product(Base):
     # closed list would need a migration for the first shop that sells by the מטר.
     # Nullable: a product that has not been given one falls back to the till's default.
     unit_label = Column(String(16), nullable=True)
+
+    # The company's built-in "פריט כללי": the product the till's calculator adds its
+    # lines as. Every company has exactly one, created with the company and never
+    # deleted; open price, standard VAT, sold in every shop of its company. Everything
+    # about it lives in app/services/general_item.py.
+    is_general = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # Where a global product is sold. Null is every product that predates this: its
     # shops are whatever rows somebody added by hand on the assortment page. "company"

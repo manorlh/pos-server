@@ -50,6 +50,7 @@ from app.services.settings_merge import (
 )
 from app.services.payment_options import legacy_tip_flags, resolve_payment_options
 from app.services.sell_screen import resolve_sell_screen
+from app.services import general_item
 from app.schemas.transaction import (
     TransactionsBatchRequest,
     TransactionsBatchResponse,
@@ -123,6 +124,44 @@ def _require_assigned_machine(machine: POSMachine) -> None:
         )
 
 
+def _ensure_shop_general_item(db: Session, machine: POSMachine) -> None:
+    """
+    Safety net: the till's calculator needs its company's general item.
+
+    Every company gets one when it is created, and migration e7f8a9b0c1d2 made one for
+    every company before that — but a company created by the previous build while the
+    migration and the deploy were a minute apart would have none, and its calculator
+    would have nothing to sell through. So the catalog pull makes sure, before building
+    the payload, so the item is in this very response. One indexed lookup when it
+    exists, which is every time but the first.
+
+    Never fails the pull: another till of the same company creating it at the same
+    moment meets the unique index, and this one simply rolls back and carries on.
+    """
+    if not machine.shop_id:
+        return
+    shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
+    if shop is None or shop.company_id is None:
+        return
+    company = db.query(Company).filter(Company.id == shop.company_id).first()
+    try:
+        ensured = general_item.ensure_general_item(db, company)
+        if not ensured.created:
+            return
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return
+    logger.warning(
+        "general item was missing and was created at catalog pull company_id=%s machine_id=%s",
+        shop.company_id,
+        machine.id,
+    )
+    # The other tills of these shops; this one gets it in the response it is pulling.
+    for shop_id in ensured.shop_ids:
+        notify_machines_for_shop(db, shop_id, reason="general_item_created")
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/{machine_id}/catalog", response_model=CatalogSyncResponse)
@@ -150,6 +189,7 @@ def get_catalog_sync(
     tid = str(machine.tenant_id) if machine.tenant_id else None
     mqid = str(machine.id)
 
+    _ensure_shop_general_item(db, machine)
     products = get_products_for_sync(db, tid, mqid, since=since_dt)
     categories = get_categories_for_sync(db, tid, mqid, since=since_dt)
     vouchers = get_vouchers_for_sync(db, tid, since=since_dt)
@@ -336,6 +376,7 @@ def machine_create_cloud_product(
     """Create a product from the till, listed in the till's own shop."""
     _require_assigned_machine(machine)
     shop = _shop_or_400(db, machine)
+    general_item.check_general_item_create(data)
 
     final_sku, sku_auto_assigned = resolve_sku_for_create(db, machine.tenant_id, data.sku)
     global_sku = allocate_global_sku(db, machine.tenant_id)
@@ -373,6 +414,8 @@ def machine_create_cloud_product(
         is_open_price=data.is_open_price,
         is_weighed=data.is_weighed,
         unit_label=data.unit_label,
+        # Only `ensure_general_item` makes a general item (the request cannot ask).
+        is_general=False,
     )
     db.add(product)
     db.flush()
@@ -424,6 +467,13 @@ def machine_update_cloud_product(
     product = _machine_editable_product(db, machine, product_id)
 
     updates = data.model_dump(exclude_unset=True, by_alias=False)
+    # The general item's fixed fields, checked whoever may edit the rest of it. The
+    # flag itself is never written from a request, so an echo of it is dropped here
+    # rather than counted as a change to the chain's master record.
+    general_item.check_general_item_update(product, updates)
+    updates.pop("is_general", None)
+    if "is_listed" in updates and not updates["is_listed"]:
+        general_item.refuse_general_item_unlist(product)
     master_fields = {k: v for k, v in updates.items() if k not in _OVERRIDE_FIELDS}
     override_fields = {k: v for k, v in updates.items() if k in _OVERRIDE_FIELDS}
 
@@ -447,6 +497,8 @@ def machine_update_cloud_product(
     if override_fields:
         override = _override_for(db, shop.id, product.id)
         if override is None:
+            # Never a row for another company's general item: this shop has its own.
+            general_item.refuse_general_item_in_foreign_shop(product, shop)
             override = ShopProductOverride(
                 shop_id=shop.id,
                 global_product_id=product.id,
@@ -495,6 +547,7 @@ def machine_delete_cloud_product(
     _require_assigned_machine(machine)
     shop = _shop_or_400(db, machine)
     product = _machine_editable_product(db, machine, product_id)
+    general_item.refuse_general_item_delete(product)
 
     override = _override_for(db, shop.id, product.id)
     if override is None:

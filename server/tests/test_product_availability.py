@@ -692,7 +692,11 @@ class TestMigration:
         here = pathlib.Path(__file__).resolve().parents[1]
         cfg = Config(str(here / "alembic.ini"))
         cfg.set_main_option("script_location", str(here / "alembic"))
-        assert ScriptDirectory.from_config(cfg).get_heads() == ["d6e7f8a9b0c1"]
+        # No longer the head itself since the general item (e7f8a9b0c1d2) was chained on.
+        script = ScriptDirectory.from_config(cfg)
+        heads = script.get_heads()
+        assert len(heads) == 1
+        assert "d6e7f8a9b0c1" in {r.revision for r in script.walk_revisions("base", heads[0])}
 
     def test_true_becomes_inherit_and_false_stays_a_lock(self, world):
         w = world

@@ -44,7 +44,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight, Lock } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 
 type SkuMode = 'auto' | 'manual';
@@ -112,6 +112,8 @@ export default function ProductsPage() {
   const isNew = !editing.id;
   const skuReadOnly = !isNew && editing.skuAutoAssigned === true;
   const isGlobal = (editing.catalogLevel ?? 'global') === 'global';
+  /** The company's built-in general item: where it is sold is fixed on the server. */
+  const isGeneral = editing.isGeneral === true;
 
   const { data, isLoading } = useQuery<ProductListResponse>({
     queryKey: ['products', page],
@@ -285,7 +287,17 @@ export default function ProductsPage() {
                     <TableCell>
                       <ProductThumbnail imageUrl={p.imageUrl} name={p.name} />
                     </TableCell>
-                    <TableCell className="font-medium">{p.name}</TableCell>
+                    <TableCell className="font-medium">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span>{p.name}</span>
+                        {p.isGeneral ? (
+                          <Badge variant="secondary" className="gap-1" title={t('systemItemTitle')}>
+                            <Lock className="h-3 w-3" />
+                            {t('systemItemBadge')}
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </TableCell>
                     <TableCell className="text-muted-foreground font-mono text-sm">{p.globalSku ?? '—'}</TableCell>
                     <TableCell className="text-muted-foreground">{p.sku}</TableCell>
                     <TableCell>₪{Number(p.price).toFixed(2)}</TableCell>
@@ -305,10 +317,13 @@ export default function ProductsPage() {
                         <Button variant="ghost" size="icon" onClick={() => openEdit(p)}>
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => remove.mutate(p.id)}
-                          className="text-destructive hover:text-destructive">
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                        {/* The general item cannot be deleted: the till's calculator sells through it. */}
+                        {p.isGeneral ? null : (
+                          <Button variant="ghost" size="icon" onClick={() => remove.mutate(p.id)}
+                            className="text-destructive hover:text-destructive">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -349,6 +364,15 @@ export default function ProductsPage() {
             <DialogTitle>{isNew ? t('addTitle') : t('editTitle')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            {isGeneral ? (
+              <div className="rounded-md border bg-muted/40 p-3 space-y-1">
+                <p className="flex items-center gap-1.5 text-sm font-medium">
+                  <Lock className="h-3.5 w-3.5" />
+                  {t('systemItemTitle')}
+                </p>
+                <p className="text-xs text-muted-foreground">{t('systemItemHint')}</p>
+              </div>
+            ) : null}
             <ProductImageUpload
               value={editing.imageUrl}
               onChange={(url) => setEditing((p) => ({ ...p, imageUrl: url }))}
@@ -436,6 +460,7 @@ export default function ProductsPage() {
             <div className="space-y-1">
               <Label>{t('voucher')}</Label>
               <Select
+                disabled={isGeneral}
                 value={editing.voucherId ?? '__none__'}
                 onValueChange={(v) =>
                   setEditing((p) => ({
@@ -459,6 +484,7 @@ export default function ProductsPage() {
                 <p className="text-xs text-muted-foreground">{t('trackStockHint')}</p>
               </div>
               <Switch
+                disabled={isGeneral}
                 checked={editing.trackStock ?? false}
                 onCheckedChange={(c) => setEditing((p) => ({ ...p, trackStock: c }))}
               />
@@ -487,7 +513,7 @@ export default function ProductsPage() {
                 shops={shops}
                 productCompanyId={productCompanyId}
                 showManual={!isNew && !editing.shopScope}
-                disabled={scopeLoading}
+                disabled={scopeLoading || isGeneral}
                 preview={preview}
               />
             ) : null}
