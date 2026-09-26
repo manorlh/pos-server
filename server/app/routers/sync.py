@@ -49,6 +49,7 @@ from app.services.settings_merge import (
     merge_all_settings_layers,
 )
 from app.services.payment_options import legacy_tip_flags, resolve_payment_options
+from app.services.sell_screen import resolve_sell_screen
 from app.schemas.transaction import (
     TransactionsBatchRequest,
     TransactionsBatchResponse,
@@ -1157,6 +1158,9 @@ def get_settings_sync(
     payment_options = resolve_payment_options(all_settings)
     effective.update(payment_options)
     effective.update(legacy_tip_flags(payment_options))
+    # The sell-screen tools likewise always go out as real bools (unset -> shown),
+    # so the till reads a value rather than deciding what a missing key means.
+    effective.update(resolve_sell_screen(all_settings))
     business_info = build_business_info(company, shop, all_settings)
 
     update_machine_sync_timestamp(db, str(machine.id))

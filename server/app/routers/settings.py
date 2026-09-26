@@ -25,6 +25,7 @@ from app.services.payment_options import (
     any_allowed,
     resolve_payment_options,
 )
+from app.services.sell_screen import SELL_SCREEN_SETTING_KEYS, resolve_sell_screen
 from app.services.settings_merge import (
     BRANDING_SETTING_KEYS,
     deep_merge_settings,
@@ -121,10 +122,25 @@ def _payment_options_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
     return {key: raw[key] for key in PAYMENT_OPTION_SETTING_KEYS if key in raw}
 
 
+def _sell_screen_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
+    """Sell-screen keys the caller explicitly sent, keeping an explicit `null`.
+
+    The same switch-has-no-empty-state reason as the payment options: `null` is the
+    dashboard's "reset to inherited", removing the key from this layer.
+    """
+    raw = data.model_dump(exclude_unset=True, by_alias=True)
+    return {key: raw[key] for key in SELL_SCREEN_SETTING_KEYS if key in raw}
+
+
 def _build_patch(data: PosSettingsV1Patch, user: User) -> Dict[str, Any]:
     branding = _branding_patch(data)
     _check_branding_write(user, branding)
-    return {**patch_to_camel_dict(data), **branding, **_payment_options_patch(data)}
+    return {
+        **patch_to_camel_dict(data),
+        **branding,
+        **_payment_options_patch(data),
+        **_sell_screen_patch(data),
+    }
 
 
 #: Stable code for the dashboard to match on; the message is for people and may change.
@@ -327,6 +343,9 @@ def get_shop_settings(
             # so a key the shop never set still reads as inherited, not overridden.
             # Tips as chosen, not as effective: see resolve_payment_options.
             effective.update(resolve_payment_options(effective, effective=False))
+            # Sell-screen tools resolved for the same reason: an unset key is
+            # "shown", and the dashboard should read that, not guess it.
+            effective.update(resolve_sell_screen(effective))
 
     return ShopSettingsResponse(
         settings=shop.settings or {},

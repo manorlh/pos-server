@@ -22,7 +22,12 @@
  * The server returns the inherited values already resolved (including the legacy
  * `tipsEnabled` / `cashTipsEnabled` fallback), so nothing here re-derives them.
  */
-import type { PaymentOptionSettingKey, PosSettingsPatch, PosSettingsV1 } from './types';
+import type {
+  PaymentOptionSettingKey,
+  PosSettingsPatch,
+  PosSettingsV1,
+  ResettableSwitchKey,
+} from './types';
 
 export type PaymentOptionId = 'fastCash' | 'cash' | 'fastCard' | 'card' | 'manualCard';
 
@@ -90,9 +95,13 @@ export const PAYMENT_OPTIONS = [
  */
 export const PAYMENT_OPTION_FALLBACK = { tips: false } as const;
 
-/** This layer's own value if it set one, else what it inherits, else `fallback`. */
+/**
+ * This layer's own value if it set one, else what it inherits, else `fallback`.
+ * Also used by the sell-screen switches (lib/sellScreen.ts), which follow the same
+ * set-or-inherit rule.
+ */
 export function resolvePaymentOptionKey(
-  key: PaymentOptionSettingKey,
+  key: ResettableSwitchKey,
   own: PosSettingsPatch,
   inherited: PosSettingsV1 | undefined,
   fallback: boolean,

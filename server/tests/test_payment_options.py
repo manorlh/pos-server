@@ -634,7 +634,7 @@ def test_null_for_an_unset_payment_key_changes_nothing() -> None:
 
 
 def test_null_still_does_not_unset_non_payment_keys() -> None:
-    # Only branding and the payment option keys treat null as "inherit again".
+    # Only branding, the payment option and the sell-screen keys treat null as "inherit again".
     _, _, shop, db = _hierarchy({}, {}, {"receiptPrinterName": "BB", "tipsEnabled": True})
     res = _patch_shop(
         shop, db, {"receiptPrinterName": None, "tipsEnabled": None, "language": "en"}

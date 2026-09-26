@@ -13,9 +13,13 @@ import {
   noPaymentOptionAllowed,
   resolvePaymentOptionKey,
 } from '@/lib/paymentOptions';
-import type { PaymentOptionSettingKey, PosSettingsPatch, PosSettingsV1 } from '@/lib/types';
+import { SELL_SCREEN_TOOLS, SELL_SCREEN_TOOL_DEFAULT } from '@/lib/sellScreen';
+import type { PosSettingsPatch, PosSettingsV1, ResettableSwitchKey } from '@/lib/types';
 
-/** A patch, not plain settings, so a payment-option key can hold `null` (= inherit again). */
+/**
+ * A patch, not plain settings, so a payment-option or sell-screen key can hold `null`
+ * (= inherit again).
+ */
 export type PosSettingsFormState = PosSettingsPatch;
 
 type Props = {
@@ -90,7 +94,7 @@ export function PosSettingsForm({
   // A switch has no empty state to clear, so a layer that set one of these keys
   // needs an explicit way back to inheriting it. `null` is what the PATCH reads
   // as "unset this layer", as it does for branding.
-  const resetToInherited = (key: PaymentOptionSettingKey) =>
+  const resetToInherited = (key: ResettableSwitchKey) =>
     typeof value[key] === 'boolean' ? (
       <Button
         type="button"
@@ -191,6 +195,35 @@ export function PosSettingsForm({
           </SelectContent>
         </Select>
         {inheritedHint('outOfStockPolicy')}
+      </div>
+
+      <div className="border-t pt-4 space-y-3">
+        <div>
+          <p className="text-sm font-medium">{t('sellScreenTitle')}</p>
+          <p className="text-xs text-muted-foreground">{t('sellScreenDesc')}</p>
+        </div>
+        {SELL_SCREEN_TOOLS.map((tool) => (
+          <div key={tool.id} className="flex items-center justify-between gap-4">
+            <div>
+              <Label>
+                {t(tool.labelKey)}
+                {overrideBadge(tool.key)}
+              </Label>
+              <p className="text-xs text-muted-foreground">{t(tool.descriptionKey)}</p>
+              {inheritedHint(tool.key, onOff)}
+              {resetToInherited(tool.key)}
+            </div>
+            <Switch
+              checked={resolvePaymentOptionKey(
+                tool.key,
+                value,
+                inherited,
+                SELL_SCREEN_TOOL_DEFAULT,
+              )}
+              onCheckedChange={(c) => set(tool.key, c)}
+            />
+          </div>
+        ))}
       </div>
 
       <div className="border-t pt-4 space-y-3">

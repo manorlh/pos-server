@@ -52,6 +52,10 @@ class PosSettingsV1Patch(BaseModel):
     pay_card_tips: Optional[bool] = Field(None, alias="payCardTips")
     pay_manual_card_enabled: Optional[bool] = Field(None, alias="payManualCardEnabled")
     pay_manual_card_tips: Optional[bool] = Field(None, alias="payManualCardTips")
+    # ── Optional tools on the till's sell screen ──
+    # Unset = shown. Resolution lives in app/services/sell_screen.py.
+    sell_search_enabled: Optional[bool] = Field(None, alias="sellSearchEnabled")
+    sell_scan_enabled: Optional[bool] = Field(None, alias="sellScanEnabled")
     tip_presets: Optional[List[int]] = Field(None, alias="tipPresets")
     tip_distribution: Optional[Literal["direct", "equal_pool", "by_sales"]] = Field(
         None, alias="tipDistribution"
