@@ -1,14 +1,26 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import type { PosSettingsV1 } from '@/lib/types';
+import {
+  PAYMENT_OPTIONS,
+  PAYMENT_OPTION_FALLBACK,
+  noPaymentOptionAllowed,
+  resolvePaymentOptionKey,
+} from '@/lib/paymentOptions';
+import { SELL_SCREEN_TOOLS, SELL_SCREEN_TOOL_DEFAULT } from '@/lib/sellScreen';
+import type { PosSettingsPatch, PosSettingsV1, ResettableSwitchKey } from '@/lib/types';
 
-export type PosSettingsFormState = PosSettingsV1;
+/**
+ * A patch, not plain settings, so a payment-option or sell-screen key can hold `null`
+ * (= inherit again).
+ */
+export type PosSettingsFormState = PosSettingsPatch;
 
 type Props = {
   value: PosSettingsFormState;
@@ -16,6 +28,8 @@ type Props = {
   /** When set, empty fields show inherited effective values (shop override UX). */
   inherited?: PosSettingsV1;
   showOverrideHints?: boolean;
+  /** The server refused the last save because no payment option was left allowed. */
+  paymentOptionsRejected?: boolean;
 };
 
 function isOverridden(
@@ -42,10 +56,16 @@ function placeholderFor<K extends keyof PosSettingsV1>(
   return '';
 }
 
-export function PosSettingsForm({ value, onChange, inherited, showOverrideHints }: Props) {
+export function PosSettingsForm({
+  value,
+  onChange,
+  inherited,
+  showOverrideHints,
+  paymentOptionsRejected,
+}: Props) {
   const t = useTranslations('posSettings');
 
-  const set = <K extends keyof PosSettingsV1>(key: K, v: PosSettingsV1[K]) => {
+  const set = <K extends keyof PosSettingsFormState>(key: K, v: PosSettingsFormState[K]) => {
     onChange({ ...value, [key]: v });
   };
 
@@ -56,15 +76,38 @@ export function PosSettingsForm({ value, onChange, inherited, showOverrideHints 
       </Badge>
     ) : null;
 
-  const inheritedHint = (key: keyof PosSettingsV1) => {
+  const inheritedHint = (
+    key: keyof PosSettingsV1,
+    format: (inh: NonNullable<PosSettingsV1[keyof PosSettingsV1]>) => string = String,
+  ) => {
     if (!showOverrideHints || !inherited) return null;
     const inh = inherited[key];
     if (inh === undefined || inh === null || inh === '') return null;
     if (isOverridden(key, value, inherited)) return null;
     return (
-      <p className="text-xs text-muted-foreground">{t('inherited', { value: String(inh) })}</p>
+      <p className="text-xs text-muted-foreground">{t('inherited', { value: format(inh) })}</p>
     );
   };
+
+  const onOff = (inh: unknown) => t(inh === true ? 'payOn' : 'payOff');
+
+  // A switch has no empty state to clear, so a layer that set one of these keys
+  // needs an explicit way back to inheriting it. `null` is what the PATCH reads
+  // as "unset this layer", as it does for branding.
+  const resetToInherited = (key: ResettableSwitchKey) =>
+    typeof value[key] === 'boolean' ? (
+      <Button
+        type="button"
+        variant="link"
+        size="xs"
+        className="h-auto px-0 text-xs"
+        onClick={() => set(key, null)}
+      >
+        {t('payResetToInherited')}
+      </Button>
+    ) : null;
+
+  const noneAllowed = noPaymentOptionAllowed(value, inherited);
 
   return (
     <div className="space-y-4">
@@ -155,32 +198,103 @@ export function PosSettingsForm({ value, onChange, inherited, showOverrideHints 
       </div>
 
       <div className="border-t pt-4 space-y-3">
-        <p className="text-sm font-medium">{t('tipsTitle')}</p>
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <Label>
-              {t('tipsEnabled')}
-              {overrideBadge('tipsEnabled')}
-            </Label>
-            {inheritedHint('tipsEnabled')}
-          </div>
-          <Switch
-            checked={value.tipsEnabled ?? inherited?.tipsEnabled ?? false}
-            onCheckedChange={(c) => set('tipsEnabled', c)}
-          />
+        <div>
+          <p className="text-sm font-medium">{t('sellScreenTitle')}</p>
+          <p className="text-xs text-muted-foreground">{t('sellScreenDesc')}</p>
         </div>
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <Label>
-              {t('cashTipsEnabled')}
-              {overrideBadge('cashTipsEnabled')}
-            </Label>
-            {inheritedHint('cashTipsEnabled')}
+        {SELL_SCREEN_TOOLS.map((tool) => (
+          <div key={tool.id} className="flex items-center justify-between gap-4">
+            <div>
+              <Label>
+                {t(tool.labelKey)}
+                {overrideBadge(tool.key)}
+              </Label>
+              <p className="text-xs text-muted-foreground">{t(tool.descriptionKey)}</p>
+              {inheritedHint(tool.key, onOff)}
+              {resetToInherited(tool.key)}
+            </div>
+            <Switch
+              checked={resolvePaymentOptionKey(
+                tool.key,
+                value,
+                inherited,
+                SELL_SCREEN_TOOL_DEFAULT,
+              )}
+              onCheckedChange={(c) => set(tool.key, c)}
+            />
           </div>
-          <Switch
-            checked={value.cashTipsEnabled ?? inherited?.cashTipsEnabled ?? false}
-            onCheckedChange={(c) => set('cashTipsEnabled', c)}
-          />
+        ))}
+      </div>
+
+      <div className="border-t pt-4 space-y-3">
+        <div>
+          <p className="text-sm font-medium">{t('payOptionsTitle')}</p>
+          <p className="text-xs text-muted-foreground">{t('payOptionsDesc')}</p>
+        </div>
+        {PAYMENT_OPTIONS.map((opt) => {
+          const allowed = resolvePaymentOptionKey(
+            opt.enabledKey,
+            value,
+            inherited,
+            opt.enabledByDefault,
+          );
+          const tips = resolvePaymentOptionKey(
+            opt.tipsKey,
+            value,
+            inherited,
+            PAYMENT_OPTION_FALLBACK.tips,
+          );
+          return (
+            <div key={opt.id} className="rounded-lg border p-3 space-y-2">
+              <div>
+                <p className="text-sm font-medium">{t(opt.labelKey)}</p>
+                <p className="text-xs text-muted-foreground">{t(opt.descriptionKey)}</p>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <Label>
+                    {t('payAllowed')}
+                    {overrideBadge(opt.enabledKey)}
+                  </Label>
+                  {inheritedHint(opt.enabledKey, onOff)}
+                  {resetToInherited(opt.enabledKey)}
+                </div>
+                <Switch checked={allowed} onCheckedChange={(c) => set(opt.enabledKey, c)} />
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <Label className={allowed ? undefined : 'text-muted-foreground'}>
+                    {t('payTips')}
+                    {overrideBadge(opt.tipsKey)}
+                  </Label>
+                  {inheritedHint(opt.tipsKey, onOff)}
+                  {resetToInherited(opt.tipsKey)}
+                  {!allowed ? (
+                    <p className="text-xs text-muted-foreground">{t('payTipsHiddenHint')}</p>
+                  ) : null}
+                </div>
+                {/* Left as stored while the option is hidden, so turning the
+                    option back on brings the earlier tip choice back with it. */}
+                <Switch
+                  checked={tips}
+                  disabled={!allowed}
+                  onCheckedChange={(c) => set(opt.tipsKey, c)}
+                />
+              </div>
+            </div>
+          );
+        })}
+        {noneAllowed || paymentOptionsRejected ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t('payNoneAllowed')}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="border-t pt-4 space-y-3">
+        <div>
+          <p className="text-sm font-medium">{t('tipsTitle')}</p>
+          <p className="text-xs text-muted-foreground">{t('tipsAppliesTo')}</p>
         </div>
         <div className="space-y-1">
           <Label>

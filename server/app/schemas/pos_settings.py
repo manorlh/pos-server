@@ -35,8 +35,27 @@ class PosSettingsV1Patch(BaseModel):
     out_of_stock_policy: Optional[Literal["block", "warn", "allow"]] = Field(
         None, alias="outOfStockPolicy"
     )
+    # Legacy tip switches. Still accepted and stored: layers already hold them, and
+    # they are the fallback for any option whose own tips key below is unset
+    # (see app/services/payment_options.py).
     tips_enabled: Optional[bool] = Field(None, alias="tipsEnabled")
     cash_tips_enabled: Optional[bool] = Field(None, alias="cashTipsEnabled")
+    # ── Payment options offered on the till, and whether each asks for a tip ──
+    # Unset = offered / legacy tip rule. Resolution lives in payment_options.py.
+    pay_fast_cash_enabled: Optional[bool] = Field(None, alias="payFastCashEnabled")
+    pay_fast_cash_tips: Optional[bool] = Field(None, alias="payFastCashTips")
+    pay_cash_enabled: Optional[bool] = Field(None, alias="payCashEnabled")
+    pay_cash_tips: Optional[bool] = Field(None, alias="payCashTips")
+    pay_fast_card_enabled: Optional[bool] = Field(None, alias="payFastCardEnabled")
+    pay_fast_card_tips: Optional[bool] = Field(None, alias="payFastCardTips")
+    pay_card_enabled: Optional[bool] = Field(None, alias="payCardEnabled")
+    pay_card_tips: Optional[bool] = Field(None, alias="payCardTips")
+    pay_manual_card_enabled: Optional[bool] = Field(None, alias="payManualCardEnabled")
+    pay_manual_card_tips: Optional[bool] = Field(None, alias="payManualCardTips")
+    # ── Optional tools on the till's sell screen ──
+    # Unset = shown. Resolution lives in app/services/sell_screen.py.
+    sell_search_enabled: Optional[bool] = Field(None, alias="sellSearchEnabled")
+    sell_scan_enabled: Optional[bool] = Field(None, alias="sellScanEnabled")
     tip_presets: Optional[List[int]] = Field(None, alias="tipPresets")
     tip_distribution: Optional[Literal["direct", "equal_pool", "by_sales"]] = Field(
         None, alias="tipDistribution"

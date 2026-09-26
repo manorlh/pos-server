@@ -194,8 +194,28 @@ export interface PosSettingsV1 {
   nayaxDevicePort?: string;
   nayaxSpicyPath?: string;
   outOfStockPolicy?: OutOfStockPolicy;
+  /**
+   * Legacy tip switches. The server still reads them as the fallback for the
+   * per-option `pay*Tips` keys below, so they stay in the type, but the
+   * dashboard no longer writes them.
+   */
   tipsEnabled?: boolean;
   cashTipsEnabled?: boolean;
+  // Which payment buttons the till shows, and whether each asks for a tip.
+  // What each option is lives in lib/paymentOptions.ts.
+  payFastCashEnabled?: boolean;
+  payFastCashTips?: boolean;
+  payCashEnabled?: boolean;
+  payCashTips?: boolean;
+  payFastCardEnabled?: boolean;
+  payFastCardTips?: boolean;
+  payCardEnabled?: boolean;
+  payCardTips?: boolean;
+  payManualCardEnabled?: boolean;
+  payManualCardTips?: boolean;
+  // Optional tools on the till's sell screen. Unset = shown; see lib/sellScreen.ts.
+  sellSearchEnabled?: boolean;
+  sellScanEnabled?: boolean;
   tipPresets?: number[];
   tipDistribution?: TipDistribution;
   receiptPrinterName?: string;
@@ -207,16 +227,39 @@ export interface PosSettingsV1 {
   brandHeroUrl?: string;
 }
 
+export type PaymentOptionSettingKey =
+  | 'payFastCashEnabled'
+  | 'payFastCashTips'
+  | 'payCashEnabled'
+  | 'payCashTips'
+  | 'payFastCardEnabled'
+  | 'payFastCardTips'
+  | 'payCardEnabled'
+  | 'payCardTips'
+  | 'payManualCardEnabled'
+  | 'payManualCardTips';
+
+export type SellScreenSettingKey = 'sellSearchEnabled' | 'sellScanEnabled';
+
+/** Switch keys whose PATCH accepts `null` (= unset this layer, inherit again). */
+export type ResettableSwitchKey = PaymentOptionSettingKey | SellScreenSettingKey;
+
 /**
  * PATCH body for POS settings. Branding keys accept an explicit `null`, which
  * unsets them at that level so the level above is inherited again — distinct
  * from `''`, which is stored and means "deliberately no image here".
+ *
+ * The payment-option and sell-screen keys take `null` for the same reason: a
+ * switch has no empty state, so without it a layer that once overrode a key could
+ * never go back to inheriting it.
  */
 export type PosSettingsPatch = Partial<
-  Omit<PosSettingsV1, 'brandLogoUrl' | 'brandHeroUrl'>
+  Omit<PosSettingsV1, 'brandLogoUrl' | 'brandHeroUrl' | ResettableSwitchKey>
 > & {
   brandLogoUrl?: string | null;
   brandHeroUrl?: string | null;
+} & {
+  [K in ResettableSwitchKey]?: boolean | null;
 };
 
 export type BrandingImageKind = 'logo' | 'hero';

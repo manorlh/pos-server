@@ -8,6 +8,8 @@ from app.models.company import Company
 from app.models.shop import Shop
 from app.models.tenant import Tenant
 from app.schemas.pos_settings import BusinessInfoSync
+from app.services.payment_options import PAYMENT_OPTION_SETTING_KEYS
+from app.services.sell_screen import SELL_SCREEN_SETTING_KEYS
 
 MANAGED_SETTING_KEYS = (
     "globalTaxRate",
@@ -20,6 +22,11 @@ MANAGED_SETTING_KEYS = (
     "outOfStockPolicy",
     "tipsEnabled",
     "cashTipsEnabled",
+    # payFastCashEnabled, payFastCashTips, payCashEnabled, ... — the eight payment
+    # option keys, spelled out once in payment_options.py.
+    *PAYMENT_OPTION_SETTING_KEYS,
+    # sellSearchEnabled, sellScanEnabled — spelled out once in sell_screen.py.
+    *SELL_SCREEN_SETTING_KEYS,
     "tipPresets",
     "tipDistribution",
     "receiptPrinterName",

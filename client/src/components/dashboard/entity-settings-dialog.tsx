@@ -21,6 +21,7 @@ import {
   patchTenantSettings,
 } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { isNoPaymentOptionAllowedError, noPaymentOptionAllowed } from '@/lib/paymentOptions';
 import { PosSettingsForm, type PosSettingsFormState } from '@/components/pos-settings-form';
 import type { PosSettingsV1 } from '@/lib/types';
 import { Button } from '@/components/ui/button';
@@ -51,12 +52,14 @@ export function EntityPosSettingsDialog({
   const [inherited, setInherited] = useState<PosSettingsV1 | undefined>();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [paymentOptionsRejected, setPaymentOptionsRejected] = useState(false);
 
   useEffect(() => {
     if (!open || !entityId) return;
     let cancelled = false;
     setValue({});
     setInherited(undefined);
+    setPaymentOptionsRejected(false);
     setLoading(true);
     const load = async () => {
       try {
@@ -91,17 +94,36 @@ export function EntityPosSettingsDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entityId, level, open]);
 
+  const inheritedForForm = level === 'shop' ? inherited : undefined;
+  const noneAllowed = noPaymentOptionAllowed(value, inheritedForForm);
+
+  const handleChange = (next: PosSettingsFormState) => {
+    setValue(next);
+    setPaymentOptionsRejected(false);
+  };
+
   const handleSave = async () => {
-    if (!entityId) return;
+    if (!entityId || noneAllowed) return;
+    // The form round-trips whatever the layer holds, including the legacy tip
+    // switches it no longer shows. Leaving them out of the PATCH keeps their
+    // stored value (the server's fallback) without the dashboard writing them.
+    const patch = { ...value };
+    delete patch.tipsEnabled;
+    delete patch.cashTipsEnabled;
     setSaving(true);
     try {
-      if (level === 'tenant') await patchTenantSettings(entityId, value);
-      else if (level === 'company') await patchCompanySettings(entityId, value);
-      else await patchShopSettings(entityId, value);
+      if (level === 'tenant') await patchTenantSettings(entityId, patch);
+      else if (level === 'company') await patchCompanySettings(entityId, patch);
+      else await patchShopSettings(entityId, patch);
       toast.success(tps('saved'));
       onOpenChange(false);
     } catch (err: unknown) {
-      toast.error(axiosErrorToToastMessage(err, tc('error')));
+      if (isNoPaymentOptionAllowedError(err)) {
+        setPaymentOptionsRejected(true);
+        toast.error(tps('payNoneAllowed'));
+      } else {
+        toast.error(axiosErrorToToastMessage(err, tc('error')));
+      }
     } finally {
       setSaving(false);
     }
@@ -123,15 +145,19 @@ export function EntityPosSettingsDialog({
         </DialogHeader>
         <PosSettingsForm
           value={value}
-          onChange={setValue}
-          inherited={level === 'shop' ? inherited : undefined}
+          onChange={handleChange}
+          inherited={inheritedForForm}
           showOverrideHints={level === 'shop'}
+          paymentOptionsRejected={paymentOptionsRejected}
         />
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {tc('cancel')}
           </Button>
-          <Button onClick={() => void handleSave()} disabled={saving || loading || !entityId}>
+          <Button
+            onClick={() => void handleSave()}
+            disabled={saving || loading || !entityId || noneAllowed}
+          >
             {saving ? tc('saving') : tc('save')}
           </Button>
         </DialogFooter>
