@@ -26,6 +26,7 @@ from app.middleware.auth import (
     ensure_same_tenant,
 )
 from app.services.catalog_notify import notify_machines_for_shop
+from app.services import product_availability as availability
 from app.services.company_hierarchy import (
     ancestor_company_ids,
     company_scope_ids,
@@ -117,8 +118,14 @@ def list_shop_product_overrides(
         .all()
     )
 
+    # The shop's own company is the only company level consulted here (and everywhere).
+    company_levels = availability.company_overrides(
+        db, availability.company_level_company_id(shop), [p.id for _, p in page_rows]
+    )
+
     items: List[ShopProductCatalogRow] = []
     for ovr, p in page_rows:
+        levels = availability.resolve_rows(p, company_levels.get(str(p.id)), ovr)
         items.append(
             ShopProductCatalogRow(
                 global_product_id=p.id,
@@ -129,6 +136,8 @@ def list_shop_product_overrides(
                 override_price=float(ovr.price) if ovr.price is not None else None,
                 is_listed=ovr.is_listed,
                 is_available=ovr.is_available,
+                effective_available=levels[availability.Level.SHOP].available,
+                inherited_available=levels[availability.Level.COMPANY].available,
             )
         )
     return ShopProductCatalogRowListResponse(page=page, page_size=page_size, total=total, items=items)
@@ -238,7 +247,7 @@ def assign_shop_product(
             global_product_id=g.id,
             price=None,
             is_listed=True,
-            is_available=True,
+            is_available=None,  # not set for this shop: inherit
         )
         db.add(ovr)
 
@@ -350,7 +359,9 @@ def upsert_shop_product_override(
             ovr.assigned_by_rule = False
         ovr.is_listed = listed
     if "is_available" in payload:
-        ovr.is_available = bool(payload["is_available"])
+        # The shop's availability level. `null` clears it back to inherit — it used to
+        # be read as `bool(None)`, i.e. a lock.
+        availability.set_shop_availability(ovr, payload["is_available"])
 
     db.commit()
     db.refresh(ovr)

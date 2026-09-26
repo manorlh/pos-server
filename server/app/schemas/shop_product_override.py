@@ -28,17 +28,29 @@ class ShopProductCatalogRow(BaseModel):
     global_price: float = Field(serialization_alias="globalPrice")
     override_price: Optional[float] = Field(default=None, serialization_alias="overridePrice")
     is_listed: bool = Field(serialization_alias="isListed")
-    is_available: bool = Field(serialization_alias="isAvailable")
+    # This shop's own setting: null = not set (inherit the company, then the product).
+    is_available: Optional[bool] = Field(default=None, serialization_alias="isAvailable")
+    # What this shop's tills get when the till itself sets nothing — resolved on the
+    # server (app/services/product_availability.py), never by the page.
+    effective_available: bool = Field(serialization_alias="effectiveAvailable")
+    # What this shop would get if it set nothing: the shop's company, else the product.
+    inherited_available: bool = Field(serialization_alias="inheritedAvailable")
 
 
 class ShopProductOverrideUpsert(BaseModel):
-    """Body uses camelCase (`isListed`, `isAvailable`). Omitted fields are left unchanged on upsert."""
+    """Body uses camelCase (`isListed`, `isAvailable`). Omitted fields are left unchanged on upsert.
+
+    `isAvailable` is the shop's own availability level: true = available here, false =
+    locked here, null = not set (inherit the shop's company, then the product).
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
     price: Optional[float] = Field(default=None, description="Set null to inherit global price")
     is_listed: Optional[bool] = Field(default=None, alias="isListed")
-    is_available: Optional[bool] = Field(default=None, alias="isAvailable")
+    is_available: Optional[bool] = Field(
+        default=None, alias="isAvailable", description="Set null to inherit"
+    )
 
 
 class ShopProductOverrideWriteResponse(BaseModel):
@@ -47,7 +59,7 @@ class ShopProductOverrideWriteResponse(BaseModel):
     global_product_id: uuid.UUID = Field(serialization_alias="globalProductId")
     override_price: Optional[float] = Field(default=None, serialization_alias="overridePrice")
     is_listed: bool = Field(serialization_alias="isListed")
-    is_available: bool = Field(serialization_alias="isAvailable")
+    is_available: Optional[bool] = Field(default=None, serialization_alias="isAvailable")
 
 
 class ShopProductCatalogCandidateListResponse(BaseModel):

@@ -247,8 +247,12 @@ export interface ShopProductCatalogRow {
   globalPrice: number;
   overridePrice?: number | null;
   isListed: boolean;
-  /** Per-shop: allow adding to cart on POS (default true when added to assortment). */
-  isAvailable: boolean;
+  /** This shop's own availability level: null = not set (inherits the company, then the product). */
+  isAvailable: boolean | null;
+  /** What the shop would get if it set nothing — resolved on the server. */
+  inheritedAvailable: boolean;
+  /** What this shop's tills get when the till itself sets nothing — resolved on the server. */
+  effectiveAvailable: boolean;
 }
 
 /** Global product not yet in shop assortment (GET .../product-catalog-candidates). */
@@ -411,6 +415,48 @@ export interface ProductShopRow {
   effectivePrice: number;
   isListed: boolean;
   assignedByRule: boolean;
+}
+
+/**
+ * Where a product may be sold — `GET /products/{id}/availability`.
+ *
+ * Every value here is resolved on the server (app/services/product_availability.py):
+ * `value` is the level's own setting (null = not set), `inherited` what it would get
+ * without one, `effective` what it gets, and `source` the level that decided it.
+ */
+export type AvailabilityLevel = 'product' | 'company' | 'shop' | 'machine';
+
+export interface AvailabilityNode {
+  value: boolean | null;
+  inherited: boolean;
+  effective: boolean;
+  source: AvailabilityLevel;
+  canEdit: boolean;
+}
+
+export interface MachineAvailability extends AvailabilityNode {
+  machineId: string;
+  name: string;
+  posNumber?: string | null;
+}
+
+export interface ShopAvailability extends AvailabilityNode {
+  shopId: string;
+  shopName: string;
+  isListed: boolean;
+  machines: MachineAvailability[];
+}
+
+export interface CompanyAvailability extends AvailabilityNode {
+  companyId: string;
+  companyName?: string | null;
+  shops: ShopAvailability[];
+}
+
+export interface ProductAvailability {
+  productId: string;
+  productAvailable: boolean;
+  companies: CompanyAvailability[];
 }
 
 /** `POST /products/shop-scope/preview`. */

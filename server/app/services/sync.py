@@ -3,17 +3,20 @@ Sync service — build catalog payloads for MQTT and REST sync endpoints.
 Supports full sync and delta sync (items updated since a given timestamp).
 
 Machines with a shop_id receive an **effective** catalog: only globals **assigned** to that shop
-(a row in `shop_product_overrides`) are merged with price, `is_listed`, and `is_available`
-(per-shop sale flag, default true); plus machine-local rows for stock / POS-only SKUs.
+(a row in `shop_product_overrides`) are merged with price and `is_listed`; plus machine-local
+rows for stock / POS-only SKUs.
 Delisted products are included with `shopListed: false` and `inStock: false`.
-`isAvailable` on merged rows follows the override (and listing), not the global product row.
-`updatedAt` is the max of global, override, and local timestamps.
+`isAvailable` on merged rows is the product's effective availability for *this machine*
+(machine → shop → the shop's own company → the product), resolved in
+`app/services/product_availability.py`, and false whenever the row is delisted. A
+machine-local copy's own flag plays no part in it.
+`updatedAt` is the max of global, override, local, company-level and machine-level timestamps.
 """
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 import uuid as uuid_mod
 
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.category import Category, CatalogLevel as CategoryCatalogLevel
@@ -26,10 +29,15 @@ from app.services.machine_health import (
     normalize_serial_number,
 )
 from app.models.product import Product, CatalogLevel
+from app.models.product_availability_override import (
+    CompanyProductOverride,
+    MachineProductOverride,
+)
 from app.models.shop import Shop
 from app.models.shop_product_override import ShopProductOverride
 from app.models.shop_category_override import ShopCategoryOverride
 from app.models.voucher import Voucher
+from app.services import product_availability as availability
 
 
 # ── Serializers ──────────────────────────────────────────────────────────────
@@ -74,7 +82,9 @@ def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[s
         "globalSku": p.global_sku,
         "imageUrl": p.image_url,
         "inStock": in_stock,
-        "isAvailable": p.is_available,
+        # A machine-local or tenant-level row: no company, shop or machine level applies,
+        # so this is the product's own flag — asked of the resolver all the same.
+        "isAvailable": availability.resolve(p.is_available).available,
         "stockQuantity": p.stock_quantity,
         "barcode": p.barcode,
         "taxRate": float(p.tax_rate) if p.tax_rate is not None else None,
@@ -95,12 +105,13 @@ def _effective_ts(
     global_p: Product,
     local: Optional[Product],
     override: Optional[ShopProductOverride],
+    *levels: Any,
 ) -> datetime:
+    """Latest of every row the merged product was built from, availability levels included."""
     parts = [_aware_utc(global_p.updated_at)]
-    if local:
-        parts.append(_aware_utc(local.updated_at))
-    if override:
-        parts.append(_aware_utc(override.updated_at))
+    for row in (local, override, *levels):
+        if row is not None:
+            parts.append(_aware_utc(row.updated_at))
     parts = [p for p in parts if p is not None]
     return max(parts) if parts else datetime.now(timezone.utc)
 
@@ -111,22 +122,31 @@ def _serialize_merged_product(
     override: Optional[ShopProductOverride],
     machine_shop_id: uuid_mod.UUID,
     since: Optional[datetime],
+    company_override: Optional[CompanyProductOverride] = None,
+    machine_override: Optional[MachineProductOverride] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Build one sync row for a global product; return None if delta filter excludes it."""
-    eff_ts = _effective_ts(global_p, local, override)
+    """
+    Build one sync row for a global product; return None if delta filter excludes it.
+
+    `company_override` must be the row of the *shop's own* company
+    (`availability.company_level_company_id`), `machine_override` the row of the machine
+    being synced. Their timestamps count toward `updatedAt`, so a lock set at either
+    level reaches a till that only pulls deltas.
+    """
+    eff_ts = _effective_ts(global_p, local, override, company_override, machine_override)
     if since is not None and _aware_utc(eff_ts) <= _aware_utc(since):
         return None
 
     row_id = local.id if local is not None else global_p.id
     price = float(override.price) if override and override.price is not None else float(global_p.price)
     shop_listed = override.is_listed if override is not None else True
-    shop_can_sell = override.is_available if override is not None else True
     base_in_stock = local.in_stock if local is not None else global_p.in_stock
     effective_in_stock = bool(shop_listed and base_in_stock)
     stock_qty = local.stock_quantity if local is not None else global_p.stock_quantity
-    # Sale flag is per shop assortment (override), not the machine-local stock row — locals
-    # often omit is_available or carried stale values, which wrongly hid items on POS.
-    is_avail = bool(shop_listed and shop_can_sell)
+    # Never from the machine-local stock row — locals often omit is_available or carried
+    # stale values, which wrongly hid items on POS. A delisted row is never sellable.
+    resolved = availability.resolve_rows(global_p, company_override, override, machine_override)
+    is_avail = bool(shop_listed and resolved[availability.Level.MACHINE].available)
 
     catalog_level = local.catalog_level if local is not None else global_p.catalog_level
     is_local_override = local.is_local_override if local is not None else False
@@ -404,10 +424,27 @@ def _products_merged_for_shop_machine(
         else:
             pos_only.append(loc)
 
+    # The two availability levels that are not on the assortment row. The company is the
+    # shop's own — never the product's, never an ancestor (see product_availability).
+    assigned_ids = [g.id for _, g in assigned_rows]
+    shop = db.query(Shop).filter(Shop.id == shop_id).first() if shop_id and assigned_ids else None
+    company_levels = availability.company_overrides(
+        db, availability.company_level_company_id(shop), assigned_ids
+    )
+    machine_levels = availability.machine_overrides(db, mqid, assigned_ids)
+
     out: List[Dict[str, Any]] = []
     for ovr, g in assigned_rows:
         loc = by_global.get(g.id)
-        row = _serialize_merged_product(g, loc, ovr, shop_id, since)
+        row = _serialize_merged_product(
+            g,
+            loc,
+            ovr,
+            shop_id,
+            since,
+            company_override=company_levels.get(str(g.id)),
+            machine_override=machine_levels.get(str(g.id)),
+        )
         if row is not None:
             out.append(row)
 
@@ -717,9 +754,34 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
             .filter(Product.pos_machine_id == machine.id)
             .scalar()
         )
+        # Availability set for the shop's own company, on products this shop sells —
+        # the same company `_products_merged_for_shop_machine` reads, and only the rows
+        # that can change what this till is sent.
+        shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
+        company_availability_max = (
+            db.query(func.max(CompanyProductOverride.updated_at))
+            .join(
+                ShopProductOverride,
+                and_(
+                    ShopProductOverride.global_product_id == CompanyProductOverride.product_id,
+                    ShopProductOverride.shop_id == machine.shop_id,
+                ),
+            )
+            .filter(
+                CompanyProductOverride.company_id
+                == availability.company_level_company_id(shop)
+            )
+            .scalar()
+        )
+        machine_availability_max = (
+            db.query(func.max(MachineProductOverride.updated_at))
+            .filter(MachineProductOverride.machine_id == machine.id)
+            .scalar()
+        )
         points.extend([
             product_max, override_max, category_max, voucher_max,
             local_product_max, customer_max,
+            company_availability_max, machine_availability_max,
         ])
     else:
         local_product_max = (

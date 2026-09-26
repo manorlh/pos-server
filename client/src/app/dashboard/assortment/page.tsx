@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
+import { AvailabilityControl, EffectiveBadge } from '@/components/dashboard/product-availability';
 import { cn } from '@/lib/utils';
 import {
   ShopProductCatalogCandidate,
@@ -119,7 +120,8 @@ function AssortmentEditDialog({
   const [priceMode, setPriceMode] = useState<'inherit' | 'custom'>('inherit');
   const [priceStr, setPriceStr] = useState('');
   const [listed, setListed] = useState(true);
-  const [avail, setAvail] = useState(true);
+  // This shop's own availability level: null = not set (inherit the company, then the product).
+  const [avail, setAvail] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!row || !open) return;
@@ -127,10 +129,10 @@ function AssortmentEditDialog({
     setPriceMode(custom ? 'custom' : 'inherit');
     setPriceStr(custom ? String(row.overridePrice) : '');
     setListed(row.isListed);
-    setAvail(row.isAvailable !== false);
+    setAvail(row.isAvailable ?? null);
   }, [row, open]);
 
-  const rowAvail = row?.isAvailable !== false;
+  const rowAvail = row?.isAvailable ?? null;
   const dirty = useMemo(() => {
     if (!row) return false;
     const baselineCustom = row.overridePrice != null;
@@ -165,10 +167,13 @@ function AssortmentEditDialog({
         }
         price = Number(trimmed);
       }
+      // Availability only when it was changed here. Re-sending the loaded value would
+      // turn a price edit into an explicit shop-level setting, which overrides whatever
+      // the company decides from then on.
       return api.put(`/shops/${shopId}/product-overrides/${row.globalProductId}`, {
         price,
         isListed: listed,
-        isAvailable: avail,
+        ...(avail !== rowAvail ? { isAvailable: avail } : {}),
       });
     },
     onSuccess: () => {
@@ -239,14 +244,17 @@ function AssortmentEditDialog({
               </div>
               <Switch id="assort-listed" checked={listed} onCheckedChange={setListed} />
             </div>
-            <div className="flex items-center justify-between gap-3">
+            <div className="space-y-2">
               <div>
-                <Label htmlFor="assort-avail" className="cursor-pointer">
-                  {t('availableForSale')}
-                </Label>
+                <Label className="text-sm">{t('availableForSale')}</Label>
                 <p className="text-xs text-muted-foreground mt-0.5">{t('availableForSaleHint')}</p>
               </div>
-              <Switch id="assort-avail" checked={avail} onCheckedChange={setAvail} />
+              <AvailabilityControl
+                value={avail}
+                inherited={row.inheritedAvailable}
+                onChange={setAvail}
+                label={t('availableForSale')}
+              />
             </div>
           </div>
         </div>
@@ -284,7 +292,9 @@ function AssortmentRow({
   const price = effectivePrice(row);
   const overridden = hasPriceOverride(row);
   const listed = row.isListed;
-  const avail = row.isAvailable !== false;
+  // Resolved on the server: what this shop's tills get unless a till sets its own.
+  const avail = row.effectiveAvailable;
+  const ta = useTranslations('availability');
 
   return (
     <TableRow className="cursor-pointer" onClick={onEdit}>
@@ -307,9 +317,10 @@ function AssortmentRow({
           <Badge variant={listed ? 'outline' : 'secondary'}>
             {listed ? t('listed') : t('hidden')}
           </Badge>
-          <Badge variant={avail ? 'outline' : 'destructive'}>
-            {avail ? t('availableYes') : t('availableNo')}
-          </Badge>
+          <EffectiveBadge available={avail} t={ta} />
+          {row.isAvailable !== null ? (
+            <Badge variant="secondary">{t('availabilitySetHere')}</Badge>
+          ) : null}
         </div>
       </TableCell>
       <TableCell className="text-end whitespace-nowrap" onClick={(e) => e.stopPropagation()}>

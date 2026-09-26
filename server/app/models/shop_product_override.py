@@ -21,8 +21,11 @@ class ShopProductOverride(Base):
     global_product_id = Column(UUID(as_uuid=True), ForeignKey("products.id"), nullable=False, index=True)
     price = Column(Numeric(10, 2), nullable=True)
     is_listed = Column(Boolean, nullable=False, default=True)
-    # When listed: allow adding to cart on POS (default True for new assortment rows).
-    is_available = Column(Boolean, nullable=False, default=True)
+    # When listed: allow adding to cart on POS. Tri-state: NULL = not set for this shop
+    # (inherit the shop's company, then the product), true = available here even if the
+    # company locked it, false = locked here. New rows start at NULL. Resolved only in
+    # app/services/product_availability.py.
+    is_available = Column(Boolean, nullable=True, default=None)
     # Created by the product's shop scope (app/services/product_shop_scope.py) rather
     # than by hand. The scope only ever touches rows carrying this flag; a hand-added
     # row is never listed, unlisted or deleted by it.

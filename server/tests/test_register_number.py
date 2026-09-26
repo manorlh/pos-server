@@ -707,7 +707,11 @@ class TestMigration:
         cfg.set_main_option("script_location", os.path.join(here, "alembic"))
         script = ScriptDirectory.from_config(cfg)
 
-        assert script.get_heads() == ["c5d6e7f8a9b0"]
+        # One head, and this revision on its line. It stopped being the head itself when
+        # the product-availability revision (d6e7f8a9b0c1) was chained onto it.
+        heads = script.get_heads()
+        assert len(heads) == 1
+        assert "c5d6e7f8a9b0" in {r.revision for r in script.walk_revisions("base", heads[0])}
         assert script.get_revision("c5d6e7f8a9b0").down_revision == "b4c5d6e7f8a9"
 
     def test_backfill_numbers_per_shop_in_creation_order_with_id_tiebreak(self, sql):

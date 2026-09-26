@@ -32,6 +32,7 @@ import {
   useShopScopePreview,
   type ScopeDraft,
 } from '@/components/dashboard/product-shop-scope';
+import { ProductAvailabilitySection } from '@/components/dashboard/product-availability';
 import { ProductImageUpload } from '@/components/product-image-upload';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -505,6 +506,9 @@ export default function ProductsPage() {
                 rows={productShops.data}
                 isLoading={productShops.isLoading}
               />
+            ) : null}
+            {isGlobal && !isNew && editing.id ? (
+              <ProductAvailabilitySection productId={editing.id} />
             ) : null}
           </div>
           <DialogFooter>

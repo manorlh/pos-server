@@ -61,6 +61,7 @@ from app.schemas.z_report import (
 )
 from app.schemas.close_day import CloseDayAckIn, CloseDayAckResponse
 from app.services.catalog_notify import notify_all_machines_for_tenant, notify_machines_for_shop
+from app.services import product_availability as availability
 from app.services.product_validation import validate_open_price_update
 from app.services.sku_sequence import resolve_sku_for_create
 from app.services.tenant_sku_sequence import allocate_global_sku
@@ -381,7 +382,9 @@ def machine_create_cloud_product(
             global_product_id=product.id,
             price=None,
             is_listed=True,
-            is_available=True,
+            # Not set for this shop: the product's own flag (true) decides, until the
+            # company, the shop or a till sets something.
+            is_available=None,
         )
     )
     _audit(
@@ -446,11 +449,16 @@ def machine_update_cloud_product(
                 shop_id=shop.id,
                 global_product_id=product.id,
                 is_listed=True,
-                is_available=True,
+                is_available=None,
             )
             db.add(override)
         for field, value in override_fields.items():
-            setattr(override, field, value)
+            if field == "is_available":
+                # The shop level, tri-state: true = available here even if the company
+                # locked it, false = locked here, null = back to inherit.
+                availability.set_shop_availability(override, value)
+            else:
+                setattr(override, field, value)
 
     _audit(
         db,

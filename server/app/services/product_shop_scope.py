@@ -276,7 +276,7 @@ def execute_plan(db: Session, product, plan: ScopePlan) -> Set[str]:
                 global_product_id=product.id,
                 price=None,
                 is_listed=True,
-                is_available=True,
+                is_available=None,  # not set for this shop: inherit
                 assigned_by_rule=True,
             )
         )

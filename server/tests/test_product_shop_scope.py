@@ -439,7 +439,8 @@ class TestApplyRule:
         assert set(rows) == {str(world.shops.a1.id), str(world.shops.a2.id)}
         assert touched == set(rows)
         for r in rows.values():
-            assert (r.is_listed, r.is_available, r.price, r.assigned_by_rule) == (True, True, None, True)
+            # Availability not set for the shop: it inherits (app/services/product_availability.py).
+            assert (r.is_listed, r.is_available, r.price, r.assigned_by_rule) == (True, None, None, True)
 
     def test_a_price_somebody_set_is_never_overwritten(self, world):
         p = _product(world, world.A, mode="company", scope_company=world.A)
