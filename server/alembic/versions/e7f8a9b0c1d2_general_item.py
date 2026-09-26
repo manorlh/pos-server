@@ -181,5 +181,12 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # See the module docstring: the products themselves are left in place.
+    #
+    # The `is_general` column is left in place too, and only the index goes. The
+    # products survive a downgrade because they may be on issued documents, and a
+    # product that survives has to keep knowing what it is: with the column dropped,
+    # the next upgrade finds no general item, makes a second one per company, and the
+    # first turns into an ordinary open-price product named "פריט כללי" on every
+    # till's grid. Found by running downgrade-then-upgrade on a real Postgres. The
+    # code this downgrade returns to never reads the column, and its default is false.
     op.execute(f"DROP INDEX IF EXISTS {_INDEX}")
-    op.execute("ALTER TABLE products DROP COLUMN IF EXISTS is_general")
