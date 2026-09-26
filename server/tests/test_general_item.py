@@ -76,7 +76,7 @@ def _jsonb_on_sqlite(_type, _compiler, **_kw):  # pragma: no cover - DDL only
 
 _TABLES = (
     "tenants", "companies", "shops", "pos_machines", "categories", "vouchers", "products",
-    "shop_product_overrides", "company_product_overrides", "machine_product_overrides",
+    "shop_product_overrides", "company_product_overrides", "machine_product_overrides", "machine_catalog_items",
     "customers", "tenant_local_sku_sequences", "shop_category_overrides", "sync_logs",
     "transaction_items", "users",
 )
@@ -680,7 +680,12 @@ class TestMigration:
         assert (m.revision, m.down_revision) == ("e7f8a9b0c1d2", "d6e7f8a9b0c1")
         cfg = Config(str(_HERE / "alembic.ini"))
         cfg.set_main_option("script_location", str(_HERE / "alembic"))
-        assert ScriptDirectory.from_config(cfg).get_heads() == ["e7f8a9b0c1d2"]
+        # No longer the head itself since the per-till catalog (f8a9b0c1d2e3) was
+        # chained on; still the only line of history.
+        script = ScriptDirectory.from_config(cfg)
+        heads = script.get_heads()
+        assert len(heads) == 1
+        assert "e7f8a9b0c1d2" in {r.revision for r in script.walk_revisions("base", heads[0])}
 
     def test_the_column_and_the_one_per_company_index(self, sql):
         assert "ADD COLUMN IF NOT EXISTS is_general BOOLEAN NOT NULL DEFAULT false" in sql

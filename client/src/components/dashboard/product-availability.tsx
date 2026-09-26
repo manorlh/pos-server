@@ -17,7 +17,7 @@
 import type { ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CornerDownLeft, Lock } from 'lucide-react';
+import { CornerDownLeft, EyeOff, Lock } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
@@ -191,6 +191,14 @@ function MachineRows({
           overrideLabel={t('overridesShop')}
           onChange={(v) => onSet(`machines/${m.machineId}`, v)}
           pending={pending}
+          extra={
+            m.inCatalog === false ? (
+              <Badge variant="secondary" title={t('notInMachineCatalogHint')}>
+                <EyeOff aria-hidden />
+                {t('notInMachineCatalog')}
+              </Badge>
+            ) : null
+          }
           t={t}
         />
       ))}

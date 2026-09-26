@@ -27,6 +27,7 @@ from app.routers import (
     elevation,
     products,
     product_availability,
+    machine_catalog,
     categories,
     companies,
     shops,
@@ -81,6 +82,7 @@ app.include_router(pairing_mobile.router, prefix=_prefix)
 app.include_router(elevation.router, prefix=_prefix)
 app.include_router(products.router, prefix=_prefix)
 app.include_router(product_availability.router, prefix=_prefix)
+app.include_router(machine_catalog.router, prefix=_prefix)
 app.include_router(categories.router, prefix=_prefix)
 app.include_router(vouchers.router, prefix=_prefix)
 app.include_router(customers.router, prefix=_prefix)

@@ -120,6 +120,18 @@ class POSMachine(Base):
     # which an older till build bumps while sending none of the fields above —
     # without this there is no way to tell a fresh 4% reading from a stale one.
     last_health_report_at = Column(DateTime(timezone=True), nullable=True)
+
+    # ── The till's own catalog ────────────────────────────────────────────────
+    # "all": the shop's whole catalog — the default, and every till's behaviour before
+    # this column existed. "selected": only the products on this till's whitelist
+    # (`machine_catalog_items`) that are also in its shop's catalog. The rule lives in
+    # `app/services/machine_catalog.py`; nothing else reads these two columns.
+    #
+    # `catalog_mode_updated_at` is stamped on every change of mode so the catalog
+    # watermark moves when only the mode changed. NULL means "never changed", which is
+    # every till that existed when the column was added.
+    catalog_mode = Column(String(16), nullable=False, default="all", server_default="all")
+    catalog_mode_updated_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

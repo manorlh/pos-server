@@ -38,6 +38,11 @@ class MachineAvailability(_Node):
     machine_id: uuid.UUID = Field(..., alias="machineId")
     name: str
     pos_number: Optional[str] = Field(None, alias="posNumber")
+    #: The till's own catalog (app/services/machine_catalog.py): "all" or "selected".
+    catalog_mode: Literal["all", "selected"] = Field("all", alias="catalogMode")
+    #: Whether the till's own catalog includes the product — always true in "all"
+    #: mode. A till whose list leaves it out does not show it at all, locked or not.
+    in_catalog: bool = Field(True, alias="inCatalog")
 
 
 class ShopAvailability(_Node):

@@ -40,6 +40,7 @@ from app.models.product_availability_override import (
     CompanyProductOverride,
     MachineProductOverride,
 )
+from app.models.machine_catalog_item import MachineCatalogItem
 from app.models.shop import Shop
 from app.models.shop_product_override import ShopProductOverride
 from app.models.user import User
@@ -54,6 +55,8 @@ from app.schemas.product_availability import (
     ProductAvailabilityResponse,
     ShopAvailability,
 )
+from app.services import general_item
+from app.services import machine_catalog
 from app.services import product_availability as availability
 from app.services.company_hierarchy import catalog_company_ids
 from app.services.product_availability import Level
@@ -201,6 +204,20 @@ def get_product_availability(
         if machines
         else {}
     )
+    # Each till's own list, for "which tills sell it" — see machine_catalog.
+    catalog_rows = (
+        {
+            str(r.machine_id): r
+            for r in db.query(MachineCatalogItem)
+            .filter(
+                MachineCatalogItem.product_id == product.id,
+                MachineCatalogItem.machine_id.in_([m.id for m in machines]),
+            )
+            .all()
+        }
+        if machines
+        else {}
+    )
     machines_by_shop: Dict[str, List[POSMachine]] = {}
     for m in machines:
         machines_by_shop.setdefault(str(m.shop_id), []).append(m)
@@ -245,6 +262,12 @@ def get_product_availability(
                     name=m.name,
                     pos_number=m.pos_number,
                     can_edit=shop_can_edit and _allowed(_check_machine_access, current_user, m, db),
+                    catalog_mode=machine_catalog.mode_of(m),
+                    in_catalog=machine_catalog.on_till(
+                        machine_catalog.mode_of(m),
+                        bool(catalog_rows.get(str(m.id)) and catalog_rows[str(m.id)].is_included),
+                        general_item.is_general(product),
+                    ),
                     **_node(m_levels, Level.MACHINE, m_value),
                 )
             )

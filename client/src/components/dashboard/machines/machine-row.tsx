@@ -25,6 +25,7 @@
  */
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
@@ -32,6 +33,7 @@ import {
   CalendarClock,
   ChevronDown,
   Link2,
+  ListChecks,
   MoreHorizontal,
   Send,
   Store,
@@ -139,6 +141,7 @@ function MachineRowMenu({
   canCloseMachine,
 }: Pick<MachineRowProps, 'm' | 'permissions' | 'actions' | 'canCloseMachine'>) {
   const t = useTranslations('machines');
+  const router = useRouter();
   const { authHydrated, canAssignMachine, canEditAssignedShop, canRemoveMachine, canCloseDay } =
     permissions;
 
@@ -185,6 +188,13 @@ function MachineRowMenu({
           disabled={m.pairingStatus !== 'assigned'}
         >
           <Send aria-hidden /> {t('pushCatalog')}
+        </DropdownMenuItem>
+        {/* The till's own list lives on its page, where there is room for a checklist. */}
+        <DropdownMenuItem
+          onClick={() => router.push(`/dashboard/machines/${m.id}#catalog`)}
+          disabled={!m.shopId}
+        >
+          <ListChecks aria-hidden /> {t('machineCatalog')}
         </DropdownMenuItem>
         {canRemoveMachine ? (
           <>

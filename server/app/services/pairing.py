@@ -14,6 +14,7 @@ from app.models.tenant_membership import TenantMembership
 from app.models.trading_day import TradingDay, TradingDayStatus
 from app.services.machine_health import serial_from_device_info
 from app.services.register_number import assign_register_number, set_machine_shop
+from app.services import machine_catalog
 from app.services.shop_validation import shop_belongs_to_company
 import uuid
 
@@ -242,7 +243,11 @@ def assign_machine_to_shop(
     # already holds in this shop. Every pairing flow that lands a till in a shop —
     # the assign endpoint, a code pre-assigned to a shop, a field install — comes
     # through here.
+    previous_shop_id = machine.shop_id
     set_machine_shop(db, machine, shop_id)
+    # A till's own list was chosen out of its old shop's catalog; see machine_catalog.
+    if previous_shop_id is not None and str(previous_shop_id) != str(machine.shop_id):
+        machine_catalog.reset_for_new_shop(db, machine)
     if shop.tenant_id:
         machine.tenant_id = shop.tenant_id
     machine.pairing_status = PairingStatus.ASSIGNED

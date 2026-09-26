@@ -2,7 +2,7 @@
 
 /**
  * One POS terminal, from the inside: health, sync state, its Z reports and its
- * transactions.
+ * transactions, and which of its shop's products it sells (its own catalog).
  *
  * The health panel and the clock-skew grading are the same components the
  * machines list uses, so a battery that reads "unknown" here means exactly what
@@ -26,6 +26,7 @@ import { registerNumberOf } from '@/lib/registerNumber';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
 import { MachineHealthPanel, ClockSkewChip } from '@/components/dashboard/machine-health';
 import { SalesStats } from '@/components/dashboard/sales-stats';
+import { MachineCatalogCard } from '@/components/dashboard/machines/machine-catalog';
 import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -226,6 +227,8 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
       </Card>
 
       <SalesStats scope={{ companyId: null, shopId: null, machineId: machine.id }} />
+
+      <MachineCatalogCard machine={machine} />
 
       <Card>
         <CardHeader className="pb-2">

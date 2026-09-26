@@ -17,6 +17,7 @@ TILL_ROUTES = {
     ("POST", "/api/v1/sync/{machine_id}/categories"),
     ("PUT", "/api/v1/sync/{machine_id}/categories/{category_id}"),
     ("DELETE", "/api/v1/sync/{machine_id}/categories/{category_id}"),
+    ("PUT", "/api/v1/sync/{machine_id}/machine-catalog"),
     ("POST", "/api/v1/elevation/sessions"),
     ("DELETE", "/api/v1/elevation/sessions/current"),
 }

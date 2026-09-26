@@ -3,6 +3,8 @@ REST sync endpoint — used by POS as HTTP fallback when MQTT is unavailable.
 
 GET  /sync/{machine_id}/catalog?since=ISO_TS   → full or delta catalog
 POST /sync/{machine_id}/catalog                → retired (410); see `post_catalog_changes`
+PUT  /sync/{machine_id}/machine-catalog        → the till's own mode and list, on a
+                                                 manager's authority
 """
 import logging
 from datetime import datetime, timezone
@@ -75,8 +77,11 @@ from app.services.sync import (
     get_vouchers_for_sync,
     merge_categories_referenced_by_products,
     merge_vouchers_referenced_by_products,
+    machine_catalog_for_sync,
     update_machine_sync_timestamp,
 )
+from app.services import machine_catalog
+from app.schemas.machine_catalog import MachineCatalogSet, MachineCatalogWriteResponse
 from app.services.transactions import (
     apply_z_report,
     check_z_report_preconditions,
@@ -104,6 +109,10 @@ class CatalogSyncResponse(BaseModel):
     # Defaulted rather than required: an older till build ignores the key, and this
     # response is also produced for machines with no tenant resolved at all.
     customers: List[Dict[str, Any]] = Field(default_factory=list)
+    # The till's own catalog mode — "all" or "selected" — sent on every pull, full or
+    # delta. The product rows carry `inMachineCatalog`; this says how to apply it. An
+    # older till ignores both and keeps selling the shop's whole catalog.
+    machine_catalog: Optional[Dict[str, Any]] = Field(None, alias="machineCatalog")
 
     class Config:
         populate_by_name = True
@@ -211,6 +220,7 @@ def get_catalog_sync(
         categories=categories,
         vouchers=vouchers,
         customers=customers,
+        machine_catalog=machine_catalog_for_sync(machine),
     )
 
 
@@ -432,6 +442,10 @@ def machine_create_cloud_product(
             is_available=None,
         )
     )
+    # A till selling only its own list would hide the product from the manager who
+    # just created it there. The shop's other "selected" tills are not touched: a
+    # product new to the shop is not added to anyone else's list.
+    machine_catalog.include_product(db, machine, product)
     _audit(
         db,
         machine=machine,
@@ -569,6 +583,57 @@ def machine_delete_cloud_product(
     db.commit()
     notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="product_deleted")
     return None
+
+
+@router.put("/{machine_id}/machine-catalog", response_model=MachineCatalogWriteResponse)
+def machine_set_own_catalog(
+    machine_id: str,
+    body: MachineCatalogSet,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    db: Session = Depends(get_db),
+):
+    """
+    The till's own mode and list, from its manager screen.
+
+    The same write as the dashboard's `PUT /machines/{id}/catalog` and the same rule:
+    every id must be a product this till's shop sells, else 404 and nothing is written.
+    The authority is a catalog grant or a signed-in operator who holds it, like every
+    other catalog write from a till; a cashier's till gets 401 `elevation_required`.
+    A till only ever writes its own list — the path's machine is the token's.
+
+    Online only. The till does not queue this: the cloud is the source of truth and a
+    queued list replayed later would overwrite whatever the dashboard set meanwhile.
+    """
+    _require_assigned_machine(machine)
+    _shop_or_400(db, machine)
+    try:
+        change = machine_catalog.set_machine_catalog(db, machine, body.mode, body.product_ids)
+    except machine_catalog.NotInShopCatalog as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "product_not_in_shop_catalog", "productIds": exc.product_ids[:50]},
+        )
+    if change.changed:
+        _audit(
+            db,
+            machine=machine,
+            actor=actor,
+            entity=SyncEntityType.PRODUCTS,
+            action=SyncAction.UPDATE,
+            entity_id=None,
+            note=f"machine_catalog mode={body.mode} +{len(change.added)} -{len(change.removed)}",
+        )
+    db.commit()
+    db.refresh(machine)
+    if change.changed:
+        machine_catalog.notify_change(machine)
+    return MachineCatalogWriteResponse(
+        mode=machine_catalog.mode_of(machine),
+        selected_count=len(machine_catalog.included_ids(db, machine.id)),
+        changed=change.changed,
+    )
 
 
 def _category_belongs_only_to(db: Session, category: Category, shop_id) -> bool:

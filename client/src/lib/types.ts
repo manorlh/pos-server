@@ -493,6 +493,54 @@ export interface MachineAvailability extends AvailabilityNode {
   machineId: string;
   name: string;
   posNumber?: string | null;
+  /** The till's own catalog: its whole shop's, or a whitelist. */
+  catalogMode?: MachineCatalogMode;
+  /** False when the till's own list leaves this product out: not shown there at all. */
+  inCatalog?: boolean;
+}
+
+// ── A till's own catalog (server: app/services/machine_catalog.py) ─────────────
+
+export type MachineCatalogMode = 'all' | 'selected';
+
+export interface MachineCatalogProduct {
+  productId: string;
+  name: string;
+  sku?: string | null;
+  barcode?: string | null;
+  price: number;
+  categoryId?: string | null;
+  categoryName?: string | null;
+  imageUrl?: string | null;
+  /** On this till's list. Kept in "all" mode too, so switching back restores it. */
+  included: boolean;
+  /** Delisted from the shop: on none of its tills, whatever the list says. */
+  shopListed: boolean;
+  /** Availability at this till; false shows locked. */
+  available: boolean;
+  /** Shown on the till right now, with the mode and the listing applied. */
+  onTill: boolean;
+}
+
+export interface MachineCatalogCategory {
+  id: string;
+  name: string;
+  sortOrder: number;
+}
+
+export interface MachineCatalog {
+  machineId: string;
+  machineName: string;
+  posNumber?: string | null;
+  shopId: string;
+  shopName: string;
+  mode: MachineCatalogMode;
+  modeUpdatedAt?: string | null;
+  canEdit: boolean;
+  selectedCount: number;
+  totalCount: number;
+  products: MachineCatalogProduct[];
+  categories: MachineCatalogCategory[];
 }
 
 export interface ShopAvailability extends AvailabilityNode {

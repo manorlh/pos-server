@@ -10,7 +10,11 @@ Delisted products are included with `shopListed: false` and `inStock: false`.
 (machine → shop → the shop's own company → the product), resolved in
 `app/services/product_availability.py`, and false whenever the row is delisted. A
 machine-local copy's own flag plays no part in it.
-`updatedAt` is the max of global, override, local, company-level and machine-level timestamps.
+`updatedAt` is the max of global, override, local, company-level and machine-level timestamps,
+and of the till's own catalog row for the product.
+`inMachineCatalog` on each row says whether the product is on this till's own list
+(`app/services/machine_catalog.py`), independently of the till's mode; the mode itself
+travels once per payload (`machine_catalog_for_sync`). The till applies the rule.
 """
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -36,8 +40,10 @@ from app.models.product_availability_override import (
 from app.models.shop import Shop
 from app.models.shop_product_override import ShopProductOverride
 from app.models.shop_category_override import ShopCategoryOverride
+from app.models.machine_catalog_item import MachineCatalogItem
 from app.models.voucher import Voucher
 from app.services import general_item
+from app.services import machine_catalog
 from app.services import product_availability as availability
 
 
@@ -109,6 +115,8 @@ def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[s
         "isWeighed": bool(p.is_weighed),
         "unitLabel": p.unit_label,
         "isGeneral": _is_general(p),
+        # A machine-local or tenant-level row is the till's own: always on its list.
+        "inMachineCatalog": True,
         "createdAt": p.created_at.isoformat() if p.created_at else None,
         "updatedAt": p.updated_at.isoformat() if p.updated_at else None,
     }
@@ -140,6 +148,7 @@ def _serialize_merged_product(
     since: Optional[datetime],
     company_override: Optional[CompanyProductOverride] = None,
     machine_override: Optional[MachineProductOverride] = None,
+    catalog_item: Optional[MachineCatalogItem] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Build one sync row for a global product; return None if delta filter excludes it.
@@ -147,9 +156,12 @@ def _serialize_merged_product(
     `company_override` must be the row of the *shop's own* company
     (`availability.company_level_company_id`), `machine_override` the row of the machine
     being synced. Their timestamps count toward `updatedAt`, so a lock set at either
-    level reaches a till that only pulls deltas.
+    level reaches a till that only pulls deltas. `catalog_item` is the till's own
+    whitelist row for the product, and counts toward `updatedAt` for the same reason.
     """
-    eff_ts = _effective_ts(global_p, local, override, company_override, machine_override)
+    eff_ts = _effective_ts(
+        global_p, local, override, company_override, machine_override, catalog_item
+    )
     if since is not None and _aware_utc(eff_ts) <= _aware_utc(since):
         return None
 
@@ -203,6 +215,8 @@ def _serialize_merged_product(
         # From the global row like the rest of what the product *is*: a till's local
         # copy of the general item is still the general item.
         "isGeneral": general_item.is_general(global_p),
+        # On this till's own list, whatever the till's mode — see machine_catalog.
+        "inMachineCatalog": bool(catalog_item is not None and catalog_item.is_included),
         "shopListed": shop_listed,
         "createdAt": (local.created_at if local else global_p.created_at).isoformat()
         if (local and local.created_at) or global_p.created_at
@@ -451,6 +465,7 @@ def _products_merged_for_shop_machine(
         db, availability.company_level_company_id(shop), assigned_ids
     )
     machine_levels = availability.machine_overrides(db, mqid, assigned_ids)
+    catalog_rows = machine_catalog.catalog_items(db, mqid) if assigned_ids else {}
 
     out: List[Dict[str, Any]] = []
     for ovr, g in assigned_rows:
@@ -463,6 +478,7 @@ def _products_merged_for_shop_machine(
             since,
             company_override=company_levels.get(str(g.id)),
             machine_override=machine_levels.get(str(g.id)),
+            catalog_item=catalog_rows.get(str(g.id)),
         )
         if row is not None:
             out.append(row)
@@ -637,6 +653,21 @@ def get_customers_for_sync(
     return [_serialize_customer(c) for c in query.order_by(Customer.name).all()]
 
 
+def machine_catalog_for_sync(machine: POSMachine) -> Dict[str, Any]:
+    """
+    The till's catalog mode, sent whole on every pull — full or delta.
+
+    Always sent rather than only when changed: it is one small object, and a till that
+    missed a change (a delta after a restore, say) then corrects itself on the next
+    pull of any kind. The product rows carry the list; this carries how to apply it.
+    """
+    ts = getattr(machine, "catalog_mode_updated_at", None)
+    return {
+        "mode": machine_catalog.mode_of(machine),
+        "updatedAt": _aware_utc(ts).isoformat() if isinstance(ts, datetime) else None,
+    }
+
+
 def update_machine_sync_timestamp(db: Session, machine_id: str) -> None:
     machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
     if machine:
@@ -797,10 +828,13 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
             .filter(MachineProductOverride.machine_id == machine.id)
             .scalar()
         )
+        # The till's own list and mode: a change to either changes what it shows.
+        machine_catalog_max = machine_catalog.last_change(db, machine)
         points.extend([
             product_max, override_max, category_max, voucher_max,
             local_product_max, customer_max,
             company_availability_max, machine_availability_max,
+            machine_catalog_max,
         ])
     else:
         local_product_max = (

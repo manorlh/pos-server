@@ -44,6 +44,7 @@ from app.services.machine_status import StatusInput, resolve_status
 from app.services.administrative_close import reconstruct_z_report
 from app.services.pairing import create_pairing_code
 from app.services.register_number import set_machine_shop
+from app.services import machine_catalog
 from app.services.transactions import find_open_trading_day
 from app.services.permission_matrix import SHOP_SCOPED_ROLES
 from app.services.close_day import (
@@ -405,7 +406,11 @@ def update_machine(
             machine.pairing_status = PairingStatus.ASSIGNED
         # Not a plain setattr: changing shop gives up this shop's register number
         # and draws the new shop's next one.
+        previous_shop_id = machine.shop_id
         set_machine_shop(db, machine, update_data.pop("shop_id"))
+        # A list chosen out of the old shop's catalog means nothing in the new one.
+        if str(previous_shop_id) != str(machine.shop_id):
+            machine_catalog.reset_for_new_shop(db, machine)
 
     for field, value in update_data.items():
         setattr(machine, field, value)

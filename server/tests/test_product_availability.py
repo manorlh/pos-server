@@ -65,7 +65,7 @@ def _jsonb_on_sqlite(_type, _compiler, **_kw):  # pragma: no cover - DDL only
 
 _TABLES = (
     "tenants", "companies", "shops", "pos_machines", "categories", "vouchers", "products",
-    "shop_product_overrides", "company_product_overrides", "machine_product_overrides",
+    "shop_product_overrides", "company_product_overrides", "machine_product_overrides", "machine_catalog_items",
     "customers",
 )
 

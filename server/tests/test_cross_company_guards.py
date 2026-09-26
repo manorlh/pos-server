@@ -272,6 +272,9 @@ class TestMoveMachine:
 
         monkeypatch.setattr(machines_router, "set_machine_shop", _set)
         monkeypatch.setattr(machines_router, "shop_belongs_to_company", lambda *_a: True)
+        # Moving a till also clears its own catalog list (tests/test_machine_catalog.py
+        # covers that); this fake session has no list to clear.
+        monkeypatch.setattr(machines_router.machine_catalog, "reset_for_new_shop", lambda *_a: False)
         return moved
 
     def _move(self, w, machine, shop, user):
