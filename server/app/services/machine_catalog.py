@@ -204,7 +204,11 @@ def set_machine_catalog(db: Session, machine, mode: str, product_ids: Iterable) 
     """
     if mode not in MODES:
         raise ValueError(f"unknown catalog mode {mode!r}")
-    requested = {_key(p) for p in product_ids}
+    # A till that holds a machine-local copy of a product (a catalog push) knows it by
+    # the copy's id — that is the id its catalog pull sent. The copy is this till's
+    # own, so naming it can only ever mean the product it copies.
+    aliases = local_copy_aliases(db, machine)
+    requested = {aliases.get(_key(p), _key(p)) for p in product_ids}
     sellable = {_key(p.id): p for _, p in shop_catalog(db, machine)}
     unknown = sorted(requested - set(sellable))
     if unknown:
@@ -228,6 +232,18 @@ def set_machine_catalog(db: Session, machine, mode: str, product_ids: Iterable) 
             _set_row(db, machine.id, row.product_id, False, row)
             change.removed.add(pid)
     return change
+
+
+def local_copy_aliases(db: Session, machine) -> Dict[str, str]:
+    """`{str(copy id): str(global id)}` for this till's own machine-local product copies."""
+    if machine is None or machine.id is None:
+        return {}
+    rows = (
+        db.query(Product.id, Product.global_product_id)
+        .filter(Product.pos_machine_id == machine.id, Product.global_product_id.isnot(None))
+        .all()
+    )
+    return {_key(copy_id): _key(global_id) for copy_id, global_id in rows}
 
 
 def include_product(db: Session, machine, product) -> bool:

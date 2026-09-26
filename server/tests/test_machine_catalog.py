@@ -290,6 +290,23 @@ class TestSelectedMode:
             (str(w.h1.id), str(w.P.id), True), (str(w.h1.id), str(w.Q.id), False),
         ])
 
+    def test_a_till_may_name_a_product_by_its_own_local_copy(self, w):
+        # A catalog push gave h1 a machine-local copy of P; its pull sends the copy's id.
+        copy = Product(
+            id=uuid.uuid4(), tenant_id=w.tid, company_id=w.H.id, category_id=w.P.category_id,
+            catalog_level=CatalogLevel.LOCAL, name="Cola", price=Decimal("10.00"), sku="1-h1",
+            pos_machine_id=w.h1.id, global_product_id=w.P.id, is_available=True,
+            updated_at=OLD, created_at=OLD,
+        )
+        w.db.add(copy)
+        w.db.commit()
+        assert _sync(w, w.h1)[str(w.P.id)]["id"] == str(copy.id)
+        _till_put(w, w.h1, "selected", [copy.id])
+        assert _rows(w) == [(str(w.h1.id), str(w.P.id), True)]
+        assert _sync(w, w.h1)[str(w.P.id)]["inMachineCatalog"] is True
+        # Another till cannot borrow h1's copy to reach P.
+        _refused(w, lambda: _till_put(w, w.b1, "selected", [copy.id]), 404)
+
     def test_a_product_created_from_a_selected_till_is_put_on_its_list(self, w):
         _put(w, w.h1, "selected", [w.P.id])
         assert M.include_product(w.db, w.h1, w.Q) is True
