@@ -49,6 +49,7 @@ import { fetchCompanies, fetchMachines, fetchShops } from './api';
 import { useAuth } from './auth';
 import { buildCompanyTree, companyPath, companySubtreeIds } from './companyTree';
 import { findBySameId, sameId } from './entityLookup';
+import { SCOPE_PARAM, isDrillRoute, tenantSwitchTarget } from './tenantSwitch';
 import {
   SCOPE_LEVEL_ORDER,
   resolvePageScope,
@@ -65,11 +66,7 @@ import type {
   Shop,
 } from './types';
 
-export const SCOPE_PARAM = {
-  company: 'company',
-  shop: 'shop',
-  machine: 'machine',
-} as const;
+export { SCOPE_PARAM };
 
 const STORAGE_PREFIX = 'dashboardScope:';
 
@@ -110,22 +107,13 @@ function writeStored(tenantId: string | null, selection: ScopeSelection): void {
   }
 }
 
-/**
- * The three drill-down routes address an entity by path, not by query. On one of
- * them the scope bar has to *navigate* — picking a different shop while sitting on
- * `/dashboard/shops/<id>` means "show me that shop", not "leave this page showing
- * shop A while the bar claims shop B". Without this the page's route-sync and the
- * bar would overwrite each other in a loop.
+/*
+ * The three drill-down routes (`isDrillRoute`) address an entity by path, not by
+ * query. On one of them the scope bar has to *navigate* — picking a different shop
+ * while sitting on `/dashboard/shops/<id>` means "show me that shop", not "leave
+ * this page showing shop A while the bar claims shop B". Without this the page's
+ * route-sync and the bar would overwrite each other in a loop.
  */
-const DRILL_PREFIXES = [
-  '/dashboard/companies/',
-  '/dashboard/shops/',
-  '/dashboard/machines/',
-] as const;
-
-function isDrillRoute(pathname: string): boolean {
-  return DRILL_PREFIXES.some((prefix) => pathname.startsWith(prefix));
-}
 
 /**
  * The scope a drill-down path already states.
@@ -238,7 +226,7 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
 
   // The path is the stronger statement: on `/dashboard/shops/<id>` the route
   // *is* the shop, so it wins over any `?shop=` that lingers in the query.
-  const urlSelection = useMemo<ScopeSelection>(() => {
+  const rawUrlSelection = useMemo<ScopeSelection>(() => {
     const implied = pathScope(pathname);
     return {
       companyId: implied.companyId ?? (searchParams.get(SCOPE_PARAM.company) || null),
@@ -246,6 +234,33 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
       machineId: implied.machineId ?? (searchParams.get(SCOPE_PARAM.machine) || null),
     };
   }, [pathname, searchParams]);
+
+  // ── The URL's scope belongs to one tenant ────────────────────────────────────
+  // The tenant is not in the URL, so switching it leaves `?company=…` (or a
+  // drill-down path) naming the previous organization's entities. Read as-is,
+  // every page would query them under the new X-Tenant-Id and get
+  // `tenant_forbidden` back. So the URL's scope is honoured only for the tenant it
+  // was chosen in: from the moment the tenant changes it reads as "whole
+  // organization" — in the same render, before any page can send a request — and
+  // the URL is cleaned. Only once it is clean does the new tenant own the URL.
+  const switchTarget = useMemo(
+    () => tenantSwitchTarget(pathname, searchParams.toString()),
+    [pathname, searchParams],
+  );
+  const [scopeTenant, setScopeTenant] = useState<string | null>(activeTenantId);
+  if (activeTenantId && scopeTenant !== activeTenantId && (scopeTenant === null || switchTarget === null)) {
+    // First tenant (nothing to carry over), or the URL is already clean.
+    setScopeTenant(activeTenantId);
+  }
+  const scopeIsCurrent = scopeTenant === null || scopeTenant === activeTenantId;
+  const urlSelection = scopeIsCurrent ? rawUrlSelection : EMPTY_SELECTION;
+
+  useEffect(() => {
+    if (scopeIsCurrent || switchTarget === null) return;
+    // `replace`, not `push`: the old organization's scope is not a place the new
+    // one can go back to.
+    router.replace(switchTarget, { scroll: false });
+  }, [router, scopeIsCurrent, switchTarget]);
 
   const [specEntry, setSpecEntry] = useState<{ id: string; spec: PageScopeSpec } | null>(null);
   const spec = specEntry?.spec ?? null;
@@ -278,6 +293,10 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
   /** Write a selection into the URL, keeping every other query param intact. */
   const commit = useCallback(
     (next: ScopeSelection, mode: 'push' | 'replace') => {
+      // Between a tenant switch and the URL being cleaned, nothing may write: a
+      // drill-down page's route-sync would otherwise put the old organization's
+      // ids back into the URL, and remember them under the new tenant's key.
+      if (!scopeIsCurrent) return;
       const params = new URLSearchParams(searchParams.toString());
       const implied = pathScope(pathname);
       // A level the path already names is dropped from the query rather than
@@ -295,15 +314,17 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
       if (mode === 'push') router.push(href, { scroll: false });
       else router.replace(href, { scroll: false });
     },
-    [activeTenantId, pathname, router, searchParams],
+    [activeTenantId, pathname, router, scopeIsCurrent, searchParams],
   );
 
   // ── Restore the last visit ───────────────────────────────────────────────────
   // Only when the URL says nothing, and only once per tenant: after that an empty
-  // URL means the user deliberately went back to the whole organization.
+  // URL means the user deliberately went back to the whole organization. Right
+  // after a switch the URL still holds the previous tenant's scope, so this waits
+  // until it has been cleaned rather than spending the tenant's one restore on it.
   const restoredForTenant = useRef<string | null>(null);
   useEffect(() => {
-    if (!activeTenantId) return;
+    if (!activeTenantId || !scopeIsCurrent) return;
     if (restoredForTenant.current === activeTenantId) return;
     restoredForTenant.current = activeTenantId;
     if (!isEmpty(urlSelection)) return;
@@ -317,7 +338,7 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
     // `urlSelection` is deliberately not a dependency: this must fire once per
     // tenant, not every time the user clears the scope by hand.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTenantId, commit, pathname]);
+  }, [activeTenantId, commit, pathname, scopeIsCurrent]);
 
   // ── Prune ids that cannot be true ────────────────────────────────────────────
   // A URL is user input: it can name a shop from another company, or a machine

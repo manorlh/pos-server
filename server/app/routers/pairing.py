@@ -36,8 +36,15 @@ def generate_pairing_code(
     active_tenant_id: uuid_mod.UUID = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """Generate a pairing code (distributor/super_admin only). Optional company/shop pre-assigns on validate."""
-    ensure_same_tenant(current_user.tenant_id, active_tenant_id)
+    """Generate a pairing code (distributor/super_admin only). Optional company/shop pre-assigns on validate.
+
+    The code belongs to the *active* tenant. There used to be a check here that the
+    user's home tenant (`user.tenant_id`, where the account was created) equals the
+    active one, which stopped a distributor pairing tills in any organization they had
+    switched into. Whether they may act in the active tenant at all is already decided
+    by `get_active_tenant_id`, which requires a membership (or super admin), so that
+    check refused nothing a membership did not already allow — only the legitimate case.
+    """
 
     try:
         company_id, shop_id = resolve_pairing_assignment(
