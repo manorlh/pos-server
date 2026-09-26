@@ -27,6 +27,7 @@ import type {
   ZReportListResponse,
 } from './types';
 import { normalizePosMachine } from './posMachine';
+import { tenantFallbackAfterForbidden } from './tenantSwitch';
 
 export const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL,
@@ -553,13 +554,46 @@ api.interceptors.response.use(
       }
     }
     if (err.response?.status === 403 && err.response?.data?.detail === 'tenant_forbidden') {
-      const { tenants, setActiveTenant } = useAuth.getState();
-      const fallback = tenants[0]?.id;
-      if (fallback) {
-        setActiveTenant(fallback);
-        if (typeof window !== 'undefined') window.location.reload();
-      }
+      // Not every `tenant_forbidden` is about the tenant — see
+      // `tenantFallbackAfterForbidden`. Resetting on any of them is what used to
+      // revert every organization switch made from a page with a scope.
+      const sent = err.config?.headers?.['X-Tenant-Id'];
+      void recheckActiveTenant(typeof sent === 'string' ? sent : null);
     }
     return Promise.reject(err);
   },
 );
+
+let tenantRecheck: Promise<void> | null = null;
+
+/**
+ * Fall back to another tenant only if the server no longer lists the active one.
+ * One check at a time: a page whose queries all 403 together asks once.
+ */
+function recheckActiveTenant(requestTenantId: string | null): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve();
+  if (tenantRecheck) return tenantRecheck;
+  tenantRecheck = (async () => {
+    try {
+      const { data } = await api.get<Array<{ id: unknown }>>('/tenants/mine');
+      const tenantIds = (Array.isArray(data) ? data : []).map((t) => String(t.id));
+      const fallback = tenantFallbackAfterForbidden({
+        requestTenantId,
+        activeTenantId: useAuth.getState().activeTenantId,
+        tenantIds,
+      });
+      if (fallback) {
+        // Written straight to storage rather than through `setActiveTenant`, which
+        // only accepts tenants from the list loaded at sign-in — the fresh list is
+        // the one that counts. The reload re-reads it through `fetchUser`.
+        window.localStorage.setItem('activeTenantId', fallback);
+        window.location.reload();
+      }
+    } catch {
+      // Could not ask; leave the tenant alone rather than guess.
+    } finally {
+      tenantRecheck = null;
+    }
+  })();
+  return tenantRecheck;
+}
