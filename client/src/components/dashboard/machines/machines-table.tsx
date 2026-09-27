@@ -56,8 +56,8 @@ const TALLY_ORDER: MachineStatusValue[] = [
   'offline_with_unsynced',
   'offline',
   'pending_sync',
-  'close_pending',
-  'day_closed',
+  'shift_close_pending',
+  'no_open_shift',
   'online',
   'not_paired',
   'retired',
@@ -81,9 +81,6 @@ export interface MachinesTableProps {
   permissions: MachinePermissions;
   actions: MachineRowActions;
   isDeviceOnline: (m: PosMachine) => boolean;
-  canCloseMachine: (m: PosMachine) => boolean;
-  selectedMachineIds: Set<string>;
-  onToggleSelected: (id: string) => void;
   /** Opens the pairing dialog with this shop's company and shop pre-selected. */
   onAddMachineToShop: (shop: Shop, companyLabel: string) => void;
 }
@@ -129,9 +126,6 @@ export function MachinesTable({
   permissions,
   actions,
   isDeviceOnline,
-  canCloseMachine,
-  selectedMachineIds,
-  onToggleSelected,
   onAddMachineToShop,
 }: MachinesTableProps) {
   const t = useTranslations('machines');
@@ -223,11 +217,10 @@ export function MachinesTable({
       <div
         className={`hidden border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground ${MACHINE_ROW_GRID}`}
       >
-        <span className="sr-only">{t('columns.select')}</span>
         <span>{t('columns.status')}</span>
         <span>{t('columns.terminal')}</span>
         <span>{t('columns.flags')}</span>
-        <span>{t('columns.tradingDay')}</span>
+        <span>{t('columns.shift')}</span>
         <span>{t('columns.pending')}</span>
         <span>{t('columns.lastSeen')}</span>
         <span className="text-end">{t('columns.actions')}</span>
@@ -258,9 +251,6 @@ export function MachinesTable({
                   permissions={permissions}
                   actions={actions}
                   isDeviceOnline={isDeviceOnline}
-                  canCloseMachine={canCloseMachine}
-                  selected={selectedMachineIds.has(m.id)}
-                  onToggleSelected={onToggleSelected}
                   expanded={expandedRows.has(m.id)}
                   onToggleExpanded={toggleRow}
                 />

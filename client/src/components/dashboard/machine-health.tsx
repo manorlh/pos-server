@@ -89,7 +89,7 @@ export function useClockSkewText() {
 }
 
 /** Explicit map rather than a template-literal key, matching how the machines
- *  page already resolves the close-day status labels. */
+ *  page already resolves the pairing status labels. */
 const BATTERY_STATUS_KEY = {
   charging: 'batteryStatus.charging',
   discharging: 'batteryStatus.discharging',

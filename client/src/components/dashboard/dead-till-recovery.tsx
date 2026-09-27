@@ -1,13 +1,15 @@
 'use client';
 
 /**
- * Recovering a terminal that died holding an open trading day.
+ * Recovering a terminal that died holding an open shift.
  *
  * Two actions, deliberately in this order, because the second is blocked by the first:
  *
- * 1. **Close the day from the cloud.** A Z built from the documents the cloud already
- *    holds, marked as reconstructed. Without it the day stays open forever — nothing but
- *    the terminal itself can issue a Z, and this one is not coming back.
+ * 1. **Close the shift from the cloud.** Its X is built from the documents the cloud
+ *    already holds and marked reconstructed, unattended and uncounted. Without it the
+ *    shift stays open forever — only the terminal can close it, and this one is not
+ *    coming back. It issues no Z: the closed shift simply joins the shop's next Z, so
+ *    the operator is pointed at the Z wizard afterwards.
  * 2. **Replace the terminal.** A pairing code that hands the machine's identity to a new
  *    device, so the register number and every document already filed against it keep
  *    pointing at the same till.
@@ -18,12 +20,15 @@
  */
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
-import { createReplacementCode, reconstructCloseTradingDay } from '@/lib/api';
-import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { administrativeCloseShift, createReplacementCode } from '@/lib/api';
+import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
+import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
+import { formatDateTime } from '@/lib/format';
 import type { PosMachine } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -34,34 +39,45 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
   const t = useTranslations('deadTill');
   const tc = useTranslations('common');
   const qc = useQueryClient();
+  const router = useRouter();
+  const canProduceZ = useCanProduceZ();
+  const errors = useZErrorText();
 
   const [closeOpen, setCloseOpen] = useState(false);
   const [note, setNote] = useState('');
   const [force, setForce] = useState(false);
   const [code, setCode] = useState<string | null>(null);
 
-  const hasOpenDay = m.tradingDayStatus === 'open';
+  const hasOpenShift = m.shiftStatus === 'open';
+  const shiftId = m.openShiftId ?? null;
 
   const closeMutation = useMutation({
-    mutationFn: () => reconstructCloseTradingDay(m.id, { force, note: note || undefined }),
+    mutationFn: () => administrativeCloseShift(m.id, shiftId!, { force, note: note || undefined }),
     onSuccess: (res) => {
       setCloseOpen(false);
       setNote('');
       setForce(false);
       qc.invalidateQueries({ queryKey: ['machines'] });
-      toast.success(
-        res.created
-          ? t('closed', { number: res.shopSequenceNumber ?? '—' })
-          : t('alreadyClosed'),
-      );
+      qc.invalidateQueries({ queryKey: ['shifts'] });
+      qc.invalidateQueries({ queryKey: ['z-candidates'] });
+      // The shift is closed, not reported: it waits for the shop's next Z. Say so, and
+      // offer the way there.
+      toast.success(res.created ? t('closed') : t('alreadyClosed'), {
+        description: t('closedNext'),
+        action:
+          canProduceZ && m.shopId
+            ? { label: t('toZWizard'), onClick: () => router.push(zWizardHref(m.shopId, m.id)) }
+            : undefined,
+        duration: 10_000,
+      });
     },
-    onError: (e) => toast.error(axiosErrorToToastMessage(e, tc('error'))),
+    onError: (e) => toast.error(errors.forError(e)),
   });
 
   const replaceMutation = useMutation({
     mutationFn: () => createReplacementCode(m.id),
     onSuccess: (res) => setCode(res.code),
-    onError: (e) => toast.error(axiosErrorToToastMessage(e, tc('error'))),
+    onError: (e) => toast.error(errors.forError(e)),
   });
 
   return (
@@ -69,9 +85,9 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
       <Button
         size="sm"
         variant="outline"
-        disabled={!hasOpenDay}
+        disabled={!hasOpenShift || !shiftId}
         onClick={() => setCloseOpen(true)}
-        title={hasOpenDay ? undefined : t('noOpenDay')}
+        title={hasOpenShift ? undefined : t('noOpenShift')}
       >
         <AlertTriangle className="h-4 w-4 ms-1" />
         {t('closeFromCloud')}
@@ -81,9 +97,9 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
         variant="outline"
         // Blocked in the UI as well as on the server, so the operator is told now rather
         // than with an engineer standing at the counter holding a new terminal.
-        disabled={hasOpenDay || replaceMutation.isPending}
+        disabled={hasOpenShift || replaceMutation.isPending}
         onClick={() => replaceMutation.mutate()}
-        title={hasOpenDay ? t('closeDayFirst') : undefined}
+        title={hasOpenShift ? t('closeShiftFirst') : undefined}
       >
         <RefreshCw className="h-4 w-4 ms-1" />
         {t('replaceTerminal')}
@@ -98,7 +114,15 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
             <p className="text-muted-foreground">{t('closeExplain')}</p>
             {/* What the document will rest on, stated before it is created. */}
             <div className="bg-muted/40 space-y-1 rounded-md p-3 text-xs">
-              <div>{t('basisLastSeen', { when: m.lastHeartbeatAt ?? '—' })}</div>
+              {m.openedAt ? (
+                <div>
+                  {t('basisShift', {
+                    since: formatDateTime(m.openedAt),
+                    by: m.openedBy ?? '—',
+                  })}
+                </div>
+              ) : null}
+              <div>{t('basisLastSeen', { when: formatDateTime(m.lastHeartbeatAt) })}</div>
               <div>
                 {m.pendingDocuments == null
                   ? t('basisNeverReported')
@@ -124,7 +148,10 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
               <Button variant="outline" onClick={() => setCloseOpen(false)}>
                 {tc('cancel')}
               </Button>
-              <Button onClick={() => closeMutation.mutate()} disabled={closeMutation.isPending}>
+              <Button
+                onClick={() => closeMutation.mutate()}
+                disabled={closeMutation.isPending || !shiftId}
+              >
                 {closeMutation.isPending ? tc('loading') : t('confirmClose')}
               </Button>
             </div>

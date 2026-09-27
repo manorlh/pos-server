@@ -12,7 +12,7 @@
  * Two rules the row inherits rather than re-implements:
  *
  * * **The status light is the server's.** `MachineStatusLabel` renders `m.status` as
- *   resolved by `machine_status.py`; nothing here re-derives it. The close-day gate
+ *   resolved by `machine_status.py`; nothing here re-derives it. The Z wizard
  *   reads that same definition, and the two drifting apart is how a manager gets told a
  *   till is reachable when it is not.
  * * **Pending documents are a last-known reading, never a live count.** The "as of"
@@ -30,8 +30,8 @@ import { useTranslations } from 'next-intl';
 import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
 import {
-  CalendarClock,
   ChevronDown,
+  FilePlus2,
   Link2,
   ListChecks,
   MoreHorizontal,
@@ -43,6 +43,7 @@ import {
 } from 'lucide-react';
 import type { PosMachine } from '@/lib/types';
 import { registerNumberOf } from '@/lib/registerNumber';
+import { zWizardHref } from '@/lib/zAccess';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -63,11 +64,11 @@ import {
 } from '@/components/dashboard/machine-status';
 
 /**
- * The eight columns, shared with the table's header strip so the two cannot drift.
+ * The seven columns, shared with the table's header strip so the two cannot drift.
  * Below `md` the grid is off entirely and the row lays itself out with flex-wrap.
  */
 export const MACHINE_ROW_GRID =
-  'md:grid md:grid-cols-[auto_minmax(9rem,auto)_minmax(0,2fr)_minmax(0,1.4fr)_auto_auto_auto_auto] md:items-center md:gap-x-3';
+  'md:grid md:grid-cols-[minmax(9rem,auto)_minmax(0,2fr)_minmax(0,1.4fr)_auto_auto_auto_auto] md:items-center md:gap-x-3';
 
 /** Everything the row needs to decide what a given operator may do with a terminal. */
 export interface MachinePermissions {
@@ -75,7 +76,8 @@ export interface MachinePermissions {
   canAssignMachine: boolean;
   canEditAssignedShop: boolean;
   canRemoveMachine: boolean;
-  canCloseDay: boolean;
+  /** May produce a Z — which is also the only way to close a till's shift remotely. */
+  canProduceZ: boolean;
 }
 
 /** The dialogs the page owns; the row only asks for them to be opened. */
@@ -83,7 +85,6 @@ export interface MachineRowActions {
   onAssign: (m: PosMachine) => void;
   onEditShop: (m: PosMachine) => void;
   onPush: (m: PosMachine) => void;
-  onCloseDay: (m: PosMachine) => void;
   onRemove: (m: PosMachine) => void;
 }
 
@@ -93,17 +94,50 @@ export interface MachineRowProps {
   actions: MachineRowActions;
   /** Passed down rather than recomputed: the page owns the one online decision. */
   isDeviceOnline: (m: PosMachine) => boolean;
-  canCloseMachine: (m: PosMachine) => boolean;
-  selected: boolean;
-  onToggleSelected: (id: string) => void;
   expanded: boolean;
   onToggleExpanded: (id: string) => void;
 }
 
-function tradingDayBadgeVariant(m: PosMachine): 'default' | 'secondary' | 'outline' {
-  if (m.closeDayPending) return 'secondary';
-  if (m.tradingDayStatus === 'open') return 'default';
+function shiftBadgeVariant(m: PosMachine): 'default' | 'secondary' | 'outline' {
+  if (m.closeShiftPending) return 'secondary';
+  if (m.shiftStatus === 'open') return 'default';
   return 'outline';
+}
+
+/**
+ * The till's shift, as the row shows it: open since when and by whom, a remote close
+ * in flight, and how many closed shifts still wait for a Z.
+ */
+export function MachineShiftSummary({ m }: { m: PosMachine }) {
+  const t = useTranslations('machines');
+  const awaiting = m.closedShiftsAwaitingZ ?? 0;
+  return (
+    <div className="space-y-0.5">
+      <Badge variant={shiftBadgeVariant(m)}>
+        {m.closeShiftPending
+          ? t('shift.closePending')
+          : m.shiftStatus === 'open'
+            ? t('shift.open')
+            : t('shift.none')}
+      </Badge>
+      {m.shiftStatus === 'open' && m.openedAt ? (
+        <p className="text-xs text-muted-foreground">
+          {t('shift.openedAgo', {
+            ago: formatDistanceToNow(new Date(m.openedAt), { addSuffix: true, locale: he }),
+          })}
+          {m.openedBy ? ` · ${t('shift.openedBy', { name: m.openedBy })}` : ''}
+        </p>
+      ) : null}
+      {awaiting > 0 ? (
+        <Link
+          href={`/dashboard/shifts?awaitingZ=1&machine=${m.id}`}
+          className="block text-xs text-amber-700 hover:underline dark:text-amber-400"
+        >
+          {t('shift.awaitingZ', { count: awaiting })}
+        </Link>
+      ) : null}
+    </div>
+  );
 }
 
 /**
@@ -138,11 +172,10 @@ function MachineRowMenu({
   m,
   permissions,
   actions,
-  canCloseMachine,
-}: Pick<MachineRowProps, 'm' | 'permissions' | 'actions' | 'canCloseMachine'>) {
+}: Pick<MachineRowProps, 'm' | 'permissions' | 'actions'>) {
   const t = useTranslations('machines');
   const router = useRouter();
-  const { authHydrated, canAssignMachine, canEditAssignedShop, canRemoveMachine, canCloseDay } =
+  const { authHydrated, canAssignMachine, canEditAssignedShop, canRemoveMachine, canProduceZ } =
     permissions;
 
   // Until the session has hydrated we do not know the role, and a menu that offers
@@ -178,9 +211,16 @@ function MachineRowMenu({
             <Store aria-hidden /> {t('changeShop')}
           </DropdownMenuItem>
         ) : null}
-        {canCloseDay ? (
-          <DropdownMenuItem onClick={() => actions.onCloseDay(m)} disabled={!canCloseMachine(m)}>
-            <CalendarClock aria-hidden /> {t('closeDay')}
+        {/* There is no remote close that is not a Z: a till's shift is closed from the
+            cloud by a Z run that includes it. So this opens the wizard on this till,
+            with its open shift included. */}
+        {canProduceZ ? (
+          <DropdownMenuItem
+            onClick={() => router.push(zWizardHref(m.shopId, m.id))}
+            disabled={m.pairingStatus !== 'assigned' || !m.shopId}
+          >
+            <FilePlus2 aria-hidden />
+            {m.shiftStatus === 'open' ? t('closeShiftRemotely') : t('produceZForTill')}
           </DropdownMenuItem>
         ) : null}
         <DropdownMenuItem
@@ -302,7 +342,7 @@ function MachineRowDetails({
       ) : null}
 
       {/* Only for a terminal that is actually unreachable — offering it on a healthy
-          till invites closing a day out from under a cashier. */}
+          till invites closing a shift out from under a cashier. */}
       {!online && m.pairingStatus === 'assigned' ? (
         <div className="md:col-span-2 xl:col-span-3">
           <DeadTillRecovery m={m} />
@@ -317,16 +357,12 @@ export function MachineRow({
   permissions,
   actions,
   isDeviceOnline,
-  canCloseMachine,
-  selected,
-  onToggleSelected,
   expanded,
   onToggleExpanded,
 }: MachineRowProps) {
   const t = useTranslations('machines');
   const tStatus = useTranslations('machineStatus');
   const detailsId = `machine-details-${m.id}`;
-  const selectable = permissions.canCloseDay && m.pairingStatus === 'assigned';
   const hasPending = !!m.pendingAsOf && (m.pendingDocuments ?? 0) > 0;
   const label = useMachineLabel(m);
 
@@ -335,20 +371,6 @@ export function MachineRow({
       <div
         className={`flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-sm hover:bg-muted/40 ${MACHINE_ROW_GRID}`}
       >
-        <div className="max-md:order-1">
-          {selectable ? (
-            <input
-              type="checkbox"
-              className="h-4 w-4 shrink-0 accent-primary"
-              checked={selected}
-              onChange={() => onToggleSelected(m.id)}
-              aria-label={label.secondary ? `${label.primary} · ${label.secondary}` : label.primary}
-            />
-          ) : (
-            <span className="block h-4 w-4" aria-hidden />
-          )}
-        </div>
-
         {/*
           `MachineStatusLabel` already carries its own dot, so the wide row shows the
           label alone rather than two lights side by side; the narrow row keeps just the
@@ -384,19 +406,7 @@ export function MachineRow({
         </div>
 
         <div className="max-md:hidden">
-          <Badge variant={tradingDayBadgeVariant(m)}>
-            {m.closeDayPending
-              ? t('tradingDayPending')
-              : m.tradingDayStatus === 'open'
-                ? t('tradingDayOpen')
-                : t('tradingDayNone')}
-          </Badge>
-          {m.tradingDayStatus === 'open' && m.openedAt ? (
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {t('tradingDayOpenedAt')}{' '}
-              {formatDistanceToNow(new Date(m.openedAt), { addSuffix: true, locale: he })}
-            </p>
-          ) : null}
+          <MachineShiftSummary m={m} />
         </div>
 
         {/*
@@ -444,12 +454,7 @@ export function MachineRow({
               aria-hidden
             />
           </Button>
-          <MachineRowMenu
-            m={m}
-            permissions={permissions}
-            actions={actions}
-            canCloseMachine={canCloseMachine}
-          />
+          <MachineRowMenu m={m} permissions={permissions} actions={actions} />
         </div>
 
         {/* Forces the wrap below `md`; on the grid it is not a cell at all. */}

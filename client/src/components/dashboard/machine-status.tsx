@@ -4,16 +4,17 @@
  * The terminal status light.
  *
  * Renders only. The status itself is resolved server-side (`machine_status.py`) so that
- * the dashboard, the close-day gate and anything added later read one definition — the
+ * the dashboard, the Z wizard and anything added later read one definition — the
  * online window used to be a 90-second constant copy-pasted into both this page and the
  * server, which is one refactor away from telling a manager a till is reachable while
- * the close-day gate disagrees.
+ * the Z run disagrees.
  *
  * A dot alone would be unreadable to anyone who has not memorised the colours, and
  * colour alone fails for the colour-blind, so every light carries its label and an
  * accessible title.
  */
 
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import type { PosMachine } from '@/lib/types';
 
@@ -23,11 +24,13 @@ type Status = NonNullable<PosMachine['status']>;
 const DOT: Record<Status, string> = {
   online: 'bg-emerald-500',
   pending_sync: 'bg-amber-500',
-  close_pending: 'bg-blue-500',
+  // A Z run asked this till to close its shift and is waiting for the close to arrive.
+  shift_close_pending: 'bg-blue-500',
   offline: 'bg-red-500',
   // Louder than plain offline on purpose: unsent money on a terminal nobody can reach.
   offline_with_unsynced: 'bg-red-600 ring-2 ring-red-300',
-  day_closed: 'bg-neutral-800',
+  // Healthy, but nobody can sell until a shift is opened on the till.
+  no_open_shift: 'bg-neutral-800',
   retired: 'bg-neutral-400',
   not_paired: 'bg-neutral-300',
 };
@@ -80,14 +83,26 @@ export function MachineStatusFlags({ m }: { m: PosMachine }) {
   if (flags.length === 0) return null;
   return (
     <span className="flex flex-wrap gap-1">
-      {flags.map((f) => (
-        <span
-          key={f}
-          className="border-muted-foreground/30 text-muted-foreground rounded border px-1.5 py-0.5 text-[11px]"
-        >
-          {t(`flag.${f}`)}
-        </span>
-      ))}
+      {flags.map((f) =>
+        // The one flag with somewhere to go: the shifts it counts, which are what the
+        // next Z has to take.
+        f === 'closed_shifts_awaiting_z' ? (
+          <Link
+            key={f}
+            href={`/dashboard/shifts?awaitingZ=1&machine=${m.id}`}
+            className="rounded border border-amber-400/60 px-1.5 py-0.5 text-[11px] text-amber-700 hover:underline dark:text-amber-400"
+          >
+            {t(`flag.${f}`)}
+          </Link>
+        ) : (
+          <span
+            key={f}
+            className="border-muted-foreground/30 text-muted-foreground rounded border px-1.5 py-0.5 text-[11px]"
+          >
+            {t(`flag.${f}`)}
+          </span>
+        ),
+      )}
     </span>
   );
 }

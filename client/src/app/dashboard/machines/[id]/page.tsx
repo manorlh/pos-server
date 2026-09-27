@@ -1,13 +1,14 @@
 'use client';
 
 /**
- * One POS terminal, from the inside: health, sync state, its Z reports and its
- * transactions, and which of its shop's products it sells (its own catalog).
+ * One POS terminal, from the inside: health, sync state, its shift, its recent shifts
+ * and Z reports, its transactions, and which of its shop's products it sells (its own
+ * catalog).
  *
  * The health panel and the clock-skew grading are the same components the
  * machines list uses, so a battery that reads "unknown" here means exactly what
  * it means there — not zero, not a fault. Actions that change a device (assign,
- * change shop, push catalogue, close day, remove) deliberately stay on the
+ * change shop, push catalogue, remove) deliberately stay on the
  * machines list, which already implements them with their confirmations; this page
  * links across rather than growing a second copy of them.
  */
@@ -19,7 +20,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Monitor, Store, Wifi, WifiOff } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
-import { api, fetchMachines, fetchShops, fetchZReports } from '@/lib/api';
+import { api, fetchMachines, fetchShifts, fetchShops, fetchZReports } from '@/lib/api';
+import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
 import { usePageScope, useSyncScopeFromRoute } from '@/lib/scope';
 import { findBySameId } from '@/lib/entityLookup';
 import { registerNumberOf } from '@/lib/registerNumber';
@@ -27,6 +29,13 @@ import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
 import { MachineHealthPanel, ClockSkewChip } from '@/components/dashboard/machine-health';
 import { SalesStats } from '@/components/dashboard/sales-stats';
 import { MachineCatalogCard } from '@/components/dashboard/machines/machine-catalog';
+import { MachineShiftSummary } from '@/components/dashboard/machines/machine-row';
+import {
+  CountedCash,
+  OverShort,
+  ShiftBadges,
+  useShiftLabel,
+} from '@/components/dashboard/shifts/shift-parts';
 import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -41,6 +50,7 @@ import {
 } from '@/components/ui/table';
 import type {
   PosMachine,
+  ShiftListResponse,
   Shop,
   TransactionListResponse,
   ZReportListResponse,
@@ -63,6 +73,9 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
   const tMachines = useTranslations('machines');
   const tZ = useTranslations('zReports');
   const tTx = useTranslations('transactions');
+  const tShifts = useTranslations('shifts');
+  const shiftLabel = useShiftLabel();
+  const canProduceZ = useCanProduceZ();
 
   usePageScope({ maxLevel: 'machine', silent: true });
 
@@ -92,6 +105,20 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
     queryFn: () => fetchZReports(zParams),
     enabled: !!machine,
   });
+
+  const shiftParams = useMemo(
+    () => ({ machineId: id, page: 1, pageSize: RECENT_LIMIT }),
+    [id],
+  );
+  const shifts = useQuery<ShiftListResponse>({
+    queryKey: ['shifts', shiftParams],
+    queryFn: () => fetchShifts(shiftParams),
+    enabled: !!machine,
+  });
+  // The open shift, when there is one, heads the list (newest business date first).
+  const openShift = (shifts.data?.items ?? []).find(
+    (s) => s.status === 'open' && s.id === machine?.openShiftId,
+  );
 
   const txParams = useMemo(
     () => ({ machineId: id, page: 1, pageSize: RECENT_LIMIT }),
@@ -155,12 +182,24 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
             <p className="text-sm text-muted-foreground">{t('shopNone')}</p>
           )}
         </div>
-        <Link
-          href="/dashboard/machines"
-          className={buttonVariants({ variant: 'outline', size: 'sm' })}
-        >
-          {t('manage')}
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          {canProduceZ && machine.shopId && machine.pairingStatus === 'assigned' ? (
+            <Link
+              href={zWizardHref(machine.shopId, machine.id)}
+              className={buttonVariants({ size: 'sm' })}
+            >
+              {machine.shiftStatus === 'open'
+                ? tMachines('closeShiftRemotely')
+                : tMachines('produceZForTill')}
+            </Link>
+          ) : null}
+          <Link
+            href="/dashboard/machines"
+            className={buttonVariants({ variant: 'outline', size: 'sm' })}
+          >
+            {t('manage')}
+          </Link>
+        </div>
       </div>
 
       <Card>
@@ -203,13 +242,19 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
             }
           />
           <Field
-            label={tMachines('tradingDayStatusLabel')}
+            label={tMachines('shift.label')}
             value={
-              machine.closeDayPending
-                ? tMachines('tradingDayPending')
-                : machine.tradingDayStatus === 'open'
-                  ? tMachines('tradingDayOpen')
-                  : tMachines('tradingDayNone')
+              <span className="space-y-0.5">
+                <MachineShiftSummary m={machine} />
+                {openShift ? (
+                  <Link
+                    href={`/dashboard/shifts/${openShift.id}`}
+                    className="block text-xs font-normal text-muted-foreground hover:underline"
+                  >
+                    {shiftLabel(openShift)}
+                  </Link>
+                ) : null}
+              </span>
             }
           />
         </CardContent>
@@ -234,6 +279,79 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
         <CardHeader className="pb-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
+              {t('recentShifts')}
+            </CardTitle>
+            <Link
+              href={`/dashboard/shifts?machine=${machine.id}`}
+              className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+            >
+              {t('allShifts')}
+            </Link>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{tShifts('col.shift')}</TableHead>
+                <TableHead>{tShifts('col.businessDate')}</TableHead>
+                <TableHead>{tShifts('col.opened')}</TableHead>
+                <TableHead className="text-end">{tShifts('col.sales')}</TableHead>
+                <TableHead className="text-end">{tShifts('col.counted')}</TableHead>
+                <TableHead className="text-end">{tShifts('col.overShort')}</TableHead>
+                <TableHead>{tShifts('col.state')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {shifts.isLoading ? (
+                <TableRow>
+                  <TableCell colSpan={7}>
+                    <Skeleton className="h-6 w-full" />
+                  </TableCell>
+                </TableRow>
+              ) : (shifts.data?.items ?? []).length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="py-6 text-center text-muted-foreground">
+                    {t('noShifts')}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                (shifts.data?.items ?? []).map((s) => (
+                  <TableRow key={s.id}>
+                    <TableCell className="font-medium">
+                      <Link href={`/dashboard/shifts/${s.id}`} className="hover:underline">
+                        {shiftLabel(s)}
+                      </Link>
+                    </TableCell>
+                    <TableCell>{formatDate(s.businessDate)}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {formatDateTime(s.openedAt)}
+                      {s.openedByName ? ` · ${s.openedByName}` : ''}
+                    </TableCell>
+                    <TableCell className="text-end font-medium">
+                      {formatCurrency(s.serverTotals?.totalSales)}
+                    </TableCell>
+                    <TableCell className="text-end">
+                      {s.status === 'open' ? '—' : <CountedCash value={s.countedCash} />}
+                    </TableCell>
+                    <TableCell className="text-end">
+                      {s.status === 'open' ? '—' : <OverShort value={s.discrepancy} />}
+                    </TableCell>
+                    <TableCell>
+                      <ShiftBadges shift={s} />
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
               {t('zReports')}
             </CardTitle>
             <Link
@@ -245,39 +363,50 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           </div>
         </CardHeader>
         <CardContent className="p-0">
+          {/* A Z is per shop, so these are the shop's Zs that took a shift of this till;
+              their figures cover every till in them. */}
+          <p className="px-4 pb-2 text-xs text-muted-foreground">{t('zReportsHint')}</p>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>{tZ('dayDate')}</TableHead>
+                <TableHead>{tZ('zNumber')}</TableHead>
+                <TableHead>{tZ('businessDate')}</TableHead>
                 <TableHead>{tZ('closedAt')}</TableHead>
+                <TableHead className="text-end">{tZ('tills')}</TableHead>
                 <TableHead className="text-end">{tZ('totalSales')}</TableHead>
-                <TableHead className="text-end">{tZ('discrepancy')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {zReports.isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={4}>
+                  <TableCell colSpan={5}>
                     <Skeleton className="h-6 w-full" />
                   </TableCell>
                 </TableRow>
               ) : (zReports.data?.items ?? []).length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="py-6 text-center text-muted-foreground">
+                  <TableCell colSpan={5} className="py-6 text-center text-muted-foreground">
                     {t('noZReports')}
                   </TableCell>
                 </TableRow>
               ) : (
                 (zReports.data?.items ?? []).map((report) => (
                   <TableRow key={report.id}>
-                    <TableCell>{formatDate(report.dayDate)}</TableCell>
+                    <TableCell className="font-medium tabular-nums">
+                      <Link href={`/dashboard/z-reports/${report.id}`} className="hover:underline">
+                        {report.shopSequenceNumber ?? '—'}
+                      </Link>
+                    </TableCell>
+                    <TableCell>{formatDate(report.businessDate)}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {formatDateTime(report.closedAt)}
+                    </TableCell>
+                    <TableCell className="text-end tabular-nums">
+                      {report.machineCount ?? (report.legacy ? 1 : '—')}
                     </TableCell>
                     <TableCell className="text-end font-medium">
                       {formatCurrency(report.totalSales)}
                     </TableCell>
-                    <TableCell className="text-end">{formatCurrency(report.discrepancy)}</TableCell>
                   </TableRow>
                 ))
               )}
