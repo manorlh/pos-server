@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -123,14 +123,21 @@ function AssortmentEditDialog({
   // This shop's own availability level: null = not set (inherit the company, then the product).
   const [avail, setAvail] = useState<boolean | null>(null);
 
-  useEffect(() => {
-    if (!row || !open) return;
-    const custom = row.overridePrice != null;
-    setPriceMode(custom ? 'custom' : 'inherit');
-    setPriceStr(custom ? String(row.overridePrice) : '');
-    setListed(row.isListed);
-    setAvail(row.isAvailable ?? null);
-  }, [row, open]);
+  // Re-seed the form whenever the dialog opens (or its row changes while open). Done
+  // while rendering rather than in an effect, so the dialog never paints one frame of
+  // the previous row's values.
+  const seedFor = open ? row : null;
+  const [seededFor, setSeededFor] = useState<ShopProductCatalogRow | null>(null);
+  if (seedFor !== seededFor) {
+    setSeededFor(seedFor);
+    if (seedFor) {
+      const custom = seedFor.overridePrice != null;
+      setPriceMode(custom ? 'custom' : 'inherit');
+      setPriceStr(custom ? String(seedFor.overridePrice) : '');
+      setListed(seedFor.isListed);
+      setAvail(seedFor.isAvailable ?? null);
+    }
+  }
 
   const rowAvail = row?.isAvailable ?? null;
   const dirty = useMemo(() => {

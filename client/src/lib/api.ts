@@ -50,11 +50,22 @@ export type ImageUploadResult = {
   publicId: string;
 };
 
+/** The slice of Clerk's browser global this module reads. */
+type ClerkGlobal = {
+  loaded?: boolean;
+  load?: () => Promise<void>;
+  session?: { getToken: () => Promise<string | null> } | null;
+};
+
+function clerkGlobal(): ClerkGlobal | undefined {
+  return (window as unknown as { Clerk?: ClerkGlobal }).Clerk;
+}
+
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {};
   if (typeof window === 'undefined') return headers;
 
-  const clerk = (window as any).Clerk;
+  const clerk = clerkGlobal();
   if (clerk && !clerk.loaded) {
     await clerk.load?.();
   }
@@ -544,7 +555,7 @@ api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401 && typeof window !== 'undefined') {
-      const clerk = (window as any).Clerk;
+      const clerk = clerkGlobal();
       if (clerk && !clerk.loaded) {
         return Promise.reject(err);
       }
