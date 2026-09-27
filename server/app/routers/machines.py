@@ -367,9 +367,11 @@ def post_my_heartbeat(
         pending_count=body.pending_count if body is not None else None,
         pending_documents=body.pending_documents if body is not None else None,
     )
-    # The till's own account of its open shift. Only when the field was sent: an older
-    # build that says nothing must not read as "no shift open".
-    if body is not None and "open_shift_id" in body.model_fields_set:
+    # The till's own account of its open shift, refreshed every beat. Absent means
+    # "none open": the till's JSON encoder drops null fields, so a till with no shift
+    # open sends no `openShiftId` at all. (A pre-shift build also sends none; it cannot
+    # have a shift, so reading that as "none open" is also true.)
+    if body is not None:
         machine.reported_open_shift_id = body.open_shift_id
         machine.reported_open_shift_opened_at = (
             body.open_shift_opened_at if body.open_shift_id else None

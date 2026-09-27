@@ -170,13 +170,16 @@ class TestTheXIsRecomputed:
         assert t.vat_total == Decimal("25.93")  # 13.73 + 15.25 - 3.05
         assert t.transactions_count == 3
         assert t.first_transaction_number == "1001"
-        assert t.last_transaction_number == "1003"
+        # The declined tap was issued a number too; the register's last number counts it.
+        assert t.last_transaction_number == "1004"
 
     def test_a_till_that_agrees_is_not_flagged(self, w):
+        """The till's totalSales is its line totals: gross, before the 10.00 discount."""
         till, shift, docs = self._shift_with_documents(w)
         till_x = {
-            "totalSales": 190, "totalRefunds": "20.00", "totalCash": 100.0,
-            "totalCard": 70, "totalTips": 5, "vatTotal": 25.93, "transactionsCount": 3,
+            "totalSales": 200, "totalDiscounts": "10.00", "totalRefunds": "20.00",
+            "totalCash": 100.0, "totalCard": 70, "totalTips": 5, "vatTotal": 25.93,
+            "transactionsCount": 3,
         }
 
         out = _close(w, till, shift.id, _close_body(docs, till=till_x))
@@ -184,9 +187,17 @@ class TestTheXIsRecomputed:
         assert out.totals_mismatch is False
         assert w.db.get(Shift, shift.id).till_totals == till_x
 
+    def test_a_discounted_shift_is_not_flagged_for_its_discount(self, w):
+        """Comparing the till's gross with the server's net would flag every discount."""
+        till, shift, docs = self._shift_with_documents(w)
+
+        out = _close(w, till, shift.id, _close_body(docs, till={"totalSales": "200.00"}))
+
+        assert out.totals_mismatch is False
+
     def test_a_till_that_disagrees_is_flagged_and_kept(self, w):
         till, shift, docs = self._shift_with_documents(w)
-        till_x = {"totalSales": 200, "totalCash": 100}
+        till_x = {"totalSales": 210, "totalCash": 100}
 
         out = _close(w, till, shift.id, _close_body(docs, till=till_x))
 
@@ -200,7 +211,7 @@ class TestTheXIsRecomputed:
     def test_a_cent_of_rounding_is_not_a_mismatch(self, w):
         till, shift, docs = self._shift_with_documents(w)
 
-        out = _close(w, till, shift.id, _close_body(docs, till={"totalSales": "190.01"}))
+        out = _close(w, till, shift.id, _close_body(docs, till={"totalSales": "200.01"}))
 
         assert out.totals_mismatch is False
 
@@ -231,10 +242,14 @@ class TestCash:
         assert stored.discrepancy == Decimal("-4.50")
 
     def test_not_counted_is_null_not_zero(self, w):
+        """The till's encoder drops nulls, so "not counted" arrives as an absent field."""
         till = w.tills[0]
         shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        body = {
+            "closedAt": NOW.isoformat(), "expectedCash": "210.00", "transactionIds": [],
+        }
 
-        _close(w, till, shift.id, _close_body([], countedCash=None))
+        _close(w, till, shift.id, ShiftCloseIn.model_validate(body))
 
         stored = w.db.get(Shift, shift.id)
         assert stored.counted_cash is None
@@ -467,19 +482,20 @@ class TestTillReads:
         assert "pendingCloseDay" not in response
         assert till.reported_open_shift_id == claimed
 
-    def test_a_heartbeat_without_the_field_leaves_the_claim_alone(self, w):
+    def test_a_heartbeat_without_the_field_means_no_shift_open(self, w):
+        """The till's encoder drops nulls: "no shift open" arrives as an absent field."""
         from app.routers import machines as machines_router
         from app.schemas.pos_machine import MachineHeartbeatBody
 
         till = w.tills[0]
         till.reported_open_shift_id = uuid.uuid4()
-        before = till.reported_open_shift_id
 
         machines_router.post_my_heartbeat(
             body=MachineHeartbeatBody.model_validate({"appVersion": "1"}), machine=till, db=w.db
         )
 
-        assert till.reported_open_shift_id == before
+        assert till.reported_open_shift_id is None
+        assert till.reported_open_shift_opened_at is None
 
 
 # ── The pre-shift endpoints are gone ────────────────────────────────────────

@@ -68,9 +68,9 @@ class MachineHeartbeatBody(BaseModel):
     # Signed; negative means the device is behind the server.
     clock_skew_ms: Optional[int] = Field(None, alias="clockSkewMs")
 
-    # The shift the till has open right now, by its own account; both null = none open.
-    # Sent on every beat so the cloud knows about a shift whose open event is still
-    # queued offline. Absent (an older build) leaves the last reading in place.
+    # The shift the till has open right now, by its own account; absent or null = none
+    # open (the till drops null fields). Sent on every beat so the cloud knows about a
+    # shift whose open event is still queued offline.
     open_shift_id: Optional[uuid.UUID] = Field(None, alias="openShiftId")
     open_shift_opened_at: Optional[datetime] = Field(None, alias="openShiftOpenedAt")
 

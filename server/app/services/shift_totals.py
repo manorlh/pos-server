@@ -131,11 +131,11 @@ def compute_totals(db: Session, shift_ids: Iterable[uuid.UUID]) -> DocumentTotal
         ):
             legs_by_doc.setdefault(leg.transaction_id, []).append(leg)
 
-    numbers: List[str] = []
+    # Every document number the register issued in these shifts, a cancelled one too:
+    # "the last document number" on a Z is about the register's numbering, not takings.
+    numbers: List[str] = [d.transaction_number for d in documents if d.transaction_number]
     for doc in counted:
         totals.transactions_count += 1
-        if doc.transaction_number:
-            numbers.append(doc.transaction_number)
         refund = is_refund_document(
             document_type=doc.document_type,
             refund_of_transaction_id=doc.refund_of_transaction_id,
@@ -188,15 +188,24 @@ def compute_totals(db: Session, shift_ids: Iterable[uuid.UUID]) -> DocumentTotal
     return totals
 
 
-#: The keys of a till's X compared against the server's, and their model columns.
+#: The keys of a till's X compared against the server's, and how to read ours.
+#:
+#: `totalSales` is compared **gross** — Σ `totalAmount` of the sales, before document
+#: discounts — because that is the figure the till's X prints (its line totals). The
+#: server's own `total_sales` is net of discounts (what was collected, and what a Z
+#: declares); comparing the till's gross with it would flag every discounted shift.
+#: `totalDiscounts` / `discountsTotal`, when the till sends one, is compared with the
+#: discounts. Everything else is the same quantity on both sides (docs/SHIFTS_API.md §3.2).
 COMPARED_TILL_KEYS = {
-    "totalSales": "total_sales",
-    "totalRefunds": "total_refunds",
-    "totalCash": "total_cash",
-    "totalCard": "total_card",
-    "totalTips": "total_tips",
-    "vatTotal": "vat_total",
-    "transactionsCount": "transactions_count",
+    "totalSales": lambda t: t.total_sales + t.discounts_total,
+    "totalDiscounts": lambda t: t.discounts_total,
+    "discountsTotal": lambda t: t.discounts_total,
+    "totalRefunds": lambda t: t.total_refunds,
+    "totalCash": lambda t: t.total_cash,
+    "totalCard": lambda t: t.total_card,
+    "totalTips": lambda t: t.total_tips,
+    "vatTotal": lambda t: t.vat_total,
+    "transactionsCount": lambda t: t.transactions_count,
 }
 
 
@@ -204,16 +213,16 @@ def till_totals_mismatch(till: Optional[dict], server: DocumentTotals) -> bool:
     """
     True if the till's X disagrees with the server's on any figure it sent.
 
-    Only keys the till actually sent are compared, and a value that is not a number is
-    a mismatch rather than skipped — the till claimed a figure the server cannot read.
+    Only keys the till actually sent are compared (an absent key is not a claim), and a
+    value that is not a number is a mismatch rather than skipped — the till claimed a
+    figure the server cannot read.
     """
     if not till:
         return False
-    x = server.as_x()
-    for key, column in COMPARED_TILL_KEYS.items():
+    for key, ours_of in COMPARED_TILL_KEYS.items():
         if key not in till or till[key] is None:
             continue
-        ours = x[column]
+        ours = ours_of(server)
         try:
             theirs = Decimal(str(till[key]))
         except (ArithmeticError, ValueError):
