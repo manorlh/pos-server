@@ -62,12 +62,14 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     lastSyncAt: (raw.lastSyncAt ?? raw.last_sync_at) as string | undefined,
     lastCatalogChangeAt: (raw.lastCatalogChangeAt ?? raw.last_catalog_change_at) as string | undefined,
     catalogPullStale: Boolean(raw.catalogPullStale ?? raw.catalog_pull_stale ?? false),
-    tradingDayStatus: (raw.tradingDayStatus ?? raw.trading_day_status) as PosMachine['tradingDayStatus'],
-    tradingDayId: (raw.tradingDayId ?? raw.trading_day_id) as string | undefined,
-    dayDate: (raw.dayDate ?? raw.day_date) as string | undefined,
+    shiftStatus: (raw.shiftStatus ?? raw.shift_status) as PosMachine['shiftStatus'],
+    openShiftId: (raw.openShiftId ?? raw.open_shift_id) as string | undefined,
+    businessDate: (raw.businessDate ?? raw.business_date) as string | undefined,
     openedAt: (raw.openedAt ?? raw.opened_at) as string | undefined,
     openedBy: (raw.openedBy ?? raw.opened_by) as string | undefined,
-    closeDayPending: Boolean(raw.closeDayPending ?? raw.close_day_pending ?? false),
+    closeShiftPending: Boolean(raw.closeShiftPending ?? raw.close_shift_pending ?? false),
+    closedShiftsAwaitingZ: nullableNumber(raw.closedShiftsAwaitingZ ?? raw.closed_shifts_awaiting_z),
+    reportedOpenShiftId: nullableString(raw.reportedOpenShiftId ?? raw.reported_open_shift_id),
     // The resolved status light and its flags. Passed through as the server sent them:
     // the light is decided server-side and must not be re-derived here.
     status: (nullableString(raw.status) ?? undefined) as PosMachine['status'],

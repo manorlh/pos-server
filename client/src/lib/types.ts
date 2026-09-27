@@ -335,33 +335,46 @@ export interface PosMachine {
   lastSyncAt?: string;
   lastCatalogChangeAt?: string;
   catalogPullStale?: boolean;
-  tradingDayStatus?: 'open' | 'closed' | 'none';
-  tradingDayId?: string;
-  dayDate?: string;
+  /** `open` when the cloud holds an open shift for this till, else `none`. */
+  shiftStatus?: 'open' | 'none';
+  openShiftId?: string;
+  /** The open shift's business date (the till's local date it opened). */
+  businessDate?: string;
   openedAt?: string;
+  /** Display name of whoever opened the shift. */
   openedBy?: string;
-  closeDayPending?: boolean;
+  /** A Z run has asked this till to close its shift and is waiting for it. */
+  closeShiftPending?: boolean;
+  /** Closed shifts of this till that no Z has taken yet. */
+  closedShiftsAwaitingZ?: number | null;
+  /** The shift the till says it has open (heartbeat); the cloud may not have seen it yet. */
+  reportedOpenShiftId?: string | null;
   /**
    * The terminal's resolved status, decided server-side.
    *
    * A single value with strict precedence, not a set of independent lights — see
    * `app/services/machine_status.py`. The dashboard renders it; it must not re-derive
-   * it, because the close-day gate reads the same definition and the two drifting apart
-   * is how a manager is told a till is reachable when it is not.
+   * it, because the Z wizard reads the same definition and the two drifting apart is
+   * how a manager is told a till is reachable when it is not.
    */
   status?:
     | 'not_paired'
     | 'retired'
     | 'offline_with_unsynced'
-    | 'day_closed'
+    | 'no_open_shift'
     | 'offline'
     | 'pending_sync'
-    | 'close_pending'
+    | 'shift_close_pending'
     | 'online';
   online?: boolean;
   /** Secondary conditions. Shown beside the status, never instead of it. */
   statusFlags?: Array<
-    'day_open_past_its_date' | 'catalog_behind' | 'clock_skewed' | 'low_battery' | 'realtime_down'
+    | 'shift_open_past_its_date'
+    | 'closed_shifts_awaiting_z'
+    | 'catalog_behind'
+    | 'clock_skewed'
+    | 'low_battery'
+    | 'realtime_down'
   >;
   /** Undelivered sales as last reported. Null means never reported, which is not zero. */
   pendingDocuments?: number | null;
@@ -725,7 +738,7 @@ export interface Transaction {
   id: string;
   machineId: string;
   shopId?: string;
-  tradingDayId?: string;
+  shiftId?: string;
   transactionNumber: string;
   status: TransactionStatus;
   documentType?: number;
@@ -756,61 +769,270 @@ export interface TransactionListResponse {
   items: Transaction[];
 }
 
-export interface TradingDay {
+// ── Shifts (משמרות), X and Z ─────────────────────────────────────────────────
+//
+// The wire contract is pos-server `docs/SHIFTS_API.md`. Two rules run through
+// every type below:
+//
+// * **Money arrives as a decimal string** ("123.40") — that is how the server's
+//   Decimal serialises. It is displayed, never added up in the browser.
+// * **`null` means unknown / not counted / not applicable, never zero.** An
+//   uncounted drawer has `countedCash: null`, and must read "לא נספר", not ₪0.
+
+/** A money amount as the shift and Z endpoints send it. */
+export type Money = string | number;
+
+/** The X figures of a shift, recomputed by the server from its documents (§3.2). */
+export interface ShiftTotals {
+  /** Net of document discounts — the money collected. Tips excluded. */
+  totalSales?: Money | null;
+  totalRefunds?: Money | null;
+  totalCash?: Money | null;
+  totalCard?: Money | null;
+  totalTips?: Money | null;
+  totalCashTips?: Money | null;
+  totalCardTips?: Money | null;
+  /** Null when any document of the shift carries no VAT figure. */
+  vatTotal?: Money | null;
+  transactionsCount?: number | null;
+  firstTransactionNumber?: string | null;
+  lastTransactionNumber?: string | null;
+}
+
+export type ShiftStatus = 'open' | 'closed';
+
+export interface Shift {
+  id: string;
+  tenantId?: string | null;
+  machineId: string;
+  shopId?: string | null;
+  businessDate: string;
+  /** Per-till counter. Null only on shifts from tills that predate it. */
+  sequenceNumber?: number | null;
+  status: ShiftStatus;
+  openedAt: string;
+  openingCash?: Money | null;
+  openedByUserId?: string | null;
+  openedByName?: string | null;
+  closedAt?: string | null;
+  /** When the cloud accepted the close with every document present. */
+  closeAcceptedAt?: string | null;
+  closedByUserId?: string | null;
+  closedByName?: string | null;
+  /** Closed remotely with nobody at the drawer (always uncounted). */
+  unattended: boolean;
+  /** Null = not counted. Never read as zero. */
+  countedCash?: Money | null;
+  expectedCash?: Money | null;
+  /** counted − expected; null when uncounted. */
+  discrepancy?: Money | null;
+  /** Null while the shift is open. */
+  serverTotals?: ShiftTotals | null;
+  /** The till's own X, as it sent it (audit only). Absent on summaries. */
+  tillTotals?: Record<string, unknown> | null;
+  /** The till's X disagreed with the server's by more than a cent. */
+  totalsMismatch: boolean;
+  /** Documents that reached the cloud after the shift was closed. */
+  lateDocuments?: number;
+  /** Closed from the cloud for a dead till, from the documents the cloud held. */
+  reconstructed: boolean;
+  reconstructionBasis?: Record<string, unknown> | null;
+  zReportId?: string | null;
+  zNumber?: number | null;
+  machineName?: string | null;
+  shopName?: string | null;
+  /** Detail read only: tender → amount, from the documents. */
+  paymentBreakdown?: Record<string, Money> | null;
+}
+
+export interface ShiftListResponse {
+  page: number;
+  pageSize: number;
+  total: number;
+  items: Shift[];
+}
+
+export type ZRunStatus = 'waiting' | 'building' | 'completed' | 'failed' | 'cancelled' | 'expired';
+
+export type ZRunItemStatus =
+  | 'waiting_close'
+  | 'closing'
+  | 'ready'
+  | 'excluded'
+  | 'failed'
+  | 'expired';
+
+/** One till of a shop, as the Z wizard sees it (`GET /shops/{id}/z-candidates`). */
+export interface ZCandidateMachine {
+  machineId: string;
+  machineName?: string | null;
+  posNumber?: string | null;
+  online: boolean;
+  status?: PosMachine['status'] | null;
+  pendingDocuments?: number | null;
+  pendingAsOf?: string | null;
+  openShift?: Shift | null;
+  /** From the heartbeat — the till may have opened a shift the cloud has not heard of. */
+  tillReportedOpenShiftId?: string | null;
+  /** Closed and not in a Z, oldest first. A Z always takes a prefix of these. */
+  closedShifts: Shift[];
+  activeRun?: { runId: string; itemStatus: ZRunItemStatus } | null;
+}
+
+export interface ZCandidates {
+  shopId: string;
+  shopName?: string | null;
+  /** `machine` = the tenant's accountant wants one till per Z. */
+  zScope: 'shop' | 'machine';
+  machines: ZCandidateMachine[];
+}
+
+export interface ZRunMachineSelection {
+  machineId: string;
+  /** Omitted = every closed un-Z'd shift of this till. */
+  throughShiftId?: string | null;
+  includeOpenShift?: boolean;
+}
+
+export interface ZRunItem {
   id: string;
   machineId: string;
-  shopId?: string;
-  dayDate: string;
-  openedAt: string;
-  closedAt?: string;
-  openingCash?: number;
-  closingCash?: number;
-  expectedCash?: number;
-  actualCash?: number;
-  discrepancy?: number;
-  openedBy?: string;
-  closedBy?: string;
-  status: 'open' | 'closed';
+  machineName?: string | null;
+  throughShiftId?: string | null;
+  closeShiftId?: string | null;
+  status: ZRunItemStatus;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  sentAt?: string | null;
+  receivedAt?: string | null;
+  readyAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface ZRun {
+  id: string;
+  shopId: string;
+  status: ZRunStatus;
+  businessDate?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  expiresAt?: string | null;
+  createdByUserId?: string | null;
+  zReportId?: string | null;
+  zNumber?: number | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  items: ZRunItem[];
 }
 
 export interface ZReport {
   id: string;
-  tradingDayId: string;
-  machineId: string;
-  shopId?: string;
-  dayDate: string;
-  totalSales?: number;
-  totalRefunds?: number;
-  totalCashSales?: number;
-  totalCardSales?: number;
-  transactionsCount?: number;
-  openingCash?: number;
-  closingCash?: number;
-  expectedCash?: number;
-  actualCash?: number;
-  discrepancy?: number;
-  payload?: Record<string, unknown> | null;
-  closedAt: string;
-  createdAt: string;
+  tenantId?: string | null;
+  shopId?: string | null;
+  shopName?: string | null;
   /**
-   * The shop's Z number — 1, 2, 3 … across every till in the shop.
+   * The shop's Z number — 1, 2, 3 … per shop, gapless.
    *
-   * Assigned by the server at close, so it is what a bookkeeper quotes. Null on a Z
-   * from a terminal with no shop, and on closes that predate the column.
+   * What a bookkeeper quotes. Null only on a legacy Z from a terminal with no shop.
    */
   shopSequenceNumber?: number | null;
-  /**
-   * Built by the cloud for a day whose terminal could not close it, rather than issued
-   * and printed by the terminal. Always shown: a reader must never have to guess which
-   * kind of document they are looking at.
-   */
+  businessDate: string;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  shiftCount?: number | null;
+  machineCount?: number | null;
+  zRunId?: string | null;
+  createdByUserId?: string | null;
+  closedAt: string;
+  createdAt: string;
+  totalSales?: Money | null;
+  totalRefunds?: Money | null;
+  discountsTotal?: Money | null;
+  totalCashSales?: Money | null;
+  totalCardSales?: Money | null;
+  totalTips?: Money | null;
+  totalCashTips?: Money | null;
+  totalCardTips?: Money | null;
+  vatTotal?: Money | null;
+  transactionsCount?: number | null;
+  paymentBreakdown?: Record<string, Money> | null;
+  openingCash?: Money | null;
+  expectedCash?: Money | null;
+  /** Null when any included shift was not counted. */
+  actualCash?: Money | null;
+  discrepancy?: Money | null;
+  /** Any included shift was closed unattended. */
+  unattended?: boolean;
+  /** Any included shift was reconstructed for a dead till. */
   reconstructed?: boolean;
-  reconstructedBy?: string | null;
-  reconstructionBasis?: Record<string, unknown> | null;
-  /** Filled in by GET /z-reports so the history table can name the terminal. */
+  /** Documents of its shifts that reached the cloud after it was built (not in its figures). */
+  lateDocuments?: number;
+  /** A pre-shift Z issued by one till: `machineId` set, no per-till sections. */
+  legacy?: boolean;
+  machineId?: string | null;
   machineName?: string | null;
-  /** Filled in by GET /z-reports; null on the single-report read. */
+  /** Legacy rows only: the till's own Z blob. */
+  payload?: Record<string, unknown> | null;
+  /** Legacy rows only. */
+  reconstructionBasis?: Record<string, unknown> | null;
+}
+
+/** One register's section of a Z (§3.6) — what the regulation ties a Z to. */
+export interface ZReportMachineSection {
+  machineId: string;
+  machineName?: string | null;
+  posNumber?: string | null;
+  shiftIds?: string[];
+  shiftCount?: number | null;
+  firstShiftSequence?: number | null;
+  lastShiftSequence?: number | null;
+  firstDocumentNumber?: string | null;
+  lastDocumentNumber?: string | null;
+  transactionsCount?: number | null;
+  salesCount?: number | null;
+  creditNotesCount?: number | null;
+  nonSaleDocumentsCount?: number | null;
+  totalSales?: Money | null;
+  totalRefunds?: Money | null;
+  discountsTotal?: Money | null;
+  vatTotal?: Money | null;
+  vatMissingCount?: number | null;
+  totalCash?: Money | null;
+  totalCard?: Money | null;
+  paymentBreakdown?: Record<string, Money> | null;
+  totalTips?: Money | null;
+  totalCashTips?: Money | null;
+  totalCardTips?: Money | null;
+  openingCash?: Money | null;
+  expectedCash?: Money | null;
+  /** Null when any of this till's shifts is uncounted. */
+  countedCash?: Money | null;
+  overShort?: Money | null;
+  uncountedShiftCount?: number | null;
+  reconstructedShiftCount?: number | null;
+  unattendedShiftCount?: number | null;
+}
+
+/** Who issued the Z, frozen when it was built — never live settings. */
+export interface ZReportBusiness {
+  businessName?: string | null;
+  vatNumber?: string | null;
+  companyRegNumber?: string | null;
+  companyId?: string | null;
+  address?: string | null;
+  addressNumber?: string | null;
+  city?: string | null;
+  zip?: string | null;
+  branchId?: string | null;
+  shopId?: string | null;
   shopName?: string | null;
+  capturedAt?: string | null;
+}
+
+export interface ZReportDetail extends ZReport {
+  perMachine: ZReportMachineSection[];
+  shifts: Shift[];
+  business?: ZReportBusiness | null;
 }
 
 export interface ZReportListResponse {
@@ -818,37 +1040,6 @@ export interface ZReportListResponse {
   pageSize: number;
   total: number;
   items: ZReport[];
-}
-
-export interface CloseDayRequestItem {
-  id: string;
-  machineId: string;
-  machineName?: string;
-  tradingDayId?: string;
-  zReportId?: string;
-  status: string;
-  errorCode?: string;
-  errorMessage?: string;
-  sentAt?: string;
-  receivedAt?: string;
-  completedAt?: string;
-  failedAt?: string;
-}
-
-export interface CloseDayRequest {
-  id: string;
-  requestId?: string;
-  status: string;
-  shopId?: string;
-  createdAt?: string;
-  updatedAt?: string;
-  items: CloseDayRequestItem[];
-}
-
-export interface CloseDayCreateResponse {
-  requestId: string;
-  status: string;
-  items: CloseDayRequestItem[];
 }
 
 export interface DashboardStats {
@@ -1051,7 +1242,7 @@ export interface TipsRangeReport {
 
 // ── Day summary (סיכום יומי) ────────────────────────────────────────────────
 //
-// Several tills' Z reports rolled into one figure per trading day. Not a Z: it
+// Z reports rolled into one figure per business date (the Z's). Not a Z: it
 // closes nothing, it is not a fiscal document, and it is deliberately not
 // printable.
 
@@ -1089,7 +1280,7 @@ export interface DaySummaryTotals {
 /** One Z report behind a day's figures. `zReportId` is the drill-down target. */
 export interface DaySummaryContributor {
   zReportId: string;
-  /** This till's day was closed from the cloud, not by the terminal. */
+  /** This till's section of the Z includes a shift closed from the cloud (dead till). */
   reconstructed?: boolean;
   /** The shop's Z number. Null on a Z from a terminal with no shop. */
   shopSequenceNumber?: number | null;
@@ -1114,8 +1305,9 @@ export interface DaySummaryContributor {
 }
 
 export interface DaySummaryRow {
+  /** The Zs' business date (the field keeps its old name on the wire). */
   dayDate: string;
-  /** Distinct terminals, not Z reports — a till running two shifts files two. */
+  /** Distinct tills across the day's Zs' per-till sections, not Z reports. */
   machineCount: number;
   zReportCount: number;
   totals: DaySummaryTotals;
