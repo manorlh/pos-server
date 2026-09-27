@@ -652,7 +652,9 @@
       "closePending": "ממתין לסגירת משמרת",
       "openedAgo": "נפתחה {ago}",
       "openedBy": "ע״י {name}",
-      "awaitingZ": "{count, plural, one {משמרת אחת ממתינה} other {# משמרות ממתינות}} לדו״ח Z"
+      "awaitingZ": "{count, plural, one {משמרת אחת ממתינה} other {# משמרות ממתינות}} לדו״ח Z",
+      "orphans": "{count} מסמכים ללא משמרת",
+      "orphansHint": "הקופה שלחה מסמכים שלא שויכו לאף משמרת. הם שמורים בענן, אך אף דו״ח Z לא יכלול אותם."
     },
     "closeShiftRemotely": "סגירת משמרת מרחוק (הפקת דו״ח Z)",
     "produceZForTill": "הפקת דו״ח Z לקופה",
@@ -974,7 +976,7 @@
       "overShort": "עודף / חוסר",
       "tillTitle": "{till} {name}",
       "shifts": "משמרות",
-      "shiftRange": "{count} (#{first}–#{last})",
+      "shiftRange": "{count}, מס׳ {first} עד {last}",
       "firstDocument": "מס׳ מסמך ראשון",
       "lastDocument": "מס׳ מסמך אחרון",
       "salesCount": "מסמכי מכירה",
@@ -1018,7 +1020,7 @@
     "tillsTitle": "לפי קופה",
     "tillNumbered": "קופה {number}",
     "till": {
-      "shiftRange": "{count} משמרות (#{first}–#{last})",
+      "shiftRange": "{count} משמרות, מס׳ {first} עד {last}",
       "shiftCount": "{count} משמרות",
       "firstDocument": "מסמך ראשון",
       "lastDocument": "מסמך אחרון",
@@ -1590,7 +1592,8 @@
       "cancel": "ביטול ההפקה",
       "waitingHint": "המשמרות של קופה שלא תיכלל ימתינו לדו״ח ה-Z הבא — בלי פער.",
       "buildingHint": "כל הקופות מוכנות; הדו״ח נבנה."
-    }
+    },
+    "tillOrphans": "{count} מסמכים של קופה זו נשלחו ללא משמרת. הם שמורים בענן, אך דו״ח ה-Z לא יכלול אותם."
   },
   "zErrors": {
     "no_machines": "לא נבחרה אף קופה",

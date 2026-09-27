@@ -92,33 +92,42 @@ export function selectionSummary(c: ZCandidates, sels: Record<string, TillSelect
   return { dates: [...dates].sort(), late, shifts, tills, waitsForClose };
 }
 
+/** "14:05", or the full date and time when it is not the day `sameDayAs` fell on. */
+function formatTime(iso: string, sameDayAs?: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const ref = new Date(sameDayAs ?? iso);
+  if (d.toDateString() !== ref.toDateString()) return formatDateTime(iso);
+  return d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+}
+
 function ShiftLine({ shift, included }: { shift: Shift; included: boolean }) {
   const t = useTranslations('zWizard');
   const shiftLabel = useShiftLabel();
   const x = shift.serverTotals;
   return (
     <li
-      className={`grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-0.5 rounded px-2 py-1 text-xs ${
-        included ? 'bg-primary/5' : 'opacity-50'
-      }`}
+      className={`space-y-0.5 rounded px-2 py-1 text-xs ${included ? 'bg-primary/5' : 'opacity-50'}`}
     >
-      <span className="font-medium whitespace-nowrap">{shiftLabel(shift)}</span>
-      <span className="text-muted-foreground truncate">
-        {formatDate(shift.businessDate)} · {formatDateTime(shift.openedAt)} –{' '}
-        {shift.closedAt ? formatDateTime(shift.closedAt) : '…'}
-      </span>
-      <span className="tabular-nums text-end">{formatCurrency(x?.totalSales)}</span>
-      <span />
-      <span className="text-muted-foreground flex flex-wrap items-center gap-x-2">
+      <div className="flex flex-wrap items-baseline gap-x-3">
+        <span className="font-medium whitespace-nowrap">{shiftLabel(shift)}</span>
+        <span className="text-muted-foreground">
+          {formatDate(shift.businessDate)} ·{' '}
+          {/* Times run left to right even inside the RTL line, or "06:00–14:00" reads backwards. */}
+          <span dir="ltr">
+            {formatTime(shift.openedAt)}–{shift.closedAt ? formatTime(shift.closedAt, shift.openedAt) : '…'}
+          </span>
+        </span>
+        <span className="ms-auto tabular-nums font-medium">{formatCurrency(x?.totalSales)}</span>
+      </div>
+      <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-0.5">
         <span>{t('cashLine', { cash: formatCurrency(x?.totalCash), card: formatCurrency(x?.totalCard) })}</span>
         <span>
           {t('countedLabel')} <CountedCash value={shift.countedCash} />
         </span>
         <span>{t('docsLine', { count: x?.transactionsCount ?? 0 })}</span>
-      </span>
-      <span className="text-end">
         <ShiftBadges shift={shift} showStatus={false} showZ={false} />
-      </span>
+      </div>
     </li>
   );
 }
@@ -176,6 +185,12 @@ function TillRow({
         </span>
       </div>
 
+      {(m.orphanDocuments ?? 0) > 0 ? (
+        <p className="flex gap-1.5 text-xs text-destructive">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          {t('tillOrphans', { count: m.orphanDocuments ?? 0 })}
+        </p>
+      ) : null}
       {blocked ? (
         <p className="text-xs text-amber-700 dark:text-amber-500">{t('tillInRun')}</p>
       ) : nothing ? (

@@ -69,6 +69,7 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     openedBy: (raw.openedBy ?? raw.opened_by) as string | undefined,
     closeShiftPending: Boolean(raw.closeShiftPending ?? raw.close_shift_pending ?? false),
     closedShiftsAwaitingZ: nullableNumber(raw.closedShiftsAwaitingZ ?? raw.closed_shifts_awaiting_z),
+    orphanDocuments: nullableNumber(raw.orphanDocuments ?? raw.orphan_documents),
     reportedOpenShiftId: nullableString(raw.reportedOpenShiftId ?? raw.reported_open_shift_id),
     // The resolved status light and its flags. Passed through as the server sent them:
     // the light is decided server-side and must not be re-derived here.

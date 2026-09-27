@@ -111,6 +111,7 @@ function shiftBadgeVariant(m: PosMachine): 'default' | 'secondary' | 'outline' {
 export function MachineShiftSummary({ m }: { m: PosMachine }) {
   const t = useTranslations('machines');
   const awaiting = m.closedShiftsAwaitingZ ?? 0;
+  const orphans = m.orphanDocuments ?? 0;
   return (
     <div className="space-y-0.5">
       <Badge variant={shiftBadgeVariant(m)}>
@@ -135,6 +136,13 @@ export function MachineShiftSummary({ m }: { m: PosMachine }) {
         >
           {t('shift.awaitingZ', { count: awaiting })}
         </Link>
+      ) : null}
+      {/* Documents the till sent without a shift: stored, but no Z will ever take
+          them, so they are said out loud rather than left to be found by an audit. */}
+      {orphans > 0 ? (
+        <p className="text-xs text-destructive" title={t('shift.orphansHint')}>
+          {t('shift.orphans', { count: orphans })}
+        </p>
       ) : null}
     </div>
   );

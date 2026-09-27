@@ -347,6 +347,8 @@ export interface PosMachine {
   closeShiftPending?: boolean;
   /** Closed shifts of this till that no Z has taken yet. */
   closedShiftsAwaitingZ?: number | null;
+  /** Documents of this till that named no shift. No Z takes them. */
+  orphanDocuments?: number | null;
   /** The shift the till says it has open (heartbeat); the cloud may not have seen it yet. */
   reportedOpenShiftId?: string | null;
   /**
@@ -877,6 +879,8 @@ export interface ZCandidateMachine {
   /** Closed and not in a Z, oldest first. A Z always takes a prefix of these. */
   closedShifts: Shift[];
   activeRun?: { runId: string; itemStatus: ZRunItemStatus } | null;
+  /** Documents of this till stored with no shift. No Z takes them. */
+  orphanDocuments?: number;
 }
 
 export interface ZCandidates {
