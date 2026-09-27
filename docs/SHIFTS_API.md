@@ -72,7 +72,17 @@ Shift resolution per document:
   Retryable: deliver the open shift's close (and the new shift's open) first, then resend.
   The server never "adopts" the open shift any more — that is what silently put shift N+1's
   sales into shift N.
-- `shiftId` absent (legacy) → the till's open shift, else a new one.
+- `shiftId` absent → the document is stored with **no shift** (an orphan). The server never
+  guesses a shift for it and never creates one: a Z takes no orphan, and each till's orphan
+  count is shown (`orphanDocuments` on the machines list and on z-candidates). A re-push of a
+  known document without `shiftId` leaves it in the shift it is already in.
+
+Each tender leg in `payments[]` may carry:
+- `nayaxMeta` — the acquirer reply, as a JSON **string** (the till) or an object; stored as
+  an object. A string that is not a JSON object is kept as `{"raw": "<string>"}`, never
+  rejected. The document-level `nayaxMeta` accepts both forms too.
+- `creditPayments` — number of credit instalments (integer, optional); stored in the leg's
+  meta as `creditPayments`. An unreadable value is dropped, not rejected.
 
 `200` body unchanged: `{"serverTime", "results": [{"id", "status": "accepted|duplicate|rejected", "reason"?, "serverReceivedAt"?}]}`.
 
@@ -190,6 +200,10 @@ Prefill rule on the till: `countedCash`, else `expectedCash`.
 
 ### 1.6 Heartbeat `POST /machines/me/heartbeat`
 
+The heartbeat **never** answers 422: an over-long string is cut to its column
+(`appVersion` 64, `serialNumber` 64, `batteryStatus` 32), and any field that cannot be read
+(wrong type, bad UUID/date, negative count) is treated as not sent.
+
 Request adds (both optional; null **or absent** = "no shift open" — the claim is replaced
 on every beat):
 ```json
@@ -214,6 +228,10 @@ X reprints); the close response only carries it when the shift is already in a Z
 until the till's close is accepted (or the run ends), so the till must dedupe by `requestId`.
 
 ### 1.7 Ably event `close-shift`
+
+The till's Ably token (`GET /machines/me/ably-auth`) grants `subscribe` and `history` on its
+channel, so an attach with `rewind=1` works and picks up an event published while the till
+was reconnecting.
 
 On channel `pos:{tenantId}:{machineId}`:
 ```json
@@ -257,6 +275,7 @@ in a Z), `from`, `to` (on `businessDate`), `page` (1), `pageSize` (50, max 200).
     "online": true, "status": "online", "pendingDocuments": 0, "pendingAsOf": "…",
     "openShift": ShiftSummary | null,
     "tillReportedOpenShiftId": "…" | null,   // from the heartbeat (the cloud may not have the open yet)
+    "orphanDocuments": 0,                      // documents of this till that named no shift; no Z takes them
     "closedShifts": [ShiftSummary, …],         // closed and not in a Z, oldest first (sequenceNumber, then openedAt)
     "activeRun": {"runId": "…", "itemStatus": "waiting_close"} | null
   }]
@@ -330,7 +349,7 @@ It then is an ordinary Z candidate. Guards: 409 `shift_not_open`, 409 `terminal_
 ### 2.10 Machines list/detail (status light)
 Fields renamed on `GET /machines` / `GET /machines/{id}`: `tradingDayStatus` → `shiftStatus`
 (`open|none`), `tradingDayId` → `openShiftId`, `dayDate` → `businessDate`, `openedAt`,
-`openedBy` (name), `closeDayPending` → `closeShiftPending`; new `closedShiftsAwaitingZ` (count).
+`openedBy` (name), `closeDayPending` → `closeShiftPending`; new `closedShiftsAwaitingZ` (count), `orphanDocuments` (documents that named no shift).
 `status`: `no_open_shift` replaces `day_closed`, `shift_close_pending` replaces `close_pending`.
 `statusFlags`: `shift_open_past_its_date` (replaces `day_open_past_its_date`),
 `closed_shifts_awaiting_z` (closed un-Z'd shifts with a businessDate before today); "today" is

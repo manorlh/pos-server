@@ -103,17 +103,17 @@ class TestResolution:
 
         assert _resolve(w, w.tills[0], wanted).id == wanted
 
-    def test_a_document_with_no_shift_id_joins_the_open_shift(self, w):
-        """Legacy payloads only. Never a phantom shift beside the real one."""
+    def test_a_document_with_no_shift_id_is_never_given_the_open_shift(self, w):
+        """Joining the open shift would be adoption again."""
         till = w.tills[0]
-        open_shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        w.shift(till, 1, status=ShiftStatus.OPEN)
 
-        assert _resolve(w, till, None).id == open_shift.id
+        assert _resolve(w, till, None) is None
 
-    def test_a_document_with_no_shift_id_and_nothing_open_still_gets_one(self, w):
-        got = _resolve(w, w.tills[0], None)
-
-        assert got.status == ShiftStatus.OPEN
+    def test_a_document_with_no_shift_id_creates_no_shift(self, w):
+        """The phantom it used to create had a random id and no sequence."""
+        assert _resolve(w, w.tills[0], None) is None
+        assert w.db.query(Shift).count() == 0
 
 
 class TestTheBatchIsCheckedBeforeAnythingIsWritten:
@@ -194,3 +194,106 @@ class TestTheRouterAnswers409:
         payload = json.loads(response.body)
         assert payload["detail"] == "another_shift_open"
         assert payload["openShiftId"] == str(n.id)
+
+
+# ── A document that names no shift is an orphan, not a phantom shift ─────────
+
+
+def _tx_in(shift_id=None, total="15.00", **extra):
+    from app.schemas.transaction import TransactionIn
+
+    body = {
+        "id": str(uuid.uuid4()), "transactionNumber": str(uuid.uuid4().int)[:8],
+        "status": "completed", "totalAmount": total, "paymentMethod": "cash", "reprintCount": 0,
+        "createdAt": NOW.isoformat(), "updatedAt": NOW.isoformat(), "businessDate": str(TODAY),
+    }
+    if shift_id is not None:
+        body["shiftId"] = str(shift_id)
+    body.update(extra)
+    return TransactionIn.model_validate(body)
+
+
+class TestOrphanDocuments:
+    def test_orphan_then_a_real_shift_then_close_then_z(self, w, monkeypatch):
+        """
+        The exact sequence that used to break: a document with no shiftId while nothing
+        is open made a phantom open shift; the till's real open then got 409
+        another_shift_open, and the phantom (no sequence, sorts first) blocked every Z.
+        """
+        from app.models.transaction import Transaction
+        from app.models.z_report import ZReport
+        from app.routers import sync as sync_router
+        from app.routers import z_runs as zr_router
+        from app.schemas.shift import ShiftCloseIn, ShiftOpenIn
+        from app.services import ably_notify
+        from app.services import z_runs as ZR
+        from app.services.transactions import upsert_transactions
+
+        monkeypatch.setattr(ably_notify, "publish_close_shift_notify", lambda *a, **k: None)
+        till = w.tills[0]
+
+        orphan = _tx_in()
+        assert [r.status for r in upsert_transactions(w.db, till, [orphan])] == ["accepted"]
+        assert w.db.get(Transaction, orphan.id).shift_id is None
+        assert w.db.query(Shift).count() == 0
+
+        shift_id = uuid.uuid4()
+        opened = sync_router.post_shift_open(
+            machine_id=str(till.id),
+            data=ShiftOpenIn.model_validate({
+                "id": str(shift_id), "businessDate": str(TODAY), "sequenceNumber": 1,
+                "openedAt": NOW.isoformat(), "openingCash": "100.00",
+            }),
+            machine=till, db=w.db,
+        )
+        assert opened.status == "open"
+
+        sale = _tx_in(shift_id, "40.00")
+        upsert_transactions(w.db, till, [sale])
+        closed = sync_router.post_shift_close(
+            machine_id=str(till.id), shift_id=shift_id,
+            body=ShiftCloseIn.model_validate({"closedAt": NOW.isoformat(), "transactionIds": [str(sale.id)]}),
+            machine=till, approval=None, db=w.db,
+        )
+        assert closed.status == "accepted"
+        w.db.commit()
+
+        cands = zr_router.get_z_candidates(w.shop.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+        mine = next(m for m in cands.machines if m.machine_id == till.id)
+        assert mine.orphan_documents == 1
+        assert [s.id for s in mine.closed_shifts] == [shift_id]
+
+        r = ZR.create_z_run(w.db, w.admin, w.tenant, w.shop, [ZR.MachineSelection(machine_id=till.id)], now=NOW)
+        z = w.db.get(ZReport, r.z_report_id)
+        assert r.status == "completed"
+        assert z.total_sales == 40  # the orphan is in no shift, so in no Z
+        assert w.db.get(Transaction, orphan.id).shift_id is None
+
+    def test_a_repush_without_a_shift_id_keeps_the_document_in_its_shift(self, w):
+        from app.models.transaction import Transaction
+        from app.services.transactions import upsert_transactions
+
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        doc = _tx_in(shift.id)
+        upsert_transactions(w.db, till, [doc])
+
+        again = _tx_in(None, id=str(doc.id), transactionNumber=doc.transaction_number,
+                       updatedAt=(NOW + timedelta(minutes=1)).replace(tzinfo=None).isoformat())
+        upsert_transactions(w.db, till, [again])
+
+        assert w.db.get(Transaction, doc.id).shift_id == shift.id
+
+    def test_the_machines_list_counts_orphans(self, w):
+        from unittest.mock import patch
+
+        from app.routers import machines as machines_router
+        from app.services.transactions import upsert_transactions
+
+        upsert_transactions(w.db, w.tills[0], [_tx_in(), _tx_in()])
+
+        with patch.object(machines_router, "get_catalog_change_watermark_for_machine", return_value=None):
+            rows = {r["id"]: r for r in machines_router._enrich_machines_batch(w.tills, w.db)}
+
+        assert rows[w.tills[0].id]["orphanDocuments"] == 2
+        assert rows[w.tills[1].id]["orphanDocuments"] == 0

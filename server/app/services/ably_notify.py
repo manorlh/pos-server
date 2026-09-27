@@ -142,7 +142,9 @@ def create_token_request_for_machine(machine: POSMachine) -> dict[str, Any]:
     token_request = client.auth.create_token_request(
         {
             "client_id": client_id,
-            "capability": {channel: ["subscribe"]},
+            # history too: the till attaches with rewind=1 to catch a close-shift
+            # published while it was reconnecting, and rewind needs history.
+            "capability": {channel: ["subscribe", "history"]},
             "ttl": 24 * 60 * 60 * 1000,
         }
     )

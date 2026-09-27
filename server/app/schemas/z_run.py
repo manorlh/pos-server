@@ -89,6 +89,8 @@ class ZCandidateMachineOut(BaseModel):
     till_reported_open_shift_id: Optional[uuid.UUID] = Field(None, alias="tillReportedOpenShiftId")
     closed_shifts: List[ShiftOut] = Field(default_factory=list, alias="closedShifts")
     active_run: Optional[ActiveRunOut] = Field(None, alias="activeRun")
+    #: Documents of this till stored with no shift (they named none). No Z takes them.
+    orphan_documents: int = Field(0, alias="orphanDocuments")
 
 
 class ZCandidatesOut(BaseModel):

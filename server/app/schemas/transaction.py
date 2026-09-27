@@ -3,9 +3,35 @@ from decimal import Decimal
 from typing import List, Literal, Optional
 import uuid
 
-from pydantic import BaseModel, Field
+import json
+
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.stock import StockMovementIn
+
+
+def meta_as_dict(value):
+    """
+    An acquirer reply as an object, whatever shape it arrived in.
+
+    A JSON string is parsed; anything that is not a JSON object — invalid JSON, a list,
+    a bare number — is kept verbatim as `{"raw": ...}`. Never a validation error: a
+    rejected field here rejects the whole batch, and with it a card sale that has
+    already been charged.
+    """
+    if value is None or isinstance(value, dict):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode("utf-8", "replace")
+    if isinstance(value, str):
+        if not value.strip():
+            return None
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return {"raw": value}
+        return parsed if isinstance(parsed, dict) else {"raw": value}
+    return {"raw": value if isinstance(value, (list, int, float, bool)) else str(value)}
 
 
 class IssuedVoucherIn(BaseModel):
@@ -47,10 +73,32 @@ class TransactionPaymentIn(BaseModel):
     sequence: int = Field(1, ge=1, description="Order the tenders were taken in, 1-based")
     method: str = Field(..., min_length=1, max_length=50)
     amount: Decimal = Field(..., ge=0)
+    #: The acquirer's reply. The Android till sends it as a JSON *string*; the desktop
+    #: as an object. Both are stored as an object (see `_meta_as_dict`).
     nayax_meta: Optional[dict] = Field(None, alias="nayaxMeta")
+    #: Number of credit instalments (תשלומים) on a card leg. No column of its own:
+    #: stored in the leg's `nayax_meta` as `creditPayments`, beside the acquirer reply
+    #: it came from.
+    credit_payments: Optional[int] = Field(None, alias="creditPayments")
 
     class Config:
         populate_by_name = True
+
+    @field_validator("nayax_meta", mode="before")
+    @classmethod
+    def _meta_as_dict(cls, value):
+        return meta_as_dict(value)
+
+    @field_validator("credit_payments", mode="before")
+    @classmethod
+    def _instalments(cls, value):
+        """An unreadable instalment count is dropped, never a rejected document."""
+        if value is None or value == "":
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
 
 class TransactionItemIn(BaseModel):
@@ -133,6 +181,11 @@ class TransactionIn(BaseModel):
 
     class Config:
         populate_by_name = True
+
+    @field_validator("nayax_meta", mode="before")
+    @classmethod
+    def _meta_as_dict(cls, value):
+        return meta_as_dict(value)
 
 
 class TransactionsBatchRequest(BaseModel):

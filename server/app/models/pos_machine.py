@@ -76,7 +76,7 @@ class POSMachine(Base):
     token_version = Column(Integer, default=1, nullable=False, server_default="1")
     last_heartbeat_at = Column(DateTime(timezone=True), nullable=True)
     mqtt_connected = Column(Boolean, nullable=True)
-    app_version = Column(String(32), nullable=True)
+    app_version = Column(String(64), nullable=True)
     last_sync_at = Column(DateTime(timezone=True), nullable=True)
 
     # ── Device identity and health ────────────────────────────────────────────

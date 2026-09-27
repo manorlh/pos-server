@@ -26,7 +26,7 @@ from app.schemas.z_run import (
     ZRunProceedIn,
 )
 from app.services.machine_status import StatusInput, resolve_status
-from app.services.shifts import shift_to_out
+from app.services.shifts import orphan_documents_by_machine, shift_to_out
 from app.services import z_runs as ZR
 
 router = APIRouter(tags=["z-runs"])
@@ -77,6 +77,7 @@ def get_z_candidates(
         db.commit()
     tills = ZR.shop_tills(db, shop.id)
     live = ZR._live_items(db, [m.id for m in tills])
+    orphans = orphan_documents_by_machine(db, [m.id for m in tills])
     machines = []
     for machine in tills:
         cand = ZR.till_candidates(db, machine)
@@ -105,6 +106,7 @@ def get_z_candidates(
                 till_reported_open_shift_id=machine.reported_open_shift_id,
                 closed_shifts=[_summary(s) for s in cand.closed],
                 active_run=ActiveRunOut(run_id=item.run_id, item_status=item.status) if item else None,
+                orphan_documents=orphans.get(machine.id, 0),
             )
         )
     return ZCandidatesOut(

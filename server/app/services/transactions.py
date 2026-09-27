@@ -139,6 +139,14 @@ def _normalized_payment_legs(tx: TransactionIn) -> List[TransactionPaymentIn]:
     ]
 
 
+def _leg_meta(leg: TransactionPaymentIn) -> Optional[dict]:
+    """The leg's acquirer reply, with its instalment count kept beside it."""
+    credit_payments = getattr(leg, "credit_payments", None)
+    if credit_payments is None:
+        return leg.nayax_meta
+    return {**(leg.nayax_meta or {}), "creditPayments": credit_payments}
+
+
 def _tender_rejection_reason(tx: TransactionIn) -> Optional[str]:
     """
     Why this document's `payments` array cannot be accepted, or None.
@@ -366,11 +374,15 @@ def upsert_transactions(
             )
 
             previous = existing_map.get(tx.id)
-            target_shift_id = shift.id
-            if (
+            target_shift_id = shift.id if shift is not None else None
+            if shift is None and previous is not None:
+                # A re-push that names no shift never detaches a document from the one
+                # it is already in.
+                target_shift_id = previous.shift_id
+            elif (
                 previous is not None
                 and previous.shift_id is not None
-                and previous.shift_id != shift.id
+                and previous.shift_id != target_shift_id
             ):
                 # A re-push naming a different shift moves the document — that is how a
                 # close's `staleIds` get fixed — except out of a shift already in a Z:
@@ -379,7 +391,7 @@ def upsert_transactions(
                 if held is not None and held[0] is not None:
                     logger.warning(
                         "Document %s stays in shift %s (already in Z %s); push named shift %s",
-                        tx.id, previous.shift_id, held[0], shift.id,
+                        tx.id, previous.shift_id, held[0], target_shift_id,
                     )
                     target_shift_id = previous.shift_id
 
@@ -449,7 +461,7 @@ def upsert_transactions(
                     # card money as cash.
                     method=((leg.method or "").strip().lower() or UNKNOWN_PAYMENT_METHOD)[:50],
                     amount=leg.amount,
-                    nayax_meta=leg.nayax_meta,
+                    nayax_meta=_leg_meta(leg),
                 )
                 for leg in legs
             ])
@@ -505,11 +517,16 @@ def upsert_transactions(
                 and previous.updated_at >= tx.updated_at
             )
             savepoint.commit()
-            if not is_duplicate:
-                touched_closed.setdefault(target_shift_id, 0)
-                if previous is None:
-                    touched_closed[target_shift_id] += 1
-                if previous is not None and previous.shift_id not in (None, target_shift_id):
+            # The row is written even when the push is a "duplicate" (same updated_at),
+            # so a move between shifts happens either way — and the shift it left needs
+            # its X recomputed as much as the one it joined.
+            moved = previous is not None and previous.shift_id != target_shift_id
+            if not is_duplicate or moved:
+                if target_shift_id is not None:
+                    touched_closed.setdefault(target_shift_id, 0)
+                    if previous is None:
+                        touched_closed[target_shift_id] += 1
+                if moved and previous.shift_id is not None:
                     touched_closed.setdefault(previous.shift_id, 0)
             results.append(TransactionUpsertResult(
                 id=tx.id,

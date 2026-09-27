@@ -50,6 +50,7 @@ from app.services.permission_matrix import SHOP_SCOPED_ROLES
 from app.services.shifts import (
     find_open_shift,
     open_shifts_for_machines,
+    orphan_documents_by_machine,
     recent_shift_zs,
     shift_to_out,
     z_reported_through_sequence,
@@ -113,6 +114,7 @@ def _enrich_machine_status(
     pending_close_ids: Optional[set] = None,
     awaiting_z: Optional[Dict[uuid_mod.UUID, tuple]] = None,
     timezones: Optional[Dict[Any, Optional[str]]] = None,
+    orphans: Optional[Dict[uuid_mod.UUID, int]] = None,
 ) -> Dict[str, Any]:
     last_catalog_change_at = get_catalog_change_watermark_for_machine(db, machine)
     last_sync_at = machine.last_sync_at
@@ -173,6 +175,9 @@ def _enrich_machine_status(
         "closeShiftPending": close_shift_pending,
         "closedShiftsAwaitingZ": awaiting_count,
         "reportedOpenShiftId": getattr(machine, "reported_open_shift_id", None),
+        "orphanDocuments": (
+            orphans if orphans is not None else orphan_documents_by_machine(db, [machine.id])
+        ).get(machine.id, 0),
         "createdAt": machine.created_at,
         "updatedAt": machine.updated_at,
     }
@@ -219,6 +224,7 @@ def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict
     pending_ids = close_shift_pending_machine_ids(db, ids)
     awaiting = _awaiting_z_by_machine(db, ids)
     timezones = _tenant_timezones(db, machines)
+    orphans = orphan_documents_by_machine(db, ids)
     return [
         _enrich_machine_status(
             m,
@@ -227,6 +233,7 @@ def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict
             pending_close_ids=pending_ids,
             awaiting_z=awaiting,
             timezones=timezones,
+            orphans=orphans,
         )
         for m in machines
     ]

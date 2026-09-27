@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from pydantic import AliasChoices, BaseModel, Field, ConfigDict
+from pydantic import AliasChoices, BaseModel, Field, ConfigDict, field_validator
 from typing import Optional, Dict, Any, List
 import uuid
 from app.models.pos_machine import PairingStatus as ModelPairingStatus
@@ -31,6 +31,10 @@ class POSMachineUpdate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+#: What each heartbeat string is cut to — the width of the column it lands in.
+HEARTBEAT_STRING_LIMITS = {"app_version": 64, "serial_number": 64, "battery_status": 32}
+
+
 class MachineHeartbeatBody(BaseModel):
     """
     HTTP heartbeat payload from a till (Android) or the POS desktop.
@@ -49,22 +53,22 @@ class MachineHeartbeatBody(BaseModel):
         validation_alias=AliasChoices("mqttConnected", "realtimeConnected", "mqtt_connected"),
         serialization_alias="mqttConnected",
     )
-    app_version: Optional[str] = Field(None, alias="appVersion", max_length=32)
+    app_version: Optional[str] = Field(None, alias="appVersion")
 
     # Outbox depth. Accepted and logged rather than stored: it is a live number that
     # is stale the moment it lands, and the machine's real backlog is derivable from
     # what has actually been pushed.
-    pending_count: Optional[int] = Field(None, alias="pendingCount", ge=0)
+    pending_count: Optional[int] = Field(None, alias="pendingCount")
 
     # Undelivered sales only, as opposed to the whole outbox above. Optional like
     # everything here: a till predating this field simply does not send it.
-    pending_documents: Optional[int] = Field(None, alias="pendingDocuments", ge=0)
+    pending_documents: Optional[int] = Field(None, alias="pendingDocuments")
 
-    serial_number: Optional[str] = Field(None, alias="serialNumber", max_length=64)
+    serial_number: Optional[str] = Field(None, alias="serialNumber")
     # No ge/le bound here deliberately: an out-of-range reading is clamped in the
     # service, not rejected. See MachineHeartbeatBody's docstring.
     battery_percent: Optional[int] = Field(None, alias="batteryPercent")
-    battery_status: Optional[str] = Field(None, alias="batteryStatus", max_length=32)
+    battery_status: Optional[str] = Field(None, alias="batteryStatus")
     # Signed; negative means the device is behind the server.
     clock_skew_ms: Optional[int] = Field(None, alias="clockSkewMs")
 
@@ -75,6 +79,32 @@ class MachineHeartbeatBody(BaseModel):
     open_shift_opened_at: Optional[datetime] = Field(None, alias="openShiftOpenedAt")
 
     model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("app_version", "serial_number", "battery_status", mode="before")
+    @classmethod
+    def _truncate(cls, value, info):
+        """An over-long string is cut to what the column holds, never a 422."""
+        if value is None:
+            return None
+        text = value if isinstance(value, str) else str(value)
+        return text[: HEARTBEAT_STRING_LIMITS[info.field_name]]
+
+    @field_validator("*", mode="wrap")
+    @classmethod
+    def _unreadable_is_unknown(cls, value, handler, info):
+        """
+        A field that cannot be read is dropped (None), never a 422 for the whole beat.
+
+        The heartbeat is the one call that must never fail validation: a terminal that
+        cannot say "I am here" shows as dead. A negative backlog reads as unknown too.
+        """
+        try:
+            parsed = handler(value)
+        except (ValueError, TypeError):
+            return None
+        if info.field_name in ("pending_count", "pending_documents") and parsed is not None and parsed < 0:
+            return None
+        return parsed
 
 
 class POSMachineResponse(POSMachineBase):
@@ -115,6 +145,8 @@ class POSMachineResponse(POSMachineBase):
     closed_shifts_awaiting_z: Optional[int] = Field(None, alias="closedShiftsAwaitingZ")
     #: The till's own claim from its heartbeat (may be ahead of the cloud).
     reported_open_shift_id: Optional[uuid.UUID] = Field(None, alias="reportedOpenShiftId")
+    #: Documents of this till stored with no shift (they named none); no Z takes them.
+    orphan_documents: Optional[int] = Field(None, alias="orphanDocuments")
     # The resolved status light (app/services/machine_status.py). These were computed
     # by the router but missing from this model, so FastAPI dropped them on the way out.
     status: Optional[str] = None

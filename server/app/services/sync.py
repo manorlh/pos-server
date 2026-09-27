@@ -706,7 +706,7 @@ def update_machine_heartbeat(
     if mqtt_connected is not None:
         machine.mqtt_connected = mqtt_connected
     if app_version is not None:
-        machine.app_version = app_version[:32] if app_version else None
+        machine.app_version = app_version[:64] if app_version else None
 
     # Outbox depth, stamped so the dashboard can say how old the reading is. Written
     # together: a count without its timestamp cannot be told apart from a stale one, and

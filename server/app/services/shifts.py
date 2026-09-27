@@ -189,26 +189,26 @@ def resolve_shift_for_document(
     shift_id: Optional[uuid.UUID],
     business_date: Optional[date],
     opened_at: Optional[datetime] = None,
-) -> Shift:
+) -> Optional[Shift]:
     """
     The shift a document belongs to — **by its id only**.
 
     * known id → that shift, whatever its status;
     * unknown id, nothing open → that shift, created open (the sale beat the open event);
     * unknown id while another shift is open → `ShiftConflict`, never adoption;
-    * no id (a legacy document) → the open shift, else a new one.
+    * no id → **None**: the document is stored with no shift (an orphan). Never a
+      guessed shift: joining the open one is adoption again, and creating one made a
+      phantom with a random id that blocked the till's next real open (one open shift
+      per till) and every Z of the till (no sequence, so it sorts first).
     """
-    if shift_id is not None:
-        shift = db.query(Shift).filter(Shift.id == shift_id).first()
-        if shift is not None:
-            return shift
-        open_shift = find_open_shift(db, machine.id)
-        if open_shift is not None:
-            raise ShiftConflict(open_shift.id, [shift_id])
-    else:
-        open_shift = find_open_shift(db, machine.id)
-        if open_shift is not None:
-            return open_shift
+    if shift_id is None:
+        return None
+    shift = db.query(Shift).filter(Shift.id == shift_id).first()
+    if shift is not None:
+        return shift
+    open_shift = find_open_shift(db, machine.id)
+    if open_shift is not None:
+        raise ShiftConflict(open_shift.id, [shift_id])
 
     shift = _new_shift(
         machine, shift_id=shift_id, business_date=business_date, opened_at=opened_at
@@ -220,8 +220,21 @@ def resolve_shift_for_document(
         # Lost a race with a concurrent open: the one-open index is the arbiter. The
         # caller's savepoint is rolled back and the batch refused as a conflict — the
         # till retries and then finds the shift by id.
-        raise ShiftConflict(None, [shift_id] if shift_id else [])
+        raise ShiftConflict(None, [shift_id])
     return shift
+
+
+def orphan_documents_by_machine(db: Session, machine_ids: List[uuid.UUID]) -> dict:
+    """Per till: documents stored with no shift (they named none). Visible, never guessed."""
+    if not machine_ids:
+        return {}
+    rows = (
+        db.query(Transaction.machine_id, func.count(Transaction.id))
+        .filter(Transaction.machine_id.in_(list(machine_ids)), Transaction.shift_id.is_(None))
+        .group_by(Transaction.machine_id)
+        .all()
+    )
+    return {r[0]: int(r[1]) for r in rows}
 
 
 def note_documents_after_close(
