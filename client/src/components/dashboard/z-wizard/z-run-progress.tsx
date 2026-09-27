@@ -1,0 +1,197 @@
+'use client';
+
+/**
+ * One Z run, live: which tills it is waiting for, and what the operator can do about it.
+ *
+ * The run finishes by itself when every till's close has been accepted with all its
+ * documents. Until then it polls `GET /z-runs/{id}` — which is also what sweeps expiry
+ * and builds the Z once the last item turns ready — so leaving this open is enough.
+ *
+ * "Proceed without" builds now over the tills that are ready; the others' shifts simply
+ * wait for the next Z (no gap for them — a Z always takes a till's oldest shifts first).
+ * Every item that is not ready has to be named in that call, so the button names them
+ * all rather than offering a partial choice the server would refuse.
+ */
+
+import { useEffect } from 'react';
+import Link from 'next/link';
+import { useTranslations } from 'next-intl';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
+import { toast } from 'sonner';
+import { cancelZRun, fetchZRun, proceedZRun } from '@/lib/api';
+import { formatDate, formatDateTime } from '@/lib/format';
+import { findBySameId } from '@/lib/entityLookup';
+import { useScope } from '@/lib/scope';
+import type { ZRun, ZRunItemStatus } from '@/lib/types';
+import { Badge } from '@/components/ui/badge';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useZErrorText } from './z-errors';
+
+const LIVE = new Set(['waiting', 'building']);
+
+function itemVariant(s: ZRunItemStatus): 'default' | 'secondary' | 'outline' | 'destructive' {
+  if (s === 'ready') return 'default';
+  if (s === 'failed' || s === 'expired') return 'destructive';
+  if (s === 'excluded') return 'outline';
+  return 'secondary';
+}
+
+export function ZRunProgress({ runId }: { runId: string }) {
+  const t = useTranslations('zWizard.progress');
+  const errors = useZErrorText();
+  const qc = useQueryClient();
+  const scope = useScope();
+
+  const { data: run, isLoading, isError, error } = useQuery<ZRun>({
+    queryKey: ['z-run', runId],
+    queryFn: () => fetchZRun(runId),
+    refetchInterval: (q) => (q.state.data && !LIVE.has(q.state.data.status) ? false : 2000),
+  });
+
+  const settle = (next: ZRun) => qc.setQueryData(['z-run', runId], next);
+
+  // Once the run lands — by polling or by an action here — every list that showed its
+  // shifts as waiting is stale, so the wizard behind it never offers a shift a Z took.
+  const finished = run ? !LIVE.has(run.status) : false;
+  useEffect(() => {
+    if (!finished) return;
+    for (const key of ['z-candidates', 'machines', 'shifts', 'z-reports']) {
+      qc.invalidateQueries({ queryKey: [key] });
+    }
+  }, [finished, qc]);
+
+  const notReady = (run?.items ?? []).filter((i) => i.status !== 'ready' && i.status !== 'excluded');
+  const readyCount = (run?.items ?? []).filter((i) => i.status === 'ready').length;
+
+  const proceed = useMutation({
+    mutationFn: () => proceedZRun(runId, notReady.map((i) => i.machineId)),
+    onSuccess: settle,
+    onError: (e) => toast.error(errors.forError(e)),
+  });
+  const cancel = useMutation({
+    mutationFn: () => cancelZRun(runId),
+    onSuccess: settle,
+    onError: (e) => toast.error(errors.forError(e)),
+  });
+
+  if (isLoading) return <Skeleton className="h-40 w-full" />;
+  if (isError || !run) {
+    return (
+      <Card>
+        <CardContent className="py-4 text-sm text-destructive">{errors.forError(error)}</CardContent>
+      </Card>
+    );
+  }
+
+  const live = LIVE.has(run.status);
+  const busy = proceed.isPending || cancel.isPending;
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="text-base">
+            {t('title', { shop: findBySameId(scope.shops, run.shopId)?.name ?? run.shopId.slice(0, 8) })}
+          </CardTitle>
+          <Badge
+            variant={
+              run.status === 'completed'
+                ? 'default'
+                : run.status === 'failed' || run.status === 'expired'
+                  ? 'destructive'
+                  : 'secondary'
+            }
+          >
+            {live ? <Loader2 className="animate-spin" aria-hidden /> : null}
+            {t(`runStatus.${run.status}`)}
+          </Badge>
+        </div>
+        <p className="text-muted-foreground text-xs">
+          {run.businessDate ? t('businessDate', { date: formatDate(run.businessDate) }) : null}
+          {run.businessDate && run.expiresAt && live ? ' · ' : null}
+          {run.expiresAt && live ? t('expiresAt', { when: formatDateTime(run.expiresAt) }) : null}
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <ul className="space-y-2">
+          {run.items.map((item) => {
+            const why = errors.forItem(item.errorCode, item.errorMessage);
+            return (
+              <li
+                key={item.id}
+                className="flex items-start justify-between gap-2 rounded-md border px-3 py-2 text-sm"
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{item.machineName ?? item.machineId}</p>
+                  <p className="text-muted-foreground text-xs">{t(`itemHint.${item.status}`)}</p>
+                  {why && item.status !== 'ready' ? (
+                    <p
+                      className={`mt-0.5 text-xs ${
+                        item.status === 'failed' || item.status === 'expired'
+                          ? 'text-destructive'
+                          : 'text-muted-foreground'
+                      }`}
+                    >
+                      {why}
+                    </p>
+                  ) : null}
+                </div>
+                <Badge variant={itemVariant(item.status)}>{t(`itemStatus.${item.status}`)}</Badge>
+              </li>
+            );
+          })}
+        </ul>
+
+        {run.status === 'completed' && run.zReportId ? (
+          <div className="flex flex-wrap items-center gap-3 rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm dark:border-emerald-800 dark:bg-emerald-950">
+            <CheckCircle2 className="h-5 w-5 text-emerald-600" aria-hidden />
+            <span className="font-medium">
+              {run.zNumber != null ? t('doneNumbered', { number: run.zNumber }) : t('done')}
+            </span>
+            <Link
+              href={`/dashboard/z-reports/${run.zReportId}`}
+              className={buttonVariants({ size: 'sm' })}
+            >
+              {t('openZ')}
+            </Link>
+          </div>
+        ) : null}
+
+        {run.status === 'failed' || run.status === 'expired' || run.status === 'cancelled' ? (
+          <div className="flex gap-2 rounded-md border bg-muted/40 p-3 text-sm">
+            <XCircle className="h-5 w-5 shrink-0 text-destructive" aria-hidden />
+            <div>
+              <p className="font-medium">{t(`ended.${run.status}`)}</p>
+              {run.status === 'failed' ? (
+                <p className="text-muted-foreground text-xs">
+                  {errors.forItem(run.errorCode, run.errorMessage) ?? ''}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {run.status === 'waiting' ? (
+          <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+            {readyCount > 0 && notReady.length > 0 ? (
+              <Button size="sm" disabled={busy} onClick={() => proceed.mutate()}>
+                {t('proceedWithout', {
+                  tills: notReady.map((i) => i.machineName ?? i.machineId.slice(0, 8)).join(', '),
+                })}
+              </Button>
+            ) : null}
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => cancel.mutate()}>
+              {t('cancel')}
+            </Button>
+            <p className="text-muted-foreground basis-full text-xs">
+              {notReady.length > 0 ? t('waitingHint') : t('buildingHint')}
+            </p>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}

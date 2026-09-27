@@ -1,18 +1,26 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+/**
+ * Z reports (דוחות Z) — one per shop per run, built in the cloud from the documents of
+ * the shifts it took. Each row opens the Z's own page, which also prints it.
+ */
+
+import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { fetchZReport, fetchZReports, type ZReportListParams } from '@/lib/api';
+import { fetchZReports, type ZReportListParams } from '@/lib/api';
+import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
 import { usePageScope } from '@/lib/scope';
 import { findBySameId } from '@/lib/entityLookup';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
 import { ZReport, ZReportListResponse } from '@/lib/types';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { OverShort } from '@/components/dashboard/shifts/shift-parts';
+import { ZBadges } from '@/components/dashboard/z-report/z-badges';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -20,12 +28,10 @@ import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FilePlus2 } from 'lucide-react';
 
 const PAGE_SIZE = 50;
+const COLS = 11;
 
 /** The zone a `datetime-local` input's value is read in — the browser's own. */
 const BROWSER_TZ = (() => {
@@ -52,6 +58,8 @@ function localInputToIso(value: string): string | undefined {
 export default function ZReportsPage() {
   const t = useTranslations('zReports');
   const tc = useTranslations('common');
+  const router = useRouter();
+  const canProduceZ = useCanProduceZ();
   // `GET /z-reports` filters by shopId and machineIds; there is no company filter.
   const { scope, resolution, effective } = usePageScope({
     maxLevel: 'machine',
@@ -65,30 +73,16 @@ export default function ZReportsPage() {
   const [closedFrom, setClosedFrom] = useState<string>('');
   const [closedTo, setClosedTo] = useState<string>('');
   const [page, setPage] = useState(1);
-  const [selected, setSelected] = useState<ZReport | null>(null);
 
   /*
-   * `?zReportId=` opens one report's dialog directly.
-   *
-   * This is how the day summary links to a contributing Z. Fetched by id rather than
-   * looked up in the current page of results, because the report being linked to is
-   * usually not on it — a summary of last month drills into Z reports that are
-   * several pages back, or filtered out entirely by the scope.
+   * `?zReportId=` used to open a dialog here; the Z now has its own page. Old links
+   * (the day summary, bookmarks) are forwarded rather than broken.
    */
   const searchParams = useSearchParams();
   const linkedId = searchParams.get('zReportId');
-  const { data: linked } = useQuery({
-    queryKey: ['z-report', linkedId],
-    queryFn: () => fetchZReport(linkedId!),
-    enabled: !!linkedId,
-  });
-  // Adopted once. Without the guard, closing the dialog while the parameter is still
-  // in the URL would immediately reopen it and the close button would look broken.
-  const [adoptedId, setAdoptedId] = useState<string | null>(null);
-  if (linked && linked.id !== adoptedId) {
-    setAdoptedId(linked.id);
-    setSelected(linked);
-  }
+  useEffect(() => {
+    if (linkedId) router.replace(`/dashboard/z-reports/${linkedId}`);
+  }, [linkedId, router]);
 
   // Same reasoning as the transactions list: a new scope is a new result set, so
   // the page number resets during render rather than one frame later.
@@ -101,8 +95,8 @@ export default function ZReportsPage() {
 
   const params = useMemo<ZReportListParams>(() => {
     const p: ZReportListParams = { page, pageSize: PAGE_SIZE };
-    // The endpoint takes a repeatable machineIds; the scope names one device, so
-    // it goes in as a single-element list rather than through a second parameter.
+    // The endpoint takes a repeatable machineIds (a Z containing that till); the scope
+    // names one device, so it goes in as a single-element list.
     if (machineId) p.machineIds = [machineId];
     if (shopId) p.shopId = shopId;
     if (from) p.from = from;
@@ -121,16 +115,23 @@ export default function ZReportsPage() {
   });
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
-
   const resetPage = () => setPage(1);
-
   const hasClosedFilter = Boolean(closedFrom || closedTo);
+  const open = (z: ZReport) => router.push(`/dashboard/z-reports/${z.id}`);
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold">{t('title')}</h1>
-        <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">{t('title')}</h1>
+          <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
+        </div>
+        {canProduceZ ? (
+          <Link href={zWizardHref(shopId, machineId)} className={buttonVariants({ size: 'sm' })}>
+            <FilePlus2 className="h-4 w-4 me-1" aria-hidden />
+            {t('produce')}
+          </Link>
+        ) : null}
       </div>
 
       <ScopeGate resolution={resolution}>
@@ -153,7 +154,7 @@ export default function ZReportsPage() {
             />
           </div>
         </div>
-        <p className="text-muted-foreground text-xs">{t('dayDateFilterHint')}</p>
+        <p className="text-muted-foreground text-xs">{t('businessDateFilterHint')}</p>
 
         <div className="grid gap-3 md:grid-cols-2">
           <div className="space-y-1">
@@ -199,70 +200,70 @@ export default function ZReportsPage() {
             <TableRow>
               {/* First column: it is the document's name, not an attribute of it. */}
               <TableHead>{t('zNumber')}</TableHead>
-              <TableHead>{t('dayDate')}</TableHead>
-              <TableHead>{t('machine')}</TableHead>
+              <TableHead>{t('businessDate')}</TableHead>
               <TableHead>{t('shop')}</TableHead>
-              <TableHead>{t('closedAt')}</TableHead>
+              <TableHead>{t('period')}</TableHead>
+              <TableHead className="text-end">{t('tills')}</TableHead>
+              <TableHead className="text-end">{t('shiftsCount')}</TableHead>
               <TableHead className="text-end">{t('totalSales')}</TableHead>
               <TableHead className="text-end">{t('totalRefunds')}</TableHead>
               <TableHead className="text-end">{t('cash')}</TableHead>
               <TableHead className="text-end">{t('card')}</TableHead>
-              <TableHead className="text-end">{t('transactionsCount')}</TableHead>
               <TableHead className="text-end">{t('discrepancy')}</TableHead>
-              <TableHead className="w-24" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={12}><Skeleton className="h-6 w-full" /></TableCell>
+                  <TableCell colSpan={COLS}><Skeleton className="h-6 w-full" /></TableCell>
                 </TableRow>
               ))
             ) : !data || data.items.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={12} className="text-center text-muted-foreground py-6">
+                <TableCell colSpan={COLS} className="text-center text-muted-foreground py-6">
                   {t('noReports')}
                 </TableCell>
               </TableRow>
             ) : (
               data.items.map((z) => {
-                const disc = z.discrepancy ?? 0;
-                const machineName =
-                  z.machineName ?? findBySameId(scope.machines, z.machineId)?.name;
                 const shopName = z.shopName ?? findBySameId(scope.shops, z.shopId)?.name;
                 return (
-                  <TableRow key={z.id} className="cursor-pointer" onClick={() => setSelected(z)}>
-                    <TableCell className="font-medium tabular-nums">
-                      {/* An em dash, not a 0: a shopless or pre-numbering Z has no
-                          number, and a 0 would read as one. */}
-                      {z.shopSequenceNumber ?? '—'}
-                      {/* A reconstructed Z was built by the cloud, not printed by the
-                          terminal. Never left implicit. */}
-                      {z.reconstructed ? (
-                        <Badge variant="outline" className="ms-2 text-[11px]">
-                          {t('reconstructed')}
-                        </Badge>
+                  <TableRow key={z.id} className="cursor-pointer" onClick={() => open(z)}>
+                    <TableCell className="font-medium tabular-nums whitespace-nowrap">
+                      <Link
+                        href={`/dashboard/z-reports/${z.id}`}
+                        className="hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {/* An em dash, not a 0: a shopless legacy Z has no number. */}
+                        {z.shopSequenceNumber ?? '—'}
+                      </Link>
+                      <ZBadges z={z} />
+                    </TableCell>
+                    <TableCell>{formatDate(z.businessDate)}</TableCell>
+                    <TableCell>
+                      {shopName ?? '—'}
+                      {z.legacy && z.machineName ? (
+                        <div className="text-muted-foreground text-xs">{z.machineName}</div>
                       ) : null}
                     </TableCell>
-                    <TableCell>{formatDate(z.dayDate)}</TableCell>
-                    <TableCell>{machineName ?? z.machineId.slice(0, 8)}</TableCell>
-                    <TableCell className="text-muted-foreground">{shopName ?? '—'}</TableCell>
                     <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
-                      {formatDateTime(z.closedAt)}
+                      {z.periodStart || z.periodEnd
+                        ? `${formatDateTime(z.periodStart)} – ${formatDateTime(z.periodEnd)}`
+                        : formatDateTime(z.closedAt)}
                     </TableCell>
+                    <TableCell className="text-end tabular-nums">
+                      {z.machineCount ?? (z.legacy ? 1 : '—')}
+                    </TableCell>
+                    <TableCell className="text-end tabular-nums">{z.shiftCount ?? '—'}</TableCell>
                     <TableCell className="text-end font-medium">{formatCurrency(z.totalSales)}</TableCell>
                     <TableCell className="text-end">{formatCurrency(z.totalRefunds)}</TableCell>
                     <TableCell className="text-end">{formatCurrency(z.totalCashSales)}</TableCell>
                     <TableCell className="text-end">{formatCurrency(z.totalCardSales)}</TableCell>
-                    <TableCell className="text-end">{z.transactionsCount ?? 0}</TableCell>
-                    <TableCell className={`text-end font-medium ${disc < 0 ? 'text-destructive' : disc > 0 ? 'text-emerald-600' : ''}`}>
-                      {formatCurrency(disc)}
-                    </TableCell>
-                    <TableCell>
-                      <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setSelected(z); }}>
-                        {t('viewDetails')}
-                      </Button>
+                    <TableCell className="text-end">
+                      {/* Withheld, not zero, when any of its shifts was not counted. */}
+                      <OverShort value={z.discrepancy} uncountedLabel={t('discrepancyWithheld')} />
                     </TableCell>
                   </TableRow>
                 );
@@ -293,120 +294,6 @@ export default function ZReportsPage() {
         </div>
       )}
       </ScopeGate>
-
-      <Dialog open={!!selected} onOpenChange={(open) => { if (!open) setSelected(null); }}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            {/* Titled by the shop's Z number when it has one, because that is how the
-                report will be referred to in a conversation with an accountant. */}
-            <DialogTitle>
-              {selected?.shopSequenceNumber
-                ? t('detailsNumbered', { number: selected.shopSequenceNumber })
-                : t('details')}
-            </DialogTitle>
-          </DialogHeader>
-          {selected && (
-            <div className="space-y-4 text-sm">
-              {/* Stated once, at the top, where someone reading the document sees it
-                  before the numbers rather than after. */}
-              {selected.reconstructed ? (
-                <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs dark:border-amber-800 dark:bg-amber-950">
-                  <p className="font-medium">{t('reconstructedNotice')}</p>
-                  <p className="mt-1">
-                    {t('reconstructedBasis', {
-                      documents: Number(selected.reconstructionBasis?.documentsOnCloud ?? 0),
-                    })}
-                  </p>
-                  {Number(selected.reconstructionBasis?.lastReportedPendingDocuments ?? 0) > 0 ? (
-                    <p className="mt-1 font-medium">
-                      {t('reconstructedOutstanding', {
-                        count: Number(
-                          selected.reconstructionBasis?.lastReportedPendingDocuments ?? 0,
-                        ),
-                      })}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label className="text-xs">{t('zNumber')}</Label>
-                  <div className="font-medium tabular-nums">
-                    {selected.shopSequenceNumber ?? '—'}
-                  </div>
-                </div>
-                <div>
-                  <Label className="text-xs">{t('dayDate')}</Label>
-                  <div>{formatDate(selected.dayDate)}</div>
-                </div>
-                <div>
-                  <Label className="text-xs">{t('closedAt')}</Label>
-                  <div>{formatDateTime(selected.closedAt)}</div>
-                </div>
-                <div>
-                  <Label className="text-xs">{t('machine')}</Label>
-                  <div>
-                    {selected.machineName
-                      ?? findBySameId(scope.machines, selected.machineId)?.name
-                      ?? selected.machineId.slice(0, 8)}
-                  </div>
-                </div>
-                <div>
-                  <Label className="text-xs">{t('shop')}</Label>
-                  <div>
-                    {selected.shopName
-                      ?? findBySameId(scope.shops, selected.shopId)?.name
-                      ?? '—'}
-                  </div>
-                </div>
-                <div>
-                  <Label className="text-xs">{t('openingCash')}</Label>
-                  <div>{formatCurrency(selected.openingCash)}</div>
-                </div>
-                <div>
-                  <Label className="text-xs">{t('closingCash')}</Label>
-                  <div>{formatCurrency(selected.closingCash)}</div>
-                </div>
-                <div>
-                  <Label className="text-xs">{t('expectedCash')}</Label>
-                  <div>
-                    {/* On a reconstructed close this is "at least": it counts only the
-                        cash sales the cloud received, and a till that died holding
-                        unsynced ones makes it an understatement. Saying so here is the
-                        difference between a figure someone reconciles against and one
-                        they trust. */}
-                    {selected.reconstructed
-                      ? t('expectedCashAtLeast', {
-                          amount: formatCurrency(selected.expectedCash),
-                        })
-                      : formatCurrency(selected.expectedCash)}
-                  </div>
-                </div>
-                <div>
-                  <Label className="text-xs">{t('actualCash')}</Label>
-                  <div>{formatCurrency(selected.actualCash)}</div>
-                </div>
-              </div>
-
-              <div className="rounded border bg-muted/40 p-3 space-y-1">
-                <div className="flex justify-between"><span>{t('totalSales')}</span><span className="font-bold">{formatCurrency(selected.totalSales)}</span></div>
-                <div className="flex justify-between"><span>{t('totalRefunds')}</span><span>{formatCurrency(selected.totalRefunds)}</span></div>
-                <div className="flex justify-between"><span>{t('cash')}</span><span>{formatCurrency(selected.totalCashSales)}</span></div>
-                <div className="flex justify-between"><span>{t('card')}</span><span>{formatCurrency(selected.totalCardSales)}</span></div>
-                <div className="flex justify-between"><span>{t('transactionsCount')}</span><span>{selected.transactionsCount ?? 0}</span></div>
-                <div className="flex justify-between"><span>{t('discrepancy')}</span><span>{formatCurrency(selected.discrepancy)}</span></div>
-              </div>
-
-              {selected.payload && (
-                <details className="rounded border p-2">
-                  <summary className="cursor-pointer text-xs text-muted-foreground">{t('rawPayload')}</summary>
-                  <pre className="text-xs mt-2 max-h-72 overflow-auto bg-muted/40 p-2 rounded">{JSON.stringify(selected.payload, null, 2)}</pre>
-                </details>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

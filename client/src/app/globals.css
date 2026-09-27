@@ -129,3 +129,20 @@
     @apply font-sans;
   }
 }
+/*
+ * Printing (the Z report's printable view). A4 portrait; the dashboard chrome hides
+ * itself with `print:hidden`, and the document's own layout carries the rest.
+ */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+  html,
+  body {
+    background: white;
+    color: black;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
