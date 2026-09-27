@@ -13,7 +13,8 @@ from app.models.user import User, UserRole
 from app.models.shop import Shop
 from app.models.transaction import Transaction
 from app.models.z_report import ZReport
-from app.models.trading_day import TradingDay
+from app.models.shift import Shift, ShiftStatus
+from app.models.tenant import Tenant
 from app.models.sync_log import SyncLog
 from app.models.pairing_code import PairingCode
 from app.models.device_pairing_request import DevicePairingRequest
@@ -41,17 +42,22 @@ from app.services.realtime_info import (
     machine_realtime_refresh_info,
 )
 from app.services.machine_status import StatusInput, resolve_status
-from app.services.administrative_close import reconstruct_z_report
+from app.services.administrative_close import close_shift_administratively
 from app.services.pairing import create_pairing_code
 from app.services.register_number import set_machine_shop
 from app.services import machine_catalog
-from app.services.transactions import find_open_trading_day
 from app.services.permission_matrix import SHOP_SCOPED_ROLES
-from app.services.close_day import (
-    get_open_trading_days_for_machines,
-    get_pending_close_day_machine_ids,
-    take_pending_close_day_for_machine,
+from app.services.shifts import (
+    find_open_shift,
+    open_shifts_for_machines,
+    shift_to_out,
+    z_reported_through_sequence,
 )
+from app.services.remote_close import (
+    close_shift_pending_machine_ids,
+    take_pending_close_shift,
+)
+from sqlalchemy import func
 
 router = APIRouter(prefix="/machines", tags=["machines"])
 
@@ -71,12 +77,41 @@ def _scope_machines_by_tenant(query, current_user: User, active_tenant_id):
     return query.filter(POSMachine.tenant_id == active_tenant_id)
 
 
+def _awaiting_z_by_machine(db: Session, machine_ids: List[uuid_mod.UUID]) -> Dict[uuid_mod.UUID, tuple]:
+    """Per till: (count, oldest business date) of closed shifts no Z has taken yet."""
+    if not machine_ids:
+        return {}
+    rows = (
+        db.query(Shift.machine_id, func.count(Shift.id), func.min(Shift.business_date))
+        .filter(
+            Shift.machine_id.in_(machine_ids),
+            Shift.status == ShiftStatus.CLOSED,
+            Shift.z_report_id.is_(None),
+        )
+        .group_by(Shift.machine_id)
+        .all()
+    )
+    return {r[0]: (int(r[1]), r[2]) for r in rows}
+
+
+def _tenant_timezones(db: Session, machines: List[POSMachine]) -> Dict[Any, Optional[str]]:
+    ids = {m.tenant_id for m in machines if m.tenant_id is not None}
+    if not ids:
+        return {}
+    return {
+        t.id: t.timezone
+        for t in db.query(Tenant).filter(Tenant.id.in_(list(ids))).all()
+    }
+
+
 def _enrich_machine_status(
     machine: POSMachine,
     db: Session,
     *,
-    open_trading_days: Optional[Dict[uuid_mod.UUID, TradingDay]] = None,
+    open_shifts_by_machine: Optional[Dict[uuid_mod.UUID, Shift]] = None,
     pending_close_ids: Optional[set] = None,
+    awaiting_z: Optional[Dict[uuid_mod.UUID, tuple]] = None,
+    timezones: Optional[Dict[Any, Optional[str]]] = None,
 ) -> Dict[str, Any]:
     last_catalog_change_at = get_catalog_change_watermark_for_machine(db, machine)
     last_sync_at = machine.last_sync_at
@@ -87,23 +122,22 @@ def _enrich_machine_status(
         else:
             catalog_pull_stale = (last_sync_at + timedelta(seconds=5)) < last_catalog_change_at
 
-    open_td = None
-    if open_trading_days is not None:
-        open_td = open_trading_days.get(machine.id)
+    if open_shifts_by_machine is not None:
+        open_td = open_shifts_by_machine.get(machine.id)
     else:
-        from app.services.transactions import find_open_trading_day
-        open_td = find_open_trading_day(db, machine.id)
+        open_td = find_open_shift(db, machine.id)
 
-    if open_td is not None:
-        trading_day_status = "open"
-    else:
-        trading_day_status = "none"
-
-    close_day_pending = False
     if pending_close_ids is not None:
-        close_day_pending = machine.id in pending_close_ids
+        close_shift_pending = machine.id in pending_close_ids
     else:
-        close_day_pending = machine.id in get_pending_close_day_machine_ids(db, [machine.id])
+        close_shift_pending = machine.id in close_shift_pending_machine_ids(db, [machine.id])
+
+    if awaiting_z is None:
+        awaiting_z = _awaiting_z_by_machine(db, [machine.id])
+    awaiting_count, oldest_awaiting = awaiting_z.get(machine.id, (0, None))
+    if timezones is None:
+        timezones = _tenant_timezones(db, [machine])
+    tz_name = timezones.get(machine.tenant_id)
 
     result: Dict[str, Any] = {
         "id": machine.id,
@@ -130,12 +164,14 @@ def _enrich_machine_status(
         "lastHealthReportAt": machine.last_health_report_at,
         "lastCatalogChangeAt": last_catalog_change_at,
         "catalogPullStale": catalog_pull_stale,
-        "tradingDayStatus": trading_day_status,
-        "tradingDayId": open_td.id if open_td else None,
-        "dayDate": open_td.day_date if open_td else None,
+        "shiftStatus": "open" if open_td is not None else "none",
+        "openShiftId": open_td.id if open_td else None,
+        "businessDate": open_td.business_date if open_td else None,
         "openedAt": open_td.opened_at if open_td else None,
         "openedBy": open_td.opened_by if open_td else None,
-        "closeDayPending": close_day_pending,
+        "closeShiftPending": close_shift_pending,
+        "closedShiftsAwaitingZ": awaiting_count,
+        "reportedOpenShiftId": getattr(machine, "reported_open_shift_id", None),
         "createdAt": machine.created_at,
         "updatedAt": machine.updated_at,
     }
@@ -152,9 +188,11 @@ def _enrich_machine_status(
                 else machine.pairing_status
             ),
             last_heartbeat_at=machine.last_heartbeat_at,
-            trading_day_open=open_td is not None,
-            day_date=open_td.day_date if open_td else None,
-            close_day_pending=close_day_pending,
+            shift_open=open_td is not None,
+            business_date=open_td.business_date if open_td else None,
+            close_shift_pending=close_shift_pending,
+            oldest_awaiting_z_date=oldest_awaiting,
+            timezone_name=tz_name,
             pending_documents=machine.pending_documents,
             pending_count=machine.pending_count,
             pending_count_at=machine.pending_count_at,
@@ -176,10 +214,19 @@ def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict
     if not machines:
         return []
     ids = [m.id for m in machines]
-    open_days = get_open_trading_days_for_machines(db, ids)
-    pending_ids = get_pending_close_day_machine_ids(db, ids)
+    open_shifts = open_shifts_for_machines(db, ids)
+    pending_ids = close_shift_pending_machine_ids(db, ids)
+    awaiting = _awaiting_z_by_machine(db, ids)
+    timezones = _tenant_timezones(db, machines)
     return [
-        _enrich_machine_status(m, db, open_trading_days=open_days, pending_close_ids=pending_ids)
+        _enrich_machine_status(
+            m,
+            db,
+            open_shifts_by_machine=open_shifts,
+            pending_close_ids=pending_ids,
+            awaiting_z=awaiting,
+            timezones=timezones,
+        )
         for m in machines
     ]
 
@@ -320,23 +367,30 @@ def post_my_heartbeat(
         pending_count=body.pending_count if body is not None else None,
         pending_documents=body.pending_documents if body is not None else None,
     )
-    # The pull half of remote close-day. Every till already calls this on a timer, so
-    # it is the one channel that does not care whether the terminal was reachable when
-    # a manager pressed the button — a till that was off simply finds the instruction
-    # when it comes back. Ably still notifies an awake till instantly; this is what
-    # makes a missed notification a delay rather than a close that never happens.
-    pending = take_pending_close_day_for_machine(db, machine)
+    # The till's own account of its open shift. Only when the field was sent: an older
+    # build that says nothing must not read as "no shift open".
+    if body is not None and "open_shift_id" in body.model_fields_set:
+        machine.reported_open_shift_id = body.open_shift_id
+        machine.reported_open_shift_opened_at = (
+            body.open_shift_opened_at if body.open_shift_id else None
+        )
+    # The pull half of a remote shift close. Every till calls this on a timer, so it is
+    # the one channel that does not care whether the terminal was reachable when the
+    # manager started the Z — a till that was off finds the instruction when it comes
+    # back. Ably notifies an awake till instantly; this makes a missed notification a
+    # delay rather than a close that never happens.
+    pending = take_pending_close_shift(db, machine)
+    through = z_reported_through_sequence(db, machine.id)
     db.commit()
 
     response = {
         "ok": True,
         "serverTime": datetime.now(timezone.utc).isoformat(),
+        # Drives the till's purge: documents of shifts at or below it are in a Z.
+        "zReportedThroughSequence": through,
     }
     if pending is not None:
-        response["pendingCloseDay"] = {
-            "requestId": str(pending.request_id),
-            "tradingDayId": str(pending.trading_day_id) if pending.trading_day_id else None,
-        }
+        response["pendingCloseShift"] = pending
     return response
 
 
@@ -425,7 +479,7 @@ def _machine_has_history(db: Session, machine_id: str) -> bool:
         return True
     if db.query(ZReport.id).filter(ZReport.machine_id == machine_id).first():
         return True
-    if db.query(TradingDay.id).filter(TradingDay.machine_id == machine_id).first():
+    if db.query(Shift.id).filter(Shift.machine_id == machine_id).first():
         return True
     if db.query(SyncLog.id).filter(SyncLog.machine_id == machine_id).first():
         return True
@@ -546,75 +600,78 @@ def trigger_sync(
     }
 
 
-class ReconstructCloseBody(BaseModel):
-    """Options for closing a dead terminal's day from the cloud."""
+class AdministrativeCloseBody(BaseModel):
+    """Options for closing a dead till's shift from the cloud."""
 
     model_config = ConfigDict(populate_by_name=True)
 
-    #: Skip the "terminal has been silent long enough" guard.
-    #:
-    #: For the case where the operator knows the unit is unusable — smashed, stolen,
-    #: returned to the distributor — and is not going to wait two hours to say so. It is
-    #: recorded in the Z's reconstruction basis, because "a human overrode the guard" is
-    #: part of how complete the document is.
+    #: Skip the "terminal has been silent long enough" guard, for a unit known to be
+    #: unusable (smashed, stolen, returned). Recorded in the reconstruction basis.
     force: bool = False
-    #: Free text kept with the document — why this was done, by whom, in their words.
+    #: Free text kept with the shift — why this was done, in the operator's words.
     note: Optional[str] = Field(None, max_length=500)
 
 
-@router.post("/{machine_id}/trading-day/reconstruct-close")
-def reconstruct_close_trading_day(
+@router.post("/{machine_id}/shifts/{shift_id}/administrative-close")
+def administrative_close_shift(
     machine_id: uuid_mod.UUID,
-    body: ReconstructCloseBody | None = None,
+    shift_id: uuid_mod.UUID,
+    body: AdministrativeCloseBody | None = None,
     current_user: User = Depends(get_current_machine_admin),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
     """
-    Close a trading day whose terminal can no longer close it.
+    Close a shift whose till can no longer close it (dead-till recovery).
 
-    Produces a Z built from the documents the cloud already holds, marked `reconstructed`
-    and attributed to the caller, with `actual_cash` left unknown because nobody counted
-    a drawer. See `app/services/administrative_close.py` for why each of those matters.
-
-    Guarded: refuses while the terminal is still online, or has been seen within the last
-    two hours, unless `force` is passed — a day closed under a working till would leave a
-    cashier selling into a day the cloud thinks has ended.
-
-    Idempotent. A day that already has a Z returns it rather than filing a second fiscal
-    document or burning another shop Z number.
+    Builds the shift's X from the documents the cloud holds, marked `reconstructed` and
+    `unattended`, uncounted, attributed to the caller. The shift is then an ordinary
+    candidate for the shop's next Z. Refused while the till is online or was seen in
+    the last two hours, unless `force`. Idempotent. See
+    `app/services/administrative_close.py`.
     """
     machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
     if not machine:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
     ensure_same_tenant(machine.tenant_id, active_tenant_id)
+    if current_user.role == UserRole.DISTRIBUTOR:
+        if machine.distributor_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    elif not _check_machine_list_access(current_user, machine, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    day = find_open_trading_day(db, machine.id)
-    if day is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="no_open_trading_day"
-        )
+    shift = (
+        db.query(Shift)
+        .filter(Shift.id == shift_id, Shift.machine_id == machine.id)
+        .first()
+    )
+    if shift is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shift not found")
 
-    options = body or ReconstructCloseBody()
-    z_report, created = reconstruct_z_report(
+    options = body or AdministrativeCloseBody()
+    shift, created = close_shift_administratively(
         db,
         machine,
-        day,
+        shift,
         current_user,
         force=options.force,
         note=options.note,
     )
     db.commit()
-    db.refresh(z_report)
-
+    db.refresh(shift)
     return {
         "created": created,
-        "zReportId": str(z_report.id),
-        "tradingDayId": str(z_report.trading_day_id),
-        "shopSequenceNumber": z_report.shop_sequence_number,
-        "reconstructed": bool(z_report.reconstructed),
-        "basis": z_report.reconstruction_basis,
+        "shift": shift_to_out(shift, machine_name=machine.name).model_dump(by_alias=True, mode="json"),
     }
+
+
+@router.post("/{machine_id}/trading-day/reconstruct-close", status_code=status.HTTP_410_GONE)
+def reconstruct_close_removed(
+    machine_id: uuid_mod.UUID,
+    current_user: User = Depends(get_current_machine_admin),
+):
+    """Removed: `POST /machines/{id}/shifts/{shiftId}/administrative-close`."""
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail="upgrade_required")
 
 
 @router.post("/{machine_id}/replacement-code")
@@ -632,9 +689,9 @@ def create_replacement_pairing_code(
     the shop knows, and the day's reporting does not split across two machines. Pairing
     bumps `token_version`, which kills whatever token the old unit still holds.
 
-    Refuses while the terminal has an open trading day: the replacement has none of that
-    day's records and its Z would declare a fraction of what was actually taken. Close
-    the day first with `reconstruct-close`.
+    Refuses while the terminal has an open shift: the replacement has none of that
+    shift's records, and its close would declare a fraction of what was taken. Close the
+    shift first with `administrative-close`.
     """
     machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
     if not machine:
@@ -644,10 +701,10 @@ def create_replacement_pairing_code(
     # Checked here as well as at redemption so the operator is told now, while they are
     # looking at the screen, rather than when the engineer is standing at the counter
     # with a new terminal in their hand.
-    if find_open_trading_day(db, machine.id) is not None:
+    if find_open_shift(db, machine.id) is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="open_trading_day — close this terminal's day before replacing it.",
+            detail="open_shift — close this terminal's shift before replacing it.",
         )
 
     code = create_pairing_code(

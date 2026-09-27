@@ -103,37 +103,30 @@ def publish_settings_notify(
     publish_notify(tenant_id, machine_id, "settings", body)
 
 
-def publish_close_day_notify(
+def publish_close_shift_notify(
     tenant_id: str,
     machine_id: str,
     request_id: str,
+    shift_id: Optional[str],
     initiated_by: str,
-    message: Optional[str] = None,
 ) -> None:
+    """
+    Ask a till to close its open shift so a Z can include it (docs/SHIFTS_API.md §1.7).
+
+    The fast path only. The same instruction is handed over by the heartbeat, so a till
+    that misses this still closes on its next beat.
+    """
     body = _notify_base()
     body["requestId"] = request_id
+    body["shiftId"] = shift_id
     body["initiatedBy"] = initiated_by
-    if message:
-        body["message"] = message
-    publish_notify(tenant_id, machine_id, "close-day", body)
+    publish_notify(tenant_id, machine_id, "close-shift", body)
 
 
 def publish_transactions_synced(tenant_id: str, machine_id: str, count: int) -> None:
     body = _notify_base()
     body["count"] = count
     publish_notify(tenant_id, machine_id, "transactions-synced", body)
-
-
-def publish_z_report_closed(
-    tenant_id: str,
-    machine_id: str,
-    z_report_id: str,
-    trading_day_id: str,
-) -> None:
-    body = _notify_base()
-    body["zReportId"] = z_report_id
-    body["tradingDayId"] = trading_day_id
-    publish_notify(tenant_id, machine_id, "z-report-closed", body)
 
 
 def create_token_request_for_machine(machine: POSMachine) -> dict[str, Any]:

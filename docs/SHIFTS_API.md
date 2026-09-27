@@ -301,6 +301,10 @@ the tenant's timezone.
 ### 2.11 Removed
 `POST /machines/close-day`, `GET /close-day-requests/{id}` → 410 `upgrade_required` (use z-runs).
 
+### 2.11b Tips report
+`GET /shops/{shopId}/tips/report?shiftId=…` — the query parameter `tradingDayId` is now `shiftId`.
+Transaction reads (`TransactionOut`, list items) carry `shiftId` instead of `tradingDayId`.
+
 ### 2.12 Tenant setting
 `PATCH /tenants/{id}/settings {"zScope": "shop" | "machine"}` (default `shop`). Read from the
 tenant level only.

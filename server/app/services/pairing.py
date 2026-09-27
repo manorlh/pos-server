@@ -11,7 +11,7 @@ from app.models.company import Company
 from app.models.shop import Shop
 from app.models.user import User
 from app.models.tenant_membership import TenantMembership
-from app.models.trading_day import TradingDay, TradingDayStatus
+from app.models.shift import Shift, ShiftStatus
 from app.services.machine_health import serial_from_device_info
 from app.services.register_number import assign_register_number, set_machine_shop
 from app.services import machine_catalog
@@ -276,10 +276,9 @@ def adopt_machine(
       revocation: the unit being replaced is holding a token that would otherwise keep
       working, and a terminal that was lost rather than broken is a terminal in someone
       else's hands.
-    * **An open trading day blocks the adoption.** The replacement would inherit a day it
-      has no records for, and its Z — computed from its own local rows — would declare a
-      fraction of what the shop actually took. The day must be closed first, which is what
-      `administrative_close` is for.
+    * **An open shift blocks the adoption.** The replacement would inherit a shift it has
+      no records for, and its close would list a fraction of the shift's documents. The
+      shift must be closed first, which is what `administrative_close` is for.
 
     `device_info` and the name are refreshed, because the hardware genuinely changed.
     """
@@ -287,18 +286,18 @@ def adopt_machine(
     if machine is None:
         return None
 
-    open_day = (
-        db.query(TradingDay)
+    open_shift = (
+        db.query(Shift)
         .filter(
-            TradingDay.machine_id == machine.id,
-            TradingDay.status == TradingDayStatus.OPEN,
+            Shift.machine_id == machine.id,
+            Shift.status == ShiftStatus.OPEN,
         )
         .first()
     )
-    if open_day is not None:
+    if open_shift is not None:
         raise PairingAssignmentError(
-            "This terminal still has an open trading day. Close it first — a replacement "
-            "cannot issue a Z for sales it never saw."
+            "This terminal still has an open shift. Close it first — a replacement "
+            "cannot close a shift whose sales it never saw."
         )
 
     if device_info:

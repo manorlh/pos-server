@@ -2,7 +2,7 @@ import uuid
 
 from sqlalchemy import (
     Boolean, Column, ForeignKey, Numeric, Integer, Date,
-    DateTime, String, UniqueConstraint, Index,
+    DateTime, String, Index,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -12,21 +12,51 @@ from app.database import Base
 
 
 class ZReport(Base):
-    """End-of-day Z report. UNIQUE on trading_day_id makes double-close idempotent."""
+    """
+    A Z report (דו״ח Z), built by the cloud over closed shifts of **one shop**.
+
+    Its figures are computed server-side from the documents the cloud holds, never taken
+    from a till. It links to 1..N shifts over 1..N tills of that shop (`shifts.z_report_id`)
+    and carries a per-till section for each (`per_machine`), so a per-shop Z is a set of
+    per-register summaries under one shop number.
+
+    Rows from before shifts existed are till-issued, one per trading day: they keep their
+    `machine_id` and have no `per_machine`. New rows have `machine_id` NULL.
+    """
 
     __tablename__ = "z_reports"
     __table_args__ = (
-        UniqueConstraint("trading_day_id", name="uq_zreport_trading_day"),
-        Index("ix_z_reports_machine_day", "machine_id", "day_date"),
+        Index("ix_z_reports_shop_business_date", "shop_id", "business_date"),
+        # A shop's Z number names one document. Two rows with one number would make the
+        # number meaningless, which is the one thing it exists to prevent.
+        Index(
+            "uq_z_reports_shop_sequence",
+            "shop_id",
+            "shop_sequence_number",
+            unique=True,
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True)
-    trading_day_id = Column(UUID(as_uuid=True), ForeignKey("trading_days.id"), nullable=False)
-    machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id"), nullable=False, index=True)
+    #: Legacy, till-issued rows only. NULL on a cloud-built Z, which spans tills.
+    machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id"), nullable=True, index=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True, index=True)
 
-    day_date = Column(Date, nullable=False)
+    #: The shop-local date the Z is filed under (default: that of its latest shift).
+    business_date = Column(Date, nullable=False)
+    #: Opening of the earliest and close of the latest included shift.
+    period_start = Column(DateTime(timezone=True), nullable=True)
+    period_end = Column(DateTime(timezone=True), nullable=True)
+    shift_count = Column(Integer, nullable=True)
+    machine_count = Column(Integer, nullable=True)
+    vat_total = Column(Numeric(12, 2), nullable=True)
+    discounts_total = Column(Numeric(12, 2), nullable=True)
+    #: Net takings per tender method, e.g. {"cash": "100.00", "card": "250.00"}.
+    payment_breakdown = Column(JSONB, nullable=True)
+    #: The per-register sections (see docs/SHIFTS_API.md §3.6). NULL on legacy rows.
+    per_machine = Column(JSONB, nullable=True)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
 
     #: The shop's own Z counter — 1, 2, 3 … across every till in the shop.
     #:
@@ -51,7 +81,7 @@ class ZReport(Base):
     total_card_tips = Column(Numeric(12, 2), nullable=True)
     transactions_count = Column(Integer, nullable=True)
 
-    #: Closed by a manager from the cloud with nobody at the drawer.
+    #: At least one included shift was closed with nobody at the drawer.
     #:
     #: Matters because `actual_cash` is then left NULL rather than copied from
     #: `expected_cash`. Copying it made every unattended Z assert a variance of exactly
@@ -59,15 +89,9 @@ class ZReport(Base):
     #: says "nobody counted", which is the truth, and this flag says why.
     unattended = Column(Boolean, nullable=False, default=False, server_default="false")
 
-    #: Built by the cloud from the documents it holds, because the terminal that owned
-    #: this day could not close it — it died, or was replaced, and a Z can otherwise
-    #: only be issued by the terminal itself.
-    #:
-    #: Never silently equivalent to a terminal-issued Z. `actual_cash` is NULL (nobody
-    #: counted a drawer), `reconstructed_by` names the person who authorised it, and
-    #: `reconstruction_basis` records what the figures were built from — how many
-    #: documents the cloud held, when the terminal was last heard from, and what backlog
-    #: it last reported. Without that, a reader has no way to judge how complete it is.
+    #: At least one included shift was reconstructed by the cloud for a dead till. The
+    #: per-shift detail (who, from what) now lives on `shifts`; legacy Z rows keep their
+    #: own `reconstructed_by` / `reconstruction_basis`.
     reconstructed = Column(Boolean, nullable=False, default=False, server_default="false")
     reconstructed_by = Column(String(255), nullable=True)
     reconstruction_basis = Column(JSONB, nullable=True)
@@ -99,6 +123,9 @@ class ZReport(Base):
     closed_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
-    trading_day = relationship("TradingDay", back_populates="z_report")
+    shifts = relationship(
+        "Shift", back_populates="z_report", foreign_keys="Shift.z_report_id",
+        order_by="Shift.opened_at",
+    )
     machine = relationship("POSMachine")
     shop = relationship("Shop")

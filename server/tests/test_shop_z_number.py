@@ -3,8 +3,9 @@ Per-shop Z numbering.
 
 A Z had only a UUID, which no bookkeeper can check against the previous report. Each
 shop now has a run of Z numbers, and the properties that make that run worth anything
-are the ones tested here: it must be gapless, it must not advance on a retried close,
-and it must continue rather than restart when the counter row is absent.
+are the ones tested here: it must be gapless and it must continue rather than restart
+when the counter row is absent. That building a Z allocates exactly once (and a retried
+or failed build burns nothing) is covered with the Z builder in test_z_run.py.
 """
 from __future__ import annotations
 
@@ -17,7 +18,6 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import sessionmaker
 
 from app.models.shop_z_sequence import ShopZSequence
-from app.services import transactions as T
 from app.services.z_sequence import allocate_shop_z_number
 
 
@@ -158,49 +158,3 @@ class TestCounterCreation:
         db = _Db(sequence_row=None, highest_row=(None,))
 
         assert allocate_shop_z_number(db, shop) == 1
-
-
-# ── Idempotency: a retried close must not burn a number ──────────────────────
-
-class TestRetriedCloseKeepsItsNumber:
-    def _apply(self, existing_z):
-        """`apply_z_report` with the trading-day resolution and Z lookup stubbed."""
-        machine = MagicMock()
-        machine.id = uuid.uuid4()
-        machine.tenant_id = uuid.uuid4()
-        machine.shop_id = uuid.uuid4()
-
-        db = MagicMock()
-        db.query.return_value.filter.return_value.first.return_value = existing_z
-
-        z_in = MagicMock()
-        z_in.trading_day_id = uuid.uuid4()
-        z_in.unattended = False
-
-        with patch.object(T, "get_or_create_trading_day", return_value=MagicMock()), \
-             patch.object(T, "allocate_shop_z_number", return_value=99) as alloc:
-            result, outcome = T.apply_z_report(db, machine, z_in)
-        return result, outcome, alloc
-
-    def test_a_duplicate_close_does_not_allocate_a_new_number(self):
-        """
-        The bug this guards: allocating before the duplicate check. A till that never
-        saw its acknowledgement retries, and every retry would advance the shop's
-        numbering — so the shop's Z numbers would climb without any new closes, and the
-        gaps would look like missing documents.
-        """
-        already_filed = MagicMock()
-        already_filed.shop_sequence_number = 4
-
-        result, outcome, alloc = self._apply(existing_z=already_filed)
-
-        assert outcome == "duplicate"
-        assert result is already_filed
-        assert result.shop_sequence_number == 4
-        alloc.assert_not_called()
-
-    def test_a_first_close_does_allocate(self):
-        _result, outcome, alloc = self._apply(existing_z=None)
-
-        assert outcome == "accepted"
-        alloc.assert_called_once()

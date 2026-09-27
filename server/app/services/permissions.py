@@ -40,8 +40,12 @@ class Scope(str, enum.Enum):
     REFUND = "refund"
     #: Take money off a sale — a basket discount or a line discount.
     DISCOUNT = "discount"
-    #: End the trading day and print the Z.
+    #: Legacy: end the trading day and print the Z. Kept so a grant naming it still
+    #: parses; nothing checks it any more (the Z is built in the cloud).
     DAY_CLOSE = "day:close"
+    #: Close a shift and print its X. A cashier may do this alone; the scope exists so
+    #: a shop that wants a second person can have one, and the approver is recorded.
+    SHIFT_CLOSE = "shift:close"
 
 
 #: Scopes that must be re-authorised for every single action rather than held for
@@ -56,6 +60,7 @@ PER_ACTION_SCOPES: FrozenSet[Scope] = frozenset({
     Scope.REFUND,
     Scope.DISCOUNT,
     Scope.DAY_CLOSE,
+    Scope.SHIFT_CLOSE,
 })
 
 
@@ -70,6 +75,7 @@ _MANAGER_SCOPES = frozenset({
     Scope.REFUND,
     Scope.DISCOUNT,
     Scope.DAY_CLOSE,
+    Scope.SHIFT_CLOSE,
 })
 
 #: What a shift supervisor (אחמ"ש) may authorise: the money decisions and the close of
@@ -79,6 +85,7 @@ _SUPERVISOR_SCOPES = frozenset({
     Scope.REFUND,
     Scope.DISCOUNT,
     Scope.DAY_CLOSE,
+    Scope.SHIFT_CLOSE,
 })
 
 _TILL_SCOPES_BY_ROLE: dict[UserRole, FrozenSet[Scope]] = {

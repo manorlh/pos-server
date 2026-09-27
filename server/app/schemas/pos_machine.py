@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from pydantic import AliasChoices, BaseModel, Field, ConfigDict
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import uuid
 from app.models.pos_machine import PairingStatus as ModelPairingStatus
 
@@ -68,6 +68,12 @@ class MachineHeartbeatBody(BaseModel):
     # Signed; negative means the device is behind the server.
     clock_skew_ms: Optional[int] = Field(None, alias="clockSkewMs")
 
+    # The shift the till has open right now, by its own account; both null = none open.
+    # Sent on every beat so the cloud knows about a shift whose open event is still
+    # queued offline. Absent (an older build) leaves the last reading in place.
+    open_shift_id: Optional[uuid.UUID] = Field(None, alias="openShiftId")
+    open_shift_opened_at: Optional[datetime] = Field(None, alias="openShiftOpenedAt")
+
     model_config = ConfigDict(populate_by_name=True)
 
 
@@ -98,12 +104,24 @@ class POSMachineResponse(POSMachineBase):
     last_health_report_at: Optional[datetime] = Field(None, alias="lastHealthReportAt")
     last_catalog_change_at: Optional[datetime] = Field(None, alias="lastCatalogChangeAt")
     catalog_pull_stale: Optional[bool] = Field(None, alias="catalogPullStale")
-    trading_day_status: Optional[str] = Field(None, alias="tradingDayStatus")
-    trading_day_id: Optional[uuid.UUID] = Field(None, alias="tradingDayId")
-    day_date: Optional[date] = Field(None, alias="dayDate")
+    #: "open" or "none" — whether the cloud holds an open shift for this till.
+    shift_status: Optional[str] = Field(None, alias="shiftStatus")
+    open_shift_id: Optional[uuid.UUID] = Field(None, alias="openShiftId")
+    business_date: Optional[date] = Field(None, alias="businessDate")
     opened_at: Optional[datetime] = Field(None, alias="openedAt")
     opened_by: Optional[str] = Field(None, alias="openedBy")
-    close_day_pending: Optional[bool] = Field(None, alias="closeDayPending")
+    close_shift_pending: Optional[bool] = Field(None, alias="closeShiftPending")
+    #: Closed shifts of this till that no Z has taken yet.
+    closed_shifts_awaiting_z: Optional[int] = Field(None, alias="closedShiftsAwaitingZ")
+    #: The till's own claim from its heartbeat (may be ahead of the cloud).
+    reported_open_shift_id: Optional[uuid.UUID] = Field(None, alias="reportedOpenShiftId")
+    # The resolved status light (app/services/machine_status.py). These were computed
+    # by the router but missing from this model, so FastAPI dropped them on the way out.
+    status: Optional[str] = None
+    online: Optional[bool] = None
+    status_flags: List[str] = Field(default_factory=list, alias="statusFlags")
+    pending_documents: Optional[int] = Field(None, alias="pendingDocuments")
+    pending_as_of: Optional[datetime] = Field(None, alias="pendingAsOf")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 

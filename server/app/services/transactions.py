@@ -1,12 +1,12 @@
 """
-Transaction + Z-report sync service.
+Transaction sync service.
 
 Idempotency contract:
 - Transaction PKs are client-generated UUIDs.
 - upsert_transactions does INSERT ... ON CONFLICT (id) DO UPDATE.
 - Items are replaced atomically per transaction (delete-then-insert by transaction_id).
 - A timed-out POST that retries hits the same id and gets back status='duplicate'.
-- z_reports.trading_day_id is UNIQUE — a retried Z-close returns 'duplicate', not a duplicate row.
+- A document names its shift by id; see `app.services.shifts` for how that resolves.
 """
 from __future__ import annotations
 
@@ -24,17 +24,19 @@ from sqlalchemy.orm import Session
 from app.models.customer import Customer
 from app.models.pos_machine import POSMachine
 from app.models.product import Product
-from app.models.trading_day import TradingDay, TradingDayStatus
+from app.models.shift import Shift
 from app.models.transaction import Transaction, TransactionStatus
 from app.models.transaction_item import TransactionItem
 from app.models.transaction_payment import TransactionPayment
 from app.models.issued_voucher import IssuedVoucher, IssuedVoucherStatus
 from app.models.stock_movement import StockMovementReason
-from app.models.z_report import ZReport
 from app.schemas.transaction import TransactionIn, TransactionPaymentIn, TransactionUpsertResult
-from app.schemas.z_report import ZReportIn
 from app.services.approvals import ApprovalRejected, verify_document_approver
-from app.services.z_sequence import allocate_shop_z_number
+from app.services.shifts import (
+    ShiftConflict,
+    precheck_document_shifts,
+    resolve_shift_for_document,
+)
 from app.services.stock import apply_movement
 from app.services.tenders import (
     UNKNOWN_PAYMENT_METHOD,
@@ -155,118 +157,12 @@ def _tender_rejection_reason(tx: TransactionIn) -> Optional[str]:
     return reconciliation_error(expected, [p.amount for p in tx.payments])
 
 
-# ── Trading day helpers ──────────────────────────────────────────────────────
-
-def find_open_trading_day(db: Session, machine_id: uuid.UUID) -> Optional[TradingDay]:
-    """Return the currently-open trading day for a machine, if any."""
-    return (
-        db.query(TradingDay)
-        .filter(
-            TradingDay.machine_id == machine_id,
-            TradingDay.status == TradingDayStatus.OPEN,
-        )
-        .order_by(TradingDay.opened_at.desc())
-        .first()
-    )
-
-
-def get_or_create_trading_day(
-    db: Session,
-    machine: POSMachine,
-    *,
-    trading_day_id: Optional[uuid.UUID],
-    day_date: Optional[date],
-    opened_at: Optional[datetime] = None,
-    opening_cash=None,
-    opened_by: Optional[str] = None,
-    sequence_number: Optional[int] = None,
-    status: TradingDayStatus = TradingDayStatus.OPEN,
-) -> TradingDay:
-    """
-    Resolve a TradingDay **by its id only**, creating it if unknown.
-
-    Idempotent by id, exactly like a transaction: the till generates the id, so a
-    retried upload lands on the same row and a day the cloud has not heard of yet is
-    simply created.
-
-    There is deliberately no fallback to `(machine_id, day_date)`. That fallback is
-    what silently merged two shifts on one calendar date: the evening's sales matched
-    the morning's already-closed day, and the evening's Z then came back `duplicate`
-    — which the till read as success before purging the documents behind it. A date
-    is a reporting attribute, never an identity.
-
-    An unknown id with no `day_date` still falls back to today in UTC, which is only
-    reachable for a payload carrying neither — the till always sends both.
-    """
-    td: Optional[TradingDay] = None
-    if trading_day_id:
-        td = db.query(TradingDay).filter(TradingDay.id == trading_day_id).first()
-    if td is not None:
-        return td
-
-    # No id at all — an older sale, or one written in the window between a day
-    # closing and the next opening. It belongs to whatever day this machine has open,
-    # which is what the till meant. Creating a fresh open day for it instead would
-    # manufacture a phantom that no Z will ever close, and would collide with the
-    # one-open-day rule the moment the real day is reported.
-    if trading_day_id is None:
-        open_day = (
-            db.query(TradingDay)
-            .filter(
-                TradingDay.machine_id == machine.id,
-                TradingDay.status == TradingDayStatus.OPEN,
-            )
-            .order_by(TradingDay.opened_at.desc())
-            .first()
-        )
-        if open_day is not None:
-            return open_day
-
-    if day_date is None:
-        # Last resort: today in UTC.
-        day_date = datetime.now(timezone.utc).date()
-
-    new_td = TradingDay(
-        id=trading_day_id or uuid.uuid4(),
-        tenant_id=machine.tenant_id,
-        machine_id=machine.id,
-        shop_id=machine.shop_id,
-        day_date=day_date,
-        sequence_number=sequence_number,
-        opened_at=opened_at or datetime.now(timezone.utc),
-        opening_cash=opening_cash,
-        opened_by=opened_by,
-        status=status,
-    )
-    db.add(new_td)
-    try:
-        db.flush()
-    except IntegrityError:
-        # The only unique rule here is "one open day per machine". Losing that race
-        # means another request created this machine's open day first; adopting it is
-        # correct and is what the caller wanted. Never a 500.
-        db.rollback()
-        existing = (
-            db.query(TradingDay)
-            .filter(
-                TradingDay.machine_id == machine.id,
-                TradingDay.status == TradingDayStatus.OPEN,
-            )
-            .order_by(TradingDay.opened_at.desc())
-            .first()
-        )
-        if existing is None:
-            raise
-        return existing
-    return new_td
-
-
 # ── Transactions upsert ──────────────────────────────────────────────────────
 
 def _serialize_tx_for_upsert(
     tx: TransactionIn,
     machine: POSMachine,
-    trading_day_id: uuid.UUID,
+    shift_id: uuid.UUID,
     *,
     payment_method: Optional[str] = None,
     customer_ref_id: Optional[uuid.UUID] = None,
@@ -289,7 +185,7 @@ def _serialize_tx_for_upsert(
         "tenant_id": machine.tenant_id,
         "machine_id": machine.id,
         "shop_id": machine.shop_id,
-        "trading_day_id": trading_day_id,
+        "shift_id": shift_id,
         "transaction_number": tx.transaction_number,
         "status": tx.status,
         "document_type": tx.document_type,
@@ -366,7 +262,9 @@ def upsert_transactions(
     For each tx:
       - Reject the document outright if its `payments` array does not reconcile.
       - Reject it outright if it claims an approver who could not have approved it.
-      - Resolve / auto-open trading_day.
+      - Resolve its shift by id (never adopting another open shift; see
+        `app.services.shifts`). A batch naming a shift the cloud cannot accept yet
+        raises `ShiftConflict` before anything is written.
       - INSERT ... ON CONFLICT (id) DO UPDATE SET ... — `status` reports 'accepted' for new rows
         and 'duplicate' for rows that already existed at the same updated_at.
       - Replace items atomically: DELETE existing items by transaction_id, then INSERT the new list.
@@ -398,6 +296,10 @@ def upsert_transactions(
     if not transactions:
         return results
 
+    # Before anything is written: a batch that names a shift the cloud cannot accept
+    # yet is refused whole, and the till retries it after the close of the open shift.
+    precheck_document_shifts(db, machine, [tx.shift_id for tx in transactions])
+
     # Pre-load existing rows in one query so we can classify accepted vs duplicate.
     incoming_ids = [tx.id for tx in transactions]
     existing_map: Dict[uuid.UUID, Transaction] = {
@@ -413,7 +315,7 @@ def upsert_transactions(
         savepoint = db.begin_nested()
         try:
             # Before anything is written, so a rejected document leaves no trace at
-            # all — not even an auto-opened trading day.
+            # all — not even an auto-opened shift.
             tender_problem = _tender_rejection_reason(tx)
             if tender_problem is not None:
                 logger.warning("Rejecting transaction %s: %s", tx.id, tender_problem)
@@ -442,29 +344,45 @@ def upsert_transactions(
 
             legs = _normalized_payment_legs(tx)
 
-            day_date_value: Optional[date] = None
-            if tx.day_date:
+            business_date_value: Optional[date] = None
+            if tx.business_date:
                 try:
-                    day_date_value = date.fromisoformat(tx.day_date)
+                    business_date_value = date.fromisoformat(tx.business_date)
                 except ValueError:
-                    day_date_value = tx.created_at.date() if tx.created_at else None
+                    business_date_value = tx.created_at.date() if tx.created_at else None
             else:
-                day_date_value = tx.created_at.date() if tx.created_at else None
+                business_date_value = tx.created_at.date() if tx.created_at else None
 
-            td = get_or_create_trading_day(
+            shift = resolve_shift_for_document(
                 db,
                 machine,
-                trading_day_id=tx.trading_day_id,
-                day_date=day_date_value,
+                shift_id=tx.shift_id,
+                business_date=business_date_value,
                 opened_at=tx.created_at,
             )
 
             previous = existing_map.get(tx.id)
+            target_shift_id = shift.id
+            if (
+                previous is not None
+                and previous.shift_id is not None
+                and previous.shift_id != shift.id
+            ):
+                # A re-push naming a different shift moves the document — that is how a
+                # close's `staleIds` get fixed — except out of a shift already in a Z:
+                # that would change a filed Z behind its back.
+                held = db.query(Shift.z_report_id).filter(Shift.id == previous.shift_id).first()
+                if held is not None and held[0] is not None:
+                    logger.warning(
+                        "Document %s stays in shift %s (already in Z %s); push named shift %s",
+                        tx.id, previous.shift_id, held[0], shift.id,
+                    )
+                    target_shift_id = previous.shift_id
 
             row = _serialize_tx_for_upsert(
                 tx,
                 machine,
-                td.id,
+                target_shift_id,
                 payment_method=derive_payment_method(
                     [leg.method for leg in legs], fallback=tx.payment_method
                 ),
@@ -588,6 +506,10 @@ def upsert_transactions(
                 status="duplicate" if is_duplicate else "accepted",
                 server_received_at=datetime.now(timezone.utc),
             ))
+        except ShiftConflict:
+            if savepoint.is_active:
+                savepoint.rollback()
+            raise
         except Exception as exc:
             if savepoint.is_active:
                 savepoint.rollback()
@@ -601,130 +523,6 @@ def upsert_transactions(
     return results
 
 
-# ── Z-report ─────────────────────────────────────────────────────────────────
-
-def check_z_report_preconditions(
-    db: Session,
-    machine: POSMachine,
-    z: ZReportIn,
-) -> Tuple[List[uuid.UUID], List[uuid.UUID]]:
-    """
-    Verify all transaction ids referenced by the Z report exist for this machine.
-    Returns (missing_ids, stale_ids).
-    """
-    if not z.transaction_ids:
-        return [], []
-
-    rows = (
-        db.query(Transaction.id)
-        .filter(
-            Transaction.machine_id == machine.id,
-            Transaction.id.in_(z.transaction_ids),
-        )
-        .all()
-    )
-    present = {r[0] for r in rows}
-    missing = [tx_id for tx_id in z.transaction_ids if tx_id not in present]
-    return missing, []  # staleness check left as future work
-
-
-def apply_z_report(
-    db: Session,
-    machine: POSMachine,
-    z: ZReportIn,
-    *,
-    approved_by_user_id: Optional[uuid.UUID] = None,
-    approved_by_pos_user_id: Optional[uuid.UUID] = None,
-) -> Tuple[ZReport, str]:
-    """
-    Idempotent close: returns (z_report, status) where status is 'accepted' or 'duplicate'.
-    Caller must check_z_report_preconditions first; this assumes preconditions hold.
-
-    `approved_by_user_id` is the person an elevation grant named at close time, or None
-    when the till's own operator had the authority and nothing was elevated — which is
-    the ordinary close. A duplicate returns before the row is touched, so a retry
-    cannot rewrite the approver the first close recorded.
-
-    `approved_by_pos_user_id` is the same thing when the approver typed a till username
-    rather than an email. At most one of the two is set, because a grant has one holder.
-    """
-    td = get_or_create_trading_day(
-        db,
-        machine,
-        trading_day_id=z.trading_day_id,
-        day_date=z.day_date,
-        opened_at=z.opened_at,
-        # A day the cloud never heard of is being closed right now, so it is created
-        # closed. Inserting it open and closing it one statement later would trip the
-        # one-open-day rule on a machine that already has a day open.
-        status=TradingDayStatus.CLOSED,
-    )
-
-    existing = db.query(ZReport).filter(ZReport.trading_day_id == td.id).first()
-    if existing is not None:
-        return existing, "duplicate"
-
-    zr = ZReport(
-        id=uuid.uuid4(),
-        trading_day_id=td.id,
-        tenant_id=machine.tenant_id,
-        machine_id=machine.id,
-        shop_id=machine.shop_id,
-        day_date=z.day_date,
-        # Drawn here and only here: the duplicate check above has already returned, so a
-        # retried close reuses the number it was given rather than advancing the shop's
-        # run. Rolls back with the rest of the transaction if this close fails, which is
-        # what keeps the sequence gapless.
-        shop_sequence_number=allocate_shop_z_number(db, machine.shop_id),
-        total_sales=z.total_sales,
-        total_refunds=z.total_refunds,
-        total_cash_sales=z.total_cash_sales,
-        total_card_sales=z.total_card_sales,
-        total_tips=z.total_tips,
-        total_cash_tips=z.total_cash_tips,
-        total_card_tips=z.total_card_tips,
-        transactions_count=z.transactions_count,
-        opening_cash=z.opening_cash,
-        closing_cash=z.closing_cash,
-        expected_cash=z.expected_cash,
-        # Nobody counted the drawer on an unattended close, so the count and the
-        # variance are stored as unknown rather than as the expected figure. The till
-        # used to send expected-as-counted, which made every remote Z assert a variance
-        # of exactly zero — a shop with a real shortfall got a document saying it
-        # balanced. Enforced here and not only on the device, so an older till build
-        # cannot reintroduce the lie.
-        actual_cash=None if z.unattended else z.actual_cash,
-        discrepancy=None if z.unattended else z.discrepancy,
-        unattended=z.unattended,
-        approved_by_user_id=approved_by_user_id,
-        approved_by_pos_user_id=approved_by_pos_user_id,
-        payload=z.payload,
-        closed_at=z.closed_at,
-    )
-    db.add(zr)
-
-    td.status = TradingDayStatus.CLOSED
-    td.closed_at = z.closed_at
-    if z.closing_cash is not None and not z.unattended:
-        td.closing_cash = z.closing_cash
-    if z.expected_cash is not None:
-        td.expected_cash = z.expected_cash
-    # Same rule as the Z row above: an unattended close leaves the count and the
-    # variance unknown on the day as well, or the dashboard would show a reconciled
-    # drawer nobody opened.
-    if z.actual_cash is not None and not z.unattended:
-        td.actual_cash = z.actual_cash
-    if z.discrepancy is not None and not z.unattended:
-        td.discrepancy = z.discrepancy
-    if z.opened_by:
-        td.opened_by = td.opened_by or z.opened_by
-    if z.closed_by:
-        td.closed_by = z.closed_by
-
-    db.flush()
-    return zr, "accepted"
-
-
 # ── MQTT publish helpers (server -> dashboard heads-up) ──────────────────────
 
 def publish_transactions_synced(tenant_id: Optional[uuid.UUID], machine_id: uuid.UUID, count: int) -> None:
@@ -734,16 +532,3 @@ def publish_transactions_synced(tenant_id: Optional[uuid.UUID], machine_id: uuid
     if not tenant_id:
         return
     ably_tx_synced(str(tenant_id), str(machine_id), count)
-
-
-def publish_z_report_closed(
-    tenant_id: Optional[uuid.UUID],
-    machine_id: uuid.UUID,
-    z_report_id: uuid.UUID,
-    trading_day_id: uuid.UUID,
-) -> None:
-    from app.services.ably_notify import publish_z_report_closed as ably_z_closed
-
-    if not tenant_id:
-        return
-    ably_z_closed(str(tenant_id), str(machine_id), str(z_report_id), str(trading_day_id))

@@ -107,4 +107,4 @@ class TestTheRequestIsRefusedWhenNothingIsOpen:
             )
 
         assert e.value.status_code == 400
-        assert "open trading day" in e.value.detail
+        assert "open shift" in e.value.detail

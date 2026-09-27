@@ -132,6 +132,14 @@ class POSMachine(Base):
     # every till that existed when the column was added.
     catalog_mode = Column(String(16), nullable=False, default="all", server_default="all")
     catalog_mode_updated_at = Column(DateTime(timezone=True), nullable=True)
+
+    # ── The shift the till says it has open, from its heartbeat ──────────────
+    # The cloud learns of a shift from the till's open event, which an offline till
+    # queues. This is the till's own claim, refreshed every beat, so the Z wizard can
+    # tell "no shift open" from "a shift is open that the cloud has not heard of yet".
+    # Not an identity and not a foreign key: the shift may not exist here yet.
+    reported_open_shift_id = Column(UUID(as_uuid=True), nullable=True)
+    reported_open_shift_opened_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

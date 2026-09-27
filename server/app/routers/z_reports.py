@@ -1,29 +1,53 @@
-"""Dashboard read endpoints for Z-reports (Clerk-user JWT)."""
+"""Dashboard read endpoints for Z reports (Clerk-user JWT). Contract: docs/SHIFTS_API.md §2.8."""
 from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.middleware.auth import get_current_user, get_active_tenant_id
-from app.models.user import User
+from app.models.company import Company
+from app.models.pos_machine import POSMachine
+from app.models.shift import Shift
+from app.models.shop import Shop
+from app.models.user import User, UserRole
 from app.models.z_report import ZReport
-from app.schemas.z_report import ZReportListResponse, ZReportOut
+from app.schemas.z_report import (
+    ZReportBusinessOut,
+    ZReportDetailOut,
+    ZReportListResponse,
+    ZReportOut,
+)
 from app.services.scoping import scope_query_by_user
+from app.services.shifts import shift_to_out
 
 
 router = APIRouter(prefix="/z-reports", tags=["z-reports"])
 
 
-def _scope_by_user(query, current_user: User, db: Session):
-    """Role scoping for Z-reports.
+def _machine_z_ids(machine_ids):
+    """Z ids containing a shift of any of `machine_ids`."""
+    return select(Shift.z_report_id).where(
+        Shift.machine_id.in_(machine_ids), Shift.z_report_id.isnot(None)
+    )
 
-    This was a verbatim copy of `scope_transactions_by_user`. It now delegates to the
-    shared implementation, so the company-manager rule (which follows the company tree)
-    cannot be right in one endpoint and stale in the other.
+
+def _scope_by_user(query, current_user: User, db: Session):
     """
+    Role scoping for Z reports.
+
+    Delegates to the shared rule for every role but the distributor, whose visibility is
+    by machine. A cloud-built Z has no single machine (it spans the shop's tills), so a
+    distributor sees a Z that contains a shift of one of their tills, or a legacy Z of one.
+    """
+    if current_user.role == UserRole.DISTRIBUTOR:
+        mine = select(POSMachine.id).where(POSMachine.distributor_id == current_user.id)
+        return query.filter(
+            or_(ZReport.machine_id.in_(mine), ZReport.id.in_(_machine_z_ids(mine)))
+        )
     return scope_query_by_user(
         query,
         current_user,
@@ -31,6 +55,14 @@ def _scope_by_user(query, current_user: User, db: Session):
         shop_column=ZReport.shop_id,
         machine_column=ZReport.machine_id,
     )
+
+
+def z_to_out(z: ZReport, cls=ZReportOut):
+    item = cls.model_validate(z)
+    item.legacy = z.per_machine is None and z.machine_id is not None
+    item.machine_name = z.machine.name if z.machine_id and z.machine else None
+    item.shop_name = z.shop.name if z.shop else None
+    return item
 
 
 @router.get("", response_model=ZReportListResponse, response_model_by_alias=True)
@@ -49,17 +81,11 @@ def list_z_reports(
     db: Session = Depends(get_db),
 ):
     """
-    Z-report history over a range. Dashboard-only (Clerk/user JWT).
+    Z report history over a range. Dashboard-only (Clerk/user JWT).
 
-    `from`/`to` filter on `day_date` — the trading day the till itself filed the
-    close under, which is the right key for "show me the Z reports for last week"
-    and is deliberately not derived from a timestamp.
-
-    `closedFrom`/`closedTo` are optional ISO datetimes on `closed_at` and are how an
-    hour-precision question gets asked here ("which tills closed after 23:00 last
-    night"). A Z report covers a whole trading day, so an hour-of-day *filter* on
-    the report itself would be meaningless; the hour that carries information is
-    when it was closed.
+    `from`/`to` filter on the Z's `business_date`. `closedFrom`/`closedTo` are ISO
+    datetimes on `closed_at`. `machineId`/`machineIds` match a Z containing that till
+    (a shift of it, or a legacy till-issued Z).
     """
     query = (
         db.query(ZReport)
@@ -70,10 +96,13 @@ def list_z_reports(
     if query is None:
         return ZReportListResponse(page=page, page_size=page_size, total=0, items=[])
 
+    wanted = list(machine_ids or [])
     if machine_id:
-        query = query.filter(ZReport.machine_id == machine_id)
-    if machine_ids:
-        query = query.filter(ZReport.machine_id.in_(machine_ids))
+        wanted.append(machine_id)
+    if wanted:
+        query = query.filter(
+            or_(ZReport.machine_id.in_(wanted), ZReport.id.in_(_machine_z_ids(wanted)))
+        )
     if shop_id:
         query = query.filter(ZReport.shop_id == shop_id)
 
@@ -81,9 +110,9 @@ def list_z_reports(
         from_date = (datetime.now(timezone.utc) - timedelta(days=90)).date()
 
     if from_date is not None:
-        query = query.filter(ZReport.day_date >= from_date)
+        query = query.filter(ZReport.business_date >= from_date)
     if to_date is not None:
-        query = query.filter(ZReport.day_date <= to_date)
+        query = query.filter(ZReport.business_date <= to_date)
 
     # A naive datetime from a caller is read as UTC, matching /dashboard/stats.
     if closed_from is not None:
@@ -97,34 +126,47 @@ def list_z_reports(
 
     total = query.count()
     rows = (
-        query.order_by(ZReport.day_date.desc(), ZReport.created_at.desc())
+        query.order_by(ZReport.business_date.desc(), ZReport.created_at.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
     )
-
-    items = []
-    for r in rows:
-        item = ZReportOut.model_validate(r)
-        item.machine_name = r.machine.name if r.machine else None
-        item.shop_name = r.shop.name if r.shop else None
-        items.append(item)
-
     return ZReportListResponse(
         page=page,
         page_size=page_size,
         total=total,
-        items=items,
+        items=[z_to_out(r) for r in rows],
     )
 
 
-@router.get("/{z_report_id}", response_model=ZReportOut)
+def _business_of(db: Session, shop: Optional[Shop]) -> Optional[ZReportBusinessOut]:
+    """The header of a Z (נספח א׳ §4): business name, VAT id, address, branch."""
+    if shop is None:
+        return None
+    from app.services.settings_merge import build_business_info
+
+    company = db.query(Company).filter(Company.id == shop.company_id).first()
+    if company is None:
+        return ZReportBusinessOut(shop_name=shop.name)
+    info = build_business_info(company, shop)
+    return ZReportBusinessOut(
+        business_name=info.company_name,
+        vat_number=info.vat_number or None,
+        address=info.company_address or None,
+        city=info.company_city or None,
+        branch_id=info.branch_id,
+        shop_name=shop.name,
+    )
+
+
+@router.get("/{z_report_id}", response_model=ZReportDetailOut, response_model_by_alias=True)
 def get_z_report(
     z_report_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    """One Z with its per-till sections, its shifts and the business header."""
     query = db.query(ZReport).filter(ZReport.id == z_report_id, ZReport.tenant_id == active_tenant_id)
     query = _scope_by_user(query, current_user, db)
     if query is None:
@@ -132,4 +174,23 @@ def get_z_report(
     z = query.first()
     if not z:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Z-report not found")
-    return z
+
+    out = z_to_out(z, ZReportDetailOut)
+    out.per_machine = list(z.per_machine or [])
+    shifts = (
+        db.query(Shift)
+        .options(joinedload(Shift.machine))
+        .filter(Shift.z_report_id == z.id)
+        .order_by(Shift.machine_id, Shift.sequence_number, Shift.opened_at)
+        .all()
+    )
+    out.shifts = [
+        shift_to_out(
+            s,
+            z_number=z.shop_sequence_number,
+            machine_name=s.machine.name if s.machine else None,
+        )
+        for s in shifts
+    ]
+    out.business = _business_of(db, z.shop)
+    return out

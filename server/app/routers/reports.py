@@ -235,9 +235,9 @@ def get_day_summary_report(
     """
     Several tills' closed days rolled into one figure per trading day (סיכום יומי).
 
-    Dashboard-only (Clerk/user JWT). Built from Z reports, so it agrees with the paper
-    each till printed — and so a day nobody has closed yet is **absent rather than
-    zero**, because an open day has not declared anything.
+    Dashboard-only (Clerk/user JWT). Built from Z reports, so it agrees with the Zs the
+    shop filed — and so a day no Z covers yet is **absent rather than zero**, because
+    nothing has been declared for it.
 
     Each day lists the Z reports behind it; follow `zReportId` to `GET /z-reports/{id}`
     for the document itself rather than a restatement of it.
@@ -253,8 +253,9 @@ def get_day_summary_report(
     nothing, and it is deliberately not printable.
 
     No `fromHour`/`toHour`: a Z covers a whole trading day, so narrowing it to an hour
-    would be meaningless. Days are selected on `day_date`, the day the till filed the
-    close under — a shift that runs past midnight still belongs to the day it started.
+    would be meaningless. Days are selected on the Z's `business_date` (by default the
+    shop-local date of its latest shift) — a shift past midnight belongs to the day it
+    started.
     """
     window = resolve_report_window(
         db, active_tenant_id,

@@ -1,12 +1,13 @@
 """
-Recovering from a terminal that died holding an open trading day.
+Recovering from a till that died holding an open shift.
 
 Two capabilities, and the tests concentrate on what must *not* happen:
 
-* a day closed from the cloud must never look like one a terminal issued, never claim a
-  cash count nobody took, and never be filed twice for one day;
-* a replacement device must never adopt a terminal that still has an open day, because
-  its Z would be computed from local records it does not have.
+* a shift closed from the cloud must never look like one its till closed, never claim a
+  cash count nobody took, and never be closed twice; and it files no Z — it becomes an
+  ordinary candidate for the shop's next Z (covered in test_z_run.py);
+* a replacement device must never adopt a till that still has an open shift, because
+  it has none of that shift's records.
 """
 from __future__ import annotations
 
@@ -19,9 +20,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from app.models.trading_day import TradingDayStatus
+from app.models.shift import ShiftStatus
 from app.services import administrative_close as AC
 from app.services import pairing as P
+from app.services.shift_totals import DocumentTotals
 
 NOW = datetime(2026, 9, 13, 20, 0, 0, tzinfo=timezone.utc)
 
@@ -38,8 +40,7 @@ def _machine(**kw):
         name="F20",
         device_info=None,
         machine_code="MACHINE-AB12",
-        # The row has always had this column; the fixture now carries it because
-        # adoption reads it (the replacement keeps the till's register number).
+        # Adoption reads it (the replacement keeps the till's register number).
         pos_number="2",
         is_active=True,
         pairing_status=None,
@@ -49,15 +50,18 @@ def _machine(**kw):
     return SimpleNamespace(**base)
 
 
-def _day(**kw):
+def _shift(**kw):
     base = dict(
         id=uuid.uuid4(),
-        status=TradingDayStatus.OPEN,
-        day_date=NOW.date(),
+        status=ShiftStatus.OPEN,
+        business_date=NOW.date(),
         opening_cash=Decimal("200.00"),
         closed_at=None,
         expected_cash=None,
+        counted_cash=Decimal("999.00"),
+        discrepancy=Decimal("1.00"),
         closed_by=None,
+        z_report_id=None,
     )
     base.update(kw)
     return SimpleNamespace(**base)
@@ -68,115 +72,112 @@ def _user():
 
 
 class _Db:
-    """Returns a scripted existing-Z, records what was added."""
-
-    def __init__(self, existing_z=None):
-        self.existing_z = existing_z
+    def __init__(self):
         self.added = []
-
-    def query(self, *_):
-        return self
-
-    def filter(self, *_):
-        return self
-
-    def join(self, *_, **__):
-        return self
-
-    def first(self):
-        return self.existing_z
-
-    def all(self):
-        return []
+        self.flushes = 0
 
     def add(self, obj):
         self.added.append(obj)
 
     def flush(self):
-        pass
+        self.flushes += 1
 
 
-def _close(db=None, machine=None, day=None, **kw):
+def _totals():
+    t = DocumentTotals(transactions_count=5, sales_count=5, total_sales=Decimal("300.00"))
+    t.payment_breakdown = {"cash": Decimal("120.00"), "card": Decimal("180.00")}
+    t.total_tips = Decimal("10.00")
+    t.total_cash_tips = Decimal("10.00")
+    return t
+
+
+def _close(db=None, machine=None, shift=None, **kw):
     db = db or _Db()
-    with patch.object(AC, "allocate_shop_z_number", return_value=7):
-        return AC.reconstruct_z_report(
-            db, machine or _machine(), day or _day(), _user(), now=NOW, **kw
+    shift = shift or _shift()
+    with patch.object(AC, "compute_totals", return_value=_totals()):
+        return AC.close_shift_administratively(
+            db, machine or _machine(), shift, _user(), now=NOW, **kw
         )
 
 
-# ── The document must say what it is ─────────────────────────────────────────
+# ── The close must say what it is ────────────────────────────────────────────
 
-class TestTheDocumentIsHonest:
-    def test_it_is_marked_as_reconstructed(self):
-        z, created = _close()
+class TestTheCloseIsHonest:
+    def test_it_is_marked_as_reconstructed_and_closed(self):
+        shift, created = _close()
 
         assert created is True
-        assert z.reconstructed is True
+        assert shift.reconstructed is True
+        assert shift.status == ShiftStatus.CLOSED
 
     def test_no_cash_count_is_claimed(self):
         """
         Nobody opened a drawer. Setting these to the expected figure would assert a
         variance of zero that no one verified — the exact lie `unattended` exists to stop.
         """
-        z, _ = _close()
+        shift, _ = _close()
 
-        assert z.actual_cash is None
-        assert z.discrepancy is None
-        assert z.closing_cash is None
+        assert shift.counted_cash is None
+        assert shift.discrepancy is None
 
     def test_it_is_also_flagged_unattended(self):
-        """
-        So every consumer that already withholds a variance for an uncounted close — the
-        day summary among them — does so here too, without being taught a new rule.
-        """
-        z, _ = _close()
+        """So the Z's cash summary withholds its over/short without a new rule."""
+        shift, _ = _close()
 
-        assert z.unattended is True
+        assert shift.unattended is True
+
+    def test_the_x_is_built_from_the_cloud_documents(self):
+        shift, _ = _close()
+
+        assert shift.total_sales == Decimal("300.00")
+        assert shift.total_cash == Decimal("120.00")
+        assert shift.total_card == Decimal("180.00")
+        assert shift.transactions_count == 5
+        # opening + cash takings + cash tips
+        assert shift.expected_cash == Decimal("330.00")
 
     def test_the_person_who_authorised_it_is_named(self):
-        z, _ = _close()
+        shift, _ = _close()
 
-        assert z.reconstructed_by == "manager"
+        assert shift.reconstructed_by == "manager"
+        assert shift.closed_by == "manager"
 
     def test_the_basis_records_how_complete_it_is(self):
         """
         "The cloud held N documents and the terminal reported nothing outstanding" is a
-        very different statement from "...and it was holding 7 it never sent". A reader
-        judging whether to trust the figure needs to be able to tell them apart.
+        very different statement from "...and it was holding 7 it never sent".
         """
-        machine = _machine(pending_documents=7)
-        z, _ = _close(machine=machine)
+        shift, _ = _close(machine=_machine(pending_documents=7))
 
-        assert z.reconstruction_basis["lastReportedPendingDocuments"] == 7
-        assert z.reconstruction_basis["lastHeartbeatAt"] is not None
-        assert z.reconstruction_basis["documentsOnCloud"] == 0
-        assert z.reconstruction_basis["forced"] is False
+        basis = shift.reconstruction_basis
+        assert basis["lastReportedPendingDocuments"] == 7
+        assert basis["lastHeartbeatAt"] is not None
+        assert basis["documentsOnCloud"] == 5
+        assert basis["forced"] is False
 
     def test_a_forced_close_says_so_in_the_basis(self):
-        z, _ = _close(machine=_machine(last_heartbeat_at=NOW), force=True)
+        shift, _ = _close(machine=_machine(last_heartbeat_at=NOW), force=True)
 
-        assert z.reconstruction_basis["forced"] is True
+        assert shift.reconstruction_basis["forced"] is True
 
-    def test_an_operator_note_is_kept_with_the_document(self):
-        z, _ = _close(note="terminal dropped, returned to distributor")
+    def test_an_operator_note_is_kept_with_the_shift(self):
+        shift, _ = _close(note="terminal dropped, returned to distributor")
 
-        assert z.reconstruction_basis["note"] == "terminal dropped, returned to distributor"
+        assert shift.reconstruction_basis["note"] == "terminal dropped, returned to distributor"
 
-    def test_it_takes_a_shop_z_number_like_any_other_close(self):
-        """It is a real close in the shop's run; a gap there would mean a missing Z."""
-        z, _ = _close()
+    def test_it_files_no_z(self):
+        """The Z is built later, over this shift and the shop's others."""
+        shift, _ = _close()
 
-        assert z.shop_sequence_number == 7
+        assert shift.z_report_id is None
+        assert not hasattr(AC, "allocate_shop_z_number")
 
 
 # ── Guards ───────────────────────────────────────────────────────────────────
 
 class TestGuards:
     def test_a_live_terminal_is_refused(self):
-        """
-        Closing the day under a working till would leave the cashier selling into a day
-        the cloud believes has ended.
-        """
+        """A shift closed under a working till leaves the cashier selling into it."""
         with pytest.raises(HTTPException) as e:
             _close(machine=_machine(last_heartbeat_at=NOW - timedelta(seconds=10)))
 
@@ -192,19 +193,13 @@ class TestGuards:
         assert "recently_seen" in e.value.detail
 
     def test_force_overrides_the_silence_guard(self):
-        z, created = _close(machine=_machine(last_heartbeat_at=NOW), force=True)
+        shift, created = _close(machine=_machine(last_heartbeat_at=NOW), force=True)
 
         assert created is True
-        assert z.reconstructed is True
-
-    def test_a_day_that_is_not_open_is_refused(self):
-        with pytest.raises(HTTPException) as e:
-            _close(day=_day(status=TradingDayStatus.CLOSED))
-
-        assert e.value.status_code == 409
+        assert shift.reconstructed is True
 
     def test_a_long_dead_terminal_passes_the_guard(self):
-        _z, created = _close(machine=_machine(last_heartbeat_at=NOW - timedelta(days=3)))
+        _shift_, created = _close(machine=_machine(last_heartbeat_at=NOW - timedelta(days=3)))
 
         assert created is True
 
@@ -212,24 +207,22 @@ class TestGuards:
 # ── Idempotency ──────────────────────────────────────────────────────────────
 
 class TestIdempotency:
-    def test_a_day_that_already_has_a_z_is_returned_untouched(self):
-        """
-        A double-click must not file two fiscal documents for one day, nor burn a second
-        shop Z number.
-        """
-        already = SimpleNamespace(id=uuid.uuid4(), shop_sequence_number=3)
-        db = _Db(existing_z=already)
+    def test_a_closed_shift_is_returned_untouched(self):
+        """A double click must not rewrite a close."""
+        closed = _shift(status=ShiftStatus.CLOSED, counted_cash=Decimal("50.00"))
+        db = _Db()
 
-        z, created = _close(db=db)
+        shift, created = _close(db=db, shift=closed)
 
         assert created is False
-        assert z is already
-        assert db.added == []
+        assert shift is closed
+        assert shift.counted_cash == Decimal("50.00")
+        assert db.flushes == 0
 
-    def test_an_existing_z_is_returned_even_for_a_live_terminal(self):
+    def test_a_closed_shift_is_returned_even_for_a_live_terminal(self):
         """The idempotency check runs before the guards; nothing is being changed."""
-        already = SimpleNamespace(id=uuid.uuid4())
-        z, created = _close(db=_Db(existing_z=already), machine=_machine(last_heartbeat_at=NOW))
+        closed = _shift(status=ShiftStatus.CLOSED)
+        _shift_, created = _close(shift=closed, machine=_machine(last_heartbeat_at=NOW))
 
         assert created is False
 
@@ -237,16 +230,16 @@ class TestIdempotency:
 # ── Replacement pairing ──────────────────────────────────────────────────────
 
 class TestAdoption:
-    def _adopt(self, machine, open_day=None):
+    def _adopt(self, machine, open_shift=None):
         db = MagicMock()
-        # First query resolves the machine; second the open trading day.
-        db.query.return_value.filter.return_value.first.side_effect = [machine, open_day]
+        # First query resolves the machine; second the open shift.
+        db.query.return_value.filter.return_value.first.side_effect = [machine, open_shift]
         return P.adopt_machine(db, machine.id, device_info={"model": "new"}, machine_name="F21")
 
     def test_the_replacement_keeps_the_identity(self):
         """
         Same row, so every document already filed still points at the till the shop
-        knows, and the day's reporting does not split across two machines.
+        knows, and its shifts and Zs do not split across two machines.
         """
         m = _machine()
         original_id, original_code = m.id, m.machine_code
@@ -277,17 +270,17 @@ class TestAdoption:
         assert adopted.pending_count is None
         assert adopted.pending_count_at is None
 
-    def test_an_open_day_blocks_the_adoption(self):
+    def test_an_open_shift_blocks_the_adoption(self):
         """
-        The replacement has none of that day's records, and its Z — built from its own
-        local rows — would declare a fraction of what the shop actually took.
+        The replacement has none of that shift's records, and its close would list a
+        fraction of the documents the shift actually holds.
         """
         m = _machine()
 
         with pytest.raises(P.PairingAssignmentError) as e:
-            self._adopt(m, open_day=_day())
+            self._adopt(m, open_shift=_shift())
 
-        assert "open trading day" in str(e.value)
+        assert "open shift" in str(e.value)
 
     def test_the_hardware_details_are_refreshed(self):
         """The unit genuinely changed; keeping the old serial would misidentify it."""

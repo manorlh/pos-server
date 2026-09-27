@@ -630,7 +630,11 @@ class TestMigration:
         assert (m.revision, m.down_revision) == ("f8a9b0c1d2e3", "e7f8a9b0c1d2")
         cfg = Config(str(_HERE / "alembic.ini"))
         cfg.set_main_option("script_location", str(_HERE / "alembic"))
-        assert ScriptDirectory.from_config(cfg).get_heads() == ["f8a9b0c1d2e3"]
+        script = ScriptDirectory.from_config(cfg)
+        # One head, and this revision on its line (later revisions build on it).
+        heads = script.get_heads()
+        assert len(heads) == 1
+        assert "f8a9b0c1d2e3" in {r.revision for r in script.iterate_revisions(heads[0], "base")}
 
     def test_upgrade_adds_the_columns_and_the_table(self):
         sql = _render("e7f8a9b0c1d2:f8a9b0c1d2e3")

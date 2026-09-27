@@ -1,5 +1,8 @@
 """
-Day summary: several tills' Z reports rolled into one figure per trading day.
+Day summary: Z reports rolled into one figure per business date.
+
+Most of these use legacy, till-issued Z rows (one till each); `TestCloudZ` covers a Z
+built in the cloud over several tills, whose contributors are its per-till sections.
 
 The aggregation is plain Python, so these tests call it and check the numbers. What
 they mostly pin is the *withholding* rules, because those are the part a well-meaning
@@ -33,7 +36,7 @@ class _Named:
 class _Z:
     """Only the attributes the summary reads."""
 
-    day_date: date = date(2026, 9, 7)
+    business_date: date = date(2026, 9, 7)
     machine_id: uuid.UUID = field(default_factory=uuid.uuid4)
     shop_id: Optional[uuid.UUID] = field(default_factory=uuid.uuid4)
     id: uuid.UUID = field(default_factory=uuid.uuid4)
@@ -57,6 +60,9 @@ class _Z:
     discrepancy: Optional[Decimal] = Decimal("0.00")
 
     payload: Optional[dict] = field(default_factory=lambda: {"taxCollected": 15.25})
+    #: None = a legacy, till-issued Z. A cloud Z carries its per-till sections.
+    per_machine: Optional[list] = None
+    vat_total: Optional[Decimal] = None
     machine: Any = field(default_factory=lambda: _Named("Till 1"))
     shop: Any = field(default_factory=lambda: _Named("Center"))
 
@@ -152,9 +158,9 @@ class TestRollUp:
 
     def test_days_come_back_newest_first(self):
         out = _run([
-            _Z(day_date=date(2026, 9, 5)),
-            _Z(day_date=date(2026, 9, 7)),
-            _Z(day_date=date(2026, 9, 6)),
+            _Z(business_date=date(2026, 9, 5)),
+            _Z(business_date=date(2026, 9, 7)),
+            _Z(business_date=date(2026, 9, 6)),
         ])
 
         assert [d.day_date for d in out.days] == [
@@ -162,7 +168,7 @@ class TestRollUp:
         ]
 
     def test_range_totals_span_every_day(self):
-        out = _run([_Z(day_date=date(2026, 9, 5)), _Z(day_date=date(2026, 9, 7))])
+        out = _run([_Z(business_date=date(2026, 9, 5)), _Z(business_date=date(2026, 9, 7))])
 
         assert len(out.days) == 2
         assert out.totals.sales == 200.00
@@ -174,7 +180,7 @@ class TestRollUp:
         zero-takings days — an open day has not declared anything, and inventing a zero
         would show a shop as having taken nothing on a day it may still be trading.
         """
-        out = _run([_Z(day_date=date(2026, 9, 3))])
+        out = _run([_Z(business_date=date(2026, 9, 3))])
 
         assert [d.day_date for d in out.days] == [date(2026, 9, 3)]
 
@@ -235,8 +241,8 @@ class TestVarianceIsWithheldUnlessCounted:
 
     def test_range_variance_is_withheld_when_any_day_was_uncounted(self):
         out = _run([
-            _Z(day_date=date(2026, 9, 6)),
-            _Z(day_date=date(2026, 9, 7), actual_cash=None, unattended=True),
+            _Z(business_date=date(2026, 9, 6)),
+            _Z(business_date=date(2026, 9, 7), actual_cash=None, unattended=True),
         ])
 
         assert out.days[0].totals.variance is None      # the 7th
@@ -460,3 +466,86 @@ class TestEdges:
 
         # tenant + from + to + shopIds + machineIds
         assert db.q.filters == 5
+
+
+# ── A Z built in the cloud over several tills ────────────────────────────────
+
+
+def _section(machine_id, name, *, sales="100.00", counted="260.00", over_short="0.00", **kw):
+    section = {
+        "machineId": str(machine_id),
+        "machineName": name,
+        "totalSales": sales,
+        "totalRefunds": "0.00",
+        "totalCash": "60.00",
+        "totalCard": "40.00",
+        "totalTips": "5.00",
+        "transactionsCount": 4,
+        "expectedCash": "260.00",
+        "countedCash": counted,
+        "overShort": over_short,
+        "unattendedShiftCount": 0,
+        "reconstructedShiftCount": 0,
+    }
+    section.update(kw)
+    return section
+
+
+def _cloud_z(sections, **kw):
+    base = dict(
+        machine_id=None,
+        machine=None,
+        per_machine=sections,
+        payload=None,
+        vat_total=Decimal("30.50"),
+        total_sales=sum((Decimal(s["totalSales"]) for s in sections), Decimal("0")),
+    )
+    base.update(kw)
+    return _Z(**base)
+
+
+class TestCloudZ:
+    def test_one_z_over_two_tills_is_two_contributors_and_one_z(self):
+        a, b = uuid.uuid4(), uuid.uuid4()
+        z = _cloud_z([_section(a, "Till 1"), _section(b, "Till 2", sales="50.00")])
+
+        out = _run([z])
+
+        day = out.days[0]
+        assert day.z_report_count == 1
+        assert day.machine_count == 2
+        assert [c.machine_name for c in day.contributors] == ["Till 1", "Till 2"]
+        assert {c.z_report_id for c in day.contributors} == {z.id}
+        assert day.totals.sales == 150.00
+
+    def test_a_till_in_two_zs_on_one_date_is_one_till(self):
+        a = uuid.uuid4()
+        out = _run([_cloud_z([_section(a, "Till 1")]), _cloud_z([_section(a, "Till 1")])])
+
+        assert out.days[0].machine_count == 1
+        assert out.days[0].z_report_count == 2
+
+    def test_vat_comes_from_the_z_not_a_payload(self):
+        out = _run([_cloud_z([_section(uuid.uuid4(), "Till 1")])])
+
+        assert out.days[0].totals.vat == 30.50
+
+    def test_a_z_whose_documents_declared_no_vat_withholds_it(self):
+        out = _run([_cloud_z([_section(uuid.uuid4(), "Till 1")], vat_total=None)])
+
+        assert out.days[0].totals.vat is None
+        assert out.days[0].totals.vat_missing_count == 1
+
+    def test_an_uncounted_till_section_is_identifiable(self):
+        a, b = uuid.uuid4(), uuid.uuid4()
+        z = _cloud_z(
+            [_section(a, "Till 1"), _section(b, "Till 2", counted=None, over_short=None)],
+            actual_cash=None,
+            discrepancy=None,
+        )
+
+        out = _run([z])
+
+        uncounted = [c.machine_name for c in out.days[0].contributors if c.uncounted]
+        assert uncounted == ["Till 2"]
+        assert out.days[0].totals.variance is None

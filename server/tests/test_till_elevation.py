@@ -460,56 +460,50 @@ def test_unpairing_bumps_the_version_so_revocation_survives_re_pairing():
     assert "token_version" in source
 
 
-# ── Trading day identity ──────────────────────────────────────────────────────
+# ── Shift identity ────────────────────────────────────────────────────────────
 #
 # The bug these guard against: `trading_days` was keyed (machine_id, day_date) and
 # resolution fell back to that pair with no status filter, so an evening shift on the
-# same date resolved to the morning's already-closed day. Its Z then came back
-# "duplicate" with HTTP 200, which the till read as success before purging the shift's
-# documents.
+# same date resolved to the morning's already-closed day. Behaviour is covered in
+# test_shift_identity.py; these pin the table shape.
 
 
-def test_trading_day_resolution_is_by_id_only():
-    """
-    Structural. A fallback to (machine, date) is what merged two shifts; if it comes
-    back, the merge comes back with it — silently, and only for shops that run two
-    shifts on one date.
-    """
-    import app.services.transactions as tx
+def test_shift_resolution_is_by_id_only():
+    """Structural backstop to the behavioural tests: no (machine, date) fallback."""
+    import app.services.shifts as shifts
 
-    source = inspect.getsource(tx.get_or_create_trading_day)
-    assert "TradingDay.id == trading_day_id" in source
-    assert "day_date == day_date" not in source
-    assert "TradingDay.day_date" not in source
+    source = inspect.getsource(shifts.resolve_shift_for_document)
+    assert "Shift.id == shift_id" in source
+    assert "business_date ==" not in source
 
 
-def test_trading_day_table_no_longer_keys_on_calendar_date():
-    from app.models.trading_day import TradingDay
+def test_shift_table_does_not_key_on_calendar_date():
+    from app.models.shift import Shift
 
-    constraint_names = {c.name for c in TradingDay.__table__.constraints if c.name}
+    constraint_names = {c.name for c in Shift.__table__.constraints if c.name}
     assert "uq_trading_day_machine_date" not in constraint_names
 
-    index_names = {i.name for i in TradingDay.__table__.indexes}
-    assert "uq_trading_day_one_open" in index_names, "the one-open-day rule must be enforced"
+    index_names = {i.name for i in Shift.__table__.indexes}
+    assert "uq_shift_one_open" in index_names, "the one-open-shift rule must be enforced"
 
 
-def test_one_open_day_index_is_partial_and_unique():
-    """A till may hold many days on one date; only one of them may be open."""
-    from app.models.trading_day import TradingDay
+def test_one_open_shift_index_is_partial_and_unique():
+    """A till may hold many shifts on one date; only one of them may be open."""
+    from app.models.shift import Shift
 
-    index = next(i for i in TradingDay.__table__.indexes if i.name == "uq_trading_day_one_open")
+    index = next(i for i in Shift.__table__.indexes if i.name == "uq_shift_one_open")
     assert index.unique is True
     assert [c.name for c in index.columns] == ["machine_id"]
     where = index.dialect_options["postgresql"]["where"]
     assert "open" in str(where)
 
 
-def test_trading_day_carries_a_sequence_number():
-    from app.models.trading_day import TradingDay
+def test_shift_carries_a_sequence_number():
+    from app.models.shift import Shift
 
-    column = TradingDay.__table__.columns["sequence_number"]
-    # Nullable: days opened before this have no number, and inventing one would
-    # fabricate a fiscal ordering that never existed.
+    column = Shift.__table__.columns["sequence_number"]
+    # Nullable: shifts from before it have no number, and inventing one would fabricate
+    # an ordering that never existed.
     assert column.nullable is True
 
 

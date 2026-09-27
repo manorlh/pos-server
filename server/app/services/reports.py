@@ -961,13 +961,18 @@ MAX_DAY_SUMMARY_Z_REPORTS = 5_000
 
 def _z_vat(z: ZReport) -> Optional[Decimal]:
     """
-    The VAT a Z declared, from its payload blob.
+    The VAT a Z declared.
+
+    A cloud-built Z carries it in `vat_total` (null when a document declared none). A
+    legacy, till-issued Z has it only in its payload blob, as below.
 
     `taxCollected` is where the till puts it; there is no column. Absent on Z reports
     filed before the till sent it, and a non-numeric value is treated as absent rather
     than coerced — the payload is client-supplied JSON, and a report that silently reads
     garbage as 0.00 understates a tax figure.
     """
+    if z.per_machine is not None:
+        return z.vat_total
     payload = z.payload or {}
     raw = payload.get("taxCollected")
     if raw is None or isinstance(raw, bool):
@@ -1057,6 +1062,72 @@ def _dec_or_zero(value) -> Decimal:
     return Decimal(str(value)) if value is not None else Decimal("0")
 
 
+def _float_or_none(value) -> Optional[float]:
+    return _to_float(_dec_or_zero(value)) if value is not None else None
+
+
+def _contributors_of(z: ZReport) -> List[DaySummaryContributor]:
+    """
+    One contributor per till in a Z: its per-till sections, or the legacy Z itself.
+
+    The per-till section is the drill-down unit a bookkeeper needs, because a register's
+    figures are what the regulation ties a Z to (docs: shifts-plan §3).
+    """
+    common = dict(
+        z_report_id=z.id,
+        shop_sequence_number=z.shop_sequence_number,
+        shop_id=z.shop_id,
+        shop_name=z.shop.name if z.shop else None,
+        closed_at=z.closed_at,
+    )
+    if z.per_machine is None:
+        return [
+            DaySummaryContributor(
+                **common,
+                machine_id=z.machine_id,
+                machine_name=z.machine.name if z.machine else None,
+                unattended=bool(z.unattended),
+                reconstructed=bool(z.reconstructed),
+                uncounted=z.actual_cash is None,
+                sales=_to_float(_dec_or_zero(z.total_sales)),
+                refunds=_to_float(_dec_or_zero(z.total_refunds)),
+                net=_to_float(_dec_or_zero(z.total_sales) - _dec_or_zero(z.total_refunds)),
+                cash_sales=_to_float(_dec_or_zero(z.total_cash_sales)),
+                card_sales=_to_float(_dec_or_zero(z.total_card_sales)),
+                tips=_to_float(_dec_or_zero(z.total_tips)),
+                transactions_count=int(z.transactions_count or 0),
+                expected_cash=_to_float(_dec_or_zero(z.expected_cash)),
+                actual_cash=_to_float(z.actual_cash) if z.actual_cash is not None else None,
+                discrepancy=_to_float(z.discrepancy) if z.discrepancy is not None else None,
+            )
+        ]
+    out = []
+    for section in z.per_machine:
+        sales = _dec_or_zero(section.get("totalSales"))
+        refunds = _dec_or_zero(section.get("totalRefunds"))
+        out.append(
+            DaySummaryContributor(
+                **common,
+                machine_id=section.get("machineId"),
+                machine_name=section.get("machineName"),
+                unattended=bool(section.get("unattendedShiftCount")),
+                reconstructed=bool(section.get("reconstructedShiftCount")),
+                uncounted=section.get("countedCash") is None,
+                sales=_to_float(sales),
+                refunds=_to_float(refunds),
+                net=_to_float(sales - refunds),
+                cash_sales=_to_float(_dec_or_zero(section.get("totalCash"))),
+                card_sales=_to_float(_dec_or_zero(section.get("totalCard"))),
+                tips=_to_float(_dec_or_zero(section.get("totalTips"))),
+                transactions_count=int(section.get("transactionsCount") or 0),
+                expected_cash=_to_float(_dec_or_zero(section.get("expectedCash"))),
+                actual_cash=_float_or_none(section.get("countedCash")),
+                discrepancy=_float_or_none(section.get("overShort")),
+            )
+        )
+    return out
+
+
 def build_day_summary_report(
     db: Session,
     current_user: User,
@@ -1067,11 +1138,13 @@ def build_day_summary_report(
     machine_ids: Optional[Sequence[uuid_mod.UUID]] = None,
 ) -> DaySummaryReportResponse:
     """
-    Z reports in the range, grouped by the trading day they were filed under.
+    Z reports in the range, grouped by the business date they were filed under.
 
-    Filtered on `day_date` rather than on `closed_at`: a shift that runs past midnight
-    files its Z the next morning, and the merchant asking about Monday means Monday's
-    trading, not what happened to close between 00:00 and 23:59 on Monday.
+    Filtered on `business_date` rather than on `closed_at`: a Z produced the next morning
+    for Monday's shifts is Monday's trading, not whatever closed between 00:00 and 23:59.
+
+    Contributors are the per-till sections of each Z (a cloud Z spans the shop's tills);
+    a legacy, till-issued Z is its own single section.
 
     `shop_ids` and `machine_ids` narrow the selection and combine as an intersection —
     asking for a shop and a machine outside it is a contradiction and correctly returns
@@ -1081,8 +1154,8 @@ def build_day_summary_report(
         db.query(ZReport)
         .options(joinedload(ZReport.machine), joinedload(ZReport.shop))
         .filter(ZReport.tenant_id == tenant_id)
-        .filter(ZReport.day_date >= window.from_date)
-        .filter(ZReport.day_date <= window.to_date)
+        .filter(ZReport.business_date >= window.from_date)
+        .filter(ZReport.business_date <= window.to_date)
     )
     scoped = scope_query_by_user(
         query,
@@ -1104,10 +1177,23 @@ def build_day_summary_report(
     if shop_ids:
         query = query.filter(ZReport.shop_id.in_(list(shop_ids)))
     if machine_ids:
-        query = query.filter(ZReport.machine_id.in_(list(machine_ids)))
+        from sqlalchemy import select as _select
+        from app.models.shift import Shift as _Shift
+
+        wanted = list(machine_ids)
+        query = query.filter(
+            or_(
+                ZReport.machine_id.in_(wanted),
+                ZReport.id.in_(
+                    _select(_Shift.z_report_id).where(
+                        _Shift.machine_id.in_(wanted), _Shift.z_report_id.isnot(None)
+                    )
+                ),
+            )
+        )
 
     rows: List[ZReport] = (
-        query.order_by(ZReport.day_date.desc(), ZReport.closed_at.desc())
+        query.order_by(ZReport.business_date.desc(), ZReport.closed_at.desc())
         .limit(MAX_DAY_SUMMARY_Z_REPORTS + 1)
         .all()
     )
@@ -1128,41 +1214,19 @@ def build_day_summary_report(
     overall = _Accumulator()
 
     for z in rows:
-        day = z.day_date
+        day = z.business_date
         acc = per_day.setdefault(day, _Accumulator())
         acc.add(z)
         overall.add(z)
-        machines_seen.setdefault(day, set()).add(z.machine_id)
-        contributors.setdefault(day, []).append(
-            DaySummaryContributor(
-                z_report_id=z.id,
-                shop_sequence_number=z.shop_sequence_number,
-                machine_id=z.machine_id,
-                machine_name=z.machine.name if z.machine else None,
-                shop_id=z.shop_id,
-                shop_name=z.shop.name if z.shop else None,
-                closed_at=z.closed_at,
-                unattended=bool(z.unattended),
-                reconstructed=bool(z.reconstructed),
-                uncounted=z.actual_cash is None,
-                sales=_to_float(_dec_or_zero(z.total_sales)),
-                refunds=_to_float(_dec_or_zero(z.total_refunds)),
-                net=_to_float(_dec_or_zero(z.total_sales) - _dec_or_zero(z.total_refunds)),
-                cash_sales=_to_float(_dec_or_zero(z.total_cash_sales)),
-                card_sales=_to_float(_dec_or_zero(z.total_card_sales)),
-                tips=_to_float(_dec_or_zero(z.total_tips)),
-                transactions_count=int(z.transactions_count or 0),
-                expected_cash=_to_float(_dec_or_zero(z.expected_cash)),
-                actual_cash=_to_float(z.actual_cash) if z.actual_cash is not None else None,
-                discrepancy=_to_float(z.discrepancy) if z.discrepancy is not None else None,
-            )
-        )
+        for contributor in _contributors_of(z):
+            machines_seen.setdefault(day, set()).add(contributor.machine_id)
+            contributors.setdefault(day, []).append(contributor)
 
     days = [
         DaySummaryRow(
             day_date=day,
             machine_count=len(machines_seen.get(day, ())),
-            z_report_count=len(contributors.get(day, ())),
+            z_report_count=len({c.z_report_id for c in contributors.get(day, ())}),
             totals=acc.to_totals(),
             contributors=contributors.get(day, []),
         )

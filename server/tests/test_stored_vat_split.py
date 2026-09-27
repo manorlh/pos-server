@@ -137,7 +137,7 @@ class TestPosNumberOnTheDocument:
             updated_at=None,
         )
         return _serialize_tx_for_upsert(
-            tx, machine, trading_day_id=None, payment_method="cash", customer_ref_id=None
+            tx, machine, shift_id=None, payment_method="cash", customer_ref_id=None
         )
 
     def test_the_merchants_register_number_wins(self):

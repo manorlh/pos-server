@@ -250,10 +250,11 @@ class TestTheUpsertRefusesTheDocument:
         machine = _machine()
         document = MagicMock()
         document.id = uuid.uuid4()
+        document.shift_id = None
 
         with patch.object(T, "_tender_rejection_reason", return_value=None), patch.object(
             T, "verify_document_approver", side_effect=ApprovalRejected(reason)
-        ), patch.object(T, "get_or_create_trading_day") as opened_day:
+        ), patch.object(T, "resolve_shift_for_document") as opened_day:
             db = MagicMock()
             db.query.return_value.filter.return_value.all.return_value = []
             results = T.upsert_transactions(db, machine, [document])
@@ -270,7 +271,7 @@ class TestTheUpsertRefusesTheDocument:
         assert results[0].reason == "approver_lacks_scope:refund"
 
     def test_a_rejected_document_leaves_no_trace_behind_it(self):
-        """Not even an auto-opened trading day, exactly as for a bad tender array."""
+        """Not even an auto-opened shift, exactly as for a bad tender array."""
         _results, opened_day = self._upsert("approver_unknown_or_inactive")
 
         opened_day.assert_not_called()
@@ -293,7 +294,7 @@ class TestTheUpsertRefusesTheDocument:
         assert row["approved_by_user_id"] is None
 
 
-# ── Closing the day ──────────────────────────────────────────────────────────
+# ── Closing a shift ──────────────────────────────────────────────────────────
 
 
 class _ZDb:
@@ -339,7 +340,7 @@ class _ZDb:
         pass
 
 
-def _grant(scopes=("day:close",), *, by_till_user=False):
+def _grant(scopes=("shift:close",), *, by_till_user=False):
     """A grant held by a cloud account, or — `by_till_user` — by a till user."""
     holder = uuid.uuid4()
     return SimpleNamespace(
@@ -351,40 +352,43 @@ def _grant(scopes=("day:close",), *, by_till_user=False):
     )
 
 
-def _z_report_row():
+def _shift_row():
     row = MagicMock()
     row.id = uuid.uuid4()
-    row.trading_day_id = uuid.uuid4()
-    row.shop_sequence_number = 7
+    row.totals_mismatch = False
+    row.z_report_id = None
     return row
 
 
 def _close(monkeypatch, *, approval, db=None, missing=(), outcome="accepted"):
-    """Run `post_z_report` with only its Z-writing services stubbed."""
+    """Run `post_shift_close` with only its shift-writing services stubbed."""
     from app.routers import sync as sync_router
 
     captured: dict = {}
-    z_row = _z_report_row()
+    shift = _shift_row()
 
     def _fake_apply(
-        _db, _machine, _body, *, approved_by_user_id=None, approved_by_pos_user_id=None
+        _db, _machine, _shift_id, _body, *, approved_by_user_id=None, approved_by_pos_user_id=None
     ):
         captured["approved_by_user_id"] = approved_by_user_id
         captured["approved_by_pos_user_id"] = approved_by_pos_user_id
-        return z_row, outcome
+        return shift, outcome
 
     monkeypatch.setattr(
-        sync_router, "check_z_report_preconditions", lambda *a, **k: (list(missing), [])
+        sync_router, "check_close_preconditions", lambda *a, **k: (list(missing), [])
     )
-    monkeypatch.setattr(sync_router, "apply_z_report", _fake_apply)
-    monkeypatch.setattr(sync_router, "publish_z_report_closed", lambda *a, **k: None)
+    monkeypatch.setattr(sync_router, "apply_shift_close", _fake_apply)
+    monkeypatch.setattr(sync_router, "on_shift_close_accepted", lambda *a, **k: None)
+    monkeypatch.setattr(sync_router, "shift_totals_out", lambda *a, **k: None)
+    monkeypatch.setattr(sync_router, "z_number_of", lambda *a, **k: None)
 
     machine = _machine()
     body = MagicMock()
-    body.close_day_request_id = None
+    body.transaction_ids = []
 
-    response = sync_router.post_z_report(
+    response = sync_router.post_shift_close(
         machine_id=str(machine.id),
+        shift_id=shift.id,
         body=body,
         machine=machine,
         approval=approval,
@@ -393,18 +397,18 @@ def _close(monkeypatch, *, approval, db=None, missing=(), outcome="accepted"):
     return response, captured
 
 
-class TestClosingTheDay:
-    def test_a_till_that_offers_no_token_still_closes_its_day(self, monkeypatch):
+class TestClosingAShift:
+    def test_a_till_that_offers_no_token_still_closes_its_shift(self, monkeypatch):
         """
-        The operator standing at the till is a `pos_users` row — admin, manager or
-        cashier — and that is not the enum elevation grants come from. A manager-operated
-        till never elevates, so requiring a token would stop it closing at all.
+        A cashier may close a shift alone, and the operator standing at the till is a
+        `pos_users` row, which is not the enum elevation grants come from. Requiring a
+        token would stop the ordinary close.
         """
         _response, captured = _close(monkeypatch, approval=None)
 
         assert captured["approved_by_user_id"] is None
 
-    def test_a_live_grant_puts_a_name_on_the_z(self, monkeypatch):
+    def test_a_live_grant_puts_a_name_on_the_shift(self, monkeypatch):
         grant = _grant()
 
         _response, captured = _close(
@@ -414,7 +418,7 @@ class TestClosingTheDay:
         assert captured["approved_by_user_id"] == grant.user_id
         assert captured["approved_by_pos_user_id"] is None
 
-    def test_a_till_user_grant_puts_the_till_user_on_the_z(self, monkeypatch):
+    def test_a_till_user_grant_puts_the_till_user_on_the_shift(self, monkeypatch):
         """
         A manager who approved by typing their till username has no cloud account to
         name. The close must carry *them*, in the till-user column — not silently no
@@ -429,7 +433,7 @@ class TestClosingTheDay:
         assert captured["approved_by_pos_user_id"] == grant.pos_user_id
         assert captured["approved_by_user_id"] is None
 
-    def test_one_pin_closes_one_day(self, monkeypatch):
+    def test_one_pin_closes_one_shift(self, monkeypatch):
         """The second close needs the manager back at the till, not the same token."""
         from fastapi import HTTPException
 
@@ -444,7 +448,7 @@ class TestClosingTheDay:
 
     def test_a_close_sent_away_to_flush_its_outbox_keeps_its_pin(self, monkeypatch):
         """
-        A 409 tells the till to push the documents the Z references and come straight
+        A 409 tells the till to push the documents the close lists and come straight
         back. Spending the grant on the way in would burn the manager's PIN on a close
         that did not happen, and the retry would arrive with nothing to present.
         """

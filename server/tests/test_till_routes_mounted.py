@@ -18,6 +18,12 @@ TILL_ROUTES = {
     ("PUT", "/api/v1/sync/{machine_id}/categories/{category_id}"),
     ("DELETE", "/api/v1/sync/{machine_id}/categories/{category_id}"),
     ("PUT", "/api/v1/sync/{machine_id}/machine-catalog"),
+    ("POST", "/api/v1/sync/{machine_id}/transactions"),
+    ("POST", "/api/v1/sync/{machine_id}/shifts"),
+    ("POST", "/api/v1/sync/{machine_id}/shifts/{shift_id}/close"),
+    ("GET", "/api/v1/sync/{machine_id}/shifts/last-closed"),
+    ("POST", "/api/v1/sync/{machine_id}/shift-close/ack"),
+    ("POST", "/api/v1/machines/me/heartbeat"),
     ("POST", "/api/v1/elevation/sessions"),
     ("DELETE", "/api/v1/elevation/sessions/current"),
 }

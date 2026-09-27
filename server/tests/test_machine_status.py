@@ -34,9 +34,9 @@ def _machine(**kw) -> StatusInput:
         is_active=True,
         pairing_status="assigned",
         last_heartbeat_at=NOW - timedelta(seconds=5),
-        trading_day_open=True,
-        day_date=TODAY,
-        close_day_pending=False,
+        shift_open=True,
+        business_date=TODAY,
+        close_shift_pending=False,
         pending_documents=0,
         pending_count=0,
         pending_count_at=NOW - timedelta(seconds=5),
@@ -61,31 +61,31 @@ class TestTheFourColours:
     def test_offline(self):
         assert _status(last_heartbeat_at=NOW - timedelta(minutes=10)) == MachineStatus.OFFLINE
 
-    def test_day_closed(self):
-        assert _status(trading_day_open=False) == MachineStatus.DAY_CLOSED
+    def test_no_open_shift(self):
+        assert _status(shift_open=False) == MachineStatus.NO_OPEN_SHIFT
 
 
 # ── Precedence: the part that is easy to get wrong ───────────────────────────
 
 class TestPrecedence:
-    def test_a_closed_day_outranks_being_offline(self):
+    def test_no_open_shift_outranks_being_offline(self):
         """
-        A till switched off after its day is behaving correctly. Showing it red every
+        A till switched off after its shift is behaving correctly. Showing it red every
         evening teaches the shop that red means nothing, which is how a real outage gets
         missed. This is a deliberate inversion of the urgency ordering.
         """
         assert _status(
-            trading_day_open=False, last_heartbeat_at=NOW - timedelta(hours=3)
-        ) == MachineStatus.DAY_CLOSED
+            shift_open=False, last_heartbeat_at=NOW - timedelta(hours=3)
+        ) == MachineStatus.NO_OPEN_SHIFT
 
-    def test_unsynced_documents_outrank_a_closed_day(self):
+    def test_unsynced_documents_outrank_no_open_shift(self):
         """
         Undelivered documents after a close mean the close drained less than it claimed.
-        That is anomalous whatever the day says, so it must not be hidden behind the
+        That is anomalous whatever the shift says, so it must not be hidden behind the
         tidy black light above.
         """
         assert _status(
-            trading_day_open=False,
+            shift_open=False,
             last_heartbeat_at=NOW - timedelta(hours=3),
             pending_documents=2,
         ) == MachineStatus.OFFLINE_WITH_UNSYNCED
@@ -98,10 +98,10 @@ class TestPrecedence:
 
     def test_a_backlog_outranks_a_queued_close(self):
         """A queued close is information; unsent sales are a problem."""
-        assert _status(close_day_pending=True, pending_documents=1) == MachineStatus.PENDING_SYNC
+        assert _status(close_shift_pending=True, pending_documents=1) == MachineStatus.PENDING_SYNC
 
     def test_a_queued_close_shows_on_an_otherwise_healthy_till(self):
-        assert _status(close_day_pending=True) == MachineStatus.CLOSE_PENDING
+        assert _status(close_shift_pending=True) == MachineStatus.SHIFT_CLOSE_PENDING
 
     def test_retired_outranks_everything(self):
         assert _status(
@@ -180,12 +180,12 @@ class TestFlags:
     def _flags(self, **kw):
         return resolve_status(_machine(**kw), now=NOW).flags
 
-    def test_a_day_left_open_past_its_date_is_flagged(self):
+    def test_a_shift_left_open_past_its_date_is_flagged(self):
         """What a dead terminal leaves behind — today, only visible if you go looking."""
-        assert MachineFlag.DAY_OPEN_PAST_ITS_DATE in self._flags(day_date=TODAY - timedelta(days=1))
+        assert MachineFlag.SHIFT_OPEN_PAST_ITS_DATE in self._flags(business_date=TODAY - timedelta(days=1))
 
-    def test_todays_open_day_is_not_flagged(self):
-        assert MachineFlag.DAY_OPEN_PAST_ITS_DATE not in self._flags()
+    def test_todays_open_shift_is_not_flagged(self):
+        assert MachineFlag.SHIFT_OPEN_PAST_ITS_DATE not in self._flags()
 
     def test_a_flag_does_not_change_the_light(self):
         """
@@ -193,7 +193,7 @@ class TestFlags:
         clock is still green, with a badge. Folding flags into the colour would make the
         colour mean nothing.
         """
-        assert _status(day_date=TODAY - timedelta(days=1), clock_skew_ms=999_999) == MachineStatus.ONLINE
+        assert _status(business_date=TODAY - timedelta(days=1), clock_skew_ms=999_999) == MachineStatus.ONLINE
 
     def test_clock_skew_is_flagged_in_both_directions(self):
         assert MachineFlag.CLOCK_SKEWED in self._flags(clock_skew_ms=CLOCK_SKEW_TOLERANCE_MS + 1)
@@ -216,6 +216,54 @@ class TestFlags:
     def test_catalog_behind_is_flagged(self):
         assert MachineFlag.CATALOG_BEHIND in self._flags(catalog_pull_stale=True)
 
+    def test_closed_shifts_from_an_earlier_date_awaiting_a_z_are_flagged(self):
+        """A shop that forgot its Z: yesterday's closed shifts no Z has taken."""
+        assert MachineFlag.CLOSED_SHIFTS_AWAITING_Z in self._flags(
+            oldest_awaiting_z_date=TODAY - timedelta(days=1)
+        )
+
+    def test_todays_closed_shifts_awaiting_a_z_are_not_flagged(self):
+        """The morning shift is closed and the Z is due tonight: nothing is wrong yet."""
+        assert MachineFlag.CLOSED_SHIFTS_AWAITING_Z not in self._flags(oldest_awaiting_z_date=TODAY)
+        assert MachineFlag.CLOSED_SHIFTS_AWAITING_Z not in self._flags(oldest_awaiting_z_date=None)
+
+    def test_awaiting_z_does_not_change_the_light(self):
+        assert _status(oldest_awaiting_z_date=TODAY - timedelta(days=3)) == MachineStatus.ONLINE
+
+
+# ── "Today" is the shop's date, not UTC's ────────────────────────────────────
+
+class TestTodayIsTheTenantsDate:
+    """
+    22:30 UTC on 9 September is 01:30 on 10 September in Israel. A shift opened on the
+    9th is, for the shop, past its date — and under UTC it looked current until 03:00.
+    """
+
+    LATE = datetime(2026, 9, 9, 22, 30, tzinfo=timezone.utc)
+
+    def _flags(self, tz, **kw):
+        return resolve_status(_machine(timezone_name=tz, last_heartbeat_at=self.LATE, pending_count_at=self.LATE, **kw), now=self.LATE).flags
+
+    def test_a_shift_from_yesterday_in_israel_is_flagged_after_local_midnight(self):
+        assert MachineFlag.SHIFT_OPEN_PAST_ITS_DATE in self._flags(
+            "Asia/Jerusalem", business_date=date(2026, 9, 9)
+        )
+
+    def test_under_utc_the_same_shift_is_still_current(self):
+        assert MachineFlag.SHIFT_OPEN_PAST_ITS_DATE not in self._flags(
+            "UTC", business_date=date(2026, 9, 9)
+        )
+
+    def test_awaiting_z_uses_the_same_local_today(self):
+        assert MachineFlag.CLOSED_SHIFTS_AWAITING_Z in self._flags(
+            "Asia/Jerusalem", oldest_awaiting_z_date=date(2026, 9, 9)
+        )
+
+    def test_an_unknown_zone_falls_back_to_utc_rather_than_failing(self):
+        assert MachineFlag.SHIFT_OPEN_PAST_ITS_DATE not in self._flags(
+            "Not/AZone", business_date=date(2026, 9, 9)
+        )
+
 
 # ── The scenario that started this ───────────────────────────────────────────
 
@@ -224,13 +272,13 @@ class TestDeadTerminalScenario:
         """
         The case discussed with the merchant: a terminal dies mid-day with sales that
         never reached the cloud. It must not read as an ordinary offline till, and the
-        day it left open must be flagged, because nothing can ever close it.
+        shift it left open must be flagged, because nothing can ever close it.
         """
         out = resolve_status(
             _machine(
                 last_heartbeat_at=NOW - timedelta(days=1),
                 pending_documents=7,
-                day_date=TODAY - timedelta(days=1),
+                business_date=TODAY - timedelta(days=1),
             ),
             now=NOW,
         )
@@ -238,7 +286,7 @@ class TestDeadTerminalScenario:
         assert out.status == MachineStatus.OFFLINE_WITH_UNSYNCED
         assert out.online is False
         assert out.pending_documents == 7
-        assert MachineFlag.DAY_OPEN_PAST_ITS_DATE in out.flags
+        assert MachineFlag.SHIFT_OPEN_PAST_ITS_DATE in out.flags
 
 
 # ── The heartbeat must actually persist what the till reports ────────────────

@@ -34,7 +34,7 @@ def get_tips_report(
     shop_id: str,
     from_date: Optional[date] = Query(None, alias="from"),
     to_date: Optional[date] = Query(None, alias="to"),
-    trading_day_id: Optional[str] = Query(None, alias="tradingDayId"),
+    shift_id: Optional[str] = Query(None, alias="shiftId"),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -43,16 +43,16 @@ def get_tips_report(
     _check_shop_access(current_user, shop, db)
 
     td_uuid: Optional[uuid.UUID] = None
-    if trading_day_id:
+    if shift_id:
         try:
-            td_uuid = uuid.UUID(trading_day_id)
+            td_uuid = uuid.UUID(shift_id)
         except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tradingDayId")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid shiftId")
 
     if not td_uuid and not from_date and not to_date:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Provide tradingDayId or from/to date range",
+            detail="Provide shiftId or from/to date range",
         )
 
     return build_tips_report(
@@ -60,5 +60,5 @@ def get_tips_report(
         shop,
         from_date=from_date,
         to_date=to_date,
-        trading_day_id=td_uuid,
+        shift_id=td_uuid,
     )

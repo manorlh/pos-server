@@ -15,7 +15,7 @@ from app.models.shop_product_override import ShopProductOverride
 from app.models.product_availability_override import CompanyProductOverride, MachineProductOverride
 from app.models.machine_catalog_item import MachineCatalogItem
 from app.models.shop_category_override import ShopCategoryOverride
-from app.models.trading_day import TradingDay, TradingDayStatus
+from app.models.shift import Shift, ShiftStatus
 from app.models.transaction import Transaction, TransactionStatus
 from app.models.transaction_item import TransactionItem
 from app.models.transaction_payment import TransactionPayment
@@ -50,7 +50,7 @@ __all__ = [
     "MachineProductOverride",
     "MachineCatalogItem",
     "ShopCategoryOverride",
-    "TradingDay", "TradingDayStatus",
+    "Shift", "ShiftStatus",
     "Transaction", "TransactionStatus",
     "TransactionItem",
     "TransactionPayment",

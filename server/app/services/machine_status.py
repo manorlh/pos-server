@@ -9,28 +9,29 @@ dashboard that says a terminal is reachable while the close-day gate says it is 
 **Primary status is a single value with strict precedence**, not a set of independent
 lights. The four colours a merchant expects (online-and-synced, online-with-pending,
 offline, closed) do not sit on one axis: the first three describe connectivity and sync,
-the fourth describes the trading day. A terminal can be offline *and* holding unsynced
+the fourth describes the shift. A terminal can be offline *and* holding unsynced
 sales, which in a four-state model shows the same red as a tidy powered-off till while
 being the single most alarming state there is — money on a device nobody can reach.
 
 So the order below is by what the manager has to *do*, with one deliberate exception:
-`DAY_CLOSED` outranks `OFFLINE`. A till that has finished its day and been switched off
+`NO_OPEN_SHIFT` outranks `OFFLINE`. A till that has closed its shift and been switched off
 is behaving correctly and must not look like a fault; the shop would learn to ignore a
 row of red lights every evening, which is how a real outage gets missed.
 
-`OFFLINE_WITH_UNSYNCED` still outranks `DAY_CLOSED`, because undelivered documents on a
-closed day mean a close that drained less than it should have — anomalous whatever the
-day says.
+`OFFLINE_WITH_UNSYNCED` still outranks `NO_OPEN_SHIFT`, because undelivered documents with
+no shift open mean a close that drained less than it should have — anomalous whatever the
+shift says.
 
 Secondary flags never change the colour. They are for things worth showing next to a
 terminal that is otherwise fine: a clock that has drifted, a catalog it has not pulled,
-a day it left open. Folding those into the light would make the light mean nothing.
+a shift it left open, closed shifts no Z has taken yet. Folding those into the light would make the light mean nothing.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 
 #: How long after its last heartbeat a terminal is still considered online.
 #:
@@ -47,24 +48,26 @@ class MachineStatus:
     NOT_PAIRED = "not_paired"
     RETIRED = "retired"
     OFFLINE_WITH_UNSYNCED = "offline_with_unsynced"
-    DAY_CLOSED = "day_closed"
+    NO_OPEN_SHIFT = "no_open_shift"
     OFFLINE = "offline"
     PENDING_SYNC = "pending_sync"
-    CLOSE_PENDING = "close_pending"
+    SHIFT_CLOSE_PENDING = "shift_close_pending"
     ONLINE = "online"
 
 
 class MachineFlag:
     """Secondary conditions. Shown beside the status; never instead of it."""
 
-    DAY_OPEN_PAST_ITS_DATE = "day_open_past_its_date"
+    SHIFT_OPEN_PAST_ITS_DATE = "shift_open_past_its_date"
+    #: Closed shifts that no Z has taken, from a business date before today.
+    CLOSED_SHIFTS_AWAITING_Z = "closed_shifts_awaiting_z"
     CATALOG_BEHIND = "catalog_behind"
     CLOCK_SKEWED = "clock_skewed"
     LOW_BATTERY = "low_battery"
     REALTIME_DOWN = "realtime_down"
 
 
-#: Beyond this, a document's timestamps land in the wrong trading day often enough to
+#: Beyond this, a document's timestamps land in the wrong shift or date often enough to
 #: matter. Two minutes is far more drift than NTP ever leaves and far less than the
 #: window in which a receipt's time would look wrong to a customer.
 CLOCK_SKEW_TOLERANCE_MS = 120_000
@@ -79,9 +82,14 @@ class StatusInput:
     is_active: bool = True
     pairing_status: Optional[str] = None
     last_heartbeat_at: Optional[datetime] = None
-    trading_day_open: bool = False
-    day_date: Optional[object] = None
-    close_day_pending: bool = False
+    shift_open: bool = False
+    #: The open shift's business date.
+    business_date: Optional[date] = None
+    close_shift_pending: bool = False
+    #: The oldest business date among this till's closed shifts not yet in a Z.
+    oldest_awaiting_z_date: Optional[date] = None
+    #: The tenant's timezone, which is what "today" means for the date flags.
+    timezone_name: Optional[str] = None
     pending_documents: Optional[int] = None
     pending_count: Optional[int] = None
     pending_count_at: Optional[datetime] = None
@@ -119,6 +127,26 @@ def is_online(last_heartbeat_at: Optional[datetime], *, now: Optional[datetime] 
     if reference.tzinfo is None:
         reference = reference.replace(tzinfo=timezone.utc)
     return (reference - beat) <= timedelta(seconds=ONLINE_WINDOW_SEC)
+
+
+def local_today(timezone_name: Optional[str], *, now: Optional[datetime] = None) -> date:
+    """
+    Today's date where the shop is, not in UTC.
+
+    A business date is the till's local date, so comparing it with the UTC date left
+    yesterday's shift in Israel looking current until 02:00-03:00 local, and the flag
+    for a shop east of UTC late by the same margin. An unknown or missing zone falls
+    back to UTC rather than failing the machine list.
+    """
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    if timezone_name:
+        try:
+            return reference.astimezone(ZoneInfo(timezone_name)).date()
+        except Exception:  # noqa: BLE001 - a bad zone string must not take the list down
+            pass
+    return reference.astimezone(timezone.utc).date()
 
 
 def _undelivered(data: StatusInput) -> int:
@@ -164,16 +192,16 @@ def _primary(data: StatusInput, *, online: bool, undelivered: int) -> str:
     if data.pairing_status != "assigned" or data.last_heartbeat_at is None:
         return MachineStatus.NOT_PAIRED
 
-    # Money on a terminal nobody can reach. Outranks everything below, including a
-    # closed day, because undelivered documents after a close mean the close drained
-    # less than it claimed.
+    # Money on a terminal nobody can reach. Outranks everything below, including no open
+    # shift, because undelivered documents after a close mean the close drained less
+    # than it claimed.
     if not online and undelivered > 0:
         return MachineStatus.OFFLINE_WITH_UNSYNCED
 
-    # Deliberately above OFFLINE: a till switched off after its day is correct
+    # Deliberately above OFFLINE: a till switched off after its shift is correct
     # behaviour, and painting it red every evening trains the shop to ignore red.
-    if not data.trading_day_open:
-        return MachineStatus.DAY_CLOSED
+    if not data.shift_open:
+        return MachineStatus.NO_OPEN_SHIFT
 
     if not online:
         return MachineStatus.OFFLINE
@@ -183,8 +211,8 @@ def _primary(data: StatusInput, *, online: bool, undelivered: int) -> str:
 
     # Only once the terminal is otherwise healthy: a queued close is information, not a
     # fault, and it would be a strange thing to show over an unsynced backlog.
-    if data.close_day_pending:
-        return MachineStatus.CLOSE_PENDING
+    if data.close_shift_pending:
+        return MachineStatus.SHIFT_CLOSE_PENDING
 
     return MachineStatus.ONLINE
 
@@ -192,13 +220,16 @@ def _primary(data: StatusInput, *, online: bool, undelivered: int) -> str:
 def _flags(data: StatusInput, *, now: Optional[datetime]) -> List[str]:
     flags: List[str] = []
 
-    # A day still open on a date that has passed. This is what a dead terminal leaves
+    today = local_today(data.timezone_name, now=now)
+    # A shift still open on a date that has passed. This is what a dead terminal leaves
     # behind — nothing can close it, and today it is visible only to someone who goes
     # looking for it.
-    if data.trading_day_open and data.day_date is not None:
-        reference = (now or datetime.now(timezone.utc)).date()
-        if data.day_date < reference:
-            flags.append(MachineFlag.DAY_OPEN_PAST_ITS_DATE)
+    if data.shift_open and data.business_date is not None:
+        if data.business_date < today:
+            flags.append(MachineFlag.SHIFT_OPEN_PAST_ITS_DATE)
+    # A shop that forgot its Z: closed shifts from an earlier date that no Z has taken.
+    if data.oldest_awaiting_z_date is not None and data.oldest_awaiting_z_date < today:
+        flags.append(MachineFlag.CLOSED_SHIFTS_AWAITING_Z)
 
     if data.catalog_pull_stale:
         flags.append(MachineFlag.CATALOG_BEHIND)

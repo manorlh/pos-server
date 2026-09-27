@@ -1,4 +1,4 @@
-"""Cloud-initiated close-day orchestration."""
+"""Cloud-initiated remote shift close (interim: replaced by `app.services.z_runs`)."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -16,11 +16,9 @@ from app.models.close_day import (
     CloseDayRequestStatus,
 )
 from app.models.pos_machine import POSMachine, PairingStatus
-from app.models.trading_day import TradingDay, TradingDayStatus
+from app.models.shift import Shift, ShiftStatus
 from app.models.user import User, UserRole
-from app.models.z_report import ZReport
 from app.services.machine_status import ONLINE_WINDOW_SEC, is_online
-from app.services.transactions import find_open_trading_day
 from app.services.permission_matrix import SHOP_SCOPED_ROLES
 
 #: Kept as a re-export so existing callers and tests keep their name, but there is now
@@ -56,31 +54,10 @@ def get_pending_close_day_machine_ids(db: Session, machine_ids: List[uuid.UUID])
 
 def get_open_trading_days_for_machines(
     db: Session, machine_ids: List[uuid.UUID]
-) -> Dict[uuid.UUID, TradingDay]:
-    if not machine_ids:
-        return {}
-    rows = (
-        db.query(TradingDay)
-        .filter(
-            TradingDay.machine_id.in_(machine_ids),
-            TradingDay.status == TradingDayStatus.OPEN,
-        )
-        .all()
-    )
-    out: Dict[uuid.UUID, TradingDay] = {}
-    for td in rows:
-        existing = out.get(td.machine_id)
-        if existing is None or td.opened_at > existing.opened_at:
-            out[td.machine_id] = td
-    return out
+) -> Dict[uuid.UUID, Shift]:
+    from app.services.shifts import open_shifts_for_machines
 
-
-def trading_day_status_for_machine(
-    db: Session, machine_id: uuid.UUID, open_td: Optional[TradingDay]
-) -> str:
-    if open_td is not None:
-        return "open"
-    return "none"
+    return open_shifts_for_machines(db, machine_ids)
 
 
 def _recompute_request_status(request: CloseDayRequest) -> None:
@@ -112,7 +89,7 @@ def _item_to_out(item: CloseDayRequestItem, machine_name: Optional[str] = None) 
         "id": item.id,
         "machineId": item.machine_id,
         "machineName": name,
-        "tradingDayId": item.trading_day_id,
+        "shiftId": item.shift_id,
         "zReportId": item.z_report_id,
         "status": status_val,
         "errorCode": item.error_code,
@@ -274,7 +251,7 @@ def resolve_machines_for_close_day(
     if not machines:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No machines with an open trading day",
+            detail="No machines with an open shift",
         )
     return machines
 
@@ -315,7 +292,7 @@ def create_close_day_request(
     shop_id: Optional[uuid.UUID] = None,
     ttl_hours: Optional[int] = None,
 ) -> CloseDayRequest:
-    from app.services.ably_notify import publish_close_day_notify
+    from app.services.ably_notify import publish_close_shift_notify
 
     now = datetime.now(timezone.utc)
     machine_ids = [m.id for m in machines]
@@ -339,7 +316,7 @@ def create_close_day_request(
         item = CloseDayRequestItem(
             request_id=request.id,
             machine_id=machine.id,
-            trading_day_id=td.id if td else None,
+            shift_id=td.id if td else None,
             status=CloseDayItemStatus.PENDING,
         )
 
@@ -351,7 +328,7 @@ def create_close_day_request(
         elif td is None:
             item.status = CloseDayItemStatus.FAILED
             item.error_code = "no_open_day"
-            item.error_message = "No open trading day on server for this machine"
+            item.error_message = "No open shift on server for this machine"
             item.failed_at = now
         elif not machine.tenant_id:
             item.status = CloseDayItemStatus.FAILED
@@ -367,16 +344,18 @@ def create_close_day_request(
             # `expires_at` is what stops this waiting forever.
             item.status = CloseDayItemStatus.PENDING
         else:
-            publish_close_day_notify(
-                str(machine.tenant_id),
-                str(machine.id),
-                str(request.id),
-                initiator_name,
-            )
             item.status = CloseDayItemStatus.SENT
             item.sent_at = now
-
         db.add(item)
+        db.flush()
+        if item.status == CloseDayItemStatus.SENT:
+            publish_close_shift_notify(
+                str(machine.tenant_id),
+                str(machine.id),
+                str(item.id),
+                str(item.shift_id) if item.shift_id else None,
+                initiator_name,
+            )
 
     db.flush()
     db.refresh(request)
@@ -428,37 +407,35 @@ def apply_close_day_ack(
     *,
     request_id: uuid.UUID,
     phase: str,
-    z_report_id: Optional[uuid.UUID] = None,
+    shift_id: Optional[uuid.UUID] = None,
     error_code: Optional[str] = None,
     error_message: Optional[str] = None,
 ) -> CloseDayRequestItem:
+    """A till's acknowledgement of a remote close instruction; `request_id` is the item id."""
     now = datetime.now(timezone.utc)
     item = (
         db.query(CloseDayRequestItem)
         .join(CloseDayRequest, CloseDayRequest.id == CloseDayRequestItem.request_id)
         .filter(
-            CloseDayRequestItem.request_id == request_id,
+            CloseDayRequestItem.id == request_id,
             CloseDayRequestItem.machine_id == machine.id,
             CloseDayRequest.tenant_id == machine.tenant_id,
         )
         .first()
     )
     if item is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Close-day request item not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="close_request_not_found")
 
-    if phase == "received":
-        if item.status in (CloseDayItemStatus.SENT, CloseDayItemStatus.RECEIVED):
+    if phase in ("received", "deferred"):
+        if item.status in (CloseDayItemStatus.PENDING, CloseDayItemStatus.SENT, CloseDayItemStatus.RECEIVED):
             item.status = CloseDayItemStatus.RECEIVED
             item.received_at = item.received_at or now
+            if phase == "deferred":
+                item.error_code = error_code or "deferred"
+                item.error_message = error_message
     elif phase == "completed":
-        if z_report_id:
-            zr = db.query(ZReport).filter(ZReport.id == z_report_id, ZReport.machine_id == machine.id).first()
-            if not zr:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="zReportId not found for machine")
-            item.z_report_id = zr.id
-            item.trading_day_id = zr.trading_day_id
-        item.status = CloseDayItemStatus.COMPLETED
-        item.completed_at = now
+        # Informational: the item completes when the close itself is accepted.
+        pass
     elif phase == "failed":
         item.status = CloseDayItemStatus.FAILED
         item.error_code = error_code or "failed"
@@ -466,41 +443,31 @@ def apply_close_day_ack(
         item.failed_at = now
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid phase")
+    if shift_id is not None and item.shift_id is None:
+        item.shift_id = shift_id
 
     db.flush()
-    request = db.query(CloseDayRequest).filter(CloseDayRequest.id == request_id).first()
-    if request:
-        _recompute_request_status(request)
+    if item.request is not None:
+        _recompute_request_status(item.request)
     db.commit()
     db.refresh(item)
     return item
 
 
-def complete_close_day_item_for_z_report(
-    db: Session,
-    machine_id: uuid.UUID,
-    request_id: uuid.UUID,
-    z_report_id: uuid.UUID,
-) -> None:
-    """Auto-complete pending item when z-report includes requestId."""
-    item = (
-        db.query(CloseDayRequestItem)
-        .filter(
-            CloseDayRequestItem.request_id == request_id,
-            CloseDayRequestItem.machine_id == machine_id,
-            CloseDayRequestItem.status.in_(PENDING_ITEM_STATUSES),
-        )
-        .first()
+def complete_close_request_for_shift(db: Session, machine_id: uuid.UUID, shift: Shift) -> None:
+    """The till's close of `shift` was accepted: finish any instruction that asked for it."""
+    query = db.query(CloseDayRequestItem).filter(
+        CloseDayRequestItem.machine_id == machine_id,
+        CloseDayRequestItem.status.in_(PENDING_ITEM_STATUSES),
     )
-    if item is None:
-        return
+    if shift.close_request_item_id is not None:
+        query = query.filter(CloseDayRequestItem.id == shift.close_request_item_id)
+    else:
+        query = query.filter(CloseDayRequestItem.shift_id == shift.id)
     now = datetime.now(timezone.utc)
-    item.status = CloseDayItemStatus.COMPLETED
-    item.z_report_id = z_report_id
-    item.completed_at = now
-    zr = db.query(ZReport).filter(ZReport.id == z_report_id).first()
-    if zr:
-        item.trading_day_id = zr.trading_day_id
-    request = db.query(CloseDayRequest).filter(CloseDayRequest.id == request_id).first()
-    if request:
-        _recompute_request_status(request)
+    for item in query.all():
+        item.status = CloseDayItemStatus.COMPLETED
+        item.shift_id = shift.id
+        item.completed_at = now
+        if item.request is not None:
+            _recompute_request_status(item.request)

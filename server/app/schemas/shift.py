@@ -1,0 +1,172 @@
+"""Shift (משמרת) payloads. The wire contract is docs/SHIFTS_API.md."""
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any, Dict, List, Literal, Optional
+import uuid
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class ShiftOpenIn(BaseModel):
+    """
+    A shift the till has already opened, reported to the cloud.
+
+    Not a request to open one — the till opens shifts by itself and sells at once, with
+    or without a connection. This carries what only the till knows: the real opening
+    time, the float, and who opened it.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: uuid.UUID
+    business_date: date = Field(..., alias="businessDate")
+    sequence_number: Optional[int] = Field(None, alias="sequenceNumber")
+    opened_at: datetime = Field(..., alias="openedAt")
+    opening_cash: Optional[Decimal] = Field(None, alias="openingCash")
+    opened_by_user_id: Optional[str] = Field(None, alias="openedByUserId", max_length=100)
+    opened_by_name: Optional[str] = Field(None, alias="openedByName", max_length=255)
+
+
+class ShiftCloseIn(BaseModel):
+    """The till's close of one shift: the count, the document list, and its own X."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    closed_at: datetime = Field(..., alias="closedAt")
+    closed_by_user_id: Optional[str] = Field(None, alias="closedByUserId", max_length=100)
+    closed_by_name: Optional[str] = Field(None, alias="closedByName", max_length=255)
+    #: Closed remotely with nobody at the drawer. The server then stores no count,
+    #: whatever the body says, so the X cannot claim a variance nobody verified.
+    unattended: bool = False
+    counted_cash: Optional[Decimal] = Field(None, alias="countedCash")
+    expected_cash: Optional[Decimal] = Field(None, alias="expectedCash")
+    #: Every document of the shift. 409 until each one is on the cloud.
+    transaction_ids: List[uuid.UUID] = Field(default_factory=list, alias="transactionIds")
+    last_transaction_number: Optional[str] = Field(None, alias="lastTransactionNumber", max_length=100)
+    #: The till's own X figures. Stored for audit and compared; never used for a Z.
+    till: Optional[Dict[str, Any]] = None
+    close_request_id: Optional[uuid.UUID] = Field(None, alias="closeRequestId")
+
+    # Optional open fields, so a shift whose open event never arrived can still close.
+    business_date: Optional[date] = Field(None, alias="businessDate")
+    sequence_number: Optional[int] = Field(None, alias="sequenceNumber")
+    opened_at: Optional[datetime] = Field(None, alias="openedAt")
+    opening_cash: Optional[Decimal] = Field(None, alias="openingCash")
+    opened_by_user_id: Optional[str] = Field(None, alias="openedByUserId", max_length=100)
+    opened_by_name: Optional[str] = Field(None, alias="openedByName", max_length=255)
+
+
+class ShiftTotalsOut(BaseModel):
+    """The X figures (docs/SHIFTS_API.md §3.2)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    total_sales: Optional[Decimal] = Field(None, alias="totalSales")
+    total_refunds: Optional[Decimal] = Field(None, alias="totalRefunds")
+    total_cash: Optional[Decimal] = Field(None, alias="totalCash")
+    total_card: Optional[Decimal] = Field(None, alias="totalCard")
+    total_tips: Optional[Decimal] = Field(None, alias="totalTips")
+    total_cash_tips: Optional[Decimal] = Field(None, alias="totalCashTips")
+    total_card_tips: Optional[Decimal] = Field(None, alias="totalCardTips")
+    vat_total: Optional[Decimal] = Field(None, alias="vatTotal")
+    transactions_count: Optional[int] = Field(None, alias="transactionsCount")
+    first_transaction_number: Optional[str] = Field(None, alias="firstTransactionNumber")
+    last_transaction_number: Optional[str] = Field(None, alias="lastTransactionNumber")
+
+
+class ShiftOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: uuid.UUID
+    tenant_id: Optional[uuid.UUID] = Field(None, alias="tenantId")
+    machine_id: uuid.UUID = Field(..., alias="machineId")
+    shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
+    business_date: date = Field(..., alias="businessDate")
+    sequence_number: Optional[int] = Field(None, alias="sequenceNumber")
+    status: str
+    opened_at: datetime = Field(..., alias="openedAt")
+    opening_cash: Optional[Decimal] = Field(None, alias="openingCash")
+    opened_by_user_id: Optional[str] = Field(None, alias="openedByUserId")
+    opened_by_name: Optional[str] = Field(None, alias="openedByName")
+    closed_at: Optional[datetime] = Field(None, alias="closedAt")
+    close_accepted_at: Optional[datetime] = Field(None, alias="closeAcceptedAt")
+    closed_by_user_id: Optional[str] = Field(None, alias="closedByUserId")
+    closed_by_name: Optional[str] = Field(None, alias="closedByName")
+    unattended: bool = False
+    counted_cash: Optional[Decimal] = Field(None, alias="countedCash")
+    expected_cash: Optional[Decimal] = Field(None, alias="expectedCash")
+    discrepancy: Optional[Decimal] = None
+    server_totals: Optional[ShiftTotalsOut] = Field(None, alias="serverTotals")
+    till_totals: Optional[Dict[str, Any]] = Field(None, alias="tillTotals")
+    totals_mismatch: bool = Field(False, alias="totalsMismatch")
+    reconstructed: bool = False
+    reconstruction_basis: Optional[Dict[str, Any]] = Field(None, alias="reconstructionBasis")
+    z_report_id: Optional[uuid.UUID] = Field(None, alias="zReportId")
+    z_number: Optional[int] = Field(None, alias="zNumber")
+
+    # Filled on dashboard reads.
+    machine_name: Optional[str] = Field(None, alias="machineName")
+    shop_name: Optional[str] = Field(None, alias="shopName")
+    payment_breakdown: Optional[Dict[str, Any]] = Field(None, alias="paymentBreakdown")
+
+
+class ShiftCloseResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    status: Literal["accepted", "duplicate"]
+    shift_id: uuid.UUID = Field(..., alias="shiftId")
+    server_totals: Optional[ShiftTotalsOut] = Field(None, alias="serverTotals")
+    totals_mismatch: bool = Field(False, alias="totalsMismatch")
+    z_report_id: Optional[uuid.UUID] = Field(None, alias="zReportId")
+    z_number: Optional[int] = Field(None, alias="zNumber")
+    server_time: datetime = Field(..., alias="serverTime")
+
+
+class ShiftMissingResponse(BaseModel):
+    """409 — push these documents and retry the close."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    detail: Literal["missing_transactions"] = "missing_transactions"
+    missing_ids: List[uuid.UUID] = Field(..., alias="missingIds")
+    stale_ids: List[uuid.UUID] = Field(default_factory=list, alias="staleIds")
+
+
+class ShiftCloseAckIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    request_id: uuid.UUID = Field(..., alias="requestId")
+    phase: Literal["received", "deferred", "completed", "failed"]
+    shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
+    error_code: Optional[str] = Field(None, alias="errorCode", max_length=64)
+    error_message: Optional[str] = Field(None, alias="errorMessage", max_length=2000)
+
+
+class ShiftCloseAckResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    ok: bool = True
+    item_status: str = Field(..., alias="itemStatus")
+
+
+class LastClosedShift(BaseModel):
+    """The till's last closed shift, to prefill the next opening float."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
+    sequence_number: Optional[int] = Field(None, alias="sequenceNumber")
+    business_date: Optional[date] = Field(None, alias="businessDate")
+    closed_at: Optional[datetime] = Field(None, alias="closedAt")
+    counted_cash: Optional[Decimal] = Field(None, alias="countedCash")
+    expected_cash: Optional[Decimal] = Field(None, alias="expectedCash")
+    reconstructed: bool = False
+
+
+class ShiftListResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    page: int
+    page_size: int = Field(..., alias="pageSize")
+    total: int
+    items: List[ShiftOut]

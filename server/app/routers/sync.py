@@ -7,6 +7,7 @@ PUT  /sync/{machine_id}/machine-catalog        → the till's own mode and list,
                                                  manager's authority
 """
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -30,9 +31,7 @@ from app.services.permissions import Scope
 from app.models.category import Category, CatalogLevel as CategoryCatalogLevel
 from app.models.elevated_session import ElevatedSession
 from app.models.pos_machine import POSMachine
-from app.models.z_report import ZReport
 from app.services.elevation import consume_per_action_use
-from app.models.trading_day import TradingDay, TradingDayStatus
 from app.models.pos_user import PosUser
 from app.models.product import Product, CatalogLevel
 from app.models.sync_log import SyncLog, SyncAction, SyncDirection, SyncEntityType, SyncStatus
@@ -57,14 +56,16 @@ from app.schemas.transaction import (
     TransactionsBatchRequest,
     TransactionsBatchResponse,
 )
-from app.schemas.trading_day import TradingDayOpenIn, TradingDayOut
-from app.schemas.z_report import (
-    LastCloseReference,
-    ZReportIn,
-    ZReportMissingResponse,
-    ZReportUpsertResponse,
+from app.schemas.shift import (
+    LastClosedShift,
+    ShiftCloseAckIn,
+    ShiftCloseAckResponse,
+    ShiftCloseIn,
+    ShiftCloseResponse,
+    ShiftMissingResponse,
+    ShiftOpenIn,
+    ShiftOut,
 )
-from app.schemas.close_day import CloseDayAckIn, CloseDayAckResponse
 from app.services.catalog_notify import notify_all_machines_for_tenant, notify_machines_for_shop
 from app.services import product_availability as availability
 from app.services.product_validation import validate_open_price_update
@@ -83,15 +84,22 @@ from app.services.sync import (
 from app.services import machine_catalog
 from app.schemas.machine_catalog import MachineCatalogSet, MachineCatalogWriteResponse
 from app.services.transactions import (
-    apply_z_report,
-    check_z_report_preconditions,
-    find_open_trading_day,
     publish_transactions_synced,
-    publish_z_report_closed,
     upsert_transactions,
 )
+from app.services.shifts import (
+    ShiftConflict,
+    ShiftUnknown,
+    apply_shift_close,
+    check_close_preconditions,
+    last_closed_shift,
+    report_shift_open,
+    shift_to_out,
+    shift_totals_out,
+    z_number_of,
+)
+from app.services.remote_close import apply_close_shift_ack, on_shift_close_accepted
 from app.services.stock import effective_stock_updated_at, get_levels_for_shop
-from app.services.close_day import apply_close_day_ack, complete_close_day_item_for_z_report
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -834,7 +842,7 @@ def machine_delete_cloud_category(
     return None
 
 
-# ── Transactions + Z-report (POS → server) ────────────────────────────────────
+# ── Transactions (POS → server) ────────────────────────────────────
 
 @router.post(
     "/{machine_id}/transactions",
@@ -847,10 +855,19 @@ def post_transactions(
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
 ):
-    """Idempotent transactions upsert. Same id retried returns status='duplicate'."""
+    """
+    Idempotent transactions upsert. Same id retried returns status='duplicate'.
+
+    409 `another_shift_open` for the whole batch, with nothing written, when a document
+    names a shift the cloud cannot accept yet (docs/SHIFTS_API.md §1.2).
+    """
     _require_assigned_machine(machine)
 
-    results = upsert_transactions(db, machine, body.transactions)
+    try:
+        results = upsert_transactions(db, machine, body.transactions)
+    except ShiftConflict as conflict:
+        db.rollback()
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=conflict.body())
 
     accepted_count = sum(1 for r in results if r.status == "accepted")
     db.bulk_save_objects([
@@ -876,54 +893,83 @@ def post_transactions(
     )
 
 
-@router.post(
-    "/{machine_id}/z-report",
-    status_code=status.HTTP_200_OK,
-    responses={
-        409: {"model": ZReportMissingResponse},
-        200: {"model": ZReportUpsertResponse},
-    },
-)
-def post_z_report(
+# ── Shifts (POS → server) ─────────────────────────────────────────────────────
+#
+# The till opens and closes shifts; the cloud records them and recomputes each X from
+# the documents it holds. Closing a shift files no Z — a Z is built in the cloud over
+# closed shifts (`app/routers/z_runs.py`). Contract: docs/SHIFTS_API.md §1.
+
+
+@router.post("/{machine_id}/shifts", response_model=ShiftOut, response_model_by_alias=True)
+def post_shift_open(
     machine_id: str,
-    body: ZReportIn,
+    data: ShiftOpenIn,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    approval: Optional[ElevatedSession] = Depends(elevation_if_offered(Scope.DAY_CLOSE)),
     db: Session = Depends(get_db),
 ):
     """
-    Close a trading day with a Z-report. Idempotent: a retry returns status='duplicate'.
-    Returns 409 with missing transaction ids if any expected tx is not yet on the cloud
-    (POS must flush those tx and retry).
+    Record a shift the till has already opened. Idempotent by id.
 
-    Elevation is accepted, never demanded. The operator at the till is a `pos_users` row,
-    which is not the enum grants are issued from, so a manager-operated till closes its
-    own day presenting nothing — and must keep doing so. When a grant *is* presented it
-    is checked as strictly as anywhere else, and the person who gave the PIN is recorded
-    on the document.
+    409 `another_shift_open:<id>` while the cloud still has another shift of this till
+    open — with an ordered outbox that means the previous close has not arrived yet.
+    """
+    _require_assigned_machine(machine)
+    shift = report_shift_open(db, machine, data)
+    db.commit()
+    db.refresh(shift)
+    return shift_to_out(shift, z_number=z_number_of(db, shift))
+
+
+@router.get(
+    "/{machine_id}/shifts/last-closed",
+    response_model=LastClosedShift,
+    response_model_by_alias=True,
+)
+def get_last_closed_shift(
+    machine_id: str,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """The till's last closed shift, to prefill the next opening float. All null if none."""
+    return last_closed_shift(db, machine.id)
+
+
+@router.post(
+    "/{machine_id}/shifts/{shift_id}/close",
+    status_code=status.HTTP_200_OK,
+    responses={409: {"model": ShiftMissingResponse}, 200: {"model": ShiftCloseResponse}},
+)
+def post_shift_close(
+    machine_id: str,
+    shift_id: uuid.UUID,
+    body: ShiftCloseIn,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    approval: Optional[ElevatedSession] = Depends(elevation_if_offered(Scope.SHIFT_CLOSE)),
+    db: Session = Depends(get_db),
+):
+    """
+    Close a shift. Accepted only when every listed document is on the cloud (409 with
+    `missingIds`/`staleIds` otherwise — push them and retry). The X is recomputed from
+    the documents; the till's own figures are stored and compared. Creates no Z.
+
+    Elevation is accepted, never demanded: a cashier may close a shift alone. A grant
+    that is presented is checked strictly and spent only once the close is certain.
     """
     _require_assigned_machine(machine)
 
-    missing, stale = check_z_report_preconditions(db, machine, body)
+    missing, stale = check_close_preconditions(db, machine, shift_id, body.transaction_ids)
     if missing or stale:
-        # Returned before the grant is spent on purpose. A 409 means "push those
-        # documents and come straight back"; burning the PIN here would charge the
-        # manager for a close that did not happen and leave the retry with nothing to
-        # present.
+        # Before the grant is spent: a 409 means "push those and come straight back".
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
-            content=ZReportMissingResponse(
-                missing_ids=missing,
-                stale_ids=stale,
+            content=ShiftMissingResponse(
+                missing_ids=missing, stale_ids=stale
             ).model_dump(by_alias=True, mode="json"),
         )
 
     approved_by = None
     approved_by_pos_user = None
     if approval is not None:
-        # Spent only now the close is certain. `consume_per_action_use` locks the row
-        # and returns False if a concurrent request got there first, so one PIN closes
-        # one day even if the till retries in parallel.
         if not consume_per_action_use(db, approval):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -933,226 +979,107 @@ def post_z_report(
         approved_by = approval.user_id
         approved_by_pos_user = approval.pos_user_id
 
-    z_report, outcome = apply_z_report(
-        db,
-        machine,
-        body,
-        approved_by_user_id=approved_by,
-        approved_by_pos_user_id=approved_by_pos_user,
-    )
-    if body.close_day_request_id:
-        complete_close_day_item_for_z_report(
+    try:
+        shift, outcome = apply_shift_close(
             db,
-            machine.id,
-            body.close_day_request_id,
-            z_report.id,
+            machine,
+            shift_id,
+            body,
+            approved_by_user_id=approved_by,
+            approved_by_pos_user_id=approved_by_pos_user,
         )
+    except ShiftUnknown:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="shift_unknown")
+
+    if outcome == "accepted":
+        on_shift_close_accepted(db, machine, shift)
     db.add(SyncLog(
         machine_id=machine.id,
         direction=SyncDirection.POS_TO_SERVER,
         entity_type=SyncEntityType.Z_REPORT,
-        entity_id=z_report.id,
+        entity_id=shift.id,
         action=SyncAction.CREATE,
         status=SyncStatus.SUCCESS,
-        conflict_note=None if outcome == "accepted" else "duplicate z-report",
+        conflict_note="shift close" if outcome == "accepted" else "duplicate shift close",
     ))
     db.commit()
-    db.refresh(z_report)
+    db.refresh(shift)
 
-    if outcome == "accepted":
-        publish_z_report_closed(machine.tenant_id, machine.id, z_report.id, z_report.trading_day_id)
-
-    return ZReportUpsertResponse(
+    return ShiftCloseResponse(
         status=outcome,
-        z_report_id=z_report.id,
-        trading_day_id=z_report.trading_day_id,
-        # Read off the stored row rather than recomputed, so a duplicate close is told
-        # the number the *first* close was given.
-        shop_sequence_number=z_report.shop_sequence_number,
+        shift_id=shift.id,
+        server_totals=shift_totals_out(shift),
+        totals_mismatch=bool(shift.totals_mismatch),
+        z_report_id=shift.z_report_id,
+        z_number=z_number_of(db, shift),
         server_time=datetime.now(timezone.utc),
     )
 
 
-@router.post("/{machine_id}/trading-day", response_model=TradingDayOut)
-def machine_report_trading_day(
-    machine_id: str,
-    data: TradingDayOpenIn,
-    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    db: Session = Depends(get_db),
-):
-    """
-    Record a day the till has already opened.
-
-    Deliberately *not* "open a day": the till opens days on its own and starts selling
-    at once, online or not. This only tells the cloud what happened, so a dashboard can
-    see an open till before its first sale and a manager's remote close stops failing
-    with `no_open_day` on exactly the till that needs it.
-
-    Idempotent by id, like a transaction. Three cases:
-
-    * unknown id — create it, with the real opening time, float and cashier;
-    * known and still open — correct those three fields. A sale can beat this event to
-      the server, and the day it creates carries an opening time inferred from that
-      sale. This is the till's own account, so it wins;
-    * known and closed — return it untouched. A late open event must never resurrect a
-      day that has already filed its Z.
-
-    A second *open* day on the same machine is refused with 409 rather than left to the
-    partial unique index, so the till gets an answer it can act on instead of a 500.
-    """
-    _require_assigned_machine(machine)
-
-    existing = db.query(TradingDay).filter(TradingDay.id == data.id).first()
-    if existing is not None:
-        if str(existing.machine_id) != str(machine.id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="trading_day_belongs_to_another_machine",
-            )
-        if existing.status == TradingDayStatus.OPEN:
-            existing.opened_at = data.opened_at
-            if data.opening_cash is not None:
-                existing.opening_cash = data.opening_cash
-            if data.opened_by:
-                existing.opened_by = data.opened_by
-            if data.sequence_number is not None:
-                existing.sequence_number = data.sequence_number
-            db.add(existing)
-            db.commit()
-            db.refresh(existing)
-        return existing
-
-    clash = (
-        db.query(TradingDay)
-        .filter(
-            TradingDay.machine_id == machine.id,
-            TradingDay.status == TradingDayStatus.OPEN,
-        )
-        .first()
-    )
-    if clash is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"another_day_is_open:{clash.id}",
-        )
-
-    day = TradingDay(
-        id=data.id,
-        tenant_id=machine.tenant_id,
-        machine_id=machine.id,
-        shop_id=machine.shop_id,
-        day_date=data.day_date,
-        sequence_number=data.sequence_number,
-        opened_at=data.opened_at,
-        opening_cash=data.opening_cash,
-        opened_by=data.opened_by,
-        status=TradingDayStatus.OPEN,
-    )
-    db.add(day)
-    try:
-        db.commit()
-    except IntegrityError:
-        # Lost the race with a concurrent report — the `clash` query above is
-        # check-then-insert, so two in-flight requests can both pass it. The partial
-        # unique index is the real arbiter; turn its error into the same 409 rather
-        # than the 500 this endpoint exists to avoid.
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="another_day_is_open"
-        )
-    db.refresh(day)
-    return day
-
-
-@router.get(
-    "/{machine_id}/trading-day/current",
-    response_model=Optional[TradingDayOut],
-)
-def get_current_trading_day(
-    machine_id: str,
-    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    db: Session = Depends(get_db),
-):
-    """Helper for POS recovery after restart — returns the open trading day if any."""
-    return find_open_trading_day(db, machine.id)
-
-
-@router.get(
-    "/{machine_id}/last-close",
-    response_model=LastCloseReference,
-    response_model_by_alias=True,
-)
-def get_last_close_reference(
-    machine_id: str,
-    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    db: Session = Depends(get_db),
-):
-    """
-    What the cloud last knew about this terminal's cash — as a reference, not an answer.
-
-    For the replacement case: a terminal died mid-day, a new unit adopted its identity,
-    and someone is about to open a day on it. They need to know what the previous close
-    came to. They must *not* be handed it as a prefilled float.
-
-    `expectedCash` is opening plus the cash sales the cloud received. A terminal that
-    died holding unsynced sales makes it an understatement, and cash is exactly what
-    cannot be recovered from the acquirer later. The case where it is most wrong is also
-    the case where we know least: documents push within seconds, so unsynced ones mean
-    the network was down, and the heartbeat carrying the outstanding count runs on that
-    same network.
-
-    So the response carries its own uncertainty — whether the close was reconstructed,
-    how many documents it was built from, and what the terminal last said it still held.
-    The count is a count, never an amount. The drawer is the authority; this informs
-    whoever counts it.
-    """
-    z = (
-        db.query(ZReport)
-        .filter(ZReport.machine_id == machine.id)
-        .order_by(ZReport.closed_at.desc())
-        .first()
-    )
-    if z is None:
-        # Never closed a day. Null rather than zero: "nothing to compare against" is a
-        # different statement from "the drawer should be empty".
-        return LastCloseReference()
-
-    basis = z.reconstruction_basis or {}
-    return LastCloseReference(
-        expected_cash=z.expected_cash,
-        closed_at=z.closed_at,
-        day_date=z.day_date,
-        reconstructed=bool(z.reconstructed),
-        documents_counted=basis.get("documentsOnCloud", z.transactions_count),
-        outstanding_documents=basis.get("lastReportedPendingDocuments"),
-        outstanding_as_of=basis.get("lastReportedPendingAt"),
-    )
-
-
 @router.post(
-    "/{machine_id}/close-day/ack",
-    response_model=CloseDayAckResponse,
+    "/{machine_id}/shift-close/ack",
+    response_model=ShiftCloseAckResponse,
     response_model_by_alias=True,
 )
-def post_close_day_ack(
+def post_shift_close_ack(
     machine_id: str,
-    body: CloseDayAckIn,
+    body: ShiftCloseAckIn,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
 ):
-    """POS acknowledges cloud-initiated close-day command."""
+    """The till acknowledges a remote close-shift instruction (`requestId`)."""
     _require_assigned_machine(machine)
-    item = apply_close_day_ack(
+    item_status = apply_close_shift_ack(
         db,
         machine,
         request_id=body.request_id,
         phase=body.phase,
-        z_report_id=body.z_report_id,
+        shift_id=body.shift_id,
         error_code=body.error_code,
         error_message=body.error_message,
     )
-    status_val = item.status.value if hasattr(item.status, "value") else item.status
-    return CloseDayAckResponse(ok=True, item_status=status_val)
+    return ShiftCloseAckResponse(ok=True, item_status=item_status)
+
+
+# ── Removed with the move to shifts (docs/SHIFTS_API.md §1.8) ─────────────────
+#
+# Still authenticated first, so an unpaired caller gets 401/403 and a paired till
+# running a pre-shift build learns it must upgrade rather than that it is forbidden.
+
+
+def _upgrade_required() -> None:
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail="upgrade_required")
+
+
+@router.post("/{machine_id}/z-report", status_code=status.HTTP_410_GONE)
+def post_z_report_removed(machine_id: str, machine: POSMachine = Depends(get_pos_machine_for_sync_path)):
+    """Removed: the Z is built in the cloud; the till closes shifts."""
+    _upgrade_required()
+
+
+@router.post("/{machine_id}/trading-day", status_code=status.HTTP_410_GONE)
+def post_trading_day_removed(machine_id: str, machine: POSMachine = Depends(get_pos_machine_for_sync_path)):
+    """Removed: `POST /shifts`."""
+    _upgrade_required()
+
+
+@router.get("/{machine_id}/trading-day/current", status_code=status.HTTP_410_GONE)
+def get_trading_day_removed(machine_id: str, machine: POSMachine = Depends(get_pos_machine_for_sync_path)):
+    """Removed."""
+    _upgrade_required()
+
+
+@router.get("/{machine_id}/last-close", status_code=status.HTTP_410_GONE)
+def get_last_close_removed(machine_id: str, machine: POSMachine = Depends(get_pos_machine_for_sync_path)):
+    """Removed: `GET /shifts/last-closed`."""
+    _upgrade_required()
+
+
+@router.post("/{machine_id}/close-day/ack", status_code=status.HTTP_410_GONE)
+def post_close_day_ack_removed(machine_id: str, machine: POSMachine = Depends(get_pos_machine_for_sync_path)):
+    """Removed: `POST /shift-close/ack`."""
+    _upgrade_required()
 
 
 # ── POS users (server → POS) ──────────────────────────────────────────────────

@@ -27,14 +27,14 @@ class Transaction(Base):
     __table_args__ = (
         UniqueConstraint("machine_id", "transaction_number", name="uq_tx_machine_number"),
         Index("ix_transactions_machine_created_at", "machine_id", "created_at"),
-        Index("ix_transactions_trading_day", "trading_day_id"),
+        Index("ix_transactions_shift", "shift_id"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True)  # client-generated
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True)
     machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id"), nullable=False, index=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True, index=True)
-    trading_day_id = Column(UUID(as_uuid=True), ForeignKey("trading_days.id"), nullable=True)
+    shift_id = Column(UUID(as_uuid=True), ForeignKey("shifts.id"), nullable=True)
 
     transaction_number = Column(String(100), nullable=False)
     status = Column(
@@ -122,7 +122,7 @@ class Transaction(Base):
 
     machine = relationship("POSMachine")
     shop = relationship("Shop")
-    trading_day = relationship("TradingDay", back_populates="transactions")
+    shift = relationship("Shift", back_populates="transactions")
     items = relationship(
         "TransactionItem",
         back_populates="transaction",

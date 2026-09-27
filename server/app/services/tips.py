@@ -38,7 +38,7 @@ def build_tips_report(
     *,
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
-    trading_day_id: Optional[uuid.UUID] = None,
+    shift_id: Optional[uuid.UUID] = None,
 ) -> TipsReportResponse:
     company = db.query(Company).filter(Company.id == shop.company_id).first()
     tenant = db.query(Tenant).filter(Tenant.id == shop.tenant_id).first() if shop.tenant_id else None
@@ -48,8 +48,8 @@ def build_tips_report(
         Transaction.shop_id == shop.id,
         Transaction.status == TransactionStatus.COMPLETED,
     )
-    if trading_day_id:
-        q = q.filter(Transaction.trading_day_id == trading_day_id)
+    if shift_id:
+        q = q.filter(Transaction.shift_id == shift_id)
     else:
         if from_date:
             start = datetime.combine(from_date, time.min, tzinfo=timezone.utc)

@@ -64,7 +64,7 @@ class CloseDayRequestItem(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     request_id = Column(UUID(as_uuid=True), ForeignKey("close_day_requests.id", ondelete="CASCADE"), nullable=False, index=True)
     machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id"), nullable=False, index=True)
-    trading_day_id = Column(UUID(as_uuid=True), ForeignKey("trading_days.id"), nullable=True)
+    shift_id = Column(UUID(as_uuid=True), ForeignKey("shifts.id"), nullable=True)
     z_report_id = Column(UUID(as_uuid=True), ForeignKey("z_reports.id"), nullable=True)
     status = Column(
         SQLEnum(CloseDayItemStatus, values_callable=lambda x: [e.value for e in x]),
@@ -82,5 +82,5 @@ class CloseDayRequestItem(Base):
 
     request = relationship("CloseDayRequest", back_populates="items")
     machine = relationship("POSMachine")
-    trading_day = relationship("TradingDay")
+    shift = relationship("Shift")
     z_report = relationship("ZReport")

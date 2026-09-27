@@ -115,9 +115,10 @@ class TransactionIn(BaseModel):
     #: user's standing permissions. A claim that fails takes the document down with it.
     approved_by_user_id: Optional[uuid.UUID] = Field(None, alias="approvedByUserId")
 
-    # Trading day envelope — POS sends its own trading_day_id; server resolves/auto-opens.
-    trading_day_id: Optional[uuid.UUID] = Field(None, alias="tradingDayId")
-    day_date: Optional[str] = Field(None, alias="dayDate", description="ISO date YYYY-MM-DD for trading day resolution")
+    # The shift this document was issued in — the till's own shift id. The server
+    # resolves it by id only; see `app.services.shifts.resolve_shift_for_document`.
+    shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
+    business_date: Optional[str] = Field(None, alias="businessDate", description="ISO date YYYY-MM-DD of the shift")
 
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
@@ -216,7 +217,7 @@ class TransactionOut(BaseModel):
     tenant_id: Optional[uuid.UUID] = Field(None, alias="tenantId")
     machine_id: uuid.UUID = Field(..., alias="machineId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
-    trading_day_id: Optional[uuid.UUID] = Field(None, alias="tradingDayId")
+    shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
 
     transaction_number: str = Field(..., alias="transactionNumber")
     status: str
@@ -264,7 +265,7 @@ class TransactionListItem(BaseModel):
     id: uuid.UUID
     machine_id: uuid.UUID = Field(..., alias="machineId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
-    trading_day_id: Optional[uuid.UUID] = Field(None, alias="tradingDayId")
+    shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     transaction_number: str = Field(..., alias="transactionNumber")
     status: str
     payment_method: Optional[str] = Field(None, alias="paymentMethod")

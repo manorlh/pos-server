@@ -23,7 +23,7 @@ class CloseDayItemOut(BaseModel):
     id: uuid.UUID
     machine_id: uuid.UUID = Field(..., alias="machineId")
     machine_name: Optional[str] = Field(None, alias="machineName")
-    trading_day_id: Optional[uuid.UUID] = Field(None, alias="tradingDayId")
+    shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     z_report_id: Optional[uuid.UUID] = Field(None, alias="zReportId")
     status: str
     error_code: Optional[str] = Field(None, alias="errorCode")
