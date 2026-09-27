@@ -34,6 +34,7 @@ from app.schemas.transaction import TransactionIn, TransactionPaymentIn, Transac
 from app.services.approvals import ApprovalRejected, verify_document_approver
 from app.services.shifts import (
     ShiftConflict,
+    note_documents_after_close,
     precheck_document_shifts,
     resolve_shift_for_document,
 )
@@ -300,6 +301,9 @@ def upsert_transactions(
     # yet is refused whole, and the till retries it after the close of the open shift.
     precheck_document_shifts(db, machine, [tx.shift_id for tx in transactions])
 
+    # Closed shifts a written document lands in (or leaves) → new documents among them.
+    touched_closed: Dict[uuid.UUID, int] = {}
+
     # Pre-load existing rows in one query so we can classify accepted vs duplicate.
     incoming_ids = [tx.id for tx in transactions]
     existing_map: Dict[uuid.UUID, Transaction] = {
@@ -501,6 +505,12 @@ def upsert_transactions(
                 and previous.updated_at >= tx.updated_at
             )
             savepoint.commit()
+            if not is_duplicate:
+                touched_closed.setdefault(target_shift_id, 0)
+                if previous is None:
+                    touched_closed[target_shift_id] += 1
+                if previous is not None and previous.shift_id not in (None, target_shift_id):
+                    touched_closed.setdefault(previous.shift_id, 0)
             results.append(TransactionUpsertResult(
                 id=tx.id,
                 status="duplicate" if is_duplicate else "accepted",
@@ -520,6 +530,8 @@ def upsert_transactions(
                 reason=str(exc),
             ))
 
+    # A document for a shift that is already closed: recompute or flag (see shifts).
+    note_documents_after_close(db, touched_closed)
     return results
 
 

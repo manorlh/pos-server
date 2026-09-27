@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Iterable, List, Optional, Sequence, Tuple
 
@@ -222,6 +222,69 @@ def resolve_shift_for_document(
         # till retries and then finds the shift by id.
         raise ShiftConflict(None, [shift_id] if shift_id else [])
     return shift
+
+
+def note_documents_after_close(
+    db: Session, touched: dict, *, now: Optional[datetime] = None
+) -> None:
+    """
+    Documents were written into (or out of) shifts that are already closed.
+
+    `touched` maps shift id → how many of the written documents were *new* to the cloud.
+    For each closed shift:
+
+    * not in a Z yet — its X is recomputed from the documents (and compared with the
+      till's again), and new ones are counted in `late_documents`. The next Z takes them.
+    * already in a Z — the documents are stored all the same (a fiscal document is never
+      dropped) but the Z's figures are frozen, so the shift and the Z are both flagged
+      with the count: the dashboard shows "document arrived after Z".
+
+    Open shifts are skipped: that is the ordinary case, and the close computes their X.
+    """
+    for shift_id, new_count in touched.items():
+        if shift_id is None:
+            continue
+        shift = db.query(Shift).filter(Shift.id == shift_id).first()
+        if shift is None or shift.status != ShiftStatus.CLOSED:
+            continue
+        if new_count:
+            shift.late_documents = int(shift.late_documents or 0) + new_count
+        if shift.z_report_id is None:
+            totals = compute_totals(db, [shift.id])
+            for column, value in totals.as_x().items():
+                setattr(shift, column, value)
+            shift.totals_mismatch = till_totals_mismatch(shift.till_totals, totals)
+        elif new_count:
+            z = db.query(ZReport).filter(ZReport.id == shift.z_report_id).first()
+            if z is not None:
+                z.late_documents = int(z.late_documents or 0) + new_count
+            logger.warning(
+                "%s document(s) arrived for shift %s after Z %s was built",
+                new_count, shift.id, shift.z_report_id,
+            )
+    db.flush()
+
+
+def recent_shift_zs(
+    db: Session, machine_id: uuid.UUID, *, now: Optional[datetime] = None, days: int = 30, limit: int = 50
+) -> List[dict]:
+    """
+    This till's shifts taken by a Z in the last `days`, newest Z first, as the till needs
+    them to print a Z number on a reprint: `[{shiftId, zReportId, zNumber}]`.
+    """
+    now = now or datetime.now(timezone.utc)
+    rows = (
+        db.query(Shift.id, ZReport.id, ZReport.shop_sequence_number)
+        .join(ZReport, ZReport.id == Shift.z_report_id)
+        .filter(Shift.machine_id == machine_id, ZReport.closed_at >= now - timedelta(days=days))
+        .order_by(ZReport.closed_at.desc(), Shift.sequence_number.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {"shiftId": str(sid), "zReportId": str(zid), "zNumber": number}
+        for sid, zid, number in rows
+    ]
 
 
 # ── Open ──────────────────────────────────────────────────────────────────────
@@ -471,6 +534,7 @@ def shift_to_out(
         server_totals=shift_totals_out(shift),
         till_totals=shift.till_totals,
         totals_mismatch=bool(shift.totals_mismatch),
+        late_documents=int(shift.late_documents or 0),
         reconstructed=bool(shift.reconstructed),
         reconstruction_basis=shift.reconstruction_basis,
         z_report_id=shift.z_report_id,

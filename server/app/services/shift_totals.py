@@ -116,8 +116,10 @@ def compute_totals(db: Session, shift_ids: Iterable[uuid.UUID]) -> DocumentTotal
     if not ids:
         return totals
 
+    # populate_existing: the upsert writes documents with a Core statement, so rows
+    # already in this session would otherwise be read back with their old values.
     documents: List[Transaction] = (
-        db.query(Transaction).filter(Transaction.shift_id.in_(ids)).all()
+        db.query(Transaction).filter(Transaction.shift_id.in_(ids)).populate_existing().all()
     )
     counted = [d for d in documents if d.status in SALE_STATUSES]
     totals.non_sale_count = len(documents) - len(counted)
@@ -127,6 +129,7 @@ def compute_totals(db: Session, shift_ids: Iterable[uuid.UUID]) -> DocumentTotal
         for leg in (
             db.query(TransactionPayment)
             .filter(TransactionPayment.transaction_id.in_([d.id for d in counted]))
+            .populate_existing()
             .all()
         ):
             legs_by_doc.setdefault(leg.transaction_id, []).append(leg)

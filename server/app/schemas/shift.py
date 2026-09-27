@@ -99,6 +99,8 @@ class ShiftOut(BaseModel):
     server_totals: Optional[ShiftTotalsOut] = Field(None, alias="serverTotals")
     till_totals: Optional[Dict[str, Any]] = Field(None, alias="tillTotals")
     totals_mismatch: bool = Field(False, alias="totalsMismatch")
+    #: Documents that arrived after the close (see docs/SHIFTS_API.md §3.1).
+    late_documents: int = Field(0, alias="lateDocuments")
     reconstructed: bool = False
     reconstruction_basis: Optional[Dict[str, Any]] = Field(None, alias="reconstructionBasis")
     z_report_id: Optional[uuid.UUID] = Field(None, alias="zReportId")

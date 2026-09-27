@@ -57,6 +57,12 @@ class ZReport(Base):
     #: The per-register sections (see docs/SHIFTS_API.md §3.6). NULL on legacy rows.
     per_machine = Column(JSONB, nullable=True)
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    #: Who issued it, frozen at build (app/services/z_header.py). Served as stored —
+    #: never re-derived from live settings, which may have changed since.
+    header = Column(JSONB, nullable=True)
+    #: Documents of its shifts that reached the cloud after it was built. They are
+    #: stored (a fiscal document is never dropped) but are not in its figures.
+    late_documents = Column(Integer, nullable=False, default=0, server_default="0")
     #: The run that built it. NULL on legacy rows.
     z_run_id = Column(UUID(as_uuid=True), ForeignKey("z_runs.id"), nullable=True, index=True)
 

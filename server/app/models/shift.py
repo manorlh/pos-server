@@ -105,6 +105,11 @@ class Shift(Base):
     #: The till's X disagreed with the server's by more than a rounding cent.
     totals_mismatch = Column(Boolean, nullable=False, default=False, server_default="false")
 
+    #: Documents that reached the cloud after this shift was closed. While the shift is
+    #: not in a Z its X is recomputed to include them; once it is, they are stored but
+    #: the Z's figures are not (the Z is flagged too).
+    late_documents = Column(Integer, nullable=False, default=0, server_default="0")
+
     #: The Z this shift is in, once one has been built. NULL = still awaiting a Z.
     z_report_id = Column(UUID(as_uuid=True), ForeignKey("z_reports.id"), nullable=True, index=True)
 

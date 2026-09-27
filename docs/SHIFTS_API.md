@@ -76,6 +76,14 @@ Shift resolution per document:
 
 `200` body unchanged: `{"serverTime", "results": [{"id", "status": "accepted|duplicate|rejected", "reason"?, "serverReceivedAt"?}]}`.
 
+**A document for a shift that is already closed** (it reached the cloud after the close) is
+always accepted and stored — a fiscal document is never dropped:
+- shift not in a Z yet → the shift's server X is recomputed to include it, and its
+  `lateDocuments` count goes up; the next Z takes it;
+- shift already in a Z → the Z's figures are frozen, so the document is stored but not in
+  the Z, and both the shift's and the Z's `lateDocuments` go up ("document arrived after Z").
+Only documents new to the cloud count; a re-push of a known one does not.
+
 ### 1.3 `POST /sync/{machineId}/shifts/{shiftId}/close` — close a shift (X)
 
 Sent after the shift's documents (outbox order: open(N) → documents(N) → close(N) → open(N+1)).
@@ -193,9 +201,14 @@ Response
   "ok": true,
   "serverTime": "…",
   "zReportedThroughSequence": 11,   // highest sequenceNumber of this till's shifts that is in a Z; null if none. Always present.
+  "recentShiftZs": [                 // this till's shifts taken by a Z in the last 30 days, newest Z first, at most 50. Always present ([] if none).
+    {"shiftId": "…", "zReportId": "…", "zNumber": 7}
+  ],
   "pendingCloseShift": {"requestId": "…", "shiftId": "…"}   // only when a remote close is waiting for this till
 }
 ```
+`recentShiftZs` is how the till learns the Z number of an older shift (for shift history and
+X reprints); the close response only carries it when the shift is already in a Z.
 `pendingCloseDay` is gone. The till purges synced documents of shifts with
 `sequenceNumber <= zReportedThroughSequence`. `pendingCloseShift` is repeated on every beat
 until the till's close is accepted (or the run ends), so the till must dedupe by `requestId`.
@@ -250,7 +263,8 @@ in a Z), `from`, `to` (on `businessDate`), `page` (1), `pageSize` (50, max 200).
 }
 ```
 Only active, assigned tills of the shop. `ShiftSummary` = §3.1 without `tillTotals` /
-`reconstructionBasis`.
+`reconstructionBasis` — it includes `lateDocuments`, so a shift with late documents is
+visible before the Z is produced.
 
 ### 2.4 `POST /z-runs`
 ```json
@@ -302,7 +316,8 @@ still closes its shift; that shift simply waits for the next Z. `409 run_not_wai
   `businessDate`. `machineId`/`machineIds` match a Z that contains that till.
   Items are **ZReport** (§3.5) without `perMachine`/`shifts`.
 - `GET /z-reports/{id}` — **ZReport** with `perMachine` (§3.6), `shifts` (ShiftSummary list)
-  and `business` (name, address, VAT id, branch).
+  and `business`: the header **frozen when the Z was built** (§3.7), never live settings.
+  `null` only for a legacy Z of a till with no shop.
 
 ### 2.9 `POST /machines/{machineId}/shifts/{shiftId}/administrative-close`
 Dead-till recovery (replaces `trading-day/reconstruct-close`). Body `{"force": false, "note": "…"}`.
@@ -353,6 +368,7 @@ sections of each Z (one row per Z × till: `zReportId`, `shopSequenceNumber`, `m
   "serverTotals": {§3.2} | null,                     // null while open
   "tillTotals": {…as sent…} | null,
   "totalsMismatch": false,
+  "lateDocuments": 0,            // documents that arrived after the close (see §1.2); >0 = show a badge
   "reconstructed": false, "reconstructionBasis": {…} | null,
   "zReportId": null, "zNumber": null
 }
@@ -422,6 +438,7 @@ it (`409 z_run_in_progress`).
   "paymentBreakdown": {"cash": "…", "card": "…", "<other method>": "…"},
   "openingCash", "expectedCash", "actualCash", "discrepancy",   // actualCash/discrepancy null if any shift uncounted
   "unattended", "reconstructed",           // any included shift unattended / reconstructed
+  "lateDocuments": 0,                      // documents of its shifts that arrived after it was built (not in its figures)
   "legacy": false,                         // true for a pre-shift, till-issued Z (machineId set, no perMachine)
   "machineId": null, "machineName": null   // legacy rows only
 }
@@ -443,6 +460,18 @@ it (`409 z_run_in_progress`).
 ```
 Money values are decimal strings. `countedCash` / `overShort` are null if any of the till's
 shifts is uncounted.
+
+### 3.7 Z header (`business` on the Z detail)
+```json
+{
+  "businessName": "…", "vatNumber": "515151515", "companyRegNumber": null,
+  "companyId": "<company uuid>", "address": "…", "addressNumber": "1", "city": "…", "zip": null,
+  "branchId": "…", "shopId": "…", "shopName": "…", "capturedAt": "<when it was frozen>"
+}
+```
+Taken from tenant → company → shop settings (`businessInfo` overrides, then the company and
+shop records) at build time. Zs that existed before this was added were backfilled from the
+settings at migration time (`capturedAt` = then).
 
 ---
 

@@ -50,6 +50,7 @@ from app.services.permission_matrix import SHOP_SCOPED_ROLES
 from app.services.shifts import (
     find_open_shift,
     open_shifts_for_machines,
+    recent_shift_zs,
     shift_to_out,
     z_reported_through_sequence,
 )
@@ -383,6 +384,7 @@ def post_my_heartbeat(
     # delay rather than a close that never happens.
     pending = take_pending_close_shift(db, machine)
     through = z_reported_through_sequence(db, machine.id)
+    recent = recent_shift_zs(db, machine.id)
     db.commit()
 
     response = {
@@ -390,6 +392,8 @@ def post_my_heartbeat(
         "serverTime": datetime.now(timezone.utc).isoformat(),
         # Drives the till's purge: documents of shifts at or below it are in a Z.
         "zReportedThroughSequence": through,
+        # So a reprint of an older shift's X can carry the Z number it ended up in.
+        "recentShiftZs": recent,
     }
     if pending is not None:
         response["pendingCloseShift"] = pending

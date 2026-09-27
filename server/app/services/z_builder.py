@@ -35,6 +35,8 @@ from app.models.shift import Shift, ShiftStatus
 from app.models.shop_z_sequence import ShopZSequence
 from app.models.z_report import ZReport
 from app.services.shift_totals import CENT, DocumentTotals, compute_totals
+from app.models.shop import Shop
+from app.services.z_header import snapshot_header
 from app.services.z_sequence import allocate_shop_z_number
 
 ZERO = Decimal("0")
@@ -251,6 +253,7 @@ def build_z(
         unattended=any(s.unattended for s in all_shifts),
         reconstructed=any(s.reconstructed for s in all_shifts),
         closed_at=now,
+        header=snapshot_header(db, db.query(Shop).filter(Shop.id == shop_id).first(), now=now),
         shop_sequence_number=allocate_shop_z_number(db, shop_id),
     )
     db.add(z)

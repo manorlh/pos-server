@@ -143,24 +143,11 @@ def list_z_reports(
     )
 
 
-def _business_of(db: Session, shop: Optional[Shop]) -> Optional[ZReportBusinessOut]:
-    """The header of a Z (נספח א׳ §4): business name, VAT id, address, branch."""
-    if shop is None:
+def _business_of(z: ZReport) -> Optional[ZReportBusinessOut]:
+    """The header frozen on the Z at build time — never live settings."""
+    if not z.header:
         return None
-    from app.services.settings_merge import build_business_info
-
-    company = db.query(Company).filter(Company.id == shop.company_id).first()
-    if company is None:
-        return ZReportBusinessOut(shop_name=shop.name)
-    info = build_business_info(company, shop)
-    return ZReportBusinessOut(
-        business_name=info.company_name,
-        vat_number=info.vat_number or None,
-        address=info.company_address or None,
-        city=info.company_city or None,
-        branch_id=info.branch_id,
-        shop_name=shop.name,
-    )
+    return ZReportBusinessOut.model_validate(z.header)
 
 
 @router.get("/{z_report_id}", response_model=ZReportDetailOut, response_model_by_alias=True)
@@ -196,5 +183,5 @@ def get_z_report(
         )
         for s in shifts
     ]
-    out.business = _business_of(db, z.shop)
+    out.business = _business_of(z)
     return out

@@ -31,6 +31,8 @@ class ZReportOut(BaseModel):
     reconstructed_by: Optional[str] = Field(None, alias="reconstructedBy")
     reconstruction_basis: Optional[dict] = Field(None, alias="reconstructionBasis")
     unattended: bool = False
+    #: Documents of its shifts that arrived after it was built (not in its figures).
+    late_documents: int = Field(0, alias="lateDocuments")
 
     total_sales: Optional[Decimal] = Field(None, alias="totalSales")
     total_refunds: Optional[Decimal] = Field(None, alias="totalRefunds")
@@ -62,14 +64,22 @@ class ZReportOut(BaseModel):
 
 
 class ZReportBusinessOut(BaseModel):
+    """The Z's header as frozen when it was built (`z_reports.header`)."""
+
     model_config = ConfigDict(populate_by_name=True)
 
     business_name: Optional[str] = Field(None, alias="businessName")
     vat_number: Optional[str] = Field(None, alias="vatNumber")
+    company_reg_number: Optional[str] = Field(None, alias="companyRegNumber")
+    company_id: Optional[str] = Field(None, alias="companyId")
     address: Optional[str] = None
+    address_number: Optional[str] = Field(None, alias="addressNumber")
     city: Optional[str] = None
+    zip: Optional[str] = None
     branch_id: Optional[str] = Field(None, alias="branchId")
+    shop_id: Optional[str] = Field(None, alias="shopId")
     shop_name: Optional[str] = Field(None, alias="shopName")
+    captured_at: Optional[str] = Field(None, alias="capturedAt")
 
 
 class ZReportDetailOut(ZReportOut):
