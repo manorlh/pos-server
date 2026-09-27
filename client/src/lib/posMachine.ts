@@ -52,6 +52,7 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     machineCode: String(raw.machineCode ?? raw.machine_code ?? ''),
     tenantId: (raw.tenantId ?? raw.tenant_id) as string | undefined,
     shopId: (raw.shopId ?? raw.shop_id) as string | undefined,
+    posNumber: nullableString(raw.posNumber ?? raw.pos_number),
     pairingStatus,
     mqttClientId: (raw.mqttClientId ?? raw.mqtt_client_id) as string | undefined,
     deviceInfo: (raw.deviceInfo ?? raw.device_info) as Record<string, unknown> | undefined,
@@ -67,6 +68,15 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     openedAt: (raw.openedAt ?? raw.opened_at) as string | undefined,
     openedBy: (raw.openedBy ?? raw.opened_by) as string | undefined,
     closeDayPending: Boolean(raw.closeDayPending ?? raw.close_day_pending ?? false),
+    // The resolved status light and its flags. Passed through as the server sent them:
+    // the light is decided server-side and must not be re-derived here.
+    status: (nullableString(raw.status) ?? undefined) as PosMachine['status'],
+    online: typeof raw.online === 'boolean' ? raw.online : undefined,
+    statusFlags: (Array.isArray(raw.statusFlags ?? raw.status_flags)
+      ? (raw.statusFlags ?? raw.status_flags)
+      : []) as NonNullable<PosMachine['statusFlags']>,
+    pendingDocuments: nullableNumber(raw.pendingDocuments ?? raw.pending_documents),
+    pendingAsOf: nullableString(raw.pendingAsOf ?? raw.pending_as_of),
     serialNumber: nullableString(raw.serialNumber ?? raw.serial_number),
     batteryPercent: nullableNumber(raw.batteryPercent ?? raw.battery_percent),
     batteryStatus: batteryStatus(raw.batteryStatus ?? raw.battery_status),
