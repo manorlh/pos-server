@@ -3,9 +3,10 @@
 import { useMemo, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, fetchCloseDayRequest, fetchMachines, postCloseDay } from '@/lib/api';
-import { CloseDayRequest, PosMachine, Shop, Company } from '@/lib/types';
+import { api, fetchMachines } from '@/lib/api';
+import { PosMachine, Shop, Company } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
+import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
 import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { findBySameId, sameId } from '@/lib/entityLookup';
@@ -13,14 +14,14 @@ import { entitySelectItems } from '@/lib/selectItems';
 import { registerNumberOf } from '@/lib/registerNumber';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { Button, buttonVariants } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
-import { Monitor, Plus, RefreshCw, Info, Trash2, Smartphone, CalendarClock, Search, Send } from 'lucide-react';
+import Link from 'next/link';
+import { Monitor, Plus, RefreshCw, Info, Trash2, Smartphone, FilePlus2, Search, Send } from 'lucide-react';
 import { ClockDriftBanner } from '@/components/dashboard/machine-health';
 import { formatDistanceToNow, format } from 'date-fns';
 import { QRCodeSVG } from 'qrcode.react';
@@ -69,17 +70,6 @@ export default function MachinesPage() {
   // upfront whether the row will be hard-deleted or only decommissioned.
   const [removeMachineHasHistory, setRemoveMachineHasHistory] = useState(false);
 
-  const [closeDayOpen, setCloseDayOpen] = useState(false);
-  const [closeDayTarget, setCloseDayTarget] = useState<'machine' | 'shop' | 'shops'>('machine');
-  // Which shops a multi-shop close covers. Separate from the machine selection: a
-  // manager closing "Dizengoff and Ramat Aviv" is naming places, not terminals, and
-  // should not have to know which tills are in them.
-  const [closeDayShopIds, setCloseDayShopIds] = useState<Set<string>>(new Set());
-  const [selectedMachineIds, setSelectedMachineIds] = useState<Set<string>>(new Set());
-  const [closeProgressOpen, setCloseProgressOpen] = useState(false);
-  const [closeProgressRequestId, setCloseProgressRequestId] = useState<string | null>(null);
-  const [closeProgressData, setCloseProgressData] = useState<CloseDayRequest | null>(null);
-
   const canAssignMachine =
     authHydrated && (me?.role === 'distributor' || me?.role === 'super_admin');
   const canEditAssignedShop =
@@ -87,12 +77,9 @@ export default function MachinesPage() {
     (me?.role === 'company_manager' || me?.role === 'distributor' || me?.role === 'super_admin');
   const canRemoveMachine =
     authHydrated && (me?.role === 'distributor' || me?.role === 'super_admin');
-  const canCloseDay =
-    authHydrated &&
-    (me?.role === 'company_manager' ||
-      me?.role === 'shop_manager' ||
-      me?.role === 'distributor' ||
-      me?.role === 'super_admin');
+  // Producing a Z is also how a till's shift is closed remotely (there is no other
+  // remote close), so it is the one shift action this page offers.
+  const canProduceZ = useCanProduceZ();
   const showAssignHelp =
     authHydrated && (me?.role === 'super_admin' || me?.role === 'distributor');
 
@@ -234,20 +221,6 @@ export default function MachinesPage() {
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
   });
 
-  const closeDayMutation = useMutation({
-    mutationFn: (payload: { machineIds?: string[]; shopId?: string; shopIds?: string[] }) =>
-      postCloseDay(payload),
-    onSuccess: (data) => {
-      setCloseProgressRequestId(data.requestId);
-      setCloseProgressData({ id: data.requestId, status: data.status, items: data.items });
-      setCloseProgressOpen(true);
-      setCloseDayOpen(false);
-      setSelectedMachineIds(new Set());
-      qc.invalidateQueries({ queryKey: ['machines'] });
-    },
-    onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
-  });
-
   const assignMachine = useMutation({
     mutationFn: ({
       machineId,
@@ -315,21 +288,6 @@ export default function MachinesPage() {
     setPushOpen(true);
   };
 
-  const openCloseDay = (m: PosMachine) => {
-    setSelectedMachine(m);
-    setCloseDayTarget(m.shopId ? 'machine' : 'machine');
-    setCloseDayOpen(true);
-  };
-
-  const toggleMachineSelected = (id: string) => {
-    setSelectedMachineIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   /**
    * Open the remove dialog. We treat any non-`paired` machine as "probably has
    * history" — once a machine has been assigned to a shop it has almost
@@ -390,8 +348,8 @@ export default function MachinesPage() {
    * The server decides this now.
    *
    * It used to be recomputed here from `lastHeartbeatAt` against a 90-second constant
-   * copied from `close_day.py`. Two copies of one threshold is how a dashboard ends up
-   * telling a manager a till is reachable while the close-day gate refuses it. Falls
+   * copied from the server. Two copies of one threshold is how a dashboard ends up
+   * telling a manager a till is reachable while the server's own gate refuses it. Falls
    * back to the old local calculation only for a payload from a server that predates
    * `online`, so a mid-deploy page does not show every terminal as offline.
    */
@@ -401,25 +359,6 @@ export default function MachinesPage() {
     const ts = new Date(m.lastHeartbeatAt).getTime();
     if (!Number.isFinite(ts)) return false;
     return nowMs - ts <= MQTT_ONLINE_WINDOW_MS;
-  };
-
-  const canCloseMachine = (m: PosMachine): boolean =>
-    m.pairingStatus === 'assigned' &&
-    m.tradingDayStatus === 'open' &&
-    isDeviceOnline(m) &&
-    !m.closeDayPending;
-
-  const closeItemStatusLabel = (status: string): string => {
-    const map: Record<string, string> = {
-      pending: t('closeDayItemStatus.pending'),
-      sent: t('closeDayItemStatus.sent'),
-      received: t('closeDayItemStatus.received'),
-      completed: t('closeDayItemStatus.completed'),
-      failed: t('closeDayItemStatus.failed'),
-      cancelled: t('closeDayItemStatus.cancelled'),
-      expired: t('closeDayItemStatus.expired'),
-    };
-    return map[status] ?? status;
   };
 
   /*
@@ -457,42 +396,6 @@ export default function MachinesPage() {
         t('registerLabel', { number: registerNumberOf(m)! }).includes(searchTerm)),
   );
 
-  const bulkCloseTargets = visibleMachines.filter((m) => selectedMachineIds.has(m.id) && canCloseMachine(m));
-
-  const selectableMachines = visibleMachines.filter(
-    (m) => m.pairingStatus === 'assigned',
-  );
-  const allSelectableSelected =
-    selectableMachines.length > 0 &&
-    selectableMachines.every((m) => selectedMachineIds.has(m.id));
-  const someSelectableSelected =
-    selectableMachines.some((m) => selectedMachineIds.has(m.id)) && !allSelectableSelected;
-
-  const toggleSelectAll = () => {
-    if (allSelectableSelected) {
-      setSelectedMachineIds(new Set());
-    } else {
-      setSelectedMachineIds(new Set(selectableMachines.map((m) => m.id)));
-    }
-  };
-
-  useEffect(() => {
-    if (!closeProgressOpen || !closeProgressRequestId) return;
-    const terminal = new Set(['completed', 'failed', 'cancelled', 'expired']);
-    const poll = () => {
-      void fetchCloseDayRequest(closeProgressRequestId)
-        .then((data) => {
-          setCloseProgressData(data);
-          const allDone = data.items.every((item) => terminal.has(item.status));
-          if (allDone) qc.invalidateQueries({ queryKey: ['machines'] });
-        })
-        .catch(() => undefined);
-    };
-    poll();
-    const tmr = window.setInterval(poll, 2000);
-    return () => window.clearInterval(tmr);
-  }, [closeProgressOpen, closeProgressRequestId, qc]);
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -501,6 +404,14 @@ export default function MachinesPage() {
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
         </div>
         <div className="flex gap-2">
+          {canProduceZ ? (
+            <Link
+              href={zWizardHref(effective.shopId, effective.machineId)}
+              className={buttonVariants({ variant: 'outline', size: 'sm' })}
+            >
+              <FilePlus2 className="h-4 w-4 ms-1" /> {t('produceZ')}
+            </Link>
+          ) : null}
           {canAssignMachine ? (
             <Button
               variant="secondary"
@@ -574,8 +485,8 @@ export default function MachinesPage() {
               'offline_with_unsynced',
               'offline',
               'pending_sync',
-              'close_pending',
-              'day_closed',
+              'shift_close_pending',
+              'no_open_shift',
               'online',
               'not_paired',
               'retired',
@@ -641,53 +552,6 @@ export default function MachinesPage() {
         </div>
       ) : (
         <>
-          {canCloseDay && selectableMachines.length > 0 ? (
-            <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur">
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-primary"
-                  checked={allSelectableSelected}
-                  ref={(el) => {
-                    if (el) el.indeterminate = someSelectableSelected;
-                  }}
-                  onChange={toggleSelectAll}
-                  aria-label={allSelectableSelected ? t('deselectAll') : t('selectAll')}
-                />
-                <span>
-                  {allSelectableSelected ? t('deselectAll') : t('selectAll')}
-                  <span className="text-muted-foreground">
-                    {' '}
-                    ({t('selectedCount', {
-                      selected: selectableMachines.filter((m) => selectedMachineIds.has(m.id)).length,
-                      total: selectableMachines.length,
-                    })})
-                  </span>
-                </span>
-              </label>
-              {selectedMachineIds.size > 0 ? (
-                <>
-                  <span className="hidden h-4 w-px bg-border sm:block" aria-hidden />
-                  <span className="text-sm text-muted-foreground">
-                    {t('closeDayBulk', { count: bulkCloseTargets.length })}
-                  </span>
-                  <Button
-                    size="sm"
-                    disabled={bulkCloseTargets.length === 0 || closeDayMutation.isPending}
-                    onClick={() =>
-                      closeDayMutation.mutate({ machineIds: bulkCloseTargets.map((m) => m.id) })
-                    }
-                  >
-                    <CalendarClock className="h-4 w-4 me-1" />
-                    {closeDayMutation.isPending ? t('closeDaySending') : t('closeDayConfirm')}
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => setSelectedMachineIds(new Set())}>
-                    {tc('cancel')}
-                  </Button>
-                </>
-              ) : null}
-            </div>
-          ) : null}
         {shownMachines.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 py-16 text-muted-foreground">
             <Monitor className="h-10 w-10 opacity-30" />
@@ -703,19 +567,15 @@ export default function MachinesPage() {
               canAssignMachine,
               canEditAssignedShop,
               canRemoveMachine,
-              canCloseDay,
+              canProduceZ,
             }}
             actions={{
               onAssign: openAssign,
               onEditShop: openShopEdit,
               onPush: openPush,
-              onCloseDay: openCloseDay,
               onRemove: openRemove,
             }}
             isDeviceOnline={isDeviceOnline}
-            canCloseMachine={canCloseMachine}
-            selectedMachineIds={selectedMachineIds}
-            onToggleSelected={toggleMachineSelected}
             onAddMachineToShop={openPairForShop}
           />
         )}
@@ -1027,148 +887,6 @@ export default function MachinesPage() {
             >
               <Send className="h-3.5 w-3.5 me-1" />
               {pushCatalog.isPending ? t('pushing') : t('pushNow')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={closeDayOpen} onOpenChange={setCloseDayOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t('closeDayTitle')}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">{t('closeDayScopeIntro')}</p>
-            {selectedMachine?.shopId ? (
-              <div className="space-y-2">
-                <Label>{t('pushScopeLabel')}</Label>
-                <Select
-                  value={closeDayTarget}
-                  onValueChange={(v) => setCloseDayTarget(v as 'machine' | 'shop' | 'shops')}
-                  items={[
-                    { value: 'machine', label: t('closeDayThisDevice') },
-                    { value: 'shop', label: t('closeDayAllOpenInShop') },
-                    { value: 'shops', label: t('closeDaySelectedShops') },
-                  ]}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="machine" label={t('closeDayThisDevice')}>
-                      {t('closeDayThisDevice')}
-                    </SelectItem>
-                    <SelectItem value="shop" label={t('closeDayAllOpenInShop')}>
-                      {t('closeDayAllOpenInShop')}
-                    </SelectItem>
-                    <SelectItem value="shops" label={t('closeDaySelectedShops')}>
-                      {t('closeDaySelectedShops')}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">{t('pushThisDeviceOnlyHint')}</p>
-            )}
-            {closeDayTarget === 'shops' ? (
-              <div className="space-y-2">
-                <Label>{t('closeDaySelectedShops')}</Label>
-                <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-2">
-                  {shops.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">{t('closeDayNoShops')}</p>
-                  ) : (
-                    shops.map((shop) => (
-                      <label key={shop.id} className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={closeDayShopIds.has(shop.id)}
-                          onChange={(e) => {
-                            setCloseDayShopIds((prev) => {
-                              const next = new Set(prev);
-                              if (e.target.checked) next.add(shop.id);
-                              else next.delete(shop.id);
-                              return next;
-                            });
-                          }}
-                        />
-                        {shop.name}
-                      </label>
-                    ))
-                  )}
-                </div>
-              </div>
-            ) : null}
-            {/* Says plainly that an offline till is not a failure — it closes when it
-                comes back, or expires if it never does. */}
-            <p className="text-sm text-muted-foreground">{t('closeDayOfflineHint')}</p>
-            <p className="text-sm text-muted-foreground">{t('closeDayProgressHint')}</p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCloseDayOpen(false)}>
-              {tc('cancel')}
-            </Button>
-            <Button
-              onClick={() => {
-                if (closeDayTarget === 'shops') {
-                  if (closeDayShopIds.size === 0) return;
-                  closeDayMutation.mutate({ shopIds: Array.from(closeDayShopIds) });
-                  return;
-                }
-                if (!selectedMachine) return;
-                if (closeDayTarget === 'shop' && selectedMachine.shopId) {
-                  closeDayMutation.mutate({ shopId: selectedMachine.shopId });
-                } else {
-                  closeDayMutation.mutate({ machineIds: [selectedMachine.id] });
-                }
-              }}
-              disabled={
-                closeDayMutation.isPending ||
-                (closeDayTarget === 'shops'
-                  ? closeDayShopIds.size === 0
-                  : !selectedMachine || !canCloseMachine(selectedMachine))
-              }
-            >
-              <CalendarClock className="h-3.5 w-3.5 me-1" />
-              {closeDayMutation.isPending ? t('closeDaySending') : t('closeDayConfirm')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={closeProgressOpen} onOpenChange={setCloseProgressOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{t('closeDayProgressTitle')}</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">{t('closeDayProgressHint')}</p>
-          <div className="max-h-72 overflow-y-auto space-y-2 py-2">
-            {(closeProgressData?.items ?? []).map((item) => (
-              <div
-                key={item.id}
-                className="flex items-start justify-between gap-2 rounded-md border px-3 py-2 text-sm"
-              >
-                <div className="min-w-0">
-                  <p className="font-medium truncate">{item.machineName ?? item.machineId}</p>
-                  {item.errorMessage ? (
-                    <p className="text-xs text-destructive mt-0.5">{item.errorMessage}</p>
-                  ) : null}
-                </div>
-                <Badge variant={item.status === 'completed' ? 'default' : item.status === 'failed' ? 'outline' : 'secondary'}>
-                  {closeItemStatusLabel(item.status)}
-                </Badge>
-              </div>
-            ))}
-          </div>
-          <DialogFooter>
-            <Button
-              onClick={() => {
-                setCloseProgressOpen(false);
-                setCloseProgressRequestId(null);
-                setCloseProgressData(null);
-                qc.invalidateQueries({ queryKey: ['machines'] });
-              }}
-            >
-              {t('closeDayDismiss')}
             </Button>
           </DialogFooter>
         </DialogContent>

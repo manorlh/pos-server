@@ -55,7 +55,7 @@ export const useAuth = create<AuthState>((set) => ({
         api.get('/users/me'),
         api.get('/tenants/mine'),
       ]);
-      const tenants = (tenantRows ?? []).map((t: any) => ({
+      const tenants = ((tenantRows ?? []) as Array<{ id: unknown; name: string; slug: string }>).map((t) => ({
         id: String(t.id),
         name: t.name,
         slug: t.slug,

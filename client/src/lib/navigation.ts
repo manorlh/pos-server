@@ -19,8 +19,10 @@ import {
   Boxes,
   Building2,
   CalendarRange,
+  Clock,
   Coins,
   FileBarChart,
+  FilePlus2,
   FileText,
   IdCard,
   LayoutDashboard,
@@ -39,7 +41,7 @@ import {
 } from 'lucide-react';
 
 /** Which gate an entry hangs on. `undefined` = visible to anyone signed in. */
-export type NavGate = 'canReadUsers' | 'canManagePosUsers' | 'branding';
+export type NavGate = 'canReadUsers' | 'canManagePosUsers' | 'branding' | 'produceZ';
 
 export interface NavItem {
   href: string;
@@ -85,7 +87,26 @@ export const NAV_SECTIONS: NavSection[] = [
     labelKey: 'sections.reports',
     items: [
       { href: '/dashboard/transactions', labelKey: 'transactions', icon: Receipt },
-      { href: '/dashboard/z-reports', labelKey: 'zReports', icon: FileBarChart },
+      // A shift's X is what a Z is made of, so the three sit together: the shifts,
+      // producing a Z from them, and the Zs themselves.
+      {
+        href: '/dashboard/shifts',
+        labelKey: 'shifts',
+        icon: Clock,
+        matchPrefixes: ['/dashboard/shifts/'],
+      },
+      {
+        href: '/dashboard/z-reports/new',
+        labelKey: 'produceZ',
+        icon: FilePlus2,
+        gate: 'produceZ',
+      },
+      {
+        href: '/dashboard/z-reports',
+        labelKey: 'zReports',
+        icon: FileBarChart,
+        matchPrefixes: ['/dashboard/z-reports/'],
+      },
       // Sits next to the closing reports it is made of, so the relationship is
       // obvious: this is a roll-up of those, not a separate kind of document.
       { href: '/dashboard/day-summary', labelKey: 'daySummary', icon: CalendarRange },

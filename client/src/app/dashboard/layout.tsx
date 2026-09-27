@@ -28,7 +28,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   return (
     <ScopeProvider>
       <div className="space-y-4">
-        <header className="space-y-3">
+        <header className="space-y-3 print:hidden">
           <Breadcrumbs />
           <ScopeBar />
         </header>
@@ -50,9 +50,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [isLoaded, isSignedIn, fetchUser]);
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-screen overflow-hidden print:block print:h-auto print:overflow-visible">
       <Sidebar />
-      <main className="flex-1 overflow-y-auto bg-muted/20 p-6">
+      <main className="flex-1 overflow-y-auto bg-muted/20 p-6 print:overflow-visible print:bg-transparent print:p-0">
         {!isLoaded ? (
           <ShellSkeleton />
         ) : !isSignedIn ? null : isSignedIn && !authHydrated ? (

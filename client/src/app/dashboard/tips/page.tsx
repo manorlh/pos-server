@@ -5,8 +5,8 @@
  * mode switch:
  *
  * * **Distribution** (`GET /shops/{id}/tips/report`) — "who is owed what" under the
- *   shop's tip-distribution policy. Keyed on a trading day, with no meaningful hour
- *   dimension, and meaningless without a shop.
+ *   shop's tip-distribution policy. Keyed on a date range (or one shift), with no
+ *   meaningful hour dimension, and meaningless without a shop.
  * * **Range** (`GET /reports/tips`) — "how much tip money came in, on what tender,
  *   when". This is the one that takes the hour-of-day window, because the question
  *   it answers ("what do the evening shifts collect") is an hourly question.
@@ -18,6 +18,7 @@
  */
 
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { Banknote, Coins, CreditCard, Wallet } from 'lucide-react';
@@ -62,10 +63,17 @@ export default function TipsReportPage() {
   const shopId = effective.shopId ?? '';
   const scopeMachineId = effective.machineId;
 
-  // ── Distribution report (per shop, per trading day) ──
+  // ── Distribution report (per shop, per date range) ──
   const [from, setFrom] = useState(todayIso());
   const [to, setTo] = useState(todayIso());
   const [runKey, setRunKey] = useState(0);
+  /*
+   * `?shiftId=` — one shift's tips, which is how a shift's X links here. The report
+   * then runs at once on that shift instead of a date range, until the operator
+   * picks dates again.
+   */
+  const searchParams = useSearchParams();
+  const [shiftId, setShiftId] = useState<string | null>(() => searchParams.get('shiftId'));
 
   // ── Range report (day range × hour band) ──
   const [rangeFilters, setRangeFilters] = useState<ReportFiltersState>({
@@ -82,14 +90,12 @@ export default function TipsReportPage() {
     isError,
     error,
   } = useQuery<TipsReport>({
-    queryKey: ['tips-report', shopId, from, to, runKey],
-    queryFn: () => fetchTipsReport(shopId, { from, to }),
+    queryKey: ['tips-report', shopId, shiftId ?? `${from}|${to}`, runKey],
+    queryFn: () => fetchTipsReport(shopId, shiftId ? { shiftId } : { from, to }),
     enabled:
       mode === 'distribution' &&
       Boolean(shopId) &&
-      Boolean(from) &&
-      Boolean(to) &&
-      runKey > 0,
+      (shiftId ? true : Boolean(from) && Boolean(to) && runKey > 0),
   });
 
   const rangeParams = useMemo(() => {
@@ -166,13 +172,19 @@ export default function TipsReportPage() {
               </div>
               <Button
                 disabled={!shopId || !from || !to || isFetching}
-                onClick={() => setRunKey((k) => k + 1)}
+                onClick={() => {
+                  setShiftId(null);
+                  setRunKey((k) => k + 1);
+                }}
               >
                 {isFetching ? tc('loading') : t('runReport')}
               </Button>
             </div>
+            {shiftId ? (
+              <p className="text-muted-foreground text-xs">{t('forShift')}</p>
+            ) : null}
 
-            {runKey === 0 ? (
+            {runKey === 0 && !shiftId ? (
               <p className="text-muted-foreground text-sm py-8 text-center">{t('selectFilters')}</p>
             ) : isLoading ? (
               <Skeleton className="h-48 w-full" />

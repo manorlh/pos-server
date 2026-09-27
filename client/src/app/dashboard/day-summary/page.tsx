@@ -1,12 +1,13 @@
 'use client';
 
 /**
- * Day summary (סיכום יומי) — several tills' closed days, one row per trading day.
+ * Day summary (סיכום יומי) — the Z reports of a range, one row per business date.
  *
- * Built on Z reports, and the two consequences of that are what this page has to
+ * Built on Z reports (grouped by the Z's business date, one drill-down row per till
+ * section of each Z), and the two consequences of that are what this page has to
  * communicate rather than hide:
  *
- * 1. **A day nobody closed is absent, not zero.** An open day has declared nothing.
+ * 1. **A day with no Z is absent, not zero.** Shifts awaiting a Z have declared nothing.
  *    So the range can legitimately come back with fewer rows than it has days, and
  *    the empty state says why instead of looking like a failed query.
  *
@@ -139,8 +140,8 @@ function DayRow({ row }: { row: DaySummaryRow }) {
         <TableCell className="font-medium">{row.dayDate}</TableCell>
         <TableCell className="text-end tabular-nums">
           {row.machineCount}
-          {/* Two shifts on one till is ordinary retail, so the Z count is shown
-              whenever it differs rather than being silently collapsed. */}
+          {/* Several Zs in a day (a Z per till, or a second run) are ordinary, so the
+              Z count is shown whenever it differs rather than being silently collapsed. */}
           {row.zReportCount !== row.machineCount ? (
             <span className="text-muted-foreground ms-1 text-xs">
               {t('table.zCount', { count: row.zReportCount })}
@@ -189,7 +190,8 @@ function DayRow({ row }: { row: DaySummaryRow }) {
                 </TableHeader>
                 <TableBody>
                   {row.contributors.map((c) => (
-                    <TableRow key={c.zReportId}>
+                    // One row per Z × till: a Z over three tills contributes three.
+                    <TableRow key={`${c.zReportId}:${c.machineId}`}>
                       <TableCell className="font-medium tabular-nums">
                         {c.shopSequenceNumber ?? '—'}
                       </TableCell>
@@ -232,7 +234,7 @@ function DayRow({ row }: { row: DaySummaryRow }) {
                       <TableCell className="text-end">
                         {/* The document itself, not a restatement of it. */}
                         <Link
-                          href={`/dashboard/z-reports?zReportId=${c.zReportId}`}
+                          href={`/dashboard/z-reports/${c.zReportId}`}
                           className="text-primary text-xs underline"
                           onClick={(event) => event.stopPropagation()}
                         >

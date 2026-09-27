@@ -8,6 +8,7 @@ import { useTranslations } from 'next-intl';
 import { useClerk, useUser } from '@clerk/nextjs';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
+import { useCanProduceZ } from '@/lib/zAccess';
 import { useScopeQuery } from '@/lib/scope';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
@@ -123,6 +124,8 @@ export function Sidebar() {
   // entry would be a link to a permission error.
   const canReadUsers = authHydrated && internalUser?.canReadUsers === true;
   const canManagePosUsers = authHydrated && internalUser?.canManagePosUsers === true;
+  // Producing a Z is the machine-admin set the z-runs router enforces.
+  const canProduceZ = useCanProduceZ();
 
   // Same three gates as before, now expressed once and applied to the grouped
   // table in lib/navigation. Nobody gains an entry they did not already have.
@@ -130,6 +133,7 @@ export function Sidebar() {
     if (item.gate === 'canReadUsers') return canReadUsers;
     if (item.gate === 'canManagePosUsers') return canManagePosUsers;
     if (item.gate === 'branding') return canManageBranding;
+    if (item.gate === 'produceZ') return canProduceZ;
     return true;
   };
 
@@ -157,7 +161,7 @@ export function Sidebar() {
 
   return (
     <>
-      <aside className="flex flex-col w-60 border-s bg-card h-full">
+      <aside className="flex flex-col w-60 border-s bg-card h-full print:hidden">
         <div className="px-4 py-5">
           <span className="text-lg font-bold tracking-tight">POS Cloud</span>
           <div className="mt-3 space-y-2">

@@ -3,13 +3,14 @@
  *
  * `formatCurrency` was copy-pasted identically into several dashboard pages; it
  * lives here now so every money column in the app renders the same way. Amounts
- * arrive from the API as JSON numbers in shekels — format them, never do
+ * arrive from the API in shekels — as JSON numbers from the older endpoints, and as
+ * decimal strings ("123.40") from the shift and Z endpoints. Format them, never do
  * arithmetic on them beyond display.
  */
 import { formatDuration, intervalToDuration } from 'date-fns';
 import { he } from 'date-fns/locale';
 
-export function formatCurrency(amount: number | null | undefined): string {
+export function formatCurrency(amount: number | string | null | undefined): string {
   if (amount === null || amount === undefined) return '—';
   const n = typeof amount === 'string' ? parseFloat(amount) : amount;
   if (Number.isNaN(n)) return '—';
@@ -18,6 +19,16 @@ export function formatCurrency(amount: number | null | undefined): string {
     currency: 'ILS',
     maximumFractionDigits: 2,
   }).format(n);
+}
+
+/**
+ * A money value as a number, for a sign check or a colour — never for a total.
+ * Null stays null: an uncounted drawer is not a balanced one.
+ */
+export function moneyValue(amount: number | string | null | undefined): number | null {
+  if (amount === null || amount === undefined || amount === '') return null;
+  const n = typeof amount === 'string' ? parseFloat(amount) : amount;
+  return Number.isFinite(n) ? n : null;
 }
 
 /** Counts and quantities. Units can be fractional (weighed goods), so keep 3 dp. */

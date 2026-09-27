@@ -5,8 +5,6 @@ import type {
   DaySummaryReport,
   CategoryReorderEntry,
   CategoryReorderResponse,
-  CloseDayCreateResponse,
-  CloseDayRequest,
   Company,
   DashboardBreakdown,
   DashboardStats,
@@ -23,8 +21,14 @@ import type {
   TipsReport,
   TaxOpenFormatPreview,
   ParentOptions,
-  ZReport,
+  Shift,
+  ShiftListResponse,
+  ShiftStatus,
+  ZCandidates,
+  ZReportDetail,
   ZReportListResponse,
+  ZRun,
+  ZRunMachineSelection,
 } from './types';
 import { normalizePosMachine } from './posMachine';
 import { tenantFallbackAfterForbidden } from './tenantSwitch';
@@ -50,11 +54,22 @@ export type ImageUploadResult = {
   publicId: string;
 };
 
+/** The slice of Clerk's browser global this module reads. */
+type ClerkGlobal = {
+  loaded?: boolean;
+  load?: () => Promise<void>;
+  session?: { getToken: () => Promise<string | null> } | null;
+};
+
+function clerkGlobal(): ClerkGlobal | undefined {
+  return (window as unknown as { Clerk?: ClerkGlobal }).Clerk;
+}
+
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {};
   if (typeof window === 'undefined') return headers;
 
-  const clerk = (window as any).Clerk;
+  const clerk = clerkGlobal();
   if (clerk && !clerk.loaded) {
     await clerk.load?.();
   }
@@ -305,7 +320,7 @@ export async function postStocktake(
 
 export async function fetchTipsReport(
   shopId: string,
-  params: { from?: string; to?: string; tradingDayId?: string },
+  params: { from?: string; to?: string; shiftId?: string },
 ): Promise<TipsReport> {
   const { data } = await api.get<TipsReport>(`/shops/${shopId}/tips/report`, { params });
   return data;
@@ -379,7 +394,7 @@ export type ZReportListParams = {
   /** Repeatable. Serialised as `machineIds=a&machineIds=b` (no `[]` suffix). */
   machineIds?: string[];
   shopId?: string;
-  /** Filters `day_date` — the trading day the till filed the close under. */
+  /** Filters the Z's `businessDate`. */
   from?: string;
   to?: string;
   /** ISO datetimes on `closed_at`; naive values are read as UTC server-side. */
@@ -390,37 +405,30 @@ export type ZReportListParams = {
 };
 
 /**
- * One Z report by id.
+ * Close a dead terminal's open shift from the cloud.
  *
- * Exists so the day summary can hand the reader the document itself rather than a
- * restatement of it. The list read cannot stand in: a Z from six weeks ago is not on
- * the page the reader happens to be looking at.
+ * Builds that shift's X from the documents the cloud holds, marked `reconstructed`,
+ * `unattended` and uncounted. It is then an ordinary candidate for the shop's next Z —
+ * this issues no Z itself. Refused while the terminal is online or was seen in the
+ * last two hours, unless forced.
  */
-/**
- * Close a dead terminal's trading day from the cloud.
- *
- * Produces a Z built from the documents the cloud holds, marked `reconstructed`. Refused
- * while the terminal is still online or was seen in the last two hours, unless forced.
- */
-export async function reconstructCloseTradingDay(
+export async function administrativeCloseShift(
   machineId: string,
+  shiftId: string,
   body: { force?: boolean; note?: string } = {},
-): Promise<{
-  created: boolean;
-  zReportId: string;
-  shopSequenceNumber: number | null;
-  reconstructed: boolean;
-  basis: Record<string, unknown> | null;
-}> {
-  const { data } = await api.post(`/machines/${machineId}/trading-day/reconstruct-close`, body);
+): Promise<{ created: boolean; shift: Shift }> {
+  const { data } = await api.post(
+    `/machines/${machineId}/shifts/${shiftId}/administrative-close`,
+    body,
+  );
   return data;
 }
 
 /**
  * A pairing code that hands this terminal's identity to a replacement device.
  *
- * Refused while the terminal has an open trading day — the replacement has none of that
- * day's records and could not issue a truthful Z for it.
+ * Refused while the terminal has an open shift — the replacement has none of that
+ * shift's records, and its close would declare a fraction of what was taken.
  */
 export async function createReplacementCode(machineId: string): Promise<{
   code: string;
@@ -449,8 +457,9 @@ export async function fetchParentOptions(companyId?: string): Promise<ParentOpti
   return data;
 }
 
-export async function fetchZReport(id: string): Promise<ZReport> {
-  const { data } = await api.get<ZReport>(`/z-reports/${id}`);
+/** One Z with its per-till sections, its shifts and the header frozen at build. */
+export async function fetchZReport(id: string): Promise<ZReportDetail> {
+  const { data } = await api.get<ZReportDetail>(`/z-reports/${id}`);
   return data;
 }
 
@@ -510,22 +519,64 @@ export async function fetchDashboardBreakdown(params: {
   return data;
 }
 
-export async function postCloseDay(payload: {
-  machineIds?: string[];
+export type ShiftListParams = {
   shopId?: string;
-  /**
-   * Several shops at once. Combines with the other two as a union on the server and
-   * is deduplicated, so a till named directly *and* covered by a chosen shop is only
-   * closed once.
-   */
-  shopIds?: string[];
-}): Promise<CloseDayCreateResponse> {
-  const { data } = await api.post('/machines/close-day', payload);
+  machineId?: string;
+  status?: ShiftStatus;
+  /** `true` = closed and in no Z yet. */
+  awaitingZ?: boolean;
+  /** On `businessDate`. */
+  from?: string;
+  to?: string;
+  page?: number;
+  pageSize?: number;
+};
+
+/** Shifts (X reports), newest business date first. */
+export async function fetchShifts(params: ShiftListParams): Promise<ShiftListResponse> {
+  const { data } = await api.get<ShiftListResponse>('/shifts', { params });
   return data;
 }
 
-export async function fetchCloseDayRequest(requestId: string): Promise<CloseDayRequest> {
-  const { data } = await api.get(`/close-day-requests/${requestId}`);
+/** One shift's X, with the tender breakdown recomputed from its documents. */
+export async function fetchShift(id: string): Promise<Shift> {
+  const { data } = await api.get<Shift>(`/shifts/${id}`);
+  return data;
+}
+
+/** Per till of a shop: reachability, open shift, and closed shifts awaiting a Z. */
+export async function fetchZCandidates(shopId: string): Promise<ZCandidates> {
+  const { data } = await api.get<ZCandidates>(`/shops/${shopId}/z-candidates`);
+  return data;
+}
+
+/**
+ * Start a Z for one shop. Several shops from the wizard are one call each — a Z never
+ * spans shops. Comes back `completed` at once when nothing needed closing.
+ */
+export async function createZRun(body: {
+  shopId: string;
+  machines: ZRunMachineSelection[];
+  businessDate?: string;
+}): Promise<ZRun> {
+  const { data } = await api.post<ZRun>('/z-runs', body);
+  return data;
+}
+
+/** Progress. Reading it also sweeps expiry and builds the Z once every item is ready. */
+export async function fetchZRun(id: string): Promise<ZRun> {
+  const { data } = await api.get<ZRun>(`/z-runs/${id}`);
+  return data;
+}
+
+/** Build now without these tills; their shifts wait for the next Z. */
+export async function proceedZRun(id: string, excludeMachineIds: string[]): Promise<ZRun> {
+  const { data } = await api.post<ZRun>(`/z-runs/${id}/proceed`, { excludeMachineIds });
+  return data;
+}
+
+export async function cancelZRun(id: string): Promise<ZRun> {
+  const { data } = await api.post<ZRun>(`/z-runs/${id}/cancel`, {});
   return data;
 }
 
@@ -544,7 +595,7 @@ api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401 && typeof window !== 'undefined') {
-      const clerk = (window as any).Clerk;
+      const clerk = clerkGlobal();
       if (clerk && !clerk.loaded) {
         return Promise.reject(err);
       }
