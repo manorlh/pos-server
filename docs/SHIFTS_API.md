@@ -14,6 +14,9 @@ Conventions
   decimal strings** (`"123.40"`) — that is how the server's Decimal serialises. Parse them
   as decimals, never floats.
 - `null` always means "unknown / not counted / not applicable", never zero.
+- **Absent = null.** The till's encoder drops null fields, so every nullable request field
+  may be omitted and an omitted field is read exactly as `null` (e.g. no `countedCash` =
+  not counted; no `openShiftId` on the heartbeat = no shift open). Never 0, never a 422.
 - Errors are `{"detail": ...}`. Where `detail` is a string with a `:` suffix
   (`another_shift_open:<id>`), split on the first `:`.
 
@@ -85,12 +88,14 @@ Request
   "closedAt": "2026-09-27T15:02:00+03:00",   // required
   "closedByUserId": "…", "closedByName": "…", // nullable
   "unattended": false,          // true = closed remotely with nobody at the drawer
-  "countedCash": 1234.50,       // null = not counted (always null when unattended; the server enforces it)
+  "countedCash": 1234.50,       // null/absent = not counted (always null when unattended; the server enforces it)
   "expectedCash": 1210.00,      // the till's own expected drawer (opening + cash + cash tips)
   "transactionIds": ["…", "…"], // every document of this shift, required (may be empty)
   "lastTransactionNumber": "1043", // nullable
-  "till": {                      // the till's X figures, stored verbatim for audit (§3.2 keys)
-    "totalSales": 3400.00, "totalRefunds": 50.00,
+  "till": {                      // the till's X figures, stored verbatim for audit (§3.3 keys)
+    "totalSales": 3400.00,       // GROSS: Σ totalAmount of sales, before document discounts
+    "totalDiscounts": 25.00,     // optional: Σ documentDiscount of sales
+    "totalRefunds": 50.00,
     "totalCash": 710.00, "totalCard": 2640.00,
     "totalTips": 20.00, "vatTotal": 510.93,
     "transactionsCount": 41
@@ -115,7 +120,7 @@ Responses
     "status": "accepted",        // or "duplicate" (already closed: nothing is rewritten)
     "shiftId": "…",
     "serverTotals": { …§3.2… },  // recomputed by the server from the documents it holds
-    "totalsMismatch": false,     // true if any §3.2 key in `till` differs from the server by > 0.01
+    "totalsMismatch": false,     // true if any §3.3 key sent in `till` differs from the server by > 0.01
     "zReportId": null, "zNumber": null,  // set once the shift is in a Z (a duplicate may carry them)
     "serverTime": "…"
   }
@@ -132,7 +137,13 @@ Responses
 - `403 {"detail": "shift_belongs_to_another_machine"}`.
 
 A close for a shift that was closed administratively (dead-till recovery, §2.9) returns
-`200 duplicate` with that shift's figures.
+`200 duplicate` with that shift's figures. When the close answers a remote instruction
+(`closeRequestId`) and it was the last till the Z run waited for, the Z is built in the same
+request and `zReportId`/`zNumber` are already set in this response.
+
+Till behaviour this contract assumes (confirmed by the till side): the open fields are
+repeated in every close; `staleIds` are re-pushed like `missingIds`; `zReportId`/`zNumber`
+are read from any 200 (a duplicate included); an ack answered 404 or 410 is dropped.
 
 ### 1.4 `POST /sync/{machineId}/shift-close/ack` — acknowledge a remote close instruction
 
@@ -146,8 +157,9 @@ A close for a shift that was closed administratively (dead-till recovery, §2.9)
 }
 ```
 - `received`: the till has the instruction (item → `closing`).
-- `deferred`: the till cannot close yet (e.g. a card payment in flight); it will retry by itself.
-  The item stays pending; `errorCode`/`errorMessage` are shown to the operator.
+- `deferred`: the till cannot close yet; it will retry by itself. The till sends
+  `errorCode: "card_in_flight"` for a card payment in flight. The item becomes `closing`
+  and `errorCode`/`errorMessage` are shown to the operator.
 - `completed`: informational — the item only becomes ready when the **close** (§1.3) is
   accepted with all documents; an ack alone never makes it ready.
 - `failed`: the till gave up (item → `failed`).
@@ -170,7 +182,8 @@ Prefill rule on the till: `countedCash`, else `expectedCash`.
 
 ### 1.6 Heartbeat `POST /machines/me/heartbeat`
 
-Request adds (both optional, both may be null = "no shift open"):
+Request adds (both optional; null **or absent** = "no shift open" — the claim is replaced
+on every beat):
 ```json
 { "openShiftId": "…", "openShiftOpenedAt": "…" }
 ```
@@ -184,7 +197,8 @@ Response
 }
 ```
 `pendingCloseDay` is gone. The till purges synced documents of shifts with
-`sequenceNumber <= zReportedThroughSequence`.
+`sequenceNumber <= zReportedThroughSequence`. `pendingCloseShift` is repeated on every beat
+until the till's close is accepted (or the run ends), so the till must dedupe by `requestId`.
 
 ### 1.7 Ably event `close-shift`
 
@@ -248,8 +262,9 @@ Only active, assigned tills of the shop. `ShiftSummary` = §3.1 without `tillTot
 ```
 - `throughShiftId` omitted/null = all of this till's closed un-Z'd shifts. When given it must
   be one of them; every older one is included too (no gaps, D4).
-- `includeOpenShift` omitted = `true` when the till has an open shift. When true the cloud
-  sends `close-shift` (Ably now, heartbeat next beat) and the item waits for that close.
+- `includeOpenShift` omitted = `true` when the till has an open shift (the cloud's, or the
+  one the till reports on its heartbeat). When true the cloud sends `close-shift` (Ably
+  now if the till is online, heartbeat on its next beat) and the item waits for that close.
   An `includeOpenShift` run always takes *all* closed shifts of that till plus the open one
   (a `throughShiftId` is then refused with 400 `through_shift_with_open_shift`).
 - `201` → **ZRun** (§3.4). When nothing needs closing the Z is built in the same request and
@@ -266,9 +281,17 @@ Only active, assigned tills of the shop. `ShiftSummary` = §3.1 without `tillTot
 
 ### 2.6 `POST /z-runs/{id}/proceed`
 `{"excludeMachineIds": ["…"]}` — build now without those tills (their shifts wait for the next
-Z; no gap for them). `200` ZRun (`completed` with the Z) ·
-`409 {"detail": "items_not_ready", "machineIds": [...]}` if a non-excluded till is not ready ·
-`409 {"detail": "nothing_to_report"}` if nothing is left · `409 {"detail": "run_not_waiting"}`.
+Z; no gap for them). A till whose item is `failed` or `expired` must be listed. `200` ZRun
+(`completed` with the Z, or `failed` with `errorCode` if the build was refused — see below) ·
+`409 {"detail": {"code": "items_not_ready", "machineIds": [...]}}` if a non-excluded till is
+not ready · `409 {"detail": "nothing_to_report"}` if nothing is left ·
+`409 {"detail": "run_not_waiting"}`.
+
+**A refused build.** The build re-checks everything under row locks. If it refuses, the run
+becomes `failed` with `errorCode` one of `through_shift_unavailable` (another Z took the
+shifts), `open_shift_before_through` (an older shift of that till is still open on the
+cloud — a gap), `shift_already_in_z`; nothing is written and no Z number is used. Start a
+new run.
 
 ### 2.7 `POST /z-runs/{id}/cancel`
 `200` ZRun (`cancelled`; open items → `excluded`). A till that already received the instruction
@@ -335,7 +358,7 @@ sections of each Z (one row per Z × till: `zReportId`, `shopSequenceNumber`, `m
 }
 ```
 
-### 3.2 X figures (`serverTotals`, and the keys compared in `till`)
+### 3.2 X figures (`serverTotals`)
 Over the shift's documents with status `completed | refunded | partial_refund`:
 
 | key | definition |
@@ -347,9 +370,26 @@ Over the shift's documents with status `completed | refunded | partial_refund`:
 | `totalCard` | same for card legs |
 | `totalTips` | Σ `tipAmount` (`totalCashTips` / `totalCardTips` split by `tipPaymentMethod`, server only) |
 | `vatTotal` | Σ `vatAmount` of sales − Σ of credit notes; **null** if any document has none |
-| `firstTransactionNumber`, `lastTransactionNumber` | lowest / highest document number (numeric order when numeric), server only |
+| `firstTransactionNumber`, `lastTransactionNumber` | lowest / highest document number issued in the shift, cancelled documents included (numeric order when numeric), server only |
 
 Server expected cash = `openingCash + totalCash + totalCashTips`.
+
+### 3.3 The till's X (`till`) and what `totalsMismatch` compares
+
+Only keys the till sends are compared (tolerance 0.01); a non-numeric value is a mismatch.
+
+| till key | compared with (server, same documents) |
+|---|---|
+| `totalSales` | **gross** sales: Σ `totalAmount` of sales (= `serverTotals.totalSales` + discounts) |
+| `totalDiscounts` or `discountsTotal` | Σ `documentDiscount` of sales |
+| `totalRefunds` | `serverTotals.totalRefunds` |
+| `totalCash`, `totalCard` | `serverTotals.totalCash`, `.totalCard` (tender legs, sales − credit notes, tips excluded) |
+| `totalTips` | `serverTotals.totalTips` |
+| `vatTotal` | `serverTotals.vatTotal` (a mismatch if the server's is null) |
+| `transactionsCount` | `serverTotals.transactionsCount` |
+
+Note the asymmetry on purpose: `serverTotals.totalSales` (and every Z) is **net of document
+discounts** — the money collected — while the till's `totalSales` is its line totals.
 
 ### 3.4 ZRun
 ```json
@@ -365,8 +405,11 @@ Server expected cash = `openingCash + totalCash + totalCashTips`.
   }]
 }
 ```
-Items expire 36 h after the run is created (`expired`); a run with an expired item can still
-`proceed` without it.
+36 h after the run was created, items still waiting for a till (`waiting_close`, `closing`)
+become `expired`; the run stays `waiting` if another item is `ready` (then `proceed` without
+the expired tills, or `cancel`), and becomes `expired` itself if nothing is ready. A till is
+in at most one live run: `waiting_close`, `closing` and `ready` items of a `waiting` run hold
+it (`409 z_run_in_progress`).
 
 ### 3.5 ZReport
 ```json
@@ -405,6 +448,11 @@ shifts is uncounted.
 
 ## Deviations from the plan
 
+- A Z run can be `failed` (build refused under lock, see §2.6) — the plan lists the status but
+  not when; also `expired` applies to the whole run only when nothing in it is ready.
+- A till whose item is `failed`/`expired` must be named in `proceed`'s `excludeMachineIds`.
+- Heartbeat: an absent `openShiftId` replaces the stored claim with "none open" (the till
+  drops nulls), rather than leaving the last reading in place.
 - Shift close accepts optional open fields so a lost open event is recoverable, and answers
   `409 shift_unknown` otherwise (plan is silent).
 - `staleIds` on the missing-documents 409 is now meaningful (documents held under another shift).

@@ -102,9 +102,9 @@ def test_me_exposes_the_capability_flags_the_dashboard_reads() -> None:
 
 def test_removing_a_user_does_not_delete_the_row() -> None:
     # Seven tables carry a FK to users.id, two of them NOT NULL
-    # (pos_machines.distributor_id, close_day_requests.initiated_by_user_id), so a
-    # hard delete either failed with an integrity error or took terminals with it —
-    # and it destroyed the answer to "who ordered that close-day".
+    # (pos_machines.distributor_id, z_runs.created_by_user_id), so a hard delete
+    # either failed with an integrity error or took terminals with it — and it
+    # destroyed the answer to "who produced that Z".
     # The body, not the docstring — which quotes the old call to explain why it went.
     body = inspect.getsource(users_router.deactivate_user).split('"""')[-1]
     assert "db.delete(" not in body

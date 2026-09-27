@@ -1,81 +1,26 @@
-"""Dashboard close-day endpoints."""
+"""Removed: the dashboard's close-day. A Z is produced with a Z run (`app/routers/z_runs.py`)."""
 from __future__ import annotations
 
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 
-from app.database import get_db
-from app.middleware.auth import get_active_tenant_id, get_current_machine_admin, get_current_user
+from app.middleware.auth import get_current_machine_admin
 from app.models.user import User
-from app.schemas.close_day import (
-    CloseDayCreateIn,
-    CloseDayCreateResponse,
-    CloseDayRequestOut,
-)
-from app.services.close_day import (
-    expire_overdue_close_day_items,
-    create_close_day_request,
-    create_response_out,
-    get_close_day_request,
-    request_to_out,
-    resolve_machines_for_close_day,
-)
 
 router = APIRouter(tags=["close-day"])
 
 
-@router.post(
-    "/machines/close-day",
-    response_model=CloseDayCreateResponse,
-    response_model_by_alias=True,
-)
-def post_close_day(
-    body: CloseDayCreateIn,
-    current_user: User = Depends(get_current_machine_admin),
-    active_tenant_id=Depends(get_active_tenant_id),
-    db: Session = Depends(get_db),
-):
-    machines = resolve_machines_for_close_day(
-        db,
-        current_user,
-        active_tenant_id,
-        machine_ids=body.machine_ids,
-        shop_id=body.shop_id,
-        shop_ids=body.shop_ids,
-    )
-    request = create_close_day_request(
-        db,
-        current_user,
-        active_tenant_id,
-        machines,
-        shop_id=body.shop_id,
-    )
-    return create_response_out(request)
+@router.post("/machines/close-day", status_code=status.HTTP_410_GONE)
+def post_close_day(current_user: User = Depends(get_current_machine_admin)):
+    """Removed: `POST /z-runs`."""
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail="upgrade_required")
 
 
-@router.get(
-    "/close-day-requests/{request_id}",
-    response_model=CloseDayRequestOut,
-    response_model_by_alias=True,
-)
+@router.get("/close-day-requests/{request_id}", status_code=status.HTTP_410_GONE)
 def get_close_day_request_detail(
     request_id: uuid.UUID,
-    # Matches the POST that creates these. It was `get_current_user`, so any tenant
-    # member — a cashier included — could read any close-day request in the tenant,
-    # which names the machines and shop being closed.
     current_user: User = Depends(get_current_machine_admin),
-    active_tenant_id=Depends(get_active_tenant_id),
-    db: Session = Depends(get_db),
 ):
-    # Retire anything the terminals never collected, so an operator watching this
-    # screen sees a stalled instruction turn into `expired` rather than sitting on
-    # `pending` for ever. Lazy because there is no scheduler in this service.
-    if expire_overdue_close_day_items(db):
-        db.commit()
-
-    request = get_close_day_request(db, request_id, active_tenant_id)
-    if request is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
-    return request_to_out(request)
+    """Removed: `GET /z-runs/{id}`."""
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail="upgrade_required")

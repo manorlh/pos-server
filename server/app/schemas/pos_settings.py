@@ -67,6 +67,11 @@ class PosSettingsV1Patch(BaseModel):
     # ── White label (distributor branding shown on the till) ──────────────────
     # "" = deliberately no image at this level (overrides an inherited URL);
     # explicit null in a PATCH body = unset this level so it inherits again.
+    # ── Z scope (tenant level only) ──
+    # "shop" (default): one Z per shop over all its tills. "machine": the Z wizard
+    # forces one till per Z — for an accountant who reads the regulation as a Z per
+    # register. Not sent to tills.
+    z_scope: Optional[Literal["shop", "machine"]] = Field(None, alias="zScope")
     brand_logo_url: Optional[str] = Field(None, alias="brandLogoUrl")
     brand_hero_url: Optional[str] = Field(None, alias="brandHeroUrl")
 

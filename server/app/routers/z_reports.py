@@ -58,7 +58,11 @@ def _scope_by_user(query, current_user: User, db: Session):
 
 
 def z_to_out(z: ZReport, cls=ZReportOut):
-    item = cls.model_validate(z)
+    item = ZReportOut.model_validate(z)
+    if cls is not ZReportOut:
+        # Not validated from the row directly: its `shifts` relationship would be read
+        # into the detail's `shifts` field as ORM rows. The caller fills that in.
+        item = cls(**item.model_dump())
     item.legacy = z.per_machine is None and z.machine_id is not None
     item.machine_name = z.machine.name if z.machine_id and z.machine else None
     item.shop_name = z.shop.name if z.shop else None

@@ -477,11 +477,11 @@ def deactivate_user(
     Soft delete: flips `is_active` to false. Mirrors what POS users already do.
 
     This used to be `db.delete(user)`, which was wrong twice over. Seven tables carry
-    a FK to `users.id`, two of them NOT NULL — `pos_machines.distributor_id` and
-    `close_day_requests.initiated_by_user_id` — so deleting a distributor who had ever
+    a FK to `users.id`, some of them NOT NULL — `pos_machines.distributor_id` and
+    `z_runs.created_by_user_id` among them — so deleting a distributor who had ever
     paired a terminal either failed with an integrity error or took the terminals with
-    it. And it destroyed the audit trail: "who ordered that close-day" has no answer
-    once the row is gone.
+    it. And it destroyed the audit trail: "who produced that Z" has no answer once the
+    row is gone.
 
     Deactivating is also what the word means operationally. Staff leave; the documents
     they touched do not.

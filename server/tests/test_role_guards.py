@@ -21,7 +21,8 @@ from fastapi import HTTPException
 from app.middleware.auth import get_current_distributor, get_current_machine_admin, get_current_user
 from app.models.tenant_membership import TenantMembershipRole
 from app.models.user import User, UserRole
-from app.routers import close_day as close_day_router
+from app.routers import z_runs as z_runs_router
+from app.routers import machines as machines_router
 from app.routers import companies as companies_router
 from app.routers import shops as shops_router
 from app.routers import tenants as tenants_router
@@ -117,12 +118,40 @@ def test_voucher_reads_are_gated_on_catalog_roles(endpoint) -> None:
     assert "_CATALOG_ROLES" in src, f"{endpoint} must gate on _CATALOG_ROLES"
 
 
-# ── 3b. Close-day request detail ──────────────────────────────────────────────
+# ── 3b. Producing a Z ─────────────────────────────────────────────────────────
+#
+# Producing a Z needs the roles that could close a day before (machine admins:
+# company manager, shop manager, distributor, super admin). A cashier or a shift
+# supervisor may close their own shift at the till, never produce the shop's Z.
 
-def test_reading_a_close_day_request_needs_the_same_role_as_creating_one() -> None:
-    read = _declared_dependency(close_day_router.get_close_day_request_detail)
-    write = _declared_dependency(close_day_router.post_close_day)
-    assert read is write is get_current_machine_admin
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        z_runs_router.post_z_run,
+        z_runs_router.post_z_run_proceed,
+        z_runs_router.post_z_run_cancel,
+        z_runs_router.get_z_run,
+        z_runs_router.get_z_candidates,
+        machines_router.administrative_close_shift,
+    ],
+)
+def test_producing_a_z_needs_a_machine_admin(endpoint) -> None:
+    assert _declared_dependency(endpoint) is get_current_machine_admin
+
+
+@pytest.mark.parametrize("role", [UserRole.CASHIER, UserRole.SHIFT_SUPERVISOR])
+def test_a_cashier_or_supervisor_is_not_a_machine_admin(role) -> None:
+    with pytest.raises(HTTPException) as e:
+        get_current_machine_admin(_user(role))
+    assert e.value.status_code == 403
+
+
+def test_every_z_run_endpoint_checks_the_shop() -> None:
+    """The role alone would let a shop manager run another shop's Z."""
+    for fn in (z_runs_router.post_z_run, z_runs_router.get_z_candidates):
+        assert "_shop_for(" in inspect.getsource(fn)
+    assert "_shop_for(" in inspect.getsource(z_runs_router._run_or_404)
 
 
 # ── 3c. PUT /shops ───────────────────────────────────────────────────────────

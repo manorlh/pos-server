@@ -2,7 +2,7 @@
 The terminal status light.
 
 One resolver, server-side, because "is this till online" was being decided in two
-places with the same ninety-second constant copied into each — `close_day.py` and the
+places with the same ninety-second constant copied into each — the old close-day and the
 dashboard's machines page. Two copies of a threshold is one refactor away from a
 dashboard that says a terminal is reachable while the close-day gate says it is not.
 

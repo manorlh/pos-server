@@ -296,3 +296,98 @@ class TestAdoption:
         db.query.return_value.filter.return_value.first.return_value = None
 
         assert P.adopt_machine(db, uuid.uuid4()) is None
+
+
+# ── The replacement code is refused at the dashboard too ─────────────────────
+
+class TestReplacementCode:
+    def test_refused_while_the_till_has_an_open_shift(self, monkeypatch):
+        from shift_world import accept_str_uuids, make_world
+
+        from app.routers import machines as machines_router
+
+        accept_str_uuids(monkeypatch)
+        w = make_world()
+        till = w.tills[0]
+        w.shift(till, 1, status=ShiftStatus.OPEN)
+        issued = []
+        monkeypatch.setattr(machines_router, "create_pairing_code", lambda *a, **k: issued.append(a))
+
+        with pytest.raises(HTTPException) as e:
+            machines_router.create_replacement_pairing_code(
+                till.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db
+            )
+
+        assert e.value.status_code == 409
+        assert e.value.detail.startswith("open_shift")
+        assert issued == []
+
+    def test_issued_once_the_shift_is_closed(self, monkeypatch):
+        from shift_world import NOW as WNOW, accept_str_uuids, make_world
+
+        from app.routers import machines as machines_router
+
+        accept_str_uuids(monkeypatch)
+        w = make_world()
+        till = w.tills[0]
+        w.shift(till, 1)  # closed
+        monkeypatch.setattr(
+            machines_router, "create_pairing_code",
+            lambda *a, **k: SimpleNamespace(code="ABCD1234", expires_at=WNOW),
+        )
+
+        out = machines_router.create_replacement_pairing_code(
+            till.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db
+        )
+
+        assert out["code"] == "ABCD1234"
+
+
+class TestTheAdministrativeCloseEndpoint:
+    def _world(self, monkeypatch):
+        from shift_world import accept_str_uuids, make_world
+
+        accept_str_uuids(monkeypatch)
+        return make_world()
+
+    def test_a_silent_tills_shift_is_closed_and_returned(self, monkeypatch):
+        from app.routers import machines as machines_router
+        from shift_world import NOW as WNOW
+
+        w = self._world(monkeypatch)
+        till = w.tills[0]
+        till.last_heartbeat_at = WNOW - timedelta(days=2)
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        w.doc(till, shift, "25.00")
+
+        out = machines_router.administrative_close_shift(
+            till.id, shift.id, body=None, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db
+        )
+
+        assert out["created"] is True
+        assert out["shift"]["status"] == "closed"
+        assert out["shift"]["reconstructed"] is True
+        assert out["shift"]["countedCash"] is None
+        assert out["shift"]["serverTotals"]["totalSales"] == "25.00"
+
+    def test_another_tills_shift_is_404(self, monkeypatch):
+        from app.routers import machines as machines_router
+
+        w = self._world(monkeypatch)
+        theirs = w.shift(w.tills[1], 1, status=ShiftStatus.OPEN)
+
+        with pytest.raises(HTTPException) as e:
+            machines_router.administrative_close_shift(
+                w.tills[0].id, theirs.id, body=None, current_user=w.admin,
+                active_tenant_id=w.tenant.id, db=w.db,
+            )
+
+        assert e.value.status_code == 404
+
+    def test_the_old_reconstruct_route_is_gone(self):
+        from app.routers import machines as machines_router
+
+        with pytest.raises(HTTPException) as e:
+            machines_router.reconstruct_close_removed(uuid.uuid4(), current_user=None)
+
+        assert e.value.status_code == 410

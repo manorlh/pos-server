@@ -1,9 +1,9 @@
 """
 The till-facing half of a remote shift close: ack, handover, and completion.
 
-One seam between the till endpoints (sync router, heartbeat) and whatever orchestrates
-remote closes, so the till contract (docs/SHIFTS_API.md §1.4, §1.6, §1.7) does not move
-when the orchestration does.
+One seam between the till endpoints (sync router, heartbeat) and the Z runs that
+orchestrate remote closes, so the till contract (docs/SHIFTS_API.md §1.4, §1.6, §1.7)
+does not depend on how the orchestration is stored.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models.pos_machine import POSMachine
 from app.models.shift import Shift
-from app.services import close_day
+from app.services import z_runs
 
 
 def apply_close_shift_ack(
@@ -27,7 +27,7 @@ def apply_close_shift_ack(
     error_code: Optional[str] = None,
     error_message: Optional[str] = None,
 ) -> str:
-    item = close_day.apply_close_day_ack(
+    item = z_runs.apply_close_shift_ack(
         db,
         machine,
         request_id=request_id,
@@ -36,24 +36,18 @@ def apply_close_shift_ack(
         error_code=error_code,
         error_message=error_message,
     )
-    return item.status.value if hasattr(item.status, "value") else str(item.status)
+    db.commit()
+    return item.status
 
 
 def on_shift_close_accepted(db: Session, machine: POSMachine, shift: Shift) -> None:
     """The cloud now holds every document of `shift` and has closed it."""
-    close_day.complete_close_request_for_shift(db, machine.id, shift)
+    z_runs.on_shift_close_accepted(db, machine, shift)
 
 
 def take_pending_close_shift(db: Session, machine: POSMachine) -> Optional[dict]:
-    """The instruction to hand this till on its heartbeat, as `{requestId, shiftId}`."""
-    item = close_day.take_pending_close_day_for_machine(db, machine)
-    if item is None:
-        return None
-    return {
-        "requestId": str(item.id),
-        "shiftId": str(item.shift_id) if item.shift_id else None,
-    }
+    return z_runs.take_pending_close_shift(db, machine)
 
 
 def close_shift_pending_machine_ids(db: Session, machine_ids: List[uuid.UUID]) -> Set[uuid.UUID]:
-    return close_day.get_pending_close_day_machine_ids(db, machine_ids)
+    return z_runs.close_shift_pending_machine_ids(db, machine_ids)

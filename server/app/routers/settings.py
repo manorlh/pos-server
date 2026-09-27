@@ -132,6 +132,15 @@ def _sell_screen_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
     return {key: raw[key] for key in SELL_SCREEN_SETTING_KEYS if key in raw}
 
 
+def _refuse_tenant_only_keys(data: PosSettingsV1Patch) -> None:
+    """`zScope` decides how a tenant's Zs are produced; it has no company or shop layer."""
+    if data.z_scope is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="zScope is a tenant setting",
+        )
+
+
 def _build_patch(data: PosSettingsV1Patch, user: User) -> Dict[str, Any]:
     branding = _branding_patch(data)
     _check_branding_write(user, branding)
@@ -291,6 +300,7 @@ def patch_company_settings(
     _check_company_access(current_user, company, db)
     _check_company_settings_write(current_user, company, db)
 
+    _refuse_tenant_only_keys(data)
     patch = _build_patch(data, current_user)
     if not patch:
         return EntitySettingsResponse(
@@ -372,6 +382,7 @@ def patch_shop_settings(
     ensure_same_tenant(shop.tenant_id, active_tenant_id)
     _check_shop_settings_write(current_user, shop, db)
 
+    _refuse_tenant_only_keys(data)
     patch = _build_patch(data, current_user)
     if not patch:
         return ShopSettingsResponse(

@@ -46,7 +46,6 @@ TABLES = [
     "categories", "vouchers", "products", "customers",
     "z_reports", "shifts", "transactions", "transaction_items", "transaction_payments",
     "issued_vouchers", "shop_z_sequences", "sync_logs",
-    "close_day_requests", "close_day_request_items",
     "z_runs", "z_run_items",
 ]
 

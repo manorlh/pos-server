@@ -45,6 +45,8 @@ from app.routers import (
     tips,
     dashboard,
     close_day,
+    shifts as shifts_router,
+    z_runs as z_runs_router,
     tax_reports,
     reports,
 )
@@ -98,6 +100,8 @@ app.include_router(sync.router, prefix=_prefix)
 app.include_router(images.router, prefix=_prefix)
 app.include_router(transactions.router, prefix=_prefix)
 app.include_router(z_reports.router, prefix=_prefix)
+app.include_router(shifts_router.router, prefix=_prefix)
+app.include_router(z_runs_router.router, prefix=_prefix)
 app.include_router(pos_users.router, prefix=_prefix)
 app.include_router(tenants.router, prefix=_prefix)
 app.include_router(settings_router.router, prefix=_prefix)

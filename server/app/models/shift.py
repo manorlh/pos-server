@@ -85,8 +85,8 @@ class Shift(Base):
 
     #: Closed with nobody at the drawer (remote close, or administrative close).
     unattended = Column(Boolean, nullable=False, default=False, server_default="false")
-    #: The remote close instruction this close answered, if any.
-    close_request_item_id = Column(UUID(as_uuid=True), nullable=True)
+    #: The remote close instruction (a Z-run item) this close answered, if any.
+    close_request_item_id = Column(UUID(as_uuid=True), ForeignKey("z_run_items.id"), nullable=True)
 
     # ── The X, recomputed by the server from the documents it holds ───────────
     total_sales = Column(Numeric(12, 2), nullable=True)

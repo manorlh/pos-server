@@ -57,6 +57,8 @@ class ZReport(Base):
     #: The per-register sections (see docs/SHIFTS_API.md §3.6). NULL on legacy rows.
     per_machine = Column(JSONB, nullable=True)
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    #: The run that built it. NULL on legacy rows.
+    z_run_id = Column(UUID(as_uuid=True), ForeignKey("z_runs.id"), nullable=True, index=True)
 
     #: The shop's own Z counter — 1, 2, 3 … across every till in the shop.
     #:

@@ -395,6 +395,10 @@ def apply_shift_close(
         shift.close_request_item_id = body.close_request_id
     shift.approved_by_user_id = approved_by_user_id
     shift.approved_by_pos_user_id = approved_by_pos_user_id
+    if getattr(machine, "reported_open_shift_id", None) == shift.id:
+        # Its heartbeat claim is stale from this moment; do not wait a beat to drop it.
+        machine.reported_open_shift_id = None
+        machine.reported_open_shift_opened_at = None
     if shift.totals_mismatch:
         logger.warning(
             "shift %s closed with a till X that disagrees with the documents till=%s",
