@@ -27,6 +27,7 @@ import type {
   ZCandidates,
   ZReportDetail,
   ZReportListResponse,
+  ShiftCloseRequest,
   ZRun,
   ZRunMachineSelection,
 } from './types';
@@ -572,6 +573,22 @@ export async function fetchZRun(id: string): Promise<ZRun> {
 /** Build now without these tills; their shifts wait for the next Z. */
 export async function proceedZRun(id: string, excludeMachineIds: string[]): Promise<ZRun> {
   const { data } = await api.post<ZRun>(`/z-runs/${id}/proceed`, { excludeMachineIds });
+  return data;
+}
+
+/** Ask a till to close its open shift, without a Z. Returns the pending one if any. */
+export async function requestShiftClose(machineId: string): Promise<ShiftCloseRequest> {
+  const { data } = await api.post<ShiftCloseRequest>(`/machines/${machineId}/close-shift`, {});
+  return data;
+}
+
+export async function fetchShiftCloseRequest(id: string): Promise<ShiftCloseRequest> {
+  const { data } = await api.get<ShiftCloseRequest>(`/shift-close-requests/${id}`);
+  return data;
+}
+
+export async function cancelShiftCloseRequest(id: string): Promise<ShiftCloseRequest> {
+  const { data } = await api.post<ShiftCloseRequest>(`/shift-close-requests/${id}/cancel`, {});
   return data;
 }
 

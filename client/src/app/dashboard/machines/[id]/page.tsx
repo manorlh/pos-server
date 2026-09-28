@@ -13,7 +13,7 @@
  * links across rather than growing a second copy of them.
  */
 
-import { use, useMemo } from 'react';
+import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
@@ -31,13 +31,17 @@ import { SalesStats } from '@/components/dashboard/sales-stats';
 import { MachineCatalogCard } from '@/components/dashboard/machines/machine-catalog';
 import { MachineShiftSummary } from '@/components/dashboard/machines/machine-row';
 import {
+  RemoteShiftCloseDialog,
+  canCloseShiftRemotely,
+} from '@/components/dashboard/machines/remote-shift-close';
+import {
   CountedCash,
   OverShort,
   ShiftBadges,
   useShiftLabel,
 } from '@/components/dashboard/shifts/shift-parts';
 import { Badge } from '@/components/ui/badge';
-import { buttonVariants } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -76,6 +80,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
   const tShifts = useTranslations('shifts');
   const shiftLabel = useShiftLabel();
   const canProduceZ = useCanProduceZ();
+  const [closeShiftOpen, setCloseShiftOpen] = useState(false);
 
   usePageScope({ maxLevel: 'machine', silent: true });
 
@@ -179,14 +184,19 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           )}
         </div>
         <div className="flex flex-wrap gap-2">
+          {/* Two separate actions: closing the shift only files its X; the Z is the
+              wizard's. */}
+          {canProduceZ && canCloseShiftRemotely(machine) ? (
+            <Button size="sm" variant="outline" onClick={() => setCloseShiftOpen(true)}>
+              {tMachines('closeShiftRemotely')}
+            </Button>
+          ) : null}
           {canProduceZ && machine.shopId && machine.pairingStatus === 'assigned' ? (
             <Link
               href={zWizardHref(machine.shopId, machine.id)}
               className={buttonVariants({ size: 'sm' })}
             >
-              {machine.shiftStatus === 'open'
-                ? tMachines('closeShiftRemotely')
-                : tMachines('produceZForTill')}
+              {tMachines('produceZForTill')}
             </Link>
           ) : null}
           <Link
@@ -468,6 +478,12 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           </Table>
         </CardContent>
       </Card>
+
+      <RemoteShiftCloseDialog
+        machine={machine}
+        open={closeShiftOpen}
+        onOpenChange={setCloseShiftOpen}
+      />
     </div>
   );
 }

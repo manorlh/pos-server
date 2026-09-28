@@ -345,7 +345,7 @@ export interface PosMachine {
   openedAt?: string;
   /** Display name of whoever opened the shift. */
   openedBy?: string;
-  /** A Z run has asked this till to close its shift and is waiting for it. */
+  /** A Z run or a remote close has asked this till to close its shift and waits for it. */
   closeShiftPending?: boolean;
   /** Closed shifts of this till that no Z has taken yet. */
   closedShiftsAwaitingZ?: number | null;
@@ -929,6 +929,40 @@ export interface ZRun {
   errorCode?: string | null;
   errorMessage?: string | null;
   items: ZRunItem[];
+}
+
+export type ShiftCloseRequestStatus =
+  | 'waiting_close'
+  | 'closing'
+  | 'completed'
+  | 'failed'
+  | 'expired'
+  | 'cancelled';
+
+/** A remote shift close without a Z (`POST /machines/{id}/close-shift`). */
+export interface ShiftCloseRequest {
+  id: string;
+  machineId: string;
+  machineName?: string | null;
+  shopId?: string | null;
+  shiftId?: string | null;
+  status: ShiftCloseRequestStatus;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  expiresAt?: string | null;
+  sentAt?: string | null;
+  receivedAt?: string | null;
+  completedAt?: string | null;
+  /** The till's last reported reading — not a live count. */
+  online?: boolean | null;
+  pendingDocuments?: number | null;
+  pendingAsOf?: string | null;
+  /** While pending: documents of the shift the cloud holds. */
+  documentsOnCloud?: number | null;
+  /** The shift being closed (its X once completed); null if the cloud has not seen it. */
+  shift?: Shift | null;
 }
 
 export interface ZReport {

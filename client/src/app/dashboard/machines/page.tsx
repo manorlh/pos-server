@@ -30,6 +30,7 @@ import { he } from 'date-fns/locale';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MachineStatusDot, machineStatus } from '@/components/dashboard/machine-status';
 import { MachinesTable } from '@/components/dashboard/machines/machines-table';
+import { RemoteShiftCloseDialog } from '@/components/dashboard/machines/remote-shift-close';
 
 const MQTT_ONLINE_WINDOW_MS = 90 * 1000;
 
@@ -63,6 +64,7 @@ export default function MachinesPage() {
   const [editShopId, setEditShopId] = useState('');
 
   const [removeOpen, setRemoveOpen] = useState(false);
+  const [closeShiftTarget, setCloseShiftTarget] = useState<PosMachine | null>(null);
   const [fieldInstallOpen, setFieldInstallOpen] = useState(false);
   const [fieldSession, setFieldSession] = useState<PairingSessionCreateResponse | null>(null);
   const [fieldPairedCount, setFieldPairedCount] = useState(0);
@@ -77,8 +79,7 @@ export default function MachinesPage() {
     (me?.role === 'company_manager' || me?.role === 'distributor' || me?.role === 'super_admin');
   const canRemoveMachine =
     authHydrated && (me?.role === 'distributor' || me?.role === 'super_admin');
-  // Producing a Z is also how a till's shift is closed remotely (there is no other
-  // remote close), so it is the one shift action this page offers.
+  // Producing a Z and closing a till's shift remotely need the same roles.
   const canProduceZ = useCanProduceZ();
   const showAssignHelp =
     authHydrated && (me?.role === 'super_admin' || me?.role === 'distributor');
@@ -574,6 +575,7 @@ export default function MachinesPage() {
               onEditShop: openShopEdit,
               onPush: openPush,
               onRemove: openRemove,
+              onCloseShift: setCloseShiftTarget,
             }}
             isDeviceOnline={isDeviceOnline}
             onAddMachineToShop={openPairForShop}
@@ -994,6 +996,15 @@ export default function MachinesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <RemoteShiftCloseDialog
+        key={closeShiftTarget?.id ?? 'none'}
+        machine={closeShiftTarget}
+        open={!!closeShiftTarget}
+        onOpenChange={(next) => {
+          if (!next) setCloseShiftTarget(null);
+        }}
+      />
     </div>
   );
 }

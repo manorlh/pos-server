@@ -34,6 +34,10 @@ const KNOWN = new Set([
   'terminal_is_online',
   'terminal_recently_seen',
   'open_shift',
+  'no_open_shift',
+  'unknown_shift',
+  'machine_not_assigned',
+  'request_not_pending',
 ]);
 
 /** The code part of a detail: `z_run_in_progress:<id>` → `z_run_in_progress`. */

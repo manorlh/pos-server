@@ -35,6 +35,7 @@ import {
   Link2,
   ListChecks,
   MoreHorizontal,
+  Power,
   Send,
   Store,
   Trash2,
@@ -44,6 +45,7 @@ import {
 import type { PosMachine } from '@/lib/types';
 import { registerNumberOf } from '@/lib/registerNumber';
 import { zWizardHref } from '@/lib/zAccess';
+import { canCloseShiftRemotely } from '@/components/dashboard/machines/remote-shift-close';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -76,7 +78,7 @@ export interface MachinePermissions {
   canAssignMachine: boolean;
   canEditAssignedShop: boolean;
   canRemoveMachine: boolean;
-  /** May produce a Z — which is also the only way to close a till's shift remotely. */
+  /** May produce a Z, and close a till's shift remotely (the same server role set). */
   canProduceZ: boolean;
 }
 
@@ -86,6 +88,8 @@ export interface MachineRowActions {
   onEditShop: (m: PosMachine) => void;
   onPush: (m: PosMachine) => void;
   onRemove: (m: PosMachine) => void;
+  /** Ask the till to close its open shift, without a Z. */
+  onCloseShift: (m: PosMachine) => void;
 }
 
 export interface MachineRowProps {
@@ -221,16 +225,20 @@ function MachineRowMenu({
             <Store aria-hidden /> {t('changeShop')}
           </DropdownMenuItem>
         ) : null}
-        {/* There is no remote close that is not a Z: a till's shift is closed from the
-            cloud by a Z run that includes it. So this opens the wizard on this till,
-            with its open shift included. */}
+        {/* Two separate actions. Closing the shift remotely only closes it (the X is
+            filed, the shift waits for a Z); producing a Z is the wizard, which may also
+            close an open shift as part of the run. */}
+        {canProduceZ && canCloseShiftRemotely(m) ? (
+          <DropdownMenuItem onClick={() => actions.onCloseShift(m)}>
+            <Power aria-hidden /> {t('closeShiftRemotely')}
+          </DropdownMenuItem>
+        ) : null}
         {canProduceZ ? (
           <DropdownMenuItem
             onClick={() => router.push(zWizardHref(m.shopId, m.id))}
             disabled={m.pairingStatus !== 'assigned' || !m.shopId}
           >
-            <FilePlus2 aria-hidden />
-            {m.shiftStatus === 'open' ? t('closeShiftRemotely') : t('produceZForTill')}
+            <FilePlus2 aria-hidden /> {t('produceZForTill')}
           </DropdownMenuItem>
         ) : null}
         <DropdownMenuItem
