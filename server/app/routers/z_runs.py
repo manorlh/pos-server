@@ -7,15 +7,17 @@ company manager, shop manager, distributor, super admin), and access to the shop
 from __future__ import annotations
 
 import uuid
+from typing import Iterable
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.middleware.auth import ensure_same_tenant, get_active_tenant_id, get_current_machine_admin
+from app.models.pos_machine import POSMachine
 from app.models.shop import Shop
 from app.models.tenant import Tenant
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.routers.shops import _check_shop_access
 from app.schemas.z_run import (
     ActiveRunOut,
@@ -25,7 +27,7 @@ from app.schemas.z_run import (
     ZRunOut,
     ZRunProceedIn,
 )
-from app.routers.machines import _awaiting_z_by_machine, _tenant_timezones
+from app.routers.machines import _awaiting_z_by_machine, _tenant_timezones, check_shift_admin_access
 from app.services.machine_status import StatusInput, resolve_status
 from app.services.remote_close import close_shift_pending_machine_ids
 from app.services.shifts import orphan_documents_by_machine, shift_to_out
@@ -38,9 +40,32 @@ def _shop_for(db: Session, shop_id, user: User, tenant_id) -> Shop:
     shop = db.query(Shop).filter(Shop.id == shop_id).first()
     if shop is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
+    # A shop with no tenant belongs to no tenant the caller acts in — never a pass.
+    # (`ensure_same_tenant` lets a NULL through, which is right for legacy machines only.)
+    if shop.tenant_id is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant_forbidden")
     ensure_same_tenant(shop.tenant_id, tenant_id)
     _check_shop_access(user, shop, db)
     return shop
+
+
+def _is_distributor(user: User) -> bool:
+    return user.role == UserRole.DISTRIBUTOR
+
+
+def _check_tills(db: Session, user: User, machines: Iterable[POSMachine], tenant_id) -> None:
+    """
+    A distributor acts only on their own terminals.
+
+    Shop access admits any distributor to any shop of the tenant, which let one produce a
+    Z over — or read the candidates of — another distributor's tills. The same per-till
+    rule as a remote or administrative close (`check_shift_admin_access`) applies here to
+    every till a run takes or a read shows. Other roles are bounded by the shop itself.
+    """
+    if not _is_distributor(user):
+        return
+    for machine in machines:
+        check_shift_admin_access(db, machine, user, tenant_id)
 
 
 def _tenant(db: Session, tenant_id) -> Tenant:
@@ -52,6 +77,7 @@ def _run_or_404(db: Session, run_id: uuid.UUID, user: User, tenant_id) -> "ZR.ZR
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Z run not found")
     _shop_for(db, run.shop_id, user, tenant_id)
+    _check_tills(db, user, [i.machine for i in run.items if i.machine is not None], tenant_id)
     return run
 
 
@@ -78,6 +104,10 @@ def get_z_candidates(
     if ZR.expire_overdue_runs(db):
         db.commit()
     tills = ZR.shop_tills(db, shop.id)
+    if _is_distributor(current_user):
+        # Only their own terminals: another distributor's tills are not listed at all.
+        tills = [m for m in tills if str(m.distributor_id) == str(current_user.id)]
+        _check_tills(db, current_user, tills, active_tenant_id)
     ids = [m.id for m in tills]
     live = ZR._live_items(db, ids)
     orphans = orphan_documents_by_machine(db, ids)
@@ -158,6 +188,12 @@ def post_z_run(
 ):
     """Start a Z for one shop. Multi-shop from the UI is one call per shop."""
     shop = _shop_for(db, body.shop_id, current_user, active_tenant_id)
+    if _is_distributor(current_user):
+        wanted = [m.machine_id for m in body.machines]
+        found = db.query(POSMachine).filter(POSMachine.id.in_(wanted)).all() if wanted else []
+        if len({m.id for m in found}) != len(set(wanted)):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        _check_tills(db, current_user, found, active_tenant_id)
     run = ZR.create_z_run(
         db,
         current_user,

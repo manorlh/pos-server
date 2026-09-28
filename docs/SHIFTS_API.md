@@ -7,7 +7,12 @@ Anything here that differs from the plan is called out under **Deviations** at t
 Conventions
 
 - Prefix: `/api/v1`. Till calls use the machine JWT (`Authorization: Bearer <machine token>`);
-  `{machineId}` in the path must be the token's machine (403 otherwise).
+  `{machineId}` in the path must be the token's machine (403 otherwise). The shift writes —
+  §1.1 open, §1.3 close, §1.4 ack, §1.5 last-closed — take **only** a machine token: a
+  dashboard (user) token is `403 {"detail": "machine_token_required"}`. Other
+  `/sync/{machineId}/…` paths that admit a user token require the user to be in the machine's
+  tenant (a distributor: their own terminal; a super admin: any) — `403 tenant_forbidden` /
+  `403 Access denied` otherwise.
 - JSON keys are camelCase. Ids are UUID strings. Timestamps are ISO-8601 with offset.
   `businessDate` is `YYYY-MM-DD` (the till's local date the shift opened).
 - **Money:** inputs accept a JSON number or a decimal string. **Responses return money as
@@ -318,7 +323,10 @@ could close a day before: `company_manager`, `shop_manager`, `distributor`, `sup
 (`get_current_machine_admin`). So does closing a till's shift remotely without a Z (§2.14),
 narrowed to the till: a distributor's own terminals, a company manager's company tree, a
 shop manager's shop. Reading shifts / Z reports needs any signed-in role that can see the
-shop.
+shop. **A distributor acts on their own terminals only** in every z-run endpoint (§2.3–§2.7):
+the candidates list only their tills, and a run over — or a read, proceed or cancel of a run
+holding — another distributor's till is `403 Access denied`. A shop with no tenant is
+`403 tenant_forbidden` to everyone.
 
 ### 2.1 `GET /shifts`
 Query: `shopId`, `machineId`, `status` (`open|closed`), `awaitingZ` (`true` = closed and not

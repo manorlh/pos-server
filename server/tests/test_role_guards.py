@@ -151,7 +151,28 @@ def test_every_z_run_endpoint_checks_the_shop() -> None:
     """The role alone would let a shop manager run another shop's Z."""
     for fn in (z_runs_router.post_z_run, z_runs_router.get_z_candidates):
         assert "_shop_for(" in inspect.getsource(fn)
+        # …and shop access alone would let any distributor at another distributor's tills.
+        assert "_check_tills(" in inspect.getsource(fn)
     assert "_shop_for(" in inspect.getsource(z_runs_router._run_or_404)
+    assert "_check_tills(" in inspect.getsource(z_runs_router._run_or_404)
+    for fn in (z_runs_router.get_z_run, z_runs_router.post_z_run_proceed, z_runs_router.post_z_run_cancel):
+        assert "_run_or_404(" in inspect.getsource(fn)
+
+
+def test_a_distributor_is_held_to_their_own_tills_in_a_z() -> None:
+    """The distributor case: another distributor's till is 403, their own passes."""
+    me, other = uuid.uuid4(), uuid.uuid4()
+    user = _user(UserRole.DISTRIBUTOR, id=me)
+    tenant = uuid.uuid4()
+    mine = MagicMock(distributor_id=me, tenant_id=tenant)
+    theirs = MagicMock(distributor_id=other, tenant_id=tenant)
+
+    z_runs_router._check_tills(MagicMock(), user, [mine], tenant)
+    with pytest.raises(HTTPException) as e:
+        z_runs_router._check_tills(MagicMock(), user, [mine, theirs], tenant)
+    assert e.value.status_code == 403
+    # Not a distributor: bounded by the shop, the per-till rule does not apply.
+    z_runs_router._check_tills(MagicMock(), _user(UserRole.SHOP_MANAGER), [theirs], tenant)
 
 
 # ── 3c. PUT /shops ───────────────────────────────────────────────────────────
