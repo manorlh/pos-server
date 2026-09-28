@@ -1,3 +1,4 @@
+import logging
 import uuid as uuid_mod
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
@@ -49,6 +50,7 @@ from app.services import machine_catalog
 from app.services.permission_matrix import SHOP_SCOPED_ROLES
 from app.services.shifts import (
     find_open_shift,
+    is_foreign_shift,
     open_shifts_for_machines,
     orphan_documents_by_machine,
     recent_shift_zs,
@@ -62,6 +64,8 @@ from app.services.remote_close import (
     take_pending_close_shift,
 )
 from sqlalchemy import func
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/machines", tags=["machines"])
 
@@ -383,9 +387,20 @@ def post_my_heartbeat(
     # open sends no `openShiftId` at all. (A pre-shift build also sends none; it cannot
     # have a shift, so reading that as "none open" is also true.)
     if body is not None:
-        machine.reported_open_shift_id = body.open_shift_id
+        claimed = body.open_shift_id
+        if is_foreign_shift(db, machine, claimed):
+            # Another till's shift (this till was re-paired as a new machine while it
+            # was open). Not this till's open shift: kept, it would sit in the Z wizard
+            # as "open, not in the cloud yet" forever, and a remote close for it could
+            # never be accepted (its close is 403).
+            logger.warning(
+                "machine %s reported open shift %s, which belongs to another machine; ignored",
+                machine.id, claimed,
+            )
+            claimed = None
+        machine.reported_open_shift_id = claimed
         machine.reported_open_shift_opened_at = (
-            body.open_shift_opened_at if body.open_shift_id else None
+            body.open_shift_opened_at if claimed else None
         )
     # The pull half of a remote shift close. Every till calls this on a timer, so it is
     # the one channel that does not care whether the terminal was reachable when the

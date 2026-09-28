@@ -15,6 +15,11 @@ document in the wrong shift:
   back to push them, the same loop the till Z used.
 * **The X is recomputed here** from those documents. The till's own figures are kept
   for audit and compared, never trusted — a Z is built from what the cloud holds.
+* **A shift is one till's.** A shift id the cloud holds for another till (a till
+  re-paired as a new machine while its shift was open) is never used for this one: its
+  documents are stored as orphans, its open and close are 403
+  `shift_belongs_to_another_machine`, its heartbeat claim is dropped, and an X or Z
+  counts only the documents of the shift's own till.
 * **Closing a shift creates no Z.** See `app.services.z_runs`.
 """
 from __future__ import annotations
@@ -26,7 +31,7 @@ from decimal import Decimal
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 from fastapi import HTTPException, status
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -72,6 +77,11 @@ class ShiftUnknown(Exception):
     """A close for a shift the cloud has never seen, carrying nothing to create it from."""
 
 
+#: The 403 detail for an open or close naming another till's shift. The till relies on
+#: exactly this string (a till re-paired as a new machine while its shift was open).
+SHIFT_BELONGS_TO_ANOTHER_MACHINE = "shift_belongs_to_another_machine"
+
+
 # ── Lookups ───────────────────────────────────────────────────────────────────
 
 
@@ -83,6 +93,32 @@ def find_open_shift(db: Session, machine_id: uuid.UUID) -> Optional[Shift]:
         .order_by(Shift.opened_at.desc())
         .first()
     )
+
+
+def is_foreign_shift(db: Session, machine: POSMachine, shift_id: Optional[uuid.UUID]) -> bool:
+    """
+    `shift_id` is a shift the cloud holds for a *different* till.
+
+    A shift id is the till's own and unique, so this only happens when a physical till is
+    re-paired as a new machine while a shift was open: in the cloud that shift stays the
+    old machine's. It is never this machine's shift — not for its documents, its close,
+    its open or its heartbeat.
+    """
+    if shift_id is None:
+        return False
+    row = db.query(Shift.machine_id).filter(Shift.id == shift_id).first()
+    return row is not None and str(row[0]) != str(machine.id)
+
+
+def refuse_foreign_shift(db: Session, machine: POSMachine, shift_id: Optional[uuid.UUID]) -> None:
+    """403 `shift_belongs_to_another_machine` for another till's shift; else nothing."""
+    if is_foreign_shift(db, machine, shift_id):
+        logger.warning(
+            "machine %s named shift %s, which belongs to another machine", machine.id, shift_id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=SHIFT_BELONGS_TO_ANOTHER_MACHINE
+        )
 
 
 def open_shifts_for_machines(db: Session, machine_ids: List[uuid.UUID]) -> dict:
@@ -170,6 +206,8 @@ def precheck_document_shifts(db: Session, machine: POSMachine, shift_ids: Iterab
     wanted = {sid for sid in shift_ids if sid is not None}
     if not wanted:
         return
+    # Known to the cloud, whichever till's: another till's shift is not a conflict — the
+    # document is taken as an orphan (see `resolve_shift_for_document`).
     known = {
         row[0]
         for row in db.query(Shift.id).filter(Shift.id.in_(list(wanted))).all()
@@ -193,7 +231,12 @@ def resolve_shift_for_document(
     """
     The shift a document belongs to — **by its id only**.
 
-    * known id → that shift, whatever its status;
+    * known id of this till → that shift, whatever its status;
+    * known id of **another** till → **None**, an orphan, exactly as if no id were sent.
+      That happens when a till is re-paired as a new machine while its shift was open:
+      in the cloud the shift stays the old machine's, and taking the document into it
+      would put this till's sale into another till's X and Z. Accepted rather than
+      refused, so the till's outbox is not jammed; logged, and counted as an orphan.
     * unknown id, nothing open → that shift, created open (the sale beat the open event);
     * unknown id while another shift is open → `ShiftConflict`, never adoption;
     * no id → **None**: the document is stored with no shift (an orphan). Never a
@@ -205,6 +248,12 @@ def resolve_shift_for_document(
         return None
     shift = db.query(Shift).filter(Shift.id == shift_id).first()
     if shift is not None:
+        if str(shift.machine_id) != str(machine.id):
+            logger.warning(
+                "machine %s pushed a document naming shift %s of machine %s; stored with no shift",
+                machine.id, shift_id, shift.machine_id,
+            )
+            return None
         return shift
     open_shift = find_open_shift(db, machine.id)
     if open_shift is not None:
@@ -225,12 +274,22 @@ def resolve_shift_for_document(
 
 
 def orphan_documents_by_machine(db: Session, machine_ids: List[uuid.UUID]) -> dict:
-    """Per till: documents stored with no shift (they named none). Visible, never guessed."""
+    """
+    Per till: documents in no shift of their own till. Visible, never guessed.
+
+    Stored with no shift (they named none, or another till's), and also any held under
+    another till's shift — before that was refused a document could land there, and it
+    is in no X or Z of either till (`compute_totals` counts a shift's own till only).
+    """
     if not machine_ids:
         return {}
     rows = (
         db.query(Transaction.machine_id, func.count(Transaction.id))
-        .filter(Transaction.machine_id.in_(list(machine_ids)), Transaction.shift_id.is_(None))
+        .outerjoin(Shift, Shift.id == Transaction.shift_id)
+        .filter(
+            Transaction.machine_id.in_(list(machine_ids)),
+            or_(Transaction.shift_id.is_(None), Shift.machine_id != Transaction.machine_id),
+        )
         .group_by(Transaction.machine_id)
         .all()
     )
@@ -238,7 +297,11 @@ def orphan_documents_by_machine(db: Session, machine_ids: List[uuid.UUID]) -> di
 
 
 def note_documents_after_close(
-    db: Session, touched: dict, *, now: Optional[datetime] = None
+    db: Session,
+    touched: dict,
+    *,
+    machine_id: Optional[uuid.UUID] = None,
+    now: Optional[datetime] = None,
 ) -> None:
     """
     Documents were written into (or out of) shifts that are already closed.
@@ -253,12 +316,16 @@ def note_documents_after_close(
       with the count: the dashboard shows "document arrived after Z".
 
     Open shifts are skipped: that is the ordinary case, and the close computes their X.
+    So is any shift of a till other than `machine_id` (the pushing till): its X counts
+    only its own till's documents, so nothing this push did can change it.
     """
     for shift_id, new_count in touched.items():
         if shift_id is None:
             continue
         shift = db.query(Shift).filter(Shift.id == shift_id).first()
         if shift is None or shift.status != ShiftStatus.CLOSED:
+            continue
+        if machine_id is not None and str(shift.machine_id) != str(machine_id):
             continue
         if new_count:
             shift.late_documents = int(shift.late_documents or 0) + new_count
@@ -311,13 +378,9 @@ def report_shift_open(db: Session, machine: POSMachine, data: ShiftOpenIn) -> Sh
     Known and closed: untouched — a late open event must not resurrect a closed shift.
     Another shift open: 409 with its id.
     """
+    refuse_foreign_shift(db, machine, data.id)
     existing = db.query(Shift).filter(Shift.id == data.id).first()
     if existing is not None:
-        if str(existing.machine_id) != str(machine.id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="shift_belongs_to_another_machine",
-            )
         if existing.status == ShiftStatus.OPEN:
             existing.opened_at = data.opened_at
             if data.opening_cash is not None:
@@ -454,12 +517,8 @@ def apply_shift_close(
     close cannot rewrite the figures, the count or the approver of the first.
     """
     now = now or datetime.now(timezone.utc)
+    refuse_foreign_shift(db, machine, shift_id)
     shift = db.query(Shift).filter(Shift.id == shift_id).first()
-    if shift is not None and str(shift.machine_id) != str(machine.id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="shift_belongs_to_another_machine",
-        )
     if shift is None:
         if body.business_date is None or body.opened_at is None:
             raise ShiftUnknown()

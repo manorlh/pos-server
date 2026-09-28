@@ -36,6 +36,7 @@ from app.models.z_run import (
 )
 from app.services.close_progress import documents_on_cloud, till_backlog
 from app.services.machine_status import is_online
+from app.services.shifts import is_foreign_shift
 from app.services.z_builder import ZBuildRefused, build_z, shift_order_key, unreported_shifts
 
 logger = logging.getLogger(__name__)
@@ -153,12 +154,16 @@ def _reported_open_is_live(db: Session, machine: POSMachine) -> bool:
 
     Ignored when the cloud already holds that shift closed: the claim is only refreshed
     on the next heartbeat, and a close-shift instruction for a closed shift would never
-    be answered.
+    be answered. Ignored too when the shift is another till's.
     """
     claimed = machine.reported_open_shift_id
     if claimed is None:
         return False
-    known = db.query(Shift.status).filter(Shift.id == claimed).first()
+    known = db.query(Shift.status, Shift.machine_id).filter(Shift.id == claimed).first()
+    if known is not None and str(known[1]) != str(machine.id):
+        # Another till's shift (the heartbeat drops such a claim; this covers one stored
+        # before it did): this till could never close it — its close is 403.
+        return False
     return known is None or known[0] == ShiftStatus.OPEN
 
 
@@ -463,7 +468,11 @@ def apply_close_shift_ack(
         else:
             item.error_code = None
             item.error_message = None
-        if shift_id is not None and item.close_shift_id is None:
+        if (
+            shift_id is not None
+            and item.close_shift_id is None
+            and not is_foreign_shift(db, machine, shift_id)
+        ):
             item.close_shift_id = shift_id
     elif phase == "completed":
         # Informational. The item becomes ready when the close itself is accepted.

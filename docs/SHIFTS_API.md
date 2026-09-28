@@ -51,8 +51,16 @@ Responses
 - `409 {"detail": "another_shift_open:<openShiftId>"}` — the cloud still has a different
   shift of this till open. With a strictly ordered outbox this means the previous shift's
   close has not been accepted yet: deliver it first, then retry this.
-- `403 {"detail": "shift_belongs_to_another_machine"}`.
+- `403 {"detail": "shift_belongs_to_another_machine"}` — the cloud holds this shift id for a
+  **different** machine (see "Another machine's shift" below). Exactly this status and body.
 - `400 {"detail": "Machine must be assigned to a shop"}` (as every sync write).
+
+**Another machine's shift.** A shift id belongs to the machine the cloud first recorded it
+for. When a physical till is re-paired as a **new** machine while a shift is open, that
+shift stays the old machine's in the cloud, and the till's new machine can never use it:
+its open and close are `403 shift_belongs_to_another_machine`, a document naming it is an
+orphan of the new machine (§1.2), and a heartbeat claiming it is ignored (§1.6). The till is
+expected to stop sending that shift's open/close on the 403 and carry on with a new shift.
 
 ### 1.2 `POST /sync/{machineId}/transactions` — documents
 
@@ -60,8 +68,13 @@ As today, with two renames on each document: `tradingDayId` → **`shiftId`**, `
 **`businessDate`**. The old names are no longer read.
 
 Shift resolution per document:
-- `shiftId` known → the document belongs to it (a re-push of an existing document with a
-  different `shiftId` moves it, unless its current shift is already in a Z — then it stays).
+- `shiftId` known, a shift of **this** till → the document belongs to it (a re-push of an
+  existing document with a different `shiftId` moves it, unless its current shift is already
+  in a Z — then it stays).
+- `shiftId` known, a shift of **another** till (a till re-paired as a new machine, §1.1) →
+  treated exactly like an absent `shiftId`: stored as an **orphan** of the pushing till,
+  `accepted`, never a conflict. It is in no X and no Z, and is counted in `orphanDocuments`.
+  Never moved into, and never recomputing, the other till's shift.
 - `shiftId` unknown and **no** shift of this till is open → that shift is created `open`
   from the document (`businessDate`, `openedAt` = document `createdAt`).
 - `shiftId` unknown while **another** shift of this till is open → **the whole batch is
@@ -75,7 +88,15 @@ Shift resolution per document:
 - `shiftId` absent → the document is stored with **no shift** (an orphan). The server never
   guesses a shift for it and never creates one: a Z takes no orphan, and each till's orphan
   count is shown (`orphanDocuments` on the machines list and on z-candidates). A re-push of a
-  known document without `shiftId` leaves it in the shift it is already in.
+  known document without `shiftId` leaves it in the shift it is already in — unless that is
+  another till's shift not yet in a Z, which it leaves to become an orphan.
+- A document whose `id` the cloud already holds for **another** machine (the same physical
+  till pushed it before it was re-paired) is left untouched and answered
+  `{"status": "duplicate", "reason": "held_by_another_machine"}`, so the till clears it.
+
+An X or Z counts only the documents of the shift's own till: a document held under another
+till's shift (possible before this was refused) is in neither, and counts as an orphan of
+its own till.
 
 Each tender leg in `payments[]` may carry:
 - `nayaxMeta` — the acquirer reply, as a JSON **string** (the till) or an object; stored as
@@ -152,7 +173,10 @@ Responses
   missing ones.
 - `409 {"detail": "shift_unknown"}` — the cloud has never heard of this shift and the body
   did not carry `businessDate` + `openedAt`. Send the open (§1.1), then retry.
-- `403 {"detail": "shift_belongs_to_another_machine"}`.
+- `403 {"detail": "shift_belongs_to_another_machine"}` — another machine's shift (§1.1).
+  Checked **first**: it is the answer whatever `transactionIds` lists, never the missing-ids
+  `409` (those documents are not this till's, so that loop could never end), and also for a
+  shift the other machine has already closed (not `200 duplicate`).
 
 A `closeRequestId` the cloud does not know for this till is ignored (the close is still
 accepted). An accepted close also completes every pending instruction that named this
@@ -187,7 +211,8 @@ are read from any 200 (a duplicate included); an ack answered 404 or 410 is drop
 - `failed`: the till gave up (item → `failed`).
 
 The `requestId` is either a Z run item or a standalone close request (§2.14); the two
-are resolved by id and behave the same for every phase.
+are resolved by id and behave the same for every phase. A `shiftId` that is another
+machine's shift (§1.1) is not recorded on the item or request.
 
 `200 {"ok": true, "itemStatus": "<z-run item status, or the close request's status>"}`; `404 {"detail": "close_request_not_found"}`.
 An ack for a cancelled/expired/finished run is accepted and changes nothing.
@@ -216,6 +241,10 @@ on every beat):
 ```json
 { "openShiftId": "…", "openShiftOpenedAt": "…" }
 ```
+An `openShiftId` that is another machine's shift (§1.1) is stored as "none open" (and
+logged): it is not this till's, its close would be `403`, and kept it would show in the Z
+wizard as an open shift not yet in the cloud forever. A Z run or a remote close never asks
+this till to close it.
 Response
 ```json
 {
@@ -288,7 +317,7 @@ in a Z), `from`, `to` (on `businessDate`), `page` (1), `pageSize` (50, max 200).
     "online": true, "status": "online", "pendingDocuments": 0, "pendingAsOf": "…",
     "openShift": ShiftSummary | null,
     "tillReportedOpenShiftId": "…" | null,   // from the heartbeat (the cloud may not have the open yet)
-    "orphanDocuments": 0,                      // documents of this till that named no shift; no Z takes them
+    "orphanDocuments": 0,                      // documents of this till in no shift of its own (named none, or another till's); no Z takes them
     "closedShifts": [ShiftSummary, …],         // closed and not in a Z, oldest first (sequenceNumber, then openedAt)
     "activeRun": {"runId": "…", "itemStatus": "waiting_close"} | null
   }]
@@ -364,7 +393,7 @@ Fields renamed on `GET /machines` / `GET /machines/{id}`: `tradingDayStatus` →
 (`open|none`), `tradingDayId` → `openShiftId`, `dayDate` → `businessDate`, `openedAt`,
 `openedBy` (name), `closeDayPending` → `closeShiftPending` (a Z run **or** a standalone
 close request, §2.14, is waiting for this till's close); new `closedShiftsAwaitingZ` (count),
-`orphanDocuments` (documents that named no shift), `openShiftSequence` (the open shift's
+`orphanDocuments` (documents in no shift of their own till), `openShiftSequence` (the open shift's
 `sequenceNumber`, null if none open or unnumbered — so a list can name "משמרת #N" without
 fetching the shift).
 `status`: `no_open_shift` replaces `day_closed`, `shift_close_pending` replaces `close_pending`.
@@ -593,3 +622,6 @@ settings at migration time (`capturedAt` = then).
 - A shift can be closed remotely without a Z (§2.14, `shift_close_requests`), over the same
   till wire path as a Z run's close; the plan had remote close only inside a Z run.
 - Shifts store `grossSales` and `discountsTotal` beside the net `totalSales` (§3.2).
+- A shift is one machine's: another machine's shift id (a till re-paired as a new machine
+  with a shift open) makes the document an orphan, the open/close a 403, and the heartbeat
+  claim "none open" (§1.1). The plan did not cover re-pairing mid-shift.

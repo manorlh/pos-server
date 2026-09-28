@@ -28,6 +28,7 @@ from typing import Dict, Iterable, List, Optional
 
 from sqlalchemy.orm import Session
 
+from app.models.shift import Shift
 from app.models.transaction import Transaction
 from app.models.transaction_payment import TransactionPayment
 from app.services.dashboard_stats import SALE_STATUSES
@@ -125,8 +126,15 @@ def compute_totals(db: Session, shift_ids: Iterable[uuid.UUID]) -> DocumentTotal
 
     # populate_existing: the upsert writes documents with a Core statement, so rows
     # already in this session would otherwise be read back with their old values.
+    # Only the shift's own till's documents: one held under another till's shift (it
+    # could land there before that was refused, after a till was re-paired as a new
+    # machine) belongs in neither till's X or Z, and is shown as an orphan instead.
     documents: List[Transaction] = (
-        db.query(Transaction).filter(Transaction.shift_id.in_(ids)).populate_existing().all()
+        db.query(Transaction)
+        .join(Shift, Shift.id == Transaction.shift_id)
+        .filter(Transaction.shift_id.in_(ids), Transaction.machine_id == Shift.machine_id)
+        .populate_existing()
+        .all()
     )
     counted = [d for d in documents if d.status in SALE_STATUSES]
     totals.non_sale_count = len(documents) - len(counted)

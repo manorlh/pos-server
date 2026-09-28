@@ -326,6 +326,26 @@ def upsert_transactions(
         # outbox and therefore the day's close.
         savepoint = db.begin_nested()
         try:
+            previous = existing_map.get(tx.id)
+            if previous is not None and str(previous.machine_id) != str(machine.id):
+                # The cloud already holds this document for another till — the same
+                # physical till before it was re-paired as a new machine. It is left
+                # exactly as it is: rewriting it would move another till's document, or
+                # recompute another till's X. Reported as a duplicate — it *is* on the
+                # cloud — so the till clears it rather than retrying forever.
+                logger.warning(
+                    "Document %s pushed by machine %s is held by machine %s; left untouched",
+                    tx.id, machine.id, previous.machine_id,
+                )
+                savepoint.rollback()
+                results.append(TransactionUpsertResult(
+                    id=tx.id,
+                    status="duplicate",
+                    reason="held_by_another_machine",
+                    server_received_at=datetime.now(timezone.utc),
+                ))
+                continue
+
             # Before anything is written, so a rejected document leaves no trace at
             # all — not even an auto-opened shift.
             tender_problem = _tender_rejection_reason(tx)
@@ -373,12 +393,24 @@ def upsert_transactions(
                 opened_at=tx.created_at,
             )
 
-            previous = existing_map.get(tx.id)
+            # `shift` is always this till's own (None for no id, or another till's id).
             target_shift_id = shift.id if shift is not None else None
+            held = None  # (machine_id, z_report_id) of the shift the document is in now
+            if previous is not None and previous.shift_id is not None:
+                held = (
+                    db.query(Shift.machine_id, Shift.z_report_id)
+                    .filter(Shift.id == previous.shift_id)
+                    .first()
+                )
+            held_by_other_till = held is not None and str(held[0]) != str(machine.id)
             if shift is None and previous is not None:
                 # A re-push that names no shift never detaches a document from the one
-                # it is already in.
+                # it is already in — unless that is another till's shift (it could land
+                # there before that was refused) not yet in a Z: then it becomes the
+                # orphan it should have been.
                 target_shift_id = previous.shift_id
+                if held_by_other_till and held[1] is None:
+                    target_shift_id = None
             elif (
                 previous is not None
                 and previous.shift_id is not None
@@ -387,11 +419,10 @@ def upsert_transactions(
                 # A re-push naming a different shift moves the document — that is how a
                 # close's `staleIds` get fixed — except out of a shift already in a Z:
                 # that would change a filed Z behind its back.
-                held = db.query(Shift.z_report_id).filter(Shift.id == previous.shift_id).first()
-                if held is not None and held[0] is not None:
+                if held is not None and held[1] is not None:
                     logger.warning(
                         "Document %s stays in shift %s (already in Z %s); push named shift %s",
-                        tx.id, previous.shift_id, held[0], target_shift_id,
+                        tx.id, previous.shift_id, held[1], target_shift_id,
                     )
                     target_shift_id = previous.shift_id
 
@@ -548,7 +579,7 @@ def upsert_transactions(
             ))
 
     # A document for a shift that is already closed: recompute or flag (see shifts).
-    note_documents_after_close(db, touched_closed)
+    note_documents_after_close(db, touched_closed, machine_id=machine.id)
     return results
 
 

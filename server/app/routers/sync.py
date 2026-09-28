@@ -93,6 +93,7 @@ from app.services.shifts import (
     apply_shift_close,
     check_close_preconditions,
     last_closed_shift,
+    refuse_foreign_shift,
     report_shift_open,
     shift_to_out,
     shift_totals_out,
@@ -956,6 +957,10 @@ def post_shift_close(
     that is presented is checked strictly and spent only once the close is certain.
     """
     _require_assigned_machine(machine)
+
+    # Before the missing-ids check: another till's shift is a 403 whatever the till
+    # lists — its documents are not this till's, so the 409 loop could never end.
+    refuse_foreign_shift(db, machine, shift_id)
 
     missing, stale = check_close_preconditions(db, machine, shift_id, body.transaction_ids)
     if missing or stale:

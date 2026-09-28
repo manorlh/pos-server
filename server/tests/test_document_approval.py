@@ -374,6 +374,7 @@ def _close(monkeypatch, *, approval, db=None, missing=(), outcome="accepted"):
         captured["approved_by_pos_user_id"] = approved_by_pos_user_id
         return shift, outcome
 
+    monkeypatch.setattr(sync_router, "refuse_foreign_shift", lambda *a, **k: None)
     monkeypatch.setattr(
         sync_router, "check_close_preconditions", lambda *a, **k: (list(missing), [])
     )
