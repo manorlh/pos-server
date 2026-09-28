@@ -21,7 +21,7 @@ import { fetchZReport } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
-import type { Shift, ZReportDetail, ZReportMachineSection } from '@/lib/types';
+import type { Money, Shift, ZReportDetail, ZReportMachineSection } from '@/lib/types';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import {
   CountedCash,
@@ -30,7 +30,9 @@ import {
   OverShort,
   PaymentBreakdownRows,
   ShiftBadges,
+  TipsSplit,
   useShiftLabel,
+  useTillHeading,
 } from '@/components/dashboard/shifts/shift-parts';
 import { ZBadges } from '@/components/dashboard/z-report/z-badges';
 import { ZPrintDocument } from '@/components/dashboard/z-report/z-print-document';
@@ -93,8 +95,64 @@ function ShiftTable({ shifts }: { shifts: Shift[] }) {
   );
 }
 
+/** The figures a Z and each of its registers share. */
+interface SalesFigures {
+  grossSales?: Money | null;
+  discountsTotal?: Money | null;
+  totalSales?: Money | null;
+  totalRefunds?: Money | null;
+  netSales?: Money | null;
+  vatTotal?: Money | null;
+  vatMissingCount?: number | null;
+  totalTips?: Money | null;
+  totalCashTips?: Money | null;
+  totalCardTips?: Money | null;
+}
+
+/**
+ * Sales from gross to net, in the order they are computed, so no line reads as if it
+ * still had to be subtracted: discounts are already out of "sales", and refunds come off
+ * only in the net line. A server that does not send gross yet gets the same sales line,
+ * with the discounts marked as already deducted.
+ */
+function SalesRows({ x }: { x: SalesFigures }) {
+  const t = useTranslations('zReports');
+  const hasGross = x.grossSales != null;
+  return (
+    <>
+      {hasGross ? (
+        <>
+          <MoneyRow label={t('grossSales')} value={x.grossSales} />
+          <MoneyRow label={t('discounts')} value={x.discountsTotal} />
+        </>
+      ) : null}
+      <MoneyRow label={t('salesAfterDiscounts')} value={x.totalSales} strong />
+      {!hasGross ? <MoneyRow label={t('discountsDeducted')} value={x.discountsTotal} /> : null}
+      <MoneyRow label={t('refundsAndCredits')} value={x.totalRefunds} />
+      {x.netSales != null ? <MoneyRow label={t('netSales')} value={x.netSales} strong /> : null}
+      <MoneyRow label={t('vatNetOfCredits')}>
+        {x.vatTotal == null ? (
+          <span className="text-muted-foreground text-xs">{t('vatMissing')}</span>
+        ) : (
+          <>
+            {formatCurrency(x.vatTotal)}
+            {(x.vatMissingCount ?? 0) > 0 ? (
+              <span className="text-muted-foreground ms-1 text-xs">
+                {t('vatMissingCount', { count: x.vatMissingCount ?? 0 })}
+              </span>
+            ) : null}
+          </>
+        )}
+      </MoneyRow>
+      <MoneyRow label={t('tips')} value={x.totalTips} />
+      <TipsSplit total={x.totalTips} cash={x.totalCashTips} card={x.totalCardTips} />
+    </>
+  );
+}
+
 function TillCard({ s, shifts }: { s: ZReportMachineSection; shifts: Shift[] }) {
   const t = useTranslations('zReports');
+  const heading = useTillHeading()(s);
   const uncounted = (s.uncountedShiftCount ?? 0) > 0;
   return (
     <Card>
@@ -102,10 +160,10 @@ function TillCard({ s, shifts }: { s: ZReportMachineSection; shifts: Shift[] }) 
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <CardTitle className="text-base">
             <Link href={`/dashboard/machines/${s.machineId}`} className="hover:underline">
-              {s.posNumber ? t('tillNumbered', { number: s.posNumber }) : (s.machineName ?? s.machineId)}
+              {heading.title}
             </Link>
-            {s.posNumber && s.machineName ? (
-              <span className="text-muted-foreground ms-2 text-sm font-normal">{s.machineName}</span>
+            {heading.name ? (
+              <span className="text-muted-foreground ms-2 text-sm font-normal">{heading.name}</span>
             ) : null}
           </CardTitle>
           <span className="text-muted-foreground text-xs">
@@ -129,9 +187,9 @@ function TillCard({ s, shifts }: { s: ZReportMachineSection; shifts: Shift[] }) 
           </Fact>
           <Fact label={t('till.documents')}>
             {t('till.documentsSplit', {
-              sales: s.salesCount ?? 0,
-              credit: s.creditNotesCount ?? 0,
-              other: s.nonSaleDocumentsCount ?? 0,
+              sales: s.salesCount ?? '—',
+              credit: s.creditNotesCount ?? '—',
+              other: s.nonSaleDocumentsCount ?? '—',
             })}
           </Fact>
           <Fact label={t('till.flags')}>
@@ -151,18 +209,7 @@ function TillCard({ s, shifts }: { s: ZReportMachineSection; shifts: Shift[] }) 
         </div>
         <div className="grid gap-4 md:grid-cols-3 text-sm">
           <div className="space-y-1 rounded border bg-muted/30 p-3">
-            <MoneyRow label={t('totalSales')} value={s.totalSales} strong />
-            <MoneyRow label={t('discounts')} value={s.discountsTotal} />
-            <MoneyRow label={t('totalRefunds')} value={s.totalRefunds} />
-            <MoneyRow label={t('vat')}>
-              {formatCurrency(s.vatTotal)}
-              {(s.vatMissingCount ?? 0) > 0 ? (
-                <span className="text-muted-foreground ms-1 text-xs">
-                  {t('vatMissingCount', { count: s.vatMissingCount ?? 0 })}
-                </span>
-              ) : null}
-            </MoneyRow>
-            <MoneyRow label={t('tips')} value={s.totalTips} />
+            <SalesRows x={s} />
           </div>
           <div className="rounded border bg-muted/30 p-3">
             <PaymentBreakdownRows breakdown={s.paymentBreakdown} />
@@ -324,24 +371,8 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
               <CardTitle className="text-sm font-medium text-muted-foreground">{t('totalsTitle')}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-1 text-sm">
-              <MoneyRow label={t('totalSales')} value={z.totalSales} strong />
-              <MoneyRow label={t('discounts')} value={z.discountsTotal} />
-              <MoneyRow label={t('totalRefunds')} value={z.totalRefunds} />
-              <MoneyRow label={t('vat')}>
-                {z.vatTotal == null ? (
-                  <span className="text-muted-foreground text-xs">{t('vatMissing')}</span>
-                ) : (
-                  formatCurrency(z.vatTotal)
-                )}
-              </MoneyRow>
-              <MoneyRow label={t('tips')} value={z.totalTips} />
-              <p className="text-muted-foreground text-xs">
-                {t('tipsSplit', {
-                  cash: formatCurrency(z.totalCashTips),
-                  card: formatCurrency(z.totalCardTips),
-                })}
-              </p>
-              <MoneyRow label={t('transactionsCount')}>{z.transactionsCount ?? 0}</MoneyRow>
+              <SalesRows x={z} />
+              <MoneyRow label={t('documentsSalesAndCredits')}>{z.transactionsCount ?? '—'}</MoneyRow>
               <p className="text-muted-foreground pt-1 text-xs">{t('salesNetHint')}</p>
             </CardContent>
           </Card>

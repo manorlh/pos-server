@@ -17,9 +17,16 @@
  */
 
 import { useTranslations } from 'next-intl';
-import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
+import { formatCurrency, formatDate, formatDateTime, moneyValue } from '@/lib/format';
 import type { Money, ZReportDetail, ZReportMachineSection } from '@/lib/types';
-import { usePaymentMethodLabel, useShiftLabel } from '@/components/dashboard/shifts/shift-parts';
+import {
+  usePaymentMethodLabel,
+  useShiftLabel,
+  useTillHeading,
+} from '@/components/dashboard/shifts/shift-parts';
+
+/** A count, or a dash when the server did not send it — never a zero it did not say. */
+const count = (n: number | null | undefined) => (n == null ? '—' : n);
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -40,8 +47,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function Payments({ breakdown }: { breakdown: Record<string, Money> | null | undefined }) {
+  const t = useTranslations('zReports.print');
   const label = usePaymentMethodLabel();
   const entries = Object.entries(breakdown ?? {});
+  if (entries.length === 0) return <Row label={t('noPayments')} value="" />;
   const rank = (k: string) => (k === 'cash' ? 0 : k === 'card' ? 1 : 2);
   entries.sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0]));
   return (
@@ -53,17 +62,66 @@ function Payments({ breakdown }: { breakdown: Record<string, Money> | null | und
   );
 }
 
+/** A sub-heading row inside a section's table. */
+function SubHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <tr>
+      <td colSpan={2} className="pt-2 pb-0.5 font-bold">
+        {children}
+      </td>
+    </tr>
+  );
+}
+
+/** Sales from gross to net, in the order they are computed (see the Z page's SalesRows). */
+function SalesRows({ x }: { x: ZReportDetail | ZReportMachineSection }) {
+  const t = useTranslations('zReports.print');
+  const hasGross = x.grossSales != null;
+  const missing = 'vatMissingCount' in x ? (x.vatMissingCount ?? 0) : 0;
+  return (
+    <>
+      {hasGross ? (
+        <>
+          <Row label={t('grossSales')} value={formatCurrency(x.grossSales)} />
+          <Row label={t('discounts')} value={formatCurrency(x.discountsTotal)} />
+        </>
+      ) : null}
+      <Row label={t('totalSales')} value={formatCurrency(x.totalSales)} />
+      {!hasGross ? <Row label={t('discountsDeducted')} value={formatCurrency(x.discountsTotal)} /> : null}
+      <Row label={t('refunds')} value={formatCurrency(x.totalRefunds)} />
+      {x.netSales != null ? <Row label={t('netSales')} value={formatCurrency(x.netSales)} /> : null}
+      <Row
+        label={t('vat')}
+        value={
+          x.vatTotal == null
+            ? t('vatMissing')
+            : missing > 0
+              ? t('vatPartial', { amount: formatCurrency(x.vatTotal), count: missing })
+              : formatCurrency(x.vatTotal)
+        }
+      />
+      <Row
+        label={t('tips')}
+        value={
+          moneyValue(x.totalTips)
+            ? t('tipsSplit', {
+                total: formatCurrency(x.totalTips),
+                cash: formatCurrency(x.totalCashTips),
+                card: formatCurrency(x.totalCardTips),
+              })
+            : formatCurrency(x.totalTips)
+        }
+      />
+    </>
+  );
+}
+
 function TillSection({ s }: { s: ZReportMachineSection }) {
   const t = useTranslations('zReports.print');
-  const tz = useTranslations('zReports');
+  const heading = useTillHeading()(s);
   const uncounted = (s.uncountedShiftCount ?? 0) > 0;
   return (
-    <Section
-      title={t('tillTitle', {
-        till: s.posNumber ? tz('tillNumbered', { number: s.posNumber }) : (s.machineName ?? s.machineId),
-        name: s.machineName ?? '',
-      })}
-    >
+    <Section title={heading.name ? t('tillTitle', { till: heading.title, name: heading.name }) : heading.title}>
       <table className="w-full text-xs">
         <tbody>
           <Row
@@ -71,46 +129,30 @@ function TillSection({ s }: { s: ZReportMachineSection }) {
             value={
               s.firstShiftSequence != null && s.lastShiftSequence != null
                 ? t('shiftRange', {
-                    count: s.shiftCount ?? 0,
+                    count: count(s.shiftCount),
                     first: s.firstShiftSequence,
                     last: s.lastShiftSequence,
                   })
-                : (s.shiftCount ?? 0)
+                : count(s.shiftCount)
             }
           />
           <Row label={t('firstDocument')} value={<span dir="ltr">{s.firstDocumentNumber ?? '—'}</span>} />
           <Row label={t('lastDocument')} value={<span dir="ltr">{s.lastDocumentNumber ?? '—'}</span>} />
-          <Row label={t('salesCount')} value={s.salesCount ?? 0} />
-          <Row label={t('creditNotesCount')} value={s.creditNotesCount ?? 0} />
-          <Row label={t('nonSaleCount')} value={s.nonSaleDocumentsCount ?? 0} />
-          <Row label={t('documents')} value={s.transactionsCount ?? 0} />
-          <Row label={t('totalSales')} value={formatCurrency(s.totalSales)} />
-          <Row label={t('discounts')} value={formatCurrency(s.discountsTotal)} />
-          <Row label={t('refunds')} value={formatCurrency(s.totalRefunds)} />
-          <Row
-            label={t('vat')}
-            value={
-              (s.vatMissingCount ?? 0) > 0
-                ? t('vatPartial', { amount: formatCurrency(s.vatTotal), count: s.vatMissingCount ?? 0 })
-                : formatCurrency(s.vatTotal)
-            }
-          />
+          <Row label={t('salesCount')} value={count(s.salesCount)} />
+          <Row label={t('creditNotesCount')} value={count(s.creditNotesCount)} />
+          <Row label={t('nonSaleCount')} value={count(s.nonSaleDocumentsCount)} />
+          <Row label={t('documents')} value={count(s.transactionsCount)} />
+          <SalesRows x={s} />
+          <SubHeading>{t('paymentsTitle')}</SubHeading>
           <Payments breakdown={s.paymentBreakdown} />
-          <Row
-            label={t('tips')}
-            value={t('tipsSplit', {
-              total: formatCurrency(s.totalTips),
-              cash: formatCurrency(s.totalCashTips),
-              card: formatCurrency(s.totalCardTips),
-            })}
-          />
+          <SubHeading>{t('cashTitle')}</SubHeading>
           <Row label={t('openingCash')} value={formatCurrency(s.openingCash)} />
           <Row label={t('expectedCash')} value={formatCurrency(s.expectedCash)} />
           <Row
             label={t('countedCash')}
             value={uncounted ? t('notCounted', { count: s.uncountedShiftCount ?? 0 }) : formatCurrency(s.countedCash)}
           />
-          <Row label={t('overShort')} value={uncounted ? t('withheld') : formatCurrency(s.overShort)} />
+          <Row label={t('overShort')} value={uncounted ? t('withheld') : signedMoney(s.overShort)} />
           {(s.reconstructedShiftCount ?? 0) > 0 ? (
             <Row label={t('reconstructedShifts')} value={s.reconstructedShiftCount} />
           ) : null}
@@ -121,6 +163,16 @@ function TillSection({ s }: { s: ZReportMachineSection }) {
       </table>
     </Section>
   );
+}
+
+/**
+ * Over/short with its sign — "+₪5.00" over, "-₪5.00" short, as the screen shows it —
+ * isolated left-to-right so the RTL line does not move the sign to the far side.
+ */
+function signedMoney(v: Money | null | undefined): React.ReactNode {
+  const n = moneyValue(v);
+  if (n === null) return '—';
+  return <span dir="ltr">{`${n > 0 ? '+' : ''}${formatCurrency(n)}`}</span>;
 }
 
 export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: string }) {
@@ -165,25 +217,17 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
           <Row label={t('tillsAndShifts')} value={t('tillsAndShiftsValue', { tills: z.machineCount ?? z.perMachine.length, shifts: z.shiftCount ?? z.shifts.length })} />
         </tbody>
       </table>
+      {z.legacy ? (
+        <p className="mt-2 font-bold">{t('legacyNotice', { till: z.machineName ?? z.machineId ?? '—' })}</p>
+      ) : null}
       {z.reconstructed ? <p className="mt-2 font-bold">{t('reconstructedNotice')}</p> : null}
       {z.unattended ? <p className="mt-1">{t('unattendedNotice')}</p> : null}
 
       <Section title={t('totalsTitle')}>
         <table className="w-full text-xs">
           <tbody>
-            <Row label={t('totalSales')} value={formatCurrency(z.totalSales)} />
-            <Row label={t('discounts')} value={formatCurrency(z.discountsTotal)} />
-            <Row label={t('refunds')} value={formatCurrency(z.totalRefunds)} />
-            <Row label={t('documents')} value={z.transactionsCount ?? 0} />
-            <Row label={t('vat')} value={z.vatTotal == null ? t('vatMissing') : formatCurrency(z.vatTotal)} />
-            <Row
-              label={t('tips')}
-              value={t('tipsSplit', {
-                total: formatCurrency(z.totalTips),
-                cash: formatCurrency(z.totalCashTips),
-                card: formatCurrency(z.totalCardTips),
-              })}
-            />
+            <SalesRows x={z} />
+            <Row label={t('documents')} value={count(z.transactionsCount)} />
           </tbody>
         </table>
       </Section>
@@ -203,9 +247,15 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
             <Row label={t('expectedCash')} value={formatCurrency(z.expectedCash)} />
             <Row
               label={t('countedCash')}
-              value={withheld ? t('notCounted', { count: uncountedShifts }) : formatCurrency(z.actualCash)}
+              value={
+                withheld
+                  ? uncountedShifts > 0
+                    ? t('notCounted', { count: uncountedShifts })
+                    : t('notCountedShort')
+                  : formatCurrency(z.actualCash)
+              }
             />
-            <Row label={t('overShort')} value={withheld ? t('withheld') : formatCurrency(z.discrepancy)} />
+            <Row label={t('overShort')} value={withheld ? t('withheld') : signedMoney(z.discrepancy)} />
           </tbody>
         </table>
       </Section>
@@ -225,6 +275,7 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
                 <th className="py-0.5 text-start">{t('shiftClosed')}</th>
                 <th className="py-0.5 text-end">{t('shiftSales')}</th>
                 <th className="py-0.5 text-end">{t('countedCash')}</th>
+                <th className="py-0.5 text-end">{t('overShort')}</th>
               </tr>
             </thead>
             <tbody>
@@ -243,6 +294,9 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
                   <td className="py-0.5 text-end tabular-nums">{formatCurrency(s.serverTotals?.totalSales)}</td>
                   <td className="py-0.5 text-end tabular-nums">
                     {s.countedCash == null ? t('notCountedShort') : formatCurrency(s.countedCash)}
+                  </td>
+                  <td className="py-0.5 text-end tabular-nums">
+                    {s.countedCash == null ? '—' : signedMoney(s.discrepancy)}
                   </td>
                 </tr>
               ))}

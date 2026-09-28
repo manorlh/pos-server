@@ -43,6 +43,7 @@ import {
 } from '@/components/dashboard/z-wizard/shop-candidates';
 import { ZRunProgress } from '@/components/dashboard/z-wizard/z-run-progress';
 import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
+import { useTillHeading } from '@/components/dashboard/shifts/shift-parts';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -108,6 +109,7 @@ function ProduceZ() {
   const router = useRouter();
   const qc = useQueryClient();
   const errors = useZErrorText();
+  const tillHeading = useTillHeading();
   const canProduceZ = useCanProduceZ();
   const { scope } = usePageScope({ maxLevel: 'machine', silent: true });
   const searchParams = useSearchParams();
@@ -161,7 +163,7 @@ function ProduceZ() {
       return machines.map(({ m, body }) => ({
         shopId: c.shopId,
         machines: [body],
-        tillName: m.posNumber ? t('tillNumbered', { number: m.posNumber }) : (m.machineName ?? m.machineId),
+        tillName: tillHeading(m).title,
       }));
     }
     return [{ shopId: c.shopId, machines: machines.map((x) => x.body) }];

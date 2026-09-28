@@ -1000,7 +1000,12 @@ export interface ZReport {
   createdByUserId?: string | null;
   closedAt: string;
   createdAt: string;
+  /** After document discounts, before refunds. */
   totalSales?: Money | null;
+  /** Before document discounts (= totalSales + discountsTotal). Absent on older servers. */
+  grossSales?: Money | null;
+  /** totalSales − totalRefunds. Absent on older servers. */
+  netSales?: Money | null;
   totalRefunds?: Money | null;
   discountsTotal?: Money | null;
   totalCashSales?: Money | null;
@@ -1048,6 +1053,8 @@ export interface ZReportMachineSection {
   creditNotesCount?: number | null;
   nonSaleDocumentsCount?: number | null;
   totalSales?: Money | null;
+  grossSales?: Money | null;
+  netSales?: Money | null;
   totalRefunds?: Money | null;
   discountsTotal?: Money | null;
   vatTotal?: Money | null;

@@ -956,7 +956,6 @@
     "vatMissing": "לא זמין — חלק מהמסמכים ללא נתון מע״מ",
     "vatMissingCount": "({count} מסמכים ללא מע״מ)",
     "tips": "טיפים",
-    "tipsSplit": "מזומן {cash} · אשראי {card}",
     "transactionsCount": "מסמכים",
     "discrepancy": "עודף/חוסר",
     "discrepancyWithheld": "לא זמין",
@@ -998,15 +997,15 @@
       "reconstructedNotice": "כולל משמרת שנסגרה מהענן (משוחזרת) — סכומיה מבוססים על המסמכים שהתקבלו בענן.",
       "unattendedNotice": "כולל משמרת שנסגרה מרחוק ללא ספירת מזומן.",
       "totalsTitle": "סיכום",
-      "totalSales": "סה״כ מכירות (נטו)",
+      "totalSales": "מכירות (אחרי הנחות, לפני החזרים)",
       "discounts": "הנחות",
       "refunds": "החזרים / תעודות זיכוי",
-      "documents": "מספר מסמכים",
-      "vat": "מע״מ",
-      "vatMissing": "לא זמין",
+      "documents": "מסמכים (מכירות + זיכויים)",
+      "vat": "מע״מ (בניכוי זיכויים)",
+      "vatMissing": "לא זמין — חלק מהמסמכים ללא נתון מע״מ",
       "vatPartial": "{amount} ({count} מסמכים ללא מע״מ)",
       "tips": "טיפים",
-      "tipsSplit": "{total} (מזומן {cash}, אשראי {card})",
+      "tipsSplit": "{total} (מתוכם טיפ במזומן {cash}, טיפ באשראי {card})",
       "paymentsTitle": "תקבולים לפי אמצעי תשלום",
       "cashTitle": "סיכום מזומן",
       "openingCash": "קופה פותחת",
@@ -1035,7 +1034,12 @@
       "notCountedShort": "לא נספר",
       "lateNotice": "{count} מסמכים הגיעו לענן אחרי הפקת הדו״ח ואינם בסכומיו.",
       "footer": "הדו״ח הופק בענן מתוך המסמכים שהתקבלו מהקופות.",
-      "headerCaptured": "פרטי העסק נכונים ל־{when}"
+      "headerCaptured": "פרטי העסק נכונים ל־{when}",
+      "grossSales": "מכירות ברוטו (לפני הנחות)",
+      "discountsDeducted": "הנחות (כבר נוכו מהמכירות)",
+      "netSales": "סה״כ נטו (מכירות פחות החזרים)",
+      "noPayments": "אין תקבולים",
+      "legacyNotice": "דו״ח Z ישן שהקופה {till} הפיקה בעצמה, לפני המעבר למשמרות. אין לו חלוקה לפי קופות."
     },
     "backToList": "לכל דוחות ה-Z",
     "reconstructedNotice": "הדו״ח כולל משמרת שנסגרה מהענן עבור מסופון שאינו פעיל; הסכומים שלה מבוססים על המסמכים שהגיעו לענן.",
@@ -1057,7 +1061,7 @@
     "cashTitle": "סיכום מזומן",
     "uncountedShifts": "{count} משמרות לא נספרו",
     "cashWithheldHint": "לפחות משמרת אחת לא נספרה, ולכן אין לדו״ח סכום נספר ועודף/חוסר.",
-    "salesNetHint": "המכירות הן נטו אחרי הנחות וללא טיפים.",
+    "salesNetHint": "המכירות הן אחרי הנחות וללא טיפים. החזרים ותעודות זיכוי אינם מנוכים מהן.",
     "tillsTitle": "לפי קופה",
     "tillNumbered": "קופה {number}",
     "till": {
@@ -1070,7 +1074,14 @@
       "flags": "חריגים",
       "reconstructed": "{count} משוחזרות",
       "unattended": "{count} נסגרו מרחוק"
-    }
+    },
+    "grossSales": "מכירות ברוטו (לפני הנחות)",
+    "salesAfterDiscounts": "מכירות (אחרי הנחות, לפני החזרים)",
+    "discountsDeducted": "הנחות (כבר נוכו מהמכירות)",
+    "refundsAndCredits": "החזרים / תעודות זיכוי",
+    "netSales": "סה״כ נטו (מכירות פחות החזרים)",
+    "vatNetOfCredits": "מע״מ (בניכוי זיכויים)",
+    "documentsSalesAndCredits": "מסמכים (מכירות + זיכויים)"
   },
   "users": {
     "title": "משתמשים",
@@ -1475,7 +1486,8 @@
       "check": "צ׳ק",
       "cheque": "צ׳ק",
       "unknown": "לא ידוע",
-      "other": "אחר"
+      "other": "אחר",
+      "mixed": "תשלום משולב"
     },
     "filter": {
       "status": "מצב",
@@ -1533,7 +1545,6 @@
       "vat": "מע״מ",
       "vatMissing": "לא זמין — חלק מהמסמכים ללא נתון מע״מ",
       "tips": "טיפים",
-      "tipsSplit": "מזומן {cash} · אשראי {card}",
       "documents": "מסמכים",
       "salesNetHint": "המכירות הן נטו אחרי הנחות על המסמך וללא טיפים — כפי שהן נספרות בדו״ח Z.",
       "noTotalsYet": "אין עדיין סכומים — המשמרת פתוחה.",
@@ -1555,7 +1566,8 @@
         "transactionsCount": "מסמכים"
       },
       "tipsByCashier": "טיפים לפי קופאי"
-    }
+    },
+    "tipsSplitOf": "מתוכם: טיפ במזומן {cash} · טיפ באשראי {card}"
   },
   "zWizard": {
     "title": "הפקת דו״ח Z",

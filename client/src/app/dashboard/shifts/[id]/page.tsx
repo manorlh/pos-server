@@ -28,6 +28,7 @@ import {
   OverShort,
   PaymentBreakdownRows,
   ShiftBadges,
+  TipsSplit,
   useShiftLabel,
 } from '@/components/dashboard/shifts/shift-parts';
 import { buttonVariants } from '@/components/ui/button';
@@ -244,12 +245,7 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
                   )}
                 </MoneyRow>
                 <MoneyRow label={t('detail.tips')} value={totals.totalTips} />
-                <p className="text-muted-foreground text-xs">
-                  {t('detail.tipsSplit', {
-                    cash: formatCurrency(totals.totalCashTips),
-                    card: formatCurrency(totals.totalCardTips),
-                  })}
-                </p>
+                <TipsSplit total={totals.totalTips} cash={totals.totalCashTips} card={totals.totalCardTips} />
                 {shift.shopId && moneyValue(totals.totalTips) ? (
                   <Link
                     href={`/dashboard/tips?shiftId=${shift.id}&shop=${shift.shopId}`}

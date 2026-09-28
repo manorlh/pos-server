@@ -21,7 +21,7 @@ import { AlertTriangle, Info } from 'lucide-react';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
 import type { PosMachine, Shift, ZCandidateMachine, ZCandidates } from '@/lib/types';
 import { MachineStatusDot } from '@/components/dashboard/machine-status';
-import { CountedCash, ShiftBadges, useShiftLabel } from '@/components/dashboard/shifts/shift-parts';
+import { CountedCash, ShiftBadges, useShiftLabel, useTillHeading } from '@/components/dashboard/shifts/shift-parts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
@@ -168,6 +168,7 @@ function TillRow({
   const t = useTranslations('zWizard');
   const tStatus = useTranslations('machineStatus');
   const shiftLabel = useShiftLabel();
+  const heading = useTillHeading()(m);
   const open = hasOpenShift(m);
   const withOpen = sel.includeOpenShift && open;
   const blocked = !!m.activeRun;
@@ -192,10 +193,8 @@ function TillRow({
             disabled={blocked || nothing}
             onChange={(e) => onChange({ ...sel, include: e.target.checked })}
           />
-          {m.posNumber ? t('tillNumbered', { number: m.posNumber }) : null}
-          <span className={m.posNumber ? 'text-muted-foreground font-normal' : ''}>
-            {m.machineName ?? m.machineId}
-          </span>
+          {heading.title}
+          {heading.name ? <span className="text-muted-foreground font-normal">{heading.name}</span> : null}
         </label>
         <span className="inline-flex items-center gap-1.5 text-xs">
           <MachineStatusDot m={{ status } as PosMachine} />
