@@ -1,5 +1,6 @@
 """Dashboard read endpoints for Z reports (Clerk-user JWT). Contract: docs/SHIFTS_API.md §2.8."""
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import List, Optional
 import uuid
 
@@ -64,6 +65,10 @@ def z_to_out(z: ZReport, cls=ZReportOut):
         # into the detail's `shifts` field as ORM rows. The caller fills that in.
         item = cls(**item.model_dump())
     item.legacy = z.per_machine is None and z.machine_id is not None
+    if z.total_sales is not None:
+        item.net_sales = Decimal(z.total_sales) - Decimal(z.total_refunds or 0)
+        if z.discounts_total is not None:
+            item.gross_sales = Decimal(z.total_sales) + Decimal(z.discounts_total)
     item.machine_name = z.machine.name if z.machine_id and z.machine else None
     item.shop_name = z.shop.name if z.shop else None
     return item
@@ -143,6 +148,27 @@ def list_z_reports(
     )
 
 
+def _with_derived_sales(section: dict) -> dict:
+    """
+    A per-till section with `grossSales` / `netSales`, derived for a Z built before they
+    were stored — from its own stored figures, never recomputed from documents. Nothing
+    else of a stored section is rewritten (its `posNumber` included).
+    """
+    out = dict(section)
+
+    def dec(key):
+        value = out.get(key)
+        return None if value is None else Decimal(str(value))
+
+    sales = dec("totalSales")
+    if sales is not None:
+        if "netSales" not in out:
+            out["netSales"] = str((sales - (dec("totalRefunds") or Decimal("0"))).quantize(Decimal("0.01")))
+        if "grossSales" not in out and out.get("discountsTotal") is not None:
+            out["grossSales"] = str((sales + dec("discountsTotal")).quantize(Decimal("0.01")))
+    return out
+
+
 def _business_of(z: ZReport) -> Optional[ZReportBusinessOut]:
     """The header frozen on the Z at build time — never live settings."""
     if not z.header:
@@ -167,7 +193,7 @@ def get_z_report(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Z-report not found")
 
     out = z_to_out(z, ZReportDetailOut)
-    out.per_machine = list(z.per_machine or [])
+    out.per_machine = [_with_derived_sales(section) for section in (z.per_machine or [])]
     shifts = (
         db.query(Shift)
         .options(joinedload(Shift.machine))

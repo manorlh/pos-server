@@ -37,6 +37,10 @@ class ZReportOut(BaseModel):
     amended_documents: int = Field(0, alias="amendedDocuments")
 
     total_sales: Optional[Decimal] = Field(None, alias="totalSales")
+    #: Σ totalAmount of the sales, before document discounts (= totalSales + discountsTotal).
+    gross_sales: Optional[Decimal] = Field(None, alias="grossSales")
+    #: Sales less refunds (= totalSales − totalRefunds).
+    net_sales: Optional[Decimal] = Field(None, alias="netSales")
     total_refunds: Optional[Decimal] = Field(None, alias="totalRefunds")
     discounts_total: Optional[Decimal] = Field(None, alias="discountsTotal")
     total_cash_sales: Optional[Decimal] = Field(None, alias="totalCashSales")

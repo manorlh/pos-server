@@ -556,7 +556,7 @@ Over the shift's documents with status `completed | refunded | partial_refund`:
 | `totalRefunds` | Σ credit notes (type 330, or `refundOfTransactionId` set) of `totalAmount`, positive |
 | `totalCash` | Σ cash tender legs of sales − Σ cash legs of credit notes (tips excluded) |
 | `totalCard` | same for card legs |
-| `totalTips` | Σ `tipAmount` (`totalCashTips` / `totalCardTips` split by `tipPaymentMethod`, server only) |
+| `totalTips` | Σ `tipAmount` (`totalCashTips` / `totalCardTips` split by `tipPaymentMethod`, server only; a tip with no `tipPaymentMethod` takes the sale's own tender — cash if the sale is cash, else card — so the two always add up to `totalTips`) |
 | `vatTotal` | Σ `vatAmount` of sales − Σ of credit notes; **null** if any document has none |
 | `firstTransactionNumber`, `lastTransactionNumber` | lowest / highest document number issued in the shift, cancelled documents included (numeric order when numeric), server only |
 
@@ -617,6 +617,8 @@ it (`409 z_run_in_progress`).
   "businessDate", "periodStart", "periodEnd", "shiftCount", "machineCount",
   "zRunId", "createdByUserId", "closedAt", "createdAt",
   "totalSales", "totalRefunds", "discountsTotal", "totalCashSales", "totalCardSales",
+  "grossSales",                            // totalSales + discountsTotal (null if discountsTotal is)
+  "netSales",                              // totalSales − totalRefunds
   "totalTips", "totalCashTips", "totalCardTips", "vatTotal", "transactionsCount",
   "paymentBreakdown": {"cash": "…", "card": "…", "<other method>": "…"},
   "openingCash", "expectedCash", "actualCash", "discrepancy",   // actualCash/discrepancy null if any shift uncounted
@@ -631,11 +633,13 @@ it (`409 z_run_in_progress`).
 ### 3.6 Per-till section (`perMachine[]`)
 ```json
 {
-  "machineId", "machineName", "posNumber",
+  "machineId", "machineName",
+  "posNumber",        // the register number; null when the till has none (never the machine code)
+  "machineCode",      // the till's machine code (Zs built from now on)
   "shiftIds": [...], "shiftCount", "firstShiftSequence", "lastShiftSequence",
   "firstDocumentNumber", "lastDocumentNumber",
   "transactionsCount", "salesCount", "creditNotesCount", "nonSaleDocumentsCount",
-  "totalSales", "totalRefunds", "discountsTotal", "vatTotal", "vatMissingCount",
+  "totalSales", "grossSales", "netSales", "totalRefunds", "discountsTotal", "vatTotal", "vatMissingCount",
   "totalCash", "totalCard", "paymentBreakdown": {…},
   "totalTips", "totalCashTips", "totalCardTips",
   "openingCash", "expectedCash", "countedCash", "overShort", "uncountedShiftCount",
@@ -643,7 +647,10 @@ it (`409 z_run_in_progress`).
 }
 ```
 Money values are decimal strings. `countedCash` / `overShort` are null if any of the till's
-shifts is uncounted.
+shifts is uncounted. Sections are served as they were stored when the Z was built — except
+that `grossSales` / `netSales` are derived from the section's own figures for a Z built before
+they were stored. A Z built before this change may carry a machine code in `posNumber`
+(non-numeric); it is not rewritten.
 
 ### 3.7 Z header (`business` on the Z detail)
 ```json

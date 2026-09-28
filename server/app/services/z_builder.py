@@ -161,7 +161,11 @@ def machine_section(machine: POSMachine, shifts: Sequence[Shift], totals: Docume
     return {
         "machineId": str(machine.id),
         "machineName": machine.name,
-        "posNumber": machine.pos_number or machine.machine_code,
+        # The register number, or null when the till has none. It used to fall back to
+        # the machine code, which put a non-number where a register number is read; the
+        # code has a key of its own.
+        "posNumber": machine.pos_number,
+        "machineCode": machine.machine_code,
         "shiftIds": [str(s.id) for s in shifts],
         "shiftCount": len(shifts),
         "firstShiftSequence": min(seqs) if seqs else None,
@@ -173,6 +177,8 @@ def machine_section(machine: POSMachine, shifts: Sequence[Shift], totals: Docume
         "creditNotesCount": totals.credit_notes_count,
         "nonSaleDocumentsCount": totals.non_sale_count,
         "totalSales": _money(totals.total_sales),
+        "grossSales": _money(totals.gross_sales),
+        "netSales": _money(totals.net_sales),
         "totalRefunds": _money(totals.total_refunds),
         "discountsTotal": _money(totals.discounts_total),
         "vatTotal": _money(totals.vat_total),
