@@ -107,13 +107,28 @@ def till_candidates(db: Session, machine: POSMachine) -> TillCandidates:
 # ── Expiry ────────────────────────────────────────────────────────────────────
 
 
+#: At expiry, what is left out of the Z so it can still be built with the ready tills.
+LEFT_OUT_AT_EXPIRY = (ZRunItemStatus.EXCLUDED, ZRunItemStatus.EXPIRED, ZRunItemStatus.FAILED)
+
+
+def _aware(moment: Optional[datetime]) -> Optional[datetime]:
+    if moment is None or moment.tzinfo is not None:
+        return moment
+    return moment.replace(tzinfo=timezone.utc)
+
+
 def expire_overdue_runs(db: Session, *, now: Optional[datetime] = None) -> int:
     """
-    Retire what nobody finished within the TTL. Lazy — there is no scheduler here — and
+    Finish what nobody finished within the TTL. Lazy — there is no scheduler here — and
     called from every read and write path, so an open dashboard sees it happen.
 
-    The items still waiting for a till expire; the operator can then `proceed` without
-    them. A run left with nothing ready expires as a whole.
+    The items still waiting for a till expire. If any till is ready, the Z is then built
+    with the ready ones — the expired and failed tills are left out, their shifts wait
+    for the next Z (no gap for them) — rather than leaving the run waiting forever for
+    an operator to `proceed`. A run with nothing ready expires as a whole.
+
+    Each run is locked and re-checked first: a till's close may be completing it at the
+    same moment.
     """
     now = now or datetime.now(timezone.utc)
     runs = (
@@ -122,7 +137,10 @@ def expire_overdue_runs(db: Session, *, now: Optional[datetime] = None) -> int:
         .all()
     )
     changed = 0
-    for run in runs:
+    for candidate in runs:
+        run = lock_run(db, candidate)
+        if run.status != ZRunStatus.WAITING or not (_aware(run.expires_at) < now):
+            continue
         for item in run.items:
             if item.status in PENDING_ITEM_STATUSES:
                 item.status = ZRunItemStatus.EXPIRED
@@ -130,11 +148,17 @@ def expire_overdue_runs(db: Session, *, now: Optional[datetime] = None) -> int:
                 item.error_message = "The till did not close its shift in time"
                 item.failed_at = now
                 changed += 1
-        if not any(i.status == ZRunItemStatus.READY for i in run.items):
+        if any(i.status == ZRunItemStatus.READY for i in run.items):
+            db.flush()
+            finalise_if_ready(db, run, now=now, left_out=LEFT_OUT_AT_EXPIRY)
+            changed += 1
+        else:
             run.status = ZRunStatus.EXPIRED
             run.error_code = "expired"
             run.error_message = "The Z run was not finished in time"
             changed += 1
+    if changed:
+        db.flush()
     return changed
 
 
@@ -343,7 +367,13 @@ def lock_run(db: Session, run: ZRun) -> ZRun:
     return locked
 
 
-def finalise_if_ready(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> bool:
+def finalise_if_ready(
+    db: Session,
+    run: ZRun,
+    *,
+    now: Optional[datetime] = None,
+    left_out: Sequence[str] = (ZRunItemStatus.EXCLUDED,),
+) -> bool:
     """
     Build the Z when every item is ready or excluded. Returns True if it was built.
 
@@ -356,7 +386,7 @@ def finalise_if_ready(db: Session, run: ZRun, *, now: Optional[datetime] = None)
     if run.status != ZRunStatus.WAITING:
         return False
     statuses = [i.status for i in run.items]
-    if not statuses or any(s not in (ZRunItemStatus.READY, ZRunItemStatus.EXCLUDED) for s in statuses):
+    if not statuses or any(s != ZRunItemStatus.READY and s not in left_out for s in statuses):
         return False
     if not any(s == ZRunItemStatus.READY for s in statuses):
         return False
@@ -421,13 +451,23 @@ def _require_waiting(run: ZRun) -> None:
 def proceed_without(
     db: Session, run: ZRun, exclude_machine_ids: Iterable[uuid.UUID], *, now: Optional[datetime] = None
 ) -> ZRun:
-    """Build now without the listed tills; their shifts wait for the next Z (no gap)."""
+    """
+    Build now without the listed tills; their shifts wait for the next Z (no gap).
+
+    Only a till that is **not** ready is left out: a ready till named in the list stays
+    in (the list is "the tills I am giving up on waiting for", and a stale screen must
+    not silently drop a till whose shifts were ready to go).
+    """
     now = now or datetime.now(timezone.utc)
     expire_overdue_runs(db, now=now)
+    run = lock_run(db, run)
     _require_waiting(run)
     excluded = set(exclude_machine_ids)
     for item in run.items:
-        if item.machine_id in excluded and item.status != ZRunItemStatus.EXCLUDED:
+        if item.machine_id in excluded and item.status not in (
+            ZRunItemStatus.EXCLUDED,
+            ZRunItemStatus.READY,
+        ):
             item.status = ZRunItemStatus.EXCLUDED
             item.error_code = item.error_code or "excluded_by_operator"
     not_ready = [
@@ -449,6 +489,8 @@ def proceed_without(
 
 
 def cancel_run(db: Session, run: ZRun) -> ZRun:
+    # Locked and re-checked: a till's close may be building this very run.
+    run = lock_run(db, run)
     _require_waiting(run)
     for item in run.items:
         if item.status != ZRunItemStatus.EXCLUDED:

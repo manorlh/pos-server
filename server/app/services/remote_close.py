@@ -58,9 +58,18 @@ def apply_close_shift_ack(
 
 
 def on_shift_close_accepted(db: Session, machine: POSMachine, shift: Shift) -> None:
-    """The cloud now holds every document of `shift` and has closed it."""
+    """
+    The cloud now holds every document of `shift` and has closed it.
+
+    Called for every road to a closed shift: the till's accepted close, a later
+    duplicate of it (the first may have closed the shift before the instruction was
+    created, or before this was wired), and an administrative close — so an instruction
+    waiting for that shift never waits past it. A Z run's item is only made ready by a
+    shift no Z has taken yet: one already in a Z has nothing left to give the run.
+    """
     close_requests.on_shift_close_accepted(db, machine, shift)
-    z_runs.on_shift_close_accepted(db, machine, shift)
+    if shift.z_report_id is None:
+        z_runs.on_shift_close_accepted(db, machine, shift)
 
 
 def take_pending_close_shift(

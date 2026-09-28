@@ -997,8 +997,9 @@ def post_shift_close(
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="shift_unknown")
 
-    if outcome == "accepted":
-        on_shift_close_accepted(db, machine, shift)
+    # A duplicate too: the shift may have been closed (administratively, or by a close
+    # that raced the instruction) before a run or request waiting on it existed.
+    on_shift_close_accepted(db, machine, shift)
     db.add(SyncLog(
         machine_id=machine.id,
         direction=SyncDirection.POS_TO_SERVER,

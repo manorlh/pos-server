@@ -183,7 +183,9 @@ accepted). An accepted close also completes every pending instruction that named
 shift, whichever `requestId` the close carried.
 
 A close for a shift that was closed administratively (dead-till recovery, §2.9) returns
-`200 duplicate` with that shift's figures. When the close answers a remote instruction
+`200 duplicate` with that shift's figures. A duplicate close also completes a remote
+instruction still waiting for that shift (and builds the Z if it was the last till), exactly
+as the first close would have — unless the shift is already in a Z. When the close answers a remote instruction
 (`closeRequestId`) and it was the last till the Z run waited for, the Z is built in the same
 request and `zReportId`/`zNumber` are already set in this response.
 
@@ -360,7 +362,8 @@ visible before the Z is produced.
 
 ### 2.6 `POST /z-runs/{id}/proceed`
 `{"excludeMachineIds": ["…"]}` — build now without those tills (their shifts wait for the next
-Z; no gap for them). A till whose item is `failed` or `expired` must be listed. `200` ZRun
+Z; no gap for them). A till whose item is `failed` or `expired` must be listed. Only a till
+that is **not** `ready` is left out: a `ready` till in the list stays in the Z. `200` ZRun
 (`completed` with the Z, or `failed` with `errorCode` if the build was refused — see below) ·
 `409 {"detail": {"code": "items_not_ready", "machineIds": [...]}}` if a non-excluded till is
 not ready · `409 {"detail": "nothing_to_report"}` if nothing is left ·
@@ -389,7 +392,10 @@ still closes its shift; that shift simply waits for the next Z. `409 run_not_wai
 ### 2.9 `POST /machines/{machineId}/shifts/{shiftId}/administrative-close`
 Dead-till recovery (replaces `trading-day/reconstruct-close`). Body `{"force": false, "note": "…"}`.
 Closes that open shift from the cloud's documents: `reconstructed`, `unattended`, uncounted.
-It then is an ordinary Z candidate. Guards: 409 `shift_not_open`, 409 `terminal_is_online…`,
+It then is an ordinary Z candidate, and a Z run or close request waiting for that shift is
+completed by it (the run builds if that was the last till), and the till's heartbeat claim of
+it is dropped. `reconstructionBasis.lastReportedPendingDocuments` is the status light's reading
+(`pendingDocuments`, else the outbox depth `pendingCount`). Guards: 409 `shift_not_open`, 409 `terminal_is_online…`,
 409 `terminal_recently_seen…` (silent < 2h) unless `force`. `200 {"created": true, "shift": Shift}`
 (`created: false` if already closed). `POST /machines/{id}/trading-day/reconstruct-close` → 410.
 `POST /machines/{id}/replacement-code` is refused with `409 open_shift…` while the till has an open shift.
@@ -543,8 +549,10 @@ already in a Z counts only the documents that reached the cloud before that Z wa
 }
 ```
 36 h after the run was created, items still waiting for a till (`waiting_close`, `closing`)
-become `expired`; the run stays `waiting` if another item is `ready` (then `proceed` without
-the expired tills, or `cancel`), and becomes `expired` itself if nothing is ready. A till is
+become `expired`. If any item is `ready`, the Z is then **built at once with the ready tills**
+— `expired` and `failed` items are left out (they keep their status; their shifts wait for the
+next Z, no gap for them) — and the run becomes `completed` (or `failed` if the build is
+refused). If nothing is ready the run becomes `expired`. A till is
 in at most one live run: `waiting_close`, `closing` and `ready` items of a `waiting` run hold
 it (`409 z_run_in_progress`).
 
