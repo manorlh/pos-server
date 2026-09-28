@@ -38,6 +38,16 @@ const KNOWN = new Set([
   'unknown_shift',
   'machine_not_assigned',
   'request_not_pending',
+  'shift_belongs_to_another_machine',
+  'no_shop',
+  'shift_changed',
+  'another_shift_open',
+  'build_error',
+  'close_request_not_found',
+  'machine_has_open_shift',
+  'machine_has_shifts_awaiting_z',
+  'shift_unknown',
+  'upgrade_required',
 ]);
 
 /** The code part of a detail: `z_run_in_progress:<id>` → `z_run_in_progress`. */

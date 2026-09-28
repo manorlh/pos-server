@@ -27,6 +27,7 @@ import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { administrativeCloseShift, createReplacementCode } from '@/lib/api';
 import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
+import { useAuth } from '@/lib/auth';
 import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
 import { formatDateTime } from '@/lib/format';
 import type { PosMachine } from '@/lib/types';
@@ -41,12 +42,25 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
   const qc = useQueryClient();
   const router = useRouter();
   const canProduceZ = useCanProduceZ();
+  const role = useAuth((st) => st.user?.role);
+  // Closing a shift from the cloud files an X a Z will take: the Z producers' call.
+  // Replacing the terminal hands its identity to new hardware: the distributor's.
+  const canClose = canProduceZ;
+  const canReplace = role === 'distributor' || role === 'super_admin';
   const errors = useZErrorText();
 
   const [closeOpen, setCloseOpen] = useState(false);
   const [note, setNote] = useState('');
   const [force, setForce] = useState(false);
-  const [code, setCode] = useState<string | null>(null);
+  const [code, setCode] = useState<{ code: string; expiresAt: string | null } | null>(null);
+
+  // Each opening starts from nothing ticked: "the terminal is unusable" is a statement
+  // about this close, not a preference to carry over from the last one.
+  const openClose = () => {
+    setNote('');
+    setForce(false);
+    setCloseOpen(true);
+  };
 
   const hasOpenShift = m.shiftStatus === 'open';
   const shiftId = m.openShiftId ?? null;
@@ -58,7 +72,9 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
       setNote('');
       setForce(false);
       qc.invalidateQueries({ queryKey: ['machines'] });
+      qc.invalidateQueries({ queryKey: ['machine', m.id] });
       qc.invalidateQueries({ queryKey: ['shifts'] });
+      qc.invalidateQueries({ queryKey: ['shift', shiftId] });
       qc.invalidateQueries({ queryKey: ['z-candidates'] });
       // The shift is closed, not reported: it waits for the shop's next Z. Say so, and
       // offer the way there.
@@ -76,34 +92,40 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
 
   const replaceMutation = useMutation({
     mutationFn: () => createReplacementCode(m.id),
-    onSuccess: (res) => setCode(res.code),
+    onSuccess: (res) => setCode({ code: res.code, expiresAt: res.expiresAt ?? null }),
     onError: (e) => toast.error(errors.forError(e)),
   });
 
+  if (!canClose && !canReplace) return null;
+
   return (
     <div className="flex flex-wrap gap-2">
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={!hasOpenShift || !shiftId}
-        onClick={() => setCloseOpen(true)}
-        title={hasOpenShift ? undefined : t('noOpenShift')}
-      >
-        <AlertTriangle className="h-4 w-4 ms-1" />
-        {t('closeFromCloud')}
-      </Button>
-      <Button
-        size="sm"
-        variant="outline"
-        // Blocked in the UI as well as on the server, so the operator is told now rather
-        // than with an engineer standing at the counter holding a new terminal.
-        disabled={hasOpenShift || replaceMutation.isPending}
-        onClick={() => replaceMutation.mutate()}
-        title={hasOpenShift ? t('closeShiftFirst') : undefined}
-      >
-        <RefreshCw className="h-4 w-4 ms-1" />
-        {t('replaceTerminal')}
-      </Button>
+      {canClose ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!hasOpenShift || !shiftId}
+          onClick={openClose}
+          title={hasOpenShift ? undefined : t('noOpenShift')}
+        >
+          <AlertTriangle className="h-4 w-4 ms-1" />
+          {t('closeFromCloud')}
+        </Button>
+      ) : null}
+      {canReplace ? (
+        <Button
+          size="sm"
+          variant="outline"
+          // Blocked in the UI as well as on the server, so the operator is told now rather
+          // than with an engineer standing at the counter holding a new terminal.
+          disabled={hasOpenShift || replaceMutation.isPending}
+          onClick={() => replaceMutation.mutate()}
+          title={hasOpenShift ? t('closeShiftFirst') : undefined}
+        >
+          <RefreshCw className="h-4 w-4 ms-1" />
+          {t('replaceTerminal')}
+        </Button>
+      ) : null}
 
       <Dialog open={closeOpen} onOpenChange={setCloseOpen}>
         <DialogContent className="max-w-lg">
@@ -166,9 +188,12 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
           </DialogHeader>
           <div className="space-y-3 text-sm">
             <p className="text-muted-foreground">{t('replaceExplain')}</p>
-            <div className="bg-muted rounded-md py-4 text-center font-mono text-3xl tracking-widest">
-              {code}
+            <div className="bg-muted rounded-md py-4 text-center font-mono text-3xl tracking-widest" dir="ltr">
+              {code?.code}
             </div>
+            {code?.expiresAt ? (
+              <p className="text-xs font-medium">{t('replaceExpires', { when: formatDateTime(code.expiresAt) })}</p>
+            ) : null}
             <p className="text-muted-foreground text-xs">{t('replaceRevokes')}</p>
           </div>
         </DialogContent>
