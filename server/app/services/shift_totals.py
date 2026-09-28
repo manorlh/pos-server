@@ -86,6 +86,11 @@ class DocumentTotals:
         return self.vat_declared
 
     @property
+    def gross_sales(self) -> Decimal:
+        """Σ totalAmount of the sales, before document discounts (the till's X figure)."""
+        return self.total_sales + self.discounts_total
+
+    @property
     def net_sales(self) -> Decimal:
         return self.total_sales - self.total_refunds
 
@@ -93,9 +98,11 @@ class DocumentTotals:
         return {k: str(v.quantize(CENT)) for k, v in sorted(self.payment_breakdown.items())}
 
     def as_x(self) -> Dict[str, object]:
-        """The §3.2 keys, as the model columns name them."""
+        """The §3.2 keys, as the model columns name them (gross and discounts included)."""
         return {
             "total_sales": self.total_sales,
+            "gross_sales": self.gross_sales,
+            "discounts_total": self.discounts_total,
             "total_refunds": self.total_refunds,
             "total_cash": self.total_cash,
             "total_card": self.total_card,
@@ -200,7 +207,7 @@ def compute_totals(db: Session, shift_ids: Iterable[uuid.UUID]) -> DocumentTotal
 #: `totalDiscounts` / `discountsTotal`, when the till sends one, is compared with the
 #: discounts. Everything else is the same quantity on both sides (docs/SHIFTS_API.md §3.2).
 COMPARED_TILL_KEYS = {
-    "totalSales": lambda t: t.total_sales + t.discounts_total,
+    "totalSales": lambda t: t.gross_sales,
     "totalDiscounts": lambda t: t.discounts_total,
     "discountsTotal": lambda t: t.discounts_total,
     "totalRefunds": lambda t: t.total_refunds,

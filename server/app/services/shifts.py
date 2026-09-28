@@ -525,6 +525,8 @@ def shift_totals_out(shift: Shift) -> Optional[ShiftTotalsOut]:
         return None
     return ShiftTotalsOut(
         total_sales=shift.total_sales,
+        gross_sales=shift.gross_sales,
+        discounts_total=shift.discounts_total,
         total_refunds=shift.total_refunds,
         total_cash=shift.total_cash,
         total_card=shift.total_card,

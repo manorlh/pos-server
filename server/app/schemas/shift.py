@@ -61,7 +61,13 @@ class ShiftTotalsOut(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+    #: Net of document discounts (what the sales collected).
     total_sales: Optional[Decimal] = Field(None, alias="totalSales")
+    #: Σ totalAmount of the sales, before document discounts — compare with the till's
+    #: `totalSales`. Null on a shift closed before it was stored and not backfillable.
+    gross_sales: Optional[Decimal] = Field(None, alias="grossSales")
+    #: Σ documentDiscount of the sales — compare with the till's `totalDiscounts`.
+    discounts_total: Optional[Decimal] = Field(None, alias="discountsTotal")
     total_refunds: Optional[Decimal] = Field(None, alias="totalRefunds")
     total_cash: Optional[Decimal] = Field(None, alias="totalCash")
     total_card: Optional[Decimal] = Field(None, alias="totalCard")

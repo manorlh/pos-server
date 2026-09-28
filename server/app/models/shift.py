@@ -100,7 +100,12 @@ class Shift(Base):
     )
 
     # ── The X, recomputed by the server from the documents it holds ───────────
+    #: Net of document discounts: what the sales collected (what a Z declares).
     total_sales = Column(Numeric(12, 2), nullable=True)
+    #: Σ totalAmount of the sales, before document discounts — the till's own X figure.
+    gross_sales = Column(Numeric(12, 2), nullable=True)
+    #: Σ documentDiscount of the sales. gross_sales - discounts_total = total_sales.
+    discounts_total = Column(Numeric(12, 2), nullable=True)
     total_refunds = Column(Numeric(12, 2), nullable=True)
     total_cash = Column(Numeric(12, 2), nullable=True)
     total_card = Column(Numeric(12, 2), nullable=True)
