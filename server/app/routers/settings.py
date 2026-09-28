@@ -141,6 +141,32 @@ def _refuse_tenant_only_keys(data: PosSettingsV1Patch) -> None:
         )
 
 
+#: Who may change `zScope`. The same narrow set as branding, for the same reason: it is
+#: one tenant-wide switch, and company managers are auto-granted TENANT_ADMIN (see
+#: BRANDING_WRITE_ROLES), so with the tenant guard alone one merchant's manager could
+#: change how every other merchant in the tenant produces its Zs.
+Z_SCOPE_WRITE_ROLES = BRANDING_WRITE_ROLES
+
+
+def _check_z_scope_write(user: User, data: PosSettingsV1Patch, stored: Any) -> None:
+    """
+    Refuse a `zScope` change from anyone outside `Z_SCOPE_WRITE_ROLES`.
+
+    Only a *change* is refused: the dashboard sends the whole form on every save, so a
+    tenant admin saving a printer name round-trips the stored `zScope` unchanged, and
+    that must still go through.
+    """
+    if data.z_scope is None or user.role in Z_SCOPE_WRITE_ROLES:
+        return
+    current = (stored or {}).get("zScope") if isinstance(stored, dict) else None
+    if data.z_scope == (current or "shop"):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Insufficient permissions to change zScope",
+    )
+
+
 def _build_patch(data: PosSettingsV1Patch, user: User) -> Dict[str, Any]:
     branding = _branding_patch(data)
     _check_branding_write(user, branding)
@@ -240,6 +266,7 @@ def patch_tenant_settings(
     if not _can_manage_tenant(current_user, tenant.id, db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
+    _check_z_scope_write(current_user, data, tenant.settings)
     patch = _build_patch(data, current_user)
     if not patch:
         return EntitySettingsResponse(

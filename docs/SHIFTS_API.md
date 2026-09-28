@@ -382,9 +382,11 @@ Transaction reads (`TransactionOut`, list items) carry `shiftId` instead of `tra
 ### 2.12 Tenant setting
 `PATCH /tenants/{id}/settings {"zScope": "shop" | "machine"}` (default `shop`). Read from the
 tenant level only; `PATCH /companies/{id}/settings` and `/shops/{id}/settings` refuse it
-with `400 "zScope is a tenant setting"`. Same guard as the tenant's other settings
-(super admin, or tenant owner/admin). The dashboard edits it in the tenant settings dialog
-("הפקת דו״ח Z"). `machine` makes `POST /z-runs` refuse more than one till
+with `400 "zScope is a tenant setting"`. Only a distributor or super admin may **change**
+it (the branding roles): anyone else passing the tenant guard gets `403 "Insufficient
+permissions to change zScope"` for a new value, while re-sending the stored value with
+other settings still saves. The dashboard edits it in the tenant settings dialog ("הפקת
+דו״ח Z"), read-only for other roles. `machine` makes `POST /z-runs` refuse more than one till
 (`422 z_scope_machine_one_till`); it affects only Zs produced after the change.
 
 ### 2.13 Day summary `GET /reports/day-summary`

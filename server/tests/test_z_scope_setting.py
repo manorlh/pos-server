@@ -2,8 +2,10 @@
 The tenant's `zScope` setting, as the dashboard's tenant settings dialog writes it.
 
 It decides whether the Z wizard may put several tills in one Z, so what is pinned is the
-path the dashboard uses: it is stored at the tenant level by whoever may change the
-tenant's other settings, refused anywhere else, and read back by the Z runs.
+path the dashboard uses: it is stored at the tenant level, changed only by a distributor
+or super admin (the branding roles — a company manager is a tenant admin too, and must
+not switch it for every merchant in the tenant), refused anywhere else, and read back by
+the Z runs.
 """
 from __future__ import annotations
 
@@ -37,7 +39,7 @@ def _user(role: UserRole) -> User:
     return u
 
 
-def _patch(tenant, db, body, *, may_manage=True, role=UserRole.COMPANY_MANAGER):
+def _patch(tenant, db, body, *, may_manage=True, role=UserRole.DISTRIBUTOR):
     with patch("app.routers.settings._can_manage_tenant", return_value=may_manage), patch(
         "app.routers.settings.notify_machines_for_tenant_settings"
     ):
@@ -49,7 +51,7 @@ def _patch(tenant, db, body, *, may_manage=True, role=UserRole.COMPANY_MANAGER):
         )
 
 
-def test_a_tenant_admin_switches_to_one_till_per_z_and_back() -> None:
+def test_a_distributor_switches_to_one_till_per_z_and_back() -> None:
     tenant, db = _tenant({"receiptPrinterName": "P1"})
 
     res = _patch(tenant, db, {"zScope": "machine"})
@@ -83,3 +85,44 @@ def test_it_has_no_company_or_shop_layer() -> None:
 def test_only_the_two_values_are_accepted() -> None:
     with pytest.raises(ValidationError):
         PosSettingsV1Patch.model_validate({"zScope": "company"})
+
+
+def test_the_roles_are_the_branding_roles() -> None:
+    from app.routers.settings import BRANDING_WRITE_ROLES, Z_SCOPE_WRITE_ROLES
+
+    assert Z_SCOPE_WRITE_ROLES == BRANDING_WRITE_ROLES == {UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR}
+
+
+@pytest.mark.parametrize(
+    "role", [UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER, UserRole.CASHIER]
+)
+def test_a_tenant_admin_below_a_distributor_may_not_change_it(role) -> None:
+    tenant, db = _tenant({"zScope": "shop"})
+
+    with pytest.raises(HTTPException) as e:
+        _patch(tenant, db, {"zScope": "machine"}, role=role)
+
+    assert e.value.status_code == 403
+    assert tenant.settings == {"zScope": "shop"}
+
+
+def test_a_super_admin_may() -> None:
+    tenant, db = _tenant()
+
+    _patch(tenant, db, {"zScope": "machine"}, role=UserRole.SUPER_ADMIN)
+
+    assert z_scope_of(tenant) == "machine"
+
+
+@pytest.mark.parametrize("stored", [{"zScope": "machine"}, {}])
+def test_resending_the_stored_value_with_other_settings_still_saves(stored) -> None:
+    """The dashboard sends the whole form; an unchanged zScope must not block a printer name."""
+    tenant, db = _tenant(dict(stored))
+    unchanged = stored.get("zScope", "shop")
+
+    res = _patch(
+        tenant, db, {"zScope": unchanged, "receiptPrinterName": "P2"}, role=UserRole.COMPANY_MANAGER
+    )
+
+    assert res.settings["receiptPrinterName"] == "P2"
+    assert z_scope_of(tenant) == unchanged

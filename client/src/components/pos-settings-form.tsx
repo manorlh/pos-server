@@ -35,6 +35,8 @@ type Props = {
    * refuses them on a company or shop, so they are not offered there.
    */
   tenantLevel?: boolean;
+  /** May change the Z scope (distributor / super admin); otherwise it is shown read-only. */
+  zScopeEditable?: boolean;
 };
 
 const Z_SCOPES = ['shop', 'machine'] as const;
@@ -70,6 +72,7 @@ export function PosSettingsForm({
   showOverrideHints,
   paymentOptionsRejected,
   tenantLevel,
+  zScopeEditable = false,
 }: Props) {
   const t = useTranslations('posSettings');
 
@@ -460,10 +463,11 @@ export function PosSettingsForm({
                   type="button"
                   role="radio"
                   aria-checked={selected}
+                  disabled={!zScopeEditable}
                   onClick={() => set('zScope', scope)}
-                  className={`w-full rounded-md border px-3 py-2 text-start transition-colors ${
-                    selected ? 'border-primary bg-primary/5' : 'hover:bg-muted/40'
-                  }`}
+                  className={`w-full rounded-md border px-3 py-2 text-start transition-colors disabled:cursor-not-allowed ${
+                    selected ? 'border-primary bg-primary/5' : 'enabled:hover:bg-muted/40'
+                  } ${!zScopeEditable && !selected ? 'opacity-60' : ''}`}
                 >
                   <span className="flex items-center gap-2 text-sm font-medium">
                     <span
@@ -479,6 +483,9 @@ export function PosSettingsForm({
               );
             })}
           </div>
+          {!zScopeEditable ? (
+            <p className="text-xs text-amber-700 dark:text-amber-400">{t('zScopeReadOnly')}</p>
+          ) : null}
           <p className="text-xs text-muted-foreground">{t('zScopeLegal')}</p>
           <p className="text-xs text-muted-foreground">{t('zScopeTenantWide')}</p>
         </div>

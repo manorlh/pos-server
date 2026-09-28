@@ -21,6 +21,7 @@ import {
   patchTenantSettings,
 } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { useAuth } from '@/lib/auth';
 import { isNoPaymentOptionAllowedError, noPaymentOptionAllowed } from '@/lib/paymentOptions';
 import { PosSettingsForm, type PosSettingsFormState } from '@/components/pos-settings-form';
 import type { PosSettingsV1 } from '@/lib/types';
@@ -53,6 +54,11 @@ export function EntityPosSettingsDialog({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [paymentOptionsRejected, setPaymentOptionsRejected] = useState(false);
+  // Only a distributor or super admin may change the Z scope (the server's
+  // Z_SCOPE_WRITE_ROLES, the branding roles); everyone else sees it read-only.
+  const { user, authHydrated } = useAuth();
+  const canChangeZScope =
+    authHydrated && (user?.role === 'super_admin' || user?.role === 'distributor');
 
   useEffect(() => {
     if (!open || !entityId) return;
@@ -110,6 +116,8 @@ export function EntityPosSettingsDialog({
     const patch = { ...value };
     delete patch.tipsEnabled;
     delete patch.cashTipsEnabled;
+    // Never sent by someone who may not change it: the stored value stays as it is.
+    if (!canChangeZScope) delete patch.zScope;
     setSaving(true);
     try {
       if (level === 'tenant') await patchTenantSettings(entityId, patch);
@@ -150,6 +158,7 @@ export function EntityPosSettingsDialog({
           showOverrideHints={level === 'shop'}
           paymentOptionsRejected={paymentOptionsRejected}
           tenantLevel={level === 'tenant'}
+          zScopeEditable={canChangeZScope}
         />
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
