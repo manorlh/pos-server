@@ -43,7 +43,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
  * not backfilled has none; its cloud cell then stays empty rather than showing the net
  * figure as if it were comparable.
  */
-const COMPARED: Array<{ till: string[]; server: (s: Shift) => unknown }> = [
+const COMPARED = [
   { till: ['totalSales'], server: (s) => s.serverTotals?.grossSales },
   { till: ['totalDiscounts', 'discountsTotal'], server: (s) => s.serverTotals?.discountsTotal },
   { till: ['totalRefunds'], server: (s) => s.serverTotals?.totalRefunds },
@@ -52,7 +52,7 @@ const COMPARED: Array<{ till: string[]; server: (s: Shift) => unknown }> = [
   { till: ['totalTips'], server: (s) => s.serverTotals?.totalTips },
   { till: ['vatTotal'], server: (s) => s.serverTotals?.vatTotal },
   { till: ['transactionsCount'], server: (s) => s.serverTotals?.transactionsCount },
-];
+] as const satisfies ReadonlyArray<{ till: readonly string[]; server: (s: Shift) => unknown }>;
 
 function display(value: unknown, key: string): string {
   if (value === null || value === undefined || value === '') return '—';
