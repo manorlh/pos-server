@@ -403,6 +403,39 @@ def _money(value) -> Optional[Decimal]:
     return None if value is None else Decimal(str(value))
 
 
+def _record_close_request(
+    db: Session, machine: POSMachine, shift: Shift, request_id: Optional[uuid.UUID]
+) -> None:
+    """
+    Keep the remote instruction a close answered, in the column for its kind.
+
+    The till sends one `closeRequestId` whichever kind it was — a Z run item or a
+    standalone close request — so it is looked up rather than trusted into a foreign
+    key: an id that is neither (or another till's) is dropped, not a 500.
+    """
+    if request_id is None:
+        return
+    from app.models.shift_close_request import ShiftCloseRequest
+    from app.models.z_run import ZRunItem
+
+    if (
+        db.query(ShiftCloseRequest.id)
+        .filter(ShiftCloseRequest.id == request_id, ShiftCloseRequest.machine_id == machine.id)
+        .first()
+        is not None
+    ):
+        shift.close_request_id = request_id
+    elif (
+        db.query(ZRunItem.id)
+        .filter(ZRunItem.id == request_id, ZRunItem.machine_id == machine.id)
+        .first()
+        is not None
+    ):
+        shift.close_request_item_id = request_id
+    else:
+        logger.warning("shift %s closed with an unknown closeRequestId %s", shift.id, request_id)
+
+
 def apply_shift_close(
     db: Session,
     machine: POSMachine,
@@ -467,8 +500,7 @@ def apply_shift_close(
     shift.discrepancy = (counted - expected) if counted is not None and expected is not None else None
     shift.till_totals = body.till
     shift.totals_mismatch = till_totals_mismatch(body.till, totals)
-    if body.close_request_id is not None:
-        shift.close_request_item_id = body.close_request_id
+    _record_close_request(db, machine, shift, body.close_request_id)
     shift.approved_by_user_id = approved_by_user_id
     shift.approved_by_pos_user_id = approved_by_pos_user_id
     if getattr(machine, "reported_open_shift_id", None) == shift.id:

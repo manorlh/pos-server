@@ -87,6 +87,17 @@ class Shift(Base):
     unattended = Column(Boolean, nullable=False, default=False, server_default="false")
     #: The remote close instruction (a Z-run item) this close answered, if any.
     close_request_item_id = Column(UUID(as_uuid=True), ForeignKey("z_run_items.id"), nullable=True)
+    #: The standalone remote close (no Z) this close answered, if any.
+    close_request_id = Column(
+        UUID(as_uuid=True),
+        # shift_close_requests.shift_id points back here; one side of the cycle is added after.
+        ForeignKey(
+            "shift_close_requests.id",
+            use_alter=True,
+            name="fk_shifts_close_request_id_shift_close_requests",
+        ),
+        nullable=True,
+    )
 
     # ── The X, recomputed by the server from the documents it holds ───────────
     total_sales = Column(Numeric(12, 2), nullable=True)

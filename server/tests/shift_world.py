@@ -46,7 +46,7 @@ TABLES = [
     "categories", "vouchers", "products", "customers",
     "z_reports", "shifts", "transactions", "transaction_items", "transaction_payments",
     "issued_vouchers", "shop_z_sequences", "sync_logs",
-    "z_runs", "z_run_items",
+    "z_runs", "z_run_items", "shift_close_requests",
 ]
 
 NOW = datetime(2026, 9, 27, 18, 0, tzinfo=timezone.utc)

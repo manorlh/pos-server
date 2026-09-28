@@ -2,7 +2,7 @@ import uuid as uuid_mod
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, ConfigDict, Field
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
 from sqlalchemy.exc import IntegrityError
@@ -55,6 +55,8 @@ from app.services.shifts import (
     shift_to_out,
     z_reported_through_sequence,
 )
+from app.schemas.shift_close_request import ShiftCloseRequestOut
+from app.services import shift_close_requests as close_requests
 from app.services.remote_close import (
     close_shift_pending_machine_ids,
     take_pending_close_shift,
@@ -613,6 +615,61 @@ def trigger_sync(
     }
 
 
+def check_shift_admin_access(db: Session, machine: POSMachine, current_user: User, active_tenant_id) -> None:
+    """
+    May `current_user` act on this till's shift from the cloud (close it remotely, close
+    it administratively)? The caller has already required a machine admin role; this
+    narrows it to the till: a distributor's own terminals, a company manager's company
+    tree, a shop manager's shop.
+    """
+    ensure_same_tenant(machine.tenant_id, active_tenant_id)
+    if current_user.role == UserRole.DISTRIBUTOR:
+        if machine.distributor_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    elif not _check_machine_list_access(current_user, machine, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+
+def machine_for_shift_admin(db: Session, machine_id, current_user: User, active_tenant_id) -> POSMachine:
+    machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+    check_shift_admin_access(db, machine, current_user, active_tenant_id)
+    return machine
+
+
+@router.post(
+    "/{machine_id}/close-shift",
+    response_model=ShiftCloseRequestOut,
+    response_model_by_alias=True,
+    status_code=status.HTTP_201_CREATED,
+)
+def request_remote_shift_close(
+    machine_id: uuid_mod.UUID,
+    response: Response,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Ask this till to close its open shift, without producing a Z (docs/SHIFTS_API.md §2.14).
+
+    The till gets the same `close-shift` instruction a Z run sends (Ably now if it is
+    online, the heartbeat otherwise) and closes unattended; the request completes when
+    that close is accepted with every document. `201` with a new request, `200` with the
+    one already pending. `409 no_open_shift`, `409 machine_not_assigned`,
+    `409 z_run_in_progress:<runId>` (a Z run is already closing this till's shift).
+    Progress: `GET /shift-close-requests/{id}`.
+    """
+    machine = machine_for_shift_admin(db, machine_id, current_user, active_tenant_id)
+    req, created = close_requests.request_close(db, current_user, machine)
+    db.commit()
+    db.refresh(req)
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return close_requests.request_to_out(db, req)
+
+
 class AdministrativeCloseBody(BaseModel):
     """Options for closing a dead till's shift from the cloud."""
 
@@ -643,15 +700,7 @@ def administrative_close_shift(
     the last two hours, unless `force`. Idempotent. See
     `app/services/administrative_close.py`.
     """
-    machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
-    if not machine:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
-    ensure_same_tenant(machine.tenant_id, active_tenant_id)
-    if current_user.role == UserRole.DISTRIBUTOR:
-        if machine.distributor_id != current_user.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    elif not _check_machine_list_access(current_user, machine, db):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    machine = machine_for_shift_admin(db, machine_id, current_user, active_tenant_id)
 
     shift = (
         db.query(Shift)

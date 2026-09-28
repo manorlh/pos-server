@@ -30,6 +30,7 @@ from app.models.customer import Customer
 from app.models.issued_voucher import IssuedVoucher, IssuedVoucherStatus
 from app.models.stock_level import StockLevel
 from app.models.z_run import ZRun, ZRunItem, ZRunItemStatus, ZRunStatus
+from app.models.shift_close_request import ShiftCloseRequest, ShiftCloseRequestStatus
 
 __all__ = [
     "User", "UserRole",
@@ -65,4 +66,5 @@ __all__ = [
     "StockLevel",
     "StockMovement", "StockMovementReason",
     "ZRun", "ZRunItem", "ZRunStatus", "ZRunItemStatus",
+    "ShiftCloseRequest", "ShiftCloseRequestStatus",
 ]
