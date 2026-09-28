@@ -11,6 +11,10 @@
  * wait for the next Z (no gap for them — a Z always takes a till's oldest shifts first).
  * Every item that is not ready has to be named in that call, so the button names them
  * all rather than offering a partial choice the server would refuse.
+ *
+ * A till the run still waits for shows what can be said about it: its own last report of
+ * unsent documents (with its age) and how many of the closing shift's documents the cloud
+ * already holds — so "closing" is not all an operator has to decide whether to wait.
  */
 
 import { useEffect } from 'react';
@@ -28,7 +32,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { TillCloseProgress } from '@/components/dashboard/close-progress';
 import { useZErrorText } from './z-errors';
+
+const WAITING_ITEM = new Set<ZRunItemStatus>(['waiting_close', 'closing']);
 
 const LIVE = new Set(['waiting', 'building']);
 
@@ -137,6 +144,11 @@ export function ZRunProgress({ runId }: { runId: string }) {
                     >
                       {why}
                     </p>
+                  ) : null}
+                  {live && WAITING_ITEM.has(item.status) ? (
+                    <div className="mt-1">
+                      <TillCloseProgress facts={item} />
+                    </div>
                   ) : null}
                 </div>
                 <Badge variant={itemVariant(item.status)}>{t(`itemStatus.${item.status}`)}</Badge>

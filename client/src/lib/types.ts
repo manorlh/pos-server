@@ -913,6 +913,12 @@ export interface ZRunItem {
   receivedAt?: string | null;
   readyAt?: string | null;
   updatedAt?: string | null;
+  /** The till's last reported reading — not a live count. */
+  online?: boolean | null;
+  pendingDocuments?: number | null;
+  pendingAsOf?: string | null;
+  /** While waiting for the till's close: documents of that shift the cloud holds. */
+  documentsOnCloud?: number | null;
 }
 
 export interface ZRun {
