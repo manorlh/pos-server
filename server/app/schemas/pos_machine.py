@@ -76,6 +76,8 @@ class MachineHeartbeatBody(BaseModel):
     # open (the till drops null fields). Sent on every beat so the cloud knows about a
     # shift whose open event is still queued offline.
     open_shift_id: Optional[uuid.UUID] = Field(None, alias="openShiftId")
+    #: The open shift's per-till number ("משמרת #N"); null if none open or unnumbered.
+    open_shift_sequence: Optional[int] = Field(None, alias="openShiftSequence")
     open_shift_opened_at: Optional[datetime] = Field(None, alias="openShiftOpenedAt")
 
     model_config = ConfigDict(populate_by_name=True)
@@ -137,6 +139,8 @@ class POSMachineResponse(POSMachineBase):
     #: "open" or "none" — whether the cloud holds an open shift for this till.
     shift_status: Optional[str] = Field(None, alias="shiftStatus")
     open_shift_id: Optional[uuid.UUID] = Field(None, alias="openShiftId")
+    #: The open shift's per-till number ("משמרת #N"); null if none open or unnumbered.
+    open_shift_sequence: Optional[int] = Field(None, alias="openShiftSequence")
     business_date: Optional[date] = Field(None, alias="businessDate")
     opened_at: Optional[datetime] = Field(None, alias="openedAt")
     opened_by: Optional[str] = Field(None, alias="openedBy")

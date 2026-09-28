@@ -171,6 +171,7 @@ def _enrich_machine_status(
         "catalogPullStale": catalog_pull_stale,
         "shiftStatus": "open" if open_td is not None else "none",
         "openShiftId": open_td.id if open_td else None,
+        "openShiftSequence": open_td.sequence_number if open_td else None,
         "businessDate": open_td.business_date if open_td else None,
         "openedAt": open_td.opened_at if open_td else None,
         "openedBy": open_td.opened_by if open_td else None,

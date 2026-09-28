@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -557,9 +557,12 @@ class TestTheMachinesListing:
 
         assert rows[busy.id]["shiftStatus"] == "open"
         assert rows[busy.id]["openShiftId"] == open_shift.id
+        # So the list can say "משמרת #3" without fetching the shift.
+        assert rows[busy.id]["openShiftSequence"] == 3
         assert rows[busy.id]["closedShiftsAwaitingZ"] == 2
         assert "closed_shifts_awaiting_z" in rows[busy.id]["statusFlags"]
         assert rows[idle.id]["shiftStatus"] == "none"
+        assert rows[idle.id]["openShiftSequence"] is None
         assert rows[idle.id]["status"] == "no_open_shift"
         assert rows[idle.id]["closedShiftsAwaitingZ"] == 0
 
@@ -568,5 +571,29 @@ class TestTheMachinesListing:
         from app.schemas.pos_machine import POSMachineResponse
 
         for name in ("status", "online", "status_flags", "pending_documents", "pending_as_of",
-                     "shift_status", "open_shift_id", "closed_shifts_awaiting_z"):
+                     "shift_status", "open_shift_id", "open_shift_sequence",
+                     "closed_shifts_awaiting_z"):
             assert name in POSMachineResponse.model_fields
+
+
+class TestAStandaloneCloseOnTheListing:
+    def test_it_lights_close_shift_pending(self, w):
+        from unittest.mock import patch
+
+        from app.routers import machines as machines_router
+        from app.services import shift_close_requests
+
+        busy, idle = w.tills
+        # The status light reads the real clock.
+        now = datetime.now(timezone.utc)
+        busy.last_heartbeat_at = now
+        w.shift(busy, 1, status=ShiftStatus.OPEN)
+        with patch("app.services.ably_notify.publish_close_shift_notify"):
+            shift_close_requests.request_close(w.db, w.admin, busy, now=now)
+
+        with patch.object(machines_router, "get_catalog_change_watermark_for_machine", return_value=None):
+            rows = {r["id"]: r for r in machines_router._enrich_machines_batch(w.tills, w.db)}
+
+        assert rows[busy.id]["closeShiftPending"] is True
+        assert rows[busy.id]["status"] == "shift_close_pending"
+        assert rows[idle.id]["closeShiftPending"] is False
