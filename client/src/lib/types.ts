@@ -338,6 +338,8 @@ export interface PosMachine {
   /** `open` when the cloud holds an open shift for this till, else `none`. */
   shiftStatus?: 'open' | 'none';
   openShiftId?: string;
+  /** The open shift's per-till number ("משמרת #N"); null if none open or unnumbered. */
+  openShiftSequence?: number | null;
   /** The open shift's business date (the till's local date it opened). */
   businessDate?: string;
   openedAt?: string;

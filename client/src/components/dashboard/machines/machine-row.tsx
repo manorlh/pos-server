@@ -118,7 +118,9 @@ export function MachineShiftSummary({ m }: { m: PosMachine }) {
         {m.closeShiftPending
           ? t('shift.closePending')
           : m.shiftStatus === 'open'
-            ? t('shift.open')
+            ? m.openShiftSequence != null
+              ? t('shift.openNumbered', { number: m.openShiftSequence })
+              : t('shift.open')
             : t('shift.none')}
       </Badge>
       {m.shiftStatus === 'open' && m.openedAt ? (

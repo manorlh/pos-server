@@ -64,6 +64,7 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     catalogPullStale: Boolean(raw.catalogPullStale ?? raw.catalog_pull_stale ?? false),
     shiftStatus: (raw.shiftStatus ?? raw.shift_status) as PosMachine['shiftStatus'],
     openShiftId: (raw.openShiftId ?? raw.open_shift_id) as string | undefined,
+    openShiftSequence: nullableNumber(raw.openShiftSequence ?? raw.open_shift_sequence),
     businessDate: (raw.businessDate ?? raw.business_date) as string | undefined,
     openedAt: (raw.openedAt ?? raw.opened_at) as string | undefined,
     openedBy: (raw.openedBy ?? raw.opened_by) as string | undefined,

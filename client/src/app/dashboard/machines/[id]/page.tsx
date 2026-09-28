@@ -115,10 +115,6 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
     queryFn: () => fetchShifts(shiftParams),
     enabled: !!machine,
   });
-  // The open shift, when there is one, heads the list (newest business date first).
-  const openShift = (shifts.data?.items ?? []).find(
-    (s) => s.status === 'open' && s.id === machine?.openShiftId,
-  );
 
   const txParams = useMemo(
     () => ({ machineId: id, page: 1, pageSize: RECENT_LIMIT }),
@@ -246,12 +242,14 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
             value={
               <span className="space-y-0.5">
                 <MachineShiftSummary m={machine} />
-                {openShift ? (
+                {/* Named from the machines response itself (openShiftSequence), so it
+                    does not wait on, or depend on, the recent-shifts page below. */}
+                {machine.shiftStatus === 'open' && machine.openShiftId ? (
                   <Link
-                    href={`/dashboard/shifts/${openShift.id}`}
+                    href={`/dashboard/shifts/${machine.openShiftId}`}
                     className="block text-xs font-normal text-muted-foreground hover:underline"
                   >
-                    {shiftLabel(openShift)}
+                    {shiftLabel({ sequenceNumber: machine.openShiftSequence ?? null })}
                   </Link>
                 ) : null}
               </span>

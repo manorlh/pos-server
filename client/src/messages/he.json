@@ -648,6 +648,7 @@
     "shift": {
       "label": "משמרת",
       "open": "משמרת פתוחה",
+      "openNumbered": "משמרת #{number} פתוחה",
       "none": "אין משמרת פתוחה",
       "closePending": "ממתין לסגירת משמרת",
       "openedAgo": "נפתחה {ago}",
