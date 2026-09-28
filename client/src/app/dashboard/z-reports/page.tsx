@@ -155,6 +155,10 @@ export default function ZReportsPage() {
           </div>
         </div>
         <p className="text-muted-foreground text-xs">{t('businessDateFilterHint')}</p>
+        {/* With no date at all the server answers the last 90 days, not everything. */}
+        {!from && !to && !closedFrom && !closedTo ? (
+          <p className="text-muted-foreground text-xs">{t('defaultWindowHint')}</p>
+        ) : null}
 
         <div className="grid gap-3 md:grid-cols-2">
           <div className="space-y-1">

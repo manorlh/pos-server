@@ -31,6 +31,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { MachineStatusDot, machineStatus } from '@/components/dashboard/machine-status';
 import { MachinesTable } from '@/components/dashboard/machines/machines-table';
 import { RemoteShiftCloseDialog } from '@/components/dashboard/machines/remote-shift-close';
+import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
 
 const MQTT_ONLINE_WINDOW_MS = 90 * 1000;
 
@@ -38,6 +39,8 @@ export default function MachinesPage() {
   const t = useTranslations('machines');
   const tStatus = useTranslations('machineStatus');
   const tc = useTranslations('common');
+  // Moving or retiring a till is refused (409) while it holds shifts; those codes have words.
+  const zErrors = useZErrorText();
   const qc = useQueryClient();
   const { user: me, authHydrated } = useAuth();
   // The list narrows to whatever the bar points at — a company (via its shops), a
@@ -87,6 +90,10 @@ export default function MachinesPage() {
   const { data: machines = [], isLoading } = useQuery<PosMachine[]>({
     queryKey: ['machines'],
     queryFn: fetchMachines,
+    // While a close is on its way to a till, look again now and then, so "close
+    // pending" turns into the closed shift without a manual reload. Slowly: the
+    // wizard and the close dialog poll the close itself.
+    refetchInterval: (q) => (q.state.data?.some((m) => m.closeShiftPending) ? 20_000 : false),
   });
 
   const { data: shops = [] } = useQuery<Shop[]>({
@@ -238,7 +245,7 @@ export default function MachinesPage() {
       setAssignShopId('');
       setSelectedMachine(null);
     },
-    onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
+    onError: (err: unknown) => toast.error(zErrors.forError(err)),
   });
 
   const updateMachineShop = useMutation({
@@ -251,7 +258,7 @@ export default function MachinesPage() {
       setEditShopId('');
       setSelectedMachine(null);
     },
-    onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
+    onError: (err: unknown) => toast.error(zErrors.forError(err)),
   });
 
   // Smart delete on the server returns mode='hard' (row gone) or mode='soft'
@@ -268,7 +275,7 @@ export default function MachinesPage() {
       setRemoveOpen(false);
       setSelectedMachine(null);
     },
-    onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
+    onError: (err: unknown) => toast.error(zErrors.forError(err)),
   });
 
   const openAssign = (m: PosMachine) => {

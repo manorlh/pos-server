@@ -225,10 +225,44 @@ export async function fetchShops(companyId?: string): Promise<Shop[]> {
 }
 
 /** `GET /machines`, normalised — the raw rows mix camelCase and snake_case. */
+/** The server's largest page of `GET /machines`. */
+const MACHINES_PAGE = 100;
+/** A ceiling on pages, so a server that ignores `skip` cannot loop us forever. */
+const MACHINES_MAX_PAGES = 50;
+
+/**
+ * Every machine in scope. `GET /machines` answers at most 100 rows per call, so a
+ * tenant with more tills is read page by page rather than silently cut at the 100th.
+ */
 export async function fetchMachines(): Promise<PosMachine[]> {
-  const { data } = await api.get('/machines');
-  const list = Array.isArray(data) ? data : [];
-  return list.map((row: Record<string, unknown>) => normalizePosMachine(row));
+  const out: PosMachine[] = [];
+  const seen = new Set<string>();
+  for (let page = 0; page < MACHINES_MAX_PAGES; page++) {
+    const { data } = await api.get('/machines', {
+      params: { skip: page * MACHINES_PAGE, limit: MACHINES_PAGE },
+    });
+    const list: Record<string, unknown>[] = Array.isArray(data) ? data : [];
+    let added = 0;
+    for (const row of list) {
+      const m = normalizePosMachine(row);
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
+      out.push(m);
+      added++;
+    }
+    // A short page is the last; a page of nothing new means `skip` was not honoured.
+    if (list.length < MACHINES_PAGE || added === 0) break;
+  }
+  return out;
+}
+
+/**
+ * One machine by id — including a removed one or one with no shop, which the list
+ * (active only, shop-scoped for some roles) does not return.
+ */
+export async function fetchMachine(id: string): Promise<PosMachine> {
+  const { data } = await api.get(`/machines/${id}`);
+  return normalizePosMachine(data as Record<string, unknown>);
 }
 
 /**

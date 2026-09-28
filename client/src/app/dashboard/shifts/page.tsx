@@ -13,17 +13,18 @@
  * than silently widened to the whole organization.
  */
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, FilePlus2 } from 'lucide-react';
 import { fetchShifts, type ShiftListParams } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { usePageScope } from '@/lib/scope';
+import { usePageScope, useScopeQuery } from '@/lib/scope';
 import { findBySameId } from '@/lib/entityLookup';
-import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
+import { formatCurrency, formatDate, formatDateTimeInZone } from '@/lib/format';
+import { useTenantTimeZone } from '@/lib/auth';
 import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
 import type { ShiftListResponse, ShiftStatus } from '@/lib/types';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
@@ -46,41 +47,91 @@ const COLS = 11;
 
 type StatusFilter = 'all' | ShiftStatus;
 
+const PLAIN_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** The page's filters, from the URL — so Back, a reload and a shared link keep them. */
+function filtersFrom(sp: URLSearchParams | { get(name: string): string | null }) {
+  const rawStatus = sp.get('status');
+  const awaitingZ = sp.get('awaitingZ') === '1';
+  const from = sp.get('from') ?? '';
+  const to = sp.get('to') ?? '';
+  const page = Math.max(1, Math.floor(Number(sp.get('page') ?? '1')) || 1);
+  const status: StatusFilter = awaitingZ
+    ? // Awaiting a Z means closed: an open shift is never waiting for one.
+      'closed'
+    : rawStatus === 'open' || rawStatus === 'closed'
+      ? rawStatus
+      : 'all';
+  return {
+    status,
+    awaitingZ,
+    from: PLAIN_DATE.test(from) ? from : '',
+    to: PLAIN_DATE.test(to) ? to : '',
+    page,
+  };
+}
+
 export default function ShiftsPage() {
   const t = useTranslations('shifts');
   const tc = useTranslations('common');
   const router = useRouter();
   const shiftLabel = useShiftLabel();
   const canProduceZ = useCanProduceZ();
-  const { scope, resolution, effective } = usePageScope({
+  const { scope, resolution, effective, ready } = usePageScope({
     maxLevel: 'machine',
     unsupported: ['company'],
   });
   const shopId = effective.shopId;
   const machineId = effective.machineId;
+  const tz = useTenantTimeZone();
 
   // `?awaitingZ=1` is how the machines page's "closed shifts awaiting a Z" flag lands here.
   const searchParams = useSearchParams();
-  const [status, setStatus] = useState<StatusFilter>(
-    searchParams.get('status') === 'open' ? 'open' : searchParams.get('status') === 'closed' ? 'closed' : 'all',
-  );
-  const [awaitingZ, setAwaitingZ] = useState(searchParams.get('awaitingZ') === '1');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [page, setPage] = useState(1);
+  const pathname = usePathname();
+  const { status, awaitingZ, from, to, page } = filtersFrom(searchParams);
+  const rangeInvalid = !!from && !!to && from > to;
+  // A shift's page links back to exactly this list — scope and filters — and carries the
+  // scope itself so the bar above it keeps naming the same shop and till.
+  const scopeQuery = useScopeQuery((st) => st.query);
+  const detailHref = (id: string) => {
+    const q = new URLSearchParams(scopeQuery.replace(/^\?/, ''));
+    q.set('list', searchParams.toString());
+    return `/dashboard/shifts/${id}?${q.toString()}`;
+  };
 
-  // A new scope is a new result set; reset the page during render, not an effect later.
+  /** Change filters in the URL, keeping the scope's own params beside them. */
+  const setFilters = useCallback(
+    (patch: Partial<{ status: StatusFilter; awaitingZ: boolean; from: string; to: string; page: number }>) => {
+      const next = new URLSearchParams(searchParams.toString());
+      const put = (key: string, value: string | null) => (value ? next.set(key, value) : next.delete(key));
+      if ('status' in patch) put('status', patch.status && patch.status !== 'all' ? patch.status : null);
+      if ('awaitingZ' in patch) put('awaitingZ', patch.awaitingZ ? '1' : null);
+      if ('from' in patch) put('from', patch.from ?? null);
+      if ('to' in patch) put('to', patch.to ?? null);
+      // Any filter change is a new result set: back to its first page.
+      const nextPage = 'page' in patch ? (patch.page ?? 1) : 1;
+      put('page', nextPage > 1 ? String(nextPage) : null);
+      const q = next.toString();
+      router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
+
+  // A new scope is a new result set too.
   const scopeKey = `${shopId ?? ''}|${machineId ?? ''}`;
-  const [pageScopeKey, setPageScopeKey] = useState(scopeKey);
-  if (pageScopeKey !== scopeKey) {
-    setPageScopeKey(scopeKey);
-    setPage(1);
-  }
+  const lastScopeKey = useRef(scopeKey);
+  useEffect(() => {
+    if (lastScopeKey.current === scopeKey) return;
+    lastScopeKey.current = scopeKey;
+    if (page > 1) setFilters({ page: 1 });
+  }, [page, scopeKey, setFilters]);
 
   const params = useMemo<ShiftListParams>(() => {
     const p: ShiftListParams = { page, pageSize: PAGE_SIZE };
-    if (shopId) p.shopId = shopId;
+    // A till is enough on its own: sending its shop too would hide the shifts it took
+    // before it was moved to another shop.
     if (machineId) p.machineId = machineId;
+    else if (shopId) p.shopId = shopId;
     if (status !== 'all') p.status = status;
     if (awaitingZ) p.awaitingZ = true;
     if (from) p.from = from;
@@ -92,9 +143,15 @@ export default function ShiftsPage() {
     queryKey: ['shifts', params],
     queryFn: () => fetchShifts(params),
     placeholderData: (prev) => prev,
+    enabled: ready && !rangeInvalid,
   });
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+  // A page past the end (a bookmarked ?page=9, or rows taken into a Z meanwhile) is
+  // moved to the last page that has rows.
+  useEffect(() => {
+    if (data && !isFetching && page > totalPages) setFilters({ page: totalPages });
+  }, [data, isFetching, page, setFilters, totalPages]);
   const statusItems = [
     { value: 'all', label: t('filter.statusAll') },
     { value: 'open', label: t('status.open') },
@@ -123,11 +180,10 @@ export default function ShiftsPage() {
               <Label className="text-xs">{t('filter.status')}</Label>
               <Select
                 value={status}
-                onValueChange={(v) => {
-                  setStatus((v ?? 'all') as StatusFilter);
-                  setPage(1);
-                }}
+                onValueChange={(v) => setFilters({ status: (v ?? 'all') as StatusFilter })}
                 items={statusItems}
+                // "Awaiting a Z" already means closed.
+                disabled={awaitingZ}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -146,10 +202,9 @@ export default function ShiftsPage() {
               <Input
                 type="date"
                 value={from}
-                onChange={(e) => {
-                  setFrom(e.target.value);
-                  setPage(1);
-                }}
+                max={to || undefined}
+                aria-invalid={rangeInvalid || undefined}
+                onChange={(e) => setFilters({ from: e.target.value })}
               />
             </div>
             <div className="space-y-1">
@@ -157,10 +212,9 @@ export default function ShiftsPage() {
               <Input
                 type="date"
                 value={to}
-                onChange={(e) => {
-                  setTo(e.target.value);
-                  setPage(1);
-                }}
+                min={from || undefined}
+                aria-invalid={rangeInvalid || undefined}
+                onChange={(e) => setFilters({ to: e.target.value })}
               />
             </div>
             <label className="flex items-center gap-2 self-end pb-2 text-sm">
@@ -168,18 +222,18 @@ export default function ShiftsPage() {
                 type="checkbox"
                 className="h-4 w-4 accent-primary"
                 checked={awaitingZ}
-                onChange={(e) => {
-                  setAwaitingZ(e.target.checked);
-                  setPage(1);
-                }}
+                onChange={(e) => setFilters({ awaitingZ: e.target.checked })}
               />
               {t('filter.awaitingZ')}
             </label>
           </div>
+          {rangeInvalid ? (
+            <p className="text-destructive text-xs">{t('filter.rangeInvalid')}</p>
+          ) : null}
           <p className="text-muted-foreground text-xs">{t('filter.dateHint')}</p>
         </div>
 
-        {isError ? (
+        {rangeInvalid ? null : isError ? (
           <ReportErrorState message={axiosErrorToToastMessage(error, tc('error'))} />
         ) : (
           <div className="rounded-lg border bg-card overflow-x-auto">
@@ -223,11 +277,11 @@ export default function ShiftsPage() {
                       <TableRow
                         key={s.id}
                         className="cursor-pointer"
-                        onClick={() => router.push(`/dashboard/shifts/${s.id}`)}
+                        onClick={() => router.push(detailHref(s.id))}
                       >
                         <TableCell className="font-medium whitespace-nowrap">
                           <Link
-                            href={`/dashboard/shifts/${s.id}`}
+                            href={detailHref(s.id)}
                             className="hover:underline"
                             onClick={(e) => e.stopPropagation()}
                           >
@@ -242,7 +296,7 @@ export default function ShiftsPage() {
                           ) : null}
                         </TableCell>
                         <TableCell className="text-xs whitespace-nowrap">
-                          <div>{formatDateTime(s.openedAt)}</div>
+                          <div>{formatDateTimeInZone(s.openedAt, tz)}</div>
                           {s.openedByName ? (
                             <div className="text-muted-foreground">{s.openedByName}</div>
                           ) : null}
@@ -252,7 +306,7 @@ export default function ShiftsPage() {
                             <span className="text-muted-foreground">—</span>
                           ) : (
                             <>
-                              <div>{formatDateTime(s.closedAt)}</div>
+                              <div>{formatDateTimeInZone(s.closedAt, tz)}</div>
                               <div className="text-muted-foreground">
                                 {s.unattended ? t('closedRemotely') : (s.closedByName ?? '')}
                               </div>
@@ -284,13 +338,13 @@ export default function ShiftsPage() {
           </div>
         )}
 
-        {data && data.total > 0 ? (
+        {!rangeInvalid && data && data.total > 0 ? (
           <div className="flex items-center justify-end gap-2 text-sm">
             <Button
               size="sm"
               variant="outline"
               disabled={page <= 1 || isFetching}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              onClick={() => setFilters({ page: Math.max(1, page - 1) })}
               aria-label={t('prevPage')}
             >
               <ChevronRight className="h-4 w-4" />
@@ -302,7 +356,7 @@ export default function ShiftsPage() {
               size="sm"
               variant="outline"
               disabled={page >= totalPages || isFetching}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              onClick={() => setFilters({ page: Math.min(totalPages, page + 1) })}
               aria-label={t('nextPage')}
             >
               <ChevronLeft className="h-4 w-4" />

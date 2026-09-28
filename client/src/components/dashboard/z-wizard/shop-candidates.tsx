@@ -21,7 +21,7 @@ import { AlertTriangle, Info } from 'lucide-react';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
 import type { PosMachine, Shift, ZCandidateMachine, ZCandidates } from '@/lib/types';
 import { MachineStatusDot } from '@/components/dashboard/machine-status';
-import { CountedCash, ShiftBadges, useShiftLabel } from '@/components/dashboard/shifts/shift-parts';
+import { CountedCash, ShiftBadges, useShiftLabel, useTillHeading } from '@/components/dashboard/shifts/shift-parts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
@@ -29,14 +29,25 @@ import { Switch } from '@/components/ui/switch';
 /** What the operator chose for one till. */
 export interface TillSelection {
   include: boolean;
-  /** Null = every closed shift (the last one). */
+  /**
+   * Null only while untouched = every closed shift. Once the operator picks one — even
+   * the last — its id is kept, so a shift closing meanwhile is not taken silently.
+   */
   throughShiftId: string | null;
   includeOpenShift: boolean;
 }
 
-/** Whether the till has a shift open — on the cloud, or by its own heartbeat. */
+/**
+ * Whether the till has a shift open — on the cloud, or by its own heartbeat.
+ *
+ * A heartbeat is older than the close it preceded: a till that reported shift S open
+ * and then closed it still carries S in its last heartbeat. When S is already among the
+ * closed shifts, that claim is stale and there is nothing open to close.
+ */
 export function hasOpenShift(m: ZCandidateMachine): boolean {
-  return !!m.openShift || !!m.tillReportedOpenShiftId;
+  if (m.openShift) return true;
+  const reported = m.tillReportedOpenShiftId;
+  return !!reported && !m.closedShifts.some((s) => s.id === reported);
 }
 
 /** Anything this till could contribute to a Z. */
@@ -62,9 +73,18 @@ export function includedClosedShifts(m: ZCandidateMachine, sel: TillSelection): 
   return idx < 0 ? m.closedShifts : m.closedShifts.slice(0, idx + 1);
 }
 
-/** Business dates, late documents and warnings over everything a shop's selection takes. */
+/**
+ * Business dates, late documents and warnings over everything a shop's selection takes.
+ *
+ * `dates` is what the mixed-dates warning lists: every date across the shop, or — when
+ * each till gets its own Z (zScope = machine) — only the dates of tills whose own Z
+ * would span more than one day. Two tills on two different days are two Zs then, and
+ * nothing to warn about.
+ */
 export function selectionSummary(c: ZCandidates, sels: Record<string, TillSelection>) {
+  const perTill = c.zScope === 'machine';
   const dates = new Set<string>();
+  const mixedTillDates = new Set<string>();
   let late = 0;
   let shifts = 0;
   let tills = 0;
@@ -77,19 +97,23 @@ export function selectionSummary(c: ZCandidates, sels: Record<string, TillSelect
     if (closed.length === 0 && !withOpen) continue;
     tills += 1;
     shifts += closed.length + (withOpen ? 1 : 0);
+    const tillDates = new Set<string>();
     for (const s of closed) {
-      dates.add(s.businessDate);
+      tillDates.add(s.businessDate);
       late += s.lateDocuments ?? 0;
     }
     if (withOpen) {
       waitsForClose += 1;
       if (m.openShift) {
-        dates.add(m.openShift.businessDate);
+        tillDates.add(m.openShift.businessDate);
         late += m.openShift.lateDocuments ?? 0;
       }
     }
+    for (const d of tillDates) dates.add(d);
+    if (tillDates.size > 1) for (const d of tillDates) mixedTillDates.add(d);
   }
-  return { dates: [...dates].sort(), late, shifts, tills, waitsForClose };
+  const warnDates = perTill ? mixedTillDates : dates;
+  return { dates: warnDates.size > 1 ? [...warnDates].sort() : [], late, shifts, tills, waitsForClose };
 }
 
 /** "14:05", or the full date and time when it is not the day `sameDayAs` fell on. */
@@ -144,6 +168,7 @@ function TillRow({
   const t = useTranslations('zWizard');
   const tStatus = useTranslations('machineStatus');
   const shiftLabel = useShiftLabel();
+  const heading = useTillHeading()(m);
   const open = hasOpenShift(m);
   const withOpen = sel.includeOpenShift && open;
   const blocked = !!m.activeRun;
@@ -168,10 +193,8 @@ function TillRow({
             disabled={blocked || nothing}
             onChange={(e) => onChange({ ...sel, include: e.target.checked })}
           />
-          {m.posNumber ? t('tillNumbered', { number: m.posNumber }) : null}
-          <span className={m.posNumber ? 'text-muted-foreground font-normal' : ''}>
-            {m.machineName ?? m.machineId}
-          </span>
+          {heading.title}
+          {heading.name ? <span className="text-muted-foreground font-normal">{heading.name}</span> : null}
         </label>
         <span className="inline-flex items-center gap-1.5 text-xs">
           <MachineStatusDot m={{ status } as PosMachine} />
@@ -233,7 +256,9 @@ function TillRow({
             <span className="text-muted-foreground">{t('through')}</span>
             <Select
               value={throughId ?? ''}
-              onValueChange={(v) => onChange({ ...sel, throughShiftId: v === lastId ? null : (v ?? null) })}
+              // The picked id is sent as is, the last shift included: "through the last"
+              // means that shift, not whatever is last when the run is created.
+              onValueChange={(v) => onChange({ ...sel, throughShiftId: v || null })}
               items={pickerItems}
               disabled={!sel.include || withOpen || blocked}
             >

@@ -41,8 +41,21 @@ export function formatQuantity(value: number | null | undefined): string {
   }).format(n);
 }
 
+const PLAIN_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * A date for display. A plain calendar date ("2026-09-28", a business date) is shown as
+ * that day wherever the reader is: `new Date("2026-09-28")` is UTC midnight, which a
+ * browser west of UTC would render as the 27th.
+ */
 export function formatDate(iso: string | undefined | null): string {
   if (!iso) return '—';
+  const plain = PLAIN_DATE.exec(iso);
+  if (plain) {
+    const d = new Date(Date.UTC(Number(plain[1]), Number(plain[2]) - 1, Number(plain[3])));
+    if (Number.isNaN(d.getTime())) return '—';
+    return d.toLocaleDateString('he-IL', { timeZone: 'UTC' });
+  }
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('he-IL');

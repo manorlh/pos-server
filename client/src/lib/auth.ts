@@ -28,6 +28,8 @@ export interface TenantSummary {
   id: string;
   name: string;
   slug: string;
+  /** IANA zone the tenant's business days and shift times are kept in. */
+  timezone?: string | null;
 }
 
 interface AuthState {
@@ -55,10 +57,13 @@ export const useAuth = create<AuthState>((set) => ({
         api.get('/users/me'),
         api.get('/tenants/mine'),
       ]);
-      const tenants = ((tenantRows ?? []) as Array<{ id: unknown; name: string; slug: string }>).map((t) => ({
+      const tenants = (
+        (tenantRows ?? []) as Array<{ id: unknown; name: string; slug: string; timezone?: string | null }>
+      ).map((t) => ({
         id: String(t.id),
         name: t.name,
         slug: t.slug,
+        timezone: typeof t.timezone === 'string' && t.timezone ? t.timezone : null,
       }));
       const storedTenantId =
         typeof window !== 'undefined' ? window.localStorage.getItem('activeTenantId') : null;
@@ -128,3 +133,13 @@ export const useAuth = create<AuthState>((set) => ({
       return { user: null, tenants: [], activeTenantId: null, authHydrated: false };
     }),
 }));
+
+/** Where tenants live unless they say otherwise — the server's own default. */
+export const DEFAULT_TENANT_TIME_ZONE = 'Asia/Jerusalem';
+
+/** The active tenant's timezone, for times that must read as the shop's local time. */
+export function useTenantTimeZone(): string {
+  return useAuth(
+    (s) => s.tenants.find((t) => t.id === s.activeTenantId)?.timezone ?? DEFAULT_TENANT_TIME_ZONE,
+  );
+}

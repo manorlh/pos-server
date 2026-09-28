@@ -24,8 +24,8 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { useMutation, useQueries } from '@tanstack/react-query';
-import { FilePlus2 } from 'lucide-react';
+import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, FilePlus2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { createZRun, fetchZCandidates } from '@/lib/api';
 import { usePageScope } from '@/lib/scope';
@@ -36,23 +36,45 @@ import {
   ShopCandidatesCard,
   defaultSelection,
   hasOpenShift,
+  hasSomethingToReport,
   includedClosedShifts,
   selectionSummary,
   type TillSelection,
 } from '@/components/dashboard/z-wizard/shop-candidates';
 import { ZRunProgress } from '@/components/dashboard/z-wizard/z-run-progress';
 import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
+import { useTillHeading } from '@/components/dashboard/shifts/shift-parts';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 
 type Overrides = Record<string, Record<string, TillSelection>>;
 
+/**
+ * A remembered choice, re-checked against what the server says now.
+ *
+ * Candidates refetch every 15 s and a colleague can take shifts into a Z meanwhile, so a
+ * choice made a minute ago can name a till that is now in another run, has nothing left
+ * to report, or an end shift that is no longer waiting. Those are dropped here rather
+ * than sent for the server to refuse.
+ */
+function sanitizeSelection(m: ZCandidates['machines'][number], sel: TillSelection): TillSelection {
+  const eligible = !m.activeRun && hasSomethingToReport(m);
+  const throughStillThere =
+    sel.throughShiftId !== null && m.closedShifts.some((s) => s.id === sel.throughShiftId);
+  return {
+    include: sel.include && eligible,
+    throughShiftId: throughStillThere ? sel.throughShiftId : null,
+    includeOpenShift: sel.includeOpenShift,
+  };
+}
+
 /** The request body for one till, or null when it contributes nothing. */
 function machineBody(
   m: ZCandidates['machines'][number],
-  sel: TillSelection,
+  chosen: TillSelection,
 ): ZRunMachineSelection | null {
+  const sel = sanitizeSelection(m, chosen);
   if (!sel.include) return null;
   const open = hasOpenShift(m);
   const withOpen = open && sel.includeOpenShift;
@@ -64,10 +86,30 @@ function machineBody(
   return body;
 }
 
+interface PlannedRun {
+  shopId: string;
+  machines: ZRunMachineSelection[];
+  /** Set on a per-till run (zScope = machine): the till's name, for its error line. */
+  tillName?: string;
+}
+
+/**
+ * The wizard's state lives in the component, so it is keyed by what the URL asks for:
+ * "start another" (no `runs=`), or a machines-page link for a different till, starts
+ * from a clean selection rather than the one the previous run was made from.
+ */
 export default function ProduceZPage() {
+  const searchParams = useSearchParams();
+  const key = ['runs', 'shopId', 'machineId'].map((k) => searchParams.get(k) ?? '').join('|');
+  return <ProduceZ key={key} />;
+}
+
+function ProduceZ() {
   const t = useTranslations('zWizard');
   const router = useRouter();
+  const qc = useQueryClient();
   const errors = useZErrorText();
+  const tillHeading = useTillHeading();
   const canProduceZ = useCanProduceZ();
   const { scope } = usePageScope({ maxLevel: 'machine', silent: true });
   const searchParams = useSearchParams();
@@ -77,7 +119,11 @@ export default function ProduceZPage() {
     [searchParams],
   );
   const presetShop = searchParams.get('shopId') ?? scope.shopId ?? null;
-  const presetMachine = searchParams.get('machineId') ?? (presetShop ? scope.machineId : null);
+  // The scope's till only means something inside the scope's own shop: a link that
+  // names another shop must not preselect a till that is not in it.
+  const presetMachine =
+    searchParams.get('machineId') ??
+    (presetShop && scope.shopId && presetShop === scope.shopId ? scope.machineId : null);
 
   const [shopIds, setShopIds] = useState<string[]>(() => (presetShop ? [presetShop] : []));
   const [overrides, setOverrides] = useState<Overrides>({});
@@ -96,7 +142,8 @@ export default function ProduceZPage() {
     const out: Record<string, TillSelection> = {};
     const only = c.shopId === presetShop ? presetMachine : null;
     for (const m of c.machines) {
-      out[m.machineId] = overrides[c.shopId]?.[m.machineId] ?? defaultSelection(m, only);
+      const chosen = overrides[c.shopId]?.[m.machineId];
+      out[m.machineId] = chosen ? sanitizeSelection(m, chosen) : defaultSelection(m, only);
     }
     return out;
   };
@@ -106,39 +153,67 @@ export default function ProduceZPage() {
     .filter((c): c is ZCandidates => !!c);
 
   /** One request body per run: per shop, or per till when the tenant wants one till per Z. */
-  const plannedRuns = loaded.flatMap((c) => {
+  const plannedRuns: PlannedRun[] = loaded.flatMap((c) => {
     const sels = selectionsFor(c);
     const machines = c.machines
-      .map((m) => machineBody(m, sels[m.machineId]))
-      .filter((b): b is ZRunMachineSelection => b !== null);
+      .map((m) => ({ m, body: machineBody(m, sels[m.machineId]) }))
+      .filter((x): x is { m: (typeof c.machines)[number]; body: ZRunMachineSelection } => x.body !== null);
     if (machines.length === 0) return [];
-    if (c.zScope === 'machine') return machines.map((b) => ({ shopId: c.shopId, machines: [b] }));
-    return [{ shopId: c.shopId, machines }];
+    if (c.zScope === 'machine') {
+      return machines.map(({ m, body }) => ({
+        shopId: c.shopId,
+        machines: [body],
+        tillName: tillHeading(m).title,
+      }));
+    }
+    return [{ shopId: c.shopId, machines: machines.map((x) => x.body) }];
   });
 
   const start = useMutation({
     mutationFn: async () => {
       const started: ZRun[] = [];
       const failed: string[] = [];
-      // Sequential on purpose: runs of different shops are independent, but a toast per
-      // failure in order is easier to read than a burst of parallel ones.
+      // Sequential on purpose: runs of different shops are independent, but a list of
+      // failures in order is easier to read than a burst of parallel ones.
       for (const body of plannedRuns) {
         try {
-          started.push(await createZRun(body));
+          started.push(await createZRun({ shopId: body.shopId, machines: body.machines }));
         } catch (e) {
-          const shop = findBySameId(scope.shops, body.shopId)?.name ?? body.shopId;
-          failed.push(`${shop}: ${errors.forError(e)}`);
+          const shop = candidateShopName(body.shopId);
+          const who = body.tillName ? `${shop} · ${body.tillName}` : shop;
+          failed.push(`${who}: ${errors.forError(e)}`);
         }
       }
+      // Every till just put into a run is no longer a candidate. Awaited while the
+      // button still reads "starting", so a second click cannot resend them.
+      await qc.invalidateQueries({ queryKey: ['z-candidates'] });
       return { started, failed };
     },
     onSuccess: ({ started, failed }) => {
-      for (const msg of failed) toast.error(msg);
+      if (failed.length > 0) {
+        // Stay here: the failures are listed below and the tills that did start are
+        // now marked as in a run (sanitizeSelection drops them), so pressing Start
+        // again retries only the rest, with the operator's other choices kept.
+        return;
+      }
       if (started.length > 0) {
+        setOverrides({});
+        setShopIds([]);
         router.replace(`/dashboard/z-reports/new?runs=${started.map((r) => r.id).join(',')}`);
       }
     },
+    onError: (e) => toast.error(errors.forError(e)),
   });
+  const outcome = start.data;
+  const partial = outcome && outcome.failed.length > 0 ? outcome : null;
+
+  function candidateShopName(shopId: string): string {
+    return (
+      loaded.find((c) => c.shopId === shopId)?.shopName ??
+      findBySameId(scope.shops, shopId)?.name ??
+      shopId
+    );
+  }
 
   const toggleShop = (id: string, on: boolean) =>
     setShopIds((prev) => (on ? [...prev, id] : prev.filter((x) => x !== id)));
@@ -178,6 +253,8 @@ export default function ProduceZPage() {
   const shopsToOffer = scope.shops;
   const totalTills = plannedRuns.reduce((n, r) => n + r.machines.length, 0);
   const waiting = loaded.reduce((n, c) => n + selectionSummary(c, selectionsFor(c)).waitsForClose, 0);
+  // zScope is the tenant's, so any loaded shop tells which rule applies to all of them.
+  const perTill = loaded.some((c) => c.zScope === 'machine');
 
   return (
     <div className="space-y-4">
@@ -189,7 +266,7 @@ export default function ProduceZPage() {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium">{t('shopsTitle')}</CardTitle>
-          <p className="text-muted-foreground text-xs">{t('shopsHint')}</p>
+          <p className="text-muted-foreground text-xs">{perTill ? t('shopsHintPerTill') : t('shopsHint')}</p>
         </CardHeader>
         <CardContent>
           {scope.shopsLoading ? (
@@ -244,8 +321,42 @@ export default function ProduceZPage() {
         </div>
       )}
 
+      {partial ? (
+        <Card className="border-destructive/50">
+          <CardContent className="space-y-2 py-4 text-sm">
+            <p className="flex items-center gap-2 font-medium text-destructive">
+              <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
+              {t('partialFailed', { count: partial.failed.length })}
+            </p>
+            <ul className="list-disc space-y-0.5 ps-6 text-destructive">
+              {partial.failed.map((msg) => (
+                <li key={msg}>{msg}</li>
+              ))}
+            </ul>
+            {partial.started.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <span className="text-muted-foreground text-xs">
+                  {t('partialStarted', { count: partial.started.length })}
+                </span>
+                <Link
+                  href={`/dashboard/z-reports/new?runs=${partial.started.map((r) => r.id).join(',')}`}
+                  className={buttonVariants({ variant: 'outline', size: 'sm' })}
+                >
+                  {t('partialOpenProgress')}
+                </Link>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
       <div className="sticky bottom-0 flex flex-wrap items-center gap-3 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur">
-        <Button disabled={plannedRuns.length === 0 || start.isPending} onClick={() => start.mutate()}>
+        <Button
+          // After a clean start the page is on its way to the progress view; a second
+          // click in that moment would try to start the same runs again.
+          disabled={plannedRuns.length === 0 || start.isPending || (start.isSuccess && !partial)}
+          onClick={() => start.mutate()}
+        >
           <FilePlus2 className="h-4 w-4 me-1" aria-hidden />
           {start.isPending ? t('starting') : t('start', { count: plannedRuns.length })}
         </Button>

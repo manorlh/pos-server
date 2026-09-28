@@ -11,13 +11,15 @@
 
 import { use } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Clock, FileBarChart } from 'lucide-react';
 import { fetchShift } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { usePageScope } from '@/lib/scope';
-import { formatCurrency, formatDate, formatDateTime, moneyValue } from '@/lib/format';
+import { usePageScope, useScopeQuery } from '@/lib/scope';
+import { formatCurrency, formatDate, formatDateTimeInZone, moneyValue } from '@/lib/format';
+import { useTenantTimeZone } from '@/lib/auth';
 import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
 import type { Shift } from '@/lib/types';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
@@ -28,6 +30,7 @@ import {
   OverShort,
   PaymentBreakdownRows,
   ShiftBadges,
+  TipsSplit,
   useShiftLabel,
 } from '@/components/dashboard/shifts/shift-parts';
 import { buttonVariants } from '@/components/ui/button';
@@ -43,7 +46,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
  * not backfilled has none; its cloud cell then stays empty rather than showing the net
  * figure as if it were comparable.
  */
-const COMPARED: Array<{ till: string[]; server: (s: Shift) => unknown }> = [
+const COMPARED = [
   { till: ['totalSales'], server: (s) => s.serverTotals?.grossSales },
   { till: ['totalDiscounts', 'discountsTotal'], server: (s) => s.serverTotals?.discountsTotal },
   { till: ['totalRefunds'], server: (s) => s.serverTotals?.totalRefunds },
@@ -52,7 +55,7 @@ const COMPARED: Array<{ till: string[]; server: (s: Shift) => unknown }> = [
   { till: ['totalTips'], server: (s) => s.serverTotals?.totalTips },
   { till: ['vatTotal'], server: (s) => s.serverTotals?.vatTotal },
   { till: ['transactionsCount'], server: (s) => s.serverTotals?.transactionsCount },
-];
+] as const satisfies ReadonlyArray<{ till: readonly string[]; server: (s: Shift) => unknown }>;
 
 function display(value: unknown, key: string): string {
   if (value === null || value === undefined || value === '') return '—';
@@ -67,6 +70,24 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
   const shiftLabel = useShiftLabel();
   const canProduceZ = useCanProduceZ();
   usePageScope({ maxLevel: 'machine', silent: true });
+  const tz = useTenantTimeZone();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const scopeQuery = useScopeQuery((st) => st.query);
+  // `?list=` is the list this shift was opened from (scope and filters). Back there is
+  // a real Back, so the list keeps its scroll; opened from anywhere else, the list is
+  // rebuilt from the scope in effect.
+  const listQuery = searchParams.get('list');
+  const backHref =
+    listQuery !== null
+      ? `/dashboard/shifts${listQuery ? `?${listQuery}` : ''}`
+      : `/dashboard/shifts${scopeQuery}`;
+  const goBack = (e: React.MouseEvent) => {
+    if (listQuery !== null && window.history.length > 1) {
+      e.preventDefault();
+      router.back();
+    }
+  };
 
   const { data: shift, isLoading, isError, error } = useQuery({
     queryKey: ['shift', id],
@@ -128,7 +149,7 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
               {t('produceZ')}
             </Link>
           ) : null}
-          <Link href="/dashboard/shifts" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+          <Link href={backHref} onClick={goBack} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
             {t('detail.backToList')}
           </Link>
         </div>
@@ -172,13 +193,13 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
 
       <Card>
         <CardContent className="grid grid-cols-2 gap-4 pt-4 sm:grid-cols-3 lg:grid-cols-6">
-          <Fact label={t('detail.openedAt')}>{formatDateTime(shift.openedAt)}</Fact>
+          <Fact label={t('detail.openedAt')}>{formatDateTimeInZone(shift.openedAt, tz)}</Fact>
           <Fact label={t('detail.openedBy')}>{shift.openedByName ?? '—'}</Fact>
-          <Fact label={t('detail.closedAt')}>{open ? '—' : formatDateTime(shift.closedAt)}</Fact>
+          <Fact label={t('detail.closedAt')}>{open ? '—' : formatDateTimeInZone(shift.closedAt, tz)}</Fact>
           <Fact label={t('detail.closedBy')}>
             {open ? '—' : shift.unattended ? t('closedRemotely') : (shift.closedByName ?? '—')}
           </Fact>
-          <Fact label={t('detail.closeAcceptedAt')}>{formatDateTime(shift.closeAcceptedAt)}</Fact>
+          <Fact label={t('detail.closeAcceptedAt')}>{formatDateTimeInZone(shift.closeAcceptedAt, tz)}</Fact>
           <Fact label={t('detail.documentRange')}>
             {totals?.firstTransactionNumber || totals?.lastTransactionNumber ? (
               <span className="font-mono text-xs" dir="ltr">
@@ -244,12 +265,7 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
                   )}
                 </MoneyRow>
                 <MoneyRow label={t('detail.tips')} value={totals.totalTips} />
-                <p className="text-muted-foreground text-xs">
-                  {t('detail.tipsSplit', {
-                    cash: formatCurrency(totals.totalCashTips),
-                    card: formatCurrency(totals.totalCardTips),
-                  })}
-                </p>
+                <TipsSplit total={totals.totalTips} cash={totals.totalCashTips} card={totals.totalCardTips} />
                 {shift.shopId && moneyValue(totals.totalTips) ? (
                   <Link
                     href={`/dashboard/tips?shiftId=${shift.id}&shop=${shift.shopId}`}

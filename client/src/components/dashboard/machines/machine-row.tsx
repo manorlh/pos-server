@@ -127,6 +127,15 @@ export function MachineShiftSummary({ m }: { m: PosMachine }) {
               : t('shift.open')
             : t('shift.none')}
       </Badge>
+      {/* A Z run is what waits for this close: it is followed (and cancelled) there. */}
+      {m.closeShiftPending && m.pendingCloseSource === 'z_run' && m.pendingZRunId ? (
+        <Link
+          href={`/dashboard/z-reports/new?runs=${m.pendingZRunId}`}
+          className="block text-xs text-primary hover:underline"
+        >
+          {t('shift.pendingZRun')}
+        </Link>
+      ) : null}
       {m.shiftStatus === 'open' && m.openedAt ? (
         <p className="text-xs text-muted-foreground">
           {t('shift.openedAgo', {
@@ -361,7 +370,7 @@ function MachineRowDetails({
 
       {/* Only for a terminal that is actually unreachable — offering it on a healthy
           till invites closing a shift out from under a cashier. */}
-      {!online && m.pairingStatus === 'assigned' ? (
+      {!online && m.pairingStatus === 'assigned' && m.isActive !== false ? (
         <div className="md:col-span-2 xl:col-span-3">
           <DeadTillRecovery m={m} />
         </div>

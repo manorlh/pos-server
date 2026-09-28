@@ -73,7 +73,7 @@ export function OverShort({
 /** A tender key from a payment breakdown, in words. Unknown keys are shown as sent. */
 export function usePaymentMethodLabel() {
   const t = useTranslations('shifts.paymentMethod');
-  const known = new Set(['cash', 'card', 'credit', 'voucher', 'check', 'cheque', 'unknown', 'other']);
+  const known = new Set(['cash', 'card', 'credit', 'voucher', 'check', 'cheque', 'mixed', 'unknown', 'other']);
   return (method: string): string => (known.has(method) ? t(method) : method);
 }
 
@@ -157,6 +157,49 @@ export function ShiftBadges({
         <span className="text-muted-foreground text-xs">{t('awaitingZ')}</span>
       ) : null}
     </span>
+  );
+}
+
+/**
+ * A register's heading: "קופה 2" with the device's name beside it, or — with no register
+ * number — the device's name alone, never twice. A register number that is not a plain
+ * number (an old id-like value) is not dressed up as "קופה <id>".
+ */
+export function useTillHeading() {
+  const t = useTranslations('zReports');
+  return (s: {
+    posNumber?: string | null;
+    machineName?: string | null;
+    machineId: string;
+  }): { title: string; name: string | null } => {
+    const number = s.posNumber?.trim();
+    if (number && /^\d+$/.test(number)) {
+      return { title: t('tillNumbered', { number }), name: s.machineName ?? null };
+    }
+    return { title: s.machineName ?? number ?? s.machineId, name: null };
+  };
+}
+
+/**
+ * The tip split under a tips total. Worded as "of which", because a bare "cash ₪x · card
+ * ₪y" under the tips line reads as the shift's cash and card takings. Nothing when there
+ * were no tips.
+ */
+export function TipsSplit({
+  total,
+  cash,
+  card,
+}: {
+  total: Money | null | undefined;
+  cash: Money | null | undefined;
+  card: Money | null | undefined;
+}) {
+  const t = useTranslations('shifts');
+  if (!moneyValue(total)) return null;
+  return (
+    <p className="text-muted-foreground text-xs">
+      {t('tipsSplitOf', { cash: formatCurrency(cash), card: formatCurrency(card) })}
+    </p>
   );
 }
 

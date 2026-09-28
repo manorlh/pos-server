@@ -44,13 +44,25 @@ import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
 
 const PENDING = new Set<ShiftCloseRequestStatus>(['waiting_close', 'closing']);
 
-/** Whether this till has a shift the cloud can be asked to close. */
+/**
+ * Whether this till has a shift the cloud can be asked to close.
+ *
+ * Not while a Z run is already waiting for that close: the run owns it, and a second,
+ * standalone request would only race it. The row links to the run instead.
+ */
 export function canCloseShiftRemotely(m: PosMachine): boolean {
   return (
+    m.isActive !== false &&
     m.pairingStatus === 'assigned' &&
     !!m.shopId &&
-    (m.shiftStatus === 'open' || !!m.reportedOpenShiftId)
+    (m.shiftStatus === 'open' || !!m.reportedOpenShiftId) &&
+    !(m.closeShiftPending && m.pendingCloseSource === 'z_run')
   );
+}
+
+/** The HTTP status of a failed request, if it has one. */
+function httpStatus(err: unknown): number | undefined {
+  return (err as { response?: { status?: number } } | null)?.response?.status;
 }
 
 function statusVariant(s: ShiftCloseRequestStatus): 'default' | 'secondary' | 'destructive' | 'outline' {
@@ -77,17 +89,33 @@ export function RemoteShiftCloseDialog({
   const [requestId, setRequestId] = useState<string | null>(null);
 
   // A fresh dialog for each opening: the last till's request must not show on the next.
-  // (The parent also keys the dialog by till.)
+  // The parent keys the dialog by till; reopening for the same till starts over too
+  // (asking again returns the pending request, so nothing is lost).
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (open) setRequestId(null);
+  }
   const handleOpenChange = (next: boolean) => {
     if (!next) setRequestId(null);
     onOpenChange(next);
   };
 
-  const { data: request } = useQuery<ShiftCloseRequest>({
+  const {
+    data: request,
+    isError: pollFailed,
+    error: pollError,
+    refetch,
+  } = useQuery<ShiftCloseRequest>({
     queryKey: ['shift-close-request', requestId],
     queryFn: () => fetchShiftCloseRequest(requestId!),
     enabled: open && !!requestId,
-    refetchInterval: (q) => (q.state.data && !PENDING.has(q.state.data.status) ? false : 2000),
+    refetchInterval: (q) => {
+      // Gone or not ours: asking every 2 s will not change that.
+      const code = httpStatus(q.state.error);
+      if (code === 403 || code === 404) return false;
+      return q.state.data && !PENDING.has(q.state.data.status) ? false : 2000;
+    },
   });
 
   const settle = (next: ShiftCloseRequest) => {
@@ -100,23 +128,32 @@ export function RemoteShiftCloseDialog({
     onSuccess: (next) => {
       settle(next);
       qc.invalidateQueries({ queryKey: ['machines'] });
+      qc.invalidateQueries({ queryKey: ['machine', next.machineId] });
     },
     onError: (e) => toast.error(errors.forError(e)),
   });
   const cancel = useMutation({
     mutationFn: () => cancelShiftCloseRequest(requestId!),
     onSuccess: settle,
-    onError: (e) => toast.error(errors.forError(e)),
+    onError: (e) => {
+      toast.error(errors.forError(e));
+      // A refused cancel usually means the request moved on (closed, expired): show
+      // where it is now rather than the state the cancel was pressed on.
+      void refetch();
+    },
   });
 
-  // Once it has ended, every list that showed the shift as open is stale.
+  // Once it has ended, every list that showed the shift as open is stale — including
+  // the shift's own page, which may be open behind this dialog.
   const ended = request ? !PENDING.has(request.status) : false;
+  const endedShiftId = ended ? (request?.shift?.id ?? request?.shiftId ?? null) : null;
   useEffect(() => {
     if (!ended) return;
-    for (const key of ['machines', 'shifts', 'z-candidates']) {
+    for (const key of ['machines', 'machine', 'shifts', 'z-candidates', 'z-reports', 'dashboard-stats']) {
       qc.invalidateQueries({ queryKey: [key] });
     }
-  }, [ended, qc]);
+    if (endedShiftId) qc.invalidateQueries({ queryKey: ['shift', endedShiftId] });
+  }, [ended, endedShiftId, qc]);
 
   if (!machine) return null;
 
@@ -143,6 +180,11 @@ export function RemoteShiftCloseDialog({
           </div>
         ) : (
           <div className="space-y-3 text-sm">
+            {pollFailed ? (
+              <p className="text-xs text-destructive">
+                {t('pollFailed', { error: errors.forError(pollError) })}
+              </p>
+            ) : null}
             <div className="flex items-center justify-between gap-2">
               <span className="font-medium">
                 {request.shift ? shiftLabel(request.shift) : shiftName}

@@ -39,6 +39,21 @@ const WAITING_ITEM = new Set<ZRunItemStatus>(['waiting_close', 'closing']);
 
 const LIVE = new Set(['waiting', 'building']);
 
+/**
+ * How long past `expiresAt` a run may still read as live before this view stops asking.
+ * Reading the run is what makes the server expire it, so a live run well past its
+ * deadline means the server is not finalising it — polling it every 2 s forever would
+ * not change that.
+ */
+const EXPIRY_GRACE_MS = 60_000;
+
+/** A live run whose deadline passed more than the grace period before `asOf`. */
+function overdue(run: ZRun | undefined, asOf: number): boolean {
+  if (!run || !LIVE.has(run.status) || !run.expiresAt) return false;
+  const deadline = Date.parse(run.expiresAt);
+  return Number.isFinite(deadline) && asOf > deadline + EXPIRY_GRACE_MS;
+}
+
 function itemVariant(s: ZRunItemStatus): 'default' | 'secondary' | 'outline' | 'destructive' {
   if (s === 'ready') return 'default';
   if (s === 'failed' || s === 'expired') return 'destructive';
@@ -52,11 +67,19 @@ export function ZRunProgress({ runId }: { runId: string }) {
   const qc = useQueryClient();
   const scope = useScope();
 
-  const { data: run, isLoading, isError, error } = useQuery<ZRun>({
+  const { data: run, isLoading, isError, error, dataUpdatedAt, refetch, isFetching } = useQuery<ZRun>({
     queryKey: ['z-run', runId],
     queryFn: () => fetchZRun(runId),
-    refetchInterval: (q) => (q.state.data && !LIVE.has(q.state.data.status) ? false : 2000),
+    refetchInterval: (q) => {
+      const data = q.state.data;
+      // Never loaded (a 404, a run of another tenant): asking again will not help.
+      if (!data) return q.state.status === 'error' ? false : 2000;
+      if (!LIVE.has(data.status)) return false;
+      if (overdue(data, q.state.dataUpdatedAt)) return false;
+      return 2000;
+    },
   });
+  const stalled = overdue(run, dataUpdatedAt);
 
   const settle = (next: ZRun) => qc.setQueryData(['z-run', runId], next);
 
@@ -85,7 +108,9 @@ export function ZRunProgress({ runId }: { runId: string }) {
   });
 
   if (isLoading) return <Skeleton className="h-40 w-full" />;
-  if (isError || !run) {
+  // Only an error with nothing to show replaces the card; a failed poll of a run already
+  // on screen keeps it and says so below.
+  if (!run) {
     return (
       <Card>
         <CardContent className="py-4 text-sm text-destructive">{errors.forError(error)}</CardContent>
@@ -94,6 +119,8 @@ export function ZRunProgress({ runId }: { runId: string }) {
   }
 
   const live = LIVE.has(run.status);
+  // Past its deadline and not finalised by the server: shown as the expiry it is.
+  const shownStatus = stalled ? 'expired' : run.status;
   const busy = proceed.isPending || cancel.isPending;
 
   return (
@@ -105,24 +132,39 @@ export function ZRunProgress({ runId }: { runId: string }) {
           </CardTitle>
           <Badge
             variant={
-              run.status === 'completed'
+              shownStatus === 'completed'
                 ? 'default'
-                : run.status === 'failed' || run.status === 'expired'
+                : shownStatus === 'failed' || shownStatus === 'expired'
                   ? 'destructive'
                   : 'secondary'
             }
           >
-            {live ? <Loader2 className="animate-spin" aria-hidden /> : null}
-            {t(`runStatus.${run.status}`)}
+            {live && !stalled ? <Loader2 className="animate-spin" aria-hidden /> : null}
+            {t(`runStatus.${shownStatus}`)}
           </Badge>
         </div>
         <p className="text-muted-foreground text-xs">
           {run.businessDate ? t('businessDate', { date: formatDate(run.businessDate) }) : null}
           {run.businessDate && run.expiresAt && live ? ' · ' : null}
-          {run.expiresAt && live ? t('expiresAt', { when: formatDateTime(run.expiresAt) }) : null}
+          {run.expiresAt && live
+            ? stalled
+              ? t('expiredAt', { when: formatDateTime(run.expiresAt) })
+              : t('expiresAt', { when: formatDateTime(run.expiresAt) })
+            : null}
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
+        {isError ? (
+          <p className="text-xs text-destructive">{t('pollFailed', { error: errors.forError(error) })}</p>
+        ) : null}
+        {stalled ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs dark:border-amber-800 dark:bg-amber-950">
+            <span>{t('stalled', { when: formatDateTime(run.expiresAt!) })}</span>
+            <Button size="sm" variant="outline" disabled={isFetching} onClick={() => refetch()}>
+              {t('refresh')}
+            </Button>
+          </div>
+        ) : null}
         <ul className="space-y-2">
           {run.items.map((item) => {
             const why = errors.forItem(item.errorCode, item.errorMessage);
@@ -145,7 +187,7 @@ export function ZRunProgress({ runId }: { runId: string }) {
                       {why}
                     </p>
                   ) : null}
-                  {live && WAITING_ITEM.has(item.status) ? (
+                  {live && !stalled && WAITING_ITEM.has(item.status) ? (
                     <div className="mt-1">
                       <TillCloseProgress facts={item} />
                     </div>
