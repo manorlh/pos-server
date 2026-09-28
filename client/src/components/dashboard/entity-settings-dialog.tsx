@@ -149,6 +149,7 @@ export function EntityPosSettingsDialog({
           inherited={inheritedForForm}
           showOverrideHints={level === 'shop'}
           paymentOptionsRejected={paymentOptionsRejected}
+          tenantLevel={level === 'tenant'}
         />
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

@@ -30,7 +30,14 @@ type Props = {
   showOverrideHints?: boolean;
   /** The server refused the last save because no payment option was left allowed. */
   paymentOptionsRejected?: boolean;
+  /**
+   * Show the settings that exist only at the tenant level (the Z scope). The server
+   * refuses them on a company or shop, so they are not offered there.
+   */
+  tenantLevel?: boolean;
 };
+
+const Z_SCOPES = ['shop', 'machine'] as const;
 
 function isOverridden(
   key: keyof PosSettingsV1,
@@ -62,6 +69,7 @@ export function PosSettingsForm({
   inherited,
   showOverrideHints,
   paymentOptionsRejected,
+  tenantLevel,
 }: Props) {
   const t = useTranslations('posSettings');
 
@@ -432,6 +440,49 @@ export function PosSettingsForm({
           </div>
         </div>
       </div>
+
+      {/* How the tenant's Zs are produced. One choice for the whole tenant, read by the
+          Z wizard and enforced by POST /z-runs (422 z_scope_machine_one_till). */}
+      {tenantLevel ? (
+        <div className="border-t pt-4 space-y-3">
+          <div>
+            <p className="text-sm font-medium">{t('zScopeTitle')}</p>
+            <p className="text-xs text-muted-foreground">{t('zScopeDesc')}</p>
+          </div>
+          <div role="radiogroup" aria-label={t('zScopeTitle')} className="space-y-2">
+            {Z_SCOPES.map((scope) => {
+              const selected = (value.zScope ?? 'shop') === scope;
+              const label = scope === 'shop' ? t('zScopeShop') : t('zScopeMachine');
+              const desc = scope === 'shop' ? t('zScopeShopDesc') : t('zScopeMachineDesc');
+              return (
+                <button
+                  key={scope}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => set('zScope', scope)}
+                  className={`w-full rounded-md border px-3 py-2 text-start transition-colors ${
+                    selected ? 'border-primary bg-primary/5' : 'hover:bg-muted/40'
+                  }`}
+                >
+                  <span className="flex items-center gap-2 text-sm font-medium">
+                    <span
+                      aria-hidden
+                      className={`inline-block h-3.5 w-3.5 shrink-0 rounded-full border ${
+                        selected ? 'border-primary bg-primary' : 'border-muted-foreground'
+                      }`}
+                    />
+                    {label}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">{desc}</span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-xs text-muted-foreground">{t('zScopeLegal')}</p>
+          <p className="text-xs text-muted-foreground">{t('zScopeTenantWide')}</p>
+        </div>
+      ) : null}
     </div>
   );
 }

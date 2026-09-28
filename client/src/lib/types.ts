@@ -226,6 +226,11 @@ export interface PosSettingsV1 {
   brandLogoUrl?: string;
   /** White label: full-screen image the till shows for ~2s while it starts up. */
   brandHeroUrl?: string;
+  /**
+   * Tenant level only: how Z reports are produced. `shop` (default) = one Z per shop
+   * over all its tills; `machine` = one till per Z. Not sent to tills.
+   */
+  zScope?: 'shop' | 'machine';
 }
 
 export type PaymentOptionSettingKey =
