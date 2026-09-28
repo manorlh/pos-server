@@ -109,7 +109,13 @@ def close_shift_administratively(
         ),
         # What the till last said it still held — the honest measure of how much this
         # reconstruction might be missing. Null means it never reported.
-        "lastReportedPendingDocuments": machine.pending_documents,
+        # Same reading as the status light: undelivered sales, else the whole outbox
+        # for a till predating that split.
+        "lastReportedPendingDocuments": (
+            machine.pending_documents
+            if machine.pending_documents is not None
+            else machine.pending_count
+        ),
         "lastReportedPendingAt": (
             machine.pending_count_at.isoformat() if machine.pending_count_at else None
         ),
@@ -134,5 +140,13 @@ def close_shift_administratively(
     shift.reconstructed = True
     shift.reconstructed_by = who
     shift.reconstruction_basis = basis
+    if getattr(machine, "reported_open_shift_id", None) == shift.id:
+        # The heartbeat claim is stale from this moment, exactly as on a till's close.
+        machine.reported_open_shift_id = None
+        machine.reported_open_shift_opened_at = None
     db.flush()
+    # A Z run or close request waiting for this shift must not wait for a till that is dead.
+    from app.services.remote_close import on_shift_close_accepted
+
+    on_shift_close_accepted(db, machine, shift)
     return shift, True

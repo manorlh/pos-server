@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from app.models.customer import Customer
 from app.models.pos_machine import POSMachine
 from app.models.product import Product
-from app.models.shift import Shift
+from app.models.shift import Shift, ShiftStatus
 from app.models.transaction import Transaction, TransactionStatus
 from app.models.transaction_item import TransactionItem
 from app.models.transaction_payment import TransactionPayment
@@ -39,6 +39,7 @@ from app.services.shifts import (
     resolve_shift_for_document,
 )
 from app.services.stock import apply_movement
+from app.services.z_runs import _rollback_savepoint
 from app.services.tenders import (
     UNKNOWN_PAYMENT_METHOD,
     derive_payment_method,
@@ -164,6 +165,84 @@ def _tender_rejection_reason(tx: TransactionIn) -> Optional[str]:
         refund_of_transaction_id=tx.refund_of_transaction_id,
     )
     return reconciliation_error(expected, [p.amount for p in tx.payments])
+
+
+def _as_utc(moment: datetime) -> datetime:
+    """A naive timestamp is UTC (how a driver without time zones hands one back)."""
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+
+
+# ── Fiscal content, for amendments of a filed document ───────────────────────
+
+_CENT = Decimal("0.01")
+
+
+def _cents(value) -> Optional[Decimal]:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value)).quantize(_CENT, rounding=ROUND_HALF_UP)
+    except (ArithmeticError, ValueError):
+        return None
+
+
+def _status_value(value) -> str:
+    return str(getattr(value, "value", value) or "")
+
+
+def _fiscal_key(
+    *, number, document_type, status, total, discount, vat, tip, tip_method, refund_of, legs
+) -> tuple:
+    """
+    What a document contributes to an X or a Z, as one comparable value.
+
+    Only what the figures are made of: a status change between two statuses that both
+    count as a sale (a sale later marked `refunded` by its credit note) is not an
+    amendment, nor is a note or a cashier id.
+    """
+    from app.services.dashboard_stats import SALE_STATUSES
+
+    counted = _status_value(status) in {_status_value(s) for s in SALE_STATUSES}
+    return (
+        (number or "").strip(),
+        document_type,
+        counted,
+        _cents(total) or Decimal("0.00"),
+        _cents(discount) or Decimal("0.00"),
+        _cents(vat),
+        _cents(tip) or Decimal("0.00"),
+        (tip_method or "").strip().lower() or None,
+        str(refund_of) if refund_of else None,
+        tuple(sorted(legs)),
+    )
+
+
+def _stored_fiscal_key(db: Session, doc: Transaction) -> tuple:
+    legs = [
+        (((m or "").strip().lower() or UNKNOWN_PAYMENT_METHOD), _cents(a))
+        for m, a in db.query(TransactionPayment.method, TransactionPayment.amount)
+        .filter(TransactionPayment.transaction_id == doc.id)
+        .all()
+    ]
+    return _fiscal_key(
+        number=doc.transaction_number, document_type=doc.document_type, status=doc.status,
+        total=doc.total_amount, discount=doc.document_discount, vat=doc.vat_amount,
+        tip=doc.tip_amount, tip_method=doc.tip_payment_method,
+        refund_of=doc.refund_of_transaction_id, legs=legs,
+    )
+
+
+def _incoming_fiscal_key(tx: TransactionIn, legs: List[TransactionPaymentIn]) -> tuple:
+    return _fiscal_key(
+        number=tx.transaction_number, document_type=tx.document_type, status=tx.status,
+        total=tx.total_amount or 0, discount=tx.document_discount,
+        vat=_vat_split(tx)["vat_amount"], tip=tx.tip_amount or 0, tip_method=tx.tip_payment_method,
+        refund_of=tx.refund_of_transaction_id,
+        legs=[
+            (((leg.method or "").strip().lower() or UNKNOWN_PAYMENT_METHOD)[:50], _cents(leg.amount))
+            for leg in legs
+        ],
+    )
 
 
 # ── Transactions upsert ──────────────────────────────────────────────────────
@@ -311,6 +390,10 @@ def upsert_transactions(
 
     # Closed shifts a written document lands in (or leaves) → new documents among them.
     touched_closed: Dict[uuid.UUID, int] = {}
+    # Known documents moved into a shift, and known documents whose fiscal content this
+    # push rewrote in place — both flagged if that shift turns out to be in a Z.
+    moved_in: Dict[uuid.UUID, int] = {}
+    amended: Dict[uuid.UUID, int] = {}
 
     # Pre-load existing rows in one query so we can classify accepted vs duplicate.
     incoming_ids = [tx.id for tx in transactions]
@@ -425,6 +508,21 @@ def upsert_transactions(
                         tx.id, previous.shift_id, held[1], target_shift_id,
                     )
                     target_shift_id = previous.shift_id
+
+            # Before the row is rewritten: would this push change what the document
+            # contributes to its shift's figures? Only asked for a closed shift, where a
+            # Z may already hold the old figures (see `note_documents_after_close`).
+            rewrites_fiscal = False
+            if (
+                previous is not None
+                and target_shift_id is not None
+                and previous.shift_id == target_shift_id
+                and db.query(Shift.id)
+                .filter(Shift.id == target_shift_id, Shift.status == ShiftStatus.CLOSED)
+                .first()
+                is not None
+            ):
+                rewrites_fiscal = _stored_fiscal_key(db, previous) != _incoming_fiscal_key(tx, legs)
 
             row = _serialize_tx_for_upsert(
                 tx,
@@ -545,18 +643,22 @@ def upsert_transactions(
             is_duplicate = previous is not None and (
                 previous.updated_at is not None
                 and tx.updated_at is not None
-                and previous.updated_at >= tx.updated_at
+                and _as_utc(previous.updated_at) >= _as_utc(tx.updated_at)
             )
             savepoint.commit()
             # The row is written even when the push is a "duplicate" (same updated_at),
             # so a move between shifts happens either way — and the shift it left needs
             # its X recomputed as much as the one it joined.
             moved = previous is not None and previous.shift_id != target_shift_id
-            if not is_duplicate or moved:
+            if not is_duplicate or moved or rewrites_fiscal:
                 if target_shift_id is not None:
                     touched_closed.setdefault(target_shift_id, 0)
                     if previous is None:
                         touched_closed[target_shift_id] += 1
+                    elif moved:
+                        moved_in[target_shift_id] = moved_in.get(target_shift_id, 0) + 1
+                    elif rewrites_fiscal:
+                        amended[target_shift_id] = amended.get(target_shift_id, 0) + 1
                 if moved and previous.shift_id is not None:
                     touched_closed.setdefault(previous.shift_id, 0)
             results.append(TransactionUpsertResult(
@@ -565,12 +667,13 @@ def upsert_transactions(
                 server_received_at=datetime.now(timezone.utc),
             ))
         except ShiftConflict:
-            if savepoint.is_active:
-                savepoint.rollback()
+            _rollback_savepoint(savepoint)
             raise
         except Exception as exc:
-            if savepoint.is_active:
-                savepoint.rollback()
+            # Not guarded by `is_active`: a failed flush deactivates the savepoint without
+            # rolling it back, and every later document of the batch then failed with a
+            # PendingRollbackError (see `app.services.z_runs._rollback_savepoint`).
+            _rollback_savepoint(savepoint)
             logger.exception("Failed to upsert transaction %s: %s", tx.id, exc)
             results.append(TransactionUpsertResult(
                 id=tx.id,
@@ -579,7 +682,9 @@ def upsert_transactions(
             ))
 
     # A document for a shift that is already closed: recompute or flag (see shifts).
-    note_documents_after_close(db, touched_closed, machine_id=machine.id)
+    note_documents_after_close(
+        db, touched_closed, machine_id=machine.id, moved_in=moved_in, amended=amended
+    )
     return results
 
 

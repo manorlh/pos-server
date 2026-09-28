@@ -86,8 +86,13 @@ class ZRunItem(Base):
     machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id"), nullable=False)
     #: The newest shift of this till to include; every older un-Z'd one comes with it.
     through_shift_id = Column(UUID(as_uuid=True), ForeignKey("shifts.id"), nullable=True)
-    #: The open shift the run asked the till to close (NULL if the cloud had not seen it).
+    #: The open shift the run asked the till to close, once the cloud holds it.
     close_shift_id = Column(UUID(as_uuid=True), ForeignKey("shifts.id"), nullable=True)
+    #: The shift the till *claimed* open (heartbeat, ack) while the cloud had not seen it.
+    #: Deliberately no foreign key: that shift may not be in `shifts` yet (its open is
+    #: still queued on the till), and a key would make the run a 500. `close_shift_id`
+    #: is filled in when the shift lands (`app.services.shifts.link_claimed_shift`).
+    claimed_shift_id = Column(UUID(as_uuid=True), nullable=True)
     include_open_shift = Column(Boolean, nullable=False, default=False, server_default="false")
     status = Column(String(16), nullable=False)
     error_code = Column(String(64), nullable=True)

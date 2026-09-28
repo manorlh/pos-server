@@ -40,7 +40,7 @@ from app.models.user import User
 from app.models.z_run import PENDING_ITEM_STATUSES, ZRun, ZRunItem, ZRunStatus
 from app.services.close_progress import documents_on_cloud, till_backlog
 from app.services.machine_status import is_online
-from app.services.shifts import find_open_shift, is_foreign_shift, shift_to_out
+from app.services.shifts import find_open_shift, is_foreign_shift, shift_exists, shift_to_out
 from app.services import z_runs
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,20 @@ CLOSE_REQUEST_TTL_HOURS = z_runs.Z_RUN_TTL_HOURS
 
 def _now(now: Optional[datetime]) -> datetime:
     return now or datetime.now(timezone.utc)
+
+
+def named_shift_id(req: ShiftCloseRequest) -> Optional[uuid.UUID]:
+    """The shift asked to close: the cloud's row once it has it, else the till's claim."""
+    return req.shift_id or req.claimed_shift_id
+
+
+def _name_shift(db: Session, req: ShiftCloseRequest, shift_id: Optional[uuid.UUID]) -> None:
+    if shift_id is None:
+        return
+    if shift_exists(db, shift_id):
+        req.shift_id = shift_id
+    else:
+        req.claimed_shift_id = shift_id
 
 
 def _pending_query(db: Session, machine_id: uuid.UUID):
@@ -90,15 +104,16 @@ def reconcile(db: Session, req: ShiftCloseRequest, *, now: Optional[datetime] = 
     The accepted close normally does this itself; this catches a close that reached the
     cloud by another road (an administrative close of a dead till, say). True if changed.
     """
-    if req.status not in PENDING_CLOSE_REQUEST_STATUSES or req.shift_id is None:
+    if req.status not in PENDING_CLOSE_REQUEST_STATUSES or named_shift_id(req) is None:
         return False
     shift = (
         db.query(Shift)
-        .filter(Shift.id == req.shift_id, Shift.machine_id == req.machine_id)
+        .filter(Shift.id == named_shift_id(req), Shift.machine_id == req.machine_id)
         .first()
     )
     if shift is None or shift.status != ShiftStatus.CLOSED:
         return False
+    req.shift_id = shift.id
     _complete(req, _now(now))
     return True
 
@@ -166,11 +181,11 @@ def request_close(
         tenant_id=machine.tenant_id,
         machine_id=machine.id,
         shop_id=machine.shop_id,
-        shift_id=shift_id,
         created_by_user_id=user.id,
         status=S.WAITING_CLOSE,
         expires_at=now + timedelta(hours=CLOSE_REQUEST_TTL_HOURS),
     )
+    _name_shift(db, req, shift_id)
     db.add(req)
     db.flush()
     _send(machine, req, user, now)
@@ -187,7 +202,7 @@ def _send(machine: POSMachine, req: ShiftCloseRequest, user: User, now: datetime
         str(machine.tenant_id),
         str(machine.id),
         str(req.id),
-        str(req.shift_id) if req.shift_id else None,
+        str(named_shift_id(req)) if named_shift_id(req) else None,
         z_runs._initiator(user),
     )
     req.sent_at = now
@@ -262,10 +277,10 @@ def apply_ack(
             req.error_message = None
         if (
             shift_id is not None
-            and req.shift_id is None
+            and named_shift_id(req) is None
             and not is_foreign_shift(db, machine, shift_id)
         ):
-            req.shift_id = shift_id
+            _name_shift(db, req, shift_id)
     elif phase == "completed":
         # Informational. The request completes when the close itself is accepted.
         pass
@@ -293,8 +308,8 @@ def on_shift_close_accepted(
     for req in _pending_query(db, machine.id).all():
         if (
             (shift.close_request_id is not None and req.id == shift.close_request_id)
-            or req.shift_id == shift.id
-            or req.shift_id is None
+            or named_shift_id(req) == shift.id
+            or named_shift_id(req) is None
         ):
             req.shift_id = shift.id
             _complete(req, now)
@@ -328,7 +343,8 @@ def pending_machine_ids(db: Session, machine_ids: List[uuid.UUID]) -> Set[uuid.U
 def request_to_out(db: Session, req: ShiftCloseRequest, *, now: Optional[datetime] = None) -> dict:
     machine = req.machine or db.query(POSMachine).filter(POSMachine.id == req.machine_id).first()
     pending = req.status in PENDING_CLOSE_REQUEST_STATUSES
-    shift = db.query(Shift).filter(Shift.id == req.shift_id).first() if req.shift_id else None
+    shift_id = named_shift_id(req)
+    shift = db.query(Shift).filter(Shift.id == shift_id).first() if shift_id else None
     summary = None
     if shift is not None:
         summary = shift_to_out(shift, machine_name=machine.name if machine else None)
@@ -339,7 +355,7 @@ def request_to_out(db: Session, req: ShiftCloseRequest, *, now: Optional[datetim
         "machineId": req.machine_id,
         "machineName": machine.name if machine is not None else None,
         "shopId": req.shop_id,
-        "shiftId": req.shift_id,
+        "shiftId": shift_id,
         "status": req.status,
         "errorCode": req.error_code,
         "errorMessage": req.error_message,
@@ -353,7 +369,7 @@ def request_to_out(db: Session, req: ShiftCloseRequest, *, now: Optional[datetim
         **till_backlog(machine, now=now),
         # Only while the till still has to act: afterwards the shift's own X says it.
         "documentsOnCloud": (
-            documents_on_cloud(db, [req.shift_id]).get(req.shift_id) if pending else None
+            documents_on_cloud(db, [shift_id]).get(shift_id) if pending and shift_id else None
         ),
         "shift": summary,
     }

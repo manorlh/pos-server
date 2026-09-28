@@ -403,6 +403,7 @@ class TestShopChange:
 
         monkeypatch.setattr(machines_router, "set_machine_shop", _set)
         monkeypatch.setattr(machines_router, "shop_belongs_to_company", lambda *_a: True)
+        monkeypatch.setattr(machines_router, "refuse_leaving_shop_with_shifts", lambda db, m: None)
         machines_router.update_machine(
             str(w.h1.id), POSMachineUpdate(shopId=w.a_shop.id), w.users.admin, w.tid, w.db
         )

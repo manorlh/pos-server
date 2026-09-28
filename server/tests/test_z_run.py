@@ -305,9 +305,9 @@ class TestNoShiftIsInTwoZs:
         seen = []
         original = B.unreported_shifts
 
-        def spy(db, machine_id, *, lock=False):
+        def spy(db, machine_id, *, lock=False, **kw):
             seen.append(lock)
-            return original(db, machine_id, lock=lock)
+            return original(db, machine_id, lock=lock, **kw)
 
         monkeypatch.setattr(B, "unreported_shifts", spy)
         s = closed_shift(w, w.tills[0], 1, [])
@@ -421,7 +421,8 @@ class TestRemoteClose:
         unseen = uuid.uuid4()
         till.reported_open_shift_id = unseen
         r = run(w, sel(till))
-        assert r.items[0].close_shift_id == unseen
+        assert ZR.named_shift_id(r.items[0]) == unseen
+        assert r.items[0].close_shift_id is None  # no such shift in the cloud yet: no FK row
 
         body = ShiftCloseIn.model_validate({
             "closedAt": NOW.isoformat(), "transactionIds": [], "closeRequestId": str(r.items[0].id),
@@ -529,11 +530,22 @@ class TestProceedWithout:
         assert e.value.status_code == 409
         assert e.value.detail == {"code": "items_not_ready", "machineIds": [str(w.tills[1].id)]}
 
-    def test_excluding_everyone_is_nothing_to_report(self, w):
-        _ready, r = self._stuck(w)
+    def test_a_ready_till_named_in_the_list_stays_in(self, w):
+        """Only a till that is not ready is left out (a stale screen must not drop it)."""
+        ready, r = self._stuck(w)
+
+        ZR.proceed_without(w.db, r, [m.id for m in w.tills])
+
+        assert {s.id for s in z_of(w, r).shifts} == {ready.id}
+        ready_item = next(i for i in r.items if i.machine_id == w.tills[0].id)
+        assert ready_item.status == ZRunItemStatus.READY
+
+    def test_excluding_everyone_not_ready_with_nothing_ready_is_nothing_to_report(self, w):
+        w.shift(w.tills[1], 1, status=ShiftStatus.OPEN)
+        r = run(w, sel(w.tills[1]))
 
         with pytest.raises(HTTPException) as e:
-            ZR.proceed_without(w.db, r, [m.id for m in w.tills])
+            ZR.proceed_without(w.db, r, [w.tills[1].id])
 
         assert e.value.detail == "nothing_to_report"
 
@@ -548,7 +560,7 @@ class TestProceedWithout:
 
 
 class TestExpiry:
-    def test_a_waiting_till_expires_after_36h_and_can_be_left_out(self, w):
+    def test_a_waiting_till_expires_after_36h_and_the_z_is_built_without_it(self, w):
         t1, t2 = w.tills
         ready = closed_shift(w, t1, 1, [])
         w.shift(t2, 1, status=ShiftStatus.OPEN)
@@ -558,13 +570,13 @@ class TestExpiry:
 
         ZR.expire_overdue_runs(w.db, now=later)
 
+        # The Z is built with the ready till at expiry; the stuck one is left out and
+        # keeps its shift for the next Z (review L2: it used to wait forever).
         stuck = next(i for i in r.items if i.machine_id == t2.id)
         assert stuck.status == ZRunItemStatus.EXPIRED
-        assert r.status == ZRunStatus.WAITING
-        assert ZR.take_pending_close_shift(w.db, t2, now=later) is None
-
-        ZR.proceed_without(w.db, r, [t2.id], now=later)
         assert {s.id for s in z_of(w, r).shifts} == {ready.id}
+        assert ZR.take_pending_close_shift(w.db, t2, now=later) is None
+        assert w.db.query(Shift).filter(Shift.machine_id == t2.id).one().z_report_id is None
 
     def test_a_run_with_nothing_ready_expires_whole(self, w):
         till = w.tills[0]

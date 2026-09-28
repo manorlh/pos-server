@@ -33,8 +33,14 @@ class ZReportOut(BaseModel):
     unattended: bool = False
     #: Documents of its shifts that arrived after it was built (not in its figures).
     late_documents: int = Field(0, alias="lateDocuments")
+    #: Documents of its shifts rewritten (fiscal content) after it was built.
+    amended_documents: int = Field(0, alias="amendedDocuments")
 
     total_sales: Optional[Decimal] = Field(None, alias="totalSales")
+    #: Σ totalAmount of the sales, before document discounts (= totalSales + discountsTotal).
+    gross_sales: Optional[Decimal] = Field(None, alias="grossSales")
+    #: Sales less refunds (= totalSales − totalRefunds).
+    net_sales: Optional[Decimal] = Field(None, alias="netSales")
     total_refunds: Optional[Decimal] = Field(None, alias="totalRefunds")
     discounts_total: Optional[Decimal] = Field(None, alias="discountsTotal")
     total_cash_sales: Optional[Decimal] = Field(None, alias="totalCashSales")
@@ -89,6 +95,17 @@ class ZReportDetailOut(ZReportOut):
     business: Optional[ZReportBusinessOut] = None
 
 
+class ZReportWindow(BaseModel):
+    """The business-date window a Z list was actually filtered on."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_date: Optional[date] = Field(None, alias="from")
+    to_date: Optional[date] = Field(None, alias="to")
+    #: True when the caller gave no range and the default (the last 90 days) applied.
+    defaulted: bool = False
+
+
 class ZReportListResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -96,3 +113,4 @@ class ZReportListResponse(BaseModel):
     page_size: int = Field(..., alias="pageSize")
     total: int
     items: List[ZReportOut]
+    window: Optional[ZReportWindow] = None

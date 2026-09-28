@@ -22,6 +22,7 @@ from app.middleware.auth import (
     CatalogActor,
     elevation_if_offered,
     get_pos_machine_for_sync_path,
+    get_pos_machine_from_sync_machine_token,
     require_catalog_authority,
 )
 from app.models.elevated_session import ElevatedSession
@@ -905,7 +906,7 @@ def post_transactions(
 def post_shift_open(
     machine_id: str,
     data: ShiftOpenIn,
-    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
     db: Session = Depends(get_db),
 ):
     """
@@ -928,7 +929,7 @@ def post_shift_open(
 )
 def get_last_closed_shift(
     machine_id: str,
-    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
     db: Session = Depends(get_db),
 ):
     """The till's last closed shift, to prefill the next opening float. All null if none."""
@@ -944,7 +945,7 @@ def post_shift_close(
     machine_id: str,
     shift_id: uuid.UUID,
     body: ShiftCloseIn,
-    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
     approval: Optional[ElevatedSession] = Depends(elevation_if_offered(Scope.SHIFT_CLOSE)),
     db: Session = Depends(get_db),
 ):
@@ -997,8 +998,9 @@ def post_shift_close(
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="shift_unknown")
 
-    if outcome == "accepted":
-        on_shift_close_accepted(db, machine, shift)
+    # A duplicate too: the shift may have been closed (administratively, or by a close
+    # that raced the instruction) before a run or request waiting on it existed.
+    on_shift_close_accepted(db, machine, shift)
     db.add(SyncLog(
         machine_id=machine.id,
         direction=SyncDirection.POS_TO_SERVER,
@@ -1030,7 +1032,7 @@ def post_shift_close(
 def post_shift_close_ack(
     machine_id: str,
     body: ShiftCloseAckIn,
-    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
     db: Session = Depends(get_db),
 ):
     """The till acknowledges a remote close-shift instruction (`requestId`)."""

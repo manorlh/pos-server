@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -58,9 +58,18 @@ def apply_close_shift_ack(
 
 
 def on_shift_close_accepted(db: Session, machine: POSMachine, shift: Shift) -> None:
-    """The cloud now holds every document of `shift` and has closed it."""
+    """
+    The cloud now holds every document of `shift` and has closed it.
+
+    Called for every road to a closed shift: the till's accepted close, a later
+    duplicate of it (the first may have closed the shift before the instruction was
+    created, or before this was wired), and an administrative close — so an instruction
+    waiting for that shift never waits past it. A Z run's item is only made ready by a
+    shift no Z has taken yet: one already in a Z has nothing left to give the run.
+    """
     close_requests.on_shift_close_accepted(db, machine, shift)
-    z_runs.on_shift_close_accepted(db, machine, shift)
+    if shift.z_report_id is None:
+        z_runs.on_shift_close_accepted(db, machine, shift)
 
 
 def take_pending_close_shift(
@@ -83,7 +92,23 @@ def take_pending_close_shift(
         return None
     if req.sent_at is None:
         req.sent_at = now
-    return {"requestId": str(req.id), "shiftId": str(req.shift_id) if req.shift_id else None}
+    named = close_requests.named_shift_id(req)
+    return {"requestId": str(req.id), "shiftId": str(named) if named else None}
+
+
+def pending_close_sources(db: Session, machine_ids: List[uuid.UUID]) -> Dict[uuid.UUID, Tuple[str, Optional[uuid.UUID]]]:
+    """
+    Per till waiting to be asked to close: `("z_run", runId)` or `("request", None)`.
+
+    A Z run's wins when both are pending — it is the one handed over first (and both
+    name the same shift, so one close answers both).
+    """
+    out: Dict[uuid.UUID, Tuple[str, Optional[uuid.UUID]]] = {
+        machine_id: ("request", None) for machine_id in close_requests.pending_machine_ids(db, machine_ids)
+    }
+    for machine_id, run_id in z_runs.close_shift_pending_runs(db, machine_ids).items():
+        out[machine_id] = ("z_run", run_id)
+    return out
 
 
 def close_shift_pending_machine_ids(db: Session, machine_ids: List[uuid.UUID]) -> Set[uuid.UUID]:

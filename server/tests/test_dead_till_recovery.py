@@ -94,7 +94,11 @@ def _totals():
 def _close(db=None, machine=None, shift=None, **kw):
     db = db or _Db()
     shift = shift or _shift()
-    with patch.object(AC, "compute_totals", return_value=_totals()):
+    # The remote-close hook reads the database; this fake has none (it is tested on the
+    # SQLite world in tests/test_z_run_lifecycle.py).
+    with patch.object(AC, "compute_totals", return_value=_totals()), patch(
+        "app.services.remote_close.on_shift_close_accepted"
+    ):
         return AC.close_shift_administratively(
             db, machine or _machine(), shift, _user(), now=NOW, **kw
         )

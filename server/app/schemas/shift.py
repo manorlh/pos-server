@@ -4,7 +4,49 @@ from decimal import Decimal
 from typing import Any, Dict, List, Literal, Optional
 import uuid
 
-from pydantic import BaseModel, ConfigDict, Field
+from decimal import ROUND_HALF_UP, InvalidOperation
+import math
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+#: The columns money lands in are NUMERIC(12, 2); a sequence lands in INTEGER.
+MONEY = dict(max_digits=12, decimal_places=2)
+SEQUENCE_MAX = 2**31 - 1
+_CENT = Decimal("0.01")
+
+
+def to_cents(value):
+    """
+    A money input as a Decimal of whole cents, before the 12-digit bound is checked.
+
+    The till sends doubles (`12.300000000000001`); rounding to the cent first means only
+    a value that cannot fit the column — or is not a number, NaN and Infinity included —
+    is refused, as a 422 the till parks (never a 500 it retries forever).
+    """
+    if value is None or isinstance(value, bool):
+        return value
+    try:
+        amount = Decimal(str(value).strip()) if isinstance(value, (str, int, float, Decimal)) else value
+    except (InvalidOperation, ValueError):
+        return value
+    if isinstance(amount, Decimal) and amount.is_finite():
+        return amount.quantize(_CENT, rounding=ROUND_HALF_UP)
+    return value
+
+
+def finite_json(value):
+    """
+    The till's own X, kept for audit, made storable: NaN / Infinity are not JSON and
+    Postgres JSONB refuses them, which failed the close with a 500. Each is kept as its
+    name in a string (`"NaN"`), which the comparison then reads as a mismatch.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {k: finite_json(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [finite_json(v) for v in value]
+    return value
 
 
 class ShiftOpenIn(BaseModel):
@@ -20,11 +62,16 @@ class ShiftOpenIn(BaseModel):
 
     id: uuid.UUID
     business_date: date = Field(..., alias="businessDate")
-    sequence_number: Optional[int] = Field(None, alias="sequenceNumber")
+    sequence_number: Optional[int] = Field(None, alias="sequenceNumber", ge=0, le=SEQUENCE_MAX)
     opened_at: datetime = Field(..., alias="openedAt")
-    opening_cash: Optional[Decimal] = Field(None, alias="openingCash")
+    opening_cash: Optional[Decimal] = Field(None, alias="openingCash", **MONEY)
     opened_by_user_id: Optional[str] = Field(None, alias="openedByUserId", max_length=100)
     opened_by_name: Optional[str] = Field(None, alias="openedByName", max_length=255)
+
+    @field_validator("opening_cash", mode="before")
+    @classmethod
+    def _cents(cls, value):
+        return to_cents(value)
 
 
 class ShiftCloseIn(BaseModel):
@@ -38,8 +85,8 @@ class ShiftCloseIn(BaseModel):
     #: Closed remotely with nobody at the drawer. The server then stores no count,
     #: whatever the body says, so the X cannot claim a variance nobody verified.
     unattended: bool = False
-    counted_cash: Optional[Decimal] = Field(None, alias="countedCash")
-    expected_cash: Optional[Decimal] = Field(None, alias="expectedCash")
+    counted_cash: Optional[Decimal] = Field(None, alias="countedCash", **MONEY)
+    expected_cash: Optional[Decimal] = Field(None, alias="expectedCash", **MONEY)
     #: Every document of the shift. 409 until each one is on the cloud.
     transaction_ids: List[uuid.UUID] = Field(default_factory=list, alias="transactionIds")
     last_transaction_number: Optional[str] = Field(None, alias="lastTransactionNumber", max_length=100)
@@ -49,11 +96,21 @@ class ShiftCloseIn(BaseModel):
 
     # Optional open fields, so a shift whose open event never arrived can still close.
     business_date: Optional[date] = Field(None, alias="businessDate")
-    sequence_number: Optional[int] = Field(None, alias="sequenceNumber")
+    sequence_number: Optional[int] = Field(None, alias="sequenceNumber", ge=0, le=SEQUENCE_MAX)
     opened_at: Optional[datetime] = Field(None, alias="openedAt")
-    opening_cash: Optional[Decimal] = Field(None, alias="openingCash")
+    opening_cash: Optional[Decimal] = Field(None, alias="openingCash", **MONEY)
     opened_by_user_id: Optional[str] = Field(None, alias="openedByUserId", max_length=100)
     opened_by_name: Optional[str] = Field(None, alias="openedByName", max_length=255)
+
+    @field_validator("counted_cash", "expected_cash", "opening_cash", mode="before")
+    @classmethod
+    def _cents(cls, value):
+        return to_cents(value)
+
+    @field_validator("till", mode="before")
+    @classmethod
+    def _finite_till(cls, value):
+        return finite_json(value)
 
 
 class ShiftTotalsOut(BaseModel):
@@ -107,6 +164,10 @@ class ShiftOut(BaseModel):
     totals_mismatch: bool = Field(False, alias="totalsMismatch")
     #: Documents that arrived after the close (see docs/SHIFTS_API.md §3.1).
     late_documents: int = Field(0, alias="lateDocuments")
+    #: Documents rewritten (fiscal content) after this shift went into a Z (§1.2).
+    amended_documents: int = Field(0, alias="amendedDocuments")
+    #: Opened with a sequence number at or below one its till already used (§1.1).
+    sequence_out_of_order: bool = Field(False, alias="sequenceOutOfOrder")
     reconstructed: bool = False
     reconstruction_basis: Optional[Dict[str, Any]] = Field(None, alias="reconstructionBasis")
     z_report_id: Optional[uuid.UUID] = Field(None, alias="zReportId")

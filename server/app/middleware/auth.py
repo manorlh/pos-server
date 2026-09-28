@@ -119,6 +119,55 @@ def _require_current_token_version(payload: dict, machine: POSMachine) -> None:
         )
 
 
+def _machine_from_sync_token(payload: dict, machine_id: str, db: Session) -> POSMachine:
+    """The machine a machine JWT names, for /sync/{machine_id}/… (sub must match)."""
+    if str(payload.get("sub")) != str(machine_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Machine token does not match machineId in path",
+        )
+    machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+    # Decommissioned devices (DELETE /machines/{id} → soft mode) keep their
+    # row for FK integrity but must be locked out of sync immediately so the
+    # old machine token stops working.
+    if not machine.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Machine has been removed")
+    _require_current_token_version(payload, machine)
+    _bind_machine_context(machine)
+    return machine
+
+
+def _check_sync_user_tenancy(db: Session, user: User, machine: POSMachine) -> None:
+    """
+    A dashboard user acting on /sync/{machine_id}/… must be in the machine's tenant.
+
+    `_check_machine_access` is role-only for a distributor and a super admin, and these
+    paths carry no `X-Tenant-Id`, so a user token reached any tenant's till. Now: a
+    super admin passes; a distributor only for their own terminals; anyone else only
+    for a till of a tenant they are a member of — never a till with no tenant.
+    """
+    if user.role == UserRole.SUPER_ADMIN:
+        return
+    if user.role == UserRole.DISTRIBUTOR:
+        if str(machine.distributor_id) != str(user.id):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        return
+    if machine.tenant_id is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant_forbidden")
+    member = (
+        db.query(TenantMembership.id)
+        .filter(
+            TenantMembership.user_id == user.id,
+            TenantMembership.tenant_id == machine.tenant_id,
+        )
+        .first()
+    )
+    if member is None and str(getattr(user, "tenant_id", None)) != str(machine.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant_forbidden")
+
+
 def get_pos_machine_for_sync_path(
     machine_id: str,
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -127,27 +176,13 @@ def get_pos_machine_for_sync_path(
     """
     Resolve POSMachine for /sync/{machine_id}/... using either:
     - Machine JWT (type=machine, sub must equal machine_id), or
-    - Clerk / legacy user JWT with RBAC (same rules as dashboard).
+    - Clerk / legacy user JWT with RBAC (same rules as dashboard), in the machine's
+      tenant (`_check_sync_user_tenancy`).
     """
     token = credentials.credentials
     payload = decode_jwt_payload(token)
     if payload and payload.get("type") == "machine":
-        if str(payload.get("sub")) != str(machine_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Machine token does not match machineId in path",
-            )
-        machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
-        if not machine:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
-        # Decommissioned devices (DELETE /machines/{id} → soft mode) keep their
-        # row for FK integrity but must be locked out of sync immediately so the
-        # old machine token stops working.
-        if not machine.is_active:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Machine has been removed")
-        _require_current_token_version(payload, machine)
-        _bind_machine_context(machine)
-        return machine
+        return _machine_from_sync_token(payload, machine_id, db)
 
     current_user = _resolve_user_from_bearer_token(token, db)
     machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
@@ -156,8 +191,31 @@ def get_pos_machine_for_sync_path(
     if not machine.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Machine has been removed")
     _check_machine_access(current_user, machine, db)
+    _check_sync_user_tenancy(db, current_user, machine)
     _bind_machine_context(machine)
     return machine
+
+
+#: 403 detail for a dashboard (user) token on a till-only endpoint.
+MACHINE_TOKEN_REQUIRED = "machine_token_required"
+
+
+def get_pos_machine_from_sync_machine_token(
+    machine_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+) -> POSMachine:
+    """
+    Machine JWT only, for the till's own shift writes (open, close, ack, last-closed).
+
+    A shift is opened and closed by its till; nobody at a desk has any business filing
+    a close with a count, or acknowledging a close instruction, in a till's name. A
+    user token is refused (403 `machine_token_required`) rather than admitted with RBAC.
+    """
+    payload = decode_jwt_payload(credentials.credentials)
+    if not payload or payload.get("type") != "machine":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=MACHINE_TOKEN_REQUIRED)
+    return _machine_from_sync_token(payload, machine_id, db)
 
 
 def _resolve_user_from_bearer_token(token: str, db: Session) -> User:

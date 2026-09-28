@@ -54,6 +54,10 @@ class ShiftCloseRequest(Base):
     #: The open shift the till is asked to close. NULL only if neither the cloud nor the
     #: till's heartbeat named one; the till's ack fills it in.
     shift_id = Column(UUID(as_uuid=True), ForeignKey("shifts.id"), nullable=True)
+    #: The shift the till claimed open while the cloud had not seen it — no foreign key,
+    #: for the reason given on `ZRunItem.claimed_shift_id`. `shift_id` is filled in when
+    #: the shift lands.
+    claimed_shift_id = Column(UUID(as_uuid=True), nullable=True)
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     status = Column(String(16), nullable=False, default=ShiftCloseRequestStatus.WAITING_CLOSE)
     error_code = Column(String(64), nullable=True)

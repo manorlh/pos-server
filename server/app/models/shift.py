@@ -125,6 +125,16 @@ class Shift(Base):
     #: not in a Z its X is recomputed to include them; once it is, they are stored but
     #: the Z's figures are not (the Z is flagged too).
     late_documents = Column(Integer, nullable=False, default=0, server_default="0")
+    #: Documents already in this shift whose fiscal content (amount, discount, VAT, tip,
+    #: tenders, number, type, or whether it counts as a sale) was rewritten by a re-push
+    #: after the shift went into a Z. The document holds the new content; the Z's figures
+    #: do not (the Z is flagged too). Only counted once the shift is in a Z — before, the
+    #: X is simply recomputed.
+    amended_documents = Column(Integer, nullable=False, default=0, server_default="0")
+    #: The till opened this shift with a `sequence_number` at or below one it had already
+    #: used (a reinstall resetting its counter, say). Accepted — refusing would jam the
+    #: till — but flagged: a Z orders a till's shifts by that number.
+    sequence_out_of_order = Column(Boolean, nullable=False, default=False, server_default="false")
 
     #: The Z this shift is in, once one has been built. NULL = still awaiting a Z.
     z_report_id = Column(UUID(as_uuid=True), ForeignKey("z_reports.id"), nullable=True, index=True)

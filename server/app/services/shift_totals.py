@@ -15,7 +15,8 @@ The rules (docs/SHIFTS_API.md §3.2):
   Credit notes are summed separately and are positive.
 * Takings per tender come from the tender legs, so a split document is part cash and
   part card. A credit note's legs are subtracted.
-* Tips are not takings and are outside the legs. Cash tips go in the drawer.
+* Tips are not takings and are outside the legs. Cash tips go in the drawer. A tip with
+  no method of its own takes the sale's tender (`tip_goes_to_cash`).
 * VAT is what each document declared. If any counted document declared none, the VAT
   total is unknown (None) rather than a partial sum that understates it.
 """
@@ -117,6 +118,21 @@ class DocumentTotals:
         }
 
 
+def tip_goes_to_cash(tip_method: Optional[str], sale_method: Optional[str]) -> bool:
+    """
+    Whether a tip is cash (in the drawer) or card — every tip is one or the other.
+
+    The tip's own method when the till sent one; otherwise the sale's own tender, as the
+    tips report reads it (`app.services.tips`): a cash sale's tip is cash, anything else
+    card. A tip in neither bucket was counted in the total but in no split, and a cash one
+    was missing from the drawer the Z expected.
+    """
+    method = (tip_method or sale_method or "").strip().lower()
+    if method in ("cash", "card"):
+        return method == "cash"
+    return (sale_method or "").strip().lower() == "cash"
+
+
 def compute_totals(db: Session, shift_ids: Iterable[uuid.UUID]) -> DocumentTotals:
     """The figures over every document of `shift_ids`."""
     ids = list(shift_ids)
@@ -189,9 +205,9 @@ def compute_totals(db: Session, shift_ids: Iterable[uuid.UUID]) -> DocumentTotal
         tip = _dec(doc.tip_amount)
         if tip:
             totals.total_tips += tip
-            if doc.tip_payment_method == "cash":
+            if tip_goes_to_cash(doc.tip_payment_method, doc.payment_method):
                 totals.total_cash_tips += tip
-            elif doc.tip_payment_method == "card":
+            else:
                 totals.total_card_tips += tip
 
         if doc.vat_amount is None:
@@ -244,6 +260,10 @@ def till_totals_mismatch(till: Optional[dict], server: DocumentTotals) -> bool:
         try:
             theirs = Decimal(str(till[key]))
         except (ArithmeticError, ValueError):
+            return True
+        if not theirs.is_finite():
+            # "NaN" / "Infinity": a figure the server cannot read is a mismatch (and a
+            # comparison with it would raise).
             return True
         if ours is None:
             # The server cannot state VAT (a document declared none); the till can.

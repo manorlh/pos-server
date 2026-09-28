@@ -37,7 +37,7 @@ from app.models.z_report import ZReport
 from app.services.shift_totals import CENT, DocumentTotals, compute_totals
 from app.models.shop import Shop
 from app.services.z_header import snapshot_header
-from app.services.z_sequence import allocate_shop_z_number
+from app.services.z_sequence import allocate_shop_z_number, ensure_shop_z_sequence
 
 ZERO = Decimal("0")
 
@@ -66,24 +66,44 @@ def shift_order_key(shift: Shift):
     return (shift.sequence_number is not None, shift.sequence_number or 0, _aware(shift.opened_at))
 
 
-def unreported_shifts(db: Session, machine_id: uuid.UUID, *, lock: bool = False) -> List[Shift]:
-    """Every shift of this till no Z has taken yet, open or closed, oldest first."""
+def unreported_shifts(
+    db: Session,
+    machine_id: uuid.UUID,
+    *,
+    shop_id: Optional[uuid.UUID] = None,
+    lock: bool = False,
+) -> List[Shift]:
+    """
+    Every shift of this till no Z has taken yet, open or closed, oldest first.
+
+    With `shop_id`, only the shifts the till worked **in that shop** (`shifts.shop_id`):
+    a Z is one shop's, and a till moved to another shop must not carry its old shop's
+    takings into the new shop's Z.
+    """
     query = db.query(Shift).filter(Shift.machine_id == machine_id, Shift.z_report_id.is_(None))
+    if shop_id is not None:
+        query = query.filter(Shift.shop_id == shop_id)
     if lock:
-        query = query.with_for_update()
+        query = query.with_for_update().populate_existing()
     return sorted(query.all(), key=shift_order_key)
 
 
 def included_shifts(
-    db: Session, machine_id: uuid.UUID, through_shift_id: uuid.UUID, *, lock: bool = True
+    db: Session,
+    machine_id: uuid.UUID,
+    through_shift_id: uuid.UUID,
+    *,
+    shop_id: Optional[uuid.UUID] = None,
+    lock: bool = True,
 ) -> List[Shift]:
     """
-    The shifts a Z takes for this till: all un-Z'd shifts up to `through`, oldest first.
+    The shifts a Z takes for this till: all its un-Z'd shifts **in `shop_id`** up to
+    `through`, oldest first.
 
     Raises `ZBuildRefused` if `through` is not an un-Z'd closed shift of this till, or
     if a shift at or before it is still open (D4: no gaps, no half-closed shift).
     """
-    shifts = unreported_shifts(db, machine_id, lock=lock)
+    shifts = unreported_shifts(db, machine_id, shop_id=shop_id, lock=lock)
     ids = [s.id for s in shifts]
     if through_shift_id not in ids:
         raise ZBuildRefused(
@@ -141,7 +161,11 @@ def machine_section(machine: POSMachine, shifts: Sequence[Shift], totals: Docume
     return {
         "machineId": str(machine.id),
         "machineName": machine.name,
-        "posNumber": machine.pos_number or machine.machine_code,
+        # The register number, or null when the till has none. It used to fall back to
+        # the machine code, which put a non-number where a register number is read; the
+        # code has a key of its own.
+        "posNumber": machine.pos_number,
+        "machineCode": machine.machine_code,
         "shiftIds": [str(s.id) for s in shifts],
         "shiftCount": len(shifts),
         "firstShiftSequence": min(seqs) if seqs else None,
@@ -153,6 +177,8 @@ def machine_section(machine: POSMachine, shifts: Sequence[Shift], totals: Docume
         "creditNotesCount": totals.credit_notes_count,
         "nonSaleDocumentsCount": totals.non_sale_count,
         "totalSales": _money(totals.total_sales),
+        "grossSales": _money(totals.gross_sales),
+        "netSales": _money(totals.net_sales),
         "totalRefunds": _money(totals.total_refunds),
         "discountsTotal": _money(totals.discounts_total),
         "vatTotal": _money(totals.vat_total),
@@ -196,17 +222,20 @@ def build_z(
         raise ZBuildRefused("nothing_to_report", "No till has anything to include.")
     now = now or datetime.now(timezone.utc)
 
-    # 1. Serialise builds for this shop on its counter row.
+    # 1. Serialise builds for this shop on its counter row (created first if missing, so
+    #    two first Zs of a shop cannot both insert it).
+    ensure_shop_z_sequence(db, shop_id)
     db.query(ShopZSequence).filter(ShopZSequence.shop_id == shop_id).with_for_update().first()
 
     # 2. Per till, the included set under lock, D4 re-checked.
     per_machine: List[Tuple[POSMachine, List[Shift]]] = []
+    # Per shift, not per till: a till's shifts belong to the shop it worked them in
+    # (`shifts.shop_id`). A till since moved away, or retired, still has its shifts of
+    # this shop taken here — and never its shifts of another shop.
     for machine, through_id in selections:
-        if str(machine.shop_id) != str(shop_id):
-            raise ZBuildRefused(
-                "machine_not_in_shop", "A till in this run is not in the shop.", machine.id
-            )
-        per_machine.append((machine, included_shifts(db, machine.id, through_id, lock=True)))
+        per_machine.append(
+            (machine, included_shifts(db, machine.id, through_id, shop_id=shop_id, lock=True))
+        )
 
     all_shifts = [s for _m, shifts in per_machine for s in shifts]
     claimed = [s for s in all_shifts if s.z_report_id is not None]

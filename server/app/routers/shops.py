@@ -545,6 +545,11 @@ def delete_shop(
     # The ORM would null these machines' `shop_id` on its own when the shop goes; doing
     # it here instead also drops their register numbers, which mean nothing without the
     # shop. The shop's counter row goes with it (ON DELETE CASCADE).
+    from app.services.shifts import refuse_leaving_shop_with_shifts
+
+    # A till with an open shift or shifts awaiting a Z keeps its shop (409).
+    for machine in list(shop.machines):
+        refuse_leaving_shop_with_shifts(db, machine)
     for machine in list(shop.machines):
         set_machine_shop(db, machine, None)
     db.delete(shop)

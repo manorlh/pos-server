@@ -1,5 +1,6 @@
 """Dashboard read endpoints for Z reports (Clerk-user JWT). Contract: docs/SHIFTS_API.md §2.8."""
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import List, Optional
 import uuid
 
@@ -20,12 +21,16 @@ from app.schemas.z_report import (
     ZReportDetailOut,
     ZReportListResponse,
     ZReportOut,
+    ZReportWindow,
 )
 from app.services.scoping import scope_query_by_user
 from app.services.shifts import shift_to_out
 
 
 router = APIRouter(prefix="/z-reports", tags=["z-reports"])
+
+#: With no range at all, a Z list covers the last 90 days of business dates.
+DEFAULT_WINDOW_DAYS = 90
 
 
 def _machine_z_ids(machine_ids):
@@ -64,6 +69,10 @@ def z_to_out(z: ZReport, cls=ZReportOut):
         # into the detail's `shifts` field as ORM rows. The caller fills that in.
         item = cls(**item.model_dump())
     item.legacy = z.per_machine is None and z.machine_id is not None
+    if z.total_sales is not None:
+        item.net_sales = Decimal(z.total_sales) - Decimal(z.total_refunds or 0)
+        if z.discounts_total is not None:
+            item.gross_sales = Decimal(z.total_sales) + Decimal(z.discounts_total)
     item.machine_name = z.machine.name if z.machine_id and z.machine else None
     item.shop_name = z.shop.name if z.shop else None
     return item
@@ -110,8 +119,10 @@ def list_z_reports(
     if shop_id:
         query = query.filter(ZReport.shop_id == shop_id)
 
-    if from_date is None and to_date is None and closed_from is None and closed_to is None:
-        from_date = (datetime.now(timezone.utc) - timedelta(days=90)).date()
+    defaulted = from_date is None and to_date is None and closed_from is None and closed_to is None
+    if defaulted:
+        from_date = (datetime.now(timezone.utc) - timedelta(days=DEFAULT_WINDOW_DAYS)).date()
+    window = ZReportWindow(from_date=from_date, to_date=to_date, defaulted=defaulted)
 
     if from_date is not None:
         query = query.filter(ZReport.business_date >= from_date)
@@ -140,7 +151,29 @@ def list_z_reports(
         page_size=page_size,
         total=total,
         items=[z_to_out(r) for r in rows],
+        window=window,
     )
+
+
+def _with_derived_sales(section: dict) -> dict:
+    """
+    A per-till section with `grossSales` / `netSales`, derived for a Z built before they
+    were stored — from its own stored figures, never recomputed from documents. Nothing
+    else of a stored section is rewritten (its `posNumber` included).
+    """
+    out = dict(section)
+
+    def dec(key):
+        value = out.get(key)
+        return None if value is None else Decimal(str(value))
+
+    sales = dec("totalSales")
+    if sales is not None:
+        if "netSales" not in out:
+            out["netSales"] = str((sales - (dec("totalRefunds") or Decimal("0"))).quantize(Decimal("0.01")))
+        if "grossSales" not in out and out.get("discountsTotal") is not None:
+            out["grossSales"] = str((sales + dec("discountsTotal")).quantize(Decimal("0.01")))
+    return out
 
 
 def _business_of(z: ZReport) -> Optional[ZReportBusinessOut]:
@@ -167,7 +200,7 @@ def get_z_report(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Z-report not found")
 
     out = z_to_out(z, ZReportDetailOut)
-    out.per_machine = list(z.per_machine or [])
+    out.per_machine = [_with_derived_sales(section) for section in (z.per_machine or [])]
     shifts = (
         db.query(Shift)
         .options(joinedload(Shift.machine))
