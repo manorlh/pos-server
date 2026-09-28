@@ -35,12 +35,17 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
-/** The till X keys the server compares, with the server figure each is compared to. */
+/**
+ * The till X keys the server compares, with the server figure each is compared to.
+ *
+ * The till's `totalSales` is gross (its line totals), so it is set against the cloud's
+ * stored gross, not its net `totalSales`. A shift closed before gross was stored and
+ * not backfilled has none; its cloud cell then stays empty rather than showing the net
+ * figure as if it were comparable.
+ */
 const COMPARED: Array<{ till: string[]; server: (s: Shift) => unknown }> = [
-  // The till's `totalSales` is gross (line totals); the server's is net of document
-  // discounts. Compared like for like: gross = net + discounts.
-  { till: ['totalSales'], server: () => undefined },
-  { till: ['totalDiscounts', 'discountsTotal'], server: () => undefined },
+  { till: ['totalSales'], server: (s) => s.serverTotals?.grossSales },
+  { till: ['totalDiscounts', 'discountsTotal'], server: (s) => s.serverTotals?.discountsTotal },
   { till: ['totalRefunds'], server: (s) => s.serverTotals?.totalRefunds },
   { till: ['totalCash'], server: (s) => s.serverTotals?.totalCash },
   { till: ['totalCard'], server: (s) => s.serverTotals?.totalCard },
@@ -221,6 +226,14 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
           <CardContent className="space-y-1 text-sm">
             {totals ? (
               <>
+                {/* Gross and discounts only when a discount was given: otherwise both
+                    say what the net line already says. */}
+                {moneyValue(totals.discountsTotal) ? (
+                  <>
+                    <MoneyRow label={t('detail.grossSales')} value={totals.grossSales} />
+                    <MoneyRow label={t('detail.discounts')} value={totals.discountsTotal} />
+                  </>
+                ) : null}
                 <MoneyRow label={t('detail.sales')} value={totals.totalSales} strong />
                 <MoneyRow label={t('detail.refunds')} value={totals.totalRefunds} />
                 <MoneyRow label={t('detail.vat')}>
@@ -288,9 +301,6 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
                 {COMPARED.map(({ till: keys, server }) => {
                   const key = keys.find((k) => k in till);
                   if (!key) return null;
-                  // Gross sales and discounts have no stored server twin on the shift;
-                  // their cloud column stays empty rather than showing the net figure
-                  // as if it were comparable.
                   return (
                     <TableRow key={key}>
                       <TableCell>{t(`detail.tillKey.${keys[0]}`)}</TableCell>

@@ -790,6 +790,10 @@ export type Money = string | number;
 export interface ShiftTotals {
   /** Net of document discounts — the money collected. Tips excluded. */
   totalSales?: Money | null;
+  /** Σ totalAmount of the sales, before document discounts (the till's `totalSales`). */
+  grossSales?: Money | null;
+  /** Σ documentDiscount of the sales (the till's `totalDiscounts`). */
+  discountsTotal?: Money | null;
   totalRefunds?: Money | null;
   totalCash?: Money | null;
   totalCard?: Money | null;
