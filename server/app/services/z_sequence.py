@@ -47,6 +47,31 @@ def _highest_existing(db: Session, shop_id: uuid.UUID) -> int:
     return (highest[0] + 1) if highest and highest[0] else DEFAULT_SHOP_Z_SEQUENCE_START
 
 
+def ensure_shop_z_sequence(db: Session, shop_id: uuid.UUID) -> None:
+    """
+    Make sure the shop has its counter row, without racing another build for it.
+
+    `INSERT … ON CONFLICT DO NOTHING`: two first Zs of one shop at the same moment would
+    otherwise both find no row and both insert one, and the loser's build fails on the
+    primary key. Afterwards the row exists and is locked with `FOR UPDATE` as before.
+    """
+    dialect = db.get_bind().dialect.name
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    elif dialect == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert
+    else:  # pragma: no cover - no other database is used
+        if db.query(ShopZSequence).filter(ShopZSequence.shop_id == shop_id).first() is None:
+            db.add(ShopZSequence(shop_id=shop_id, next_value=_highest_existing(db, shop_id)))
+            db.flush()
+        return
+    db.execute(
+        insert(ShopZSequence.__table__)
+        .values(shop_id=shop_id, next_value=_highest_existing(db, shop_id))
+        .on_conflict_do_nothing(index_elements=["shop_id"])
+    )
+
+
 def allocate_shop_z_number(db: Session, shop_id: Optional[uuid.UUID]) -> Optional[int]:
     """
     The next Z number for `shop_id`, or None when the machine has no shop.

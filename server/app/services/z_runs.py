@@ -347,9 +347,10 @@ def finalise_if_ready(db: Session, run: ZRun, *, now: Optional[datetime] = None)
     """
     Build the Z when every item is ready or excluded. Returns True if it was built.
 
-    Never raises for a refused build: the run is marked failed with the reason, and the
-    caller's own work (a till's accepted close, say) still commits. The build runs in a
-    savepoint so a refusal leaves nothing of it behind.
+    Never raises for a failed build — a refusal, or anything else (a database error,
+    a bug): the run is marked failed with the reason, and the caller's own work (a till's
+    accepted close, above all) still commits. The build runs in a savepoint so a failure
+    leaves nothing of it behind. A till whose close raised here would retry it forever.
     """
     run = lock_run(db, run)
     if run.status != ZRunStatus.WAITING:
@@ -381,11 +382,35 @@ def finalise_if_ready(db: Session, run: ZRun, *, now: Optional[datetime] = None)
         run.error_message = refused.message
         db.flush()
         return False
+    except Exception as exc:  # noqa: BLE001 - see the docstring
+        _rollback_savepoint(savepoint)
+        logger.exception("Z run %s build failed", run.id)
+        run.status = ZRunStatus.FAILED
+        run.error_code = "build_error"
+        run.error_message = f"The Z could not be built: {type(exc).__name__}"
+        db.flush()
+        return False
     run.status = ZRunStatus.COMPLETED
     run.z_report_id = z.id
     run.completed_at = now
     db.flush()
     return True
+
+
+def _rollback_savepoint(savepoint) -> None:
+    """
+    Roll a failed savepoint back even when SQLAlchemy has already deactivated it.
+
+    `is_active` is False after a failed flush, yet the savepoint is not rolled back and
+    the session stays unusable (PendingRollbackError) until it is — so checking
+    `is_active` first, as looked natural, left the till's close to fail on commit.
+    """
+    from sqlalchemy.exc import ResourceClosedError
+
+    try:
+        savepoint.rollback()
+    except ResourceClosedError:
+        pass
 
 
 def _require_waiting(run: ZRun) -> None:

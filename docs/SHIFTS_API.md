@@ -369,8 +369,10 @@ not ready · `409 {"detail": "nothing_to_report"}` if nothing is left ·
 **A refused build.** The build re-checks everything under row locks. If it refuses, the run
 becomes `failed` with `errorCode` one of `through_shift_unavailable` (another Z took the
 shifts), `open_shift_before_through` (an older shift of that till is still open on the
-cloud — a gap), `shift_already_in_z`; nothing is written and no Z number is used. Start a
-new run.
+cloud — a gap), `shift_already_in_z`, or `build_error` (anything else went wrong while
+building — logged on the server); nothing is written and no Z number is used. Start a
+new run. A failed build never fails the till's close that triggered it: the close is
+accepted and the run alone is marked `failed`.
 
 ### 2.7 `POST /z-runs/{id}/cancel`
 `200` ZRun (`cancelled`; open items → `excluded`). A till that already received the instruction

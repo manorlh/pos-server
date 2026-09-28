@@ -39,6 +39,7 @@ from app.services.shifts import (
     resolve_shift_for_document,
 )
 from app.services.stock import apply_movement
+from app.services.z_runs import _rollback_savepoint
 from app.services.tenders import (
     UNKNOWN_PAYMENT_METHOD,
     derive_payment_method,
@@ -565,12 +566,13 @@ def upsert_transactions(
                 server_received_at=datetime.now(timezone.utc),
             ))
         except ShiftConflict:
-            if savepoint.is_active:
-                savepoint.rollback()
+            _rollback_savepoint(savepoint)
             raise
         except Exception as exc:
-            if savepoint.is_active:
-                savepoint.rollback()
+            # Not guarded by `is_active`: a failed flush deactivates the savepoint without
+            # rolling it back, and every later document of the batch then failed with a
+            # PendingRollbackError (see `app.services.z_runs._rollback_savepoint`).
+            _rollback_savepoint(savepoint)
             logger.exception("Failed to upsert transaction %s: %s", tx.id, exc)
             results.append(TransactionUpsertResult(
                 id=tx.id,

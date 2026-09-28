@@ -37,7 +37,7 @@ from app.models.z_report import ZReport
 from app.services.shift_totals import CENT, DocumentTotals, compute_totals
 from app.models.shop import Shop
 from app.services.z_header import snapshot_header
-from app.services.z_sequence import allocate_shop_z_number
+from app.services.z_sequence import allocate_shop_z_number, ensure_shop_z_sequence
 
 ZERO = Decimal("0")
 
@@ -70,7 +70,7 @@ def unreported_shifts(db: Session, machine_id: uuid.UUID, *, lock: bool = False)
     """Every shift of this till no Z has taken yet, open or closed, oldest first."""
     query = db.query(Shift).filter(Shift.machine_id == machine_id, Shift.z_report_id.is_(None))
     if lock:
-        query = query.with_for_update()
+        query = query.with_for_update().populate_existing()
     return sorted(query.all(), key=shift_order_key)
 
 
@@ -196,7 +196,9 @@ def build_z(
         raise ZBuildRefused("nothing_to_report", "No till has anything to include.")
     now = now or datetime.now(timezone.utc)
 
-    # 1. Serialise builds for this shop on its counter row.
+    # 1. Serialise builds for this shop on its counter row (created first if missing, so
+    #    two first Zs of a shop cannot both insert it).
+    ensure_shop_z_sequence(db, shop_id)
     db.query(ShopZSequence).filter(ShopZSequence.shop_id == shop_id).with_for_update().first()
 
     # 2. Per till, the included set under lock, D4 re-checked.

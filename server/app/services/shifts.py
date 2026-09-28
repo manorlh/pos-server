@@ -121,6 +121,17 @@ def refuse_foreign_shift(db: Session, machine: POSMachine, shift_id: Optional[uu
         )
 
 
+def lock_shift(db: Session, shift_id: uuid.UUID) -> Optional[Shift]:
+    """The shift, re-read under a row lock (the Z builder takes the same lock)."""
+    return (
+        db.query(Shift)
+        .filter(Shift.id == shift_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+
+
 def shift_exists(db: Session, shift_id: Optional[uuid.UUID]) -> bool:
     if shift_id is None:
         return False
@@ -349,11 +360,16 @@ def note_documents_after_close(
     Open shifts are skipped: that is the ordinary case, and the close computes their X.
     So is any shift of a till other than `machine_id` (the pushing till): its X counts
     only its own till's documents, so nothing this push did can change it.
+
+    Each shift is read under `FOR UPDATE`, fresh (`populate_existing`): a Z being built
+    over it holds that lock, so this waits for the Z and then sees that the shift is in
+    it — rather than recomputing the X of a shift a Z has just frozen, from a copy of
+    the row this session read before the Z committed.
     """
     for shift_id, new_count in touched.items():
         if shift_id is None:
             continue
-        shift = db.query(Shift).filter(Shift.id == shift_id).first()
+        shift = lock_shift(db, shift_id)
         if shift is None or shift.status != ShiftStatus.CLOSED:
             continue
         if machine_id is not None and str(shift.machine_id) != str(machine_id):
@@ -550,7 +566,9 @@ def apply_shift_close(
     """
     now = now or datetime.now(timezone.utc)
     refuse_foreign_shift(db, machine, shift_id)
-    shift = db.query(Shift).filter(Shift.id == shift_id).first()
+    # Locked, like a late document's note and the Z builder: a close racing a document
+    # push must not compute its X from a copy of the row that is already stale.
+    shift = lock_shift(db, shift_id)
     if shift is None:
         if body.business_date is None or body.opened_at is None:
             raise ShiftUnknown()
