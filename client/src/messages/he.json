@@ -983,6 +983,7 @@
     "legacy": "דו״ח קופה ישן",
     "legacyHint": "דו״ח Z שהקופה הפיקה בעצמה, לפני המעבר למשמרות",
     "notFound": "הדו״ח לא נמצא או שאינו בהיקף שלך.",
+    "printButton": "הדפסה",
     "print": {
       "vatNumber": "עוסק מורשה / ח.פ. {number}",
       "companyReg": "מס׳ חברה {number}",

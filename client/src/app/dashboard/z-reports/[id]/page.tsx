@@ -274,7 +274,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={print}>
               <Printer className="h-4 w-4 me-1" aria-hidden />
-              {t('print')}
+              {t('printButton')}
             </Button>
             <Link href="/dashboard/z-reports" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
               {t('backToList')}
