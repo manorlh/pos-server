@@ -245,6 +245,10 @@ def till_totals_mismatch(till: Optional[dict], server: DocumentTotals) -> bool:
             theirs = Decimal(str(till[key]))
         except (ArithmeticError, ValueError):
             return True
+        if not theirs.is_finite():
+            # "NaN" / "Infinity": a figure the server cannot read is a mismatch (and a
+            # comparison with it would raise).
+            return True
         if ours is None:
             # The server cannot state VAT (a document declared none); the till can.
             return True

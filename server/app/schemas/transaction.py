@@ -4,10 +4,27 @@ from typing import List, Literal, Optional
 import uuid
 
 import json
+import math
 
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.stock import StockMovementIn
+
+
+#: The most of an acquirer reply kept. A reply is a few hundred bytes; anything near
+#: this is not one, and is kept cut, as text, rather than parsed.
+META_MAX_CHARS = 16 * 1024
+
+
+def _reject_constant(name):
+    """`json.loads` hook: NaN / Infinity are not JSON, and Postgres JSONB refuses them."""
+    raise ValueError(f"non-JSON constant {name}")
+
+
+def _raw(text: str) -> dict:
+    if len(text) > META_MAX_CHARS:
+        return {"raw": text[:META_MAX_CHARS], "truncated": True}
+    return {"raw": text}
 
 
 def meta_as_dict(value):
@@ -17,21 +34,37 @@ def meta_as_dict(value):
     A JSON string is parsed; anything that is not a JSON object — invalid JSON, a list,
     a bare number — is kept verbatim as `{"raw": ...}`. Never a validation error: a
     rejected field here rejects the whole batch, and with it a card sale that has
-    already been charged.
+    already been charged. Nor a database error, which fails the document just the same:
+    a reply over 16 KB, one nested deeper than the parser can follow, or one carrying
+    NaN / Infinity (which JSONB refuses) is kept as `{"raw": <text, cut to 16 KB>}`.
     """
-    if value is None or isinstance(value, dict):
+    if value is None:
         return value
+    if isinstance(value, dict):
+        try:
+            text = json.dumps(value, allow_nan=False)
+        except (ValueError, TypeError, RecursionError):
+            return _raw(str(value))
+        return value if len(text) <= META_MAX_CHARS else _raw(text)
     if isinstance(value, (bytes, bytearray)):
         value = value.decode("utf-8", "replace")
     if isinstance(value, str):
         if not value.strip():
             return None
+        if len(value) > META_MAX_CHARS:
+            return _raw(value)
         try:
-            parsed = json.loads(value)
-        except ValueError:
-            return {"raw": value}
-        return parsed if isinstance(parsed, dict) else {"raw": value}
-    return {"raw": value if isinstance(value, (list, int, float, bool)) else str(value)}
+            parsed = json.loads(value, parse_constant=_reject_constant)
+        except (ValueError, RecursionError):
+            return _raw(value)
+        return parsed if isinstance(parsed, dict) else _raw(value)
+    if isinstance(value, (list, int, float, bool)):
+        try:
+            json.dumps(value, allow_nan=False)
+        except (ValueError, TypeError, RecursionError):
+            return _raw(str(value))
+        return {"raw": value}
+    return _raw(str(value))
 
 
 class IssuedVoucherIn(BaseModel):
@@ -96,9 +129,11 @@ class TransactionPaymentIn(BaseModel):
         if value is None or value == "":
             return None
         try:
-            return int(value)
-        except (TypeError, ValueError):
+            count = int(value)
+        except (TypeError, ValueError, OverflowError):
+            # OverflowError: a JSON 1e999 arrives as float("inf").
             return None
+        return count if 0 <= count <= 2**31 - 1 else None
 
 
 class TransactionItemIn(BaseModel):

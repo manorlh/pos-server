@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from pydantic import AliasChoices, BaseModel, Field, ConfigDict, field_validator
+from pydantic import AliasChoices, BaseModel, Field, ConfigDict, PrivateAttr, field_validator, model_validator
 from typing import Optional, Dict, Any, List
 import uuid
 from app.models.pos_machine import PairingStatus as ModelPairingStatus
@@ -30,6 +30,11 @@ class POSMachineUpdate(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+
+#: The columns the backlog counts land in are INTEGER; the skew is BIGINT. A reading
+#: beyond them is not a reading (and would fail the write): it is dropped, as unknown.
+INT32_MAX = 2**31 - 1
+INT64_MAX = 2**63 - 1
 
 #: What each heartbeat string is cut to — the width of the column it lands in.
 HEARTBEAT_STRING_LIMITS = {"app_version": 64, "serial_number": 64, "battery_status": 32}
@@ -104,9 +109,32 @@ class MachineHeartbeatBody(BaseModel):
             parsed = handler(value)
         except (ValueError, TypeError):
             return None
-        if info.field_name in ("pending_count", "pending_documents") and parsed is not None and parsed < 0:
+        if info.field_name in ("pending_count", "pending_documents") and parsed is not None:
+            if parsed < 0 or parsed > INT32_MAX:
+                return None
+        if info.field_name == "clock_skew_ms" and parsed is not None and abs(parsed) > INT64_MAX:
+            return None
+        if info.field_name == "battery_percent" and parsed is not None and abs(parsed) > INT32_MAX:
             return None
         return parsed
+
+    #: The till sent an `openShiftId` that could not be read (not a UUID). Distinct from
+    #: absent/null ("none open"): an unreadable claim leaves the stored one as it was.
+    _open_shift_id_unreadable: bool = PrivateAttr(default=False)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _remember_unreadable_claim(cls, value, handler):
+        model = handler(value)
+        if isinstance(value, dict):
+            raw = next((value[k] for k in ("openShiftId", "open_shift_id") if k in value), None)
+            if raw is not None and model.open_shift_id is None:
+                model._open_shift_id_unreadable = True
+        return model
+
+    @property
+    def open_shift_id_unreadable(self) -> bool:
+        return self._open_shift_id_unreadable
 
 
 class POSMachineResponse(POSMachineBase):

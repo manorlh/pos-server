@@ -4,6 +4,12 @@ Status: the contract the till (pos-android `feat/shifts`) and the dashboard buil
 Spec: `pos-android/docs/shifts-plan.md` §4.4–§4.6. Owner: the pos-server `feat/shifts` branch.
 Anything here that differs from the plan is called out under **Deviations** at the end.
 
+**Bounds on the shift writes (§1.1, §1.3).** Money (`openingCash`, `countedCash`,
+`expectedCash`) is rounded to the cent and must fit 12 digits with 2 decimals
+(|x| < 10¹⁰); `sequenceNumber` is 0…2³¹−1; `NaN`/`Infinity` are refused. Anything else is a
+`422` (the till parks it) — never a `500`. `NaN`/`Infinity` inside `till` is stored as text
+and counts as a mismatch.
+
 Conventions
 
 - Prefix: `/api/v1`. Till calls use the machine JWT (`Authorization: Bearer <machine token>`);
@@ -110,9 +116,12 @@ its own till.
 Each tender leg in `payments[]` may carry:
 - `nayaxMeta` — the acquirer reply, as a JSON **string** (the till) or an object; stored as
   an object. A string that is not a JSON object is kept as `{"raw": "<string>"}`, never
-  rejected. The document-level `nayaxMeta` accepts both forms too.
+  rejected — so is one over 16 KB (`{"raw": <first 16 KB>, "truncated": true}`), one nested
+  too deep to parse, and one carrying `NaN`/`Infinity` (not JSON; the database refuses it).
+  The document-level `nayaxMeta` accepts both forms too.
 - `creditPayments` — number of credit instalments (integer, optional); stored in the leg's
-  meta as `creditPayments`. An unreadable value is dropped, not rejected.
+  meta as `creditPayments`. An unreadable value (not a number, negative, beyond 2³¹−1,
+  infinite) is dropped, not rejected.
 
 `200` body unchanged: `{"serverTime", "results": [{"id", "status": "accepted|duplicate|rejected", "reason"?, "serverReceivedAt"?}]}`.
 
@@ -256,7 +265,9 @@ Prefill rule on the till: `countedCash`, else `expectedCash`.
 
 The heartbeat **never** answers 422: an over-long string is cut to its column
 (`appVersion` 64, `serialNumber` 64, `batteryStatus` 32), and any field that cannot be read
-(wrong type, bad UUID/date, negative count) is treated as not sent.
+(wrong type, bad UUID/date, negative count, a count beyond 2³¹−1) is treated as not sent.
+One exception to "not sent = none": an **unreadable** `openShiftId` (not a UUID) leaves the
+stored claim as it was; only an absent or null one means "no shift open".
 
 Request adds (both optional; null **or absent** = "no shift open" — the claim is replaced
 on every beat):

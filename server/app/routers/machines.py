@@ -387,7 +387,11 @@ def post_my_heartbeat(
     # "none open": the till's JSON encoder drops null fields, so a till with no shift
     # open sends no `openShiftId` at all. (A pre-shift build also sends none; it cannot
     # have a shift, so reading that as "none open" is also true.)
-    if body is not None:
+    if body is not None and body.open_shift_id_unreadable:
+        # An `openShiftId` that could not be read says nothing: the stored claim stays
+        # (wiping it would read as "no shift open" and hide a shift the cloud has not seen).
+        logger.warning("machine %s sent an unreadable openShiftId; claim left as it was", machine.id)
+    elif body is not None:
         claimed = body.open_shift_id
         if is_foreign_shift(db, machine, claimed):
             # Another till's shift (this till was re-paired as a new machine while it
