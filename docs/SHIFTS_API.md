@@ -427,11 +427,16 @@ still closes its shift; that shift simply waits for the next Z. `409 run_not_wai
 
 ### 2.8 Z reports
 - `GET /z-reports` — as before plus `shopId` (already there). `from`/`to` now filter on the Z's
-  `businessDate`. `machineId`/`machineIds` match a Z that contains that till.
-  Items are **ZReport** (§3.5) without `perMachine`/`shifts`.
-- `GET /z-reports/{id}` — **ZReport** with `perMachine` (§3.6), `shifts` (ShiftSummary list)
-  and `business`: the header **frozen when the Z was built** (§3.7), never live settings.
-  `null` only for a legacy Z of a till with no shop.
+  `businessDate`; `closedFrom`/`closedTo` (ISO datetimes, naive = UTC) on `closedAt`.
+  `machineId`/`machineIds` match a Z that contains that till. **With none of `from`, `to`,
+  `closedFrom`, `closedTo` given, the list covers the last 90 days** (`from` = today − 90 days,
+  UTC). Items are **ZReport** (§3.5) without `perMachine`/`shifts`. The response says which
+  window applied:
+  `{"page", "pageSize", "total", "items": [...], "window": {"from": "2026-07-01" | null, "to": … | null, "defaulted": true}}`.
+- `GET /z-reports/{id}` — **ZReport** with `perMachine` (§3.6), `shifts` (full **Shift**
+  objects, §3.1 — `tillTotals` and `reconstructionBasis` included — plus `machineName`, and
+  `zNumber` = this Z's) and `business`: the header **frozen when the Z was built** (§3.7),
+  never live settings. `business` is `null` only for a legacy Z of a till with no shop.
 
 ### 2.9 `POST /machines/{machineId}/shifts/{shiftId}/administrative-close`
 Dead-till recovery (replaces `trading-day/reconstruct-close`). Body `{"force": false, "note": "…"}`.
@@ -451,7 +456,10 @@ Fields renamed on `GET /machines` / `GET /machines/{id}`: `tradingDayStatus` →
 close request, §2.14, is waiting for this till's close); new `closedShiftsAwaitingZ` (count),
 `orphanDocuments` (documents in no shift of their own till), `openShiftSequence` (the open shift's
 `sequenceNumber`, null if none open or unnumbered — so a list can name "משמרת #N" without
-fetching the shift).
+fetching the shift), `pendingCloseSource` (`"z_run"` | `"request"` | null — what is waiting for
+this till's close; a Z run's wins when both are) and `pendingZRunId` (that run, when it is a Z
+run). `reportedOpenShiftId` (the heartbeat claim) is null unless a close could still answer it:
+not a shift the cloud holds closed, not another till's.
 `status`: `no_open_shift` replaces `day_closed`, `shift_close_pending` replaces `close_pending`.
 `statusFlags`: `shift_open_past_its_date` (replaces `day_open_past_its_date`),
 `closed_shifts_awaiting_z` (closed un-Z'd shifts with a businessDate before today); "today" is

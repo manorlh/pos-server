@@ -95,6 +95,17 @@ class ZReportDetailOut(ZReportOut):
     business: Optional[ZReportBusinessOut] = None
 
 
+class ZReportWindow(BaseModel):
+    """The business-date window a Z list was actually filtered on."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_date: Optional[date] = Field(None, alias="from")
+    to_date: Optional[date] = Field(None, alias="to")
+    #: True when the caller gave no range and the default (the last 90 days) applied.
+    defaulted: bool = False
+
+
 class ZReportListResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -102,3 +113,4 @@ class ZReportListResponse(BaseModel):
     page_size: int = Field(..., alias="pageSize")
     total: int
     items: List[ZReportOut]
+    window: Optional[ZReportWindow] = None

@@ -21,12 +21,16 @@ from app.schemas.z_report import (
     ZReportDetailOut,
     ZReportListResponse,
     ZReportOut,
+    ZReportWindow,
 )
 from app.services.scoping import scope_query_by_user
 from app.services.shifts import shift_to_out
 
 
 router = APIRouter(prefix="/z-reports", tags=["z-reports"])
+
+#: With no range at all, a Z list covers the last 90 days of business dates.
+DEFAULT_WINDOW_DAYS = 90
 
 
 def _machine_z_ids(machine_ids):
@@ -115,8 +119,10 @@ def list_z_reports(
     if shop_id:
         query = query.filter(ZReport.shop_id == shop_id)
 
-    if from_date is None and to_date is None and closed_from is None and closed_to is None:
-        from_date = (datetime.now(timezone.utc) - timedelta(days=90)).date()
+    defaulted = from_date is None and to_date is None and closed_from is None and closed_to is None
+    if defaulted:
+        from_date = (datetime.now(timezone.utc) - timedelta(days=DEFAULT_WINDOW_DAYS)).date()
+    window = ZReportWindow(from_date=from_date, to_date=to_date, defaulted=defaulted)
 
     if from_date is not None:
         query = query.filter(ZReport.business_date >= from_date)
@@ -145,6 +151,7 @@ def list_z_reports(
         page_size=page_size,
         total=total,
         items=[z_to_out(r) for r in rows],
+        window=window,
     )
 
 

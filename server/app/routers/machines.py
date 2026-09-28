@@ -62,8 +62,10 @@ from app.schemas.shift_close_request import ShiftCloseRequestOut
 from app.services import shift_close_requests as close_requests
 from app.services.remote_close import (
     close_shift_pending_machine_ids,
+    pending_close_sources,
     take_pending_close_shift,
 )
+from app.services.z_runs import _reported_open_is_live
 from sqlalchemy import func
 
 logger = logging.getLogger(__name__)
@@ -118,7 +120,7 @@ def _enrich_machine_status(
     db: Session,
     *,
     open_shifts_by_machine: Optional[Dict[uuid_mod.UUID, Shift]] = None,
-    pending_close_ids: Optional[set] = None,
+    pending_close: Optional[Dict[uuid_mod.UUID, tuple]] = None,
     awaiting_z: Optional[Dict[uuid_mod.UUID, tuple]] = None,
     timezones: Optional[Dict[Any, Optional[str]]] = None,
     orphans: Optional[Dict[uuid_mod.UUID, int]] = None,
@@ -137,10 +139,10 @@ def _enrich_machine_status(
     else:
         open_td = find_open_shift(db, machine.id)
 
-    if pending_close_ids is not None:
-        close_shift_pending = machine.id in pending_close_ids
-    else:
-        close_shift_pending = machine.id in close_shift_pending_machine_ids(db, [machine.id])
+    if pending_close is None:
+        pending_close = pending_close_sources(db, [machine.id])
+    close_source, close_run_id = pending_close.get(machine.id, (None, None))
+    close_shift_pending = close_source is not None
 
     if awaiting_z is None:
         awaiting_z = _awaiting_z_by_machine(db, [machine.id])
@@ -181,8 +183,18 @@ def _enrich_machine_status(
         "openedAt": open_td.opened_at if open_td else None,
         "openedBy": open_td.opened_by if open_td else None,
         "closeShiftPending": close_shift_pending,
+        # What is waiting for this till's close: a Z run (and which) or a standalone request.
+        "pendingCloseSource": close_source,
+        "pendingZRunId": close_run_id,
         "closedShiftsAwaitingZ": awaiting_count,
-        "reportedOpenShiftId": getattr(machine, "reported_open_shift_id", None),
+        # Only a claim a close could still answer: not a shift the cloud holds closed, and
+        # not another till's (the same rule as the Z candidates).
+        "reportedOpenShiftId": (
+            machine.reported_open_shift_id
+            if getattr(machine, "reported_open_shift_id", None) is not None
+            and _reported_open_is_live(db, machine)
+            else None
+        ),
         "orphanDocuments": (
             orphans if orphans is not None else orphan_documents_by_machine(db, [machine.id])
         ).get(machine.id, 0),
@@ -229,7 +241,7 @@ def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict
         return []
     ids = [m.id for m in machines]
     open_shifts = open_shifts_for_machines(db, ids)
-    pending_ids = close_shift_pending_machine_ids(db, ids)
+    pending = pending_close_sources(db, ids)
     awaiting = _awaiting_z_by_machine(db, ids)
     timezones = _tenant_timezones(db, machines)
     orphans = orphan_documents_by_machine(db, ids)
@@ -238,7 +250,7 @@ def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict
             m,
             db,
             open_shifts_by_machine=open_shifts,
-            pending_close_ids=pending_ids,
+            pending_close=pending,
             awaiting_z=awaiting,
             timezones=timezones,
             orphans=orphans,

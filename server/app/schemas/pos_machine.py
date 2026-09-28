@@ -173,9 +173,14 @@ class POSMachineResponse(POSMachineBase):
     opened_at: Optional[datetime] = Field(None, alias="openedAt")
     opened_by: Optional[str] = Field(None, alias="openedBy")
     close_shift_pending: Optional[bool] = Field(None, alias="closeShiftPending")
+    #: "z_run" or "request" while a remote close waits for this till; null otherwise.
+    pending_close_source: Optional[str] = Field(None, alias="pendingCloseSource")
+    #: The Z run waiting for this till's close, when the source is a Z run.
+    pending_z_run_id: Optional[uuid.UUID] = Field(None, alias="pendingZRunId")
     #: Closed shifts of this till that no Z has taken yet.
     closed_shifts_awaiting_z: Optional[int] = Field(None, alias="closedShiftsAwaitingZ")
-    #: The till's own claim from its heartbeat (may be ahead of the cloud).
+    #: The till's own claim from its heartbeat (may be ahead of the cloud); null unless a
+    #: close could still answer it (not a shift the cloud holds closed, not another till's).
     reported_open_shift_id: Optional[uuid.UUID] = Field(None, alias="reportedOpenShiftId")
     #: Documents of this till stored with no shift (they named none); no Z takes them.
     orphan_documents: Optional[int] = Field(None, alias="orphanDocuments")

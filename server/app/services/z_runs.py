@@ -685,6 +685,24 @@ def take_pending_close_shift(db: Session, machine: POSMachine, *, now: Optional[
     }
 
 
+def close_shift_pending_runs(db: Session, machine_ids: List[uuid.UUID]) -> Dict[uuid.UUID, uuid.UUID]:
+    """Per till with a Z run waiting for its close: that run's id (the oldest, if several)."""
+    if not machine_ids:
+        return {}
+    rows = (
+        db.query(ZRunItem.machine_id, ZRun.id)
+        .join(ZRun, ZRun.id == ZRunItem.run_id)
+        .filter(
+            ZRunItem.machine_id.in_(machine_ids),
+            ZRunItem.status.in_(PENDING_ITEM_STATUSES),
+            ZRun.status == ZRunStatus.WAITING,
+        )
+        .order_by(ZRun.created_at.desc())
+        .all()
+    )
+    return {machine_id: run_id for machine_id, run_id in rows}
+
+
 def close_shift_pending_machine_ids(db: Session, machine_ids: List[uuid.UUID]) -> Set[uuid.UUID]:
     if not machine_ids:
         return set()

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -94,6 +94,21 @@ def take_pending_close_shift(
         req.sent_at = now
     named = close_requests.named_shift_id(req)
     return {"requestId": str(req.id), "shiftId": str(named) if named else None}
+
+
+def pending_close_sources(db: Session, machine_ids: List[uuid.UUID]) -> Dict[uuid.UUID, Tuple[str, Optional[uuid.UUID]]]:
+    """
+    Per till waiting to be asked to close: `("z_run", runId)` or `("request", None)`.
+
+    A Z run's wins when both are pending — it is the one handed over first (and both
+    name the same shift, so one close answers both).
+    """
+    out: Dict[uuid.UUID, Tuple[str, Optional[uuid.UUID]]] = {
+        machine_id: ("request", None) for machine_id in close_requests.pending_machine_ids(db, machine_ids)
+    }
+    for machine_id, run_id in z_runs.close_shift_pending_runs(db, machine_ids).items():
+        out[machine_id] = ("z_run", run_id)
+    return out
 
 
 def close_shift_pending_machine_ids(db: Session, machine_ids: List[uuid.UUID]) -> Set[uuid.UUID]:

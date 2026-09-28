@@ -679,7 +679,7 @@ class TestApi:
 
         with patch.object(machines_router, "get_catalog_change_watermark_for_machine", return_value=None):
             row = machines_router._enrich_machine_status(
-                m, db, open_shifts_by_machine={}, pending_close_ids=set(),
+                m, db, open_shifts_by_machine={}, pending_close={},
                 awaiting_z={}, timezones={}, orphans={},
             )
 
