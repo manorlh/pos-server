@@ -5,7 +5,7 @@ contract is `docs/SHIFTS_API.md`; the plan is `pos-android/docs/shifts-plan.md`.
 
 ## Prerequisites
 
-- pos-server at migration head `a0b1c2d3e4f5` (take a `pg_dump` into `~/dev/pos-backups` first)
+- pos-server at migration head `e4f5a6b7c8d9` (take a `pg_dump` into `~/dev/pos-backups` first)
 - A till on the shifts build, paired and assigned to a shop, online (Ably connected)
 - A second till in the same shop for the multi-till cases
 - Dashboard user with `company_manager`, `shop_manager`, `distributor` or `super_admin`
@@ -21,9 +21,16 @@ contract is `docs/SHIFTS_API.md`; the plan is `pos-android/docs/shifts-plan.md`.
       after every document synced (`GET /shifts?machineId=…` shows `closeAcceptedAt`)
 - [ ] The X in the dashboard (`GET /shifts/{id}`) equals the printed X; `totalsMismatch`
       is false (a discounted shift must not be flagged)
+- [ ] With a document discount: `serverTotals.grossSales` = the printed gross,
+      `discountsTotal` = the printed discounts, `totalSales` = gross − discounts; the shift
+      page shows gross and discounts above the net sales
+- [ ] A shift whose till X disagrees: the mismatch table's "בענן" column is filled for
+      gross sales and discounts too (not empty)
 - [ ] Close without counting: `countedCash` and `discrepancy` are null, not 0
 - [ ] Open a second shift at once and sell; the machines page shows
       `closedShiftsAwaitingZ: 1`
+- [ ] The machines row badge reads "משמרת #N פתוחה" with the till's own number
+      (`openShiftSequence` on `GET /machines`), and the machine page links that shift
 
 ## Offline close, then a new shift
 
@@ -32,6 +39,28 @@ contract is `docs/SHIFTS_API.md`; the plan is `pos-android/docs/shifts-plan.md`.
 - [ ] No document of N+1 lands in N (compare `GET /shifts/{id}` counts with the till)
 - [ ] While close(N) is still queued, a document of N+1 is answered
       `409 another_shift_open` and retried later — never `rejected`
+
+## Remote shift close without a Z
+
+- [ ] Machines page → row menu → "סגור משמרת מרחוק" (shown only for a till with an open
+      shift, to a Z-producing role): the dialog explains no count and no Z; confirm
+- [ ] Online till: it receives `close-shift` at once, closes unattended (no count), tells
+      the cashier, and offers a new shift; the dialog goes `waiting_close → closing →
+      completed` and shows the shift's sales, with links to its X and to the Z wizard
+- [ ] No Z was built; the shift appears in the wizard's closed shifts for the next Z
+- [ ] Offline till: the dialog waits (showing the till offline and its last reported
+      backlog); the till closes on its next heartbeat after it comes back
+- [ ] Card payment in flight: the dialog shows `card_in_flight`, then completes once the
+      payment settles
+- [ ] While waiting, "documents of the shift already in the cloud" rises as the till syncs
+- [ ] Close the dialog and ask again: the same request comes back (200) with its progress
+- [ ] "ביטול הבקשה": the heartbeat stops handing it over; if the till already had it, the
+      shift still closes and waits for the next Z; the request stays `cancelled`
+- [ ] A Z run already closing the till: the remote close is refused (`z_run_in_progress`)
+- [ ] A remote close pending, then a Z run including that till's open shift: one close on
+      the till completes both, and the Z is built
+- [ ] Not answered for 36 h: the request becomes `expired`
+- [ ] A shop manager may close a till of their own shop, not of another shop
 
 ## Z from the dashboard
 
@@ -46,10 +75,15 @@ contract is `docs/SHIFTS_API.md`; the plan is `pos-android/docs/shifts-plan.md`.
 - [ ] Offline till with an open shift: the run waits; the till closes on its next heartbeat
 - [ ] Card payment in flight on the till: it defers (`card_in_flight`), the item shows it,
       and it closes once the payment settles
+- [ ] While a till's item waits, the progress line shows the till online/offline, its last
+      reported unsent documents with the reading's age, and how many of the closing
+      shift's documents the cloud holds
 - [ ] Stuck till: `proceed` excluding it builds the Z without it; its shifts stay for the next Z
 - [ ] A second run for a till already in a live run is refused (`z_run_in_progress`)
 - [ ] `cancel` a waiting run; a later ack/close from the till builds nothing
-- [ ] Tenant `zScope: machine`: a run with two tills is refused; one till per Z works
+- [ ] Tenant settings dialog → "הפקת דו״ח Z" → "דו״ח Z לכל קופה", save: a run with two
+      tills is refused (`z_scope_machine_one_till`); one till per Z works. Switch back to
+      "דו״ח Z לסניף". The option is absent from company and shop settings
 - [ ] Z detail (`GET /z-reports/{id}`): business header, per-till sections with first/last
       document number, tenders, discounts, refunds, VAT, tips, and cash (float, expected,
       counted, over/short — null if any shift was uncounted)
@@ -85,5 +119,9 @@ curl -X POST "${H[@]}" -H "Content-Type: application/json" \
   -d '{"excludeMachineIds":["'$STUCK'"]}' "$API/z-runs/$RUN/proceed"
 
 curl "${H[@]}" "$API/z-reports/$Z"
+
+curl -X POST "${H[@]}" "$API/machines/$MACHINE/close-shift"     # remote close, no Z
+curl "${H[@]}" "$API/shift-close-requests/$REQ"
+curl -X POST "${H[@]}" "$API/shift-close-requests/$REQ/cancel"
 curl "${H[@]}" "$API/shifts?shopId=$SHOP&awaitingZ=true"
 ```

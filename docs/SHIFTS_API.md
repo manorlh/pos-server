@@ -118,7 +118,7 @@ Request
     "totalTips": 20.00, "vatTotal": 510.93,
     "transactionsCount": 41
   },
-  "closeRequestId": "…",         // the requestId of a remote close-shift instruction, else null/absent
+  "closeRequestId": "…",         // the requestId of a remote close-shift instruction (a Z run's or a standalone one, §2.14), else null/absent
 
   // Optional, recommended: lets the cloud create the shift if its open event was lost.
   "businessDate": "2026-09-27", "sequenceNumber": 12, "openedAt": "…",
@@ -154,6 +154,10 @@ Responses
   did not carry `businessDate` + `openedAt`. Send the open (§1.1), then retry.
 - `403 {"detail": "shift_belongs_to_another_machine"}`.
 
+A `closeRequestId` the cloud does not know for this till is ignored (the close is still
+accepted). An accepted close also completes every pending instruction that named this
+shift, whichever `requestId` the close carried.
+
 A close for a shift that was closed administratively (dead-till recovery, §2.9) returns
 `200 duplicate` with that shift's figures. When the close answers a remote instruction
 (`closeRequestId`) and it was the last till the Z run waited for, the Z is built in the same
@@ -182,7 +186,10 @@ are read from any 200 (a duplicate included); an ack answered 404 or 410 is drop
   accepted with all documents; an ack alone never makes it ready.
 - `failed`: the till gave up (item → `failed`).
 
-`200 {"ok": true, "itemStatus": "<z-run item status>"}`; `404 {"detail": "close_request_not_found"}`.
+The `requestId` is either a Z run item or a standalone close request (§2.14); the two
+are resolved by id and behave the same for every phase.
+
+`200 {"ok": true, "itemStatus": "<z-run item status, or the close request's status>"}`; `404 {"detail": "close_request_not_found"}`.
 An ack for a cancelled/expired/finished run is accepted and changes nothing.
 
 ### 1.5 `GET /sync/{machineId}/shifts/last-closed`
@@ -226,6 +233,9 @@ X reprints); the close response only carries it when the shift is already in a Z
 `pendingCloseDay` is gone. The till purges synced documents of shifts with
 `sequenceNumber <= zReportedThroughSequence`. `pendingCloseShift` is repeated on every beat
 until the till's close is accepted (or the run ends), so the till must dedupe by `requestId`.
+It comes from a Z run or from a standalone close request (§2.14) — one per beat, a Z
+run's first. When both are pending they name the same shift, and the one accepted close
+completes both.
 
 ### 1.7 Ably event `close-shift`
 
@@ -237,7 +247,8 @@ On channel `pos:{tenantId}:{machineId}`:
 ```json
 {"serverTime": "…", "requestId": "…", "shiftId": "…", "initiatedBy": "manager name"}
 ```
-Same instruction as `pendingCloseShift`; the till must treat both idempotently by `requestId`.
+Same instruction as `pendingCloseShift`, from a Z run or a standalone close request
+(§2.14); the till must treat both idempotently by `requestId`.
 `shiftId` is the shift the cloud believes is open (may be null if the cloud has not seen the
 open yet — close whatever is open, and send its id in the ack).
 
@@ -254,8 +265,10 @@ User JWT + `X-Tenant-Id`. Role scoping as the rest of the dashboard (shop-scoped
 their shop, company managers their company tree, distributors their machines).
 **Producing a Z** (z-runs create/proceed/cancel, administrative close) needs the roles that
 could close a day before: `company_manager`, `shop_manager`, `distributor`, `super_admin`
-(`get_current_machine_admin`). Reading shifts / Z reports needs any signed-in role that can
-see the shop.
+(`get_current_machine_admin`). So does closing a till's shift remotely without a Z (§2.14),
+narrowed to the till: a distributor's own terminals, a company manager's company tree, a
+shop manager's shop. Reading shifts / Z reports needs any signed-in role that can see the
+shop.
 
 ### 2.1 `GET /shifts`
 Query: `shopId`, `machineId`, `status` (`open|closed`), `awaitingZ` (`true` = closed and not
@@ -349,7 +362,11 @@ It then is an ordinary Z candidate. Guards: 409 `shift_not_open`, 409 `terminal_
 ### 2.10 Machines list/detail (status light)
 Fields renamed on `GET /machines` / `GET /machines/{id}`: `tradingDayStatus` → `shiftStatus`
 (`open|none`), `tradingDayId` → `openShiftId`, `dayDate` → `businessDate`, `openedAt`,
-`openedBy` (name), `closeDayPending` → `closeShiftPending`; new `closedShiftsAwaitingZ` (count), `orphanDocuments` (documents that named no shift).
+`openedBy` (name), `closeDayPending` → `closeShiftPending` (a Z run **or** a standalone
+close request, §2.14, is waiting for this till's close); new `closedShiftsAwaitingZ` (count),
+`orphanDocuments` (documents that named no shift), `openShiftSequence` (the open shift's
+`sequenceNumber`, null if none open or unnumbered — so a list can name "משמרת #N" without
+fetching the shift).
 `status`: `no_open_shift` replaces `day_closed`, `shift_close_pending` replaces `close_pending`.
 `statusFlags`: `shift_open_past_its_date` (replaces `day_open_past_its_date`),
 `closed_shifts_awaiting_z` (closed un-Z'd shifts with a businessDate before today); "today" is
@@ -364,12 +381,49 @@ Transaction reads (`TransactionOut`, list items) carry `shiftId` instead of `tra
 
 ### 2.12 Tenant setting
 `PATCH /tenants/{id}/settings {"zScope": "shop" | "machine"}` (default `shop`). Read from the
-tenant level only.
+tenant level only; `PATCH /companies/{id}/settings` and `/shops/{id}/settings` refuse it
+with `400 "zScope is a tenant setting"`. Same guard as the tenant's other settings
+(super admin, or tenant owner/admin). The dashboard edits it in the tenant settings dialog
+("הפקת דו״ח Z"). `machine` makes `POST /z-runs` refuse more than one till
+(`422 z_scope_machine_one_till`); it affects only Zs produced after the change.
 
 ### 2.13 Day summary `GET /reports/day-summary`
 Unchanged path and totals. Groups Zs by the Z's `businessDate`. `contributors` are per-till
 sections of each Z (one row per Z × till: `zReportId`, `shopSequenceNumber`, `machineId`,
 `machineName`, …); `machineCount` = distinct tills across those sections.
+
+### 2.14 Remote shift close without a Z
+
+An operator closes one till's open shift from the dashboard, without producing a Z. The
+till receives **exactly** a Z run's instruction (§1.6 heartbeat `pendingCloseShift`, §1.7
+Ably `close-shift`), with the request's id as `requestId`, so a till in the field needs no
+change: its `shift-close/ack` (§1.4) and its close's `closeRequestId` (§1.3) resolve to the
+request. It closes unattended (no count). The request completes only when the close is
+**accepted** with every document; no Z is built, and the closed shift is an ordinary
+candidate for the shop's next Z.
+
+`POST /machines/{machineId}/close-shift` (no body) → `201` **ShiftCloseRequest** (§3.8), or
+`200` with the request already pending for this till (a second click sends nothing new).
+- `409 {"detail": "no_open_shift"}` — neither the cloud nor the till's heartbeat has a shift open.
+- `409 {"detail": "machine_not_assigned"}` — the till has no shop.
+- `409 {"detail": "z_run_in_progress:<runId>"}` — a Z run is already closing this till's shift.
+- `403` / `404` as the other machine actions. Roles: §2 (machine admin, narrowed to the till).
+
+A Z run started while a request is pending is allowed: its item names the same open shift,
+and the one accepted close completes both (and builds the Z if it was the last till).
+
+`GET /shift-close-requests/{id}` → ShiftCloseRequest · `404`. Sweeps expiry, and completes a
+pending request whose shift the cloud already holds closed (e.g. closed administratively).
+
+`POST /shift-close-requests/{id}/cancel` → ShiftCloseRequest (`cancelled`) · `409
+request_not_pending`. The heartbeat stops handing it over; a till that already received it
+still closes its shift, which then waits for the next Z. Its later ack or close changes
+nothing on the request.
+
+Statuses: `waiting_close` (sent, not acknowledged) → `closing` (`received` or `deferred` ack;
+`deferred` keeps `errorCode`, e.g. `card_in_flight`) → `completed` (close accepted). Ends
+early as `failed` (a `failed` ack), `expired` (36 h after creation, like a Z run's items) or
+`cancelled`.
 
 ---
 
@@ -400,6 +454,8 @@ Over the shift's documents with status `completed | refunded | partial_refund`:
 |---|---|
 | `transactionsCount` | number of those documents (sales + credit notes) |
 | `totalSales` | Σ sales (non-credit-note) of `totalAmount − documentDiscount` (tips excluded) |
+| `grossSales` | Σ sales of `totalAmount`, before document discounts (= `totalSales + discountsTotal`) |
+| `discountsTotal` | Σ sales of `documentDiscount` |
 | `totalRefunds` | Σ credit notes (type 330, or `refundOfTransactionId` set) of `totalAmount`, positive |
 | `totalCash` | Σ cash tender legs of sales − Σ cash legs of credit notes (tips excluded) |
 | `totalCard` | same for card legs |
@@ -415,8 +471,8 @@ Only keys the till sends are compared (tolerance 0.01); a non-numeric value is a
 
 | till key | compared with (server, same documents) |
 |---|---|
-| `totalSales` | **gross** sales: Σ `totalAmount` of sales (= `serverTotals.totalSales` + discounts) |
-| `totalDiscounts` or `discountsTotal` | Σ `documentDiscount` of sales |
+| `totalSales` | **gross** sales: `serverTotals.grossSales` (Σ `totalAmount` of sales) |
+| `totalDiscounts` or `discountsTotal` | `serverTotals.discountsTotal` (Σ `documentDiscount` of sales) |
 | `totalRefunds` | `serverTotals.totalRefunds` |
 | `totalCash`, `totalCard` | `serverTotals.totalCash`, `.totalCard` (tender legs, sales − credit notes, tips excluded) |
 | `totalTips` | `serverTotals.totalTips` |
@@ -424,7 +480,10 @@ Only keys the till sends are compared (tolerance 0.01); a non-numeric value is a
 | `transactionsCount` | `serverTotals.transactionsCount` |
 
 Note the asymmetry on purpose: `serverTotals.totalSales` (and every Z) is **net of document
-discounts** — the money collected — while the till's `totalSales` is its line totals.
+discounts** — the money collected — while the till's `totalSales` is its line totals. The
+server stores both (`grossSales`, `discountsTotal`) so the two can be shown side by side.
+Shifts closed before these were stored were backfilled from their documents (a shift
+already in a Z counts only the documents that reached the cloud before that Z was built).
 
 ### 3.4 ZRun
 ```json
@@ -436,7 +495,11 @@ discounts** — the money collected — while the till's `totalSales` is its lin
     "id", "machineId", "machineName",
     "throughShiftId", "closeShiftId",
     "status": "waiting_close|closing|ready|excluded|failed|expired",
-    "errorCode", "errorMessage", "sentAt", "receivedAt", "readyAt", "updatedAt"
+    "errorCode", "errorMessage", "sentAt", "receivedAt", "readyAt", "updatedAt",
+    "online": true,                  // the till's reachability, as the status light reads it
+    "pendingDocuments": 3,           // the till's LAST REPORTED backlog (a reading, not live); null = never reported
+    "pendingAsOf": "…",              // when that reading was taken
+    "documentsOnCloud": 41           // while waiting_close/closing: documents of the closing shift the cloud holds; else null
   }]
 }
 ```
@@ -492,6 +555,21 @@ Taken from tenant → company → shop settings (`businessInfo` overrides, then 
 shop records) at build time. Zs that existed before this was added were backfilled from the
 settings at migration time (`capturedAt` = then).
 
+### 3.8 ShiftCloseRequest (§2.14)
+```json
+{
+  "id", "machineId", "machineName", "shopId",
+  "shiftId": "…",                 // the shift asked to close (null only if nobody named one yet)
+  "status": "waiting_close|closing|completed|failed|expired|cancelled",
+  "errorCode", "errorMessage",
+  "createdAt", "updatedAt", "expiresAt", "createdByUserId",
+  "sentAt", "receivedAt", "completedAt",
+  "online", "pendingDocuments", "pendingAsOf",   // as on a Z run item (§3.4)
+  "documentsOnCloud": 12,         // while pending; null once ended
+  "shift": ShiftSummary | null    // the shift being closed; its X once completed
+}
+```
+
 ---
 
 ## Deviations from the plan
@@ -510,3 +588,6 @@ settings at migration time (`capturedAt` = then).
 - Shifts also store the approver (`approved_by_user_id`/`approved_by_pos_user_id`), cash/card
   tip split and `close_accepted_at`; the heartbeat's reported open shift is stored on the machine.
 - `POST /machines/close-day` and `GET /close-day-requests/{id}` return 410 (replaced by z-runs).
+- A shift can be closed remotely without a Z (§2.14, `shift_close_requests`), over the same
+  till wire path as a Z run's close; the plan had remote close only inside a Z run.
+- Shifts store `grossSales` and `discountsTotal` beside the net `totalSales` (§3.2).
