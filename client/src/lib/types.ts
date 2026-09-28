@@ -352,6 +352,14 @@ export interface PosMachine {
   openedBy?: string;
   /** A Z run or a remote close has asked this till to close its shift and waits for it. */
   closeShiftPending?: boolean;
+  /**
+   * Which of the two is waiting: `z_run` (close it through that run, not a second
+   * request) or `request` (a standalone remote close). Null when none is, or from a
+   * server that does not say.
+   */
+  pendingCloseSource?: 'z_run' | 'request' | null;
+  /** The Z run waiting for this till's close, when `pendingCloseSource` is `z_run`. */
+  pendingZRunId?: string | null;
   /** Closed shifts of this till that no Z has taken yet. */
   closedShiftsAwaitingZ?: number | null;
   /** Documents of this till that named no shift. No Z takes them. */

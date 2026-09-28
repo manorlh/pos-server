@@ -344,21 +344,29 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
   // A URL is user input: it can name a shop from another company, or a machine
   // that was decommissioned. Each check waits for its own list to arrive, so a
   // slow request never looks like a missing entity.
+  //
+  // A level the *path* names is never pruned: `/dashboard/machines/<id>` is that
+  // machine's page, and the page itself asks the server for it. The lists here are not
+  // proof it is missing — a removed till, a till with no shop, or the 101st till are
+  // real and reachable by id, yet absent from `GET /machines` — and a prune could not
+  // take the id out of the path anyway: it would only replace the URL with itself, over
+  // and over.
   useEffect(() => {
     if (!activeTenantId) return;
     const next: ScopeSelection = { ...urlSelection };
+    const implied = pathScope(pathname);
 
     if (next.companyId && companiesQuery.isSuccess && !findBySameId(companies, next.companyId)) {
-      next.companyId = null;
-      next.shopId = null;
-      next.machineId = null;
+      next.companyId = implied.companyId ? next.companyId : null;
+      next.shopId = implied.shopId ? next.shopId : null;
+      next.machineId = implied.machineId ? next.machineId : null;
     }
     if (next.machineId && machinesQuery.isSuccess) {
       const machine = findBySameId(machines, next.machineId);
       if (!machine) {
-        next.machineId = null;
+        if (!implied.machineId) next.machineId = null;
       } else if (next.shopId && !sameId(machine.shopId, next.shopId)) {
-        next.machineId = null;
+        if (!implied.machineId) next.machineId = null;
       } else if (!next.shopId && machine.shopId) {
         // A shared link can name a device and nothing else. Filling in the levels
         // above it is not "remembering something the user did not choose" — it is
@@ -370,16 +378,16 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
     if (next.shopId && shopsQuery.isSuccess) {
       const shop = findBySameId(shops, next.shopId);
       if (!shop) {
-        next.shopId = null;
-        next.machineId = null;
+        if (!implied.shopId) next.shopId = null;
+        if (!implied.machineId) next.machineId = null;
       } else if (next.companyId && !sameId(shop.companyId, next.companyId)) {
         // The shop is real but belongs to a different company than the one in
         // scope. The company the user named wins; the stale shop goes — unless the
         // shop sits somewhere under that company, which is the nested case.
         const subtree = companySubtreeIds(tree, next.companyId);
         if (!subtree.some((id) => sameId(id, shop.companyId))) {
-          next.shopId = null;
-          next.machineId = null;
+          if (!implied.shopId) next.shopId = null;
+          if (!implied.machineId) next.machineId = null;
         }
       } else if (!next.companyId && shop.companyId) {
         next.companyId = shop.companyId;
@@ -394,6 +402,7 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
     companiesQuery.isSuccess,
     machines,
     machinesQuery.isSuccess,
+    pathname,
     shops,
     shopsQuery.isSuccess,
     tree,

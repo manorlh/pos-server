@@ -30,6 +30,12 @@ function batteryStatus(value: unknown): PosMachine['batteryStatus'] {
     : 'unknown';
 }
 
+/** What is waiting for this till's close: a Z run, a standalone request, or nothing known. */
+function closeSource(value: unknown): PosMachine['pendingCloseSource'] {
+  const s = nullableString(value);
+  return s === 'z_run' || s === 'request' ? s : null;
+}
+
 /** Normalize GET /machines rows (camelCase or snake_case, enum quirks). */
 export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
   const pairingRaw = raw.pairingStatus ?? raw.pairing_status;
@@ -72,6 +78,8 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     closedShiftsAwaitingZ: nullableNumber(raw.closedShiftsAwaitingZ ?? raw.closed_shifts_awaiting_z),
     orphanDocuments: nullableNumber(raw.orphanDocuments ?? raw.orphan_documents),
     reportedOpenShiftId: nullableString(raw.reportedOpenShiftId ?? raw.reported_open_shift_id),
+    pendingCloseSource: closeSource(raw.pendingCloseSource ?? raw.pending_close_source),
+    pendingZRunId: nullableString(raw.pendingZRunId ?? raw.pending_z_run_id),
     // The resolved status light and its flags. Passed through as the server sent them:
     // the light is decided server-side and must not be re-derived here.
     status: (nullableString(raw.status) ?? undefined) as PosMachine['status'],

@@ -20,7 +20,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Monitor, Store, Wifi, WifiOff } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
-import { api, fetchMachines, fetchShifts, fetchShops, fetchZReports } from '@/lib/api';
+import { api, fetchMachine, fetchShifts, fetchShops, fetchZReports } from '@/lib/api';
+import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
 import { usePageScope, useSyncScopeFromRoute } from '@/lib/scope';
 import { findBySameId } from '@/lib/entityLookup';
@@ -30,6 +31,7 @@ import { MachineHealthPanel, ClockSkewChip } from '@/components/dashboard/machin
 import { SalesStats } from '@/components/dashboard/sales-stats';
 import { MachineCatalogCard } from '@/components/dashboard/machines/machine-catalog';
 import { MachineShiftSummary } from '@/components/dashboard/machines/machine-row';
+import { DeadTillRecovery } from '@/components/dashboard/dead-till-recovery';
 import {
   RemoteShiftCloseDialog,
   canCloseShiftRemotely,
@@ -62,6 +64,13 @@ import type {
 
 const RECENT_LIMIT = 10;
 
+/** The server's online window, used only when a response predates its own `online`. */
+const ONLINE_WINDOW_MS = 90 * 1000;
+
+function httpStatus(err: unknown): number | undefined {
+  return (err as { response?: { status?: number } } | null)?.response?.status;
+}
+
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="space-y-0.5">
@@ -84,10 +93,22 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
 
   usePageScope({ maxLevel: 'machine', silent: true });
 
-  const machinesQuery = useQuery<PosMachine[]>({ queryKey: ['machines'], queryFn: fetchMachines });
+  // The machine itself, by id — not found in the list: the list holds active tills
+  // only, is shop-scoped for some roles and pages at 100, and a removed or shop-less
+  // till must still have a page (its dead-till recovery lives here).
+  const machineQuery = useQuery<PosMachine>({
+    queryKey: ['machine', id],
+    queryFn: () => fetchMachine(id),
+    retry: (count, err) => {
+      const code = httpStatus(err);
+      return code !== 403 && code !== 404 && count < 2;
+    },
+    // A close someone asked for is on its way: keep the shift line honest meanwhile.
+    refetchInterval: (q) => (q.state.data?.closeShiftPending ? 15_000 : false),
+  });
   const shopsQuery = useQuery<Shop[]>({ queryKey: ['shops'], queryFn: () => fetchShops() });
 
-  const machine = findBySameId(machinesQuery.data ?? [], id);
+  const machine = machineQuery.data;
   const shop = findBySameId(shopsQuery.data ?? [], machine?.shopId);
   const registerNumber = machine ? registerNumberOf(machine) : null;
   const registerLabel =
@@ -131,7 +152,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
     enabled: !!machine,
   });
 
-  if (machinesQuery.isLoading) {
+  if (machineQuery.isLoading) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-8 w-64" />
@@ -141,10 +162,19 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
   }
 
   if (!machine) {
+    const code = httpStatus(machineQuery.error);
+    const why =
+      code === 404
+        ? t('notFound')
+        : code === 403
+          ? t('forbidden')
+          : axiosErrorToToastMessage(machineQuery.error, t('loadFailed'));
     return (
       <div className="space-y-3">
         <h1 className="text-2xl font-bold">{tMachines('title')}</h1>
-        <p className="text-sm text-muted-foreground">{t('notFound')}</p>
+        <p className={`text-sm ${code === 404 || code === 403 ? 'text-muted-foreground' : 'text-destructive'}`}>
+          {why}
+        </p>
         <Link
           href="/dashboard/machines"
           className={buttonVariants({ variant: 'outline', size: 'sm' })}
@@ -154,6 +184,17 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
       </div>
     );
   }
+
+  const removed = machine.isActive === false;
+  const online =
+    typeof machine.online === 'boolean'
+      ? machine.online
+      : !!machine.lastHeartbeatAt &&
+        machineQuery.dataUpdatedAt - new Date(machine.lastHeartbeatAt).getTime() <= ONLINE_WINDOW_MS;
+  // As on the machines list: offered only for a terminal that is actually unreachable.
+  const showDeadTill = !removed && !online && machine.pairingStatus === 'assigned';
+  const zRows = zReports.data?.items ?? [];
+  const zSpansTills = zRows.some((r) => (r.machineCount ?? 1) > 1);
 
   return (
     <div className="space-y-6">
@@ -170,6 +211,11 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
             <Badge variant="outline">
               {tMachines(`pairingStatusLabels.${machine.pairingStatus}`)}
             </Badge>
+            {removed ? (
+              <Badge variant="destructive" title={t('removedHint')}>
+                {t('removed')}
+              </Badge>
+            ) : null}
             <ClockSkewChip machine={machine} />
           </div>
           {shop ? (
@@ -191,7 +237,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
               {tMachines('closeShiftRemotely')}
             </Button>
           ) : null}
-          {canProduceZ && machine.shopId && machine.pairingStatus === 'assigned' ? (
+          {canProduceZ && !removed && machine.shopId && machine.pairingStatus === 'assigned' ? (
             <Link
               href={zWizardHref(machine.shopId, machine.id)}
               className={buttonVariants({ size: 'sm' })}
@@ -267,6 +313,24 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           />
         </CardContent>
       </Card>
+
+      {removed ? (
+        <div className="rounded-md border bg-muted/40 p-3 text-sm">{t('removedNotice')}</div>
+      ) : null}
+
+      {showDeadTill ? (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              {t('deadTillTitle')}
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">{t('deadTillHint')}</p>
+          </CardHeader>
+          <CardContent>
+            <DeadTillRecovery m={machine} />
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader className="pb-2">
@@ -371,9 +435,11 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          {/* A Z is per shop, so these are the shop's Zs that took a shift of this till;
-              their figures cover every till in them. */}
-          <p className="px-4 pb-2 text-xs text-muted-foreground">{t('zReportsHint')}</p>
+          {/* A Z per shop covers every till in it; a tenant on one Z per till has Zs of
+              this till alone. Said from the Zs themselves, so it is true in both. */}
+          <p className="px-4 pb-2 text-xs text-muted-foreground">
+            {zSpansTills ? t('zReportsHint') : t('zReportsHintOwn')}
+          </p>
           <Table>
             <TableHeader>
               <TableRow>
@@ -391,14 +457,14 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
                     <Skeleton className="h-6 w-full" />
                   </TableCell>
                 </TableRow>
-              ) : (zReports.data?.items ?? []).length === 0 ? (
+              ) : zRows.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="py-6 text-center text-muted-foreground">
                     {t('noZReports')}
                   </TableCell>
                 </TableRow>
               ) : (
-                (zReports.data?.items ?? []).map((report) => (
+                zRows.map((report) => (
                   <TableRow key={report.id}>
                     <TableCell className="font-medium tabular-nums">
                       <Link href={`/dashboard/z-reports/${report.id}`} className="hover:underline">
@@ -480,6 +546,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
       </Card>
 
       <RemoteShiftCloseDialog
+        key={machine.id}
         machine={machine}
         open={closeShiftOpen}
         onOpenChange={setCloseShiftOpen}
