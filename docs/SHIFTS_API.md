@@ -280,6 +280,10 @@ Same instruction as `pendingCloseShift`, from a Z run or a standalone close requ
 (§2.14); the till must treat both idempotently by `requestId`.
 `shiftId` is the shift the cloud believes is open (may be null if the cloud has not seen the
 open yet — close whatever is open, and send its id in the ack).
+It may also be the id the till itself reported open on its heartbeat before its open event
+reached the cloud: a remote close of such a shift is accepted (the id is kept as the till's
+claim and tied to the shift when its open, a document or the close itself arrives), and the
+close is matched by `closeRequestId`, else by that shift id.
 
 ### 1.8 Removed — `410 {"detail": "upgrade_required"}`
 
@@ -524,7 +528,9 @@ already in a Z counts only the documents that reached the cloud before that Z wa
   "zReportId", "zNumber", "errorCode", "errorMessage",
   "items": [{
     "id", "machineId", "machineName",
-    "throughShiftId", "closeShiftId",
+    "throughShiftId",
+    "closeShiftId",                  // the shift the till is asked to close — the till's own claim
+                                     // (heartbeat/ack) while the cloud has not seen that shift yet
     "status": "waiting_close|closing|ready|excluded|failed|expired",
     "errorCode", "errorMessage", "sentAt", "receivedAt", "readyAt", "updatedAt",
     "online": true,                  // the till's reachability, as the status light reads it
@@ -590,7 +596,8 @@ settings at migration time (`capturedAt` = then).
 ```json
 {
   "id", "machineId", "machineName", "shopId",
-  "shiftId": "…",                 // the shift asked to close (null only if nobody named one yet)
+  "shiftId": "…",                 // the shift asked to close (null only if nobody named one yet);
+                                  // may be a shift only the till has reported so far (see §1.7)
   "status": "waiting_close|closing|completed|failed|expired|cancelled",
   "errorCode", "errorMessage",
   "createdAt", "updatedAt", "expiresAt", "createdByUserId",

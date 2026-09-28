@@ -175,12 +175,13 @@ def make_world() -> World:
     engine = create_engine("sqlite://")
 
     @event.listens_for(engine, "connect")
-    def _fk_off(dbapi_connection, _record):  # pragma: no cover - wiring
-        dbapi_connection.execute("PRAGMA foreign_keys=OFF")
+    def _fk_on(dbapi_connection, _record):  # pragma: no cover - wiring
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
 
-    for name in TABLES:
-        if name in Base.metadata.tables:
-            Base.metadata.tables[name].create(engine)
+    # Every table, not only TABLES: with foreign keys enforced, a row needs every table
+    # its keys point at (a machine's pairing session, a shift's approver…) to exist.
+    for table in Base.metadata.sorted_tables:
+        table.create(engine)
     db = sessionmaker(bind=engine)()
 
     tenant = Tenant(id=uuid.uuid4(), name="T", slug="t", timezone="Asia/Jerusalem")

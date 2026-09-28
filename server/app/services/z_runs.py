@@ -36,7 +36,7 @@ from app.models.z_run import (
 )
 from app.services.close_progress import documents_on_cloud, till_backlog
 from app.services.machine_status import is_online
-from app.services.shifts import is_foreign_shift
+from app.services.shifts import is_foreign_shift, shift_exists
 from app.services.z_builder import ZBuildRefused, build_z, shift_order_key, unreported_shifts
 
 logger = logging.getLogger(__name__)
@@ -167,6 +167,25 @@ def _reported_open_is_live(db: Session, machine: POSMachine) -> bool:
     return known is None or known[0] == ShiftStatus.OPEN
 
 
+def named_shift_id(item: ZRunItem) -> Optional[uuid.UUID]:
+    """
+    The shift this item asks the till to close: the cloud's row once it has one, else
+    the id the till claimed (`claimed_shift_id`, no foreign key — the cloud may not
+    have seen that shift yet).
+    """
+    return item.close_shift_id or item.claimed_shift_id
+
+
+def _name_shift(db: Session, item: ZRunItem, shift_id: Optional[uuid.UUID]) -> None:
+    """Name `shift_id` on the item: in the keyed column if the cloud holds it, else as a claim."""
+    if shift_id is None:
+        return
+    if shift_exists(db, shift_id):
+        item.close_shift_id = shift_id
+    else:
+        item.claimed_shift_id = shift_id
+
+
 def _initiator(user: User) -> str:
     return user.username or user.email or str(user.id)
 
@@ -181,7 +200,7 @@ def _send_close(machine: POSMachine, item: ZRunItem, user: User, now: datetime) 
         str(machine.tenant_id),
         str(machine.id),
         str(item.id),
-        str(item.close_shift_id) if item.close_shift_id else None,
+        str(named_shift_id(item)) if named_shift_id(item) else None,
         _initiator(user),
     )
     item.sent_at = now
@@ -253,8 +272,10 @@ def create_z_run(
                     status_code=status.HTTP_400_BAD_REQUEST, detail="through_shift_with_open_shift"
                 )
             item.status = ZRunItemStatus.WAITING_CLOSE
-            item.close_shift_id = (
-                cand.open_shift.id if cand.open_shift is not None else machine.reported_open_shift_id
+            _name_shift(
+                db,
+                item,
+                cand.open_shift.id if cand.open_shift is not None else machine.reported_open_shift_id,
             )
             item.through_shift_id = cand.open_shift.id if cand.open_shift is not None else None
             to_notify.append((machine, item))
@@ -470,10 +491,10 @@ def apply_close_shift_ack(
             item.error_message = None
         if (
             shift_id is not None
-            and item.close_shift_id is None
+            and named_shift_id(item) is None
             and not is_foreign_shift(db, machine, shift_id)
         ):
-            item.close_shift_id = shift_id
+            _name_shift(db, item, shift_id)
     elif phase == "completed":
         # Informational. The item becomes ready when the close itself is accepted.
         pass
@@ -513,8 +534,8 @@ def on_shift_close_accepted(
     if not items:
         return None
     match = next((i for i in items if shift.close_request_item_id and i.id == shift.close_request_item_id), None)
-    match = match or next((i for i in items if i.close_shift_id == shift.id), None)
-    match = match or next((i for i in items if i.close_shift_id is None), None)
+    match = match or next((i for i in items if named_shift_id(i) == shift.id), None)
+    match = match or next((i for i in items if named_shift_id(i) is None), None)
     if match is None:
         return None
     run = lock_run(db, match.run)
@@ -552,7 +573,7 @@ def take_pending_close_shift(db: Session, machine: POSMachine, *, now: Optional[
         item.sent_at = now
     return {
         "requestId": str(item.id),
-        "shiftId": str(item.close_shift_id) if item.close_shift_id else None,
+        "shiftId": str(named_shift_id(item)) if named_shift_id(item) else None,
     }
 
 
@@ -583,7 +604,7 @@ def run_to_out(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> dic
     already holds.
     """
     waiting = [i for i in run.items if i.status in PENDING_ITEM_STATUSES]
-    held = documents_on_cloud(db, [i.close_shift_id for i in waiting])
+    held = documents_on_cloud(db, [named_shift_id(i) for i in waiting])
     z_number = None
     if run.z_report_id is not None:
         from app.models.z_report import ZReport
@@ -609,7 +630,7 @@ def run_to_out(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> dic
                 "machineId": i.machine_id,
                 "machineName": i.machine.name if i.machine is not None else None,
                 "throughShiftId": i.through_shift_id,
-                "closeShiftId": i.close_shift_id,
+                "closeShiftId": named_shift_id(i),
                 "status": i.status,
                 "errorCode": i.error_code,
                 "errorMessage": i.error_message,
@@ -619,8 +640,8 @@ def run_to_out(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> dic
                 "updatedAt": i.updated_at,
                 **till_backlog(i.machine, now=now),
                 "documentsOnCloud": (
-                    held.get(i.close_shift_id)
-                    if i.status in PENDING_ITEM_STATUSES and i.close_shift_id is not None
+                    held.get(named_shift_id(i))
+                    if i.status in PENDING_ITEM_STATUSES and named_shift_id(i) is not None
                     else None
                 ),
             }

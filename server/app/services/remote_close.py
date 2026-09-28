@@ -83,7 +83,8 @@ def take_pending_close_shift(
         return None
     if req.sent_at is None:
         req.sent_at = now
-    return {"requestId": str(req.id), "shiftId": str(req.shift_id) if req.shift_id else None}
+    named = close_requests.named_shift_id(req)
+    return {"requestId": str(req.id), "shiftId": str(named) if named else None}
 
 
 def close_shift_pending_machine_ids(db: Session, machine_ids: List[uuid.UUID]) -> Set[uuid.UUID]:

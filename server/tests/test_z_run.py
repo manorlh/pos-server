@@ -421,7 +421,8 @@ class TestRemoteClose:
         unseen = uuid.uuid4()
         till.reported_open_shift_id = unseen
         r = run(w, sel(till))
-        assert r.items[0].close_shift_id == unseen
+        assert ZR.named_shift_id(r.items[0]) == unseen
+        assert r.items[0].close_shift_id is None  # no such shift in the cloud yet: no FK row
 
         body = ShiftCloseIn.model_validate({
             "closedAt": NOW.isoformat(), "transactionIds": [], "closeRequestId": str(r.items[0].id),

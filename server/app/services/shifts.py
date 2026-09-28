@@ -121,6 +121,36 @@ def refuse_foreign_shift(db: Session, machine: POSMachine, shift_id: Optional[uu
         )
 
 
+def shift_exists(db: Session, shift_id: Optional[uuid.UUID]) -> bool:
+    if shift_id is None:
+        return False
+    return db.query(Shift.id).filter(Shift.id == shift_id).first() is not None
+
+
+def link_claimed_shift(db: Session, shift: Shift) -> None:
+    """
+    A shift a remote close only knew as the till's claim has reached the cloud.
+
+    A Z run item or a close request may have been created for a shift the cloud had
+    not seen (the till reports its open shift on the heartbeat before the open event
+    is delivered). The claim is kept in `claimed_shift_id`, a column without a foreign
+    key; now that the shift exists, the keyed column is filled in too.
+    """
+    from app.models.shift_close_request import ShiftCloseRequest
+    from app.models.z_run import ZRunItem
+
+    db.query(ZRunItem).filter(
+        ZRunItem.claimed_shift_id == shift.id,
+        ZRunItem.machine_id == shift.machine_id,
+        ZRunItem.close_shift_id.is_(None),
+    ).update({ZRunItem.close_shift_id: shift.id}, synchronize_session="fetch")
+    db.query(ShiftCloseRequest).filter(
+        ShiftCloseRequest.claimed_shift_id == shift.id,
+        ShiftCloseRequest.machine_id == shift.machine_id,
+        ShiftCloseRequest.shift_id.is_(None),
+    ).update({ShiftCloseRequest.shift_id: shift.id}, synchronize_session="fetch")
+
+
 def open_shifts_for_machines(db: Session, machine_ids: List[uuid.UUID]) -> dict:
     if not machine_ids:
         return {}
@@ -270,6 +300,7 @@ def resolve_shift_for_document(
         # caller's savepoint is rolled back and the batch refused as a conflict — the
         # till retries and then finds the shift by id.
         raise ShiftConflict(None, [shift_id])
+    link_claimed_shift(db, shift)
     return shift
 
 
@@ -422,6 +453,7 @@ def report_shift_open(db: Session, machine: POSMachine, data: ShiftOpenIn) -> Sh
             status_code=status.HTTP_409_CONFLICT,
             detail=f"another_shift_open:{clash.id}" if clash else "another_shift_open",
         )
+    link_claimed_shift(db, shift)
     return shift
 
 
@@ -537,6 +569,7 @@ def apply_shift_close(
         )
         db.add(shift)
         db.flush()
+        link_claimed_shift(db, shift)
     elif shift.status == ShiftStatus.CLOSED:
         return shift, "duplicate"
 
