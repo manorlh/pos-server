@@ -48,6 +48,13 @@ class ZRunItemOut(BaseModel):
     received_at: Optional[datetime] = Field(None, alias="receivedAt")
     ready_at: Optional[datetime] = Field(None, alias="readyAt")
     updated_at: Optional[datetime] = Field(None, alias="updatedAt")
+    # The till's last report, as the status light reads it (a reading, not live).
+    online: Optional[bool] = None
+    pending_documents: Optional[int] = Field(None, alias="pendingDocuments")
+    pending_as_of: Optional[datetime] = Field(None, alias="pendingAsOf")
+    #: While waiting for the till's close: documents of the closing shift the cloud
+    #: already holds. Null once the item is ready/excluded/ended, or if the shift is unknown.
+    documents_on_cloud: Optional[int] = Field(None, alias="documentsOnCloud")
 
 
 class ZRunOut(BaseModel):

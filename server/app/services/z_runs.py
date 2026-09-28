@@ -34,6 +34,7 @@ from app.models.z_run import (
     ZRunItemStatus,
     ZRunStatus,
 )
+from app.services.close_progress import documents_on_cloud, till_backlog
 from app.services.machine_status import is_online
 from app.services.z_builder import ZBuildRefused, build_z, shift_order_key, unreported_shifts
 
@@ -565,7 +566,15 @@ def close_shift_pending_machine_ids(db: Session, machine_ids: List[uuid.UUID]) -
 # ── Out ───────────────────────────────────────────────────────────────────────
 
 
-def run_to_out(db: Session, run: ZRun) -> dict:
+def run_to_out(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> dict:
+    """
+    The run as the wizard shows it. Each item carries its till's last reported backlog
+    (`pendingDocuments`, `pendingAsOf`, `online`), and while the run still waits for the
+    till to close, `documentsOnCloud`: how many documents of the closing shift the cloud
+    already holds.
+    """
+    waiting = [i for i in run.items if i.status in PENDING_ITEM_STATUSES]
+    held = documents_on_cloud(db, [i.close_shift_id for i in waiting])
     z_number = None
     if run.z_report_id is not None:
         from app.models.z_report import ZReport
@@ -599,6 +608,12 @@ def run_to_out(db: Session, run: ZRun) -> dict:
                 "receivedAt": i.received_at,
                 "readyAt": i.ready_at,
                 "updatedAt": i.updated_at,
+                **till_backlog(i.machine, now=now),
+                "documentsOnCloud": (
+                    held.get(i.close_shift_id)
+                    if i.status in PENDING_ITEM_STATUSES and i.close_shift_id is not None
+                    else None
+                ),
             }
             for i in run.items
         ],

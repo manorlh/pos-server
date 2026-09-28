@@ -779,3 +779,61 @@ class TestTheRunIsSerialised:
 
         q = sessionmaker()().query(ZRun).filter(ZRun.id == uuid.uuid4()).with_for_update()
         assert "FOR UPDATE" in str(q.statement.compile(dialect=postgresql.dialect()))
+
+
+# ── Progress detail ──────────────────────────────────────────────────────────
+
+
+class TestProgressDetail:
+    def test_a_waiting_item_says_what_the_till_reported_and_the_cloud_holds(self, w):
+        till = w.tills[0]
+        till.pending_documents = 4
+        till.pending_count_at = NOW - timedelta(minutes=2)
+        open_shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        w.doc(till, open_shift, "10.00")
+        w.doc(till, open_shift, "12.00", status=TransactionStatus.CANCELLED)
+
+        out = ZR.run_to_out(w.db, run(w, sel(till)), now=NOW)
+
+        item = out["items"][0]
+        assert item["status"] == ZRunItemStatus.WAITING_CLOSE
+        assert item["pendingDocuments"] == 4
+        assert item["pendingAsOf"] == till.pending_count_at
+        assert item["online"] is True
+        # Every document of the shift counts, a declined tap too: the close lists them all.
+        assert item["documentsOnCloud"] == 2
+
+    def test_a_ready_item_carries_the_backlog_but_no_count(self, w):
+        till = w.tills[0]
+        till.last_heartbeat_at = NOW - timedelta(hours=3)
+        closed_shift(w, till, 1, [dict(total="10.00")])
+        r = run(w, sel(till, include_open=False))
+        # Keep the run waiting so the item is reported as ready rather than built.
+        r.status = ZRunStatus.WAITING
+
+        item = ZR.run_to_out(w.db, r, now=NOW)["items"][0]
+
+        assert item["status"] == ZRunItemStatus.READY
+        assert item["online"] is False
+        assert item["pendingDocuments"] is None
+        assert item["documentsOnCloud"] is None
+
+    def test_the_router_serialises_them(self, w):
+        from datetime import datetime, timezone
+
+        from app.routers import z_runs as zr_router
+        from app.schemas.z_run import ZRunOut
+
+        till = w.tills[0]
+        till.pending_documents = 1
+        w.shift(till, 1, status=ShiftStatus.OPEN)
+        # The router sweeps expiry on the real clock.
+        r = run(w, sel(till), now=datetime.now(timezone.utc))
+        w.db.commit()
+
+        out = zr_router.get_z_run(r.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+
+        dumped = ZRunOut.model_validate(out).model_dump(by_alias=True, mode="json")["items"][0]
+        assert dumped["pendingDocuments"] == 1
+        assert dumped["documentsOnCloud"] == 0
+        assert "online" in dumped and "pendingAsOf" in dumped
