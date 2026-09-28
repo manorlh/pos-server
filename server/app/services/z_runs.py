@@ -58,16 +58,52 @@ def z_scope_of(tenant: Optional[Tenant]) -> str:
 # ── Candidates ────────────────────────────────────────────────────────────────
 
 
-def shop_tills(db: Session, shop_id: uuid.UUID) -> List[POSMachine]:
+def is_seated_in(machine: POSMachine, shop_id: uuid.UUID) -> bool:
+    """An active till assigned to this shop right now — one that can be asked to close."""
     return (
+        bool(machine.is_active)
+        and machine.pairing_status == PairingStatus.ASSIGNED
+        and str(machine.shop_id) == str(shop_id)
+    )
+
+
+def shop_tills(db: Session, shop_id: uuid.UUID) -> List[POSMachine]:
+    """
+    The tills a Z of this shop can take shifts from.
+
+    Its active, assigned tills — and any other till, whatever its state, that still has
+    closed shifts **of this shop** no Z has taken: one retired or unpaired, or moved to
+    another shop, before that was refused while it had shifts awaiting a Z. Their shifts
+    are fiscal data of this shop; left out, they could never reach a Z at all.
+    """
+    seated = (
         db.query(POSMachine)
         .filter(
             POSMachine.shop_id == shop_id,
             POSMachine.is_active.is_(True),
             POSMachine.pairing_status == PairingStatus.ASSIGNED,
         )
-        .order_by(POSMachine.pos_number, POSMachine.name)
         .all()
+    )
+    seen = {m.id for m in seated}
+    stranded_ids = [
+        row[0]
+        for row in db.query(Shift.machine_id)
+        .filter(
+            Shift.shop_id == shop_id,
+            Shift.status == ShiftStatus.CLOSED,
+            Shift.z_report_id.is_(None),
+        )
+        .distinct()
+        .all()
+        if row[0] not in seen
+    ]
+    stranded = (
+        db.query(POSMachine).filter(POSMachine.id.in_(stranded_ids)).all() if stranded_ids else []
+    )
+    return sorted(
+        seated + stranded,
+        key=lambda m: (not is_seated_in(m, shop_id), m.pos_number or "", m.name or ""),
     )
 
 
@@ -94,8 +130,11 @@ class TillCandidates:
     closed: List[Shift]
 
 
-def till_candidates(db: Session, machine: POSMachine) -> TillCandidates:
-    shifts = unreported_shifts(db, machine.id)
+def till_candidates(
+    db: Session, machine: POSMachine, shop_id: Optional[uuid.UUID] = None
+) -> TillCandidates:
+    """This till's shifts awaiting a Z of `shop_id` (default: its current shop)."""
+    shifts = unreported_shifts(db, machine.id, shop_id=shop_id or machine.shop_id)
     open_shift = next((s for s in shifts if s.status == ShiftStatus.OPEN), None)
     closed = [s for s in shifts if s.status == ShiftStatus.CLOSED]
     # Only closed shifts *before* any open one can be taken without closing it first.
@@ -283,9 +322,11 @@ def create_z_run(
     for machine_id in wanted:
         sel = by_id[machine_id]
         machine = tills[machine_id]
-        cand = till_candidates(db, machine)
-        reported_open = _reported_open_is_live(db, machine)
-        has_open = cand.open_shift is not None or reported_open
+        cand = till_candidates(db, machine, shop.id)
+        # Only a till seated in this shop can be asked to close a shift; one retired or
+        # moved away is here for its closed shifts alone.
+        reported_open = is_seated_in(machine, shop.id) and _reported_open_is_live(db, machine)
+        has_open = is_seated_in(machine, shop.id) and (cand.open_shift is not None or reported_open)
         include_open = has_open if sel.include_open_shift is None else bool(sel.include_open_shift)
         include_open = include_open and has_open
 

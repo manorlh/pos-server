@@ -25,7 +25,9 @@ from app.schemas.z_run import (
     ZRunOut,
     ZRunProceedIn,
 )
+from app.routers.machines import _awaiting_z_by_machine, _tenant_timezones
 from app.services.machine_status import StatusInput, resolve_status
+from app.services.remote_close import close_shift_pending_machine_ids
 from app.services.shifts import orphan_documents_by_machine, shift_to_out
 from app.services import z_runs as ZR
 
@@ -76,23 +78,40 @@ def get_z_candidates(
     if ZR.expire_overdue_runs(db):
         db.commit()
     tills = ZR.shop_tills(db, shop.id)
-    live = ZR._live_items(db, [m.id for m in tills])
-    orphans = orphan_documents_by_machine(db, [m.id for m in tills])
+    ids = [m.id for m in tills]
+    live = ZR._live_items(db, ids)
+    orphans = orphan_documents_by_machine(db, ids)
+    # The same readings the machines page feeds the status light.
+    pending_close = close_shift_pending_machine_ids(db, ids)
+    awaiting = _awaiting_z_by_machine(db, ids)
+    timezones = _tenant_timezones(db, tills)
     machines = []
     for machine in tills:
-        cand = ZR.till_candidates(db, machine)
+        cand = ZR.till_candidates(db, machine, shop.id)
         light = resolve_status(
             StatusInput(
                 is_active=bool(machine.is_active),
-                pairing_status="assigned",
+                pairing_status=(
+                    machine.pairing_status.value
+                    if hasattr(machine.pairing_status, "value")
+                    else machine.pairing_status
+                ),
                 last_heartbeat_at=machine.last_heartbeat_at,
                 shift_open=cand.open_shift is not None,
+                business_date=cand.open_shift.business_date if cand.open_shift else None,
+                close_shift_pending=machine.id in pending_close,
+                oldest_awaiting_z_date=awaiting.get(machine.id, (0, None))[1],
+                timezone_name=timezones.get(machine.tenant_id),
                 pending_documents=machine.pending_documents,
                 pending_count=machine.pending_count,
                 pending_count_at=machine.pending_count_at,
+                clock_skew_ms=machine.clock_skew_ms,
+                battery_percent=machine.battery_percent,
+                mqtt_connected=machine.mqtt_connected,
             )
         )
         item = live.get(machine.id)
+        seated = ZR.is_seated_in(machine, shop.id)
         machines.append(
             ZCandidateMachineOut(
                 machine_id=machine.id,
@@ -103,10 +122,18 @@ def get_z_candidates(
                 pending_documents=light.pending_documents,
                 pending_as_of=light.pending_as_of,
                 open_shift=_summary(cand.open_shift) if cand.open_shift is not None else None,
-                till_reported_open_shift_id=machine.reported_open_shift_id,
+                # Only a claim a close instruction could still answer (UI-4): not one for a
+                # shift the cloud holds closed, not another till's, not a retired till's.
+                till_reported_open_shift_id=(
+                    machine.reported_open_shift_id
+                    if seated and ZR._reported_open_is_live(db, machine)
+                    else None
+                ),
                 closed_shifts=[_summary(s) for s in cand.closed],
                 active_run=ActiveRunOut(run_id=item.run_id, item_status=item.status) if item else None,
                 orphan_documents=orphans.get(machine.id, 0),
+                in_shop=seated,
+                is_active=bool(machine.is_active),
             )
         )
     return ZCandidatesOut(

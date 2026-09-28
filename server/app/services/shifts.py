@@ -177,6 +177,34 @@ def open_shifts_for_machines(db: Session, machine_ids: List[uuid.UUID]) -> dict:
     return out
 
 
+#: 409 details for a till that may not leave its shop (or be retired) yet.
+MACHINE_HAS_OPEN_SHIFT = "machine_has_open_shift"
+MACHINE_HAS_SHIFTS_AWAITING_Z = "machine_has_shifts_awaiting_z"
+
+
+def refuse_leaving_shop_with_shifts(db: Session, machine: POSMachine) -> None:
+    """
+    409 while the till has an open shift, or closed shifts no Z has taken.
+
+    For a shop change, an unpair or a retirement. The till's shifts are its shop's
+    fiscal record: moved, they were carried into the new shop's Z; retired or unpaired,
+    they could never reach a Z at all. Close the shift and produce the Z first.
+    """
+    if find_open_shift(db, machine.id) is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=MACHINE_HAS_OPEN_SHIFT)
+    awaiting = (
+        db.query(Shift.id)
+        .filter(
+            Shift.machine_id == machine.id,
+            Shift.status == ShiftStatus.CLOSED,
+            Shift.z_report_id.is_(None),
+        )
+        .first()
+    )
+    if awaiting is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=MACHINE_HAS_SHIFTS_AWAITING_Z)
+
+
 def z_reported_through_sequence(db: Session, machine_id: uuid.UUID) -> Optional[int]:
     """
     The highest shift sequence of this till that is in a Z, or None.

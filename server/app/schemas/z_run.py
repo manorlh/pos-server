@@ -98,6 +98,10 @@ class ZCandidateMachineOut(BaseModel):
     active_run: Optional[ActiveRunOut] = Field(None, alias="activeRun")
     #: Documents of this till stored with no shift (they named none). No Z takes them.
     orphan_documents: int = Field(0, alias="orphanDocuments")
+    #: False for a till listed only for its closed shifts of this shop: retired,
+    #: unpaired or since moved to another shop. It can be included, never asked to close.
+    in_shop: bool = Field(True, alias="inShop")
+    is_active: bool = Field(True, alias="isActive")
 
 
 class ZCandidatesOut(BaseModel):

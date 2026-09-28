@@ -322,14 +322,23 @@ in a Z), `from`, `to` (on `businessDate`), `page` (1), `pageSize` (50, max 200).
     "machineId": "…", "machineName": "…", "posNumber": "2",
     "online": true, "status": "online", "pendingDocuments": 0, "pendingAsOf": "…",
     "openShift": ShiftSummary | null,
-    "tillReportedOpenShiftId": "…" | null,   // from the heartbeat (the cloud may not have the open yet)
+    "tillReportedOpenShiftId": "…" | null,   // from the heartbeat (the cloud may not have the open yet); null unless a
+                                               // close could still answer it: not a shift the cloud holds closed,
+                                               // not another till's, not a till that is not in this shop
+    "inShop": true, "isActive": true,          // false for a till listed only for its closed shifts of this shop
     "orphanDocuments": 0,                      // documents of this till in no shift of its own (named none, or another till's); no Z takes them
     "closedShifts": [ShiftSummary, …],         // closed and not in a Z, oldest first (sequenceNumber, then openedAt)
     "activeRun": {"runId": "…", "itemStatus": "waiting_close"} | null
   }]
 }
 ```
-Only active, assigned tills of the shop. `ShiftSummary` = §3.1 without `tillTotals` /
+The shop's active, assigned tills — **plus any till, whatever its state, that still has closed
+shifts of this shop no Z has taken** (retired, unpaired, or moved to another shop before that
+was refused): `inShop: false`. Such a till's shifts can be included like any other; it is never
+asked to close a shift (`includeOpenShift` does not apply). A till's candidates are its shifts
+**worked in this shop** (`shopId` of the shift), never those of another shop. `status` is the
+same status light as the machines page (real pairing state, pending close, flags' inputs).
+`ShiftSummary` = §3.1 without `tillTotals` /
 `reconstructionBasis` — it includes `lateDocuments`, so a shift with late documents is
 visible before the Z is produced.
 
@@ -350,7 +359,8 @@ visible before the Z is produced.
   (a `throughShiftId` is then refused with 400 `through_shift_with_open_shift`).
 - `201` → **ZRun** (§3.4). When nothing needs closing the Z is built in the same request and
   the run comes back `completed` with `zReportId`.
-- `400 {"detail": "no_machines"}` · `400 {"detail": "machine_not_in_shop:<id>"}` ·
+- `400 {"detail": "no_machines"}` · `400 {"detail": "machine_not_in_shop:<id>"}` (not a candidate
+  till of this shop, §2.3) ·
   `400 {"detail": "through_shift_not_candidate:<machineId>"}` ·
   `409 {"detail": "nothing_to_report"}` (no till has a closed shift to include or an open one to close) ·
   `409 {"detail": "z_run_in_progress:<runId>"}` (a live run already covers one of these tills) ·
@@ -412,6 +422,14 @@ fetching the shift).
 `statusFlags`: `shift_open_past_its_date` (replaces `day_open_past_its_date`),
 `closed_shifts_awaiting_z` (closed un-Z'd shifts with a businessDate before today); "today" is
 the tenant's timezone.
+
+### 2.10b A till keeps its shop while it has shifts to report
+`PUT /machines/{id}` changing `shopId` (to another shop or to null) or setting `isActive: false`,
+`DELETE /machines/{id}`, and `DELETE /shops/{id}` (for each of its tills) are refused while the
+till has an open shift or closed shifts no Z has taken:
+`409 {"detail": "machine_has_open_shift"}` · `409 {"detail": "machine_has_shifts_awaiting_z"}`.
+Close the shift and produce the Z first. A till's shifts are its shop's fiscal record: moved,
+they would reach the wrong shop's Z; retired, no Z at all.
 
 ### 2.11 Removed
 `POST /machines/close-day`, `GET /close-day-requests/{id}` → 410 `upgrade_required` (use z-runs).

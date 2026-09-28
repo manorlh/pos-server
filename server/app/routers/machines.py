@@ -54,6 +54,7 @@ from app.services.shifts import (
     open_shifts_for_machines,
     orphan_documents_by_machine,
     recent_shift_zs,
+    refuse_leaving_shop_with_shifts,
     shift_to_out,
     z_reported_through_sequence,
 )
@@ -469,6 +470,12 @@ def update_machine(
 
     update_data = machine_data.model_dump(exclude_unset=True, by_alias=False)
 
+    # Leaving its shop, or being retired, with shifts that belong to it: refused (409).
+    leaving = "shop_id" in update_data and str(update_data["shop_id"]) != str(machine.shop_id)
+    retiring = update_data.get("is_active") is False and machine.is_active
+    if leaving or retiring:
+        refuse_leaving_shop_with_shifts(db, machine)
+
     if "shop_id" in update_data:
         sid = update_data["shop_id"]
         if sid is not None:
@@ -533,6 +540,9 @@ def delete_machine(
     if current_user.role == UserRole.DISTRIBUTOR:
         if machine.distributor_id != current_user.id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    # Before anything is touched: an open shift or shifts awaiting a Z keep the till.
+    refuse_leaving_shop_with_shifts(db, machine)
 
     db.query(PairingCode).filter(PairingCode.pos_machine_id == machine_id).delete(
         synchronize_session=False

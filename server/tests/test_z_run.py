@@ -305,9 +305,9 @@ class TestNoShiftIsInTwoZs:
         seen = []
         original = B.unreported_shifts
 
-        def spy(db, machine_id, *, lock=False):
+        def spy(db, machine_id, *, lock=False, **kw):
             seen.append(lock)
-            return original(db, machine_id, lock=lock)
+            return original(db, machine_id, lock=lock, **kw)
 
         monkeypatch.setattr(B, "unreported_shifts", spy)
         s = closed_shift(w, w.tills[0], 1, [])

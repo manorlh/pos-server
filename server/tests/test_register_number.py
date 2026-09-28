@@ -472,6 +472,14 @@ class TestCounterCreation:
 # ── Every place a machine gets a shop ────────────────────────────────────────
 
 class TestCallSites:
+    @pytest.fixture(autouse=True)
+    def _no_shifts(self, monkeypatch):
+        """These fakes hold no shifts; the shift guard is tested in test_shop_scoped_z.py."""
+        import app.services.shifts as shifts_service
+
+        monkeypatch.setattr(machines_router, "refuse_leaving_shop_with_shifts", lambda db, m: None)
+        monkeypatch.setattr(shifts_service, "refuse_leaving_shop_with_shifts", lambda db, m: None)
+
     def test_assigning_a_paired_machine_to_a_shop(self):
         """`POST /pairing/machines/{id}/assign`, and the two flows below, land here."""
         db = _Db()
