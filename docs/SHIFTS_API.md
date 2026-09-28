@@ -44,10 +44,14 @@ Request
 Responses
 - `200` → **Shift** object (§3.1). Cases:
   - unknown id → created `open`;
-  - known and still open → `openedAt`, `openingCash`, `openedByUserId`, `openedByName`,
-    `sequenceNumber` are corrected from the body (a sale can beat this event to the cloud and
-    create the shift with inferred values); `businessDate` is kept;
+  - known and still open → `businessDate`, `openedAt`, `openingCash`, `openedByUserId`,
+    `openedByName`, `sequenceNumber` are corrected from the body (a sale can beat this event to
+    the cloud and create the shift with inferred values);
   - known and closed → returned untouched.
+- A `sequenceNumber` at or below one this till already used (a reinstall resetting its
+  counter, say) is **accepted and flagged** — `sequenceOutOfOrder: true` on the Shift — never
+  refused: a refusal would jam the till's outbox. The dashboard should show it; a Z orders a
+  till's shifts by that number.
 - `409 {"detail": "another_shift_open:<openShiftId>"}` — the cloud still has a different
   shift of this till open. With a strictly ordered outbox this means the previous shift's
   close has not been accepted yet: deliver it first, then retry this.
@@ -113,7 +117,16 @@ always accepted and stored — a fiscal document is never dropped:
   `lateDocuments` count goes up; the next Z takes it;
 - shift already in a Z → the Z's figures are frozen, so the document is stored but not in
   the Z, and both the shift's and the Z's `lateDocuments` go up ("document arrived after Z").
-Only documents new to the cloud count; a re-push of a known one does not.
+Only documents new to the cloud count this way; a plain re-push of a known one does not. But
+for a shift already in a Z:
+- a known document **moved into** it (a re-push naming it, e.g. a former orphan) is not in the
+  Z's figures either and counts in `lateDocuments` of the shift and the Z;
+- a known document of it **re-pushed with different fiscal content** — number, document type,
+  `totalAmount`, `documentDiscount`, `vatAmount`, tip or its method, refund link, tender legs,
+  or whether its status counts as a sale — is stored as sent and counts in
+  `amendedDocuments` of the shift and the Z (whose figures stay as built). A status change
+  between two sale statuses (`completed` → `refunded` when its credit note is issued) is not
+  an amendment.
 
 ### 1.3 `POST /sync/{machineId}/shifts/{shiftId}/close` — close a shift (X)
 
@@ -141,7 +154,9 @@ Request
   },
   "closeRequestId": "…",         // the requestId of a remote close-shift instruction (a Z run's or a standalone one, §2.14), else null/absent
 
-  // Optional, recommended: lets the cloud create the shift if its open event was lost.
+  // Optional, recommended: lets the cloud create the shift if its open event was lost, and
+  // fills what a shift created by a sale lacks (float, number, opener; businessDate and,
+  // if no open event ever arrived, openedAt, are taken as the till's).
   "businessDate": "2026-09-27", "sequenceNumber": 12, "openedAt": "…",
   "openingCash": 500.00, "openedByUserId": "…", "openedByName": "…"
 }
@@ -503,6 +518,8 @@ early as `failed` (a `failed` ack), `expired` (36 h after creation, like a Z run
   "tillTotals": {…as sent…} | null,
   "totalsMismatch": false,
   "lateDocuments": 0,            // documents that arrived after the close (see §1.2); >0 = show a badge
+  "amendedDocuments": 0,         // documents rewritten after the shift went into a Z (§1.2); >0 = show a badge
+  "sequenceOutOfOrder": false,   // opened with a sequenceNumber at or below one its till already used (§1.1)
   "reconstructed": false, "reconstructionBasis": {…} | null,
   "zReportId": null, "zNumber": null
 }
@@ -585,7 +602,8 @@ it (`409 z_run_in_progress`).
   "paymentBreakdown": {"cash": "…", "card": "…", "<other method>": "…"},
   "openingCash", "expectedCash", "actualCash", "discrepancy",   // actualCash/discrepancy null if any shift uncounted
   "unattended", "reconstructed",           // any included shift unattended / reconstructed
-  "lateDocuments": 0,                      // documents of its shifts that arrived after it was built (not in its figures)
+  "lateDocuments": 0,                      // documents of its shifts that arrived (or moved in) after it was built (not in its figures)
+  "amendedDocuments": 0,                   // documents of its shifts rewritten after it was built (its figures are as built)
   "legacy": false,                         // true for a pre-shift, till-issued Z (machineId set, no perMachine)
   "machineId": null, "machineName": null   // legacy rows only
 }

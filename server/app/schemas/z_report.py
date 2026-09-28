@@ -33,6 +33,8 @@ class ZReportOut(BaseModel):
     unattended: bool = False
     #: Documents of its shifts that arrived after it was built (not in its figures).
     late_documents: int = Field(0, alias="lateDocuments")
+    #: Documents of its shifts rewritten (fiscal content) after it was built.
+    amended_documents: int = Field(0, alias="amendedDocuments")
 
     total_sales: Optional[Decimal] = Field(None, alias="totalSales")
     total_refunds: Optional[Decimal] = Field(None, alias="totalRefunds")

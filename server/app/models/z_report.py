@@ -63,6 +63,9 @@ class ZReport(Base):
     #: Documents of its shifts that reached the cloud after it was built. They are
     #: stored (a fiscal document is never dropped) but are not in its figures.
     late_documents = Column(Integer, nullable=False, default=0, server_default="0")
+    #: Documents of its shifts whose fiscal content was rewritten after it was built.
+    #: Its figures are the ones it was built with (see `Shift.amended_documents`).
+    amended_documents = Column(Integer, nullable=False, default=0, server_default="0")
     #: The run that built it. NULL on legacy rows.
     z_run_id = Column(UUID(as_uuid=True), ForeignKey("z_runs.id"), nullable=True, index=True)
 

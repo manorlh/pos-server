@@ -371,6 +371,8 @@ def note_documents_after_close(
     touched: dict,
     *,
     machine_id: Optional[uuid.UUID] = None,
+    moved_in: Optional[dict] = None,
+    amended: Optional[dict] = None,
     now: Optional[datetime] = None,
 ) -> None:
     """
@@ -383,7 +385,10 @@ def note_documents_after_close(
       till's again), and new ones are counted in `late_documents`. The next Z takes them.
     * already in a Z — the documents are stored all the same (a fiscal document is never
       dropped) but the Z's figures are frozen, so the shift and the Z are both flagged
-      with the count: the dashboard shows "document arrived after Z".
+      with the count: the dashboard shows "document arrived after Z". A known document
+      *moved* into it (`moved_in`) is not in the Z's figures either and is counted the
+      same way, in `late_documents`; one whose fiscal content was rewritten in place
+      (`amended`) is counted in `amended_documents`. Neither was flagged before.
 
     Open shifts are skipped: that is the ordinary case, and the close computes their X.
     So is any shift of a till other than `machine_id` (the pushing till): its X counts
@@ -409,14 +414,21 @@ def note_documents_after_close(
             for column, value in totals.as_x().items():
                 setattr(shift, column, value)
             shift.totals_mismatch = till_totals_mismatch(shift.till_totals, totals)
-        elif new_count:
-            z = db.query(ZReport).filter(ZReport.id == shift.z_report_id).first()
-            if z is not None:
-                z.late_documents = int(z.late_documents or 0) + new_count
-            logger.warning(
-                "%s document(s) arrived for shift %s after Z %s was built",
-                new_count, shift.id, shift.z_report_id,
-            )
+            continue
+        late = new_count + int((moved_in or {}).get(shift_id, 0))
+        rewritten = int((amended or {}).get(shift_id, 0))
+        if not (late or rewritten):
+            continue
+        shift.late_documents = int(shift.late_documents or 0) + (late - new_count)
+        shift.amended_documents = int(shift.amended_documents or 0) + rewritten
+        z = db.query(ZReport).filter(ZReport.id == shift.z_report_id).first()
+        if z is not None:
+            z.late_documents = int(z.late_documents or 0) + late
+            z.amended_documents = int(z.amended_documents or 0) + rewritten
+        logger.warning(
+            "shift %s is in Z %s: %s document(s) arrived or moved in after it, %s rewritten",
+            shift.id, shift.z_report_id, late, rewritten,
+        )
     db.flush()
 
 
@@ -445,12 +457,39 @@ def recent_shift_zs(
 # ── Open ──────────────────────────────────────────────────────────────────────
 
 
+def flag_sequence_out_of_order(db: Session, shift: Shift) -> None:
+    """
+    Flag (never refuse) a shift whose number is at or below one its till already used.
+
+    A Z orders a till's shifts by `sequence_number`; a till whose counter went back (a
+    reinstall, a restored backup) would have its new shifts sort before older ones.
+    Refusing the open would jam the till's outbox for good, so it is accepted, marked
+    `sequence_out_of_order`, and logged for someone to look at.
+    """
+    if shift.sequence_number is None:
+        return
+    highest = (
+        db.query(func.max(Shift.sequence_number))
+        .filter(Shift.machine_id == shift.machine_id, Shift.id != shift.id)
+        .scalar()
+    )
+    if highest is not None and shift.sequence_number <= int(highest):
+        shift.sequence_out_of_order = True
+        logger.warning(
+            "shift %s of machine %s opened with sequence %s, not above the till's highest %s",
+            shift.id, shift.machine_id, shift.sequence_number, highest,
+        )
+
+
 def report_shift_open(db: Session, machine: POSMachine, data: ShiftOpenIn) -> Shift:
     """
     Record a shift the till has opened. Idempotent by id.
 
-    Known and open: the till's own account corrects what a sale may have inferred.
-    Known and closed: untouched — a late open event must not resurrect a closed shift.
+    Known and open: the till's own account corrects what a sale may have inferred —
+    its business date included (a sale-created shift took the document's date, or
+    today's). Known and closed: untouched — a late open event must not resurrect a
+    closed shift. A sequence number at or below one the till already used is flagged,
+    not refused (`flag_sequence_out_of_order`).
     Another shift open: 409 with its id.
     """
     refuse_foreign_shift(db, machine, data.id)
@@ -458,14 +497,16 @@ def report_shift_open(db: Session, machine: POSMachine, data: ShiftOpenIn) -> Sh
     if existing is not None:
         if existing.status == ShiftStatus.OPEN:
             existing.opened_at = data.opened_at
+            existing.business_date = data.business_date
             if data.opening_cash is not None:
                 existing.opening_cash = data.opening_cash
             if data.opened_by_name:
                 existing.opened_by = data.opened_by_name
             if data.opened_by_user_id:
                 existing.opened_by_pos_user_id = data.opened_by_user_id
-            if data.sequence_number is not None:
+            if data.sequence_number is not None and data.sequence_number != existing.sequence_number:
                 existing.sequence_number = data.sequence_number
+                flag_sequence_out_of_order(db, existing)
             db.add(existing)
             db.flush()
         return existing
@@ -487,6 +528,7 @@ def report_shift_open(db: Session, machine: POSMachine, data: ShiftOpenIn) -> Sh
         opened_by=data.opened_by_name,
         opened_by_pos_user_id=data.opened_by_user_id,
     )
+    flag_sequence_out_of_order(db, shift)
     db.add(shift)
     try:
         db.flush()
@@ -575,6 +617,31 @@ def _record_close_request(
         logger.warning("shift %s closed with an unknown closeRequestId %s", shift.id, request_id)
 
 
+def _fill_open_fields_from_close(db: Session, shift: Shift, body: ShiftCloseIn) -> None:
+    """
+    The close repeats the shift's open fields; use them where the cloud has none.
+
+    A shift created by a document (its open event lost or still queued) has no float,
+    no number and a guessed business date. The till's own account in the close fills
+    what is missing — the business date and opening time are the till's to say, as on
+    the open — and never overwrites a value the open event already set.
+    """
+    if body.business_date is not None:
+        shift.business_date = body.business_date
+    if body.opened_at is not None and shift.opened_by is None and shift.sequence_number is None:
+        # Only on a shift no open event ever reached: its opened_at is the first sale's.
+        shift.opened_at = body.opened_at
+    if shift.opening_cash is None and body.opening_cash is not None:
+        shift.opening_cash = body.opening_cash
+    if shift.opened_by is None and body.opened_by_name:
+        shift.opened_by = body.opened_by_name
+    if shift.opened_by_pos_user_id is None and body.opened_by_user_id:
+        shift.opened_by_pos_user_id = body.opened_by_user_id
+    if shift.sequence_number is None and body.sequence_number is not None:
+        shift.sequence_number = body.sequence_number
+        flag_sequence_out_of_order(db, shift)
+
+
 def apply_shift_close(
     db: Session,
     machine: POSMachine,
@@ -613,11 +680,14 @@ def apply_shift_close(
             opened_by=body.opened_by_name,
             opened_by_pos_user_id=body.opened_by_user_id,
         )
+        flag_sequence_out_of_order(db, shift)
         db.add(shift)
         db.flush()
         link_claimed_shift(db, shift)
     elif shift.status == ShiftStatus.CLOSED:
         return shift, "duplicate"
+    else:
+        _fill_open_fields_from_close(db, shift, body)
 
     totals = compute_totals(db, [shift.id])
     for column, value in totals.as_x().items():
@@ -720,6 +790,8 @@ def shift_to_out(
         till_totals=shift.till_totals,
         totals_mismatch=bool(shift.totals_mismatch),
         late_documents=int(shift.late_documents or 0),
+        amended_documents=int(shift.amended_documents or 0),
+        sequence_out_of_order=bool(shift.sequence_out_of_order),
         reconstructed=bool(shift.reconstructed),
         reconstruction_basis=shift.reconstruction_basis,
         z_report_id=shift.z_report_id,

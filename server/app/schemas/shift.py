@@ -107,6 +107,10 @@ class ShiftOut(BaseModel):
     totals_mismatch: bool = Field(False, alias="totalsMismatch")
     #: Documents that arrived after the close (see docs/SHIFTS_API.md §3.1).
     late_documents: int = Field(0, alias="lateDocuments")
+    #: Documents rewritten (fiscal content) after this shift went into a Z (§1.2).
+    amended_documents: int = Field(0, alias="amendedDocuments")
+    #: Opened with a sequence number at or below one its till already used (§1.1).
+    sequence_out_of_order: bool = Field(False, alias="sequenceOutOfOrder")
     reconstructed: bool = False
     reconstruction_basis: Optional[Dict[str, Any]] = Field(None, alias="reconstructionBasis")
     z_report_id: Optional[uuid.UUID] = Field(None, alias="zReportId")
