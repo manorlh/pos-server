@@ -20,7 +20,7 @@ from datetime import date, datetime, timezone
 from typing import List, Optional
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -28,13 +28,18 @@ from app.middleware.auth import (
     get_active_tenant_id,
     get_current_user,
     get_pos_machine_for_sync_path,
+    ensure_same_tenant,
 )
+from app.routers.shops import _check_shop_access
+from app.services.areas import parse_area_filter
 from app.models.pos_machine import POSMachine
+from app.models.shop import Shop
 from app.models.user import User
 from app.schemas.reports import (
     CashierSalesReportResponse,
     DaySummaryReportResponse,
     ProductSalesReportResponse,
+    SalesByAreaResponse,
     ShopTransactionsResponse,
     TipsRangeReportResponse,
 )
@@ -45,6 +50,7 @@ from app.services.reports import (
     build_cashier_sales_report,
     build_day_summary_report,
     build_product_sales_report,
+    build_sales_by_area_report,
     build_tips_range_report,
     load_shop_transactions_for_machine,
     resolve_report_window,
@@ -64,6 +70,10 @@ _FROM_HOUR_DESC = (
 _TO_HOUR_DESC = (
     "End hour (1-24, exclusive) applied to every day in the range. "
     "fromHour > toHour is a window that wraps midnight, e.g. 22-2 for a late shift."
+)
+_AREA_DESC = (
+    "An area's id, or `none`. Filters on the area each document's shift was stamped "
+    "with when the cloud created it — never the till's area now. No shift is `none`."
 )
 _TZ_DESC = (
     "IANA timezone the days and hours are measured in. "
@@ -86,6 +96,7 @@ def get_product_sales_report(
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     cashier_id: Optional[str] = Query(None, alias="cashierId"),
     limit: int = Query(PRODUCT_ROWS_DEFAULT, ge=1, le=PRODUCT_ROWS_MAX),
+    area_id: Optional[str] = Query(None, alias="areaId", description=_AREA_DESC),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -104,6 +115,7 @@ def get_product_sales_report(
     return build_product_sales_report(
         db, current_user, active_tenant_id, window,
         shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id, limit=limit,
+        area_filter=parse_area_filter(area_id),
     )
 
 
@@ -120,6 +132,7 @@ def get_cashier_sales_report(
     tz: Optional[str] = Query(None, description=_TZ_DESC),
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    area_id: Optional[str] = Query(None, alias="areaId", description=_AREA_DESC),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -136,7 +149,49 @@ def get_cashier_sales_report(
     return build_cashier_sales_report(
         db, current_user, active_tenant_id, window,
         shop_id=shop_id, machine_id=machine_id,
+        area_filter=parse_area_filter(area_id),
     )
+
+
+@router.get(
+    "/sales-by-area",
+    response_model=SalesByAreaResponse,
+    response_model_by_alias=True,
+)
+def get_sales_by_area_report(
+    shop_id: uuid.UUID = Query(..., alias="shopId"),
+    date_from: Optional[date] = Query(None, alias="dateFrom", description=_FROM_DESC),
+    date_to: Optional[date] = Query(None, alias="dateTo", description=_TO_DESC),
+    # The other reports' names for the same two days, so either spelling works.
+    from_date: Optional[date] = Query(None, alias="from", description="Same as dateFrom."),
+    to_date: Optional[date] = Query(None, alias="to", description="Same as dateTo."),
+    from_hour: Optional[int] = Query(None, alias="fromHour", description=_FROM_HOUR_DESC),
+    to_hour: Optional[int] = Query(None, alias="toHour", description=_TO_HOUR_DESC),
+    tz: Optional[str] = Query(None, description=_TZ_DESC),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    One shop's sales per area over the range, plus `Unassigned`, and their totals.
+    Dashboard-only (Clerk/user JWT).
+
+    By each document's shift's stamped area, never its till's area now. Archived areas
+    that took something are included (`archived: true`). The money is the per-cashier
+    report's, and the rows add up exactly to that report's shop total for the same
+    window. No server-side CSV: like the other reports, the dashboard exports the JSON.
+    """
+    shop = db.query(Shop).filter(Shop.id == shop_id).first()
+    if shop is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
+    ensure_same_tenant(shop.tenant_id, active_tenant_id)
+    _check_shop_access(current_user, shop, db)
+    window = resolve_report_window(
+        db, active_tenant_id,
+        from_date=date_from or from_date, to_date=date_to or to_date,
+        from_hour=from_hour, to_hour=to_hour, tz=tz,
+    )
+    return build_sales_by_area_report(db, current_user, active_tenant_id, window, shop=shop)
 
 
 @router.get(
@@ -152,6 +207,7 @@ def get_tips_range_report(
     tz: Optional[str] = Query(None, description=_TZ_DESC),
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    area_id: Optional[str] = Query(None, alias="areaId", description=_AREA_DESC),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -172,6 +228,7 @@ def get_tips_range_report(
     return build_tips_range_report(
         db, current_user, active_tenant_id, window,
         shop_id=shop_id, machine_id=machine_id,
+        area_filter=parse_area_filter(area_id),
     )
 
 

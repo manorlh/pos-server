@@ -47,7 +47,9 @@ from sqlalchemy.orm import Query, Session, joinedload
 
 from app.models.pos_machine import POSMachine
 from app.models.pos_user import PosUser
+from app.models.shift import Shift
 from app.models.shop import Shop
+from app.models.shop_area import ShopArea
 from app.models.tenant import Tenant
 from app.models.transaction import Transaction
 from app.models.transaction_item import TransactionItem
@@ -65,11 +67,14 @@ from app.schemas.reports import (
     ProductSalesRow,
     ProductSalesTotals,
     ReportWindowOut,
+    SalesByAreaResponse,
+    SalesByAreaRow,
     ShopTransactionRow,
     TipMethodRow,
     TipsByCashierRow,
     TipsRangeReportResponse,
 )
+from app.services.areas import transaction_area_predicate
 from app.services.dashboard_stats import SALE_STATUSES
 from app.services.scoping import scope_query_by_user, scope_transactions_by_user
 from app.services.tenders import CREDIT_NOTE_DOCUMENT_TYPE as _CREDIT_NOTE_DOCUMENT_TYPE
@@ -334,9 +339,14 @@ def build_scoped_transaction_query(
     shop_id: Optional[uuid_mod.UUID] = None,
     machine_id: Optional[uuid_mod.UUID] = None,
     cashier_id: Optional[str] = None,
+    area_filter=None,
 ) -> Optional[Query]:
     """
     The reportable-document set for a dashboard user, already time- and hour-filtered.
+
+    `area_filter` (`app.services.areas.parse_area_filter`) narrows on the area each
+    document's shift was stamped with — never the till's area now, so moving a till
+    does not move what an area took. A document with no shift is "no area".
 
     Returns None when the user's role grants access to nothing, which every caller
     turns into an empty report rather than an error (same convention as
@@ -363,6 +373,9 @@ def build_scoped_transaction_query(
         query = query.filter(Transaction.machine_id == machine_id)
     if cashier_id:
         query = query.filter(Transaction.cashier_id == str(cashier_id))
+    area_pred = transaction_area_predicate(area_filter)
+    if area_pred is not None:
+        query = query.filter(area_pred)
     return query
 
 
@@ -421,6 +434,7 @@ def build_product_sales_report(
     machine_id: Optional[uuid_mod.UUID] = None,
     cashier_id: Optional[str] = None,
     limit: int = PRODUCT_ROWS_DEFAULT,
+    area_filter=None,
 ) -> ProductSalesReportResponse:
     now = datetime.now(timezone.utc)
     empty_totals = ProductSalesTotals(
@@ -429,7 +443,7 @@ def build_product_sales_report(
     )
     tx_q = build_scoped_transaction_query(
         db, current_user, tenant_id, window,
-        shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id,
+        shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id, area_filter=area_filter,
     )
     if tx_q is None:
         return ProductSalesReportResponse(
@@ -555,24 +569,24 @@ def _empty_cashier_row(**kwargs) -> CashierSalesRow:
     return CashierSalesRow(**base)
 
 
-def build_cashier_sales_report(
-    db: Session,
-    current_user: User,
-    tenant_id: uuid_mod.UUID,
-    window: ReportWindow,
-    *,
-    shop_id: Optional[uuid_mod.UUID] = None,
-    machine_id: Optional[uuid_mod.UUID] = None,
-) -> CashierSalesReportResponse:
-    now = datetime.now(timezone.utc)
-    tx_q = build_scoped_transaction_query(
-        db, current_user, tenant_id, window, shop_id=shop_id, machine_id=machine_id,
-    )
-    if tx_q is None:
-        return CashierSalesReportResponse(
-            window=window.to_schema(), generated_at=now,
-            totals=_empty_cashier_row(cashier_name="Total"), rows=[],
-        )
+def _new_sales_bucket() -> Dict[str, float]:
+    return {
+        "gross": 0.0, "discounts": 0.0, "refunds": 0.0, "tips": 0.0,
+        "sales_count": 0, "refunds_count": 0,
+        "cash_net": 0.0, "card_net": 0.0, "other_net": 0.0,
+    }
+
+
+def _sales_buckets(tx_q: Query, key, *, joins=()) -> Dict[object, Dict[str, float]]:
+    """
+    The per-cashier report's money, grouped by `key` instead of the cashier.
+
+    One definition for every "sales by X" table, so the rows of two of them over the
+    same documents can never disagree on what gross, discounts, refunds, net or a tender
+    split is. `joins` are (entity, onclause) outer joins `key` needs.
+    """
+    for entity, onclause in joins:
+        tx_q = tx_q.outerjoin(entity, onclause)
 
     refund_cond = _is_refund_condition()
     # A sale's total_amount is gross of line discounts (document_discount carries
@@ -586,7 +600,7 @@ def build_cashier_sales_report(
     # choice of which leg owns them. The tender split is a second query below.
     rows = (
         tx_q.with_entities(
-            Transaction.cashier_id.label("cashier_id"),
+            key.label("bucket_key"),
             func.coalesce(func.sum(case((refund_cond, 0), else_=sale_gross)), 0).label("gross"),
             func.coalesce(func.sum(case((refund_cond, 0), else_=sale_discount)), 0).label("discounts"),
             func.coalesce(func.sum(case((refund_cond, Transaction.total_amount), else_=0)), 0).label("refunds"),
@@ -594,21 +608,13 @@ def build_cashier_sales_report(
             func.coalesce(func.sum(case((refund_cond, 1), else_=0)), 0).label("refunds_count"),
             func.coalesce(func.sum(Transaction.tip_amount), 0).label("tips"),
         )
-        .group_by(Transaction.cashier_id)
+        .group_by(key)
         .all()
     )
 
-    def _new_bucket() -> Dict[str, float]:
-        return {
-            "gross": 0.0, "discounts": 0.0, "refunds": 0.0, "tips": 0.0,
-            "sales_count": 0, "refunds_count": 0,
-            "cash_net": 0.0, "card_net": 0.0, "other_net": 0.0,
-        }
-
-    agg: Dict[Optional[str], Dict[str, float]] = {}
+    agg: Dict[object, Dict[str, float]] = {}
     for r in rows:
-        key = r.cashier_id or None
-        bucket = agg.setdefault(key, _new_bucket())
+        bucket = agg.setdefault(r.bucket_key or None, _new_sales_bucket())
         bucket["gross"] += _to_float(r.gross)
         bucket["discounts"] += _to_float(r.discounts)
         bucket["refunds"] += _to_float(r.refunds)
@@ -636,16 +642,41 @@ def build_cashier_sales_report(
             TransactionPayment, TransactionPayment.transaction_id == Transaction.id
         )
         .with_entities(
-            Transaction.cashier_id.label("cashier_id"),
+            key.label("bucket_key"),
             method_expr.label("method"),
             func.coalesce(func.sum(signed_tender_amount_expr()), 0).label("net"),
         )
-        .group_by(Transaction.cashier_id, method_expr)
+        .group_by(key, method_expr)
         .all()
     )
     for r in tender_rows:
-        bucket = agg.setdefault(r.cashier_id or None, _new_bucket())
+        bucket = agg.setdefault(r.bucket_key or None, _new_sales_bucket())
         bucket[f"{normalize_tender(r.method)}_net"] += _to_float(r.net)
+    return agg
+
+
+def build_cashier_sales_report(
+    db: Session,
+    current_user: User,
+    tenant_id: uuid_mod.UUID,
+    window: ReportWindow,
+    *,
+    shop_id: Optional[uuid_mod.UUID] = None,
+    machine_id: Optional[uuid_mod.UUID] = None,
+    area_filter=None,
+) -> CashierSalesReportResponse:
+    now = datetime.now(timezone.utc)
+    tx_q = build_scoped_transaction_query(
+        db, current_user, tenant_id, window, shop_id=shop_id, machine_id=machine_id,
+        area_filter=area_filter,
+    )
+    if tx_q is None:
+        return CashierSalesReportResponse(
+            window=window.to_schema(), generated_at=now,
+            totals=_empty_cashier_row(cashier_name="Total"), rows=[],
+        )
+
+    agg = _sales_buckets(tx_q, Transaction.cashier_id)
 
     pos_users = _load_cashier_names(db, [k for k in agg.keys() if k])
 
@@ -702,6 +733,105 @@ def build_cashier_sales_report(
     )
 
 
+# ── 2b′. Sales by area ───────────────────────────────────────────────────────
+
+def _cents(value: float) -> float:
+    return float(Decimal(str(value)).quantize(Decimal("0.01")))
+
+
+def build_sales_by_area_report(
+    db: Session,
+    current_user: User,
+    tenant_id: uuid_mod.UUID,
+    window: ReportWindow,
+    *,
+    shop: Shop,
+) -> SalesByAreaResponse:
+    """
+    One row per area of the shop that took something in the window, and `Unassigned`.
+
+    Grouped on each document's **shift's stamped area**, never its till's area now: a
+    till moved from the bar to the terrace leaves yesterday's takings in the bar. A
+    document with no shift, or whose shift was taken under no area, is `Unassigned`.
+    Archived areas are included and flagged — their history is still theirs.
+
+    Every document of the shop is in exactly one row, and the money is the per-cashier
+    report's (`_sales_buckets`), so the rows add up to that report's shop total.
+    """
+    now = datetime.now(timezone.utc)
+    tx_q = build_scoped_transaction_query(db, current_user, tenant_id, window, shop_id=shop.id)
+    agg = (
+        _sales_buckets(tx_q, Shift.area_id, joins=((Shift, Shift.id == Transaction.shift_id),))
+        if tx_q is not None
+        else {}
+    )
+
+    known = {
+        a.id: a
+        for a in (
+            db.query(ShopArea).filter(ShopArea.id.in_([k for k in agg if k is not None])).all()
+            if any(k is not None for k in agg)
+            else []
+        )
+    }
+
+    def row(area_id, bucket) -> SalesByAreaRow:
+        area = known.get(area_id) if area_id is not None else None
+        return SalesByAreaRow(
+            area_id=area_id,
+            area_name=area.name if area is not None else None,
+            archived=bool(area is not None and area.archived_at is not None),
+            transactions_count=int(bucket["sales_count"]) + int(bucket["refunds_count"]),
+            gross=_cents(bucket["gross"]),
+            discounts=_cents(bucket["discounts"]),
+            refunds=_cents(bucket["refunds"]),
+            net=_cents(bucket["gross"] - bucket["discounts"] - bucket["refunds"]),
+            cash=_cents(bucket["cash_net"]),
+            card=_cents(bucket["card_net"]),
+            other=_cents(bucket["other_net"]),
+            tips=_cents(bucket["tips"]),
+        )
+
+    rows = [row(area_id, bucket) for area_id, bucket in agg.items() if area_id is not None]
+    rows.sort(
+        key=lambda r: (
+            known[r.area_id].sort_order or 0 if r.area_id in known else 0,
+            (r.area_name or "").lower(),
+        )
+    )
+    unassigned = agg.get(None)
+    if unassigned is not None:
+        rest = row(None, unassigned)
+        if rest.transactions_count or any(
+            getattr(rest, f) for f in ("gross", "discounts", "refunds", "net", "tips")
+        ):
+            rows.append(rest)
+
+    def total(field: str) -> float:
+        # Summed in cents, from the rows as shown, so the totals are the rows' sum.
+        return float(sum((Decimal(str(getattr(r, field))) for r in rows), Decimal("0")))
+
+    totals = SalesByAreaRow(
+        area_id=None,
+        area_name=None,
+        archived=False,
+        transactions_count=sum(r.transactions_count for r in rows),
+        **{
+            f: total(f)
+            for f in ("gross", "discounts", "net", "refunds", "cash", "card", "other", "tips")
+        },
+    )
+    return SalesByAreaResponse(
+        shop_id=shop.id,
+        date_from=window.from_date,
+        date_to=window.to_date,
+        window=window.to_schema(),
+        generated_at=now,
+        rows=rows,
+        totals=totals,
+    )
+
+
 # ── 2c. Tips report ───────────────────────────────────────────────────────────
 
 def build_tips_range_report(
@@ -712,10 +842,12 @@ def build_tips_range_report(
     *,
     shop_id: Optional[uuid_mod.UUID] = None,
     machine_id: Optional[uuid_mod.UUID] = None,
+    area_filter=None,
 ) -> TipsRangeReportResponse:
     now = datetime.now(timezone.utc)
     tx_q = build_scoped_transaction_query(
         db, current_user, tenant_id, window, shop_id=shop_id, machine_id=machine_id,
+        area_filter=area_filter,
     )
     if tx_q is None:
         return TipsRangeReportResponse(
