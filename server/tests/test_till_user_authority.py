@@ -274,6 +274,16 @@ class TestUsernameElevation:
         assert grant.pos_user_id == dana.id
         assert grant.user_id is None
 
+    def test_the_grant_says_who_approved_for_the_documents(self):
+        """The till copies `approverPosUserId` into each document's `approvedByPosUserId`."""
+        machine = _machine()
+        dana = _pos_user(machine.shop_id)
+
+        body = _elevate(_FakeDb(dana), machine, username="dana").model_dump(by_alias=True, mode="json")
+
+        assert body["approverPosUserId"] == str(dana.id)
+        assert body["approverUserId"] is None
+
     def test_a_manager_picked_from_the_roster_approves_by_id(self):
         machine = _machine()
         dana = _pos_user(machine.shop_id)

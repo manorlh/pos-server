@@ -33,14 +33,16 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal, InvalidOperation
-from typing import FrozenSet, Optional
+from typing import FrozenSet, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
 from app.models.pos_machine import POSMachine
+from app.models.pos_user import PosUser
+from app.models.shop import Shop
 from app.models.user import User, UserRole
 from app.services.company_hierarchy import user_may_use_machine
-from app.services.permissions import Scope, till_grantable_scopes
+from app.services.permissions import Scope, pos_user_till_scopes, till_grantable_scopes
 from app.services.tenders import is_refund_document
 
 
@@ -160,3 +162,62 @@ def verify_document_approver(
         raise ApprovalRejected("approver_not_permitted_at_machine")
 
     return user.id
+
+
+def verify_document_pos_approver(
+    db: Session, machine: POSMachine, tx
+) -> Optional[uuid.UUID]:
+    """
+    `verify_document_approver` for a **till user** approver (`approvedByPosUserId`).
+
+    The same four questions, answered from the till user's side:
+
+    1. exists and active, and of this till's tenant (by the tenant of their shop — a
+       till user row may predate `pos_users.tenant_id`) → else `approver_unknown_or_inactive`;
+    2. what the document needed (`scopes_required_by_document`);
+    3. whether their role grants it (`pos_user_till_scopes`, the ceiling the live
+       elevation path uses for a till user) → else `approver_lacks_scope:…`;
+    4. whether they belong to this till: a till user answers for their one shop only
+       (`elevation.pos_user_may_use_machine`) → else `approver_not_permitted_at_machine`.
+    """
+    claimed = getattr(tx, "approved_by_pos_user_id", None)
+    if claimed is None:
+        return None
+    from app.services.elevation import pos_user_may_use_machine
+
+    pos_user = db.query(PosUser).filter(PosUser.id == claimed).first()
+    tenant_id = getattr(machine, "tenant_id", None)
+    if pos_user is None or not pos_user.is_active or tenant_id is None:
+        raise ApprovalRejected("approver_unknown_or_inactive")
+    shop_tenant = db.query(Shop.tenant_id).filter(Shop.id == pos_user.shop_id).first()
+    owner = pos_user.tenant_id or (shop_tenant[0] if shop_tenant else None)
+    if owner is None or str(owner) != str(tenant_id):
+        raise ApprovalRejected("approver_unknown_or_inactive")
+
+    missing = scopes_required_by_document(tx) - pos_user_till_scopes(pos_user.role)
+    if missing:
+        raise ApprovalRejected(
+            "approver_lacks_scope:" + ",".join(sorted(scope.value for scope in missing))
+        )
+
+    if not pos_user_may_use_machine(pos_user, machine):
+        raise ApprovalRejected("approver_not_permitted_at_machine")
+
+    return pos_user.id
+
+
+def verify_document_approvers(
+    db: Session, machine: POSMachine, tx
+) -> Tuple[Optional[uuid.UUID], Optional[uuid.UUID]]:
+    """
+    (cloud approver, till-user approver) to store for `tx`; at most one is set.
+
+    A document naming both is refused (`approver_ambiguous`): "who approved this" must
+    have one answer, the rule `elevated_sessions` enforces for the grant itself.
+    """
+    if (
+        getattr(tx, "approved_by_user_id", None) is not None
+        and getattr(tx, "approved_by_pos_user_id", None) is not None
+    ):
+        raise ApprovalRejected("approver_ambiguous")
+    return verify_document_approver(db, machine, tx), verify_document_pos_approver(db, machine, tx)

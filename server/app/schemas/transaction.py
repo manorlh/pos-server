@@ -224,6 +224,11 @@ class TransactionIn(BaseModel):
     #: A claim, not a fact, until `app.services.approvals` has checked it against that
     #: user's standing permissions. A claim that fails takes the document down with it.
     approved_by_user_id: Optional[uuid.UUID] = Field(None, alias="approvedByUserId")
+    #: The same claim when the approver is a **till user** (`pos_users`, e.g. a shop
+    #: manager on this till's roster) — the elevation grant's `approverPosUserId`. Send
+    #: at most one of the two; checked the same way, and a claim that fails refuses the
+    #: document.
+    approved_by_pos_user_id: Optional[uuid.UUID] = Field(None, alias="approvedByPosUserId")
 
     # The shift this document was issued in — the till's own shift id. The server
     # resolves it by id only; see `app.services.shifts.resolve_shift_for_document`.
@@ -418,6 +423,7 @@ class TransactionOut(BaseModel):
     customer_address: Optional[str] = Field(None, alias="customerAddress")
     #: Verified at ingest, so what comes back out is a name the server stood behind.
     approved_by_user_id: Optional[uuid.UUID] = Field(None, alias="approvedByUserId")
+    approved_by_pos_user_id: Optional[uuid.UUID] = Field(None, alias="approvedByPosUserId")
 
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")

@@ -57,6 +57,12 @@ class ElevationResponse(BaseModel):
     #: What the till should offer next time, exactly as the server matched it: the
     #: username for a till user, the email for a cloud account.
     user_login: str = Field(alias="userLogin")
+    #: Who approved, as ids the till puts on the documents this grant authorised —
+    #: exactly one is set. `approverUserId` (a cloud `users` id) → the document's
+    #: `approvedByUserId`; `approverPosUserId` (a till user, `pos_users`) → its
+    #: `approvedByPosUserId`.
+    approver_user_id: Optional[uuid.UUID] = Field(default=None, alias="approverUserId")
+    approver_pos_user_id: Optional[uuid.UUID] = Field(default=None, alias="approverPosUserId")
 
 
 class ElevationStatus(BaseModel):
@@ -67,6 +73,9 @@ class ElevationStatus(BaseModel):
     absolute_expires_at: datetime = Field(alias="absoluteExpiresAt")
     user_name: str = Field(alias="userName")
     user_email: Optional[str] = Field(default=None, alias="userEmail")
+    #: As on `ElevationResponse`: exactly one is set.
+    approver_user_id: Optional[uuid.UUID] = Field(default=None, alias="approverUserId")
+    approver_pos_user_id: Optional[uuid.UUID] = Field(default=None, alias="approverPosUserId")
 
 
 class TillPinSet(BaseModel):

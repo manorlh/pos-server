@@ -37,7 +37,7 @@ from app.schemas.transaction import (
     TransactionUpsertResult,
     UnidentifiedDocument,
 )
-from app.services.approvals import ApprovalRejected, verify_document_approver
+from app.services.approvals import ApprovalRejected, verify_document_approvers
 from app.services.shifts import (
     ShiftConflict,
     note_documents_after_close,
@@ -499,6 +499,7 @@ def _serialize_tx_for_upsert(
     payment_method: Optional[str] = None,
     customer_ref_id: Optional[uuid.UUID] = None,
     approved_by_user_id: Optional[uuid.UUID] = None,
+    approved_by_pos_user_id: Optional[uuid.UUID] = None,
 ) -> Dict:
     """
     Flatten one incoming document into the row the upsert writes.
@@ -556,6 +557,7 @@ def _serialize_tx_for_upsert(
         "customer_phone": getattr(tx, "customer_phone", None),
         "customer_address": getattr(tx, "customer_address", None),
         "approved_by_user_id": approved_by_user_id,
+        "approved_by_pos_user_id": approved_by_pos_user_id,
         "created_at": tx.created_at,
         "updated_at": tx.updated_at,
     }
@@ -710,7 +712,9 @@ def upsert_transactions(
                 continue
 
             try:
-                approved_by_user_id = verify_document_approver(db, machine, tx)
+                approved_by_user_id, approved_by_pos_user_id = verify_document_approvers(
+                    db, machine, tx
+                )
             except ApprovalRejected as bad_claim:
                 logger.warning("Rejecting transaction %s: %s", tx.id, bad_claim)
                 results.append(TransactionUpsertResult(
@@ -798,6 +802,7 @@ def upsert_transactions(
                     db, tx.customer_id, machine.tenant_id
                 ),
                 approved_by_user_id=approved_by_user_id,
+                approved_by_pos_user_id=approved_by_pos_user_id,
             )
             stmt = pg_insert(Transaction).values(**row)
             update_cols = {

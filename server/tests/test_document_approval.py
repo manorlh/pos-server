@@ -261,7 +261,7 @@ class TestTheUpsertRefusesTheDocument:
         with patch.object(T, "_tender_rejection_reason", return_value=None), patch.object(
             T, "_refund_of_other_tenant", return_value=False
         ), patch.object(
-            T, "verify_document_approver", side_effect=ApprovalRejected(reason)
+            T, "verify_document_approvers", side_effect=ApprovalRejected(reason)
         ), patch.object(T, "resolve_shift_for_document") as opened_day:
             db = MagicMock()
             db.query.return_value.filter.return_value.all.return_value = []

@@ -219,6 +219,8 @@ def create_elevation(
         user_name=name,
         user_email=email,
         user_login=login,
+        approver_user_id=session.user_id,
+        approver_pos_user_id=session.pos_user_id,
     )
 
 
@@ -252,6 +254,8 @@ def read_current_elevation(
         absolute_expires_at=session.absolute_expires_at,
         user_name=name,
         user_email=email,
+        approver_user_id=session.user_id,
+        approver_pos_user_id=session.pos_user_id,
     )
 
 

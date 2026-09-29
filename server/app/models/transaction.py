@@ -139,6 +139,10 @@ class Transaction(Base):
     #: never produces a second name. Null means "nobody had to approve this", not
     #: "we lost track of who did".
     approved_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    #: The same, when the approver was a till user (a shop manager on the till's own
+    #: roster) rather than a cloud account. At most one of the two is set. Verified at
+    #: ingest like `approved_by_user_id` (`app.services.approvals`).
+    approved_by_pos_user_id = Column(UUID(as_uuid=True), ForeignKey("pos_users.id"), nullable=True)
 
     # Timestamps from POS
     created_at = Column(DateTime(timezone=True), nullable=False)
