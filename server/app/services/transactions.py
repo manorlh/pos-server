@@ -79,6 +79,19 @@ def _safe_issued_product_id(db: Session, pid: Optional[uuid.UUID]) -> Optional[u
     return _safe_item_product_id(db, pid)
 
 
+def _kept_link(
+    resolved: Optional[uuid.UUID], sent: Optional[uuid.UUID], where: str, warnings: List[str]
+) -> Optional[uuid.UUID]:
+    """
+    `resolved` (a `_safe_*` lookup of `sent`), with a warning when a link was sent and
+    names nothing here — the well-formed twin of `drop_unreadable_references`: the
+    document is stored without the link either way, and the till is told which one.
+    """
+    if sent is not None and resolved is None:
+        warnings.append(f"{where}: unknown {_raw(str(sent))}, stored without the link")
+    return resolved
+
+
 def _resolve_customer_ref_id(
     db: Session, raw: Optional[str], tenant_id: Optional[uuid.UUID]
 ) -> Optional[uuid.UUID]:
@@ -576,6 +589,8 @@ def upsert_transactions(
         # turning one bad row into a 500 the till retries forever, which blocks the
         # outbox and therefore the day's close.
         savepoint = db.begin_nested()
+        # Links the document sent that name nothing here (answered as `warnings`).
+        link_warnings: List[str] = []
         try:
             previous = existing_map.get(tx.id)
             if previous is not None and str(previous.machine_id) != str(machine.id):
@@ -722,7 +737,10 @@ def upsert_transactions(
                     TransactionItem(
                         id=it.id,
                         transaction_id=tx.id,
-                        product_id=_safe_item_product_id(db, it.product_id),
+                        product_id=_kept_link(
+                            _safe_item_product_id(db, it.product_id), it.product_id,
+                            f"items[{i}].productId", link_warnings,
+                        ),
                         product_name=it.product_name,
                         sku=it.sku,
                         quantity=it.quantity,
@@ -734,7 +752,7 @@ def upsert_transactions(
                         line_discount=it.line_discount,
                         notes=it.notes,
                     )
-                    for it in tx.items
+                    for i, it in enumerate(tx.items)
                 ])
 
             # Tender legs are replaced atomically, exactly like items: a re-push is
@@ -775,8 +793,14 @@ def upsert_transactions(
                         machine_id=machine.id,
                         transaction_id=tx.id,
                         transaction_item_id=iv.transaction_item_id,
-                        voucher_id=_safe_voucher_id(db, iv.voucher_id),
-                        product_id=_safe_issued_product_id(db, iv.product_id),
+                        voucher_id=_kept_link(
+                            _safe_voucher_id(db, iv.voucher_id), iv.voucher_id,
+                            f"issuedVouchers[{i}].voucherId", link_warnings,
+                        ),
+                        product_id=_kept_link(
+                            _safe_issued_product_id(db, iv.product_id), iv.product_id,
+                            f"issuedVouchers[{i}].productId", link_warnings,
+                        ),
                         product_name=iv.product_name,
                         quantity=iv.quantity,
                         unit_value=iv.unit_value,
@@ -787,7 +811,7 @@ def upsert_transactions(
                         reprint_count=iv.reprint_count,
                         last_printed_at=iv.last_printed_at,
                     )
-                    for iv in tx.issued_vouchers
+                    for i, iv in enumerate(tx.issued_vouchers)
                 ])
 
             if tx.stock_movements and machine.shop_id and machine.tenant_id:
@@ -829,9 +853,12 @@ def upsert_transactions(
                         amended[target_shift_id] = amended.get(target_shift_id, 0) + 1
                 if moved and previous.shift_id is not None:
                     touched_closed.setdefault(previous.shift_id, 0)
+            if link_warnings:
+                logger.warning("Storing document %s without links: %s", tx.id, "; ".join(link_warnings))
             results.append(TransactionUpsertResult(
                 id=tx.id,
                 status="duplicate" if is_duplicate else "accepted",
+                warnings=link_warnings or None,
                 server_received_at=datetime.now(timezone.utc),
             ))
         except ShiftConflict:

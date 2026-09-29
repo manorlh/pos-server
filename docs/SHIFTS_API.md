@@ -137,7 +137,10 @@ The links dropped this way: `items[].productId` (the line keeps its name, SKU an
 `stockMovements[].transactionItemId`. A stock movement whose `productId` cannot be read is
 not applied (`"stockMovements[0].productId: unreadable 'p12', movement not applied"`) —
 without a product there is nothing to move, and on-hand is not a fiscal record; the
-document is still stored. `warnings` is null when nothing was dropped.
+document is still stored. A well-formed UUID that names nothing here — `items[].productId`,
+`issuedVouchers[].productId` / `voucherId` — is dropped the same way, with its own entry
+(`"items[1].productId: unknown '3f2a…', stored without the link"`), after the unreadable ones.
+`warnings` is null when nothing was dropped.
 
 Not dropped, because each decides what the money is: `shiftId` (which X it is in),
 `refundOfTransactionId` (sale or refund), `approvedByUserId` (stripping a claim of approval

@@ -877,8 +877,10 @@ def post_transactions(
         db.rollback()
         return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=conflict.body())
     for (_i, _tx, warnings), r in zip(valid, upserted):
+        # Unreadable links (dropped before the model) first, then unknown ones (dropped
+        # by the upsert, which names nothing here).
         if warnings:
-            r.warnings = warnings
+            r.warnings = [*warnings, *(r.warnings or ())]
     # In the order the till sent them.
     results = [
         r for _i, r in sorted(

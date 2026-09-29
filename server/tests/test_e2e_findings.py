@@ -154,6 +154,61 @@ class TestOneBadDocumentDoesNotJamTheBatch:
         log = w.db.query(SyncLog).one()
         assert log.status == SyncStatus.SUCCESS and "'p12'" in log.conflict_note
 
+    def test_an_unknown_product_link_is_dropped_with_the_same_warning(self, w):
+        """A well-formed UUID naming no product loses its link as "p12" does — and says so."""
+        from app.models.category import Category
+        from app.models.product import CatalogLevel, Product
+        from app.models.transaction_item import TransactionItem
+
+        till = w.tills[0]
+        category = Category(id=uuid.uuid4(), tenant_id=till.tenant_id, name="Drinks")
+        known = Product(
+            id=uuid.uuid4(), tenant_id=till.tenant_id, category_id=category.id,
+            catalog_level=CatalogLevel.GLOBAL, name="Cola", price=Decimal("8"), sku="COLA",
+        )
+        w.db.add_all([category, known])
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        unknown = uuid.uuid4()
+        line = {"quantity": 1, "unitPrice": 8, "totalPrice": 8}
+        sale = _doc(shift.id, "24.00", items=[
+            {"id": str(uuid.uuid4()), "productId": "p12", "productName": "Espresso", **line},
+            {"id": str(uuid.uuid4()), "productId": str(unknown), "productName": "Tea", **line},
+            {"id": str(uuid.uuid4()), "productId": str(known.id), "productName": "Cola", **line},
+        ])
+
+        (result,) = _push(w, till, [sale]).results
+
+        assert result.status == "accepted"
+        assert result.warnings == [
+            "items[0].productId: unreadable 'p12', stored without the link",
+            f"items[1].productId: unknown '{unknown}', stored without the link",
+        ]
+        links = {i.product_name: i.product_id for i in w.db.query(TransactionItem).all()}
+        assert links == {"Espresso": None, "Tea": None, "Cola": known.id}
+        log = w.db.query(SyncLog).one()
+        assert str(unknown) in log.conflict_note and "'p12'" in log.conflict_note
+
+        (again,) = _push(w, till, [sale]).results
+        assert again.status == "duplicate" and again.warnings == result.warnings
+
+    def test_an_unknown_voucher_link_is_dropped_with_a_warning(self, w):
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        voucher, product = uuid.uuid4(), uuid.uuid4()
+        sale = _doc(shift.id, "50.00", issuedVouchers=[{
+            "id": str(uuid.uuid4()), "voucherId": str(voucher), "productId": str(product),
+            "productName": "Gift card", "quantity": 1, "unitValue": 50, "faceValue": 50,
+            "issuedAt": NOW.isoformat(),
+        }])
+
+        (result,) = _push(w, till, [sale]).results
+
+        assert result.status == "accepted", result.reason
+        assert result.warnings == [
+            f"issuedVouchers[0].voucherId: unknown '{voucher}', stored without the link",
+            f"issuedVouchers[0].productId: unknown '{product}', stored without the link",
+        ]
+
     def test_a_re_push_answers_the_warning_again(self, w):
         till = w.tills[0]
         shift = w.shift(till, 1, status=ShiftStatus.OPEN)
