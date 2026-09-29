@@ -23,6 +23,7 @@ from app.schemas.z_report import (
     ZReportOut,
     ZReportWindow,
 )
+from app.services.areas import filter_on_column, parse_area_filter
 from app.services.scoping import scope_query_by_user
 from app.services.shifts import shift_to_out
 
@@ -91,6 +92,8 @@ def z_to_out(z: ZReport, cls=ZReportOut):
     item.between_shift_adjustments = _between_shift_adjustments(z.per_machine)
     item.machine_name = z.machine.name if z.machine_id and z.machine else None
     item.shop_name = z.shop.name if z.shop else None
+    # The frozen name, never the area's name today: a Z keeps what it was filed as.
+    item.area_name = (z.header or {}).get("areaName") if z.area_id is not None else None
     return item
 
 
@@ -103,6 +106,9 @@ def list_z_reports(
     to_date: Optional[date] = Query(None, alias="to"),
     closed_from: Optional[datetime] = Query(None, alias="closedFrom"),
     closed_to: Optional[datetime] = Query(None, alias="closedTo"),
+    area_id: Optional[str] = Query(
+        None, alias="areaId", description="The area a Z was started for, or `none`."
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200, alias="pageSize"),
     current_user: User = Depends(get_current_user),
@@ -114,8 +120,10 @@ def list_z_reports(
 
     `from`/`to` filter on the Z's `business_date`. `closedFrom`/`closedTo` are ISO
     datetimes on `closed_at`. `machineId`/`machineIds` match a Z containing that till
-    (a shift of it, or a legacy till-issued Z).
+    (a shift of it, or a legacy till-issued Z). `areaId` matches the area a Z was run
+    for; `none` is every whole-shop, hand-picked or legacy Z.
     """
+    area_filter = parse_area_filter(area_id)
     query = (
         db.query(ZReport)
         .options(joinedload(ZReport.machine), joinedload(ZReport.shop))
@@ -134,6 +142,7 @@ def list_z_reports(
         )
     if shop_id:
         query = query.filter(ZReport.shop_id == shop_id)
+    query = filter_on_column(query, ZReport.area_id, area_filter)
 
     defaulted = from_date is None and to_date is None and closed_from is None and closed_to is None
     if defaulted:

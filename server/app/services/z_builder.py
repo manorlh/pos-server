@@ -38,6 +38,7 @@ from app.models.shop_z_sequence import ShopZSequence
 from app.models.z_report import ZReport
 from app.services.shift_totals import CENT, DocumentTotals, compute_totals
 from app.models.shop import Shop
+from app.models.shop_area import ShopArea
 from app.services.z_header import snapshot_header
 from app.services.z_sequence import allocate_shop_z_number, ensure_shop_z_sequence
 
@@ -290,10 +291,14 @@ def build_z(
     created_by_user_id: Optional[uuid.UUID] = None,
     z_run_id: Optional[uuid.UUID] = None,
     business_date: Optional[date] = None,
+    area_id: Optional[uuid.UUID] = None,
     now: Optional[datetime] = None,
 ) -> ZReport:
     """
     Build and write one Z over `selections` — (till, through shift id) pairs of one shop.
+
+    `area_id` records which area of the shop the Z was started for, and its header
+    freezes the area's name. It selects nothing here: the tills were chosen by the run.
 
     The caller owns the transaction: on `ZBuildRefused` nothing has been written, and the
     caller rolls back (or releases its savepoint).
@@ -364,7 +369,13 @@ def build_z(
         unattended=any(s.unattended for s in all_shifts),
         reconstructed=any(s.reconstructed for s in all_shifts),
         closed_at=now,
-        header=snapshot_header(db, db.query(Shop).filter(Shop.id == shop_id).first(), now=now),
+        area_id=area_id,
+        header=snapshot_header(
+            db,
+            db.query(Shop).filter(Shop.id == shop_id).first(),
+            area=db.query(ShopArea).filter(ShopArea.id == area_id).first() if area_id else None,
+            now=now,
+        ),
         shop_sequence_number=allocate_shop_z_number(db, shop_id),
     )
     db.add(z)
