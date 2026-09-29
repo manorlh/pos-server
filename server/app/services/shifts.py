@@ -31,7 +31,7 @@ from decimal import Decimal
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_
+from sqlalchemy import BigInteger, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -220,7 +220,49 @@ def z_reported_through_sequence(db: Session, machine_id: uuid.UUID) -> Optional[
     return int(value) if value is not None else None
 
 
+#: The most digits a document number may have to count as a number here: it must fit the
+#: till's `Long` (and Postgres' bigint). 18 digits always does.
+DOCUMENT_NUMBER_MAX_DIGITS = 18
+
+
+def _highest_number_query(db: Session, machine_id: uuid.UUID):
+    """Postgres: the max over the all-digit numbers (the cast only sees rows the filter kept)."""
+    return db.query(func.max(Transaction.transaction_number.cast(BigInteger))).filter(
+        Transaction.machine_id == machine_id,
+        Transaction.transaction_number.op("~")(f"^[0-9]{{1,{DOCUMENT_NUMBER_MAX_DIGITS}}}$"),
+    )
+
+
+def highest_transaction_number(db: Session, machine_id: uuid.UUID) -> Optional[int]:
+    """
+    The highest numeric document number the cloud holds from this machine, or None.
+
+    `transaction_number` is text, so compared as a number (a string max puts "9" above
+    "10"); a number that is not all digits — or too long to be one the till issued — is
+    not a number here. Every document counts, whatever its status: a cancelled document's
+    number was still used.
+    """
+    if db.get_bind().dialect.name == "postgresql":
+        value = _highest_number_query(db, machine_id).scalar()
+        return None if value is None else int(value)
+    # Other engines (the tests' SQLite) have no regex match: filtered here instead.
+    numbers = [
+        int(n)
+        for (n,) in db.query(Transaction.transaction_number)
+        .filter(Transaction.machine_id == machine_id)
+        .all()
+        if n and n.isascii() and n.isdigit() and len(n) <= DOCUMENT_NUMBER_MAX_DIGITS
+    ]
+    return max(numbers) if numbers else None
+
+
 def last_closed_shift(db: Session, machine_id: uuid.UUID) -> LastClosedShift:
+    """
+    The till's last closed shift, and the highest document number the cloud holds from
+    it — the latter even when it never closed a shift (a reinstalled till raises its
+    counter onto it, so it never reissues a number the machine already used).
+    """
+    highest = highest_transaction_number(db, machine_id)
     shift = (
         db.query(Shift)
         .filter(Shift.machine_id == machine_id, Shift.status == ShiftStatus.CLOSED)
@@ -228,8 +270,9 @@ def last_closed_shift(db: Session, machine_id: uuid.UUID) -> LastClosedShift:
         .first()
     )
     if shift is None:
-        return LastClosedShift()
+        return LastClosedShift(highest_transaction_number=highest)
     return LastClosedShift(
+        highest_transaction_number=highest,
         shift_id=shift.id,
         sequence_number=shift.sequence_number,
         business_date=shift.business_date,

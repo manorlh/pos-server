@@ -26,10 +26,12 @@ import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import {
   CountedCash,
   Fact,
+  hasBetweenShiftAdjustments,
   MoneyRow,
   OverShort,
   PaymentBreakdownRows,
   ShiftBadges,
+  SignedMoney,
   TipsSplit,
   useShiftLabel,
   useTillHeading,
@@ -216,6 +218,11 @@ function TillCard({ s, shifts }: { s: ZReportMachineSection; shifts: Shift[] }) 
           </div>
           <div className="space-y-1 rounded border bg-muted/30 p-3">
             <MoneyRow label={t('openingCash')} value={s.openingCash} />
+            {hasBetweenShiftAdjustments(s.betweenShiftAdjustments) ? (
+              <MoneyRow label={t('betweenShiftAdjustments')}>
+                <SignedMoney value={s.betweenShiftAdjustments} />
+              </MoneyRow>
+            ) : null}
             <MoneyRow label={t('expectedCash')} value={s.expectedCash} />
             <MoneyRow label={t('actualCash')}>
               {uncounted ? (
@@ -390,6 +397,11 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
             </CardHeader>
             <CardContent className="space-y-1 text-sm">
               <MoneyRow label={t('openingCash')} value={z.openingCash} />
+              {hasBetweenShiftAdjustments(z.betweenShiftAdjustments) ? (
+                <MoneyRow label={t('betweenShiftAdjustments')}>
+                  <SignedMoney value={z.betweenShiftAdjustments} />
+                </MoneyRow>
+              ) : null}
               <MoneyRow label={t('expectedCash')} value={z.expectedCash} />
               <MoneyRow label={t('actualCash')}>
                 {withheld ? (

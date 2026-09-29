@@ -137,7 +137,19 @@ The links dropped this way: `items[].productId` (the line keeps its name, SKU an
 `stockMovements[].transactionItemId`. A stock movement whose `productId` cannot be read is
 not applied (`"stockMovements[0].productId: unreadable 'p12', movement not applied"`) —
 without a product there is nothing to move, and on-hand is not a fiscal record; the
-document is still stored. `warnings` is null when nothing was dropped.
+document is still stored. A well-formed UUID that names nothing here — `items[].productId`,
+`issuedVouchers[].productId` / `voucherId` — is dropped the same way, with its own entry
+(`"items[1].productId: unknown '3f2a…', stored without the link"`), after the unreadable ones.
+`warnings` is null when nothing was dropped. A stock movement naming such a product is not
+applied (`"stockMovements[0].productId: unknown '…', movement not applied"`).
+
+**Links stay in the till's tenant.** An id of **another tenant's** product, voucher or
+customer is, to the till, an unknown one: the link is dropped with the same `unknown` warning
+(a customer link is dropped silently, as an unknown customer always was). Not dropped: a
+`refundOfTransactionId` naming another tenant's document refuses the document
+(`"refundOfTransactionId: names a document of another tenant"`), and an `approvedByUserId`
+of someone outside the till's tenant — not a member of it, a distributor of someone else's
+terminal — refuses it as `approver_unknown_or_inactive`.
 
 Not dropped, because each decides what the money is: `shiftId` (which X it is in),
 `refundOfTransactionId` (sale or refund), `approvedByUserId` (stripping a claim of approval
@@ -313,11 +325,18 @@ Prefills the next opening float when the till has no local row (e.g. after reins
 {
   "shiftId": "…", "sequenceNumber": 11, "businessDate": "2026-09-27",
   "closedAt": "…", "countedCash": "1234.50", "expectedCash": "1210.00",
-  "reconstructed": false
+  "reconstructed": false,
+  "highestTransactionNumber": 1432
 }
 ```
-All fields `null` (and `reconstructed: false`) when this till has never closed a shift. Always 200.
+All shift fields `null` (and `reconstructed: false`) when this till has never closed a shift. Always 200.
 Prefill rule on the till: `countedCash`, else `expectedCash`.
+
+`highestTransactionNumber` — the highest numeric document number the cloud holds from this
+machine (any status), as a JSON integer; `null` if it holds none. Sent whether or not a shift
+was ever closed. `transactionNumber` is text, so it is compared as a number; one that is not
+all digits, or longer than 18 digits, does not count. A till paired out of demo mode raises
+its counter onto it, so a reinstalled till never reissues a number the machine already used.
 
 ### 1.6 Heartbeat `POST /machines/me/heartbeat`
 
@@ -690,6 +709,7 @@ it (`409 z_run_in_progress`).
   "totalTips", "totalCashTips", "totalCardTips", "vatTotal", "transactionsCount",
   "paymentBreakdown": {"cash": "…", "card": "…", "<other method>": "…"},
   "openingCash", "expectedCash", "actualCash", "discrepancy",   // Σ of the per-till figures (§3.6); null if null for any till
+  "betweenShiftAdjustments",               // Σ of the per-till figure (§3.6); null on a Z built before it existed, and on a legacy Z
   "unattended", "reconstructed",           // any included shift unattended / reconstructed
   "lateDocuments": 0,                      // documents of its shifts that arrived (or moved in) after it was built (not in its figures)
   "amendedDocuments": 0,                   // documents of its shifts rewritten after it was built (its figures are as built)
@@ -712,33 +732,44 @@ it (`409 z_run_in_progress`).
   "totalTips", "totalCashTips", "totalCardTips",
   "openingCash", "expectedCash", "countedCash", "overShort", "uncountedShiftCount",
   "cashSalesNet",     // Σ cash takings of its shifts, net of cash refunds (Zs built from now on)
+  "betweenShiftAdjustments",  // cash put into / taken out of the drawer between its shifts (Zs built from now on)
   "reconstructedShiftCount", "unattendedShiftCount"
 }
 ```
 Money values are decimal strings.
 
 **The drawer figures across back-to-back shifts.** A till has one drawer, and consecutive
-shifts hand it on: the next shift's float is what the last one left in it. Summing floats
-and expecteds over the shifts counted the same banknotes once per shift (a drawer holding
-~180 read as opening 455, expected 540). Per till, over the shifts the Z takes of it,
-oldest first:
+shifts hand it on: the next shift's float is normally what the last one left in it. Per till,
+over the shifts the Z takes of it (1..n, oldest first), with each shift's server expected =
+its float + cash takings + cash tips, and its *closing* = its count, or its expected if it
+was not counted:
 - `openingCash` — the **first** shift's opening float: the drawer at the start of the period;
-- `expectedCash` — the **last** shift's expected (the server's own: its float + cash takings
-  + cash tips): the drawer at the end of the period;
+- `cashSalesNet` — Σ cash takings of the shifts, net of cash refunds;
+- `betweenShiftAdjustments` — Σ over consecutive shifts of (float of shift i+1 − closing of
+  shift i): cash put into (+) or taken out of (−) the drawer between shifts. Usually 0;
+- `expectedCash` — `openingCash + cashSalesNet + totalCashTips + betweenShiftAdjustments`:
+  the drawer at the end of the period;
 - `countedCash` — the **last** shift's count; null if that shift was not counted;
 - `overShort` — the sum of every shift's own over/short (its count − its server expected);
   null if **any** shift was not counted — a partial count presented as the drawer's would
-  hide exactly the shortfall a count exists to find. It is therefore not always
-  `countedCash − expectedCash`: an earlier shift's shortfall is in it too;
-- `cashSalesNet` — the cash the whole period took, which the drawer figures alone do not show
-  when cash left the drawer between shifts.
+  hide exactly the shortfall a count exists to find. When it is not null it is exactly
+  `countedCash − expectedCash`.
 
-Example (one till): A float 100, expected 180, counted 175; B float 175, expected 180,
-uncounted; C float 180, expected 185, uncounted → opening 100, expected 185, counted null,
-over/short null. The Z's `openingCash` / `expectedCash` / `actualCash` / `discrepancy` are the
-sums of these over its tills (tills have a drawer each), null if null for any till. The day
-summary (§2.13) takes each cloud Z's variance from its `discrepancy`. A Z built before this
-rule keeps the sums it was built with. Sections are served as they were stored when the Z was built — except
+Why it reconciles: an earlier shift's over/short is carried into the next float, so the
+period's `expectedCash` is the last shift's expected **less** the earlier shifts' over/shorts,
+and the last count less it is every shift's over/short.
+
+Example (E2E Z #3, one till): E float 180, +10 cash, expected 190, counted 192 (+2); F float
+192, −2 cash, expected 190, counted 189 (−1) → opening 180, cash 8, between shifts 0,
+expected 188, counted 189, over/short +1. Had F instead opened on 150 (42 banked between the
+shifts), taken +5 and counted 154: between shifts −42, expected 180 + 15 − 42 = 153, over/short
++1 (= +2 − 1 = 154 − 153). A shift left uncounted closes at its expected, and withholds
+over/short. The Z's `openingCash` / `expectedCash` / `actualCash` /
+`discrepancy` / `betweenShiftAdjustments` are the sums of these over its tills (tills have a
+drawer each), null if null for any till. The day summary (§2.13) takes each cloud Z's variance
+from its `discrepancy`. A Z keeps the figures it was built with: one built before this rule
+took the last shift's expected (so its over/short need not be counted − expected) and has no
+`betweenShiftAdjustments`. Sections are served as they were stored when the Z was built — except
 that `grossSales` / `netSales` are derived from the section's own figures for a Z built before
 they were stored. A Z built before this change may carry a machine code in `posNumber`
 (non-numeric); it is not rewritten.

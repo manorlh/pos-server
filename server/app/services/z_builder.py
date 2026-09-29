@@ -14,8 +14,9 @@ never from figures a till reported. Everything happens in one database transacti
    in the till's run) or contain one whose close has not been accepted.
 3. Totals are computed from the documents of the whole set, and per till for its
    section (first and last document number, takings by tender, discounts, refunds, VAT,
-   tips, and the drawer: first float to last expected per till, with over/short withheld
-   if any shift was uncounted — see `till_cash_summary`).
+   tips, and the drawer: per till from the first float through the cash takings and
+   the cash moved between shifts to an expected that its last count reconciles with,
+   over/short withheld if any shift was uncounted — see `till_cash_summary`).
 4. The number is allocated, the Z written, and `shifts.z_report_id` set — which is
    what makes a shift in at most one Z: it was NULL under the lock, and it is set in
    the same transaction.
@@ -136,29 +137,52 @@ def _shift_expected(shift: Shift) -> Decimal:
     return _dec(shift.opening_cash) + _dec(shift.total_cash) + _dec(shift.total_cash_tips)
 
 
+def _shift_closing(shift: Shift) -> Decimal:
+    """What a shift left in the drawer: its count, or its server expected if uncounted."""
+    return _shift_expected(shift) if shift.counted_cash is None else _dec(shift.counted_cash)
+
+
 def till_cash_summary(shifts: Sequence[Shift]) -> Dict[str, Optional[Decimal]]:
     """
     One till's drawer over the consecutive shifts a Z takes of it (oldest first).
 
-    A till has one drawer, and back-to-back shifts hand it on: the next shift's float is
-    what the last one left in it. Summing floats and expecteds over the shifts counted
-    the same banknotes once per shift — a drawer that held ~180 read as opening 455 and
-    expected 540. So (docs/SHIFTS_API.md §3.6):
+    A till has one drawer, and back-to-back shifts hand it on. Summing floats and
+    expecteds over the shifts counted the same banknotes once per shift (a drawer that
+    held ~180 read as opening 455, expected 540); taking the last shift's expected
+    instead did not add up either once a surplus or shortfall was carried into the next
+    float (E2E Z #3: expected 190, counted 189, over/short +1). So
+    (docs/SHIFTS_API.md §3.6), with shifts 1..n, float_i their opening float, cash_i
+    their cash takings net of cash refunds, tips_i their cash tips, expected_i =
+    float_i + cash_i + tips_i (the server's own) and closing_i = the count if counted,
+    else expected_i:
 
-    * opening  — the **first** shift's float: the drawer at the start of the period;
-    * expected — the **last** shift's expected (the server's own: its float + cash
-      takings + cash tips): the drawer at the end of the period;
+    * opening  — float_1: the drawer at the start of the period;
+    * between-shift adjustments — Σ_{i<n} (float_{i+1} − closing_i): cash put into or
+      taken out of the drawer between shifts (usually 0, or a carried surplus);
+    * expected — opening + Σ cash_i + Σ tips_i + adjustments;
     * counted  — the **last** shift's count, NULL if that shift was not counted;
-    * over/short — the sum of each shift's own over/short (its count − its expected),
-      NULL if **any** shift was not counted: a partial count presented as the drawer's
-      would hide exactly the shortfall a count exists to find;
-    * cash sales — the cash takings of every shift, net of cash refunds (the money the
-      drawer figures alone no longer show when cash left it between shifts).
+    * over/short — Σ (count_i − expected_i), NULL if **any** shift was not counted: a
+      partial count presented as the drawer's would hide exactly the shortfall a count
+      exists to find;
+    * cash sales — Σ cash_i.
+
+    Why this reconciles. With d_i = closing_i − expected_i (the over/short of a counted
+    shift, 0 for an uncounted one), float_{i+1} = closing_i + adj_i
+    = float_i + cash_i + tips_i + d_i + adj_i, so telescoping from float_1:
+
+        expected_n = float_1 + Σ_{i≤n} (cash_i + tips_i) + Σ_{i<n} adj_i + Σ_{i<n} d_i
+                   = expected + Σ_{i<n} d_i
+
+    i.e. the period's expected is the last shift's expected **less** the earlier shifts'
+    over/shorts (they were carried into the floats, and are counted once, in
+    over/short). When every shift was counted, counted_n = expected_n + d_n, hence
+
+        counted − expected = d_n + Σ_{i<n} d_i = over/short     exactly.
     """
     if not shifts:
         return {
             "opening": ZERO, "expected": ZERO, "counted": None, "over_short": None,
-            "uncounted": 0, "cash_sales": ZERO,
+            "uncounted": 0, "cash_sales": ZERO, "between_shifts": ZERO,
         }
     first, last = shifts[0], shifts[-1]
     uncounted = sum(1 for s in shifts if s.counted_cash is None)
@@ -166,13 +190,21 @@ def till_cash_summary(shifts: Sequence[Shift]) -> Dict[str, Optional[Decimal]]:
         None if uncounted
         else sum((_dec(s.counted_cash) - _shift_expected(s) for s in shifts), ZERO)
     )
+    cash_sales = sum((_dec(s.total_cash) for s in shifts), ZERO)
+    cash_tips = sum((_dec(s.total_cash_tips) for s in shifts), ZERO)
+    between_shifts = sum(
+        (_dec(after.opening_cash) - _shift_closing(before) for before, after in zip(shifts, shifts[1:])),
+        ZERO,
+    )
+    opening = _dec(first.opening_cash)
     return {
-        "opening": _dec(first.opening_cash),
-        "expected": _shift_expected(last),
+        "opening": opening,
+        "expected": opening + cash_sales + cash_tips + between_shifts,
         "counted": None if last.counted_cash is None else _dec(last.counted_cash),
         "over_short": over_short,
         "uncounted": uncounted,
-        "cash_sales": sum((_dec(s.total_cash) for s in shifts), ZERO),
+        "cash_sales": cash_sales,
+        "between_shifts": between_shifts,
     }
 
 
@@ -195,6 +227,7 @@ def z_cash_summary(per_till: Sequence[Sequence[Shift]]) -> Dict[str, Optional[De
         "over_short": _sum_or_none([t["over_short"] for t in tills]) if tills else None,
         "uncounted": sum(t["uncounted"] for t in tills),
         "cash_sales": sum((t["cash_sales"] for t in tills), ZERO),
+        "between_shifts": sum((t["between_shifts"] for t in tills), ZERO),
     }
 
 
@@ -237,9 +270,11 @@ def machine_section(machine: POSMachine, shifts: Sequence[Shift], totals: Docume
         "expectedCash": _money(cash["expected"]),
         "countedCash": _money(cash["counted"]),
         "overShort": _money(cash["over_short"]),
-        # Net of cash refunds. With the drawer carried from shift to shift, expected is
-        # the last shift's drawer — this is the cash the whole period took.
+        # Net of cash refunds: the cash the whole period took.
         "cashSalesNet": _money(cash["cash_sales"]),
+        # Cash put into or taken out of the drawer between its shifts (the next float
+        # less what the last shift left); part of expectedCash. Usually 0.
+        "betweenShiftAdjustments": _money(cash["between_shifts"]),
         "uncountedShiftCount": cash["uncounted"],
         "reconstructedShiftCount": sum(1 for s in shifts if s.reconstructed),
         "unattendedShiftCount": sum(1 for s in shifts if s.unattended),

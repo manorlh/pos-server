@@ -127,3 +127,14 @@ export function formatApproxDuration(ms: number): string {
 export function formatHour(hour: number): string {
   return `${String(hour).padStart(2, '0')}:00`;
 }
+
+/**
+ * A running number as "#12", isolated left-to-right (U+2066 LRI … U+2069 PDI) for text
+ * that sits in a Hebrew line: bare, the "#" is a weak character and could land on the
+ * far side of the digits ("משמרת 12#"). The string form of the `dir="ltr"` spans the
+ * document numbers use, for places that take a string — interpolated messages, select
+ * options, titles.
+ */
+export function formatHashNumber(n: number | string): string {
+  return `\u2066#${n}\u2069`;
+}

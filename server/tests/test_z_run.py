@@ -124,10 +124,11 @@ class TestMultiTillTotalsGolden:
         assert z.vat_total == Decimal("54.15")
         assert z.transactions_count == 5
         assert z.payment_breakdown == {"card": "195.00", "cash": "160.00"}
-        # Per till, the drawer from the first shift's float to the last shift's expected
-        # (till 1: 100 → 50 + 30 + 5 tip = 85; till 2: 0 → 50), summed over the tills.
+        # Per till, the first float + the cash takings + cash tips + the cash moved
+        # between shifts (till 1: 100 + 110 + 5 − 140 taken out after shift 1 = 75;
+        # till 2: 0 + 50 = 50), summed over the tills.
         assert z.opening_cash == Decimal("100.00")
-        assert z.expected_cash == Decimal("135.00")
+        assert z.expected_cash == Decimal("125.00")
         # Till 2 was not counted: the Z's count and over/short are unknown, not partial.
         assert z.actual_cash is None and z.discrepancy is None
 
@@ -144,12 +145,15 @@ class TestMultiTillTotalsGolden:
         assert one["totalCash"] == "110.00" and one["totalCard"] == "45.00"
         assert one["vatTotal"] == "23.64"
         assert one["creditNotesCount"] == 1 and one["salesCount"] == 3
-        # The first shift's float, the last shift's expected and count; over/short is
-        # each shift's own (+10 then −5), summed.
+        # Shift 1 left 190 (counted, +10); shift 2 opened on 50, so 140 left the drawer
+        # between them. Expected is 100 + 110 cash + 5 cash tip − 140 = 75; over/short is
+        # each shift's own (+10 then −5), summed — and it is the count less expected.
         assert one["openingCash"] == "100.00"
-        assert one["expectedCash"] == "85.00"
+        assert one["betweenShiftAdjustments"] == "-140.00"
+        assert one["expectedCash"] == "75.00"
         assert one["countedCash"] == "80.00"
         assert one["overShort"] == "5.00"
+        assert Decimal(one["countedCash"]) - Decimal(one["expectedCash"]) == Decimal(one["overShort"])
         assert one["cashSalesNet"] == "110.00"
 
         assert two["totalSales"] == "200.00"
@@ -159,6 +163,7 @@ class TestMultiTillTotalsGolden:
         assert (two["firstDocumentNumber"], two["lastDocumentNumber"]) == ("1", "2")
         assert two["countedCash"] is None and two["overShort"] is None
         assert two["uncountedShiftCount"] == 1
+        assert two["betweenShiftAdjustments"] == "0.00"  # one shift: nothing between
 
     def test_the_tills_own_figures_are_never_read(self, w):
         """`closed_shift` sends totalSales=1.00 on every close; the Z ignores it."""

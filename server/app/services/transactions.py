@@ -56,27 +56,68 @@ from app.services.tenders import (
 logger = logging.getLogger(__name__)
 
 
-def _safe_item_product_id(db: Session, pid: Optional[uuid.UUID]) -> Optional[uuid.UUID]:
+def _safe_item_product_id(
+    db: Session, pid: Optional[uuid.UUID], tenant_id: Optional[uuid.UUID]
+) -> Optional[uuid.UUID]:
     """
+    `pid` if it names a product **of `tenant_id`** (the pushing till's), else None.
+
     POS SQLite `products.id` can diverge from cloud PK after SKU-based merge; invalid UUIDs
     would break INSERT into transaction_items (FK → products). Snapshot fields preserve lines.
+    Another tenant's product is treated as unknown: without the tenant predicate a till
+    could link its lines — and its stock movements — to another merchant's catalogue by
+    naming a UUID.
     """
-    if pid is None:
+    if pid is None or tenant_id is None:
         return None
-    row = db.query(Product.id).filter(Product.id == pid).first()
+    row = db.query(Product.id).filter(Product.id == pid, Product.tenant_id == tenant_id).first()
     return pid if row else None
 
 
-def _safe_voucher_id(db: Session, vid: Optional[uuid.UUID]) -> Optional[uuid.UUID]:
-    if vid is None:
+def _safe_voucher_id(
+    db: Session, vid: Optional[uuid.UUID], tenant_id: Optional[uuid.UUID]
+) -> Optional[uuid.UUID]:
+    """`vid` if it names a voucher of `tenant_id`, else None (as `_safe_item_product_id`)."""
+    if vid is None or tenant_id is None:
         return None
     from app.models.voucher import Voucher
-    row = db.query(Voucher.id).filter(Voucher.id == vid).first()
+    row = db.query(Voucher.id).filter(Voucher.id == vid, Voucher.tenant_id == tenant_id).first()
     return vid if row else None
 
 
-def _safe_issued_product_id(db: Session, pid: Optional[uuid.UUID]) -> Optional[uuid.UUID]:
-    return _safe_item_product_id(db, pid)
+def _safe_issued_product_id(
+    db: Session, pid: Optional[uuid.UUID], tenant_id: Optional[uuid.UUID]
+) -> Optional[uuid.UUID]:
+    return _safe_item_product_id(db, pid, tenant_id)
+
+
+def _refund_of_other_tenant(
+    db: Session, refund_of: Optional[uuid.UUID], tenant_id: Optional[uuid.UUID]
+) -> bool:
+    """
+    Does the document's `refundOfTransactionId` name a document of **another** tenant?
+
+    Not dropped like a product link: it decides whether the money is a sale or a refund,
+    so a document naming another tenant's sale is refused. An id the cloud does not hold
+    (yet) is fine — the original may arrive after its credit note.
+    """
+    if refund_of is None:
+        return False
+    row = db.query(Transaction.tenant_id).filter(Transaction.id == refund_of).first()
+    return row is not None and str(row[0]) != str(tenant_id)
+
+
+def _kept_link(
+    resolved: Optional[uuid.UUID], sent: Optional[uuid.UUID], where: str, warnings: List[str]
+) -> Optional[uuid.UUID]:
+    """
+    `resolved` (a `_safe_*` lookup of `sent`), with a warning when a link was sent and
+    names nothing here — the well-formed twin of `drop_unreadable_references`: the
+    document is stored without the link either way, and the till is told which one.
+    """
+    if sent is not None and resolved is None:
+        warnings.append(f"{where}: unknown {_raw(str(sent))}, stored without the link")
+    return resolved
 
 
 def _resolve_customer_ref_id(
@@ -576,6 +617,8 @@ def upsert_transactions(
         # turning one bad row into a 500 the till retries forever, which blocks the
         # outbox and therefore the day's close.
         savepoint = db.begin_nested()
+        # Links the document sent that name nothing here (answered as `warnings`).
+        link_warnings: List[str] = []
         try:
             previous = existing_map.get(tx.id)
             if previous is not None and str(previous.machine_id) != str(machine.id):
@@ -614,6 +657,18 @@ def upsert_transactions(
             # trace, least of all a stored copy of itself with the claim quietly
             # stripped out. Stripping would turn a lie into a plausible ordinary
             # document, which is the one outcome worse than rejecting.
+            if _refund_of_other_tenant(db, tx.refund_of_transaction_id, machine.tenant_id):
+                logger.warning(
+                    "Rejecting transaction %s: refundOfTransactionId %s is another tenant's",
+                    tx.id, tx.refund_of_transaction_id,
+                )
+                results.append(TransactionUpsertResult(
+                    id=tx.id,
+                    status="rejected",
+                    reason="refundOfTransactionId: names a document of another tenant",
+                ))
+                continue
+
             try:
                 approved_by_user_id = verify_document_approver(db, machine, tx)
             except ApprovalRejected as bad_claim:
@@ -722,7 +777,10 @@ def upsert_transactions(
                     TransactionItem(
                         id=it.id,
                         transaction_id=tx.id,
-                        product_id=_safe_item_product_id(db, it.product_id),
+                        product_id=_kept_link(
+                            _safe_item_product_id(db, it.product_id, machine.tenant_id), it.product_id,
+                            f"items[{i}].productId", link_warnings,
+                        ),
                         product_name=it.product_name,
                         sku=it.sku,
                         quantity=it.quantity,
@@ -734,7 +792,7 @@ def upsert_transactions(
                         line_discount=it.line_discount,
                         notes=it.notes,
                     )
-                    for it in tx.items
+                    for i, it in enumerate(tx.items)
                 ])
 
             # Tender legs are replaced atomically, exactly like items: a re-push is
@@ -775,8 +833,14 @@ def upsert_transactions(
                         machine_id=machine.id,
                         transaction_id=tx.id,
                         transaction_item_id=iv.transaction_item_id,
-                        voucher_id=_safe_voucher_id(db, iv.voucher_id),
-                        product_id=_safe_issued_product_id(db, iv.product_id),
+                        voucher_id=_kept_link(
+                            _safe_voucher_id(db, iv.voucher_id, machine.tenant_id), iv.voucher_id,
+                            f"issuedVouchers[{i}].voucherId", link_warnings,
+                        ),
+                        product_id=_kept_link(
+                            _safe_issued_product_id(db, iv.product_id, machine.tenant_id), iv.product_id,
+                            f"issuedVouchers[{i}].productId", link_warnings,
+                        ),
                         product_name=iv.product_name,
                         quantity=iv.quantity,
                         unit_value=iv.unit_value,
@@ -787,11 +851,20 @@ def upsert_transactions(
                         reprint_count=iv.reprint_count,
                         last_printed_at=iv.last_printed_at,
                     )
-                    for iv in tx.issued_vouchers
+                    for i, iv in enumerate(tx.issued_vouchers)
                 ])
 
             if tx.stock_movements and machine.shop_id and machine.tenant_id:
-                for sm in tx.stock_movements:
+                for i, sm in enumerate(tx.stock_movements):
+                    if sm.product_id is None:
+                        continue  # nothing named, nothing to move (as before)
+                    if _safe_item_product_id(db, sm.product_id, machine.tenant_id) is None:
+                        # Unknown here, or another tenant's: nothing of ours to move.
+                        link_warnings.append(
+                            f"stockMovements[{i}].productId: unknown {_raw(str(sm.product_id))}, "
+                            "movement not applied"
+                        )
+                        continue
                     reason = StockMovementReason(sm.reason)
                     apply_movement(
                         db,
@@ -829,9 +902,12 @@ def upsert_transactions(
                         amended[target_shift_id] = amended.get(target_shift_id, 0) + 1
                 if moved and previous.shift_id is not None:
                     touched_closed.setdefault(previous.shift_id, 0)
+            if link_warnings:
+                logger.warning("Storing document %s without links: %s", tx.id, "; ".join(link_warnings))
             results.append(TransactionUpsertResult(
                 id=tx.id,
                 status="duplicate" if is_duplicate else "accepted",
+                warnings=link_warnings or None,
                 server_received_at=datetime.now(timezone.utc),
             ))
         except ShiftConflict:

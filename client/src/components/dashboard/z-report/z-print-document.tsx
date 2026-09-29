@@ -20,6 +20,7 @@ import { useTranslations } from 'next-intl';
 import { formatCurrency, formatDate, formatDateTime, moneyValue } from '@/lib/format';
 import type { Money, ZReportDetail, ZReportMachineSection } from '@/lib/types';
 import {
+  hasBetweenShiftAdjustments,
   usePaymentMethodLabel,
   useShiftLabel,
   useTillHeading,
@@ -147,6 +148,9 @@ function TillSection({ s }: { s: ZReportMachineSection }) {
           <Payments breakdown={s.paymentBreakdown} />
           <SubHeading>{t('cashTitle')}</SubHeading>
           <Row label={t('openingCash')} value={formatCurrency(s.openingCash)} />
+          {hasBetweenShiftAdjustments(s.betweenShiftAdjustments) ? (
+            <Row label={t('betweenShiftAdjustments')} value={signedMoney(s.betweenShiftAdjustments)} />
+          ) : null}
           <Row label={t('expectedCash')} value={formatCurrency(s.expectedCash)} />
           <Row
             label={t('countedCash')}
@@ -244,6 +248,9 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
         <table className="w-full text-xs">
           <tbody>
             <Row label={t('openingCash')} value={formatCurrency(z.openingCash)} />
+            {hasBetweenShiftAdjustments(z.betweenShiftAdjustments) ? (
+              <Row label={t('betweenShiftAdjustments')} value={signedMoney(z.betweenShiftAdjustments)} />
+            ) : null}
             <Row label={t('expectedCash')} value={formatCurrency(z.expectedCash)} />
             <Row
               label={t('countedCash')}

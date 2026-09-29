@@ -1066,9 +1066,10 @@ def _z_variance(z: ZReport) -> Optional[Decimal]:
     A Z's over/short, or None when it is unknown.
 
     A cloud Z's is its own `discrepancy`: the sum of each shift's over/short, NULL if
-    any shift was uncounted. It is *not* counted − expected — a till's drawer figures
-    are its last shift's, and a shortfall in an earlier shift of the same Z is in the
-    discrepancy only (`app.services.z_builder.till_cash_summary`). A legacy till-issued
+    any shift was uncounted. On a Z built from now on that is exactly counted −
+    expected (`app.services.z_builder.till_cash_summary`); a Z built earlier took its
+    expected from each till's last shift, and there only the stored discrepancy holds
+    an earlier shift's shortfall — so it is read, not recomputed. A legacy till-issued
     Z has one drawer and one count, so counted − expected is its variance.
     """
     if z.per_machine is not None:
