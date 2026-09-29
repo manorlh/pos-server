@@ -28,12 +28,13 @@ from app.routers import z_runs as z_router
 from app.schemas.pos_machine import POSMachineUpdate
 from app.services import ably_notify
 from app.services import z_runs as ZR
-from shift_world import NOW, accept_str_uuids, make_world
+from shift_world import NOW, accept_str_uuids, freeze_z_run_clock, make_world
 
 
 @pytest.fixture
 def w(monkeypatch):
     accept_str_uuids(monkeypatch)
+    freeze_z_run_clock(monkeypatch)
     world = make_world()
     monkeypatch.setattr(ably_notify, "publish_close_shift_notify", lambda *a, **k: None)
     monkeypatch.setattr(machines_router, "shop_belongs_to_company", lambda *a: True)
