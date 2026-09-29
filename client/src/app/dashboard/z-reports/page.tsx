@@ -10,11 +10,12 @@ import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { fetchZReports, type ZReportListParams } from '@/lib/api';
+import { AREA_NONE, fetchZReports, type ZReportListParams } from '@/lib/api';
 import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
 import { usePageScope } from '@/lib/scope';
 import { findBySameId } from '@/lib/entityLookup';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
+import { AreaFilterSelect, AreaName } from '@/components/dashboard/areas/area-filter';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
 import { ZReport, ZReportListResponse } from '@/lib/types';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
@@ -31,7 +32,7 @@ import {
 import { ChevronLeft, ChevronRight, FilePlus2 } from 'lucide-react';
 
 const PAGE_SIZE = 50;
-const COLS = 11;
+const COLS = 12;
 
 /** The zone a `datetime-local` input's value is read in — the browser's own. */
 const BROWSER_TZ = (() => {
@@ -73,6 +74,8 @@ export default function ZReportsPage() {
   const [closedFrom, setClosedFrom] = useState<string>('');
   const [closedTo, setClosedTo] = useState<string>('');
   const [page, setPage] = useState(1);
+  /** `''` = any, `none` = Zs run for no area, else an area of the shop in scope. */
+  const [area, setArea] = useState<string>('');
 
   /*
    * `?zReportId=` used to open a dialog here; the Z now has its own page. Old links
@@ -89,6 +92,8 @@ export default function ZReportsPage() {
   const scopeKey = `${shopId ?? ''}|${machineId ?? ''}`;
   const [pageScopeKey, setPageScopeKey] = useState(scopeKey);
   if (pageScopeKey !== scopeKey) {
+    // An area belongs to one shop: another shop drops it ("no area" still applies).
+    if (pageScopeKey.split('|')[0] !== (shopId ?? '') && area !== AREA_NONE) setArea('');
     setPageScopeKey(scopeKey);
     setPage(1);
   }
@@ -105,8 +110,9 @@ export default function ZReportsPage() {
     const ct = localInputToIso(closedTo);
     if (cf) p.closedFrom = cf;
     if (ct) p.closedTo = ct;
+    if (area) p.areaId = area;
     return p;
-  }, [machineId, shopId, from, to, closedFrom, closedTo, page]);
+  }, [machineId, shopId, from, to, closedFrom, closedTo, area, page]);
 
   const { data, isLoading, isFetching, isError, error } = useQuery<ZReportListResponse>({
     queryKey: ['z-reports', params],
@@ -136,7 +142,7 @@ export default function ZReportsPage() {
 
       <ScopeGate resolution={resolution}>
       <div className="rounded-lg border bg-card p-4 space-y-3">
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid gap-3 md:grid-cols-3">
           <div className="space-y-1">
             <Label className="text-xs">{t('filterFrom')}</Label>
             <Input
@@ -153,6 +159,11 @@ export default function ZReportsPage() {
               onChange={(e) => { setTo(e.target.value); resetPage(); }}
             />
           </div>
+          <AreaFilterSelect
+            shopId={shopId}
+            value={area}
+            onChange={(next) => { setArea(next); resetPage(); }}
+          />
         </div>
         <p className="text-muted-foreground text-xs">{t('businessDateFilterHint')}</p>
         {/* With no date at all the server answers the last 90 days, not everything. */}
@@ -206,6 +217,7 @@ export default function ZReportsPage() {
               <TableHead>{t('zNumber')}</TableHead>
               <TableHead>{t('businessDate')}</TableHead>
               <TableHead>{t('shop')}</TableHead>
+              <TableHead>{t('area')}</TableHead>
               <TableHead>{t('period')}</TableHead>
               <TableHead className="text-end">{t('tills')}</TableHead>
               <TableHead className="text-end">{t('shiftsCount')}</TableHead>
@@ -251,6 +263,9 @@ export default function ZReportsPage() {
                       {z.legacy && z.machineName ? (
                         <div className="text-muted-foreground text-xs">{z.machineName}</div>
                       ) : null}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <AreaName name={z.areaName} />
                     </TableCell>
                     <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
                       {z.periodStart || z.periodEnd
