@@ -16,6 +16,7 @@ from app.observability.body_logging import (
     collect_response_body,
     prepare_body_for_log,
     should_log_request_body,
+    should_log_response_body,
 )
 from app.observability.context import reset_request_context, set_request_context
 
@@ -94,7 +95,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                     headers=dict(response.headers),
                     media_type=response.media_type,
                 )
-                if status_code >= 400:
+                if should_log_response_body(request.method, request.url.path, status_code):
                     response_body_log = prepare_body_for_log(
                         resp_body_bytes,
                         response_content_type,

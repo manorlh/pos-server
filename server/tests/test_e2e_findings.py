@@ -440,3 +440,39 @@ class TestACloseRequestNamesTheShop:
         out = SCR.request_to_out(w.db, req, now=NOW)
         assert created and out["shift"].shop_name == "Center"
         assert out["shift"].machine_name == "Till 1"
+
+
+# ── 5. The till's write answers are in the body log ──────────────────────────
+
+
+class TestWhichResponseBodiesAreLogged:
+    M = "899ed8da-aab0-4072-923e-94eecf487bb2"
+
+    @pytest.mark.parametrize("path", [
+        f"/api/v1/sync/{M}/transactions",
+        f"/api/v1/sync/{M}/shifts",
+        f"/api/v1/sync/{M}/shifts/{M}/close",
+        f"/api/v1/sync/{M}/shift-close/ack",
+    ])
+    def test_the_tills_write_answers_are(self, path):
+        from app.observability.body_logging import should_log_response_body
+
+        assert should_log_response_body("POST", path, 200)
+
+    @pytest.mark.parametrize("method,path", [
+        ("GET", f"/api/v1/sync/{M}/catalog"),
+        ("GET", f"/api/v1/sync/{M}/pos-users"),
+        ("GET", f"/api/v1/sync/{M}/shifts/last-closed"),
+        ("POST", "/api/v1/pairing/validate"),
+        ("GET", "/api/v1/machines/me/ably-auth"),
+        ("POST", f"/api/v1/sync/{M}/transactions/extra"),
+    ])
+    def test_nothing_else_that_succeeds_is(self, method, path):
+        from app.observability.body_logging import should_log_response_body
+
+        assert not should_log_response_body(method, path, 200)
+
+    def test_every_error_still_is(self):
+        from app.observability.body_logging import should_log_response_body
+
+        assert should_log_response_body("GET", "/api/v1/machines/me/ably-auth", 503)
