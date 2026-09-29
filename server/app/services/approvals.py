@@ -38,7 +38,7 @@ from typing import FrozenSet, Optional
 from sqlalchemy.orm import Session
 
 from app.models.pos_machine import POSMachine
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.services.company_hierarchy import user_may_use_machine
 from app.services.permissions import Scope, till_grantable_scopes
 from app.services.tenders import is_refund_document
@@ -98,6 +98,33 @@ def scopes_required_by_document(tx) -> FrozenSet[Scope]:
     return frozenset(required)
 
 
+def _user_in_tenant(db: Session, user: User, machine: POSMachine) -> bool:
+    """
+    Is `user` one of the till's tenant's people — the rule the /sync paths apply to a
+    user token (`app.middleware.auth._check_sync_user_tenancy`)? A super admin is
+    platform-wide; a distributor counts for their own terminals only; anyone else must be
+    a member of the till's tenant (`tenant_memberships`, or `users.tenant_id` for rows from
+    before memberships). Anyone else is, to this till, an unknown user: another tenant's
+    manager cannot approve this tenant's documents.
+    """
+    if user.role == UserRole.SUPER_ADMIN:
+        return True
+    if user.role == UserRole.DISTRIBUTOR:
+        return str(getattr(machine, "distributor_id", None)) == str(user.id)
+    tenant_id = getattr(machine, "tenant_id", None)
+    if tenant_id is None:
+        return False
+    if getattr(user, "tenant_id", None) is not None and str(user.tenant_id) == str(tenant_id):
+        return True
+    from app.models.tenant_membership import TenantMembership
+    return (
+        db.query(TenantMembership.id)
+        .filter(TenantMembership.user_id == user.id, TenantMembership.tenant_id == tenant_id)
+        .first()
+        is not None
+    )
+
+
 def verify_document_approver(
     db: Session, machine: POSMachine, tx
 ) -> Optional[uuid.UUID]:
@@ -118,7 +145,7 @@ def verify_document_approver(
         return None
 
     user = db.query(User).filter(User.id == claimed).first()
-    if user is None or not user.is_active:
+    if user is None or not user.is_active or not _user_in_tenant(db, user, machine):
         # One reason for both: a till cannot usefully act on the difference, and the
         # narrower message would confirm which cloud accounts exist.
         raise ApprovalRejected("approver_unknown_or_inactive")

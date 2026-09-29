@@ -140,7 +140,16 @@ without a product there is nothing to move, and on-hand is not a fiscal record; 
 document is still stored. A well-formed UUID that names nothing here — `items[].productId`,
 `issuedVouchers[].productId` / `voucherId` — is dropped the same way, with its own entry
 (`"items[1].productId: unknown '3f2a…', stored without the link"`), after the unreadable ones.
-`warnings` is null when nothing was dropped.
+`warnings` is null when nothing was dropped. A stock movement naming such a product is not
+applied (`"stockMovements[0].productId: unknown '…', movement not applied"`).
+
+**Links stay in the till's tenant.** An id of **another tenant's** product, voucher or
+customer is, to the till, an unknown one: the link is dropped with the same `unknown` warning
+(a customer link is dropped silently, as an unknown customer always was). Not dropped: a
+`refundOfTransactionId` naming another tenant's document refuses the document
+(`"refundOfTransactionId: names a document of another tenant"`), and an `approvedByUserId`
+of someone outside the till's tenant — not a member of it, a distributor of someone else's
+terminal — refuses it as `approver_unknown_or_inactive`.
 
 Not dropped, because each decides what the money is: `shiftId` (which X it is in),
 `refundOfTransactionId` (sale or refund), `approvedByUserId` (stripping a claim of approval

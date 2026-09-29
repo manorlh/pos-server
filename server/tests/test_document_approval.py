@@ -93,6 +93,12 @@ def _machine():
     return machine
 
 
+@pytest.fixture(autouse=True)
+def of_this_tenant(monkeypatch):
+    """Default the tenant question to yes (tests/test_cross_tenant_links.py asks it)."""
+    monkeypatch.setattr(approvals, "_user_in_tenant", lambda *a, **k: True)
+
+
 @pytest.fixture
 def at_this_machine(monkeypatch):
     """Default the machine-permission question to yes, so each test states its own."""
@@ -253,6 +259,8 @@ class TestTheUpsertRefusesTheDocument:
         document.shift_id = None
 
         with patch.object(T, "_tender_rejection_reason", return_value=None), patch.object(
+            T, "_refund_of_other_tenant", return_value=False
+        ), patch.object(
             T, "verify_document_approver", side_effect=ApprovalRejected(reason)
         ), patch.object(T, "resolve_shift_for_document") as opened_day:
             db = MagicMock()
