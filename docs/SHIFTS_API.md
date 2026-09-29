@@ -182,17 +182,25 @@ re-push the same id) and keeps delivering the rest. A document it cannot match t
 stays queued (absence is not acceptance).
 
 **A credit note settles its original.** When a credit note (document type 330, with
-`refundOfTransactionId`) is stored, the original it names is given the status the till gives
-its own copy, from the **cumulative** credited amount — every credit note of that original in
-a counted status (`completed` / `refunded` / `partial_refund`; a card refund still `pending`
-has moved no money) against what the original collected (`totalAmount − documentDiscount`):
-credited ≥ collected (one agora of slack) → `refunded`; less, but more than nothing →
-`partial_refund`. Only an original in a counted status, and only one of the same tenant, is
+`refundOfTransactionId`, or with lines naming the original's lines by `refundOfItemId`) is
+stored, the original is given the status the till gives its own copy. Counted: every credit
+note of that original in a counted status (`completed` / `refunded` / `partial_refund`; a
+card refund still `pending` has moved no money).
+- **Per line**, when every such credit note names the original line of each of its lines
+  (`refundOfItemId`, §1.2a): every original line credited in full quantity → `refunded`;
+  anything credited → `partial_refund`. A credit note that takes a line past the quantity it
+  sold is `overCredited`.
+- **By amount** otherwise (as before): the cumulative credited amount against what the
+  original collected (`totalAmount − documentDiscount`): credited ≥ collected (one agora of
+  slack) → `refunded`; less, but more than nothing → `partial_refund`. Only an original in a counted status, and only one of the same tenant, is
 touched. It is recomputed from what is stored, so a re-push of either document — even a
 retry of the original still saying `completed` — lands on the same status. A credit note
 that takes the running credited total (oldest first) past what the original collected is
 **stored all the same** (a fiscal document is never refused) but flagged
-`overCredited: true` on the transaction, and logged. No X or Z moves: `refunded` and
+`overCredited: true` on the transaction, and logged.
+**A credit note may arrive before its original**: `refundOfTransactionId` is not a foreign
+key, so the credit note is stored (`accepted`) with the link as sent, and the original is
+settled when it arrives. The link is always resolved within the till's tenant. No X or Z moves: `refunded` and
 `partial_refund` count exactly as `completed` does, and the tips report counts all three.
 
 **A document for a shift that is already closed** (it reached the cloud after the close) is
@@ -211,6 +219,91 @@ for a shift already in a Z:
   `amendedDocuments` of the shift and the Z (whose figures stay as built). A status change
   between two sale statuses (`completed` → `refunded` when its credit note is issued) is not
   an amendment.
+
+### 1.2a Mixed basket — sale lines and returned lines (זיכוי פריט) in one basket
+
+A till basket that holds both sold lines and returned lines is committed as **several
+documents in one push**, each with a single direction (amounts positive; the document type
+carries the sign, as credit notes always have), all carrying the same **`basketId`**:
+
+| document | when | link |
+|---|---|---|
+| one **320** | there are sold lines | — |
+| one **330** per original receipt credited | lines returned from a receipt | `refundOfTransactionId` = that receipt; each line `refundOfItemId` = the receipt's line |
+| one **330** | lines returned straight from the catalogue | none (`refundOfTransactionId` absent) |
+
+New optional fields (all absent = the document is not part of a basket, exactly as before):
+
+| field | on | type | meaning |
+|---|---|---|---|
+| `basketId` | document | UUID | the basket; client generated, the same on every document of it |
+| `refundOfItemId` | `items[]` of a 330 | UUID | the original sale line (`items[].id` of the original document) this line returns |
+| `customerName` | document | string | buyer's name as printed (the regulation requires buyer details on a return) |
+| `customerPhone` | document | string | buyer's phone |
+| `customerAddress` | document | string | buyer's address, one line |
+
+The buyer fields are a **snapshot**, separate from `customerId` (a cloud customer, resolved
+as before). They are trimmed and cut to 255 / 30 / 500 characters — never a reason to refuse
+the document. The tax export uses them (C100 1207 name, 1208 address, 1214 phone) only when
+the document has no resolved `customerId`.
+
+**The `exchange` tender.** The offset between the 320 and the 330s is paid with tender legs
+of `method: "exchange"`; only the **net** goes through a real tender. Each document's legs
+must still sum to its own collectable amount (§1.2 rules, unchanged):
+
+- **net > 0** (the customer pays): the 320 is paid with cash/card legs **plus** an `exchange`
+  leg equal to the total credited; each 330 is paid entirely by `exchange` legs.
+- **net = 0**: every document is settled by `exchange` legs only.
+- **net < 0** (the customer is paid out): the 320 (if any) is paid entirely by `exchange`;
+  the 330(s) are paid with `exchange` legs plus **one** payout leg (`cash` or `card`) for the
+  net.
+
+Over a complete basket, Σ `exchange` legs of its 320 = Σ `exchange` legs of its 330s.
+
+Example — sell ₪100, return a ₪40 line of receipt R, customer pays ₪60 cash:
+```json
+{"transactions": [
+  {"id": "S", "documentType": 320, "basketId": "B", "totalAmount": 100, "items": [...],
+   "payments": [{"id": "…", "sequence": 1, "method": "cash", "amount": 60},
+                {"id": "…", "sequence": 2, "method": "exchange", "amount": 40}]},
+  {"id": "C", "documentType": 330, "basketId": "B", "totalAmount": 40,
+   "refundOfTransactionId": "R",
+   "items": [{"id": "…", "refundOfItemId": "<R's line id>", "quantity": 1, "unitPrice": 40, "totalPrice": 40}],
+   "payments": [{"id": "…", "sequence": 1, "method": "exchange", "amount": 40}],
+   "customerName": "…", "customerPhone": "…"}
+]}
+```
+
+What the server does with them:
+- **Sales, refunds, VAT, discounts are unchanged:** the 320 counts as a sale, each 330 as a
+  refund (a 330 is a refund **with or without** `refundOfTransactionId`).
+- **`exchange` is its own tender bucket** — never cash, never card, never `other`. It is in no
+  drawer: `totalCash`, `totalCard`, the expected cash, tips and every cash/card split exclude
+  it. X and Z show its net as `totalExchange` (and `paymentBreakdown.exchange`); it is `0.00`
+  when every basket is complete, and non-zero only while part of a basket has not reached the
+  cloud.
+- **`paymentMethod` summary**: `exchange` legs are left out when the document has a real
+  tender too — cash + exchange reads `cash`; a document settled by exchange alone reads
+  `exchange`; two real tenders still read `mixed`. A tip with no `tipPaymentMethod` takes that
+  summary tender (so a basket's tip rides on its cash or card, not on the exchange).
+- **Settling originals per line** (below, "A credit note settles its original").
+- **OpenFormat**: an `exchange` leg is D120 payment type **6** (תלוש החלפה); card stays 3,
+  anything else 1. Each D110 line of a 330 names its base document (1256 type, 1257 number,
+  1274 branch): the receipt of its `refundOfItemId` line, else the document's
+  `refundOfTransactionId` — resolved within the tenant **even when the original is outside
+  the export window**. A catalogue return names none.
+- **Dashboard**: `GET /transactions` rows carry `basketId`, `documentType` and
+  `refundOfTransactionId`, and take a `basketId=` filter (no default date window with it);
+  `GET /transactions/{id}` adds `basketDocuments` (the other documents of the basket, same
+  tenant, oldest first), `refundOfTransactionNumber`, the buyer fields, and `refundOfItemId`
+  on items. `/dashboard/stats` and its breakdown count every 330 as a refund (an unlinked one
+  used to be counted as a sale), and only in a counted status. The cashier report adds
+  `exchangeNet` (cash + card + other + exchange = net).
+
+Links: an unreadable `basketId` or `items[].refundOfItemId` is dropped with a warning
+(`"basketId: unreadable 'b-1', stored without the link"`), as `productId` is. A
+`refundOfItemId` naming another tenant's line is dropped with an `unknown` warning; one the
+cloud does not hold yet is **kept** (the original may arrive later).
 
 ### 1.3 `POST /sync/{machineId}/shifts/{shiftId}/close` — close a shift (X)
 
@@ -643,11 +736,12 @@ Over the shift's documents with status `completed | refunded | partial_refund`:
 | `totalRefunds` | Σ credit notes (type 330, or `refundOfTransactionId` set) of `totalAmount`, positive |
 | `totalCash` | Σ cash tender legs of sales − Σ cash legs of credit notes (tips excluded) |
 | `totalCard` | same for card legs |
+| `totalExchange` | same for `exchange` legs (§1.2a) — in neither cash nor card; `0.00` when every mixed basket is complete. Null on a shift closed before it was stored |
 | `totalTips` | Σ `tipAmount` (`totalCashTips` / `totalCardTips` split by `tipPaymentMethod`, server only; a tip with no `tipPaymentMethod` takes the sale's own tender — cash if the sale is cash, else card — so the two always add up to `totalTips`) |
 | `vatTotal` | Σ `vatAmount` of sales − Σ of credit notes; **null** if any document has none |
 | `firstTransactionNumber`, `lastTransactionNumber` | lowest / highest document number issued in the shift, cancelled documents included (numeric order when numeric), server only |
 
-Server expected cash = `openingCash + totalCash + totalCashTips`.
+Server expected cash = `openingCash + totalCash + totalCashTips` (`exchange` is never in it).
 
 ### 3.3 The till's X (`till`) and what `totalsMismatch` compares
 
@@ -659,6 +753,7 @@ Only keys the till sends are compared (tolerance 0.01); a non-numeric value is a
 | `totalDiscounts` or `discountsTotal` | `serverTotals.discountsTotal` (Σ `documentDiscount` of sales) |
 | `totalRefunds` | `serverTotals.totalRefunds` |
 | `totalCash`, `totalCard` | `serverTotals.totalCash`, `.totalCard` (tender legs, sales − credit notes, tips excluded) |
+| `totalExchange` | `serverTotals.totalExchange` |
 | `totalTips` | `serverTotals.totalTips` |
 | `vatTotal` | `serverTotals.vatTotal` (a mismatch if the server's is null) |
 | `transactionsCount` | `serverTotals.transactionsCount` |
@@ -704,10 +799,11 @@ it (`409 z_run_in_progress`).
   "businessDate", "periodStart", "periodEnd", "shiftCount", "machineCount",
   "zRunId", "createdByUserId", "closedAt", "createdAt",
   "totalSales", "totalRefunds", "discountsTotal", "totalCashSales", "totalCardSales",
+  "totalExchange",                         // net of the exchange legs (§1.2a); "0.00" when every basket is complete; null on a Z built before it
   "grossSales",                            // totalSales + discountsTotal (null if discountsTotal is)
   "netSales",                              // totalSales − totalRefunds
   "totalTips", "totalCashTips", "totalCardTips", "vatTotal", "transactionsCount",
-  "paymentBreakdown": {"cash": "…", "card": "…", "<other method>": "…"},
+  "paymentBreakdown": {"cash": "…", "card": "…", "exchange": "…", "<other method>": "…"},
   "openingCash", "expectedCash", "actualCash", "discrepancy",   // Σ of the per-till figures (§3.6); null if null for any till
   "betweenShiftAdjustments",               // Σ of the per-till figure (§3.6); null on a Z built before it existed, and on a legacy Z
   "unattended", "reconstructed",           // any included shift unattended / reconstructed
@@ -729,6 +825,7 @@ it (`409 z_run_in_progress`).
   "transactionsCount", "salesCount", "creditNotesCount", "nonSaleDocumentsCount",
   "totalSales", "grossSales", "netSales", "totalRefunds", "discountsTotal", "vatTotal", "vatMissingCount",
   "totalCash", "totalCard", "paymentBreakdown": {…},
+  "totalExchange",    // net of the exchange legs (§1.2a), in neither cash nor card (Zs built from now on)
   "totalTips", "totalCashTips", "totalCardTips",
   "openingCash", "expectedCash", "countedCash", "overShort", "uncountedShiftCount",
   "cashSalesNet",     // Σ cash takings of its shifts, net of cash refunds (Zs built from now on)
