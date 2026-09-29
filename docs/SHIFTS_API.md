@@ -325,11 +325,18 @@ Prefills the next opening float when the till has no local row (e.g. after reins
 {
   "shiftId": "…", "sequenceNumber": 11, "businessDate": "2026-09-27",
   "closedAt": "…", "countedCash": "1234.50", "expectedCash": "1210.00",
-  "reconstructed": false
+  "reconstructed": false,
+  "highestTransactionNumber": 1432
 }
 ```
-All fields `null` (and `reconstructed: false`) when this till has never closed a shift. Always 200.
+All shift fields `null` (and `reconstructed: false`) when this till has never closed a shift. Always 200.
 Prefill rule on the till: `countedCash`, else `expectedCash`.
+
+`highestTransactionNumber` — the highest numeric document number the cloud holds from this
+machine (any status), as a JSON integer; `null` if it holds none. Sent whether or not a shift
+was ever closed. `transactionNumber` is text, so it is compared as a number; one that is not
+all digits, or longer than 18 digits, does not count. A till paired out of demo mode raises
+its counter onto it, so a reinstalled till never reissues a number the machine already used.
 
 ### 1.6 Heartbeat `POST /machines/me/heartbeat`
 

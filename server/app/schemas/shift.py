@@ -230,6 +230,9 @@ class LastClosedShift(BaseModel):
     counted_cash: Optional[Decimal] = Field(None, alias="countedCash")
     expected_cash: Optional[Decimal] = Field(None, alias="expectedCash")
     reconstructed: bool = False
+    #: The highest numeric document number the cloud holds from this machine (a JSON
+    #: integer, the till's `Long`); null if none. Sent even when no shift was closed.
+    highest_transaction_number: Optional[int] = Field(None, alias="highestTransactionNumber")
 
 
 class ShiftListResponse(BaseModel):

@@ -442,6 +442,47 @@ class TestTillReads:
 
         assert out.shift_id is None and out.counted_cash is None and out.reconstructed is False
 
+    def test_the_highest_document_number_is_numeric_and_sent_without_a_close(self, w):
+        till, other = w.tills[0], w.tills[1]
+        for number in ("9", "10", "A-99", "99x", "1234567890123456789"):
+            w.doc(till, None, "1.00", number=number)
+        w.doc(till, None, "1.00", number="0011", status=TransactionStatus.CANCELLED)
+        w.doc(other, None, "1.00", number="500")
+
+        out = last_closed_shift(w.db, till.id)
+
+        # Numerically ("10" > "9"), leading zeros read as a number, a cancelled document's
+        # number counted (it was used), non-numbers and a number too long for the till's
+        # Long skipped, only this machine's documents.
+        assert out.shift_id is None
+        assert out.highest_transaction_number == 11
+        body = out.model_dump(mode="json", by_alias=True)
+        assert body["highestTransactionNumber"] == 11 and body["shiftId"] is None
+
+    def test_the_highest_document_number_is_null_without_documents(self, w):
+        assert last_closed_shift(w.db, w.tills[0].id).highest_transaction_number is None
+
+    def test_the_highest_document_number_rides_with_the_last_close(self, w):
+        till = w.tills[0]
+        shift = w.shift(till, 1, counted_cash="100.00")
+        w.doc(till, shift, "1.00", number="41")
+
+        out = last_closed_shift(w.db, till.id)
+
+        assert (out.shift_id, out.highest_transaction_number) == (shift.id, 41)
+
+    def test_on_postgres_the_numbers_are_matched_and_cast_in_sql(self, w):
+        from sqlalchemy.dialects import postgresql
+
+        from app.services.shifts import _highest_number_query
+
+        sql = str(
+            _highest_number_query(w.db, w.tills[0].id)
+            .statement.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+        )
+        assert "max(CAST(transactions.transaction_number AS BIGINT))" in sql
+        assert "transactions.transaction_number ~ '^[0-9]{1,18}$'" in sql
+
     def test_last_closed_is_the_latest_close(self, w):
         till = w.tills[0]
         w.shift(till, 1, counted_cash="100.00")
