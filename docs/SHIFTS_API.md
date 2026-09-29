@@ -307,6 +307,58 @@ Links: an unreadable `basketId` or `items[].refundOfItemId` is dropped with a wa
 `refundOfItemId` naming another tenant's line is dropped with an `unknown` warning; one the
 cloud does not hold yet is **kept** (the original may arrive later).
 
+### 1.2b Who approved a document — `approvedByUserId` / `approvedByPosUserId`
+
+A refund or a discount a cashier may not do alone carries its approver. The grant
+(`POST /elevation/sessions`, and `GET /elevation/sessions/current`) now says who approved,
+as ids — exactly one is set:
+
+```json
+{"token": "…", "scopes": ["refund"], "expiresAt": "…", "absoluteExpiresAt": "…",
+ "userName": "Dana Levi", "userEmail": null, "userLogin": "dana",
+ "approverUserId": null,                 // a cloud account (users.id) approved
+ "approverPosUserId": "<pos_users.id>"}  // a till user (shop manager on the roster) approved
+```
+
+The till copies it onto every document that grant authorised — **at most one** of:
+
+| document field | from the grant | who |
+|---|---|---|
+| `approvedByUserId` | `approverUserId` | a cloud `users` account (as before) |
+| `approvedByPosUserId` | `approverPosUserId` | a till user (`pos_users`) — new |
+
+A till whose own operator already holds the authority sends neither (nobody else approved).
+
+Both are **claims, checked against the approver's standing permissions** when the document
+arrives (the grant itself is gone by the time the outbox drains, and an operator approving
+their own refund never took one — so the server does not require a matching grant). A claim
+that fails **refuses the document** (`rejected`, nothing stored), never a stripped copy:
+
+| reason | when |
+|---|---|
+| `approver_unknown_or_inactive` | no such user, deactivated, or of another tenant (a till user's tenant is read from its shop) |
+| `approver_lacks_scope:<scopes>` | their role cannot grant what the document needed (`refund` for a credit note, `discount` for any discount); a till user's ceiling is its role's (`shop_manager`) |
+| `approver_not_permitted_at_machine` | a cloud user with no reach to this till; a till user of **another shop** |
+| `approver_ambiguous` | both fields sent |
+
+An unreadable id in either field refuses the document too (`approvedByPosUserId: Input
+should be a valid UUID…`). The stored approver is returned on the transaction as
+`approvedByUserId` / `approvedByPosUserId`.
+
+### 1.2c Till settings for returns
+
+Two flat boolean keys in the settings feed (`GET /sync/{machineId}/settings`), set per
+tenant / company / shop like every till setting (later layer wins; `null` in a PATCH resets
+a layer to inherited), and editable in the dashboard settings dialog:
+
+| key | default | meaning |
+|---|---|---|
+| `unlinkedCardCreditEnabled` | `true` | a card credit may be issued for a return with no original receipt (picked from the catalogue) |
+| `refundCustomerDetailsRequired` | `true` | the till asks for the buyer's details before issuing a credit note, and sends `customerName` / `customerPhone` / `customerAddress` (§1.2a) |
+
+The feed always sends both as real booleans (unset, or anything but a boolean → `true`).
+They steer the till only: the server accepts every credit note it is sent, whatever they say.
+
 ### 1.3 `POST /sync/{machineId}/shifts/{shiftId}/close` — close a shift (X)
 
 Sent after the shift's documents (outbox order: open(N) → documents(N) → close(N) → open(N+1)).
