@@ -327,7 +327,7 @@ The till copies it onto every document that grant authorised — **at most one**
 | `approvedByUserId` | `approverUserId` | a cloud `users` account (as before) |
 | `approvedByPosUserId` | `approverPosUserId` | a till user (`pos_users`) — new |
 
-A till whose own operator already holds the authority sends neither (nobody else approved).
+A shop manager acting on their own authority (no grant) sends their own till user id as `approvedByPosUserId`, so the document still records who authorised it. Sending neither is also accepted.
 
 Both are **claims, checked against the approver's standing permissions** when the document
 arrives (the grant itself is gone by the time the outbox drains, and an operator approving
