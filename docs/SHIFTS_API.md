@@ -123,7 +123,32 @@ Each tender leg in `payments[]` may carry:
   meta as `creditPayments`. An unreadable value (not a number, negative, beyond 2³¹−1,
   infinite) is dropped, not rejected.
 
-`200` body unchanged: `{"serverTime", "results": [{"id", "status": "accepted|duplicate|rejected", "reason"?, "serverReceivedAt"?}]}`.
+`200` body: `{"serverTime", "results": [{"id", "status": "accepted|duplicate|rejected", "reason"?, "serverReceivedAt"?}], "unidentified": null | [...]}`.
+
+**Each document is validated on its own.** Only the envelope (`{"transactions": [...]}`, a
+list) can make the request a `422`. A document the model refuses — an unreadable field such
+as `items[0].productId: "p12"`, a missing required field, a document that is not a JSON
+object — is **not stored** (no row, no auto-opened shift, no stock movement) and is answered
+alongside the others, in the order sent:
+```json
+{"id": "<its id>", "status": "rejected", "reason": "items[0].productId: Input should be a valid UUID, …"}
+```
+- `reason` is `<field path>: <message>` for every error of that document, `; `-joined, cut
+  to 500 characters. Field paths use the wire names (`items[0].productId`, `totalAmount`).
+- `id` is the document's `id` exactly as sent when it was a string — also when that string
+  is not a UUID and is itself the error (`"reason": "id: Input should be a valid UUID, …"`).
+- A refused document with **no** string `id` cannot be matched by id, and is answered in
+  `unidentified: [{"index": <position in the batch>, "status": "rejected", "reason"}]`
+  rather than in `results` (a shipped till decodes `results[].id` as a non-null string).
+  `unidentified` is `null` otherwise.
+- The rest of the batch is written as if the refused document had not been in it. The
+  whole-batch `409 another_shift_open` above still applies to the documents that were valid.
+- Each refusal is logged and written to `sync_logs` (`status: failed`, the reason in
+  `conflict_note`).
+
+The till parks only the rejected document (it keeps its local copy; a corrected build can
+re-push the same id) and keeps delivering the rest. A document it cannot match to a result
+stays queued (absence is not acceptance).
 
 **A document for a shift that is already closed** (it reached the cloud after the close) is
 always accepted and stored — a fiscal document is never dropped:

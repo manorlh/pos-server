@@ -171,18 +171,16 @@ class TestTheUpsertRaisesTheConflictRatherThanRejectingDocuments:
 
 class TestTheRouterAnswers409:
     def test_post_transactions_returns_409_with_the_open_shift(self, w):
-        from unittest.mock import MagicMock
-
         from app.routers import sync as sync_router
+        from app.schemas.transaction import TransactionsBatchEnvelope
 
         till = w.tills[0]
         n = w.shift(till, 1, status=ShiftStatus.OPEN)
         w.db.commit()
-        doc = MagicMock()
-        doc.id = uuid.uuid4()
-        doc.shift_id = uuid.uuid4()
-        body = MagicMock()
-        body.transactions = [doc]
+        body = TransactionsBatchEnvelope(transactions=[{
+            "id": str(uuid.uuid4()), "transactionNumber": "1", "shiftId": str(uuid.uuid4()),
+            "createdAt": NOW.isoformat(), "updatedAt": NOW.isoformat(),
+        }])
 
         response = sync_router.post_transactions(
             machine_id=str(till.id), body=body, machine=till, db=w.db

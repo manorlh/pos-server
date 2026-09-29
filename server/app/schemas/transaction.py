@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional, Union
 import uuid
 
 import json
@@ -224,11 +224,29 @@ class TransactionIn(BaseModel):
 
 
 class TransactionsBatchRequest(BaseModel):
+    """The batch with every document validated — what one strict parse looks like."""
+
     transactions: List[TransactionIn]
 
 
+class TransactionsBatchEnvelope(BaseModel):
+    """
+    The batch as `POST /sync/{m}/transactions` accepts it: only the envelope is checked.
+
+    Each document is validated on its own afterwards (`validate_documents`), so one
+    document the model refuses is answered `rejected` while the rest of the batch still
+    lands. Validating the list here made one bad field a 422 for the whole batch, and
+    the till retried that batch forever — every sale behind it jammed with it.
+    """
+
+    transactions: List[Any]
+
+
 class TransactionUpsertResult(BaseModel):
-    id: uuid.UUID
+    #: A UUID for every document the model accepted. A document refused by validation
+    #: is answered with its id exactly as sent when that was a string, so the till can
+    #: match it even when the id itself was what failed.
+    id: Union[uuid.UUID, str]
     status: Literal["accepted", "duplicate", "rejected"]
     reason: Optional[str] = None
     server_received_at: Optional[datetime] = Field(None, alias="serverReceivedAt")
@@ -237,9 +255,21 @@ class TransactionUpsertResult(BaseModel):
         populate_by_name = True
 
 
+class UnidentifiedDocument(BaseModel):
+    """A refused document with no string id to answer by: its position in the batch."""
+
+    index: int
+    status: Literal["rejected"] = "rejected"
+    reason: str
+
+
 class TransactionsBatchResponse(BaseModel):
     server_time: datetime = Field(..., alias="serverTime")
     results: List[TransactionUpsertResult]
+    #: Null unless something in the batch had no string id at all. Kept out of `results`
+    #: because a shipped till decodes `results[].id` as a non-null string, and one null
+    #: there would fail the decoding of the whole answer.
+    unidentified: Optional[List[UnidentifiedDocument]] = None
 
     class Config:
         populate_by_name = True

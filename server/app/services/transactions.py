@@ -14,8 +14,9 @@ import logging
 import uuid
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date, datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -30,7 +31,12 @@ from app.models.transaction_item import TransactionItem
 from app.models.transaction_payment import TransactionPayment
 from app.models.issued_voucher import IssuedVoucher, IssuedVoucherStatus
 from app.models.stock_movement import StockMovementReason
-from app.schemas.transaction import TransactionIn, TransactionPaymentIn, TransactionUpsertResult
+from app.schemas.transaction import (
+    TransactionIn,
+    TransactionPaymentIn,
+    TransactionUpsertResult,
+    UnidentifiedDocument,
+)
 from app.services.approvals import ApprovalRejected, verify_document_approver
 from app.services.shifts import (
     ShiftConflict,
@@ -243,6 +249,83 @@ def _incoming_fiscal_key(tx: TransactionIn, legs: List[TransactionPaymentIn]) ->
             for leg in legs
         ],
     )
+
+
+# ── Per-document validation ──────────────────────────────────────────────────
+
+#: The most of a validation reason sent back. The till shows it and keeps it with the
+#: parked document; a few errors are enough to fix the build that produced it.
+REJECTION_REASON_MAX_CHARS = 500
+#: The most of a non-UUID id echoed back.
+ECHOED_ID_MAX_CHARS = 100
+
+
+def _error_location(loc: Sequence[Any]) -> str:
+    out = ""
+    for part in loc:
+        if isinstance(part, int):
+            out += f"[{part}]"
+        else:
+            out += ("." if out else "") + str(part)
+    return out or "document"
+
+
+def validation_reason(error: ValidationError) -> str:
+    """`items[0].productId: Input should be a valid UUID, …` — every error, `; `-joined."""
+    parts = [f"{_error_location(e.get('loc', ()))}: {e.get('msg', 'invalid')}" for e in error.errors()]
+    reason = "; ".join(parts) or "invalid document"
+    if len(reason) > REJECTION_REASON_MAX_CHARS:
+        reason = reason[: REJECTION_REASON_MAX_CHARS - 1] + "…"
+    return reason
+
+
+def _answerable_id(raw: Any):
+    """The id to answer a refused document by: a UUID, the string as sent, or None."""
+    value = raw.get("id") if isinstance(raw, dict) else None
+    if isinstance(value, uuid.UUID):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        return value[:ECHOED_ID_MAX_CHARS]
+
+
+def validate_documents(
+    raw_documents: Sequence[Any],
+) -> Tuple[List[Tuple[int, TransactionIn]], List[Tuple[int, TransactionUpsertResult]], List[UnidentifiedDocument]]:
+    """
+    Validate each document of a batch on its own (docs/SHIFTS_API.md §1.2).
+
+    Returns the valid documents, the refused ones as `rejected` results, and the refused
+    ones that carry no string id to answer by — each with its position in the batch, so
+    the caller can answer in the order the till sent. A refused document is never
+    stored: it is logged, and the till parks it and keeps the rest moving.
+    """
+    valid: List[Tuple[int, TransactionIn]] = []
+    rejected: List[Tuple[int, TransactionUpsertResult]] = []
+    unidentified: List[UnidentifiedDocument] = []
+    for index, raw in enumerate(raw_documents):
+        if isinstance(raw, TransactionIn):
+            valid.append((index, raw))
+            continue
+        try:
+            if not isinstance(raw, dict):
+                raise TypeError("a document must be a JSON object")
+            valid.append((index, TransactionIn.model_validate(raw)))
+            continue
+        except ValidationError as error:
+            reason = validation_reason(error)
+        except TypeError as error:
+            reason = f"document: {error}"
+        doc_id = _answerable_id(raw)
+        logger.warning("Rejecting document %s (batch index %d): %s", doc_id, index, reason)
+        if doc_id is None:
+            unidentified.append(UnidentifiedDocument(index=index, reason=reason))
+        else:
+            rejected.append((index, TransactionUpsertResult(id=doc_id, status="rejected", reason=reason)))
+    return valid, rejected, unidentified
 
 
 # ── Transactions upsert ──────────────────────────────────────────────────────
