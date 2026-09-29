@@ -106,6 +106,7 @@ export default function TipsReportPage() {
       ...(shopId ? { shopId } : {}),
       ...(scopeMachineId ? { machineId: scopeMachineId } : {}),
       ...hourQueryParams(appliedRange.hours),
+      ...(appliedRange.areaId ? { areaId: appliedRange.areaId } : {}),
     };
   }, [appliedRange, scopeMachineId, shopId]);
 
@@ -247,6 +248,8 @@ export default function TipsReportPage() {
               value={rangeFilters}
               onChange={setRangeFilters}
               onRun={() => setAppliedRange(rangeFilters)}
+              showArea
+              areaShopId={shopId || null}
               isFetching={rangeQuery.isFetching}
             />
 

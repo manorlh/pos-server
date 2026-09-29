@@ -80,6 +80,7 @@ export default function ProductSalesReportPage() {
       ...(scopeShopId ? { shopId: scopeShopId } : {}),
       ...(scopeMachineId ? { machineId: scopeMachineId } : {}),
       ...hourQueryParams(f.hours),
+      ...(f.areaId ? { areaId: f.areaId } : {}),
       limit: applied.limit,
     };
   }, [applied, scopeMachineId, scopeShopId]);
@@ -103,6 +104,8 @@ export default function ProductSalesReportPage() {
           onChange={setFilters}
           onRun={() => setApplied({ filters, limit })}
           isFetching={isFetching}
+          showArea
+          areaShopId={scopeShopId}
         >
           <div className="space-y-1">
             <Label className="text-xs">{t('rowLimit')}</Label>

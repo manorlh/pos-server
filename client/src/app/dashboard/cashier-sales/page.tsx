@@ -113,6 +113,7 @@ export default function CashierSalesReportPage() {
       ...(scopeShopId ? { shopId: scopeShopId } : {}),
       ...(scopeMachineId ? { machineId: scopeMachineId } : {}),
       ...hourQueryParams(applied.hours),
+      ...(applied.areaId ? { areaId: applied.areaId } : {}),
     };
   }, [applied, scopeMachineId, scopeShopId]);
 
@@ -134,6 +135,8 @@ export default function CashierSalesReportPage() {
           value={filters}
           onChange={setFilters}
           onRun={() => setApplied(filters)}
+          showArea
+          areaShopId={scopeShopId}
           isFetching={isFetching}
         />
 
