@@ -331,6 +331,12 @@ export interface PosMachine {
    * `registerNumberOf`, which never yields 0.
    */
   posNumber?: string | null;
+  /**
+   * The area of its shop the till is in now (bar, terrace …), or null when unassigned.
+   * Current membership only — history (shifts, Zs, reports) carries its own stamp.
+   */
+  areaId?: string | null;
+  areaName?: string | null;
   pairingStatus: 'unpaired' | 'paired' | 'assigned';
   mqttClientId?: string;
   deviceInfo?: Record<string, unknown>;
@@ -862,6 +868,12 @@ export interface Shift {
   zNumber?: number | null;
   machineName?: string | null;
   shopName?: string | null;
+  /**
+   * The area the till was in when the cloud created this shift. Stamped, never
+   * updated: moving the till later does not move its past shifts.
+   */
+  areaId?: string | null;
+  areaName?: string | null;
   /** Detail read only: tender → amount, from the documents. */
   paymentBreakdown?: Record<string, Money> | null;
 }
@@ -949,6 +961,9 @@ export interface ZRun {
   createdByUserId?: string | null;
   zReportId?: string | null;
   zNumber?: number | null;
+  /** Set when the run was started for one area of the shop. */
+  areaId?: string | null;
+  areaName?: string | null;
   errorCode?: string | null;
   errorMessage?: string | null;
   items: ZRunItem[];
@@ -999,6 +1014,12 @@ export interface ZReport {
    * What a bookkeeper quotes. Null only on a legacy Z from a terminal with no shop.
    */
   shopSequenceNumber?: number | null;
+  /**
+   * The area this Z was run for, or null for a whole-shop / hand-picked Z. The number
+   * above is still the shop's — an area has no sequence of its own.
+   */
+  areaId?: string | null;
+  areaName?: string | null;
   businessDate: string;
   periodStart?: string | null;
   periodEnd?: string | null;
@@ -1103,6 +1124,9 @@ export interface ZReportBusiness {
   branchId?: string | null;
   shopId?: string | null;
   shopName?: string | null;
+  /** Frozen with the header: the area's name as it was when the Z was built. */
+  areaId?: string | null;
+  areaName?: string | null;
   capturedAt?: string | null;
 }
 
@@ -1418,4 +1442,74 @@ export interface ParentOptions {
   movesMachines: number;
   movesCompanies: number;
   mayDetach: boolean;
+}
+
+/**
+ * The status values an area's roll-up counts: the machine status light's own values
+ * (`app/services/machine_status.py`), minus `retired` and `not_paired`.
+ */
+export type AreaStatusValue = Exclude<
+  NonNullable<PosMachine['status']>,
+  'retired' | 'not_paired'
+>;
+
+/**
+ * An area's status roll-up, resolved server-side (`ROLLUP_SEVERITY`). Rendered as is —
+ * the dashboard never re-derives `worst` from `counts`.
+ */
+export interface AreaStatusRollup {
+  /** The most severe status among the area's active tills; null for an empty area. */
+  worst: string | null;
+  /** Status value → how many of the area's active tills have it. */
+  counts: Record<string, number>;
+}
+
+/** A till as listed on an area after its membership was set. */
+export interface ShopAreaMachine {
+  id: string;
+  name?: string | null;
+  posNumber?: string | null;
+}
+
+/** An area of one shop: a group of its tills (docs/AREAS_API.md). */
+export interface ShopArea {
+  id: string;
+  shopId: string;
+  name: string;
+  sortOrder: number;
+  /** Archived, never deleted: old shifts, Zs and reports keep pointing at it. */
+  archivedAt?: string | null;
+  /** Active tills currently in the area. */
+  machineCount: number;
+  status?: AreaStatusRollup | null;
+  /** Present on the answer to `PUT /areas/{id}/machines`. */
+  machines?: ShopAreaMachine[];
+}
+
+/** One row of `GET /reports/sales-by-area`. `areaId` null = the unassigned row. */
+export interface SalesByAreaRow {
+  areaId: string | null;
+  areaName?: string | null;
+  archived?: boolean;
+  transactionsCount: number;
+  gross: Money;
+  discounts: Money;
+  net: Money;
+  refunds: Money;
+  cash: Money;
+  card: Money;
+  other: Money;
+  tips: Money;
+}
+
+export type SalesByAreaTotals = Omit<SalesByAreaRow, 'areaId' | 'areaName' | 'archived'> &
+  Partial<Pick<SalesByAreaRow, 'areaId' | 'areaName' | 'archived'>>;
+
+export interface SalesByAreaReport {
+  shopId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  rows: SalesByAreaRow[];
+  totals: SalesByAreaTotals;
+  generatedAt?: string | null;
 }

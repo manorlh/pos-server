@@ -33,6 +33,8 @@ import { SalesStats } from '@/components/dashboard/sales-stats';
 import { ShopFormDialog } from '@/components/dashboard/shop-form-dialog';
 import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
 import { ClockSkewChip } from '@/components/dashboard/machine-health';
+import { ShopAreasCard } from '@/components/dashboard/areas/shop-areas-card';
+import { AreaName } from '@/components/dashboard/areas/area-filter';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -70,6 +72,7 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
   const tShops = useTranslations('shops');
   const tPosUsers = useTranslations('posUsers');
   const tMachines = useTranslations('machines');
+  const tAreas = useTranslations('areas');
   const canManagePosUsers = useAuth((s) => s.user?.canManagePosUsers === true);
 
   usePageScope({ maxLevel: 'machine', silent: true });
@@ -240,6 +243,8 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
         </Card>
       </div>
 
+      <ShopAreasCard shopId={shop.id} machines={machines} />
+
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
@@ -253,6 +258,7 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
               <TableRow>
                 <TableHead>{t('machines')}</TableHead>
                 <TableHead>{tMachines('machineCode')}</TableHead>
+                <TableHead>{tAreas('area')}</TableHead>
                 <TableHead />
                 <TableHead className="w-10" />
               </TableRow>
@@ -260,7 +266,7 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
             <TableBody>
               {machines.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="py-6 text-center text-muted-foreground">
+                  <TableCell colSpan={5} className="py-6 text-center text-muted-foreground">
                     {t('noMachines')}
                   </TableCell>
                 </TableRow>
@@ -277,6 +283,9 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
                     </TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">
                       {machine.machineCode}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <AreaName name={machine.areaName} />
                     </TableCell>
                     <TableCell>
                       <ClockSkewChip machine={machine} />

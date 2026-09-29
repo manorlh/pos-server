@@ -17,7 +17,7 @@ import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
-import { Monitor, Store, Wifi, WifiOff } from 'lucide-react';
+import { Monitor, Pencil, Store, Wifi, WifiOff } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
 import { api, fetchMachine, fetchShifts, fetchShops, fetchZReports } from '@/lib/api';
@@ -32,6 +32,7 @@ import { SalesStats } from '@/components/dashboard/sales-stats';
 import { MachineCatalogCard } from '@/components/dashboard/machines/machine-catalog';
 import { MachineShiftSummary } from '@/components/dashboard/machines/machine-row';
 import { DeadTillRecovery } from '@/components/dashboard/dead-till-recovery';
+import { MachineAreaDialog } from '@/components/dashboard/areas/machine-area-dialog';
 import {
   RemoteShiftCloseDialog,
   canCloseShiftRemotely,
@@ -90,6 +91,8 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
   const shiftLabel = useShiftLabel();
   const canProduceZ = useCanProduceZ();
   const [closeShiftOpen, setCloseShiftOpen] = useState(false);
+  const [areaOpen, setAreaOpen] = useState(false);
+  const tAreas = useTranslations('areas');
 
   usePageScope({ maxLevel: 'machine', silent: true });
 
@@ -263,6 +266,29 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
             />
           ) : null}
           <Field label={t('machineCode')} value={<span className="font-mono">{machine.machineCode}</span>} />
+          {machine.shopId ? (
+            <Field
+              label={tAreas('area')}
+              value={
+                <span className="inline-flex items-center gap-1">
+                  {machine.areaName ?? <span className="text-muted-foreground">{tAreas('noArea')}</span>}
+                  {/* PUT /machines/{id} is the machine admins' — the same set that produces a Z. */}
+                  {canProduceZ && !removed ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 w-6 p-0"
+                      onClick={() => setAreaOpen(true)}
+                      aria-label={tAreas('machineAreaTitle')}
+                      title={tAreas('machineAreaTitle')}
+                    >
+                      <Pencil className="h-3.5 w-3.5" aria-hidden />
+                    </Button>
+                  ) : null}
+                </span>
+              }
+            />
+          ) : null}
           <Field
             label={tMachines('lastSeen')}
             value={
@@ -544,6 +570,8 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           </Table>
         </CardContent>
       </Card>
+
+      <MachineAreaDialog machine={machine} open={areaOpen} onOpenChange={setAreaOpen} />
 
       <RemoteShiftCloseDialog
         key={machine.id}

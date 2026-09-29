@@ -32,12 +32,15 @@ import { MachineStatusDot, machineStatus } from '@/components/dashboard/machine-
 import { MachinesTable } from '@/components/dashboard/machines/machines-table';
 import { RemoteShiftCloseDialog } from '@/components/dashboard/machines/remote-shift-close';
 import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
+import { MachineAreaDialog } from '@/components/dashboard/areas/machine-area-dialog';
+import { AREA_NONE } from '@/lib/api';
 
 const MQTT_ONLINE_WINDOW_MS = 90 * 1000;
 
 export default function MachinesPage() {
   const t = useTranslations('machines');
   const tStatus = useTranslations('machineStatus');
+  const tAreas = useTranslations('areas');
   const tc = useTranslations('common');
   // Moving or retiring a till is refused (409) while it holds shifts; those codes have words.
   const zErrors = useZErrorText();
@@ -133,6 +136,9 @@ export default function MachinesPage() {
    */
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  /** `''` = every area, `none` = tills in no area, else an area id. */
+  const [areaFilter, setAreaFilter] = useState('');
+  const [areaTarget, setAreaTarget] = useState<PosMachine | null>(null);
 
   const visibleMachines = effective.machineId
     ? machines.filter((m) => sameId(m.id, effective.machineId))
@@ -393,9 +399,43 @@ export default function MachinesPage() {
    */
   const searchTerm = search.trim().toLowerCase();
 
+  /*
+   * The areas to filter by: the ones the tills in view are in now, read off the rows
+   * themselves, so the filter works at any scope without a request per shop. With
+   * several shops in view each area carries its shop's name — "Bar" is in more than one.
+   */
+  const areaOptions = useMemo(() => {
+    const byId = new Map<string, { id: string; label: string }>();
+    const shopIds = new Set(visibleMachines.map((m) => m.shopId ?? ''));
+    for (const m of visibleMachines) {
+      if (!m.areaId || byId.has(m.areaId)) continue;
+      const shopName = shopIds.size > 1 ? findBySameId(shops, m.shopId)?.name : null;
+      const name = m.areaName ?? m.areaId.slice(0, 8);
+      byId.set(m.areaId, { id: m.areaId, label: shopName ? `${name} · ${shopName}` : name });
+    }
+    return [...byId.values()].sort((a, b) => a.label.localeCompare(b.label, 'he-IL'));
+  }, [shops, visibleMachines]);
+  const areaFilterItems = [
+    { value: '__all__', label: tAreas('filter.all') },
+    { value: AREA_NONE, label: tAreas('filter.none') },
+    ...areaOptions.map((o) => ({ value: o.id, label: o.label })),
+  ];
+  const activeAreaFilter =
+    areaFilter === '' || areaFilter === AREA_NONE || areaOptions.some((o) => o.id === areaFilter)
+      ? areaFilter
+      : '';
+
   const shownMachines = (
     statusFilter ? visibleMachines.filter((m) => machineStatus(m) === statusFilter) : visibleMachines
-  ).filter(
+  )
+    .filter((m) =>
+      activeAreaFilter === ''
+        ? true
+        : activeAreaFilter === AREA_NONE
+          ? !m.areaId
+          : m.areaId === activeAreaFilter,
+    )
+    .filter(
     (m) =>
       searchTerm === '' ||
       m.name.toLowerCase().includes(searchTerm) ||
@@ -518,20 +558,38 @@ export default function MachinesPage() {
       ) : null}
 
       {!isLoading && visibleMachines.length > 0 ? (
-        <div className="relative max-w-sm">
-          <Search
-            className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden
-          />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={t('searchPlaceholder')}
-            aria-label={t('search')}
-            // Both sides restated: the base input's shared `px` is dropped the moment
-            // one logical side is overridden, which would leave no end padding.
-            className="ps-9 pe-2.5"
-          />
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full max-w-sm">
+            <Search
+              className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+              aria-hidden
+            />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={t('searchPlaceholder')}
+              aria-label={t('search')}
+              // Both sides restated: the base input's shared `px` is dropped the moment
+              // one logical side is overridden, which would leave no end padding.
+              className="ps-9 pe-2.5"
+            />
+          </div>
+          <Select
+            value={activeAreaFilter || '__all__'}
+            onValueChange={(v) => setAreaFilter(!v || v === '__all__' ? '' : String(v))}
+            items={areaFilterItems}
+          >
+            <SelectTrigger className="w-auto min-w-44" aria-label={tAreas('filter.label')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {areaFilterItems.map((i) => (
+                <SelectItem key={i.value} value={i.value} label={i.label}>
+                  {i.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       ) : null}
 
@@ -583,6 +641,7 @@ export default function MachinesPage() {
               onPush: openPush,
               onRemove: openRemove,
               onCloseShift: setCloseShiftTarget,
+              onEditArea: setAreaTarget,
             }}
             isDeviceOnline={isDeviceOnline}
             onAddMachineToShop={openPairForShop}
@@ -790,6 +849,12 @@ export default function MachinesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <MachineAreaDialog
+        machine={areaTarget}
+        open={!!areaTarget}
+        onOpenChange={(open) => (!open ? setAreaTarget(null) : undefined)}
+      />
 
       <Dialog open={shopEditOpen} onOpenChange={setShopEditOpen}>
         <DialogContent className="max-w-md">

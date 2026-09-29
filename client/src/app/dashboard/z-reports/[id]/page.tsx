@@ -266,6 +266,9 @@ function Header({ z }: { z: ZReportDetail }) {
         {b.shopName ?? '—'}
         {b.branchId ? <span className="text-muted-foreground text-xs"> · {b.branchId}</span> : null}
       </Fact>
+      {b.areaName ?? z.areaName ? (
+        <Fact label={t('header.area')}>{b.areaName ?? z.areaName}</Fact>
+      ) : null}
       <Fact label={t('header.capturedAt')}>{formatDateTime(b.capturedAt)}</Fact>
     </div>
   );
@@ -298,6 +301,8 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
   const uncountedShifts = z.perMachine.reduce((n, s) => n + (s.uncountedShiftCount ?? 0), 0);
   const withheld = z.actualCash == null;
   const late = z.lateDocuments ?? 0;
+  // Frozen in the header when the Z was built, so a later rename does not rewrite it.
+  const areaName = z.business?.areaName ?? z.areaName ?? null;
   const shiftsOf = (machineId: string) => z.shifts.filter((s) => s.machineId === machineId);
 
   const print = () => {
@@ -322,6 +327,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
             </div>
             <p className="text-muted-foreground text-sm">
               {z.shopName ?? z.business?.shopName ?? '—'} ·{' '}
+              {areaName ? <>{t('areaValue', { area: areaName })} · </> : null}
               {t('businessDateValue', { date: formatDate(z.businessDate) })}
             </p>
           </div>
