@@ -16,16 +16,19 @@
 
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { formatCurrency, moneyValue } from '@/lib/format';
+import { formatCurrency, formatHashNumber, moneyValue } from '@/lib/format';
 import type { Money, Shift } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 
-/** "משמרת #12", or plain "משמרת" for a shift from a till that predates the counter. */
+/**
+ * "משמרת #12" (the number isolated left-to-right, `formatHashNumber`), or plain "משמרת" for
+ * a shift from a till that predates the counter.
+ */
 export function useShiftLabel() {
   const t = useTranslations('shifts');
   return (shift: Pick<Shift, 'sequenceNumber'>): string =>
     shift.sequenceNumber != null
-      ? t('labelNumbered', { number: shift.sequenceNumber })
+      ? t('labelNumbered', { number: formatHashNumber(shift.sequenceNumber) })
       : t('label');
 }
 

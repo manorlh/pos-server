@@ -42,6 +42,7 @@ import {
   Wifi,
   WifiOff,
 } from 'lucide-react';
+import { formatHashNumber } from '@/lib/format';
 import type { PosMachine } from '@/lib/types';
 import { registerNumberOf } from '@/lib/registerNumber';
 import { zWizardHref } from '@/lib/zAccess';
@@ -123,7 +124,7 @@ export function MachineShiftSummary({ m }: { m: PosMachine }) {
           ? t('shift.closePending')
           : m.shiftStatus === 'open'
             ? m.openShiftSequence != null
-              ? t('shift.openNumbered', { number: m.openShiftSequence })
+              ? t('shift.openNumbered', { number: formatHashNumber(m.openShiftSequence) })
               : t('shift.open')
             : t('shift.none')}
       </Badge>
