@@ -360,6 +360,8 @@ class TransactionOut(BaseModel):
     notes: Optional[str]
 
     refund_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="refundOfTransactionId")
+    #: A credit note that took its original's credited total past what it collected.
+    over_credited: Optional[bool] = Field(False, alias="overCredited")
     nayax_meta: Optional[dict] = Field(None, alias="nayaxMeta")
     #: Verified at ingest, so what comes back out is a name the server stood behind.
     approved_by_user_id: Optional[uuid.UUID] = Field(None, alias="approvedByUserId")

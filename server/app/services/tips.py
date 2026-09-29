@@ -13,8 +13,9 @@ from app.models.company import Company
 from app.models.pos_user import PosUser
 from app.models.shop import Shop
 from app.models.tenant import Tenant
-from app.models.transaction import Transaction, TransactionStatus
+from app.models.transaction import Transaction
 from app.schemas.tips import TipCashierRow, TipsReportResponse
+from app.services.dashboard_stats import SALE_STATUSES
 from app.services.settings_merge import merge_all_settings_layers
 
 
@@ -46,7 +47,9 @@ def build_tips_report(
 
     q = db.query(Transaction).filter(
         Transaction.shop_id == shop.id,
-        Transaction.status == TransactionStatus.COMPLETED,
+        # A sale refunded later is `refunded` / `partial_refund` once its credit note
+        # arrives (`settle_credited_originals`); the tip it took was still taken.
+        Transaction.status.in_(SALE_STATUSES),
     )
     if shift_id:
         q = q.filter(Transaction.shift_id == shift_id)

@@ -764,11 +764,123 @@ def upsert_transactions(
                 reason=str(exc),
             ))
 
+    # A credit note settles its original (and an original pushed after its credit note
+    # is settled on arrival). A status change only: no X or Z moves.
+    # Never at the cost of the batch: the documents are written, and a failure here is
+    # logged and retried with the next push that names them.
+    written = [
+        r.id for r in results if r.status != "rejected" and r.reason != "held_by_another_machine"
+    ]
+    if written:
+        savepoint = db.begin_nested()
+        try:
+            settle_credited_originals(db, machine.tenant_id, written)
+            savepoint.commit()
+        except Exception:
+            _rollback_savepoint(savepoint)
+            logger.exception("Could not settle credited originals for %s", written)
+
     # A document for a shift that is already closed: recompute or flag (see shifts).
     note_documents_after_close(
         db, touched_closed, machine_id=machine.id, moved_in=moved_in, amended=amended
     )
     return results
+
+
+# ── A credit note settles its original ───────────────────────────────────────
+
+#: Rounding slack between what an original collected and what was credited against it.
+CREDIT_TOLERANCE = Decimal("0.01")
+
+
+def settle_credited_originals(
+    db: Session, tenant_id: Optional[uuid.UUID], document_ids: Sequence[uuid.UUID]
+) -> None:
+    """
+    Bring each original named by, or among, `document_ids` to the status its credit
+    notes give it — the statuses the till gives its own copy (`SaleRepository.settleCredit`).
+
+    The till marks the sale it refunds `refunded` / `partial_refund` locally but pushes
+    only the credit note, so the cloud's copy stayed `completed`. From the cumulative
+    credited amount instead: every counted credit note (status in `SALE_STATUSES`; a
+    card refund still `pending` has not moved money) referring to the original, against
+    what the original collected (total − document discount):
+
+    * credited ≥ collected (one agora of slack) → `refunded`;
+    * 0 < credited < collected → `partial_refund`;
+    * nothing credited → left as it is.
+
+    Only an original in a counted status is touched (a cancelled or pending one is not a
+    sale to refund), and only within `tenant_id`: a credit note cannot restate another
+    tenant's document by naming its id.
+
+    A credit note whose arrival takes the running credited total (oldest first) past
+    what the original collected is flagged `over_credited` and logged — stored all the
+    same, because a fiscal document the till issued is never lost.
+
+    Idempotent: recomputed from what is stored, so a re-push, or the original arriving
+    after its credit note, lands on the same result. No X or Z moves: both statuses
+    count exactly as `completed` does.
+    """
+    from app.services.dashboard_stats import SALE_STATUSES
+
+    ids = {i for i in document_ids if i is not None}
+    if not ids or tenant_id is None:
+        return
+    # The originals: those the batch's credit notes name, and batch documents that are
+    # themselves credited (the original pushed after its credit note).
+    named = {
+        r[0]
+        for r in db.query(Transaction.refund_of_transaction_id)
+        .filter(Transaction.id.in_(ids), Transaction.refund_of_transaction_id.isnot(None))
+        .all()
+    }
+    originals = (
+        db.query(Transaction)
+        .filter(Transaction.id.in_(ids | named), Transaction.tenant_id == tenant_id)
+        .populate_existing()
+        .all()
+    )
+    for original in originals:
+        credits = (
+            db.query(Transaction)
+            .filter(
+                Transaction.refund_of_transaction_id == original.id,
+                Transaction.id != original.id,
+                Transaction.tenant_id == tenant_id,
+                Transaction.status.in_(SALE_STATUSES),
+            )
+            .populate_existing()
+            .all()
+        )
+        if not credits:
+            continue
+        collected = expected_tender_total(
+            total_amount=original.total_amount,
+            document_discount=original.document_discount,
+            document_type=original.document_type,
+            refund_of_transaction_id=original.refund_of_transaction_id,
+        )
+        running = Decimal("0")
+        for credit in sorted(credits, key=lambda c: (_as_utc(c.created_at), str(c.id))):
+            running += Decimal(str(credit.total_amount or 0))
+            over = running > collected + CREDIT_TOLERANCE
+            if over and not credit.over_credited:
+                logger.warning(
+                    "Credit note %s over-credits original %s: credited %s of %s collected",
+                    credit.id, original.id, running, collected,
+                )
+            credit.over_credited = over
+        if original.status not in SALE_STATUSES or running <= 0:
+            continue
+        settled = (
+            TransactionStatus.REFUNDED
+            if running >= collected - CREDIT_TOLERANCE
+            else TransactionStatus.PARTIAL_REFUND
+        )
+        if original.status != settled:
+            original.status = settled
+    db.flush()
 
 
 # ── MQTT publish helpers (server -> dashboard heads-up) ──────────────────────

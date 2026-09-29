@@ -150,6 +150,20 @@ The till parks only the rejected document (it keeps its local copy; a corrected 
 re-push the same id) and keeps delivering the rest. A document it cannot match to a result
 stays queued (absence is not acceptance).
 
+**A credit note settles its original.** When a credit note (document type 330, with
+`refundOfTransactionId`) is stored, the original it names is given the status the till gives
+its own copy, from the **cumulative** credited amount — every credit note of that original in
+a counted status (`completed` / `refunded` / `partial_refund`; a card refund still `pending`
+has moved no money) against what the original collected (`totalAmount − documentDiscount`):
+credited ≥ collected (one agora of slack) → `refunded`; less, but more than nothing →
+`partial_refund`. Only an original in a counted status, and only one of the same tenant, is
+touched. It is recomputed from what is stored, so a re-push of either document — even a
+retry of the original still saying `completed` — lands on the same status. A credit note
+that takes the running credited total (oldest first) past what the original collected is
+**stored all the same** (a fiscal document is never refused) but flagged
+`overCredited: true` on the transaction, and logged. No X or Z moves: `refunded` and
+`partial_refund` count exactly as `completed` does, and the tips report counts all three.
+
 **A document for a shift that is already closed** (it reached the cloud after the close) is
 always accepted and stored — a fiscal document is never dropped:
 - shift not in a Z yet → the shift's server X is recomputed to include it, and its

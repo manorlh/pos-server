@@ -7,6 +7,8 @@ Server findings of the 2026-09-29 end-to-end run (docs/SHIFTS_API.md).
 * **Z cash over back-to-back shifts** — a till's drawer is handed from shift to shift,
   so summing floats and expecteds counted the same banknotes once per shift (Z #1:
   opening 455, expected 540, for a drawer holding ~180).
+* **A credit note settles its original** — the refunded sale stayed `completed` in the
+  cloud, because the till pushes only the credit note.
 
 Runs on the in-memory SQLite world in tests/shift_world.py.
 """
@@ -23,15 +25,16 @@ from pydantic import ValidationError
 
 from app.models.shift import ShiftStatus
 from app.models.sync_log import SyncLog, SyncStatus
-from app.models.transaction import Transaction
+from app.models.transaction import Transaction, TransactionStatus
 from app.routers import sync as sync_router
 from app.schemas.shift import ShiftCloseIn
 from app.schemas.transaction import TransactionsBatchEnvelope
 from app.services import ably_notify
 from app.services import reports as R
 from app.services import z_runs as ZR
+from app.services.shift_totals import compute_totals
 from app.services.shifts import apply_shift_close
-from app.services.transactions import validate_documents
+from app.services.transactions import settle_credited_originals, validate_documents
 from app.services.z_builder import till_cash_summary, z_cash_summary
 from app.models.z_run import ZRunStatus
 from app.models.z_report import ZReport
@@ -58,6 +61,14 @@ def _doc(shift_id=None, total="10.00", **extra) -> dict:
         body["shiftId"] = str(shift_id)
     body.update(extra)
     return body
+
+
+def _credit(original_id, total, shift_id=None, minutes=1, **extra) -> dict:
+    at = (NOW + timedelta(minutes=minutes)).isoformat()
+    return _doc(
+        shift_id, total, documentType=330, refundOfTransactionId=str(original_id),
+        createdAt=at, updatedAt=at, **extra,
+    )
 
 
 def _push(w, till, docs):
@@ -302,3 +313,111 @@ class TestTheDaySummaryReadsTheZsOverShort:
         assert totals.variance is None and totals.uncounted_count == 1
         (contributor,) = R._contributors_of(w.db.query(ZReport).one())
         assert contributor.uncounted is True
+
+
+# ── 3. A credit note settles its original ────────────────────────────────────
+
+
+def _status(w, doc_id) -> TransactionStatus:
+    w.db.expire_all()
+    return w.db.get(Transaction, uuid.UUID(str(doc_id))).status
+
+
+class TestACreditNoteSettlesItsOriginal:
+    def test_partial_then_full(self, w):
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        sale = _doc(shift.id, "100.00")
+        _push(w, till, [sale])
+
+        _push(w, till, [_credit(sale["id"], "40.00", shift.id, minutes=1)])
+        assert _status(w, sale["id"]) == TransactionStatus.PARTIAL_REFUND
+
+        _push(w, till, [_credit(sale["id"], "60.00", shift.id, minutes=2)])
+        assert _status(w, sale["id"]) == TransactionStatus.REFUNDED
+
+    def test_what_was_collected_is_the_measure(self, w):
+        """A sale's collected amount is its total less the document discount."""
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        sale = _doc(shift.id, "100.00", documentDiscount="10.00")
+        _push(w, till, [sale])
+
+        _push(w, till, [_credit(sale["id"], "90.00", shift.id)])
+
+        assert _status(w, sale["id"]) == TransactionStatus.REFUNDED
+
+    def test_it_is_idempotent(self, w):
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        sale = _doc(shift.id, "100.00")
+        credit = _credit(sale["id"], "40.00", shift.id)
+        _push(w, till, [sale, credit])
+
+        again = _push(w, till, [credit])
+        stale_original = _push(w, till, [sale])  # a retry of the original, still "completed"
+
+        assert [r.status for r in again.results] == ["duplicate"]
+        assert [r.status for r in stale_original.results] == ["duplicate"]
+        assert _status(w, sale["id"]) == TransactionStatus.PARTIAL_REFUND
+        assert w.db.get(Transaction, uuid.UUID(credit["id"])).over_credited is False
+
+    def test_an_over_credit_is_stored_and_flagged(self, w):
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        sale = _doc(shift.id, "100.00")
+        first = _credit(sale["id"], "70.00", shift.id, minutes=1)
+        second = _credit(sale["id"], "50.00", shift.id, minutes=2)
+        _push(w, till, [sale, first])
+
+        response = _push(w, till, [second])
+
+        assert [r.status for r in response.results] == ["accepted"]
+        w.db.expire_all()
+        assert w.db.get(Transaction, uuid.UUID(first["id"])).over_credited is False
+        assert w.db.get(Transaction, uuid.UUID(second["id"])).over_credited is True
+        assert _status(w, sale["id"]) == TransactionStatus.REFUNDED
+
+    def test_a_pending_credit_note_moves_nothing(self, w):
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        sale = _doc(shift.id, "100.00")
+        _push(w, till, [sale, _credit(sale["id"], "40.00", shift.id, status="pending")])
+
+        assert _status(w, sale["id"]) == TransactionStatus.COMPLETED
+
+    def test_a_cancelled_original_is_left_alone(self, w):
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        sale = _doc(shift.id, "100.00", status="cancelled")
+        _push(w, till, [sale, _credit(sale["id"], "40.00", shift.id)])
+
+        assert _status(w, sale["id"]) == TransactionStatus.CANCELLED
+
+    def test_another_tenants_document_is_never_restated(self, w):
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        sale = w.doc(till, shift, "100.00")
+        w.doc(till, shift, "100.00", credit_note=True).refund_of_transaction_id = sale.id
+        w.db.flush()
+
+        settle_credited_originals(w.db, uuid.uuid4(), [sale.id])
+
+        assert _status(w, sale.id) == TransactionStatus.COMPLETED
+
+    def test_the_x_is_unchanged(self, w):
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        sale = _doc(shift.id, "100.00")
+        credit = _credit(sale["id"], "40.00", shift.id)
+        _push(w, till, [sale, credit])
+        before = compute_totals(w.db, [shift.id]).as_x()
+
+        w.db.get(Transaction, uuid.UUID(sale["id"])).status = TransactionStatus.COMPLETED
+        w.db.flush()
+        as_if_unsettled = compute_totals(w.db, [shift.id]).as_x()
+
+        assert before == as_if_unsettled
+        assert before["total_sales"] == Decimal("100.00")
+        assert before["total_refunds"] == Decimal("40.00")
+        assert before["total_cash"] == Decimal("60.00")
