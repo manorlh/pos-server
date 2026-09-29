@@ -32,6 +32,7 @@ import { he } from 'date-fns/locale';
 import {
   ChevronDown,
   FilePlus2,
+  LayoutGrid,
   Link2,
   ListChecks,
   MoreHorizontal,
@@ -67,11 +68,11 @@ import {
 } from '@/components/dashboard/machine-status';
 
 /**
- * The seven columns, shared with the table's header strip so the two cannot drift.
+ * The eight columns, shared with the table's header strip so the two cannot drift.
  * Below `md` the grid is off entirely and the row lays itself out with flex-wrap.
  */
 export const MACHINE_ROW_GRID =
-  'md:grid md:grid-cols-[minmax(9rem,auto)_minmax(0,2fr)_minmax(0,1.4fr)_auto_auto_auto_auto] md:items-center md:gap-x-3';
+  'md:grid md:grid-cols-[minmax(9rem,auto)_minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.4fr)_auto_auto_auto_auto] md:items-center md:gap-x-3';
 
 /** Everything the row needs to decide what a given operator may do with a terminal. */
 export interface MachinePermissions {
@@ -91,6 +92,8 @@ export interface MachineRowActions {
   onRemove: (m: PosMachine) => void;
   /** Ask the till to close its open shift, without a Z. */
   onCloseShift: (m: PosMachine) => void;
+  /** Move the till into an area of its shop, or out of one. */
+  onEditArea?: (m: PosMachine) => void;
 }
 
 export interface MachineRowProps {
@@ -233,6 +236,12 @@ function MachineRowMenu({
         {m.pairingStatus === 'assigned' && canEditAssignedShop ? (
           <DropdownMenuItem onClick={() => actions.onEditShop(m)}>
             <Store aria-hidden /> {t('changeShop')}
+          </DropdownMenuItem>
+        ) : null}
+        {/* Same role set as `PUT /machines/{id}` (the machine admins, who also produce Zs). */}
+        {canProduceZ && actions.onEditArea && m.shopId && m.pairingStatus === 'assigned' ? (
+          <DropdownMenuItem onClick={() => actions.onEditArea?.(m)}>
+            <LayoutGrid aria-hidden /> {t('changeArea')}
           </DropdownMenuItem>
         ) : null}
         {/* Two separate actions. Closing the shift remotely only closes it (the X is
@@ -427,6 +436,14 @@ export function MachineRow({
           <p className="truncate text-xs text-muted-foreground" dir="ltr">
             {m.machineCode}
           </p>
+          {/* The narrow row has no area column; the area rides under the code instead. */}
+          {m.areaName ? (
+            <p className="truncate text-xs text-muted-foreground md:hidden">{m.areaName}</p>
+          ) : null}
+        </div>
+
+        <div className="min-w-0 truncate text-xs max-md:hidden">
+          {m.areaName ?? <span className="text-muted-foreground">—</span>}
         </div>
 
         <div className="min-w-0 max-md:order-7">
