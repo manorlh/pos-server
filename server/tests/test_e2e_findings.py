@@ -9,6 +9,7 @@ Server findings of the 2026-09-29 end-to-end run (docs/SHIFTS_API.md).
   opening 455, expected 540, for a drawer holding ~180).
 * **A credit note settles its original** — the refunded sale stayed `completed` in the
   cloud, because the till pushes only the credit note.
+* **shopName** on the shift of a close request.
 
 Runs on the in-memory SQLite world in tests/shift_world.py.
 """
@@ -31,6 +32,7 @@ from app.schemas.shift import ShiftCloseIn
 from app.schemas.transaction import TransactionsBatchEnvelope
 from app.services import ably_notify
 from app.services import reports as R
+from app.services import shift_close_requests as SCR
 from app.services import z_runs as ZR
 from app.services.shift_totals import compute_totals
 from app.services.shifts import apply_shift_close
@@ -421,3 +423,20 @@ class TestACreditNoteSettlesItsOriginal:
         assert before["total_sales"] == Decimal("100.00")
         assert before["total_refunds"] == Decimal("40.00")
         assert before["total_cash"] == Decimal("60.00")
+
+
+# ── 4. shopName on a close request's shift ───────────────────────────────────
+
+
+class TestACloseRequestNamesTheShop:
+    def test_the_shift_summary_carries_the_shop_name(self, w):
+        till = w.tills[0]
+        w.shift(till, 1, status=ShiftStatus.OPEN)
+        till.last_heartbeat_at = NOW
+
+        req, created = SCR.request_close(w.db, w.admin, till, now=NOW)
+        w.db.flush()
+
+        out = SCR.request_to_out(w.db, req, now=NOW)
+        assert created and out["shift"].shop_name == "Center"
+        assert out["shift"].machine_name == "Till 1"
