@@ -62,6 +62,21 @@ def _scope_by_user(query, current_user: User, db: Session):
     )
 
 
+def _between_shift_adjustments(sections) -> Optional[Decimal]:
+    """
+    The Z's cash moved between shifts: the sum of its sections' own, as stored.
+
+    None when there are no sections (a legacy Z) or any section predates the figure — a
+    Z keeps the numbers it was built with, and a partial sum would be a new one.
+    """
+    if not sections:
+        return None
+    values = [section.get("betweenShiftAdjustments") for section in sections]
+    if any(v is None for v in values):
+        return None
+    return sum((Decimal(str(v)) for v in values), Decimal("0"))
+
+
 def z_to_out(z: ZReport, cls=ZReportOut):
     item = ZReportOut.model_validate(z)
     if cls is not ZReportOut:
@@ -73,6 +88,7 @@ def z_to_out(z: ZReport, cls=ZReportOut):
         item.net_sales = Decimal(z.total_sales) - Decimal(z.total_refunds or 0)
         if z.discounts_total is not None:
             item.gross_sales = Decimal(z.total_sales) + Decimal(z.discounts_total)
+    item.between_shift_adjustments = _between_shift_adjustments(z.per_machine)
     item.machine_name = z.machine.name if z.machine_id and z.machine else None
     item.shop_name = z.shop.name if z.shop else None
     return item

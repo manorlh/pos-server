@@ -1029,6 +1029,11 @@ export interface ZReport {
   /** Null when any included shift was not counted. */
   actualCash?: Money | null;
   discrepancy?: Money | null;
+  /**
+   * Σ of the tills' cash put into / taken out of the drawer between shifts (part of
+   * expectedCash). Null on a Z built before it existed.
+   */
+  betweenShiftAdjustments?: Money | null;
   /** Any included shift was closed unattended. */
   unattended?: boolean;
   /** Any included shift was reconstructed for a dead till. */
@@ -1078,6 +1083,8 @@ export interface ZReportMachineSection {
   /** Null when any of this till's shifts is uncounted. */
   countedCash?: Money | null;
   overShort?: Money | null;
+  /** Cash put into (+) / taken out of (−) the drawer between its shifts; part of expectedCash. */
+  betweenShiftAdjustments?: Money | null;
   uncountedShiftCount?: number | null;
   reconstructedShiftCount?: number | null;
   unattendedShiftCount?: number | null;

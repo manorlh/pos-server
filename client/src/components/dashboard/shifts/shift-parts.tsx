@@ -203,6 +203,27 @@ export function TipsSplit({
   );
 }
 
+/**
+ * An amount with its sign ("+₪5.00" / "-₪5.00"), isolated left-to-right so an RTL line
+ * does not move the sign to the far side. Neutral in colour: not every signed figure is a
+ * variance.
+ */
+export function SignedMoney({ value }: { value: Money | null | undefined }) {
+  const n = moneyValue(value);
+  if (n === null) return <>—</>;
+  return (
+    <span dir="ltr" className="tabular-nums">
+      {`${n > 0 ? '+' : ''}${formatCurrency(n)}`}
+    </span>
+  );
+}
+
+/** Cash moved between shifts is shown only when there was some (stored, and not zero). */
+export function hasBetweenShiftAdjustments(value: Money | null | undefined): boolean {
+  const n = moneyValue(value);
+  return n !== null && n !== 0;
+}
+
 /** A label/value pair for the detail grids. */
 export function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (

@@ -55,6 +55,10 @@ class ZReportOut(BaseModel):
     expected_cash: Optional[Decimal] = Field(None, alias="expectedCash")
     actual_cash: Optional[Decimal] = Field(None, alias="actualCash")
     discrepancy: Optional[Decimal] = None
+    #: Σ of the per-till `betweenShiftAdjustments` (§3.6): cash put into or taken out of
+    #: the drawers between shifts, part of `expectedCash`. Null on a Z built before it
+    #: was stored, and on a legacy Z.
+    between_shift_adjustments: Optional[Decimal] = Field(None, alias="betweenShiftAdjustments")
     closed_at: datetime = Field(..., alias="closedAt")
     created_at: datetime = Field(..., alias="createdAt")
 

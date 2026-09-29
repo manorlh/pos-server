@@ -29,6 +29,7 @@ from app.models.shift import ShiftStatus
 from app.models.sync_log import SyncLog, SyncStatus
 from app.models.transaction import Transaction, TransactionStatus
 from app.routers import sync as sync_router
+from app.routers import z_reports as ZRouter
 from app.schemas.shift import ShiftCloseIn
 from app.schemas.transaction import TransactionsBatchEnvelope
 from app.services import ably_notify
@@ -273,8 +274,10 @@ class TestOneBadDocumentDoesNotJamTheBatch:
 
 
 def _closed(w, till, seq, cash_sales, *, opening, counted):
+    """A closed shift whose cash takings net to `cash_sales` (negative: a cash refund)."""
     shift = w.shift(till, seq, status=ShiftStatus.OPEN, opening_cash=opening)
-    docs = [w.doc(till, shift, cash_sales)] if Decimal(cash_sales) else []
+    net = Decimal(cash_sales)
+    docs = [w.doc(till, shift, str(abs(net)), credit_note=net < 0)] if net else []
     body = ShiftCloseIn.model_validate({
         "closedAt": (shift.opened_at + timedelta(hours=1)).isoformat(),
         "countedCash": counted,
@@ -302,6 +305,14 @@ def _e2e_shifts(w, till):
     ]
 
 
+def _assert_reconciles(section):
+    """A counted till's over/short is exactly its count less its expected."""
+    assert section["overShort"] is not None
+    assert Decimal(section["countedCash"]) - Decimal(section["expectedCash"]) == Decimal(
+        section["overShort"]
+    )
+
+
 class TestTheDrawerIsCarriedFromShiftToShift:
     def test_the_e2e_numbers(self, w):
         till = w.tills[0]
@@ -309,14 +320,17 @@ class TestTheDrawerIsCarriedFromShiftToShift:
 
         z = _z(w, till)
 
+        # A's 5 short was carried into B's float: the period's expected is 100 + 90 cash
+        # = 190, not C's 185 (which assumes A's missing 5 was never missing).
         (section,) = z.per_machine
         assert section["openingCash"] == "100.00"
-        assert section["expectedCash"] == "185.00"
+        assert section["betweenShiftAdjustments"] == "0.00"
+        assert section["expectedCash"] == "190.00"
         assert section["countedCash"] is None
         assert section["overShort"] is None
         assert section["uncountedShiftCount"] == 2
         assert section["cashSalesNet"] == "90.00"
-        assert (z.opening_cash, z.expected_cash) == (Decimal("100.00"), Decimal("185.00"))
+        assert (z.opening_cash, z.expected_cash) == (Decimal("100.00"), Decimal("190.00"))
         assert z.actual_cash is None and z.discrepancy is None
 
     def test_the_count_is_the_last_shifts_and_over_short_every_shifts(self, w):
@@ -327,9 +341,84 @@ class TestTheDrawerIsCarriedFromShiftToShift:
         (section,) = _z(w, till).per_machine
 
         assert section["openingCash"] == "100.00"
-        assert section["expectedCash"] == "180.00"
+        assert section["expectedCash"] == "185.00"
         assert section["countedCash"] == "182.00"
         assert section["overShort"] == "-3.00"
+        _assert_reconciles(section)
+
+    def test_z3_a_surplus_carried_into_the_next_float(self, w):
+        """
+        E2E Z #3: E float 180, +10 cash, expected 190, counted 192 (+2); F opened on the
+        192 E left, −2 cash (a refund), expected 190, counted 189 (−1). The Z read
+        expected 190, counted 189, over/short +1 — which does not add up. The drawer
+        started at 180 and took 8: expected 188, and 189 − 188 = +1.
+        """
+        till = w.tills[0]
+        e = _closed(w, till, 1, "10.00", opening="180.00", counted="192.00")
+        f = _closed(w, till, 2, "-2.00", opening="192.00", counted="189.00")
+        assert (e.total_cash, f.total_cash) == (Decimal("10.00"), Decimal("-2.00"))
+
+        z = _z(w, till)
+
+        (section,) = z.per_machine
+        assert section["openingCash"] == "180.00"
+        assert section["cashSalesNet"] == "8.00"
+        assert section["betweenShiftAdjustments"] == "0.00"   # F's float is what E left
+        assert section["expectedCash"] == "188.00"
+        assert section["countedCash"] == "189.00"
+        assert section["overShort"] == "1.00"
+        _assert_reconciles(section)
+        assert (z.opening_cash, z.expected_cash, z.actual_cash, z.discrepancy) == (
+            Decimal("180.00"), Decimal("188.00"), Decimal("189.00"), Decimal("1.00"),
+        )
+        assert z.actual_cash - z.expected_cash == z.discrepancy
+
+    def test_cash_moved_between_shifts_is_its_own_line(self, w):
+        """E left 192; F opened on 150 (42 banked in between), took 5 and counted 154."""
+        till = w.tills[0]
+        _closed(w, till, 1, "10.00", opening="180.00", counted="192.00")   # +2
+        _closed(w, till, 2, "5.00", opening="150.00", counted="154.00")    # −1
+
+        z = _z(w, till)
+
+        (section,) = z.per_machine
+        assert section["betweenShiftAdjustments"] == "-42.00"
+        assert section["expectedCash"] == "153.00"   # 180 + 15 − 42
+        assert section["overShort"] == "1.00"
+        _assert_reconciles(section)
+        body = ZRouter.z_to_out(z)
+        assert body.between_shift_adjustments == Decimal("-42.00")
+
+    def test_the_period_expected_is_the_last_less_the_earlier_over_shorts(self, w):
+        """The algebra in `till_cash_summary`: expected = expected_n − Σ_{i<n} d_i."""
+        till = w.tills[0]
+        shifts = [
+            _closed(w, till, 1, "80.00", opening="100.00", counted="175.00"),  # −5
+            _closed(w, till, 2, "5.00", opening="175.00", counted=None),       # d = 0
+            _closed(w, till, 3, "7.00", opening="200.00", counted="210.00"),   # +3, 20 put in
+            _closed(w, till, 4, "-4.00", opening="100.00", counted="95.00"),   # −1, 110 out
+        ]
+        summary = till_cash_summary(shifts)
+
+        expected_n = shifts[-1].opening_cash + shifts[-1].total_cash
+        earlier = sum(
+            (s.counted_cash - (s.opening_cash + s.total_cash) for s in shifts[:-1] if s.counted_cash is not None),
+            Decimal("0"),
+        )
+        assert summary["expected"] == expected_n - earlier == Decimal("98.00")
+        assert summary["between_shifts"] == Decimal("-90.00")   # +20 − 110
+        assert summary["over_short"] is None                    # shift 2 uncounted
+        assert summary["counted"] - summary["expected"] == Decimal("-3.00")  # Σ known d_i, withheld
+
+    def test_an_old_z_keeps_its_numbers(self, w):
+        till = w.tills[0]
+        _closed(w, till, 1, "10.00", opening="180.00", counted="192.00")
+        z = _z(w, till)
+        z.per_machine = [
+            {k: v for k, v in section.items() if k != "betweenShiftAdjustments"}
+            for section in z.per_machine
+        ]
+        assert ZRouter.z_to_out(z).between_shift_adjustments is None
 
     def test_an_earlier_uncounted_shift_withholds_over_short_but_not_the_count(self, w):
         till = w.tills[0]
@@ -350,7 +439,7 @@ class TestTheDrawerIsCarriedFromShiftToShift:
         z = _z(w, one, two)
 
         assert z.opening_cash == Decimal("150.00")      # 100 + 50
-        assert z.expected_cash == Decimal("275.00")     # 185 + 90
+        assert z.expected_cash == Decimal("280.00")     # 190 + 90
         assert z.actual_cash is None and z.discrepancy is None  # till 1 uncounted
 
     def test_counted_everywhere_sums_counts_and_over_shorts(self, w):
@@ -361,9 +450,12 @@ class TestTheDrawerIsCarriedFromShiftToShift:
 
         z = _z(w, one, two)
 
-        assert z.expected_cash == Decimal("270.00")
+        assert z.expected_cash == Decimal("275.00")     # 185 + 90
         assert z.actual_cash == Decimal("271.00")
         assert z.discrepancy == Decimal("-4.00")
+        assert z.actual_cash - z.expected_cash == z.discrepancy
+        for section in z.per_machine:
+            _assert_reconciles(section)
 
     def test_no_shifts_is_nothing(self):
         assert till_cash_summary([])["counted"] is None
@@ -376,7 +468,7 @@ class TestTheDaySummaryReadsTheZsOverShort:
         _closed(w, till, 1, "80.00", opening="100.00", counted="175.00")   # −5
         _closed(w, till, 2, "5.00", opening="175.00", counted="180.00")    # 0
         z = _z(w, till)
-        assert z.actual_cash == z.expected_cash  # the last drawer balanced
+        assert z.actual_cash - z.expected_cash == z.discrepancy == Decimal("-5.00")
 
         acc = R._Accumulator()
         acc.add(z)
