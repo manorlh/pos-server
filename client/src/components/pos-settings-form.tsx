@@ -14,6 +14,7 @@ import {
   resolvePaymentOptionKey,
 } from '@/lib/paymentOptions';
 import { SELL_SCREEN_TOOLS, SELL_SCREEN_TOOL_DEFAULT } from '@/lib/sellScreen';
+import { REFUND_SETTINGS, REFUND_SETTING_DEFAULT } from '@/lib/refundSettings';
 import type { PosSettingsPatch, PosSettingsV1, ResettableSwitchKey } from '@/lib/types';
 
 /**
@@ -232,6 +233,35 @@ export function PosSettingsForm({
                 SELL_SCREEN_TOOL_DEFAULT,
               )}
               onCheckedChange={(c) => set(tool.key, c)}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="border-t pt-4 space-y-3">
+        <div>
+          <p className="text-sm font-medium">{t('refundsTitle')}</p>
+          <p className="text-xs text-muted-foreground">{t('refundsDesc')}</p>
+        </div>
+        {REFUND_SETTINGS.map((setting) => (
+          <div key={setting.key} className="flex items-center justify-between gap-4">
+            <div>
+              <Label>
+                {t(setting.labelKey)}
+                {overrideBadge(setting.key)}
+              </Label>
+              <p className="text-xs text-muted-foreground">{t(setting.descriptionKey)}</p>
+              {inheritedHint(setting.key, onOff)}
+              {resetToInherited(setting.key)}
+            </div>
+            <Switch
+              checked={resolvePaymentOptionKey(
+                setting.key,
+                value,
+                inherited,
+                REFUND_SETTING_DEFAULT,
+              )}
+              onCheckedChange={(c) => set(setting.key, c)}
             />
           </div>
         ))}

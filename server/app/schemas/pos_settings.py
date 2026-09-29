@@ -57,6 +57,11 @@ class PosSettingsV1Patch(BaseModel):
     sell_search_enabled: Optional[bool] = Field(None, alias="sellSearchEnabled")
     sell_scan_enabled: Optional[bool] = Field(None, alias="sellScanEnabled")
     sell_calculator_enabled: Optional[bool] = Field(None, alias="sellCalculatorEnabled")
+    # The till's return flow; both on unless switched off (app/services/refund_settings.py).
+    unlinked_card_credit_enabled: Optional[bool] = Field(None, alias="unlinkedCardCreditEnabled")
+    refund_customer_details_required: Optional[bool] = Field(
+        None, alias="refundCustomerDetailsRequired"
+    )
     tip_presets: Optional[List[int]] = Field(None, alias="tipPresets")
     tip_distribution: Optional[Literal["direct", "equal_pool", "by_sales"]] = Field(
         None, alias="tipDistribution"

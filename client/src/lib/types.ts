@@ -217,6 +217,9 @@ export interface PosSettingsV1 {
   sellSearchEnabled?: boolean;
   sellScanEnabled?: boolean;
   sellCalculatorEnabled?: boolean;
+  // The till's return flow. Unset = on; see lib/refundSettings.ts.
+  unlinkedCardCreditEnabled?: boolean;
+  refundCustomerDetailsRequired?: boolean;
   tipPresets?: number[];
   tipDistribution?: TipDistribution;
   receiptPrinterName?: string;
@@ -250,8 +253,10 @@ export type SellScreenSettingKey =
   | 'sellScanEnabled'
   | 'sellCalculatorEnabled';
 
+export type RefundSettingKey = 'unlinkedCardCreditEnabled' | 'refundCustomerDetailsRequired';
+
 /** Switch keys whose PATCH accepts `null` (= unset this layer, inherit again). */
-export type ResettableSwitchKey = PaymentOptionSettingKey | SellScreenSettingKey;
+export type ResettableSwitchKey = PaymentOptionSettingKey | SellScreenSettingKey | RefundSettingKey;
 
 /**
  * PATCH body for POS settings. Branding keys accept an explicit `null`, which

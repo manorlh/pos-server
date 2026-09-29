@@ -51,6 +51,7 @@ from app.services.settings_merge import (
     merge_all_settings_layers,
 )
 from app.services.payment_options import legacy_tip_flags, resolve_payment_options
+from app.services.refund_settings import resolve_refund_settings
 from app.services.sell_screen import resolve_sell_screen
 from app.services import general_item
 from app.services.areas import as_utc, machine_area_for_sync
@@ -1266,6 +1267,8 @@ def get_settings_sync(
     # The sell-screen tools likewise always go out as real bools (unset -> shown),
     # so the till reads a value rather than deciding what a missing key means.
     effective.update(resolve_sell_screen(all_settings))
+    # The return-flow switches too (unset -> on).
+    effective.update(resolve_refund_settings(all_settings))
     business_info = build_business_info(company, shop, all_settings)
 
     update_machine_sync_timestamp(db, str(machine.id))

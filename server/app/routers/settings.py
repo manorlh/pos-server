@@ -25,6 +25,7 @@ from app.services.payment_options import (
     any_allowed,
     resolve_payment_options,
 )
+from app.services.refund_settings import REFUND_SETTING_KEYS, resolve_refund_settings
 from app.services.sell_screen import SELL_SCREEN_SETTING_KEYS, resolve_sell_screen
 from app.services.settings_merge import (
     BRANDING_SETTING_KEYS,
@@ -132,6 +133,12 @@ def _sell_screen_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
     return {key: raw[key] for key in SELL_SCREEN_SETTING_KEYS if key in raw}
 
 
+def _refund_settings_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
+    """Return-flow keys the caller explicitly sent, keeping an explicit `null` (reset)."""
+    raw = data.model_dump(exclude_unset=True, by_alias=True)
+    return {key: raw[key] for key in REFUND_SETTING_KEYS if key in raw}
+
+
 def _refuse_tenant_only_keys(data: PosSettingsV1Patch) -> None:
     """`zScope` decides how a tenant's Zs are produced; it has no company or shop layer."""
     if data.z_scope is not None:
@@ -175,6 +182,7 @@ def _build_patch(data: PosSettingsV1Patch, user: User) -> Dict[str, Any]:
         **branding,
         **_payment_options_patch(data),
         **_sell_screen_patch(data),
+        **_refund_settings_patch(data),
     }
 
 
@@ -383,6 +391,7 @@ def get_shop_settings(
             # Sell-screen tools resolved for the same reason: an unset key is
             # "shown", and the dashboard should read that, not guess it.
             effective.update(resolve_sell_screen(effective))
+            effective.update(resolve_refund_settings(effective))
 
     return ShopSettingsResponse(
         settings=shop.settings or {},
