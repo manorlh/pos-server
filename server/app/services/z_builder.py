@@ -14,7 +14,8 @@ never from figures a till reported. Everything happens in one database transacti
    in the till's run) or contain one whose close has not been accepted.
 3. Totals are computed from the documents of the whole set, and per till for its
    section (first and last document number, takings by tender, discounts, refunds, VAT,
-   tips, and the cash summary with over/short withheld if any shift was uncounted).
+   tips, and the drawer: first float to last expected per till, with over/short withheld
+   if any shift was uncounted — see `till_cash_summary`).
 4. The number is allocated, the Z written, and `shifts.z_report_id` set — which is
    what makes a shift in at most one Z: it was NULL under the lock, and it is set in
    the same transaction.
@@ -130,33 +131,76 @@ def _dec(value) -> Decimal:
     return ZERO if value is None else Decimal(value)
 
 
-def _cash_summary(shifts: Sequence[Shift]) -> Dict[str, Optional[Decimal]]:
-    """
-    Opening, expected (server), counted and over/short over a set of shifts.
+def _shift_expected(shift: Shift) -> Decimal:
+    """The server's own expected drawer at a shift's close: its float + cash takings + cash tips."""
+    return _dec(shift.opening_cash) + _dec(shift.total_cash) + _dec(shift.total_cash_tips)
 
-    Expected is the server's own: opening + cash takings + cash tips per shift. Counted
-    and over/short are NULL if any shift was not counted — a partial count presented as
-    the drawer's would hide exactly the shortfall a count exists to find.
+
+def till_cash_summary(shifts: Sequence[Shift]) -> Dict[str, Optional[Decimal]]:
     """
-    opening = sum((_dec(s.opening_cash) for s in shifts), ZERO)
-    expected = sum(
-        (_dec(s.opening_cash) + _dec(s.total_cash) + _dec(s.total_cash_tips) for s in shifts),
-        ZERO,
-    )
+    One till's drawer over the consecutive shifts a Z takes of it (oldest first).
+
+    A till has one drawer, and back-to-back shifts hand it on: the next shift's float is
+    what the last one left in it. Summing floats and expecteds over the shifts counted
+    the same banknotes once per shift — a drawer that held ~180 read as opening 455 and
+    expected 540. So (docs/SHIFTS_API.md §3.6):
+
+    * opening  — the **first** shift's float: the drawer at the start of the period;
+    * expected — the **last** shift's expected (the server's own: its float + cash
+      takings + cash tips): the drawer at the end of the period;
+    * counted  — the **last** shift's count, NULL if that shift was not counted;
+    * over/short — the sum of each shift's own over/short (its count − its expected),
+      NULL if **any** shift was not counted: a partial count presented as the drawer's
+      would hide exactly the shortfall a count exists to find;
+    * cash sales — the cash takings of every shift, net of cash refunds (the money the
+      drawer figures alone no longer show when cash left it between shifts).
+    """
+    if not shifts:
+        return {
+            "opening": ZERO, "expected": ZERO, "counted": None, "over_short": None,
+            "uncounted": 0, "cash_sales": ZERO,
+        }
+    first, last = shifts[0], shifts[-1]
     uncounted = sum(1 for s in shifts if s.counted_cash is None)
-    counted = None if uncounted else sum((_dec(s.counted_cash) for s in shifts), ZERO)
+    over_short = (
+        None if uncounted
+        else sum((_dec(s.counted_cash) - _shift_expected(s) for s in shifts), ZERO)
+    )
     return {
-        "opening": opening,
-        "expected": expected,
-        "counted": counted,
-        "over_short": (counted - expected) if counted is not None else None,
+        "opening": _dec(first.opening_cash),
+        "expected": _shift_expected(last),
+        "counted": None if last.counted_cash is None else _dec(last.counted_cash),
+        "over_short": over_short,
         "uncounted": uncounted,
+        "cash_sales": sum((_dec(s.total_cash) for s in shifts), ZERO),
+    }
+
+
+def _sum_or_none(values: Sequence[Optional[Decimal]]) -> Optional[Decimal]:
+    return None if any(v is None for v in values) else sum(values, ZERO)
+
+
+def z_cash_summary(per_till: Sequence[Sequence[Shift]]) -> Dict[str, Optional[Decimal]]:
+    """
+    The Z's drawer figures: each till's (`till_cash_summary`) summed over the tills.
+
+    Tills have a drawer each, so here summing is right. Counted and over/short are NULL
+    if they are NULL for any till.
+    """
+    tills = [till_cash_summary(shifts) for shifts in per_till]
+    return {
+        "opening": sum((t["opening"] for t in tills), ZERO),
+        "expected": sum((t["expected"] for t in tills), ZERO),
+        "counted": _sum_or_none([t["counted"] for t in tills]) if tills else None,
+        "over_short": _sum_or_none([t["over_short"] for t in tills]) if tills else None,
+        "uncounted": sum(t["uncounted"] for t in tills),
+        "cash_sales": sum((t["cash_sales"] for t in tills), ZERO),
     }
 
 
 def machine_section(machine: POSMachine, shifts: Sequence[Shift], totals: DocumentTotals) -> dict:
     """One till's section of a Z (docs/SHIFTS_API.md §3.6). Money as decimal strings."""
-    cash = _cash_summary(shifts)
+    cash = till_cash_summary(shifts)
     seqs = [s.sequence_number for s in shifts if s.sequence_number is not None]
     return {
         "machineId": str(machine.id),
@@ -193,6 +237,9 @@ def machine_section(machine: POSMachine, shifts: Sequence[Shift], totals: Docume
         "expectedCash": _money(cash["expected"]),
         "countedCash": _money(cash["counted"]),
         "overShort": _money(cash["over_short"]),
+        # Net of cash refunds. With the drawer carried from shift to shift, expected is
+        # the last shift's drawer — this is the cash the whole period took.
+        "cashSalesNet": _money(cash["cash_sales"]),
         "uncountedShiftCount": cash["uncounted"],
         "reconstructedShiftCount": sum(1 for s in shifts if s.reconstructed),
         "unattendedShiftCount": sum(1 for s in shifts if s.unattended),
@@ -248,7 +295,7 @@ def build_z(
         machine_section(machine, shifts, compute_totals(db, [s.id for s in shifts]))
         for machine, shifts in per_machine
     ]
-    cash = _cash_summary(all_shifts)
+    cash = z_cash_summary([shifts for _m, shifts in per_machine])
 
     # 4. Number, write, claim.
     z = ZReport(

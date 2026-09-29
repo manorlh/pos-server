@@ -518,7 +518,9 @@ other settings still saves. The dashboard edits it in the tenant settings dialog
 ### 2.13 Day summary `GET /reports/day-summary`
 Unchanged path and totals. Groups Zs by the Z's `businessDate`. `contributors` are per-till
 sections of each Z (one row per Z × till: `zReportId`, `shopSequenceNumber`, `machineId`,
-`machineName`, …); `machineCount` = distinct tills across those sections.
+`machineName`, …); `machineCount` = distinct tills across those sections. The variance
+is the sum of the Zs' own over/short (`discrepancy`, §3.6), withheld if any Z's is unknown;
+a contributor is `uncounted` when its section's count or over/short is null.
 
 ### 2.14 Remote shift close without a Z
 
@@ -654,7 +656,7 @@ it (`409 z_run_in_progress`).
   "netSales",                              // totalSales − totalRefunds
   "totalTips", "totalCashTips", "totalCardTips", "vatTotal", "transactionsCount",
   "paymentBreakdown": {"cash": "…", "card": "…", "<other method>": "…"},
-  "openingCash", "expectedCash", "actualCash", "discrepancy",   // actualCash/discrepancy null if any shift uncounted
+  "openingCash", "expectedCash", "actualCash", "discrepancy",   // Σ of the per-till figures (§3.6); null if null for any till
   "unattended", "reconstructed",           // any included shift unattended / reconstructed
   "lateDocuments": 0,                      // documents of its shifts that arrived (or moved in) after it was built (not in its figures)
   "amendedDocuments": 0,                   // documents of its shifts rewritten after it was built (its figures are as built)
@@ -676,11 +678,34 @@ it (`409 z_run_in_progress`).
   "totalCash", "totalCard", "paymentBreakdown": {…},
   "totalTips", "totalCashTips", "totalCardTips",
   "openingCash", "expectedCash", "countedCash", "overShort", "uncountedShiftCount",
+  "cashSalesNet",     // Σ cash takings of its shifts, net of cash refunds (Zs built from now on)
   "reconstructedShiftCount", "unattendedShiftCount"
 }
 ```
-Money values are decimal strings. `countedCash` / `overShort` are null if any of the till's
-shifts is uncounted. Sections are served as they were stored when the Z was built — except
+Money values are decimal strings.
+
+**The drawer figures across back-to-back shifts.** A till has one drawer, and consecutive
+shifts hand it on: the next shift's float is what the last one left in it. Summing floats
+and expecteds over the shifts counted the same banknotes once per shift (a drawer holding
+~180 read as opening 455, expected 540). Per till, over the shifts the Z takes of it,
+oldest first:
+- `openingCash` — the **first** shift's opening float: the drawer at the start of the period;
+- `expectedCash` — the **last** shift's expected (the server's own: its float + cash takings
+  + cash tips): the drawer at the end of the period;
+- `countedCash` — the **last** shift's count; null if that shift was not counted;
+- `overShort` — the sum of every shift's own over/short (its count − its server expected);
+  null if **any** shift was not counted — a partial count presented as the drawer's would
+  hide exactly the shortfall a count exists to find. It is therefore not always
+  `countedCash − expectedCash`: an earlier shift's shortfall is in it too;
+- `cashSalesNet` — the cash the whole period took, which the drawer figures alone do not show
+  when cash left the drawer between shifts.
+
+Example (one till): A float 100, expected 180, counted 175; B float 175, expected 180,
+uncounted; C float 180, expected 185, uncounted → opening 100, expected 185, counted null,
+over/short null. The Z's `openingCash` / `expectedCash` / `actualCash` / `discrepancy` are the
+sums of these over its tills (tills have a drawer each), null if null for any till. The day
+summary (§2.13) takes each cloud Z's variance from its `discrepancy`. A Z built before this
+rule keeps the sums it was built with. Sections are served as they were stored when the Z was built — except
 that `grossSales` / `netSales` are derived from the section's own figures for a Z built before
 they were stored. A Z built before this change may carry a machine code in `posNumber`
 (non-numeric); it is not rewritten.

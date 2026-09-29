@@ -1000,6 +1000,7 @@ class _Accumulator:
     vat: Decimal = Decimal("0")
     vat_missing: int = 0
     actual_cash: Decimal = Decimal("0")
+    variance: Decimal = Decimal("0")
     uncounted: int = 0
     #: Z reports rolled in. Zero means there is nothing to reconcile and nothing to
     #: declare, which is not the same as a reconciliation that came to zero.
@@ -1027,10 +1028,12 @@ class _Accumulator:
         # `actual_cash` is NULL when nobody counted — an unattended close, or a Z from
         # before the till sent a count. Both make the day's variance unknowable, and
         # neither may be read as zero.
-        if z.actual_cash is None:
+        variance = _z_variance(z)
+        if z.actual_cash is None or variance is None:
             self.uncounted += 1
         else:
             self.actual_cash += _dec_or_zero(z.actual_cash)
+            self.variance += variance
 
     def to_totals(self) -> DaySummaryTotals:
         # An empty selection has no variance and no VAT to report. Returning 0.00 would
@@ -1053,9 +1056,26 @@ class _Accumulator:
             vat=_to_float(self.vat) if declared_vat else None,
             vat_missing_count=self.vat_missing,
             actual_cash=_to_float(self.actual_cash) if counted else None,
-            variance=_to_float(self.actual_cash - self.expected_cash) if counted else None,
+            variance=_to_float(self.variance) if counted else None,
             uncounted_count=self.uncounted,
         )
+
+
+def _z_variance(z: ZReport) -> Optional[Decimal]:
+    """
+    A Z's over/short, or None when it is unknown.
+
+    A cloud Z's is its own `discrepancy`: the sum of each shift's over/short, NULL if
+    any shift was uncounted. It is *not* counted − expected — a till's drawer figures
+    are its last shift's, and a shortfall in an earlier shift of the same Z is in the
+    discrepancy only (`app.services.z_builder.till_cash_summary`). A legacy till-issued
+    Z has one drawer and one count, so counted − expected is its variance.
+    """
+    if z.per_machine is not None:
+        return None if z.discrepancy is None else _dec_or_zero(z.discrepancy)
+    if z.actual_cash is None:
+        return None
+    return _dec_or_zero(z.actual_cash) - _dec_or_zero(z.expected_cash)
 
 
 def _dec_or_zero(value) -> Decimal:
@@ -1112,7 +1132,12 @@ def _contributors_of(z: ZReport) -> List[DaySummaryContributor]:
                 machine_name=section.get("machineName"),
                 unattended=bool(section.get("unattendedShiftCount")),
                 reconstructed=bool(section.get("reconstructedShiftCount")),
-                uncounted=section.get("countedCash") is None,
+                # An earlier shift left uncounted withholds the over/short even when
+                # the last one was counted.
+                uncounted=(
+                    section.get("countedCash") is None
+                    or section.get("overShort") is None
+                ),
                 sales=_to_float(sales),
                 refunds=_to_float(refunds),
                 net=_to_float(sales - refunds),
