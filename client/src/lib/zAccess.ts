@@ -20,11 +20,16 @@ export function useCanProduceZ(): boolean {
   return authHydrated && !!user && Z_PRODUCER_ROLES.includes(user.role);
 }
 
-/** The Z wizard, optionally opened on one shop (and one of its tills). */
-export function zWizardHref(shopId?: string | null, machineId?: string | null): string {
+/** The Z wizard, optionally opened on one shop (and one of its tills, or one of its areas). */
+export function zWizardHref(
+  shopId?: string | null,
+  machineId?: string | null,
+  areaId?: string | null,
+): string {
   const search = new URLSearchParams();
   if (shopId) search.set('shopId', shopId);
   if (shopId && machineId) search.set('machineId', machineId);
+  if (shopId && areaId) search.set('areaId', areaId);
   const q = search.toString();
   return q ? `/dashboard/z-reports/new?${q}` : '/dashboard/z-reports/new';
 }

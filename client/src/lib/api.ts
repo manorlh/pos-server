@@ -14,7 +14,9 @@ import type {
   PosMachine,
   PosSettingsPatch,
   ProductSalesReport,
+  SalesByAreaReport,
   Shop,
+  ShopArea,
   ShopSettingsResponse,
   StockLevel,
   TipsRangeReport,
@@ -378,6 +380,8 @@ export type ReportWindowParams = {
   tz?: string;
   shopId?: string;
   machineId?: string;
+  /** An area id, or `none` for sales of shifts with no area (and of no shift). */
+  areaId?: string;
 };
 
 export async function fetchProductSalesReport(
@@ -435,6 +439,8 @@ export type ZReportListParams = {
   /** ISO datetimes on `closed_at`; naive values are read as UTC server-side. */
   closedFrom?: string;
   closedTo?: string;
+  /** An area id, or `none` for Zs run for no area. */
+  areaId?: string;
   page?: number;
   pageSize?: number;
 };
@@ -563,6 +569,8 @@ export type ShiftListParams = {
   /** On `businessDate`. */
   from?: string;
   to?: string;
+  /** The shift's stamped area id, or `none` for shifts stamped with no area. */
+  areaId?: string;
   page?: number;
   pageSize?: number;
 };
@@ -579,9 +587,14 @@ export async function fetchShift(id: string): Promise<Shift> {
   return data;
 }
 
-/** Per till of a shop: reachability, open shift, and closed shifts awaiting a Z. */
-export async function fetchZCandidates(shopId: string): Promise<ZCandidates> {
-  const { data } = await api.get<ZCandidates>(`/shops/${shopId}/z-candidates`);
+/**
+ * Per till of a shop: reachability, open shift, and closed shifts awaiting a Z.
+ * With `areaId`, only the tills currently in that area.
+ */
+export async function fetchZCandidates(shopId: string, areaId?: string | null): Promise<ZCandidates> {
+  const { data } = await api.get<ZCandidates>(`/shops/${shopId}/z-candidates`, {
+    params: areaId ? { areaId } : undefined,
+  });
   return data;
 }
 
@@ -593,6 +606,11 @@ export async function createZRun(body: {
   shopId: string;
   machines: ZRunMachineSelection[];
   businessDate?: string;
+  /**
+   * Run the Z for one area of the shop. Still the shop's Z (same number sequence);
+   * every listed till must currently be in the area.
+   */
+  areaId?: string;
 }): Promise<ZRun> {
   const { data } = await api.post<ZRun>('/z-runs', body);
   return data;
@@ -628,6 +646,71 @@ export async function cancelShiftCloseRequest(id: string): Promise<ShiftCloseReq
 
 export async function cancelZRun(id: string): Promise<ZRun> {
   const { data } = await api.post<ZRun>(`/z-runs/${id}/cancel`, {});
+  return data;
+}
+
+// ── Shop areas (docs/AREAS_API.md) ─────────────────────────────────────────
+
+/** The `areaId` filter value that means "no area". */
+export const AREA_NONE = 'none';
+
+/** A shop's areas, ordered by sortOrder then name. Archived ones only when asked. */
+export async function fetchShopAreas(shopId: string, includeArchived = false): Promise<ShopArea[]> {
+  const { data } = await api.get<ShopArea[]>(`/shops/${shopId}/areas`, {
+    params: { includeArchived },
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function createShopArea(
+  shopId: string,
+  body: { name: string; sortOrder?: number },
+): Promise<ShopArea> {
+  const { data } = await api.post<ShopArea>(`/shops/${shopId}/areas`, body);
+  return data;
+}
+
+export async function updateShopArea(
+  areaId: string,
+  body: { name?: string; sortOrder?: number },
+): Promise<ShopArea> {
+  const { data } = await api.patch<ShopArea>(`/areas/${areaId}`, body);
+  return data;
+}
+
+/** Refused (`area_has_machines`) while any active till is still in the area. */
+export async function archiveShopArea(areaId: string): Promise<ShopArea> {
+  const { data } = await api.post<ShopArea>(`/areas/${areaId}/archive`, {});
+  return data;
+}
+
+export async function restoreShopArea(areaId: string): Promise<ShopArea> {
+  const { data } = await api.post<ShopArea>(`/areas/${areaId}/restore`, {});
+  return data;
+}
+
+/**
+ * Set the area's tills to exactly this list. Listed tills join (from no area or
+ * another area of the shop); tills in it that are not listed leave it.
+ */
+export async function setShopAreaMachines(areaId: string, machineIds: string[]): Promise<ShopArea> {
+  const { data } = await api.put<ShopArea>(`/areas/${areaId}/machines`, { machineIds });
+  return data;
+}
+
+/** Move one till to an area of its shop, or — with `null` — out of any area. */
+export async function setMachineArea(machineId: string, areaId: string | null): Promise<PosMachine> {
+  const { data } = await api.put(`/machines/${machineId}`, { areaId });
+  return normalizePosMachine(data as Record<string, unknown>);
+}
+
+/** Sales per area of one shop over a day range; the rows sum to the shop's total. */
+export async function fetchSalesByArea(params: {
+  shopId: string;
+  dateFrom: string;
+  dateTo: string;
+}): Promise<SalesByAreaReport> {
+  const { data } = await api.get<SalesByAreaReport>('/reports/sales-by-area', { params });
   return data;
 }
 
