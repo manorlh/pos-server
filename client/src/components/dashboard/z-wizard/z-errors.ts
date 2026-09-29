@@ -48,6 +48,9 @@ const KNOWN = new Set([
   'machine_has_shifts_awaiting_z',
   'shift_unknown',
   'upgrade_required',
+  'area_not_in_shop',
+  'area_archived',
+  'machine_not_in_area',
 ]);
 
 /** The code part of a detail: `z_run_in_progress:<id>` → `z_run_in_progress`. */

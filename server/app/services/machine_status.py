@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Dict, Iterable, List, Optional
 from zoneinfo import ZoneInfo
 
 #: How long after its last heartbeat a terminal is still considered online.
@@ -243,3 +243,50 @@ def _flags(data: StatusInput, *, now: Optional[datetime]) -> List[str]:
         flags.append(MachineFlag.REALTIME_DOWN)
 
     return flags
+
+
+# ── Roll-up over a group of tills (a shop area) ───────────────────────────────
+
+#: Most severe first, for the one light an area shows (docs/AREAS_API.md §2.4).
+#:
+#: Not the resolver's precedence above, which picks one till's status: that order puts
+#: `NO_OPEN_SHIFT` over `OFFLINE` so a till switched off after its shift is not a fault.
+#: Across a group the question is "is anything here wrong", so a closed till ranks just
+#: above a healthy one, and a queued close above a backlog that is merely syncing.
+#: `RETIRED` and `NOT_PAIRED` are absent on purpose: neither says anything about how the
+#: area is trading, and an unpaired spare in a drawer must not colour the bar red.
+ROLLUP_SEVERITY = (
+    MachineStatus.OFFLINE_WITH_UNSYNCED,
+    MachineStatus.OFFLINE,
+    MachineStatus.SHIFT_CLOSE_PENDING,
+    MachineStatus.PENDING_SYNC,
+    MachineStatus.NO_OPEN_SHIFT,
+    MachineStatus.ONLINE,
+)
+
+#: Every primary status value, in the resolver's order — the keys of a roll-up's counts.
+ALL_STATUSES = (
+    MachineStatus.NOT_PAIRED,
+    MachineStatus.RETIRED,
+    MachineStatus.OFFLINE_WITH_UNSYNCED,
+    MachineStatus.NO_OPEN_SHIFT,
+    MachineStatus.OFFLINE,
+    MachineStatus.PENDING_SYNC,
+    MachineStatus.SHIFT_CLOSE_PENDING,
+    MachineStatus.ONLINE,
+)
+
+
+def rollup_status(statuses: Iterable[str]) -> dict:
+    """
+    `{worst, counts}` over the primary statuses of a group's tills.
+
+    `counts` has every status value, zeros included, so a reader never has to decide
+    what a missing key means. `worst` is None when no till has a status that ranks —
+    an empty area, or one holding only unpaired tills.
+    """
+    counts: Dict[str, int] = {value: 0 for value in ALL_STATUSES}
+    for value in statuses:
+        counts[value] = counts.get(value, 0) + 1
+    worst = next((value for value in ROLLUP_SEVERITY if counts.get(value)), None)
+    return {"worst": worst, "counts": counts}

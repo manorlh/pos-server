@@ -25,6 +25,9 @@ class ZRunCreateIn(BaseModel):
     shop_id: uuid.UUID = Field(..., alias="shopId")
     machines: List[ZRunMachineIn] = Field(default_factory=list)
     business_date: Optional[date] = Field(None, alias="businessDate")
+    #: A Z for this area of the shop: every listed till must be in it now (some may be
+    #: left off). Still the shop's Z, under the shop's number (docs/AREAS_API.md §2.3).
+    area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
 
 
 class ZRunProceedIn(BaseModel):
@@ -62,6 +65,8 @@ class ZRunOut(BaseModel):
 
     id: uuid.UUID
     shop_id: uuid.UUID = Field(..., alias="shopId")
+    area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
+    area_name: Optional[str] = Field(None, alias="areaName")
     status: str
     business_date: Optional[date] = Field(None, alias="businessDate")
     created_at: Optional[datetime] = Field(None, alias="createdAt")
@@ -102,6 +107,9 @@ class ZCandidateMachineOut(BaseModel):
     #: unpaired or since moved to another shop. It can be included, never asked to close.
     in_shop: bool = Field(True, alias="inShop")
     is_active: bool = Field(True, alias="isActive")
+    #: The till's area now (not its shifts' stamps).
+    area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
+    area_name: Optional[str] = Field(None, alias="areaName")
 
 
 class ZCandidatesOut(BaseModel):
@@ -109,5 +117,8 @@ class ZCandidatesOut(BaseModel):
 
     shop_id: uuid.UUID = Field(..., alias="shopId")
     shop_name: Optional[str] = Field(None, alias="shopName")
+    #: Echoes an `areaId` filter: only that area's tills are listed.
+    area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
+    area_name: Optional[str] = Field(None, alias="areaName")
     z_scope: str = Field("shop", alias="zScope")
     machines: List[ZCandidateMachineOut] = Field(default_factory=list)

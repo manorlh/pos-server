@@ -219,6 +219,7 @@ export function MachinesTable({
       >
         <span>{t('columns.status')}</span>
         <span>{t('columns.terminal')}</span>
+        <span>{t('columns.area')}</span>
         <span>{t('columns.flags')}</span>
         <span>{t('columns.shift')}</span>
         <span>{t('columns.pending')}</span>

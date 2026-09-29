@@ -39,12 +39,13 @@ from app.services import z_runs as ZR
 from app.services.administrative_close import close_shift_administratively
 from app.services.shifts import apply_shift_close, z_reported_through_sequence
 from app.services.z_builder import ZBuildRefused, build_z, included_shifts
-from shift_world import NOW, TODAY, accept_str_uuids, make_world
+from shift_world import NOW, TODAY, accept_str_uuids, freeze_z_run_clock, make_world
 
 
 @pytest.fixture
 def w(monkeypatch):
     accept_str_uuids(monkeypatch)
+    freeze_z_run_clock(monkeypatch)
     world = make_world()
     world.sent = []
     monkeypatch.setattr(
@@ -605,7 +606,9 @@ class TestExpiry:
         r = run(w, sel(w.tills[0]))
 
         assert ZR.Z_RUN_TTL_HOURS == 36
-        assert r.expires_at > r.created_at if r.created_at else True
+        # Against the clock the run was made on: `created_at` is the database's own
+        # wall-clock default, which this world's fixed `NOW` falls behind.
+        assert ZR._aware(r.expires_at) == NOW + timedelta(hours=36)
 
 
 class TestCancel:

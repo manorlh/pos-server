@@ -171,6 +171,24 @@ def accept_str_uuids(monkeypatch) -> None:
     monkeypatch.setattr(sqltypes.Uuid, "bind_processor", _bind_accepting_str)
 
 
+def freeze_z_run_clock(monkeypatch) -> None:
+    """
+    Let the Z-run service read the world's clock (`NOW`), not the wall clock.
+
+    A run made at `NOW` expires 36 h later, and every read and write path sweeps expiry
+    with the real time. Without this, every test that creates a run and then touches it
+    again starts failing 36 h after `NOW` — a date bomb, not a regression.
+    """
+    import app.services.z_runs as z_runs_module
+
+    class _WorldClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW if tz is not None else NOW.replace(tzinfo=None)
+
+    monkeypatch.setattr(z_runs_module, "datetime", _WorldClock)
+
+
 def make_world() -> World:
     engine = create_engine("sqlite://")
 

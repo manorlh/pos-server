@@ -19,7 +19,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, FilePlus2 } from 'lucide-react';
-import { fetchShifts, type ShiftListParams } from '@/lib/api';
+import { AREA_NONE, fetchShifts, type ShiftListParams } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope, useScopeQuery } from '@/lib/scope';
 import { findBySameId } from '@/lib/entityLookup';
@@ -28,6 +28,7 @@ import { useTenantTimeZone } from '@/lib/auth';
 import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
 import type { ShiftListResponse, ShiftStatus } from '@/lib/types';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
+import { AreaFilterSelect, AreaName } from '@/components/dashboard/areas/area-filter';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import {
   CountedCash,
@@ -43,7 +44,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 const PAGE_SIZE = 50;
-const COLS = 11;
+const COLS = 12;
 
 type StatusFilter = 'all' | ShiftStatus;
 
@@ -56,6 +57,8 @@ function filtersFrom(sp: URLSearchParams | { get(name: string): string | null })
   const from = sp.get('from') ?? '';
   const to = sp.get('to') ?? '';
   const page = Math.max(1, Math.floor(Number(sp.get('page') ?? '1')) || 1);
+  // `none` = shifts stamped with no area; otherwise an area id of the shop in scope.
+  const area = sp.get('area') ?? '';
   const status: StatusFilter = awaitingZ
     ? // Awaiting a Z means closed: an open shift is never waiting for one.
       'closed'
@@ -67,6 +70,7 @@ function filtersFrom(sp: URLSearchParams | { get(name: string): string | null })
     awaitingZ,
     from: PLAIN_DATE.test(from) ? from : '',
     to: PLAIN_DATE.test(to) ? to : '',
+    area,
     page,
   };
 }
@@ -88,7 +92,7 @@ export default function ShiftsPage() {
   // `?awaitingZ=1` is how the machines page's "closed shifts awaiting a Z" flag lands here.
   const searchParams = useSearchParams();
   const pathname = usePathname();
-  const { status, awaitingZ, from, to, page } = filtersFrom(searchParams);
+  const { status, awaitingZ, from, to, area, page } = filtersFrom(searchParams);
   const rangeInvalid = !!from && !!to && from > to;
   // A shift's page links back to exactly this list — scope and filters — and carries the
   // scope itself so the bar above it keeps naming the same shop and till.
@@ -101,13 +105,23 @@ export default function ShiftsPage() {
 
   /** Change filters in the URL, keeping the scope's own params beside them. */
   const setFilters = useCallback(
-    (patch: Partial<{ status: StatusFilter; awaitingZ: boolean; from: string; to: string; page: number }>) => {
+    (
+      patch: Partial<{
+        status: StatusFilter;
+        awaitingZ: boolean;
+        from: string;
+        to: string;
+        area: string;
+        page: number;
+      }>,
+    ) => {
       const next = new URLSearchParams(searchParams.toString());
       const put = (key: string, value: string | null) => (value ? next.set(key, value) : next.delete(key));
       if ('status' in patch) put('status', patch.status && patch.status !== 'all' ? patch.status : null);
       if ('awaitingZ' in patch) put('awaitingZ', patch.awaitingZ ? '1' : null);
       if ('from' in patch) put('from', patch.from ?? null);
       if ('to' in patch) put('to', patch.to ?? null);
+      if ('area' in patch) put('area', patch.area ?? null);
       // Any filter change is a new result set: back to its first page.
       const nextPage = 'page' in patch ? (patch.page ?? 1) : 1;
       put('page', nextPage > 1 ? String(nextPage) : null);
@@ -117,14 +131,20 @@ export default function ShiftsPage() {
     [pathname, router, searchParams],
   );
 
-  // A new scope is a new result set too.
+  // A new scope is a new result set too. An area belongs to one shop, so another shop
+  // drops the area filter (keeping "no area", which means the same thing anywhere).
   const scopeKey = `${shopId ?? ''}|${machineId ?? ''}`;
+  const shopKey = shopId ?? '';
   const lastScopeKey = useRef(scopeKey);
+  const lastShopKey = useRef(shopKey);
   useEffect(() => {
     if (lastScopeKey.current === scopeKey) return;
     lastScopeKey.current = scopeKey;
-    if (page > 1) setFilters({ page: 1 });
-  }, [page, scopeKey, setFilters]);
+    const shopChanged = lastShopKey.current !== shopKey;
+    lastShopKey.current = shopKey;
+    if (shopChanged && area && area !== AREA_NONE) setFilters({ area: '' });
+    else if (page > 1) setFilters({ page: 1 });
+  }, [area, page, scopeKey, setFilters, shopKey]);
 
   const params = useMemo<ShiftListParams>(() => {
     const p: ShiftListParams = { page, pageSize: PAGE_SIZE };
@@ -136,8 +156,9 @@ export default function ShiftsPage() {
     if (awaitingZ) p.awaitingZ = true;
     if (from) p.from = from;
     if (to) p.to = to;
+    if (area) p.areaId = area;
     return p;
-  }, [shopId, machineId, status, awaitingZ, from, to, page]);
+  }, [shopId, machineId, status, awaitingZ, from, to, area, page]);
 
   const { data, isLoading, isFetching, isError, error } = useQuery<ShiftListResponse>({
     queryKey: ['shifts', params],
@@ -175,7 +196,7 @@ export default function ShiftsPage() {
 
       <ScopeGate resolution={resolution}>
         <div className="rounded-lg border bg-card p-4 space-y-3">
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-5">
             <div className="space-y-1">
               <Label className="text-xs">{t('filter.status')}</Label>
               <Select
@@ -217,6 +238,11 @@ export default function ShiftsPage() {
                 onChange={(e) => setFilters({ to: e.target.value })}
               />
             </div>
+            <AreaFilterSelect
+              shopId={shopId}
+              value={area}
+              onChange={(next) => setFilters({ area: next })}
+            />
             <label className="flex items-center gap-2 self-end pb-2 text-sm">
               <input
                 type="checkbox"
@@ -243,6 +269,7 @@ export default function ShiftsPage() {
                   <TableHead>{t('col.shift')}</TableHead>
                   <TableHead>{t('col.businessDate')}</TableHead>
                   <TableHead>{t('col.till')}</TableHead>
+                  <TableHead>{t('col.area')}</TableHead>
                   <TableHead>{t('col.opened')}</TableHead>
                   <TableHead>{t('col.closed')}</TableHead>
                   <TableHead className="text-end">{t('col.sales')}</TableHead>
@@ -294,6 +321,9 @@ export default function ShiftsPage() {
                           {shopName ? (
                             <div className="text-muted-foreground text-xs">{shopName}</div>
                           ) : null}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          <AreaName name={s.areaName} />
                         </TableCell>
                         <TableCell className="text-xs whitespace-nowrap">
                           <div>{formatDateTimeInZone(s.openedAt, tz)}</div>

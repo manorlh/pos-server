@@ -129,6 +129,9 @@ export function ZRunProgress({ runId }: { runId: string }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="text-base">
             {t('title', { shop: findBySameId(scope.shops, run.shopId)?.name ?? run.shopId.slice(0, 8) })}
+            {run.areaName ? (
+              <span className="text-muted-foreground text-sm font-normal"> · {run.areaName}</span>
+            ) : null}
           </CardTitle>
           <Badge
             variant={

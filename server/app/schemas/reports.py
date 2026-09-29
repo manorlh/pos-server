@@ -126,6 +126,48 @@ class CashierSalesReportResponse(BaseModel):
     rows: List[CashierSalesRow]
 
 
+# ── 2b′. Sales by area ───────────────────────────────────────────────────────
+
+class SalesByAreaRow(BaseModel):
+    """
+    One area's documents over the window, by the shift they were stamped under.
+
+    The per-cashier report's money exactly (`gross - discounts - refunds = net`,
+    `cash + card + other = net`), so an area table and a cashier table over the same
+    shop and window add up to the same figure.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: Null for documents taken under no area (an unassigned till, or no shift at all).
+    area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
+    area_name: Optional[str] = Field(None, alias="areaName")
+    archived: bool = False
+    #: Sales + credit notes, as `documentCount` in the cashier report.
+    transactions_count: int = Field(0, alias="transactionsCount")
+    gross: float = 0.0
+    discounts: float = 0.0
+    net: float = 0.0
+    refunds: float = 0.0
+    cash: float = 0.0
+    card: float = 0.0
+    other: float = 0.0
+    tips: float = 0.0
+
+
+class SalesByAreaResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    shop_id: uuid.UUID = Field(..., alias="shopId")
+    date_from: date = Field(..., alias="dateFrom")
+    date_to: date = Field(..., alias="dateTo")
+    window: ReportWindowOut
+    generated_at: datetime = Field(..., alias="generatedAt")
+    rows: List[SalesByAreaRow]
+    #: The rows added up — equal to the shop's total over the same window.
+    totals: SalesByAreaRow
+
+
 # ── 2c. Tips ──────────────────────────────────────────────────────────────────
 
 class TipMethodRow(BaseModel):

@@ -59,6 +59,8 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     tenantId: (raw.tenantId ?? raw.tenant_id) as string | undefined,
     shopId: (raw.shopId ?? raw.shop_id) as string | undefined,
     posNumber: nullableString(raw.posNumber ?? raw.pos_number),
+    areaId: nullableString(raw.areaId ?? raw.area_id),
+    areaName: nullableString(raw.areaName ?? raw.area_name),
     pairingStatus,
     mqttClientId: (raw.mqttClientId ?? raw.mqtt_client_id) as string | undefined,
     deviceInfo: (raw.deviceInfo ?? raw.device_info) as Record<string, unknown> | undefined,

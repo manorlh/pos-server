@@ -18,6 +18,7 @@
  * and spelled out in prose underneath.
  */
 
+import { useEffect, useRef } from 'react';
 import { useTranslations } from 'next-intl';
 import { CalendarClock, Clock, Info } from 'lucide-react';
 import { formatHour } from '@/lib/format';
@@ -39,6 +40,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
+import { AREA_NONE } from '@/lib/api';
+import { AreaFilterSelect } from '@/components/dashboard/areas/area-filter';
 import {
   Select,
   SelectContent,
@@ -51,6 +54,11 @@ export interface ReportFiltersState {
   from: string;
   to: string;
   hours: HourWindow;
+  /**
+   * The report's `areaId`: `''`/absent = every area, `none` = sales of shifts with no
+   * area, else an area of the shop in scope. Filters on the shift's stamped area.
+   */
+  areaId?: string;
 }
 
 interface ReportFiltersProps {
@@ -60,6 +68,12 @@ interface ReportFiltersProps {
   isFetching: boolean;
   /** Report-specific extras (e.g. a row-limit select) rendered next to Run. */
   children?: React.ReactNode;
+  /**
+   * Offer the area filter. Its areas are those of `areaShopId` (the shop in scope);
+   * without a shop only "no area" can be picked.
+   */
+  showArea?: boolean;
+  areaShopId?: string | null;
 }
 
 /**
@@ -110,10 +124,26 @@ export function ReportFilters({
   onRun,
   isFetching,
   children,
+  showArea = false,
+  areaShopId = null,
 }: ReportFiltersProps) {
   const t = useTranslations('reports.filters');
 
   const set = (patch: Partial<ReportFiltersState>) => onChange({ ...value, ...patch });
+
+  // An area belongs to one shop: when the scope moves to another shop, a chosen area
+  // no longer applies ("no area" still does).
+  const lastShop = useRef(areaShopId);
+  const latest = useRef({ value, onChange });
+  useEffect(() => {
+    latest.current = { value, onChange };
+  });
+  useEffect(() => {
+    if (lastShop.current === areaShopId) return;
+    lastShop.current = areaShopId;
+    const { value: v, onChange: change } = latest.current;
+    if (v.areaId && v.areaId !== AREA_NONE) change({ ...v, areaId: '' });
+  }, [areaShopId]);
 
   const days = dayCount(value.from, value.to);
   const hoursValid = isValidHourWindow(value.hours);
@@ -241,7 +271,16 @@ export function ReportFilters({
       </div>
 
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-wrap items-end gap-3">{children}</div>
+        <div className="flex flex-wrap items-end gap-3">
+          {showArea ? (
+            <AreaFilterSelect
+              shopId={areaShopId}
+              value={value.areaId ?? ''}
+              onChange={(areaId) => set({ areaId })}
+            />
+          ) : null}
+          {children}
+        </div>
         <Button disabled={!canRun} onClick={onRun}>
           {isFetching ? t('running') : t('run')}
         </Button>

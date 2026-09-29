@@ -71,6 +71,10 @@ class ZReportOut(BaseModel):
 
     machine_name: Optional[str] = Field(None, alias="machineName")
     shop_name: Optional[str] = Field(None, alias="shopName")
+    #: The area the Z was started for, and its name as frozen in the header at build.
+    #: Both null for a whole-shop or hand-picked Z.
+    area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
+    area_name: Optional[str] = Field(None, alias="areaName")
 
 
 class ZReportBusinessOut(BaseModel):
@@ -89,6 +93,8 @@ class ZReportBusinessOut(BaseModel):
     branch_id: Optional[str] = Field(None, alias="branchId")
     shop_id: Optional[str] = Field(None, alias="shopId")
     shop_name: Optional[str] = Field(None, alias="shopName")
+    area_id: Optional[str] = Field(None, alias="areaId")
+    area_name: Optional[str] = Field(None, alias="areaName")
     captured_at: Optional[str] = Field(None, alias="capturedAt")
 
 

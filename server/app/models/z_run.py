@@ -53,6 +53,9 @@ class ZRun(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=False)
+    #: The area this Z was started for: its tills were the area's at the time. NULL for
+    #: a whole-shop or hand-picked Z. A filter only — the Z is still the shop's.
+    area_id = Column(UUID(as_uuid=True), ForeignKey("shop_areas.id"), nullable=True)
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     status = Column(String(16), nullable=False, default=ZRunStatus.WAITING)
     #: The business date the operator asked for; NULL = derive it at build time.
@@ -75,6 +78,7 @@ class ZRun(Base):
         "ZRunItem", back_populates="run", cascade="all, delete-orphan", order_by="ZRunItem.created_at"
     )
     shop = relationship("Shop")
+    area = relationship("ShopArea")
 
 
 class ZRunItem(Base):

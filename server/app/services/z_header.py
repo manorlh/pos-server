@@ -15,18 +15,37 @@ from sqlalchemy.orm import Session
 
 from app.models.company import Company
 from app.models.shop import Shop
+from app.models.shop_area import ShopArea
 from app.models.tenant import Tenant
 from app.services.settings_merge import build_business_info, merge_all_settings_layers
 
 
-def snapshot_header(db: Session, shop: Optional[Shop], *, now: Optional[datetime] = None) -> Optional[dict]:
-    """The header as of now, or None when there is no shop to say who issued it."""
+def snapshot_header(
+    db: Session,
+    shop: Optional[Shop],
+    *,
+    area: Optional[ShopArea] = None,
+    now: Optional[datetime] = None,
+) -> Optional[dict]:
+    """
+    The header as of now, or None when there is no shop to say who issued it.
+
+    `areaId` / `areaName` name the area a Z was started for — null for a whole-shop or
+    hand-picked Z — frozen like the rest, so renaming the area later does not rename
+    the Zs already filed under it.
+    """
     if shop is None:
         return None
     captured = (now or datetime.now(timezone.utc)).isoformat()
+    area_fields = {
+        "areaId": str(area.id) if area is not None else None,
+        "areaName": area.name if area is not None else None,
+    }
     company = db.query(Company).filter(Company.id == shop.company_id).first()
     if company is None:
-        return {"shopId": str(shop.id), "shopName": shop.name, "capturedAt": captured}
+        return {
+            "shopId": str(shop.id), "shopName": shop.name, **area_fields, "capturedAt": captured,
+        }
     tenant = (
         db.query(Tenant).filter(Tenant.id == company.tenant_id).first()
         if company.tenant_id else None
@@ -44,5 +63,6 @@ def snapshot_header(db: Session, shop: Optional[Shop], *, now: Optional[datetime
         "branchId": info.branch_id,
         "shopId": str(shop.id),
         "shopName": shop.name,
+        **area_fields,
         "capturedAt": captured,
     }

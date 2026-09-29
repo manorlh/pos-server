@@ -17,7 +17,9 @@
  *
  * `?shopId=&machineId=` opens the wizard on one shop and one till — that is how the
  * machines page's "close shift remotely" gets here, since the API has no single-till
- * close that is not a Z.
+ * close that is not a Z. `?shopId=&areaId=` opens it on one area of a shop (the shop
+ * page's "Run Z for this area"): the candidates are that area's tills and the run
+ * records the area. It is still the shop's Z, numbered in the shop's sequence.
  */
 
 import { useMemo, useState } from 'react';
@@ -42,6 +44,7 @@ import {
   type TillSelection,
 } from '@/components/dashboard/z-wizard/shop-candidates';
 import { ZRunProgress } from '@/components/dashboard/z-wizard/z-run-progress';
+import { ZAreaSelect } from '@/components/dashboard/z-wizard/z-area-select';
 import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
 import { useTillHeading } from '@/components/dashboard/shifts/shift-parts';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -88,6 +91,8 @@ function machineBody(
 
 interface PlannedRun {
   shopId: string;
+  /** The area the run is for, when the operator chose one for this shop. */
+  areaId?: string;
   machines: ZRunMachineSelection[];
   /** Set on a per-till run (zScope = machine): the till's name, for its error line. */
   tillName?: string;
@@ -100,7 +105,7 @@ interface PlannedRun {
  */
 export default function ProduceZPage() {
   const searchParams = useSearchParams();
-  const key = ['runs', 'shopId', 'machineId'].map((k) => searchParams.get(k) ?? '').join('|');
+  const key = ['runs', 'shopId', 'machineId', 'areaId'].map((k) => searchParams.get(k) ?? '').join('|');
   return <ProduceZ key={key} />;
 }
 
@@ -125,13 +130,35 @@ function ProduceZ() {
     searchParams.get('machineId') ??
     (presetShop && scope.shopId && presetShop === scope.shopId ? scope.machineId : null);
 
+  // An area only means something with the shop the link names.
+  const presetArea = searchParams.get('shopId') ? searchParams.get('areaId') : null;
+
   const [shopIds, setShopIds] = useState<string[]>(() => (presetShop ? [presetShop] : []));
   const [overrides, setOverrides] = useState<Overrides>({});
+  /** Per shop: the area whose tills are offered, or absent for all of the shop's tills. */
+  const [areaByShop, setAreaByShop] = useState<Record<string, string>>(() =>
+    presetShop && presetArea ? { [presetShop]: presetArea } : {},
+  );
+
+  const setShopArea = (shopId: string, areaId: string | null) => {
+    setAreaByShop((prev) => {
+      const next = { ...prev };
+      if (areaId) next[shopId] = areaId;
+      else delete next[shopId];
+      return next;
+    });
+    // Another till list: choices made for the previous one start over.
+    setOverrides((prev) => {
+      const next = { ...prev };
+      delete next[shopId];
+      return next;
+    });
+  };
 
   const candidateQueries = useQueries({
     queries: shopIds.map((id) => ({
-      queryKey: ['z-candidates', id],
-      queryFn: () => fetchZCandidates(id),
+      queryKey: ['z-candidates', id, areaByShop[id] ?? null],
+      queryFn: () => fetchZCandidates(id, areaByShop[id] ?? null),
       // Online state and the open shift move while the operator is deciding.
       refetchInterval: 15_000,
       enabled: runIds.length === 0,
@@ -159,14 +186,17 @@ function ProduceZ() {
       .map((m) => ({ m, body: machineBody(m, sels[m.machineId]) }))
       .filter((x): x is { m: (typeof c.machines)[number]; body: ZRunMachineSelection } => x.body !== null);
     if (machines.length === 0) return [];
+    const areaId = areaByShop[c.shopId];
+    const area = areaId ? { areaId } : {};
     if (c.zScope === 'machine') {
       return machines.map(({ m, body }) => ({
         shopId: c.shopId,
+        ...area,
         machines: [body],
         tillName: tillHeading(m).title,
       }));
     }
-    return [{ shopId: c.shopId, machines: machines.map((x) => x.body) }];
+    return [{ shopId: c.shopId, ...area, machines: machines.map((x) => x.body) }];
   });
 
   const start = useMutation({
@@ -177,7 +207,13 @@ function ProduceZ() {
       // failures in order is easier to read than a burst of parallel ones.
       for (const body of plannedRuns) {
         try {
-          started.push(await createZRun({ shopId: body.shopId, machines: body.machines }));
+          started.push(
+            await createZRun({
+              shopId: body.shopId,
+              machines: body.machines,
+              ...(body.areaId ? { areaId: body.areaId } : {}),
+            }),
+          );
         } catch (e) {
           const shop = candidateShopName(body.shopId);
           const who = body.tillName ? `${shop} · ${body.tillName}` : shop;
@@ -295,29 +331,40 @@ function ProduceZ() {
         <p className="text-muted-foreground text-sm">{t('pickShop')}</p>
       ) : (
         <div className="space-y-4">
-          {candidateQueries.map((q, i) =>
-            q.isLoading ? (
-              <Skeleton key={shopIds[i]} className="h-40 w-full" />
-            ) : q.isError || !q.data ? (
-              <Card key={shopIds[i]}>
-                <CardContent className="py-4 text-sm text-destructive">
-                  {(findBySameId(scope.shops, shopIds[i])?.name ?? shopIds[i]) + ': ' + errors.forError(q.error)}
-                </CardContent>
-              </Card>
-            ) : (
-              <ShopCandidatesCard
-                key={q.data.shopId}
-                candidates={q.data}
-                selections={selectionsFor(q.data)}
-                onChange={(machineId, next) =>
-                  setOverrides((prev) => ({
-                    ...prev,
-                    [q.data!.shopId]: { ...prev[q.data!.shopId], [machineId]: next },
-                  }))
-                }
-              />
-            ),
-          )}
+          {candidateQueries.map((q, i) => {
+            const shopId = shopIds[i];
+            const shopName = findBySameId(scope.shops, shopId)?.name ?? q.data?.shopName ?? shopId;
+            return (
+              <div key={shopId} className="space-y-2">
+                <ZAreaSelect
+                  shopId={shopId}
+                  shopName={shopName}
+                  value={areaByShop[shopId] ?? null}
+                  onChange={(areaId) => setShopArea(shopId, areaId)}
+                />
+                {q.isLoading ? (
+                  <Skeleton className="h-40 w-full" />
+                ) : q.isError || !q.data ? (
+                  <Card>
+                    <CardContent className="py-4 text-sm text-destructive">
+                      {shopName + ': ' + errors.forError(q.error)}
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <ShopCandidatesCard
+                    candidates={q.data}
+                    selections={selectionsFor(q.data)}
+                    onChange={(machineId, next) =>
+                      setOverrides((prev) => ({
+                        ...prev,
+                        [q.data!.shopId]: { ...prev[q.data!.shopId], [machineId]: next },
+                      }))
+                    }
+                  />
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 

@@ -277,11 +277,27 @@ def create_z_run(
     selections: Sequence[MachineSelection],
     *,
     business_date: Optional[date] = None,
+    area_id: Optional[uuid.UUID] = None,
     now: Optional[datetime] = None,
 ) -> ZRun:
-    """Start a run (and build at once when nothing needs closing). Raises HTTPException."""
+    """
+    Start a run (and build at once when nothing needs closing). Raises HTTPException.
+
+    With `area_id`, a Z for that area of the shop: the area must be a live one of this
+    shop and every listed till must be in it now. Nothing else changes — the same shop
+    number, the same through-shift rules, the same remote close. Each till's shifts are
+    taken whatever area they are stamped with (a till moved mid-cycle): the Z is about
+    the till, the area reports are about the stamp.
+    """
     now = now or datetime.now(timezone.utc)
     expire_overdue_runs(db, now=now)
+
+    area = None
+    if area_id is not None:
+        from app.services.areas import area_in_shop, refuse_archived
+
+        area = area_in_shop(db, area_id, shop.id)
+        refuse_archived(area)
 
     if not selections:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no_machines")
@@ -297,6 +313,13 @@ def create_z_run(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"machine_not_in_shop:{machine_id}"
             )
+    if area is not None:
+        for machine_id in wanted:
+            if str(tills[machine_id].area_id) != str(area.id):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"machine_not_in_area:{machine_id}",
+                )
 
     live = _live_items(db, wanted)
     if live:
@@ -309,6 +332,7 @@ def create_z_run(
         id=uuid.uuid4(),
         tenant_id=tenant.id,
         shop_id=shop.id,
+        area_id=area.id if area is not None else None,
         created_by_user_id=user.id,
         status=ZRunStatus.WAITING,
         business_date=business_date,
@@ -442,6 +466,7 @@ def finalise_if_ready(
             created_by_user_id=run.created_by_user_id,
             z_run_id=run.id,
             business_date=run.business_date,
+            area_id=run.area_id,
             now=now,
         )
         savepoint.commit()
@@ -732,14 +757,22 @@ def run_to_out(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> dic
     waiting = [i for i in run.items if i.status in PENDING_ITEM_STATUSES]
     held = documents_on_cloud(db, [named_shift_id(i) for i in waiting])
     z_number = None
+    z = None
     if run.z_report_id is not None:
         from app.models.z_report import ZReport
 
         z = db.query(ZReport).filter(ZReport.id == run.z_report_id).first()
         z_number = z.shop_sequence_number if z is not None else None
+    # Once built, the name the Z froze; until then, what the area is called now.
+    area_name = None
+    if run.area_id is not None:
+        frozen = (z.header or {}) if z is not None else {}
+        area_name = frozen.get("areaName") or (run.area.name if run.area is not None else None)
     return {
         "id": run.id,
         "shopId": run.shop_id,
+        "areaId": run.area_id,
+        "areaName": area_name,
         "status": run.status,
         "businessDate": run.business_date,
         "createdAt": run.created_at,

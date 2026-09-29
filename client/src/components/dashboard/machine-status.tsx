@@ -43,6 +43,16 @@ export function machineStatus(m: PosMachine): Status {
   return m.status ?? 'not_paired';
 }
 
+/** The dot's colour classes for a status value; neutral grey for a value this build does not know. */
+export function statusDotClass(status: string): string {
+  return (DOT as Record<string, string>)[status] ?? 'bg-neutral-300';
+}
+
+/** Whether this build has a label for a status value. */
+export function isKnownStatus(status: string): status is Status {
+  return status in DOT;
+}
+
 export function MachineStatusDot({ m, className = '' }: { m: PosMachine; className?: string }) {
   const t = useTranslations('machineStatus');
   const status = machineStatus(m);

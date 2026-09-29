@@ -7,9 +7,9 @@ company manager, shop manager, distributor, super admin), and access to the shop
 from __future__ import annotations
 
 import uuid
-from typing import Iterable
+from typing import Iterable, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -31,6 +31,7 @@ from app.routers.machines import _awaiting_z_by_machine, _tenant_timezones, chec
 from app.services.machine_status import StatusInput, resolve_status
 from app.services.remote_close import close_shift_pending_machine_ids
 from app.services.shifts import orphan_documents_by_machine, shift_to_out
+from app.services import areas
 from app.services import z_runs as ZR
 
 router = APIRouter(tags=["z-runs"])
@@ -95,15 +96,30 @@ def _summary(shift):
 )
 def get_z_candidates(
     shop_id: uuid.UUID,
+    area_id: Optional[uuid.UUID] = Query(None, alias="areaId"),
     current_user: User = Depends(get_current_machine_admin),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """Per till of the shop: reachability, open shift, and closed shifts awaiting a Z."""
+    """
+    Per till of the shop: reachability, open shift, and closed shifts awaiting a Z.
+
+    `areaId`: only the tills in that area now (`400 area_not_in_shop`). A till's shifts
+    are listed whatever area they are stamped with — the Z is about the till.
+    """
     shop = _shop_for(db, shop_id, current_user, active_tenant_id)
+    area = (
+        areas.area_in_shop(db, area_id, shop.id)
+        if isinstance(area_id, uuid.UUID)
+        else None
+    )
     if ZR.expire_overdue_runs(db):
         db.commit()
     tills = ZR.shop_tills(db, shop.id)
+    if area is not None:
+        # Seated here and in the area now. A till only stranded here by its old shifts
+        # has left every area of this shop with its shop, so it cannot be one of these.
+        tills = [m for m in tills if str(m.area_id) == str(area.id) and ZR.is_seated_in(m, shop.id)]
     if _is_distributor(current_user):
         # Only their own terminals: another distributor's tills are not listed at all.
         tills = [m for m in tills if str(m.distributor_id) == str(current_user.id)]
@@ -164,11 +180,15 @@ def get_z_candidates(
                 orphan_documents=orphans.get(machine.id, 0),
                 in_shop=seated,
                 is_active=bool(machine.is_active),
+                area_id=machine.area_id,
+                area_name=machine.area_name,
             )
         )
     return ZCandidatesOut(
         shop_id=shop.id,
         shop_name=shop.name,
+        area_id=area.id if area is not None else None,
+        area_name=area.name if area is not None else None,
         z_scope=ZR.z_scope_of(_tenant(db, active_tenant_id)),
         machines=machines,
     )
@@ -208,6 +228,7 @@ def post_z_run(
             for m in body.machines
         ],
         business_date=body.business_date,
+        area_id=body.area_id,
     )
     db.commit()
     db.refresh(run)

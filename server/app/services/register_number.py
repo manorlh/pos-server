@@ -160,9 +160,17 @@ def set_machine_shop(db: Session, machine: POSMachine, shop_id: ShopId) -> Optio
     it stays spent in the old shop's run, because that shop's counter never goes back —
     and draws the new shop's next one. Setting the shop it is already in changes
     nothing, so a till re-assigned to its own shop is still the same register.
+
+    The till's area goes with its old shop for the same reason: an area is one shop's,
+    so a till that leaves the shop leaves the area (`area.shop_id == machine.shop_id`).
+    Its past shifts keep their stamped area.
     """
     if not _same_shop(machine.shop_id, shop_id):
         machine.shop_id = shop_id
         machine.pos_number = None
+        if getattr(machine, "area_id", None) is not None:
+            from app.services.areas import set_machine_area
+
+            set_machine_area(machine, None)
     return assign_register_number(db, machine)
 

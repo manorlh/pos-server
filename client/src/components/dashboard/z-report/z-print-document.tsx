@@ -200,6 +200,7 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
           {t('branch', { shop: b?.shopName ?? z.shopName ?? '—' })}
           {b?.branchId ? ` · ${t('branchId', { id: b.branchId })}` : ''}
         </p>
+        {b?.areaName ?? z.areaName ? <p>{t('area', { area: (b?.areaName ?? z.areaName)! })}</p> : null}
       </header>
 
       <div className="mt-3 flex items-baseline justify-between">

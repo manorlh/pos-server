@@ -14,6 +14,7 @@ from app.models.shift import Shift, ShiftStatus
 from app.models.user import User
 from app.models.z_report import ZReport
 from app.schemas.shift import ShiftListResponse, ShiftOut
+from app.services.areas import filter_on_column, parse_area_filter
 from app.services.scoping import scope_query_by_user
 from app.services.shift_totals import compute_totals
 from app.services.shifts import shift_to_out
@@ -24,7 +25,12 @@ router = APIRouter(prefix="/shifts", tags=["shifts"])
 def _scoped(db: Session, user: User, tenant_id):
     query = (
         db.query(Shift)
-        .options(joinedload(Shift.machine), joinedload(Shift.shop), joinedload(Shift.z_report))
+        .options(
+            joinedload(Shift.machine),
+            joinedload(Shift.shop),
+            joinedload(Shift.z_report),
+            joinedload(Shift.area),
+        )
         .filter(Shift.tenant_id == tenant_id)
     )
     return scope_query_by_user(
@@ -50,13 +56,22 @@ def list_shifts(
     awaiting_z: Optional[bool] = Query(None, alias="awaitingZ"),
     from_date: Optional[date] = Query(None, alias="from"),
     to_date: Optional[date] = Query(None, alias="to"),
+    area_id: Optional[str] = Query(
+        None, alias="areaId", description="An area's id, or `none`. The shift's stamped area."
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200, alias="pageSize"),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """Shifts (X reports), newest first. `awaitingZ=true`: closed and in no Z yet."""
+    """
+    Shifts (X reports), newest first. `awaitingZ=true`: closed and in no Z yet.
+
+    `areaId` filters on the area the shift was stamped with when it was created, never
+    on its till's area now.
+    """
+    area_filter = parse_area_filter(area_id)
     query = _scoped(db, current_user, active_tenant_id)
     if query is None:
         return ShiftListResponse(page=page, page_size=page_size, total=0, items=[])
@@ -74,6 +89,7 @@ def list_shifts(
         query = query.filter(Shift.business_date >= from_date)
     if to_date:
         query = query.filter(Shift.business_date <= to_date)
+    query = filter_on_column(query, Shift.area_id, area_filter)
 
     total = query.count()
     rows = (

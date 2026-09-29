@@ -27,6 +27,9 @@ class POSMachineUpdate(BaseModel):
     name: Optional[str] = None
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     is_active: Optional[bool] = Field(None, alias="isActive")
+    #: An area of the machine's shop (its new one, when `shopId` is sent too). An
+    #: explicit null clears it; omitted leaves it as it is.
+    area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -143,6 +146,9 @@ class POSMachineResponse(POSMachineBase):
     id: uuid.UUID
     tenant_id: Optional[uuid.UUID] = Field(None, alias="tenantId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
+    #: The area of its shop it stands in now; both null when unassigned.
+    area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
+    area_name: Optional[str] = Field(None, alias="areaName")
     #: The register number in its shop — "קופה 2". Null when the machine has no shop.
     #: Text, because documents copy it verbatim; it is always a plain integer when set.
     pos_number: Optional[str] = Field(None, alias="posNumber")

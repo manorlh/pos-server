@@ -128,6 +128,8 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
               {shift.machineName ?? shift.machineId}
             </Link>
             {shift.shopName ? <> · {shift.shopName}</> : null}
+            {/* The area stamped on the shift when it was created — not the till's area now. */}
+            {shift.areaName ? <> · {t('detail.area', { area: shift.areaName })}</> : null}
             {' · '}
             {t('detail.businessDate', { date: formatDate(shift.businessDate) })}
           </p>
