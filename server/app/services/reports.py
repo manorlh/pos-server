@@ -1002,6 +1002,7 @@ def load_shop_transactions_for_machine(
             Transaction.status,
             Transaction.cashier_id,
             Transaction.created_at,
+            Transaction.basket_id,
             POSMachine.name.label("machine_name"),
         )
         .join(POSMachine, POSMachine.id == Transaction.machine_id)
@@ -1073,6 +1074,7 @@ def load_shop_transactions_for_machine(
                 cashier_name=_display_name(pu) or (r.cashier_id or None),
                 machine_name=r.machine_name,
                 created_at=r.created_at.isoformat() if r.created_at else None,
+                basket_id=str(r.basket_id) if r.basket_id else None,
             )
         )
     return out, truncated

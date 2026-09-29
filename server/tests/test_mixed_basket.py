@@ -680,3 +680,25 @@ class TestTheDashboard:
         body = out.model_dump(by_alias=True, mode="json")
         assert body["basketDocuments"][0]["transactionNumber"] == sale["transactionNumber"]
         assert {p["method"] for p in body["payments"]} == {"exchange"}
+
+
+class TestTheShopFeed:
+    def test_it_carries_the_basket(self, w):
+        """The feed reads the real clock (its window is "the last hours"), so these do too."""
+        from app.services.reports import load_shop_transactions_for_machine
+
+        till = w.tills[0]
+        shift = _open(w, till)
+        basket = uuid.uuid4()
+        now = datetime.now(timezone.utc).isoformat()
+        sale = _sale(shift.id, "40.00", ("exchange", "40.00"), basket=basket, createdAt=now, updatedAt=now)
+        credit = _credit(shift.id, "40.00", ("exchange", "40.00"), basket=basket, createdAt=now, updatedAt=now)
+        plain = _sale(shift.id, "5.00", ("cash", "5.00"), createdAt=now, updatedAt=now)
+        _push(w, till, [sale, credit, plain])
+
+        rows, _ = load_shop_transactions_for_machine(w.db, w.tills[1], hours=24)
+
+        by_id = {r.id: r for r in rows}
+        assert by_id[sale["id"]].basket_id == by_id[credit["id"]].basket_id == str(basket)
+        assert by_id[plain["id"]].basket_id is None
+        assert by_id[sale["id"]].model_dump(by_alias=True)["basketId"] == str(basket)

@@ -102,6 +102,8 @@ def test_shop_transactions_response_matches_the_shipped_till_contract() -> None:
         "cashierName",
         "machineName",
         "createdAt",
+        # Added with mixed baskets; nullable, and unknown to (so ignored by) older tills.
+        "basketId",
     }
 
 

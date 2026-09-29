@@ -299,6 +299,8 @@ What the server does with them:
   on items. `/dashboard/stats` and its breakdown count every 330 as a refund (an unlinked one
   used to be counted as a sale), and only in a counted status. The cashier report adds
   `exchangeNet` (cash + card + other + exchange = net).
+- **Till shop feed** (`GET /reports/{machineId}/shop-transactions`): each row adds `basketId` (null when
+  the document has none), so a till can group a basket's documents.
 
 Links: an unreadable `basketId` or `items[].refundOfItemId` is dropped with a warning
 (`"basketId: unreadable 'b-1', stored without the link"`), as `productId` is. A

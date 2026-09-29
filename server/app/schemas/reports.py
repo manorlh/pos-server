@@ -235,6 +235,10 @@ class ShopTransactionRow(BaseModel):
     cashier_name: Optional[str] = Field(None, alias="cashierName")
     machine_name: Optional[str] = Field(None, alias="machineName")
     created_at: Optional[str] = Field(None, alias="createdAt")
+    #: The mixed basket the document was committed in (docs/SHIFTS_API.md §1.2a), so a
+    #: till can group a basket's 320 and 330s. Additive and nullable: the shipped till
+    #: (Moshi) ignores keys it does not know.
+    basket_id: Optional[str] = Field(None, alias="basketId")
 
 
 class ShopTransactionsResponse(BaseModel):
