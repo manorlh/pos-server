@@ -22,8 +22,8 @@ look credit notes up by it.
 
 No data changes: nothing held carries a basket, an item link or an exchange leg yet.
 
-Revision ID: c8d9e0f1a2b3
-Revises: b7c8d9e0f1a2
+Revision ID: d9e0f1a2b3c4
+Revises: c8d9e0f1a2b3 (shop areas)
 Create Date: 2026-09-30 09:00:00.000000
 """
 
@@ -34,8 +34,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 
-revision = "c8d9e0f1a2b3"
-down_revision = "b7c8d9e0f1a2"
+revision = "d9e0f1a2b3c4"
+down_revision = "c8d9e0f1a2b3"
 branch_labels = None
 depends_on = None
 

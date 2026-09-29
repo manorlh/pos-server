@@ -702,3 +702,18 @@ class TestTheShopFeed:
         assert by_id[sale["id"]].basket_id == by_id[credit["id"]].basket_id == str(basket)
         assert by_id[plain["id"]].basket_id is None
         assert by_id[sale["id"]].model_dump(by_alias=True)["basketId"] == str(basket)
+
+
+def test_the_migration_is_the_single_head_on_top_of_shop_areas():
+    import pathlib
+
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    config = Config(str(root / "alembic.ini"))
+    config.set_main_option("script_location", str(root / "alembic"))
+    script = ScriptDirectory.from_config(config)
+
+    assert script.get_heads() == ["d9e0f1a2b3c4"]
+    assert script.get_revision("d9e0f1a2b3c4").down_revision == "c8d9e0f1a2b3"
