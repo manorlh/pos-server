@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import { usePageScope } from '@/lib/scope';
 import { findBySameId } from '@/lib/entityLookup';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
+import { usePaymentMethodLabel } from '@/components/dashboard/shifts/shift-parts';
 import {
   Transaction,
   TransactionListResponse,
@@ -38,8 +39,16 @@ function statusVariant(s: TransactionStatus): 'default' | 'secondary' | 'outline
   }
 }
 
+/** 320 / 330 in words; any other document type as its number. */
+function useDocumentTypeLabel() {
+  const t = useTranslations('transactions');
+  return (type: number | null | undefined): string =>
+    type === 320 ? t('documentTypes.320') : type === 330 ? t('documentTypes.330') : String(type ?? '—');
+}
+
 export default function TransactionsPage() {
   const t = useTranslations('transactions');
+  const paymentLabel = usePaymentMethodLabel();
   // `GET /transactions` filters by machineId and shopId. There is no companyId
   // filter, so a company in scope is called out instead of being dropped, which
   // would have shown the whole tenant under a company heading.
@@ -142,10 +151,15 @@ export default function TransactionsPage() {
                 return (
                   <TableRow key={tx.id} className="cursor-pointer" onClick={() => setSelectedId(tx.id)}>
                     <TableCell>{formatDateTime(tx.createdAt)}</TableCell>
-                    <TableCell className="font-mono text-xs">{tx.transactionNumber}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {tx.transactionNumber}
+                      {tx.basketId && (
+                        <Badge variant="outline" className="ms-2 font-sans">{t('basket')}</Badge>
+                      )}
+                    </TableCell>
                     <TableCell>{machine?.name ?? tx.machineId.slice(0, 8)}</TableCell>
                     <TableCell>{tx.cashierId ?? '—'}</TableCell>
-                    <TableCell>{tx.paymentMethod ?? '—'}</TableCell>
+                    <TableCell>{tx.paymentMethod ? paymentLabel(tx.paymentMethod) : '—'}</TableCell>
                     <TableCell>
                       <Badge variant={statusVariant(tx.status)}>
                         {t(`statusLabels.${tx.status}`)}
@@ -194,13 +208,27 @@ export default function TransactionsPage() {
       )}
       </ScopeGate>
 
-      <TransactionDetailsDialog id={selectedId} onClose={() => setSelectedId(null)} />
+      <TransactionDetailsDialog
+        id={selectedId}
+        onClose={() => setSelectedId(null)}
+        onSelect={setSelectedId}
+      />
     </div>
   );
 }
 
-function TransactionDetailsDialog({ id, onClose }: { id: string | null; onClose: () => void }) {
+function TransactionDetailsDialog({
+  id,
+  onClose,
+  onSelect,
+}: {
+  id: string | null;
+  onClose: () => void;
+  onSelect: (id: string) => void;
+}) {
   const t = useTranslations('transactions');
+  const paymentLabel = usePaymentMethodLabel();
+  const documentTypeLabel = useDocumentTypeLabel();
   const enabled = !!id;
   const { data, isLoading } = useQuery<Transaction>({
     queryKey: ['transaction', id],
@@ -237,7 +265,7 @@ function TransactionDetailsDialog({ id, onClose }: { id: string | null; onClose:
               </div>
               <div>
                 <Label className="text-xs">{t('payment')}</Label>
-                <div>{data.paymentMethod ?? '—'}</div>
+                <div>{data.paymentMethod ? paymentLabel(data.paymentMethod) : '—'}</div>
               </div>
               <div>
                 <Label className="text-xs">{t('cashier')}</Label>
@@ -246,10 +274,40 @@ function TransactionDetailsDialog({ id, onClose }: { id: string | null; onClose:
               {data.refundOfTransactionId && (
                 <div>
                   <Label className="text-xs">{t('originalTransaction')}</Label>
-                  <div className="font-mono text-xs">{data.refundOfTransactionId}</div>
+                  <div className="font-mono text-xs">
+                    {data.refundOfTransactionNumber ?? data.refundOfTransactionId}
+                  </div>
+                </div>
+              )}
+              {(data.customerName || data.customerPhone || data.customerAddress) && (
+                <div className="col-span-2">
+                  <Label className="text-xs">{t('customer')}</Label>
+                  <div>
+                    {[data.customerName, data.customerPhone, data.customerAddress].filter(Boolean).join(' · ')}
+                  </div>
                 </div>
               )}
             </div>
+
+            {(data.basketDocuments ?? []).length > 0 && (
+              <div className="rounded border p-3 space-y-2">
+                <Label className="text-xs">{t('basketDocuments')}</Label>
+                {(data.basketDocuments ?? []).map((doc) => (
+                  <button
+                    key={doc.id}
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 rounded px-2 py-1 text-start hover:bg-muted"
+                    onClick={() => onSelect(doc.id)}
+                  >
+                    <span>
+                      {documentTypeLabel(doc.documentType)}{' '}
+                      <span className="font-mono text-xs">{doc.transactionNumber}</span>
+                    </span>
+                    <span className="font-medium tabular-nums">{formatCurrency(doc.totalAmount)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div className="rounded border overflow-hidden">
               <Table>
@@ -288,6 +346,18 @@ function TransactionDetailsDialog({ id, onClose }: { id: string | null; onClose:
                 <div className="flex justify-between"><span>{t('discount')}</span><span>{formatCurrency(data.documentDiscount)}</span></div>
               )}
             </div>
+
+            {(data.payments ?? []).length > 0 && (
+              <div className="space-y-1 rounded border p-3">
+                <Label className="text-xs">{t('payments')}</Label>
+                {(data.payments ?? []).map((leg) => (
+                  <div key={leg.id} className="flex justify-between">
+                    <span>{paymentLabel(leg.method)}</span>
+                    <span className="tabular-nums">{formatCurrency(leg.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </DialogContent>

@@ -936,6 +936,14 @@
     "changeAmount": "עודף",
     "discount": "הנחה",
     "originalTransaction": "החזר עבור עסקה",
+    "basket": "סל משולב",
+    "basketDocuments": "מסמכים נוספים בסל",
+    "payments": "אמצעי תשלום",
+    "customer": "פרטי הלקוח",
+    "documentTypes": {
+      "320": "חשבונית מס קבלה",
+      "330": "חשבונית זיכוי"
+    },
     "previousPage": "הקודם",
     "nextPage": "הבא",
     "pageInfo": "עמוד {page} מתוך {pages}",
@@ -1508,7 +1516,8 @@
       "cheque": "צ׳ק",
       "unknown": "לא ידוע",
       "other": "אחר",
-      "mixed": "תשלום משולב"
+      "mixed": "תשלום משולב",
+      "exchange": "החלפה / קיזוז"
     },
     "filter": {
       "status": "מצב",

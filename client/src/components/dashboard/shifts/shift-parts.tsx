@@ -76,7 +76,7 @@ export function OverShort({
 /** A tender key from a payment breakdown, in words. Unknown keys are shown as sent. */
 export function usePaymentMethodLabel() {
   const t = useTranslations('shifts.paymentMethod');
-  const known = new Set(['cash', 'card', 'credit', 'voucher', 'check', 'cheque', 'mixed', 'unknown', 'other']);
+  const known = new Set(['cash', 'card', 'credit', 'voucher', 'check', 'cheque', 'mixed', 'exchange', 'unknown', 'other']);
   return (method: string): string => (known.has(method) ? t(method) : method);
 }
 

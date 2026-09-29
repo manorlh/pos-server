@@ -755,6 +755,28 @@ export interface TransactionItem {
   transactionType?: number;
   lineDiscount?: number;
   notes?: string;
+  /** On a credit-note line returned from a receipt: the original sale line. */
+  refundOfItemId?: string | null;
+}
+
+/** One tender leg. `exchange` settles a mixed basket's sale against its returns. */
+export interface TransactionPayment {
+  id: string;
+  sequence: number;
+  method: string;
+  amount: number;
+}
+
+/** Another document of the same mixed basket (same `basketId`). */
+export interface BasketDocument {
+  id: string;
+  transactionNumber: string;
+  documentType?: number | null;
+  status: TransactionStatus;
+  totalAmount: number;
+  paymentMethod?: string | null;
+  refundOfTransactionId?: string | null;
+  createdAt: string;
 }
 
 export interface Transaction {
@@ -778,11 +800,21 @@ export interface Transaction {
   branchId?: string;
   notes?: string;
   refundOfTransactionId?: string;
+  /** The original's document number (detail read only). */
+  refundOfTransactionNumber?: string | null;
   nayaxMeta?: Record<string, unknown> | null;
+  /** The till basket this document was committed in; shared by its sibling documents. */
+  basketId?: string | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  customerAddress?: string | null;
   createdAt: string;
   updatedAt: string;
   serverReceivedAt: string;
   items?: TransactionItem[];
+  payments?: TransactionPayment[];
+  /** The other documents of its basket (detail read only). */
+  basketDocuments?: BasketDocument[];
 }
 
 export interface TransactionListResponse {
