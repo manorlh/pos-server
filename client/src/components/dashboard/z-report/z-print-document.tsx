@@ -255,7 +255,11 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
                   : formatCurrency(z.actualCash)
               }
             />
-            <Row label={t('overShort')} value={withheld ? t('withheld') : signedMoney(z.discrepancy)} />
+            {/* An earlier uncounted shift withholds it even when every till's last shift was counted. */}
+            <Row
+              label={t('overShort')}
+              value={withheld || z.discrepancy == null ? t('withheld') : signedMoney(z.discrepancy)}
+            />
           </tbody>
         </table>
       </Section>

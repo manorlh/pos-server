@@ -123,7 +123,65 @@ Each tender leg in `payments[]` may carry:
   meta as `creditPayments`. An unreadable value (not a number, negative, beyond 2³¹−1,
   infinite) is dropped, not rejected.
 
-`200` body unchanged: `{"serverTime", "results": [{"id", "status": "accepted|duplicate|rejected", "reason"?, "serverReceivedAt"?}]}`.
+`200` body: `{"serverTime", "results": [{"id", "status": "accepted|duplicate|rejected", "reason"?, "warnings"?, "serverReceivedAt"?}], "unidentified": null | [...]}`.
+
+**A fiscal document is never lost over a link.** An unreadable reference to another row is
+dropped and the document stored, answered `accepted` (or `duplicate`) with a `warnings`
+entry per dropped link — the value as sent is in the warning, and kept in
+`sync_logs.conflict_note` (an item has no field of its own to hold it):
+```json
+{"id": "<its id>", "status": "accepted", "warnings": ["items[0].productId: unreadable 'p12', stored without the link"]}
+```
+The links dropped this way: `items[].productId` (the line keeps its name, SKU and money),
+`issuedVouchers[].voucherId` / `productId` / `transactionItemId`, and
+`stockMovements[].transactionItemId`. A stock movement whose `productId` cannot be read is
+not applied (`"stockMovements[0].productId: unreadable 'p12', movement not applied"`) —
+without a product there is nothing to move, and on-hand is not a fiscal record; the
+document is still stored. `warnings` is null when nothing was dropped.
+
+Not dropped, because each decides what the money is: `shiftId` (which X it is in),
+`refundOfTransactionId` (sale or refund), `approvedByUserId` (stripping a claim of approval
+would pass a false one off as ordinary). An unreadable one of these refuses the document, as
+does one whose own `id`, money or dates cannot be read.
+
+**Each document is validated on its own.** Only the envelope (`{"transactions": [...]}`, a
+list) can make the request a `422`. A document that truly cannot be stored — a missing or
+unreadable required field (`totalAmount: "lots"`, `items[0].quantity: "one"`), one of the
+fields above, a document that is not a JSON object — is **not stored** (no row, no
+auto-opened shift, no stock movement) and is answered alongside the others, in the order sent:
+```json
+{"id": "<its id>", "status": "rejected", "reason": "totalAmount: Input should be a valid decimal"}
+```
+- `reason` is `<field path>: <message>` for every error of that document, `; `-joined, cut
+  to 500 characters. Field paths use the wire names (`items[0].productId`, `totalAmount`).
+- `id` is the document's `id` exactly as sent when it was a string — also when that string
+  is not a UUID and is itself the error (`"reason": "id: Input should be a valid UUID, …"`).
+- A refused document with **no** string `id` cannot be matched by id, and is answered in
+  `unidentified: [{"index": <position in the batch>, "status": "rejected", "reason"}]`
+  rather than in `results` (a shipped till decodes `results[].id` as a non-null string).
+  `unidentified` is `null` otherwise.
+- The rest of the batch is written as if the refused document had not been in it. The
+  whole-batch `409 another_shift_open` above still applies to the documents that were valid.
+- Each refusal is logged and written to `sync_logs` (`status: failed`, the reason in
+  `conflict_note`).
+
+The till parks only the rejected document (it keeps its local copy; a corrected build can
+re-push the same id) and keeps delivering the rest. A document it cannot match to a result
+stays queued (absence is not acceptance).
+
+**A credit note settles its original.** When a credit note (document type 330, with
+`refundOfTransactionId`) is stored, the original it names is given the status the till gives
+its own copy, from the **cumulative** credited amount — every credit note of that original in
+a counted status (`completed` / `refunded` / `partial_refund`; a card refund still `pending`
+has moved no money) against what the original collected (`totalAmount − documentDiscount`):
+credited ≥ collected (one agora of slack) → `refunded`; less, but more than nothing →
+`partial_refund`. Only an original in a counted status, and only one of the same tenant, is
+touched. It is recomputed from what is stored, so a re-push of either document — even a
+retry of the original still saying `completed` — lands on the same status. A credit note
+that takes the running credited total (oldest first) past what the original collected is
+**stored all the same** (a fiscal document is never refused) but flagged
+`overCredited: true` on the transaction, and logged. No X or Z moves: `refunded` and
+`partial_refund` count exactly as `completed` does, and the tips report counts all three.
 
 **A document for a shift that is already closed** (it reached the cloud after the close) is
 always accepted and stored — a fiscal document is never dropped:
@@ -493,7 +551,9 @@ other settings still saves. The dashboard edits it in the tenant settings dialog
 ### 2.13 Day summary `GET /reports/day-summary`
 Unchanged path and totals. Groups Zs by the Z's `businessDate`. `contributors` are per-till
 sections of each Z (one row per Z × till: `zReportId`, `shopSequenceNumber`, `machineId`,
-`machineName`, …); `machineCount` = distinct tills across those sections.
+`machineName`, …); `machineCount` = distinct tills across those sections. The variance
+is the sum of the Zs' own over/short (`discrepancy`, §3.6), withheld if any Z's is unknown;
+a contributor is `uncounted` when its section's count or over/short is null.
 
 ### 2.14 Remote shift close without a Z
 
@@ -629,7 +689,7 @@ it (`409 z_run_in_progress`).
   "netSales",                              // totalSales − totalRefunds
   "totalTips", "totalCashTips", "totalCardTips", "vatTotal", "transactionsCount",
   "paymentBreakdown": {"cash": "…", "card": "…", "<other method>": "…"},
-  "openingCash", "expectedCash", "actualCash", "discrepancy",   // actualCash/discrepancy null if any shift uncounted
+  "openingCash", "expectedCash", "actualCash", "discrepancy",   // Σ of the per-till figures (§3.6); null if null for any till
   "unattended", "reconstructed",           // any included shift unattended / reconstructed
   "lateDocuments": 0,                      // documents of its shifts that arrived (or moved in) after it was built (not in its figures)
   "amendedDocuments": 0,                   // documents of its shifts rewritten after it was built (its figures are as built)
@@ -651,11 +711,34 @@ it (`409 z_run_in_progress`).
   "totalCash", "totalCard", "paymentBreakdown": {…},
   "totalTips", "totalCashTips", "totalCardTips",
   "openingCash", "expectedCash", "countedCash", "overShort", "uncountedShiftCount",
+  "cashSalesNet",     // Σ cash takings of its shifts, net of cash refunds (Zs built from now on)
   "reconstructedShiftCount", "unattendedShiftCount"
 }
 ```
-Money values are decimal strings. `countedCash` / `overShort` are null if any of the till's
-shifts is uncounted. Sections are served as they were stored when the Z was built — except
+Money values are decimal strings.
+
+**The drawer figures across back-to-back shifts.** A till has one drawer, and consecutive
+shifts hand it on: the next shift's float is what the last one left in it. Summing floats
+and expecteds over the shifts counted the same banknotes once per shift (a drawer holding
+~180 read as opening 455, expected 540). Per till, over the shifts the Z takes of it,
+oldest first:
+- `openingCash` — the **first** shift's opening float: the drawer at the start of the period;
+- `expectedCash` — the **last** shift's expected (the server's own: its float + cash takings
+  + cash tips): the drawer at the end of the period;
+- `countedCash` — the **last** shift's count; null if that shift was not counted;
+- `overShort` — the sum of every shift's own over/short (its count − its server expected);
+  null if **any** shift was not counted — a partial count presented as the drawer's would
+  hide exactly the shortfall a count exists to find. It is therefore not always
+  `countedCash − expectedCash`: an earlier shift's shortfall is in it too;
+- `cashSalesNet` — the cash the whole period took, which the drawer figures alone do not show
+  when cash left the drawer between shifts.
+
+Example (one till): A float 100, expected 180, counted 175; B float 175, expected 180,
+uncounted; C float 180, expected 185, uncounted → opening 100, expected 185, counted null,
+over/short null. The Z's `openingCash` / `expectedCash` / `actualCash` / `discrepancy` are the
+sums of these over its tills (tills have a drawer each), null if null for any till. The day
+summary (§2.13) takes each cloud Z's variance from its `discrepancy`. A Z built before this
+rule keeps the sums it was built with. Sections are served as they were stored when the Z was built — except
 that `grossSales` / `netSales` are derived from the section's own figures for a Z built before
 they were stored. A Z built before this change may carry a machine code in `posNumber`
 (non-numeric); it is not rewritten.

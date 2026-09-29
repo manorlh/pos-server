@@ -2,8 +2,8 @@ import uuid
 import enum
 
 from sqlalchemy import (
-    Column, String, ForeignKey, Numeric, Integer, Text,
-    Enum as SQLEnum, DateTime, UniqueConstraint, Index,
+    Boolean, Column, String, ForeignKey, Numeric, Integer, Text,
+    Enum as SQLEnum, DateTime, UniqueConstraint, Index, false,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -98,6 +98,11 @@ class Transaction(Base):
     notes = Column(Text, nullable=True)
 
     refund_of_transaction_id = Column(UUID(as_uuid=True), ForeignKey("transactions.id"), nullable=True)
+    #: Set on a credit note that took its original's credited total past what the
+    #: original collected. Stored all the same — a fiscal document the till issued is
+    #: never refused — but flagged, so the over-refund can be found and explained.
+    #: Written server-side only (`app.services.transactions.settle_credited_originals`).
+    over_credited = Column(Boolean, nullable=False, default=False, server_default=false())
     nayax_meta = Column(JSONB, nullable=True)
 
     #: Who authorised the thing a cashier may not do alone — the refund, or the money

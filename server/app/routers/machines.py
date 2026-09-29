@@ -765,7 +765,11 @@ def administrative_close_shift(
     db.refresh(shift)
     return {
         "created": created,
-        "shift": shift_to_out(shift, machine_name=machine.name).model_dump(by_alias=True, mode="json"),
+        "shift": shift_to_out(
+            shift,
+            machine_name=machine.name,
+            shop_name=shift.shop.name if shift.shop is not None else None,
+        ).model_dump(by_alias=True, mode="json"),
     }
 
 

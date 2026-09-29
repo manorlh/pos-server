@@ -54,7 +54,7 @@ from app.services.payment_options import legacy_tip_flags, resolve_payment_optio
 from app.services.sell_screen import resolve_sell_screen
 from app.services import general_item
 from app.schemas.transaction import (
-    TransactionsBatchRequest,
+    TransactionsBatchEnvelope,
     TransactionsBatchResponse,
 )
 from app.schemas.shift import (
@@ -87,6 +87,7 @@ from app.schemas.machine_catalog import MachineCatalogSet, MachineCatalogWriteRe
 from app.services.transactions import (
     publish_transactions_synced,
     upsert_transactions,
+    validate_documents,
 )
 from app.services.shifts import (
     ShiftConflict,
@@ -853,23 +854,37 @@ def machine_delete_cloud_category(
 )
 def post_transactions(
     machine_id: str,
-    body: TransactionsBatchRequest,
+    body: TransactionsBatchEnvelope,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
 ):
     """
     Idempotent transactions upsert. Same id retried returns status='duplicate'.
 
+    Each document is validated on its own: one the model refuses is answered
+    `rejected` with the field and the message, and stored nowhere, while the rest of
+    the batch is written. Only a malformed envelope is a 422.
+
     409 `another_shift_open` for the whole batch, with nothing written, when a document
     names a shift the cloud cannot accept yet (docs/SHIFTS_API.md §1.2).
     """
     _require_assigned_machine(machine)
 
+    valid, refused, unidentified = validate_documents(body.transactions)
     try:
-        results = upsert_transactions(db, machine, body.transactions)
+        upserted = upsert_transactions(db, machine, [tx for _i, tx, _w in valid])
     except ShiftConflict as conflict:
         db.rollback()
         return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=conflict.body())
+    for (_i, _tx, warnings), r in zip(valid, upserted):
+        if warnings:
+            r.warnings = warnings
+    # In the order the till sent them.
+    results = [
+        r for _i, r in sorted(
+            [(i, r) for (i, _tx, _w), r in zip(valid, upserted)] + refused, key=lambda pair: pair[0]
+        )
+    ]
 
     accepted_count = sum(1 for r in results if r.status == "accepted")
     db.bulk_save_objects([
@@ -877,12 +892,30 @@ def post_transactions(
             machine_id=machine.id,
             direction=SyncDirection.POS_TO_SERVER,
             entity_type=SyncEntityType.TRANSACTIONS,
-            entity_id=r.id,
+            entity_id=r.id if isinstance(r.id, uuid.UUID) else None,
             action=SyncAction.CREATE if r.status == "accepted" else SyncAction.UPDATE,
             status=SyncStatus.SUCCESS if r.status != "rejected" else SyncStatus.FAILED,
-            conflict_note=r.reason,
+            # The warnings keep the values of the links dropped to store the document.
+            conflict_note="; ".join(
+                part for part in (
+                    r.reason if isinstance(r.id, uuid.UUID) or r.reason is None
+                    else f"id {r.id!r}: {r.reason}",
+                    *(r.warnings or ()),
+                ) if part
+            ) or None,
         )
         for r in results
+    ] + [
+        SyncLog(
+            machine_id=machine.id,
+            direction=SyncDirection.POS_TO_SERVER,
+            entity_type=SyncEntityType.TRANSACTIONS,
+            entity_id=None,
+            action=SyncAction.CREATE,
+            status=SyncStatus.FAILED,
+            conflict_note=f"batch index {u.index}: {u.reason}",
+        )
+        for u in unidentified
     ])
     db.commit()
 
@@ -892,6 +925,7 @@ def post_transactions(
     return TransactionsBatchResponse(
         server_time=datetime.now(timezone.utc),
         results=results,
+        unidentified=unidentified or None,
     )
 
 

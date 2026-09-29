@@ -124,8 +124,10 @@ class TestMultiTillTotalsGolden:
         assert z.vat_total == Decimal("54.15")
         assert z.transactions_count == 5
         assert z.payment_breakdown == {"card": "195.00", "cash": "160.00"}
-        assert z.opening_cash == Decimal("150.00")
-        assert z.expected_cash == Decimal("315.00")
+        # Per till, the drawer from the first shift's float to the last shift's expected
+        # (till 1: 100 → 50 + 30 + 5 tip = 85; till 2: 0 → 50), summed over the tills.
+        assert z.opening_cash == Decimal("100.00")
+        assert z.expected_cash == Decimal("135.00")
         # Till 2 was not counted: the Z's count and over/short are unknown, not partial.
         assert z.actual_cash is None and z.discrepancy is None
 
@@ -142,10 +144,13 @@ class TestMultiTillTotalsGolden:
         assert one["totalCash"] == "110.00" and one["totalCard"] == "45.00"
         assert one["vatTotal"] == "23.64"
         assert one["creditNotesCount"] == 1 and one["salesCount"] == 3
-        assert one["openingCash"] == "150.00"
-        assert one["expectedCash"] == "265.00"
-        assert one["countedCash"] == "270.00"
+        # The first shift's float, the last shift's expected and count; over/short is
+        # each shift's own (+10 then −5), summed.
+        assert one["openingCash"] == "100.00"
+        assert one["expectedCash"] == "85.00"
+        assert one["countedCash"] == "80.00"
         assert one["overShort"] == "5.00"
+        assert one["cashSalesNet"] == "110.00"
 
         assert two["totalSales"] == "200.00"
         assert two["paymentBreakdown"] == {"card": "150.00", "cash": "50.00"}

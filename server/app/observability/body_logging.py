@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 SENSITIVE_KEYS = frozenset(
@@ -32,6 +33,22 @@ def is_loggable_content_type(content_type: str | None) -> bool:
     if media_type == "multipart/form-data":
         return False
     return any(media_type.startswith(prefix) for prefix in LOGGABLE_CONTENT_PREFIXES)
+
+
+#: Successful responses whose bodies are logged too (with `LOG_REQUEST_BODIES`): the
+#: till's own write endpoints, whose answers only echo ids, statuses, reasons and
+#: figures of what the till just sent — already in the logged request body. Every other
+#: 2xx body is left out on purpose: catalog, users, settings and token responses carry
+#: PIN hashes, tokens under camelCase keys the redaction list does not know, and bulk.
+_LOGGED_SUCCESS_RESPONSES = re.compile(
+    r"^/api/v1/sync/[0-9a-fA-F-]{36}/(?:transactions|shifts(?:/[0-9a-fA-F-]{36}/close)?|shift-close/ack)$"
+)
+
+
+def should_log_response_body(method: str, path: str, status_code: int) -> bool:
+    if status_code >= 400:
+        return True
+    return method.upper() == "POST" and bool(_LOGGED_SUCCESS_RESPONSES.match(path))
 
 
 def should_log_request_body(method: str, content_type: str | None) -> bool:

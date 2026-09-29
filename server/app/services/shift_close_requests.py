@@ -347,7 +347,11 @@ def request_to_out(db: Session, req: ShiftCloseRequest, *, now: Optional[datetim
     shift = db.query(Shift).filter(Shift.id == shift_id).first() if shift_id else None
     summary = None
     if shift is not None:
-        summary = shift_to_out(shift, machine_name=machine.name if machine else None)
+        summary = shift_to_out(
+            shift,
+            machine_name=machine.name if machine else None,
+            shop_name=shift.shop.name if shift.shop is not None else None,
+        )
         summary.till_totals = None
         summary.reconstruction_basis = None
     return {

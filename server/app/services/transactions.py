@@ -14,8 +14,9 @@ import logging
 import uuid
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date, datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -30,7 +31,12 @@ from app.models.transaction_item import TransactionItem
 from app.models.transaction_payment import TransactionPayment
 from app.models.issued_voucher import IssuedVoucher, IssuedVoucherStatus
 from app.models.stock_movement import StockMovementReason
-from app.schemas.transaction import TransactionIn, TransactionPaymentIn, TransactionUpsertResult
+from app.schemas.transaction import (
+    TransactionIn,
+    TransactionPaymentIn,
+    TransactionUpsertResult,
+    UnidentifiedDocument,
+)
 from app.services.approvals import ApprovalRejected, verify_document_approver
 from app.services.shifts import (
     ShiftConflict,
@@ -243,6 +249,168 @@ def _incoming_fiscal_key(tx: TransactionIn, legs: List[TransactionPaymentIn]) ->
             for leg in legs
         ],
     )
+
+
+# ── Per-document validation ──────────────────────────────────────────────────
+
+#: The most of a validation reason sent back. The till shows it and keeps it with the
+#: parked document; a few errors are enough to fix the build that produced it.
+REJECTION_REASON_MAX_CHARS = 500
+#: The most of a non-UUID id echoed back.
+ECHOED_ID_MAX_CHARS = 100
+
+
+def _error_location(loc: Sequence[Any]) -> str:
+    out = ""
+    for part in loc:
+        if isinstance(part, int):
+            out += f"[{part}]"
+        else:
+            out += ("." if out else "") + str(part)
+    return out or "document"
+
+
+def validation_reason(error: ValidationError) -> str:
+    """`items[0].productId: Input should be a valid UUID, …` — every error, `; `-joined."""
+    parts = [f"{_error_location(e.get('loc', ()))}: {e.get('msg', 'invalid')}" for e in error.errors()]
+    reason = "; ".join(parts) or "invalid document"
+    if len(reason) > REJECTION_REASON_MAX_CHARS:
+        reason = reason[: REJECTION_REASON_MAX_CHARS - 1] + "…"
+    return reason
+
+
+def _answerable_id(raw: Any):
+    """The id to answer a refused document by: a UUID, the string as sent, or None."""
+    value = raw.get("id") if isinstance(raw, dict) else None
+    if isinstance(value, uuid.UUID):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        return value[:ECHOED_ID_MAX_CHARS]
+
+
+#: Reference fields a document is stored without when they cannot be read — links to
+#: other rows, which the upsert already drops when they name nothing (`_safe_item_product_id`,
+#: `_safe_voucher_id`). A document is never refused over one of these: the sale happened.
+#: `(list key, field)` → the field is set to null.
+_DROPPABLE_REFERENCES = (
+    ("items", "productId"),
+    ("issuedVouchers", "voucherId"),
+    ("issuedVouchers", "productId"),
+    ("issuedVouchers", "transactionItemId"),
+    ("stockMovements", "transactionItemId"),
+)
+
+#: The most of an unreadable reference kept in a warning.
+RAW_VALUE_MAX_CHARS = 100
+
+
+def _unreadable_uuid(value: Any) -> bool:
+    if value is None or isinstance(value, uuid.UUID):
+        return False
+    if not isinstance(value, str):
+        return True
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return True
+    return False
+
+
+def _raw(value: Any) -> str:
+    return repr(value)[:RAW_VALUE_MAX_CHARS]
+
+
+def drop_unreadable_references(raw: dict) -> Tuple[dict, List[str]]:
+    """
+    The document with every unreadable reference link dropped, and a warning for each.
+
+    Never lose a fiscal document over a link: an item whose `productId` is not a UUID
+    ("p12") is stored with no product link — the line keeps its name, SKU and money — and
+    the value as sent goes into the warning, which is answered to the till and kept in
+    `sync_logs.conflict_note` (an item has no field of its own to hold it). A stock
+    movement whose `productId` cannot be read is dropped the same way: without a product
+    there is nothing to move, and on-hand is not a fiscal record.
+
+    Only these links. A document whose money, dates or own id cannot be read is still
+    refused, and so is an unreadable `shiftId` (it decides which X the money is in),
+    `refundOfTransactionId` (it decides whether the money is a sale or a refund) or
+    `approvedByUserId` (stripping a claim of approval would pass a false one off as an
+    ordinary document).
+    """
+    warnings: List[str] = []
+    doc = dict(raw)
+    for key, field in _DROPPABLE_REFERENCES:
+        entries = doc.get(key)
+        if not isinstance(entries, list):
+            continue
+        rewritten = []
+        for i, entry in enumerate(entries):
+            if isinstance(entry, dict) and _unreadable_uuid(entry.get(field)):
+                warnings.append(f"{key}[{i}].{field}: unreadable {_raw(entry[field])}, stored without the link")
+                entry = {**entry, field: None}
+            rewritten.append(entry)
+        doc[key] = rewritten
+    movements = doc.get("stockMovements")
+    if isinstance(movements, list):
+        kept = []
+        for i, movement in enumerate(movements):
+            if isinstance(movement, dict) and _unreadable_uuid(movement.get("productId")):
+                warnings.append(
+                    f"stockMovements[{i}].productId: unreadable {_raw(movement['productId'])}, movement not applied"
+                )
+                continue
+            kept.append(movement)
+        doc["stockMovements"] = kept
+    return doc, warnings
+
+
+def validate_documents(
+    raw_documents: Sequence[Any],
+) -> Tuple[
+    List[Tuple[int, TransactionIn, List[str]]],
+    List[Tuple[int, TransactionUpsertResult]],
+    List[UnidentifiedDocument],
+]:
+    """
+    Validate each document of a batch on its own (docs/SHIFTS_API.md §1.2).
+
+    Returns the valid documents (with the warnings of any reference dropped to store
+    them — `drop_unreadable_references`), the refused ones as `rejected` results, and the
+    refused ones that carry no string id to answer by — each with its position in the
+    batch, so the caller can answer in the order the till sent. A refused document is
+    never stored: it is logged, and the till parks it and keeps the rest moving.
+    """
+    valid: List[Tuple[int, TransactionIn, List[str]]] = []
+    rejected: List[Tuple[int, TransactionUpsertResult]] = []
+    unidentified: List[UnidentifiedDocument] = []
+    for index, raw in enumerate(raw_documents):
+        if isinstance(raw, TransactionIn):
+            valid.append((index, raw, []))
+            continue
+        try:
+            if not isinstance(raw, dict):
+                raise TypeError("a document must be a JSON object")
+            doc, warnings = drop_unreadable_references(raw)
+            tx = TransactionIn.model_validate(doc)
+            if warnings:
+                logger.warning("Storing document %s without links: %s", tx.id, "; ".join(warnings))
+            valid.append((index, tx, warnings))
+            continue
+        except ValidationError as error:
+            reason = validation_reason(error)
+        except TypeError as error:
+            reason = f"document: {error}"
+        doc_id = _answerable_id(raw)
+        logger.warning("Rejecting document %s (batch index %d): %s", doc_id, index, reason)
+        if doc_id is None:
+            unidentified.append(UnidentifiedDocument(index=index, reason=reason))
+        else:
+            rejected.append((index, TransactionUpsertResult(id=doc_id, status="rejected", reason=reason)))
+    return valid, rejected, unidentified
 
 
 # ── Transactions upsert ──────────────────────────────────────────────────────
@@ -681,11 +849,123 @@ def upsert_transactions(
                 reason=str(exc),
             ))
 
+    # A credit note settles its original (and an original pushed after its credit note
+    # is settled on arrival). A status change only: no X or Z moves.
+    # Never at the cost of the batch: the documents are written, and a failure here is
+    # logged and retried with the next push that names them.
+    written = [
+        r.id for r in results if r.status != "rejected" and r.reason != "held_by_another_machine"
+    ]
+    if written:
+        savepoint = db.begin_nested()
+        try:
+            settle_credited_originals(db, machine.tenant_id, written)
+            savepoint.commit()
+        except Exception:
+            _rollback_savepoint(savepoint)
+            logger.exception("Could not settle credited originals for %s", written)
+
     # A document for a shift that is already closed: recompute or flag (see shifts).
     note_documents_after_close(
         db, touched_closed, machine_id=machine.id, moved_in=moved_in, amended=amended
     )
     return results
+
+
+# ── A credit note settles its original ───────────────────────────────────────
+
+#: Rounding slack between what an original collected and what was credited against it.
+CREDIT_TOLERANCE = Decimal("0.01")
+
+
+def settle_credited_originals(
+    db: Session, tenant_id: Optional[uuid.UUID], document_ids: Sequence[uuid.UUID]
+) -> None:
+    """
+    Bring each original named by, or among, `document_ids` to the status its credit
+    notes give it — the statuses the till gives its own copy (`SaleRepository.settleCredit`).
+
+    The till marks the sale it refunds `refunded` / `partial_refund` locally but pushes
+    only the credit note, so the cloud's copy stayed `completed`. From the cumulative
+    credited amount instead: every counted credit note (status in `SALE_STATUSES`; a
+    card refund still `pending` has not moved money) referring to the original, against
+    what the original collected (total − document discount):
+
+    * credited ≥ collected (one agora of slack) → `refunded`;
+    * 0 < credited < collected → `partial_refund`;
+    * nothing credited → left as it is.
+
+    Only an original in a counted status is touched (a cancelled or pending one is not a
+    sale to refund), and only within `tenant_id`: a credit note cannot restate another
+    tenant's document by naming its id.
+
+    A credit note whose arrival takes the running credited total (oldest first) past
+    what the original collected is flagged `over_credited` and logged — stored all the
+    same, because a fiscal document the till issued is never lost.
+
+    Idempotent: recomputed from what is stored, so a re-push, or the original arriving
+    after its credit note, lands on the same result. No X or Z moves: both statuses
+    count exactly as `completed` does.
+    """
+    from app.services.dashboard_stats import SALE_STATUSES
+
+    ids = {i for i in document_ids if i is not None}
+    if not ids or tenant_id is None:
+        return
+    # The originals: those the batch's credit notes name, and batch documents that are
+    # themselves credited (the original pushed after its credit note).
+    named = {
+        r[0]
+        for r in db.query(Transaction.refund_of_transaction_id)
+        .filter(Transaction.id.in_(ids), Transaction.refund_of_transaction_id.isnot(None))
+        .all()
+    }
+    originals = (
+        db.query(Transaction)
+        .filter(Transaction.id.in_(ids | named), Transaction.tenant_id == tenant_id)
+        .populate_existing()
+        .all()
+    )
+    for original in originals:
+        credits = (
+            db.query(Transaction)
+            .filter(
+                Transaction.refund_of_transaction_id == original.id,
+                Transaction.id != original.id,
+                Transaction.tenant_id == tenant_id,
+                Transaction.status.in_(SALE_STATUSES),
+            )
+            .populate_existing()
+            .all()
+        )
+        if not credits:
+            continue
+        collected = expected_tender_total(
+            total_amount=original.total_amount,
+            document_discount=original.document_discount,
+            document_type=original.document_type,
+            refund_of_transaction_id=original.refund_of_transaction_id,
+        )
+        running = Decimal("0")
+        for credit in sorted(credits, key=lambda c: (_as_utc(c.created_at), str(c.id))):
+            running += Decimal(str(credit.total_amount or 0))
+            over = running > collected + CREDIT_TOLERANCE
+            if over and not credit.over_credited:
+                logger.warning(
+                    "Credit note %s over-credits original %s: credited %s of %s collected",
+                    credit.id, original.id, running, collected,
+                )
+            credit.over_credited = over
+        if original.status not in SALE_STATUSES or running <= 0:
+            continue
+        settled = (
+            TransactionStatus.REFUNDED
+            if running >= collected - CREDIT_TOLERANCE
+            else TransactionStatus.PARTIAL_REFUND
+        )
+        if original.status != settled:
+            original.status = settled
+    db.flush()
 
 
 # ── MQTT publish helpers (server -> dashboard heads-up) ──────────────────────
