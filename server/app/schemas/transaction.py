@@ -249,6 +249,9 @@ class TransactionUpsertResult(BaseModel):
     id: Union[uuid.UUID, str]
     status: Literal["accepted", "duplicate", "rejected"]
     reason: Optional[str] = None
+    #: A stored document's reference links that could not be read and were dropped
+    #: (`items[0].productId: unreadable 'p12', stored without the link`). Null otherwise.
+    warnings: Optional[List[str]] = None
     server_received_at: Optional[datetime] = Field(None, alias="serverReceivedAt")
 
     class Config:

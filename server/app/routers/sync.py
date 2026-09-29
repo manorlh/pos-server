@@ -872,14 +872,17 @@ def post_transactions(
 
     valid, refused, unidentified = validate_documents(body.transactions)
     try:
-        upserted = upsert_transactions(db, machine, [tx for _i, tx in valid])
+        upserted = upsert_transactions(db, machine, [tx for _i, tx, _w in valid])
     except ShiftConflict as conflict:
         db.rollback()
         return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=conflict.body())
+    for (_i, _tx, warnings), r in zip(valid, upserted):
+        if warnings:
+            r.warnings = warnings
     # In the order the till sent them.
     results = [
         r for _i, r in sorted(
-            [(i, r) for (i, _tx), r in zip(valid, upserted)] + refused, key=lambda pair: pair[0]
+            [(i, r) for (i, _tx, _w), r in zip(valid, upserted)] + refused, key=lambda pair: pair[0]
         )
     ]
 
@@ -892,10 +895,14 @@ def post_transactions(
             entity_id=r.id if isinstance(r.id, uuid.UUID) else None,
             action=SyncAction.CREATE if r.status == "accepted" else SyncAction.UPDATE,
             status=SyncStatus.SUCCESS if r.status != "rejected" else SyncStatus.FAILED,
-            conflict_note=(
-                r.reason if isinstance(r.id, uuid.UUID) or r.reason is None
-                else f"id {r.id!r}: {r.reason}"
-            ),
+            # The warnings keep the values of the links dropped to store the document.
+            conflict_note="; ".join(
+                part for part in (
+                    r.reason if isinstance(r.id, uuid.UUID) or r.reason is None
+                    else f"id {r.id!r}: {r.reason}",
+                    *(r.warnings or ()),
+                ) if part
+            ) or None,
         )
         for r in results
     ] + [

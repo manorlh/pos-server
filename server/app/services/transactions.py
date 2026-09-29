@@ -292,28 +292,113 @@ def _answerable_id(raw: Any):
         return value[:ECHOED_ID_MAX_CHARS]
 
 
+#: Reference fields a document is stored without when they cannot be read — links to
+#: other rows, which the upsert already drops when they name nothing (`_safe_item_product_id`,
+#: `_safe_voucher_id`). A document is never refused over one of these: the sale happened.
+#: `(list key, field)` → the field is set to null.
+_DROPPABLE_REFERENCES = (
+    ("items", "productId"),
+    ("issuedVouchers", "voucherId"),
+    ("issuedVouchers", "productId"),
+    ("issuedVouchers", "transactionItemId"),
+    ("stockMovements", "transactionItemId"),
+)
+
+#: The most of an unreadable reference kept in a warning.
+RAW_VALUE_MAX_CHARS = 100
+
+
+def _unreadable_uuid(value: Any) -> bool:
+    if value is None or isinstance(value, uuid.UUID):
+        return False
+    if not isinstance(value, str):
+        return True
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return True
+    return False
+
+
+def _raw(value: Any) -> str:
+    return repr(value)[:RAW_VALUE_MAX_CHARS]
+
+
+def drop_unreadable_references(raw: dict) -> Tuple[dict, List[str]]:
+    """
+    The document with every unreadable reference link dropped, and a warning for each.
+
+    Never lose a fiscal document over a link: an item whose `productId` is not a UUID
+    ("p12") is stored with no product link — the line keeps its name, SKU and money — and
+    the value as sent goes into the warning, which is answered to the till and kept in
+    `sync_logs.conflict_note` (an item has no field of its own to hold it). A stock
+    movement whose `productId` cannot be read is dropped the same way: without a product
+    there is nothing to move, and on-hand is not a fiscal record.
+
+    Only these links. A document whose money, dates or own id cannot be read is still
+    refused, and so is an unreadable `shiftId` (it decides which X the money is in),
+    `refundOfTransactionId` (it decides whether the money is a sale or a refund) or
+    `approvedByUserId` (stripping a claim of approval would pass a false one off as an
+    ordinary document).
+    """
+    warnings: List[str] = []
+    doc = dict(raw)
+    for key, field in _DROPPABLE_REFERENCES:
+        entries = doc.get(key)
+        if not isinstance(entries, list):
+            continue
+        rewritten = []
+        for i, entry in enumerate(entries):
+            if isinstance(entry, dict) and _unreadable_uuid(entry.get(field)):
+                warnings.append(f"{key}[{i}].{field}: unreadable {_raw(entry[field])}, stored without the link")
+                entry = {**entry, field: None}
+            rewritten.append(entry)
+        doc[key] = rewritten
+    movements = doc.get("stockMovements")
+    if isinstance(movements, list):
+        kept = []
+        for i, movement in enumerate(movements):
+            if isinstance(movement, dict) and _unreadable_uuid(movement.get("productId")):
+                warnings.append(
+                    f"stockMovements[{i}].productId: unreadable {_raw(movement['productId'])}, movement not applied"
+                )
+                continue
+            kept.append(movement)
+        doc["stockMovements"] = kept
+    return doc, warnings
+
+
 def validate_documents(
     raw_documents: Sequence[Any],
-) -> Tuple[List[Tuple[int, TransactionIn]], List[Tuple[int, TransactionUpsertResult]], List[UnidentifiedDocument]]:
+) -> Tuple[
+    List[Tuple[int, TransactionIn, List[str]]],
+    List[Tuple[int, TransactionUpsertResult]],
+    List[UnidentifiedDocument],
+]:
     """
     Validate each document of a batch on its own (docs/SHIFTS_API.md §1.2).
 
-    Returns the valid documents, the refused ones as `rejected` results, and the refused
-    ones that carry no string id to answer by — each with its position in the batch, so
-    the caller can answer in the order the till sent. A refused document is never
-    stored: it is logged, and the till parks it and keeps the rest moving.
+    Returns the valid documents (with the warnings of any reference dropped to store
+    them — `drop_unreadable_references`), the refused ones as `rejected` results, and the
+    refused ones that carry no string id to answer by — each with its position in the
+    batch, so the caller can answer in the order the till sent. A refused document is
+    never stored: it is logged, and the till parks it and keeps the rest moving.
     """
-    valid: List[Tuple[int, TransactionIn]] = []
+    valid: List[Tuple[int, TransactionIn, List[str]]] = []
     rejected: List[Tuple[int, TransactionUpsertResult]] = []
     unidentified: List[UnidentifiedDocument] = []
     for index, raw in enumerate(raw_documents):
         if isinstance(raw, TransactionIn):
-            valid.append((index, raw))
+            valid.append((index, raw, []))
             continue
         try:
             if not isinstance(raw, dict):
                 raise TypeError("a document must be a JSON object")
-            valid.append((index, TransactionIn.model_validate(raw)))
+            doc, warnings = drop_unreadable_references(raw)
+            tx = TransactionIn.model_validate(doc)
+            if warnings:
+                logger.warning("Storing document %s without links: %s", tx.id, "; ".join(warnings))
+            valid.append((index, tx, warnings))
             continue
         except ValidationError as error:
             reason = validation_reason(error)

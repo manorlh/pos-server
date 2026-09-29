@@ -123,15 +123,34 @@ Each tender leg in `payments[]` may carry:
   meta as `creditPayments`. An unreadable value (not a number, negative, beyond 2³¹−1,
   infinite) is dropped, not rejected.
 
-`200` body: `{"serverTime", "results": [{"id", "status": "accepted|duplicate|rejected", "reason"?, "serverReceivedAt"?}], "unidentified": null | [...]}`.
+`200` body: `{"serverTime", "results": [{"id", "status": "accepted|duplicate|rejected", "reason"?, "warnings"?, "serverReceivedAt"?}], "unidentified": null | [...]}`.
+
+**A fiscal document is never lost over a link.** An unreadable reference to another row is
+dropped and the document stored, answered `accepted` (or `duplicate`) with a `warnings`
+entry per dropped link — the value as sent is in the warning, and kept in
+`sync_logs.conflict_note` (an item has no field of its own to hold it):
+```json
+{"id": "<its id>", "status": "accepted", "warnings": ["items[0].productId: unreadable 'p12', stored without the link"]}
+```
+The links dropped this way: `items[].productId` (the line keeps its name, SKU and money),
+`issuedVouchers[].voucherId` / `productId` / `transactionItemId`, and
+`stockMovements[].transactionItemId`. A stock movement whose `productId` cannot be read is
+not applied (`"stockMovements[0].productId: unreadable 'p12', movement not applied"`) —
+without a product there is nothing to move, and on-hand is not a fiscal record; the
+document is still stored. `warnings` is null when nothing was dropped.
+
+Not dropped, because each decides what the money is: `shiftId` (which X it is in),
+`refundOfTransactionId` (sale or refund), `approvedByUserId` (stripping a claim of approval
+would pass a false one off as ordinary). An unreadable one of these refuses the document, as
+does one whose own `id`, money or dates cannot be read.
 
 **Each document is validated on its own.** Only the envelope (`{"transactions": [...]}`, a
-list) can make the request a `422`. A document the model refuses — an unreadable field such
-as `items[0].productId: "p12"`, a missing required field, a document that is not a JSON
-object — is **not stored** (no row, no auto-opened shift, no stock movement) and is answered
-alongside the others, in the order sent:
+list) can make the request a `422`. A document that truly cannot be stored — a missing or
+unreadable required field (`totalAmount: "lots"`, `items[0].quantity: "one"`), one of the
+fields above, a document that is not a JSON object — is **not stored** (no row, no
+auto-opened shift, no stock movement) and is answered alongside the others, in the order sent:
 ```json
-{"id": "<its id>", "status": "rejected", "reason": "items[0].productId: Input should be a valid UUID, …"}
+{"id": "<its id>", "status": "rejected", "reason": "totalAmount: Input should be a valid decimal"}
 ```
 - `reason` is `<field path>: <message>` for every error of that document, `; `-joined, cut
   to 500 characters. Field paths use the wire names (`items[0].productId`, `totalAmount`).

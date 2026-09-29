@@ -1,9 +1,10 @@
 """
 Server findings of the 2026-09-29 end-to-end run (docs/SHIFTS_API.md).
 
-* **Per-document rejection** — one document the model refuses (productId "p12") was a
-  422 for the whole batch, and the till retried it forever. Now it alone is `rejected`,
-  with the field and the message, and the rest of the batch lands.
+* **Per-document rejection** — one document the model refused (productId "p12") was a
+  422 for the whole batch, and the till retried it forever. Now an unreadable reference
+  link is dropped and the document stored with a warning; only a document that truly
+  cannot be stored is `rejected`, alone, and the rest of the batch lands.
 * **Z cash over back-to-back shifts** — a till's drawer is handed from shift to shift,
   so summing floats and expecteds counted the same banknotes once per shift (Z #1:
   opening 455, expected 540, for a drawer holding ~180).
@@ -36,7 +37,12 @@ from app.services import shift_close_requests as SCR
 from app.services import z_runs as ZR
 from app.services.shift_totals import compute_totals
 from app.services.shifts import apply_shift_close
-from app.services.transactions import settle_credited_originals, validate_documents
+from app.schemas.transaction import TransactionIn
+from app.services.transactions import (
+    drop_unreadable_references,
+    settle_credited_originals,
+    validate_documents,
+)
 from app.services.z_builder import till_cash_summary, z_cash_summary
 from app.models.z_run import ZRunStatus
 from app.models.z_report import ZReport
@@ -91,8 +97,7 @@ class TestOneBadDocumentDoesNotJamTheBatch:
         shift = w.shift(till, 1, status=ShiftStatus.OPEN)
         good = _doc(shift.id, "25.00")
         bad = _doc(shift.id, "12.00", items=[{
-            "id": str(uuid.uuid4()), "productId": "p12", "quantity": 1,
-            "unitPrice": 12, "totalPrice": 12,
+            "id": str(uuid.uuid4()), "quantity": "one", "unitPrice": 12, "totalPrice": 12,
         }])
         after = _doc(shift.id, "7.00")
 
@@ -102,7 +107,7 @@ class TestOneBadDocumentDoesNotJamTheBatch:
             (good["id"], "accepted"), (bad["id"], "rejected"), (after["id"], "accepted"),
         ]
         reason = response.results[1].reason
-        assert reason.startswith("items[0].productId: Input should be a valid UUID")
+        assert reason.startswith("items[0].quantity: Input should be a valid decimal")
         stored = {str(t.id) for t in w.db.query(Transaction).all()}
         assert stored == {good["id"], after["id"]}
         assert response.unidentified is None
@@ -125,6 +130,80 @@ class TestOneBadDocumentDoesNotJamTheBatch:
 
         reason = refused[0][1].reason
         assert "totalAmount: " in reason and "createdAt: " in reason and "; " in reason
+
+    def test_an_unreadable_product_link_is_dropped_and_the_sale_kept(self, w):
+        """The E2E case: productId "p12". The sale happened; only the link is lost."""
+        from app.models.transaction_item import TransactionItem
+
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        sale = _doc(shift.id, "12.00", items=[{
+            "id": str(uuid.uuid4()), "productId": "p12", "productName": "Espresso", "sku": "12",
+            "quantity": 1, "unitPrice": 12, "totalPrice": 12,
+        }])
+
+        response = _push(w, till, [sale])
+
+        (result,) = response.results
+        assert (str(result.id), result.status, result.reason) == (sale["id"], "accepted", None)
+        assert result.warnings == ["items[0].productId: unreadable 'p12', stored without the link"]
+        item = w.db.query(TransactionItem).one()
+        assert item.product_id is None
+        assert (item.product_name, item.sku, item.total_price) == ("Espresso", "12", Decimal("12.00"))
+        log = w.db.query(SyncLog).one()
+        assert log.status == SyncStatus.SUCCESS and "'p12'" in log.conflict_note
+
+    def test_a_re_push_answers_the_warning_again(self, w):
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        sale = _doc(shift.id, "12.00", items=[{
+            "id": str(uuid.uuid4()), "productId": 12, "quantity": 1, "unitPrice": 12, "totalPrice": 12,
+        }])
+        _push(w, till, [sale])
+
+        (again,) = _push(w, till, [sale]).results
+
+        assert again.status == "duplicate"
+        assert again.warnings == ["items[0].productId: unreadable 12, stored without the link"]
+
+    def test_voucher_links_and_stock_movements(self, w):
+        doc, warnings = drop_unreadable_references(_doc(
+            issuedVouchers=[{"id": str(uuid.uuid4()), "voucherId": "v-1", "productId": None,
+                             "transactionItemId": "line-1", "issuedAt": NOW.isoformat()}],
+            stockMovements=[
+                {"id": str(uuid.uuid4()), "productId": "p12", "delta": -1, "reason": "sale",
+                 "occurredAt": NOW.isoformat()},
+                {"id": str(uuid.uuid4()), "productId": str(uuid.uuid4()), "delta": -1,
+                 "reason": "sale", "transactionItemId": "line-1", "occurredAt": NOW.isoformat()},
+            ],
+        ))
+
+        voucher = doc["issuedVouchers"][0]
+        assert voucher["voucherId"] is None and voucher["transactionItemId"] is None
+        assert len(doc["stockMovements"]) == 1
+        assert doc["stockMovements"][0]["transactionItemId"] is None
+        assert len(warnings) == 4
+        assert "stockMovements[0].productId: unreadable 'p12', movement not applied" in warnings
+        assert TransactionIn.model_validate(doc)
+
+    @pytest.mark.parametrize("field,value", [
+        ("shiftId", "shift-7"),
+        ("refundOfTransactionId", "sale-3"),
+        ("approvedByUserId", "manager"),
+        ("totalAmount", "lots"),
+        ("createdAt", "yesterday"),
+    ])
+    def test_what_decides_the_money_is_still_refused(self, w, field, value):
+        (_i, result), = validate_documents([_doc(**{field: value})])[1]
+
+        assert result.status == "rejected" and result.reason.startswith(f"{field}: ")
+
+    def test_a_valid_document_carries_no_warnings(self, w):
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        body = json.loads(_push(w, till, [_doc(shift.id)]).model_dump_json(by_alias=True))
+
+        assert body["results"][0]["warnings"] is None
 
     def test_a_document_whose_id_is_not_a_uuid_is_answered_by_that_id(self, w):
         till = w.tills[0]
