@@ -31,6 +31,7 @@ from app.routers import (
     categories,
     companies,
     shops,
+    areas as areas_router,
     catalog,
     sync,
     images,
@@ -78,6 +79,7 @@ app.include_router(auth.router, prefix=_prefix)
 app.include_router(users.router, prefix=_prefix)
 app.include_router(companies.router, prefix=_prefix)
 app.include_router(shops.router, prefix=_prefix)
+app.include_router(areas_router.router, prefix=_prefix)
 app.include_router(machines.router, prefix=_prefix)
 app.include_router(close_day.router, prefix=_prefix)
 app.include_router(pairing.router, prefix=_prefix)

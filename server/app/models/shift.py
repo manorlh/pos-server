@@ -56,6 +56,11 @@ class Shift(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True)
     machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id"), nullable=False, index=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True, index=True)
+    #: The till's area when the cloud first created this shift, and never changed after.
+    #: History is stamped, not joined: every area report filters on this, so a till
+    #: moved to another area — even mid-shift — takes its new area from its *next* shift
+    #: and past totals stay where they were taken.
+    area_id = Column(UUID(as_uuid=True), ForeignKey("shop_areas.id"), nullable=True, index=True)
 
     business_date = Column(Date, nullable=False)
     #: Per-till counter, assigned by the till. Nullable for shifts that predate it.
@@ -161,5 +166,6 @@ class Shift(Base):
 
     machine = relationship("POSMachine")
     shop = relationship("Shop")
+    area = relationship("ShopArea")
     transactions = relationship("Transaction", back_populates="shift")
     z_report = relationship("ZReport", back_populates="shifts", foreign_keys=[z_report_id])

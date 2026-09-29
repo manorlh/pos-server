@@ -53,6 +53,7 @@ from app.services.settings_merge import (
 from app.services.payment_options import legacy_tip_flags, resolve_payment_options
 from app.services.sell_screen import resolve_sell_screen
 from app.services import general_item
+from app.services.areas import as_utc, machine_area_for_sync
 from app.schemas.transaction import (
     TransactionsBatchEnvelope,
     TransactionsBatchResponse,
@@ -1192,6 +1193,7 @@ def get_settings_sync(
     POS applies to local SQLite; cloud is source of truth for managed keys.
     """
     server_time = datetime.now(timezone.utc)
+    area, area_stamps = machine_area_for_sync(db, machine)
 
     if not machine.shop_id:
         return SettingsSyncResponse(
@@ -1200,6 +1202,7 @@ def get_settings_sync(
             settings_updated_at=server_time,
             settings={},
             business_info=None,
+            area=area,
         )
 
     shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
@@ -1210,6 +1213,7 @@ def get_settings_sync(
             settings_updated_at=server_time,
             settings={},
             business_info=None,
+            area=area,
         )
 
     company = db.query(Company).filter(Company.id == shop.company_id).first()
@@ -1220,13 +1224,17 @@ def get_settings_sync(
             settings_updated_at=server_time,
             settings={},
             business_info=None,
+            area=area,
         )
 
     tenant = None
     if company.tenant_id:
         tenant = db.query(Tenant).filter(Tenant.id == company.tenant_id).first()
 
-    watermark = effective_settings_updated_at(company, shop, tenant)
+    # The till's area is part of what it shows, so a move between areas (the machine's
+    # `area_changed_at`) and a rename (the area's `updated_at`) move the watermark too —
+    # otherwise a delta pull after the notification would answer "unchanged".
+    watermark = max([as_utc(effective_settings_updated_at(company, shop, tenant))] + area_stamps)
     since_dt: Optional[datetime] = None
     if since:
         try:
@@ -1241,6 +1249,7 @@ def get_settings_sync(
             settings_updated_at=watermark,
             settings={},
             business_info=None,
+            area=area,
         )
 
     all_settings = merge_all_settings_layers(company, shop, tenant)
@@ -1267,6 +1276,7 @@ def get_settings_sync(
         settings_updated_at=watermark,
         settings=effective,
         business_info=business_info,
+        area=area,
     )
 
 

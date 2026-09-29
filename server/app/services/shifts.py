@@ -300,6 +300,10 @@ def _new_shift(
         tenant_id=machine.tenant_id,
         machine_id=machine.id,
         shop_id=machine.shop_id,
+        # Stamped once, here, and never updated: an area report reads this, so a till
+        # moved later takes its new area from its next shift and past totals stay put
+        # (docs/AREAS_API.md §0). Every cloud shift is created through this function.
+        area_id=getattr(machine, "area_id", None),
         business_date=business_date or datetime.now(timezone.utc).date(),
         opened_at=opened_at or datetime.now(timezone.utc),
         status=status_,
@@ -800,6 +804,13 @@ def z_number_of(db: Session, shift: Shift) -> Optional[int]:
     return z.shop_sequence_number if z is not None else None
 
 
+def _stamped_area_name(shift: Shift) -> Optional[str]:
+    if getattr(shift, "area_id", None) is None:
+        return None
+    area = getattr(shift, "area", None)
+    return area.name if area is not None else None
+
+
 def shift_to_out(
     shift: Shift,
     *,
@@ -841,5 +852,9 @@ def shift_to_out(
         z_number=z_number,
         machine_name=machine_name,
         shop_name=shop_name,
+        area_id=getattr(shift, "area_id", None),
+        # The stamped area's name as it is called now. What an area is called is not
+        # fiscal content; which area the shift was taken under is, and that is the id.
+        area_name=_stamped_area_name(shift),
         payment_breakdown=payment_breakdown,
     )

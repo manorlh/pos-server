@@ -117,6 +117,9 @@ class SettingsSyncResponse(BaseModel):
     settings_updated_at: datetime = Field(..., alias="settingsUpdatedAt")
     settings: Dict[str, Any] = Field(default_factory=dict)
     business_info: Optional[BusinessInfoSync] = Field(None, alias="businessInfo")
+    #: The till's area, `{id, name}`, or null for none (docs/AREAS_API.md §3). Sent on
+    #: every response, "unchanged" included, so it is always the current truth.
+    area: Optional[Dict[str, str]] = None
 
     class Config:
         populate_by_name = True

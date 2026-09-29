@@ -46,6 +46,16 @@ class POSMachine(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True, index=True)
+    #: The area of its shop this till stands in (bar, kitchen…), or none. Always an area
+    #: of the *current* `shop_id`: `set_machine_shop` clears it whenever the shop changes,
+    #: the way it gives up the register number. Shifts copy it when they open
+    #: (`shifts.area_id`); reports read that stamp, never this column, so moving a till
+    #: never rewrites what an area took.
+    area_id = Column(UUID(as_uuid=True), ForeignKey("shop_areas.id"), nullable=True, index=True)
+    #: When `area_id` last changed. The till's settings watermark includes it, so a till
+    #: moved between areas sees its new area on its next delta settings pull. Its own
+    #: column rather than `updated_at`, which every heartbeat moves.
+    area_changed_at = Column(DateTime(timezone=True), nullable=True)
     distributor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     pairing_session_id = Column(UUID(as_uuid=True), ForeignKey("pairing_sessions.id"), nullable=True, index=True)
     name = Column(String(255), nullable=False)
@@ -144,6 +154,12 @@ class POSMachine(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
     shop = relationship("Shop", back_populates="machines")
+    area = relationship("ShopArea")
     distributor = relationship("User", foreign_keys=[distributor_id])
     products = relationship("Product", back_populates="pos_machine")
     categories = relationship("Category", back_populates="pos_machine")
+
+    @property
+    def area_name(self):
+        """The current area's name, for responses built straight from the row."""
+        return self.area.name if self.area is not None else None

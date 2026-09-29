@@ -3,6 +3,7 @@ from app.models.tenant import Tenant, TenantStatus
 from app.models.tenant_membership import TenantMembership, TenantMembershipRole
 from app.models.company import Company
 from app.models.shop import Shop
+from app.models.shop_area import ShopArea
 from app.models.pos_machine import POSMachine, PairingStatus
 from app.models.pairing_code import PairingCode
 from app.models.pairing_session import PairingSession
@@ -39,6 +40,7 @@ __all__ = [
     "TenantMembership", "TenantMembershipRole",
     "Company",
     "Shop",
+    "ShopArea",
     "POSMachine", "PairingStatus",
     "PairingCode",
     "PairingSession",

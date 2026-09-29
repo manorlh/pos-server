@@ -42,6 +42,9 @@ class ZReport(Base):
     #: Legacy, till-issued rows only. NULL on a cloud-built Z, which spans tills.
     machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id"), nullable=True, index=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True, index=True)
+    #: The area the run that built it was for (`z_runs.area_id`); NULL for a whole-shop or
+    #: hand-picked Z. Its name as of the build is frozen in `header.areaName`.
+    area_id = Column(UUID(as_uuid=True), ForeignKey("shop_areas.id"), nullable=True, index=True)
 
     #: The shop-local date the Z is filed under (default: that of its latest shift).
     business_date = Column(Date, nullable=False)

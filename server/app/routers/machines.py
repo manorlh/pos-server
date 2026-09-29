@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, ConfigDict, Field
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import or_, and_
 from sqlalchemy.exc import IntegrityError
 from app.database import get_db
@@ -46,7 +46,7 @@ from app.services.machine_status import StatusInput, resolve_status
 from app.services.administrative_close import close_shift_administratively
 from app.services.pairing import create_pairing_code
 from app.services.register_number import set_machine_shop
-from app.services import machine_catalog
+from app.services import areas, machine_catalog
 from app.services.permission_matrix import SHOP_SCOPED_ROLES
 from app.services.shifts import (
     find_open_shift,
@@ -157,6 +157,8 @@ def _enrich_machine_status(
         "machineCode": machine.machine_code,
         "tenantId": machine.tenant_id,
         "shopId": machine.shop_id,
+        "areaId": machine.area_id,
+        "areaName": machine.area_name,
         "posNumber": machine.pos_number,
         "distributorId": machine.distributor_id,
         "mqttClientId": machine.mqtt_client_id,
@@ -281,12 +283,18 @@ def list_machines(
         False,
         description="Include decommissioned (is_active=false) machines.",
     ),
+    area_id: Optional[str] = Query(
+        None,
+        alias="areaId",
+        description="An area's id, or `none` for machines in no area.",
+    ),
     current_user: User = Depends(get_current_user),
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db)
 ):
-    """List machines (filtered by shop/tenant/role/distributor)."""
-    query = db.query(POSMachine)
+    """List machines (filtered by shop/tenant/role/distributor/area)."""
+    area_filter = areas.parse_area_filter(area_id)
+    query = db.query(POSMachine).options(selectinload(POSMachine.area))
     scope_tid = active_tenant_id
     if tenant_id:
         try:
@@ -311,6 +319,7 @@ def list_machines(
         query = query.filter(POSMachine.shop_id == shop_id)
     if distributor_id:
         query = query.filter(POSMachine.distributor_id == distributor_id)
+    query = areas.filter_on_column(query, POSMachine.area_id, area_filter)
 
     machines = query.offset(skip).limit(limit).all()
     return _enrich_machines_batch(machines, db)
@@ -363,6 +372,8 @@ def get_my_machine(
         "machineCode": machine.machine_code,
         "tenantId": str(machine.tenant_id) if machine.tenant_id else None,
         "shopId": str(machine.shop_id) if machine.shop_id else None,
+        # Shown beside the till's name and printed on its X (docs/AREAS_API.md §3).
+        "area": areas.area_ref(machine.area),
         "pairingStatus": machine.pairing_status.value if hasattr(machine.pairing_status, "value") else machine.pairing_status,
         "mqttClientId": machine.mqtt_client_id,
         **machine_realtime_refresh_info(machine=machine),
@@ -491,6 +502,7 @@ def update_machine(
     retiring = update_data.get("is_active") is False and machine.is_active
     if leaving or retiring:
         refuse_leaving_shop_with_shifts(db, machine)
+    area_before = machine.area_id
 
     if "shop_id" in update_data:
         sid = update_data["shop_id"]
@@ -520,11 +532,23 @@ def update_machine(
         if str(previous_shop_id) != str(machine.shop_id):
             machine_catalog.reset_for_new_shop(db, machine)
 
+    # After the shop: an area sent with a new shop must be one of the new shop's, and a
+    # shop change without one has already cleared the old area (`set_machine_shop`).
+    if "area_id" in update_data:
+        areas.assign_machine_area(db, machine, update_data.pop("area_id"))
+    if retiring:
+        # A retired till stands in no area: an area counts and closes active tills only,
+        # and an archived area must not be left holding one that is later reactivated.
+        areas.set_machine_area(machine, None)
+
     for field, value in update_data.items():
         setattr(machine, field, value)
 
+    area_changed = str(area_before) != str(machine.area_id)
     db.commit()
     db.refresh(machine)
+    if area_changed:
+        areas.notify_tills([machine])
     return machine
 
 
