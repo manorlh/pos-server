@@ -28,6 +28,8 @@ class Transaction(Base):
         UniqueConstraint("machine_id", "transaction_number", name="uq_tx_machine_number"),
         Index("ix_transactions_machine_created_at", "machine_id", "created_at"),
         Index("ix_transactions_shift", "shift_id"),
+        Index("ix_transactions_basket", "basket_id"),
+        Index("ix_transactions_refund_of", "refund_of_transaction_id"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True)  # client-generated
@@ -93,17 +95,36 @@ class Transaction(Base):
     # receipt and tax-export code joins on, so an unresolvable reference reads as
     # "no customer" instead of silently producing a tax invoice addressed to nobody.
     customer_ref_id = Column(UUID(as_uuid=True), ForeignKey("customers.id"), nullable=True, index=True)
+    # The buyer's details as printed on the document — the regulation requires them on a
+    # return (זיכוי), and a walk-in who returns an item is rarely a cloud customer. A
+    # snapshot, like a line's product name: never resolved, never rewritten, and only
+    # read by the tax export when the document has no resolved `customer_ref_id`.
+    customer_name = Column(String(255), nullable=True)
+    customer_phone = Column(String(30), nullable=True)
+    customer_address = Column(String(500), nullable=True)
     cashier_id = Column(String(100), nullable=True)
     branch_id = Column(String(100), nullable=True)
     notes = Column(Text, nullable=True)
 
-    refund_of_transaction_id = Column(UUID(as_uuid=True), ForeignKey("transactions.id"), nullable=True)
+    #: The original sale a credit note refunds. **Not** a foreign key, on purpose: the
+    #: till pushes in its own order, and a credit note that reaches the cloud before its
+    #: original must still be stored — a fiscal document is never lost over a link. The
+    #: link is resolved when it is read (always within the document's own tenant), and
+    #: the original is settled when it arrives (`settle_credited_originals`).
+    refund_of_transaction_id = Column(UUID(as_uuid=True), nullable=True)
     #: Set on a credit note that took its original's credited total past what the
     #: original collected. Stored all the same — a fiscal document the till issued is
     #: never refused — but flagged, so the over-refund can be found and explained.
     #: Written server-side only (`app.services.transactions.settle_credited_originals`).
     over_credited = Column(Boolean, nullable=False, default=False, server_default=false())
     nayax_meta = Column(JSONB, nullable=True)
+
+    #: The till basket this document was committed in (docs/SHIFTS_API.md §1.2a). One
+    #: basket that mixes sold and returned lines is several documents — a 320 for the
+    #: sale, a 330 per original receipt credited, and a 330 for catalogue returns — that
+    #: share this id, and whose offset is paid with `exchange` tender legs. Client
+    #: generated; null for every document that is not part of such a basket.
+    basket_id = Column(UUID(as_uuid=True), nullable=True)
 
     #: Who authorised the thing a cashier may not do alone — the refund, or the money
     #: taken off the price. `cashier_id` says who rang it up; this says who allowed it,
@@ -148,4 +169,10 @@ class Transaction(Base):
         order_by="TransactionPayment.sequence",
     )
     customer = relationship("Customer", foreign_keys=[customer_ref_id])
-    refund_of = relationship("Transaction", remote_side="Transaction.id")
+    # View only, and unscoped: the link is not a foreign key (see above), so a reader
+    # that follows it must check the tenant itself.
+    refund_of = relationship(
+        "Transaction",
+        primaryjoin="foreign(Transaction.refund_of_transaction_id) == remote(Transaction.id)",
+        viewonly=True,
+    )

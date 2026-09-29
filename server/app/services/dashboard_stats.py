@@ -14,7 +14,12 @@ from app.models.transaction import Transaction, TransactionStatus
 from app.models.transaction_item import TransactionItem
 from app.models.transaction_payment import TransactionPayment
 from app.schemas.dashboard import DashboardBreakdownRow, DashboardStatsResponse
-from app.services.tenders import tender_amount_expr, tender_method_expr
+from app.services.tenders import (
+    refund_condition,
+    sale_condition,
+    tender_amount_expr,
+    tender_method_expr,
+)
 
 SALE_STATUSES = (
     TransactionStatus.COMPLETED,
@@ -69,8 +74,11 @@ def compute_sales_summary(
 
     base = _apply_time_window(scoped_query, from_dt, to_dt)
 
+    # A credit note is a document of type 330 **or** one linked to an original — the
+    # rule every other report uses (`tenders.refund_condition`). Reading only the link
+    # counted a 330 with no original (a return picked from the catalogue) as a sale.
     sale_q = base.filter(
-        Transaction.refund_of_transaction_id.is_(None),
+        sale_condition(),
         Transaction.status.in_(SALE_STATUSES),
     )
 
@@ -95,7 +103,9 @@ def compute_sales_summary(
     )
     items_sold = _to_float(items_row)
 
-    refund_q = base.filter(Transaction.refund_of_transaction_id.isnot(None))
+    # Counted statuses only, as the sales are: a declined card refund is a `cancelled`
+    # credit note that handed nothing back.
+    refund_q = base.filter(refund_condition(), Transaction.status.in_(SALE_STATUSES))
     refund_agg = refund_q.with_entities(
         func.coalesce(func.sum(Transaction.total_amount), 0).label("amount"),
         func.count(Transaction.id).label("count"),
@@ -197,10 +207,10 @@ def compute_breakdown(
     base = _apply_time_window(scoped_query, from_dt, to_dt)
 
     sale_cond = and_(
-        Transaction.refund_of_transaction_id.is_(None),
+        sale_condition(),
         Transaction.status.in_(SALE_STATUSES),
     )
-    refund_cond = Transaction.refund_of_transaction_id.isnot(None)
+    refund_cond = and_(refund_condition(), Transaction.status.in_(SALE_STATUSES))
 
     gross_expr = func.coalesce(
         func.sum(case((sale_cond, Transaction.total_amount), else_=0)), 0

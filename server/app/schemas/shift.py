@@ -128,6 +128,9 @@ class ShiftTotalsOut(BaseModel):
     total_refunds: Optional[Decimal] = Field(None, alias="totalRefunds")
     total_cash: Optional[Decimal] = Field(None, alias="totalCash")
     total_card: Optional[Decimal] = Field(None, alias="totalCard")
+    #: Net of the `exchange` legs of mixed baskets (§1.2a) — in neither cash nor card,
+    #: zero when every basket is complete. Null on a shift closed before it was stored.
+    total_exchange: Optional[Decimal] = Field(None, alias="totalExchange")
     total_tips: Optional[Decimal] = Field(None, alias="totalTips")
     total_cash_tips: Optional[Decimal] = Field(None, alias="totalCashTips")
     total_card_tips: Optional[Decimal] = Field(None, alias="totalCardTips")

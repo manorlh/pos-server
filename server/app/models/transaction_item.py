@@ -15,6 +15,7 @@ class TransactionItem(Base):
     __tablename__ = "transaction_items"
     __table_args__ = (
         Index("ix_transaction_items_transaction", "transaction_id"),
+        Index("ix_transaction_items_refund_of_item", "refund_of_item_id"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True)  # client-generated
@@ -37,6 +38,12 @@ class TransactionItem(Base):
     transaction_type = Column(Integer, nullable=True)
     line_discount = Column(Numeric(12, 2), nullable=True)
     notes = Column(Text, nullable=True)
+    #: On a credit-note line returned from a receipt: the original sale line
+    #: (`transaction_items.id`) it credits. Not a foreign key, for the reason
+    #: `transactions.refund_of_transaction_id` is not one — the original may reach the
+    #: cloud after its credit note. Resolved within the tenant when read; it settles the
+    #: original per line and names the base document of the line in the tax export.
+    refund_of_item_id = Column(UUID(as_uuid=True), nullable=True)
 
     transaction = relationship("Transaction", back_populates="items")
     product = relationship("Product")

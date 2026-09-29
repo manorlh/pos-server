@@ -17,7 +17,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
@@ -105,6 +105,35 @@ def _refund_of_other_tenant(
         return False
     row = db.query(Transaction.tenant_id).filter(Transaction.id == refund_of).first()
     return row is not None and str(row[0]) != str(tenant_id)
+
+
+def _refund_item_link(
+    db: Session,
+    item_id: Optional[uuid.UUID],
+    tenant_id: Optional[uuid.UUID],
+    where: str,
+    warnings: List[str],
+) -> Optional[uuid.UUID]:
+    """
+    A credit-note line's `refundOfItemId`, unless it names a line of **another** tenant.
+
+    An id the cloud does not hold (yet) is kept: the original may arrive after its credit
+    note, and the link is resolved when read. Another tenant's line is dropped with the
+    `unknown` warning, as a product link is — the line keeps its money either way (the
+    document type, not this link, says it is a refund).
+    """
+    if item_id is None:
+        return None
+    row = (
+        db.query(Transaction.tenant_id)
+        .join(TransactionItem, TransactionItem.transaction_id == Transaction.id)
+        .filter(TransactionItem.id == item_id)
+        .first()
+    )
+    if row is not None and str(row[0]) != str(tenant_id):
+        warnings.append(f"{where}: unknown {_raw(str(item_id))}, stored without the link")
+        return None
+    return item_id
 
 
 def _kept_link(
@@ -339,6 +368,7 @@ def _answerable_id(raw: Any):
 #: `(list key, field)` → the field is set to null.
 _DROPPABLE_REFERENCES = (
     ("items", "productId"),
+    ("items", "refundOfItemId"),
     ("issuedVouchers", "voucherId"),
     ("issuedVouchers", "productId"),
     ("issuedVouchers", "transactionItemId"),
@@ -384,6 +414,11 @@ def drop_unreadable_references(raw: dict) -> Tuple[dict, List[str]]:
     """
     warnings: List[str] = []
     doc = dict(raw)
+    # The basket id groups documents for display; it decides no money, so an unreadable
+    # one is dropped like a link rather than refusing the document.
+    if _unreadable_uuid(doc.get("basketId")):
+        warnings.append(f"basketId: unreadable {_raw(doc['basketId'])}, stored without the link")
+        doc["basketId"] = None
     for key, field in _DROPPABLE_REFERENCES:
         entries = doc.get(key)
         if not isinstance(entries, list):
@@ -515,6 +550,11 @@ def _serialize_tx_for_upsert(
         "notes": tx.notes,
         "refund_of_transaction_id": tx.refund_of_transaction_id,
         "nayax_meta": tx.nayax_meta,
+        # getattr: a caller may hand in a document built before these fields existed.
+        "basket_id": getattr(tx, "basket_id", None),
+        "customer_name": getattr(tx, "customer_name", None),
+        "customer_phone": getattr(tx, "customer_phone", None),
+        "customer_address": getattr(tx, "customer_address", None),
         "approved_by_user_id": approved_by_user_id,
         "created_at": tx.created_at,
         "updated_at": tx.updated_at,
@@ -791,6 +831,10 @@ def upsert_transactions(
                         transaction_type=it.transaction_type,
                         line_discount=it.line_discount,
                         notes=it.notes,
+                        refund_of_item_id=_refund_item_link(
+                            db, it.refund_of_item_id, machine.tenant_id,
+                            f"items[{i}].refundOfItemId", link_warnings,
+                        ),
                     )
                     for i, it in enumerate(tx.items)
                 ])
@@ -952,6 +996,8 @@ def upsert_transactions(
 
 #: Rounding slack between what an original collected and what was credited against it.
 CREDIT_TOLERANCE = Decimal("0.01")
+#: Half the smallest quantity a line stores (Numeric(12, 3)).
+QUANTITY_TOLERANCE = Decimal("0.0005")
 
 
 def settle_credited_originals(
@@ -962,22 +1008,30 @@ def settle_credited_originals(
     notes give it — the statuses the till gives its own copy (`SaleRepository.settleCredit`).
 
     The till marks the sale it refunds `refunded` / `partial_refund` locally but pushes
-    only the credit note, so the cloud's copy stayed `completed`. From the cumulative
-    credited amount instead: every counted credit note (status in `SALE_STATUSES`; a
-    card refund still `pending` has not moved money) referring to the original, against
-    what the original collected (total − document discount):
+    only the credit note, so the cloud's copy stayed `completed`. From what is credited
+    instead, counting every counted credit note (status in `SALE_STATUSES`; a card
+    refund still `pending` has not moved money) that refers to the original — by
+    `refund_of_transaction_id`, or by a line whose `refund_of_item_id` is one of the
+    original's lines.
 
-    * credited ≥ collected (one agora of slack) → `refunded`;
-    * 0 < credited < collected → `partial_refund`;
-    * nothing credited → left as it is.
+    **Per line, when the credit notes say which lines.** If every such credit note names
+    the original line of each of its lines (`refundOfItemId`, docs/SHIFTS_API.md §1.2a),
+    the original is `refunded` when every one of its lines has been credited in full
+    quantity, and `partial_refund` when anything was credited. A credit note that takes
+    a line's credited quantity past what that line sold is over-crediting it.
+
+    **By amount otherwise** (unchanged): the cumulative credited amount against what the
+    original collected (total − document discount) — credited ≥ collected (one agora of
+    slack) → `refunded`; 0 < credited < collected → `partial_refund`.
+
+    Either way, a credit note whose arrival takes the running credited amount (oldest
+    first) past what the original collected, or a line past what it sold, is flagged
+    `over_credited` and logged — stored all the same, because a fiscal document the till
+    issued is never lost.
 
     Only an original in a counted status is touched (a cancelled or pending one is not a
     sale to refund), and only within `tenant_id`: a credit note cannot restate another
-    tenant's document by naming its id.
-
-    A credit note whose arrival takes the running credited total (oldest first) past
-    what the original collected is flagged `over_credited` and logged — stored all the
-    same, because a fiscal document the till issued is never lost.
+    tenant's document by naming its id, or one of its lines.
 
     Idempotent: recomputed from what is stored, so a re-push, or the original arriving
     after its credit note, lands on the same result. No X or Z moves: both statuses
@@ -988,14 +1042,28 @@ def settle_credited_originals(
     ids = {i for i in document_ids if i is not None}
     if not ids or tenant_id is None:
         return
-    # The originals: those the batch's credit notes name, and batch documents that are
-    # themselves credited (the original pushed after its credit note).
+    # The originals: those the batch's credit notes name (as a document, or through a
+    # line), and batch documents that are themselves credited (the original pushed
+    # after its credit note).
     named = {
         r[0]
         for r in db.query(Transaction.refund_of_transaction_id)
         .filter(Transaction.id.in_(ids), Transaction.refund_of_transaction_id.isnot(None))
         .all()
     }
+    named_lines = {
+        r[0]
+        for r in db.query(TransactionItem.refund_of_item_id)
+        .filter(TransactionItem.transaction_id.in_(ids), TransactionItem.refund_of_item_id.isnot(None))
+        .all()
+    }
+    if named_lines:
+        named |= {
+            r[0]
+            for r in db.query(TransactionItem.transaction_id)
+            .filter(TransactionItem.id.in_(named_lines))
+            .all()
+        }
     originals = (
         db.query(Transaction)
         .filter(Transaction.id.in_(ids | named), Transaction.tenant_id == tenant_id)
@@ -1003,10 +1071,23 @@ def settle_credited_originals(
         .all()
     )
     for original in originals:
+        sold = {
+            it.id: abs(Decimal(str(it.quantity or 0)))
+            for it in db.query(TransactionItem)
+            .filter(TransactionItem.transaction_id == original.id)
+            .populate_existing()
+            .all()
+        }
+        by_line = select(TransactionItem.transaction_id).where(
+            TransactionItem.refund_of_item_id.in_(list(sold))
+        )
         credits = (
             db.query(Transaction)
             .filter(
-                Transaction.refund_of_transaction_id == original.id,
+                or_(
+                    Transaction.refund_of_transaction_id == original.id,
+                    Transaction.id.in_(by_line),
+                ),
                 Transaction.id != original.id,
                 Transaction.tenant_id == tenant_id,
                 Transaction.status.in_(SALE_STATUSES),
@@ -1016,6 +1097,21 @@ def settle_credited_originals(
         )
         if not credits:
             continue
+        lines_of: Dict[uuid.UUID, List[TransactionItem]] = {}
+        for line in (
+            db.query(TransactionItem)
+            .filter(TransactionItem.transaction_id.in_([c.id for c in credits]))
+            .populate_existing()
+            .all()
+        ):
+            lines_of.setdefault(line.transaction_id, []).append(line)
+        # Per line only if every credit note names the original line of every line it
+        # has, and the original has lines to measure against.
+        per_line = bool(sold) and all(
+            lines_of.get(c.id) and all(l.refund_of_item_id in sold for l in lines_of[c.id])
+            for c in credits
+        )
+
         collected = expected_tender_total(
             total_amount=original.total_amount,
             document_discount=original.document_discount,
@@ -1023,9 +1119,22 @@ def settle_credited_originals(
             refund_of_transaction_id=original.refund_of_transaction_id,
         )
         running = Decimal("0")
+        credited_qty: Dict[uuid.UUID, Decimal] = {}
         for credit in sorted(credits, key=lambda c: (_as_utc(c.created_at), str(c.id))):
-            running += Decimal(str(credit.total_amount or 0))
+            linked = [l for l in lines_of.get(credit.id, []) if l.refund_of_item_id in sold]
+            if credit.refund_of_transaction_id == original.id:
+                running += Decimal(str(credit.total_amount or 0))
+            else:
+                # Credits this original only through some of its lines.
+                running += sum((Decimal(str(l.total_price or 0)) for l in linked), Decimal("0"))
             over = running > collected + CREDIT_TOLERANCE
+            for line in linked:
+                credited_qty[line.refund_of_item_id] = (
+                    credited_qty.get(line.refund_of_item_id, Decimal("0"))
+                    + abs(Decimal(str(line.quantity or 0)))
+                )
+                if credited_qty[line.refund_of_item_id] > sold[line.refund_of_item_id] + QUANTITY_TOLERANCE:
+                    over = True
             if over and not credit.over_credited:
                 logger.warning(
                     "Credit note %s over-credits original %s: credited %s of %s collected",
@@ -1034,11 +1143,15 @@ def settle_credited_originals(
             credit.over_credited = over
         if original.status not in SALE_STATUSES or running <= 0:
             continue
-        settled = (
-            TransactionStatus.REFUNDED
-            if running >= collected - CREDIT_TOLERANCE
-            else TransactionStatus.PARTIAL_REFUND
-        )
+        if per_line:
+            fully = all(
+                credited_qty.get(item_id, Decimal("0")) >= qty - QUANTITY_TOLERANCE
+                for item_id, qty in sold.items()
+                if qty > 0
+            )
+        else:
+            fully = running >= collected - CREDIT_TOLERANCE
+        settled = TransactionStatus.REFUNDED if fully else TransactionStatus.PARTIAL_REFUND
         if original.status != settled:
             original.status = settled
     db.flush()

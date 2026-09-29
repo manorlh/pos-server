@@ -113,6 +113,9 @@ class CashierSalesRow(BaseModel):
     cash_net: float = Field(..., alias="cashNet")
     card_net: float = Field(..., alias="cardNet")
     other_net: float = Field(..., alias="otherNet")
+    #: Net of the `exchange` legs of mixed baskets (docs/SHIFTS_API.md §1.2a): not money
+    #: taken, and zero over complete baskets, so cash + card + other + exchange = net.
+    exchange_net: float = Field(0.0, alias="exchangeNet")
 
     tips: float
 
@@ -133,7 +136,7 @@ class SalesByAreaRow(BaseModel):
     One area's documents over the window, by the shift they were stamped under.
 
     The per-cashier report's money exactly (`gross - discounts - refunds = net`,
-    `cash + card + other = net`), so an area table and a cashier table over the same
+    `cash + card + other + exchange = net`), so an area table and a cashier table over the same
     shop and window add up to the same figure.
     """
 
@@ -152,6 +155,9 @@ class SalesByAreaRow(BaseModel):
     cash: float = 0.0
     card: float = 0.0
     other: float = 0.0
+    #: Net of the `exchange` legs of mixed baskets (docs/SHIFTS_API.md §1.2a); zero over
+    #: complete baskets, so cash + card + other + exchange = net.
+    exchange: float = 0.0
     tips: float = 0.0
 
 

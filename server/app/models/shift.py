@@ -114,6 +114,10 @@ class Shift(Base):
     total_refunds = Column(Numeric(12, 2), nullable=True)
     total_cash = Column(Numeric(12, 2), nullable=True)
     total_card = Column(Numeric(12, 2), nullable=True)
+    #: Net of the `exchange` tender legs: what the sale halves of mixed baskets settled
+    #: against their credit halves. Not money in any drawer or acquirer, and in neither
+    #: `total_cash` nor `total_card`; zero whenever every basket is complete.
+    total_exchange = Column(Numeric(12, 2), nullable=True)
     total_tips = Column(Numeric(12, 2), nullable=True)
     total_cash_tips = Column(Numeric(12, 2), nullable=True)
     total_card_tips = Column(Numeric(12, 2), nullable=True)

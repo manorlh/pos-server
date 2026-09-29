@@ -263,6 +263,9 @@ def machine_section(machine: POSMachine, shifts: Sequence[Shift], totals: Docume
         "vatMissingCount": totals.vat_missing_count,
         "totalCash": _money(totals.total_cash),
         "totalCard": _money(totals.total_card),
+        # The net of the `exchange` legs (mixed baskets, §1.2a): in neither cash nor
+        # card, and zero when every basket is complete.
+        "totalExchange": _money(totals.total_exchange),
         "paymentBreakdown": totals.breakdown_json(),
         "totalTips": _money(totals.total_tips),
         "totalCashTips": _money(totals.total_cash_tips),
@@ -355,6 +358,7 @@ def build_z(
         discounts_total=overall.discounts_total,
         total_cash_sales=overall.total_cash,
         total_card_sales=overall.total_card,
+        total_exchange=overall.total_exchange,
         total_tips=overall.total_tips,
         total_cash_tips=overall.total_cash_tips,
         total_card_tips=overall.total_card_tips,

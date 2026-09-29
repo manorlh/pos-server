@@ -23,13 +23,20 @@ till and nobody can say which is lying.
    document — an older till build, every report written before this change, and the
    tax export all read it. One leg means that leg's method; more than one means the
    literal `"mixed"`. See `derive_payment_method`.
+
+4. **`exchange` is not money.** A till basket that mixes sold and returned lines is
+   committed as several documents (a 320 and one or more 330s, sharing a `basketId`);
+   the part of the sale the returns pay for is an `exchange` leg on the 320, matched by
+   `exchange` legs on the 330s, and only the net goes through a real tender. So an
+   `exchange` leg is its own bucket — never cash, never card, never `other` — and it
+   nets to zero over a complete basket. See docs/SHIFTS_API.md §1.2a.
 """
 from __future__ import annotations
 
 from decimal import Decimal
 from typing import Iterable, Optional, Sequence
 
-from sqlalchemy import case, func, or_
+from sqlalchemy import and_, case, func, or_
 
 from app.models.transaction import Transaction
 from app.models.transaction_payment import TransactionPayment
@@ -57,6 +64,10 @@ MIXED_PAYMENT_METHOD = "mixed"
 # never teaches a downstream bucket a new case.
 UNKNOWN_PAYMENT_METHOD = "other"
 
+# The tender that settles the sale half of a mixed basket against its credit half
+# (rule 4 above). OpenFormat payment type 6, "תלוש החלפה".
+EXCHANGE_PAYMENT_METHOD = "exchange"
+
 # Rounding slack allowed when checking that the legs sum to the document.
 #
 # Per leg, not flat: amounts are Numeric(12,2) here and integer agorot on the till,
@@ -67,13 +78,25 @@ TENDER_TOLERANCE_PER_LEG = Decimal("0.01")
 
 
 def normalize_tender(method: Optional[str]) -> str:
-    """Collapse a payment method to cash / card / other for the tender splits."""
+    """
+    Collapse a payment method to cash / card / exchange / other for the tender splits.
+
+    `exchange` is a bucket of its own rather than `other`: it is the offset between the
+    two halves of a mixed basket, not money anyone took, and folding it into `other`
+    would show a basket's sale half as unclassified takings.
+    """
     m = (method or "").strip().lower()
     if m == "cash":
         return "cash"
     if m == "card":
         return "card"
+    if m == EXCHANGE_PAYMENT_METHOD:
+        return EXCHANGE_PAYMENT_METHOD
     return "other"
+
+
+def is_exchange(method: Optional[str]) -> bool:
+    return (method or "").strip().lower() == EXCHANGE_PAYMENT_METHOD
 
 
 def is_refund_document(
@@ -154,8 +177,17 @@ def derive_payment_method(
     Collapsing repeated identical tenders matters: a cashier who takes two notes on
     two swipes of the cash key has not created a mixed document, and calling it mixed
     would push an ordinary cash sale out of the cash bucket of every legacy report.
+
+    `exchange` legs are left out whenever the document has a real tender too: a basket's
+    sale paid ₪60 cash + ₪40 `exchange` took its money in cash, and the reader of this
+    one value that matters — a tip with no method of its own takes the sale's tender —
+    must read cash, not "mixed". Every tender split reads the legs, not this column, so
+    no split learns to put the ₪40 in cash. A document settled by `exchange` alone says
+    `exchange`.
     """
     distinct = {(m or "").strip().lower() for m in methods if (m or "").strip()}
+    if len(distinct) > 1:
+        distinct.discard(EXCHANGE_PAYMENT_METHOD)
     if not distinct:
         return fallback
     if len(distinct) == 1:
@@ -192,6 +224,22 @@ def refund_condition():
     return or_(
         Transaction.document_type == CREDIT_NOTE_DOCUMENT_TYPE,
         Transaction.refund_of_transaction_id.isnot(None),
+    )
+
+
+def sale_condition():
+    """
+    Not a credit note, as a SQL predicate — the null-safe negation of `refund_condition`.
+
+    `NOT refund_condition()` is not it: for a legacy row with a null `document_type` and
+    no back-link the OR is NULL, its negation is NULL, and the sale would be filtered out.
+    """
+    return and_(
+        or_(
+            Transaction.document_type.is_(None),
+            Transaction.document_type != CREDIT_NOTE_DOCUMENT_TYPE,
+        ),
+        Transaction.refund_of_transaction_id.is_(None),
     )
 
 

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.company import Company
 from app.models.shop import Shop
 from app.models.transaction import Transaction
+from app.models.transaction_item import TransactionItem
 from app.services.open_format.tax_report_generator import (
     BusinessInfoDict,
     TaxReportResult,
@@ -164,7 +165,72 @@ def load_transactions_for_tax_export(
     return query.all()
 
 
-def _build_cart_from_items(tx: Transaction, global_tax_rate: float) -> Dict[str, Any]:
+BaseDocument = Dict[str, Any]
+
+
+@dataclass
+class BaseDocuments:
+    """
+    The originals the export's credit notes name, resolved **outside** the export window.
+
+    D110 fields 1256/1257 (סוג / מספר מסמך בסיס) name the receipt a credit-note line
+    returns. The original is very often from an earlier period than its credit note, so
+    looking it up among the exported documents only — as the export used to — left the
+    fields empty on exactly the returns an inspector follows back. Every lookup is within
+    the export's tenant: the links are not foreign keys, and must not reach another
+    tenant's documents.
+    """
+
+    by_document: Dict[str, BaseDocument]
+    #: original line id → its document's base block.
+    by_line: Dict[str, BaseDocument]
+
+
+def _base_of(tx: Transaction) -> BaseDocument:
+    return {
+        "documentType": tx.document_type or 320,
+        "transactionNumber": tx.transaction_number,
+        "branchId": tx.branch_id,
+    }
+
+
+def load_base_documents(
+    db: Session, tenant_id: uuid.UUID, rows: List[Transaction]
+) -> BaseDocuments:
+    doc_ids = {tx.refund_of_transaction_id for tx in rows if tx.refund_of_transaction_id}
+    line_ids = {
+        it.refund_of_item_id for tx in rows for it in (tx.items or []) if it.refund_of_item_id
+    }
+    by_line_doc: Dict[str, uuid.UUID] = {}
+    if line_ids:
+        for item_id, doc_id in (
+            db.query(TransactionItem.id, TransactionItem.transaction_id)
+            .filter(TransactionItem.id.in_(line_ids))
+            .all()
+        ):
+            by_line_doc[str(item_id)] = doc_id
+            doc_ids.add(doc_id)
+    by_document: Dict[str, BaseDocument] = {}
+    if doc_ids:
+        for original in (
+            db.query(Transaction)
+            .filter(Transaction.id.in_(doc_ids), Transaction.tenant_id == tenant_id)
+            .all()
+        ):
+            by_document[str(original.id)] = _base_of(original)
+    return BaseDocuments(
+        by_document=by_document,
+        by_line={
+            line: by_document[str(doc)]
+            for line, doc in by_line_doc.items()
+            if str(doc) in by_document
+        },
+    )
+
+
+def _build_cart_from_items(
+    tx: Transaction, global_tax_rate: float, bases: Optional[BaseDocuments] = None
+) -> Dict[str, Any]:
     """
     The cart block of a C100/D120 document record.
 
@@ -219,6 +285,13 @@ def _build_cart_from_items(tx: Transaction, global_tax_rate: float) -> Dict[str,
                 "discount": _decimal_to_float(it.discount),
                 "lineDiscount": _decimal_to_float(it.line_discount),
                 "transactionType": it.transaction_type or 2,
+                # The receipt this credit-note line returns (D110 1256/1257), when the
+                # line names its original and the cloud holds it.
+                "base": (
+                    bases.by_line.get(str(it.refund_of_item_id))
+                    if bases is not None and it.refund_of_item_id
+                    else None
+                ),
             }
         )
 
@@ -296,9 +369,19 @@ def _customer_for_open_format(tx: Transaction) -> Dict[str, Any]:
     document has no resolved customer, which is every walk-in sale and every document
     written before customers existed. Only `customer_ref_id` is consulted: the raw
     `customer_id` string is unvalidated free text and must never reach a tax filing.
+    Without a resolved customer, the buyer details printed on the document
+    (`customer_name` / `_phone` / `_address`) are used when it has any.
     """
     customer = tx.customer
     if customer is None:
+        # The buyer's details as the till printed them (a return records who returned
+        # it). A snapshot, used only when there is no resolved customer.
+        if tx.customer_name or tx.customer_phone or tx.customer_address:
+            return {
+                "name": tx.customer_name or "לקוח כללי",
+                "phone": tx.customer_phone or None,
+                "address": {"street": tx.customer_address or ""},
+            }
         return {"name": "לקוח כללי"}
     return {
         "name": customer.name or "לקוח כללי",
@@ -314,7 +397,9 @@ def _customer_for_open_format(tx: Transaction) -> Dict[str, Any]:
     }
 
 
-def transform_transaction_for_open_format(tx: Transaction, global_tax_rate: float) -> Dict[str, Any]:
+def transform_transaction_for_open_format(
+    tx: Transaction, global_tax_rate: float, bases: Optional[BaseDocuments] = None
+) -> Dict[str, Any]:
     status_val = tx.status.value if hasattr(tx.status, "value") else str(tx.status)
     doc_date = tx.document_production_date or tx.created_at
     return {
@@ -328,6 +413,12 @@ def transform_transaction_for_open_format(tx: Transaction, global_tax_rate: floa
         "whtDeduction": _decimal_to_float(tx.wht_deduction),
         "branchId": tx.branch_id,
         "refundOfTransactionId": str(tx.refund_of_transaction_id) if tx.refund_of_transaction_id else None,
+        # The original named by `refundOfTransactionId`, even when outside the export.
+        "baseDocument": (
+            bases.by_document.get(str(tx.refund_of_transaction_id))
+            if bases is not None and tx.refund_of_transaction_id
+            else None
+        ),
         "createdAt": tx.created_at.isoformat() if tx.created_at else None,
         # Tender legs. A single-tender document produces the same single D120 payment
         # record it always has; a split-tender one produces one per leg, each with its
@@ -336,7 +427,7 @@ def transform_transaction_for_open_format(tx: Transaction, global_tax_rate: floa
         "payments": _payments_for_open_format(tx),
         "cashier": {"name": tx.cashier_id or ""},
         "customer": _customer_for_open_format(tx),
-        "cart": _build_cart_from_items(tx, global_tax_rate),
+        "cart": _build_cart_from_items(tx, global_tax_rate, bases),
     }
 
 
@@ -383,7 +474,8 @@ def build_tax_open_format_export(
         start=ctx.start,
         end=ctx.end,
     )
-    tx_dicts = [transform_transaction_for_open_format(tx, ctx.global_tax_rate) for tx in rows]
+    bases = load_base_documents(db, tenant_id, rows)
+    tx_dicts = [transform_transaction_for_open_format(tx, ctx.global_tax_rate, bases) for tx in rows]
     result = generate_tax_report(
         tx_dicts,
         ctx.business_info,

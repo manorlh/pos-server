@@ -15,6 +15,9 @@ The rules (docs/SHIFTS_API.md §3.2):
   Credit notes are summed separately and are positive.
 * Takings per tender come from the tender legs, so a split document is part cash and
   part card. A credit note's legs are subtracted.
+* `exchange` legs (the offset inside a mixed basket, §1.2a) are a bucket of their own:
+  in neither cash nor card, so never in the drawer. Signed like every leg, they net to
+  zero over a complete basket; `total_exchange` is that net, shown on its own.
 * Tips are not takings and are outside the legs. Cash tips go in the drawer. A tip with
   no method of its own takes the sale's tender (`tip_goes_to_cash`).
 * VAT is what each document declared. If any counted document declared none, the VAT
@@ -34,6 +37,7 @@ from app.models.transaction import Transaction
 from app.models.transaction_payment import TransactionPayment
 from app.services.dashboard_stats import SALE_STATUSES
 from app.services.tenders import (
+    EXCHANGE_PAYMENT_METHOD,
     UNKNOWN_PAYMENT_METHOD,
     expected_tender_total,
     is_refund_document,
@@ -82,6 +86,11 @@ class DocumentTotals:
         return self.payment_breakdown.get("card", ZERO)
 
     @property
+    def total_exchange(self) -> Decimal:
+        """Net of the `exchange` legs: zero when every mixed basket is complete."""
+        return self.payment_breakdown.get(EXCHANGE_PAYMENT_METHOD, ZERO)
+
+    @property
     def vat_total(self) -> Optional[Decimal]:
         if self.transactions_count and self.vat_missing_count:
             return None
@@ -108,6 +117,7 @@ class DocumentTotals:
             "total_refunds": self.total_refunds,
             "total_cash": self.total_cash,
             "total_card": self.total_card,
+            "total_exchange": self.total_exchange,
             "total_tips": self.total_tips,
             "total_cash_tips": self.total_cash_tips,
             "total_card_tips": self.total_card_tips,
@@ -237,6 +247,7 @@ COMPARED_TILL_KEYS = {
     "totalRefunds": lambda t: t.total_refunds,
     "totalCash": lambda t: t.total_cash,
     "totalCard": lambda t: t.total_card,
+    "totalExchange": lambda t: t.total_exchange,
     "totalTips": lambda t: t.total_tips,
     "vatTotal": lambda t: t.vat_total,
     "transactionsCount": lambda t: t.transactions_count,

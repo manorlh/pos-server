@@ -45,6 +45,9 @@ class ZReportOut(BaseModel):
     discounts_total: Optional[Decimal] = Field(None, alias="discountsTotal")
     total_cash_sales: Optional[Decimal] = Field(None, alias="totalCashSales")
     total_card_sales: Optional[Decimal] = Field(None, alias="totalCardSales")
+    #: Net of the `exchange` legs of mixed baskets (§1.2a); zero when every basket is
+    #: complete. Null on a Z built before it was stored.
+    total_exchange: Optional[Decimal] = Field(None, alias="totalExchange")
     total_tips: Optional[Decimal] = Field(None, alias="totalTips")
     total_cash_tips: Optional[Decimal] = Field(None, alias="totalCashTips")
     total_card_tips: Optional[Decimal] = Field(None, alias="totalCardTips")

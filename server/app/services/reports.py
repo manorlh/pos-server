@@ -413,7 +413,7 @@ def _display_name(pu: Optional[PosUser]) -> Optional[str]:
 
 def normalize_tender(method: Optional[str]) -> str:
     """
-    Collapse a payment method to cash / card / other for the tender splits.
+    Collapse a payment method to cash / card / exchange / other for the tender splits.
 
     Re-exported from `app.services.tenders`, which is where the tender rules live now
     that a document can have several. Kept as a name here because callers and tests
@@ -563,7 +563,7 @@ def _empty_cashier_row(**kwargs) -> CashierSalesRow:
         cashier_id=None, cashier_name=None, worker_number=None,
         document_count=0, sales_count=0, refunds_count=0,
         gross=0.0, discounts=0.0, refunds=0.0, net=0.0, average_basket=0.0,
-        cash_net=0.0, card_net=0.0, other_net=0.0, tips=0.0,
+        cash_net=0.0, card_net=0.0, other_net=0.0, exchange_net=0.0, tips=0.0,
     )
     base.update(kwargs)
     return CashierSalesRow(**base)
@@ -573,7 +573,7 @@ def _new_sales_bucket() -> Dict[str, float]:
     return {
         "gross": 0.0, "discounts": 0.0, "refunds": 0.0, "tips": 0.0,
         "sales_count": 0, "refunds_count": 0,
-        "cash_net": 0.0, "card_net": 0.0, "other_net": 0.0,
+        "cash_net": 0.0, "card_net": 0.0, "other_net": 0.0, "exchange_net": 0.0,
     }
 
 
@@ -703,6 +703,7 @@ def build_cashier_sales_report(
                 cash_net=b["cash_net"],
                 card_net=b["card_net"],
                 other_net=b["other_net"],
+                exchange_net=b["exchange_net"],
                 tips=b["tips"],
             )
         )
@@ -726,6 +727,7 @@ def build_cashier_sales_report(
         cash_net=sum(r.cash_net for r in out_rows),
         card_net=sum(r.card_net for r in out_rows),
         other_net=sum(r.other_net for r in out_rows),
+        exchange_net=sum(r.exchange_net for r in out_rows),
         tips=sum(r.tips for r in out_rows),
     )
     return CashierSalesReportResponse(
@@ -789,6 +791,7 @@ def build_sales_by_area_report(
             cash=_cents(bucket["cash_net"]),
             card=_cents(bucket["card_net"]),
             other=_cents(bucket["other_net"]),
+            exchange=_cents(bucket["exchange_net"]),
             tips=_cents(bucket["tips"]),
         )
 
@@ -900,6 +903,9 @@ def build_tips_range_report(
         # rather than guessing a leg. That is the honest answer: only the till knows
         # which tender the tip went on, and it says so in `tip_payment_method`.
         method = normalize_tender(r.tip_method or r.payment_method)
+        if method == "exchange":
+            # A document settled by `exchange` alone took no money a tip could ride on.
+            method = "other"
 
         by_method[method]["amount"] += tips
         by_method[method]["documents"] += tipped

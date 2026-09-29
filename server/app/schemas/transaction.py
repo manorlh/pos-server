@@ -16,6 +16,20 @@ from app.schemas.stock import StockMovementIn
 META_MAX_CHARS = 16 * 1024
 
 
+def cut_text(value, limit: int):
+    """
+    Free text as sent, trimmed and cut to `limit` — never a validation error.
+
+    For the buyer details on a document: an over-long address must not refuse a fiscal
+    document the till has already printed, so it is cut to what the column holds.
+    """
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else str(value)
+    text = text.strip()
+    return text[:limit] or None
+
+
 def _reject_constant(name):
     """`json.loads` hook: NaN / Infinity are not JSON, and Postgres JSONB refuses them."""
     raise ValueError(f"non-JSON constant {name}")
@@ -151,6 +165,10 @@ class TransactionItemIn(BaseModel):
     transaction_type: Optional[int] = Field(None, alias="transactionType")
     line_discount: Optional[Decimal] = Field(None, alias="lineDiscount")
     notes: Optional[str] = None
+    #: On a credit-note line returned from a receipt: the id of the original sale line
+    #: (`items[].id` of the original document). Optional; absent on a catalogue return.
+    #: An original the cloud does not hold yet is fine — it may arrive later.
+    refund_of_item_id: Optional[uuid.UUID] = Field(None, alias="refundOfItemId")
 
     class Config:
         populate_by_name = True
@@ -190,6 +208,15 @@ class TransactionIn(BaseModel):
     refund_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="refundOfTransactionId")
     nayax_meta: Optional[dict] = Field(None, alias="nayaxMeta")
 
+    #: The till basket this document was committed in: the documents of one basket that
+    #: mixes sold and returned lines share it (docs/SHIFTS_API.md §1.2a). Optional.
+    basket_id: Optional[uuid.UUID] = Field(None, alias="basketId")
+    #: The buyer's details as printed (required by regulation on a return). Free text,
+    #: trimmed and cut to the column, never a reason to refuse the document.
+    customer_name: Optional[str] = Field(None, alias="customerName")
+    customer_phone: Optional[str] = Field(None, alias="customerPhone")
+    customer_address: Optional[str] = Field(None, alias="customerAddress")
+
     #: The cloud `users` row the till says authorised this document — the person who
     #: typed a PIN for the refund or the discount. Optional, and absent is the ordinary
     #: case: a till whose own operator already holds the authority approves nothing.
@@ -221,6 +248,21 @@ class TransactionIn(BaseModel):
     @classmethod
     def _meta_as_dict(cls, value):
         return meta_as_dict(value)
+
+    @field_validator("customer_name", mode="before")
+    @classmethod
+    def _cut_name(cls, value):
+        return cut_text(value, 255)
+
+    @field_validator("customer_phone", mode="before")
+    @classmethod
+    def _cut_phone(cls, value):
+        return cut_text(value, 30)
+
+    @field_validator("customer_address", mode="before")
+    @classmethod
+    def _cut_address(cls, value):
+        return cut_text(value, 500)
 
 
 class TransactionsBatchRequest(BaseModel):
@@ -291,6 +333,7 @@ class TransactionItemOut(BaseModel):
     transaction_type: Optional[int] = Field(None, alias="transactionType")
     line_discount: Optional[Decimal] = Field(None, alias="lineDiscount")
     notes: Optional[str]
+    refund_of_item_id: Optional[uuid.UUID] = Field(None, alias="refundOfItemId")
 
     class Config:
         from_attributes = True
@@ -363,9 +406,16 @@ class TransactionOut(BaseModel):
     notes: Optional[str]
 
     refund_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="refundOfTransactionId")
+    #: The original's document number, when the cloud holds it (same tenant). Filled on
+    #: the dashboard detail read only.
+    refund_of_transaction_number: Optional[str] = Field(None, alias="refundOfTransactionNumber")
     #: A credit note that took its original's credited total past what it collected.
     over_credited: Optional[bool] = Field(False, alias="overCredited")
     nayax_meta: Optional[dict] = Field(None, alias="nayaxMeta")
+    basket_id: Optional[uuid.UUID] = Field(None, alias="basketId")
+    customer_name: Optional[str] = Field(None, alias="customerName")
+    customer_phone: Optional[str] = Field(None, alias="customerPhone")
+    customer_address: Optional[str] = Field(None, alias="customerAddress")
     #: Verified at ingest, so what comes back out is a name the server stood behind.
     approved_by_user_id: Optional[uuid.UUID] = Field(None, alias="approvedByUserId")
 
@@ -376,10 +426,33 @@ class TransactionOut(BaseModel):
     items: List[TransactionItemOut] = Field(default_factory=list)
     payments: List[TransactionPaymentOut] = Field(default_factory=list)
     issued_vouchers: List[IssuedVoucherOut] = Field(default_factory=list, alias="issuedVouchers")
+    #: The other documents of its basket (same `basketId`, same tenant), oldest first.
+    #: Filled on the dashboard detail read only; empty for a document with no basket.
+    basket_documents: List["BasketDocumentOut"] = Field(default_factory=list, alias="basketDocuments")
 
     class Config:
         from_attributes = True
         populate_by_name = True
+
+
+class BasketDocumentOut(BaseModel):
+    """One sibling document of a mixed basket, as the detail view links it."""
+
+    id: uuid.UUID
+    transaction_number: str = Field(..., alias="transactionNumber")
+    document_type: Optional[int] = Field(None, alias="documentType")
+    status: str
+    total_amount: Decimal = Field(..., alias="totalAmount")
+    payment_method: Optional[str] = Field(None, alias="paymentMethod")
+    refund_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="refundOfTransactionId")
+    created_at: datetime = Field(..., alias="createdAt")
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+
+
+TransactionOut.model_rebuild()
 
 
 class TransactionListItem(BaseModel):
@@ -391,10 +464,13 @@ class TransactionListItem(BaseModel):
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     transaction_number: str = Field(..., alias="transactionNumber")
     status: str
+    document_type: Optional[int] = Field(None, alias="documentType")
     payment_method: Optional[str] = Field(None, alias="paymentMethod")
     total_amount: Decimal = Field(..., alias="totalAmount")
     tip_amount: Decimal = Field(0, alias="tipAmount")
     cashier_id: Optional[str] = Field(None, alias="cashierId")
+    refund_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="refundOfTransactionId")
+    basket_id: Optional[uuid.UUID] = Field(None, alias="basketId")
     created_at: datetime = Field(..., alias="createdAt")
     server_received_at: datetime = Field(..., alias="serverReceivedAt")
 

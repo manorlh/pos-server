@@ -12,6 +12,7 @@ from app.models.transaction import Transaction
 from app.models.user import User
 from app.services.scoping import scope_transactions_by_user
 from app.schemas.transaction import (
+    BasketDocumentOut,
     TransactionListItem,
     TransactionListResponse,
     TransactionOut,
@@ -25,6 +26,7 @@ router = APIRouter(prefix="/transactions", tags=["transactions"])
 def list_transactions(
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
+    basket_id: Optional[uuid.UUID] = Query(None, alias="basketId"),
     from_date: Optional[date] = Query(None, alias="from"),
     to_date: Optional[date] = Query(None, alias="to"),
     page: int = Query(1, ge=1),
@@ -42,8 +44,11 @@ def list_transactions(
         query = query.filter(Transaction.machine_id == machine_id)
     if shop_id:
         query = query.filter(Transaction.shop_id == shop_id)
+    if basket_id:
+        query = query.filter(Transaction.basket_id == basket_id)
 
-    if from_date is None and to_date is None:
+    # A basket is shown whole, whenever it was committed: no default window for it.
+    if from_date is None and to_date is None and basket_id is None:
         from_date = (datetime.now(timezone.utc) - timedelta(days=30)).date()
 
     if from_date is not None:
@@ -91,4 +96,33 @@ def get_transaction(
     tx = query.first()
     if not tx:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
-    return tx
+    out = TransactionOut.model_validate(tx)
+    # The links are not foreign keys (a credit note may arrive before its original), so
+    # each is resolved here, inside the reader's tenant and scope.
+    if tx.refund_of_transaction_id is not None:
+        original = scope_transactions_by_user(
+            db.query(Transaction.transaction_number).filter(
+                Transaction.id == tx.refund_of_transaction_id,
+                Transaction.tenant_id == active_tenant_id,
+            ),
+            current_user,
+            db,
+        )
+        row = original.first() if original is not None else None
+        out.refund_of_transaction_number = row[0] if row else None
+    if tx.basket_id is not None:
+        siblings = scope_transactions_by_user(
+            db.query(Transaction).filter(
+                Transaction.basket_id == tx.basket_id,
+                Transaction.tenant_id == active_tenant_id,
+                Transaction.id != tx.id,
+            ),
+            current_user,
+            db,
+        )
+        if siblings is not None:
+            out.basket_documents = [
+                BasketDocumentOut.model_validate(s)
+                for s in siblings.order_by(Transaction.created_at.asc(), Transaction.id.asc()).all()
+            ]
+    return out

@@ -424,6 +424,16 @@ def build_d110_record(
     return record[:339]
 
 
+#: D120 field 1306 (אמצעי תשלום) for the tenders this system files by name.
+#: 3 = כרטיס אשראי; 6 = תלוש החלפה — the `exchange` leg that settles the sale half of a
+#: mixed basket against its credit half (docs/SHIFTS_API.md §1.2a). Anything else is 1.
+PAYMENT_TYPE_CODES = {"card": 3, "exchange": 6}
+
+
+def payment_type_code(method: Optional[str]) -> int:
+    return PAYMENT_TYPE_CODES.get((method or "").strip().lower(), 1)
+
+
 def build_d120_record(
     transaction: Dict[str, Any],
     line_number: int,
@@ -443,12 +453,12 @@ def build_d120_record(
     single-tender document produces exactly the record it produced before split
     tender existed, to the byte.
 
-    The payment-type code table is deliberately left as it was: card → 3, everything
-    else → 1. The מבנה אחיד field has further codes (cheque, bank transfer, vouchers)
-    and this system now stores whatever tender string the till sends, but mapping new
-    strings onto tax codes is a filing decision, not a refactor, and a wrong code is
-    not something the merchant finds out about from us. Unrecognised tenders keep
-    landing on 1 exactly as they did before.
+    The payment-type code (field 1306) is `payment_type_code`: card → 3, `exchange` →
+    6, everything else → 1. The מבנה אחיד field has further codes (cheque, bank
+    transfer, vouchers) and this system stores whatever tender string the till sends,
+    but mapping new strings onto tax codes is a filing decision, not a refactor, and a
+    wrong code is not something the merchant finds out about from us. Unrecognised
+    tenders keep landing on 1 exactly as they did before.
     """
     cart = transaction.get("cart") or {}
     payment_amount = (
@@ -457,7 +467,7 @@ def build_d120_record(
         else float(cart.get("totalAmount") or 0)
     )
     method = payment_method if payment_method is not None else transaction.get("paymentMethod")
-    payment_type = 3 if method == "card" else 1
+    payment_type = payment_type_code(method)
     doc_type_val = doc_type if doc_type is not None else transaction.get("documentType")
     doc_production_date = _parse_dt(
         transaction.get("documentProductionDate"),
@@ -618,9 +628,24 @@ def generate_tax_report(
         document_link_seq += 1
         link_id7 = format_open_format_link_id(document_link_seq)
         refund_id = transaction.get("refundOfTransactionId")
-        is_refund = bool(refund_id)
-        original_tx = tx_by_id.get(str(refund_id)) if is_refund else None
+        # A credit note is type 330 **or** linked to an original. Reading only the link
+        # filed a return with no original receipt (picked from the catalogue) as a 320 —
+        # a sale — so the period overstated turnover by twice the refund.
+        is_refund = bool(refund_id) or transaction.get("documentType") == 330
         doc_type = 330 if is_refund else 320
+        # The document's base document: the original when it is in this export, else
+        # what the caller resolved for it (`baseDocument`, which reaches outside the
+        # export window). Each line may name its own (`base` on the item).
+        original_tx = tx_by_id.get(str(refund_id)) if refund_id else None
+        document_base = (
+            {
+                "documentType": original_tx.get("documentType"),
+                "transactionNumber": original_tx.get("transactionNumber"),
+                "branchId": original_tx.get("branchId"),
+            }
+            if original_tx
+            else transaction.get("baseDocument")
+        ) if is_refund else None
 
         bkmv_lines.append(
             build_c100_record(
@@ -637,6 +662,7 @@ def generate_tax_report(
 
         line_number = 1
         for item in (transaction.get("cart") or {}).get("items") or []:
+            base = (item.get("base") or document_base) if is_refund else None
             bkmv_lines.append(
                 build_d110_record(
                     transaction,
@@ -647,12 +673,12 @@ def generate_tax_report(
                     global_tax_rate,
                     link_id7,
                     doc_type=doc_type,
-                    base_doc_type=pad_left(str(original_tx.get("documentType")), 3, "0")
-                    if original_tx
+                    base_doc_type=pad_left(str(base.get("documentType") or 320), 3, "0")
+                    if base
                     else None,
-                    base_doc_number=original_tx.get("transactionNumber") if original_tx else None,
-                    base_branch_id=pad_right(str(original_tx.get("branchId")), 7)[:7]
-                    if original_tx and original_tx.get("branchId")
+                    base_doc_number=base.get("transactionNumber") if base else None,
+                    base_branch_id=pad_right(str(base.get("branchId")), 7)[:7]
+                    if base and base.get("branchId")
                     else None,
                 )
             )
