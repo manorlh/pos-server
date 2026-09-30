@@ -894,7 +894,8 @@ Request adds, optional:
     "lastError": "timeout",            // the last attempt's error; null/absent when it succeeded
     "source": "terminal"               // where pendingCount came from: "terminal" (Agamento
                                        // getReport queryTransactions) or "local" (the till's own
-                                       // count of card sales since its last success)
+                                       // count of card sales since its last success); stored
+                                       // lower-cased; any other string is kept as sent, never a 422
   }
 }
 ```
@@ -939,6 +940,12 @@ Statuses: `waiting` (sent, not acknowledged) → `transmitting` (`received` or `
 `deferred` keeps `errorCode`) → `completed` (`completed` ack, or a `success` report naming the
 request) · `failed` (`failed` ack, or a `failed` report naming it) · `expired` (36 h after
 creation, like the close requests) · `cancelled`.
+
+**Elevation scope `transmit`.** A cashier who presses "שדר עסקאות עכשיו" on the till asks a
+manager's PIN for scope `transmit` (§ elevation, like `shift:close`). Grantable to the roles
+that may ask from the dashboard — `super_admin`, `distributor`, `company_manager`,
+`shop_manager` (and a till user who is a shop manager) — plus `shift_supervisor`, who may
+close a shift. Per action: one PIN, one transmission. Not a cashier.
 
 ### 4.5 `POST /sync/{machineId}/transmit/ack` — acknowledge a transmit instruction (till)
 
@@ -1102,6 +1109,7 @@ refused because of, a transmission.**
 - A batch of documents referencing an unknown shift while another is open is refused as a
   whole (409), since `/transactions` is a batch endpoint with per-document results.
 - New scope `shift:close` (the till may keep sending none). `day:close` stays as a legacy name.
+  New scope `transmit` (§4.4), per action.
 - Shifts also store the approver (`approved_by_user_id`/`approved_by_pos_user_id`), cash/card
   tip split and `close_accepted_at`; the heartbeat's reported open shift is stored on the machine.
 - `POST /machines/close-day` and `GET /close-day-requests/{id}` return 410 (replaced by z-runs).

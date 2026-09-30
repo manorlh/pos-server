@@ -19,6 +19,9 @@ MAX_TERMINAL_IDS = 5000
 TERMINAL_ID_LENGTH = 64
 REPORT_TEXT_LIMIT = 65536
 
+#: Where the till's pending count came from (docs/SHIFTS_API.md §4.2).
+HEARTBEAT_SOURCES = ("terminal", "local")
+
 
 def cut(value: Any, limit: int) -> Optional[str]:
     """A string cut to its column; any other scalar as its text. Never a 422."""
@@ -105,7 +108,17 @@ class HeartbeatTransmission(BaseModel):
     @field_validator("source", mode="wrap")
     @classmethod
     def _source(cls, value, handler):
-        return cut(value, 32) if not isinstance(value, (dict, list)) else None
+        """
+        `terminal` (Agamento's own count) or `local` (the till's count since its last
+        success), as the till sends them; case and spaces are forgiven. Any other string
+        is kept as sent (cut to 32) rather than refused — the beat must not fail.
+        """
+        if value is None or isinstance(value, (dict, list, bool)):
+            return None
+        text = str(value).strip()
+        if text.lower() in HEARTBEAT_SOURCES:
+            return text.lower()
+        return text[:32] or None
 
 
 class TransmissionReportIn(BaseModel):

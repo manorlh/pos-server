@@ -425,6 +425,14 @@ class TestHeartbeat:
             {"transmission": {"pendingCount": 2**31, "pendingAmount": "1e12", "lastError": "e" * 900}}
         ).transmission.pending_count is None
 
+    @pytest.mark.parametrize("raw,stored", [
+        ("terminal", "terminal"), ("local", "local"), (" Local ", "local"),
+        ("agamento", "agamento"), ("", None), (7, "7"), (["x"], None),
+    ])
+    def test_the_source_is_terminal_or_local_and_never_refused(self, raw, stored):
+        t = MachineHeartbeatBody.model_validate({"transmission": {"source": raw}}).transmission
+        assert t.source == stored
+
     def test_long_error_is_cut(self):
         t = MachineHeartbeatBody.model_validate({"transmission": {"lastError": "e" * 900}}).transmission
         assert len(t.last_error) == 500
@@ -1010,3 +1018,42 @@ def test_the_migration_is_the_single_head_on_shop_areas():
     assert len(heads) == 1
     assert "e0f1a2b3c4d5" in {r.revision for r in script.walk_revisions("base", heads[0])}
     assert script.get_revision("e0f1a2b3c4d5").down_revision == "c8d9e0f1a2b3"
+
+
+# ── The till's elevation scope ───────────────────────────────────────────────
+
+
+class TestTransmitScope:
+    """`transmit`: a cashier asks a manager's PIN for "שדר עסקאות עכשיו"."""
+
+    def test_the_wire_name_is_pinned_and_parsed(self):
+        from app.services.permissions import Scope, parse_scopes
+
+        assert Scope.TRANSMIT.value == "transmit"
+        assert parse_scopes(["transmit", "refund"]) == [Scope.TRANSMIT, Scope.REFUND]
+
+    @pytest.mark.parametrize("role", [
+        UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR, UserRole.COMPANY_MANAGER,
+        UserRole.SHOP_MANAGER, UserRole.SHIFT_SUPERVISOR,
+    ])
+    def test_the_roles_that_may_transmit_remotely_and_the_supervisor_hold_it(self, role):
+        from app.services.permissions import Scope, till_grantable_scopes
+
+        assert Scope.TRANSMIT in till_grantable_scopes(role)
+
+    def test_a_cashier_does_not(self):
+        from app.services.permissions import Scope, till_grantable_scopes
+
+        assert Scope.TRANSMIT not in till_grantable_scopes(UserRole.CASHIER)
+
+    def test_a_till_shop_manager_holds_it_a_till_cashier_does_not(self):
+        from app.models.pos_user import PosUserRole
+        from app.services.permissions import Scope, pos_user_till_scopes
+
+        assert Scope.TRANSMIT in pos_user_till_scopes(PosUserRole.SHOP_MANAGER)
+        assert Scope.TRANSMIT not in pos_user_till_scopes(PosUserRole.CASHIER)
+
+    def test_one_pin_per_transmission(self):
+        from app.services.permissions import Scope, requires_per_action_reauth
+
+        assert requires_per_action_reauth(Scope.TRANSMIT) is True

@@ -223,7 +223,7 @@ class TestTillRoleMap:
     def test_a_shop_manager_holds_every_scope(self):
         assert pos_user_till_scopes(PosUserRole.SHOP_MANAGER) == {
             Scope.REFUND, Scope.DISCOUNT, Scope.DAY_CLOSE, Scope.SHIFT_CLOSE,
-            Scope.CATALOG_WRITE,
+            Scope.CATALOG_WRITE, Scope.TRANSMIT,
         }
 
     def test_a_till_shop_manager_matches_a_cloud_shop_manager(self):
