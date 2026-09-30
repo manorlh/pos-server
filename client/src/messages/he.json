@@ -626,6 +626,20 @@
       "skewSevere": "סחיפת שעון חמורה",
       "lastReport": "דיווח בריאות אחרון {ago} ({at})",
       "neverReported": "טרם התקבל דיווח בריאות",
+      "printer": "מדפסת",
+      "printerStatus": {
+        "ok": "תקינה",
+        "noPaper": "נגמר הנייר",
+        "overheated": "התחממות",
+        "error": "תקלה",
+        "blackMark": "תקלת סימון שחור",
+        "unavailable": "לא זמינה במכשיר",
+        "unknown": "מצב לא ידוע"
+      },
+      "printerWithCode": "{label} (קוד {code})",
+      "printerAsOf": "נכון ל־{when}",
+      "printerLastOk": "הדפסה תקינה אחרונה: {at}",
+      "printerNeverOk": "טרם נרשמה הדפסה תקינה",
       "noData": "טרם התקבל דיווח בריאות מהמכשיר — אין נתוני סוללה, שעון או מספר סידורי. אין כאן תקלה, רק היעדר נתונים.",
       "driftBannerTitle": "שעונים חורגים: {severe} חמורים, {notable} מורגשים",
       "driftBannerMore": "ועוד {count} מכשירים",
@@ -1457,7 +1471,8 @@
       "low_battery": "סוללה חלשה",
       "realtime_down": "ערוץ פקודות מנותק",
       "transmission_overdue": "עסקאות אשראי לא שודרו מעל 24 שעות",
-      "transmission_critical": "עסקאות אשראי לא שודרו מעל 4 ימים"
+      "transmission_critical": "עסקאות אשראי לא שודרו מעל 4 ימים",
+      "printer_problem": "תקלת מדפסת"
     },
     "pendingDocuments": "{count} עסקאות לא נשלחו",
     "pendingAsOf": "נכון ל־{when}",

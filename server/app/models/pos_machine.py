@@ -34,6 +34,10 @@ class PairingStatus(str, enum.Enum):
 # offline on the dashboard for a reason that has nothing to do with the machine.
 BATTERY_STATUSES = ("charging", "discharging", "full", "not_charging", "unknown")
 
+# Values the till may report for `printer_status` (the heartbeat's `printer` block). The
+# same rule as the battery: an unexpected string is stored as "unknown", never a 422.
+PRINTER_STATUSES = ("ok", "no_paper", "overheated", "error", "unavailable", "unknown")
+
 
 class POSMachine(Base):
     __tablename__ = "pos_machines"
@@ -173,6 +177,19 @@ class POSMachine(Base):
     #: from before it are never "untransmitted": the feature did not exist when they were
     #: sold. Cleared when a replacement device adopts the till, which starts it again.
     transmission_tracking_started_at = Column(DateTime(timezone=True), nullable=True)
+
+    # ── The built-in printer, as the till last reported it ────────────────────
+    # A snapshot from the heartbeat's `printer` block, replaced whole whenever a beat
+    # carries one. `printer_status_at` is when the till observed it (its clock);
+    # `printer_reported_at` is when we received it (ours) — a till offline since then
+    # leaves a reading the dashboard must show "as of", not as live.
+    printer_status = Column(String(16), nullable=True)
+    #: The vendor's code (115 no paper, 116 overheated, 120 error, 132/133 black mark).
+    printer_error_code = Column(Integer, nullable=True)
+    printer_message = Column(String(200), nullable=True)
+    printer_status_at = Column(DateTime(timezone=True), nullable=True)
+    printer_last_ok_at = Column(DateTime(timezone=True), nullable=True)
+    printer_reported_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

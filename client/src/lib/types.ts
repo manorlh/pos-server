@@ -405,6 +405,7 @@ export interface PosMachine {
     | 'realtime_down'
     | 'transmission_overdue'
     | 'transmission_critical'
+    | 'printer_problem'
   >;
   /** Undelivered sales as last reported. Null means never reported, which is not zero. */
   pendingDocuments?: number | null;
@@ -444,9 +445,22 @@ export interface PosMachine {
   transmissionTrackingStartedAt?: string | null;
   transmitPending?: boolean;
   pendingTransmitRequestId?: string | null;
+  // ── The built-in printer, from the heartbeat (docs/SHIFTS_API.md §1.6a) ────
+  /** Null = the till never reported its printer (older build) — not "fine". */
+  printerStatus?: PrinterStatus | null;
+  /** The vendor's code: 115 no paper, 116 overheated, 120 error, 132/133 black mark. */
+  printerErrorCode?: number | null;
+  printerMessage?: string | null;
+  /** When the till observed it (the till's clock) — "as of", never live. */
+  printerStatusAt?: string | null;
+  printerLastOkAt?: string | null;
+  /** When the cloud received it. */
+  printerReportedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
+
+export type PrinterStatus = 'ok' | 'no_paper' | 'overheated' | 'error' | 'unavailable' | 'unknown';
 
 export type TransmissionTrigger = 'shift_close' | 'daily' | 'manual' | 'remote';
 export type TransmissionStatus = 'success' | 'failed' | 'unknown';

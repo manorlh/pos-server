@@ -24,7 +24,7 @@ shift says.
 
 Secondary flags never change the colour. They are for things worth showing next to a
 terminal that is otherwise fine: a clock that has drifted, a catalog it has not pulled,
-a shift it left open, closed shifts no Z has taken yet. Folding those into the light would make the light mean nothing.
+a shift it left open, closed shifts no Z has taken yet, a printer out of paper. Folding those into the light would make the light mean nothing.
 """
 from __future__ import annotations
 
@@ -69,6 +69,9 @@ class MachineFlag:
     TRANSMISSION_OVERDUE = "transmission_overdue"
     #: …for more than 4 days: the card companies refuse them after 7. Comes with overdue.
     TRANSMISSION_CRITICAL = "transmission_critical"
+    #: The till's printer reports no paper, overheating or an error (docs/SHIFTS_API.md
+    #: §1.6a). The till still sells, so it is a flag, not a colour.
+    PRINTER_PROBLEM = "printer_problem"
 
 
 #: Beyond this, a document's timestamps land in the wrong shift or date often enough to
@@ -82,6 +85,11 @@ LOW_BATTERY_PERCENT = 15
 #: transaction transmitted more than 7 days after it was taken; critical leaves three.
 TRANSMISSION_OVERDUE_AFTER = timedelta(hours=24)
 TRANSMISSION_CRITICAL_AFTER = timedelta(days=4)
+
+#: Printer statuses that need someone at the counter. `unavailable` (no printer on this
+#: device) and `unknown` are not problems: flagging them would light up every till
+#: without a printer.
+PRINTER_PROBLEM_STATUSES = ("no_paper", "overheated", "error")
 
 
 @dataclass
@@ -114,6 +122,8 @@ class StatusInput:
     transmission_last_success_at: Optional[datetime] = None
     #: When the cloud first heard about transmissions from this till.
     transmission_tracking_started_at: Optional[datetime] = None
+    #: The printer as the till last reported it; None when it never did.
+    printer_status: Optional[str] = None
 
 
 @dataclass
@@ -260,6 +270,8 @@ def _flags(data: StatusInput, *, now: Optional[datetime]) -> List[str]:
         flags.append(MachineFlag.REALTIME_DOWN)
 
     flags.extend(transmission_flags(data, now=now))
+    if data.printer_status in PRINTER_PROBLEM_STATUSES:
+        flags.append(MachineFlag.PRINTER_PROBLEM)
     return flags
 
 

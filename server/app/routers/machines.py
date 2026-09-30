@@ -43,6 +43,7 @@ from app.services.realtime_info import (
     machine_realtime_connection_info,
     machine_realtime_refresh_info,
 )
+from app.services.machine_health import apply_printer_block
 from app.services.machine_status import StatusInput, resolve_status
 from app.services.administrative_close import close_shift_administratively
 from app.services.pairing import create_pairing_code
@@ -227,6 +228,13 @@ def _enrich_machine_status(
     result["assumedTransmissionCount"] = machine.transmission_assumed_count
     result["transmitPending"] = machine.id in pending_transmit
     result["pendingTransmitRequestId"] = pending_transmit.get(machine.id)
+    # The printer (docs/SHIFTS_API.md §1.6a), as the till last reported it.
+    result["printerStatus"] = machine.printer_status
+    result["printerErrorCode"] = machine.printer_error_code
+    result["printerMessage"] = machine.printer_message
+    result["printerStatusAt"] = machine.printer_status_at
+    result["printerLastOkAt"] = machine.printer_last_ok_at
+    result["printerReportedAt"] = machine.printer_reported_at
 
     # Resolved server-side so the dashboard, the close-day gate and anything added later
     # all read one definition. The raw fields above stay, because a detail panel still
@@ -256,6 +264,7 @@ def _enrich_machine_status(
             transmission_oldest_pending_at=tx_state.oldest_pending_at,
             transmission_last_success_at=tx_state.last_transmission_at,
             transmission_tracking_started_at=tx_state.tracking_started_at,
+            printer_status=machine.printer_status,
         )
     )
     result["status"] = resolved.status
@@ -474,6 +483,9 @@ def post_my_heartbeat(
     # whole when the beat carries one. And the pull half of "transmit now" (§4.4).
     if body is not None and body.transmission is not None:
         transmissions.apply_heartbeat_block(machine, body.transmission)
+    # The till's printer (§1.6a), the same kind of snapshot.
+    if body is not None and body.printer is not None:
+        apply_printer_block(machine, body.printer)
     pending_transmit = transmit_requests.take_pending(db, machine)
     through = z_reported_through_sequence(db, machine.id)
     recent = recent_shift_zs(db, machine.id)
