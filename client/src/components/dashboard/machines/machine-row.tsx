@@ -37,17 +37,22 @@ import {
   ListChecks,
   MoreHorizontal,
   Power,
+  RadioTower,
   Send,
   Store,
   Trash2,
   Wifi,
   WifiOff,
 } from 'lucide-react';
-import { formatHashNumber } from '@/lib/format';
+import { formatCurrency, formatHashNumber } from '@/lib/format';
 import type { PosMachine } from '@/lib/types';
 import { registerNumberOf } from '@/lib/registerNumber';
 import { zWizardHref } from '@/lib/zAccess';
 import { canCloseShiftRemotely } from '@/components/dashboard/machines/remote-shift-close';
+import {
+  canTransmitRemotely,
+  TransmissionSummary,
+} from '@/components/dashboard/machines/card-transmission';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -94,6 +99,8 @@ export interface MachineRowActions {
   onCloseShift: (m: PosMachine) => void;
   /** Move the till into an area of its shop, or out of one. */
   onEditArea?: (m: PosMachine) => void;
+  /** Ask the till to transmit its card batch to Shva now. */
+  onTransmit?: (m: PosMachine) => void;
 }
 
 export interface MachineRowProps {
@@ -252,6 +259,12 @@ function MachineRowMenu({
             <Power aria-hidden /> {t('closeShiftRemotely')}
           </DropdownMenuItem>
         ) : null}
+        {/* Same role set as a remote shift close (docs/SHIFTS_API.md §4.4). */}
+        {canProduceZ && actions.onTransmit && canTransmitRemotely(m) ? (
+          <DropdownMenuItem onClick={() => actions.onTransmit?.(m)}>
+            <RadioTower aria-hidden /> {t('transmitNow')}
+          </DropdownMenuItem>
+        ) : null}
         {canProduceZ ? (
           <DropdownMenuItem
             onClick={() => router.push(zWizardHref(m.shopId, m.id))}
@@ -363,6 +376,11 @@ function MachineRowDetails({
         </div>
       </div>
 
+      <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+        <div className="text-muted-foreground">{t('transmissionColumn')}</div>
+        <TransmissionSummary m={m} />
+      </div>
+
       {m.lastCatalogChangeAt ? (
         <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
           <div className="flex items-center justify-between gap-2">
@@ -399,6 +417,7 @@ export function MachineRow({
 }: MachineRowProps) {
   const t = useTranslations('machines');
   const tStatus = useTranslations('machineStatus');
+  const tTx = useTranslations('transmission');
   const detailsId = `machine-details-${m.id}`;
   const hasPending = !!m.pendingAsOf && (m.pendingDocuments ?? 0) > 0;
   const label = useMachineLabel(m);
@@ -448,6 +467,15 @@ export function MachineRow({
 
         <div className="min-w-0 max-md:order-7">
           <MachineStatusFlags m={m} />
+          {/* The count itself, when card sales wait: the flags say only how late. */}
+          {(m.pendingTransmissionCount ?? 0) > 0 ? (
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {tTx('pendingSummary', {
+                count: m.pendingTransmissionCount ?? 0,
+                amount: formatCurrency(m.pendingTransmissionAmount),
+              })}
+            </p>
+          ) : null}
         </div>
 
         <div className="max-md:hidden">

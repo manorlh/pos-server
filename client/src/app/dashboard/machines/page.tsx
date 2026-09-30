@@ -31,6 +31,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { MachineStatusDot, machineStatus } from '@/components/dashboard/machine-status';
 import { MachinesTable } from '@/components/dashboard/machines/machines-table';
 import { RemoteShiftCloseDialog } from '@/components/dashboard/machines/remote-shift-close';
+import { TransmitNowDialog } from '@/components/dashboard/machines/card-transmission';
 import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
 import { MachineAreaDialog } from '@/components/dashboard/areas/machine-area-dialog';
 import { AREA_NONE } from '@/lib/api';
@@ -71,6 +72,7 @@ export default function MachinesPage() {
 
   const [removeOpen, setRemoveOpen] = useState(false);
   const [closeShiftTarget, setCloseShiftTarget] = useState<PosMachine | null>(null);
+  const [transmitTarget, setTransmitTarget] = useState<PosMachine | null>(null);
   const [fieldInstallOpen, setFieldInstallOpen] = useState(false);
   const [fieldSession, setFieldSession] = useState<PairingSessionCreateResponse | null>(null);
   const [fieldPairedCount, setFieldPairedCount] = useState(0);
@@ -641,6 +643,7 @@ export default function MachinesPage() {
               onPush: openPush,
               onRemove: openRemove,
               onCloseShift: setCloseShiftTarget,
+              onTransmit: setTransmitTarget,
               onEditArea: setAreaTarget,
             }}
             isDeviceOnline={isDeviceOnline}
@@ -1075,6 +1078,15 @@ export default function MachinesPage() {
         open={!!closeShiftTarget}
         onOpenChange={(next) => {
           if (!next) setCloseShiftTarget(null);
+        }}
+      />
+
+      <TransmitNowDialog
+        key={`transmit-${transmitTarget?.id ?? 'none'}`}
+        machine={transmitTarget}
+        open={!!transmitTarget}
+        onOpenChange={(next) => {
+          if (!next) setTransmitTarget(null);
         }}
       />
     </div>
