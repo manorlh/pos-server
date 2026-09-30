@@ -59,6 +59,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -226,7 +227,10 @@ function MachineRowMenu({
         }
       />
       <DropdownMenuContent className="w-56" align="end">
-        <DropdownMenuLabel>{t('rowActions')}</DropdownMenuLabel>
+        {/* A label outside a group throws in Base UI, and takes the page down with it. */}
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>{t('rowActions')}</DropdownMenuLabel>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
         {m.pairingStatus === 'paired' && canAssignMachine ? (
           <DropdownMenuItem onClick={() => actions.onAssign(m)}>
@@ -236,9 +240,11 @@ function MachineRowMenu({
         {/* Says why the obvious next step is missing, instead of leaving a gap the
             operator reads as a broken menu. */}
         {m.pairingStatus === 'paired' && !canAssignMachine ? (
-          <DropdownMenuLabel className="text-amber-700 whitespace-normal dark:text-amber-500">
-            {t('assignNoPermission')}
-          </DropdownMenuLabel>
+          <DropdownMenuGroup>
+            <DropdownMenuLabel className="text-amber-700 whitespace-normal dark:text-amber-500">
+              {t('assignNoPermission')}
+            </DropdownMenuLabel>
+          </DropdownMenuGroup>
         ) : null}
         {m.pairingStatus === 'assigned' && canEditAssignedShop ? (
           <DropdownMenuItem onClick={() => actions.onEditShop(m)}>

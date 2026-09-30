@@ -22,6 +22,7 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -92,7 +93,9 @@ export function EntityMultiSelect({
           }
         />
         <DropdownMenuContent className="max-h-80 w-64 overflow-y-auto" align="start">
-          <DropdownMenuLabel>{label}</DropdownMenuLabel>
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>{label}</DropdownMenuLabel>
+          </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onClick={(event) => {
