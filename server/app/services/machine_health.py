@@ -11,9 +11,14 @@ malformed battery string would take a healthy terminal off the dashboard.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, Optional
 
 from app.models.pos_machine import BATTERY_STATUSES
+
+if TYPE_CHECKING:
+    from app.models.pos_machine import POSMachine
+    from app.schemas.printer import HeartbeatPrinter
 
 SERIAL_MAX_LEN = 64
 
@@ -86,3 +91,27 @@ def normalize_clock_skew_ms(value: Any) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _utc(moment: Optional[datetime]) -> Optional[datetime]:
+    if moment is None:
+        return None
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+
+
+def apply_printer_block(
+    machine: "POSMachine", block: Optional["HeartbeatPrinter"], *, now: Optional[datetime] = None
+) -> None:
+    """
+    The heartbeat's `printer` block (docs/SHIFTS_API.md §1.6a): a snapshot, replacing the
+    stored reading field by field. No block, no change — an older till sends none, and
+    that must not read as "the printer is fine".
+    """
+    if block is None:
+        return
+    machine.printer_status = block.status
+    machine.printer_error_code = block.code
+    machine.printer_message = block.message
+    machine.printer_status_at = _utc(block.at)
+    machine.printer_last_ok_at = _utc(block.last_print_ok_at)
+    machine.printer_reported_at = now or datetime.now(timezone.utc)

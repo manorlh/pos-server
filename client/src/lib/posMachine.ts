@@ -1,6 +1,7 @@
 import type { PosMachine } from '@/lib/types';
 
 const BATTERY_STATUSES = ['charging', 'discharging', 'full', 'not_charging', 'unknown'] as const;
+const PRINTER_STATUSES = ['ok', 'no_paper', 'overheated', 'error', 'unavailable', 'unknown'] as const;
 
 /**
  * Number-or-null, never number-or-zero.
@@ -27,6 +28,15 @@ function batteryStatus(value: unknown): PosMachine['batteryStatus'] {
   if (!s) return null;
   return (BATTERY_STATUSES as readonly string[]).includes(s)
     ? (s as PosMachine['batteryStatus'])
+    : 'unknown';
+}
+
+/** Null stays null (never reported); a value the dashboard does not know is 'unknown'. */
+function printerStatus(value: unknown): PosMachine['printerStatus'] {
+  const s = nullableString(value)?.toLowerCase();
+  if (!s) return null;
+  return (PRINTER_STATUSES as readonly string[]).includes(s)
+    ? (s as PosMachine['printerStatus'])
     : 'unknown';
 }
 
@@ -110,6 +120,12 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     transmissionTrackingStartedAt: nullableString(raw.transmissionTrackingStartedAt),
     transmitPending: Boolean(raw.transmitPending ?? false),
     pendingTransmitRequestId: nullableString(raw.pendingTransmitRequestId),
+    printerStatus: printerStatus(raw.printerStatus),
+    printerErrorCode: nullableNumber(raw.printerErrorCode),
+    printerMessage: nullableString(raw.printerMessage),
+    printerStatusAt: nullableString(raw.printerStatusAt),
+    printerLastOkAt: nullableString(raw.printerLastOkAt),
+    printerReportedAt: nullableString(raw.printerReportedAt),
     createdAt: String(raw.createdAt ?? raw.created_at ?? ''),
     updatedAt: String(raw.updatedAt ?? raw.updated_at ?? ''),
   };

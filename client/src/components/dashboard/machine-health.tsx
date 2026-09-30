@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Device health for a POS terminal: serial, battery, clock skew, last report.
+ * Device health for a POS terminal: serial, battery, clock skew, printer, last report.
  *
  * Two of these fields lie easily, so the rules are enforced here rather than at
  * each call site:
@@ -13,6 +13,10 @@
  *   server. It can legitimately be enormous (a terminal whose clock was never
  *   set), so it is shown as a human duration with an explicit direction, and
  *   graded against the same thresholds the till itself uses.
+ *
+ * * **`printerStatus === null` means the till never reported its printer** (an older
+ *   build), which is not "the printer is fine": the row is left out rather than
+ *   shown as OK. A reading is the till's last one, so it always says "as of".
  *
  * A terminal that has never reported health has nulls throughout; that renders as
  * "no data yet", never as a fault.
@@ -30,8 +34,9 @@ import {
   BatteryWarning,
   Clock,
   Hash,
+  Printer,
 } from 'lucide-react';
-import type { PosMachine } from '@/lib/types';
+import type { PosMachine, PrinterStatus } from '@/lib/types';
 import { formatApproxDuration, formatDateTime } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
 
@@ -55,7 +60,8 @@ export function hasNoHealthData(m: PosMachine): boolean {
     !m.lastHealthReportAt &&
     (m.batteryPercent === null || m.batteryPercent === undefined) &&
     (m.clockSkewMs === null || m.clockSkewMs === undefined) &&
-    !m.serialNumber
+    !m.serialNumber &&
+    !m.printerStatus
   );
 }
 
@@ -168,6 +174,63 @@ function BatteryRow({ machine: m }: { machine: PosMachine }) {
   );
 }
 
+/** The statuses that raise the server's `printer_problem` flag. */
+const PRINTER_PROBLEMS: readonly PrinterStatus[] = ['no_paper', 'overheated', 'error'];
+
+const PRINTER_STATUS_KEY = {
+  ok: 'printerStatus.ok',
+  no_paper: 'printerStatus.noPaper',
+  overheated: 'printerStatus.overheated',
+  error: 'printerStatus.error',
+  unavailable: 'printerStatus.unavailable',
+  unknown: 'printerStatus.unknown',
+} as const;
+
+/** Black-mark sensor codes: an error, but one worth naming — it is the paper type. */
+const BLACK_MARK_CODES = [132, 133];
+
+function PrinterRow({ machine: m }: { machine: PosMachine }) {
+  const t = useTranslations('machines.health');
+  const status = m.printerStatus;
+  if (!status) return null;
+
+  const problem = PRINTER_PROBLEMS.includes(status);
+  const code = m.printerErrorCode;
+  const label =
+    status === 'error' && code != null && BLACK_MARK_CODES.includes(code)
+      ? t('printerStatus.blackMark')
+      : t(PRINTER_STATUS_KEY[status]);
+  const text = problem && code != null ? t('printerWithCode', { label, code }) : label;
+  const asOf = m.printerStatusAt ?? m.printerReportedAt;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-muted-foreground flex items-center gap-1.5">
+          <Printer className={`h-3.5 w-3.5 ${problem ? 'text-destructive' : ''}`} aria-hidden />
+          {t('printer')}
+        </span>
+        <Badge
+          variant={problem ? 'destructive' : status === 'ok' ? 'secondary' : 'outline'}
+          title={m.printerMessage ?? undefined}
+        >
+          {text}
+        </Badge>
+      </div>
+      {problem && m.printerMessage ? (
+        <p className="text-muted-foreground text-xs" dir="auto">{m.printerMessage}</p>
+      ) : null}
+      <p className="text-muted-foreground text-xs">
+        {asOf ? t('printerAsOf', { when: formatDateTime(asOf) }) : null}
+        {asOf ? ' · ' : null}
+        {m.printerLastOkAt
+          ? t('printerLastOk', { at: formatDateTime(m.printerLastOkAt) })
+          : t('printerNeverOk')}
+      </p>
+    </div>
+  );
+}
+
 /** Compact drift chip for a card header / list row. Renders nothing when fine. */
 export function ClockSkewChip({ machine: m }: { machine: PosMachine }) {
   const t = useTranslations('machines.health');
@@ -216,6 +279,8 @@ export function MachineHealthPanel({ machine: m }: { machine: PosMachine }) {
       ) : null}
 
       <BatteryRow machine={m} />
+
+      <PrinterRow machine={m} />
 
       <div className="flex items-start justify-between gap-2">
         <span className="text-muted-foreground flex items-center gap-1.5">

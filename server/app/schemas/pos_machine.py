@@ -3,6 +3,7 @@ from pydantic import AliasChoices, BaseModel, Field, ConfigDict, PrivateAttr, fi
 from typing import Optional, Dict, Any, List
 import uuid
 from app.models.pos_machine import PairingStatus as ModelPairingStatus
+from app.schemas.printer import HeartbeatPrinter
 from app.schemas.transmission import HeartbeatTransmission
 
 
@@ -92,6 +93,9 @@ class MachineHeartbeatBody(BaseModel):
     #: The till's card transmission state (docs/SHIFTS_API.md §4.2). A block that is not
     #: an object is dropped whole; a field inside it that cannot be read is None.
     transmission: Optional[HeartbeatTransmission] = None
+    #: The till's printer as it last observed it (docs/SHIFTS_API.md §1.6a). Dropped
+    #: whole when not an object, like `transmission`; an unknown status is "unknown".
+    printer: Optional[HeartbeatPrinter] = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -218,6 +222,15 @@ class POSMachineResponse(POSMachineBase):
     transmission_tracking_started_at: Optional[datetime] = Field(None, alias="transmissionTrackingStartedAt")
     transmit_pending: Optional[bool] = Field(None, alias="transmitPending")
     pending_transmit_request_id: Optional[uuid.UUID] = Field(None, alias="pendingTransmitRequestId")
+    # ── The printer (docs/SHIFTS_API.md §1.6a) — all null for a till that never reported
+    printer_status: Optional[str] = Field(None, alias="printerStatus")
+    printer_error_code: Optional[int] = Field(None, alias="printerErrorCode")
+    printer_message: Optional[str] = Field(None, alias="printerMessage")
+    #: When the till observed it (the till's clock).
+    printer_status_at: Optional[datetime] = Field(None, alias="printerStatusAt")
+    printer_last_ok_at: Optional[datetime] = Field(None, alias="printerLastOkAt")
+    #: When the cloud received it; null = the till never sent a printer block.
+    printer_reported_at: Optional[datetime] = Field(None, alias="printerReportedAt")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 

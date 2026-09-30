@@ -518,12 +518,47 @@ Response
 X reprints); the close response only carries it when the shift is already in a Z.
 Card transmission adds the optional `transmission` block to the request and
 `pendingTransmit` to the response — §4.2.
+The till's printer adds the optional `printer` block to the request — §1.6a.
 `pendingCloseDay` is gone. The till purges synced documents of shifts with
 `sequenceNumber <= zReportedThroughSequence`. `pendingCloseShift` is repeated on every beat
 until the till's close is accepted (or the run ends), so the till must dedupe by `requestId`.
 It comes from a Z run or from a standalone close request (§2.14) — one per beat, a Z
 run's first. When both are pending they name the same shift, and the one accepted close
 completes both.
+
+### 1.6a Heartbeat — the till's printer (`printer` block)
+
+Request adds, optional (a till predating it sends none, and is accepted as before):
+```json
+{
+  "printer": {
+    "status": "no_paper",               // ok | no_paper | overheated | error | unavailable | unknown
+    "code": 115,                        // the vendor's integer code, or null
+    "message": "…",                     // or null; cut to 200 characters, never refused
+    "at": "2026-10-01T10:00:00Z",       // when the till observed this state (the till's clock)
+    "lastPrintOkAt": "2026-10-01T09:58:00Z"  // the last print that went through, or null
+  }
+}
+```
+Vendor codes: 115 no paper, 116 overheated, 120 generic printer error, 132/133 black-mark
+errors. `unavailable` = this device has no usable printer.
+
+The block is a **snapshot**, like `transmission` (§4.2): when present it replaces the stored
+reading field by field (an absent `code`/`message` is stored as null), and the cloud stamps
+its own receive time. A beat without the block (or with `"printer": null`) leaves the stored
+reading as it was. Never a 422: a `status` the cloud does not know (or not a string, or
+absent) is stored as `"unknown"` — case, spaces and `-` are forgiven (`" No-Paper "` is
+`no_paper`); a block that is not an object is ignored whole; a `code` that is not an integer
+(or beyond 2³¹−1), a `message` that is an object/array, or an unreadable date is stored as null.
+
+Stored on `pos_machines`: `printer_status`, `printer_error_code`, `printer_message`,
+`printer_status_at` (the till's `at`), `printer_last_ok_at`, `printer_reported_at` (server
+receive time). Shown on `GET /machines` / `GET /machines/{id}` (§2.10) as `printerStatus`,
+`printerErrorCode`, `printerMessage`, `printerStatusAt`, `printerLastOkAt` and
+`printerReportedAt` — all null for a till that never sent the block, which is not "ok".
+Status flag `printer_problem`: `printerStatus` is `no_paper`, `overheated` or `error`
+(`unavailable` and `unknown` are not problems). Like every flag it never changes the colour
+of the light: a till out of paper still sells.
 
 ### 1.7 Ably event `close-shift`
 
@@ -690,6 +725,7 @@ not a shift the cloud holds closed, not another till's.
 `statusFlags`: `shift_open_past_its_date` (replaces `day_open_past_its_date`),
 `closed_shifts_awaiting_z` (closed un-Z'd shifts with a businessDate before today); "today" is
 the tenant's timezone.
+Printer fields and the `printer_problem` flag: §1.6a.
 
 ### 2.10b A till keeps its shop while it has shifts to report
 `PUT /machines/{id}` changing `shopId` (to another shop or to null) or setting `isActive: false`,
