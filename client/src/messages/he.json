@@ -1848,6 +1848,7 @@
     "lastTransmission": "שידור מוצלח אחרון {ago}",
     "neverTransmitted": "טרם בוצע שידור מוצלח",
     "lastError": "השידור האחרון נכשל: {error}",
+    "assumed": "לא אומת מול המסוף: {count}",
     "reportedAsOf": "נכון לדיווח הקופה {when}",
     "requestPending": "נשלחה לקופה בקשת שידור",
     "historyTitle": "היסטוריית שידורים",

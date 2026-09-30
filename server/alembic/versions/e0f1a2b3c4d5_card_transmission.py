@@ -36,6 +36,7 @@ depends_on = None
 _MACHINE_COLUMNS = (
     ("transmission_pending_count", sa.Integer()),
     ("transmission_pending_amount", sa.Numeric(12, 2)),
+    ("transmission_assumed_count", sa.Integer()),
     ("transmission_oldest_pending_at", sa.DateTime(timezone=True)),
     ("transmission_last_success_at", sa.DateTime(timezone=True)),
     ("transmission_last_attempt_at", sa.DateTime(timezone=True)),

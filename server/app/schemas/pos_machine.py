@@ -211,6 +211,8 @@ class POSMachineResponse(POSMachineBase):
     last_transmission_error: Optional[str] = Field(None, alias="lastTransmissionError")
     transmission_reported_at: Optional[datetime] = Field(None, alias="transmissionReportedAt")
     transmission_source: Optional[str] = Field(None, alias="transmissionSource")
+    #: Card sales the till assumes a successful batch carried; not verified, not a flag.
+    assumed_transmission_count: Optional[int] = Field(None, alias="assumedTransmissionCount")
     untransmitted_card_legs: Optional[int] = Field(None, alias="untransmittedCardLegs")
     untransmitted_card_amount: Optional[str] = Field(None, alias="untransmittedCardAmount")
     transmission_tracking_started_at: Optional[datetime] = Field(None, alias="transmissionTrackingStartedAt")

@@ -136,6 +136,13 @@ export function TransmissionSummary({ m, compact = false }: { m: PosMachine; com
           ? t('lastTransmission', { ago: ago(m.lastTransmissionAt) })
           : t('neverTransmitted')}
       </p>
+      {/* The till counts these as transmitted, but the terminal never named them: said
+          plainly, in grey — information, not an alarm. */}
+      {(m.assumedTransmissionCount ?? 0) > 0 ? (
+        <p className="text-muted-foreground">
+          {t('assumed', { count: m.assumedTransmissionCount ?? 0 })}
+        </p>
+      ) : null}
       {m.lastTransmissionError ? (
         <p className="text-destructive">{t('lastError', { error: m.lastTransmissionError })}</p>
       ) : null}

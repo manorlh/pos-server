@@ -159,6 +159,10 @@ class POSMachine(Base):
     # card legs went out (`transaction_payments.transmission_id`) sit beside it.
     transmission_pending_count = Column(Integer, nullable=True)
     transmission_pending_amount = Column(Numeric(12, 2), nullable=True)
+    #: Card sales in a successful batch that the terminal did not name by uid (an id
+    #: format the till could not match), which the till *assumes* went out. Information
+    #: only: not verified, never a flag.
+    transmission_assumed_count = Column(Integer, nullable=True)
     transmission_oldest_pending_at = Column(DateTime(timezone=True), nullable=True)
     transmission_last_success_at = Column(DateTime(timezone=True), nullable=True)
     transmission_last_attempt_at = Column(DateTime(timezone=True), nullable=True)

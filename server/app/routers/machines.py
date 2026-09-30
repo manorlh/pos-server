@@ -223,6 +223,8 @@ def _enrich_machine_status(
     result.update(transmissions.machine_fields(tx_state))
     result["transmissionReportedAt"] = machine.transmission_reported_at
     result["transmissionSource"] = machine.transmission_source
+    # Informational only (§4.2): the till assumes these went, the terminal never said.
+    result["assumedTransmissionCount"] = machine.transmission_assumed_count
     result["transmitPending"] = machine.id in pending_transmit
     result["pendingTransmitRequestId"] = pending_transmit.get(machine.id)
 

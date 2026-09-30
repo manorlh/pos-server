@@ -104,6 +104,7 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     lastTransmissionError: nullableString(raw.lastTransmissionError),
     transmissionReportedAt: nullableString(raw.transmissionReportedAt),
     transmissionSource: nullableString(raw.transmissionSource),
+    assumedTransmissionCount: nullableNumber(raw.assumedTransmissionCount),
     untransmittedCardLegs: nullableNumber(raw.untransmittedCardLegs),
     untransmittedCardAmount: nullableString(raw.untransmittedCardAmount),
     transmissionTrackingStartedAt: nullableString(raw.transmissionTrackingStartedAt),

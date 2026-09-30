@@ -430,6 +430,8 @@ export interface PosMachine {
   /** When the till last reported its transmission state — "as of", never live. */
   transmissionReportedAt?: string | null;
   transmissionSource?: string | null;
+  /** Card sales the till assumes a successful batch carried (not named by uid). Not verified, not a flag. */
+  assumedTransmissionCount?: number | null;
   /** Our records: card sales after the tracking start in no successful batch. */
   untransmittedCardLegs?: number | null;
   untransmittedCardAmount?: string | null;

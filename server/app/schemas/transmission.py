@@ -79,13 +79,16 @@ class HeartbeatTransmission(BaseModel):
 
     pending_count: Optional[int] = Field(None, alias="pendingCount")
     pending_amount: Optional[Decimal] = Field(None, alias="pendingAmount")
+    #: Card sales in a successful batch the terminal did not name by uid — assumed, not
+    #: verified.
+    assumed_count: Optional[int] = Field(None, alias="assumedCount")
     oldest_pending_at: Optional[datetime] = Field(None, alias="oldestPendingAt")
     last_success_at: Optional[datetime] = Field(None, alias="lastSuccessAt")
     last_attempt_at: Optional[datetime] = Field(None, alias="lastAttemptAt")
     last_error: Optional[str] = Field(None, alias="lastError")
     source: Optional[str] = None
 
-    @field_validator("pending_count", mode="wrap")
+    @field_validator("pending_count", "assumed_count", mode="wrap")
     @classmethod
     def _count(cls, value, handler):
         return count_or_none(value)

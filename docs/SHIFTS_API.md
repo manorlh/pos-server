@@ -888,6 +888,10 @@ Request adds, optional:
   "transmission": {
     "pendingCount": 4,                 // card transactions stored on the terminal, not yet transmitted
     "pendingAmount": "310.00",         // their sum, ₪
+    "assumedCount": 2,                 // card sales the till counts as transmitted by a
+                                       // successful batch although the terminal did not name
+                                       // them by uid (an id format the till could not match):
+                                       // assumed, not verified
     "oldestPendingAt": "…",            // when the oldest of them was taken
     "lastSuccessAt": "…",              // the last successful doPeriodic
     "lastAttemptAt": "…",              // the last doPeriodic attempt, successful or not
@@ -899,6 +903,10 @@ Request adds, optional:
   }
 }
 ```
+`assumedCount` is stored and shown on the machines list/detail as `assumedTransmissionCount`
+(§4.6), for information only: it is never a flag, never counts as pending, and does not
+mark any leg — the cloud still matches legs by uid only, so those sales stay in the
+recovery list (§4.8) until a batch names them.
 The block is a **snapshot**: when present, it replaces the stored one field by field
 (an absent field is stored as null — e.g. `lastError` absent after a success clears it). A
 beat without the block leaves the stored snapshot as it was. Never a 422: a block that is not
@@ -982,6 +990,7 @@ New fields on every machine:
   "lastTransmissionError": "…",           // the latest attempt's error, if that attempt failed; else null
   "transmissionReportedAt": "…",          // when the till last sent the §4.2 block; null = never
   "transmissionSource": "terminal",       // the block's source
+  "assumedTransmissionCount": 2,          // the block's assumedCount (§4.2): not verified, never a flag
   "untransmittedCardLegs": 3,             // our records (§4.8): card legs after tracking start, in no successful batch
   "untransmittedCardAmount": "210.00",
   "transmissionTrackingStartedAt": "…",   // null = this till never reported transmissions

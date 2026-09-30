@@ -433,6 +433,26 @@ class TestHeartbeat:
         t = MachineHeartbeatBody.model_validate({"transmission": {"source": raw}}).transmission
         assert t.source == stored
 
+    def test_the_assumed_count_is_stored_and_shown_never_a_flag(self, w):
+        till = w.tills[0]
+        track(w, till, w.now - timedelta(days=6))
+        beat(w, till, {"transmission": {
+            "pendingCount": 0, "assumedCount": 3,
+            "lastSuccessAt": (w.now - timedelta(hours=1)).isoformat(),
+        }})
+        assert till.transmission_assumed_count == 3
+        row = detail(w, till)
+        assert row["assumedTransmissionCount"] == 3
+        assert not [f for f in row["statusFlags"] if f.startswith("transmission")]
+        # A snapshot like the rest: absent clears it.
+        beat(w, till, {"transmission": {"pendingCount": 0}})
+        assert detail(w, till)["assumedTransmissionCount"] is None
+
+    @pytest.mark.parametrize("raw", [-1, "x", 2**31, 1.5, True])
+    def test_an_unreadable_assumed_count_is_null(self, raw):
+        t = MachineHeartbeatBody.model_validate({"transmission": {"assumedCount": raw}}).transmission
+        assert t.assumed_count is None
+
     def test_long_error_is_cut(self):
         t = MachineHeartbeatBody.model_validate({"transmission": {"lastError": "e" * 900}}).transmission
         assert len(t.last_error) == 500
@@ -918,7 +938,7 @@ class TestReplacement:
     def test_an_acknowledged_code_is_adopted_and_tracking_restarts(self, w, monkeypatch):
         monkeypatch.setattr(pairing_router, "machine_realtime_connection_info", lambda **kw: kw)
         till = w.tills[0]
-        beat(w, till, {"transmission": {"pendingCount": 2, "pendingAmount": "40.00"}})
+        beat(w, till, {"transmission": {"pendingCount": 2, "pendingAmount": "40.00", "assumedCount": 1}})
         out = self._code(w, till, ack=True)
         row = w.db.query(PairingCode).filter(PairingCode.code == out["code"]).one()
         assert out["untransmittedAcknowledged"] is True
@@ -929,6 +949,7 @@ class TestReplacement:
 
         w.db.refresh(till)
         assert till.transmission_pending_count is None
+        assert till.transmission_assumed_count is None
         assert till.transmission_tracking_started_at is None
         assert till.transmission_reported_at is None
 

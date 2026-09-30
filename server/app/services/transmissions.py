@@ -151,6 +151,7 @@ def reset_for_replacement(machine: POSMachine) -> None:
     """
     machine.transmission_pending_count = None
     machine.transmission_pending_amount = None
+    machine.transmission_assumed_count = None
     machine.transmission_oldest_pending_at = None
     machine.transmission_last_success_at = None
     machine.transmission_last_attempt_at = None
@@ -172,6 +173,7 @@ def apply_heartbeat_block(
     now = now or datetime.now(timezone.utc)
     machine.transmission_pending_count = block.pending_count
     machine.transmission_pending_amount = block.pending_amount
+    machine.transmission_assumed_count = block.assumed_count
     machine.transmission_oldest_pending_at = _utc(block.oldest_pending_at)
     machine.transmission_last_success_at = _utc(block.last_success_at)
     machine.transmission_last_attempt_at = _utc(block.last_attempt_at)
