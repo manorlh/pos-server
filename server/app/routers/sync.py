@@ -105,6 +105,8 @@ from app.services.shifts import (
 )
 from app.services.remote_close import apply_close_shift_ack, on_shift_close_accepted
 from app.services.stock import effective_stock_updated_at, get_levels_for_shop
+from app.schemas.transmission import TransmissionReportIn, TransmitAckIn
+from app.services import transmissions, transmit_requests
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -1085,6 +1087,58 @@ def post_shift_close_ack(
         error_message=body.error_message,
     )
     return ShiftCloseAckResponse(ok=True, item_status=item_status)
+
+
+# ── Card transmission (docs/SHIFTS_API.md §4) ─────────────────────────────────
+
+
+@router.post("/{machine_id}/transmissions", status_code=status.HTTP_201_CREATED)
+def post_transmission_report(
+    machine_id: str,
+    body: TransmissionReportIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    One `doPeriodic` attempt of this till (§4.1). Idempotent by `id`: `201` the first
+    time, `200` after. A success marks the card legs it carried. Not refused for a till
+    that has left its shop: a batch is money, whatever the till's assignment now.
+    """
+    outcome = transmissions.record_report(db, machine, body)
+    transmit_requests.on_report(db, machine, outcome.transmission)
+    db.commit()
+    payload = {
+        "ok": True,
+        "transmissionId": str(outcome.transmission.id),
+        "status": outcome.transmission.status,
+        "created": outcome.created,
+        "legsMarked": outcome.legs_marked,
+    }
+    return JSONResponse(
+        status_code=status.HTTP_201_CREATED if outcome.created else status.HTTP_200_OK,
+        content=payload,
+    )
+
+
+@router.post("/{machine_id}/transmit/ack")
+def post_transmit_ack(
+    machine_id: str,
+    body: TransmitAckIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """The till acknowledges a transmit instruction (§4.5)."""
+    req = transmit_requests.apply_ack(
+        db,
+        machine,
+        request_id=body.request_id,
+        phase=body.phase,
+        transmission_id=body.transmission_id,
+        error_code=body.error_code,
+        error_message=body.error_message,
+    )
+    db.commit()
+    return {"ok": True, "requestStatus": req.status}
 
 
 # ── Removed with the move to shifts (docs/SHIFTS_API.md §1.8) ─────────────────

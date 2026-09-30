@@ -18,6 +18,7 @@ from app.services.areas import filter_on_column, parse_area_filter
 from app.services.scoping import scope_query_by_user
 from app.services.shift_totals import compute_totals
 from app.services.shifts import shift_to_out
+from app.services.transmissions import period_block
 
 router = APIRouter(prefix="/shifts", tags=["shifts"])
 
@@ -113,4 +114,8 @@ def get_shift(
     shift = query.filter(Shift.id == shift_id).first() if query is not None else None
     if shift is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shift not found")
-    return _out(shift, payment_breakdown=compute_totals(db, [shift.id]).breakdown_json())
+    out = _out(shift, payment_breakdown=compute_totals(db, [shift.id]).breakdown_json())
+    if shift.machine is not None:
+        # Informational only: the shift's card sales and the batches that carried them.
+        out.transmission = period_block(db, shift.machine, [shift])
+    return out

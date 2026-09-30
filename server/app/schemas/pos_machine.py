@@ -3,6 +3,7 @@ from pydantic import AliasChoices, BaseModel, Field, ConfigDict, PrivateAttr, fi
 from typing import Optional, Dict, Any, List
 import uuid
 from app.models.pos_machine import PairingStatus as ModelPairingStatus
+from app.schemas.transmission import HeartbeatTransmission
 
 
 class PairingStatus(str):
@@ -87,6 +88,10 @@ class MachineHeartbeatBody(BaseModel):
     #: The open shift's per-till number ("משמרת #N"); null if none open or unnumbered.
     open_shift_sequence: Optional[int] = Field(None, alias="openShiftSequence")
     open_shift_opened_at: Optional[datetime] = Field(None, alias="openShiftOpenedAt")
+
+    #: The till's card transmission state (docs/SHIFTS_API.md §4.2). A block that is not
+    #: an object is dropped whole; a field inside it that cannot be read is None.
+    transmission: Optional[HeartbeatTransmission] = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -197,6 +202,22 @@ class POSMachineResponse(POSMachineBase):
     status_flags: List[str] = Field(default_factory=list, alias="statusFlags")
     pending_documents: Optional[int] = Field(None, alias="pendingDocuments")
     pending_as_of: Optional[datetime] = Field(None, alias="pendingAsOf")
+    # ── Card transmission (docs/SHIFTS_API.md §4.6) ──────────────────────────
+    pending_transmission_count: Optional[int] = Field(None, alias="pendingTransmissionCount")
+    #: Decimal string, like every money value the dashboard reads.
+    pending_transmission_amount: Optional[str] = Field(None, alias="pendingTransmissionAmount")
+    oldest_pending_transmission_at: Optional[datetime] = Field(None, alias="oldestPendingTransmissionAt")
+    last_transmission_at: Optional[datetime] = Field(None, alias="lastTransmissionAt")
+    last_transmission_error: Optional[str] = Field(None, alias="lastTransmissionError")
+    transmission_reported_at: Optional[datetime] = Field(None, alias="transmissionReportedAt")
+    transmission_source: Optional[str] = Field(None, alias="transmissionSource")
+    #: Card sales the till assumes a successful batch carried; not verified, not a flag.
+    assumed_transmission_count: Optional[int] = Field(None, alias="assumedTransmissionCount")
+    untransmitted_card_legs: Optional[int] = Field(None, alias="untransmittedCardLegs")
+    untransmitted_card_amount: Optional[str] = Field(None, alias="untransmittedCardAmount")
+    transmission_tracking_started_at: Optional[datetime] = Field(None, alias="transmissionTrackingStartedAt")
+    transmit_pending: Optional[bool] = Field(None, alias="transmitPending")
+    pending_transmit_request_id: Optional[uuid.UUID] = Field(None, alias="pendingTransmitRequestId")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 

@@ -713,6 +713,8 @@ def test_the_migration_is_the_single_head_on_top_of_main():
     config.set_main_option("script_location", str(root / "alembic"))
     script = ScriptDirectory.from_config(config)
 
-    # One head (later migrations stack on this one: mixed basket is d9e0f1a2b3c4).
-    assert len(script.get_heads()) == 1
+    # One head; later migrations (mixed basket, card transmission) stack on this one.
+    heads = script.get_heads()
+    assert len(heads) == 1
+    assert "c8d9e0f1a2b3" in {r.revision for r in script.walk_revisions("base", heads[0])}
     assert script.get_revision("c8d9e0f1a2b3").down_revision == "b7c8d9e0f1a2"

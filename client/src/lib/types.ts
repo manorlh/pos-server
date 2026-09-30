@@ -403,6 +403,8 @@ export interface PosMachine {
     | 'clock_skewed'
     | 'low_battery'
     | 'realtime_down'
+    | 'transmission_overdue'
+    | 'transmission_critical'
   >;
   /** Undelivered sales as last reported. Null means never reported, which is not zero. */
   pendingDocuments?: number | null;
@@ -420,8 +422,115 @@ export interface PosMachine {
   clockSkewMs?: number | null;
   /** Null on a till that has never sent a health report. */
   lastHealthReportAt?: string | null;
+  // ── Card transmission to Shva (docs/SHIFTS_API.md §4.6) ────────────────────
+  /** The till's reading if it sent one, else our records. Null = never reported. */
+  pendingTransmissionCount?: number | null;
+  /** Decimal string, same source as the count. */
+  pendingTransmissionAmount?: string | null;
+  /** The oldest card sale waiting to be transmitted. */
+  oldestPendingTransmissionAt?: string | null;
+  lastTransmissionAt?: string | null;
+  /** The latest attempt's error, if it failed; null otherwise. */
+  lastTransmissionError?: string | null;
+  /** When the till last reported its transmission state — "as of", never live. */
+  transmissionReportedAt?: string | null;
+  transmissionSource?: string | null;
+  /** Card sales the till assumes a successful batch carried (not named by uid). Not verified, not a flag. */
+  assumedTransmissionCount?: number | null;
+  /** Our records: card sales after the tracking start in no successful batch. */
+  untransmittedCardLegs?: number | null;
+  untransmittedCardAmount?: string | null;
+  /** Null = this till never reported transmissions (older build). */
+  transmissionTrackingStartedAt?: string | null;
+  transmitPending?: boolean;
+  pendingTransmitRequestId?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type TransmissionTrigger = 'shift_close' | 'daily' | 'manual' | 'remote';
+export type TransmissionStatus = 'success' | 'failed' | 'unknown';
+
+/** One `doPeriodic` attempt of a till (docs/SHIFTS_API.md §4.7). */
+export interface CardTransmission {
+  id: string;
+  machineId: string;
+  trigger: TransmissionTrigger;
+  requestId?: string | null;
+  startedAt: string;
+  finishedAt?: string | null;
+  receivedAt?: string | null;
+  status: TransmissionStatus;
+  statusCode?: number | null;
+  statusMessage?: string | null;
+  batchNumber?: string | null;
+  transactionCount?: number | null;
+  amount?: string | null;
+  error?: string | null;
+  terminalTransactionCount: number;
+  legsMatched: number;
+  /** Detail only. */
+  terminalTransactionIds?: string[];
+  reportText?: string | null;
+}
+
+export interface CardTransmissionList {
+  total: number;
+  items: CardTransmission[];
+}
+
+/** A card sale in no successful batch, from our records (§4.8). */
+export interface UntransmittedCardSale {
+  transactionId: string;
+  transactionNumber: string;
+  documentType?: number | null;
+  createdAt: string;
+  shiftId?: string | null;
+  legId: string;
+  amount: string;
+  approvalNumber?: string | null;
+  terminalTransactionId?: string | null;
+  cardLast4?: string | null;
+  creditPayments?: number | null;
+}
+
+export interface UntransmittedCardSales {
+  machineId: string;
+  trackingStartedAt?: string | null;
+  count: number;
+  amount: string;
+  tillPendingCount?: number | null;
+  tillReportedAt?: string | null;
+  items: UntransmittedCardSale[];
+}
+
+export type TransmitRequestStatus =
+  | 'waiting'
+  | 'transmitting'
+  | 'completed'
+  | 'failed'
+  | 'expired'
+  | 'cancelled';
+
+/** "Transmit now" (`POST /machines/{id}/transmit`, §4.10). */
+export interface TransmitRequest {
+  id: string;
+  machineId: string;
+  machineName?: string | null;
+  shopId?: string | null;
+  status: TransmitRequestStatus;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  expiresAt?: string | null;
+  sentAt?: string | null;
+  receivedAt?: string | null;
+  completedAt?: string | null;
+  failedAt?: string | null;
+  online?: boolean | null;
+  transmissionId?: string | null;
+  transmission?: CardTransmission | null;
 }
 
 export type CatalogLevel = 'global' | 'local';
@@ -913,6 +1022,8 @@ export interface Shift {
   areaName?: string | null;
   /** Detail read only: tender → amount, from the documents. */
   paymentBreakdown?: Record<string, Money> | null;
+  /** Card transmission of the shift's sales (X detail only), informational. */
+  transmission?: PeriodTransmission | null;
 }
 
 export interface ShiftListResponse {
@@ -1549,4 +1660,28 @@ export interface SalesByAreaReport {
   rows: SalesByAreaRow[];
   totals: SalesByAreaTotals;
   generatedAt?: string | null;
+}
+
+/** The `transmission` block of an X or a Z section (docs/SHIFTS_API.md §4.11). */
+export interface PeriodTransmission {
+  batches: Array<{
+    id: string;
+    batchNumber?: string | null;
+    status: TransmissionStatus;
+    trigger: TransmissionTrigger;
+    startedAt?: string | null;
+    finishedAt?: string | null;
+    transactionCount?: number | null;
+    amount?: string | null;
+    legsInPeriod: number;
+  }>;
+  cardLegs: number;
+  transmittedLegs: number;
+  untransmittedLegs: number;
+  untransmittedAmount?: string | null;
+  untrackedLegs: number;
+  tillPendingCount?: number | null;
+  tillPendingAmount?: string | null;
+  tillReportedAt?: string | null;
+  asOf?: string | null;
 }

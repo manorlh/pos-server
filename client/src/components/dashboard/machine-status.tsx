@@ -104,6 +104,22 @@ export function MachineStatusFlags({ m }: { m: PosMachine }) {
           >
             {t(`flag.${f}`)}
           </Link>
+        ) : f === 'transmission_overdue' || f === 'transmission_critical' ? (
+          // Card sales the till has not transmitted: money at stake, so they are drawn
+          // in its colours — the light itself stays the server's.
+          f === 'transmission_overdue' && flags.includes('transmission_critical') ? null : (
+            <Link
+              key={f}
+              href={`/dashboard/machines/${m.id}#transmission`}
+              className={`rounded border px-1.5 py-0.5 text-[11px] hover:underline ${
+                f === 'transmission_critical'
+                  ? 'border-destructive/60 text-destructive'
+                  : 'border-amber-400/60 text-amber-700 dark:text-amber-400'
+              }`}
+            >
+              {t(`flag.${f}`)}
+            </Link>
+          )
         ) : (
           <span
             key={f}

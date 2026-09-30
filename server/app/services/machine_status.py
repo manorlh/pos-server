@@ -65,6 +65,10 @@ class MachineFlag:
     CLOCK_SKEWED = "clock_skewed"
     LOW_BATTERY = "low_battery"
     REALTIME_DOWN = "realtime_down"
+    #: Card sales not transmitted to Shva for more than 24 h (docs/SHIFTS_API.md §4.6).
+    TRANSMISSION_OVERDUE = "transmission_overdue"
+    #: …for more than 4 days: the card companies refuse them after 7. Comes with overdue.
+    TRANSMISSION_CRITICAL = "transmission_critical"
 
 
 #: Beyond this, a document's timestamps land in the wrong shift or date often enough to
@@ -73,6 +77,11 @@ class MachineFlag:
 CLOCK_SKEW_TOLERANCE_MS = 120_000
 
 LOW_BATTERY_PERCENT = 15
+
+#: Card transmission thresholds (docs/SHIFTS_API.md §4.6). A card company refuses a
+#: transaction transmitted more than 7 days after it was taken; critical leaves three.
+TRANSMISSION_OVERDUE_AFTER = timedelta(hours=24)
+TRANSMISSION_CRITICAL_AFTER = timedelta(days=4)
 
 
 @dataclass
@@ -97,6 +106,14 @@ class StatusInput:
     clock_skew_ms: Optional[int] = None
     battery_percent: Optional[int] = None
     mqtt_connected: Optional[bool] = None
+    #: Card sales wait for transmission: the till says so, or our records do.
+    transmission_pending: bool = False
+    #: When the oldest of them was taken, if known.
+    transmission_oldest_pending_at: Optional[datetime] = None
+    #: The last successful transmission, if any.
+    transmission_last_success_at: Optional[datetime] = None
+    #: When the cloud first heard about transmissions from this till.
+    transmission_tracking_started_at: Optional[datetime] = None
 
 
 @dataclass
@@ -242,6 +259,45 @@ def _flags(data: StatusInput, *, now: Optional[datetime]) -> List[str]:
     if is_online(data.last_heartbeat_at, now=now) and data.mqtt_connected is False:
         flags.append(MachineFlag.REALTIME_DOWN)
 
+    flags.extend(transmission_flags(data, now=now))
+    return flags
+
+
+def _aware(moment: Optional[datetime]) -> Optional[datetime]:
+    if moment is None:
+        return None
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+
+
+def transmission_flags(data: StatusInput, *, now: Optional[datetime] = None) -> List[str]:
+    """
+    `transmission_overdue` and `transmission_critical` (docs/SHIFTS_API.md §4.6).
+
+    Only while something is pending. Overdue: the oldest pending sale is over 24 h old, or
+    there has been no successful transmission for 24 h (from the tracking start when there
+    never was one). Critical: the oldest pending sale is over 4 days old — or, when its
+    time is unknown, the last success is. A critical till carries both.
+    """
+    if not data.transmission_pending:
+        return []
+    reference = _aware(now) or datetime.now(timezone.utc)
+    success_ref = _aware(data.transmission_last_success_at) or _aware(
+        data.transmission_tracking_started_at
+    )
+    oldest = _aware(data.transmission_oldest_pending_at)
+    since_success = reference - success_ref if success_ref is not None else None
+    oldest_age = reference - oldest if oldest is not None else None
+
+    critical_age = oldest_age if oldest_age is not None else since_success
+    critical = critical_age is not None and critical_age > TRANSMISSION_CRITICAL_AFTER
+    overdue = critical or any(
+        age is not None and age > TRANSMISSION_OVERDUE_AFTER for age in (oldest_age, since_success)
+    )
+    flags: List[str] = []
+    if overdue:
+        flags.append(MachineFlag.TRANSMISSION_OVERDUE)
+    if critical:
+        flags.append(MachineFlag.TRANSMISSION_CRITICAL)
     return flags
 
 

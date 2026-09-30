@@ -32,6 +32,12 @@ import { SalesStats } from '@/components/dashboard/sales-stats';
 import { MachineCatalogCard } from '@/components/dashboard/machines/machine-catalog';
 import { MachineShiftSummary } from '@/components/dashboard/machines/machine-row';
 import { DeadTillRecovery } from '@/components/dashboard/dead-till-recovery';
+import {
+  TransmissionHistory,
+  TransmissionSummary,
+  TransmitNowButton,
+  UntransmittedSales,
+} from '@/components/dashboard/machines/card-transmission';
 import { MachineAreaDialog } from '@/components/dashboard/areas/machine-area-dialog';
 import {
   RemoteShiftCloseDialog,
@@ -88,6 +94,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
   const tZ = useTranslations('zReports');
   const tTx = useTranslations('transactions');
   const tShifts = useTranslations('shifts');
+  const tSend = useTranslations('transmission');
   const shiftLabel = useShiftLabel();
   const canProduceZ = useCanProduceZ();
   const [closeShiftOpen, setCloseShiftOpen] = useState(false);
@@ -366,6 +373,39 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
         </CardHeader>
         <CardContent>
           <MachineHealthPanel machine={machine} />
+        </CardContent>
+      </Card>
+
+      {/* Card sales waiting for Shva, the batches the till reported, and — for a till
+          that dies with its batch — the list to take to the card company. */}
+      <Card id="transmission">
+        <CardHeader className="pb-2">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="space-y-1">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                {tSend('title')}
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">{tSend('hint')}</p>
+            </div>
+            {canProduceZ && !removed ? <TransmitNowButton m={machine} /> : null}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4 p-0 pb-2">
+          <div className="px-4">
+            <TransmissionSummary m={machine} />
+          </div>
+          <div>
+            <h3 className="px-4 pb-1 text-xs font-medium text-muted-foreground">
+              {tSend('untransmittedTitle')}
+            </h3>
+            <UntransmittedSales m={machine} />
+          </div>
+          <div>
+            <h3 className="px-4 pb-1 text-xs font-medium text-muted-foreground">
+              {tSend('historyTitle')}
+            </h3>
+            <TransmissionHistory machineId={machine.id} />
+          </div>
         </CardContent>
       </Card>
 

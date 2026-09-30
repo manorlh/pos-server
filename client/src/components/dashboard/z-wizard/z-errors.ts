@@ -51,6 +51,9 @@ const KNOWN = new Set([
   'area_not_in_shop',
   'area_archived',
   'machine_not_in_area',
+  'untransmitted_card_sales',
+  'transmit_request_not_found',
+  'transmission_failed',
 ]);
 
 /** The code part of a detail: `z_run_in_progress:<id>` → `z_run_in_progress`. */

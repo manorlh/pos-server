@@ -20,6 +20,7 @@
  */
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -28,7 +29,7 @@ import { toast } from 'sonner';
 import { administrativeCloseShift, createReplacementCode } from '@/lib/api';
 import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
 import { useAuth } from '@/lib/auth';
-import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
+import { errorCodeOf, useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
 import { formatDateTime } from '@/lib/format';
 import type { PosMachine } from '@/lib/types';
 import { Button } from '@/components/ui/button';
@@ -90,10 +91,26 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
     onError: (e) => toast.error(errors.forError(e)),
   });
 
+  // Card sales the old terminal never transmitted die with it (docs/SHIFTS_API.md §4.9):
+  // the server refuses the code until someone accepts that, having exported the list.
+  const [untransmittedOpen, setUntransmittedOpen] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
   const replaceMutation = useMutation({
-    mutationFn: () => createReplacementCode(m.id),
-    onSuccess: (res) => setCode({ code: res.code, expiresAt: res.expiresAt ?? null }),
-    onError: (e) => toast.error(errors.forError(e)),
+    mutationFn: (acknowledgeUntransmitted: boolean) =>
+      createReplacementCode(m.id, { acknowledgeUntransmitted }),
+    onSuccess: (res) => {
+      setUntransmittedOpen(false);
+      setCode({ code: res.code, expiresAt: res.expiresAt ?? null });
+    },
+    onError: (e) => {
+      const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+      if (errorCodeOf(detail) === 'untransmitted_card_sales') {
+        setAcknowledged(false);
+        setUntransmittedOpen(true);
+        return;
+      }
+      toast.error(errors.forError(e));
+    },
   });
 
   if (!canClose && !canReplace) return null;
@@ -119,7 +136,7 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
           // Blocked in the UI as well as on the server, so the operator is told now rather
           // than with an engineer standing at the counter holding a new terminal.
           disabled={hasOpenShift || replaceMutation.isPending}
-          onClick={() => replaceMutation.mutate()}
+          onClick={() => replaceMutation.mutate(false)}
           title={hasOpenShift ? t('closeShiftFirst') : undefined}
         >
           <RefreshCw className="h-4 w-4 ms-1" />
@@ -175,6 +192,43 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
                 disabled={closeMutation.isPending || !shiftId}
               >
                 {closeMutation.isPending ? tc('loading') : t('confirmClose')}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={untransmittedOpen} onOpenChange={setUntransmittedOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t('untransmittedTitle')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <p className="text-muted-foreground">{t('untransmittedExplain')}</p>
+            <Link
+              href={`/dashboard/machines/${m.id}#transmission`}
+              className="text-xs text-primary hover:underline"
+            >
+              {t('untransmittedList')}
+            </Link>
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={acknowledged}
+                onChange={(e) => setAcknowledged(e.target.checked)}
+              />
+              {t('untransmittedAck')}
+            </label>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setUntransmittedOpen(false)}>
+                {tc('cancel')}
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={!acknowledged || replaceMutation.isPending}
+                onClick={() => replaceMutation.mutate(true)}
+              >
+                {replaceMutation.isPending ? tc('loading') : t('untransmittedConfirm')}
               </Button>
             </div>
           </div>

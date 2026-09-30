@@ -35,7 +35,7 @@ SUP = UserRole.SHIFT_SUPERVISOR
 class TestWhatItMayAuthoriseAtTheTill:
     def test_it_may_authorise_the_money_decisions_and_the_close(self):
         assert till_grantable_scopes(SUP) == frozenset(
-            {Scope.REFUND, Scope.DISCOUNT, Scope.DAY_CLOSE, Scope.SHIFT_CLOSE}
+            {Scope.REFUND, Scope.DISCOUNT, Scope.DAY_CLOSE, Scope.SHIFT_CLOSE, Scope.TRANSMIT}
         )
 
     def test_it_may_not_edit_the_catalog(self):
@@ -74,7 +74,7 @@ class TestPerActionReauthorisation:
         here, which would silently make it session-length.
         """
         assert PER_ACTION_SCOPES == {
-            Scope.REFUND, Scope.DISCOUNT, Scope.DAY_CLOSE, Scope.SHIFT_CLOSE,
+            Scope.REFUND, Scope.DISCOUNT, Scope.DAY_CLOSE, Scope.SHIFT_CLOSE, Scope.TRANSMIT,
         }
 
 
@@ -93,6 +93,7 @@ class TestScopeStringsAreWireContract:
             (Scope.DISCOUNT, "discount"),
             (Scope.DAY_CLOSE, "day:close"),
             (Scope.SHIFT_CLOSE, "shift:close"),
+            (Scope.TRANSMIT, "transmit"),
         ],
     )
     def test_the_wire_name_is_pinned(self, scope, wire):

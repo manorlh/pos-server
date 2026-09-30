@@ -39,6 +39,7 @@ from app.models.z_report import ZReport
 from app.services.shift_totals import CENT, DocumentTotals, compute_totals
 from app.models.shop import Shop
 from app.models.shop_area import ShopArea
+from app.services.transmissions import period_block
 from app.services.z_header import snapshot_header
 from app.services.z_sequence import allocate_shop_z_number, ensure_shop_z_sequence
 
@@ -338,6 +339,10 @@ def build_z(
         machine_section(machine, shifts, compute_totals(db, [s.id for s in shifts]))
         for machine, shifts in per_machine
     ]
+    # Card transmission, frozen with the section at build time. Informational: nothing
+    # here waits for, or is refused by, a transmission (docs/SHIFTS_API.md §4.11).
+    for section, (machine, shifts) in zip(sections, per_machine):
+        section["transmission"] = period_block(db, machine, shifts, now=now)
     cash = z_cash_summary([shifts for _m, shifts in per_machine])
 
     # 4. Number, write, claim.

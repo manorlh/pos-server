@@ -30,6 +30,10 @@ import type {
   ZReportDetail,
   ZReportListResponse,
   ShiftCloseRequest,
+  CardTransmission,
+  CardTransmissionList,
+  TransmitRequest,
+  UntransmittedCardSales,
   ZRun,
   ZRunMachineSelection,
 } from './types';
@@ -471,13 +475,19 @@ export async function administrativeCloseShift(
  * Refused while the terminal has an open shift — the replacement has none of that
  * shift's records, and its close would declare a fraction of what was taken.
  */
-export async function createReplacementCode(machineId: string): Promise<{
+export async function createReplacementCode(
+  machineId: string,
+  opts: { acknowledgeUntransmitted?: boolean } = {},
+): Promise<{
   code: string;
   expiresAt: string;
   replacesMachineId: string;
   machineCode: string;
+  untransmittedAcknowledged?: boolean;
 }> {
-  const { data } = await api.post(`/machines/${machineId}/replacement-code`, {});
+  const { data } = await api.post(`/machines/${machineId}/replacement-code`, {
+    acknowledgeUntransmitted: !!opts.acknowledgeUntransmitted,
+  });
   return data;
 }
 
@@ -641,6 +651,47 @@ export async function fetchShiftCloseRequest(id: string): Promise<ShiftCloseRequ
 
 export async function cancelShiftCloseRequest(id: string): Promise<ShiftCloseRequest> {
   const { data } = await api.post<ShiftCloseRequest>(`/shift-close-requests/${id}/cancel`, {});
+  return data;
+}
+
+/** Ask a till to transmit its card batch to Shva now. Returns the pending one if any. */
+export async function requestTransmit(machineId: string): Promise<TransmitRequest> {
+  const { data } = await api.post<TransmitRequest>(`/machines/${machineId}/transmit`, {});
+  return data;
+}
+
+export async function fetchTransmitRequest(id: string): Promise<TransmitRequest> {
+  const { data } = await api.get<TransmitRequest>(`/transmit-requests/${id}`);
+  return data;
+}
+
+export async function cancelTransmitRequest(id: string): Promise<TransmitRequest> {
+  const { data } = await api.post<TransmitRequest>(`/transmit-requests/${id}/cancel`, {});
+  return data;
+}
+
+export async function fetchMachineTransmissions(
+  machineId: string,
+  params: { limit?: number; offset?: number } = {},
+): Promise<CardTransmissionList> {
+  const { data } = await api.get<CardTransmissionList>(`/machines/${machineId}/transmissions`, {
+    params,
+  });
+  return data;
+}
+
+export async function fetchMachineTransmission(
+  machineId: string,
+  transmissionId: string,
+): Promise<CardTransmission> {
+  const { data } = await api.get<CardTransmission>(
+    `/machines/${machineId}/transmissions/${transmissionId}`,
+  );
+  return data;
+}
+
+export async function fetchUntransmittedCardSales(machineId: string): Promise<UntransmittedCardSales> {
+  const { data } = await api.get<UntransmittedCardSales>(`/machines/${machineId}/untransmitted`);
   return data;
 }
 

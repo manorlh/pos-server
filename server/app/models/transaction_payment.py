@@ -33,6 +33,7 @@ class TransactionPayment(Base):
     __tablename__ = "transaction_payments"
     __table_args__ = (
         Index("ix_transaction_payments_transaction", "transaction_id"),
+        Index("ix_transaction_payments_terminal_uid", "terminal_uid"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True)  # client-generated
@@ -58,5 +59,21 @@ class TransactionPayment(Base):
     # On a split document the reply belongs to the card leg, not to the document —
     # two card legs on one sale have two different authorisation numbers.
     nayax_meta = Column(JSONB, nullable=True)
+
+    # ── Card transmission (docs/SHIFTS_API.md §4) ─────────────────────────────
+    #: The terminal's own id of this card sale (Agamento `uid`), read out of `nayax_meta`
+    #: on the way in. It is what `doPeriodic` lists in a batch, so it is how a leg is
+    #: matched to the transmission that carried it. Null for a non-card leg or a card leg
+    #: whose reply carried none — such a leg can never be matched.
+    terminal_uid = Column(String(64), nullable=True)
+    #: The successful transmission that carried this leg to Shva; null = not (yet) known
+    #: to have gone. Set by the report or, for a leg that lands after it, on ingest.
+    transmission_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("card_transmissions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    #: That transmission's batch number (Agamento `ackNumber`), kept on the leg itself.
+    transmitted_batch = Column(String(64), nullable=True)
 
     transaction = relationship("Transaction", back_populates="payments")

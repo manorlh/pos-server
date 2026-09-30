@@ -46,6 +46,10 @@ class Scope(str, enum.Enum):
     #: Close a shift and print its X. A cashier may do this alone; the scope exists so
     #: a shop that wants a second person can have one, and the approver is recorded.
     SHIFT_CLOSE = "shift:close"
+    #: Transmit the terminal's card batch to Shva now ("שדר עסקאות עכשיו",
+    #: docs/SHIFTS_API.md §4). Same people as a remote transmit from the dashboard, plus
+    #: the shift supervisor, who may close a shift and so the day's card batch.
+    TRANSMIT = "transmit"
 
 
 #: Scopes that must be re-authorised for every single action rather than held for
@@ -61,6 +65,7 @@ PER_ACTION_SCOPES: FrozenSet[Scope] = frozenset({
     Scope.DISCOUNT,
     Scope.DAY_CLOSE,
     Scope.SHIFT_CLOSE,
+    Scope.TRANSMIT,
 })
 
 
@@ -76,6 +81,7 @@ _MANAGER_SCOPES = frozenset({
     Scope.DISCOUNT,
     Scope.DAY_CLOSE,
     Scope.SHIFT_CLOSE,
+    Scope.TRANSMIT,
 })
 
 #: What a shift supervisor (אחמ"ש) may authorise: the money decisions and the close of
@@ -86,6 +92,7 @@ _SUPERVISOR_SCOPES = frozenset({
     Scope.DISCOUNT,
     Scope.DAY_CLOSE,
     Scope.SHIFT_CLOSE,
+    Scope.TRANSMIT,
 })
 
 _TILL_SCOPES_BY_ROLE: dict[UserRole, FrozenSet[Scope]] = {

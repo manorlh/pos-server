@@ -23,6 +23,7 @@ import { useTenantTimeZone } from '@/lib/auth';
 import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
 import type { Shift } from '@/lib/types';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
+import { PeriodTransmissionSummary } from '@/components/dashboard/machines/card-transmission';
 import {
   CountedCash,
   Fact,
@@ -67,6 +68,7 @@ function display(value: unknown, key: string): string {
 export default function ShiftDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const t = useTranslations('shifts');
+  const tSend = useTranslations('transmission');
   const shiftLabel = useShiftLabel();
   const canProduceZ = useCanProduceZ();
   usePageScope({ maxLevel: 'machine', silent: true });
@@ -296,6 +298,19 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
             <p className="text-muted-foreground pt-2 text-xs">{t('detail.paymentsHint')}</p>
           </CardContent>
         </Card>
+
+        {shift.transmission ? (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                {tSend('title')}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <PeriodTransmissionSummary block={shift.transmission} />
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
 
       {shift.totalsMismatch && till ? (

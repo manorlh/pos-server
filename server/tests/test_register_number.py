@@ -637,6 +637,7 @@ class TestReplacement:
             is_used=False, expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
             tenant_id=TENANT, distributor_id=uuid.uuid4(), target_machine_id=dead.id,
             shop_id=None, used_at=None, pos_machine_id=None,
+            untransmitted_acknowledged_at=None,
         )
 
         machine = P.validate_pairing_code(db, "ABCD1234", {"model": "new"}, "F21")
@@ -681,6 +682,7 @@ class TestApi:
             row = machines_router._enrich_machine_status(
                 m, db, open_shifts_by_machine={}, pending_close={},
                 awaiting_z={}, timezones={}, orphans={},
+                untransmitted={}, latest_transmissions={}, pending_transmit={},
             )
 
         assert row["posNumber"] == "1"
