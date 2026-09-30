@@ -14,7 +14,7 @@ from app.models.tenant_membership import TenantMembership
 from app.models.shift import Shift, ShiftStatus
 from app.services.machine_health import serial_from_device_info
 from app.services.register_number import assign_register_number, set_machine_shop
-from app.services import machine_catalog
+from app.services import machine_catalog, transmissions
 from app.services.shop_validation import shop_belongs_to_company
 import uuid
 
@@ -23,6 +23,10 @@ settings = get_settings()
 
 class PairingAssignmentError(ValueError):
     """Invalid company/shop pre-assignment for a pairing code."""
+
+
+class AdoptionRefused(PairingAssignmentError):
+    """A replacement device may not adopt this terminal yet (answered `409`)."""
 
 
 def resolve_tenant_id_for_user(db: Session, user_id: uuid.UUID) -> Optional[uuid.UUID]:
@@ -90,6 +94,7 @@ def create_pairing_code(
     company_id: Optional[uuid.UUID] = None,
     shop_id: Optional[uuid.UUID] = None,
     target_machine_id: Optional[uuid.UUID] = None,
+    untransmitted_acknowledged_by: Optional[uuid.UUID] = None,
 ) -> PairingCode:
     """
     Create a new pairing code, optionally with company/shop pre-assignment.
@@ -114,6 +119,10 @@ def create_pairing_code(
         company_id=company_id,
         shop_id=shop_id,
         target_machine_id=target_machine_id,
+        untransmitted_acknowledged_by_user_id=untransmitted_acknowledged_by,
+        untransmitted_acknowledged_at=(
+            datetime.now(timezone.utc) if untransmitted_acknowledged_by is not None else None
+        ),
         expires_at=expires_at,
         is_used=False,
     )
@@ -151,6 +160,7 @@ def validate_pairing_code(
             pairing_code.target_machine_id,
             device_info=device_info,
             machine_name=machine_name,
+            untransmitted_acknowledged=pairing_code.untransmitted_acknowledged_at is not None,
         )
         if pos_machine is None:
             return None
@@ -262,6 +272,7 @@ def adopt_machine(
     *,
     device_info: Optional[dict] = None,
     machine_name: Optional[str] = None,
+    untransmitted_acknowledged: bool = False,
 ) -> Optional[POSMachine]:
     """
     Hand an existing terminal's identity to a replacement device.
@@ -295,10 +306,15 @@ def adopt_machine(
         .first()
     )
     if open_shift is not None:
-        raise PairingAssignmentError(
+        raise AdoptionRefused(
             "This terminal still has an open shift. Close it first — a replacement "
             "cannot close a shift whose sales it never saw."
         )
+    # Card sales the old device never transmitted die with its card application: the new
+    # one has none of them (docs/SHIFTS_API.md §4.9). Refused unless the code was created
+    # with that acknowledged.
+    if not untransmitted_acknowledged and transmissions.has_untransmitted(db, machine):
+        raise AdoptionRefused("untransmitted_card_sales")
 
     if device_info:
         machine.device_info = device_info
@@ -312,6 +328,8 @@ def adopt_machine(
     machine.pending_count = None
     machine.pending_documents = None
     machine.pending_count_at = None
+    # Nor the old device's card batch: tracking starts again with the new one.
+    transmissions.reset_for_replacement(machine)
     # Same row, so the same register number — the replacement is the till the shop
     # already calls "register 2". This keeps it; it only draws a number if the row is
     # in a shop and somehow never got one.

@@ -29,6 +29,13 @@ class PairingCode(Base):
     target_machine_id = Column(
         UUID(as_uuid=True), ForeignKey("pos_machines.id"), nullable=True
     )
+    #: A replacement code created although the till still held untransmitted card sales
+    #: (docs/SHIFTS_API.md §4.9): who accepted that they will not be transmitted by the
+    #: new device, and when. Its adoption is then not refused for them.
+    untransmitted_acknowledged_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    untransmitted_acknowledged_at = Column(DateTime(timezone=True), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     is_used = Column(Boolean, default=False, nullable=False)
     used_at = Column(DateTime(timezone=True), nullable=True)

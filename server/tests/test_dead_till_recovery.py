@@ -45,6 +45,9 @@ def _machine(**kw):
         is_active=True,
         pairing_status=None,
         pending_count=0,
+        # Card transmission (docs/SHIFTS_API.md §4.9): a till that never reported.
+        transmission_pending_count=None,
+        transmission_tracking_started_at=None,
     )
     base.update(kw)
     return SimpleNamespace(**base)

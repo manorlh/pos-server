@@ -17,6 +17,7 @@ from app.models.company import Company
 from app.models.user import User
 from app.middleware.auth import get_current_distributor, get_active_tenant_id, ensure_same_tenant
 from app.services.pairing import (
+    AdoptionRefused,
     PairingAssignmentError,
     create_pairing_code,
     validate_pairing_code,
@@ -87,12 +88,18 @@ def validate_pairing(
     db: Session = Depends(get_db)
 ):
     """Validate and activate pairing code (public endpoint for desktop client)."""
-    machine = validate_pairing_code(
-        db,
-        pairing_data.code,
-        pairing_data.device_info,
-        pairing_data.machine_name
-    )
+    try:
+        machine = validate_pairing_code(
+            db,
+            pairing_data.code,
+            pairing_data.device_info,
+            pairing_data.machine_name
+        )
+    except AdoptionRefused as exc:
+        # A replacement code whose terminal may not be replaced yet: an open shift, or
+        # card sales it never transmitted (docs/SHIFTS_API.md §4.9). The code stays unused.
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
     if not machine:
         raise HTTPException(

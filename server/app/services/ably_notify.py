@@ -123,6 +123,24 @@ def publish_close_shift_notify(
     publish_notify(tenant_id, machine_id, "close-shift", body)
 
 
+def publish_transmit_notify(
+    tenant_id: str,
+    machine_id: str,
+    request_id: str,
+    initiated_by: str,
+) -> None:
+    """
+    Ask a till to transmit its card batch now (docs/SHIFTS_API.md §4.3).
+
+    The fast path only, like `close-shift`: the heartbeat's `pendingTransmit` hands the same
+    instruction to a till that missed this.
+    """
+    body = _notify_base()
+    body["requestId"] = request_id
+    body["initiatedBy"] = initiated_by
+    publish_notify(tenant_id, machine_id, "transmit", body)
+
+
 def publish_transactions_synced(tenant_id: str, machine_id: str, count: int) -> None:
     body = _notify_base()
     body["count"] = count

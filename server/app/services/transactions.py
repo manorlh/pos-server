@@ -38,6 +38,7 @@ from app.schemas.transaction import (
     UnidentifiedDocument,
 )
 from app.services.approvals import ApprovalRejected, verify_document_approver
+from app.services.transmissions import leg_terminal_uid, mark_legs_on_ingest
 from app.services.shifts import (
     ShiftConflict,
     note_documents_after_close,
@@ -817,9 +818,19 @@ def upsert_transactions(
                     method=((leg.method or "").strip().lower() or UNKNOWN_PAYMENT_METHOD)[:50],
                     amount=leg.amount,
                     nayax_meta=_leg_meta(leg),
+                    # The terminal's id of a card sale, what a transmission batch lists
+                    # (docs/SHIFTS_API.md §4). Read here once so matching is an index hit.
+                    terminal_uid=leg_terminal_uid(leg.method, leg.nayax_meta),
                 )
                 for leg in legs
             ])
+            # A batch that already carried this sale (the report came first, or this is a
+            # re-push that just replaced the legs) marks it again from the kept uids.
+            mark_legs_on_ingest(
+                db,
+                machine,
+                [(leg.id, leg_terminal_uid(leg.method, leg.nayax_meta)) for leg in legs],
+            )
 
             db.query(IssuedVoucher).filter(
                 IssuedVoucher.transaction_id == tx.id

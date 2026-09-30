@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     JSON,
+    Numeric,
     SmallInteger,
     String,
     UniqueConstraint,
@@ -150,6 +151,24 @@ class POSMachine(Base):
     # Not an identity and not a foreign key: the shift may not exist here yet.
     reported_open_shift_id = Column(UUID(as_uuid=True), nullable=True)
     reported_open_shift_opened_at = Column(DateTime(timezone=True), nullable=True)
+
+    # ── Card transmission, as the till last reported it (docs/SHIFTS_API.md §4.2) ─
+    # A snapshot from the heartbeat's `transmission` block, replaced whole whenever a beat
+    # carries one; `transmission_reported_at` says how old it is. Like the backlog above,
+    # a last-known reading: the dashboard shows it "as of", and our own records of which
+    # card legs went out (`transaction_payments.transmission_id`) sit beside it.
+    transmission_pending_count = Column(Integer, nullable=True)
+    transmission_pending_amount = Column(Numeric(12, 2), nullable=True)
+    transmission_oldest_pending_at = Column(DateTime(timezone=True), nullable=True)
+    transmission_last_success_at = Column(DateTime(timezone=True), nullable=True)
+    transmission_last_attempt_at = Column(DateTime(timezone=True), nullable=True)
+    transmission_last_error = Column(String(500), nullable=True)
+    transmission_source = Column(String(32), nullable=True)
+    transmission_reported_at = Column(DateTime(timezone=True), nullable=True)
+    #: The first time this till said anything about transmissions. Card legs of documents
+    #: from before it are never "untransmitted": the feature did not exist when they were
+    #: sold. Cleared when a replacement device adopts the till, which starts it again.
+    transmission_tracking_started_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

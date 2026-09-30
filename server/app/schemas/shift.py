@@ -180,6 +180,9 @@ class ShiftOut(BaseModel):
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
     area_name: Optional[str] = Field(None, alias="areaName")
     payment_breakdown: Optional[Dict[str, Any]] = Field(None, alias="paymentBreakdown")
+    #: Card transmission of the shift's sales, informational (docs/SHIFTS_API.md §4.11).
+    #: On the X detail (`GET /shifts/{id}`) only; null elsewhere.
+    transmission: Optional[Dict[str, Any]] = None
 
 
 class ShiftCloseResponse(BaseModel):

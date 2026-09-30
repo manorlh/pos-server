@@ -1,4 +1,5 @@
 import logging
+from decimal import Decimal
 import uuid as uuid_mod
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
@@ -66,6 +67,8 @@ from app.services.remote_close import (
     take_pending_close_shift,
 )
 from app.services.z_runs import _reported_open_is_live
+from app.services import transmissions, transmit_requests
+from app.schemas.transmission import ReplacementCodeBody
 from sqlalchemy import func
 
 logger = logging.getLogger(__name__)
@@ -124,6 +127,9 @@ def _enrich_machine_status(
     awaiting_z: Optional[Dict[uuid_mod.UUID, tuple]] = None,
     timezones: Optional[Dict[Any, Optional[str]]] = None,
     orphans: Optional[Dict[uuid_mod.UUID, int]] = None,
+    untransmitted: Optional[Dict[uuid_mod.UUID, tuple]] = None,
+    latest_transmissions: Optional[Dict[uuid_mod.UUID, dict]] = None,
+    pending_transmit: Optional[Dict[uuid_mod.UUID, uuid_mod.UUID]] = None,
 ) -> Dict[str, Any]:
     last_catalog_change_at = get_catalog_change_watermark_for_machine(db, machine)
     last_sync_at = machine.last_sync_at
@@ -204,6 +210,22 @@ def _enrich_machine_status(
         "updatedAt": machine.updated_at,
     }
 
+    # Card transmission (docs/SHIFTS_API.md §4.6): the till's reading beside our records.
+    if untransmitted is None:
+        untransmitted = transmissions.untransmitted_summary(db, [machine.id])
+    if latest_transmissions is None:
+        latest_transmissions = transmissions.latest_by_machine(db, [machine.id])
+    if pending_transmit is None:
+        pending_transmit = transmit_requests.pending_by_machine(db, [machine.id])
+    tx_state = transmissions.machine_transmission(
+        machine, untransmitted.get(machine.id), latest_transmissions.get(machine.id)
+    )
+    result.update(transmissions.machine_fields(tx_state))
+    result["transmissionReportedAt"] = machine.transmission_reported_at
+    result["transmissionSource"] = machine.transmission_source
+    result["transmitPending"] = machine.id in pending_transmit
+    result["pendingTransmitRequestId"] = pending_transmit.get(machine.id)
+
     # Resolved server-side so the dashboard, the close-day gate and anything added later
     # all read one definition. The raw fields above stay, because a detail panel still
     # wants the underlying readings.
@@ -228,6 +250,10 @@ def _enrich_machine_status(
             clock_skew_ms=machine.clock_skew_ms,
             battery_percent=machine.battery_percent,
             mqtt_connected=machine.mqtt_connected,
+            transmission_pending=tx_state.anything_pending,
+            transmission_oldest_pending_at=tx_state.oldest_pending_at,
+            transmission_last_success_at=tx_state.last_transmission_at,
+            transmission_tracking_started_at=tx_state.tracking_started_at,
         )
     )
     result["status"] = resolved.status
@@ -247,6 +273,9 @@ def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict
     awaiting = _awaiting_z_by_machine(db, ids)
     timezones = _tenant_timezones(db, machines)
     orphans = orphan_documents_by_machine(db, ids)
+    untransmitted = transmissions.untransmitted_summary(db, ids)
+    latest = transmissions.latest_by_machine(db, ids)
+    pending_transmit = transmit_requests.pending_by_machine(db, ids)
     return [
         _enrich_machine_status(
             m,
@@ -256,6 +285,9 @@ def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict
             awaiting_z=awaiting,
             timezones=timezones,
             orphans=orphans,
+            untransmitted=untransmitted,
+            latest_transmissions=latest,
+            pending_transmit=pending_transmit,
         )
         for m in machines
     ]
@@ -436,6 +468,11 @@ def post_my_heartbeat(
     # back. Ably notifies an awake till instantly; this makes a missed notification a
     # delay rather than a close that never happens.
     pending = take_pending_close_shift(db, machine)
+    # The till's card transmission state (docs/SHIFTS_API.md §4.2): a snapshot, replaced
+    # whole when the beat carries one. And the pull half of "transmit now" (§4.4).
+    if body is not None and body.transmission is not None:
+        transmissions.apply_heartbeat_block(machine, body.transmission)
+    pending_transmit = transmit_requests.take_pending(db, machine)
     through = z_reported_through_sequence(db, machine.id)
     recent = recent_shift_zs(db, machine.id)
     db.commit()
@@ -450,6 +487,8 @@ def post_my_heartbeat(
     }
     if pending is not None:
         response["pendingCloseShift"] = pending
+    if pending_transmit is not None:
+        response["pendingTransmit"] = pending_transmit
     return response
 
 
@@ -736,6 +775,111 @@ def request_remote_shift_close(
     return close_requests.request_to_out(db, req)
 
 
+# ── Card transmission (docs/SHIFTS_API.md §4) ─────────────────────────────────
+
+
+def _machine_for_read(db: Session, machine_id, current_user: User, active_tenant_id) -> POSMachine:
+    """Whoever may read the machine detail may read its transmissions."""
+    machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+    ensure_same_tenant(machine.tenant_id, active_tenant_id)
+    if current_user.role == UserRole.DISTRIBUTOR:
+        if machine.distributor_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    elif not _check_machine_list_access(current_user, machine, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    return machine
+
+
+@router.post("/{machine_id}/transmit", status_code=status.HTTP_201_CREATED)
+def request_transmit(
+    machine_id: uuid_mod.UUID,
+    response: Response,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Ask this till to transmit its card batch to Shva now (docs/SHIFTS_API.md §4.4).
+
+    The till gets the `transmit` Ably event if it is online and `pendingTransmit` on its
+    heartbeat either way. `201` with a new request, `200` with the one already pending.
+    `409 machine_not_assigned`. Same roles as a remote shift close. Progress:
+    `GET /transmit-requests/{id}`.
+    """
+    machine = machine_for_shift_admin(db, machine_id, current_user, active_tenant_id)
+    req, created = transmit_requests.request_transmit(db, current_user, machine)
+    db.commit()
+    db.refresh(req)
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return transmit_requests.request_to_out(db, req)
+
+
+@router.get("/{machine_id}/transmissions")
+def list_machine_transmissions(
+    machine_id: uuid_mod.UUID,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """This till's transmission reports, newest first (docs/SHIFTS_API.md §4.7)."""
+    machine = _machine_for_read(db, machine_id, current_user, active_tenant_id)
+    return transmissions.list_for_machine(db, machine, limit=limit, offset=offset)
+
+
+@router.get("/{machine_id}/transmissions/{transmission_id}")
+def get_machine_transmission(
+    machine_id: uuid_mod.UUID,
+    transmission_id: uuid_mod.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """One report, with its terminal ids and the terminal's printed report."""
+    from app.models.card_transmission import CardTransmission
+
+    machine = _machine_for_read(db, machine_id, current_user, active_tenant_id)
+    row = (
+        db.query(CardTransmission)
+        .filter(CardTransmission.id == transmission_id, CardTransmission.machine_id == machine.id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transmission not found")
+    return transmissions.transmission_to_out(db, row, detail=True)
+
+
+@router.get("/{machine_id}/untransmitted")
+def list_untransmitted_card_sales(
+    machine_id: uuid_mod.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Card sales of this till in no successful transmission, from our records
+    (docs/SHIFTS_API.md §4.8) — the list a shop takes to the card company when a terminal
+    dies with its batch. Only sales after the till's tracking start.
+    """
+    machine = _machine_for_read(db, machine_id, current_user, active_tenant_id)
+    items = transmissions.untransmitted_items(db, machine)
+    total = sum((Decimal(i["amount"]) for i in items if i["amount"] is not None), Decimal("0.00"))
+    reported = machine.transmission_reported_at is not None
+    return {
+        "machineId": str(machine.id),
+        "trackingStartedAt": machine.transmission_tracking_started_at,
+        "count": len(items),
+        "amount": transmissions.money(total),
+        "tillPendingCount": machine.transmission_pending_count if reported else None,
+        "tillReportedAt": machine.transmission_reported_at,
+        "items": items,
+    }
+
+
 class AdministrativeCloseBody(BaseModel):
     """Options for closing a dead till's shift from the cloud."""
 
@@ -809,6 +953,7 @@ def reconstruct_close_removed(
 @router.post("/{machine_id}/replacement-code")
 def create_replacement_pairing_code(
     machine_id: uuid_mod.UUID,
+    body: ReplacementCodeBody | None = None,
     current_user: User = Depends(get_current_distributor),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -824,6 +969,12 @@ def create_replacement_pairing_code(
     Refuses while the terminal has an open shift: the replacement has none of that
     shift's records, and its close would declare a fraction of what was taken. Close the
     shift first with `administrative-close`.
+
+    Refuses too while the till holds card sales it has not transmitted
+    (`409 untransmitted_card_sales`, docs/SHIFTS_API.md §4.9): the new device's card
+    application has none of them, so nobody would ever transmit them. For a terminal that
+    is dead with its batch, `{"acknowledgeUntransmitted": true}` creates the code anyway
+    and records who accepted that.
     """
     machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
     if not machine:
@@ -838,6 +989,9 @@ def create_replacement_pairing_code(
             status_code=status.HTTP_409_CONFLICT,
             detail="open_shift — close this terminal's shift before replacing it.",
         )
+    acknowledged = body is not None and body.acknowledge_untransmitted
+    if not acknowledged and transmissions.has_untransmitted(db, machine):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="untransmitted_card_sales")
 
     code = create_pairing_code(
         db,
@@ -846,10 +1000,12 @@ def create_replacement_pairing_code(
         company_id=None,
         shop_id=None,
         target_machine_id=machine.id,
+        untransmitted_acknowledged_by=current_user.id if acknowledged else None,
     )
     return {
         "code": code.code,
         "expiresAt": code.expires_at,
         "replacesMachineId": str(machine.id),
         "machineCode": machine.machine_code,
+        "untransmittedAcknowledged": bool(acknowledged),
     }

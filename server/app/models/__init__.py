@@ -32,6 +32,12 @@ from app.models.issued_voucher import IssuedVoucher, IssuedVoucherStatus
 from app.models.stock_level import StockLevel
 from app.models.z_run import ZRun, ZRunItem, ZRunItemStatus, ZRunStatus
 from app.models.shift_close_request import ShiftCloseRequest, ShiftCloseRequestStatus
+from app.models.card_transmission import (
+    CardTransmission,
+    CardTransmissionItem,
+    TransmitRequest,
+    TransmitRequestStatus,
+)
 
 __all__ = [
     "User", "UserRole",
@@ -69,4 +75,5 @@ __all__ = [
     "StockMovement", "StockMovementReason",
     "ZRun", "ZRunItem", "ZRunStatus", "ZRunItemStatus",
     "ShiftCloseRequest", "ShiftCloseRequestStatus",
+    "CardTransmission", "CardTransmissionItem", "TransmitRequest", "TransmitRequestStatus",
 ]
