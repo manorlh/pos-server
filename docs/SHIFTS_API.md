@@ -1019,6 +1019,7 @@ documents created at or after its tracking start, with a terminal uid, in no suc
 It is what the shop takes to the card company if a terminal dies with its batch. Oldest first.
 ```json
 {
+  "machineId": "…",
   "trackingStartedAt": "…",       // null → the till never reported; the list is empty
   "count": 2, "amount": "130.00",
   "tillPendingCount": 2,          // the till's last reading, for comparison (null = never sent)
@@ -1043,7 +1044,8 @@ A new device has an empty Agamento database: whatever the old one had not transm
 transmitted by nobody. Transmit first (§4.4); for a terminal that is dead with its batch,
 export the recovery list (§4.8), then create the code with
 `POST /machines/{id}/replacement-code {"acknowledgeUntransmitted": true}` — the code records
-who acknowledged it and when, and its adoption is not refused for this. (The existing
+who acknowledged it and when, and its adoption is not refused for this. The response adds
+`"untransmittedAcknowledged": true|false`; the body stays optional (no body = `false`). (The existing
 `409 open_shift…` refusal is unchanged and comes first; an adoption refused for an open shift
 is now `409` instead of an error.) The replacement starts the till's tracking again: the
 old snapshot is cleared, and legs from before are no longer counted.
