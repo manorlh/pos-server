@@ -32,6 +32,7 @@ import { MachineStatusDot, machineStatus } from '@/components/dashboard/machine-
 import { MachinesTable } from '@/components/dashboard/machines/machines-table';
 import { RemoteShiftCloseDialog } from '@/components/dashboard/machines/remote-shift-close';
 import { TransmitNowDialog } from '@/components/dashboard/machines/card-transmission';
+import { RequestTillZDialog, ZModeDialog } from '@/components/dashboard/till-z/till-z-dialogs';
 import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
 import { MachineAreaDialog } from '@/components/dashboard/areas/machine-area-dialog';
 import { AREA_NONE } from '@/lib/api';
@@ -73,6 +74,8 @@ export default function MachinesPage() {
   const [removeOpen, setRemoveOpen] = useState(false);
   const [closeShiftTarget, setCloseShiftTarget] = useState<PosMachine | null>(null);
   const [transmitTarget, setTransmitTarget] = useState<PosMachine | null>(null);
+  const [tillZTarget, setTillZTarget] = useState<PosMachine | null>(null);
+  const [zModeTarget, setZModeTarget] = useState<PosMachine | null>(null);
   const [fieldInstallOpen, setFieldInstallOpen] = useState(false);
   const [fieldSession, setFieldSession] = useState<PairingSessionCreateResponse | null>(null);
   const [fieldPairedCount, setFieldPairedCount] = useState(0);
@@ -645,6 +648,8 @@ export default function MachinesPage() {
               onCloseShift: setCloseShiftTarget,
               onTransmit: setTransmitTarget,
               onEditArea: setAreaTarget,
+              onRequestTillZ: setTillZTarget,
+              onEditZMode: setZModeTarget,
             }}
             isDeviceOnline={isDeviceOnline}
             onAddMachineToShop={openPairForShop}
@@ -1087,6 +1092,23 @@ export default function MachinesPage() {
         open={!!transmitTarget}
         onOpenChange={(next) => {
           if (!next) setTransmitTarget(null);
+        }}
+      />
+
+      <RequestTillZDialog
+        key={`till-z-${tillZTarget?.id ?? 'none'}`}
+        machine={tillZTarget}
+        open={!!tillZTarget}
+        onOpenChange={(next) => {
+          if (!next) setTillZTarget(null);
+        }}
+      />
+
+      <ZModeDialog
+        machine={zModeTarget}
+        open={!!zModeTarget}
+        onOpenChange={(next) => {
+          if (!next) setZModeTarget(null);
         }}
       />
     </div>
