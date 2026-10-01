@@ -8,7 +8,8 @@
  *
  * * who issued it: business name, VAT / company id, address, branch — the header frozen
  *   when the Z was built, never today's settings;
- * * the date and time, and the shop's Z number;
+ * * the date and time, and the shop's Z number — or, for a Z the till produced itself,
+ *   the till and its own number ("קופה 2 · Z 12") and who produced it;
  * * per till: its last (and first) document number, total sales, receipts by payment
  *   method with cash and credit apart, discounts, refunds / credit notes, and the count
  *   of non-sale documents;
@@ -25,6 +26,7 @@ import {
   useShiftLabel,
   useTillHeading,
 } from '@/components/dashboard/shifts/shift-parts';
+import { useZProducedBy, useZTitle, zNumberSourceOf } from './z-number';
 
 /** A count, or a dash when the server did not send it — never a zero it did not say. */
 const count = (n: number | null | undefined) => (n == null ? '—' : n);
@@ -183,6 +185,8 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
   const t = useTranslations('zReports.print');
   const tz = useTranslations('zReports');
   const shiftLabel = useShiftLabel();
+  const zTitle = useZTitle();
+  const producedBy = useZProducedBy()(z);
   const b = z.business;
   const uncountedShifts = z.perMachine.reduce((n, s) => n + (s.uncountedShiftCount ?? 0), 0);
   const withheld = z.actualCash == null;
@@ -204,11 +208,7 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
       </header>
 
       <div className="mt-3 flex items-baseline justify-between">
-        <h1 className="text-lg font-bold">
-          {z.shopSequenceNumber != null
-            ? tz('detailsNumbered', { number: z.shopSequenceNumber })
-            : tz('details')}
-        </h1>
+        <h1 className="text-lg font-bold">{zTitle(zNumberSourceOf(z))}</h1>
         <span>{t('businessDate', { date: formatDate(z.businessDate) })}</span>
       </div>
       <table className="mt-1 w-full text-xs">
@@ -218,6 +218,7 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
             value={`${formatDateTime(z.periodStart)} – ${formatDateTime(z.periodEnd)}`}
           />
           <Row label={t('producedAt')} value={formatDateTime(z.closedAt)} />
+          {producedBy ? <Row label={producedBy} value="" /> : null}
           <Row label={t('printedAt')} value={formatDateTime(printedAt)} />
           <Row label={t('tillsAndShifts')} value={t('tillsAndShiftsValue', { tills: z.machineCount ?? z.perMachine.length, shifts: z.shiftCount ?? z.shifts.length })} />
         </tbody>
@@ -225,6 +226,7 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
       {z.legacy ? (
         <p className="mt-2 font-bold">{t('legacyNotice', { till: z.machineName ?? z.machineId ?? '—' })}</p>
       ) : null}
+      {z.totalsMismatch ? <p className="mt-2 font-bold">{tz('totalsMismatchNotice')}</p> : null}
       {z.reconstructed ? <p className="mt-2 font-bold">{t('reconstructedNotice')}</p> : null}
       {z.unattended ? <p className="mt-1">{t('unattendedNotice')}</p> : null}
 
