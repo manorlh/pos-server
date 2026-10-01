@@ -130,6 +130,23 @@ class TestOnlineWindow:
     def test_one_second_past_the_window_is_offline(self):
         assert is_online(NOW - timedelta(seconds=ONLINE_WINDOW_SEC + 1), now=NOW) is False
 
+    def test_the_window_is_five_minutes_for_a_two_minute_beat(self):
+        """Two missed beats plus slack; a beat every two minutes must never flicker."""
+        assert ONLINE_WINDOW_SEC == 300
+
+    def test_just_under_five_minutes_is_online(self):
+        assert is_online(NOW - timedelta(seconds=299), now=NOW) is True
+
+    def test_just_over_five_minutes_is_offline(self):
+        assert is_online(NOW - timedelta(seconds=301), now=NOW) is False
+
+    def test_what_the_old_ninety_second_window_called_offline_is_now_online(self):
+        for seconds in (91, 120, 121, 240, 299):
+            assert is_online(NOW - timedelta(seconds=seconds), now=NOW) is True
+
+    def test_a_beat_missed_once_is_still_online(self):
+        assert is_online(NOW - timedelta(minutes=4), now=NOW) is True
+
     def test_never_beating_is_offline(self):
         assert is_online(None, now=NOW) is False
 

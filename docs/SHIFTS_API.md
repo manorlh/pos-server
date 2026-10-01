@@ -487,6 +487,10 @@ its counter onto it, so a reinstalled till never reissues a number the machine a
 
 ### 1.6 Heartbeat `POST /machines/me/heartbeat`
 
+The till beats every **2 minutes**. The cloud calls a terminal online while its last beat is
+at most **300 s** old (`ONLINE_WINDOW_SEC`, `machine_status.is_online`): two missed beats plus
+slack. A build still on the older 15-minute beat shows offline between its beats.
+
 The heartbeat **never** answers 422: an over-long string is cut to its column
 (`appVersion` 64, `serialNumber` 64, `batteryStatus` 32), and any field that cannot be read
 (wrong type, bad UUID/date, negative count, a count beyond 2³¹−1) is treated as not sent.

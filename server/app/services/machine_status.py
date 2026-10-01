@@ -35,11 +35,15 @@ from zoneinfo import ZoneInfo
 
 #: How long after its last heartbeat a terminal is still considered online.
 #:
-#: The till beats on a timer well inside this. The window is a compromise that cannot be
-#: escaped by any amount of logic: a terminal that dies one second after a beat looks
-#: healthy until the window lapses. Widening it hides outages, narrowing it turns an
-#: ordinary missed beat into a false alarm.
-ONLINE_WINDOW_SEC = 90
+#: The till beats every two minutes, so this is two missed beats plus a minute of slack
+#: for a slow request. Anything under one interval turns a healthy till offline between
+#: beats. A till still on the old fifteen-minute beat shows offline between its beats
+#: until it is upgraded; widening the window to cover it would hide a real outage for a
+#: quarter of an hour. The window is a compromise that cannot be escaped by any amount of
+#: logic: a terminal that dies one second after a beat looks healthy until the window
+#: lapses. Widening it hides outages, narrowing it turns an ordinary missed beat into a
+#: false alarm.
+ONLINE_WINDOW_SEC = 300
 
 
 class MachineStatus:

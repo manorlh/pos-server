@@ -192,9 +192,9 @@ class TestGuards:
         assert "online" in e.value.detail
 
     def test_a_terminal_seen_recently_is_refused_even_though_offline(self):
-        """Offline for four minutes is a network blip, not a dead terminal."""
+        """Offline for ten minutes is a network blip, not a dead terminal."""
         with pytest.raises(HTTPException) as e:
-            _close(machine=_machine(last_heartbeat_at=NOW - timedelta(minutes=4)))
+            _close(machine=_machine(last_heartbeat_at=NOW - timedelta(minutes=10)))
 
         assert e.value.status_code == 409
         assert "recently_seen" in e.value.detail
