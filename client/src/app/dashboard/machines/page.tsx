@@ -36,7 +36,7 @@ import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
 import { MachineAreaDialog } from '@/components/dashboard/areas/machine-area-dialog';
 import { AREA_NONE } from '@/lib/api';
 
-const MQTT_ONLINE_WINDOW_MS = 90 * 1000;
+const MQTT_ONLINE_WINDOW_MS = 300 * 1000;
 
 export default function MachinesPage() {
   const t = useTranslations('machines');

@@ -72,7 +72,7 @@ import type {
 const RECENT_LIMIT = 10;
 
 /** The server's online window, used only when a response predates its own `online`. */
-const ONLINE_WINDOW_MS = 90 * 1000;
+const ONLINE_WINDOW_MS = 300 * 1000;
 
 function httpStatus(err: unknown): number | undefined {
   return (err as { response?: { status?: number } } | null)?.response?.status;
