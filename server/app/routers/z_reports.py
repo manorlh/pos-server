@@ -26,6 +26,7 @@ from app.schemas.z_report import (
 from app.services.areas import filter_on_column, parse_area_filter
 from app.services import card_brands, offline_authorizations, z_print
 from app.services.shift_totals import compute_totals
+from app.services.z_waiters import waiter_breakdown
 from app.services.reports import _load_zoneinfo, resolve_report_timezone
 from app.services.scoping import scope_query_by_user
 from app.services.shifts import shift_to_out
@@ -450,4 +451,11 @@ def get_z_report(
     elif z.per_machine is not None and shifts:
         out.card_brands = compute_totals(db, [s.id for s in shifts]).card_brands_json()
         out.card_brands_source = "documents"
+    stored_waiters = (z.header or {}).get("byWaiter")
+    if isinstance(stored_waiters, list):
+        out.by_waiter = stored_waiters
+        out.by_waiter_source = "stored"
+    elif z.per_machine is not None and shifts:
+        out.by_waiter = waiter_breakdown(db, [s.id for s in shifts], z.shop_id)
+        out.by_waiter_source = "documents"
     return out

@@ -60,6 +60,8 @@ const KNOWN = new Set([
   'open_tables_block_z',
   // A till refused a remote close for the same reason (its ack's error code).
   'open_tables',
+  // The shop Z comes from the shop's main till only ("Z סניפי — מאיפה מפיקים").
+  'z_only_from_main_till',
 ]);
 
 /** The code part of a detail: `z_run_in_progress:<id>` → `z_run_in_progress`. */

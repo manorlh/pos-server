@@ -47,14 +47,15 @@ from app.models.tenant import Tenant
 from app.models.user import UserRole
 from app.models.z_run import ZRun, ZRunItemStatus, ZRunStatus
 from app.schemas.z_run import ZRunOut
+from app.services import main_till as MT
 from app.services import z_runs as ZR
 from app.services.machine_status import is_online
-from app.services.till_parameters import till_parameters_for_machine
 
 router = APIRouter(tags=["till-shop-z"])
 
-#: The till parameter that makes a till its shop's master for the shop Z.
-MASTER_PARAM = "shopZMasterTill"
+#: The till parameter that makes a till its shop's master for the shop Z (the shop's
+#: main till, `mainTill`, is its master too — app/services/main_till.py).
+MASTER_PARAM = MT.SHOP_Z_MASTER_KEY
 
 
 class _TillActor:
@@ -95,9 +96,15 @@ def _machine(machine_id: str, machine: POSMachine) -> POSMachine:
 
 
 def _require_master(db: Session, machine: POSMachine) -> None:
-    value = till_parameters_for_machine(db, machine).parameters.get(MASTER_PARAM)
-    if value is not True and str(value).strip().lower() not in ("true", "1", "כן"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not_master_till")
+    """
+    This till may run its shop's Z: the shop's main till ("קופה ראשית") — the only one,
+    when the shop has one, unless `shopZFrom` opens it to every till — else a till marked
+    `shopZMasterTill` (app/services/main_till.py). 403 `z_only_from_main_till` or
+    `not_master_till` otherwise.
+    """
+    refusal = MT.till_shop_z_refusal(db, machine)
+    if refusal is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=refusal)
 
 
 def _operator(machine: POSMachine, pos_user_name: Optional[str]) -> str:
@@ -194,6 +201,8 @@ def till_shop_z_status(
         "shopName": shop.name,
         # "shop" (Z סניפי, from the master) or "machine" (Z לכל קופה, this till alone).
         "zScope": scope,
+        # The shop's main till ("קופה ראשית"), or null: the till the shop Z comes from.
+        "mainTill": MT.till_ref(MT.main_till_of_shop(db, shop.id)),
         "rule": ZR.open_tills_rule(db, tenant, shop) if scope == ZR.Z_SCOPE_SHOP else None,
         "serverTime": now.isoformat(),
         "activity": activity,

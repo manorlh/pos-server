@@ -42,6 +42,7 @@ import { ZBadges } from '@/components/dashboard/z-report/z-badges';
 import { OpenTillsRecord } from '@/components/dashboard/z-wizard/open-tills';
 import { ZPrintDocument } from '@/components/dashboard/z-report/z-print-document';
 import { CardBrandSummaryCard } from '@/components/dashboard/z-report/card-brand-summary';
+import { WaiterSummaryCard } from '@/components/dashboard/z-report/waiter-summary';
 import {
   printTillReceipts,
   zPrintTitle,
@@ -494,6 +495,8 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
         </div>
 
         <CardBrandSummaryCard rows={z.cardBrands} source={z.cardBrandsSource} />
+
+        <WaiterSummaryCard rows={z.byWaiter} source={z.byWaiterSource} />
 
         {z.perMachine.length > 0 ? (
           <div className="space-y-3">

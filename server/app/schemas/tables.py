@@ -246,10 +246,19 @@ class LocalOrderIn(WaiterRef):
     cancelled_items: Optional[List[CancelledItemIn]] = Field(None, alias="cancelledItems", max_length=500)
     #: The order's extras (its waiter, the parts paid on their own — their tips are counted).
     extras_json: Optional[str] = Field(None, alias="extrasJson", max_length=EXTRAS_JSON_MAX)
+    #: The LAN host's mirror only: the order's cart, so a till taking over from a dead host
+    #: has the dishes (`app.services.tables.host_seed`). A single till does not send it.
+    cart_json: Optional[str] = Field(None, alias="cartJson", max_length=CART_JSON_MAX)
 
 
 class TablesReportIn(_Camel):
     orders: List[LocalOrderIn] = Field(default_factory=list, max_length=200)
+
+
+class TakeOverIn(_Camel):
+    """"העבר את השרת לקופה הזו": who at the till decided (a manager, checked on the till)."""
+
+    pos_user_name: Optional[str] = Field(None, alias="posUserName", max_length=200)
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────

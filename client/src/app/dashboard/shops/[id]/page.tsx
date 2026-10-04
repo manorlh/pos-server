@@ -36,6 +36,7 @@ import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-
 import { ClockSkewChip } from '@/components/dashboard/machine-health';
 import { ShopAreasCard } from '@/components/dashboard/areas/shop-areas-card';
 import { ZScopeCard } from '@/components/dashboard/z-scope-card';
+import { MainTillCard } from '@/components/dashboard/main-till-card';
 import { AreaName } from '@/components/dashboard/areas/area-filter';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -249,6 +250,8 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
       <ShopAreasCard shopId={shop.id} machines={machines} />
 
       <ZScopeCard shopId={shop.id} />
+
+      <MainTillCard shopId={shop.id} />
 
       <Card>
         <CardHeader className="pb-2">

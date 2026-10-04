@@ -1352,6 +1352,20 @@ export interface ZCandidates {
    */
   openTillsRule?: 'block' | 'confirm' | null;
   machines: ZCandidateMachine[];
+  /** The shop's main till ("קופה ראשית"), or null. */
+  mainTill?: TillRef | null;
+  /**
+   * The shop Z is the main till's alone (`shopZFrom` «הקופה הראשית בלבד»): the wizard starts
+   * only tills' own Zs here. The server refuses the rest (409 `z_only_from_main_till`).
+   */
+  dashboardZBlocked?: boolean;
+}
+
+/** A till as a small reference. */
+export interface TillRef {
+  machineId: string;
+  posNumber?: string | null;
+  name?: string | null;
 }
 
 /** A till a shop Z leaves behind (409 `open_tills_*`, and the record on the Z). */
@@ -1631,6 +1645,26 @@ export interface ZReportDetail extends ZReport {
   cardBrands?: CardBrandBreakdownRow[];
   /** stored — frozen at build time; documents — read now (a Z built before the split). */
   cardBrandsSource?: 'stored' | 'documents' | null;
+  /** Per waiter ("פירוט לפי מלצר"): a table's sales by its waiter, any other by its cashier. */
+  byWaiter?: ZWaiterRow[];
+  byWaiterSource?: 'stored' | 'documents' | null;
+}
+
+/** One waiter's row of a Z (money as decimal strings). `waiter` null: no one on the documents. */
+export interface ZWaiterRow {
+  waiterId?: string | null;
+  waiter?: string | null;
+  salesCount: number;
+  sales: string;
+  refundsCount: number;
+  refunds: string;
+  net: string;
+  cash: string;
+  card: string;
+  other: string;
+  tips: string;
+  tables: number;
+  guests: number;
 }
 
 export interface ZReportListResponse {

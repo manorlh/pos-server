@@ -322,6 +322,25 @@ def _offline_section(z: ZReport) -> Optional[dict]:
     return section("אשראי אופליין שנדחה" if totals["declined_count"] else "אשראי אופליין", rows)
 
 
+def _waiters_section(z: ZReport) -> Optional[dict]:
+    """
+    "מלצרים": per waiter (app/services/z_waiters.py) — the net, then tables · guests and
+    tips when there are any. Only on a Z that froze the breakdown (`header.byWaiter`).
+    """
+    waiters = [w for w in ((z.header or {}).get("byWaiter") or []) if isinstance(w, dict)]
+    if not waiters:
+        return None
+    rows: List[Optional[dict]] = []
+    for w in waiters:
+        name = (w.get("waiter") or "").strip() or "ללא שיוך"
+        rows.append(row(name, f"{money(w.get('net'))} · {_count(w.get('salesCount'))} מס׳", emphasis=True))
+        if w.get("tables"):
+            rows.append(row("· שולחנות / סועדים", f"{w.get('tables')} / {_count(w.get('guests'))}"))
+        if (_dec(w.get("tips")) or ZERO) != 0:
+            rows.append(row("· תשר", money(w.get("tips"))))
+    return section("מלצרים", rows)
+
+
 def _till_title(s: dict) -> str:
     pos = s.get("posNumber")
     name = (s.get("machineName") or "").strip()
@@ -449,6 +468,9 @@ def build_print_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] =
     offline = _offline_section(z)
     if offline is not None:
         sections.append(offline)
+    waiters = _waiters_section(z)
+    if waiters is not None:
+        sections.append(waiters)
     for s in _sections_of(z):
         sections.append(_till_section(s))
 
@@ -549,6 +571,9 @@ def build_summary_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime]
     lines = [_till_line(s) for s in _ordered_sections(z)]
     if lines:
         sections.append(section("קופות", lines))
+    waiters = _waiters_section(z)
+    if waiters is not None:
+        sections.append(waiters)
 
     footer = _footer_notes(z)
     if lines:

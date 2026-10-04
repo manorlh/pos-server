@@ -48,6 +48,7 @@ from app.models.shop_area import ShopArea
 from app.services.offline_authorizations import offline_block
 from app.services.transmissions import period_block
 from app.services.z_header import snapshot_header
+from app.services.z_waiters import waiter_breakdown
 from app.services.z_sequence import (
     allocate_machine_z_number,
     allocate_shop_z_number,
@@ -474,6 +475,8 @@ def build_z(
         z.header = {**z.header, "lineDiscountsTotal": _money(overall.line_discounts_total)}
         # Promotion discounts ("הנחות מבצעים") the same way: inside `discounts_total`.
         z.header = {**z.header, "promotionDiscountsTotal": _money(overall.promotion_discounts_total)}
+        # Per waiter ("פירוט לפי מלצר"): the same documents, by whose table or sale they were.
+        z.header = {**z.header, "byWaiter": waiter_breakdown(db, [s.id for s in all_shifts], shop_id)}
     db.add(z)
     db.flush()
     for shift in all_shifts:

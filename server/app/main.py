@@ -60,6 +60,7 @@ from app.routers import (
     till_messages as till_messages_router,
     prepaid_vouchers as prepaid_vouchers_router,
     till_shop_z as till_shop_z_router,
+    main_till as main_till_router,
     exceptions as exceptions_router,
     promotions as promotions_router,
     tables as tables_router,
@@ -144,6 +145,7 @@ app.include_router(sales_reports_router.router, prefix=_prefix)
 app.include_router(till_messages_router.router, prefix=_prefix)
 app.include_router(prepaid_vouchers_router.router, prefix=_prefix)
 app.include_router(till_shop_z_router.router, prefix=_prefix)
+app.include_router(main_till_router.router, prefix=_prefix)
 app.include_router(exceptions_router.router, prefix=_prefix)
 app.include_router(exceptions_router.till_router, prefix=_prefix)
 app.include_router(promotions_router.router, prefix=_prefix)

@@ -90,6 +90,7 @@ from app.schemas.tables import (
     TableReleaseIn,
     TableSaveIn,
     TablesReportIn,
+    TakeOverIn,
     TableUpdate,
     TillLayoutIn,
     ZoneCreate,
@@ -190,6 +191,41 @@ def report_local_tables(
     """Single-till mode: the till's orders, for the dashboard. Idempotent by version."""
     out = T.apply_local_report(db, machine, body.orders)
     db.commit()
+    return out
+
+
+@router.get("/sync/{machine_id}/tables/host-seed")
+def get_host_seed(
+    machine_id: str,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """The LAN mode's orders as the cloud holds them, for a till that just became the host."""
+    return T.host_seed(db, machine)
+
+
+@router.post("/sync/{machine_id}/tables/take-over")
+def take_over_host(
+    machine_id: str,
+    body: TakeOverIn,
+    background_tasks: BackgroundTasks,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    "העבר את השרת לקופה הזו" (app/services/main_till.py `take_over`): the main till is down,
+    and this till becomes the shop's main till — the tables host, the print server and the
+    master of the shop Z. 409 `host_online` while the cloud still hears the old one.
+    """
+    from app.services import main_till as MT
+    from app.services import till_parameters as TP
+
+    out = MT.take_over(db, machine, body.pos_user_name)
+    tills = TP.notify_targets_for_scope(db, "shop", machine.shop_id)
+    db.commit()
+    # Every till re-reads its parameters and printers, and pulls the tables' new host.
+    background_tasks.add_task(TP.publish_parameters_notify, tills)
+    _wake(background_tasks, db, machine)
     return out
 
 

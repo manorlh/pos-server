@@ -151,3 +151,9 @@ class ZCandidatesOut(BaseModel):
     #: server enforces it on `POST /z-runs`.
     open_tills_rule: Optional[str] = Field(None, alias="openTillsRule")
     machines: List[ZCandidateMachineOut] = Field(default_factory=list)
+    #: The shop's main till ("קופה ראשית": {machineId, posNumber, name}), or null.
+    main_till: Optional[Dict[str, Any]] = Field(None, alias="mainTill")
+    #: The shop Z is the main till's alone (`shopZFrom` «הקופה הראשית בלבד»): the wizard
+    #: may start only tills' own Zs here. Advisory: `POST /z-runs` refuses it (409
+    #: `z_only_from_main_till`).
+    dashboard_z_blocked: bool = Field(False, alias="dashboardZBlocked")

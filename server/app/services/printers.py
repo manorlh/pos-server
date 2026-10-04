@@ -1153,9 +1153,10 @@ def print_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
     """
     The shop's print server: the active till whose `printHostTill` parameter resolves on
     (normally set at the till's own level, like `shopZMasterTill`). Several: the lowest
-    register number, so every till agrees on one. None when the shop has none — off by
-    default.
+    register number, so every till agrees on one. None marked: the shop's main till
+    ("קופה ראשית", app/services/main_till.py), else none — off by default.
     """
+    from app.services.main_till import main_till_of_shop
     from app.services.till_parameters import till_parameters_for_machine
 
     if shop_id is None:
@@ -1165,7 +1166,7 @@ def print_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
         if till_parameters_for_machine(db, m).parameters.get(PRINT_HOST_KEY) is True
     ]
     if not hosts:
-        return None
+        return main_till_of_shop(db, shop_id)
 
     def order(m: POSMachine):
         number = (m.pos_number or "").strip()

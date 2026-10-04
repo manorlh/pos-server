@@ -240,7 +240,8 @@ function ProduceZ() {
     const areaId = areaByShop[c.shopId];
     const area = areaId ? { areaId } : {};
     const own = machines.filter(({ m }) => c.zScope === 'machine' || m.ownZ);
-    const shared = machines.filter(({ m }) => !(c.zScope === 'machine' || m.ownZ));
+    // "Z only from the main till": the shop Z is not this wizard's to start.
+    const shared = c.dashboardZBlocked ? [] : machines.filter(({ m }) => !(c.zScope === 'machine' || m.ownZ));
     const perTillRuns: PlannedRun[] = own.map(({ m, body }) => ({
       shopId: c.shopId,
       ...area,
@@ -457,7 +458,18 @@ function ProduceZ() {
                         }))
                       }
                     />
-                    {q.data.zScope === 'shop' && q.data.openTillsRule ? (
+                    {q.data.dashboardZBlocked ? (
+                      <Card className="border-amber-500/50">
+                        <CardContent className="py-3 text-sm">
+                          {t('onlyFromMainTill', {
+                            till: q.data.mainTill?.posNumber
+                              ? t('mainTillNumber', { n: q.data.mainTill.posNumber })
+                              : (q.data.mainTill?.name ?? ''),
+                          })}
+                        </CardContent>
+                      </Card>
+                    ) : null}
+                    {q.data.zScope === 'shop' && q.data.openTillsRule && !q.data.dashboardZBlocked ? (
                       <OpenTillsNotice
                         rule={q.data.openTillsRule}
                         tills={tillsLeftOut(q.data, selectionsFor(q.data))}

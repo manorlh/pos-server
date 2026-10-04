@@ -135,6 +135,12 @@ class ZReportDetailOut(ZReportOut):
     #: "stored" — frozen in the sections at build time; "documents" — a Z built before
     #: the split, read now from its documents; null — no card split (a till-issued Z).
     card_brands_source: Optional[str] = Field(None, alias="cardBrandsSource")
+    #: Per waiter ("פירוט לפי מלצר", app/services/z_waiters.py): {waiterId, waiter,
+    #: salesCount, sales, refundsCount, refunds, net, cash, card, other, tips, tables,
+    #: guests}. "stored" — frozen on the header at build; "documents" — a Z built before
+    #: it was stored, read now from its documents; null — none (a till-issued Z).
+    by_waiter: List[Dict[str, Any]] = Field(default_factory=list, alias="byWaiter")
+    by_waiter_source: Optional[str] = Field(None, alias="byWaiterSource")
 
 
 class ZReportWindow(BaseModel):

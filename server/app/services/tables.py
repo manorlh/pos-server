@@ -614,8 +614,10 @@ def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
     """
     The LAN mode's tables host ("קופה ראשית לשולחנות"): the active till whose
     `tablesHostTill` resolves on — the lowest register number of several, so every till
-    agrees on one — else the shop's print server, else none.
+    agrees on one — else the shop's main till ("קופה ראשית", app/services/main_till.py),
+    else the shop's print server, else none.
     """
+    from app.services.main_till import main_till_of_shop
     from app.services.printers import print_host_of_shop, shop_machines
     from app.services.till_parameters import till_parameters_for_machine
 
@@ -626,7 +628,7 @@ def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
         if till_parameters_for_machine(db, m).parameters.get(TABLES_HOST_KEY) is True
     ]
     if not hosts:
-        return print_host_of_shop(db, shop_id)
+        return main_till_of_shop(db, shop_id) or print_host_of_shop(db, shop_id)
 
     def order(m: POSMachine):
         number = (m.pos_number or "").strip()
@@ -1477,6 +1479,10 @@ def apply_local_report(db: Session, machine: POSMachine, orders: Sequence[Any]) 
         row.merged_into_id = item.merged_into_id
         if item.extras_json is not None:
             row.extras_json = item.extras_json
+        # The LAN host's mirror carries the cart: a till that takes over from a dead host
+        # starts from it (`host_seed`).
+        if item.cart_json is not None:
+            row.cart_json = item.cart_json
         db.flush()
         if newly_cancelled:
             if item.cancel_reason_id not in reasons:
@@ -1485,6 +1491,81 @@ def apply_local_report(db: Session, machine: POSMachine, orders: Sequence[Any]) 
             record_cancel_exception(db, machine, row, reason_name=reasons[item.cancel_reason_id])
         accepted.append(str(item.id))
     return {"accepted": accepted, "skipped": skipped}
+
+
+# ── The LAN mode's host, taken over ──────────────────────────────────────────
+
+#: Orders a new host takes from the cloud: every open one, and those changed lately —
+#: so a till that hosted before and still holds an order since closed elsewhere sees it
+#: closed (the newer version wins).
+HOST_SEED_RECENT = timedelta(hours=24)
+
+
+def host_seed(db: Session, machine: POSMachine) -> dict:
+    """
+    The LAN mode's orders as the cloud holds them (the host mirrors every change, cart
+    included), for a till that has just become the tables host — a takeover after the
+    main till died ("העבר את השרת לקופה הזו"), or a restart. Only the host's: 409
+    `not_the_tables_host` to any other till. `{orders: [...]}` in the host's own shape.
+    """
+    params = machine_params(db, machine)
+    host = tables_host_of_shop(db, machine.shop_id)
+    if mode_of(params.get(TABLES_MODE_KEY)) != MODE_LAN or host is None or host.id != machine.id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="not_the_tables_host")
+    since = _now() - HOST_SEED_RECENT
+    rows = (
+        db.query(TableOrder)
+        .filter(
+            TableOrder.shop_id == machine.shop_id,
+            TableOrder.source == "local",
+            or_(TableOrder.status == "open", TableOrder.updated_at >= since),
+        )
+        .all()
+    )
+    return {"orders": [_host_order_out(o) for o in rows]}
+
+
+def _host_order_out(o: TableOrder) -> Dict[str, Any]:
+    def num(value):
+        return float(value) if value is not None else None
+
+    return {
+        "id": str(o.id),
+        "tableId": str(o.table_id),
+        "zoneId": str(o.zone_id) if o.zone_id else None,
+        "tableNumber": o.table_number,
+        "tableName": o.table_name,
+        "status": o.status,
+        "version": o.version or 1,
+        "guests": o.guests,
+        "cartJson": o.cart_json,
+        "extrasJson": o.extras_json,
+        "itemCount": num(o.item_count) or 0.0,
+        "total": num(o.total) or 0.0,
+        "openedAt": _iso(o.opened_at),
+        "openedMachineId": str(o.opened_machine_id) if o.opened_machine_id else None,
+        "openedByPosUserId": o.opened_by_pos_user_id,
+        "openedByPosUserName": o.opened_by_pos_user_name,
+        "waiterPosUserId": o.waiter_pos_user_id,
+        "waiterPosUserName": o.waiter_pos_user_name,
+        "updatedAt": _iso(o.updated_at),
+        "sentAt": _iso(o.sent_at),
+        "sendCount": o.send_count or 0,
+        "billPrintedAt": _iso(o.bill_printed_at),
+        "closedAt": _iso(o.closed_at),
+        "closedByPosUserId": o.closed_by_pos_user_id,
+        "closedByPosUserName": o.closed_by_pos_user_name,
+        "transactionId": o.transaction_id,
+        "transactionNumber": o.transaction_number,
+        "paidTotal": num(o.paid_total),
+        "payConflict": bool(o.pay_conflict),
+        "cancelReasonId": str(o.cancel_reason_id) if o.cancel_reason_id else None,
+        "cancelReasonText": o.cancel_reason_text,
+        "cancelApprovedByPosUserId": o.cancel_approved_by_pos_user_id,
+        "cancelApprovedByName": o.cancel_approved_by_name,
+        "cancelledItems": o.cancelled_items,
+        "mergedIntoId": str(o.merged_into_id) if o.merged_into_id else None,
+    }
 
 
 # ── The close of the day ─────────────────────────────────────────────────────

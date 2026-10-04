@@ -32,6 +32,7 @@ from app.services.machine_status import StatusInput, resolve_status
 from app.services.remote_close import close_shift_pending_machine_ids
 from app.services.shifts import orphan_documents_by_machine, shift_to_out
 from app.services import areas
+from app.services import main_till as MT
 from app.services import z_runs as ZR
 
 router = APIRouter(tags=["z-runs"])
@@ -196,6 +197,8 @@ def get_z_candidates(
         z_scope=ZR.z_scope_of(tenant, shop, area),
         open_tills_rule=ZR.open_tills_rule(db, tenant, shop),
         machines=machines,
+        main_till=MT.till_ref(MT.main_till_of_shop(db, shop.id)),
+        dashboard_z_blocked=MT.dashboard_z_refusal(db, shop) is not None,
     )
 
 
@@ -219,6 +222,14 @@ def post_z_run(
     parameter forbids it, or wants `confirmOpenTills: true` first.
     """
     shop = _shop_for(db, body.shop_id, current_user, active_tenant_id)
+    # "Z only from the main till" (app/services/main_till.py): a shop Z of a shop that has
+    # one is started there, not here — 409 `z_only_from_main_till`. A till's own Z ("Z לכל
+    # קופה") is not a shop Z and stays the dashboard's to start.
+    refusal = MT.dashboard_z_refusal(db, shop)
+    if refusal is not None:
+        own_z = ZR.per_till_ids(db, ZR.shop_tills(db, shop.id), _tenant(db, active_tenant_id), shop)
+        if any(m.machine_id not in own_z for m in body.machines):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refusal)
     if _is_distributor(current_user):
         wanted = [m.machine_id for m in body.machines]
         found = db.query(POSMachine).filter(POSMachine.id.in_(wanted)).all() if wanted else []
