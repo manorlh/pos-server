@@ -54,7 +54,11 @@ class PrinterIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     name: str
-    connection_type: Literal["network", "bluetooth", "cloud", "till"] = Field(alias="connectionType")
+    #: kitchen ("מדפסת בונים") | receipt ("מדפסת חשבוניות").
+    purpose: Literal["kitchen", "receipt"] = "kitchen"
+    connection_type: Literal["network", "bluetooth", "cloud", "till", "usb"] = Field(alias="connectionType")
+    #: A receipt printer with the cash drawer on its port.
+    cash_drawer: bool = Field(False, alias="cashDrawer")
     host: Optional[str] = None
     port: Optional[int] = None
     bt_address: Optional[str] = Field(None, alias="btAddress")
@@ -102,6 +106,16 @@ class PrinterIn(BaseModel):
     def _by_type(self):
         """Keep only what the connection type uses, and require what it needs."""
         kind = self.connection_type
+        if self.purpose == "receipt":
+            # Printed by the till that sends it, directly: no relay, no "this till's printer".
+            if kind not in ("network", "bluetooth", "usb"):
+                raise ValueError("a receipt printer is reached by network, bluetooth or usb")
+            if kind == "usb" and self.machine_id is None:
+                raise ValueError("a USB printer hangs on one till: machineId is required")
+        else:
+            if kind == "usb":
+                raise ValueError("usb is for receipt printers")
+            self.cash_drawer = False
         hosted = kind == "cloud"
         # How the printer itself is reached: directly, or by its host till.
         reach = self.host_connection if hosted else kind

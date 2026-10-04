@@ -1,9 +1,10 @@
 'use client';
 
 /**
- * Add / edit one kitchen printer: name, how it is reached (network, Bluetooth, through
- * the cloud via a host till, the till's own), where it applies (the whole shop, one point
- * of sale, one till), and how it prints (paper, copies, cut, beep).
+ * Add / edit one printer of the shop: a kitchen printer ("מדפסת בונים": network, Bluetooth,
+ * through the cloud via a host till, the till's own) or a receipt printer ("מדפסת
+ * חשבוניות": network, Bluetooth, or one till's USB — with the cash drawer on its port or
+ * not); where it applies (the whole shop, one point of sale, one till), and how it prints.
  */
 
 import { useState } from 'react';
@@ -14,6 +15,7 @@ import type {
   KitchenPrintersPage,
   PrinterConnectionType,
   PrinterHostConnection,
+  PrinterPurpose,
 } from '@/lib/kitchenPrintersApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -74,6 +76,8 @@ export function SimpleSelect({
 
 interface FormState {
   name: string;
+  purpose: PrinterPurpose;
+  cashDrawer: boolean;
   connectionType: PrinterConnectionType;
   host: string;
   port: string;
@@ -89,10 +93,12 @@ interface FormState {
   isActive: boolean;
 }
 
-function initial(printer: KitchenPrinter | null): FormState {
+function initial(printer: KitchenPrinter | null, purpose: PrinterPurpose): FormState {
   if (!printer) {
     return {
       name: '',
+      purpose,
+      cashDrawer: purpose === 'receipt',
       connectionType: 'network',
       host: '',
       port: '9100',
@@ -110,6 +116,8 @@ function initial(printer: KitchenPrinter | null): FormState {
   }
   return {
     name: printer.name,
+    purpose: printer.purpose ?? 'kitchen',
+    cashDrawer: printer.cashDrawer ?? false,
     connectionType: printer.connectionType,
     host: printer.host ?? '',
     port: String(printer.port ?? 9100),
@@ -129,6 +137,7 @@ function initial(printer: KitchenPrinter | null): FormState {
 export function PrinterDialog({
   open,
   printer,
+  purpose = 'kitchen',
   page,
   saving,
   onClose,
@@ -136,6 +145,8 @@ export function PrinterDialog({
 }: {
   open: boolean;
   printer: KitchenPrinter | null;
+  /** A new printer's kind (an existing one keeps its own). */
+  purpose?: PrinterPurpose;
   page: KitchenPrintersPage;
   saving: boolean;
   onClose: () => void;
@@ -143,20 +154,39 @@ export function PrinterDialog({
 }) {
   const t = useTranslations('kitchenPrinters');
   const tc = useTranslations('common');
-  const [form, setForm] = useState<FormState>(() => initial(printer));
+  const [form, setForm] = useState<FormState>(() => initial(printer, purpose));
   const [error, setError] = useState<string | null>(null);
   const set = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }));
 
   // How the printer itself is reached: directly, or by its host till.
   const hosted = form.connectionType === 'cloud';
   const reach = hosted ? form.hostConnection : form.connectionType;
+  const receipt = form.purpose === 'receipt';
 
-  const typeOptions: Option[] = [
-    { value: 'network', label: t('types.network') },
-    { value: 'bluetooth', label: t('types.bluetooth') },
-    { value: 'cloud', label: t('types.cloud') },
-    { value: 'till', label: t('types.till') },
-  ];
+  // A receipt printer is reached directly by the till that prints on it.
+  const typeOptions: Option[] = receipt
+    ? [
+        { value: 'network', label: t('types.network') },
+        { value: 'bluetooth', label: t('types.bluetooth') },
+        { value: 'usb', label: t('types.usb') },
+      ]
+    : [
+        { value: 'network', label: t('types.network') },
+        { value: 'bluetooth', label: t('types.bluetooth') },
+        { value: 'cloud', label: t('types.cloud') },
+        { value: 'till', label: t('types.till') },
+      ];
+  const setPurpose = (next: PrinterPurpose) =>
+    set({
+      purpose: next,
+      cashDrawer: next === 'receipt' ? form.cashDrawer : false,
+      connectionType:
+        next === 'receipt' && (form.connectionType === 'cloud' || form.connectionType === 'till')
+          ? 'network'
+          : next === 'kitchen' && form.connectionType === 'usb'
+            ? 'network'
+            : form.connectionType,
+    });
   const hostConnectionOptions: Option[] = [
     { value: 'till', label: t('hostConnections.till') },
     { value: 'network', label: t('hostConnections.network') },
@@ -187,8 +217,12 @@ export function PrinterDialog({
     }
     const copies = Math.min(5, Math.max(1, Number(form.copies) || 1));
     const [scopeType, scopeId] = form.scope.split(':');
+    // A USB printer hangs on one till.
+    if (form.connectionType === 'usb' && scopeType !== 'machine') return setError(t('errors.usbTill'));
     onSave({
       name,
+      purpose: form.purpose,
+      cashDrawer: receipt && form.cashDrawer,
       connectionType: form.connectionType,
       host: reach === 'network' ? form.host.trim() : null,
       port: reach === 'network' ? port : null,
@@ -228,6 +262,20 @@ export function PrinterDialog({
           </div>
 
           <div className="space-y-1">
+            <Label>{t('fields.purpose')}</Label>
+            <SimpleSelect
+              value={form.purpose}
+              onChange={(v) => setPurpose(v === 'receipt' ? 'receipt' : 'kitchen')}
+              options={[
+                { value: 'kitchen', label: t('purposes.kitchen') },
+                { value: 'receipt', label: t('purposes.receipt') },
+              ]}
+              ariaLabel={t('fields.purpose')}
+            />
+            <p className="text-xs text-muted-foreground">{t(`purposeHints.${form.purpose}`)}</p>
+          </div>
+
+          <div className="space-y-1">
             <Label>{t('fields.connection')}</Label>
             <SimpleSelect
               value={form.connectionType}
@@ -240,6 +288,7 @@ export function PrinterDialog({
               {form.connectionType === 'bluetooth' && t('typeHints.bluetooth')}
               {form.connectionType === 'cloud' && t('typeHints.cloud')}
               {form.connectionType === 'till' && t('typeHints.till')}
+              {form.connectionType === 'usb' && t('typeHints.usb')}
             </p>
           </div>
 
@@ -334,15 +383,17 @@ export function PrinterDialog({
                 ariaLabel={t('fields.paper')}
               />
             </div>
-            <div className="space-y-1">
-              <Label htmlFor="kp-copies">{t('fields.copies')}</Label>
-              <Input
-                id="kp-copies"
-                inputMode="numeric"
-                value={form.copies}
-                onChange={(e) => set({ copies: e.target.value.replace(/\D/g, '').slice(0, 1) })}
-              />
-            </div>
+            {!receipt && (
+              <div className="space-y-1">
+                <Label htmlFor="kp-copies">{t('fields.copies')}</Label>
+                <Input
+                  id="kp-copies"
+                  inputMode="numeric"
+                  value={form.copies}
+                  onChange={(e) => set({ copies: e.target.value.replace(/\D/g, '').slice(0, 1) })}
+                />
+              </div>
+            )}
           </div>
 
           <div className="flex flex-wrap gap-6">
@@ -350,16 +401,24 @@ export function PrinterDialog({
               <Switch checked={form.cutPaper} onCheckedChange={(v) => set({ cutPaper: v })} />
               {t('fields.cut')}
             </label>
-            <label className="flex items-center gap-2 text-sm">
-              <Switch checked={form.beep} onCheckedChange={(v) => set({ beep: v })} />
-              {t('fields.beep')}
-            </label>
+            {receipt ? (
+              <label className="flex items-center gap-2 text-sm">
+                <Switch checked={form.cashDrawer} onCheckedChange={(v) => set({ cashDrawer: v })} />
+                {t('fields.cashDrawer')}
+              </label>
+            ) : (
+              <label className="flex items-center gap-2 text-sm">
+                <Switch checked={form.beep} onCheckedChange={(v) => set({ beep: v })} />
+                {t('fields.beep')}
+              </label>
+            )}
             <label className="flex items-center gap-2 text-sm">
               <Switch checked={form.isActive} onCheckedChange={(v) => set({ isActive: v })} />
               {t('fields.active')}
             </label>
           </div>
 
+          {receipt && form.cashDrawer && <p className="text-xs text-muted-foreground">{t('cashDrawerHint')}</p>}
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
 

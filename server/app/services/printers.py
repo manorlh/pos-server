@@ -71,7 +71,7 @@ ON_TILL_KEY = "kitchenTicketsOnTill"
 OPTION_KEYS = (ON_SALE_KEY, ON_TILL_KEY)
 
 #: A relayed ticket nobody printed by then is failed for its sender.
-JOB_TTL = timedelta(minutes=30)
+JOB_TTL = timedelta(minutes=5)
 #: A job handed to its host and not acknowledged within this is handed out again.
 JOB_LEASE = timedelta(minutes=2)
 #: How far back the dashboard's test-print results reach.
@@ -193,6 +193,8 @@ def printer_out(printer: KitchenPrinter, machines: Dict[uuid.UUID, POSMachine] |
         "id": str(printer.id),
         "shopId": str(printer.shop_id),
         "name": printer.name,
+        "purpose": printer.purpose or "kitchen",
+        "cashDrawer": bool(printer.cash_drawer),
         "connectionType": printer.connection_type,
         "host": printer.host,
         "port": printer.port,
@@ -235,6 +237,8 @@ def apply_printer(db: Session, shop: Shop, printer: KitchenPrinter, body: Printe
     printer.tenant_id = shop.tenant_id
     printer.shop_id = shop.id
     printer.name = body.name
+    printer.purpose = body.purpose
+    printer.cash_drawer = body.cash_drawer
     printer.connection_type = body.connection_type
     printer.host = body.host
     printer.port = body.port
@@ -530,11 +534,14 @@ def _printer_ids_of_shop(db: Session, shop: Shop) -> set:
 
 
 def _check_printers(db: Session, shop: Shop, printer_ids: Iterable[uuid.UUID]) -> List[uuid.UUID]:
-    mine = _printer_ids_of_shop(db, shop)
+    """The ids, each a kitchen printer of the shop (a receipt printer prints no ticket)."""
+    printers = {str(p.id): p for p in shop_printers(db, shop.id)}
     cleaned: List[uuid.UUID] = []
     for pid in printer_ids:
-        if str(pid) not in mine:
+        if str(pid) not in printers:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="printer_not_in_shop")
+        if not is_kitchen(printers[str(pid)]):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="printer_not_kitchen")
         if pid not in cleaned:
             cleaned.append(pid)
     return cleaned
@@ -684,6 +691,7 @@ def target_route(
         "printers": [
             {"id": str(p.id), "name": p.name, "isActive": bool(p.is_active), "type": p.connection_type}
             for p in printers
+            if is_kitchen(p)
         ],
     }
 
@@ -987,6 +995,7 @@ def product_state(
         "printers": [
             {"id": str(p.id), "name": p.name, "isActive": bool(p.is_active), "type": p.connection_type}
             for p in shop_printers(db, shop.id)
+            if is_kitchen(p)
         ],
         "effective": effective_for_shop(db, product, shop, flagged=flagged, machine=machine),
     })
@@ -1107,6 +1116,15 @@ SERVED_TYPES = ("network", "bluetooth")
 PRINT_HOST_KEY = "printHostTill"
 
 
+def is_kitchen(printer: KitchenPrinter) -> bool:
+    return (printer.purpose or "kitchen") == "kitchen"
+
+
+def is_served(printer: KitchenPrinter) -> bool:
+    """The shop's print server prints it for the other tills: a network / Bluetooth kitchen printer."""
+    return printer.connection_type in SERVED_TYPES and is_kitchen(printer)
+
+
 def is_hosted_by(printer: KitchenPrinter, machine: POSMachine) -> bool:
     """A cloud / print-host printer whose host is `machine`."""
     return printer.connection_type in HOSTED_TYPES and str(printer.host_machine_id) == str(machine.id)
@@ -1126,11 +1144,15 @@ def printer_for_till(
     printer: KitchenPrinter, machine: POSMachine, in_scope: bool, serves: bool = False
 ) -> Dict[str, Any]:
     # This till prints it for others: a cloud printer it hosts, or — as the shop's print
-    # server — any network / Bluetooth printer.
-    is_host = is_hosted_by(printer, machine) or (serves and printer.connection_type in SERVED_TYPES)
+    # server — any network / Bluetooth kitchen printer.
+    is_host = is_hosted_by(printer, machine) or (serves and is_served(printer))
     return {
         "id": str(printer.id),
         "name": printer.name,
+        #: kitchen | receipt — a receipt printer is never a ticket's: the till prints its
+        #: bills and receipts there when asked, and opens its drawer (`cashDrawer`).
+        "purpose": printer.purpose or "kitchen",
+        "cashDrawer": bool(printer.cash_drawer),
         "type": printer.connection_type,
         "host": printer.host,
         "port": printer.port,
@@ -1216,12 +1238,14 @@ def sync_payload(db: Session, machine: POSMachine) -> Dict[str, Any]:
             applies = printer_applies_to(printer, machine)
             hosts = printer.is_active and (
                 is_hosted_by(printer, machine)
-                # The print server prints every network / Bluetooth printer of the shop.
-                or (serves and printer.connection_type in SERVED_TYPES)
+                # The print server prints every network / Bluetooth kitchen printer of the shop.
+                or (serves and is_served(printer))
             )
-            if applies or hosts:
-                printers.append(printer_for_till(printer, machine, applies, serves))
-            if applies:
+            # A receipt printer: listed for the tills it applies to; no ticket routes there.
+            kitchen = is_kitchen(printer)
+            if applies or (hosts and kitchen):
+                printers.append(printer_for_till(printer, machine, applies and kitchen, serves))
+            if applies and kitchen:
                 in_scope_ids.add(str(printer.id))
 
     category_routes: Dict[str, List[str]] = {}
@@ -1357,7 +1381,7 @@ def relay_target(db: Session, printer: KitchenPrinter):
     """
     if printer.connection_type in HOSTED_TYPES:
         return printer.host_machine_id
-    if printer.connection_type in SERVED_TYPES:
+    if is_served(printer):
         host = print_host_of_shop(db, printer.shop_id)
         return host.id if host is not None else None
     return None
@@ -1411,7 +1435,7 @@ def create_test_jobs(db: Session, user: User, printer: KitchenPrinter) -> List[K
     A test ticket for each till that would print on `printer`: its host for a cloud
     printer, otherwise every active till it applies to.
     """
-    served_by = print_host_of_shop(db, printer.shop_id) if printer.connection_type in SERVED_TYPES else None
+    served_by = print_host_of_shop(db, printer.shop_id) if is_served(printer) else None
     if printer.connection_type in HOSTED_TYPES:
         targets = []
         if printer.host_machine_id is not None:

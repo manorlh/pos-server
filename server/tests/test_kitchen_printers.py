@@ -941,3 +941,56 @@ class TestTheProductEverywhere:
         second = pull(k, k.other_till, etag=first["etag"])
         assert second["syncType"] == "full"
         assert pull(k, k.other_till, etag=second["etag"])["syncType"] == "unchanged"
+
+
+# ── Receipt printers ("מדפסות חשבוניות") ──────────────────────────────────────
+
+
+class TestReceiptPrinters:
+    def test_a_receipt_printer_is_reached_directly_and_may_have_a_drawer(self, k):
+        out = create(k, name="קופה ראשית BTP-880", purpose="receipt", cashDrawer=True)
+        assert out["purpose"] == "receipt" and out["cashDrawer"] is True
+        with pytest.raises(ValidationError):
+            printer_in(name="x", purpose="receipt", connectionType="cloud", hostMachineId=str(uuid.uuid4()))
+        with pytest.raises(ValidationError):
+            printer_in(name="x", purpose="receipt", connectionType="till")
+        # USB hangs on one till.
+        with pytest.raises(ValidationError):
+            printer_in(name="x", purpose="receipt", connectionType="usb")
+        usb = create(k, name="USB", purpose="receipt", connectionType="usb", machineId=str(k.tills[0].id))
+        assert usb["connectionType"] == "usb" and usb["machineName"]
+        # A kitchen printer has no drawer and no USB.
+        assert printer_in(name="k", cashDrawer=True).cash_drawer is False
+        with pytest.raises(ValidationError):
+            printer_in(name="k", connectionType="usb", machineId=str(uuid.uuid4()))
+
+    def test_the_tills_get_it_but_no_ticket_routes_there(self, k):
+        kitchen = create(k, name="Kitchen")
+        receipt = create(k, name="Counter", purpose="receipt", host="192.168.1.60", cashDrawer=True)
+        with pytest.raises(Exception) as e:
+            route_categories(k, {k.food: [receipt["id"]]})
+        assert getattr(e.value, "detail", None) == "printer_not_kitchen"
+        route_categories(k, {k.food: [kitchen["id"]]})
+        out = pull(k, k.tills[0])
+        by_id = {p["id"]: p for p in out["printers"]}
+        assert by_id[receipt["id"]]["purpose"] == "receipt" and by_id[receipt["id"]]["cashDrawer"] is True
+        assert by_id[receipt["id"]]["inScope"] is False
+        assert by_id[kitchen["id"]]["purpose"] == "kitchen" and by_id[kitchen["id"]]["inScope"] is True
+        assert all(receipt["id"] not in ids for ids in out["categoryRoutes"].values())
+
+    def test_the_print_server_does_not_take_receipt_printers(self, k):
+        t1, t2 = k.tills
+        make_print_host(k, t1)
+        receipt = create(k, name="Counter", purpose="receipt", host="192.168.1.60")
+        kitchen = create(k, name="Kitchen")
+        host_view = {p["id"]: p for p in pull(k, t1)["printers"]}
+        assert host_view[kitchen["id"]]["isHost"] is True
+        assert host_view[receipt["id"]]["isHost"] is False
+        # Not relayed through the cloud either: the till prints it itself.
+        with pytest.raises(Exception) as e:
+            send_job(k, t2, receipt["id"])
+        assert getattr(e.value, "detail", None) == "printer_not_relayed"
+
+
+def test_a_relayed_ticket_expires_in_minutes_not_half_an_hour():
+    assert K.JOB_TTL <= timedelta(minutes=5)

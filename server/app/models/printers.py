@@ -14,6 +14,12 @@ Three tables:
     which prints it — on its own printer (`host_connection='till'`) or on a network /
     Bluetooth printer only it reaches (`host_connection` + the same host/port/MAC fields).
   - `till`: the built-in printer of whichever till the ticket comes from.
+  - `usb`: a receipt printer on one till's USB port (`machine_id` names the till).
+
+  `purpose`: a kitchen printer ("מדפסת בונים": tickets, by the routing) or a receipt
+  printer ("מדפסת חשבוניות": bills and receipts the tills send it, never a ticket). A
+  receipt printer is reached directly (network, Bluetooth, USB) and may have the cash
+  drawer on its port (`cash_drawer`).
 
 * `kitchen_printer_routes` — what prints where, per shop. A row routes a category or a
   product (`target_type`, `target_id`) to a printer. Several rows for one target print
@@ -55,7 +61,8 @@ from sqlalchemy.sql import func
 
 from app.database import Base
 
-PRINTER_CONNECTION_TYPES = ("network", "bluetooth", "cloud", "till")
+PRINTER_CONNECTION_TYPES = ("network", "bluetooth", "cloud", "till", "usb")
+PRINTER_PURPOSES = ("kitchen", "receipt")
 #: The port the shop's print server till listens on for the other tills' jobs.
 DEFAULT_LAN_PORT = 8399
 #: How the host till of a `cloud` printer reaches it.
@@ -70,9 +77,10 @@ class KitchenPrinter(Base):
     __tablename__ = "kitchen_printers"
     __table_args__ = (
         CheckConstraint(
-            "connection_type IN ('network', 'bluetooth', 'cloud', 'till')",
+            "connection_type IN ('network', 'bluetooth', 'cloud', 'till', 'usb')",
             name="ck_kitchen_printers_connection_type",
         ),
+        CheckConstraint("purpose IN ('kitchen', 'receipt')", name="ck_kitchen_printers_purpose"),
         CheckConstraint(
             "host_connection IS NULL OR host_connection IN ('till', 'network', 'bluetooth')",
             name="ck_kitchen_printers_host_connection",
@@ -89,6 +97,10 @@ class KitchenPrinter(Base):
     #: Only this till uses it (wins over `area_id`); null = not narrowed to a till.
     machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id", ondelete="SET NULL"), nullable=True)
     name = Column(String(100), nullable=False)
+    #: kitchen ("מדפסת בונים") | receipt ("מדפסת חשבוניות").
+    purpose = Column(String(8), nullable=False, default="kitchen", server_default="kitchen")
+    #: A receipt printer with the cash drawer on its port ("מגירה").
+    cash_drawer = Column(Boolean, nullable=False, default=False, server_default="false")
     connection_type = Column(String(16), nullable=False)
     #: network (and a cloud printer whose host reaches it over the network).
     host = Column(String(255), nullable=True)

@@ -1,10 +1,11 @@
 'use client';
 
 /**
- * "מדפסות בונים" — kitchen / bar ticket printers of one shop (SPEC §4): the printers, a
- * test print for each, what prints where, and the two kitchen options. Everything here
- * reaches the shop's tills on their next pull (they are woken when it changes); the tills
- * then print without the cloud, except through a cloud (relay) printer.
+ * "מדפסות" — the printers of one shop: kitchen / bar ticket printers (SPEC §4) and receipt
+ * printers ("מדפסות חשבוניות": bills and receipts, the cash drawer on their port), a test
+ * print for each, what prints where, and the two kitchen options. Everything here reaches
+ * the shop's tills on their next pull (they are woken when it changes); the tills then
+ * print without the cloud, except through a cloud (relay) printer.
  */
 
 import { useState } from 'react';
@@ -23,6 +24,7 @@ import {
   updateKitchenPrinter,
   type KitchenPrinter,
   type KitchenPrinterInput,
+  type PrinterPurpose,
 } from '@/lib/kitchenPrintersApi';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -50,7 +52,7 @@ export default function KitchenPrintersPage() {
     enabled: !!shopId,
   });
 
-  const [dialog, setDialog] = useState<{ printer: KitchenPrinter | null } | null>(null);
+  const [dialog, setDialog] = useState<{ printer: KitchenPrinter | null; purpose: PrinterPurpose } | null>(null);
   const [testing, setTesting] = useState<{ printer: KitchenPrinter; jobIds: string[] } | null>(null);
 
   const refresh = () => {
@@ -101,7 +103,9 @@ export default function KitchenPrintersPage() {
           ? p.btAddress
             ? t('connection.bluetooth', { device: [p.btName, p.btAddress].filter(Boolean).join(' ') })
             : t('connection.bluetoothOnTill')
-          : t('connection.till');
+          : reach === 'usb'
+            ? t('connection.usb')
+            : t('connection.till');
     return p.connectionType === 'cloud'
       ? t('connection.cloud', { host: p.hostMachineName ?? '?', how })
       : how;
@@ -115,6 +119,87 @@ export default function KitchenPrintersPage() {
         : t('scopeShop');
 
   const canEdit = page?.canEdit === true;
+  const kitchen = (page?.printers ?? []).filter((p) => (p.purpose ?? 'kitchen') === 'kitchen');
+  const receipts = (page?.printers ?? []).filter((p) => p.purpose === 'receipt');
+
+  const table = (printers: KitchenPrinter[], empty: string) =>
+    printers.length === 0 ? (
+      <div className="rounded-lg border bg-card p-6 text-center text-sm text-muted-foreground">{empty}</div>
+    ) : (
+      <div className="overflow-x-auto rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t('columns.name')}</TableHead>
+              <TableHead>{t('columns.connection')}</TableHead>
+              <TableHead>{t('columns.scope')}</TableHead>
+              <TableHead>{t('columns.print')}</TableHead>
+              <TableHead>{tc('status')}</TableHead>
+              <TableHead className="w-36" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {printers.map((p) => (
+              <TableRow key={p.id}>
+                <TableCell className="font-medium">{p.name}</TableCell>
+                <TableCell>{connection(p)}</TableCell>
+                <TableCell>{scopeText(p)}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">
+                  {[
+                    p.paperWidth === 58 ? t('paper58') : t('paper80'),
+                    p.copies > 1 && p.purpose !== 'receipt' ? t('copiesN', { n: p.copies }) : null,
+                    p.cutPaper ? t('cutShort') : null,
+                    p.beep && p.purpose !== 'receipt' ? t('beepShort') : null,
+                    p.cashDrawer ? t('drawerShort') : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </TableCell>
+                <TableCell>
+                  <Badge variant={p.isActive ? 'secondary' : 'outline'}>
+                    {p.isActive ? tc('active') : tc('inactive')}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!p.isActive || test.isPending}
+                      onClick={() => test.mutate(p)}
+                    >
+                      <Printer className="h-3.5 w-3.5" /> {t('testPrint')}
+                    </Button>
+                    {canEdit && (
+                      <>
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          aria-label={tc('edit')}
+                          onClick={() => setDialog({ printer: p, purpose: p.purpose ?? 'kitchen' })}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          aria-label={tc('delete')}
+                          onClick={() => {
+                            if (window.confirm(t('confirmDelete', { name: p.name }))) remove.mutate(p.id);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    );
 
   return (
     <div className="space-y-6">
@@ -124,9 +209,14 @@ export default function KitchenPrintersPage() {
           <p className="text-sm text-muted-foreground">{t('subtitle')}</p>
         </div>
         {canEdit && (
-          <Button size="sm" onClick={() => setDialog({ printer: null })}>
-            <Plus className="ms-1 h-4 w-4" /> {t('add')}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={() => setDialog({ printer: null, purpose: 'kitchen' })}>
+              <Plus className="ms-1 h-4 w-4" /> {t('add')}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setDialog({ printer: null, purpose: 'receipt' })}>
+              <Plus className="ms-1 h-4 w-4" /> {t('addReceipt')}
+            </Button>
+          </div>
         )}
       </div>
 
@@ -136,89 +226,19 @@ export default function KitchenPrintersPage() {
         ) : (
           <>
             <section className="space-y-2">
-              {page.printers.length === 0 ? (
-                <div className="rounded-lg border bg-card p-6 text-center text-sm text-muted-foreground">
-                  {t('empty')}
-                </div>
-              ) : (
-                <div className="overflow-x-auto rounded-lg border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>{t('columns.name')}</TableHead>
-                        <TableHead>{t('columns.connection')}</TableHead>
-                        <TableHead>{t('columns.scope')}</TableHead>
-                        <TableHead>{t('columns.print')}</TableHead>
-                        <TableHead>{tc('status')}</TableHead>
-                        <TableHead className="w-36" />
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {page.printers.map((p) => (
-                        <TableRow key={p.id}>
-                          <TableCell className="font-medium">{p.name}</TableCell>
-                          <TableCell>{connection(p)}</TableCell>
-                          <TableCell>{scopeText(p)}</TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {[
-                              p.paperWidth === 58 ? t('paper58') : t('paper80'),
-                              p.copies > 1 ? t('copiesN', { n: p.copies }) : null,
-                              p.cutPaper ? t('cutShort') : null,
-                              p.beep ? t('beepShort') : null,
-                            ]
-                              .filter(Boolean)
-                              .join(' · ')}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={p.isActive ? 'secondary' : 'outline'}>
-                              {p.isActive ? tc('active') : tc('inactive')}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex gap-1">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={!p.isActive || test.isPending}
-                                onClick={() => test.mutate(p)}
-                              >
-                                <Printer className="h-3.5 w-3.5" /> {t('testPrint')}
-                              </Button>
-                              {canEdit && (
-                                <>
-                                  <Button
-                                    size="icon-sm"
-                                    variant="ghost"
-                                    aria-label={tc('edit')}
-                                    onClick={() => setDialog({ printer: p })}
-                                  >
-                                    <Pencil className="h-4 w-4" />
-                                  </Button>
-                                  <Button
-                                    size="icon-sm"
-                                    variant="ghost"
-                                    aria-label={tc('delete')}
-                                    onClick={() => {
-                                      if (window.confirm(t('confirmDelete', { name: p.name }))) remove.mutate(p.id);
-                                    }}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
-                                </>
-                              )}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
+              <h2 className="text-lg font-semibold">{t('kitchenTitle')}</h2>
+              {table(kitchen, t('empty'))}
+            </section>
+
+            <section className="space-y-2">
+              <h2 className="text-lg font-semibold">{t('receiptTitle')}</h2>
+              <p className="text-sm text-muted-foreground">{t('receiptHint')}</p>
+              {table(receipts, t('receiptEmpty'))}
             </section>
 
             <PrintServerCard page={page} />
-            <RoutingEditor shopId={shopId} printers={page.printers} canEdit={canEdit} />
-            <StationsCard shopId={shopId} printers={page.printers} canEditShop={canEdit} />
+            <RoutingEditor shopId={shopId} printers={kitchen} canEdit={canEdit} />
+            <StationsCard shopId={shopId} printers={kitchen} canEditShop={canEdit} />
             <OptionsCard page={page} />
 
             {dialog && (
@@ -226,6 +246,7 @@ export default function KitchenPrintersPage() {
                 key={dialog.printer?.id ?? 'new'}
                 open
                 printer={dialog.printer}
+                purpose={dialog.purpose}
                 page={page}
                 saving={save.isPending}
                 onClose={() => setDialog(null)}

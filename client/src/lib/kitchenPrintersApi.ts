@@ -4,13 +4,18 @@
  */
 import { api } from './api';
 
-export type PrinterConnectionType = 'network' | 'bluetooth' | 'cloud' | 'till';
+export type PrinterConnectionType = 'network' | 'bluetooth' | 'cloud' | 'till' | 'usb';
+/** kitchen — "מדפסת בונים" (tickets, by the routing); receipt — "מדפסת חשבוניות" (bills, receipts, the drawer). */
+export type PrinterPurpose = 'kitchen' | 'receipt';
 export type PrinterHostConnection = 'till' | 'network' | 'bluetooth';
 
 export interface KitchenPrinter {
   id: string;
   shopId: string;
   name: string;
+  purpose: PrinterPurpose;
+  /** A receipt printer with the cash drawer on its port. */
+  cashDrawer: boolean;
   connectionType: PrinterConnectionType;
   host: string | null;
   port: number | null;
@@ -34,6 +39,8 @@ export interface KitchenPrinter {
 
 export interface KitchenPrinterInput {
   name: string;
+  purpose: PrinterPurpose;
+  cashDrawer: boolean;
   connectionType: PrinterConnectionType;
   host?: string | null;
   port?: number | null;
