@@ -35,6 +35,8 @@ from app.services.shifts import note_documents_after_close
 from app.services.z_sequence import ensure_shop_z_sequence
 from shift_world import NOW, TODAY, accept_str_uuids, make_world
 
+pytestmark = pytest.mark.usefixtures("z_activity_unchecked")  # not about "no Z on 0"
+
 
 @pytest.fixture
 def w(monkeypatch):

@@ -18,6 +18,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 
 const EMPTY: Partial<Voucher> = {
   name: '',
@@ -68,7 +69,7 @@ export default function VouchersPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between print:hidden">
         <div>
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
@@ -82,6 +83,22 @@ export default function VouchersPage() {
         <ScopeIgnoredNote maxLevel={resolution.maxLevel} />
       ) : null}
 
+      <ReportExportToolbar
+        title={t('title')}
+        disabled={vouchers.length === 0}
+        getSheets={() => ({
+          name: t('title'),
+          columns: [
+            { header: t('name'), width: 26 },
+            { header: t('title'), width: 26 },
+            { header: t('valueMode'), width: 16 },
+            { header: tc('status'), width: 10 },
+          ],
+          rows: vouchers.map((v) => [
+            v.name, v.title ?? v.name, t(`valueMode_${v.valueDisplayMode}`), v.isActive ? tc('active') : tc('inactive'),
+          ]),
+        })}
+      />
       <div className="rounded-lg border bg-card overflow-hidden">
         <Table>
           <TableHeader>
@@ -140,7 +157,7 @@ export default function VouchersPage() {
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{isNew ? t('addTitle') : t('editTitle')}</DialogTitle>
           </DialogHeader>

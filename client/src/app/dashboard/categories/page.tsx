@@ -29,7 +29,7 @@ import { api, reorderCategories } from '@/lib/api';
 import { usePageScope } from '@/lib/scope';
 import { ScopeIgnoredNote } from '@/components/dashboard/scope-gate';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { Category, Voucher, PaginatedResponse } from '@/lib/types';
+import { Category, Voucher, PaginatedResponse, TicketMode } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -40,8 +40,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, GripVertical, Info } from 'lucide-react';
+import { TargetPrintersSection } from '@/components/dashboard/kitchen-printers/target-printers-section';
+import { CategoryMenuSection } from '@/components/dashboard/menu/menu-sections';
 
 const EMPTY: Partial<Category> = { name: '', description: '', color: '#6366f1', catalogLevel: 'global' };
+
+const TICKET_MODES: TicketMode[] = ['off', 'per_unit', 'per_line', 'per_sale'];
 
 /** Move `from` to `to`, returning a new array. Out-of-range moves are no-ops. */
 function moveItem<T>(items: T[], from: number, to: number): T[] {
@@ -58,6 +62,7 @@ export default function CategoriesPage() {
   const t = useTranslations('categories');
   const tr = useTranslations('categories.reorder');
   const tc = useTranslations('common');
+  const tt = useTranslations('itemTicket');
   const qc = useQueryClient();
   // `GET /categories` accepts companyId / shopId, but filtering by them would hide
   // the global categories and leave a partial list to reorder — an order saved
@@ -134,7 +139,7 @@ export default function CategoriesPage() {
   const save = useMutation({
     mutationFn: (c: Partial<Category>) => {
       // Send voucherId explicitly (null when cleared) so the API can unset it.
-      const payload = { ...c, voucherId: c.voucherId ?? null };
+      const payload = { ...c, voucherId: c.voucherId ?? null, ticketMode: c.ticketMode ?? 'off' };
       return c.id ? api.put(`/categories/${c.id}`, payload) : api.post('/categories', payload);
     },
     onSuccess: () => {
@@ -221,6 +226,7 @@ export default function CategoriesPage() {
               <TableHead className="w-14">{t('color')}</TableHead>
               <TableHead>{t('name')}</TableHead>
               <TableHead>{t('level')}</TableHead>
+              <TableHead>{tt('column')}</TableHead>
               <TableHead>{tc('status')}</TableHead>
               <TableHead className="w-28" />
             </TableRow>
@@ -229,14 +235,14 @@ export default function CategoriesPage() {
             {isLoading ? (
               Array.from({ length: 4 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 6 }).map((_, j) => (
+                  {Array.from({ length: 7 }).map((_, j) => (
                     <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                   ))}
                 </TableRow>
               ))
             ) : rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
                   {tr('empty')}
                 </TableCell>
               </TableRow>
@@ -299,10 +305,38 @@ export default function CategoriesPage() {
                       {c.catalogLevel}
                     </Badge>
                   </TableCell>
+                  <TableCell className="text-sm">
+                    {c.ticketMode && c.ticketMode !== 'off' ? (
+                      <Badge variant="outline">{tt(c.ticketMode)}</Badge>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
                   <TableCell>
-                    <Badge variant={c.isActive ? 'outline' : 'destructive'}>
-                      {c.isActive ? tc('active') : tc('inactive')}
-                    </Badge>
+                    <div className="flex flex-wrap items-center gap-1">
+                      <Badge variant={c.isActive ? 'outline' : 'destructive'}>
+                        {c.isActive ? tc('active') : tc('inactive')}
+                      </Badge>
+                      {/* Switched off from a till for a shop, area or single till. */}
+                      {c.isActive && c.inactiveAt && c.inactiveAt.length > 0 ? (
+                        <Badge variant="secondary" title={t('inactiveAtHint')}>
+                          {t('inactiveAt', {
+                            names: c.inactiveAt
+                              .map((i) =>
+                                t(
+                                  i.level === 'shop'
+                                    ? 'inactiveAtShop'
+                                    : i.level === 'area'
+                                      ? 'inactiveAtArea'
+                                      : 'inactiveAtMachine',
+                                  { name: i.name ?? '' },
+                                ),
+                              )
+                              .join(', '),
+                          })}
+                        </Badge>
+                      ) : null}
+                    </div>
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1">
@@ -376,6 +410,28 @@ export default function CategoriesPage() {
               </Select>
               <p className="text-xs text-muted-foreground">{t('voucherHint')}</p>
             </div>
+            <div className="space-y-1">
+              <Label>{tt('label')}</Label>
+              <Select
+                value={editing.ticketMode ?? 'off'}
+                onValueChange={(v) =>
+                  setEditing((c) => ({ ...c, ticketMode: (v as TicketMode | null) ?? 'off' }))
+                }
+                items={TICKET_MODES.map((m) => ({ value: m, label: tt(m) }))}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {TICKET_MODES.map((m) => (
+                    <SelectItem key={m} value={m} label={tt(m)}>{tt(m)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{tt('hint')}</p>
+            </div>
+            {/* Kitchen / bar printers of the whole category ("מדפסות בונים"). */}
+            {!isNew && editing.id ? <TargetPrintersSection kind="category" id={editing.id} /> : null}
+            {/* Modifier groups, note chips and course for the category (docs/SPEC_MENU_MODIFIERS.md §12). */}
+            {!isNew && editing.id ? <CategoryMenuSection categoryId={editing.id} /> : null}
             {/* No sortOrder field: the table is the ordering control. */}
           </div>
           <DialogFooter>

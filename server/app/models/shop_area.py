@@ -1,7 +1,7 @@
 import uuid
 
 from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -15,8 +15,8 @@ class ShopArea(Base):
 
     A filter over the shop's tills, never a fiscal scope of its own: a Z "for an area"
     is an ordinary shop Z whose till list is the area's, under the shop's one Z number.
-    Membership is `pos_machines.area_id` and nothing else, so a settings layer per area
-    can later hang off the same column.
+    Membership is `pos_machines.area_id` and nothing else, and the area's settings layer
+    (`settings`, between the shop's and each till's) hangs off that same column.
 
     **Archived, never deleted.** Shifts, Z runs and Zs keep pointing at the area they
     were stamped with; deleting it would either break those keys or rewrite history.
@@ -47,6 +47,13 @@ class ShopArea(Base):
     name = Column(String(100), nullable=False)
     sort_order = Column(Integer, nullable=False, default=0, server_default="0")
     archived_at = Column(DateTime(timezone=True), nullable=True)
+    # ── POS settings for this point of sale ───────────────────────────────────
+    # The layer between the shop and its tills in tenant → company → shop → area → till
+    # (`settings_merge`): the same keys, so the bar can take card instalments while the
+    # counter does not. Empty for almost every area. `settings_updated_at` NULL means
+    # never written, so no till's settings watermark moved when the column was added.
+    settings = Column(JSONB, nullable=False, default=dict, server_default="{}")
+    settings_updated_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     #: Also the tills' settings watermark for the area's name (see the settings sync).
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

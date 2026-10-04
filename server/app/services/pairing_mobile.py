@@ -193,6 +193,7 @@ def claim_device_pairing(
     company_id: uuid.UUID,
     shop_id: uuid.UUID,
     machine_name: Optional[str] = None,
+    device_model: Optional[str] = None,
 ) -> Tuple[DevicePairingRequest, POSMachine, Company, Shop]:
     if shop_id is None:
         raise PairingMobileError("shopId is required")
@@ -240,6 +241,7 @@ def claim_device_pairing(
         device_info=row.device_info,
         machine_name=resolved_machine_name,
         pairing_session_id=session.id,
+        device_model=device_model,
     )
 
     assigned = assign_machine_to_shop(db, pos_machine.id, resolved_shop_id)

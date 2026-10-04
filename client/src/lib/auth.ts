@@ -30,6 +30,9 @@ export interface TenantSummary {
   slug: string;
   /** IANA zone the tenant's business days and shift times are kept in. */
   timezone?: string | null;
+  /** "לקוח זמני": its tills stop selling after `licenseExpiresOn`. */
+  licenseType?: 'permanent' | 'temporary';
+  licenseExpiresOn?: string | null;
 }
 
 interface AuthState {
@@ -58,12 +61,21 @@ export const useAuth = create<AuthState>((set) => ({
         api.get('/tenants/mine'),
       ]);
       const tenants = (
-        (tenantRows ?? []) as Array<{ id: unknown; name: string; slug: string; timezone?: string | null }>
+        (tenantRows ?? []) as Array<{
+          id: unknown;
+          name: string;
+          slug: string;
+          timezone?: string | null;
+          licenseType?: string | null;
+          licenseExpiresOn?: string | null;
+        }>
       ).map((t) => ({
         id: String(t.id),
         name: t.name,
         slug: t.slug,
         timezone: typeof t.timezone === 'string' && t.timezone ? t.timezone : null,
+        licenseType: t.licenseType === 'temporary' ? ('temporary' as const) : ('permanent' as const),
+        licenseExpiresOn: t.licenseExpiresOn ?? null,
       }));
       const storedTenantId =
         typeof window !== 'undefined' ? window.localStorage.getItem('activeTenantId') : null;

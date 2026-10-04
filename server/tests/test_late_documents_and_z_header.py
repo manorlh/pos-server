@@ -30,6 +30,8 @@ from app.services.transactions import upsert_transactions
 from shift_world import NOW, TODAY, accept_str_uuids, make_world
 from test_z_run import closed_shift, run, sel, z_of
 
+pytestmark = pytest.mark.usefixtures("z_activity_unchecked")  # not about "no Z on 0"
+
 
 @pytest.fixture
 def w(monkeypatch):
@@ -213,8 +215,8 @@ class TestALateDocumentAfterTheZ:
 
         out = zr_router.list_z_reports(
             machine_id=None, machine_ids=None, shop_id=w.shop.id, from_date=None, to_date=None,
-            closed_from=None, closed_to=None, page=1, page_size=50,
-            current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+            closed_from=None, closed_to=None, area_id=None, date_basis="business", tz=None,
+            page=1, page_size=50, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
         )
 
         assert out.items[0].late_documents == 1

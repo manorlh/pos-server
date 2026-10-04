@@ -182,7 +182,7 @@ export function ReportFilters({
   })();
 
   return (
-    <div className="rounded-lg border bg-card p-4 space-y-4">
+    <div className="rounded-lg border bg-card p-4 space-y-4 print:hidden">
       <div className="grid gap-3 md:grid-cols-2 lg:max-w-lg">
         <div className="space-y-1">
           <Label className="text-xs">{t('from')}</Label>

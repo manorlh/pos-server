@@ -138,6 +138,40 @@
     size: A4 portrait;
     margin: 12mm;
   }
+  /*
+   * A report printed from its toolbar (components/dashboard/report-export-toolbar.tsx):
+   * its own named page, so only it carries the "page X of Y" footer, and tables are
+   * let out of their scroll boxes so no column is cut off.
+   */
+  @page report {
+    size: A4 portrait;
+    margin: 12mm 10mm 14mm;
+    @bottom-center {
+      content: "עמוד " counter(page) " מתוך " counter(pages);
+      font-size: 9px;
+    }
+  }
+  html[data-print='report'] main {
+    page: report;
+  }
+  html[data-print='report'] main .overflow-x-auto,
+  html[data-print='report'] main .overflow-auto {
+    overflow: visible !important;
+  }
+  html[data-print='report'] main table {
+    font-size: 10px;
+  }
+  html[data-print='report'] main tr {
+    break-inside: avoid;
+  }
+  html[data-print='report'] main thead {
+    display: table-header-group;
+  }
+  .report-print-header {
+    border-bottom: 1px solid black;
+    padding-bottom: 4px;
+    margin-bottom: 8px;
+  }
   html,
   body {
     background: white;

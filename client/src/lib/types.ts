@@ -1,3 +1,5 @@
+import type { CardBrandBreakdownRow } from './cardBrands';
+
 /**
  * Listed most senior first, matching the server's `ROLE_LEVEL`, so a reader does
  * not have to guess where a role sits relative to its neighbours.
@@ -60,9 +62,17 @@ export interface UserCapabilities {
 /** `GET /users/me` — the caller's own record plus its capabilities. */
 export interface CurrentUser extends User, UserCapabilities {}
 
+/**
+ * A permanent customer, or a temporary one (an event, a season) whose tills stop selling
+ * after the last day. Set by a super admin only.
+ */
+export type LicenseType = 'permanent' | 'temporary';
+
 export interface Company {
   id: string;
   name: string;
+  /** Company #1, #2 … in its tenant; never reused. Null for a tenantless company. */
+  companyNumber?: number | null;
   vatNumber?: string;
   address?: string;
   city?: string;
@@ -73,6 +83,9 @@ export interface Company {
    * whose parent it cannot resolve.
    */
   parentCompanyId?: string | null;
+  /** "לקוח זמני": the tills stop selling after `licenseExpiresOn`. */
+  licenseType?: LicenseType;
+  licenseExpiresOn?: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -173,9 +186,13 @@ export interface Shop {
   id: string;
   companyId: string;
   name: string;
+  /** Shop #1, #2 … in its company; never reused. */
+  shopNumber?: number | null;
   branchId?: string;
   address?: string;
   city?: string;
+  licenseType?: LicenseType;
+  licenseExpiresOn?: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -213,6 +230,11 @@ export interface PosSettingsV1 {
   payCardTips?: boolean;
   payManualCardEnabled?: boolean;
   payManualCardTips?: boolean;
+  /**
+   * The most instalments the `card` option's picker offers, 2–36. Unset = the card
+   * terminal decides.
+   */
+  payInstallmentsMax?: number;
   // Optional tools on the till's sell screen. Unset = shown; see lib/sellScreen.ts.
   sellSearchEnabled?: boolean;
   sellScanEnabled?: boolean;
@@ -222,6 +244,8 @@ export interface PosSettingsV1 {
   refundCustomerDetailsRequired?: boolean;
   tipPresets?: number[];
   tipDistribution?: TipDistribution;
+  /** The question on the customer's tip screen; '' / unset = the till's default wording. */
+  tipPromptText?: string;
   receiptPrinterName?: string;
   drawerPrinterName?: string;
   businessInfo?: Record<string, unknown>;
@@ -229,6 +253,25 @@ export interface PosSettingsV1 {
   brandLogoUrl?: string;
   /** White label: full-screen image the till shows for ~2s while it starts up. */
   brandHeroUrl?: string;
+  /** White label: the till's main colour, "#RRGGBB"; its whole palette derives from it. '' = the till's default. */
+  brandPrimaryColor?: string;
+  /** White label: printed at the head of the till's receipts. '' = deliberately none. */
+  brandReceiptLogoUrl?: string;
+  /**
+   * The card terminal number (מספר מסוף) a till must be connected to: on a shop, one
+   * number for all its tills; on a till, its own. The till refuses to work on a mismatch.
+   */
+  expectedTerminalNumber?: string;
+  /**
+   * Which clearing server the till's Agamento uses. The till switches it on sync.
+   * '' = leave the terminal as it is.
+   */
+  clearingServer?: '' | 'SHVA' | 'PELECARD';
+  /**
+   * While true, a till whose Agamento reports another number writes the expected one
+   * into Agamento on its next sync (only while idle, with nothing waiting to transmit).
+   */
+  forceTerminalNumber?: boolean;
   /**
    * Tenant level only: how Z reports are produced. `shop` (default) = one Z per shop
    * over all its tills; `machine` = one till per Z. Not sent to tills.
@@ -268,15 +311,47 @@ export type ResettableSwitchKey = PaymentOptionSettingKey | SellScreenSettingKey
  * never go back to inheriting it.
  */
 export type PosSettingsPatch = Partial<
-  Omit<PosSettingsV1, 'brandLogoUrl' | 'brandHeroUrl' | ResettableSwitchKey>
+  Omit<
+    PosSettingsV1,
+    | 'brandLogoUrl'
+    | 'brandHeroUrl'
+    | 'brandPrimaryColor'
+    | 'brandReceiptLogoUrl'
+    | 'expectedTerminalNumber'
+    | 'clearingServer'
+    | 'forceTerminalNumber'
+    | 'tipPresets'
+    | 'tipDistribution'
+    | 'tipPromptText'
+    | 'payInstallmentsMax'
+    | ResettableSwitchKey
+  >
 > & {
   brandLogoUrl?: string | null;
   brandHeroUrl?: string | null;
+  brandPrimaryColor?: string | null;
+  brandReceiptLogoUrl?: string | null;
+  /** `null` = this layer sets none and inherits again (a till rejoins its shop's number). */
+  expectedTerminalNumber?: string | null;
+  /** `null` = inherit the level above's server again. */
+  clearingServer?: '' | 'SHVA' | 'PELECARD' | null;
+  /** `null` = inherit whether to force the number from the level above again. */
+  forceTerminalNumber?: boolean | null;
+  /** `null` = unset this layer's percentages and inherit the level above's again. */
+  tipPresets?: number[] | null;
+  tipDistribution?: TipDistribution | null;
+  /** `null` = inherit the level above's tip question again. */
+  tipPromptText?: string | null;
+  /** `null` = unset this layer's most instalments and inherit the level above's again. */
+  payInstallmentsMax?: number | null;
 } & {
   [K in ResettableSwitchKey]?: boolean | null;
 };
 
-export type BrandingImageKind = 'logo' | 'hero';
+/** The most tip percentages a layer may offer: the till lays them out as square buttons. */
+export const TIP_PRESETS_MAX = 6;
+/** `receipt` is printed at the head of the till's receipts. */
+export type BrandingImageKind = 'logo' | 'hero' | 'receipt';
 
 export interface BrandingUploadResult {
   url: string;
@@ -291,9 +366,30 @@ export interface EntitySettingsResponse {
   settingsUpdatedAt: string;
 }
 
+/** A level of the settings hierarchy, least specific first. */
+export type SettingsLevel = 'tenant' | 'company' | 'shop' | 'area' | 'machine';
+
+/**
+ * With `effective`: per key, the level above that set the inherited value. A key no
+ * level above sets is absent — its value is the option's default.
+ */
+export type EffectiveSources = Partial<Record<string, SettingsLevel>>;
+
 export interface ShopSettingsResponse extends EntitySettingsResponse {
   effective?: PosSettingsV1;
+  effectiveSources?: EffectiveSources | null;
 }
+
+/** A till's own layer: never written yet means no `settingsUpdatedAt`. */
+export interface MachineSettingsResponse {
+  settings: PosSettingsV1;
+  settingsUpdatedAt: string | null;
+  effective?: PosSettingsV1;
+  effectiveSources?: EffectiveSources | null;
+}
+
+/** A point of sale's (shop area's) own layer, between its shop and its tills. */
+export type AreaSettingsResponse = MachineSettingsResponse;
 
 /** Global product row with optional shop override (GET /shops/{id}/product-overrides). */
 export interface ShopProductCatalogRow {
@@ -323,6 +419,10 @@ export interface ShopProductCatalogCandidate {
   globalPrice: number;
 }
 
+/** The hardware a till is: a Nova 55F (built-in printer) or a Modo (no printer). */
+export const DEVICE_MODELS = ['N55F', 'MODO'] as const;
+export type DeviceModel = (typeof DEVICE_MODELS)[number];
+
 export interface PosMachine {
   id: string;
   name: string;
@@ -343,6 +443,16 @@ export interface PosMachine {
   areaId?: string | null;
   areaName?: string | null;
   pairingStatus: 'unpaired' | 'paired' | 'assigned';
+  /** Its shop's number in its company, and that company's in the tenant; null without a shop. */
+  shopNumber?: number | null;
+  companyNumber?: number | null;
+  /** "N55F" | "MODO"; null when never recorded, which reads as a 55F. */
+  deviceModel?: DeviceModel | null;
+  /** False for a Modo only. Absent on a server that predates it. */
+  hasPrinter?: boolean;
+  /** "לקוח זמני" on this till alone; the till keeps the earliest end above it too. */
+  licenseType?: LicenseType;
+  licenseExpiresOn?: string | null;
   mqttClientId?: string;
   deviceInfo?: Record<string, unknown>;
   isActive: boolean;
@@ -456,8 +566,75 @@ export interface PosMachine {
   printerLastOkAt?: string | null;
   /** When the cloud received it. */
   printerReportedAt?: string | null;
+  // ── The card terminal (Agamento), from the heartbeat ───────────────────────
+  /** What Agamento reports. Null with a null `terminalReportedAt` = never reported. */
+  terminalNumber?: string | null;
+  terminalClearingServer?: 'SHVA' | 'PELECARD' | string | null;
+  terminalOfflineMode?: boolean | null;
+  /** When the cloud received the reading — "as of", never live. */
+  terminalReportedAt?: string | null;
+  /** The till's last write into Agamento (a forced number, or the clearing server). */
+  terminalLastWrite?: TerminalLastWrite | null;
+  /** The business name and supplier number (מספר ספק) the terminal is set up under. */
+  terminalMerchantName?: string | null;
+  terminalSupplierNumber?: string | null;
+  /** The till's effective `expectedTerminalNumber`; null = no level requires one. */
+  expectedTerminalNumber?: string | null;
+  forceTerminalNumber?: boolean;
+  /** The level `forceTerminalNumber` comes from; null = no level sets it (off). */
+  forceTerminalNumberSource?: SettingsLevel | null;
+  /** Server-resolved, ignoring leading zeros as the till does. */
+  terminalStatus?: TerminalStatus;
   createdAt: string;
   updatedAt: string;
+}
+
+export type TerminalStatus = 'match' | 'mismatch' | 'unknown' | 'not_required';
+
+export interface TerminalLastWrite {
+  field: 'terminalNumber' | 'clearingServer' | string | null;
+  value: string | null;
+  ok: boolean | null;
+  error: string | null;
+  at: string | null;
+}
+
+/** `POST /machines/terminal-number/force`. */
+export interface TerminalNumberForceRequest {
+  level: Exclude<SettingsLevel, 'tenant'>;
+  targetId: string;
+  /** Also set `expectedTerminalNumber` at that level. */
+  terminalNumber?: string;
+  force: boolean;
+}
+
+/** One till the force reached, with its status as of the answer. */
+export type TerminalForceMachine = Pick<
+  PosMachine,
+  | 'id'
+  | 'name'
+  | 'shopId'
+  | 'areaName'
+  | 'posNumber'
+  | 'terminalNumber'
+  | 'terminalClearingServer'
+  | 'terminalOfflineMode'
+  | 'terminalReportedAt'
+  | 'terminalLastWrite'
+  | 'terminalMerchantName'
+  | 'terminalSupplierNumber'
+  | 'expectedTerminalNumber'
+  | 'forceTerminalNumber'
+  | 'forceTerminalNumberSource'
+  | 'terminalStatus'
+>;
+
+export interface TerminalNumberForceResponse {
+  level: TerminalNumberForceRequest['level'];
+  targetId: string;
+  forceTerminalNumber: boolean;
+  expectedTerminalNumber: string | null;
+  machines: TerminalForceMachine[];
 }
 
 export type PrinterStatus = 'ok' | 'no_paper' | 'overheated' | 'error' | 'unavailable' | 'unknown';
@@ -549,6 +726,9 @@ export interface TransmitRequest {
 
 export type CatalogLevel = 'global' | 'local';
 
+/** Item-ticket ("שובר פריט") print mode — see server app/services/item_ticket.py. */
+export type TicketMode = 'off' | 'per_unit' | 'per_line' | 'per_sale';
+
 export interface Category {
   id: string;
   companyId?: string;
@@ -560,10 +740,20 @@ export interface Category {
   imageUrl?: string;
   parentId?: string;
   voucherId?: string;
+  /** Null/absent is "off". */
+  ticketMode?: TicketMode | null;
   isActive: boolean;
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
+  /** Shops, areas and tills that switched it off (set from the till). List only. */
+  inactiveAt?: CategoryInactiveAt[];
+}
+
+export interface CategoryInactiveAt {
+  level: 'shop' | 'area' | 'machine';
+  targetId: string;
+  name?: string | null;
 }
 
 export interface Product {
@@ -587,7 +777,13 @@ export interface Product {
   barcode?: string;
   taxRate?: number;
   voucherId?: string;
+  /** The product's own mode; null/absent inherits its category's. */
+  ticketMode?: TicketMode | null;
+  /** An entry ticket: entries per unit (> 1 prints that many tickets per unit). Null/1 = ordinary. */
+  ticketEntries?: number | null;
   trackStock?: boolean;
+  /** "לא מקבל הנחות": no line, basket or promotion discount at the till. */
+  noDiscount?: boolean;
   /**
    * The company's built-in general item ("פריט כללי"), which the till's calculator
    * sells through. Every company has exactly one; it cannot be deleted, and whether it
@@ -643,7 +839,7 @@ export interface ProductShopRow {
  * `value` is the level's own setting (null = not set), `inherited` what it would get
  * without one, `effective` what it gets, and `source` the level that decided it.
  */
-export type AvailabilityLevel = 'product' | 'company' | 'shop' | 'machine';
+export type AvailabilityLevel = 'product' | 'company' | 'shop' | 'area' | 'machine';
 
 export interface AvailabilityNode {
   value: boolean | null;
@@ -661,6 +857,14 @@ export interface MachineAvailability extends AvailabilityNode {
   catalogMode?: MachineCatalogMode;
   /** False when the till's own list leaves this product out: not shown there at all. */
   inCatalog?: boolean;
+  /** The area (point of sale) the till stands in, which it inherits from; null = none. */
+  areaId?: string | null;
+}
+
+/** An area of the shop: a level between the shop and its tills. */
+export interface AreaAvailability extends AvailabilityNode {
+  areaId: string;
+  name: string;
 }
 
 // ── A till's own catalog (server: app/services/machine_catalog.py) ─────────────
@@ -711,6 +915,8 @@ export interface ShopAvailability extends AvailabilityNode {
   shopId: string;
   shopName: string;
   isListed: boolean;
+  /** The shop's live areas; each till in `machines` names its own. */
+  areas?: AreaAvailability[];
   machines: MachineAvailability[];
 }
 
@@ -724,6 +930,38 @@ export interface ProductAvailability {
   productId: string;
   productAvailable: boolean;
   companies: CompanyAvailability[];
+}
+
+/** A level that sets its own value against what it would inherit. */
+export interface AvailabilityException {
+  level: Exclude<AvailabilityLevel, 'product'>;
+  id: string;
+  name?: string | null;
+  /** The shop an area or till belongs to. */
+  shopName?: string | null;
+  posNumber?: string | null;
+  /** true unlocks, false locks. */
+  value: boolean;
+}
+
+/**
+ * One line of `POST /products/availability-summary`: counts over the tree
+ * `GET /products/{id}/availability` shows, for the shops the caller can reach.
+ * "Active" = listed in the shop and effectively available (a till: also on its catalog).
+ */
+export interface ProductAvailabilitySummary {
+  productId: string;
+  productAvailable: boolean;
+  companyCount: number;
+  shopCount: number;
+  activeShopCount: number;
+  areaCount: number;
+  activeAreaCount: number;
+  machineCount: number;
+  activeMachineCount: number;
+  /** The first few overriding levels, locks first. */
+  exceptions: AvailabilityException[];
+  exceptionCount: number;
 }
 
 /** `POST /products/shop-scope/preview`. */
@@ -893,6 +1131,10 @@ export interface TransactionPayment {
   sequence: number;
   method: string;
   amount: number;
+  /** Card legs: מותג / חברת סליקה / מנפיק (codes of `lib/cardBrands`). */
+  cardBrand?: string | null;
+  cardAcquirer?: string | null;
+  cardIssuer?: string | null;
 }
 
 /** Another document of the same mixed basket (same `basketId`). */
@@ -943,7 +1185,17 @@ export interface Transaction {
   payments?: TransactionPayment[];
   /** The other documents of its basket (detail read only). */
   basketDocuments?: BasketDocument[];
+  /**
+   * An offline authorization run of its till answered one of its card legs: `declined`
+   * (the acquirer refused a sale the terminal had approved offline — declined wins) or
+   * `approved`. Null when no run answered any.
+   */
+  offlineOutcome?: OfflineOutcome | null;
+  /** List rows: the brands (מותג) of its card legs. */
+  cardBrands?: string[];
 }
+
+export type OfflineOutcome = 'approved' | 'declined';
 
 export interface TransactionListResponse {
   page: number;
@@ -1038,6 +1290,11 @@ export interface Shift {
   paymentBreakdown?: Record<string, Money> | null;
   /** Card transmission of the shift's sales (X detail only), informational. */
   transmission?: PeriodTransmission | null;
+  /** Offline-approved card sales of the shift and their authorization (X detail only). */
+  offline?: PeriodOffline | null;
+  /** Its card legs an offline authorization run declined (list and detail reads). */
+  offlineDeclinedCount?: number | null;
+  offlineDeclinedAmount?: Money | null;
 }
 
 export interface ShiftListResponse {
@@ -1074,6 +1331,11 @@ export interface ZCandidateMachine {
   activeRun?: { runId: string; itemStatus: ZRunItemStatus } | null;
   /** Documents of this till stored with no shift. No Z takes them. */
   orphanDocuments?: number;
+  /**
+   * False for a till listed only for its closed shifts of this shop (retired, unpaired
+   * or moved away): it can be included, never asked to close.
+   */
+  inShop?: boolean;
 }
 
 export interface ZCandidates {
@@ -1081,7 +1343,30 @@ export interface ZCandidates {
   shopName?: string | null;
   /** `machine` = the tenant's accountant wants one till per Z. */
   zScope: 'shop' | 'machine';
+  /**
+   * The shop's `shopZOpenTills` till parameter, for a shop Z that leaves tills with open
+   * (or un-Z'd) shifts behind: refused (`block`), or only on the operator's confirmation
+   * (`confirm`). Null when it does not apply. The server enforces it on `POST /z-runs`.
+   */
+  openTillsRule?: 'block' | 'confirm' | null;
   machines: ZCandidateMachine[];
+}
+
+/** A till a shop Z leaves behind (409 `open_tills_*`, and the record on the Z). */
+export interface ZOpenTill {
+  id: string;
+  posNumber?: string | null;
+  name?: string | null;
+  /** The open shift left open; null when only closed shifts are left behind. */
+  openShiftId?: string | null;
+}
+
+/** The operator's confirmation that a shop Z was produced without some tills. */
+export interface ZOpenTillsLeftOut {
+  tills: ZOpenTill[];
+  confirmedByUserId?: string | null;
+  confirmedByName?: string | null;
+  confirmedAt?: string | null;
 }
 
 export interface ZRunMachineSelection {
@@ -1128,6 +1413,8 @@ export interface ZRun {
   areaName?: string | null;
   errorCode?: string | null;
   errorMessage?: string | null;
+  /** Set when the operator confirmed producing this shop Z without some tills. */
+  openTillsLeftOut?: ZOpenTillsLeftOut | null;
   items: ZRunItem[];
 }
 
@@ -1170,6 +1457,8 @@ export interface ZReport {
   tenantId?: string | null;
   shopId?: string | null;
   shopName?: string | null;
+  /** The shop's number in its company ("#3"), as it is today. */
+  shopNumber?: number | null;
   /**
    * The shop's Z number — 1, 2, 3 … per shop, gapless.
    *
@@ -1183,6 +1472,11 @@ export interface ZReport {
   areaId?: string | null;
   areaName?: string | null;
   businessDate: string;
+  /**
+   * The local date the Z was produced (`closedAt` in the tenant's timezone). From the
+   * list only; absent on a server that predates it.
+   */
+  productionDate?: string | null;
   periodStart?: string | null;
   periodEnd?: string | null;
   shiftCount?: number | null;
@@ -1217,6 +1511,14 @@ export interface ZReport {
    * expectedCash). Null on a Z built before it existed.
    */
   betweenShiftAdjustments?: Money | null;
+  /**
+   * Σ of the tills' `offline` blocks. Null on a Z built before the block was stored (and
+   * on a legacy Z): shown as nothing, never as zero.
+   */
+  offlineAuthorizationCount?: number | null;
+  offlineApprovedCount?: number | null;
+  offlineDeclinedCount?: number | null;
+  offlineDeclinedAmount?: Money | null;
   /** Any included shift was closed unattended. */
   unattended?: boolean;
   /** Any included shift was reconstructed for a dead till. */
@@ -1271,6 +1573,28 @@ export interface ZReportMachineSection {
   uncountedShiftCount?: number | null;
   reconstructedShiftCount?: number | null;
   unattendedShiftCount?: number | null;
+  /** Offline-approved card sales and their authorization. Absent on a Z built before it. */
+  offline?: PeriodOffline | null;
+}
+
+/**
+ * The `offline` block of an X or a Z section: card legs the terminal approved offline
+ * that an authorization run then approved or declined, matched by the terminal's uid.
+ */
+export interface PeriodOffline {
+  /** Authorization runs of the till that answered any leg of the period. */
+  authorizationCount: number;
+  approvedCount: number;
+  approvedAmount: Money;
+  declinedCount: number;
+  declinedAmount: Money;
+  declined: Array<{
+    transactionId: string;
+    documentNumber?: string | null;
+    amount: Money;
+    terminalUid: string;
+    at?: string | null;
+  }>;
 }
 
 /** Who issued the Z, frozen when it was built — never live settings. */
@@ -1290,12 +1614,18 @@ export interface ZReportBusiness {
   areaId?: string | null;
   areaName?: string | null;
   capturedAt?: string | null;
+  /** Frozen too: the tills the operator confirmed producing this shop Z without. */
+  openTillsLeftOut?: ZOpenTillsLeftOut | null;
 }
 
 export interface ZReportDetail extends ZReport {
   perMachine: ZReportMachineSection[];
   shifts: Shift[];
   business?: ZReportBusiness | null;
+  /** Card legs per brand (מותג) × acquirer (חברת סליקה), summed over the tills. */
+  cardBrands?: CardBrandBreakdownRow[];
+  /** stored — frozen at build time; documents — read now (a Z built before the split). */
+  cardBrandsSource?: 'stored' | 'documents' | null;
 }
 
 export interface ZReportListResponse {
@@ -1303,6 +1633,44 @@ export interface ZReportListResponse {
   pageSize: number;
   total: number;
   items: ZReport[];
+  /** The date window the server filtered on, with its basis and timezone. */
+  window?: {
+    from?: string | null;
+    to?: string | null;
+    defaulted: boolean;
+    dateBasis?: 'business' | 'production';
+    timezone?: string | null;
+  } | null;
+}
+
+/**
+ * A Z as the till prints it (80 mm) — built by the server (`app/services/z_print.py`),
+ * the same document the Android till prints. Every value is a finished string.
+ */
+export interface ZPrintRow {
+  label: string;
+  value: string;
+  emphasis: boolean;
+}
+
+export interface ZPrintSection {
+  title: string;
+  rows: ZPrintRow[];
+}
+
+export interface ZPrintDoc {
+  title: string;
+  number: number | null;
+  businessName: string;
+  subtitle: string[];
+  sections: ZPrintSection[];
+  footer: string[];
+}
+
+/** `GET /z-reports/print-documents`: several Zs, in Z-number order. */
+export interface ZPrintDocList {
+  items: { id: string; number: number | null; shopId: string | null; document: ZPrintDoc }[];
+  total: number;
 }
 
 export interface DashboardStats {
@@ -1335,6 +1703,79 @@ export interface DashboardBreakdown {
   rows: DashboardBreakdownRow[];
   from: string;
   to: string;
+}
+
+// ── Manager overview (לוח מנהל, `GET /reports/overview`) ─────────────────────
+
+/** One node's takings for the day — the per-cashier report's money. */
+export interface OverviewSales {
+  /** gross − discounts − refunds. */
+  salesToday: number;
+  gross: number;
+  discounts: number;
+  refunds: number;
+  /** Sales + credit notes. */
+  documentsToday: number;
+  salesCount: number;
+  refundsCount: number;
+  cash: number;
+  card: number;
+  other: number;
+  tips: number;
+}
+
+export interface OverviewKpis extends OverviewSales {
+  /** (gross − discounts) / salesCount; 0 when nothing was sold. */
+  averageTicket: number;
+}
+
+export interface OverviewMachine extends OverviewSales {
+  id: string;
+  posNumber?: string | null;
+  name: string;
+  /** The open shift and what it took since it opened (not since midnight). Null when none. */
+  openShiftId?: string | null;
+  openShiftSales?: number | null;
+  openShiftDocuments?: number | null;
+  /** The area (point of sale) it stands in now; null when none. */
+  areaId?: string | null;
+}
+
+/**
+ * A point of sale (area) of a shop. Its money is the day's documents whose shift was
+ * stamped with it (the area report's rule); its tills are those standing in it now.
+ */
+export interface OverviewArea extends OverviewSales {
+  id: string;
+  name: string;
+  sortOrder: number;
+  machineIds: string[];
+}
+
+export interface OverviewShop extends OverviewSales {
+  id: string;
+  number?: number | null;
+  name: string;
+  /** Every till of the shop, whatever its area (each carries `areaId`). */
+  machines: OverviewMachine[];
+  /** Live areas in order; absent from an older server. */
+  areas?: OverviewArea[];
+}
+
+export interface OverviewCompany extends OverviewSales {
+  id: string;
+  number?: number | null;
+  name: string;
+  parentCompanyId?: string | null;
+  shops: OverviewShop[];
+}
+
+/** Sales only: a till's live state is the machines list's, joined on `id`. */
+export interface OverviewReport {
+  window: ReportWindowOut;
+  generatedAt: string;
+  kpis: OverviewKpis;
+  companies: OverviewCompany[];
 }
 
 // ── POS users (per-shop till operators) ────────────────────────────────────────
@@ -1413,6 +1854,8 @@ export interface ProductSalesRow {
   net: number;
   linesSold: number;
   linesRefunded: number;
+  /** Of `unitsSold`, how many were sold inside meals (their money is the meals', allocated). */
+  unitsInMeals?: number;
 }
 
 export interface ProductSalesTotals {
@@ -1538,6 +1981,9 @@ export interface DaySummaryTotals {
   actualCash: number | null;
   variance: number | null;
   uncountedCount: number;
+  /** Offline-approved card sales later declined, as the Zs froze them. */
+  offlineDeclinedCount?: number;
+  offlineDeclinedAmount?: number;
 }
 
 /** One Z report behind a day's figures. `zReportId` is the drill-down target. */
@@ -1565,6 +2011,8 @@ export interface DaySummaryContributor {
   expectedCash: number;
   actualCash: number | null;
   discrepancy: number | null;
+  offlineDeclinedCount?: number;
+  offlineDeclinedAmount?: number;
 }
 
 export interface DaySummaryRow {
@@ -1583,6 +2031,60 @@ export interface DaySummaryReport {
   totals: DaySummaryTotals;
   /** Newest first. A day nobody closed is absent, not a zero row. */
   days: DaySummaryRow[];
+}
+
+// ── Offline card authorization (GET /reports/offline-authorizations) ────────
+
+/** One uid a run declined, and the till's card leg it matched — if any did. */
+export interface OfflineDeclinedLeg {
+  terminalUid: string;
+  /** False: no document of the till carries the uid (yet). */
+  matched: boolean;
+  transactionId?: string | null;
+  documentNumber?: string | null;
+  amount?: Money | null;
+  /** The original sale's time. */
+  soldAt?: string | null;
+}
+
+/** One `authorizePendingTransactions` run of one till. */
+export interface OfflineAuthorizationRun {
+  id: string;
+  authorizedAt: string;
+  receivedAt?: string | null;
+  shopId?: string | null;
+  shopName?: string | null;
+  machineId: string;
+  machineName?: string | null;
+  posNumber?: string | null;
+  statusCode?: number | null;
+  approvedCount: number;
+  /** The terminal's own approved total when it sent one, else the matched legs' sum. */
+  approvedAmount: Money;
+  declinedCount: number;
+  /** Σ of the matched declined legs; an unmatched uid has no amount. */
+  declinedAmount: Money;
+  declinedUnmatchedCount: number;
+  declined: OfflineDeclinedLeg[];
+}
+
+export interface OfflineAuthorizationTotals {
+  authorizationCount: number;
+  approvedCount: number;
+  approvedAmount: Money;
+  declinedCount: number;
+  declinedAmount: Money;
+  declinedUnmatchedCount: number;
+}
+
+export interface OfflineAuthorizationReport {
+  window: ReportWindowOut;
+  generatedAt: string;
+  totals: OfflineAuthorizationTotals;
+  /** Newest first. */
+  items: OfflineAuthorizationRun[];
+  /** More runs than the server returns in one report; the totals are of these. */
+  truncated: boolean;
 }
 
 
@@ -1699,3 +2201,264 @@ export interface PeriodTransmission {
   tillReportedAt?: string | null;
   asOf?: string | null;
 }
+
+// ── Till parameters ("פרמטרים לקופות", super admin) ─────────────────────────
+
+export type TillParameterValueType = 'string' | 'integer' | 'decimal' | 'boolean' | 'enum';
+
+/** A value as the till receives it: text, a number or a boolean, per the type. */
+export type TillParameterScalar = string | number | boolean;
+
+/** Where a value is set, least specific first. The till takes the most specific. */
+export type TillParameterScope = 'company' | 'shop' | 'area' | 'machine';
+
+/** A definition. Global — not per tenant. */
+export interface TillParameter {
+  id: string;
+  /** The name the till reads it by: a letter, then letters, digits, `_` or `.`. */
+  key: string;
+  label: string;
+  description?: string | null;
+  valueType: TillParameterValueType;
+  /** Only for `enum`; null otherwise. */
+  enumOptions?: string[] | null;
+  /** null = no default: a till with no value at any level does not get the key. */
+  defaultValue?: TillParameterScalar | null;
+  isActive: boolean;
+  /** How many levels set a value for it. */
+  valueCount: number;
+  /**
+   * How it is edited beyond its type: `'image'` = a string holding an image URL, picked
+   * by upload (the server's `IMAGE_PARAMETER_KEYS`, e.g. `receiptLogoUrl`); null = by type.
+   */
+  widget?: 'image' | null;
+  /** For `widget: 'image'`: the branding upload kind its images go through. */
+  imageKind?: BrandingImageKind | 'media' | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+/** Body of `POST /till-parameters` and `PUT /till-parameters/{id}` (partial there). */
+export interface TillParameterInput {
+  key: string;
+  label: string;
+  description?: string | null;
+  valueType: TillParameterValueType;
+  enumOptions?: string[] | null;
+  defaultValue?: TillParameterScalar | null;
+  isActive: boolean;
+}
+
+export interface TillParameterValue {
+  id: string;
+  parameterId: string;
+  scopeType: TillParameterScope;
+  scopeId: string;
+  /** The entity's name; null when it no longer exists. */
+  scopeName?: string | null;
+  /** The shop of an area or till, the company of a shop. */
+  scopeContext?: string | null;
+  value: TillParameterScalar;
+  updatedAt?: string | null;
+}
+
+// ── Till app releases ("עדכון קופות", super admin) ──────────────────────────
+
+/** Where a release is sent. A till takes the most specific: till, area, shop, company, tenant. */
+export type AppReleaseLevel = 'tenant' | 'company' | 'shop' | 'area' | 'machine';
+
+/** What a till reports while it takes a release. */
+export type AppUpdateStatus =
+  | 'downloading'
+  | 'downloaded'
+  | 'installing'
+  | 'installed'
+  | 'failed'
+  | 'declined';
+
+/** One uploaded APK. Global — every tenant's tills run the same app. */
+export interface AppRelease {
+  id: string;
+  versionCode: number;
+  versionName: string;
+  sha256: string;
+  sizeBytes: number;
+  notes?: string | null;
+  /** Retired releases are offered to no till. */
+  isActive: boolean;
+  createdAt?: string | null;
+  /** Live (not cancelled) assignments. */
+  assignmentCount: number;
+}
+
+export interface AppReleaseAssignment {
+  id: string;
+  releaseId: string;
+  versionName?: string | null;
+  level: AppReleaseLevel;
+  targetId: string;
+  /** The target's name; null when it no longer exists. */
+  targetName?: string | null;
+  /** The shop of an area or till, the company of a shop. */
+  targetContext?: string | null;
+  tenantId: string;
+  autoInstall: boolean;
+  createdAt?: string | null;
+  cancelledAt?: string | null;
+  /** Active tills it reaches (whether or not something more specific wins there). */
+  machineCount: number;
+}
+
+/** One till of `GET /app-releases/rollout`. */
+export interface AppReleaseRolloutRow {
+  machineId: string;
+  machineName: string;
+  posNumber?: string | null;
+  companyId?: string | null;
+  companyName?: string | null;
+  shopId?: string | null;
+  shopName?: string | null;
+  areaId?: string | null;
+  areaName?: string | null;
+  /** What the till last said it runs (its heartbeat's app version). */
+  currentVersion?: string | null;
+  lastHeartbeatAt?: string | null;
+  releaseId?: string | null;
+  targetVersion?: string | null;
+  targetVersionCode?: number | null;
+  assignmentId?: string | null;
+  assignmentLevel?: AppReleaseLevel | null;
+  autoInstall?: boolean | null;
+  /** The till already runs the target. */
+  upToDate: boolean;
+  /** The till's last report about the target; null = it has said nothing yet. */
+  status?: AppUpdateStatus | null;
+  statusMessage?: string | null;
+  statusAt?: string | null;
+}
+
+// ── Live sales by item (`GET /reports/live-items`) ────────────────────────────
+
+export interface LiveItemRow {
+  productId?: string | null;
+  sku?: string | null;
+  name?: string | null;
+  /** Units sold minus units credited back. */
+  qty: number;
+  unitsSold: number;
+  unitsRefunded: number;
+  gross: number;
+  discounts: number;
+  refunds: number;
+  /** gross − discounts − refunds. */
+  net: number;
+  /** % of the scope's net (0 when that is not positive). */
+  share: number;
+}
+
+export interface LiveItemsReport {
+  window: ReportWindowOut;
+  generatedAt: string;
+  period: 'day' | 'range' | 'shift';
+  openShiftCount?: number | null;
+  truncated: boolean;
+  rowLimit: number;
+  totals: {
+    qty: number;
+    gross: number;
+    discounts: number;
+    refunds: number;
+    net: number;
+    productCount: number;
+  };
+  rows: LiveItemRow[];
+}
+
+// ── Messages to tills (הודעות לקופות, `/till-messages`) ──────────────────────
+
+export type TillMessageLevel = 'company' | 'shop' | 'area' | 'machine';
+/** scheduled = not gone out yet; paused / ended = a recurring message's schedule. */
+export type TillMessageStatus = 'active' | 'expired' | 'cancelled' | 'scheduled' | 'paused' | 'ended';
+export type TillMessageScheduleKind = 'now' | 'scheduled' | 'recurring';
+
+/** Days are 0 = Sunday (א׳) … 6 = Saturday (ש׳); `time` is "HH:MM" in the tenant's zone. */
+export interface TillMessageRecurrence {
+  days: number[];
+  time: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  occurrenceTtlMinutes?: number | null;
+}
+/** sent = not fetched yet; delivered = the till has it; acknowledged = "קראתי". */
+export type TillMessageReceiptStatus = 'sent' | 'delivered' | 'acknowledged';
+
+export interface TillMessageReceipt {
+  machineId: string;
+  machineName: string;
+  posNumber?: string | null;
+  shopName?: string | null;
+  areaName?: string | null;
+  status: TillMessageReceiptStatus;
+  deliveredAt?: string | null;
+  acknowledgedAt?: string | null;
+  acknowledgedByPosUserId?: string | null;
+  acknowledgedByName?: string | null;
+}
+
+export interface TillMessage {
+  id: string;
+  title?: string | null;
+  body: string;
+  targetLevel: TillMessageLevel;
+  targetId: string;
+  targetName?: string | null;
+  createdAt: string;
+  senderName?: string | null;
+  expiresAt?: string | null;
+  cancelledAt?: string | null;
+  status: TillMessageStatus;
+  counts: { total: number; delivered: number; acknowledged: number };
+  /** Whether this user may cancel or resend it (an active message in their scope). */
+  canManage: boolean;
+  /** A scheduled message not yet sent, or a recurring one, in this user's scope. */
+  canEdit?: boolean;
+  /** For a recurring message: the latest occurrence's tills. */
+  tills: TillMessageReceipt[];
+  scheduleKind?: TillMessageScheduleKind;
+  sendAt?: string | null;
+  sentAt?: string | null;
+  timezone?: string | null;
+  pausedAt?: string | null;
+  recurrence?: TillMessageRecurrence | null;
+  nextOccurrenceAt?: string | null;
+  occurrence?: { date: string; startsAt: string; expiresAt: string; live: boolean } | null;
+}
+
+export interface TillMessageList {
+  items: TillMessage[];
+  total: number;
+}
+
+export interface TillMessageCreate {
+  title?: string | null;
+  body: string;
+  targetLevel: TillMessageLevel;
+  targetId: string;
+  expiresAt?: string | null;
+  scheduleKind?: TillMessageScheduleKind;
+  /** "YYYY-MM-DDTHH:mm" without an offset = the tenant's local time. */
+  sendAt?: string | null;
+  recurDays?: number[];
+  recurTime?: string;
+  recurStartDate?: string | null;
+  recurEndDate?: string | null;
+  occurrenceTtlMinutes?: number | null;
+}
+
+/** Only the fields sent change; null clears an optional one. */
+export type TillMessageUpdate = Partial<
+  Pick<
+    TillMessageCreate,
+    'title' | 'body' | 'expiresAt' | 'sendAt' | 'recurDays' | 'recurTime' | 'recurStartDate' | 'recurEndDate' | 'occurrenceTtlMinutes'
+  >
+>;

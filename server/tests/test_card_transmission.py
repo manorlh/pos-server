@@ -703,6 +703,40 @@ class TestHistory:
                 active_tenant_id=w.tenant.id, db=w.db,
             )
 
+    def test_the_till_reads_its_own_history_with_its_machine_token(self, w):
+        till = w.tills[0]
+        old = report_body(startedAt=(w.now - timedelta(days=2)).isoformat(), status="failed", error="timeout")
+        new = report_body()
+        post_report(w, till, old)
+        post_report(w, till, new)
+        post_report(w, w.tills[1], report_body())
+
+        out = sync_router.list_own_transmissions(machine_id=str(till.id), limit=50, offset=0, machine=till, db=w.db)
+        # Its own attempts only, newest first, in the dashboard's shape.
+        assert out["total"] == 2
+        assert [i["id"] for i in out["items"]] == [str(new.id), str(old.id)]
+        assert out["items"][1]["status"] == "failed" and out["items"][1]["error"] == "timeout"
+        # Paged like the dashboard's list.
+        page = sync_router.list_own_transmissions(machine_id=str(till.id), limit=1, offset=1, machine=till, db=w.db)
+        assert page["total"] == 2 and [i["id"] for i in page["items"]] == [str(old.id)]
+
+
+class TestMachineMe:
+    def test_me_names_the_till_its_shop_and_company(self, w):
+        till = w.tills[0]
+        me = machines_router.get_my_machine(machine=till)
+        assert me["machineName"] == till.name
+        assert me["posNumber"] == till.pos_number
+        assert me["shopName"] == till.shop.name
+        assert me["companyName"] == till.shop.company.name
+
+    def test_a_till_with_no_shop_has_no_names(self, w):
+        till = w.tills[0]
+        till.shop_id = None
+        till.shop = None
+        me = machines_router.get_my_machine(machine=till)
+        assert me["shopName"] is None and me["companyName"] is None
+
 
 # ── Machines list fields and flags ──────────────────────────────────────────
 

@@ -18,6 +18,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { PackagePlus, ClipboardList, SlidersHorizontal } from 'lucide-react';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 
 type ActionKind = 'receipt' | 'adjust' | 'stocktake';
 
@@ -160,7 +161,7 @@ export default function ShopStockPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between print:hidden">
         <div>
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
@@ -188,6 +189,25 @@ export default function ShopStockPage() {
       </div>
 
       <ScopeGate resolution={resolution}>
+      <ReportExportToolbar
+        title={t('title')}
+        disabled={displayRows.length === 0}
+        getSheets={() => ({
+          name: t('title'),
+          columns: [
+            { header: t('product'), width: 30 },
+            { header: t('sku'), width: 14 },
+            { header: t('onHand'), kind: 'number' },
+            { header: t('reorderMin'), kind: 'number' },
+            { header: t('lowStock'), width: 10 },
+          ],
+          rows: displayRows.map((row) => [
+            row.productName ?? null, row.sku ?? null, row.quantity, row.reorderMin ?? null,
+            isLow(row) ? t('lowStock') : null,
+          ]),
+          totals: [null, null, displayRows.reduce((sum, r) => sum + Number(r.quantity || 0), 0), null, null],
+        })}
+      />
       <div className="rounded-lg border bg-card overflow-hidden">
         <Table>
           <TableHeader>

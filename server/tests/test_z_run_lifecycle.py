@@ -29,6 +29,8 @@ from app.services.administrative_close import close_shift_administratively
 from app.services.shifts import apply_shift_close
 from shift_world import NOW, accept_str_uuids, make_world
 
+pytestmark = pytest.mark.usefixtures("z_activity_unchecked")  # not about "no Z on 0"
+
 
 @pytest.fixture
 def w(monkeypatch):

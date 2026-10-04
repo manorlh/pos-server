@@ -4,12 +4,14 @@ import uuid as uuid_mod
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 
+from app.services import licenses
 from app.database import get_db
 from app.models.company import Company
 from app.models.pos_machine import POSMachine
 from app.models.shop import Shop
 from app.models.user import User, UserRole
 from app.services.permission_matrix import Action, Resource, roles_for
+from app.services.org_numbers import assign_company_number
 from app.schemas.company import (
     CompanyCreate,
     CompanyResponse,
@@ -261,8 +263,15 @@ def create_company(
         city=data.city,
         is_active=data.is_active,
     )
+    # "לקוח קבוע / זמני": the super admin's to set (app/services/licenses.py).
+    licenses.apply_license(
+        current_user, company, data.model_dump(include=set(licenses.FIELDS)), creating=True
+    )
     db.add(company)
     db.flush()
+    # Company 1, 2, 3 in the tenant, drawn in this transaction so a failed create
+    # gives it back.
+    assign_company_number(db, company)
     # Every company has its general item from the start, in the same transaction, so
     # there is never a company whose tills' calculator has nothing to sell through.
     # A new company has no shops, so nobody to notify.
@@ -303,6 +312,8 @@ def update_company(
     _check_company_write(current_user, company, db)
 
     updates = data.model_dump(exclude_unset=True, by_alias=False)
+    # The license fields leave `updates` here: the super admin's only.
+    licenses.apply_license(current_user, company, updates)
 
     requested_parent = updates.get("parent_company_id", _UNCHANGED)
     # Only an actual *move* is gated. A dashboard that PUTs the whole company back,

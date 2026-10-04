@@ -52,6 +52,20 @@ from app.routers import (
     transmit_requests as transmit_requests_router,
     tax_reports,
     reports,
+    till_parameters as till_parameters_router,
+    app_releases as app_releases_router,
+    accounting as accounting_router,
+    sales_reports as sales_reports_router,
+    till_messages as till_messages_router,
+    prepaid_vouchers as prepaid_vouchers_router,
+    till_shop_z as till_shop_z_router,
+    exceptions as exceptions_router,
+    promotions as promotions_router,
+    tables as tables_router,
+    printers as printers_router,
+    menu as menu_router,
+    insights as insights_router,
+    catalog_import as catalog_import_router,
 )
 from app.services.ably_notify import is_enabled as ably_enabled
 
@@ -102,6 +116,11 @@ app.include_router(dashboard.router, prefix=_prefix)
 app.include_router(catalog.router, prefix=_prefix)
 app.include_router(sync.router, prefix=_prefix)
 app.include_router(images.router, prefix=_prefix)
+# Images stored on this server when Cloudinary is not configured (app/services/local_media.py).
+# A plain route, not StaticFiles: Starlette resolves the directory's real path, and on a
+# subst'ed drive (P: → C:\…) that ends in "paths don't have the same drive" and a 500.
+from app.services.local_media import MEDIA_PREFIX as _MEDIA_PREFIX, media_file_response as _media_file_response
+app.add_api_route(_MEDIA_PREFIX + "/{path:path}", _media_file_response, methods=["GET"], include_in_schema=False)
 app.include_router(transactions.router, prefix=_prefix)
 app.include_router(z_reports.router, prefix=_prefix)
 app.include_router(shifts_router.router, prefix=_prefix)
@@ -111,6 +130,46 @@ app.include_router(transmit_requests_router.router, prefix=_prefix)
 app.include_router(pos_users.router, prefix=_prefix)
 app.include_router(tenants.router, prefix=_prefix)
 app.include_router(settings_router.router, prefix=_prefix)
+app.include_router(till_parameters_router.router, prefix=_prefix)
+app.include_router(app_releases_router.router, prefix=_prefix)
+app.include_router(accounting_router.router, prefix=_prefix)
+app.include_router(sales_reports_router.router, prefix=_prefix)
+app.include_router(till_messages_router.router, prefix=_prefix)
+app.include_router(prepaid_vouchers_router.router, prefix=_prefix)
+app.include_router(till_shop_z_router.router, prefix=_prefix)
+app.include_router(exceptions_router.router, prefix=_prefix)
+app.include_router(exceptions_router.till_router, prefix=_prefix)
+app.include_router(promotions_router.router, prefix=_prefix)
+app.include_router(tables_router.router, prefix=_prefix)
+app.include_router(printers_router.router, prefix=_prefix)
+app.include_router(menu_router.router, prefix=_prefix)
+app.include_router(insights_router.router, prefix=_prefix)
+# The menu as a spreadsheet; the public half is the share link's download (no login).
+app.include_router(catalog_import_router.router, prefix=_prefix)
+app.include_router(catalog_import_router.public_router, prefix=_prefix)
+
+
+@app.on_event("startup")
+def seed_builtin_till_parameters():
+    """
+    The till parameters the cloud itself reads (`shopZOpenTills`, `receiptLogoUrl`), created if missing.
+    Never fatal: without them the rules they drive simply do not apply. Also available
+    as `python -m scripts.seed_till_parameters`.
+    """
+    from app.database import SessionLocal
+    from app.services.till_parameters import ensure_builtin_parameters
+
+    db = SessionLocal()
+    try:
+        created = ensure_builtin_parameters(db)
+        db.commit()
+        if created:
+            logger.info("Created built-in till parameters: %s", ", ".join(created))
+    except Exception:  # noqa: BLE001 - see the docstring
+        db.rollback()
+        logger.exception("Could not create the built-in till parameters")
+    finally:
+        db.close()
 
 
 @app.get("/")

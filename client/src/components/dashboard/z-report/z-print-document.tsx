@@ -14,6 +14,8 @@
  *   of non-sale documents;
  * * VAT, tips, and the cash summary — withheld, with the reason, when a drawer was not
  *   counted, rather than printed as a balanced zero.
+ * * offline-approved card sales the acquirer later declined, per till with each
+ *   document, when there were any (`offline-summary.tsx`).
  */
 
 import { useTranslations } from 'next-intl';
@@ -25,6 +27,8 @@ import {
   useShiftLabel,
   useTillHeading,
 } from '@/components/dashboard/shifts/shift-parts';
+import { offlineOf, offlineOfZ, useOfflineLine } from '@/components/dashboard/z-report/offline-summary';
+import { CardBrandPrintRows } from '@/components/dashboard/z-report/card-brand-summary';
 
 /** A count, or a dash when the server did not send it — never a zero it did not say. */
 const count = (n: number | null | undefined) => (n == null ? '—' : n);
@@ -117,6 +121,26 @@ function SalesRows({ x }: { x: ZReportDetail | ZReportMachineSection }) {
   );
 }
 
+/** The offline line and, under it, each declined document with its amount. */
+function OfflineRows({ s }: { s: ZReportMachineSection }) {
+  const t = useTranslations('zReports.offline');
+  const line = useOfflineLine();
+  const offline = offlineOf(s.offline);
+  if (!offline) return null;
+  return (
+    <>
+      <SubHeading>{line(offline)}</SubHeading>
+      {(s.offline?.declined ?? []).map((d) => (
+        <Row
+          key={`${d.transactionId}-${d.terminalUid}`}
+          label={`${t('document')} ${d.documentNumber ?? d.transactionId.slice(0, 8)} · ${formatDateTime(d.at)}`}
+          value={formatCurrency(d.amount)}
+        />
+      ))}
+    </>
+  );
+}
+
 function TillSection({ s }: { s: ZReportMachineSection }) {
   const t = useTranslations('zReports.print');
   const heading = useTillHeading()(s);
@@ -163,6 +187,7 @@ function TillSection({ s }: { s: ZReportMachineSection }) {
           {(s.unattendedShiftCount ?? 0) > 0 ? (
             <Row label={t('unattendedShifts')} value={s.unattendedShiftCount} />
           ) : null}
+          <OfflineRows s={s} />
         </tbody>
       </table>
     </Section>
@@ -183,7 +208,12 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
   const t = useTranslations('zReports.print');
   const tz = useTranslations('zReports');
   const shiftLabel = useShiftLabel();
+  const offlineLine = useOfflineLine();
+  const tOpen = useTranslations('zWizard.openTills');
+  const offline = offlineOfZ(z);
   const b = z.business;
+  const leftOut = b?.openTillsLeftOut?.tills.length ? b.openTillsLeftOut : null;
+  const leftOutTills = leftOut?.tills.map((till) => till.posNumber || till.name || till.id).join(', ') ?? '';
   const uncountedShifts = z.perMachine.reduce((n, s) => n + (s.uncountedShiftCount ?? 0), 0);
   const withheld = z.actualCash == null;
   const address = [b?.address, b?.addressNumber].filter(Boolean).join(' ');
@@ -227,6 +257,16 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
       ) : null}
       {z.reconstructed ? <p className="mt-2 font-bold">{t('reconstructedNotice')}</p> : null}
       {z.unattended ? <p className="mt-1">{t('unattendedNotice')}</p> : null}
+      {leftOut ? (
+        <p className="mt-1 font-bold">
+          {leftOut.confirmedByName
+            ? tOpen('record', { tills: leftOutTills, by: leftOut.confirmedByName })
+            : tOpen('recordNoWho', { tills: leftOutTills })}
+        </p>
+      ) : null}
+      {offline ? (
+        <p className={offline.declinedCount > 0 ? 'mt-2 font-bold' : 'mt-1'}>{offlineLine(offline)}</p>
+      ) : null}
 
       <Section title={t('totalsTitle')}>
         <table className="w-full text-xs">
@@ -244,6 +284,16 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
           </tbody>
         </table>
       </Section>
+
+      {z.cardBrands && z.cardBrands.length > 0 ? (
+        <Section title={t('cardBrandsTitle')}>
+          <table className="w-full text-xs">
+            <tbody>
+              <CardBrandPrintRows rows={z.cardBrands} Row={Row} SubHeading={SubHeading} />
+            </tbody>
+          </table>
+        </Section>
+      ) : null}
 
       <Section title={t('cashTitle')}>
         <table className="w-full text-xs">

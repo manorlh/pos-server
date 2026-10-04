@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, ConfigDict
 
+from app.schemas.pos_machine import DeviceModel
+
 
 class PairingSessionCreateResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -56,6 +58,8 @@ class MobileClaimRequest(BaseModel):
     company_id: uuid.UUID = Field(..., alias="companyId")
     shop_id: uuid.UUID = Field(..., alias="shopId")
     machine_name: Optional[str] = Field(None, alias="machineName")
+    #: "N55F" | "MODO", as on `POST /pairing/generate`; omitted leaves it unknown (a 55F).
+    device_model: Optional[DeviceModel] = Field(None, alias="deviceModel")
 
 
 class MobileClaimResponse(BaseModel):

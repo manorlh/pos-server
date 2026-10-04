@@ -69,6 +69,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 
 /** Day row + the expander cell. */
 const COLS = 10;
@@ -126,6 +127,20 @@ function VarianceCell({ totals }: { totals: DaySummaryTotals }) {
   );
 }
 
+/**
+ * Under a card figure: its offline-approved sales the acquirer later declined, in red.
+ * Nothing when there were none (or the Zs predate the figure).
+ */
+function OfflineDeclined({ count, amount }: { count?: number; amount?: number }) {
+  const t = useTranslations('daySummary');
+  if (!count) return null;
+  return (
+    <div className="text-destructive text-xs whitespace-nowrap">
+      {t('offlineDeclined', { count, amount: formatCurrency(amount ?? 0) })}
+    </div>
+  );
+}
+
 function DayRow({ row }: { row: DaySummaryRow }) {
   const t = useTranslations('daySummary');
   const [open, setOpen] = useState(false);
@@ -157,6 +172,7 @@ function DayRow({ row }: { row: DaySummaryRow }) {
         </TableCell>
         <TableCell className="bg-muted/40 text-end tabular-nums">
           {formatCurrency(row.totals.cardSales)}
+          <OfflineDeclined count={row.totals.offlineDeclinedCount} amount={row.totals.offlineDeclinedAmount} />
         </TableCell>
         <TableCell className="text-end">
           <MaybeMoney value={row.totals.vat} unavailableLabel={t('unavailable.short')} />
@@ -214,6 +230,7 @@ function DayRow({ row }: { row: DaySummaryRow }) {
                       </TableCell>
                       <TableCell className="text-end tabular-nums">
                         {formatCurrency(c.cardSales)}
+                        <OfflineDeclined count={c.offlineDeclinedCount} amount={c.offlineDeclinedAmount} />
                       </TableCell>
                       <TableCell className="text-end tabular-nums">{formatCurrency(c.tips)}</TableCell>
                       <TableCell className="text-end tabular-nums">
@@ -344,7 +361,7 @@ export default function DaySummaryPage() {
       </div>
 
       <ScopeGate resolution={resolution}>
-        <Card>
+        <Card className="print:hidden">
           <CardContent className="grid gap-4 pt-6 md:grid-cols-2 xl:grid-cols-5">
             <div className="space-y-1.5">
               <Label htmlFor="day-summary-from">{t('filters.from')}</Label>
@@ -426,6 +443,33 @@ export default function DaySummaryPage() {
           <ReportErrorState message={axiosErrorToToastMessage(error, tc('error'))} />
         ) : data ? (
           <div className="space-y-4">
+            <ReportExportToolbar
+              title={t('title')}
+              from={data.window.from}
+              to={data.window.to}
+              getSheets={() => ({
+                name: t('title'),
+                columns: [
+                  { header: t('table.day'), kind: 'date' },
+                  { header: t('table.tills'), kind: 'number' },
+                  { header: t('table.net'), kind: 'money' },
+                  { header: t('table.refunds'), kind: 'money' },
+                  { header: t('table.cash'), kind: 'money' },
+                  { header: t('table.card'), kind: 'money' },
+                  { header: t('table.vat'), kind: 'money' },
+                  { header: t('table.tips'), kind: 'money' },
+                  { header: t('table.variance'), kind: 'money' },
+                ],
+                rows: data.days.map((d) => [
+                  d.dayDate, d.machineCount, d.totals.net, d.totals.refunds, d.totals.cashSales,
+                  d.totals.cardSales, d.totals.vat, d.totals.tips, d.totals.variance,
+                ]),
+                totals: [
+                  t('table.total'), null, data.totals.net, data.totals.refunds, data.totals.cashSales,
+                  data.totals.cardSales, data.totals.vat, data.totals.tips, data.totals.variance,
+                ],
+              })}
+            />
             <ReportWindowSummary window={data.window} generatedAt={data.generatedAt} />
 
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
@@ -546,6 +590,10 @@ export default function DaySummaryPage() {
                         </TableCell>
                         <TableCell className="bg-muted/40 text-end tabular-nums">
                           {formatCurrency(data.totals.cardSales)}
+                          <OfflineDeclined
+                            count={data.totals.offlineDeclinedCount}
+                            amount={data.totals.offlineDeclinedAmount}
+                          />
                         </TableCell>
                         <TableCell className="text-end">
                           <MaybeMoney

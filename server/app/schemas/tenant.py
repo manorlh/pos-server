@@ -1,5 +1,5 @@
-from datetime import datetime
-from typing import List, Optional
+from datetime import date, datetime
+from typing import List, Literal, Optional
 import uuid
 
 from pydantic import BaseModel, Field, ConfigDict
@@ -14,6 +14,10 @@ class TenantCreate(BaseModel):
     timezone: str = "Asia/Jerusalem"
     default_currency: str = Field("ILS", alias="defaultCurrency")
     locale: str = "he-IL"
+    #: "permanent" | "temporary" (a short-term customer, an event) — super admin only.
+    license_type: Optional[Literal["permanent", "temporary"]] = Field(None, alias="licenseType")
+    #: A temporary customer's last day of sales.
+    license_expires_on: Optional[date] = Field(None, alias="licenseExpiresOn")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -26,6 +30,10 @@ class TenantUpdate(BaseModel):
     locale: Optional[str] = None
     status: Optional[TenantStatus] = None
     settings: Optional[dict] = None
+    #: "permanent" | "temporary" (a short-term customer, an event) — super admin only.
+    license_type: Optional[Literal["permanent", "temporary"]] = Field(None, alias="licenseType")
+    #: A temporary customer's last day of sales.
+    license_expires_on: Optional[date] = Field(None, alias="licenseExpiresOn")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -41,6 +49,8 @@ class TenantOut(BaseModel):
     default_currency: str = Field(..., alias="defaultCurrency")
     locale: str
     settings: Optional[dict]
+    license_type: str = Field("permanent", alias="licenseType")
+    license_expires_on: Optional[date] = Field(None, alias="licenseExpiresOn")
     created_by_user_id: Optional[uuid.UUID] = Field(None, alias="createdBy")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")

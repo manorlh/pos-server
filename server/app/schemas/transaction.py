@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 import uuid
 
 import json
@@ -127,9 +127,23 @@ class TransactionPaymentIn(BaseModel):
     #: stored in the leg's `nayax_meta` as `creditPayments`, beside the acquirer reply
     #: it came from.
     credit_payments: Optional[int] = Field(None, alias="creditPayments")
+    #: Brand / acquirer / issuer as the till read them off the reply (codes of
+    #: `app.services.card_brands`). Optional and unvalidated here: an unknown code is
+    #: ignored on ingest and the server reads the reply itself (older tills send none).
+    card_brand: Optional[str] = Field(None, alias="cardBrand", max_length=32)
+    card_acquirer: Optional[str] = Field(None, alias="cardAcquirer", max_length=32)
+    card_issuer: Optional[str] = Field(None, alias="cardIssuer", max_length=32)
 
     class Config:
         populate_by_name = True
+
+    @field_validator("card_brand", "card_acquirer", "card_issuer", mode="before")
+    @classmethod
+    def _card_code(cls, value):
+        """Never a rejected document over a label: anything odd is simply dropped."""
+        if not isinstance(value, str):
+            return None
+        return value.strip()[:32] or None
 
     @field_validator("nayax_meta", mode="before")
     @classmethod
@@ -169,6 +183,30 @@ class TransactionItemIn(BaseModel):
     #: (`items[].id` of the original document). Optional; absent on a catalogue return.
     #: An original the cloud does not hold yet is fine — it may arrive later.
     refund_of_item_id: Optional[uuid.UUID] = Field(None, alias="refundOfItemId")
+    #: The line's share of what promotions took off ("מבצעים"), an amount; inside
+    #: `documentDiscount` like `discount`, never in `totalPrice`. Optional.
+    promotion_discount: Optional[Decimal] = Field(None, alias="promotionDiscount")
+    #: The promotion that took it. Optional; an unreadable id is dropped, not refused.
+    promotion_id: Optional[str] = Field(None, alias="promotionId")
+    #: What the dish was ordered with (docs/SPEC_MENU_MODIFIERS.md §3.8): modifiers, notes,
+    #: allergies, seat, course, a meal's components. Optional; never checked against the
+    #: menu — anything that is not an object, or too big, is dropped and the line kept.
+    details: Optional[Any] = None
+    #: The upsell rule the line was added by. Optional; an unreadable id is dropped.
+    upsell_rule_id: Optional[str] = Field(None, alias="upsellRuleId")
+
+    class Config:
+        populate_by_name = True
+
+
+class TransactionPromotionIn(BaseModel):
+    """One promotion on a document: how often it applied and what it took off."""
+
+    promotion_id: Optional[str] = Field(None, alias="promotionId")
+    name: Optional[str] = None
+    type: Optional[str] = None
+    applications: int = Field(1, ge=0, le=100000)
+    discount: Decimal = Decimal("0")
 
     class Config:
         populate_by_name = True
@@ -245,6 +283,9 @@ class TransactionIn(BaseModel):
     payments: List[TransactionPaymentIn] = Field(default_factory=list)
     issued_vouchers: List[IssuedVoucherIn] = Field(default_factory=list, alias="issuedVouchers")
     stock_movements: List[StockMovementIn] = Field(default_factory=list, alias="stockMovements")
+    #: The promotions ("מבצעים") the till applied to this sale. Optional; an older
+    #: till sends none.
+    promotions: List[TransactionPromotionIn] = Field(default_factory=list)
 
     class Config:
         populate_by_name = True
@@ -339,6 +380,11 @@ class TransactionItemOut(BaseModel):
     line_discount: Optional[Decimal] = Field(None, alias="lineDiscount")
     notes: Optional[str]
     refund_of_item_id: Optional[uuid.UUID] = Field(None, alias="refundOfItemId")
+    promotion_discount: Optional[Decimal] = Field(None, alias="promotionDiscount")
+    promotion_id: Optional[uuid.UUID] = Field(None, alias="promotionId")
+    #: What the dish was ordered with, as the till sent it (docs/SPEC_MENU_MODIFIERS.md).
+    details: Optional[Dict[str, Any]] = None
+    upsell_rule_id: Optional[uuid.UUID] = Field(None, alias="upsellRuleId")
 
     class Config:
         from_attributes = True
@@ -351,6 +397,9 @@ class TransactionPaymentOut(BaseModel):
     method: str
     amount: Decimal
     nayax_meta: Optional[dict] = Field(None, alias="nayaxMeta")
+    card_brand: Optional[str] = Field(None, alias="cardBrand")
+    card_acquirer: Optional[str] = Field(None, alias="cardAcquirer")
+    card_issuer: Optional[str] = Field(None, alias="cardIssuer")
 
     class Config:
         from_attributes = True
@@ -435,6 +484,9 @@ class TransactionOut(BaseModel):
     #: The other documents of its basket (same `basketId`, same tenant), oldest first.
     #: Filled on the dashboard detail read only; empty for a document with no basket.
     basket_documents: List["BasketDocumentOut"] = Field(default_factory=list, alias="basketDocuments")
+    #: `declined` / `approved` when an offline authorization run of its till answered one
+    #: of its card legs (declined wins); null otherwise. Filled on dashboard reads only.
+    offline_outcome: Optional[Literal["approved", "declined"]] = Field(None, alias="offlineOutcome")
 
     class Config:
         from_attributes = True
@@ -479,6 +531,11 @@ class TransactionListItem(BaseModel):
     basket_id: Optional[uuid.UUID] = Field(None, alias="basketId")
     created_at: datetime = Field(..., alias="createdAt")
     server_received_at: datetime = Field(..., alias="serverReceivedAt")
+    #: `declined` / `approved` when an offline authorization run of its till answered one
+    #: of its card legs (declined wins); null otherwise. Filled on dashboard reads only.
+    offline_outcome: Optional[Literal["approved", "declined"]] = Field(None, alias="offlineOutcome")
+    #: The brands (מותג) of its card legs, in leg order; filled on dashboard reads only.
+    card_brands: List[str] = Field(default_factory=list, alias="cardBrands")
 
     class Config:
         from_attributes = True

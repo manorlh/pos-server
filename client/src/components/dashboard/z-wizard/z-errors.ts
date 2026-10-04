@@ -54,6 +54,12 @@ const KNOWN = new Set([
   'untransmitted_card_sales',
   'transmit_request_not_found',
   'transmission_failed',
+  'open_tills_block_z',
+  'open_tills_need_confirmation',
+  // Synced-mode tables still open in the shop ("חסימת סגירת יום עם שולחנות פתוחים").
+  'open_tables_block_z',
+  // A till refused a remote close for the same reason (its ack's error code).
+  'open_tables',
 ]);
 
 /** The code part of a detail: `z_run_in_progress:<id>` → `z_run_in_progress`. */

@@ -7,6 +7,8 @@ server/**/*.py[cod]
 server/.env
 server/.env.local
 server/certs/
+# Uploaded till APKs (app_releases_dir) and anything else the server writes locally.
+server/var/
 server/alembic/versions/*.pyc
 
 # ── Client ────────────────────────────────────────────────────────────────────

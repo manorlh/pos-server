@@ -5,9 +5,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, ConfigDict, Field
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, object_session, selectinload
 from sqlalchemy import or_, and_
 from sqlalchemy.exc import IntegrityError
+from app.services import licenses
 from app.database import get_db
 from app.schemas.pos_machine import POSMachineUpdate, POSMachineResponse, MachineHeartbeatBody
 from app.models.pos_machine import POSMachine, PairingStatus
@@ -67,8 +68,14 @@ from app.services.remote_close import (
     pending_close_sources,
     take_pending_close_shift,
 )
-from app.services.z_runs import _reported_open_is_live
+from app.services.z_runs import _reported_open_is_live, shop_z_fast_beat
 from app.services import transmissions, transmit_requests
+from app.services.terminal_status import (
+    TerminalSettings,
+    apply_terminal_block,
+    machine_terminal_fields,
+    terminal_settings_for,
+)
 from app.schemas.transmission import ReplacementCodeBody
 from sqlalchemy import func
 
@@ -131,6 +138,7 @@ def _enrich_machine_status(
     untransmitted: Optional[Dict[uuid_mod.UUID, tuple]] = None,
     latest_transmissions: Optional[Dict[uuid_mod.UUID, dict]] = None,
     pending_transmit: Optional[Dict[uuid_mod.UUID, uuid_mod.UUID]] = None,
+    terminal_settings: Optional[Dict[uuid_mod.UUID, TerminalSettings]] = None,
 ) -> Dict[str, Any]:
     last_catalog_change_at = get_catalog_change_watermark_for_machine(db, machine)
     last_sync_at = machine.last_sync_at
@@ -167,10 +175,19 @@ def _enrich_machine_status(
         "areaId": machine.area_id,
         "areaName": machine.area_name,
         "posNumber": machine.pos_number,
+        # The till's shop and company by number: "חברה #N · סניף #M · קופה #K".
+        "shopNumber": machine.shop.shop_number if machine.shop is not None else None,
+        "companyNumber": (
+            machine.shop.company.company_number
+            if machine.shop is not None and machine.shop.company is not None
+            else None
+        ),
         "distributorId": machine.distributor_id,
         "mqttClientId": machine.mqtt_client_id,
         "pairingStatus": machine.pairing_status,
         "deviceInfo": machine.device_info,
+        "deviceModel": machine.device_model,
+        "hasPrinter": machine.has_printer,
         "isActive": machine.is_active,
         "lastHeartbeatAt": machine.last_heartbeat_at,
         "mqttConnected": machine.mqtt_connected,
@@ -235,6 +252,12 @@ def _enrich_machine_status(
     result["printerStatusAt"] = machine.printer_status_at
     result["printerLastOkAt"] = machine.printer_last_ok_at
     result["printerReportedAt"] = machine.printer_reported_at
+    # The card terminal: what Agamento reports beside the number the settings expect.
+    if terminal_settings is None:
+        terminal_settings = terminal_settings_for(db, [machine])
+    result.update(
+        machine_terminal_fields(machine, terminal_settings.get(machine.id) or TerminalSettings())
+    )
 
     # Resolved server-side so the dashboard, the close-day gate and anything added later
     # all read one definition. The raw fields above stay, because a detail panel still
@@ -287,6 +310,7 @@ def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict
     untransmitted = transmissions.untransmitted_summary(db, ids)
     latest = transmissions.latest_by_machine(db, ids)
     pending_transmit = transmit_requests.pending_by_machine(db, ids)
+    terminal = terminal_settings_for(db, machines)
     return [
         _enrich_machine_status(
             m,
@@ -299,6 +323,7 @@ def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict
             untransmitted=untransmitted,
             latest_transmissions=latest,
             pending_transmit=pending_transmit,
+            terminal_settings=terminal,
         )
         for m in machines
     ]
@@ -408,17 +433,38 @@ def get_my_ably_auth(
 @router.get("/me")
 def get_my_machine(
     machine: POSMachine = Depends(get_pos_machine_from_machine_token),
+    db: Session = Depends(get_db),
 ):
     """POS desktop: resolve shop/tenant and realtime (Ably) endpoint using machine JWT only."""
+    shop = machine.shop
+    company = shop.company if shop is not None else None
     return {
         "machineId": str(machine.id),
         "machineCode": machine.machine_code,
+        # Who and where the till is, for its menu header: the till's own name and
+        # register number, and the names of its shop and that shop's company.
+        "machineName": machine.name,
+        "posNumber": machine.pos_number,
+        "shopName": shop.name if shop is not None else None,
+        "companyName": company.name if company is not None else None,
+        # By number as well, for "חברה #N · סניף #M · קופה #K"; null without a shop.
+        "shopNumber": shop.shop_number if shop is not None else None,
+        "companyNumber": company.company_number if company is not None else None,
         "tenantId": str(machine.tenant_id) if machine.tenant_id else None,
         "shopId": str(machine.shop_id) if machine.shop_id else None,
         # Shown beside the till's name and printed on its X (docs/AREAS_API.md §3).
         "area": areas.area_ref(machine.area),
         "pairingStatus": machine.pairing_status.value if hasattr(machine.pairing_status, "value") else machine.pairing_status,
         "mqttClientId": machine.mqtt_client_id,
+        # The hardware, as the dashboard recorded it: "N55F" | "MODO" | null. A till with
+        # `hasPrinter` false (a Modo) must not try to print; null reads as a 55F.
+        "deviceModel": machine.device_model,
+        "hasPrinter": machine.has_printer,
+        # "לקוח זמני": the license end this till keeps (app/services/licenses.py).
+        # Called directly (a test), `db` is its Depends default: the machine's own session.
+        "license": licenses.effective_license(
+            db if isinstance(db, Session) else object_session(machine), machine
+        ),
         **machine_realtime_refresh_info(machine=machine),
     }
 
@@ -486,9 +532,15 @@ def post_my_heartbeat(
     # The till's printer (§1.6a), the same kind of snapshot.
     if body is not None and body.printer is not None:
         apply_printer_block(machine, body.printer)
+    # The card terminal (Agamento), the same kind of snapshot.
+    if body is not None and body.terminal is not None:
+        apply_terminal_block(machine, body.terminal)
     pending_transmit = transmit_requests.take_pending(db, machine)
     through = z_reported_through_sequence(db, machine.id)
     recent = recent_shift_zs(db, machine.id)
+    # A shop Z is about (the master till's "סגירת Z סניפי" is open, or a run is waiting):
+    # beat every few seconds, so its close reaches this till at once without realtime.
+    fast_beat = shop_z_fast_beat(db, machine)
     db.commit()
 
     response = {
@@ -498,7 +550,11 @@ def post_my_heartbeat(
         "zReportedThroughSequence": through,
         # So a reprint of an older shift's X can carry the Z number it ended up in.
         "recentShiftZs": recent,
+        # A temporary customer's license end, every beat — a change reaches the till at once.
+        "license": licenses.effective_license(db, machine),
     }
+    if fast_beat:
+        response["fastBeat"] = True
     if pending is not None:
         response["pendingCloseShift"] = pending
     if pending_transmit is not None:
@@ -549,6 +605,8 @@ def update_machine(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     update_data = machine_data.model_dump(exclude_unset=True, by_alias=False)
+    # "לקוח קבוע / זמני" for this till: the super admin's only; leaves `update_data`.
+    licenses.apply_license(current_user, machine, update_data)
 
     # Leaving its shop, or being retired, with shifts that belong to it: refused (409).
     leaving = "shop_id" in update_data and str(update_data["shop_id"]) != str(machine.shop_id)
@@ -1015,6 +1073,8 @@ def create_replacement_pairing_code(
         shop_id=None,
         target_machine_id=machine.id,
         untransmitted_acknowledged_by=current_user.id if acknowledged else None,
+        # The replacement unit's hardware; none keeps the till's recorded model.
+        device_model=body.device_model if body is not None else None,
     )
     return {
         "code": code.code,

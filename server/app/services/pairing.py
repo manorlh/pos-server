@@ -95,12 +95,14 @@ def create_pairing_code(
     shop_id: Optional[uuid.UUID] = None,
     target_machine_id: Optional[uuid.UUID] = None,
     untransmitted_acknowledged_by: Optional[uuid.UUID] = None,
+    device_model: Optional[str] = None,
 ) -> PairingCode:
     """
     Create a new pairing code, optionally with company/shop pre-assignment.
 
     `target_machine_id` makes it a *replacement* code: the device that redeems it adopts
     that existing machine row rather than creating a new one. See `validate_pairing_code`.
+    `device_model` ("N55F" | "MODO") is copied onto the machine the code pairs.
     """
     code = generate_pairing_code()
     while db.query(PairingCode).filter(PairingCode.code == code).first():
@@ -123,6 +125,7 @@ def create_pairing_code(
         untransmitted_acknowledged_at=(
             datetime.now(timezone.utc) if untransmitted_acknowledged_by is not None else None
         ),
+        device_model=device_model,
         expires_at=expires_at,
         is_used=False,
     )
@@ -164,6 +167,9 @@ def validate_pairing_code(
         )
         if pos_machine is None:
             return None
+        # The replacement unit may be other hardware; a code with no model keeps the old one.
+        if pairing_code.device_model:
+            pos_machine.device_model = pairing_code.device_model
     else:
         pos_machine = create_pos_machine(
             db,
@@ -171,6 +177,7 @@ def validate_pairing_code(
             tenant_id=tenant_id,
             device_info=device_info,
             machine_name=machine_name,
+            device_model=pairing_code.device_model,
         )
 
     pairing_code.is_used = True
@@ -200,6 +207,7 @@ def create_pos_machine(
     device_info: Optional[dict] = None,
     machine_name: Optional[str] = None,
     pairing_session_id: Optional[uuid.UUID] = None,
+    device_model: Optional[str] = None,
 ) -> POSMachine:
     """Create a new POS machine row in PAIRED status (not yet assigned to a shop)."""
     machine_code = f"MACHINE-{uuid.uuid4().hex[:8].upper()}"
@@ -220,6 +228,7 @@ def create_pos_machine(
         mqtt_client_id=mqtt_client_id,
         pairing_status=PairingStatus.PAIRED,
         device_info=device_info,
+        device_model=device_model,
         # The till already puts its serial in `device_info` at pairing time, on both
         # the code path (POST /pairing/validate) and the QR path (POST
         # /pairing/device/register → claim). Lift it into the column so a machine is

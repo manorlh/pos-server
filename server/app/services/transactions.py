@@ -39,6 +39,7 @@ from app.schemas.transaction import (
 )
 from app.services.approvals import ApprovalRejected, verify_document_approvers
 from app.services.transmissions import leg_terminal_uid, mark_legs_on_ingest
+from app.services import card_brands
 from app.services.shifts import (
     ShiftConflict,
     note_documents_after_close,
@@ -46,6 +47,8 @@ from app.services.shifts import (
     resolve_shift_for_document,
 )
 from app.services.stock import apply_movement
+from app.services.promotions import replace_document_promotions
+from app.services import menu as _menu
 from app.services.z_runs import _rollback_savepoint
 from app.services.tenders import (
     UNKNOWN_PAYMENT_METHOD,
@@ -55,6 +58,29 @@ from app.services.tenders import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _promotion_uuid(value) -> Optional[uuid.UUID]:
+    """A line's promotion id when it reads as one; never a reason to refuse the line."""
+    if value is None:
+        return None
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+class _ItemForParts:
+    """An incoming line as `menu.parts_for_item` reads it: its money and its cleaned details."""
+
+    def __init__(self, item, details):
+        self.id = item.id
+        self.product_id = item.product_id
+        self.quantity = item.quantity
+        self.total_price = item.total_price
+        self.discount = item.discount
+        self.promotion_discount = item.promotion_discount
+        self.details = details
 
 
 def _safe_item_product_id(
@@ -223,6 +249,19 @@ def _leg_meta(leg: TransactionPaymentIn) -> Optional[dict]:
     if credit_payments is None:
         return leg.nayax_meta
     return {**(leg.nayax_meta or {}), "creditPayments": credit_payments}
+
+
+def _leg_card_brand(leg: TransactionPaymentIn) -> dict:
+    """`card_brand` / `card_acquirer` / `card_issuer` of a card leg; nothing for the rest."""
+    if (leg.method or "").strip().lower() != "card":
+        return {}
+    brand, acquirer, issuer = card_brands.resolve(
+        leg.nayax_meta,
+        brand=getattr(leg, "card_brand", None),
+        acquirer=getattr(leg, "card_acquirer", None),
+        issuer=getattr(leg, "card_issuer", None),
+    )
+    return {"card_brand": brand, "card_acquirer": acquirer, "card_issuer": issuer}
 
 
 def _tender_rejection_reason(tx: TransactionIn) -> Optional[str]:
@@ -841,9 +880,21 @@ def upsert_transactions(
                             db, it.refund_of_item_id, machine.tenant_id,
                             f"items[{i}].refundOfItemId", link_warnings,
                         ),
+                        promotion_discount=it.promotion_discount,
+                        promotion_id=_promotion_uuid(it.promotion_id),
+                        # What the dish was ordered with (docs/SPEC_MENU_MODIFIERS.md).
+                        details=_menu.clean_details(it.details),
+                        upsell_rule_id=_promotion_uuid(it.upsell_rule_id),
                     )
                     for i, it in enumerate(tx.items)
                 ])
+            # The promotions ("מבצעים") the till applied, replaced like the items.
+            replace_document_promotions(db, tx.id, tx.promotions)
+            # The lines taken apart for the menu reports — modifiers, and a meal's
+            # components with its money allocated — rebuilt like the items.
+            _menu.replace_item_parts(db, tx.id, [
+                _ItemForParts(it, _menu.clean_details(it.details)) for it in tx.items
+            ])
 
             # Tender legs are replaced atomically, exactly like items: a re-push is
             # the whole document, so the legs it carries are the whole truth about
@@ -870,6 +921,9 @@ def upsert_transactions(
                     # The terminal's id of a card sale, what a transmission batch lists
                     # (docs/SHIFTS_API.md §4). Read here once so matching is an index hit.
                     terminal_uid=leg_terminal_uid(leg.method, leg.nayax_meta),
+                    # מותג / חברת סליקה / מנפיק: the till's reading when it sent one,
+                    # else the server reads the reply (an older till sends none).
+                    **_leg_card_brand(leg),
                 )
                 for leg in legs
             ])

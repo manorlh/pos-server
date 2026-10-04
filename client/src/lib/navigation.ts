@@ -16,33 +16,64 @@
  */
 import type { ElementType } from 'react';
 import {
+  Activity,
+  BadgePercent,
+  BarChart3,
+  BookOpenCheck,
   Boxes,
+  Calculator,
+  ChefHat,
+  ClipboardList,
   Building2,
   CalendarRange,
   Clock,
   Coins,
+  CreditCard,
+  Download,
   FileBarChart,
   FilePlus2,
   FileText,
+  Grid3x3,
   IdCard,
   LayoutDashboard,
   LayoutGrid,
+  Layers,
+  Lightbulb,
   ListFilter,
+  ListOrdered,
+  Megaphone,
   Monitor,
   Package,
   Package2,
   Palette,
+  Percent,
+  Printer,
+  QrCode,
   Receipt,
+  Scale,
+  ShieldAlert,
+  SlidersHorizontal,
+  SlidersVertical,
+  Sparkles,
   Store,
   Tag,
   Ticket,
   User,
   UserRoundCheck,
   Users,
+  UtensilsCrossed,
+  Wallet,
+  WifiOff,
 } from 'lucide-react';
 
 /** Which gate an entry hangs on. `undefined` = visible to anyone signed in. */
-export type NavGate = 'canReadUsers' | 'canManagePosUsers' | 'branding' | 'produceZ';
+export type NavGate =
+  | 'canReadUsers'
+  | 'canManagePosUsers'
+  | 'branding'
+  | 'produceZ'
+  | 'superAdmin'
+  | 'settingsWrite';
 
 export interface NavItem {
   href: string;
@@ -67,15 +98,34 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     id: 'overview',
     labelKey: 'sections.overview',
-    items: [{ href: '/dashboard', labelKey: 'overview', icon: LayoutDashboard }],
+    items: [
+      { href: '/dashboard', labelKey: 'overview', icon: LayoutDashboard },
+      // Per product, what the scope has sold so far, refreshed as it sells.
+      { href: '/dashboard/live-items', labelKey: 'liveItems', icon: Activity },
+      // Day against day — today vs yesterday, Saturday vs Saturday, any two days.
+      { href: '/dashboard/compare', labelKey: 'compareBoard', icon: BarChart3 },
+      // What to look at and do: dead items, weak hours, the menu matrix, forecast, outliers.
+      { href: '/dashboard/insights', labelKey: 'insights', icon: Lightbulb },
+      // A message every targeted till must acknowledge; the machine-admin roles, which
+      // are exactly the settings-write set.
+      { href: '/dashboard/till-messages', labelKey: 'tillMessages', icon: Megaphone, gate: 'settingsWrite' },
+    ],
   },
   {
     id: 'catalog',
     labelKey: 'sections.catalog',
     items: [
-      { href: '/dashboard/products', labelKey: 'products', icon: Package },
+      // `/dashboard/products/import` (the menu as a spreadsheet) lights "Products" up too.
+      { href: '/dashboard/products', labelKey: 'products', icon: Package, matchPrefixes: ['/dashboard/products/'] },
       { href: '/dashboard/categories', labelKey: 'categories', icon: Tag },
       { href: '/dashboard/vouchers', labelKey: 'vouchers', icon: Ticket },
+      // Vouchers worth goods for an event's production team, redeemed at the tills by QR.
+      { href: '/dashboard/prepaid-vouchers', labelKey: 'prepaidVouchers', icon: QrCode },
+      // Promotions ("מבצעים"): defined here, computed by the tills offline.
+      { href: '/dashboard/promotions', labelKey: 'promotions', icon: BadgePercent },
+      // The menu layer: modifier groups, note chips and courses; and the till's upsells.
+      { href: '/dashboard/modifiers', labelKey: 'modifiers', icon: ChefHat },
+      { href: '/dashboard/upsells', labelKey: 'upsells', icon: Sparkles },
       // Both of these used to live at /dashboard/shops/… while being shown as
       // top-level items, and would now collide with the /dashboard/shops/[id]
       // drill-down. They are top-level routes to match where they appear.
@@ -111,11 +161,35 @@ export const NAV_SECTIONS: NavSection[] = [
       // Sits next to the closing reports it is made of, so the relationship is
       // obvious: this is a roll-up of those, not a separate kind of document.
       { href: '/dashboard/day-summary', labelKey: 'daySummary', icon: CalendarRange },
+      // Card sales the terminal approved offline, and the ones the acquirer declined after.
+      { href: '/dashboard/offline-transactions', labelKey: 'offlineTransactions', icon: WifiOff },
       { href: '/dashboard/product-sales', labelKey: 'productSales', icon: Package2 },
       { href: '/dashboard/cashier-sales', labelKey: 'cashierSales', icon: UserRoundCheck },
       { href: '/dashboard/area-sales', labelKey: 'areaSales', icon: LayoutGrid },
       { href: '/dashboard/tips', labelKey: 'tips', icon: Coins },
+      // The reports of docs/ACCOUNTING_EXPORT_AND_REPORTS.md §4.3.
+      { href: '/dashboard/sales-by-payment', labelKey: 'salesByPayment', icon: Wallet },
+      // Card takings per brand (מותג) and acquirer (חברת סליקה): the clearing report.
+      { href: '/dashboard/card-brands', labelKey: 'cardBrands', icon: CreditCard },
+      // How often each promotion applied and what it took off, by shop, till and day.
+      { href: '/dashboard/promotions-report', labelKey: 'promotionsReport', icon: Percent },
+      // Modifiers chosen, meals and their components, upsells taken.
+      { href: '/dashboard/menu-reports', labelKey: 'menuReports', icon: ClipboardList },
+      { href: '/dashboard/hourly-sales', labelKey: 'hourlySales', icon: Grid3x3 },
+      { href: '/dashboard/department-sales', labelKey: 'departmentSales', icon: Layers },
+      { href: '/dashboard/document-sequence', labelKey: 'documentSequence', icon: ListOrdered },
+      { href: '/dashboard/cash-variance', labelKey: 'cashVariance', icon: Scale },
+      // Discounts, refunds, cancelled baskets, long orders, high tips… for review.
+      { href: '/dashboard/exceptions', labelKey: 'exceptions', icon: ShieldAlert },
       { href: '/dashboard/tax-reports', labelKey: 'taxReports', icon: FileText },
+      // The books: the same super-admin / distributor / company-manager set the
+      // accounting router enforces, which is exactly the `branding` gate's.
+      {
+        href: '/dashboard/accounting-export',
+        labelKey: 'accountingExport',
+        icon: BookOpenCheck,
+        gate: 'branding',
+      },
     ],
   },
   {
@@ -140,6 +214,9 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: Monitor,
         matchPrefixes: ['/dashboard/machines/'],
       },
+      // The floor: zones and tables (map or grid), open tables now, the tables report and
+      // cancellation reasons — the shop's managers.
+      { href: '/dashboard/tables', labelKey: 'tables', icon: UtensilsCrossed, gate: 'settingsWrite' },
     ],
   },
   {
@@ -154,6 +231,48 @@ export const NAV_SECTIONS: NavSection[] = [
         gate: 'canManagePosUsers',
       },
       { href: '/dashboard/branding', labelKey: 'branding', icon: Palette, gate: 'branding' },
+      // Account mapping for the accounting export; same roles as the export itself.
+      {
+        href: '/dashboard/accounting-settings',
+        labelKey: 'accountingSettings',
+        icon: Calculator,
+        gate: 'branding',
+      },
+      // Which payment buttons the tills show, per company, shop, point of sale or till.
+      // Which exceptions are detected and their thresholds, per level.
+      {
+        href: '/dashboard/exception-settings',
+        labelKey: 'exceptionSettings',
+        icon: SlidersVertical,
+        gate: 'settingsWrite',
+      },
+      {
+        href: '/dashboard/payment-methods',
+        labelKey: 'paymentMethods',
+        icon: CreditCard,
+        gate: 'settingsWrite',
+      },
+      // Kitchen / bar ticket printers and what prints where — a shop's managers.
+      {
+        href: '/dashboard/kitchen-printers',
+        labelKey: 'kitchenPrinters',
+        icon: Printer,
+        gate: 'settingsWrite',
+      },
+      // Global definitions every tenant's tills read; only a super admin sets them.
+      {
+        href: '/dashboard/till-parameters',
+        labelKey: 'tillParameters',
+        icon: SlidersHorizontal,
+        gate: 'superAdmin',
+      },
+      // Uploading the till app and sending it out is the super admin's alone.
+      {
+        href: '/dashboard/app-updates',
+        labelKey: 'appUpdates',
+        icon: Download,
+        gate: 'superAdmin',
+      },
       { href: '/dashboard/profile', labelKey: 'profile', icon: User },
     ],
   },
@@ -181,6 +300,42 @@ export function findNavEntry(pathname: string | null | undefined): NavItem | und
     }
   }
   return best;
+}
+
+/**
+ * A label folded for the sidebar search: case, niqqud and cantillation marks dropped,
+ * and geresh/gershayim (and the ASCII quotes typed in their place) removed, so "דוח"
+ * finds "דו״ח" and "z" finds "Z".
+ */
+export function normalizeNavText(text: string): string {
+  return text
+    .normalize('NFKD')
+    .replace(/[֑-ׇ]/g, '')
+    .replace(/["'`׳״‘’“”]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * The sections a sidebar search shows: an entry whose label contains the query, or
+ * every entry of a section whose title does. Sections left empty are dropped. An
+ * empty query returns the sections as they are.
+ */
+export function filterNavSections(
+  sections: NavSection[],
+  query: string,
+  label: (key: string) => string,
+): NavSection[] {
+  const q = normalizeNavText(query);
+  if (!q) return sections;
+  return sections
+    .map((section) =>
+      normalizeNavText(label(section.labelKey)).includes(q)
+        ? section
+        : { ...section, items: section.items.filter((item) => normalizeNavText(label(item.labelKey)).includes(q)) },
+    )
+    .filter((section) => section.items.length > 0);
 }
 
 /** The section id a path sits in, for keeping that sidebar group open. */

@@ -59,6 +59,9 @@ class ProductSalesRow(BaseModel):
 
     lines_sold: int = Field(..., alias="linesSold")
     lines_refunded: int = Field(..., alias="linesRefunded")
+    #: Of `unitsSold`, how many were sold inside meals (docs/SPEC_MENU_MODIFIERS.md §5.2);
+    #: their money is the meals' allocated to them.
+    units_in_meals: float = Field(0.0, alias="unitsInMeals")
 
 
 class ProductSalesTotals(BaseModel):
@@ -301,6 +304,12 @@ class DaySummaryTotals(BaseModel):
     variance: Optional[float] = None
     uncounted_count: int = Field(0, alias="uncountedCount")
 
+    #: Card sales the terminal approved offline that the acquirer then declined, as the
+    #: Zs froze them. A Z built before the figure contributes nothing: no run was
+    #: reported before it existed.
+    offline_declined_count: int = Field(0, alias="offlineDeclinedCount")
+    offline_declined_amount: float = Field(0.0, alias="offlineDeclinedAmount")
+
 
 class DaySummaryContributor(BaseModel):
     """
@@ -338,6 +347,8 @@ class DaySummaryContributor(BaseModel):
     expected_cash: float = Field(0.0, alias="expectedCash")
     actual_cash: Optional[float] = Field(None, alias="actualCash")
     discrepancy: Optional[float] = None
+    offline_declined_count: int = Field(0, alias="offlineDeclinedCount")
+    offline_declined_amount: float = Field(0.0, alias="offlineDeclinedAmount")
 
 
 class DaySummaryRow(BaseModel):
@@ -362,3 +373,98 @@ class DaySummaryReportResponse(BaseModel):
     #: Rolled across every day in the range, under the same completeness rules.
     totals: DaySummaryTotals
     days: List[DaySummaryRow]
+
+
+# ── Manager overview (לוח מנהל) ───────────────────────────────────────────────
+
+class OverviewSales(BaseModel):
+    """
+    One node's takings for the day: the per-cashier report's money (`_sales_buckets`),
+    so a till's, a shop's and the whole scope's figures add up to each other and to
+    that report over the same day.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: gross - discounts - refunds. The headline "sales today".
+    sales_today: float = Field(0.0, alias="salesToday")
+    gross: float = 0.0
+    discounts: float = 0.0
+    refunds: float = 0.0
+    #: Sales + credit notes, as `documentCount` in the cashier report.
+    documents_today: int = Field(0, alias="documentsToday")
+    sales_count: int = Field(0, alias="salesCount")
+    refunds_count: int = Field(0, alias="refundsCount")
+    cash: float = 0.0
+    card: float = 0.0
+    other: float = 0.0
+    tips: float = 0.0
+
+
+class OverviewKpis(OverviewSales):
+    #: (gross - discounts) / salesCount; 0 when nothing was sold.
+    average_ticket: float = Field(0.0, alias="averageTicket")
+
+
+class OverviewMachine(OverviewSales):
+    id: uuid.UUID
+    #: Register number in its shop ("קופה 2"), verbatim as stored.
+    pos_number: Optional[str] = Field(None, alias="posNumber")
+    name: str
+    #: The till's open shift as the cloud holds it, and what it has taken so far — over
+    #: the whole shift, so a shift opened before midnight counts from its start. Null
+    #: when no shift is open.
+    open_shift_id: Optional[uuid.UUID] = Field(None, alias="openShiftId")
+    open_shift_sales: Optional[float] = Field(None, alias="openShiftSales")
+    open_shift_documents: Optional[int] = Field(None, alias="openShiftDocuments")
+    #: The area (point of sale) the till stands in now; null when it is in none.
+    area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
+
+
+class OverviewArea(OverviewSales):
+    """
+    A point of sale (area) of a shop. Its money is the day's documents whose shift was
+    stamped with it — the area report's rule — so it adds up to that report; its tills
+    are those standing in it now (`machineIds`, in register order).
+    """
+
+    id: uuid.UUID
+    name: str
+    sort_order: int = Field(0, alias="sortOrder")
+    machine_ids: List[uuid.UUID] = Field(default_factory=list, alias="machineIds")
+
+
+class OverviewShop(OverviewSales):
+    id: uuid.UUID
+    number: Optional[int] = None
+    name: str
+    #: Every till of the shop, whatever its area (each carries `areaId`).
+    machines: List[OverviewMachine] = Field(default_factory=list)
+    #: The shop's live areas, in their order. Tills with no area are the `machines`
+    #: whose `areaId` is null; their money is the shop's minus the areas'.
+    areas: List[OverviewArea] = Field(default_factory=list)
+
+
+class OverviewCompany(OverviewSales):
+    id: uuid.UUID
+    number: Optional[int] = None
+    name: str
+    parent_company_id: Optional[uuid.UUID] = Field(None, alias="parentCompanyId")
+    shops: List[OverviewShop] = Field(default_factory=list)
+
+
+class OverviewResponse(BaseModel):
+    """
+    Today's takings over the caller's scope, as company › shop › till.
+
+    Sales only: the live state of a till (online, open shift, alerts) is the machines
+    list's, which the dashboard joins on `id` — restating it here would give the page
+    two answers to "is it online" that can disagree for up to a refresh.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    window: ReportWindowOut
+    generated_at: datetime = Field(..., alias="generatedAt")
+    kpis: OverviewKpis
+    companies: List[OverviewCompany]

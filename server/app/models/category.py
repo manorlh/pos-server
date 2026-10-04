@@ -30,6 +30,12 @@ class Category(Base):
     image_url = Column(String(500), nullable=True)
     parent_id = Column(UUID(as_uuid=True), ForeignKey("categories.id"), nullable=True)
     voucher_id = Column(UUID(as_uuid=True), ForeignKey("vouchers.id"), nullable=True, index=True)
+    # Item-ticket ("שובר") printing for products of this category: "per_unit",
+    # "per_line", "per_sale" or "off". NULL is "off". See app/services/item_ticket.py.
+    ticket_mode = Column(String(16), nullable=True)
+    # The course its products' table lines are fired in by default (docs/SPEC_MENU_MODIFIERS.md
+    # §8); null inherits the parent's. Not a key: a deleted course reads as none.
+    course_id = Column(UUID(as_uuid=True), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     sort_order = Column(Integer, default=0, nullable=False)
 

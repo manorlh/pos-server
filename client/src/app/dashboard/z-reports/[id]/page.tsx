@@ -15,9 +15,11 @@
 import { use, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
+import { NumberPill } from '@/components/dashboard/number-pill';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, FileBarChart, Printer } from 'lucide-react';
-import { fetchZReport } from '@/lib/api';
+import { AlertTriangle, FileBarChart, FileDown, Printer } from 'lucide-react';
+import { toast } from 'sonner';
+import { fetchZPrintDocument, fetchZReport } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
@@ -37,7 +39,21 @@ import {
   useTillHeading,
 } from '@/components/dashboard/shifts/shift-parts';
 import { ZBadges } from '@/components/dashboard/z-report/z-badges';
+import { OpenTillsRecord } from '@/components/dashboard/z-wizard/open-tills';
 import { ZPrintDocument } from '@/components/dashboard/z-report/z-print-document';
+import { CardBrandSummaryCard } from '@/components/dashboard/z-report/card-brand-summary';
+import {
+  printTillReceipts,
+  zPrintTitle,
+  ZTillReceipt,
+} from '@/components/dashboard/z-report/z-till-receipt';
+import { ZPrintViewToggle, type ZPrintView } from '@/components/dashboard/z-report/z-print-view-toggle';
+import {
+  OfflineDeclinedList,
+  OfflineNotice,
+  offlineOf,
+  offlineOfZ,
+} from '@/components/dashboard/z-report/offline-summary';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -156,6 +172,7 @@ function TillCard({ s, shifts }: { s: ZReportMachineSection; shifts: Shift[] }) 
   const t = useTranslations('zReports');
   const heading = useTillHeading()(s);
   const uncounted = (s.uncountedShiftCount ?? 0) > 0;
+  const offline = offlineOf(s.offline);
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -238,6 +255,12 @@ function TillCard({ s, shifts }: { s: ZReportMachineSection; shifts: Shift[] }) 
             </MoneyRow>
           </div>
         </div>
+        {offline ? (
+          <div className="space-y-2">
+            <OfflineNotice figures={offline} />
+            <OfflineDeclinedList declined={s.offline?.declined ?? []} />
+          </div>
+        ) : null}
       </CardContent>
       {shifts.length > 0 ? (
         <CardContent className="border-t p-0">
@@ -280,10 +303,18 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
   usePageScope({ maxLevel: 'machine', silent: true });
   // Stamped when the print dialog opens, so the paper says when it was printed.
   const [printedAt, setPrintedAt] = useState(() => new Date().toISOString());
+  const tp = useTranslations('zReports.tillPrint');
+  /** A4: the dashboard's document. Till: the 80 mm paper the till prints. */
+  const [view, setView] = useState<ZPrintView>('a4');
 
   const { data: z, isLoading, isError, error } = useQuery({
     queryKey: ['z-report', id],
     queryFn: () => fetchZReport(id),
+  });
+  const tillDoc = useQuery({
+    queryKey: ['z-report-print-document', id],
+    queryFn: () => fetchZPrintDocument(id),
+    enabled: view === 'till',
   });
 
   if (isLoading) {
@@ -301,15 +332,29 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
   const uncountedShifts = z.perMachine.reduce((n, s) => n + (s.uncountedShiftCount ?? 0), 0);
   const withheld = z.actualCash == null;
   const late = z.lateDocuments ?? 0;
+  const offline = offlineOfZ(z);
   // Frozen in the header when the Z was built, so a later rename does not rewrite it.
   const areaName = z.business?.areaName ?? z.areaName ?? null;
   const shiftsOf = (machineId: string) => z.shifts.filter((s) => s.machineId === machineId);
 
-  const print = () => {
+  const title = zPrintTitle([z.shopSequenceNumber]);
+  const print = (pdf = false) => {
+    if (pdf) toast.info(tp('pdfHint'));
+    if (view === 'till') {
+      if (tillDoc.data) void printTillReceipts([tillDoc.data], title);
+      return;
+    }
     setPrintedAt(new Date().toISOString());
-    // Let the new timestamp render before the dialog snapshots the page.
-    window.setTimeout(() => window.print(), 50);
+    // Let the new timestamp render before the dialog snapshots the page; the title
+    // names the file when it is saved as PDF.
+    const parentTitle = document.title;
+    document.title = title;
+    window.setTimeout(() => {
+      window.print();
+      document.title = parentTitle;
+    }, 50);
   };
+  const printDisabled = view === 'till' && !tillDoc.data;
 
   return (
     <>
@@ -326,15 +371,21 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
               <ZBadges z={z} />
             </div>
             <p className="text-muted-foreground text-sm">
+              <NumberPill n={z.shopNumber} className="me-1" />
               {z.shopName ?? z.business?.shopName ?? '—'} ·{' '}
               {areaName ? <>{t('areaValue', { area: areaName })} · </> : null}
               {t('businessDateValue', { date: formatDate(z.businessDate) })}
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={print}>
+          <div className="flex flex-wrap items-center gap-2">
+            <ZPrintViewToggle value={view} onChange={setView} />
+            <Button size="sm" onClick={() => print()} disabled={printDisabled}>
               <Printer className="h-4 w-4 me-1" aria-hidden />
               {t('printButton')}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => print(true)} disabled={printDisabled}>
+              <FileDown className="h-4 w-4 me-1" aria-hidden />
+              {tp('pdf')}
             </Button>
             <Link href="/dashboard/z-reports" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
               {t('backToList')}
@@ -353,12 +404,28 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
             {t('lateNotice', { count: late })}
           </div>
         ) : null}
+        {offline ? <OfflineNotice figures={offline} /> : null}
+        {/* Frozen at build: the tills the operator confirmed producing this shop Z without. */}
+        <OpenTillsRecord left={z.business?.openTillsLeftOut} />
         {z.legacy ? (
           <div className="rounded-md border bg-muted/40 p-3 text-sm">
             {t('legacyNotice', { till: z.machineName ?? z.machineId ?? '—' })}
           </div>
         ) : null}
 
+        {view === 'till' ? (
+          <div className="space-y-2">
+            <p className="text-muted-foreground text-xs">{tp('tillHint')}</p>
+            {tillDoc.isLoading ? (
+              <Skeleton className="h-96 w-[80mm] max-w-full" />
+            ) : tillDoc.isError || !tillDoc.data ? (
+              <ReportErrorState message={axiosErrorToToastMessage(tillDoc.error, tp('loadError'))} />
+            ) : (
+              <ZTillReceipt doc={tillDoc.data} />
+            )}
+          </div>
+        ) : (
+        <>
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">{t('header.title')}</CardTitle>
@@ -426,6 +493,8 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
           </Card>
         </div>
 
+        <CardBrandSummaryCard rows={z.cardBrands} source={z.cardBrandsSource} />
+
         {z.perMachine.length > 0 ? (
           <div className="space-y-3">
             <h2 className="text-lg font-semibold">{t('tillsTitle')}</h2>
@@ -449,6 +518,8 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
             </pre>
           </details>
         ) : null}
+        </>
+        )}
       </div>
 
       <ZPrintDocument z={z} printedAt={printedAt} />

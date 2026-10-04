@@ -52,7 +52,9 @@ def _ts() -> datetime:
 def test_branding_keys_are_managed_and_therefore_synced() -> None:
     # MANAGED_SETTING_KEYS is the whitelist GET /sync/{machine_id}/settings
     # filters on. Off this tuple, the till never sees them.
-    assert BRANDING_SETTING_KEYS == ("brandLogoUrl", "brandHeroUrl")
+    assert BRANDING_SETTING_KEYS == (
+        "brandLogoUrl", "brandHeroUrl", "brandPrimaryColor", "brandReceiptLogoUrl",
+    )
     for key in BRANDING_SETTING_KEYS:
         assert key in MANAGED_SETTING_KEYS
 
@@ -169,6 +171,31 @@ def test_branding_write_roles(role: UserRole, allowed: bool) -> None:
         assert exc.value.status_code == 403
 
 
+# ── The till's brand colour (brandPrimaryColor) ──────────────────────────────
+
+
+@pytest.mark.parametrize("good, stored", [("#1b4fd8", "#1B4FD8"), ("#00AA55", "#00AA55"), ("", "")])
+def test_brand_colour_accepts_six_hex_digits_or_empty(good: str, stored: str) -> None:
+    assert PosSettingsV1Patch.model_validate({"brandPrimaryColor": good}).brand_primary_color == stored
+
+
+@pytest.mark.parametrize("bad", ["1B4FD8", "#1B4FD", "#1B4FD8FF", "blue", "#GGGGGG", "rgb(0,0,0)"])
+def test_brand_colour_refuses_anything_else(bad: str) -> None:
+    with pytest.raises(ValidationError):
+        PosSettingsV1Patch.model_validate({"brandPrimaryColor": bad})
+
+
+def test_brand_colour_is_branding_only_its_owners_may_change_and_null_resets() -> None:
+    data = PosSettingsV1Patch.model_validate({"brandPrimaryColor": "#00AA55"})
+    assert _build_patch(data, _user(UserRole.DISTRIBUTOR)) == {"brandPrimaryColor": "#00AA55"}
+    with pytest.raises(HTTPException) as exc:
+        _build_patch(data, _user(UserRole.SHOP_MANAGER))
+    assert exc.value.status_code == 403
+    reset = PosSettingsV1Patch.model_validate({"brandPrimaryColor": None})
+    assert _build_patch(reset, _user(UserRole.DISTRIBUTOR)) == {"brandPrimaryColor": None}
+    assert patch_settings_json({"brandPrimaryColor": "#00AA55"}, {"brandPrimaryColor": None}) == {}
+
+
 def test_shop_manager_may_write_shop_settings_but_not_repaint_the_brand() -> None:
     # _check_shop_settings_write only bars cashiers, so this is the interaction
     # worth pinning: the shop-level guard passes and branding is still refused.
@@ -247,8 +274,17 @@ def test_branding_upload_roles_match_branding_write_roles() -> None:
 def test_branding_upload_limits_are_bounded_for_a_cellular_terminal() -> None:
     assert _BRANDING_LIMITS["logo"]["max_bytes"] == 2 * 1024 * 1024
     assert _BRANDING_LIMITS["hero"]["max_bytes"] == 5 * 1024 * 1024
-    for kind in ("logo", "hero"):
+    for kind in ("logo", "hero", "receipt"):
         limits = _BRANDING_LIMITS[kind]
         assert limits["min_width"] < limits["max_width"]
         assert limits["deliver_width"] <= 1600
         assert limits["deliver_height"] <= 1600
+
+
+def test_the_receipt_logo_is_delivered_at_the_print_head_width() -> None:
+    # 384 dots across 58 mm paper: anything wider is downloaded only to be thrown away.
+    assert _BRANDING_LIMITS["receipt"]["deliver_width"] == 384
+    assert "brandReceiptLogoUrl" in MANAGED_SETTING_KEYS
+    with pytest.raises(ValidationError):
+        PosSettingsV1Patch.model_validate({"brandReceiptLogoUrl": "http://not-https.example/l.png"})
+    assert PosSettingsV1Patch.model_validate({"brandReceiptLogoUrl": LOGO}).brand_receipt_logo_url == LOGO

@@ -446,6 +446,7 @@ def note_documents_after_close(
     it — rather than recomputing the X of a shift a Z has just frozen, from a copy of
     the row this session read before the Z committed.
     """
+    recomputed_tills = set()
     for shift_id, new_count in touched.items():
         if shift_id is None:
             continue
@@ -461,6 +462,7 @@ def note_documents_after_close(
             for column, value in totals.as_x().items():
                 setattr(shift, column, value)
             shift.totals_mismatch = till_totals_mismatch(shift.till_totals, totals)
+            recomputed_tills.add(shift.machine_id)
             continue
         late = new_count + int((moved_in or {}).get(shift_id, 0))
         rewritten = int((amended or {}).get(shift_id, 0))
@@ -477,6 +479,12 @@ def note_documents_after_close(
             shift.id, shift.z_report_id, late, rewritten,
         )
     db.flush()
+    if recomputed_tills:
+        # A shop Z from the master till may have been waiting for exactly these documents
+        # (its till's close counted more than the cloud held): it can build now.
+        from app.services.z_runs import retry_strict_runs
+
+        retry_strict_runs(db, recomputed_tills)
 
 
 def recent_shift_zs(

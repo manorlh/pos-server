@@ -186,6 +186,13 @@ class ShiftOut(BaseModel):
     #: Card transmission of the shift's sales, informational (docs/SHIFTS_API.md §4.11).
     #: On the X detail (`GET /shifts/{id}`) only; null elsewhere.
     transmission: Optional[Dict[str, Any]] = None
+    #: Offline-approved card sales of the shift and how their authorization went. On the
+    #: X detail only, like `transmission`.
+    offline: Optional[Dict[str, Any]] = None
+    #: Card legs of the shift that an offline authorization run of its till declined.
+    #: Filled on the dashboard list and detail reads; null elsewhere.
+    offline_declined_count: Optional[int] = Field(None, alias="offlineDeclinedCount")
+    offline_declined_amount: Optional[Decimal] = Field(None, alias="offlineDeclinedAmount")
 
 
 class ShiftCloseResponse(BaseModel):

@@ -18,6 +18,9 @@ class ZRunStatus:
     FAILED = "failed"
     CANCELLED = "cancelled"
     EXPIRED = "expired"
+    #: Ended with no Z: the shifts it would take had no activity at all ("אין תנועות —
+    #: לא ניתן לסגור Z על 0"). No Z written, no number drawn; the shifts stay closed.
+    EMPTY = "empty"
 
 
 class ZRunItemStatus:
@@ -71,6 +74,11 @@ class ZRun(Base):
     error_code = Column(String(64), nullable=True)
     error_message = Column(Text, nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
+    #: Started from the shop's master till ("סגירת Z סניפי"): the Z is built only when the
+    #: cloud holds, for every till, its shift closed, the close accepted and every sale the
+    #: till counted (`app.services.z_runs.verify_item`) — or the till was deferred by the
+    #: operator's typed "סגור". False for the dashboard's runs.
+    strict_cloud_check = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

@@ -37,6 +37,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 
 const MONEY_COLS = ['gross', 'discounts', 'net', 'refunds', 'cash', 'card', 'other', 'tips'] as const;
 const COLS = 2 + MONEY_COLS.length;
@@ -101,7 +102,7 @@ export default function SalesByAreaPage() {
       </div>
 
       <ScopeGate resolution={resolution}>
-        <div className="rounded-lg border bg-card p-4 space-y-3">
+        <div className="rounded-lg border bg-card p-4 space-y-3 print:hidden">
           <div className="flex flex-wrap items-end gap-3">
             <div className="space-y-1">
               <Label htmlFor="area-sales-from" className="text-xs">
@@ -145,6 +146,27 @@ export default function SalesByAreaPage() {
           <p className="text-muted-foreground text-xs">{t('stampHint')}</p>
         </div>
 
+        {data && !isError && params ? (
+          <ReportExportToolbar
+            title={t('title')}
+            from={params.dateFrom}
+            to={params.dateTo}
+            scopeLabel={shopName}
+            getSheets={() => ({
+              name: t('title'),
+              columns: [
+                { header: t('col.area') },
+                { header: t('col.archived'), width: 8 },
+                { header: t('col.transactions'), kind: 'number' },
+                ...MONEY_COLS.map((c) => ({ header: t(`col.${c}`), kind: 'money' as const })),
+              ],
+              rows: data.rows.map((r) => [
+                rowName(r), r.archived ? tc('yes') : null, r.transactionsCount, ...MONEY_COLS.map((c) => r[c]),
+              ]),
+              totals: [t('totals'), null, data.totals.transactionsCount, ...MONEY_COLS.map((c) => data.totals[c])],
+            })}
+          />
+        ) : null}
         {!applied ? (
           <p className="text-muted-foreground py-12 text-center text-sm">{t('selectFilters')}</p>
         ) : isLoading ? (

@@ -68,6 +68,14 @@ class DocumentTotals:
     total_sales: Decimal = ZERO
     total_refunds: Decimal = ZERO
     discounts_total: Decimal = ZERO
+    #: Σ the sale lines' own discounts (a discount on one item). Already inside the
+    #: lines' net totals, so it is reported beside `discounts_total` (the basket
+    #: discounts), never subtracted again.
+    line_discounts_total: Decimal = ZERO
+    #: Σ what promotions ("מבצעים") took off the sale lines. Like the item discounts,
+    #: already inside `discounts_total` (the till puts it in `document_discount`), so
+    #: reported beside it, never subtracted again.
+    promotion_discounts_total: Decimal = ZERO
     payment_breakdown: Dict[str, Decimal] = field(default_factory=dict)
     total_tips: Decimal = ZERO
     total_cash_tips: Decimal = ZERO
@@ -76,6 +84,35 @@ class DocumentTotals:
     vat_missing_count: int = 0
     first_transaction_number: Optional[str] = None
     last_transaction_number: Optional[str] = None
+    #: Card legs per (brand, acquirer): [sales count, sales amount, refunds count,
+    #: refunds amount] — refunds positive. Tips are not legs, so not in here.
+    card_brands: Dict[tuple, list] = field(default_factory=dict)
+
+    def add_card_leg(self, brand: Optional[str], acquirer: Optional[str], amount: Decimal, refund: bool) -> None:
+        key = (brand or "other", acquirer or "unknown")
+        bucket = self.card_brands.setdefault(key, [0, ZERO, 0, ZERO])
+        if refund:
+            bucket[2] += 1
+            bucket[3] += amount
+        else:
+            bucket[0] += 1
+            bucket[1] += amount
+
+    def card_brands_json(self) -> List[Dict[str, object]]:
+        """The card split as a Z section stores it, largest net first."""
+        out = []
+        for (brand, acquirer), (sc, sa, rc, ra) in self.card_brands.items():
+            out.append({
+                "brand": brand,
+                "acquirer": acquirer,
+                "salesCount": sc,
+                "salesAmount": str(sa.quantize(CENT)),
+                "refundsCount": rc,
+                "refundsAmount": str(ra.quantize(CENT)),
+                "net": str((sa - ra).quantize(CENT)),
+            })
+        out.sort(key=lambda r: (-Decimal(r["net"]), r["brand"], r["acquirer"]))
+        return out
 
     @property
     def total_cash(self) -> Decimal:
@@ -178,6 +215,31 @@ def compute_totals(db: Session, shift_ids: Iterable[uuid.UUID]) -> DocumentTotal
     # Every document number the register issued in these shifts, a cancelled one too:
     # "the last document number" on a Z is about the register's numbering, not takings.
     numbers: List[str] = [d.transaction_number for d in documents if d.transaction_number]
+    # Item discounts: on sale documents only (a credit note's lines carry its share of
+    # the original's discounts, which is not a discount given now).
+    sale_ids = [
+        d.id for d in counted
+        if not is_refund_document(
+            document_type=d.document_type, refund_of_transaction_id=d.refund_of_transaction_id
+        )
+    ]
+    if sale_ids:
+        from sqlalchemy import func as _func
+
+        from app.models.transaction_item import TransactionItem
+
+        line_sum = (
+            db.query(_func.coalesce(_func.sum(_func.abs(TransactionItem.discount)), 0))
+            .filter(TransactionItem.transaction_id.in_(sale_ids))
+            .scalar()
+        )
+        totals.line_discounts_total = _dec(line_sum)
+        promotion_sum = (
+            db.query(_func.coalesce(_func.sum(_func.abs(TransactionItem.promotion_discount)), 0))
+            .filter(TransactionItem.transaction_id.in_(sale_ids))
+            .scalar()
+        )
+        totals.promotion_discounts_total = _dec(promotion_sum)
     for doc in counted:
         totals.transactions_count += 1
         refund = is_refund_document(
@@ -206,6 +268,11 @@ def compute_totals(db: Session, shift_ids: Iterable[uuid.UUID]) -> DocumentTotal
                 totals.payment_breakdown[method] = (
                     totals.payment_breakdown.get(method, ZERO) + sign * _dec(leg.amount)
                 )
+                if method == "card":
+                    totals.add_card_leg(
+                        getattr(leg, "card_brand", None), getattr(leg, "card_acquirer", None),
+                        _dec(leg.amount), refund,
+                    )
         else:
             method = (doc.payment_method or "").strip().lower() or UNKNOWN_PAYMENT_METHOD
             totals.payment_breakdown[method] = (

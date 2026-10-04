@@ -22,6 +22,12 @@ never from figures a till reported. Everything happens in one database transacti
    the same transaction.
 
 A refusal raises `ZBuildRefused` before anything is written.
+
+**No Z on nothing** ("אל תאפשר לסגור Z על 0"): a set of shifts with no activity — no
+document of any kind, no money, no cash moved between shifts (`figures_show_activity`) —
+is refused (`empty_z`) after step 3 and before step 4, so no Z is written and no number
+is drawn. Its shifts stay closed and in no Z; a later Z with activity takes them along
+(they add nothing), so a till's shifts still run without a gap.
 """
 from __future__ import annotations
 
@@ -39,6 +45,7 @@ from app.models.z_report import ZReport
 from app.services.shift_totals import CENT, DocumentTotals, compute_totals
 from app.models.shop import Shop
 from app.models.shop_area import ShopArea
+from app.services.offline_authorizations import offline_block
 from app.services.transmissions import period_block
 from app.services.z_header import snapshot_header
 from app.services.z_sequence import allocate_shop_z_number, ensure_shop_z_sequence
@@ -52,6 +59,47 @@ class ZBuildRefused(Exception):
         self.code = code
         self.message = message
         self.machine_id = machine_id
+
+
+#: The refusal of a Z with nothing in it ("אל תאפשר לסגור Z על 0"), and what is said.
+EMPTY_Z = "empty_z"
+EMPTY_Z_MESSAGE = "אין תנועות — לא ניתן לסגור Z על 0"
+
+
+def figures_show_activity(totals: DocumentTotals, between_shifts=ZERO) -> bool:
+    """
+    Whether a Z over these figures has anything to report.
+
+    Activity is a document of any kind — a sale, a credit note, a cancelled or declined
+    one — any money (sales, refunds, discounts, tips, takings by tender, VAT), or cash put
+    into or taken out of a drawer between shifts (`between_shifts`, the only cash movement
+    a Z carries). The float a drawer opened with is not activity, and neither is a count
+    that disagrees with it: a till that opened and closed with no document has nothing a
+    Z could report.
+    """
+    if totals.transactions_count or totals.non_sale_count:
+        return True
+    amounts = [
+        totals.total_sales,
+        totals.total_refunds,
+        totals.discounts_total,
+        totals.total_tips,
+        totals.vat_declared,
+        *totals.payment_breakdown.values(),
+    ]
+    if any(_dec(a) != ZERO for a in amounts):
+        return True
+    return _dec(between_shifts) != ZERO
+
+
+def shifts_show_activity(db: Session, per_till: Sequence[Sequence[Shift]]) -> bool:
+    """`figures_show_activity` over these shifts (each till's oldest first), open ones too."""
+    ids = [s.id for shifts in per_till for s in shifts]
+    if not ids:
+        return False
+    totals = compute_totals(db, ids)
+    between = z_cash_summary([list(shifts) for shifts in per_till if shifts])["between_shifts"]
+    return figures_show_activity(totals, between)
 
 
 def _aware(moment: Optional[datetime]) -> datetime:
@@ -260,6 +308,8 @@ def machine_section(machine: POSMachine, shifts: Sequence[Shift], totals: Docume
         "netSales": _money(totals.net_sales),
         "totalRefunds": _money(totals.total_refunds),
         "discountsTotal": _money(totals.discounts_total),
+        "lineDiscountsTotal": _money(totals.line_discounts_total),
+        "promotionDiscountsTotal": _money(totals.promotion_discounts_total),
         "vatTotal": _money(totals.vat_total),
         "vatMissingCount": totals.vat_missing_count,
         "totalCash": _money(totals.total_cash),
@@ -268,6 +318,8 @@ def machine_section(machine: POSMachine, shifts: Sequence[Shift], totals: Docume
         # card, and zero when every basket is complete.
         "totalExchange": _money(totals.total_exchange),
         "paymentBreakdown": totals.breakdown_json(),
+        # Card legs per brand (מותג) and acquirer (חברת סליקה), sales and refunds apart.
+        "cardBrands": totals.card_brands_json(),
         "totalTips": _money(totals.total_tips),
         "totalCashTips": _money(totals.total_cash_tips),
         "totalCardTips": _money(totals.total_card_tips),
@@ -296,6 +348,7 @@ def build_z(
     z_run_id: Optional[uuid.UUID] = None,
     business_date: Optional[date] = None,
     area_id: Optional[uuid.UUID] = None,
+    open_tills_left_out: Optional[dict] = None,
     now: Optional[datetime] = None,
 ) -> ZReport:
     """
@@ -306,6 +359,10 @@ def build_z(
 
     The caller owns the transaction: on `ZBuildRefused` nothing has been written, and the
     caller rolls back (or releases its savepoint).
+
+    `open_tills_left_out` (`app.services.z_runs.open_tills_left_out`): the tills the
+    operator confirmed producing this shop Z without, and who confirmed it. Frozen into
+    the header as `openTillsLeftOut`, so the Z itself says what it does not cover.
     """
     if shop_id is None:
         raise ZBuildRefused("no_shop", "A Z is per shop; this run has none.")
@@ -335,6 +392,10 @@ def build_z(
 
     # 3. Totals from documents: the whole set, and each till on its own.
     overall = compute_totals(db, [s.id for s in all_shifts])
+    # No Z on nothing ("אל תאפשר לסגור Z על 0"): refused here, before a number is drawn.
+    between = z_cash_summary([shifts for _m, shifts in per_machine])["between_shifts"]
+    if not figures_show_activity(overall, between):
+        raise ZBuildRefused(EMPTY_Z, EMPTY_Z_MESSAGE)
     sections = [
         machine_section(machine, shifts, compute_totals(db, [s.id for s in shifts]))
         for machine, shifts in per_machine
@@ -343,6 +404,9 @@ def build_z(
     # here waits for, or is refused by, a transmission (docs/SHIFTS_API.md §4.11).
     for section, (machine, shifts) in zip(sections, per_machine):
         section["transmission"] = period_block(db, machine, shifts, now=now)
+        # Offline-approved card sales the acquirer later declined (or approved), as the
+        # till's authorization runs reported them by build time. Informational too.
+        section["offline"] = offline_block(db, machine, shifts)
     cash = z_cash_summary([shifts for _m, shifts in per_machine])
 
     # 4. Number, write, claim.
@@ -387,6 +451,14 @@ def build_z(
         ),
         shop_sequence_number=allocate_shop_z_number(db, shop_id),
     )
+    if open_tills_left_out and z.header is not None:
+        z.header = {**z.header, "openTillsLeftOut": open_tills_left_out}
+    # Item discounts have no column of their own: frozen on the header, beside the
+    # basket discounts' `discounts_total`.
+    if z.header is not None:
+        z.header = {**z.header, "lineDiscountsTotal": _money(overall.line_discounts_total)}
+        # Promotion discounts ("הנחות מבצעים") the same way: inside `discounts_total`.
+        z.header = {**z.header, "promotionDiscountsTotal": _money(overall.promotion_discounts_total)}
     db.add(z)
     db.flush()
     for shift in all_shifts:

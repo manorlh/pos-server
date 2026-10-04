@@ -3,6 +3,8 @@ from typing import Optional, Dict, Any
 import uuid
 from datetime import datetime
 
+from app.schemas.pos_machine import DeviceModel
+
 
 class PairingCodeGenerateRequest(BaseModel):
     """Optional pre-assignment: machine auto-assigns on validate when set."""
@@ -11,6 +13,10 @@ class PairingCodeGenerateRequest(BaseModel):
 
     company_id: Optional[uuid.UUID] = Field(None, alias="companyId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
+    #: The hardware the new device is: "N55F" or "MODO". Copied onto the machine when it
+    #: pairs. Optional here so an older dashboard still generates codes; the dashboard
+    #: requires it.
+    device_model: Optional[DeviceModel] = Field(None, alias="deviceModel")
 
 
 class PairingCodeCreate(BaseModel):
@@ -40,6 +46,7 @@ class PairingCodeResponse(BaseModel):
     company_id: Optional[uuid.UUID] = Field(None, alias="companyId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     pos_machine_id: Optional[uuid.UUID] = Field(None, alias="posMachineId")
+    device_model: Optional[str] = Field(None, alias="deviceModel")
     expires_at: datetime = Field(..., alias="expiresAt")
     is_used: bool = Field(..., alias="isUsed")
     used_at: Optional[datetime] = Field(None, alias="usedAt")

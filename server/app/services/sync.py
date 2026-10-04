@@ -7,11 +7,14 @@ Machines with a shop_id receive an **effective** catalog: only globals **assigne
 rows for stock / POS-only SKUs.
 Delisted products are included with `shopListed: false` and `inStock: false`.
 `isAvailable` on merged rows is the product's effective availability for *this machine*
-(machine → shop → the shop's own company → the product), resolved in
+(machine → area → shop → the shop's own company → the product), resolved in
 `app/services/product_availability.py`, and false whenever the row is delisted. A
 machine-local copy's own flag plays no part in it.
-`updatedAt` is the max of global, override, local, company-level and machine-level timestamps,
-and of the till's own catalog row for the product.
+`updatedAt` is the max of global, override, local, company-, area- and machine-level
+timestamps, of the till's own catalog row for the product, and of when the till last
+changed area (its area level changed with it).
+A category's `isActive` is likewise effective for *this machine* (the tenant flag, then
+machine → area → shop), resolved in `app/services/category_availability.py`.
 `inMachineCatalog` on each row says whether the product is on this till's own list
 (`app/services/machine_catalog.py`), independently of the till's mode; the mode itself
 travels once per payload (`machine_catalog_for_sync`). The till applies the rule.
@@ -34,6 +37,7 @@ from app.services.machine_health import (
 )
 from app.models.product import Product, CatalogLevel
 from app.models.product_availability_override import (
+    AreaProductOverride,
     CompanyProductOverride,
     MachineProductOverride,
 )
@@ -43,8 +47,10 @@ from app.models.shop_category_override import ShopCategoryOverride
 from app.models.machine_catalog_item import MachineCatalogItem
 from app.models.voucher import Voucher
 from app.services import general_item
+from app.services import item_ticket
 from app.services import machine_catalog
 from app.services import product_availability as availability
+from app.services import category_availability
 
 
 # ── Serializers ──────────────────────────────────────────────────────────────
@@ -110,10 +116,23 @@ def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[s
         "barcode": p.barcode,
         "taxRate": float(p.tax_rate) if p.tax_rate is not None else None,
         "voucherId": str(eff_voucher_id) if eff_voucher_id else None,
+        # Resolved (product, else category): the till prints from this as it stands.
+        "ticketMode": item_ticket.effective_mode(p),
+        "ticketEntries": getattr(p, "ticket_entries", None),
         "trackStock": bool(p.track_stock),
         "isOpenPrice": bool(p.is_open_price),
         "isWeighed": bool(p.is_weighed),
         "unitLabel": p.unit_label,
+        # "לא מקבל הנחות": the till gives it no line, basket or promotion discount.
+        "noDiscount": bool(getattr(p, "no_discount", False)),
+        # The menu layer (docs/SPEC_MENU_MODIFIERS.md): allergen codes, and the course
+        # its table lines fire in (null: the category's).
+        "allergens": list(getattr(p, "allergens", None) or []),
+        "courseId": str(p.course_id) if getattr(p, "course_id", None) else None,
+        # Order limits and refills (docs/SPEC_MENU_MODIFIERS.md §3.9).
+        "maxPerOrder": getattr(p, "max_per_order", None),
+        "refillable": bool(getattr(p, "refillable", False)),
+        "maxRefills": getattr(p, "max_refills", None),
         "isGeneral": _is_general(p),
         # A machine-local or tenant-level row is the till's own: always on its list.
         "inMachineCatalog": True,
@@ -149,19 +168,27 @@ def _serialize_merged_product(
     company_override: Optional[CompanyProductOverride] = None,
     machine_override: Optional[MachineProductOverride] = None,
     catalog_item: Optional[MachineCatalogItem] = None,
+    area_override: Optional[AreaProductOverride] = None,
+    area_changed_at: Optional[datetime] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Build one sync row for a global product; return None if delta filter excludes it.
 
     `company_override` must be the row of the *shop's own* company
-    (`availability.company_level_company_id`), `machine_override` the row of the machine
-    being synced. Their timestamps count toward `updatedAt`, so a lock set at either
-    level reaches a till that only pulls deltas. `catalog_item` is the till's own
-    whitelist row for the product, and counts toward `updatedAt` for the same reason.
+    (`availability.company_level_company_id`), `area_override` the row of the area the
+    machine stands in, `machine_override` the row of the machine being synced. Their
+    timestamps count toward `updatedAt`, so a lock set at any level reaches a till that
+    only pulls deltas. `catalog_item` is the till's own whitelist row for the product,
+    and counts toward `updatedAt` for the same reason. `area_changed_at` is when the till
+    last moved area: its area level changed then without any row changing.
     """
     eff_ts = _effective_ts(
-        global_p, local, override, company_override, machine_override, catalog_item
+        global_p, local, override, company_override, area_override, machine_override,
+        catalog_item,
     )
+    moved = _aware_utc(area_changed_at)
+    if moved is not None and moved > eff_ts:
+        eff_ts = moved
     if since is not None and _aware_utc(eff_ts) <= _aware_utc(since):
         return None
 
@@ -173,7 +200,9 @@ def _serialize_merged_product(
     stock_qty = local.stock_quantity if local is not None else global_p.stock_quantity
     # Never from the machine-local stock row — locals often omit is_available or carried
     # stale values, which wrongly hid items on POS. A delisted row is never sellable.
-    resolved = availability.resolve_rows(global_p, company_override, override, machine_override)
+    resolved = availability.resolve_rows(
+        global_p, company_override, override, machine_override, area_row=area_override
+    )
     is_avail = bool(shop_listed and resolved[availability.Level.MACHINE].available)
 
     catalog_level = local.catalog_level if local is not None else global_p.catalog_level
@@ -204,6 +233,9 @@ def _serialize_merged_product(
         "barcode": global_p.barcode,
         "taxRate": float(global_p.tax_rate) if global_p.tax_rate is not None else None,
         "voucherId": str(_effective_voucher_id(global_p)) if _effective_voucher_id(global_p) else None,
+        # What the product *is*, so from the global row; resolved against its category.
+        "ticketMode": item_ticket.effective_mode(global_p),
+        "ticketEntries": getattr(global_p, "ticket_entries", None),
         "trackStock": bool(global_p.track_stock),
         "isOpenPrice": bool(global_p.is_open_price),
         # Taken from the global row, like every other product *description* field: a
@@ -212,6 +244,15 @@ def _serialize_merged_product(
         # product, not an override.
         "isWeighed": bool(global_p.is_weighed),
         "unitLabel": global_p.unit_label,
+        # "לא מקבל הנחות", from the global row like the rest of what the product is.
+        "noDiscount": bool(getattr(global_p, "no_discount", False)),
+        # What the dish contains and its course, from the global row like the rest of
+        # what the product is (docs/SPEC_MENU_MODIFIERS.md).
+        "allergens": list(getattr(global_p, "allergens", None) or []),
+        "courseId": str(global_p.course_id) if getattr(global_p, "course_id", None) else None,
+        "maxPerOrder": getattr(global_p, "max_per_order", None),
+        "refillable": bool(getattr(global_p, "refillable", False)),
+        "maxRefills": getattr(global_p, "max_refills", None),
         # From the global row like the rest of what the product *is*: a till's local
         # copy of the general item is still the general item.
         "isGeneral": general_item.is_general(global_p),
@@ -226,19 +267,30 @@ def _serialize_merged_product(
 
 
 def _serialize_category(
-    c: Category, override: Optional[ShopCategoryOverride] = None
+    c: Category,
+    override: Optional[ShopCategoryOverride] = None,
+    activity: Optional[Dict[str, Any]] = None,
+    area_changed_at: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """
     One category as a till sees it, with the till's own shop's name for it if it has one.
 
-    `updatedAt` is the later of the category's and the override's, so that whatever a
-    till stores reflects the change it was actually sent for.
+    `activity` is the category's `{level: row}` from `category_availability` for this
+    till; `isActive` is what it resolves to, and the tenant's own flag when there are
+    none. `updatedAt` is the latest of the category's, the rename override's, those
+    rows' and the till's last area move, so that whatever a till stores reflects the
+    change it was actually sent for.
     """
     name = override.name if override is not None and override.name else c.name
     updated = c.updated_at
-    if override is not None and override.updated_at is not None:
-        if updated is None or _as_utc(override.updated_at) > _as_utc(updated):
-            updated = override.updated_at
+    stamps = [
+        override.updated_at if override is not None else None,
+        category_availability.latest_change(activity),
+        area_changed_at,
+    ]
+    for stamp in stamps:
+        if stamp is not None and (updated is None or _as_utc(stamp) > _as_utc(updated)):
+            updated = stamp
     return {
         "id": str(c.id),
         "catalogLevel": c.catalog_level.value if hasattr(c.catalog_level, "value") else c.catalog_level,
@@ -250,7 +302,10 @@ def _serialize_category(
         "color": c.color,
         "imageUrl": c.image_url,
         "parentId": str(c.parent_id) if c.parent_id else None,
-        "isActive": c.is_active,
+        "ticketMode": item_ticket.category_mode(c),
+        # The course its products fire in by default (docs/SPEC_MENU_MODIFIERS.md §8).
+        "courseId": str(c.course_id) if getattr(c, "course_id", None) else None,
+        "isActive": category_availability.resolve_rows(c, activity),
         "sortOrder": c.sort_order,
         "createdAt": c.created_at.isoformat() if c.created_at else None,
         "updatedAt": updated.isoformat() if updated else None,
@@ -375,10 +430,26 @@ def merge_categories_referenced_by_products(
     )
     merged = list(categories)
     seen = set(existing_ids)
-    for r in rows:
+    missing = [r for r in rows if str(r.id) not in seen]
+    if not missing:
+        return merged
+    # Sent as this till would get them on a full pull — its shop's name and its
+    # effective `isActive` — or a delta would undo a rename or a switch-off on the till.
+    renames: Dict[Any, ShopCategoryOverride] = {}
+    activity: Dict[str, Dict[str, Any]] = {}
+    if machine.shop_id:
+        renames = {
+            o.category_id: o
+            for o in db.query(ShopCategoryOverride).filter(
+                ShopCategoryOverride.shop_id == machine.shop_id,
+                ShopCategoryOverride.category_id.in_([r.id for r in missing]),
+            )
+        }
+        activity = category_availability.overrides_for_machine(db, machine, [r.id for r in missing])
+    for r in missing:
         sid = str(r.id)
         if sid not in seen:
-            merged.append(_serialize_category(r))
+            merged.append(_serialize_category(r, renames.get(r.id), activity.get(sid)))
             seen.add(sid)
     return merged
 
@@ -464,8 +535,10 @@ def _products_merged_for_shop_machine(
     company_levels = availability.company_overrides(
         db, availability.company_level_company_id(shop), assigned_ids
     )
+    area_levels = availability.area_overrides(db, getattr(machine, "area_id", None), assigned_ids)
     machine_levels = availability.machine_overrides(db, mqid, assigned_ids)
     catalog_rows = machine_catalog.catalog_items(db, mqid) if assigned_ids else {}
+    area_changed_at = getattr(machine, "area_changed_at", None)
 
     out: List[Dict[str, Any]] = []
     for ovr, g in assigned_rows:
@@ -479,6 +552,8 @@ def _products_merged_for_shop_machine(
             company_override=company_levels.get(str(g.id)),
             machine_override=machine_levels.get(str(g.id)),
             catalog_item=catalog_rows.get(str(g.id)),
+            area_override=area_levels.get(str(g.id)),
+            area_changed_at=area_changed_at if isinstance(area_changed_at, datetime) else None,
         )
         if row is not None:
             out.append(row)
@@ -558,6 +633,58 @@ def category_delta_filter(since: datetime, renamed_here: List[Any]):
     return or_(changed, Category.id.in_(renamed_here))
 
 
+def _category_ids_listed_in_shop(db: Session, shop_id, category_ids: List[Any]) -> Set[str]:
+    """Which of `category_ids` a product listed in this shop is filed under."""
+    rows = (
+        db.query(Product.category_id)
+        .join(ShopProductOverride, ShopProductOverride.global_product_id == Product.id)
+        .filter(
+            ShopProductOverride.shop_id == shop_id,
+            ShopProductOverride.is_listed.is_(True),
+            Product.category_id.in_(category_ids),
+        )
+        .distinct()
+        .all()
+    )
+    return {str(row[0]) for row in rows}
+
+
+def _categories_for_shop(db: Session, machine: POSMachine, categories: List[Category]) -> List[Category]:
+    """
+    The tenant's categories this till's shop may see.
+
+    A category placed on a company or a shop reaches only that company's or that shop's
+    tills — one added from a till belongs to its shop alone. A category any product
+    listed in this shop is filed under still comes, whoever placed it, so no product on
+    the till points at a category it was never sent.
+    """
+    shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
+    company_id = str(shop.company_id) if shop and shop.company_id else None
+
+    def placed_here(c: Category) -> bool:
+        if c.company_id is not None and str(c.company_id) != company_id:
+            return False
+        return c.shop_id is None or str(c.shop_id) == str(machine.shop_id)
+
+    outside = [c for c in categories if not placed_here(c)]
+    if not outside:
+        return categories
+    in_use = _category_ids_listed_in_shop(db, machine.shop_id, [c.id for c in outside])
+    return [c for c in categories if placed_here(c) or str(c.id) in in_use]
+
+
+def category_sent_to_machine(db: Session, machine: POSMachine, category: Category) -> bool:
+    """Is `category` among those `get_categories_for_sync` sends this till (with a shop)?"""
+    if not machine.shop_id or category.pos_machine_id is not None:
+        return False
+    if str(category.tenant_id) != str(machine.tenant_id):
+        return False
+    level = category.catalog_level.value if hasattr(category.catalog_level, "value") else category.catalog_level
+    if level != CategoryCatalogLevel.GLOBAL.value:
+        return False
+    return bool(_categories_for_shop(db, machine, [category]))
+
+
 def get_categories_for_sync(
     db: Session,
     tenant_id: Optional[str] = None,
@@ -590,13 +717,25 @@ def get_categories_for_sync(
                         ShopCategoryOverride.shop_id == machine.shop_id
                     )
                 }
-                if since:
+                # Whether each category is active here: shop, area and till rows.
+                activity = category_availability.overrides_for_machine(db, machine)
+                moved = machine.area_changed_at if isinstance(
+                    getattr(machine, "area_changed_at", None), datetime
+                ) else None
+                # A till that moved area since gets every category again: its area
+                # level changed without any row changing.
+                if since and not (moved is not None and _as_utc(moved) > _as_utc(since)):
                     q = q.filter(
-                        category_delta_filter(since, overrides_changed_since(overrides, since))
+                        category_delta_filter(
+                            since,
+                            overrides_changed_since(overrides, since)
+                            + category_availability.changed_since(activity, since),
+                        )
                     )
+                rows = _categories_for_shop(db, machine, q.order_by(Category.sort_order).all())
                 return [
-                    _serialize_category(c, overrides.get(c.id))
-                    for c in q.order_by(Category.sort_order).all()
+                    _serialize_category(c, overrides.get(c.id), activity.get(str(c.id)), moved)
+                    for c in rows
                 ]
 
     query = db.query(Category)
@@ -828,12 +967,27 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
             .filter(MachineProductOverride.machine_id == machine.id)
             .scalar()
         )
+        # The area the till stands in, and when it moved there: either changes its
+        # area level. No query for a till in no area.
+        area_availability_max = None
+        area_id = getattr(machine, "area_id", None)
+        if area_id is not None:
+            area_availability_max = (
+                db.query(func.max(AreaProductOverride.updated_at))
+                .filter(AreaProductOverride.area_id == area_id)
+                .scalar()
+            )
+        moved = getattr(machine, "area_changed_at", None)
+        # Category activity for this till's shop, area and itself.
+        category_availability_max = category_availability.last_change(db, machine)
         # The till's own list and mode: a change to either changes what it shows.
         machine_catalog_max = machine_catalog.last_change(db, machine)
         points.extend([
             product_max, override_max, category_max, voucher_max,
             local_product_max, customer_max,
-            company_availability_max, machine_availability_max,
+            company_availability_max, area_availability_max, machine_availability_max,
+            category_availability_max,
+            moved if isinstance(moved, datetime) else None,
             machine_catalog_max,
         ])
     else:
@@ -853,6 +1007,11 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
             .scalar()
         )
         points.extend([local_product_max, local_category_max, voucher_max, customer_max])
+
+    # The menu block rides the catalog pull too (docs/SPEC_MENU_MODIFIERS.md §10.1).
+    from app.services.menu import menu_changed_at
+
+    points.append(menu_changed_at(db, tid_uuid))
 
     points = [p for p in points if p is not None]
     if not points:

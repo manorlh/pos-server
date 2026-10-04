@@ -16,6 +16,7 @@
 import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
+import { NumberPill } from '@/components/dashboard/number-pill';
 import { useQuery } from '@tanstack/react-query';
 import { MoveRight, Building2, ChevronLeft, Monitor, Pencil, Settings2, Store } from 'lucide-react';
 import { api, fetchCompanies, fetchMachines, fetchShops } from '@/lib/api';
@@ -145,6 +146,7 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <Building2 className="h-5 w-5 text-muted-foreground" aria-hidden />
+            <NumberPill n={company.companyNumber} className="text-sm" />
             <h1 className="text-2xl font-bold">{company.name}</h1>
             <Badge variant={company.isActive ? 'outline' : 'destructive'}>
               {company.isActive ? tc('active') : tc('inactive')}
@@ -259,6 +261,7 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
                             className="flex items-center gap-2 font-medium hover:underline"
                           >
                             <Store className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                            <NumberPill n={shop.shopNumber} />
                             <span className="truncate">{shop.name}</span>
                             <span className="ms-auto flex items-center gap-1 text-xs text-muted-foreground">
                               <Monitor className="h-3.5 w-3.5" aria-hidden />

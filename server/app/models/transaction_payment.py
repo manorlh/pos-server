@@ -76,4 +76,14 @@ class TransactionPayment(Base):
     #: That transmission's batch number (Agamento `ackNumber`), kept on the leg itself.
     transmitted_batch = Column(String(64), nullable=True)
 
+    # ── Card brand / acquirer / issuer (app.services.card_brands) ────────────
+    #: מותג: visa | mastercard | amex | diners | isracard | jcb | discover | maestro | other.
+    #: What the till sent, else read from the reply's `mutag`, else from the BIN. Null for
+    #: a non-card leg, or a card leg whose reply says nothing at all.
+    card_brand = Column(String(16), nullable=True)
+    #: חברת סליקה (the reply's `solek`): isracard | cal | max | diners | amex | other.
+    card_acquirer = Column(String(16), nullable=True)
+    #: מנפיק (the reply's `manpik`): as the acquirer, plus foreign.
+    card_issuer = Column(String(16), nullable=True)
+
     transaction = relationship("Transaction", back_populates="payments")

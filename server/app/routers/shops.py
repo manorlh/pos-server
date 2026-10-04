@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.services import licenses
 from app.database import get_db
 from app.models.shop import Shop
 from app.models.company import Company
@@ -36,6 +37,7 @@ from app.services.company_hierarchy import (
 from app.services.product_shop_scope import product_allowed_in_shop, reconcile_shops
 from app.services.pos_user_defaults import ensure_default_pos_user
 from app.services.register_number import peek_next_register_number, set_machine_shop
+from app.services.org_numbers import assign_shop_number
 from app.services.settings_notify import notify_machines_for_shop_settings
 from app.services.permission_matrix import SHOP_SCOPED_ROLES
 
@@ -439,10 +441,14 @@ def create_shop(
         city=data.city,
         is_active=data.is_active,
     )
+    # "לקוח קבוע / זמני": the super admin's to set (app/services/licenses.py).
+    licenses.apply_license(current_user, shop, data.model_dump(include=set(licenses.FIELDS)), creating=True)
     db.add(shop)
     # Flush to materialise shop.id, then seed the default POS user in the same transaction
     # so a shop can never exist without an operator a till can sign in as.
     db.flush()
+    # Shop 1, 2, 3 in its company, drawn in this transaction like the till numbers.
+    assign_shop_number(db, shop)
     ensure_default_pos_user(db, shop)
     # A new shop receives every product whose "all shops of company X" rule covers it.
     # No till can be paired to it yet, so there is nobody to notify.
@@ -512,6 +518,8 @@ def update_shop(
     _check_shop_override_write(current_user, shop, db)
 
     updates = data.model_dump(exclude_unset=True, by_alias=False)
+    # The license fields leave `updates` here: the super admin's only.
+    licenses.apply_license(current_user, shop, updates)
     profile_changed = bool(_SHOP_PROFILE_FIELDS & set(updates.keys()))
     was_active, old_company_id = shop.is_active, shop.company_id
     for field, value in updates.items():

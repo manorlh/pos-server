@@ -1,6 +1,7 @@
 'use client';
 
-import { Suspense, useEffect } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { useAuth as useClerkAuth } from '@clerk/nextjs';
 import { useTranslations } from 'next-intl';
 import { Sidebar } from '@/components/sidebar';
@@ -9,6 +10,7 @@ import { ScopeBar } from '@/components/dashboard/scope-bar';
 import { ScopeProvider } from '@/lib/scope';
 import { useAuth } from '@/lib/auth';
 import { Skeleton } from '@/components/ui/skeleton';
+import { MobileNav } from '@/components/mobile-nav';
 
 function ShellSkeleton() {
   return (
@@ -49,26 +51,37 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }
   }, [isLoaded, isSignedIn, fetchUser]);
 
+  // Below md the sidebar is a drawer behind a menu button. It is open for the path it was
+  // opened on, so following any link — the menu's or the page's — closes it.
+  const pathname = usePathname();
+  const [navOpenAt, setNavOpenAt] = useState<string | null>(null);
+
   return (
-    <div className="flex h-screen overflow-hidden print:block print:h-auto print:overflow-visible">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto bg-muted/20 p-6 print:overflow-visible print:bg-transparent print:p-0">
-        {!isLoaded ? (
-          <ShellSkeleton />
-        ) : !isSignedIn ? null : isSignedIn && !authHydrated ? (
-          <ShellSkeleton />
-        ) : authHydrated && tenants.length === 0 ? (
-          <div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground max-w-lg">
-            {t('noTenant')}
-          </div>
-        ) : activeTenantId ? (
-          <Suspense fallback={<ShellSkeleton />}>
-            <DashboardShell>{children}</DashboardShell>
-          </Suspense>
-        ) : (
-          <ShellSkeleton />
-        )}
-      </main>
+    <div className="flex h-dvh overflow-hidden print:block print:h-auto print:overflow-visible">
+      <Sidebar className="hidden md:flex" />
+      <div className="flex min-w-0 flex-1 flex-col print:block">
+        <MobileNav
+          open={navOpenAt === pathname}
+          onOpenChange={(open) => setNavOpenAt(open ? pathname : null)}
+        />
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-muted/20 p-3 sm:p-4 md:p-6 print:overflow-visible print:bg-transparent print:p-0">
+          {!isLoaded ? (
+            <ShellSkeleton />
+          ) : !isSignedIn ? null : isSignedIn && !authHydrated ? (
+            <ShellSkeleton />
+          ) : authHydrated && tenants.length === 0 ? (
+            <div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground max-w-lg">
+              {t('noTenant')}
+            </div>
+          ) : activeTenantId ? (
+            <Suspense fallback={<ShellSkeleton />}>
+              <DashboardShell>{children}</DashboardShell>
+            </Suspense>
+          ) : (
+            <ShellSkeleton />
+          )}
+        </main>
+      </div>
     </div>
   );
 }

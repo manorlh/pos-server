@@ -184,12 +184,14 @@ def get_z_candidates(
                 area_name=machine.area_name,
             )
         )
+    tenant = _tenant(db, active_tenant_id)
     return ZCandidatesOut(
         shop_id=shop.id,
         shop_name=shop.name,
         area_id=area.id if area is not None else None,
         area_name=area.name if area is not None else None,
-        z_scope=ZR.z_scope_of(_tenant(db, active_tenant_id)),
+        z_scope=ZR.z_scope_of(tenant),
+        open_tills_rule=ZR.open_tills_rule(db, tenant, shop),
         machines=machines,
     )
 
@@ -206,7 +208,13 @@ def post_z_run(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """Start a Z for one shop. Multi-shop from the UI is one call per shop."""
+    """
+    Start a Z for one shop. Multi-shop from the UI is one call per shop.
+
+    409 `{code: open_tills_block_z | open_tills_need_confirmation, tills}` when a shop Z
+    would leave tills with open (or un-Z'd) shifts behind and the shop's `shopZOpenTills`
+    parameter forbids it, or wants `confirmOpenTills: true` first.
+    """
     shop = _shop_for(db, body.shop_id, current_user, active_tenant_id)
     if _is_distributor(current_user):
         wanted = [m.machine_id for m in body.machines]
@@ -229,6 +237,7 @@ def post_z_run(
         ],
         business_date=body.business_date,
         area_id=body.area_id,
+        confirm_open_tills=body.confirm_open_tills,
     )
     db.commit()
     db.refresh(run)

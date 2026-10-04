@@ -80,6 +80,8 @@ class TestCreateShop:
     def seeded(self, world, monkeypatch):
         seeded: list = []
         monkeypatch.setattr(shops_router, "ensure_default_pos_user", lambda _db, shop: seeded.append(shop))
+        # Numbering is tests/test_org_numbers.py's; this fake session has no counters.
+        monkeypatch.setattr(shops_router, "assign_shop_number", lambda _db, shop: None)
         return seeded
 
     def _create(self, w, company_id, user):

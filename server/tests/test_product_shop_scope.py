@@ -508,6 +508,7 @@ class TestApplyRule:
 class TestShopHooks:
     def test_a_new_shop_receives_every_product_whose_rule_covers_it(self, world, monkeypatch):
         monkeypatch.setattr(shops_router, "ensure_default_pos_user", lambda *_: None)
+        monkeypatch.setattr(shops_router, "assign_shop_number", lambda *_: None)
         own = _product(world, world.A, mode="company", scope_company=world.A1, sku="1")
         from_top = _product(world, world.H, mode="company", scope_company=world.H, include_sub=True, sku="2")
         top_only = _product(world, world.H, mode="company", scope_company=world.H, sku="3")

@@ -50,6 +50,11 @@ class Scope(str, enum.Enum):
     #: docs/SHIFTS_API.md §4). Same people as a remote transmit from the dashboard, plus
     #: the shift supervisor, who may close a shift and so the day's card batch.
     TRANSMIT = "transmit"
+    #: Cancel an open table's order ("ביטול שולחן", app/services/tables.py): the goods
+    #: were ordered and are written off, with a reason, against the approver's name.
+    TABLE_CANCEL = "table:cancel"
+    #: Release another till's lock on a table by force (a till that went down inside it).
+    TABLE_UNLOCK = "table:unlock"
 
 
 #: Scopes that must be re-authorised for every single action rather than held for
@@ -66,6 +71,8 @@ PER_ACTION_SCOPES: FrozenSet[Scope] = frozenset({
     Scope.DAY_CLOSE,
     Scope.SHIFT_CLOSE,
     Scope.TRANSMIT,
+    Scope.TABLE_CANCEL,
+    Scope.TABLE_UNLOCK,
 })
 
 
@@ -82,6 +89,8 @@ _MANAGER_SCOPES = frozenset({
     Scope.DAY_CLOSE,
     Scope.SHIFT_CLOSE,
     Scope.TRANSMIT,
+    Scope.TABLE_CANCEL,
+    Scope.TABLE_UNLOCK,
 })
 
 #: What a shift supervisor (אחמ"ש) may authorise: the money decisions and the close of
@@ -93,6 +102,8 @@ _SUPERVISOR_SCOPES = frozenset({
     Scope.DAY_CLOSE,
     Scope.SHIFT_CLOSE,
     Scope.TRANSMIT,
+    Scope.TABLE_CANCEL,
+    Scope.TABLE_UNLOCK,
 })
 
 _TILL_SCOPES_BY_ROLE: dict[UserRole, FrozenSet[Scope]] = {

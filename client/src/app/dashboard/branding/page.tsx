@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -11,6 +12,7 @@ import { usePageScope } from '@/lib/scope';
 import { ScopeIgnoredNote } from '@/components/dashboard/scope-gate';
 import type { BrandingImageKind, EntitySettingsResponse, PosSettingsPatch } from '@/lib/types';
 import { BrandingImageField } from '@/components/branding-image-field';
+import { BrandColorField } from '@/components/brand-color-field';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
@@ -24,7 +26,14 @@ import { Skeleton } from '@/components/ui/skeleton';
 const BRANDING_ROLES = ['super_admin', 'distributor', 'company_manager'];
 
 /** Present key = edited. `null` = remove it from the tenant (back to unset). */
-type BrandingDraft = { brandLogoUrl?: string | null; brandHeroUrl?: string | null };
+type BrandingDraft = {
+  brandLogoUrl?: string | null;
+  brandHeroUrl?: string | null;
+  brandPrimaryColor?: string | null;
+  brandReceiptLogoUrl?: string | null;
+};
+
+const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 
 export default function BrandingPage() {
   const t = useTranslations('branding');
@@ -59,26 +68,32 @@ export default function BrandingPage() {
 
   const saved = data?.settings ?? {};
 
-  const valueFor = (key: 'brandLogoUrl' | 'brandHeroUrl'): string | undefined => {
+  const valueFor = (key: 'brandLogoUrl' | 'brandHeroUrl' | 'brandReceiptLogoUrl'): string | undefined => {
     if (key in draft) return draft[key] ?? undefined;
     return saved[key];
   };
 
-  const setValue = (key: 'brandLogoUrl' | 'brandHeroUrl', url: string | undefined) => {
+  const setValue = (key: 'brandLogoUrl' | 'brandHeroUrl' | 'brandReceiptLogoUrl', url: string | undefined) => {
     setDraft((d) => ({ ...d, [key]: url ?? null }));
   };
 
+  const colorValue =
+    'brandPrimaryColor' in draft ? (draft.brandPrimaryColor ?? undefined) : saved.brandPrimaryColor || undefined;
+  const colorInvalid = !!colorValue && !HEX_COLOR.test(colorValue);
+
   const dirty = Object.keys(draft).length > 0;
 
-  const field = (kind: BrandingImageKind, key: 'brandLogoUrl' | 'brandHeroUrl') => (
+  const field = (kind: BrandingImageKind, key: 'brandLogoUrl' | 'brandHeroUrl' | 'brandReceiptLogoUrl') => (
     <BrandingImageField
       kind={kind}
       value={valueFor(key)}
       onChange={(url) => setValue(key, url)}
-      title={t(kind === 'logo' ? 'logoTitle' : 'heroTitle')}
-      description={t(kind === 'logo' ? 'logoWhere' : 'heroWhere')}
-      hint={t(kind === 'logo' ? 'logoHint' : 'heroHint')}
+      title={t(`${kind}Title`)}
+      description={t(`${kind}Where`)}
+      hint={t(`${kind}Hint`)}
       disabled={save.isPending}
+      // The startup hero may be a short video too: same setting, played by the till.
+      allowVideo={kind === 'hero'}
     />
   );
 
@@ -118,11 +133,32 @@ export default function BrandingPage() {
               <Separator />
               {field('hero', 'brandHeroUrl')}
               <Separator />
+              {/* Superseded by the till parameter `receiptLogoUrl` (per company, shop, point
+                  of sale or till), which the till prefers when set. Kept working for the
+                  tills that have no value there. */}
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/40">
+                <p className="font-medium">{t('receiptSuperseded')}</p>
+                <p className="text-muted-foreground text-xs">{t('receiptSupersededHint')}</p>
+                {/* The till parameters page is the super admin's; others are told, not sent. */}
+                {role === 'super_admin' ? (
+                  <Link href="/dashboard/till-parameters" className="text-primary text-xs underline">
+                    {t('receiptSupersededLink')}
+                  </Link>
+                ) : null}
+              </div>
+              {field('receipt', 'brandReceiptLogoUrl')}
+              <Separator />
+              <BrandColorField
+                value={colorValue}
+                disabled={save.isPending}
+                onChange={(hex) => setDraft((d) => ({ ...d, brandPrimaryColor: hex ?? null }))}
+              />
+              <Separator />
               <p className="text-xs text-muted-foreground">{t('propagationNote')}</p>
               <div className="flex justify-start">
                 <Button
                   onClick={() => save.mutate(draft as PosSettingsPatch)}
-                  disabled={!dirty || save.isPending || !activeTenantId}
+                  disabled={!dirty || colorInvalid || save.isPending || !activeTenantId}
                 >
                   {save.isPending ? tc('saving') : tc('save')}
                 </Button>

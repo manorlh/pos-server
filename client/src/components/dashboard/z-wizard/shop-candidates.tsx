@@ -16,9 +16,10 @@
  *   register, so every selected till becomes its own Z.
  */
 
+import { useId, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { AlertTriangle, Info } from 'lucide-react';
-import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
+import { AlertTriangle, ChevronDown, Info } from 'lucide-react';
+import { formatCurrency, formatDate, formatDateTime, moneyValue } from '@/lib/format';
 import type { PosMachine, Shift, ZCandidateMachine, ZCandidates } from '@/lib/types';
 import { MachineStatusDot } from '@/components/dashboard/machine-status';
 import { CountedCash, ShiftBadges, useShiftLabel, useTillHeading } from '@/components/dashboard/shifts/shift-parts';
@@ -156,6 +157,24 @@ function ShiftLine({ shift, included }: { shift: Shift; included: boolean }) {
   );
 }
 
+/**
+ * Σ totalSales of some shifts, for the collapsed row's one-line summary only. Summed in
+ * agorot so 0.1 + 0.2 does not show as 0.30000000000000004; the Z itself is the server's.
+ */
+function shiftsTotal(shifts: Shift[]): number {
+  let agorot = 0;
+  for (const s of shifts) {
+    const v = moneyValue(s.serverTotals?.totalSales);
+    if (v !== null) agorot += Math.round(v * 100);
+  }
+  return agorot / 100;
+}
+
+/**
+ * One till: a compact row (checkbox, name, online dot, a one-line summary) that opens to
+ * everything the Z would take and the controls to change it. Collapsing only hides — the
+ * selection is the same either way.
+ */
 function TillRow({
   m,
   sel,
@@ -169,127 +188,175 @@ function TillRow({
   const tStatus = useTranslations('machineStatus');
   const shiftLabel = useShiftLabel();
   const heading = useTillHeading()(m);
+  const [expanded, setExpanded] = useState(false);
+  const detailsId = useId();
   const open = hasOpenShift(m);
   const withOpen = sel.includeOpenShift && open;
   const blocked = !!m.activeRun;
   const nothing = !hasSomethingToReport(m);
+  const orphans = m.orphanDocuments ?? 0;
   const lastId = m.closedShifts.length > 0 ? m.closedShifts[m.closedShifts.length - 1].id : null;
   const throughId = sel.throughShiftId ?? lastId;
   const throughIdx = m.closedShifts.findIndex((s) => s.id === throughId);
   const status = (m.status ?? 'not_paired') as NonNullable<PosMachine['status']>;
+  const statusText = tStatus(`status.${status}`);
   const pickerItems = m.closedShifts.map((s) => ({
     value: s.id,
     label: `${shiftLabel(s)} · ${formatDate(s.businessDate)}`,
   }));
+  // The row sums up what the Z would take when the till is in, else what is waiting.
+  const summaryShifts = sel.include ? includedClosedShifts(m, sel) : m.closedShifts;
 
   return (
-    <div className={`space-y-2 rounded-md border p-3 ${sel.include ? '' : 'bg-muted/30'}`}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <label className="flex items-center gap-2 text-sm font-medium">
+    <div className={`rounded-md border ${sel.include ? '' : 'bg-muted/30'}`}>
+      <div className="flex items-center gap-1 pe-1">
+        {/* Its own control, outside the expand button: ticking a till never opens it. */}
+        <label className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center">
           <input
             type="checkbox"
             className="h-4 w-4 accent-primary"
             checked={sel.include}
             disabled={blocked || nothing}
+            aria-label={heading.name ? `${heading.title} ${heading.name}` : heading.title}
             onChange={(e) => onChange({ ...sel, include: e.target.checked })}
           />
-          {heading.title}
-          {heading.name ? <span className="text-muted-foreground font-normal">{heading.name}</span> : null}
         </label>
-        <span className="inline-flex items-center gap-1.5 text-xs">
+        <button
+          type="button"
+          className="flex min-h-10 min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5 rounded py-1.5 text-start text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          aria-expanded={expanded}
+          aria-controls={detailsId}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          <span className="inline-flex min-w-0 items-center gap-2">
+            <span className="inline-flex shrink-0" title={statusText}>
+              <MachineStatusDot m={{ status } as PosMachine} />
+              <span className="sr-only">{statusText}</span>
+            </span>
+            <span className="truncate font-medium">{heading.title}</span>
+            {heading.name ? <span className="text-muted-foreground truncate">{heading.name}</span> : null}
+          </span>
+          <span className="ms-auto inline-flex flex-wrap items-center gap-1.5 text-xs">
+            {orphans > 0 ? <AlertTriangle className="h-3.5 w-3.5 text-destructive" aria-hidden /> : null}
+            {blocked ? (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-800 dark:bg-amber-950 dark:text-amber-400">
+                {t('chipInRun')}
+              </span>
+            ) : null}
+            {open ? (
+              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-primary">{t('chipOpenShift')}</span>
+            ) : null}
+            <span className="text-muted-foreground tabular-nums">
+              {nothing
+                ? t('tillNothing')
+                : t('tillSummaryLine', {
+                    count: summaryShifts.length,
+                    total: formatCurrency(shiftsTotal(summaryShifts)),
+                  })}
+            </span>
+            <ChevronDown
+              className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`}
+              aria-hidden
+            />
+          </span>
+        </button>
+      </div>
+
+      <div id={detailsId} hidden={!expanded} className="space-y-2 border-t p-3">
+        <p className="flex flex-wrap items-center gap-1.5 text-xs">
           <MachineStatusDot m={{ status } as PosMachine} />
-          {tStatus(`status.${status}`)}
+          {statusText}
           {(m.pendingDocuments ?? 0) > 0 ? (
             <span className="text-muted-foreground">
               · {tStatus('pendingDocuments', { count: m.pendingDocuments ?? 0 })}
               {m.pendingAsOf ? ` (${tStatus('pendingAsOf', { when: formatDateTime(m.pendingAsOf) })})` : ''}
             </span>
           ) : null}
-        </span>
-      </div>
-
-      {(m.orphanDocuments ?? 0) > 0 ? (
-        <p className="flex gap-1.5 text-xs text-destructive">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          {t('tillOrphans', { count: m.orphanDocuments ?? 0 })}
         </p>
-      ) : null}
-      {blocked ? (
-        <p className="text-xs text-amber-700 dark:text-amber-500">{t('tillInRun')}</p>
-      ) : nothing ? (
-        <p className="text-muted-foreground text-xs">{t('tillNothing')}</p>
-      ) : null}
 
-      {open ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded bg-muted/40 px-2 py-1.5 text-xs">
-          <span>
-            {m.openShift
-              ? t('openShift', {
-                  shift: shiftLabel(m.openShift),
-                  since: formatDateTime(m.openShift.openedAt),
-                  by: m.openShift.openedByName ?? '—',
-                })
-              : t('openShiftTillOnly')}
-          </span>
-          <label className="flex items-center gap-2">
-            <Switch
-              size="sm"
-              checked={sel.includeOpenShift}
-              disabled={!sel.include || blocked}
-              onCheckedChange={(checked) =>
-                onChange({ ...sel, includeOpenShift: checked, throughShiftId: checked ? null : sel.throughShiftId })
-              }
-            />
-            {t('includeOpen')}
-          </label>
-        </div>
-      ) : null}
-      {withOpen && sel.include ? (
-        <p className="text-muted-foreground text-xs">
-          {m.online ? t('includeOpenHint') : t('includeOpenOffline')}
-        </p>
-      ) : null}
+        {orphans > 0 ? (
+          <p className="flex gap-1.5 text-xs text-destructive">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            {t('tillOrphans', { count: orphans })}
+          </p>
+        ) : null}
+        {blocked ? (
+          <p className="text-xs text-amber-700 dark:text-amber-500">{t('tillInRun')}</p>
+        ) : nothing ? (
+          <p className="text-muted-foreground text-xs">{t('tillNothing')}</p>
+        ) : null}
 
-      {m.closedShifts.length > 0 ? (
-        <>
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-muted-foreground">{t('through')}</span>
-            <Select
-              value={throughId ?? ''}
-              // The picked id is sent as is, the last shift included: "through the last"
-              // means that shift, not whatever is last when the run is created.
-              onValueChange={(v) => onChange({ ...sel, throughShiftId: v || null })}
-              items={pickerItems}
-              disabled={!sel.include || withOpen || blocked}
-            >
-              <SelectTrigger size="sm" className="min-w-48">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {pickerItems.map((item) => (
-                  <SelectItem key={item.value} value={item.value} label={item.label}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <span className="text-muted-foreground">
-              {withOpen ? t('throughAllWithOpen') : t('throughHint')}
+        {open ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded bg-muted/40 px-2 py-1.5 text-xs">
+            <span>
+              {m.openShift
+                ? t('openShift', {
+                    shift: shiftLabel(m.openShift),
+                    since: formatDateTime(m.openShift.openedAt),
+                    by: m.openShift.openedByName ?? '—',
+                  })
+                : t('openShiftTillOnly')}
             </span>
-          </div>
-          <ol className="space-y-1">
-            {m.closedShifts.map((s, i) => (
-              <ShiftLine
-                key={s.id}
-                shift={s}
-                included={sel.include && (withOpen || throughIdx < 0 || i <= throughIdx)}
+            <label className="flex min-h-10 items-center gap-2">
+              <Switch
+                size="sm"
+                checked={sel.includeOpenShift}
+                disabled={!sel.include || blocked}
+                onCheckedChange={(checked) =>
+                  onChange({ ...sel, includeOpenShift: checked, throughShiftId: checked ? null : sel.throughShiftId })
+                }
               />
-            ))}
-          </ol>
-        </>
-      ) : !nothing ? (
-        <p className="text-muted-foreground text-xs">{t('noClosedShifts')}</p>
-      ) : null}
+              {t('includeOpen')}
+            </label>
+          </div>
+        ) : null}
+        {withOpen && sel.include ? (
+          <p className="text-muted-foreground text-xs">
+            {m.online ? t('includeOpenHint') : t('includeOpenOffline')}
+          </p>
+        ) : null}
+
+        {m.closedShifts.length > 0 ? (
+          <>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-muted-foreground">{t('through')}</span>
+              <Select
+                value={throughId ?? ''}
+                // The picked id is sent as is, the last shift included: "through the last"
+                // means that shift, not whatever is last when the run is created.
+                onValueChange={(v) => onChange({ ...sel, throughShiftId: v || null })}
+                items={pickerItems}
+                disabled={!sel.include || withOpen || blocked}
+              >
+                <SelectTrigger size="sm" className="min-w-48 max-w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {pickerItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value} label={item.label}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span className="text-muted-foreground">
+                {withOpen ? t('throughAllWithOpen') : t('throughHint')}
+              </span>
+            </div>
+            <ol className="space-y-1">
+              {m.closedShifts.map((s, i) => (
+                <ShiftLine
+                  key={s.id}
+                  shift={s}
+                  included={sel.include && (withOpen || throughIdx < 0 || i <= throughIdx)}
+                />
+              ))}
+            </ol>
+          </>
+        ) : !nothing ? (
+          <p className="text-muted-foreground text-xs">{t('noClosedShifts')}</p>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -319,7 +386,7 @@ export function ShopCandidatesCard({
               : t('summary', { tills: summary.tills, shifts: summary.shifts })}
         </p>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-2">
         {perTill ? (
           <div className="flex gap-2 rounded-md border bg-muted/40 p-2 text-xs">
             <Info className="h-4 w-4 shrink-0" aria-hidden />

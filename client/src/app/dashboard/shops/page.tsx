@@ -13,6 +13,8 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import { NumberPill } from '@/components/dashboard/number-pill';
+import { LicenseBadge } from '@/components/dashboard/license-fields';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, fetchCompanies, fetchMachines, fetchShops } from '@/lib/api';
 import { usePageScope } from '@/lib/scope';
@@ -147,6 +149,7 @@ export default function ShopsPage() {
                     title={t('openHint')}
                   >
                     <TableCell className="font-medium">
+                      <NumberPill n={s.shopNumber} className="me-1.5" />
                       <Link
                         href={href}
                         className="hover:underline"
@@ -154,6 +157,7 @@ export default function ShopsPage() {
                       >
                         {s.name}
                       </Link>
+                      <LicenseBadge value={s} className="ms-2" />
                     </TableCell>
                     <TableCell>
                       {company ? (
@@ -165,6 +169,7 @@ export default function ShopsPage() {
                           // unambiguous without opening the company.
                           title={companyPathLabel(tree, company.id, company.name)}
                         >
+                          <NumberPill n={company.companyNumber} className="me-1" />
                           {company.name}
                         </Link>
                       ) : (

@@ -73,6 +73,7 @@ def generate_pairing_code(
             tenant_id=active_tenant_id,
             company_id=company_id,
             shop_id=shop_id,
+            device_model=body.device_model,
         )
     except PairingAssignmentError as exc:
         raise HTTPException(

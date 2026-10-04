@@ -35,7 +35,10 @@ SUP = UserRole.SHIFT_SUPERVISOR
 class TestWhatItMayAuthoriseAtTheTill:
     def test_it_may_authorise_the_money_decisions_and_the_close(self):
         assert till_grantable_scopes(SUP) == frozenset(
-            {Scope.REFUND, Scope.DISCOUNT, Scope.DAY_CLOSE, Scope.SHIFT_CLOSE, Scope.TRANSMIT}
+            {
+                Scope.REFUND, Scope.DISCOUNT, Scope.DAY_CLOSE, Scope.SHIFT_CLOSE, Scope.TRANSMIT,
+                Scope.TABLE_CANCEL, Scope.TABLE_UNLOCK,
+            }
         )
 
     def test_it_may_not_edit_the_catalog(self):
@@ -75,6 +78,7 @@ class TestPerActionReauthorisation:
         """
         assert PER_ACTION_SCOPES == {
             Scope.REFUND, Scope.DISCOUNT, Scope.DAY_CLOSE, Scope.SHIFT_CLOSE, Scope.TRANSMIT,
+            Scope.TABLE_CANCEL, Scope.TABLE_UNLOCK,
         }
 
 

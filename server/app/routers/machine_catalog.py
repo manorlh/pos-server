@@ -84,6 +84,7 @@ def build_picture(db: Session, machine: POSMachine, shop: Shop, can_edit: bool) 
     company_levels = availability.company_overrides(
         db, availability.company_level_company_id(shop), ids
     )
+    area_levels = availability.area_overrides(db, machine.area_id, ids)
     machine_levels = availability.machine_overrides(db, machine.id, ids)
 
     products: List[MachineCatalogProduct] = []
@@ -94,7 +95,7 @@ def build_picture(db: Session, machine: POSMachine, shop: Shop, can_edit: bool) 
         included = bool(item is not None and item.is_included)
         listed = bool(ovr.is_listed) if ovr.is_listed is not None else True
         resolved = availability.resolve_rows(
-            p, company_levels.get(key), ovr, machine_levels.get(key)
+            p, company_levels.get(key), ovr, machine_levels.get(key), area_row=area_levels.get(key)
         )[availability.Level.MACHINE]
         if p.category_id:
             category_ids.add(p.category_id)

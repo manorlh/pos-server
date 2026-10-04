@@ -165,6 +165,7 @@ def mobile_claim(
             body.company_id,
             body.shop_id,
             machine_name=body.machine_name,
+            device_model=body.device_model,
         )
     except PairingMobileError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

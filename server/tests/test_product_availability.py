@@ -66,7 +66,10 @@ def _jsonb_on_sqlite(_type, _compiler, **_kw):  # pragma: no cover - DDL only
 _TABLES = (
     "tenants", "companies", "shops", "pos_machines", "categories", "vouchers", "products",
     "shop_product_overrides", "company_product_overrides", "machine_product_overrides", "machine_catalog_items",
-    "customers",
+    "customers", "shop_areas", "area_product_overrides", "category_availability_overrides",
+    # The menu block rides the catalog pull (docs/SPEC_MENU_MODIFIERS.md §10.1).
+    "modifier_groups", "modifier_options", "modifier_links", "prep_note_presets", "meal_slots",
+    "meal_slot_options", "upsell_rules", "menu_courses", "menu_sync_state",
 )
 
 OLD = datetime(2026, 1, 1, tzinfo=timezone.utc)

@@ -13,6 +13,7 @@
 import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
+import { NumberPill } from '@/components/dashboard/number-pill';
 import { useQuery } from '@tanstack/react-query';
 import {
   Boxes,
@@ -149,6 +150,7 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <Store className="h-5 w-5 text-muted-foreground" aria-hidden />
+            <NumberPill n={shop.shopNumber} className="text-sm" />
             <h1 className="text-2xl font-bold">{shop.name}</h1>
             <Badge variant={shop.isActive ? 'outline' : 'destructive'}>
               {shop.isActive ? tc('active') : tc('inactive')}

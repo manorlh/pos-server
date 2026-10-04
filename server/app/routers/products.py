@@ -1,8 +1,7 @@
 import uuid as uuid_mod
 from types import SimpleNamespace
-from typing import Iterable, List, Optional, Set
+from typing import Annotated, Iterable, List, Optional, Set
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -10,9 +9,11 @@ from app.models.company import Company
 from app.models.product import Product, CatalogLevel
 from app.models.category import Category
 from app.models.shop import Shop
+from app.models.shop_area import ShopArea
 from app.models.shop_product_override import ShopProductOverride
 from app.models.voucher import Voucher
 from app.models.user import User, UserRole
+from app.routers.companies import _check_company_access
 from app.routers.shops import _check_shop_access, _check_shop_override_write
 from app.services.permission_matrix import SHOP_SCOPED_ROLES, Action, Resource, roles_for
 from app.schemas.product import (
@@ -35,6 +36,8 @@ from app.middleware.auth import (
 )
 from app.models.pos_machine import POSMachine
 from app.services import general_item
+from app.services import item_ticket
+from app.services import product_list_filters as list_filters
 from app.services import product_shop_scope as scope_svc
 from app.services.catalog_notify import (
     notify_all_machines_for_tenant,
@@ -248,6 +251,60 @@ def _notify_shops(db: Session, shop_ids: Iterable[str], reason: str) -> None:
         notify_machines_for_shop(db, shop_id, reason=reason)
 
 
+def _available_at_scope(db: Session, user: User, active_tenant_id, raw: str):
+    """
+    `availableAt` -> the (sold there, active there) conditions, after checking the target
+    is in the tenant and within the caller's reach - the same reads the availability
+    picture allows. 400 on a malformed value, 404 on a missing target, 403 out of reach.
+    """
+    level, _, target_id = raw.partition(":")
+    if level not in list_filters.SCOPE_LEVELS or not target_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid availableAt")
+    try:
+        uuid_mod.UUID(target_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid availableAt")
+
+    def _missing(what: str) -> HTTPException:
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{what} not found")
+
+    if level == "company":
+        company = db.query(Company).filter(Company.id == target_id).first()
+        if not company:
+            raise _missing("Company")
+        ensure_same_tenant(company.tenant_id, active_tenant_id)
+        _check_company_access(user, company, db)
+        return list_filters.scope_conditions("company", company)
+    if level == "machine":
+        machine = db.query(POSMachine).filter(POSMachine.id == target_id).first()
+        if not machine:
+            raise _missing("Machine")
+        ensure_same_tenant(machine.tenant_id, active_tenant_id)
+        _check_machine_access(user, machine, db)
+        shop = db.query(Shop).filter(Shop.id == machine.shop_id).first() if machine.shop_id else None
+        if shop is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Machine must be assigned to a shop"
+            )
+        return list_filters.scope_conditions("machine", machine, shop=shop)
+    if level == "area":
+        area = db.query(ShopArea).filter(ShopArea.id == target_id).first()
+        if not area:
+            raise _missing("Area")
+        ensure_same_tenant(area.tenant_id, active_tenant_id)
+        shop = db.query(Shop).filter(Shop.id == area.shop_id).first()
+        if not shop:
+            raise _missing("Shop")
+        _check_shop_access(user, shop, db)
+        return list_filters.scope_conditions("area", area, shop=shop)
+    shop = db.query(Shop).filter(Shop.id == target_id).first()
+    if not shop:
+        raise _missing("Shop")
+    ensure_same_tenant(shop.tenant_id, active_tenant_id)
+    _check_shop_access(user, shop, db)
+    return list_filters.scope_conditions("shop", shop)
+
+
 @router.get("", response_model=ProductListResponse)
 def list_products(
     page: int = Query(1, ge=1),
@@ -262,7 +319,34 @@ def list_products(
     current_user: User = Depends(get_current_user),
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
+    # Annotated, so a direct call (the tests) that leaves them out gets a plain None.
+    category_ids: Annotated[
+        Optional[List[str]],
+        Query(alias="categoryIds", description="Any of these categories (repeat the param)"),
+    ] = None,
+    uncategorized: Annotated[
+        Optional[bool],
+        Query(description="Also (or only) products whose category no longer exists"),
+    ] = None,
+    product_status: Annotated[
+        Optional[str],
+        Query(
+            alias="status",
+            description='"active" / "inactive" - at `availableAt` when given, else anywhere',
+        ),
+    ] = None,
+    available_at: Annotated[
+        Optional[str],
+        Query(
+            alias="availableAt",
+            description='"company:<id>", "shop:<id>", "area:<id>" or "machine:<id>"',
+        ),
+    ] = None,
 ):
+    """
+    The catalog, a page at a time. Search and filters are described in
+    `app/services/product_list_filters.py`; every one of them is part of the one query.
+    """
     query = db.query(Product).filter(Product.tenant_id == active_tenant_id)
 
     # A tenant-wide product carries no company at all, so membership alone hid every
@@ -286,16 +370,24 @@ def list_products(
         query = query.filter(Product.catalog_level == catalog_level)
     if in_stock is not None:
         query = query.filter(Product.in_stock == in_stock)
-    if search and search.strip():
-        term = f"%{search.strip()}%"
-        query = query.filter(
-            or_(
-                Product.name.ilike(term),
-                Product.sku.ilike(term),
-                Product.global_sku.ilike(term),
-                Product.barcode.ilike(term),
-            )
-        )
+    matches = list_filters.search_condition(search)
+    if matches is not None:
+        query = query.filter(matches)
+    in_categories = list_filters.category_condition(
+        [c for c in (category_ids or []) if c], bool(uncategorized), active_tenant_id
+    )
+    if in_categories is not None:
+        query = query.filter(in_categories)
+    if product_status is not None and product_status not in list_filters.STATUSES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown status")
+    scope = (
+        _available_at_scope(db, current_user, active_tenant_id, available_at)
+        if available_at
+        else None
+    )
+    by_status = list_filters.status_condition(product_status, scope)
+    if by_status is not None:
+        query = query.filter(by_status)
 
     total = query.count()
     items = (
@@ -363,10 +455,13 @@ def create_product(
         barcode=data.barcode,
         tax_rate=data.tax_rate,
         voucher_id=data.voucher_id,
+        ticket_mode=item_ticket.normalize(data.ticket_mode),
+        ticket_entries=data.ticket_entries,
         track_stock=data.track_stock,
         is_open_price=data.is_open_price,
         is_weighed=data.is_weighed,
         unit_label=data.unit_label,
+        no_discount=data.no_discount,
         # Only `ensure_general_item` makes a general item (the request cannot ask).
         is_general=False,
     )
@@ -464,6 +559,10 @@ def update_product(
                     detail="SKU already exists for this tenant",
                 )
         updates["sku"] = new_sku
+
+    if "ticket_mode" in updates:
+        # "inherit" is stored as NULL.
+        updates["ticket_mode"] = item_ticket.normalize(updates["ticket_mode"])
 
     for field, value in updates.items():
         setattr(product, field, value)

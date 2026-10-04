@@ -5,6 +5,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    Date,
     DateTime,
     Enum as SQLEnum,
     ForeignKey,
@@ -15,7 +16,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -37,6 +38,18 @@ BATTERY_STATUSES = ("charging", "discharging", "full", "not_charging", "unknown"
 # Values the till may report for `printer_status` (the heartbeat's `printer` block). The
 # same rule as the battery: an unexpected string is stored as "unknown", never a 422.
 PRINTER_STATUSES = ("ok", "no_paper", "overheated", "error", "unavailable", "unknown")
+
+# The hardware a till is, as the dashboard records it. A Nova 55F has a built-in printer;
+# a Modo has none. NULL is "not recorded" and reads as a 55F, which every till that
+# existed before the column was.
+DEVICE_MODEL_N55F = "N55F"
+DEVICE_MODEL_MODO = "MODO"
+DEVICE_MODELS = (DEVICE_MODEL_N55F, DEVICE_MODEL_MODO)
+
+
+def device_has_printer(device_model) -> bool:
+    """Whether a till of this model prints: everything but a Modo (unknown included)."""
+    return device_model != DEVICE_MODEL_MODO
 
 
 class POSMachine(Base):
@@ -79,6 +92,14 @@ class POSMachine(Base):
     mqtt_client_id = Column(String(255), unique=True, nullable=True)
     pairing_status = Column(SQLEnum(PairingStatus, values_callable=lambda x: [e.value for e in x]), nullable=False, default=PairingStatus.UNPAIRED)
     device_info = Column(JSON, nullable=True)
+    #: "N55F" | "MODO" (`DEVICE_MODELS`), chosen on the dashboard; null = unknown, read
+    #: as a 55F. The till learns whether it has a printer from `GET /machines/me`.
+    device_model = Column(String(16), nullable=True)
+    #: "לקוח קבוע / זמני" for this till alone — a till lent for an event in a permanent
+    #: shop. The earliest end among the till, its shop, companies and organization wins
+    #: (app/services/licenses.py). Set by a super admin only.
+    license_type = Column(String(16), nullable=False, default="permanent", server_default="permanent")
+    license_expires_on = Column(Date, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
 
     # Bumped whenever this terminal is unpaired. Machine tokens carry the version
@@ -148,6 +169,15 @@ class POSMachine(Base):
     catalog_mode = Column(String(16), nullable=False, default="all", server_default="all")
     catalog_mode_updated_at = Column(DateTime(timezone=True), nullable=True)
 
+    # ── POS settings for this one till ────────────────────────────────────────
+    # The last layer of tenant → company → shop → till (`settings_merge`): the same
+    # keys, so a till can ask for a tip where the rest of its shop does not, or offer
+    # different percentages at the bar than at the counter. Empty for almost every till.
+    # `settings_updated_at` NULL means never written — every till that existed when the
+    # column was added — so the settings watermark does not move for them.
+    settings = Column(JSONB, nullable=False, default=dict, server_default="{}")
+    settings_updated_at = Column(DateTime(timezone=True), nullable=True)
+
     # ── The shift the till says it has open, from its heartbeat ──────────────
     # The cloud learns of a shift from the till's open event, which an offline till
     # queues. This is the till's own claim, refreshed every beat, so the Z wizard can
@@ -155,6 +185,10 @@ class POSMachine(Base):
     # Not an identity and not a foreign key: the shift may not exist here yet.
     reported_open_shift_id = Column(UUID(as_uuid=True), nullable=True)
     reported_open_shift_opened_at = Column(DateTime(timezone=True), nullable=True)
+    #: The shop's master till has "סגירת Z סניפי" on screen until then (refreshed while it
+    #: is open). Meanwhile the heartbeat tells every till of the shop to beat fast, so the
+    #: close a shop Z sends is picked up in seconds even when realtime is down.
+    shop_z_screen_until = Column(DateTime(timezone=True), nullable=True)
 
     # ── Card transmission, as the till last reported it (docs/SHIFTS_API.md §4.2) ─
     # A snapshot from the heartbeat's `transmission` block, replaced whole whenever a beat
@@ -190,6 +224,22 @@ class POSMachine(Base):
     printer_status_at = Column(DateTime(timezone=True), nullable=True)
     printer_last_ok_at = Column(DateTime(timezone=True), nullable=True)
     printer_reported_at = Column(DateTime(timezone=True), nullable=True)
+
+    # ── The card terminal (Agamento), as the till last reported it ────────────
+    # From the heartbeat's `terminal` block; a beat without one leaves these alone.
+    # `terminal_reported_at` is when we received it — null = the till never reported.
+    terminal_number = Column(String(20), nullable=True)
+    #: "SHVA" or "PELECARD" as the terminal reports it.
+    terminal_clearing_server = Column(String(16), nullable=True)
+    terminal_offline_mode = Column(Boolean, nullable=True)
+    terminal_reported_at = Column(DateTime(timezone=True), nullable=True)
+    #: The till's last write into Agamento (`forceTerminalNumber`, `clearingServer`):
+    #: {field, value, ok, error, at}. Kept until the till reports a newer one.
+    terminal_last_write = Column(JSONB, nullable=True)
+    #: The business name and supplier number (מספר ספק) the terminal is set up under, as
+    #: Agamento names them. Kept once seen: a reply that omits them does not clear them.
+    terminal_merchant_name = Column(String(120), nullable=True)
+    terminal_supplier_number = Column(String(30), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
@@ -203,3 +253,7 @@ class POSMachine(Base):
     def area_name(self):
         """The current area's name, for responses built straight from the row."""
         return self.area.name if self.area is not None else None
+
+    @property
+    def has_printer(self) -> bool:
+        return device_has_printer(self.device_model)

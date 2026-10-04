@@ -1,9 +1,9 @@
 """
-Whether a product can be sold, set for one company or one till.
+Whether a product can be sold, set for one company, one area of a shop or one till.
 
-Two of the four levels a product's availability is decided at. The other two already
+Three of the five levels a product's availability is decided at. The other two already
 existed: the product's own `products.is_available`, and the shop's
-`shop_product_overrides.is_available`. How the four combine is decided in exactly one
+`shop_product_overrides.is_available`. How the five combine is decided in exactly one
 place, `app/services/product_availability.py`.
 
 "Unavailable" means *locked*, not hidden: the till still shows the product and refuses
@@ -62,8 +62,39 @@ class CompanyProductOverride(Base):
     )
 
 
+class AreaProductOverride(Base):
+    """
+    A point of sale's setting for a global product: every till standing in the area
+    (`pos_machines.area_id`), between the shop's setting and each till's own.
+    """
+
+    __tablename__ = "area_product_overrides"
+    __table_args__ = (
+        UniqueConstraint("area_id", "product_id", name="uq_area_product_override"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    area_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("shop_areas.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    product_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    is_available = Column(Boolean, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class MachineProductOverride(Base):
-    """One till's own setting for a global product, nearest of all four levels."""
+    """One till's own setting for a global product, nearest of all five levels."""
 
     __tablename__ = "machine_product_overrides"
     __table_args__ = (

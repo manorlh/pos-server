@@ -2,6 +2,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.services import licenses
 from app.database import get_db
 from app.middleware.auth import get_current_user, get_current_distributor
 from app.models.tenant import Tenant
@@ -124,6 +125,8 @@ def create_tenant(
         locale=body.locale,
         created_by_user_id=current_user.id,
     )
+    # "לקוח קבוע / זמני": the super admin's to set (app/services/licenses.py).
+    licenses.apply_license(current_user, tenant, body.model_dump(include=set(licenses.FIELDS)), creating=True)
     db.add(tenant)
     db.flush()
     db.add(
@@ -154,7 +157,10 @@ def update_tenant(
     if not _can_manage_tenant(current_user, tenant_id, db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
-    for field, value in body.model_dump(exclude_unset=True, by_alias=False).items():
+    updates = body.model_dump(exclude_unset=True, by_alias=False)
+    # The license fields leave `updates` here: the super admin's only.
+    licenses.apply_license(current_user, tenant, updates)
+    for field, value in updates.items():
         setattr(tenant, field, value)
     db.commit()
     db.refresh(tenant)

@@ -22,6 +22,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
+  LicenseFields,
+  licenseIncomplete,
+  licensePayload,
+  useIsSuperAdmin,
+  withoutLicense,
+} from '@/components/dashboard/license-fields';
+import {
   Dialog,
   DialogContent,
   DialogFooter,
@@ -90,6 +97,7 @@ function ShopForm({
     () => shop ?? { ...EMPTY, companyId: defaultCompanyId ?? undefined },
   );
   const isNew = !draft.id;
+  const isSuperAdmin = useIsSuperAdmin();
 
   const { data: companies = [] } = useQuery<Company[]>({
     queryKey: ['companies'],
@@ -99,9 +107,12 @@ function ShopForm({
 
   const save = useMutation({
     mutationFn: async (s: Partial<Shop>) => {
+      // The draft is the row as read, license included; only a super admin may send that
+      // part back ("לקוח קבוע / זמני"), so it is rebuilt rather than echoed.
+      const payload = { ...withoutLicense(s), ...licensePayload(s, isSuperAdmin) };
       const { data } = s.id
-        ? await api.put<Shop>(`/shops/${s.id}`, s)
-        : await api.post<Shop>('/shops', s);
+        ? await api.put<Shop>(`/shops/${s.id}`, payload)
+        : await api.post<Shop>('/shops', payload);
       return data;
     },
     onSuccess: (data) => {
@@ -185,12 +196,17 @@ function ShopForm({
             onChange={(e) => setDraft((s) => ({ ...s, address: e.target.value }))}
           />
         </div>
+        <LicenseFields
+          idPrefix="shop"
+          value={draft}
+          onChange={(v) => setDraft((s) => ({ ...s, ...v }))}
+        />
       </div>
       <DialogFooter>
         <Button variant="outline" onClick={() => onOpenChange(false)}>
           {tc('cancel')}
         </Button>
-        <Button onClick={() => save.mutate(draft)} disabled={save.isPending}>
+        <Button onClick={() => save.mutate(draft)} disabled={save.isPending || licenseIncomplete(draft, isSuperAdmin)}>
           {save.isPending ? tc('saving') : tc('save')}
         </Button>
       </DialogFooter>

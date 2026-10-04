@@ -23,6 +23,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
+  LicenseFields,
+  licenseIncomplete,
+  licensePayload,
+  useIsSuperAdmin,
+} from '@/components/dashboard/license-fields';
+import {
   Dialog,
   DialogContent,
   DialogFooter,
@@ -74,6 +80,7 @@ function CompanyForm({
   const qc = useQueryClient();
   const [draft, setDraft] = useState<Partial<Company>>(() => company ?? EMPTY);
   const isNew = !draft.id;
+  const isSuperAdmin = useIsSuperAdmin();
 
   // Only while creating: on an existing company this picker would be the quiet
   // dropdown the module comment argues against.
@@ -93,6 +100,8 @@ function CompanyForm({
         // Only ever sent when creating. An edit must not carry it, or saving a name
         // change would silently re-assert a parent the operator never looked at.
         ...(c.id ? {} : { parentCompanyId: c.parentCompanyId || null }),
+        // "לקוח קבוע / זמני": a super admin's only — anyone else's save leaves it alone.
+        ...licensePayload(c, isSuperAdmin),
       };
       const { data } = c.id
         ? await api.put<Company>(`/companies/${c.id}`, payload)
@@ -173,12 +182,17 @@ function CompanyForm({
             onChange={(e) => setDraft((c) => ({ ...c, address: e.target.value }))}
           />
         </div>
+        <LicenseFields
+          idPrefix="company"
+          value={draft}
+          onChange={(v) => setDraft((c) => ({ ...c, ...v }))}
+        />
       </div>
       <DialogFooter>
         <Button variant="outline" onClick={() => onOpenChange(false)}>
           {tc('cancel')}
         </Button>
-        <Button onClick={() => save.mutate(draft)} disabled={save.isPending}>
+        <Button onClick={() => save.mutate(draft)} disabled={save.isPending || licenseIncomplete(draft, isSuperAdmin)}>
           {save.isPending ? tc('saving') : tc('save')}
         </Button>
       </DialogFooter>

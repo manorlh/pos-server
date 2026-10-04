@@ -18,6 +18,9 @@ class ZReportOut(BaseModel):
     #: The shop's Z counter. Null only on a legacy Z from a terminal with no shop.
     shop_sequence_number: Optional[int] = Field(None, alias="shopSequenceNumber")
     business_date: date = Field(..., alias="businessDate")
+    #: The local date the Z was produced (`closedAt` in the list's timezone). Filled by
+    #: the list (`GET /z-reports`), which can filter and sort on it (`dateBasis`).
+    production_date: Optional[date] = Field(None, alias="productionDate")
     period_start: Optional[datetime] = Field(None, alias="periodStart")
     period_end: Optional[datetime] = Field(None, alias="periodEnd")
     shift_count: Optional[int] = Field(None, alias="shiftCount")
@@ -62,6 +65,13 @@ class ZReportOut(BaseModel):
     #: the drawers between shifts, part of `expectedCash`. Null on a Z built before it
     #: was stored, and on a legacy Z.
     between_shift_adjustments: Optional[Decimal] = Field(None, alias="betweenShiftAdjustments")
+    #: Σ of the per-till `offline` blocks: offline-approved card sales that went through an
+    #: authorization run, and those of them the acquirer declined. Null on a Z built before
+    #: the block was stored, and on a legacy Z.
+    offline_authorization_count: Optional[int] = Field(None, alias="offlineAuthorizationCount")
+    offline_approved_count: Optional[int] = Field(None, alias="offlineApprovedCount")
+    offline_declined_count: Optional[int] = Field(None, alias="offlineDeclinedCount")
+    offline_declined_amount: Optional[Decimal] = Field(None, alias="offlineDeclinedAmount")
     closed_at: datetime = Field(..., alias="closedAt")
     created_at: datetime = Field(..., alias="createdAt")
 
@@ -74,6 +84,8 @@ class ZReportOut(BaseModel):
 
     machine_name: Optional[str] = Field(None, alias="machineName")
     shop_name: Optional[str] = Field(None, alias="shopName")
+    #: The shop's number in its company today ("#3"); a live label, not part of the Z.
+    shop_number: Optional[int] = Field(None, alias="shopNumber")
     #: The area the Z was started for, and its name as frozen in the header at build.
     #: Both null for a whole-shop or hand-picked Z.
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
@@ -99,6 +111,10 @@ class ZReportBusinessOut(BaseModel):
     area_id: Optional[str] = Field(None, alias="areaId")
     area_name: Optional[str] = Field(None, alias="areaName")
     captured_at: Optional[str] = Field(None, alias="capturedAt")
+    #: A shop Z produced on the operator's confirmation without some tills
+    #: (`shopZOpenTills`): `{tills: [{id, posNumber, name, openShiftId}],
+    #: confirmedByUserId, confirmedByName, confirmedAt}`. Absent otherwise.
+    open_tills_left_out: Optional[Dict[str, Any]] = Field(None, alias="openTillsLeftOut")
 
 
 class ZReportDetailOut(ZReportOut):
@@ -106,10 +122,16 @@ class ZReportDetailOut(ZReportOut):
     per_machine: List[Dict[str, Any]] = Field(default_factory=list, alias="perMachine")
     shifts: List[ShiftOut] = Field(default_factory=list)
     business: Optional[ZReportBusinessOut] = None
+    #: Card legs per brand (מותג) × acquirer (חברת סליקה), summed over the sections:
+    #: {brand, acquirer, salesCount, salesAmount, refundsCount, refundsAmount, net}.
+    card_brands: List[Dict[str, Any]] = Field(default_factory=list, alias="cardBrands")
+    #: "stored" — frozen in the sections at build time; "documents" — a Z built before
+    #: the split, read now from its documents; null — no card split (a till-issued Z).
+    card_brands_source: Optional[str] = Field(None, alias="cardBrandsSource")
 
 
 class ZReportWindow(BaseModel):
-    """The business-date window a Z list was actually filtered on."""
+    """The date window a Z list was actually filtered on."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -117,6 +139,11 @@ class ZReportWindow(BaseModel):
     to_date: Optional[date] = Field(None, alias="to")
     #: True when the caller gave no range and the default (the last 90 days) applied.
     defaulted: bool = False
+    #: Which date `from`/`to` are: "business" (the Z's business date) or "production"
+    #: (the local date of its `closedAt`).
+    date_basis: str = Field("business", alias="dateBasis")
+    #: The timezone production dates are measured in (the tenant's, else Israel).
+    timezone: Optional[str] = None
 
 
 class ZReportListResponse(BaseModel):

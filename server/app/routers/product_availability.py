@@ -1,9 +1,10 @@
 """
-Lock or unlock a product per company, per shop and per till — and show the result.
+Lock or unlock a product per company, per shop, per area and per till — and show the result.
 
     GET /products/{id}/availability                          → the whole picture
     PUT /products/{id}/availability/companies/{company_id}   {"isAvailable": true|false|null}
     PUT /products/{id}/availability/shops/{shop_id}          {"isAvailable": true|false|null}
+    PUT /products/{id}/availability/areas/{area_id}          {"isAvailable": true|false|null}
     PUT /products/{id}/availability/machines/{machine_id}    {"isAvailable": true|false|null}
 
 `null` clears a level back to inherit. The rule itself — nearest level wins, and the
@@ -16,6 +17,7 @@ Permissions reuse the existing checks and refuse (403) before anything is writte
   company manager whose scope covers the company (`_check_company_settings_write`). A
   shop manager's `company_id` does not make them a company-level actor.
 * shop level — the assortment write check (`_check_shop_override_write`).
+* area level — the assortment write check on the area's shop.
 * machine level — the machine check (`_check_machine_access`) *and* the assortment
   write check on the machine's shop.
 """
@@ -35,30 +37,37 @@ from app.middleware.auth import (
 )
 from app.models.company import Company
 from app.models.pos_machine import POSMachine
-from app.models.product import Product
+from app.models.product import CatalogLevel, Product
 from app.models.product_availability_override import (
+    AreaProductOverride,
     CompanyProductOverride,
     MachineProductOverride,
 )
 from app.models.machine_catalog_item import MachineCatalogItem
 from app.models.shop import Shop
+from app.models.shop_area import ShopArea
 from app.models.shop_product_override import ShopProductOverride
 from app.models.user import User
 from app.routers.products import _check_product_access, _require_global_catalog_product
 from app.routers.settings import _check_company_settings_write
 from app.routers.shops import _check_shop_access, _check_shop_override_write
 from app.schemas.product_availability import (
+    AreaAvailability,
+    AvailabilityException,
+    AvailabilitySummaryRequest,
+    AvailabilitySummaryResponse,
     AvailabilitySet,
     AvailabilityWriteResponse,
     CompanyAvailability,
     MachineAvailability,
     ProductAvailabilityResponse,
+    ProductAvailabilitySummary,
     ShopAvailability,
 )
 from app.services import general_item
 from app.services import machine_catalog
 from app.services import product_availability as availability
-from app.services.company_hierarchy import catalog_company_ids
+from app.services.company_hierarchy import catalog_company_ids, catalog_visibility_filter
 from app.services.product_availability import Level
 from app.services.product_shop_scope import scope_company_allowed
 
@@ -221,6 +230,36 @@ def get_product_availability(
     machines_by_shop: Dict[str, List[POSMachine]] = {}
     for m in machines:
         machines_by_shop.setdefault(str(m.shop_id), []).append(m)
+    # The shops' live areas, and each one's setting. A till's area is always one of
+    # its own shop's (`set_machine_shop` clears it on a move).
+    areas: List[ShopArea] = (
+        db.query(ShopArea)
+        .filter(ShopArea.shop_id.in_(visible_shop_ids), ShopArea.archived_at.is_(None))
+        .order_by(ShopArea.sort_order, ShopArea.name)
+        .all()
+        if visible_shop_ids
+        else []
+    )
+    area_levels: Dict[str, AreaProductOverride] = (
+        {
+            str(r.area_id): r
+            for r in db.query(AreaProductOverride)
+            .filter(
+                AreaProductOverride.product_id == product.id,
+                AreaProductOverride.area_id.in_([a.id for a in areas]),
+            )
+            .all()
+        }
+        if areas
+        else {}
+    )
+    areas_by_shop: Dict[str, List[ShopArea]] = {}
+    for a in areas:
+        areas_by_shop.setdefault(str(a.shop_id), []).append(a)
+
+    def area_value(area_id):
+        row = area_levels.get(str(area_id)) if area_id is not None else None
+        return row.is_available if row is not None else None
 
     by_company: Dict[str, CompanyAvailability] = {}
     for ovr, shop in sorted(visible, key=lambda pair: pair[1].name or ""):
@@ -250,11 +289,25 @@ def get_product_availability(
             can_edit=shop_can_edit,
             **_node(shop_levels, Level.SHOP, ovr.is_available),
         )
+        for a in areas_by_shop.get(str(shop.id), []):
+            a_value = area_value(a.id)
+            a_levels = availability.resolve_levels(
+                product.is_available, company_value, ovr.is_available, area=a_value
+            )
+            shop_node.areas.append(
+                AreaAvailability(
+                    area_id=a.id,
+                    name=a.name,
+                    can_edit=shop_can_edit,
+                    **_node(a_levels, Level.AREA, a_value),
+                )
+            )
         for m in sorted(machines_by_shop.get(str(shop.id), []), key=lambda x: (x.pos_number or "", x.name or "")):
             m_row = machine_levels.get(str(m.id))
             m_value = m_row.is_available if m_row is not None else None
             m_levels = availability.resolve_levels(
-                product.is_available, company_value, ovr.is_available, m_value
+                product.is_available, company_value, ovr.is_available, m_value,
+                area=area_value(m.area_id),
             )
             shop_node.machines.append(
                 MachineAvailability(
@@ -268,6 +321,7 @@ def get_product_availability(
                         bool(catalog_rows.get(str(m.id)) and catalog_rows[str(m.id)].is_included),
                         general_item.is_general(product),
                     ),
+                    area_id=m.area_id,
                     **_node(m_levels, Level.MACHINE, m_value),
                 )
             )
@@ -278,6 +332,210 @@ def get_product_availability(
         product_available=bool(product.is_available),
         companies=sorted(by_company.values(), key=lambda c: c.company_name or ""),
     )
+
+
+# ── A page of products, one line each ────────────────────────────────────────
+
+#: How many override examples each summary carries.
+_SUMMARY_EXCEPTIONS = 5
+
+
+@router.post("/availability-summary", response_model=AvailabilitySummaryResponse)
+def summarize_product_availability(
+    body: AvailabilitySummaryRequest,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "Active in 3/4 shops · locked on till 4" for every product on a page of the list.
+
+    The same tree and the same rule as `GET /products/{id}/availability`, counted rather
+    than drawn, for many products at once: a fixed number of queries whatever the page
+    size. Products the caller cannot see in the list, and local copies (which have no
+    tree), are left out; so are shops the caller cannot reach, as in the picture.
+    """
+    ids = list(dict.fromkeys(body.product_ids))
+    if not ids:
+        return AvailabilitySummaryResponse(items=[])
+
+    query = db.query(Product).filter(
+        Product.id.in_(ids),
+        Product.tenant_id == active_tenant_id,
+        Product.pos_machine_id.is_(None),
+        Product.catalog_level == CatalogLevel.GLOBAL,
+    )
+    visible_filter = catalog_visibility_filter(db, current_user, Product)
+    if visible_filter is not None:
+        query = query.filter(visible_filter)
+    products = query.all()
+    if not products:
+        return AvailabilitySummaryResponse(items=[])
+    product_ids = [p.id for p in products]
+
+    rows = (
+        db.query(ShopProductOverride)
+        .filter(ShopProductOverride.global_product_id.in_(product_ids))
+        .all()
+    )
+    shop_ids = list({str(r.shop_id): r.shop_id for r in rows}.values())
+    shops = (
+        {str(s.id): s for s in db.query(Shop).filter(Shop.id.in_(shop_ids)).all()}
+        if shop_ids
+        else {}
+    )
+    shops = {
+        sid: s for sid, s in shops.items() if _allowed(_check_shop_access, current_user, s, db)
+    }
+    visible_shop_ids = [s.id for s in shops.values()]
+    company_ids = list(
+        {
+            str(availability.company_level_company_id(s)): availability.company_level_company_id(s)
+            for s in shops.values()
+        }.values()
+    )
+    companies = (
+        {str(c.id): c for c in db.query(Company).filter(Company.id.in_(company_ids)).all()}
+        if company_ids
+        else {}
+    )
+
+    def _by_pair(model, owner_col, owner_ids):
+        if not owner_ids:
+            return {}
+        return {
+            (str(getattr(r, owner_col)), str(r.product_id)): r
+            for r in db.query(model)
+            .filter(
+                getattr(model, owner_col).in_(owner_ids),
+                model.product_id.in_(product_ids),
+            )
+            .all()
+        }
+
+    company_levels = _by_pair(CompanyProductOverride, "company_id", company_ids)
+    areas: List[ShopArea] = (
+        db.query(ShopArea)
+        .filter(ShopArea.shop_id.in_(visible_shop_ids), ShopArea.archived_at.is_(None))
+        .order_by(ShopArea.sort_order, ShopArea.name)
+        .all()
+        if visible_shop_ids
+        else []
+    )
+    area_levels = _by_pair(AreaProductOverride, "area_id", [a.id for a in areas])
+    machines: List[POSMachine] = (
+        db.query(POSMachine)
+        .filter(POSMachine.shop_id.in_(visible_shop_ids), POSMachine.is_active.is_(True))
+        .all()
+        if visible_shop_ids
+        else []
+    )
+    machine_levels = _by_pair(MachineProductOverride, "machine_id", [m.id for m in machines])
+    selected = [m.id for m in machines if machine_catalog.mode_of(m) == machine_catalog.MODE_SELECTED]
+    catalog_rows = _by_pair(MachineCatalogItem, "machine_id", selected)
+
+    areas_by_shop: Dict[str, List[ShopArea]] = {}
+    for a in areas:
+        areas_by_shop.setdefault(str(a.shop_id), []).append(a)
+    machines_by_shop: Dict[str, List[POSMachine]] = {}
+    for m in sorted(machines, key=lambda x: (x.pos_number or "", x.name or "")):
+        machines_by_shop.setdefault(str(m.shop_id), []).append(m)
+    rows_by_product: Dict[str, List[ShopProductOverride]] = {}
+    for r in rows:
+        if str(r.shop_id) in shops:
+            rows_by_product.setdefault(str(r.global_product_id), []).append(r)
+
+    def value_of(table, owner_id, product_id):
+        row = table.get((str(owner_id), str(product_id))) if owner_id is not None else None
+        return row.is_available if row is not None else None
+
+    out: List[ProductAvailabilitySummary] = []
+    for product in products:
+        pid = str(product.id)
+        summary = ProductAvailabilitySummary(
+            product_id=product.id, product_available=bool(product.is_available)
+        )
+        found: List[AvailabilityException] = []
+        seen_companies = set()
+        product_rows = sorted(
+            rows_by_product.get(pid, []), key=lambda r: shops[str(r.shop_id)].name or ""
+        )
+        for ovr in product_rows:
+            shop = shops[str(ovr.shop_id)]
+            listed = bool(ovr.is_listed)
+            company_id = availability.company_level_company_id(shop)
+            company_value = value_of(company_levels, company_id, product.id)
+            if str(company_id) not in seen_companies:
+                seen_companies.add(str(company_id))
+                if company_value is not None and company_value != bool(product.is_available):
+                    company = companies.get(str(company_id))
+                    found.append(
+                        AvailabilityException(
+                            level="company",
+                            id=company_id,
+                            name=company.name if company else None,
+                            value=company_value,
+                        )
+                    )
+            levels = availability.resolve_levels(product.is_available, company_value, ovr.is_available)
+            shop_effective = levels[Level.SHOP].available
+            summary.shop_count += 1
+            if listed and shop_effective:
+                summary.active_shop_count += 1
+            if ovr.is_available is not None and ovr.is_available != levels[Level.COMPANY].available:
+                found.append(
+                    AvailabilityException(
+                        level="shop", id=shop.id, name=shop.name, value=ovr.is_available
+                    )
+                )
+            for a in areas_by_shop.get(str(shop.id), []):
+                a_value = value_of(area_levels, a.id, product.id)
+                a_levels = availability.resolve_levels(
+                    product.is_available, company_value, ovr.is_available, area=a_value
+                )
+                summary.area_count += 1
+                if listed and a_levels[Level.AREA].available:
+                    summary.active_area_count += 1
+                if a_value is not None and a_value != shop_effective:
+                    found.append(
+                        AvailabilityException(
+                            level="area", id=a.id, name=a.name, shop_name=shop.name, value=a_value
+                        )
+                    )
+            for m in machines_by_shop.get(str(shop.id), []):
+                m_value = value_of(machine_levels, m.id, product.id)
+                m_levels = availability.resolve_levels(
+                    product.is_available, company_value, ovr.is_available, m_value,
+                    area=value_of(area_levels, m.area_id, product.id),
+                )
+                catalog_row = catalog_rows.get((str(m.id), pid))
+                in_catalog = machine_catalog.on_till(
+                    machine_catalog.mode_of(m),
+                    bool(catalog_row and catalog_row.is_included),
+                    general_item.is_general(product),
+                )
+                summary.machine_count += 1
+                if listed and in_catalog and m_levels[Level.MACHINE].available:
+                    summary.active_machine_count += 1
+                if m_value is not None and m_value != m_levels[Level.AREA].available:
+                    found.append(
+                        AvailabilityException(
+                            level="machine",
+                            id=m.id,
+                            name=m.name,
+                            shop_name=shop.name,
+                            pos_number=m.pos_number,
+                            value=m_value,
+                        )
+                    )
+        summary.company_count = len(seen_companies)
+        summary.exception_count = len(found)
+        # Locks first: "locked on till 4" is what the list has to say out loud.
+        found.sort(key=lambda e: e.value)
+        summary.exceptions = found[:_SUMMARY_EXCEPTIONS]
+        out.append(summary)
+
+    return AvailabilitySummaryResponse(items=out)
 
 
 # ── Setting a level ──────────────────────────────────────────────────────────
@@ -345,6 +603,40 @@ def set_shop_availability(
     db.commit()
     availability.notify_shop_change(db, shop.id)
     return AvailabilityWriteResponse(level="shop", value=body.is_available)
+
+
+@router.put(
+    "/{product_id}/availability/areas/{area_id}",
+    response_model=AvailabilityWriteResponse,
+)
+def set_area_availability(
+    product_id: str,
+    area_id: str,
+    body: AvailabilitySet,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """A point of sale's setting, for every till standing in it. Its shop must sell the product."""
+    product = _global_product_or_404(db, product_id, active_tenant_id)
+    area = db.query(ShopArea).filter(ShopArea.id == area_id).first()
+    if not area:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Area not found")
+    ensure_same_tenant(area.tenant_id, active_tenant_id)
+    shop = db.query(Shop).filter(Shop.id == area.shop_id).first()
+    if not shop:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
+    ensure_same_tenant(shop.tenant_id, active_tenant_id)
+    _check_shop_override_write(current_user, shop, db)
+    if _assortment_row(db, shop.id, product.id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Product not in shop assortment"
+        )
+
+    availability.set_area_availability(db, area.id, product.id, body.is_available)
+    db.commit()
+    availability.notify_area_change(db, area.id)
+    return AvailabilityWriteResponse(level="area", value=body.is_available)
 
 
 @router.put(

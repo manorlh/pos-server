@@ -30,6 +30,7 @@ import { WHOLE_DAY, daysBackIso, hourQueryParams, todayIso } from '@/lib/reportW
 import type { CashierSalesReport, CashierSalesRow } from '@/lib/types';
 import { ReportFilters, type ReportFiltersState } from '@/components/dashboard/report-filters';
 import { ReportStatCard } from '@/components/dashboard/report-stat-card';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 import {
   ReportErrorState,
   ReportWindowSummary,
@@ -156,6 +157,36 @@ export default function CashierSalesReportPage() {
           <ReportErrorState message={axiosErrorToToastMessage(error, tc('error'))} />
         ) : data ? (
           <div className="space-y-4">
+            <ReportExportToolbar
+              title={t('title')}
+              from={data.window.from}
+              to={data.window.to}
+              getSheets={() => ({
+                name: t('title'),
+                columns: [
+                  { header: t('col.cashier') },
+                  { header: t('col.workerNumber'), width: 10 },
+                  { header: t('col.documents'), kind: 'number' },
+                  { header: t('col.gross'), kind: 'money' },
+                  { header: t('col.discounts'), kind: 'money' },
+                  { header: t('col.refunds'), kind: 'money' },
+                  { header: t('col.net'), kind: 'money' },
+                  { header: t('col.cashNet'), kind: 'money' },
+                  { header: t('col.cardNet'), kind: 'money' },
+                  { header: t('col.otherNet'), kind: 'money' },
+                  { header: t('col.tips'), kind: 'money' },
+                ],
+                rows: data.rows.map((r) => [
+                  cashierLabel(r, t('unknownCashier')), r.workerNumber ?? null, r.documentCount,
+                  r.gross, r.discounts, r.refunds, r.net, r.cashNet, r.cardNet, r.otherNet, r.tips,
+                ]),
+                totals: [
+                  t('footerTotals'), null, data.totals.documentCount, data.totals.gross,
+                  data.totals.discounts, data.totals.refunds, data.totals.net, data.totals.cashNet,
+                  data.totals.cardNet, data.totals.otherNet, data.totals.tips,
+                ],
+              })}
+            />
             <ReportWindowSummary window={data.window} generatedAt={data.generatedAt} />
 
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
