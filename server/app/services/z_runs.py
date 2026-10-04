@@ -17,7 +17,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Dict, Iterable, List, Optional, Sequence, Set
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, joinedload
@@ -59,10 +59,66 @@ Z_SCOPE_SHOP = "shop"
 Z_SCOPE_MACHINE = "machine"
 
 
-def z_scope_of(tenant: Optional[Tenant]) -> str:
-    """The tenant's `zScope` setting: one Z per shop (default) or one till per Z."""
-    raw = ((tenant.settings or {}) if tenant is not None else {}).get("zScope")
-    return Z_SCOPE_MACHINE if raw == Z_SCOPE_MACHINE else Z_SCOPE_SHOP
+def _scope_in(layer: Any) -> Optional[str]:
+    settings = getattr(layer, "settings", None) if layer is not None else None
+    raw = settings.get("zScope") if isinstance(settings, dict) else None
+    return raw if raw in (Z_SCOPE_SHOP, Z_SCOPE_MACHINE) else None
+
+
+def z_scope_of(tenant: Optional[Tenant], shop: Optional[Shop] = None, area: Any = None) -> str:
+    """
+    `zScope` — "Z סניפי" (one Z for the shop's tills, the default) or "Z לכל קופה" (each
+    till its own Z). Set on the point of sale (area), else its shop, else the
+    organization's default: the first layer that says wins.
+    """
+    for layer in (area, shop, tenant):
+        found = _scope_in(layer)
+        if found is not None:
+            return found
+    return Z_SCOPE_SHOP
+
+
+def z_scope_of_machine(
+    db: Session, machine: POSMachine, tenant: Optional[Tenant] = None, shop: Optional[Shop] = None
+) -> str:
+    """The Z mode this till is under: its point of sale's, its shop's, its organization's."""
+    from app.models.shop_area import ShopArea
+
+    area = db.get(ShopArea, machine.area_id) if getattr(machine, "area_id", None) else None
+    if shop is None or str(shop.id) != str(machine.shop_id):
+        shop = db.get(Shop, machine.shop_id) if machine.shop_id else None
+    if tenant is None:
+        tenant = db.get(Tenant, machine.tenant_id) if machine.tenant_id else None
+    return z_scope_of(tenant, shop, area)
+
+
+def per_till_ids(
+    db: Session, machines: Sequence[POSMachine], tenant: Optional[Tenant], shop: Optional[Shop]
+) -> set:
+    """The tills among these that produce their own Z ("Z לכל קופה")."""
+    return {m.id for m in machines if z_scope_of_machine(db, m, tenant, shop) == Z_SCOPE_MACHINE}
+
+
+def tills_not_closed(db: Session, machines: Sequence[POSMachine]) -> List[dict]:
+    """
+    Of these tills, the ones a change of Z mode would cut through: an open shift, or
+    closed shifts no Z has taken yet. The mode changes only over a clean break — every
+    till closed and in a Z — so the first Z under the new mode starts from nothing.
+    """
+    out = []
+    for m in machines:
+        if m.shop_id is None:
+            continue
+        cand = till_candidates(db, m, m.shop_id)
+        if cand.open_shift is not None or cand.closed:
+            out.append({
+                "machineId": str(m.id),
+                "posNumber": m.pos_number,
+                "name": m.name,
+                "openShift": cand.open_shift is not None,
+                "awaitingZ": len(cand.closed),
+            })
+    return out
 
 
 # ── Candidates ────────────────────────────────────────────────────────────────
@@ -343,6 +399,7 @@ def tills_left_out(
     selections: Dict[uuid.UUID, MachineSelection],
     *,
     area=None,
+    own_z: Optional[set] = None,
 ) -> List[LeftOutTill]:
     """
     The tills of the shop this Z would leave something behind on: a selected till whose
@@ -351,11 +408,14 @@ def tills_left_out(
 
     Bounded the way the candidates are: an area's Z looks at that area's tills only, a
     distributor at their own terminals only. A till another run is already producing a
-    Z for is that run's business, not this one's.
+    Z for is that run's business, not this one's — and so is a till that produces its own
+    Z (`own_z`, "Z לכל קופה"): a shop Z never waits for it, nor does another till's Z.
     """
+    own_z = own_z or set()
     considered = [
         m for m in tills.values()
-        if area is None or (str(m.area_id) == str(area.id) and is_seated_in(m, shop.id))
+        if (area is None or (str(m.area_id) == str(area.id) and is_seated_in(m, shop.id)))
+        and (m.id in selections or m.id not in own_z)
     ]
     if user.role == UserRole.DISTRIBUTOR:
         considered = [m for m in considered if str(m.distributor_id) == str(user.id)]
@@ -385,7 +445,7 @@ def open_tills_rule(db: Session, tenant: Optional[Tenant], shop: Shop) -> Option
     A value that is neither option (one renamed since) reads as "confirm": the rule
     still holds, the gentler way.
     """
-    if z_scope_of(tenant) != Z_SCOPE_SHOP:
+    if z_scope_of(tenant, shop) != Z_SCOPE_SHOP:
         return None
     from app.services import till_parameters as TP
 
@@ -597,12 +657,20 @@ def create_z_run(
     if not selections:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no_machines")
     wanted = list(dict.fromkeys(sel.machine_id for sel in selections))
-    if z_scope_of(tenant) == Z_SCOPE_MACHINE and len(wanted) > 1:
+
+    tills = {m.id: m for m in shop_tills(db, shop.id)}
+    # "Z לכל קופה" (its point of sale's, its shop's or the organization's mode): such a
+    # till's Z is its own — never one Z for it and another till.
+    own_z = per_till_ids(db, list(tills.values()), tenant, shop)
+    if len(wanted) > 1 and any(machine_id in own_z for machine_id in wanted):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="z_scope_machine_one_till"
         )
-
-    tills = {m.id: m for m in shop_tills(db, shop.id)}
+    # A till's own Z leaves no other till behind: they are not part of it.
+    run_scope = Z_SCOPE_SHOP
+    if len(wanted) == 1 and wanted[0] in own_z:
+        run_scope = Z_SCOPE_MACHINE
+        own_z = set(tills) - {wanted[0]}
     for machine_id in wanted:
         if machine_id not in tills:
             raise HTTPException(
@@ -629,7 +697,7 @@ def create_z_run(
     refuse_z_with_open_tables(db, shop, area.id if area is not None else None)
 
     by_id = {sel.machine_id: sel for sel in selections}
-    left_out = tills_left_out(db, user, shop, tills, by_id, area=area)
+    left_out = tills_left_out(db, user, shop, tills, by_id, area=area, own_z=own_z)
     record_left_out = check_open_tills(db, tenant, shop, left_out, confirmed=confirm_open_tills)
 
     run = ZRun(
@@ -642,6 +710,7 @@ def create_z_run(
         business_date=business_date,
         expires_at=now + timedelta(hours=Z_RUN_TTL_HOURS),
         strict_cloud_check=bool(strict_cloud_check),
+        z_scope=run_scope,
     )
     db.add(run)
     db.flush()
@@ -991,6 +1060,7 @@ def finalise_if_ready(
             area_id=run.area_id,
             open_tills_left_out=open_tills_left_out(db, run),
             now=now,
+            per_till=getattr(run, "z_scope", None) == Z_SCOPE_MACHINE,
         )
         savepoint.commit()
     except ZBuildRefused as refused:
@@ -1346,7 +1416,7 @@ def run_to_out(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> dic
         from app.models.z_report import ZReport
 
         z = db.query(ZReport).filter(ZReport.id == run.z_report_id).first()
-        z_number = z.shop_sequence_number if z is not None else None
+        z_number = z.z_number if z is not None else None
     # Once built, the name the Z froze; until then, what the area is called now.
     area_name = None
     if run.area_id is not None:
@@ -1407,3 +1477,56 @@ def run_to_out(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> dic
             if not is_left_out_marker(i)
         ],
     }
+
+
+# ── "Z לכל קופה": the shift is the Z ─────────────────────────────────────────────
+
+
+class _OwnTillActor:
+    """The run's author when a till's own close produces its Z: the till's distributor."""
+
+    def __init__(self, machine: POSMachine):
+        self.id = machine.distributor_id
+        self.role = UserRole.SHOP_MANAGER
+        self.username = f"קופה {machine.pos_number}" if machine.pos_number else (machine.name or "קופה")
+        self.email = None
+
+
+def z_on_own_close(db: Session, machine: POSMachine, shift: Shift) -> Optional[ZRun]:
+    """
+    Under "Z לכל קופה" a till does not work by shifts: its accepted close *is* its Z. The
+    cloud starts the till's own run at once, so the Z is built — and numbered by the till's
+    own counter — as soon as the close is in, online or synced later from offline.
+
+    Never fails the close: anything that stops it (a run already under way, open tables,
+    nothing to report) is logged and the shift waits for the next Z like any other.
+    """
+    if shift.z_report_id is not None or machine.shop_id is None:
+        return None
+    try:
+        if z_scope_of_machine(db, machine) != Z_SCOPE_MACHINE:
+            return None
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.warning("till %s: its Z mode could not be read on close", machine.id, exc_info=True)
+        return None
+    if _live_items(db, [machine.id]):
+        return None  # a run is already taking this till (on_shift_close_accepted answers it)
+    shop = db.get(Shop, machine.shop_id)
+    tenant = db.get(Tenant, machine.tenant_id) if machine.tenant_id else None
+    if shop is None or tenant is None:
+        return None
+    savepoint = db.begin_nested()
+    try:
+        run = create_z_run(
+            db,
+            _OwnTillActor(machine),  # type: ignore[arg-type]
+            tenant,
+            shop,
+            [MachineSelection(machine_id=machine.id)],
+        )
+        savepoint.commit()
+        return run
+    except Exception:  # noqa: BLE001 - see the docstring
+        _rollback_savepoint(savepoint)
+        logger.warning("till %s: its own Z on close was not started", machine.id, exc_info=True)
+        return None

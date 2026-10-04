@@ -1336,12 +1336,14 @@ export interface ZCandidateMachine {
    * or moved away): it can be included, never asked to close.
    */
   inShop?: boolean;
+  /** "Z לכל קופה" for this till (its point of sale's or shop's mode): a Z of its own. */
+  ownZ?: boolean;
 }
 
 export interface ZCandidates {
   shopId: string;
   shopName?: string | null;
-  /** `machine` = the tenant's accountant wants one till per Z. */
+  /** `machine` = "Z לכל קופה" for the shop (or the point of sale asked for): one till per Z. */
   zScope: 'shop' | 'machine';
   /**
    * The shop's `shopZOpenTills` till parameter, for a shop Z that leaves tills with open
@@ -1465,6 +1467,9 @@ export interface ZReport {
    * What a bookkeeper quotes. Null only on a legacy Z from a terminal with no shop.
    */
   shopSequenceNumber?: number | null;
+  /** The number it is known by: the till's own under "Z לכל קופה" (`perTill`), else the shop's. */
+  zNumber?: number | null;
+  perTill?: boolean;
   /**
    * The area this Z was run for, or null for a whole-shop / hand-picked Z. The number
    * above is still the shop's — an area has no sequence of its own.

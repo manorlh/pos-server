@@ -36,7 +36,7 @@ from fastapi import BackgroundTasks, HTTPException
 from app.models.audit_exception import AuditException
 from app.models.pos_user import PosUser, PosUserRole
 from app.models.shop_area import ShopArea
-from app.models.tables import DiningTable, TableEvent, TableOrder
+from app.models.tables import DiningTable, TableEvent, TableOrder, TableZone
 from app.models.till_parameter import TillParameter, TillParameterValue
 from app.routers import tables as R
 from app.schemas.tables import (
@@ -687,6 +687,20 @@ class TestDashboard:
         R.archive_table(w.t[2].id, BackgroundTasks(), **ctx(w))
         assert w.db.get(DiningTable, w.t[2].id).archived_at is not None
 
+    def test_a_table_a_single_till_has_open_cannot_be_archived_either(self, w):
+        """Removed, it would vanish from the till with its order still open there."""
+        from datetime import timedelta
+        from decimal import Decimal
+
+        w.db.add(TableOrder(
+            id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=w.shop.id, table_id=w.t[3].id, zone_id=w.hall.id,
+            table_number=w.t[3].number, status="open", source="local", total=Decimal("10.00"),
+            opened_at=NOW - timedelta(minutes=5), updated_at=NOW,
+        ))
+        w.db.flush()
+        e = refused(R.archive_table, w.t[3].id, BackgroundTasks(), **ctx(w))
+        assert e.detail["code"] == "table_has_open_order"
+
     def test_a_shop_manager_of_another_shop_is_refused(self, w):
         from app.models.user import User, UserRole
 
@@ -735,6 +749,164 @@ class TestDashboard:
         assert out["cancellations"]["byReason"] == [{"reason": "לקוח עזב", "count": 1, "total": 98.0}]
         assert out["cancellations"]["byEmployee"][0]["employee"] == "דנה"
         assert out["cancellations"]["rows"][0]["approvedBy"] == "מנהלת רותי"
+
+    def test_the_waiters_report_and_handing_a_table_to_another_waiter(self, w):
+        # Dana opens and serves table 1; Avi opens table 2, then hands it to Dana's colleague Yossi.
+        enter(w, w.a, w.t[1], name="דנה")
+        o1 = uuid.uuid4()
+        save(w, w.a, w.t[1], o1, None, total="100", guests=4, name="דנה")
+        w.clock.advance(minutes=40)
+        pay(w, w.a, w.t[1], o1, 1, tx=f"tx-{o1}", total="100")
+
+        enter(w, w.a, w.t[2], name="אבי")
+        o2 = uuid.uuid4()
+        save(w, w.a, w.t[2], o2, None, total="60", guests=2, name="אבי")
+        tasks = BackgroundTasks()
+        body = TableSaveIn(
+            orderId=o2, expectedVersion=1, requestId=uuid.uuid4().hex, action="save", guests=2,
+            cartJson=cart("l1"), extrasJson=None, itemCount=1, total=Decimal("60"),
+            posUserId="pu-אבי", posUserName="אבי", waiterPosUserId="pu-יוסי", waiterPosUserName="יוסי",
+        )
+        out = R.save_table(str(w.a.id), w.t[2].id, body, tasks, machine=w.a, db=w.db)
+        assert (out["order"]["waiterPosUserId"], out["order"]["waiterName"]) == ("pu-יוסי", "יוסי")
+        pay(w, w.a, w.t[2], o2, 2, tx=f"tx-{o2}", total="60")
+
+        day = w.clock.now.date()
+        rep = R.tables_report(w.shop.id, day - timedelta(days=1), day + timedelta(days=1), **ctx(w))
+        by = {r["waiter"]: r for r in rep["byWaiter"]}
+        assert set(by) == {"דנה", "יוסי"}
+        assert (by["דנה"]["tables"], by["דנה"]["guests"], by["דנה"]["revenue"]) == (1, 4, 100.0)
+        assert (by["דנה"]["avgCheck"], by["דנה"]["avgPerGuest"], by["דנה"]["avgMinutes"]) == (100.0, 25.0, 40.0)
+        assert by["יוסי"]["revenue"] == 60.0
+        rows = [r for r in rep["waiterTables"] if r["waiter"] == "יוסי"]
+        assert [(r["tableNumber"], r["total"], r["status"]) for r in rows] == [(2, 60.0, "paid")]
+
+    def test_a_table_opened_by_a_number_on_no_map(self, w):
+        from app.schemas.tables import TableAdhocIn
+
+        def adhoc(n):
+            return R.adhoc_table(str(w.a.id), TableAdhocIn(number=n, posUserName="דנה"), BackgroundTasks(),
+                                 machine=w.a, db=w.db)
+
+        # A number on the map: that table.
+        out = adhoc(2)
+        assert (out["created"], out["table"]["id"]) == (False, str(w.t[2].id))
+        # A number on no map: made in "שולחנות מזדמנים", and every till sees it from then on.
+        out = adhoc(77)
+        assert out["created"] is True and out["table"]["number"] == 77
+        zone = w.db.get(TableZone, uuid.UUID(out["table"]["zoneId"]))
+        assert zone.name == T.ADHOC_ZONE_NAME and zone.layout == "grid"
+        assert any(t["number"] == 77 for t in R.get_tables_state(str(w.b.id), machine=w.b, db=w.db)["tables"])
+        # Again: the same table, and one zone for them all.
+        assert adhoc(77)["table"]["id"] == out["table"]["id"]
+        assert adhoc(78)["table"]["zoneId"] == out["table"]["zoneId"]
+        # It is a table like any other: opened and saved.
+        tid = uuid.UUID(out["table"]["id"])
+        table = w.db.get(DiningTable, tid)
+        enter(w, w.a, table)
+        save(w, w.a, table, uuid.uuid4(), None)
+
+    def test_items_moved_to_another_table_both_or_neither(self, w):
+        from app.schemas.tables import TableTransferIn
+
+        enter(w, w.a, w.t[1])
+        src = uuid.uuid4()
+        save(w, w.a, w.t[1], src, None, lines=("l1", "l2"), total="80")
+        # The till enters the target to read it (free), then moves l2 there.
+        enter(w, w.a, w.t[2])
+        dst = uuid.uuid4()
+
+        def transfer(src_version, target_version, src_lines, request=None):
+            body = TableTransferIn(
+                orderId=src, expectedVersion=src_version, requestId=request or uuid.uuid4().hex,
+                cartJson=cart(*src_lines), extrasJson=None, itemCount=len(src_lines), total=Decimal("30"),
+                targetTableId=w.t[2].id, targetOrderId=dst, targetExpectedVersion=target_version,
+                targetCartJson=cart("l2"), targetExtrasJson=None, targetItemCount=1, targetTotal=Decimal("50"),
+                posUserId="pu-דנה", posUserName="דנה",
+            )
+            return R.transfer_items(str(w.a.id), w.t[1].id, body, BackgroundTasks(), machine=w.a, db=w.db)
+
+        out = transfer(1, None, ("l1",))
+        assert out["order"]["version"] == 2 and out["target"]["total"] == 50.0
+        there = w.db.get(TableOrder, dst)
+        assert there.status == "open" and there.table_id == w.t[2].id
+        # The target is let go; the source stays this till's.
+        assert w.db.get(DiningTable, w.t[2].id).lock_machine_id is None
+        assert w.db.get(DiningTable, w.t[1].id).lock_machine_id == w.a.id
+        # A stale target is refused, and nothing is written.
+        enter(w, w.a, w.t[2])
+        e = refused(transfer, 2, None, ("l1",))
+        assert e.detail["code"] == "table_target_changed"
+        assert w.db.get(TableOrder, src).version == 2
+        # Everything moved: the source closes as merged into the target.
+        enter(w, w.a, w.t[2])
+        transfer(2, 1, ())
+        gone = w.db.get(TableOrder, src)
+        assert (gone.status, gone.merged_into_id) == ("merged", dst)
+
+    def test_reservations_from_the_dashboard_and_the_till(self, w):
+        from app.schemas.tables import ReservationIn, ReservationStatusIn, ReservationUpdate
+
+        at = w.clock.now + timedelta(hours=2)
+        made = R.create_reservation(
+            ReservationIn(shopId=w.shop.id, tableId=w.t[3].id, reservedAt=at, guests=4, customerName="כהן",
+                          phone="050-1234567"),
+            BackgroundTasks(), **ctx(w),
+        )
+        assert (made["tableId"], made["status"], made["guests"]) == (str(w.t[3].id), "booked", 4)
+        # The same table over the same time: refused.
+        e = refused(
+            R.create_reservation,
+            ReservationIn(shopId=w.shop.id, tableId=w.t[3].id, reservedAt=at + timedelta(minutes=30), customerName="לוי"),
+            BackgroundTasks(), **ctx(w),
+        )
+        assert e.detail["code"] == "reservation_overlap"
+        # A till takes one with no table; both show on the tills.
+        R.till_create_reservation(
+            str(w.a.id), ReservationIn(reservedAt=at + timedelta(minutes=20), customerName="ישראלי", guests=2),
+            BackgroundTasks(), machine=w.a, db=w.db,
+        )
+        state = R.get_tables_state(str(w.b.id), machine=w.b, db=w.db)
+        assert [r["customerName"] for r in state["reservations"]] == ["כהן", "ישראלי"]
+        # The day's list in the dashboard, and moving one.
+        from zoneinfo import ZoneInfo
+
+        day = R.list_reservations(w.shop.id, at.astimezone(ZoneInfo("Asia/Jerusalem")).date(), **ctx(w))
+        assert len(day) == 2 and day[0]["tableNumber"] == 3
+        R.update_reservation(uuid.UUID(made["id"]), ReservationUpdate(guests=6), BackgroundTasks(),
+                             shop_id=w.shop.id, **ctx(w))
+        # They came: seated, and off the tills' list.
+        R.till_reservation_status(str(w.a.id), uuid.UUID(made["id"]), ReservationStatusIn(status="seated"),
+                                  BackgroundTasks(), machine=w.a, db=w.db)
+        state = R.get_tables_state(str(w.b.id), machine=w.b, db=w.db)
+        assert [r["customerName"] for r in state["reservations"]] == ["ישראלי"]
+
+    def test_a_part_paid_is_never_refused_and_always_recorded(self, w):
+        from app.schemas.tables import TablePartPayIn
+
+        enter(w, w.a, w.t[1])
+        oid = uuid.uuid4()
+        save(w, w.a, w.t[1], oid, None, lines=("l1", "l2"), total="80")
+
+        def part(version, tx, lines=("l2",)):
+            body = TablePartPayIn(
+                orderId=oid, expectedVersion=version, requestId=uuid.uuid4().hex, transactionId=tx,
+                transactionNumber="9", amount=Decimal("30"), cartJson=cart(*lines),
+                extrasJson=json.dumps({"partials": [{"tx": tx, "no": "9", "amount": 3000}]}),
+                itemCount=len(lines), total=Decimal("50"), posUserId="pu-דנה", posUserName="דנה",
+            )
+            return R.pay_part(str(w.a.id), w.t[1].id, body, BackgroundTasks(), machine=w.a, db=w.db)
+
+        out = part(1, "tx-a")
+        assert out["conflict"] is False and out["order"]["version"] == 2 and out["order"]["total"] == 50.0
+        # The same sale again: answered, nothing changes.
+        assert part(2, "tx-a")["replayed"] is True
+        # On a stale version: still recorded, flagged for a manager.
+        out = part(1, "tx-b")
+        assert out["conflict"] is True
+        order = w.db.get(TableOrder, oid)
+        assert order.pay_conflict is True
+        assert [p["tx"] for p in json.loads(order.extras_json)["partials"]] == ["tx-a", "tx-b"]
 
     def test_the_report_range_is_checked(self, w):
         assert refused(R.tables_report, w.shop.id, date(2026, 9, 2), date(2026, 9, 1), **ctx(w)).status_code == 400

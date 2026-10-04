@@ -454,11 +454,11 @@ def build_print_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] =
 
     footer = _footer_notes(z)
     footer.append(f"הודפס {stamp(printed_at or datetime.now(timezone.utc), tzinfo)}")
-    footer.append(f"סוף {TITLE}" + (f" #{z.shop_sequence_number}" if z.shop_sequence_number is not None else ""))
+    footer.append(f"סוף {TITLE}" + (f" #{z.z_number}" if z.z_number is not None else ""))
 
     return {
         "title": TITLE,
-        "number": z.shop_sequence_number,
+        "number": z.z_number,
         "businessName": header.get("businessName") or shop_name or DASH,
         "subtitle": subtitle,
         "sections": sections,
@@ -554,10 +554,10 @@ def build_summary_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime]
     if lines:
         footer.append("פירוט מלא לכל קופה — בהדפסה נפרדת")
     footer.append(f"הודפס {stamp(printed_at or datetime.now(timezone.utc), tzinfo)}")
-    footer.append(f"סוף סיכום {TITLE}" + (f" #{z.shop_sequence_number}" if z.shop_sequence_number is not None else ""))
+    footer.append(f"סוף סיכום {TITLE}" + (f" #{z.z_number}" if z.z_number is not None else ""))
     return {
         "title": TITLE,
-        "number": z.shop_sequence_number,
+        "number": z.z_number,
         "businessName": _business_name(z),
         "subtitle": ["סיכום סניף", *_subtitle(z, tzinfo)],
         "sections": sections,
@@ -632,11 +632,11 @@ def build_till_document(
     if int(s.get("unattendedShiftCount") or 0):
         footer.append("כולל משמרת שנסגרה מרחוק")
     footer.append(f"הודפס {stamp(printed_at or datetime.now(timezone.utc), tzinfo)}")
-    number = f" · {TITLE} #{z.shop_sequence_number}" if z.shop_sequence_number is not None else ""
+    number = f" · {TITLE} #{z.z_number}" if z.z_number is not None else ""
     footer.append(f"סוף פירוט {title}{number}")
     return {
         "title": TITLE,
-        "number": z.shop_sequence_number,
+        "number": z.z_number,
         "businessName": _business_name(z),
         "subtitle": [f"פירוט {title}", *_subtitle(z, tzinfo)],
         "sections": sections,
@@ -649,7 +649,7 @@ def list_item(z: ZReport, tzinfo) -> Dict[str, Any]:
     produced = _local(z.closed_at, tzinfo)
     return {
         "id": str(z.id),
-        "number": z.shop_sequence_number,
+        "number": z.z_number,
         "businessDate": z.business_date.isoformat() if z.business_date else None,
         "productionDate": produced.date().isoformat() if produced is not None else None,
         "producedAt": produced.isoformat() if produced is not None else None,

@@ -1212,6 +1212,11 @@ def post_shift_close(
         from app.services.exceptions import detect_safely, detect_shift_close
 
         detect_safely(db, detect_shift_close, shift.id)
+        # "Z לכל קופה": the close is the till's Z — built now, its number in this answer.
+        from app.services.z_runs import z_on_own_close
+
+        if z_on_own_close(db, machine, shift) is not None:
+            db.commit()
     db.refresh(shift)
 
     return ShiftCloseResponse(

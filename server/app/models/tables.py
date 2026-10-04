@@ -172,6 +172,10 @@ class TableOrder(Base):
     opened_machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id", ondelete="SET NULL"), nullable=True)
     opened_by_pos_user_id = Column(String(100), nullable=True)
     opened_by_pos_user_name = Column(String(200), nullable=True)
+    #: The waiter the table is theirs ("מלצר"): whoever opened it, unless it was handed to
+    #: another waiter since. The waiters' reports go by it.
+    waiter_pos_user_id = Column(String(100), nullable=True)
+    waiter_pos_user_name = Column(String(200), nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_machine_id = Column(UUID(as_uuid=True), nullable=True)
     updated_by_pos_user_id = Column(String(100), nullable=True)
@@ -238,3 +242,28 @@ class TableCancelReason(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
 
+class TableReservation(Base):
+    """
+    "הזמנת שולחן": a booking — a time, a party (name, phone, guests, a note), and the table
+    when one is set aside for it (or none yet). booked → seated (they came), cancelled, or
+    no_show. Made in the dashboard or on a till; the tills show the day's on the tables.
+    """
+
+    __tablename__ = "table_reservations"
+    __table_args__ = (Index("ix_table_reservations_shop_time", "shop_id", "reserved_at"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
+    table_id = Column(UUID(as_uuid=True), ForeignKey("dining_tables.id", ondelete="SET NULL"), nullable=True)
+    reserved_at = Column(DateTime(timezone=True), nullable=False)
+    duration_minutes = Column(Integer, nullable=False, default=90, server_default="90")
+    guests = Column(Integer, nullable=True)
+    customer_name = Column(String(120), nullable=False)
+    phone = Column(String(40), nullable=True)
+    notes = Column(String(300), nullable=True)
+    #: booked | seated | cancelled | no_show
+    status = Column(String(16), nullable=False, default="booked", server_default="booked")
+    created_by_name = Column(String(200), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

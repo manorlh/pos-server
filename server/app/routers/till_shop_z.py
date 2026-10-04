@@ -1,5 +1,10 @@
 """
-Shop Z from a master till (Z סניפי מקופה ראשית).
+Shop Z from a master till (Z סניפי מקופה ראשית) — and a till's own Z (Z לכל קופה).
+
+The Z mode ("zScope") is set on the shop, or on a point of sale (area) of it, else the
+organization's default (`app.services.z_runs.z_scope_of_machine`). A till under "Z לכל
+קופה" uses these same endpoints for itself alone, from any till, master or not; a shop Z
+takes only the tills under "Z סניפי".
 
 A till the cloud marks as the shop's master (`shopZMasterTill` in פרמטרים לקופות) shows
 "סגירת Z סניפי": every till of its shop and its state, one command that closes them all
@@ -113,13 +118,34 @@ def _stamp_confirmer(run: ZRun, operator: str) -> None:
             item.error_message = json.dumps(data, ensure_ascii=False)
 
 
-def _live_run(db: Session, shop_id: uuid.UUID) -> Optional[ZRun]:
-    return (
+def _live_run(db: Session, shop_id: uuid.UUID, machine_ids: Optional[set] = None) -> Optional[ZRun]:
+    """The run under way for these tills — any of the shop's, or (`machine_ids`) one of theirs."""
+    runs = (
         db.query(ZRun)
         .filter(ZRun.shop_id == shop_id, ZRun.status.in_([ZRunStatus.WAITING, ZRunStatus.BUILDING]))
         .order_by(ZRun.created_at.desc())
-        .first()
+        .all()
     )
+    for run in runs:
+        if machine_ids is None or any(
+            i.machine_id in machine_ids and not ZR.is_left_out_marker(i) for i in run.items
+        ):
+            return run
+    return None
+
+
+def _scope(db: Session, machine: POSMachine, shop: Shop, tenant: Optional[Tenant]):
+    """
+    This till's Z mode and the tills its Z is for: "machine" ("Z לכל קופה") — itself
+    alone, on any till; "shop" ("Z סניפי") — the shop's tills that are not on a Z of their
+    own, from the master till only.
+    """
+    shop_machines = ZR.shop_tills(db, shop.id)
+    own_z = ZR.per_till_ids(db, shop_machines, tenant, shop)
+    if machine.id in own_z:
+        return ZR.Z_SCOPE_MACHINE, [machine]
+    _require_master(db, machine)
+    return ZR.Z_SCOPE_SHOP, [m for m in shop_machines if m.id not in own_z]
 
 
 @router.get("/sync/{machine_id}/shop-z")
@@ -129,16 +155,15 @@ def till_shop_z_status(
     db: Session = Depends(get_db),
 ):
     machine = _machine(machine_id, machine)
-    _require_master(db, machine)
     ZR.expire_overdue_runs(db)
     shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
     tenant = db.query(Tenant).filter(Tenant.id == machine.tenant_id).first()
+    scope, shop_machines = _scope(db, machine, shop, tenant)
     now = datetime.now(timezone.utc)
     # The screen is open: the shop's tills beat fast until shortly after it closes, so the
     # close this screen sends reaches them in seconds even without realtime.
     ZR.note_shop_z_screen(machine, now=now)
     tills = []
-    shop_machines = ZR.shop_tills(db, shop.id)
     # No Z on nothing ("אל תאפשר לסגור Z על 0"): what a Z now could report, so the master
     # offers the start only when there is something to close. The start refuses it too.
     activity = ZR.shop_activity(db, shop.id, shop_machines)
@@ -159,7 +184,7 @@ def till_shop_z_status(
             },
             "closedWaiting": len(cand.closed),
         })
-    live = _live_run(db, shop.id)
+    live = _live_run(db, shop.id, {m.id for m in shop_machines})
     if live is not None and live.status == ZRunStatus.WAITING:
         # A till that was waiting for its transactions is looked at again on every poll.
         ZR.finalise_if_ready(db, live, now=now)
@@ -167,7 +192,9 @@ def till_shop_z_status(
     return {
         "shopId": str(shop.id),
         "shopName": shop.name,
-        "rule": ZR.open_tills_rule(db, tenant, shop),
+        # "shop" (Z סניפי, from the master) or "machine" (Z לכל קופה, this till alone).
+        "zScope": scope,
+        "rule": ZR.open_tills_rule(db, tenant, shop) if scope == ZR.Z_SCOPE_SHOP else None,
         "serverTime": now.isoformat(),
         "activity": activity,
         "tills": tills,
@@ -188,11 +215,11 @@ def till_shop_z_start(
     dashboard; the till asks the operator to type "סגור" and sends `confirmOpenTills`.
     """
     machine = _machine(machine_id, machine)
-    _require_master(db, machine)
     shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
     tenant = db.query(Tenant).filter(Tenant.id == machine.tenant_id).first()
     operator = _operator(machine, body.pos_user_name)
-    selections = [ZR.MachineSelection(machine_id=m.id) for m in ZR.shop_tills(db, shop.id)]
+    _, shop_machines = _scope(db, machine, shop, tenant)
+    selections = [ZR.MachineSelection(machine_id=m.id) for m in shop_machines]
     ZR.note_shop_z_screen(machine)
     run = ZR.create_z_run(
         db,
@@ -211,9 +238,16 @@ def till_shop_z_start(
 
 
 def _own_run(db: Session, machine: POSMachine, run_id: uuid.UUID) -> ZRun:
+    """
+    A run this till may follow: its own Z ("Z לכל קופה" — the run is for it alone), or,
+    on the shop's master till, any of the shop's.
+    """
     run = ZR.get_run(db, run_id, machine.tenant_id)
     if run is None or run.shop_id != machine.shop_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run_not_found")
+    tills = {i.machine_id for i in run.items if not ZR.is_left_out_marker(i)}
+    if tills != {machine.id}:
+        _require_master(db, machine)
     return run
 
 
@@ -225,7 +259,6 @@ def till_shop_z_run(
     db: Session = Depends(get_db),
 ):
     machine = _machine(machine_id, machine)
-    _require_master(db, machine)
     ZR.expire_overdue_runs(db)
     run = _own_run(db, machine, run_id)
     ZR.note_shop_z_screen(machine)
@@ -251,7 +284,6 @@ def till_shop_z_proceed(
     Each such till is noted with who decided, on the run and on the Z itself.
     """
     machine = _machine(machine_id, machine)
-    _require_master(db, machine)
     run = _own_run(db, machine, run_id)
     operator = _operator(machine, body.pos_user_name)
     strict = bool(getattr(run, "strict_cloud_check", False))

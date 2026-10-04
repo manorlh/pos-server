@@ -337,7 +337,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
   const areaName = z.business?.areaName ?? z.areaName ?? null;
   const shiftsOf = (machineId: string) => z.shifts.filter((s) => s.machineId === machineId);
 
-  const title = zPrintTitle([z.shopSequenceNumber]);
+  const title = zPrintTitle([(z.zNumber ?? z.shopSequenceNumber)]);
   const print = (pdf = false) => {
     if (pdf) toast.info(tp('pdfHint'));
     if (view === 'till') {
@@ -364,8 +364,8 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
             <div className="flex flex-wrap items-center gap-1">
               <FileBarChart className="h-5 w-5 text-muted-foreground me-1" aria-hidden />
               <h1 className="text-2xl font-bold">
-                {z.shopSequenceNumber != null
-                  ? t('detailsNumbered', { number: z.shopSequenceNumber })
+                {(z.zNumber ?? z.shopSequenceNumber) != null
+                  ? t('detailsNumbered', { number: z.zNumber ?? z.shopSequenceNumber ?? 0 })
                   : t('details')}
               </h1>
               <ZBadges z={z} />

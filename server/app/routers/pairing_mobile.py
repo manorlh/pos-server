@@ -28,6 +28,7 @@ from app.schemas.pairing_mobile import (
     PairingSessionCreateResponse,
     PairingSessionSummary,
 )
+from app.services import access
 from app.services.pairing_mobile import (
     PairingMobileError,
     build_mobile_url,
@@ -54,6 +55,8 @@ def create_session(
     db: Session = Depends(get_db),
 ):
     """Start a 12h field-install session; scan resulting QR on distributor phone."""
+    # "הוספת מכשירים": the super admin may have taken it from this role (app/services/access.py).
+    access.require_feature(db, current_user, access.PAIR_DEVICES)
     session, token = create_pairing_session(db, current_user, active_tenant_id)
     return PairingSessionCreateResponse(
         session_id=session.id,
@@ -70,6 +73,8 @@ def list_active_sessions(
     active_tenant_id: uuid_mod.UUID = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    # "הוספת מכשירים": the super admin may have taken it from this role (app/services/access.py).
+    access.require_feature(db, current_user, access.PAIR_DEVICES)
     rows = list_active_pairing_sessions(db, current_user.id, active_tenant_id)
     return rows
 
@@ -81,6 +86,8 @@ def revoke_session(
     active_tenant_id: uuid_mod.UUID = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    # "הוספת מכשירים": the super admin may have taken it from this role (app/services/access.py).
+    access.require_feature(db, current_user, access.PAIR_DEVICES)
     try:
         sid = uuid_mod.UUID(str(session_id))
     except ValueError as exc:

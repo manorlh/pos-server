@@ -132,6 +132,9 @@ class ZCandidateMachineOut(BaseModel):
     #: The till's area now (not its shifts' stamps).
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
     area_name: Optional[str] = Field(None, alias="areaName")
+    #: "Z לכל קופה" for this till (its point of sale's, shop's or organization's mode): it
+    #: gets a Z of its own, never one shared with another till.
+    own_z: bool = Field(False, alias="ownZ")
 
 
 class ZCandidatesOut(BaseModel):

@@ -131,6 +131,8 @@ def get_z_candidates(
     pending_close = close_shift_pending_machine_ids(db, ids)
     awaiting = _awaiting_z_by_machine(db, ids)
     timezones = _tenant_timezones(db, tills)
+    tenant = _tenant(db, active_tenant_id)
+    own_z = ZR.per_till_ids(db, tills, tenant, shop)
     machines = []
     for machine in tills:
         cand = ZR.till_candidates(db, machine, shop.id)
@@ -182,15 +184,16 @@ def get_z_candidates(
                 is_active=bool(machine.is_active),
                 area_id=machine.area_id,
                 area_name=machine.area_name,
+                own_z=machine.id in own_z,
             )
         )
-    tenant = _tenant(db, active_tenant_id)
     return ZCandidatesOut(
         shop_id=shop.id,
         shop_name=shop.name,
         area_id=area.id if area is not None else None,
         area_name=area.name if area is not None else None,
-        z_scope=ZR.z_scope_of(tenant),
+        # The mode of what was asked for: the point of sale's when one is, else the shop's.
+        z_scope=ZR.z_scope_of(tenant, shop, area),
         open_tills_rule=ZR.open_tills_rule(db, tenant, shop),
         machines=machines,
     )

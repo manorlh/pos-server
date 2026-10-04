@@ -57,11 +57,11 @@ export function EntityPosSettingsDialog({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [paymentOptionsRejected, setPaymentOptionsRejected] = useState(false);
-  // Only a distributor or super admin may change the Z scope (the server's
-  // Z_SCOPE_WRITE_ROLES, the branding roles); everyone else sees it read-only.
+  // Only the super admin may change the Z mode (the server's Z_SCOPE_WRITE_ROLES);
+  // everyone else sees it read-only. The shop's and its points of sale's are on the
+  // shop page (ZScopeCard).
   const { user, authHydrated } = useAuth();
-  const canChangeZScope =
-    authHydrated && (user?.role === 'super_admin' || user?.role === 'distributor');
+  const canChangeZScope = authHydrated && user?.role === 'super_admin';
 
   useEffect(() => {
     if (!open || !entityId) return;
@@ -124,8 +124,9 @@ export function EntityPosSettingsDialog({
     const patch = { ...value };
     delete patch.tipsEnabled;
     delete patch.cashTipsEnabled;
-    // Never sent by someone who may not change it: the stored value stays as it is.
-    if (!canChangeZScope) delete patch.zScope;
+    // Never sent by someone who may not change it, nor from below the organization —
+    // a shop's own mode is changed on its page (ZScopeCard), over a clean break.
+    if (!canChangeZScope || level !== 'tenant') delete patch.zScope;
     setSaving(true);
     try {
       if (level === 'tenant') await patchTenantSettings(entityId, patch);

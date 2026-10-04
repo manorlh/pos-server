@@ -44,7 +44,7 @@ def _scoped(db: Session, user: User, tenant_id):
 def _out(shift: Shift, **kw) -> ShiftOut:
     return shift_to_out(
         shift,
-        z_number=shift.z_report.shop_sequence_number if shift.z_report is not None else None,
+        z_number=shift.z_report.z_number if shift.z_report is not None else None,
         machine_name=shift.machine.name if shift.machine is not None else None,
         shop_name=shift.shop.name if shift.shop is not None else None,
         **kw,

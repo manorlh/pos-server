@@ -48,7 +48,11 @@ from app.models.shop_area import ShopArea
 from app.services.offline_authorizations import offline_block
 from app.services.transmissions import period_block
 from app.services.z_header import snapshot_header
-from app.services.z_sequence import allocate_shop_z_number, ensure_shop_z_sequence
+from app.services.z_sequence import (
+    allocate_machine_z_number,
+    allocate_shop_z_number,
+    ensure_shop_z_sequence,
+)
 
 ZERO = Decimal("0")
 
@@ -350,6 +354,7 @@ def build_z(
     area_id: Optional[uuid.UUID] = None,
     open_tills_left_out: Optional[dict] = None,
     now: Optional[datetime] = None,
+    per_till: bool = False,
 ) -> ZReport:
     """
     Build and write one Z over `selections` — (till, through shift id) pairs of one shop.
@@ -363,7 +368,12 @@ def build_z(
     `open_tills_left_out` (`app.services.z_runs.open_tills_left_out`): the tills the
     operator confirmed producing this shop Z without, and who confirmed it. Frozen into
     the header as `openTillsLeftOut`, so the Z itself says what it does not cover.
+
+    `per_till` ("Z לכל קופה"): the Z of one till alone. It is that till's (`machine_id`)
+    and takes the till's own number (`machine_sequence_number`), not the shop's.
     """
+    if per_till and len(selections) != 1:
+        raise ZBuildRefused("per_till_one_till", "A till's own Z is for that till alone.")
     if shop_id is None:
         raise ZBuildRefused("no_shop", "A Z is per shop; this run has none.")
     if not selections:
@@ -413,7 +423,7 @@ def build_z(
     z = ZReport(
         id=uuid.uuid4(),
         tenant_id=tenant_id,
-        machine_id=None,
+        machine_id=per_machine[0][0].id if per_till else None,
         shop_id=shop_id,
         z_run_id=z_run_id,
         created_by_user_id=created_by_user_id,
@@ -449,8 +459,13 @@ def build_z(
             area=db.query(ShopArea).filter(ShopArea.id == area_id).first() if area_id else None,
             now=now,
         ),
-        shop_sequence_number=allocate_shop_z_number(db, shop_id),
+        shop_sequence_number=None if per_till else allocate_shop_z_number(db, shop_id),
+        machine_sequence_number=(
+            allocate_machine_z_number(db, per_machine[0][0].id) if per_till else None
+        ),
     )
+    if per_till and z.header is not None:
+        z.header = {**z.header, "zScope": "machine"}
     if open_tills_left_out and z.header is not None:
         z.header = {**z.header, "openTillsLeftOut": open_tills_left_out}
     # Item discounts have no column of their own: frozen on the header, beside the

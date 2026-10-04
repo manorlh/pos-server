@@ -52,6 +52,7 @@ import {
   Receipt,
   Scale,
   ShieldAlert,
+  ShieldCheck,
   SlidersHorizontal,
   SlidersVertical,
   Sparkles,
@@ -264,6 +265,13 @@ export const NAV_SECTIONS: NavSection[] = [
         href: '/dashboard/till-parameters',
         labelKey: 'tillParameters',
         icon: SlidersHorizontal,
+        gate: 'superAdmin',
+      },
+      // "הרשאות": which entries and device actions each role is denied — the super admin's.
+      {
+        href: '/dashboard/access-settings',
+        labelKey: 'accessSettings',
+        icon: ShieldCheck,
         gate: 'superAdmin',
       },
       // Uploading the till app and sending it out is the super admin's alone.

@@ -105,6 +105,9 @@ def z_to_out(z: ZReport, cls=ZReportOut, tzinfo=None):
         item.offline_declined_count = offline["declined_count"]
         item.offline_declined_amount = offline["declined_amount"]
     item.machine_name = z.machine.name if z.machine_id and z.machine else None
+    if z.per_till and z.machine is not None and z.machine.pos_number:
+        # A till's own Z is named by its register: "קופה 2".
+        item.machine_name = f"קופה {z.machine.pos_number}"
     item.shop_name = z.shop.name if z.shop else None
     item.shop_number = z.shop.shop_number if z.shop else None
     # The frozen name, never the area's name today: a Z keeps what it was filed as.
@@ -351,7 +354,7 @@ def get_z_print_documents(
         "items": [
             {
                 "id": str(z.id),
-                "number": z.shop_sequence_number,
+                "number": z.z_number,
                 "shopId": str(z.shop_id) if z.shop_id else None,
                 "document": z_print.build_print_document(z, tzinfo, printed_at=printed_at),
             }
@@ -434,7 +437,7 @@ def get_z_report(
     out.shifts = [
         shift_to_out(
             s,
-            z_number=z.shop_sequence_number,
+            z_number=z.z_number,
             machine_name=s.machine.name if s.machine else None,
         )
         for s in shifts

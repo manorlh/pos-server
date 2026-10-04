@@ -235,8 +235,8 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
 
       <div className="mt-3 flex items-baseline justify-between">
         <h1 className="text-lg font-bold">
-          {z.shopSequenceNumber != null
-            ? tz('detailsNumbered', { number: z.shopSequenceNumber })
+          {(z.zNumber ?? z.shopSequenceNumber) != null
+            ? tz('detailsNumbered', { number: z.zNumber ?? z.shopSequenceNumber ?? 0 })
             : tz('details')}
         </h1>
         <span>{t('businessDate', { date: formatDate(z.businessDate) })}</span>

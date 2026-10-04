@@ -496,7 +496,8 @@ def recent_shift_zs(
     """
     now = now or datetime.now(timezone.utc)
     rows = (
-        db.query(Shift.id, ZReport.id, ZReport.shop_sequence_number)
+        # A till's own Z number ("Z לכל קופה") when it has one, else the shop's.
+        db.query(Shift.id, ZReport.id, func.coalesce(ZReport.machine_sequence_number, ZReport.shop_sequence_number))
         .join(ZReport, ZReport.id == Shift.z_report_id)
         .filter(Shift.machine_id == machine_id, ZReport.closed_at >= now - timedelta(days=days))
         .order_by(ZReport.closed_at.desc(), Shift.sequence_number.desc())
@@ -810,7 +811,7 @@ def z_number_of(db: Session, shift: Shift) -> Optional[int]:
     z = getattr(shift, "z_report", None)
     if z is None:
         z = db.query(ZReport).filter(ZReport.id == shift.z_report_id).first()
-    return z.shop_sequence_number if z is not None else None
+    return z.z_number if z is not None else None
 
 
 def _stamped_area_name(shift: Shift) -> Optional[str]:

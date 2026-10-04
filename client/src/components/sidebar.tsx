@@ -9,6 +9,7 @@ import { useClerk, useUser } from '@clerk/nextjs';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { useCanProduceZ } from '@/lib/zAccess';
+import { useRoleAccess } from '@/lib/accessApi';
 import { useScopeQuery } from '@/lib/scope';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
@@ -154,6 +155,7 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
   // Till parameters are global definitions; the server takes them from a super admin only.
   const isSuperAdmin = authHydrated && internalUser?.role === 'super_admin';
   const activeTenant = tenants.find((x) => x.id === activeTenantId) ?? null;
+  const roleAccess = useRoleAccess();
   // Payment methods: whoever may write settings at some level — the server decides per
   // level (company managers and up for a company; shop managers for their shop, its
   // points of sale and tills). Cashiers and shift supervisors write none.
@@ -167,6 +169,8 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
   // Same three gates as before, now expressed once and applied to the grouped
   // table in lib/navigation. Nobody gains an entry they did not already have.
   const allows = (item: NavItem): boolean => {
+    // "הרשאות": an entry the super admin hid from this role.
+    if (roleAccess.hidden.has(item.href)) return false;
     if (item.gate === 'canReadUsers') return canReadUsers;
     if (item.gate === 'canManagePosUsers') return canManagePosUsers;
     if (item.gate === 'branding') return canManageBranding;
@@ -184,7 +188,7 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
       })).filter((section) => section.items.length > 0),
     // `allows` closes over the three capability flags; recompute when they change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [canReadUsers, canManagePosUsers, canManageBranding, isSuperAdmin, canWriteSettings],
+    [canReadUsers, canManagePosUsers, canManageBranding, isSuperAdmin, canWriteSettings, roleAccess.hidden],
   );
 
   const activeEntry = findNavEntry(pathname);

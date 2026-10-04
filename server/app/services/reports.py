@@ -1348,7 +1348,7 @@ def _contributors_of(z: ZReport) -> List[DaySummaryContributor]:
     """
     common = dict(
         z_report_id=z.id,
-        shop_sequence_number=z.shop_sequence_number,
+        shop_sequence_number=getattr(z, "z_number", None) or z.shop_sequence_number,
         shop_id=z.shop_id,
         shop_name=z.shop.name if z.shop else None,
         closed_at=z.closed_at,

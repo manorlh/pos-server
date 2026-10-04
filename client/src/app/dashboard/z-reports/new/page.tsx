@@ -226,7 +226,11 @@ function ProduceZ() {
     .map((q) => q.data)
     .filter((c): c is ZCandidates => !!c);
 
-  /** One request body per run: per shop, or per till when the tenant wants one till per Z. */
+  /**
+   * One request body per run: per shop ("Z סניפי"), or per till under "Z לכל קופה" — the
+   * shop's or point of sale's mode (`zScope`), or the till's own (`ownZ`) in a mixed shop.
+   * Selecting all of a shop's tills therefore closes every one of them, each into its own Z.
+   */
   const plannedRuns: PlannedRun[] = loaded.flatMap((c) => {
     const sels = selectionsFor(c);
     const machines = c.machines
@@ -235,15 +239,17 @@ function ProduceZ() {
     if (machines.length === 0) return [];
     const areaId = areaByShop[c.shopId];
     const area = areaId ? { areaId } : {};
-    if (c.zScope === 'machine') {
-      return machines.map(({ m, body }) => ({
-        shopId: c.shopId,
-        ...area,
-        machines: [body],
-        tillName: tillHeading(m).title,
-      }));
-    }
-    return [{ shopId: c.shopId, ...area, machines: machines.map((x) => x.body) }];
+    const own = machines.filter(({ m }) => c.zScope === 'machine' || m.ownZ);
+    const shared = machines.filter(({ m }) => !(c.zScope === 'machine' || m.ownZ));
+    const perTillRuns: PlannedRun[] = own.map(({ m, body }) => ({
+      shopId: c.shopId,
+      ...area,
+      machines: [body],
+      tillName: tillHeading(m).title,
+    }));
+    return shared.length > 0
+      ? [{ shopId: c.shopId, ...area, machines: shared.map((x) => x.body) }, ...perTillRuns]
+      : perTillRuns;
   });
 
   /**
@@ -378,8 +384,8 @@ function ProduceZ() {
   const shopsToOffer = scope.shops;
   const totalTills = plannedRuns.reduce((n, r) => n + r.machines.length, 0);
   const waiting = loaded.reduce((n, c) => n + selectionSummary(c, selectionsFor(c)).waitsForClose, 0);
-  // zScope is the tenant's, so any loaded shop tells which rule applies to all of them.
-  const perTill = loaded.some((c) => c.zScope === 'machine');
+  // Any till on its own Z ("Z לכל קופה") gets a Z of its own.
+  const perTill = loaded.some((c) => c.zScope === 'machine' || c.machines.some((m) => m.ownZ));
 
   return (
     <div className="space-y-4">

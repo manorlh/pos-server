@@ -1,5 +1,5 @@
 """Tenant, company, shop, area (point of sale) and till POS settings (dashboard CRUD)."""
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -163,6 +163,8 @@ TIP_RESETTABLE_KEYS = (
     "clearingServer",
     "forceTerminalNumber",
     "payInstallmentsMax",
+    # "Z סניפי / Z לכל קופה": a shop or point of sale back to its parent's mode.
+    "zScope",
 )
 
 
@@ -173,11 +175,14 @@ def _tip_settings_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
 
 
 def _refuse_tenant_only_keys(data: PosSettingsV1Patch) -> None:
-    """`zScope` decides how a tenant's Zs are produced; it has no company or shop layer."""
-    if data.z_scope is not None:
+    """
+    `zScope` ("Z סניפי / Z לכל קופה") lives on the organization (its default), the shop
+    and the point of sale — not on a company, and not on a single till.
+    """
+    if "z_scope" in data.model_fields_set:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="zScope is a tenant setting",
+            detail="zScope is set on the organization, a shop or a point of sale",
         )
 
 
@@ -185,21 +190,71 @@ def _refuse_tenant_only_keys(data: PosSettingsV1Patch) -> None:
 #: one tenant-wide switch, and company managers are auto-granted TENANT_ADMIN (see
 #: BRANDING_WRITE_ROLES), so with the tenant guard alone one merchant's manager could
 #: change how every other merchant in the tenant produces its Zs.
-Z_SCOPE_WRITE_ROLES = BRANDING_WRITE_ROLES
+Z_SCOPE_WRITE_ROLES = {UserRole.SUPER_ADMIN}
+
+#: "Z סניפי / Z לכל קופה" on a shop or a point of sale: the super admin's alone, as on
+#: the organization — it decides how the books are kept and how Zs are numbered.
+SHOP_Z_SCOPE_WRITE_ROLES = {UserRole.SUPER_ADMIN}
 
 
-def _check_z_scope_write(user: User, data: PosSettingsV1Patch, stored: Any) -> None:
+def _guard_z_scope_change(
+    db: Session, data: PosSettingsV1Patch, stored: Any, machines, *, default: Optional[str]
+) -> None:
     """
-    Refuse a `zScope` change from anyone outside `Z_SCOPE_WRITE_ROLES`.
+    A change of Z mode only over a clean break: 409 `z_scope_tills_open` (with the tills)
+    while any till it applies to has an open shift or closed shifts no Z has taken. From
+    then on each mode counts afresh — a till under "Z לכל קופה" from its own Z 1.
+    """
+    if "z_scope" not in data.model_fields_set:
+        return
+    current = (stored or {}).get("zScope") if isinstance(stored, dict) else None
+    if (data.z_scope or default) == (current or default):
+        return
+    from app.services import z_runs as ZR
+
+    blocking = ZR.tills_not_closed(db, list(machines()))
+    if blocking:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "z_scope_tills_open", "tills": blocking},
+        )
+
+
+def _tenant_tills(db: Session, tenant_id) -> list:
+    from app.models.pos_machine import POSMachine
+
+    return db.query(POSMachine).filter(POSMachine.tenant_id == tenant_id).all()
+
+
+def _shop_tills(db: Session, shop_id, area_id=None) -> list:
+    from app.services import z_runs as ZR
+
+    tills = ZR.shop_tills(db, shop_id)
+    if area_id is not None:
+        tills = [m for m in tills if str(m.area_id) == str(area_id)]
+    return tills
+
+
+def _check_z_scope_write(
+    user: User,
+    data: PosSettingsV1Patch,
+    stored: Any,
+    *,
+    roles=Z_SCOPE_WRITE_ROLES,
+    default: Optional[str] = "shop",
+) -> None:
+    """
+    Refuse a `zScope` change from anyone outside `roles`.
 
     Only a *change* is refused: the dashboard sends the whole form on every save, so a
     tenant admin saving a printer name round-trips the stored `zScope` unchanged, and
-    that must still go through.
+    that must still go through. `default` is what an unset value reads as on this layer:
+    "shop" on the organization, nothing (inherit) on a shop or point of sale.
     """
-    if data.z_scope is None or user.role in Z_SCOPE_WRITE_ROLES:
+    if "z_scope" not in data.model_fields_set or user.role in roles:
         return
     current = (stored or {}).get("zScope") if isinstance(stored, dict) else None
-    if data.z_scope == (current or "shop"):
+    if (data.z_scope or default) == (current or default):
         return
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
@@ -330,6 +385,7 @@ def patch_tenant_settings(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
     _check_z_scope_write(current_user, data, tenant.settings)
+    _guard_z_scope_change(db, data, tenant.settings, lambda: _tenant_tills(db, tenant.id), default="shop")
     patch = _build_patch(data, current_user)
     if not patch:
         return EntitySettingsResponse(
@@ -472,7 +528,10 @@ def patch_shop_settings(
     ensure_same_tenant(shop.tenant_id, active_tenant_id)
     _check_shop_settings_write(current_user, shop, db)
 
-    _refuse_tenant_only_keys(data)
+    _check_z_scope_write(
+        current_user, data, shop.settings, roles=SHOP_Z_SCOPE_WRITE_ROLES, default=None
+    )
+    _guard_z_scope_change(db, data, shop.settings, lambda: _shop_tills(db, shop.id), default=None)
     patch = _build_patch(data, current_user)
     if not patch:
         return ShopSettingsResponse(
@@ -563,7 +622,10 @@ def patch_area_settings(
     """
     area, shop = _area_and_shop(db, area_id, active_tenant_id)
     _check_shop_settings_write(current_user, shop, db)
-    _refuse_tenant_only_keys(data)
+    _check_z_scope_write(
+        current_user, data, area.settings, roles=SHOP_Z_SCOPE_WRITE_ROLES, default=None
+    )
+    _guard_z_scope_change(db, data, area.settings, lambda: _shop_tills(db, shop.id, area.id), default=None)
     patch = _build_patch(data, current_user)
     if not patch:
         return AreaSettingsResponse(

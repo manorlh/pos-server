@@ -16,6 +16,7 @@ from app.models.shop import Shop
 from app.models.company import Company
 from app.models.user import User
 from app.middleware.auth import get_current_distributor, get_active_tenant_id, ensure_same_tenant
+from app.services import access
 from app.services.pairing import (
     AdoptionRefused,
     PairingAssignmentError,
@@ -46,6 +47,8 @@ def generate_pairing_code(
     by `get_active_tenant_id`, which requires a membership (or super admin), so that
     check refused nothing a membership did not already allow — only the legitimate case.
     """
+    # "הוספת מכשירים": the super admin may have taken it from this role (app/services/access.py).
+    access.require_feature(db, current_user, access.PAIR_DEVICES)
 
     try:
         company_id, shop_id = resolve_pairing_assignment(
@@ -119,6 +122,8 @@ def list_pairing_codes(
     db: Session = Depends(get_db)
 ):
     """List pairing codes (distributor/super_admin only)."""
+    # "הוספת מכשירים": the super admin may have taken it from this role (app/services/access.py).
+    access.require_feature(db, current_user, access.PAIR_DEVICES)
     query = db.query(PairingCode).filter(PairingCode.tenant_id == active_tenant_id)
 
     if current_user.role.value != "super_admin":
@@ -135,6 +140,8 @@ def get_pairing_code(
     db: Session = Depends(get_db)
 ):
     """Get pairing code details."""
+    # "הוספת מכשירים": the super admin may have taken it from this role (app/services/access.py).
+    access.require_feature(db, current_user, access.PAIR_DEVICES)
     code = db.query(PairingCode).filter(PairingCode.id == code_id).first()
     if not code:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pairing code not found")
@@ -155,6 +162,8 @@ def assign_machine(
     db: Session = Depends(get_db)
 ):
     """Assign paired machine to a shop (distributor/super_admin only)."""
+    # "הוספת מכשירים": the super admin may have taken it from this role (app/services/access.py).
+    access.require_feature(db, current_user, access.PAIR_DEVICES)
     sid = assign_data.shop_id
     shop = db.query(Shop).filter(Shop.id == sid).first()
     if not shop:

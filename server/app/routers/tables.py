@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
@@ -70,6 +70,12 @@ from app.schemas.tables import (
     BulkTablesIn,
     DashboardCancelIn,
     MergePrepareIn,
+    TableAdhocIn,
+    TablePartPayIn,
+    ReservationIn,
+    ReservationStatusIn,
+    ReservationUpdate,
+    TableTransferIn,
     ReasonCreate,
     ReasonUpdate,
     TableCancelIn,
@@ -333,6 +339,95 @@ def rename_table(
     targets = T.notify_targets(db, machine.shop_id)
     if targets:
         background_tasks.add_task(T.publish_tables_notify, targets, str(table_id))
+    return out
+
+
+@router.post("/sync/{machine_id}/tables/{table_id}/pay-part")
+def pay_part(
+    machine_id: str,
+    table_id: uuid.UUID,
+    body: TablePartPayIn,
+    background_tasks: BackgroundTasks,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """"פיצול חשבון": a part paid — never refused (the money moved); `conflict` when it changed meanwhile."""
+    out = T.pay_part(db, _actor(machine, body), table_id, body)
+    db.commit()
+    _wake(background_tasks, db, machine, str(table_id))
+    return out
+
+
+@router.post("/sync/{machine_id}/tables/{table_id}/transfer")
+def transfer_items(
+    machine_id: str,
+    table_id: uuid.UUID,
+    body: TableTransferIn,
+    background_tasks: BackgroundTasks,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """"העברת פריטים": lines of this table moved to another — both written, or neither."""
+    out = T.transfer(db, _actor(machine, body), table_id, body)
+    db.commit()
+    _wake(background_tasks, db, machine, str(table_id))
+    return out
+
+
+@router.post("/sync/{machine_id}/tables/reservations")
+def till_create_reservation(
+    machine_id: str,
+    body: ReservationIn,
+    background_tasks: BackgroundTasks,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """A booking taken at the till ("הזמנה חדשה"). 409 `reservation_overlap`."""
+    if machine.shop_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="table_not_found")
+    shop = db.get(Shop, machine.shop_id)
+    r = T.create_reservation(db, shop, body, by_name=body.pos_user_name)
+    db.commit()
+    _wake(background_tasks, db, machine, None)
+    return T.reservation_out(r)
+
+
+@router.post("/sync/{machine_id}/tables/reservations/{reservation_id}/status")
+def till_reservation_status(
+    machine_id: str,
+    reservation_id: uuid.UUID,
+    body: ReservationStatusIn,
+    background_tasks: BackgroundTasks,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """The party came ("הגיעו"), cancelled, or did not come."""
+    r = T.get_reservation(db, reservation_id, machine.shop_id)
+    r.status = body.status
+    r.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    _wake(background_tasks, db, machine, None)
+    return T.reservation_out(r)
+
+
+@router.post("/sync/{machine_id}/tables/adhoc")
+def adhoc_table(
+    machine_id: str,
+    body: TableAdhocIn,
+    background_tasks: BackgroundTasks,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    "פתיחת שולחן לפי מספר": the table of that number, made in "שולחנות מזדמנים" when it is
+    on no map. Any waiter's — it adds a table to sit at, not a layout edit.
+    """
+    out = T.adhoc_table(db, machine, body.number)
+    db.commit()
+    if out["created"]:
+        targets = T.notify_targets(db, machine.shop_id)
+        if targets:
+            background_tasks.add_task(T.publish_tables_notify, targets, None)
     return out
 
 
@@ -672,6 +767,54 @@ def live_tables(
     """Open tables now, with their order and lock."""
     shop = _readable_shop(db, shop_id, current_user, active_tenant_id)
     return T.live(db, shop)
+
+
+@router.get("/tables/reservations")
+def list_reservations(
+    shop_id: uuid.UUID = Query(..., alias="shopId"),
+    day: date = Query(..., alias="date"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"הזמנות": the shop's bookings of one day, by time."""
+    shop = _readable_shop(db, shop_id, current_user, active_tenant_id)
+    return T.reservations_of_day(db, shop, day)
+
+
+@router.post("/tables/reservations", status_code=status.HTTP_201_CREATED)
+def create_reservation(
+    body: ReservationIn,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """409 `reservation_overlap` when the table is booked over that time."""
+    if body.shop_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="shop_required")
+    shop = _readable_shop(db, body.shop_id, current_user, active_tenant_id)
+    r = T.create_reservation(db, shop, body, by_name=getattr(current_user, "username", None))
+    db.commit()
+    _wake_shop(background_tasks, db, shop.id)
+    return T.reservation_out(r)
+
+
+@router.patch("/tables/reservations/{reservation_id}")
+def update_reservation(
+    reservation_id: uuid.UUID,
+    body: ReservationUpdate,
+    background_tasks: BackgroundTasks,
+    shop_id: uuid.UUID = Query(..., alias="shopId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    shop = _readable_shop(db, shop_id, current_user, active_tenant_id)
+    r = T.update_reservation(db, T.get_reservation(db, reservation_id, shop.id), body)
+    db.commit()
+    _wake_shop(background_tasks, db, shop.id)
+    return T.reservation_out(r)
 
 
 @router.get("/tables/report")

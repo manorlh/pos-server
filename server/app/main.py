@@ -19,6 +19,7 @@ warnings.filterwarnings(
 )
 from app.database import engine, Base
 from app.routers import (
+    system_access,
     auth,
     users,
     machines,
@@ -68,6 +69,7 @@ from app.routers import (
     catalog_import as catalog_import_router,
 )
 from app.services.ably_notify import is_enabled as ably_enabled
+from starlette.middleware.gzip import GZipMiddleware
 
 settings = get_settings()
 
@@ -87,10 +89,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(RequestContextMiddleware)
+# Compressed answers: a till pulls the tables' state (≈140 KB at 200 tables) every few
+# seconds, and the catalog on every sync — gzip takes them to a tenth. OkHttp asks for it
+# and unpacks it by itself; small answers are left as they are.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 _prefix = settings.api_v1_prefix
 
 app.include_router(auth.router, prefix=_prefix)
+app.include_router(system_access.router, prefix=_prefix)
 app.include_router(users.router, prefix=_prefix)
 app.include_router(companies.router, prefix=_prefix)
 app.include_router(shops.router, prefix=_prefix)

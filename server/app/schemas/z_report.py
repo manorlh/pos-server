@@ -17,6 +17,13 @@ class ZReportOut(BaseModel):
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     #: The shop's Z counter. Null only on a legacy Z from a terminal with no shop.
     shop_sequence_number: Optional[int] = Field(None, alias="shopSequenceNumber")
+    #: "Z לכל קופה": the till's own Z counter (and no shop number). Null on a shop Z.
+    machine_sequence_number: Optional[int] = Field(None, alias="machineSequenceNumber")
+    #: The number the Z is known by — the till's own under "Z לכל קופה", else the shop's.
+    z_number: Optional[int] = Field(None, alias="zNumber")
+    #: True for a till's own Z ("Z לכל קופה").
+    per_till: bool = Field(False, alias="perTill")
+    machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
     business_date: date = Field(..., alias="businessDate")
     #: The local date the Z was produced (`closedAt` in the list's timezone). Filled by
     #: the list (`GET /z-reports`), which can filter and sort on it (`dateBasis`).

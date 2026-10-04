@@ -127,6 +127,44 @@
   }
   html {
     @apply font-sans;
+    /* iOS: no text inflation on rotation, no grey flash on a tap. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* A tap is a tap at once — no double-tap-to-zoom wait. */
+  button,
+  a,
+  input,
+  select,
+  textarea,
+  label,
+  [role='button'] {
+    touch-action: manipulation;
+  }
+}
+
+/*
+ * Touch screens (iPhone, iPad, Android): Safari zooms the page into any field typed in at
+ * under 16px — every field is 16px there. A native select is a fingertip's height.
+ */
+@media (pointer: coarse) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']),
+  select,
+  textarea {
+    font-size: max(16px, 1em);
+  }
+  select {
+    min-height: 2.5rem;
+  }
+}
+
+/* The phone's page: clear of the home bar and, in landscape, of the notch. */
+@media (max-width: 767px) {
+  .ios-safe-main {
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+    padding-right: max(0.75rem, env(safe-area-inset-right));
   }
 }
 /*

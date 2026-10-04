@@ -4,6 +4,10 @@
  * The tables report: revenue, guests and average seating time per table and per zone
  * (paid orders, by the day they were paid), and cancellations by reason and by employee,
  * with every cancelled table listed (who, approver, what was on it).
+ *
+ * And the waiters' ("דוח מלצרים"): per waiter — tables, guests, takings, average check and
+ * per guest, seating time, tips, cancellations — and every table of one waiter
+ * ("שולחנות למלצר").
  */
 
 import { useState } from 'react';
@@ -25,6 +29,8 @@ export function TablesReportView({ shopId }: { shopId: string }) {
   const [from, setFrom] = useState(daysBackIso(6));
   const [to, setTo] = useState(todayIso());
   const [applied, setApplied] = useState<{ from: string; to: string }>({ from: daysBackIso(6), to: todayIso() });
+  /** "שולחנות למלצר": the waiter whose tables are listed; empty — every waiter. */
+  const [waiter, setWaiter] = useState('');
   const invalid = !from || !to || from > to;
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['tables-report', shopId, applied.from, applied.to],
@@ -76,6 +82,120 @@ export function TablesReportView({ shopId }: { shopId: string }) {
           </div>
           {data.summary.payConflicts > 0 ? (
             <p className="text-sm text-orange-700">{t('payConflicts', { count: data.summary.payConflicts })}</p>
+          ) : null}
+
+          {data.byWaiter ? (
+            <Section title={t('byWaiter')}>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('waiter')}</TableHead>
+                      <TableHead>{t('waiterTables')}</TableHead>
+                      <TableHead>{t('guests')}</TableHead>
+                      <TableHead>{t('revenue')}</TableHead>
+                      <TableHead>{t('avgCheck')}</TableHead>
+                      <TableHead>{t('avgPerGuest')}</TableHead>
+                      <TableHead>{t('avgSeating')}</TableHead>
+                      <TableHead>{t('tips')}</TableHead>
+                      <TableHead>{t('cancelledOrders')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.byWaiter.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={9} className="text-center text-muted-foreground">
+                          {t('noWaiters')}
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      data.byWaiter.map((r, i) => (
+                        <TableRow
+                          key={i}
+                          className="cursor-pointer hover:bg-muted/40"
+                          onClick={() => setWaiter(r.waiter)}
+                        >
+                          <TableCell className="font-medium">{r.waiter}</TableCell>
+                          <TableCell>{r.tables}</TableCell>
+                          <TableCell>{r.guests}</TableCell>
+                          <TableCell>{formatCurrency(r.revenue)}</TableCell>
+                          <TableCell>{r.avgCheck == null ? '—' : formatCurrency(r.avgCheck)}</TableCell>
+                          <TableCell>{r.avgPerGuest == null ? '—' : formatCurrency(r.avgPerGuest)}</TableCell>
+                          <TableCell>{minutes(r.avgMinutes)}</TableCell>
+                          <TableCell>{formatCurrency(r.tips)}</TableCell>
+                          <TableCell>
+                            {r.cancelled > 0 ? `${r.cancelled} · ${formatCurrency(r.cancelledTotal)}` : '—'}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </Section>
+          ) : null}
+
+          {data.waiterTables ? (
+            <Section title={t('tablesOfWaiter')}>
+              <div className="flex flex-wrap items-center gap-2 border-b p-2">
+                <Label htmlFor="waiter-filter" className="text-xs">
+                  {t('waiter')}
+                </Label>
+                <select
+                  id="waiter-filter"
+                  className="border-input bg-background h-9 rounded-md border px-3 text-sm"
+                  value={waiter}
+                  onChange={(e) => setWaiter(e.target.value)}
+                >
+                  <option value="">{t('allWaiters')}</option>
+                  {(data.byWaiter ?? []).map((r) => (
+                    <option key={r.waiter} value={r.waiter}>
+                      {r.waiter}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('waiter')}</TableHead>
+                      <TableHead>{t('table')}</TableHead>
+                      <TableHead>{t('opened')}</TableHead>
+                      <TableHead>{t('closed')}</TableHead>
+                      <TableHead>{t('avgSeating')}</TableHead>
+                      <TableHead>{t('guests')}</TableHead>
+                      <TableHead>{tc('total')}</TableHead>
+                      <TableHead>{t('tips')}</TableHead>
+                      <TableHead>{t('receipt')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.waiterTables
+                      .filter((r) => !waiter || r.waiter === waiter)
+                      .map((r) => (
+                        <TableRow key={r.orderId} className={r.status === 'cancelled' ? 'text-muted-foreground' : ''}>
+                          <TableCell>{r.waiter}</TableCell>
+                          <TableCell>
+                            {[r.tableNumber, r.tableName].filter(Boolean).join(' ')}
+                            {r.zoneName ? <span className="text-xs text-muted-foreground"> ({r.zoneName})</span> : null}
+                          </TableCell>
+                          <TableCell>{r.openedAt ? formatDateTime(r.openedAt) : '—'}</TableCell>
+                          <TableCell>{r.closedAt ? formatDateTime(r.closedAt) : '—'}</TableCell>
+                          <TableCell>{minutes(r.minutes)}</TableCell>
+                          <TableCell>{r.guests ?? '—'}</TableCell>
+                          <TableCell>
+                            {formatCurrency(r.total)}
+                            {r.status === 'cancelled' ? <span className="ms-1 text-xs">({t('cancelledShort')})</span> : null}
+                          </TableCell>
+                          <TableCell>{r.tip ? formatCurrency(r.tip) : '—'}</TableCell>
+                          <TableCell>{r.transactionNumber ?? '—'}</TableCell>
+                        </TableRow>
+                      ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </Section>
           ) : null}
 
           <Section title={t('byZone')}>

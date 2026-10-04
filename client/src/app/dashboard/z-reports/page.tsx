@@ -324,7 +324,7 @@ export default function ZReportsPage() {
                 <Link href={`/dashboard/z-reports/${z.id}`} className="block min-w-0 flex-1 space-y-1 p-3 text-sm hover:bg-muted/50">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="font-medium tabular-nums">
-                      {t('zNumber')} {z.shopSequenceNumber ?? '—'}
+                      {t('zNumber')} {(z.zNumber ?? z.shopSequenceNumber) ?? '—'}
                       <ZBadges z={z} />
                     </span>
                     <span className="font-medium tabular-nums">{formatCurrency(z.totalSales)}</span>
@@ -431,7 +431,7 @@ export default function ZReportsPage() {
                         onClick={(e) => e.stopPropagation()}
                       >
                         {/* An em dash, not a 0: a shopless legacy Z has no number. */}
-                        {z.shopSequenceNumber ?? '—'}
+                        {(z.zNumber ?? z.shopSequenceNumber) ?? '—'}
                       </Link>
                       <ZBadges z={z} />
                     </TableCell>

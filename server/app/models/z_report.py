@@ -35,6 +35,13 @@ class ZReport(Base):
             "shop_sequence_number",
             unique=True,
         ),
+        # A till's own Z number ("Z לכל קופה") names one document of that till.
+        Index(
+            "uq_z_reports_machine_sequence",
+            "machine_id",
+            "machine_sequence_number",
+            unique=True,
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -84,6 +91,21 @@ class ZReport(Base):
     #: acknowledgement, so a reprint does. Nullable because a terminal that is not
     #: assigned to a shop has no shop sequence to draw from.
     shop_sequence_number = Column(Integer, nullable=True)
+    #: "Z לכל קופה": the till's own Z counter — 1, 2, 3 … for that till alone, on a Z built
+    #: for one till under that mode (`machine_id` is the till). Such a Z draws no shop
+    #: number, so the shop's run stays gapless for its shop Zs.
+    machine_sequence_number = Column(Integer, nullable=True)
+
+    @property
+    def z_number(self):
+        """The number this Z is known by: its till's own under "Z לכל קופה", else the shop's."""
+        if self.machine_sequence_number is not None:
+            return self.machine_sequence_number
+        return self.shop_sequence_number
+
+    @property
+    def per_till(self) -> bool:
+        return self.machine_sequence_number is not None
 
     # Snapshot totals (denormalised from items at close time for fast list queries)
     total_sales = Column(Numeric(12, 2), nullable=True)

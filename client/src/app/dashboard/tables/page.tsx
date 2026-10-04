@@ -15,8 +15,9 @@ import { TablesEditor } from '@/components/dashboard/tables/tables-editor';
 import { TablesLive } from '@/components/dashboard/tables/tables-live';
 import { TablesReportView } from '@/components/dashboard/tables/tables-report';
 import { CancelReasons } from '@/components/dashboard/tables/cancel-reasons';
+import { TableReservations } from '@/components/dashboard/tables/reservations';
 
-type Section = 'editor' | 'live' | 'report' | 'reasons';
+type Section = 'editor' | 'live' | 'reservations' | 'report' | 'reasons';
 
 export default function TablesPage() {
   const t = useTranslations('tables');
@@ -38,6 +39,13 @@ export default function TablesPage() {
         <Button size="sm" variant={section === 'live' ? 'default' : 'outline'} onClick={() => setSection('live')}>
           {t('sectionLive')}
         </Button>
+        <Button
+          size="sm"
+          variant={section === 'reservations' ? 'default' : 'outline'}
+          onClick={() => setSection('reservations')}
+        >
+          {t('sectionReservations')}
+        </Button>
         <Button size="sm" variant={section === 'report' ? 'default' : 'outline'} onClick={() => setSection('report')}>
           {t('sectionReport')}
         </Button>
@@ -54,6 +62,8 @@ export default function TablesPage() {
               <TablesEditor shopId={shopId} />
             ) : section === 'live' ? (
               <TablesLive shopId={shopId} />
+            ) : section === 'reservations' ? (
+              <TableReservations shopId={shopId} />
             ) : (
               <TablesReportView shopId={shopId} />
             )

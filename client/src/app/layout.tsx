@@ -25,6 +25,8 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
+  // Edge to edge on an iPhone (the notch, the home bar): the shell pads by the safe areas.
+  viewportFit: 'cover',
   themeColor: '#ffffff',
 };
 

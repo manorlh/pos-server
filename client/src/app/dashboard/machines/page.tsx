@@ -26,6 +26,7 @@ import { ClockDriftBanner } from '@/components/dashboard/machine-health';
 import { formatDistanceToNow, format } from 'date-fns';
 import { QRCodeSVG } from 'qrcode.react';
 import type { PairingSessionCreateResponse } from '@/lib/types';
+import { useRoleAccess } from '@/lib/accessApi';
 import { he } from 'date-fns/locale';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MachineStatusDot, machineStatus } from '@/components/dashboard/machine-status';
@@ -89,13 +90,17 @@ export default function MachinesPage() {
   // upfront whether the row will be hard-deleted or only decommissioned.
   const [removeMachineHasHistory, setRemoveMachineHasHistory] = useState(false);
 
+  // "הרשאות": the super admin may have taken a device action from this role (the server
+  // refuses it too); the roles' own rules stand.
+  const { denied } = useRoleAccess();
   const canAssignMachine =
-    authHydrated && (me?.role === 'distributor' || me?.role === 'super_admin');
+    authHydrated && (me?.role === 'distributor' || me?.role === 'super_admin') && !denied.has('pairDevices');
   const canEditAssignedShop =
     authHydrated &&
-    (me?.role === 'company_manager' || me?.role === 'distributor' || me?.role === 'super_admin');
+    (me?.role === 'company_manager' || me?.role === 'distributor' || me?.role === 'super_admin') &&
+    !denied.has('moveDevices');
   const canRemoveMachine =
-    authHydrated && (me?.role === 'distributor' || me?.role === 'super_admin');
+    authHydrated && (me?.role === 'distributor' || me?.role === 'super_admin') && !denied.has('removeDevices');
   // Producing a Z and closing a till's shift remotely need the same roles.
   const canProduceZ = useCanProduceZ();
   const showAssignHelp =

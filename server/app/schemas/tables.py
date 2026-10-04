@@ -53,7 +53,14 @@ class _Versioned(PosUserRef):
     request_id: Optional[str] = Field(None, alias="requestId", max_length=64)
 
 
-class TableSaveIn(_Versioned):
+class WaiterRef(_Camel):
+    """The table's waiter, when the till says (a new table: the opener; "החלפת מלצר": another)."""
+
+    waiter_pos_user_id: Optional[str] = Field(None, alias="waiterPosUserId", max_length=100)
+    waiter_pos_user_name: Optional[str] = Field(None, alias="waiterPosUserName", max_length=200)
+
+
+class TableSaveIn(_Versioned, WaiterRef):
     #: save — keep it (autosave, before payment); send — "הזמן", then leave;
     #: bill — the bill was printed; leave — back to the tables screen.
     action: Literal["save", "send", "bill", "leave"] = "save"
@@ -73,6 +80,21 @@ class TablePayIn(_Versioned):
     cart_json: Optional[str] = Field(None, alias="cartJson", max_length=CART_JSON_MAX)
     extras_json: Optional[str] = Field(None, alias="extrasJson", max_length=EXTRAS_JSON_MAX)
     item_count: float = Field(0, alias="itemCount", ge=0, le=1_000_000)
+
+
+class TablePartPayIn(_Versioned):
+    """
+    "פיצול חשבון": a part of the order was paid (its own sale). The table after it: the lines
+    left (`cartJson`…), and its extras with the part recorded among `partials`.
+    """
+
+    transaction_id: str = Field(..., alias="transactionId", min_length=1, max_length=100)
+    transaction_number: Optional[str] = Field(None, alias="transactionNumber", max_length=50)
+    amount: Decimal = Field(..., ge=-10_000_000, le=10_000_000)
+    cart_json: str = Field(..., alias="cartJson", max_length=CART_JSON_MAX)
+    extras_json: Optional[str] = Field(None, alias="extrasJson", max_length=EXTRAS_JSON_MAX)
+    item_count: float = Field(0, alias="itemCount", ge=0, le=1_000_000)
+    total: Decimal = Field(Decimal("0"), ge=-10_000_000, le=10_000_000)
 
 
 class CancelledItemIn(_Camel):
@@ -95,6 +117,61 @@ class TableCancelIn(_Versioned):
 
 class TableMoveIn(_Versioned):
     target_table_id: uuid.UUID = Field(..., alias="targetTableId")
+
+
+class TableTransferIn(_Versioned):
+    """
+    "העברת פריטים": lines of the open order (this table) moved to another table. The till
+    built both orders: this one after (its `cartJson`…) and the target's after (`target*`),
+    on the target as it read it (`targetOrderId`/`targetExpectedVersion`; null — free).
+    """
+
+    cart_json: str = Field(..., alias="cartJson", max_length=CART_JSON_MAX)
+    extras_json: Optional[str] = Field(None, alias="extrasJson", max_length=EXTRAS_JSON_MAX)
+    item_count: float = Field(0, alias="itemCount", ge=0, le=1_000_000)
+    total: Decimal = Field(Decimal("0"), ge=-10_000_000, le=10_000_000)
+    target_table_id: uuid.UUID = Field(..., alias="targetTableId")
+    target_order_id: uuid.UUID = Field(..., alias="targetOrderId")
+    target_expected_version: Optional[int] = Field(None, alias="targetExpectedVersion", ge=0)
+    target_cart_json: str = Field(..., alias="targetCartJson", max_length=CART_JSON_MAX)
+    target_extras_json: Optional[str] = Field(None, alias="targetExtrasJson", max_length=EXTRAS_JSON_MAX)
+    target_item_count: float = Field(0, alias="targetItemCount", ge=0, le=1_000_000)
+    target_total: Decimal = Field(Decimal("0"), alias="targetTotal", ge=-10_000_000, le=10_000_000)
+    target_guests: Optional[int] = Field(None, alias="targetGuests", ge=0, le=999)
+
+
+class ReservationIn(PosUserRef):
+    """"הזמנת שולחן": a time, a party, and a table when one is set aside."""
+
+    shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
+    table_id: Optional[uuid.UUID] = Field(None, alias="tableId")
+    reserved_at: datetime = Field(..., alias="reservedAt")
+    duration_minutes: int = Field(90, alias="durationMinutes", ge=15, le=600)
+    guests: Optional[int] = Field(None, ge=1, le=999)
+    customer_name: str = Field(..., alias="customerName", min_length=1, max_length=120)
+    phone: Optional[str] = Field(None, max_length=40)
+    notes: Optional[str] = Field(None, max_length=300)
+
+
+class ReservationUpdate(_Camel):
+    table_id: Optional[uuid.UUID] = Field(None, alias="tableId")
+    reserved_at: Optional[datetime] = Field(None, alias="reservedAt")
+    duration_minutes: Optional[int] = Field(None, alias="durationMinutes", ge=15, le=600)
+    guests: Optional[int] = Field(None, ge=1, le=999)
+    customer_name: Optional[str] = Field(None, alias="customerName", min_length=1, max_length=120)
+    phone: Optional[str] = Field(None, max_length=40)
+    notes: Optional[str] = Field(None, max_length=300)
+    status: Optional[Literal["booked", "seated", "cancelled", "no_show"]] = None
+
+
+class ReservationStatusIn(PosUserRef):
+    status: Literal["booked", "seated", "cancelled", "no_show"]
+
+
+class TableAdhocIn(PosUserRef):
+    """"פתיחת שולחן לפי מספר": the table of this number, made when it is on no map."""
+
+    number: int = Field(..., ge=1, le=9999)
 
 
 class TableReleaseIn(PosUserRef):
@@ -138,7 +215,7 @@ class TableMergeIn(_Versioned):
     sources: List[MergeSourceIn] = Field(..., min_length=1, max_length=20)
 
 
-class LocalOrderIn(_Camel):
+class LocalOrderIn(WaiterRef):
     """One order of a single-till ("קופה אחת") till, uploaded for the reports."""
 
     id: uuid.UUID
@@ -167,6 +244,8 @@ class LocalOrderIn(_Camel):
     cancel_approved_by_pos_user_id: Optional[str] = Field(None, alias="cancelApprovedByPosUserId", max_length=100)
     cancel_approved_by_name: Optional[str] = Field(None, alias="cancelApprovedByName", max_length=200)
     cancelled_items: Optional[List[CancelledItemIn]] = Field(None, alias="cancelledItems", max_length=500)
+    #: The order's extras (its waiter, the parts paid on their own — their tips are counted).
+    extras_json: Optional[str] = Field(None, alias="extrasJson", max_length=EXTRAS_JSON_MAX)
 
 
 class TablesReportIn(_Camel):

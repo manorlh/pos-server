@@ -599,7 +599,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
                   <TableRow key={report.id}>
                     <TableCell className="font-medium tabular-nums">
                       <Link href={`/dashboard/z-reports/${report.id}`} className="hover:underline">
-                        {report.shopSequenceNumber ?? '—'}
+                        {(report.zNumber ?? report.shopSequenceNumber) ?? '—'}
                       </Link>
                     </TableCell>
                     <TableCell>{formatDate(report.businessDate)}</TableCell>

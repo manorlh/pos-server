@@ -101,3 +101,25 @@ def allocate_shop_z_number(db: Session, shop_id: Optional[uuid.UUID]) -> Optiona
     row.next_value = assigned + 1
     db.flush()
     return assigned
+
+
+def allocate_machine_z_number(db: Session, machine_id: uuid.UUID) -> int:
+    """
+    The next own-Z number of a till under "Z לכל קופה": 1, 2, 3 … for that till alone.
+
+    Gapless the same way as the shop's: the till's row is locked and its counter moved
+    inside the transaction that inserts the Z, so a rolled-back build gives it back.
+    """
+    from app.models.pos_machine import POSMachine
+
+    machine = (
+        db.query(POSMachine)
+        .filter(POSMachine.id == machine_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    assigned = int(machine.next_z_number or 1)
+    machine.next_z_number = assigned + 1
+    db.flush()
+    return assigned

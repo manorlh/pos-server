@@ -198,7 +198,8 @@ def list_accounting_z_reports(
                 id=z.id,
                 shop_id=z.shop_id,
                 shop_name=z.shop.name if z.shop else None,
-                shop_sequence_number=z.shop_sequence_number,
+                # The number the Z is known by: a till's own under "Z לכל קופה", else the shop's.
+                shop_sequence_number=z.z_number,
                 business_date=z.business_date,
                 closed_at=z.closed_at,
                 net_sales=net,

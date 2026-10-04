@@ -111,6 +111,8 @@ class ZFacts:
     vat_total: Optional[Decimal] = ZERO
     #: Σ tenders = net sales including VAT.
     net: Decimal = ZERO
+    #: "קופה 2" on a till's own Z ("Z לכל קופה"), whose number is that till's; else None.
+    till_label: Optional[str] = None
     #: rate (e.g. Decimal("0.18"), 0 = exempt) → (gross incl. VAT, VAT). None = no split.
     income_by_rate: Optional[Dict[Decimal, Tuple[Decimal, Decimal]]] = None
     #: brand → card takings (only brands seen; the rest is in the card total). Used when
@@ -224,7 +226,7 @@ def load_z_facts(
 
     facts = ZFacts(
         z_id=z.id,
-        z_number=z.shop_sequence_number,
+        z_number=z.z_number,
         business_date=z.business_date,
         shop_id=z.shop_id,
         shop_name=shop_name,
@@ -235,6 +237,11 @@ def load_z_facts(
         declined_amount=declined,
         vat_total=None if vat is None else _dec(vat),
         net=sum(breakdown.values(), ZERO),
+        till_label=(
+            f"קופה {z.machine.pos_number}"
+            if z.per_till and z.machine is not None and z.machine.pos_number
+            else (z.machine.name if z.per_till and z.machine is not None else None)
+        ),
     )
 
     if z.per_machine is None:
@@ -343,7 +350,9 @@ def _line(key: str, signed: Decimal, label: str, accounts: Dict[str, str]) -> Op
     )
 
 
-def _z_details(numbers: Sequence[Optional[int]], shop_name: str, suffix: str = "") -> str:
+def _z_details(
+    numbers: Sequence[Optional[int]], shop_name: str, suffix: str = "", tills: Sequence[str] = ()
+) -> str:
     nums = sorted(n for n in numbers if n is not None)
     if not nums:
         ref = "Z"
@@ -351,6 +360,11 @@ def _z_details(numbers: Sequence[Optional[int]], shop_name: str, suffix: str = "
         ref = f"Z {nums[0]}"
     else:
         ref = f"Z {nums[0]}-{nums[-1]}"
+    # Tills' own Zs ("Z לכל קופה") are numbered per till: name the tills, or "Z 1" says
+    # nothing about which.
+    till_names = sorted(set(tills))
+    if till_names:
+        ref = f"{', '.join(till_names)} {ref}"
     parts = [ref] + ([suffix] if suffix else []) + ([shop_name] if shop_name else [])
     return " · ".join(parts)
 
@@ -555,13 +569,14 @@ def build_entries(
             settings = settings_by_shop.get(first.shop_id, {})
             shop_id, name = first.shop_id, first.shop_name
         numbers = [f.z_number for f, _ in items]
+        tills = [f.till_label for f, _ in items if f.till_label]
         if grouping == "month":
             d = items[-1][0].business_date
             entry_date = date(d.year, d.month, calendar.monthrange(d.year, d.month)[1])
-            details = _z_details(numbers, name, f"{d.month:02d}/{d.year}")
+            details = _z_details(numbers, name, f"{d.month:02d}/{d.year}", tills)
         else:
             entry_date = max(f.business_date for f, _ in items)
-            details = _z_details(numbers, name)
+            details = _z_details(numbers, name, tills=tills)
         lines = _merge_lines(l for _f, ls in items for l in ls)
         branch = str(settings.get("branchCode") or "")
         entries.append(

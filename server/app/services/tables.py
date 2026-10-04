@@ -54,6 +54,7 @@ from app.models.tables import (
     TableCancelReason,
     TableEvent,
     TableOrder,
+    TableReservation,
     TableZone,
 )
 from app.models.user import User
@@ -411,6 +412,9 @@ def order_summary(order: TableOrder) -> dict:
         "openedAt": _iso(order.opened_at),
         "openedByPosUserId": order.opened_by_pos_user_id,
         "openedByName": order.opened_by_pos_user_name,
+        # The table's waiter: its own, else whoever opened it (orders from before waiters).
+        "waiterPosUserId": order.waiter_pos_user_id or order.opened_by_pos_user_id,
+        "waiterName": order.waiter_pos_user_name or order.opened_by_pos_user_name,
         "updatedAt": _iso(order.updated_at),
         "sentAt": _iso(order.sent_at),
         "sendCount": order.send_count or 0,
@@ -593,6 +597,10 @@ def till_state(db: Session, machine: POSMachine, *, now: Optional[datetime] = No
         row["lock"] = lock
         row["state"] = table_state(order, lock)
         out["tables"].append(row)
+    # "הזמנות": the day's bookings still to come (and those due a while ago, not seated yet).
+    out["reservations"] = [
+        reservation_out(r) for r in upcoming_reservations(db, machine, now, {t.id for t in tables})
+    ]
     if out["mode"] == MODE_LAN:
         # Who holds the shop's tables on the LAN, and the secret the tills present to it.
         from app.services.printers import print_secret
@@ -771,6 +779,9 @@ def save(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[dateti
             opened_machine_id=actor.machine.id,
             opened_by_pos_user_id=actor.pos_user_id,
             opened_by_pos_user_name=actor.pos_user_name,
+            # The table is its opener's unless the till names another waiter.
+            waiter_pos_user_id=getattr(body, "waiter_pos_user_id", None) or actor.pos_user_id,
+            waiter_pos_user_name=getattr(body, "waiter_pos_user_name", None) or actor.pos_user_name,
             send_count=0,
         )
         try:
@@ -783,6 +794,11 @@ def save(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[dateti
     else:
         current.version = (current.version or 0) + 1
 
+    # "החלפת מלצר": the till names another waiter for the table.
+    new_waiter = getattr(body, "waiter_pos_user_id", None)
+    if new_waiter and new_waiter != current.waiter_pos_user_id:
+        current.waiter_pos_user_id = new_waiter
+        current.waiter_pos_user_name = getattr(body, "waiter_pos_user_name", None)
     changed = (current.cart_json or "") != body.cart_json
     current.cart_json = body.cart_json
     current.extras_json = body.extras_json
@@ -996,6 +1012,144 @@ def move(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[dateti
     release_lock(db, table, actor.machine)
     release_lock(db, target, actor.machine)
     return {"order": order_full(current), "replayed": False}
+
+
+def _partials_of(order: TableOrder) -> List[dict]:
+    extras = parse_json_or_none(order.extras_json)
+    parts = extras.get("partials") if isinstance(extras, dict) else None
+    return [p for p in parts if isinstance(p, dict)] if isinstance(parts, list) else []
+
+
+def pay_part(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[datetime] = None) -> dict:
+    """
+    "פיצול חשבון": a part of the order was paid. Like a payment, never refused — the money
+    has moved. At the version the till read: the table becomes the rest it sends. Moved on
+    meanwhile (another till edited it): the part is still recorded with the order (its
+    `partials`, so the final payment and the reports count it), the order is flagged
+    `pay_conflict` for a manager, and the till is told (`conflict`). Idempotent by the sale.
+    """
+    now = now or _now()
+    table = table_for_machine(db, actor.machine, table_id)
+    order = db.get(TableOrder, _uuid(body.order_id))
+    if order is not None and any(str(p.get("tx")) == body.transaction_id for p in _partials_of(order)):
+        return {"order": order_full(order) if order.status == "open" else order_summary(order), "conflict": False, "replayed": True}
+    part = {"tx": body.transaction_id, "no": body.transaction_number, "amount": int((Decimal(body.amount) * 100).to_integral_value())}
+    if order is None or order.status != "open":
+        record_event(db, "part_pay_closed", table, order, actor=actor, now=now, details=part)
+        return {"order": order_summary(order) if order is not None else None, "conflict": True, "replayed": False}
+    if order.version == body.expected_version:
+        order.cart_json = body.cart_json
+        order.extras_json = body.extras_json
+        order.item_count = Decimal(str(body.item_count or 0))
+        order.total = _money(body.total)
+        order.bill_printed_at = None
+        conflict = False
+    else:
+        extras = parse_json_or_none(order.extras_json)
+        extras = extras if isinstance(extras, dict) else {}
+        extras["partials"] = _partials_of(order) + [part]
+        order.extras_json = json.dumps(extras, ensure_ascii=False)
+        order.pay_conflict = True
+        conflict = True
+    order.version = (order.version or 0) + 1
+    _touch(order, actor, now, body.request_id)
+    db.flush()
+    record_event(db, "part_pay", table, order, actor=actor, now=now, details={**part, "conflict": conflict})
+    return {"order": order_full(order), "conflict": conflict, "replayed": False}
+
+
+def transfer(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[datetime] = None) -> dict:
+    """
+    "העברת פריטים": lines of this table's open order moved to another table — both written
+    in one go, or neither. This table is the till's (its lock, its version); the target is
+    locked for the write (the till entered it to read it) and checked at the version the
+    till read, then let go. A table emptied by it is closed as merged into the target.
+    """
+    now = now or _now()
+    minutes = _require_synced(db, actor.machine)
+    table = table_for_machine(db, actor.machine, table_id)
+    target = table_for_machine(db, actor.machine, body.target_table_id)
+    if target.id == table.id:
+        raise _bad("transfer_same_table")
+
+    replay = _replayed(db, body.order_id, body.request_id)
+    if replay is not None:
+        release_lock(db, target, actor.machine)
+        moved_to = db.get(TableOrder, body.target_order_id)
+        return {"order": order_full(replay) if replay.status == "open" else order_summary(replay),
+                "target": order_summary(moved_to) if moved_to else None, "replayed": True}
+
+    ensure_lock(db, table, actor, minutes, now)
+    current = open_order(db, table.id)
+    if current is None:
+        raise _conflict("table_version_conflict", order=None)
+    _check_version(current, body.order_id, body.expected_version)
+    if not try_lock(db, target, actor, minutes, now):
+        raise _locked(db, target, now, code="table_target_locked")
+    there = open_order(db, target.id)
+    try:
+        _check_version(there, body.target_order_id, body.target_expected_version)
+    except HTTPException:
+        release_lock(db, target, actor.machine)
+        raise _conflict("table_target_changed", table=table_ref(target), order=order_full(there))
+
+    if there is None:
+        if db.get(TableOrder, body.target_order_id) is not None:
+            release_lock(db, target, actor.machine)
+            raise _conflict("table_target_changed", table=table_ref(target), order=None)
+        there = TableOrder(
+            id=body.target_order_id, tenant_id=actor.machine.tenant_id, shop_id=target.shop_id,
+            table_id=target.id, zone_id=target.zone_id, table_number=target.number, table_name=target.name,
+            status="open", source="synced", version=1, opened_at=now, opened_machine_id=actor.machine.id,
+            opened_by_pos_user_id=actor.pos_user_id, opened_by_pos_user_name=actor.pos_user_name,
+            waiter_pos_user_id=current.waiter_pos_user_id or actor.pos_user_id,
+            waiter_pos_user_name=current.waiter_pos_user_name or actor.pos_user_name,
+            guests=body.target_guests, send_count=0,
+        )
+        db.add(there)
+    else:
+        there.version = (there.version or 0) + 1
+        if body.target_guests is not None:
+            there.guests = body.target_guests
+    there.cart_json = body.target_cart_json
+    there.extras_json = body.target_extras_json
+    there.item_count = Decimal(str(body.target_item_count or 0))
+    there.total = _money(body.target_total)
+    there.bill_printed_at = None
+    # What moved had been sent: the target's lines are in the kitchen too.
+    if (current.send_count or 0) > 0 and (there.send_count or 0) == 0:
+        there.send_count = 1
+        there.sent_at = current.sent_at
+    _touch(there, actor, now, body.request_id)
+
+    current.version = (current.version or 0) + 1
+    current.cart_json = body.cart_json
+    current.extras_json = body.extras_json
+    current.item_count = Decimal(str(body.item_count or 0))
+    current.total = _money(body.total)
+    current.bill_printed_at = None
+    _touch(current, actor, now, body.request_id)
+    if (body.item_count or 0) <= 0:
+        # Everything moved: this table's order goes on in the target's.
+        _close(current, "merged", actor, now)
+        current.merged_into_id = there.id
+    try:
+        with db.begin_nested():
+            db.flush()
+    except IntegrityError:
+        release_lock(db, target, actor.machine)
+        raise _conflict("table_target_changed", table=table_ref(target), order=None)
+    details = {"fromTableId": str(table.id), "fromNumber": table.number, "toTableId": str(target.id), "toNumber": target.number}
+    record_event(db, "transfer", table, current, actor=actor, now=now, details=details)
+    record_event(db, "transfer", target, there, actor=actor, now=now, details=details)
+    release_lock(db, target, actor.machine)
+    if current.status != "open":
+        release_lock(db, table, actor.machine)
+    return {
+        "order": order_full(current) if current.status == "open" else order_summary(current),
+        "target": order_summary(there),
+        "replayed": False,
+    }
 
 
 def release(
@@ -1301,6 +1455,8 @@ def apply_local_report(db: Session, machine: POSMachine, orders: Sequence[Any]) 
         row.opened_at = as_utc(item.opened_at)
         row.opened_by_pos_user_id = item.opened_by_pos_user_id
         row.opened_by_pos_user_name = item.opened_by_pos_user_name
+        row.waiter_pos_user_id = item.waiter_pos_user_id or item.opened_by_pos_user_id
+        row.waiter_pos_user_name = item.waiter_pos_user_name or item.opened_by_pos_user_name
         row.updated_at = as_utc(item.updated_at) or _now()
         row.updated_machine_id = machine.id
         row.sent_at = as_utc(item.sent_at)
@@ -1319,6 +1475,8 @@ def apply_local_report(db: Session, machine: POSMachine, orders: Sequence[Any]) 
         row.cancel_approved_by_name = item.cancel_approved_by_name
         row.cancelled_items = _cancelled_items(item.cancelled_items or []) or None
         row.merged_into_id = item.merged_into_id
+        if item.extras_json is not None:
+            row.extras_json = item.extras_json
         db.flush()
         if newly_cancelled:
             if item.cancel_reason_id not in reasons:
@@ -1503,8 +1661,18 @@ def update_zone(db: Session, shop: Shop, zone: TableZone, body) -> TableZone:
 
 
 def _refuse_open(db: Session, tables: Sequence[DiningTable]) -> None:
+    """
+    Never remove a table someone is eating at: an open order of any mode — synced, or one a
+    single till or the LAN host reported. Removed, the table would vanish from the tills'
+    layout with its order still open there, unreachable until the table came back.
+    """
     for table in tables:
-        if open_order(db, table.id) is not None:
+        if open_order(db, table.id) is not None or (
+            db.query(TableOrder.id)
+            .filter(TableOrder.table_id == table.id, TableOrder.status == "open")
+            .first()
+            is not None
+        ):
             raise _conflict("table_has_open_order", table=table_ref(table))
 
 
@@ -1536,6 +1704,57 @@ def _next_slot(zone: TableZone, index: int, width: float, height: float) -> Tupl
     x = gap + col * (width + gap)
     y = gap + row * (height + gap)
     return min(x, max(zone.canvas_width - width, 0)), min(y, max(zone.canvas_height - height, 0))
+
+
+#: The zone a till's tables opened by number land in when they are on no map.
+ADHOC_ZONE_NAME = "שולחנות מזדמנים"
+
+
+def adhoc_table(db: Session, machine: POSMachine, number: int) -> dict:
+    """
+    "פתיחת שולחן לפי מספר": a waiter keys a table number. The table of that number the till
+    sees, if there is one; otherwise one is made — in the zone "שולחנות מזדמנים" of the till's
+    point of sale (made too, the first time; a plain grid) — and from then on it is a table
+    like any other: every till sees it, and the dashboard can move, rename or remove it.
+    409 `table_number_elsewhere` for a number another point of sale's map holds.
+    """
+    if machine.shop_id is None:
+        raise _not_found("table_not_found")
+    zones = zones_for(db, machine.shop_id, machine.area_id)
+    existing = (
+        db.query(DiningTable)
+        .filter(DiningTable.shop_id == machine.shop_id, DiningTable.number == number, DiningTable.archived_at.is_(None))
+        .first()
+    )
+    if existing is not None:
+        if existing.zone_id not in {z.id for z in zones}:
+            raise _conflict("table_number_elsewhere", number=number)
+        return {"table": table_out(existing), "created": False}
+    zone = next(
+        (z for z in zones if z.name == ADHOC_ZONE_NAME and str(z.area_id or "") == str(machine.area_id or "")),
+        None,
+    )
+    if zone is None:
+        zone = TableZone(
+            id=uuid.uuid4(), tenant_id=machine.tenant_id, shop_id=machine.shop_id, area_id=machine.area_id,
+            name=ADHOC_ZONE_NAME, layout="grid", canvas_width=1000, canvas_height=700,
+            sort_order=len(zones_for(db, machine.shop_id, all_areas=True)),
+        )
+        db.add(zone)
+        db.flush()
+    width, height = default_table_size(zone, "square")
+    x, y = _next_slot(zone, len(tables_in(db, [zone.id])), width, height)
+    table = DiningTable(
+        id=uuid.uuid4(), tenant_id=zone.tenant_id, shop_id=zone.shop_id, zone_id=zone.id, number=number,
+        seats=4, shape="square", x=x, y=y, width=width, height=height, rotation=0,
+    )
+    try:
+        with db.begin_nested():
+            db.add(table)
+            db.flush()
+    except IntegrityError:
+        raise _conflict("table_number_taken", number=number)
+    return {"table": table_out(table), "created": True}
 
 
 def create_table(db: Session, zone: TableZone, body) -> DiningTable:
@@ -1981,6 +2200,11 @@ def report(db: Session, shop: Shop, start: date, end: date) -> dict:
     The tables report for the local days `start`..`end`: revenue and seating time per
     table and per zone (paid orders, by when they were paid), and cancellations by
     reason and by employee.
+
+    And the waiters' ("דוח מלצרים"): per waiter — tables served, guests, takings, the average
+    check and per guest, seating time, tips (the paid sale's) and cancellations — and every
+    table each one served ("שולחנות למלצר"). A table is its waiter's (`waiter_pos_user_*`),
+    else its opener's.
     """
     if end < start:
         raise _bad("bad_range")
@@ -2075,6 +2299,88 @@ def report(db: Session, shop: Shop, start: date, end: date) -> dict:
                 "source": order.source,
             })
 
+    # ── Waiters ──
+    paid = [o for o in orders if o.status == "paid"]
+
+    def order_tx_ids(o: TableOrder) -> List[str]:
+        """The order's sale, and the sales of its parts paid on their own ("פיצול חשבון")."""
+        ids = [str(o.transaction_id)] if o.transaction_id else []
+        extras = parse_json_or_none(o.extras_json)
+        for part in (extras or {}).get("partials") or [] if isinstance(extras, dict) else []:
+            if isinstance(part, dict) and part.get("tx"):
+                ids.append(str(part["tx"]))
+        return ids
+
+    tx_ids = []
+    for o in paid:
+        for raw in order_tx_ids(o):
+            try:
+                tx_ids.append(uuid.UUID(raw))
+            except (TypeError, ValueError):
+                pass
+    tips: Dict[str, Decimal] = {}
+    if tx_ids:
+        from app.models.transaction import Transaction
+
+        for tid, tip in db.query(Transaction.id, Transaction.tip_amount).filter(Transaction.id.in_(tx_ids)).all():
+            tips[str(tid)] = _money(tip or 0)
+
+    def waiter_of(o: TableOrder):
+        wid = o.waiter_pos_user_id or o.opened_by_pos_user_id
+        name = o.waiter_pos_user_name or o.opened_by_pos_user_name or "—"
+        return (wid or name), name
+
+    by_waiter: Dict[Any, dict] = {}
+    waiter_rows = []
+    for o in orders:
+        key, name = waiter_of(o)
+        wr = by_waiter.setdefault(key, {
+            "waiterId": o.waiter_pos_user_id or o.opened_by_pos_user_id, "waiter": name,
+            "tables": 0, "guests": 0, "revenue": Decimal("0"), "tips": Decimal("0"),
+            "cancelled": 0, "cancelledTotal": Decimal("0"), "_minutes": 0.0, "_n": 0,
+        })
+        if o.status == "paid":
+            amount = _money(o.paid_total if o.paid_total is not None else o.total)
+            tip = sum((tips.get(tid, Decimal("0")) for tid in order_tx_ids(o)), Decimal("0"))
+            m = minutes(o)
+            wr["tables"] += 1
+            wr["guests"] += o.guests or 0
+            wr["revenue"] += amount
+            wr["tips"] += tip
+            if m is not None:
+                wr["_minutes"] += m
+                wr["_n"] += 1
+            waiter_rows.append({
+                "orderId": str(o.id), "waiter": name, "waiterId": wr["waiterId"],
+                "tableNumber": o.table_number, "tableName": o.table_name, "zoneName": zone_names.get(o.zone_id),
+                "openedAt": _iso(o.opened_at), "closedAt": _iso(o.closed_at),
+                "minutes": round(m, 1) if m is not None else None, "guests": o.guests,
+                "total": float(amount), "tip": float(tip), "transactionNumber": o.transaction_number,
+                "status": "paid",
+            })
+        else:
+            wr["cancelled"] += 1
+            wr["cancelledTotal"] += _money(o.total)
+            waiter_rows.append({
+                "orderId": str(o.id), "waiter": name, "waiterId": wr["waiterId"],
+                "tableNumber": o.table_number, "tableName": o.table_name, "zoneName": zone_names.get(o.zone_id),
+                "openedAt": _iso(o.opened_at), "closedAt": _iso(o.closed_at), "minutes": None,
+                "guests": o.guests, "total": float(_money(o.total)), "tip": 0.0,
+                "transactionNumber": None, "status": "cancelled",
+            })
+
+    def finish_waiter(row: dict) -> dict:
+        n = row.pop("_n")
+        total_minutes = row.pop("_minutes")
+        revenue = row["revenue"]
+        row["avgMinutes"] = round(total_minutes / n, 1) if n else None
+        row["avgCheck"] = float(_money(revenue / row["tables"])) if row["tables"] else None
+        row["avgPerGuest"] = float(_money(revenue / row["guests"])) if row["guests"] else None
+        row["revenue"] = float(revenue)
+        row["tips"] = float(row["tips"])
+        row["cancelledTotal"] = float(row["cancelledTotal"])
+        return row
+
     def finish(row: dict) -> dict:
         n = row.pop("_n")
         total_minutes = row.pop("_minutes")
@@ -2096,6 +2402,8 @@ def report(db: Session, shop: Shop, start: date, end: date) -> dict:
         },
         "byTable": sorted((finish(r) for r in by_table.values()), key=lambda r: (r["number"] is None, r["number"] or 0)),
         "byZone": sorted((finish(r) for r in by_zone.values()), key=lambda r: -r["revenue"]),
+        "byWaiter": sorted((finish_waiter(r) for r in by_waiter.values()), key=lambda r: -r["revenue"]),
+        "waiterTables": sorted(waiter_rows, key=lambda r: (r["waiter"] or "", r["closedAt"] or "")),
         "cancellations": {
             "byReason": sorted(
                 ({**r, "total": float(r["total"])} for r in by_reason.values()), key=lambda r: -r["count"]
@@ -2115,3 +2423,127 @@ def parse_json_or_none(raw: Optional[str]) -> Any:
         return json.loads(raw)
     except ValueError:
         return None
+
+
+# ── Reservations ("הזמנות שולחנות") ─────────────────────────────────────────
+
+RESERVATION_STATUSES = ("booked", "seated", "cancelled", "no_show")
+#: A booking still shows this long after its time while nobody seated it ("late").
+RESERVATION_GRACE = timedelta(hours=2)
+
+
+def reservation_out(r: TableReservation, table: Optional[DiningTable] = None) -> dict:
+    return {
+        "id": str(r.id),
+        "tableId": str(r.table_id) if r.table_id else None,
+        "tableNumber": table.number if table is not None else None,
+        "reservedAt": _iso(r.reserved_at),
+        "durationMinutes": r.duration_minutes,
+        "guests": r.guests,
+        "customerName": r.customer_name,
+        "phone": r.phone,
+        "notes": r.notes,
+        "status": r.status,
+        "createdByName": r.created_by_name,
+    }
+
+
+def _check_reservation_table(db: Session, shop_id: Any, table_id: Any) -> Optional[DiningTable]:
+    if table_id is None:
+        return None
+    table = db.get(DiningTable, _uuid(table_id))
+    if table is None or table.shop_id != shop_id or table.archived_at is not None:
+        raise _not_found("table_not_found")
+    return table
+
+
+def _refuse_overlap(db: Session, r: TableReservation) -> None:
+    """One table, one party at a time: a booking of the same table over the same time is refused."""
+    if r.table_id is None or r.status != "booked":
+        return
+    start = as_utc(r.reserved_at)
+    end = start + timedelta(minutes=r.duration_minutes or 90)
+    for other in (
+        db.query(TableReservation)
+        .filter(
+            TableReservation.table_id == r.table_id,
+            TableReservation.status == "booked",
+            TableReservation.id != r.id,
+            TableReservation.reserved_at < end,
+            TableReservation.reserved_at > start - timedelta(hours=12),
+        )
+        .all()
+    ):
+        o_start = as_utc(other.reserved_at)
+        if o_start + timedelta(minutes=other.duration_minutes or 90) > start:
+            raise _conflict("reservation_overlap", reservation=reservation_out(other))
+
+
+def create_reservation(db: Session, shop: Shop, body, *, by_name: Optional[str] = None) -> TableReservation:
+    table = _check_reservation_table(db, shop.id, body.table_id)
+    r = TableReservation(
+        id=uuid.uuid4(), tenant_id=shop.tenant_id, shop_id=shop.id, table_id=table.id if table else None,
+        reserved_at=as_utc(body.reserved_at), duration_minutes=body.duration_minutes, guests=body.guests,
+        customer_name=body.customer_name, phone=body.phone, notes=body.notes, status="booked",
+        created_by_name=by_name,
+    )
+    # Checked before it is added: a refused booking leaves nothing behind.
+    _refuse_overlap(db, r)
+    db.add(r)
+    db.flush()
+    return r
+
+
+def update_reservation(db: Session, r: TableReservation, body) -> TableReservation:
+    fields = body.model_fields_set
+    if "table_id" in fields:
+        table = _check_reservation_table(db, r.shop_id, body.table_id)
+        r.table_id = table.id if table else None
+    for name in ("duration_minutes", "guests", "customer_name", "phone", "notes", "status"):
+        if name in fields and (getattr(body, name) is not None or name in ("guests", "phone", "notes")):
+            setattr(r, name, getattr(body, name))
+    if "reserved_at" in fields and body.reserved_at is not None:
+        r.reserved_at = as_utc(body.reserved_at)
+    r.updated_at = _now()
+    db.flush()
+    _refuse_overlap(db, r)
+    return r
+
+
+def get_reservation(db: Session, reservation_id: Any, shop_id: Any) -> TableReservation:
+    r = db.get(TableReservation, _uuid(reservation_id))
+    if r is None or r.shop_id != shop_id:
+        raise _not_found("reservation_not_found")
+    return r
+
+
+def reservations_of_day(db: Session, shop: Shop, day: date) -> List[dict]:
+    lo, hi = _day_bounds(db, shop.tenant_id, day, day)
+    rows = (
+        db.query(TableReservation)
+        .filter(TableReservation.shop_id == shop.id, TableReservation.reserved_at >= lo, TableReservation.reserved_at < hi)
+        .order_by(TableReservation.reserved_at.asc())
+        .all()
+    )
+    tables = {t.id: t for t in db.query(DiningTable).filter(DiningTable.id.in_([r.table_id for r in rows if r.table_id])).all()} if rows else {}
+    return [reservation_out(r, tables.get(r.table_id)) for r in rows]
+
+
+def upcoming_reservations(db: Session, machine: POSMachine, now: datetime, table_ids) -> List[TableReservation]:
+    """The bookings a till shows: still booked, from a while ago (late) to the end of tomorrow."""
+    if machine.shop_id is None:
+        return []
+    rows = (
+        db.query(TableReservation)
+        .filter(
+            TableReservation.shop_id == machine.shop_id,
+            TableReservation.status == "booked",
+            TableReservation.reserved_at >= now - RESERVATION_GRACE,
+            TableReservation.reserved_at < now + timedelta(hours=36),
+        )
+        .order_by(TableReservation.reserved_at.asc())
+        .limit(200)
+        .all()
+    )
+    # Its own tables', and those with no table yet.
+    return [r for r in rows if r.table_id is None or r.table_id in table_ids]

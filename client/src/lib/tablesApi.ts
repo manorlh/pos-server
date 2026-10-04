@@ -122,6 +122,39 @@ export interface CancelledRow {
   source: 'synced' | 'local';
 }
 
+/** "דוח מלצרים": one waiter over the range. */
+export interface WaiterReportRow {
+  waiterId: string | null;
+  waiter: string;
+  tables: number;
+  guests: number;
+  revenue: number;
+  tips: number;
+  avgCheck: number | null;
+  avgPerGuest: number | null;
+  avgMinutes: number | null;
+  cancelled: number;
+  cancelledTotal: number;
+}
+
+/** "שולחנות למלצר": one table a waiter served (or that was cancelled). */
+export interface WaiterTableRow {
+  orderId: string;
+  waiter: string;
+  waiterId: string | null;
+  tableNumber: number | null;
+  tableName: string | null;
+  zoneName: string | null;
+  openedAt: string | null;
+  closedAt: string | null;
+  minutes: number | null;
+  guests: number | null;
+  total: number;
+  tip: number;
+  transactionNumber: string | null;
+  status: 'paid' | 'cancelled';
+}
+
 export interface TablesReport {
   from: string;
   to: string;
@@ -136,6 +169,9 @@ export interface TablesReport {
   };
   byTable: TablesReportRow[];
   byZone: TablesReportRow[];
+  /** Absent on a server from before the waiters' reports. */
+  byWaiter?: WaiterReportRow[];
+  waiterTables?: WaiterTableRow[];
   cancellations: {
     byReason: { reason: string; count: number; total: number }[];
     byEmployee: { employee: string; count: number; total: number }[];
@@ -227,3 +263,43 @@ export function tablesErrorCode(err: unknown): string | null {
   }
   return null;
 }
+
+// ── Reservations ("הזמנות") ─────────────────────────────────────────────────
+
+export type ReservationStatus = 'booked' | 'seated' | 'cancelled' | 'no_show';
+
+export interface TableReservation {
+  id: string;
+  tableId: string | null;
+  tableNumber: number | null;
+  reservedAt: string;
+  durationMinutes: number;
+  guests: number | null;
+  customerName: string;
+  phone: string | null;
+  notes: string | null;
+  status: ReservationStatus;
+  createdByName: string | null;
+}
+
+export interface ReservationInput {
+  tableId?: string | null;
+  reservedAt: string;
+  durationMinutes?: number;
+  guests?: number | null;
+  customerName: string;
+  phone?: string | null;
+  notes?: string | null;
+}
+
+export const fetchReservations = (shopId: string, date: string) =>
+  api.get<TableReservation[]>('/tables/reservations', { params: { shopId, date } }).then((r) => r.data);
+
+export const createReservation = (shopId: string, body: ReservationInput) =>
+  api.post<TableReservation>('/tables/reservations', { ...body, shopId }).then((r) => r.data);
+
+export const updateReservation = (
+  shopId: string,
+  id: string,
+  body: Partial<ReservationInput> & { status?: ReservationStatus },
+) => api.patch<TableReservation>(`/tables/reservations/${id}`, body, { params: { shopId } }).then((r) => r.data);

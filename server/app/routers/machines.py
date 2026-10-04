@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, object_session, selectinload
 from sqlalchemy import or_, and_
 from sqlalchemy.exc import IntegrityError
 from app.services import licenses
+from app.services import access
 from app.database import get_db
 from app.schemas.pos_machine import POSMachineUpdate, POSMachineResponse, MachineHeartbeatBody
 from app.models.pos_machine import POSMachine, PairingStatus
@@ -465,6 +466,9 @@ def get_my_machine(
         "license": licenses.effective_license(
             db if isinstance(db, Session) else object_session(machine), machine
         ),
+        # "Z סניפי" or "Z לכל קופה" (its point of sale's, shop's or organization's mode):
+        # under the latter every till closes its own Z, and the shift becomes the Z.
+        "zScope": _z_scope(db if isinstance(db, Session) else object_session(machine), machine),
         **machine_realtime_refresh_info(machine=machine),
     }
 
@@ -552,6 +556,7 @@ def post_my_heartbeat(
         "recentShiftZs": recent,
         # A temporary customer's license end, every beat — a change reaches the till at once.
         "license": licenses.effective_license(db, machine),
+        "zScope": _z_scope(db, machine),
     }
     if fast_beat:
         response["fastBeat"] = True
@@ -584,6 +589,18 @@ def get_machine(
     return _enrich_machine_status(machine, db)
 
 
+def _z_scope(db: Session, machine: POSMachine) -> str:
+    """The till's Z mode; "shop" for a till with no shop or when it cannot be read."""
+    if db is None or machine.shop_id is None:
+        return "shop"
+    from app.services import z_runs as ZR
+
+    try:
+        return ZR.z_scope_of_machine(db, machine)
+    except Exception:  # noqa: BLE001 - a heartbeat never fails on it
+        return "shop"
+
+
 @router.put("/{machine_id}", response_model=POSMachineResponse)
 def update_machine(
     machine_id: str,
@@ -610,6 +627,9 @@ def update_machine(
 
     # Leaving its shop, or being retired, with shifts that belong to it: refused (409).
     leaving = "shop_id" in update_data and str(update_data["shop_id"]) != str(machine.shop_id)
+    if leaving:
+        # "העברת מכשיר לסניף אחר": the super admin may have taken it from this role.
+        access.require_feature(db, current_user, access.MOVE_DEVICES)
     retiring = update_data.get("is_active") is False and machine.is_active
     if leaving or retiring:
         refuse_leaving_shop_with_shifts(db, machine)
@@ -691,6 +711,8 @@ def delete_machine(
     if current_user.role == UserRole.DISTRIBUTOR:
         if machine.distributor_id != current_user.id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    # "הסרת מכשירים": the super admin may have taken it from this role.
+    access.require_feature(db, current_user, access.REMOVE_DEVICES)
 
     # Before anything is touched: an open shift or shifts awaiting a Z keep the till.
     refuse_leaving_shop_with_shifts(db, machine)

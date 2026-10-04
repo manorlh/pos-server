@@ -100,6 +100,8 @@ class POSMachine(Base):
     #: (app/services/licenses.py). Set by a super admin only.
     license_type = Column(String(16), nullable=False, default="permanent", server_default="permanent")
     license_expires_on = Column(Date, nullable=True)
+    #: "Z לכל קופה": the number this till's next own Z takes (app/services/z_sequence.py).
+    next_z_number = Column(Integer, nullable=False, default=1, server_default="1")
     is_active = Column(Boolean, default=True, nullable=False)
 
     # Bumped whenever this terminal is unpaired. Machine tokens carry the version
