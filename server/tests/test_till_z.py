@@ -593,6 +593,30 @@ class TestModeSwitching:
         assert json.loads(out.body) == {"detail": "unreported_shifts", "count": 2}
         assert w.tills[1].z_mode == "cloud"
 
+    def test_a_dead_till_goes_to_cloud_with_its_administratively_closed_shift(self, w):
+        """§5: a dead till never asks for its Z; switched to cloud, the shop's Z takes it."""
+        from app.services.administrative_close import close_shift_administratively
+
+        closed_shift(w, w.till, 1, [dict(total="10.00")])
+        open_ = w.shift(w.till, 2, status=ShiftStatus.OPEN)
+        w.till.last_heartbeat_at = w.now - timedelta(days=1)
+        close_shift_administratively(w.db, w.till, open_, w.admin, force=True)
+
+        assert put_mode(w, w.till, "cloud").z_mode == "cloud"
+        run = cloud_run(w, w.till)
+        assert w.db.get(ZReport, run.z_report_id).shift_count == 2
+
+    def test_a_reconstructed_shift_does_not_open_the_way_to_till_mode(self, w):
+        from app.services.administrative_close import close_shift_administratively
+
+        open_ = w.shift(w.tills[1], 1, status=ShiftStatus.OPEN)
+        w.tills[1].last_heartbeat_at = w.now - timedelta(days=1)
+        close_shift_administratively(w.db, w.tills[1], open_, w.admin, force=True)
+
+        out = put_mode(w, w.tills[1], "till")
+
+        assert (out.status_code, json.loads(out.body)) == (409, {"detail": "unreported_shifts", "count": 1})
+
     def test_an_open_shift_does_not_block(self, w):
         w.shift(w.tills[1], 1, status=ShiftStatus.OPEN)
 

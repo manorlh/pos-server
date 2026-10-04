@@ -136,6 +136,20 @@ def unreported_closed_count(db: Session, machine_id: uuid.UUID) -> int:
 # ── The setting (§5.1) ────────────────────────────────────────────────────────
 
 
+def _has_reconstructed_unreported(db: Session, machine_id: uuid.UUID) -> bool:
+    return (
+        db.query(Shift.id)
+        .filter(
+            Shift.machine_id == machine_id,
+            Shift.status == ShiftStatus.CLOSED,
+            Shift.z_report_id.is_(None),
+            Shift.reconstructed.is_(True),
+        )
+        .first()
+        is not None
+    )
+
+
 def set_z_mode(db: Session, machine: POSMachine, mode: str, *, now: Optional[datetime] = None) -> bool:
     """
     Switch who produces this till's Z. Returns True if it changed; the same value again
@@ -148,6 +162,10 @@ def set_z_mode(db: Session, machine: POSMachine, mode: str, *, now: Optional[dat
     other run. And while a Z is under way for it (`409 z_in_progress`): a live Z run item
     or a pending till-Z request. An **open** shift does not block: it simply goes into
     the next Z of the new mode.
+
+    One exception, dead-till recovery (§2.9, §5): a till whose waiting shifts include one
+    the cloud closed administratively may be switched **to `cloud`** with them — a dead
+    till will never ask for its Z, and this is how its shifts reach one (the shop's).
 
     Locks the till's Z counter first, the lock every till Z takes, so a switch and a till
     Z of the same till cannot interleave.
@@ -162,7 +180,7 @@ def set_z_mode(db: Session, machine: POSMachine, mode: str, *, now: Optional[dat
     if live_z_run_item(db, machine.id) is not None or _pending_query(db, machine.id).first() is not None:
         raise TillZRefused(status.HTTP_409_CONFLICT, {"detail": "z_in_progress"})
     count = unreported_closed_count(db, machine.id)
-    if count:
+    if count and not (mode == Z_MODE_CLOUD and _has_reconstructed_unreported(db, machine.id)):
         raise TillZRefused(status.HTTP_409_CONFLICT, {"detail": "unreported_shifts", "count": count})
     logger.info("machine %s z_mode %s -> %s", machine.id, machine.z_mode, mode)
     machine.z_mode = mode
