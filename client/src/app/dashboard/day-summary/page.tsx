@@ -54,6 +54,7 @@ import {
   ReportErrorState,
   ReportWindowSummary,
 } from '@/components/dashboard/report-window-summary';
+import { useZNumberLabel } from '@/components/dashboard/z-report/z-number';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -128,6 +129,9 @@ function VarianceCell({ totals }: { totals: DaySummaryTotals }) {
 
 function DayRow({ row }: { row: DaySummaryRow }) {
   const t = useTranslations('daySummary');
+  const tz = useTranslations('zReports');
+  // A till Z has no shop number: it reads "קופה 2 · Z 12", never "#null".
+  const zNumberLabel = useZNumberLabel();
   const [open, setOpen] = useState(false);
   const Chevron = open ? ChevronDown : ChevronRight;
 
@@ -192,8 +196,13 @@ function DayRow({ row }: { row: DaySummaryRow }) {
                   {row.contributors.map((c) => (
                     // One row per Z × till: a Z over three tills contributes three.
                     <TableRow key={`${c.zReportId}:${c.machineId}`}>
-                      <TableCell className="font-medium tabular-nums">
-                        {c.shopSequenceNumber ?? '—'}
+                      <TableCell className="font-medium tabular-nums whitespace-nowrap">
+                        {zNumberLabel(c)}
+                        {c.origin === 'till' ? (
+                          <Badge variant="secondary" className="ms-2 text-xs" title={tz('originTillHint')}>
+                            {tz('originTill')}
+                          </Badge>
+                        ) : null}
                       </TableCell>
                       <TableCell className="font-medium">
                         {c.machineName ?? c.machineId}

@@ -46,6 +46,11 @@ function closeSource(value: unknown): PosMachine['pendingCloseSource'] {
   return s === 'z_run' || s === 'request' ? s : null;
 }
 
+/** Absent (an older server) or anything unknown is the default, `cloud`. */
+function zMode(value: unknown): NonNullable<PosMachine['zMode']> {
+  return nullableString(value) === 'till' ? 'till' : 'cloud';
+}
+
 /** Normalize GET /machines rows (camelCase or snake_case, enum quirks). */
 export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
   const pairingRaw = raw.pairingStatus ?? raw.pairing_status;
@@ -126,6 +131,7 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     printerStatusAt: nullableString(raw.printerStatusAt),
     printerLastOkAt: nullableString(raw.printerLastOkAt),
     printerReportedAt: nullableString(raw.printerReportedAt),
+    zMode: zMode(raw.zMode ?? raw.z_mode),
     createdAt: String(raw.createdAt ?? raw.created_at ?? ''),
     updatedAt: String(raw.updatedAt ?? raw.updated_at ?? ''),
   };

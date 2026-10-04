@@ -54,6 +54,14 @@ const KNOWN = new Set([
   'untransmitted_card_sales',
   'transmit_request_not_found',
   'transmission_failed',
+  'unreported_shifts',
+  'z_in_progress',
+  'machine_not_till_z',
+  'machine_issues_its_own_z',
+  'till_z_disabled',
+  'till_z_request_not_found',
+  'printing',
+  'shift_not_closed',
 ]);
 
 /** The code part of a detail: `z_run_in_progress:<id>` → `z_run_in_progress`. */
