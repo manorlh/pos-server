@@ -43,6 +43,9 @@ class POSMachineUpdate(BaseModel):
     #: "לקוח קבוע / זמני" for this till alone — the super admin's (app/services/licenses.py).
     license_type: Optional[Literal["permanent", "temporary"]] = Field(None, alias="licenseType")
     license_expires_on: Optional[date] = Field(None, alias="licenseExpiresOn")
+    #: Who produces this till's Z (docs/SHIFTS_API.md §5.1). A switch is refused while
+    #: the till has shifts waiting for a Z of the old mode (409); the same value is a no-op.
+    z_mode: Optional[Literal["cloud", "till"]] = Field(None, alias="zMode")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -178,6 +181,15 @@ class POSMachineResponse(POSMachineBase):
     #: Its shop's number in its company, and that company's in the tenant; null without a shop.
     shop_number: Optional[int] = Field(None, alias="shopNumber")
     company_number: Optional[int] = Field(None, alias="companyNumber")
+    #: "cloud" (the shop's Z run builds its Z) or "till" (it produces its own, §5).
+    z_mode: str = Field("cloud", alias="zMode")
+
+    @field_validator("z_mode", mode="before")
+    @classmethod
+    def _z_mode_default(cls, value):
+        # A row not flushed yet (or a caller's stand-in) has no value: it is the default.
+        return value or "cloud"
+
     distributor_id: uuid.UUID = Field(..., alias="distributorId")
     mqtt_client_id: Optional[str] = Field(None, alias="mqttClientId")
     pairing_status: ModelPairingStatus = Field(..., alias="pairingStatus")

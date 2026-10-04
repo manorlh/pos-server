@@ -2,10 +2,9 @@
 The tenant's `zScope` setting, as the dashboard's tenant settings dialog writes it.
 
 It decides whether the Z wizard may put several tills in one Z, so what is pinned is the
-path the dashboard uses: the organization's default (a shop or a point of sale may set its
-own — tests/test_per_till_z.py), changed by the super admin only, only while every till it
-applies to is closed and in a Z, refused on a company or a single till, and read back by
-the Z runs.
+path the dashboard uses: stored at the tenant level, changed by the super admin only (the
+owner's rule), only while every till of the tenant is closed and in a Z, refused anywhere
+else, and read back by the Z runs. Each till's own `zMode` is tests/test_till_z.py's.
 """
 from __future__ import annotations
 
@@ -90,9 +89,9 @@ def test_only_the_two_values_are_accepted() -> None:
 
 
 def test_the_super_admin_alone() -> None:
-    from app.routers.settings import SHOP_Z_SCOPE_WRITE_ROLES, Z_SCOPE_WRITE_ROLES
+    from app.routers.settings import Z_SCOPE_WRITE_ROLES
 
-    assert Z_SCOPE_WRITE_ROLES == SHOP_Z_SCOPE_WRITE_ROLES == {UserRole.SUPER_ADMIN}
+    assert Z_SCOPE_WRITE_ROLES == {UserRole.SUPER_ADMIN}
 
 
 @pytest.mark.parametrize(

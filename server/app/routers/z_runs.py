@@ -34,6 +34,8 @@ from app.services.shifts import orphan_documents_by_machine, shift_to_out
 from app.services import areas
 from app.services import main_till as MT
 from app.services import z_runs as ZR
+from app.services.till_z import TillZRefused, z_mode_of
+from fastapi.responses import JSONResponse
 
 router = APIRouter(tags=["z-runs"])
 
@@ -133,7 +135,6 @@ def get_z_candidates(
     awaiting = _awaiting_z_by_machine(db, ids)
     timezones = _tenant_timezones(db, tills)
     tenant = _tenant(db, active_tenant_id)
-    own_z = ZR.per_till_ids(db, tills, tenant, shop)
     machines = []
     for machine in tills:
         cand = ZR.till_candidates(db, machine, shop.id)
@@ -166,6 +167,9 @@ def get_z_candidates(
                 machine_id=machine.id,
                 machine_name=machine.name,
                 pos_number=machine.pos_number,
+                # "till": it produces its own Z (§5) — the wizard asks it rather than
+                # taking it into the shop's run, which refuses it.
+                z_mode=z_mode_of(machine),
                 online=light.online,
                 status=light.status,
                 pending_documents=light.pending_documents,
@@ -185,7 +189,6 @@ def get_z_candidates(
                 is_active=bool(machine.is_active),
                 area_id=machine.area_id,
                 area_name=machine.area_name,
-                own_z=machine.id in own_z,
             )
         )
     return ZCandidatesOut(
@@ -193,8 +196,7 @@ def get_z_candidates(
         shop_name=shop.name,
         area_id=area.id if area is not None else None,
         area_name=area.name if area is not None else None,
-        # The mode of what was asked for: the point of sale's when one is, else the shop's.
-        z_scope=ZR.z_scope_of(tenant, shop, area),
+        z_scope=ZR.z_scope_of(tenant),
         open_tills_rule=ZR.open_tills_rule(db, tenant, shop),
         machines=machines,
         main_till=MT.till_ref(MT.main_till_of_shop(db, shop.id)),
@@ -236,23 +238,28 @@ def post_z_run(
         if len({m.id for m in found}) != len(set(wanted)):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
         _check_tills(db, current_user, found, active_tenant_id)
-    run = ZR.create_z_run(
-        db,
-        current_user,
-        _tenant(db, active_tenant_id),
-        shop,
-        [
-            ZR.MachineSelection(
-                machine_id=m.machine_id,
-                through_shift_id=m.through_shift_id,
-                include_open_shift=m.include_open_shift,
-            )
-            for m in body.machines
-        ],
-        business_date=body.business_date,
-        area_id=body.area_id,
-        confirm_open_tills=body.confirm_open_tills,
-    )
+    try:
+        run = ZR.create_z_run(
+            db,
+            current_user,
+            _tenant(db, active_tenant_id),
+            shop,
+            [
+                ZR.MachineSelection(
+                    machine_id=m.machine_id,
+                    through_shift_id=m.through_shift_id,
+                    include_open_shift=m.include_open_shift,
+                )
+                for m in body.machines
+            ],
+            business_date=body.business_date,
+            area_id=body.area_id,
+            confirm_open_tills=body.confirm_open_tills,
+        )
+    except TillZRefused as refused:
+        # `422 machine_issues_its_own_z` with the till's id beside the detail (§5.4).
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
     db.commit()
     db.refresh(run)
     return ZR.run_to_out(db, run)

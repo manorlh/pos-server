@@ -49,7 +49,10 @@ import type {
   CardTransmission,
   CardTransmissionList,
   TransmitRequest,
+  TillZRequest,
+  TillZRequestStatus,
   UntransmittedCardSales,
+  ZMode,
   ZRun,
   ZRunMachineSelection,
   TillParameter,
@@ -574,6 +577,8 @@ export type ZReportListParams = {
   closedTo?: string;
   /** An area id, or `none` for Zs run for no area. */
   areaId?: string;
+  /** `till` = Zs the tills produced themselves; `cloud` = the shop's Zs. */
+  origin?: 'cloud' | 'till';
   page?: number;
   pageSize?: number;
 };
@@ -873,6 +878,58 @@ export async function fetchUntransmittedCardSales(machineId: string): Promise<Un
 
 export async function cancelZRun(id: string): Promise<ZRun> {
   const { data } = await api.post<ZRun>(`/z-runs/${id}/cancel`, {});
+  return data;
+}
+
+// ── Z on the till (docs/SHIFTS_API.md §5) ──────────────────────────────────
+
+/**
+ * Who produces this till's Z. Refused (409) while the till has closed shifts no Z took
+ * (`unreported_shifts`, with `count`) or a Z is being produced for it (`z_in_progress`).
+ */
+export async function setMachineZMode(machineId: string, zMode: ZMode): Promise<PosMachine> {
+  const { data } = await api.put(`/machines/${machineId}`, { zMode });
+  return normalizePosMachine(data as Record<string, unknown>);
+}
+
+/**
+ * Ask these `till`-mode tills of a shop to produce their own Z — one request each. A till
+ * that already has a pending request returns that one. Omitting `machineIds` asks every
+ * active `till`-mode till of the shop.
+ */
+export async function requestShopTillZ(shopId: string, machineIds?: string[]): Promise<TillZRequest[]> {
+  const { data } = await api.post<TillZRequest[]>(
+    `/shops/${shopId}/till-z`,
+    machineIds ? { machineIds } : {},
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+/** Ask one `till`-mode till to produce its own Z. Returns the pending one if any. */
+export async function requestMachineTillZ(machineId: string): Promise<TillZRequest> {
+  const { data } = await api.post<TillZRequest>(`/machines/${machineId}/till-z`, {});
+  return data;
+}
+
+export async function fetchTillZRequest(id: string): Promise<TillZRequest> {
+  const { data } = await api.get<TillZRequest>(`/till-z-requests/${id}`);
+  return data;
+}
+
+export async function fetchTillZRequests(params: {
+  shopId?: string;
+  status?: TillZRequestStatus;
+}): Promise<TillZRequest[]> {
+  // "A list" (§5.4): read either a bare array or a paged `{items}` body.
+  const { data } = await api.get<TillZRequest[] | { items?: TillZRequest[] }>('/till-z-requests', {
+    params,
+  });
+  if (Array.isArray(data)) return data;
+  return Array.isArray(data?.items) ? data.items : [];
+}
+
+export async function cancelTillZRequest(id: string): Promise<TillZRequest> {
+  const { data } = await api.post<TillZRequest>(`/till-z-requests/${id}/cancel`, {});
   return data;
 }
 

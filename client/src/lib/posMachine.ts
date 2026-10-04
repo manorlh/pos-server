@@ -96,6 +96,11 @@ function deviceModel(value: unknown): PosMachine['deviceModel'] {
   return s === 'N55F' || s === 'MODO' ? s : null;
 }
 
+/** Absent (an older server) or anything unknown is the default, `cloud`. */
+function zMode(value: unknown): NonNullable<PosMachine['zMode']> {
+  return nullableString(value) === 'till' ? 'till' : 'cloud';
+}
+
 /** Normalize GET /machines rows (camelCase or snake_case, enum quirks). */
 export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
   const pairingRaw = raw.pairingStatus ?? raw.pairing_status;
@@ -183,6 +188,7 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     printerLastOkAt: nullableString(raw.printerLastOkAt),
     printerReportedAt: nullableString(raw.printerReportedAt),
     ...normalizeTerminalFields(raw),
+    zMode: zMode(raw.zMode ?? raw.z_mode),
     createdAt: String(raw.createdAt ?? raw.created_at ?? ''),
     updatedAt: String(raw.updatedAt ?? raw.updated_at ?? ''),
   };

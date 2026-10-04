@@ -15,7 +15,7 @@ from app.models.pos_machine import POSMachine
 from app.models.shift import Shift
 from app.models.shop import Shop
 from app.models.user import User, UserRole
-from app.models.z_report import ZReport
+from app.models.z_report import ZOrigin, ZReport
 from app.schemas.z_report import (
     ZReportBusinessOut,
     ZReportDetailOut,
@@ -93,7 +93,11 @@ def z_to_out(z: ZReport, cls=ZReportOut, tzinfo=None):
         # Not validated from the row directly: its `shifts` relationship would be read
         # into the detail's `shifts` field as ORM rows. The caller fills that in.
         item = cls(**item.model_dump())
+    # A till Z has a machine too, but also its section: legacy is the shape, not the till.
     item.legacy = z.per_machine is None and z.machine_id is not None
+    item.origin = z.origin or ZOrigin.CLOUD
+    if z.is_till_z and z.per_machine:
+        item.pos_number = z.per_machine[0].get("posNumber")
     if z.total_sales is not None:
         item.net_sales = Decimal(z.total_sales) - Decimal(z.total_refunds or 0)
         if z.discounts_total is not None:
@@ -106,9 +110,6 @@ def z_to_out(z: ZReport, cls=ZReportOut, tzinfo=None):
         item.offline_declined_count = offline["declined_count"]
         item.offline_declined_amount = offline["declined_amount"]
     item.machine_name = z.machine.name if z.machine_id and z.machine else None
-    if z.per_till and z.machine is not None and z.machine.pos_number:
-        # A till's own Z is named by its register: "קופה 2".
-        item.machine_name = f"קופה {z.machine.pos_number}"
     item.shop_name = z.shop.name if z.shop else None
     item.shop_number = z.shop.shop_number if z.shop else None
     # The frozen name, never the area's name today: a Z keeps what it was filed as.
@@ -142,6 +143,9 @@ def list_z_reports(
         description="IANA timezone production dates are measured in. Defaults to the "
         "tenant's configured timezone, else Asia/Jerusalem.",
     ),
+    origin: Optional[str] = Query(
+        None, pattern="^(cloud|till)$", description="`till`: the tills' own Zs (§5); `cloud`: Z runs'."
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200, alias="pageSize"),
     current_user: User = Depends(get_current_user),
@@ -157,7 +161,9 @@ def list_z_reports(
     carries both (`businessDate`, `productionDate`). `closedFrom`/`closedTo` are ISO
     datetimes on `closed_at`. `machineId`/`machineIds` match a Z containing that till
     (a shift of it, or a legacy till-issued Z). `areaId` matches the area a Z was run
-    for; `none` is every whole-shop, hand-picked or legacy Z.
+    for; `none` is every whole-shop, hand-picked or legacy Z. `origin` keeps the tills'
+    own Zs (`till`, docs/SHIFTS_API.md §5) or the Z runs' (`cloud`); a till Z is listed
+    among its shop's, ordered by when it closed within its business date.
     """
     area_filter = parse_area_filter(area_id)
     query = (
@@ -179,8 +185,13 @@ def list_z_reports(
     if shop_id:
         query = query.filter(ZReport.shop_id == shop_id)
     query = filter_on_column(query, ZReport.area_id, area_filter)
+    if isinstance(origin, str):  # (a direct call leaves the Query default in place)
+        query = query.filter(ZReport.origin == origin)
 
-    tz_name = resolve_report_timezone(db, active_tenant_id, tz)
+    # A direct call (the tests) leaves the Query defaults in place: read them as unset.
+    if not isinstance(date_basis, str):
+        date_basis = "business"
+    tz_name = resolve_report_timezone(db, active_tenant_id, tz if isinstance(tz, str) else None)
     tzinfo = _load_zoneinfo(tz_name)
     production = date_basis == "production"
 
@@ -425,7 +436,14 @@ def get_z_report(
     z = query.first()
     if not z:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Z-report not found")
+    return z_detail_out(db, z)
 
+
+def z_detail_out(db: Session, z: ZReport) -> ZReportDetailOut:
+    """
+    The Z with its sections, shifts and frozen header — the dashboard's detail, and the
+    body a till gets back for its own Z (docs/SHIFTS_API.md §5.2), so both print one thing.
+    """
     out = z_to_out(z, ZReportDetailOut)
     out.per_machine = [_with_derived_sales(section) for section in (z.per_machine or [])]
     shifts = (
@@ -458,4 +476,5 @@ def get_z_report(
     elif z.per_machine is not None and shifts:
         out.by_waiter = waiter_breakdown(db, [s.id for s in shifts], z.shop_id)
         out.by_waiter_source = "documents"
+    out.till_totals = z.till_totals
     return out

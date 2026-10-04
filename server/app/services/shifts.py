@@ -31,14 +31,14 @@ from decimal import Decimal
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 from fastapi import HTTPException, status
-from sqlalchemy import BigInteger, func, or_
+from sqlalchemy import BigInteger, case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.pos_machine import POSMachine
 from app.models.shift import Shift, ShiftStatus
 from app.models.transaction import Transaction
-from app.models.z_report import ZReport
+from app.models.z_report import ZOrigin, ZReport
 from app.schemas.shift import (
     LastClosedShift,
     ShiftCloseIn,
@@ -493,11 +493,20 @@ def recent_shift_zs(
     """
     This till's shifts taken by a Z in the last `days`, newest Z first, as the till needs
     them to print a Z number on a reprint: `[{shiftId, zReportId, zNumber}]`.
+
+    A till Z (§5) is listed exactly like a cloud Z, with its own number as `zNumber`: the
+    till's purge and its "in Z N" marks read this list whichever kind of Z took a shift.
     """
     now = now or datetime.now(timezone.utc)
     rows = (
-        # A till's own Z number ("Z לכל קופה") when it has one, else the shop's.
-        db.query(Shift.id, ZReport.id, func.coalesce(ZReport.machine_sequence_number, ZReport.shop_sequence_number))
+        db.query(
+            Shift.id,
+            ZReport.id,
+            case(
+                (ZReport.origin == ZOrigin.TILL, ZReport.machine_sequence_number),
+                else_=ZReport.shop_sequence_number,
+            ),
+        )
         .join(ZReport, ZReport.id == Shift.z_report_id)
         .filter(Shift.machine_id == machine_id, ZReport.closed_at >= now - timedelta(days=days))
         .order_by(ZReport.closed_at.desc(), Shift.sequence_number.desc())
@@ -811,6 +820,7 @@ def z_number_of(db: Session, shift: Shift) -> Optional[int]:
     z = getattr(shift, "z_report", None)
     if z is None:
         z = db.query(ZReport).filter(ZReport.id == shift.z_report_id).first()
+    # A till Z's number is in its till's run (§5), a cloud Z's in the shop's.
     return z.z_number if z is not None else None
 
 

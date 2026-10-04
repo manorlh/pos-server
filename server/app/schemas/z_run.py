@@ -115,6 +115,8 @@ class ZCandidateMachineOut(BaseModel):
     machine_id: uuid.UUID = Field(..., alias="machineId")
     machine_name: Optional[str] = Field(None, alias="machineName")
     pos_number: Optional[str] = Field(None, alias="posNumber")
+    #: "cloud" (taken by the shop's Z run) or "till" (produces its own Z, §5).
+    z_mode: str = Field("cloud", alias="zMode")
     online: bool = False
     status: Optional[str] = None
     pending_documents: Optional[int] = Field(None, alias="pendingDocuments")
@@ -132,9 +134,6 @@ class ZCandidateMachineOut(BaseModel):
     #: The till's area now (not its shifts' stamps).
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
     area_name: Optional[str] = Field(None, alias="areaName")
-    #: "Z לכל קופה" for this till (its point of sale's, shop's or organization's mode): it
-    #: gets a Z of its own, never one shared with another till.
-    own_z: bool = Field(False, alias="ownZ")
 
 
 class ZCandidatesOut(BaseModel):

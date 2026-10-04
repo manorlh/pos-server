@@ -2,7 +2,12 @@
 
 /**
  * Z reports (דוחות Z) — one per shop per run, built in the cloud from the documents of
- * the shifts it took. Each row opens the Z's own page, which also prints it.
+ * the shifts it took, and — for tills that produce their own Z (zMode = till) — one per
+ * till, numbered per till ("קופה 2 · Z 12"), sorted among the shop's by when they closed.
+ * Each row opens the Z's own page, which also prints it.
+ *
+ * The till filter is the scope bar's (`machineIds`); the origin filter tells the shop's
+ * Zs from the tills' own.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -24,6 +29,8 @@ import { OverShort } from '@/components/dashboard/shifts/shift-parts';
 import { ZBadges } from '@/components/dashboard/z-report/z-badges';
 import { NumberPill } from '@/components/dashboard/number-pill';
 import { numberedLabel } from '@/lib/orgNumber';
+import { useZNumberLabel } from '@/components/dashboard/z-report/z-number';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -37,6 +44,7 @@ import { ZA4Batch, useZSequencePrint } from '@/components/dashboard/z-report/z-s
 import { ZRangePrintDialog } from '@/components/dashboard/z-report/z-range-print-dialog';
 
 const PAGE_SIZE = 50;
+const ORIGIN_ANY = '__any__';
 const COLS = 14;
 
 type DateBasis = 'business' | 'production';
@@ -66,6 +74,7 @@ function localInputToIso(value: string): string | undefined {
 export default function ZReportsPage() {
   const t = useTranslations('zReports');
   const tc = useTranslations('common');
+  const zNumberLabel = useZNumberLabel();
   const router = useRouter();
   const canProduceZ = useCanProduceZ();
   // `GET /z-reports` filters by shopId and machineIds; there is no company filter.
@@ -92,6 +101,8 @@ export default function ZReportsPage() {
   const [printView, setPrintView] = useState<ZPrintView>('a4');
   const [rangeOpen, setRangeOpen] = useState(false);
   const sequence = useZSequencePrint();
+  /** `''` = both, `cloud` = the shop's Zs, `till` = Zs the tills produced themselves. */
+  const [origin, setOrigin] = useState<'' | 'cloud' | 'till'>('');
 
   /*
    * `?zReportId=` used to open a dialog here; the Z now has its own page. Old links
@@ -128,8 +139,14 @@ export default function ZReportsPage() {
     if (ct) p.closedTo = ct;
     if (area) p.areaId = area;
     if (dateBasis !== 'business') p.dateBasis = dateBasis;
+    if (origin) p.origin = origin;
     return p;
-  }, [machineId, shopId, from, to, closedFrom, closedTo, area, dateBasis, page]);
+  }, [machineId, shopId, from, to, closedFrom, closedTo, area, dateBasis, origin, page]);
+  const originItems = [
+    { value: ORIGIN_ANY, label: t('originAll') },
+    { value: 'cloud', label: t('originCloudOption') },
+    { value: 'till', label: t('originTillOption') },
+  ];
 
   const { data, isLoading, isFetching, isError, error } = useQuery<ZReportListResponse>({
     queryKey: ['z-reports', params],
@@ -200,7 +217,7 @@ export default function ZReportsPage() {
             ))}
           </div>
         </div>
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-4">
           <div className="space-y-1">
             <Label className="text-xs">
               {dateBasis === 'production' ? t('filterFromProduction') : t('filterFrom')}
@@ -226,6 +243,28 @@ export default function ZReportsPage() {
             value={area}
             onChange={(next) => { setArea(next); resetPage(); }}
           />
+          <div className="space-y-1">
+            <Label className="text-xs">{t('filterOrigin')}</Label>
+            <Select
+              value={origin || ORIGIN_ANY}
+              onValueChange={(v) => {
+                setOrigin(v === 'cloud' || v === 'till' ? v : '');
+                resetPage();
+              }}
+              items={originItems}
+            >
+              <SelectTrigger className="min-w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {originItems.map((i) => (
+                  <SelectItem key={i.value} value={i.value} label={i.label}>
+                    {i.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
         <p className="text-muted-foreground text-xs">
           {dateBasis === 'production'
@@ -430,8 +469,9 @@ export default function ZReportsPage() {
                         className="hover:underline"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        {/* An em dash, not a 0: a shopless legacy Z has no number. */}
-                        {(z.zNumber ?? z.shopSequenceNumber) ?? '—'}
+                        {/* An em dash, not a 0: a shopless legacy Z has no number. A till Z
+                            has none of the shop's either — it is "קופה 2 · Z 12". */}
+                        {zNumberLabel(z)}
                       </Link>
                       <ZBadges z={z} />
                     </TableCell>
@@ -440,7 +480,7 @@ export default function ZReportsPage() {
                     <TableCell>
                       <NumberPill n={z.shopNumber} className="me-1" />
                       {shopName ?? '—'}
-                      {z.legacy && z.machineName ? (
+                      {(z.legacy || z.origin === 'till') && z.machineName ? (
                         <div className="text-muted-foreground text-xs">{z.machineName}</div>
                       ) : null}
                     </TableCell>

@@ -51,6 +51,7 @@ from app.routers import (
     z_runs as z_runs_router,
     shift_close_requests as shift_close_requests_router,
     transmit_requests as transmit_requests_router,
+    till_z_requests as till_z_requests_router,
     tax_reports,
     reports,
     till_parameters as till_parameters_router,
@@ -61,6 +62,7 @@ from app.routers import (
     prepaid_vouchers as prepaid_vouchers_router,
     till_shop_z as till_shop_z_router,
     main_till as main_till_router,
+    z_mode as z_mode_router,
     exceptions as exceptions_router,
     promotions as promotions_router,
     tables as tables_router,
@@ -135,6 +137,7 @@ app.include_router(shifts_router.router, prefix=_prefix)
 app.include_router(z_runs_router.router, prefix=_prefix)
 app.include_router(shift_close_requests_router.router, prefix=_prefix)
 app.include_router(transmit_requests_router.router, prefix=_prefix)
+app.include_router(till_z_requests_router.router, prefix=_prefix)
 app.include_router(pos_users.router, prefix=_prefix)
 app.include_router(tenants.router, prefix=_prefix)
 app.include_router(settings_router.router, prefix=_prefix)
@@ -146,6 +149,7 @@ app.include_router(till_messages_router.router, prefix=_prefix)
 app.include_router(prepaid_vouchers_router.router, prefix=_prefix)
 app.include_router(till_shop_z_router.router, prefix=_prefix)
 app.include_router(main_till_router.router, prefix=_prefix)
+app.include_router(z_mode_router.router, prefix=_prefix)
 app.include_router(exceptions_router.router, prefix=_prefix)
 app.include_router(exceptions_router.till_router, prefix=_prefix)
 app.include_router(promotions_router.router, prefix=_prefix)

@@ -21,6 +21,9 @@ never from figures a till reported. Everything happens in one database transacti
    what makes a shift in at most one Z: it was NULL under the lock, and it is set in
    the same transaction.
 
+A till Z (`zMode = till`, docs/SHIFTS_API.md §5) runs the same steps over one till,
+with that till's counter (`machine_z_sequences`) in place of the shop's.
+
 A refusal raises `ZBuildRefused` before anything is written.
 
 **No Z on nothing** ("אל תאפשר לסגור Z על 0"): a set of shifts with no activity — no
@@ -41,8 +44,8 @@ from sqlalchemy.orm import Session
 from app.models.pos_machine import POSMachine
 from app.models.shift import Shift, ShiftStatus
 from app.models.shop_z_sequence import ShopZSequence
-from app.models.z_report import ZReport
-from app.services.shift_totals import CENT, DocumentTotals, compute_totals
+from app.models.z_report import ZOrigin, ZReport
+from app.services.shift_totals import CENT, DocumentTotals, compute_totals, till_totals_mismatch
 from app.models.shop import Shop
 from app.models.shop_area import ShopArea
 from app.services.offline_authorizations import offline_block
@@ -53,7 +56,12 @@ from app.services.z_sequence import (
     allocate_machine_z_number,
     allocate_shop_z_number,
     ensure_shop_z_sequence,
+    lock_machine_z_sequence,
 )
+
+#: `pos_machines.z_mode` of a till that produces its own Z (docs/SHIFTS_API.md §5).
+Z_MODE_TILL = "till"
+Z_MODE_CLOUD = "cloud"
 
 ZERO = Decimal("0")
 
@@ -355,13 +363,30 @@ def build_z(
     area_id: Optional[uuid.UUID] = None,
     open_tills_left_out: Optional[dict] = None,
     now: Optional[datetime] = None,
-    per_till: bool = False,
+    origin: str = ZOrigin.CLOUD,
+    created_by_name: Optional[str] = None,
+    created_by_pos_user_id: Optional[str] = None,
+    client_request_id: Optional[uuid.UUID] = None,
+    till_totals: Optional[dict] = None,
+    unattended: bool = False,
 ) -> ZReport:
     """
     Build and write one Z over `selections` — (till, through shift id) pairs of one shop.
 
     `area_id` records which area of the shop the Z was started for, and its header
     freezes the area's name. It selects nothing here: the tills were chosen by the run.
+
+    `origin = till` builds a till Z (docs/SHIFTS_API.md §5): exactly one till, numbered
+    in that till's own run instead of the shop's, filed under its **first** shift's
+    business date, `machine_id` set. Everything else — the included shifts, the figures,
+    the per-till section, the header — is this same code, so a till Z and a cloud Z over
+    the same shifts cannot differ. `till_totals` (the till's own sum) is kept for audit
+    and compared; `unattended` marks a Z produced for a dashboard request with nobody at
+    the till (on a till Z that is all it means).
+
+    A cloud Z refuses a till in `zMode = till` (`machine_issues_its_own_z`): whichever
+    path reaches the build — a new run, a till's close finishing one, expiry, an
+    administrative close — the cloud never takes such a till's shifts.
 
     The caller owns the transaction: on `ZBuildRefused` nothing has been written, and the
     caller rolls back (or releases its savepoint).
@@ -370,21 +395,33 @@ def build_z(
     operator confirmed producing this shop Z without, and who confirmed it. Frozen into
     the header as `openTillsLeftOut`, so the Z itself says what it does not cover.
 
-    `per_till` ("Z לכל קופה"): the Z of one till alone. It is that till's (`machine_id`)
-    and takes the till's own number (`machine_sequence_number`), not the shop's.
+    Every Z, cloud or till, freezes its per-waiter breakdown on the header (`byWaiter`,
+    app/services/z_waiters.py).
     """
-    if per_till and len(selections) != 1:
-        raise ZBuildRefused("per_till_one_till", "A till's own Z is for that till alone.")
     if shop_id is None:
         raise ZBuildRefused("no_shop", "A Z is per shop; this run has none.")
     if not selections:
         raise ZBuildRefused("nothing_to_report", "No till has anything to include.")
     now = now or datetime.now(timezone.utc)
+    till_z = origin == ZOrigin.TILL
 
-    # 1. Serialise builds for this shop on its counter row (created first if missing, so
-    #    two first Zs of a shop cannot both insert it).
-    ensure_shop_z_sequence(db, shop_id)
-    db.query(ShopZSequence).filter(ShopZSequence.shop_id == shop_id).with_for_update().first()
+    if till_z:
+        if len(selections) != 1:
+            raise ZBuildRefused("till_z_one_till", "A till Z is one till's.")
+        # 1. Serialise on the till's own counter (the caller normally holds it already).
+        lock_machine_z_sequence(db, selections[0][0].id)
+    else:
+        for machine, _through in selections:
+            if getattr(machine, "z_mode", None) == Z_MODE_TILL:
+                raise ZBuildRefused(
+                    "machine_issues_its_own_z",
+                    "This till produces its own Z; a cloud Z does not take its shifts.",
+                    machine.id,
+                )
+        # 1. Serialise builds for this shop on its counter row (created first if missing,
+        #    so two first Zs of a shop cannot both insert it).
+        ensure_shop_z_sequence(db, shop_id)
+        db.query(ShopZSequence).filter(ShopZSequence.shop_id == shop_id).with_for_update().first()
 
     # 2. Per till, the included set under lock, D4 re-checked.
     per_machine: List[Tuple[POSMachine, List[Shift]]] = []
@@ -421,14 +458,26 @@ def build_z(
     cash = z_cash_summary([shifts for _m, shifts in per_machine])
 
     # 4. Number, write, claim.
+    if business_date is None:
+        # A cloud Z: its latest shift's day. A till Z closes the till's business day,
+        # which its first shift opened (§5): the first shift's day.
+        business_date = (
+            per_machine[0][1][0].business_date if till_z else max(s.business_date for s in all_shifts)
+        )
     z = ZReport(
         id=uuid.uuid4(),
         tenant_id=tenant_id,
-        machine_id=per_machine[0][0].id if per_till else None,
+        machine_id=per_machine[0][0].id if till_z else None,
+        origin=ZOrigin.TILL if till_z else ZOrigin.CLOUD,
         shop_id=shop_id,
         z_run_id=z_run_id,
         created_by_user_id=created_by_user_id,
-        business_date=business_date or max(s.business_date for s in all_shifts),
+        created_by_name=created_by_name,
+        created_by_pos_user_id=created_by_pos_user_id,
+        client_request_id=client_request_id,
+        till_totals=till_totals,
+        totals_mismatch=till_totals_mismatch(till_totals, overall) if till_z else False,
+        business_date=business_date,
         period_start=min((_aware(s.opened_at) for s in all_shifts)),
         period_end=max((_aware(s.closed_at or s.close_accepted_at or now) for s in all_shifts)),
         shift_count=len(all_shifts),
@@ -450,7 +499,10 @@ def build_z(
         expected_cash=cash["expected"],
         actual_cash=cash["counted"],
         discrepancy=cash["over_short"],
-        unattended=any(s.unattended for s in all_shifts),
+        # A cloud Z: any shift closed with nobody at the drawer. A till Z: produced for a
+        # dashboard request with nobody at the till (§5.5, shown "הופק מרחוק") — its
+        # shifts' own flags are on their sections (`unattendedShiftCount`).
+        unattended=bool(unattended) if till_z else any(s.unattended for s in all_shifts),
         reconstructed=any(s.reconstructed for s in all_shifts),
         closed_at=now,
         area_id=area_id,
@@ -460,13 +512,10 @@ def build_z(
             area=db.query(ShopArea).filter(ShopArea.id == area_id).first() if area_id else None,
             now=now,
         ),
-        shop_sequence_number=None if per_till else allocate_shop_z_number(db, shop_id),
-        machine_sequence_number=(
-            allocate_machine_z_number(db, per_machine[0][0].id) if per_till else None
-        ),
+        # One run or the other, never both: a till Z is not a number in the shop's run.
+        shop_sequence_number=None if till_z else allocate_shop_z_number(db, shop_id),
+        machine_sequence_number=allocate_machine_z_number(db, per_machine[0][0].id) if till_z else None,
     )
-    if per_till and z.header is not None:
-        z.header = {**z.header, "zScope": "machine"}
     if open_tills_left_out and z.header is not None:
         z.header = {**z.header, "openTillsLeftOut": open_tills_left_out}
     # Item discounts have no column of their own: frozen on the header, beside the

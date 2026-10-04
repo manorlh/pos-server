@@ -237,10 +237,11 @@ def load_z_facts(
         declined_amount=declined,
         vat_total=None if vat is None else _dec(vat),
         net=sum(breakdown.values(), ZERO),
+        # A till's own Z (`zMode = till`): named by its register, "קופה 2".
         till_label=(
             f"קופה {z.machine.pos_number}"
-            if z.per_till and z.machine is not None and z.machine.pos_number
-            else (z.machine.name if z.per_till and z.machine is not None else None)
+            if z.is_till_z and z.machine is not None and z.machine.pos_number
+            else (z.machine.name if z.is_till_z and z.machine is not None else None)
         ),
     )
 

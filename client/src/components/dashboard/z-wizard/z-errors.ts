@@ -62,6 +62,17 @@ const KNOWN = new Set([
   'open_tables',
   // The shop Z comes from the shop's main till only ("Z סניפי — מאיפה מפיקים").
   'z_only_from_main_till',
+  // A till's Z mode: the super admin's alone, with the till's shift closed first.
+  'till_open',
+  'super_admin_only',
+  'unreported_shifts',
+  'z_in_progress',
+  'machine_not_till_z',
+  'machine_issues_its_own_z',
+  'till_z_disabled',
+  'till_z_request_not_found',
+  'printing',
+  'shift_not_closed',
 ]);
 
 /** The code part of a detail: `z_run_in_progress:<id>` → `z_run_in_progress`. */

@@ -42,6 +42,7 @@ from app.services.shifts import is_foreign_shift, shift_exists
 from app.services.z_builder import (
     EMPTY_Z,
     EMPTY_Z_MESSAGE,
+    Z_MODE_TILL,
     ZBuildRefused,
     build_z,
     shift_order_key,
@@ -59,51 +60,28 @@ Z_SCOPE_SHOP = "shop"
 Z_SCOPE_MACHINE = "machine"
 
 
-def _scope_in(layer: Any) -> Optional[str]:
-    settings = getattr(layer, "settings", None) if layer is not None else None
-    raw = settings.get("zScope") if isinstance(settings, dict) else None
-    return raw if raw in (Z_SCOPE_SHOP, Z_SCOPE_MACHINE) else None
-
-
-def z_scope_of(tenant: Optional[Tenant], shop: Optional[Shop] = None, area: Any = None) -> str:
-    """
-    `zScope` — "Z סניפי" (one Z for the shop's tills, the default) or "Z לכל קופה" (each
-    till its own Z). Set on the point of sale (area), else its shop, else the
-    organization's default: the first layer that says wins.
-    """
-    for layer in (area, shop, tenant):
-        found = _scope_in(layer)
-        if found is not None:
-            return found
-    return Z_SCOPE_SHOP
-
-
-def z_scope_of_machine(
-    db: Session, machine: POSMachine, tenant: Optional[Tenant] = None, shop: Optional[Shop] = None
-) -> str:
-    """The Z mode this till is under: its point of sale's, its shop's, its organization's."""
-    from app.models.shop_area import ShopArea
-
-    area = db.get(ShopArea, machine.area_id) if getattr(machine, "area_id", None) else None
-    if shop is None or str(shop.id) != str(machine.shop_id):
-        shop = db.get(Shop, machine.shop_id) if machine.shop_id else None
-    if tenant is None:
-        tenant = db.get(Tenant, machine.tenant_id) if machine.tenant_id else None
-    return z_scope_of(tenant, shop, area)
+def z_scope_of(tenant: Optional[Tenant]) -> str:
+    """The tenant's `zScope` setting: one Z per shop (default) or one till per Z."""
+    raw = ((tenant.settings or {}) if tenant is not None else {}).get("zScope")
+    return Z_SCOPE_MACHINE if raw == Z_SCOPE_MACHINE else Z_SCOPE_SHOP
 
 
 def per_till_ids(
-    db: Session, machines: Sequence[POSMachine], tenant: Optional[Tenant], shop: Optional[Shop]
+    db: Session, machines: Sequence[POSMachine], tenant: Optional[Tenant] = None, shop: Optional[Shop] = None
 ) -> set:
-    """The tills among these that produce their own Z ("Z לכל קופה")."""
-    return {m.id for m in machines if z_scope_of_machine(db, m, tenant, shop) == Z_SCOPE_MACHINE}
+    """
+    The tills among these that produce their own Z (`zMode = till`, docs/SHIFTS_API.md
+    §5): a shop Z neither takes them nor waits for them.
+    """
+    return {m.id for m in machines if getattr(m, "z_mode", None) == Z_MODE_TILL}
 
 
 def tills_not_closed(db: Session, machines: Sequence[POSMachine]) -> List[dict]:
     """
     Of these tills, the ones a change of Z mode would cut through: an open shift, or
     closed shifts no Z has taken yet. The mode changes only over a clean break — every
-    till closed and in a Z — so the first Z under the new mode starts from nothing.
+    till closed and in a Z — so the first Z under the new mode starts from nothing
+    (`app.services.till_z.set_z_mode`, the super admin's).
     """
     out = []
     for m in machines:
@@ -409,7 +387,7 @@ def tills_left_out(
     Bounded the way the candidates are: an area's Z looks at that area's tills only, a
     distributor at their own terminals only. A till another run is already producing a
     Z for is that run's business, not this one's — and so is a till that produces its own
-    Z (`own_z`, "Z לכל קופה"): a shop Z never waits for it, nor does another till's Z.
+    Z (`own_z`, `zMode = till`): a shop Z never waits for it.
     """
     own_z = own_z or set()
     considered = [
@@ -440,12 +418,13 @@ def tills_left_out(
 def open_tills_rule(db: Session, tenant: Optional[Tenant], shop: Shop) -> Optional[str]:
     """
     `shopZOpenTills` for this shop: "block" or "confirm"; None when it does not apply —
-    a per-till Z, or the parameter missing or deactivated by a super admin.
+    one till per Z (the tenant's `zScope`), or the parameter missing or deactivated by a
+    super admin.
 
     A value that is neither option (one renamed since) reads as "confirm": the rule
     still holds, the gentler way.
     """
-    if z_scope_of(tenant, shop) != Z_SCOPE_SHOP:
+    if z_scope_of(tenant) != Z_SCOPE_SHOP:
         return None
     from app.services import till_parameters as TP
 
@@ -657,24 +636,28 @@ def create_z_run(
     if not selections:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no_machines")
     wanted = list(dict.fromkeys(sel.machine_id for sel in selections))
-
-    tills = {m.id: m for m in shop_tills(db, shop.id)}
-    # "Z לכל קופה" (its point of sale's, its shop's or the organization's mode): such a
-    # till's Z is its own — never one Z for it and another till.
-    own_z = per_till_ids(db, list(tills.values()), tenant, shop)
-    if len(wanted) > 1 and any(machine_id in own_z for machine_id in wanted):
+    if z_scope_of(tenant) == Z_SCOPE_MACHINE and len(wanted) > 1:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="z_scope_machine_one_till"
         )
-    # A till's own Z leaves no other till behind: they are not part of it.
-    run_scope = Z_SCOPE_SHOP
-    if len(wanted) == 1 and wanted[0] in own_z:
-        run_scope = Z_SCOPE_MACHINE
-        own_z = set(tills) - {wanted[0]}
+
+    tills = {m.id: m for m in shop_tills(db, shop.id)}
+    # A till in `zMode = till` makes its own Z: the shop's Z neither takes it (refused
+    # below) nor waits for it.
+    own_z = per_till_ids(db, list(tills.values()), tenant, shop)
     for machine_id in wanted:
         if machine_id not in tills:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"machine_not_in_shop:{machine_id}"
+            )
+    for machine_id in wanted:
+        if getattr(tills[machine_id], "z_mode", None) == Z_MODE_TILL:
+            # It produces its own Z (docs/SHIFTS_API.md §5): the shop's Z never takes it.
+            from app.services.till_z import TillZRefused
+
+            raise TillZRefused(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {"detail": "machine_issues_its_own_z", "machineId": str(machine_id)},
             )
     if area is not None:
         for machine_id in wanted:
@@ -710,7 +693,6 @@ def create_z_run(
         business_date=business_date,
         expires_at=now + timedelta(hours=Z_RUN_TTL_HOURS),
         strict_cloud_check=bool(strict_cloud_check),
-        z_scope=run_scope,
     )
     db.add(run)
     db.flush()
@@ -1060,7 +1042,6 @@ def finalise_if_ready(
             area_id=run.area_id,
             open_tills_left_out=open_tills_left_out(db, run),
             now=now,
-            per_till=getattr(run, "z_scope", None) == Z_SCOPE_MACHINE,
         )
         savepoint.commit()
     except ZBuildRefused as refused:
@@ -1478,55 +1459,3 @@ def run_to_out(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> dic
         ],
     }
 
-
-# ── "Z לכל קופה": the shift is the Z ─────────────────────────────────────────────
-
-
-class _OwnTillActor:
-    """The run's author when a till's own close produces its Z: the till's distributor."""
-
-    def __init__(self, machine: POSMachine):
-        self.id = machine.distributor_id
-        self.role = UserRole.SHOP_MANAGER
-        self.username = f"קופה {machine.pos_number}" if machine.pos_number else (machine.name or "קופה")
-        self.email = None
-
-
-def z_on_own_close(db: Session, machine: POSMachine, shift: Shift) -> Optional[ZRun]:
-    """
-    Under "Z לכל קופה" a till does not work by shifts: its accepted close *is* its Z. The
-    cloud starts the till's own run at once, so the Z is built — and numbered by the till's
-    own counter — as soon as the close is in, online or synced later from offline.
-
-    Never fails the close: anything that stops it (a run already under way, open tables,
-    nothing to report) is logged and the shift waits for the next Z like any other.
-    """
-    if shift.z_report_id is not None or machine.shop_id is None:
-        return None
-    try:
-        if z_scope_of_machine(db, machine) != Z_SCOPE_MACHINE:
-            return None
-    except Exception:  # noqa: BLE001 - see the docstring
-        logger.warning("till %s: its Z mode could not be read on close", machine.id, exc_info=True)
-        return None
-    if _live_items(db, [machine.id]):
-        return None  # a run is already taking this till (on_shift_close_accepted answers it)
-    shop = db.get(Shop, machine.shop_id)
-    tenant = db.get(Tenant, machine.tenant_id) if machine.tenant_id else None
-    if shop is None or tenant is None:
-        return None
-    savepoint = db.begin_nested()
-    try:
-        run = create_z_run(
-            db,
-            _OwnTillActor(machine),  # type: ignore[arg-type]
-            tenant,
-            shop,
-            [MachineSelection(machine_id=machine.id)],
-        )
-        savepoint.commit()
-        return run
-    except Exception:  # noqa: BLE001 - see the docstring
-        _rollback_savepoint(savepoint)
-        logger.warning("till %s: its own Z on close was not started", machine.id, exc_info=True)
-        return None

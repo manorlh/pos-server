@@ -45,6 +45,11 @@ import {
   UntransmittedSales,
 } from '@/components/dashboard/machines/card-transmission';
 import { MachineAreaDialog } from '@/components/dashboard/areas/machine-area-dialog';
+import { RequestTillZButton, ZModeField } from '@/components/dashboard/till-z/till-z-dialogs';
+import { LatestTillZRequest } from '@/components/dashboard/till-z/till-z-request';
+import { ZBadges } from '@/components/dashboard/z-report/z-badges';
+import { useZNumberLabel } from '@/components/dashboard/z-report/z-number';
+import { zModeOf } from '@/lib/tillZ';
 import {
   RemoteShiftCloseDialog,
   canCloseShiftRemotely,
@@ -101,7 +106,9 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
   const tTx = useTranslations('transactions');
   const tShifts = useTranslations('shifts');
   const tSend = useTranslations('transmission');
+  const tTillZ = useTranslations('tillZ');
   const shiftLabel = useShiftLabel();
+  const zNumberLabel = useZNumberLabel();
   const canProduceZ = useCanProduceZ();
   const [closeShiftOpen, setCloseShiftOpen] = useState(false);
   const [areaOpen, setAreaOpen] = useState(false);
@@ -215,6 +222,8 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
   // As on the machines list: offered only for a terminal that is actually unreachable.
   const showDeadTill = !removed && !online && machine.pairingStatus === 'assigned';
   const zRows = zReports.data?.items ?? [];
+  // A till that produces its own Z is asked for it; the cloud wizard never builds one for it.
+  const tillMode = zModeOf(machine) === 'till';
   const zSpansTills = zRows.some((r) => (r.machineCount ?? 1) > 1);
 
   return (
@@ -259,7 +268,9 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
               {tMachines('closeShiftRemotely')}
             </Button>
           ) : null}
-          {canProduceZ && !removed && machine.shopId && machine.pairingStatus === 'assigned' ? (
+          {canProduceZ && tillMode ? (
+            <RequestTillZButton m={machine} />
+          ) : canProduceZ && !removed && machine.shopId && machine.pairingStatus === 'assigned' ? (
             <Link
               href={zWizardHref(machine.shopId, machine.id)}
               className={buttonVariants({ size: 'sm' })}
@@ -335,6 +346,17 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
               }
             />
           ) : null}
+          {/* `PUT /machines/{id}` {zMode} is the Z producers'; read-only for everyone else. */}
+          <Field
+            label={tTillZ('mode.label')}
+            value={
+              <ZModeField
+                machine={machine}
+                // The owner's rule: the super admin alone switches a till's Z mode.
+                canEdit={isSuperAdmin && !removed && machine.pairingStatus === 'assigned'}
+              />
+            }
+          />
           <Field
             label={tMachines('lastSeen')}
             value={
@@ -571,6 +593,11 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           <p className="px-4 pb-2 text-xs text-muted-foreground">
             {zSpansTills ? t('zReportsHint') : t('zReportsHintOwn')}
           </p>
+          {tillMode && machine.shopId ? (
+            <div className="mx-4 mb-3 rounded-md border bg-muted/30 px-3 py-2">
+              <LatestTillZRequest machineId={machine.id} shopId={machine.shopId} />
+            </div>
+          ) : null}
           <Table>
             <TableHeader>
               <TableRow>
@@ -599,8 +626,9 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
                   <TableRow key={report.id}>
                     <TableCell className="font-medium tabular-nums">
                       <Link href={`/dashboard/z-reports/${report.id}`} className="hover:underline">
-                        {(report.zNumber ?? report.shopSequenceNumber) ?? '—'}
+                        {zNumberLabel(report)}
                       </Link>
+                      <ZBadges z={report} />
                     </TableCell>
                     <TableCell>{formatDate(report.businessDate)}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">

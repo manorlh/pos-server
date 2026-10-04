@@ -8,6 +8,9 @@
  * it was built. It is shown as stored: a Z is a fiscal document, and re-deriving it from
  * today's settings would quietly rewrite every Z after a rename or a move.
  *
+ * A Z the till produced itself (origin `till`, docs/SHIFTS_API.md §5) is a Z of that one
+ * till: one register section, numbered per till ("קופה 2 · Z 12"), with no shop number.
+ *
  * "Print" opens the browser's print dialog on an A4 layout (`ZPrintDocument`) that is
  * hidden on screen; "save as PDF" there gives the file.
  */
@@ -55,6 +58,7 @@ import {
   offlineOf,
   offlineOfZ,
 } from '@/components/dashboard/z-report/offline-summary';
+import { useZTitle, ZProducedBy, zNumberSourceOf } from '@/components/dashboard/z-report/z-number';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -301,6 +305,7 @@ function Header({ z }: { z: ZReportDetail }) {
 export default function ZReportDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const t = useTranslations('zReports');
+  const zTitle = useZTitle();
   usePageScope({ maxLevel: 'machine', silent: true });
   // Stamped when the print dialog opens, so the paper says when it was printed.
   const [printedAt, setPrintedAt] = useState(() => new Date().toISOString());
@@ -364,11 +369,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-1">
               <FileBarChart className="h-5 w-5 text-muted-foreground me-1" aria-hidden />
-              <h1 className="text-2xl font-bold">
-                {(z.zNumber ?? z.shopSequenceNumber) != null
-                  ? t('detailsNumbered', { number: z.zNumber ?? z.shopSequenceNumber ?? 0 })
-                  : t('details')}
-              </h1>
+              <h1 className="text-2xl font-bold">{zTitle(zNumberSourceOf(z))}</h1>
               <ZBadges z={z} />
             </div>
             <p className="text-muted-foreground text-sm">
@@ -377,6 +378,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
               {areaName ? <>{t('areaValue', { area: areaName })} · </> : null}
               {t('businessDateValue', { date: formatDate(z.businessDate) })}
             </p>
+            <ZProducedBy z={z} className="text-muted-foreground text-xs" />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <ZPrintViewToggle value={view} onChange={setView} />
@@ -394,6 +396,12 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
           </div>
         </div>
 
+        {z.totalsMismatch ? (
+          <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden />
+            {t('totalsMismatchNotice')}
+          </div>
+        ) : null}
         {z.reconstructed ? (
           <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950">
             {t('reconstructedNotice')}

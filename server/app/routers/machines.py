@@ -77,7 +77,10 @@ from app.services.terminal_status import (
     machine_terminal_fields,
     terminal_settings_for,
 )
+from app.services import till_z, z_mode_policy
+from app.schemas.till_z import TillZRequestOut
 from app.schemas.transmission import ReplacementCodeBody
+from fastapi.responses import JSONResponse
 from sqlalchemy import func
 
 logger = logging.getLogger(__name__)
@@ -183,6 +186,7 @@ def _enrich_machine_status(
             if machine.shop is not None and machine.shop.company is not None
             else None
         ),
+        "zMode": till_z.z_mode_of(machine),
         "distributorId": machine.distributor_id,
         "mqttClientId": machine.mqtt_client_id,
         "pairingStatus": machine.pairing_status,
@@ -466,9 +470,6 @@ def get_my_machine(
         "license": licenses.effective_license(
             db if isinstance(db, Session) else object_session(machine), machine
         ),
-        # "Z סניפי" or "Z לכל קופה" (its point of sale's, shop's or organization's mode):
-        # under the latter every till closes its own Z, and the shift becomes the Z.
-        "zScope": _z_scope(db if isinstance(db, Session) else object_session(machine), machine),
         **machine_realtime_refresh_info(machine=machine),
     }
 
@@ -540,6 +541,8 @@ def post_my_heartbeat(
     if body is not None and body.terminal is not None:
         apply_terminal_block(machine, body.terminal)
     pending_transmit = transmit_requests.take_pending(db, machine)
+    # The pull half of "produce your Z" (§5.3), for a till in `zMode = till`.
+    pending_till_z = till_z.take_pending(db, machine)
     through = z_reported_through_sequence(db, machine.id)
     recent = recent_shift_zs(db, machine.id)
     # A shop Z is about (the master till's "סגירת Z סניפי" is open, or a run is waiting):
@@ -553,10 +556,12 @@ def post_my_heartbeat(
         # Drives the till's purge: documents of shifts at or below it are in a Z.
         "zReportedThroughSequence": through,
         # So a reprint of an older shift's X can carry the Z number it ended up in.
+        # A till Z's shifts are here exactly like a cloud Z's (§5.6).
         "recentShiftZs": recent,
         # A temporary customer's license end, every beat — a change reaches the till at once.
         "license": licenses.effective_license(db, machine),
-        "zScope": _z_scope(db, machine),
+        # Who produces this till's Z (§5.1), on every beat: the till takes its mode from here.
+        "zMode": till_z.z_mode_of(machine),
     }
     if fast_beat:
         response["fastBeat"] = True
@@ -564,6 +569,8 @@ def post_my_heartbeat(
         response["pendingCloseShift"] = pending
     if pending_transmit is not None:
         response["pendingTransmit"] = pending_transmit
+    if pending_till_z is not None:
+        response["pendingTillZ"] = pending_till_z
     return response
 
 
@@ -589,18 +596,6 @@ def get_machine(
     return _enrich_machine_status(machine, db)
 
 
-def _z_scope(db: Session, machine: POSMachine) -> str:
-    """The till's Z mode; "shop" for a till with no shop or when it cannot be read."""
-    if db is None or machine.shop_id is None:
-        return "shop"
-    from app.services import z_runs as ZR
-
-    try:
-        return ZR.z_scope_of_machine(db, machine)
-    except Exception:  # noqa: BLE001 - a heartbeat never fails on it
-        return "shop"
-
-
 @router.put("/{machine_id}", response_model=POSMachineResponse)
 def update_machine(
     machine_id: str,
@@ -622,6 +617,17 @@ def update_machine(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     update_data = machine_data.model_dump(exclude_unset=True, by_alias=False)
+    # Who produces its Z (§5.1): first, so a refused switch changes nothing else either.
+    # An explicit null is no change.
+    z_mode = update_data.pop("z_mode", None)
+    if z_mode is not None:
+        try:
+            # The owner's rules: the super admin alone, the till's shift closed first.
+            z_mode_policy.check_switch(db, current_user, machine, z_mode)
+            till_z.set_z_mode(db, machine, z_mode)
+        except till_z.TillZRefused as refused:
+            db.rollback()
+            return JSONResponse(status_code=refused.status_code, content=refused.body)
     # "לקוח קבוע / זמני" for this till: the super admin's only; leaves `update_data`.
     licenses.apply_license(current_user, machine, update_data)
 
@@ -867,6 +873,38 @@ def request_remote_shift_close(
     if not created:
         response.status_code = status.HTTP_200_OK
     return close_requests.request_to_out(db, req)
+
+
+@router.post(
+    "/{machine_id}/till-z",
+    response_model=TillZRequestOut,
+    response_model_by_alias=True,
+    status_code=status.HTTP_201_CREATED,
+)
+def request_till_z(
+    machine_id: uuid_mod.UUID,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Ask this till (`zMode = till`) to produce its own Z now (docs/SHIFTS_API.md §5.4).
+
+    The till gets the `till-z` Ably event if online and `pendingTillZ` on its heartbeat
+    either way; it closes its open shift unattended, asks for its Z and prints it. A till
+    with a request pending gets that one back. `422 machine_not_till_z` for a `cloud`
+    till, `409 machine_not_assigned`. Same roles as a remote shift close. Progress:
+    `GET /till-z-requests/{id}`.
+    """
+    machine = machine_for_shift_admin(db, machine_id, current_user, active_tenant_id)
+    try:
+        req, _created = till_z.request_for_machine(db, current_user, machine)
+    except till_z.TillZRefused as refused:
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
+    db.commit()
+    db.refresh(req)
+    return till_z.request_to_out(db, req)
 
 
 # ── Card transmission (docs/SHIFTS_API.md §4) ─────────────────────────────────

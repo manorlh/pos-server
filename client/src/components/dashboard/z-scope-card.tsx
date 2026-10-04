@@ -1,135 +1,102 @@
 'use client';
 
 /**
- * "מצב דו״ח Z" on a shop: "Z סניפי" (one Z for the shop's tills) or "Z לכל קופה" (each till
- * its own Z — the till no longer works by shifts: its close is its Z, numbered from Z 1 by
- * its own counter). Set on the shop, and on any of its points of sale over it; unset
- * follows the layer above (the point of sale its shop, the shop the organization).
+ * "מצב דו״ח Z" on a shop: who produces the Zs of its tills — the shop's Z, built in the
+ * cloud ("Z בענן", `zMode = cloud`), or each till its own ("Z בקופה", `zMode = till`,
+ * numbered per till from Z 1, docs/SHIFTS_API.md §5) — for the whole shop, and for each
+ * of its points of sale. A till is also switched alone, on its own page.
  *
- * The super admin's alone, and only over a clean break: the server refuses a change
- * (409 `z_scope_tills_open`) while a till it applies to has an open shift or closed
- * shifts no Z has taken, and this card lists those tills. Accounting takes every Z,
- * shop Zs and tills' own alike.
+ * The super admin's alone, and only over a clean break: every till switched has its
+ * shift closed and its closed shifts in a Z (pos-server app/services/z_mode_policy.py).
+ * A shop or point of sale switches all or nothing; a refusal names the till that stopped
+ * it. Accounting takes every Z, the shop's and the tills' own alike.
  */
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ReceiptText } from 'lucide-react';
 import { toast } from 'sonner';
-import {
-  fetchAreaSettings,
-  fetchShopAreas,
-  fetchShopSettings,
-  fetchTenantSettings,
-  patchAreaSettings,
-  patchShopSettings,
-} from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { useAuth } from '@/lib/auth';
-import type { PosSettingsPatch } from '@/lib/types';
-import { useIsSuperAdmin } from '@/components/dashboard/license-fields';
+import { fetchShopZMode, saveShopZMode, type ShopZModeState, type ZModeTill } from '@/lib/zModeApi';
+import type { ZMode } from '@/lib/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 
-type Scope = 'shop' | 'machine';
-type Choice = Scope | 'inherit';
+type Summary = ZMode | 'mixed' | 'none';
 
-interface BlockingTill {
-  machineId: string;
-  posNumber?: string | null;
-  name?: string | null;
-  openShift: boolean;
-  awaitingZ: number;
+function summaryOf(tills: ZModeTill[]): Summary {
+  if (tills.length === 0) return 'none';
+  const modes = new Set(tills.map((t) => t.zMode));
+  return modes.size > 1 ? 'mixed' : (tills[0].zMode as ZMode);
 }
 
-function scopeOf(settings: unknown): Scope | undefined {
-  const raw = (settings as { zScope?: unknown } | null | undefined)?.zScope;
-  return raw === 'shop' || raw === 'machine' ? raw : undefined;
+interface Refusal {
+  detail: string;
+  machineId?: string;
+  count?: number;
 }
 
-function blockingTills(err: unknown): BlockingTill[] | null {
-  const detail = (err as { response?: { status?: number; data?: { detail?: unknown } } } | null)?.response;
-  const d = detail?.data?.detail as { code?: string; tills?: BlockingTill[] } | undefined;
-  return detail?.status === 409 && d?.code === 'z_scope_tills_open' ? (d.tills ?? []) : null;
+function refusalOf(err: unknown): Refusal | null {
+  const data = (err as { response?: { status?: number; data?: unknown } } | null)?.response?.data as
+    | Refusal
+    | { detail?: unknown }
+    | undefined;
+  return data && typeof data.detail === 'string' ? (data as Refusal) : null;
 }
 
 export function ZScopeCard({ shopId }: { shopId: string }) {
   const t = useTranslations('zScope');
   const tc = useTranslations('common');
   const qc = useQueryClient();
-  const isSuperAdmin = useIsSuperAdmin();
-  const tenantId = useAuth((s) => s.activeTenantId);
-  const [blocking, setBlocking] = useState<BlockingTill[] | null>(null);
-
-  const shopQuery = useQuery({
-    queryKey: ['shop-settings', shopId, 'z-scope'],
-    queryFn: () => fetchShopSettings(shopId, false),
-  });
-  // The organization's default, which an unset shop follows. Only a super admin reads it
-  // (the tenant settings are the tenant admins'); anyone else sees "as the organization".
-  const tenantQuery = useQuery({
-    queryKey: ['tenant-settings', tenantId, 'z-scope'],
-    queryFn: () => fetchTenantSettings(tenantId!),
-    enabled: isSuperAdmin && !!tenantId,
-  });
-  const areasQuery = useQuery({
-    queryKey: ['shop-areas', shopId],
-    queryFn: () => fetchShopAreas(shopId),
-  });
-  const areas = areasQuery.data ?? [];
-  const areaSettings = useQueries({
-    queries: areas.map((a) => ({
-      queryKey: ['area-settings', a.id, 'z-scope'],
-      queryFn: () => fetchAreaSettings(a.id, false),
-    })),
-  });
-
-  const orgScope: Scope = scopeOf(tenantQuery.data?.settings) ?? 'shop';
-  const shopOwn = scopeOf(shopQuery.data?.settings);
-  const shopEffective: Scope = shopOwn ?? orgScope;
+  const query = useQuery({ queryKey: ['shop-z-mode', shopId], queryFn: () => fetchShopZMode(shopId) });
+  const [refusal, setRefusal] = useState<Refusal | null>(null);
 
   const save = useMutation({
-    mutationFn: async ({ level, id, choice }: { level: 'shop' | 'area'; id: string; choice: Choice }) => {
-      const patch = { zScope: choice === 'inherit' ? null : choice } as unknown as PosSettingsPatch;
-      return level === 'shop' ? patchShopSettings(id, patch) : patchAreaSettings(id, patch);
-    },
-    onSuccess: () => {
-      setBlocking(null);
-      void qc.invalidateQueries({ queryKey: ['shop-settings', shopId] });
-      void qc.invalidateQueries({ queryKey: ['area-settings'] });
+    mutationFn: ({ mode, areaId }: { mode: ZMode; areaId?: string }) => saveShopZMode(shopId, mode, areaId),
+    onSuccess: (out) => {
+      setRefusal(null);
+      qc.setQueryData(['shop-z-mode', shopId], out);
+      void qc.invalidateQueries({ queryKey: ['machines'] });
+      void qc.invalidateQueries({ queryKey: ['z-candidates'] });
       toast.success(t('saved'));
     },
     onError: (err: unknown) => {
-      const tills = blockingTills(err);
-      if (tills) {
-        setBlocking(tills);
-        toast.error(t('tillsOpen'));
-      } else {
-        toast.error(axiosErrorToToastMessage(err, tc('error')));
-      }
+      const r = refusalOf(err);
+      setRefusal(r);
+      if (!r) toast.error(axiosErrorToToastMessage(err, tc('error')));
     },
   });
 
-  const label = (s: Scope) => (s === 'machine' ? t('machine') : t('shop'));
+  const data = query.data;
+  const tillName = (s: ShopZModeState, machineId?: string) => {
+    const till = s.tills.find((x) => x.machineId === machineId);
+    return till?.posNumber ? t('till', { n: till.posNumber }) : (till?.name ?? '');
+  };
+  const refusalText = (s: ShopZModeState, r: Refusal): string => {
+    const till = tillName(s, r.machineId);
+    if (r.detail === 'till_open') return t('refused.tillOpen', { till });
+    if (r.detail === 'unreported_shifts') return t('refused.awaitingZ', { till, n: r.count ?? 1 });
+    if (r.detail === 'z_in_progress') return t('refused.zInProgress', { till });
+    if (r.detail === 'super_admin_only') return t('readOnly');
+    return r.detail;
+  };
 
-  const picker = (
-    level: 'shop' | 'area',
-    id: string,
-    own: Scope | undefined,
-    inheritedLabel: string,
-  ) => (
+  const picker = (id: string, summary: Summary, editable: boolean, areaId?: string) => (
     <select
-      id={`${level}-${id}`}
+      id={id}
       className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm disabled:opacity-70 sm:w-56"
-      value={own ?? 'inherit'}
-      disabled={!isSuperAdmin || save.isPending}
-      onChange={(e) =>
-        save.mutate({ level, id, choice: e.target.value as Choice })
-      }
+      value={summary}
+      disabled={!editable || save.isPending || summary === 'none'}
+      onChange={(e) => {
+        const v = e.target.value;
+        if (v === 'cloud' || v === 'till') save.mutate({ mode: v, areaId });
+      }}
     >
-      <option value="inherit">{inheritedLabel}</option>
-      <option value="shop">{t('shop')}</option>
-      <option value="machine">{t('machine')}</option>
+      {summary === 'mixed' ? <option value="mixed">{t('mixed')}</option> : null}
+      {summary === 'none' ? <option value="none">{t('noTills')}</option> : null}
+      <option value="cloud">{t('cloud')}</option>
+      <option value="till">{t('till_mode')}</option>
     </select>
   );
 
@@ -143,54 +110,47 @@ export function ZScopeCard({ shopId }: { shopId: string }) {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-xs text-muted-foreground">{t('desc')}</p>
+        {query.isLoading || !data ? (
+          <Skeleton className="h-20 w-full" />
+        ) : (
+          <>
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <label htmlFor={`zmode-shop-${shopId}`} className="text-sm font-medium">
+                {t('shopLevel')}
+              </label>
+              {picker(`zmode-shop-${shopId}`, summaryOf(data.tills), data.canEdit)}
+            </div>
 
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <label htmlFor={`shop-${shopId}`} className="text-sm font-medium">
-            {t('shopLevel')}
-          </label>
-          {picker('shop', shopId, shopOwn, t('inheritOrg', { mode: label(orgScope) }))}
-        </div>
+            {data.areas.length > 0 ? (
+              <div className="space-y-2 border-t pt-3">
+                <p className="text-xs font-medium text-muted-foreground">{t('areasTitle')}</p>
+                {data.areas.map((a) => {
+                  const tills = data.tills.filter((x) => x.areaId === a.id);
+                  return (
+                    <div key={a.id} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                      <label htmlFor={`zmode-area-${a.id}`} className="text-sm">
+                        {a.name}
+                        <span className="ms-2 text-xs text-muted-foreground">
+                          {t('tillsCount', { n: tills.length })}
+                        </span>
+                      </label>
+                      {picker(`zmode-area-${a.id}`, summaryOf(tills), data.canEdit, a.id)}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
 
-        {areas.length > 0 ? (
-          <div className="space-y-2 border-t pt-3">
-            <p className="text-xs font-medium text-muted-foreground">{t('areasTitle')}</p>
-            {areas.map((a, i) => {
-              const own = scopeOf(areaSettings[i]?.data?.settings);
-              return (
-                <div
-                  key={a.id}
-                  className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <label htmlFor={`area-${a.id}`} className="text-sm">
-                    {a.name}
-                    <span className="ms-2 text-xs text-muted-foreground">
-                      {t('effective', { mode: label(own ?? shopEffective) })}
-                    </span>
-                  </label>
-                  {picker('area', a.id, own, t('inheritShop', { mode: label(shopEffective) }))}
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
+            {refusal ? (
+              <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                {refusalText(data, refusal)}
+              </div>
+            ) : null}
 
-        {blocking && blocking.length > 0 ? (
-          <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
-            <p className="font-medium text-destructive">{t('tillsOpen')}</p>
-            <ul className="mt-1 list-disc space-y-0.5 ps-5 text-xs">
-              {blocking.map((b) => (
-                <li key={b.machineId}>
-                  {b.posNumber ? t('till', { n: b.posNumber }) : (b.name ?? '')}
-                  {' — '}
-                  {b.openShift ? t('openShift') : t('awaitingZ', { n: b.awaitingZ })}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-
-        {!isSuperAdmin ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('readOnly')}</p> : null}
-        <p className="text-xs text-muted-foreground">{t('cleanBreak')}</p>
+            {!data.canEdit ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('readOnly')}</p> : null}
+            <p className="text-xs text-muted-foreground">{t('cleanBreak')}</p>
+          </>
+        )}
       </CardContent>
     </Card>
   );
