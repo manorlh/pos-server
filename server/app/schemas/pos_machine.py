@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from pydantic import AliasChoices, BaseModel, Field, ConfigDict, PrivateAttr, field_validator, model_validator
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Literal
 import uuid
 from app.models.pos_machine import PairingStatus as ModelPairingStatus
 from app.schemas.printer import HeartbeatPrinter
@@ -32,6 +32,9 @@ class POSMachineUpdate(BaseModel):
     #: An area of the machine's shop (its new one, when `shopId` is sent too). An
     #: explicit null clears it; omitted leaves it as it is.
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
+    #: Who produces this till's Z (docs/SHIFTS_API.md §5.1). A switch is refused while
+    #: the till has shifts waiting for a Z of the old mode (409); the same value is a no-op.
+    z_mode: Optional[Literal["cloud", "till"]] = Field(None, alias="zMode")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -161,6 +164,15 @@ class POSMachineResponse(POSMachineBase):
     #: The register number in its shop — "קופה 2". Null when the machine has no shop.
     #: Text, because documents copy it verbatim; it is always a plain integer when set.
     pos_number: Optional[str] = Field(None, alias="posNumber")
+    #: "cloud" (the shop's Z run builds its Z) or "till" (it produces its own, §5).
+    z_mode: str = Field("cloud", alias="zMode")
+
+    @field_validator("z_mode", mode="before")
+    @classmethod
+    def _z_mode_default(cls, value):
+        # A row not flushed yet (or a caller's stand-in) has no value: it is the default.
+        return value or "cloud"
+
     distributor_id: uuid.UUID = Field(..., alias="distributorId")
     mqtt_client_id: Optional[str] = Field(None, alias="mqttClientId")
     pairing_status: ModelPairingStatus = Field(..., alias="pairingStatus")

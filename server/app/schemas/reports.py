@@ -316,6 +316,13 @@ class DaySummaryContributor(BaseModel):
     #: The shop's Z number, which is what a bookkeeper will quote. Null on a Z from a
     #: terminal with no shop.
     shop_sequence_number: Optional[int] = Field(None, alias="shopSequenceNumber")
+    #: "till" for a till's own Z (docs/SHIFTS_API.md §5): it has no shop number, and is
+    #: quoted by its number in its till's run instead.
+    origin: str = "cloud"
+    machine_sequence_number: Optional[int] = Field(None, alias="machineSequenceNumber")
+    #: The till's register number as the Z froze it ("קופה {posNumber} · Z {n}"); null
+    #: when it has none, and on a legacy Z.
+    pos_number: Optional[str] = Field(None, alias="posNumber")
     machine_id: uuid.UUID = Field(..., alias="machineId")
     machine_name: Optional[str] = Field(None, alias="machineName")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")

@@ -33,6 +33,8 @@ from app.services.remote_close import close_shift_pending_machine_ids
 from app.services.shifts import orphan_documents_by_machine, shift_to_out
 from app.services import areas
 from app.services import z_runs as ZR
+from app.services.till_z import TillZRefused, z_mode_of
+from fastapi.responses import JSONResponse
 
 router = APIRouter(tags=["z-runs"])
 
@@ -163,6 +165,9 @@ def get_z_candidates(
                 machine_id=machine.id,
                 machine_name=machine.name,
                 pos_number=machine.pos_number,
+                # "till": it produces its own Z (§5) — the wizard asks it rather than
+                # taking it into the shop's run, which refuses it.
+                z_mode=z_mode_of(machine),
                 online=light.online,
                 status=light.status,
                 pending_documents=light.pending_documents,
@@ -214,22 +219,27 @@ def post_z_run(
         if len({m.id for m in found}) != len(set(wanted)):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
         _check_tills(db, current_user, found, active_tenant_id)
-    run = ZR.create_z_run(
-        db,
-        current_user,
-        _tenant(db, active_tenant_id),
-        shop,
-        [
-            ZR.MachineSelection(
-                machine_id=m.machine_id,
-                through_shift_id=m.through_shift_id,
-                include_open_shift=m.include_open_shift,
-            )
-            for m in body.machines
-        ],
-        business_date=body.business_date,
-        area_id=body.area_id,
-    )
+    try:
+        run = ZR.create_z_run(
+            db,
+            current_user,
+            _tenant(db, active_tenant_id),
+            shop,
+            [
+                ZR.MachineSelection(
+                    machine_id=m.machine_id,
+                    through_shift_id=m.through_shift_id,
+                    include_open_shift=m.include_open_shift,
+                )
+                for m in body.machines
+            ],
+            business_date=body.business_date,
+            area_id=body.area_id,
+        )
+    except TillZRefused as refused:
+        # `422 machine_issues_its_own_z` with the till's id beside the detail (§5.4).
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
     db.commit()
     db.refresh(run)
     return ZR.run_to_out(db, run)
