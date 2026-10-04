@@ -17,13 +17,9 @@ class ZReportOut(BaseModel):
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     #: The shop's Z counter. Null only on a legacy Z from a terminal with no shop.
     shop_sequence_number: Optional[int] = Field(None, alias="shopSequenceNumber")
-    #: "Z לכל קופה": the till's own Z counter (and no shop number). Null on a shop Z.
-    machine_sequence_number: Optional[int] = Field(None, alias="machineSequenceNumber")
-    #: The number the Z is known by — the till's own under "Z לכל קופה", else the shop's.
+    #: The number the Z is quoted by (`ZReport.z_number`): the till's own run on a till Z
+    #: (`origin = till`, §5), the shop's otherwise.
     z_number: Optional[int] = Field(None, alias="zNumber")
-    #: True for a till's own Z ("Z לכל קופה").
-    per_till: bool = Field(False, alias="perTill")
-    machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
     business_date: date = Field(..., alias="businessDate")
     #: The local date the Z was produced (`closedAt` in the list's timezone). Filled by
     #: the list (`GET /z-reports`), which can filter and sort on it (`dateBasis`).
@@ -84,7 +80,18 @@ class ZReportOut(BaseModel):
 
     #: A pre-shift Z issued by one till (it has `machineId` and no per-till sections).
     legacy: bool = False
-    #: Legacy rows only.
+    #: "cloud" (a Z run over the shop's tills) or "till" (the till's own Z, §5).
+    origin: str = "cloud"
+    #: A till Z's number in its till's own run; null on a cloud Z (its number is
+    #: `shopSequenceNumber`). Shown as "קופה {posNumber or machineName} · Z {this}".
+    machine_sequence_number: Optional[int] = Field(None, alias="machineSequenceNumber")
+    #: The register number of a till Z's till, as frozen in its section; null otherwise.
+    pos_number: Optional[str] = Field(None, alias="posNumber")
+    #: Who pressed "הפק Z" at the till; null when produced remotely, and on a cloud Z.
+    created_by_name: Optional[str] = Field(None, alias="createdByName")
+    #: A till Z whose till-sent figures differed from the built ones (shown, not refused).
+    totals_mismatch: bool = Field(False, alias="totalsMismatch")
+    #: The till of a till Z, and of a legacy row; null on a cloud Z (it spans tills).
     machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
     #: Legacy rows: the till's own Z blob.
     payload: Optional[dict] = None
@@ -127,6 +134,8 @@ class ZReportBusinessOut(BaseModel):
 class ZReportDetailOut(ZReportOut):
     #: The per-register sections, as stored at build time (money as decimal strings).
     per_machine: List[Dict[str, Any]] = Field(default_factory=list, alias="perMachine")
+    #: A till Z: the till's own sum as it sent it (audit; never the figures).
+    till_totals: Optional[Dict[str, Any]] = Field(None, alias="tillTotals")
     shifts: List[ShiftOut] = Field(default_factory=list)
     business: Optional[ZReportBusinessOut] = None
     #: Card legs per brand (מותג) × acquirer (חברת סליקה), summed over the sections:

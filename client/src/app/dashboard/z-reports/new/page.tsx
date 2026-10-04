@@ -15,6 +15,11 @@
  *    then builds the Z. The run ids go into the URL (`?runs=`), so a reload or a
  *    colleague with the link lands on the same progress view.
  *
+ * **Tills that produce their own Z** (zMode = till, §5) are not in a cloud run at all:
+ * the cloud refuses to build their Z. Each shop lists them apart and asks them for their
+ * own (`POST /shops/{id}/till-z`); a shop of only such tills shows only that path. Their
+ * requests ride in the URL as `?tillz=`, beside the runs, on the progress view.
+ *
  * `?shopId=&machineId=` opens the wizard on one shop and one till — that is how the
  * machines page's "close shift remotely" gets here, since the API has no single-till
  * close that is not a Z. `?shopId=&areaId=` opens it on one area of a shop (the shop
@@ -35,10 +40,11 @@ import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, FilePlus2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { createZRun, fetchZCandidates } from '@/lib/api';
+import { splitCandidatesByZMode } from '@/lib/tillZ';
 import { usePageScope } from '@/lib/scope';
 import { findBySameId } from '@/lib/entityLookup';
 import { useCanProduceZ } from '@/lib/zAccess';
-import type { ZCandidates, ZOpenTill, ZRun, ZRunMachineSelection } from '@/lib/types';
+import type { TillZRequest, ZCandidates, ZOpenTill, ZRun, ZRunMachineSelection } from '@/lib/types';
 import {
   ShopCandidatesCard,
   defaultSelection,
@@ -49,6 +55,8 @@ import {
   type TillSelection,
 } from '@/components/dashboard/z-wizard/shop-candidates';
 import { ZRunProgress } from '@/components/dashboard/z-wizard/z-run-progress';
+import { TillZShopCard } from '@/components/dashboard/z-wizard/till-z-shop-card';
+import { TillZRequestLive } from '@/components/dashboard/till-z/till-z-request';
 import { ZAreaSelect } from '@/components/dashboard/z-wizard/z-area-select';
 import {
   OpenTillsBlocked,
@@ -127,6 +135,14 @@ function tillsLeftOut(c: ZCandidates, sels: Record<string, TillSelection>): ZOpe
   return out;
 }
 
+/** The progress view for these runs and till-Z requests. */
+function progressHref(runIds: string[], tillZIds: string[]): string {
+  const search = new URLSearchParams();
+  if (runIds.length > 0) search.set('runs', runIds.join(','));
+  if (tillZIds.length > 0) search.set('tillz', tillZIds.join(','));
+  return `/dashboard/z-reports/new?${search.toString()}`;
+}
+
 interface PlannedRun {
   shopId: string;
   /** The area the run is for, when the operator chose one for this shop. */
@@ -152,12 +168,15 @@ const EMPTY_SESSION: StartSession = { started: [], failed: [], blocked: [] };
  */
 export default function ProduceZPage() {
   const searchParams = useSearchParams();
-  const key = ['runs', 'shopId', 'machineId', 'areaId'].map((k) => searchParams.get(k) ?? '').join('|');
+  const key = ['runs', 'tillz', 'shopId', 'machineId', 'areaId']
+    .map((k) => searchParams.get(k) ?? '')
+    .join('|');
   return <ProduceZ key={key} />;
 }
 
 function ProduceZ() {
   const t = useTranslations('zWizard');
+  const tTillZ = useTranslations('tillZ.wizard');
   const router = useRouter();
   const qc = useQueryClient();
   const errors = useZErrorText();
@@ -170,6 +189,11 @@ function ProduceZ() {
     () => (searchParams.get('runs') ?? '').split(',').filter(Boolean),
     [searchParams],
   );
+  const tillZIds = useMemo(
+    () => (searchParams.get('tillz') ?? '').split(',').filter(Boolean),
+    [searchParams],
+  );
+  const inProgress = runIds.length > 0 || tillZIds.length > 0;
   const presetShop = searchParams.get('shopId') ?? scope.shopId ?? null;
   // The scope's till only means something inside the scope's own shop: a link that
   // names another shop must not preselect a till that is not in it.
@@ -186,6 +210,8 @@ function ProduceZ() {
   const [areaByShop, setAreaByShop] = useState<Record<string, string>>(() =>
     presetShop && presetArea ? { [presetShop]: presetArea } : {},
   );
+  /** Till-Z requests sent from this page, newest per till, until it moves to progress. */
+  const [sentTillZ, setSentTillZ] = useState<TillZRequest[]>([]);
 
   const setShopArea = (shopId: string, areaId: string | null) => {
     setAreaByShop((prev) => {
@@ -208,7 +234,7 @@ function ProduceZ() {
       queryFn: () => fetchZCandidates(id, areaByShop[id] ?? null),
       // Online state and the open shift move while the operator is deciding.
       refetchInterval: 15_000,
-      enabled: runIds.length === 0,
+      enabled: !inProgress,
     })),
   });
 
@@ -222,16 +248,25 @@ function ProduceZ() {
     return out;
   };
 
+  // A cloud run takes only the tills whose Z the cloud builds; the others are asked for
+  // their own (TillZShopCard). Everything below about runs reads the cloud half.
+  const split = (c: ZCandidates) => splitCandidatesByZMode(c);
   const loaded = candidateQueries
     .map((q) => q.data)
-    .filter((c): c is ZCandidates => !!c);
+    .filter((c): c is ZCandidates => !!c)
+    .map((c) => split(c).cloud);
+  /** Shops whose every till produces its own Z: only that path is shown for them. */
+  const onlyTillMode = (c: ZCandidates) => {
+    const { cloud, till } = split(c);
+    return cloud.machines.length === 0 && till.length > 0;
+  };
 
   /**
-   * One request body per run: per shop ("Z סניפי"), or per till under "Z לכל קופה" — the
-   * shop's or point of sale's mode (`zScope`), or the till's own (`ownZ`) in a mixed shop.
-   * Selecting all of a shop's tills therefore closes every one of them, each into its own Z.
+   * One request body per run: per shop, or per till when the tenant wants one till per Z
+   * (`zScope` machine). None where the shop Z is the main till's alone (`dashboardZBlocked`).
    */
   const plannedRuns: PlannedRun[] = loaded.flatMap((c) => {
+    if (c.dashboardZBlocked) return [];
     const sels = selectionsFor(c);
     const machines = c.machines
       .map((m) => ({ m, body: machineBody(m, sels[m.machineId]) }))
@@ -239,18 +274,15 @@ function ProduceZ() {
     if (machines.length === 0) return [];
     const areaId = areaByShop[c.shopId];
     const area = areaId ? { areaId } : {};
-    const own = machines.filter(({ m }) => c.zScope === 'machine' || m.ownZ);
-    // "Z only from the main till": the shop Z is not this wizard's to start.
-    const shared = c.dashboardZBlocked ? [] : machines.filter(({ m }) => !(c.zScope === 'machine' || m.ownZ));
-    const perTillRuns: PlannedRun[] = own.map(({ m, body }) => ({
-      shopId: c.shopId,
-      ...area,
-      machines: [body],
-      tillName: tillHeading(m).title,
-    }));
-    return shared.length > 0
-      ? [{ shopId: c.shopId, ...area, machines: shared.map((x) => x.body) }, ...perTillRuns]
-      : perTillRuns;
+    if (c.zScope === 'machine') {
+      return machines.map(({ m, body }) => ({
+        shopId: c.shopId,
+        ...area,
+        machines: [body],
+        tillName: tillHeading(m).title,
+      }));
+    }
+    return [{ shopId: c.shopId, ...area, machines: machines.map((x) => x.body) }];
   });
 
   /**
@@ -265,7 +297,7 @@ function ProduceZ() {
   const goToProgress = (started: ZRun[]) => {
     setOverrides({});
     setShopIds([]);
-    router.replace(`/dashboard/z-reports/new?runs=${started.map((r) => r.id).join(',')}`);
+    router.replace(progressHref(started.map((r) => r.id), sentTillZ.map((r) => r.id)));
   };
 
   const start = useMutation({
@@ -339,6 +371,23 @@ function ProduceZ() {
     setSession((prev) => ({ ...prev, failed: [...prev.failed, ...declined] }));
   };
 
+  /**
+   * Till-Z requests just sent. While cloud tills are still to be decided on, they are
+   * followed here, under their tills; when there is nothing else to do, the page moves
+   * on to the progress view.
+   */
+  const onTillZSent = (requests: TillZRequest[]) => {
+    const next = [
+      ...sentTillZ.filter((r) => !requests.some((n) => n.machineId === r.machineId)),
+      ...requests,
+    ];
+    setSentTillZ(next);
+    const cloudLeft = candidateQueries.some((q) => q.data && split(q.data).cloud.machines.length > 0);
+    if (!cloudLeft && next.length > 0) {
+      router.replace(progressHref([], next.map((r) => r.id)));
+    }
+  };
+
   function candidateShopName(shopId: string): string {
     return (
       loaded.find((c) => c.shopId === shopId)?.shopName ??
@@ -360,7 +409,7 @@ function ProduceZ() {
   }
 
   // ── Progress ──────────────────────────────────────────────────────────────
-  if (runIds.length > 0) {
+  if (inProgress) {
     return (
       <div className="space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -372,11 +421,31 @@ function ProduceZ() {
             {t('startAnother')}
           </Link>
         </div>
-        <div className="grid gap-4 xl:grid-cols-2">
-          {runIds.map((id) => (
-            <ZRunProgress key={id} runId={id} />
-          ))}
-        </div>
+        {runIds.length > 0 ? (
+          <div className="grid gap-4 xl:grid-cols-2">
+            {runIds.map((id) => (
+              <ZRunProgress key={id} runId={id} />
+            ))}
+          </div>
+        ) : null}
+        {tillZIds.length > 0 ? (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">{tTillZ('progressTitle')}</CardTitle>
+              <p className="text-muted-foreground text-xs">{tTillZ('progressHint')}</p>
+            </CardHeader>
+            <CardContent className="grid gap-3 md:grid-cols-2">
+              {tillZIds.map((id) => (
+                <div key={id} className="rounded-md border px-3 py-2">
+                  <TillZRequestLive
+                    requestId={id}
+                    initial={sentTillZ.find((r) => r.id === id) ?? null}
+                  />
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
     );
   }
@@ -385,8 +454,10 @@ function ProduceZ() {
   const shopsToOffer = scope.shops;
   const totalTills = plannedRuns.reduce((n, r) => n + r.machines.length, 0);
   const waiting = loaded.reduce((n, c) => n + selectionSummary(c, selectionsFor(c)).waitsForClose, 0);
-  // Any till on its own Z ("Z לכל קופה") gets a Z of its own.
-  const perTill = loaded.some((c) => c.zScope === 'machine' || c.machines.some((m) => m.ownZ));
+  // zScope is the tenant's, so any loaded shop tells which rule applies to all of them.
+  const perTill = loaded.some((c) => c.zScope === 'machine');
+  const loadedAll = candidateQueries.map((q) => q.data).filter((c): c is ZCandidates => !!c);
+  const showCloudBar = loadedAll.length === 0 || loadedAll.some((c) => !onlyTillMode(c));
 
   return (
     <div className="space-y-4">
@@ -447,35 +518,56 @@ function ProduceZ() {
                     </CardContent>
                   </Card>
                 ) : (
-                  <>
-                    <ShopCandidatesCard
-                      candidates={q.data}
-                      selections={selectionsFor(q.data)}
-                      onChange={(machineId, next) =>
-                        setOverrides((prev) => ({
-                          ...prev,
-                          [q.data!.shopId]: { ...prev[q.data!.shopId], [machineId]: next },
-                        }))
-                      }
-                    />
-                    {q.data.dashboardZBlocked ? (
-                      <Card className="border-amber-500/50">
-                        <CardContent className="py-3 text-sm">
-                          {t('onlyFromMainTill', {
-                            till: q.data.mainTill?.posNumber
-                              ? t('mainTillNumber', { n: q.data.mainTill.posNumber })
-                              : (q.data.mainTill?.name ?? ''),
-                          })}
-                        </CardContent>
-                      </Card>
-                    ) : null}
-                    {q.data.zScope === 'shop' && q.data.openTillsRule && !q.data.dashboardZBlocked ? (
-                      <OpenTillsNotice
-                        rule={q.data.openTillsRule}
-                        tills={tillsLeftOut(q.data, selectionsFor(q.data))}
-                      />
-                    ) : null}
-                  </>
+                  (() => {
+                    const { cloud, till } = split(q.data);
+                    const onlyTill = onlyTillMode(q.data);
+                    return (
+                      <>
+                        {!onlyTill ? (
+                          <ShopCandidatesCard
+                            candidates={cloud}
+                            selections={selectionsFor(cloud)}
+                            onChange={(machineId, next) =>
+                              setOverrides((prev) => ({
+                                ...prev,
+                                [cloud.shopId]: { ...prev[cloud.shopId], [machineId]: next },
+                              }))
+                            }
+                          />
+                        ) : null}
+                        {!onlyTill && cloud.dashboardZBlocked ? (
+                          <Card className="border-amber-500/50">
+                            <CardContent className="py-3 text-sm">
+                              {t('onlyFromMainTill', {
+                                till: cloud.mainTill?.posNumber
+                                  ? t('mainTillNumber', { n: cloud.mainTill.posNumber })
+                                  : (cloud.mainTill?.name ?? ''),
+                              })}
+                            </CardContent>
+                          </Card>
+                        ) : null}
+                        {/* Only the cloud tills: a till that produces its own Z is never
+                            left behind by a shop Z (the server skips it too). */}
+                        {!onlyTill && cloud.zScope === 'shop' && cloud.openTillsRule && !cloud.dashboardZBlocked ? (
+                          <OpenTillsNotice
+                            rule={cloud.openTillsRule}
+                            tills={tillsLeftOut(cloud, selectionsFor(cloud))}
+                          />
+                        ) : null}
+                        {till.length > 0 ? (
+                          <TillZShopCard
+                            shopId={q.data.shopId}
+                            shopName={shopName}
+                            tills={till}
+                            onlyTill={onlyTill}
+                            onlyMachineId={q.data.shopId === presetShop ? presetMachine : null}
+                            sent={sentTillZ.filter((r) => till.some((m) => m.machineId === r.machineId))}
+                            onSent={onTillZSent}
+                          />
+                        ) : null}
+                      </>
+                    );
+                  })()
                 )}
               </div>
             );
@@ -514,31 +606,35 @@ function ProduceZ() {
         </Card>
       ) : null}
 
-      <div className="sticky bottom-0 flex flex-wrap items-center gap-3 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur">
-        <Button
-          // After a clean start the page is on its way to the progress view; a second
-          // click in that moment would try to start the same runs again.
-          disabled={
-            plannedRuns.length === 0 ||
-            start.isPending ||
-            toConfirm.length > 0 ||
-            (start.isSuccess && !partial && session.started.length > 0)
-          }
-          onClick={() => {
-            setSession(EMPTY_SESSION);
-            start.mutate({ runs: plannedRuns });
-          }}
-        >
-          <FilePlus2 className="h-4 w-4 me-1" aria-hidden />
-          {start.isPending ? t('starting') : t('start', { count: plannedRuns.length })}
-        </Button>
-        <span className="text-muted-foreground text-xs">
-          {plannedRuns.length === 0
-            ? t('startNothing')
-            : t('startSummary', { runs: plannedRuns.length, tills: totalTills })}
-          {waiting > 0 ? ` ${t('startWaits', { count: waiting })}` : ''}
-        </span>
-      </div>
+      {/* The cloud run's bar. Not for shops whose every till produces its own Z: their
+          card has its own button, and this one could only ever say "nothing chosen". */}
+      {showCloudBar ? (
+        <div className="sticky bottom-0 flex flex-wrap items-center gap-3 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur">
+          <Button
+            // After a clean start the page is on its way to the progress view; a second
+            // click in that moment would try to start the same runs again.
+            disabled={
+              plannedRuns.length === 0 ||
+              start.isPending ||
+              toConfirm.length > 0 ||
+              (start.isSuccess && !partial && session.started.length > 0)
+            }
+            onClick={() => {
+              setSession(EMPTY_SESSION);
+              start.mutate({ runs: plannedRuns });
+            }}
+          >
+            <FilePlus2 className="h-4 w-4 me-1" aria-hidden />
+            {start.isPending ? t('starting') : t('start', { count: plannedRuns.length })}
+          </Button>
+          <span className="text-muted-foreground text-xs">
+            {plannedRuns.length === 0
+              ? t('startNothing')
+              : t('startSummary', { runs: plannedRuns.length, tills: totalTills })}
+            {waiting > 0 ? ` ${t('startWaits', { count: waiting })}` : ''}
+          </span>
+        </div>
+      ) : null}
 
       {toConfirm.length > 0 ? (
         <OpenTillsConfirmDialog

@@ -68,7 +68,7 @@ def _out(db: Session, shop: Shop, user: User) -> dict:
         "zFrom": MT.z_from_of(db, shop),
         "zFromOptions": list(MT.Z_FROM_OPTIONS),
         # What leans on it today — each may name another till explicitly.
-        "zScope": ZR.z_scope_of(tenant, shop),
+        "zScope": ZR.z_scope_of(tenant),
         "tablesMode": params.get(TABLES_MODE_KEY),
         # «רשת מקומית (קופה ראשית)»: the tables live on the host, the main till unless named.
         "tablesLan": mode_of(params.get(TABLES_MODE_KEY)) == MODE_LAN,

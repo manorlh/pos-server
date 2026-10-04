@@ -35,7 +35,6 @@ import { ShopFormDialog } from '@/components/dashboard/shop-form-dialog';
 import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
 import { ClockSkewChip } from '@/components/dashboard/machine-health';
 import { ShopAreasCard } from '@/components/dashboard/areas/shop-areas-card';
-import { ZScopeCard } from '@/components/dashboard/z-scope-card';
 import { MainTillCard } from '@/components/dashboard/main-till-card';
 import { AreaName } from '@/components/dashboard/areas/area-filter';
 import { Badge } from '@/components/ui/badge';
@@ -248,8 +247,6 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
       </div>
 
       <ShopAreasCard shopId={shop.id} machines={machines} />
-
-      <ZScopeCard shopId={shop.id} />
 
       <MainTillCard shopId={shop.id} />
 

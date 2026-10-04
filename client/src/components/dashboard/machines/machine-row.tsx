@@ -40,6 +40,7 @@ import {
   ClockAlert,
   Cpu,
   CreditCard,
+  FileCog,
   FilePlus2,
   FileWarning,
   LayoutGrid,
@@ -64,6 +65,7 @@ import { formatCurrency, formatHashNumber } from '@/lib/format';
 import type { PosMachine } from '@/lib/types';
 import { registerNumberOf } from '@/lib/registerNumber';
 import { zWizardHref } from '@/lib/zAccess';
+import { zModeOf } from '@/lib/tillZ';
 import { canCloseShiftRemotely } from '@/components/dashboard/machines/remote-shift-close';
 import {
   canTransmitRemotely,
@@ -71,6 +73,8 @@ import {
 } from '@/components/dashboard/machines/card-transmission';
 import { TerminalSummary } from '@/components/dashboard/machines/card-terminal';
 import { DeviceModelBadge } from '@/components/dashboard/machines/device-model';
+import { canRequestTillZ } from '@/components/dashboard/till-z/till-z-dialogs';
+import { LatestTillZRequest, ZModeBadge } from '@/components/dashboard/till-z/till-z-request';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -125,6 +129,10 @@ export interface MachineRowActions {
   onTerminalNumber?: (m: PosMachine) => void;
   /** Which hardware the till is: a 55F (prints) or a Modo (does not). */
   onEditDeviceModel?: (m: PosMachine) => void;
+  /** Ask a `till`-mode till to produce its own Z. */
+  onRequestTillZ?: (m: PosMachine) => void;
+  /** Switch who produces the till's Z (the cloud or the till). */
+  onEditZMode?: (m: PosMachine) => void;
 }
 
 export interface MachineRowProps {
@@ -270,9 +278,11 @@ function MachineRowMenu({
   actions,
 }: Pick<MachineRowProps, 'm' | 'permissions' | 'actions'>) {
   const t = useTranslations('machines');
+  const tZ = useTranslations('tillZ');
   const router = useRouter();
   const { authHydrated, canAssignMachine, canEditAssignedShop, canRemoveMachine, canProduceZ } =
     permissions;
+  const tillMode = zModeOf(m) === 'till';
 
   // Until the session has hydrated we do not know the role, and a menu that offers
   // everything and then removes half of it is worse than one that waits a beat.
@@ -350,12 +360,27 @@ function MachineRowMenu({
             <RadioTower aria-hidden /> {t('transmitNow')}
           </DropdownMenuItem>
         ) : null}
-        {canProduceZ ? (
+        {/* A till that produces its own Z is asked for it; the cloud never builds one
+            for it, so the wizard's cloud Z is not offered for it here. */}
+        {canProduceZ && tillMode && actions.onRequestTillZ ? (
+          <DropdownMenuItem
+            onClick={() => actions.onRequestTillZ?.(m)}
+            disabled={!canRequestTillZ(m)}
+          >
+            <FilePlus2 aria-hidden /> {tZ('request.menu')}
+          </DropdownMenuItem>
+        ) : canProduceZ ? (
           <DropdownMenuItem
             onClick={() => router.push(zWizardHref(m.shopId, m.id))}
             disabled={m.pairingStatus !== 'assigned' || !m.shopId}
           >
             <FilePlus2 aria-hidden /> {t('produceZForTill')}
+          </DropdownMenuItem>
+        ) : null}
+        {/* `PUT /machines/{id}` {zMode}: the roles that produce Zs (docs/SHIFTS_API.md §5.1). */}
+        {canProduceZ && actions.onEditZMode && m.pairingStatus === 'assigned' && m.isActive !== false ? (
+          <DropdownMenuItem onClick={() => actions.onEditZMode?.(m)}>
+            <FileCog aria-hidden /> {tZ('mode.menu')}
           </DropdownMenuItem>
         ) : null}
         <DropdownMenuItem
@@ -391,6 +416,7 @@ function MachineRowDetails({
 }: Pick<MachineRowProps, 'm' | 'isDeviceOnline'>) {
   const t = useTranslations('machines');
   const tTerminal = useTranslations('cardTerminal');
+  const tZ = useTranslations('tillZ');
   const online = isDeviceOnline(m);
   const mqtt = mqttState(m, online);
 
@@ -479,6 +505,20 @@ function MachineRowDetails({
           <TerminalSummary m={m} />
         </div>
       ) : null}
+      {/* Who produces this till's Z, and — for a till that makes its own — the last
+          time the dashboard asked it for one and how that went. */}
+      <div className="space-y-1.5 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-muted-foreground">{tZ('mode.label')}</span>
+          <ZModeBadge mode={zModeOf(m)} />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {zModeOf(m) === 'till' ? tZ('mode.tillHint') : tZ('mode.cloudHint')}
+        </p>
+        {zModeOf(m) === 'till' && m.shopId ? (
+          <LatestTillZRequest machineId={m.id} shopId={m.shopId} />
+        ) : null}
+      </div>
 
       {m.lastCatalogChangeAt ? (
         <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
@@ -768,6 +808,10 @@ export function MachineRow({
               {m.machineCode}
             </span>
             <DeviceModelBadge m={m} />
+            {/* Only the exception is marked: most tills are on the shop's cloud Z. */}
+            {zModeOf(m) === 'till' ? (
+              <ZModeBadge mode="till" className="h-4 shrink-0 px-1 text-[10px]" />
+            ) : null}
             {m.areaName ? <span className="truncate">· {m.areaName}</span> : null}
           </div>
         </div>

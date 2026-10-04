@@ -111,7 +111,7 @@ class ZFacts:
     vat_total: Optional[Decimal] = ZERO
     #: Σ tenders = net sales including VAT.
     net: Decimal = ZERO
-    #: "קופה 2" on a till's own Z ("Z לכל קופה"), whose number is that till's; else None.
+    #: "קופה 2" on a till Z (`origin = till`, §5), whose number is that till's; else None.
     till_label: Optional[str] = None
     #: rate (e.g. Decimal("0.18"), 0 = exempt) → (gross incl. VAT, VAT). None = no split.
     income_by_rate: Optional[Dict[Decimal, Tuple[Decimal, Decimal]]] = None
@@ -239,8 +239,8 @@ def load_z_facts(
         net=sum(breakdown.values(), ZERO),
         till_label=(
             f"קופה {z.machine.pos_number}"
-            if z.per_till and z.machine is not None and z.machine.pos_number
-            else (z.machine.name if z.per_till and z.machine is not None else None)
+            if z.is_till_z and z.machine is not None and z.machine.pos_number
+            else (z.machine.name if z.is_till_z and z.machine is not None else None)
         ),
     )
 
@@ -360,7 +360,7 @@ def _z_details(
         ref = f"Z {nums[0]}"
     else:
         ref = f"Z {nums[0]}-{nums[-1]}"
-    # Tills' own Zs ("Z לכל קופה") are numbered per till: name the tills, or "Z 1" says
+    # Till Zs (§5) are numbered per till: name the tills, or "Z 1" says
     # nothing about which.
     till_names = sorted(set(tills))
     if till_names:

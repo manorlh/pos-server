@@ -585,6 +585,11 @@ export interface PosMachine {
   forceTerminalNumberSource?: SettingsLevel | null;
   /** Server-resolved, ignoring leading zeros as the till does. */
   terminalStatus?: TerminalStatus;
+  /**
+   * Who produces this till's Z (docs/SHIFTS_API.md §5.1): the cloud, as part of the
+   * shop's Z (`cloud`, the default), or the till itself, numbered per till (`till`).
+   */
+  zMode?: ZMode;
   createdAt: string;
   updatedAt: string;
 }
@@ -636,6 +641,8 @@ export interface TerminalNumberForceResponse {
   expectedTerminalNumber: string | null;
   machines: TerminalForceMachine[];
 }
+/** `cloud` = the shop's Z, built in the cloud; `till` = the till produces its own Z. */
+export type ZMode = 'cloud' | 'till';
 
 export type PrinterStatus = 'ok' | 'no_paper' | 'overheated' | 'error' | 'unavailable' | 'unknown';
 
@@ -1331,19 +1338,17 @@ export interface ZCandidateMachine {
   activeRun?: { runId: string; itemStatus: ZRunItemStatus } | null;
   /** Documents of this till stored with no shift. No Z takes them. */
   orphanDocuments?: number;
-  /**
-   * False for a till listed only for its closed shifts of this shop (retired, unpaired
-   * or moved away): it can be included, never asked to close.
-   */
+  /** False for a till listed only for its closed shifts of this shop (retired, moved). */
   inShop?: boolean;
-  /** "Z לכל קופה" for this till (its point of sale's or shop's mode): a Z of its own. */
-  ownZ?: boolean;
+  isActive?: boolean;
+  /** `till`: the cloud never builds this till's Z; it is asked for its own (§5.4). */
+  zMode?: ZMode;
 }
 
 export interface ZCandidates {
   shopId: string;
   shopName?: string | null;
-  /** `machine` = "Z לכל קופה" for the shop (or the point of sale asked for): one till per Z. */
+  /** The tenant's `zScope`: `machine` = one till per cloud Z. */
   zScope: 'shop' | 'machine';
   /**
    * The shop's `shopZOpenTills` till parameter, for a shop Z that leaves tills with open
@@ -1356,7 +1361,7 @@ export interface ZCandidates {
   mainTill?: TillRef | null;
   /**
    * The shop Z is the main till's alone (`shopZFrom` «הקופה הראשית בלבד»): the wizard starts
-   * only tills' own Zs here. The server refuses the rest (409 `z_only_from_main_till`).
+   * no cloud Z here (409 `z_only_from_main_till`); tills in `zMode` till are still asked for theirs.
    */
   dashboardZBlocked?: boolean;
 }
@@ -1468,6 +1473,45 @@ export interface ShiftCloseRequest {
   shift?: Shift | null;
 }
 
+export type TillZRequestStatus =
+  | 'waiting'
+  | 'in_progress'
+  | 'completed'
+  | 'failed'
+  | 'expired'
+  | 'cancelled';
+
+/**
+ * The dashboard asking a `till`-mode till to produce its own Z (docs/SHIFTS_API.md §5.4).
+ * `completed` with no `zReportId` means the till had nothing to report.
+ */
+export interface TillZRequest {
+  id: string;
+  machineId: string;
+  machineName?: string | null;
+  shopId?: string | null;
+  status: TillZRequestStatus;
+  /** `deferred` keeps its code while in progress (`card_in_flight`, `printing`). */
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  expiresAt?: string | null;
+  createdByUserId?: string | null;
+  /** Who asked, by name. */
+  initiatedBy?: string | null;
+  sentAt?: string | null;
+  receivedAt?: string | null;
+  completedAt?: string | null;
+  /** Set when it completed with a Z. */
+  zReportId?: string | null;
+  machineSequenceNumber?: number | null;
+  /** The till's last reported reading — not a live count. */
+  online?: boolean | null;
+  pendingDocuments?: number | null;
+  pendingAsOf?: string | null;
+}
+
 export interface ZReport {
   id: string;
   tenantId?: string | null;
@@ -1481,9 +1525,8 @@ export interface ZReport {
    * What a bookkeeper quotes. Null only on a legacy Z from a terminal with no shop.
    */
   shopSequenceNumber?: number | null;
-  /** The number it is known by: the till's own under "Z לכל קופה" (`perTill`), else the shop's. */
+  /** The number it is quoted by: `machineSequenceNumber` on a till Z (`origin` till), else the shop's. */
   zNumber?: number | null;
-  perTill?: boolean;
   /**
    * The area this Z was run for, or null for a whole-shop / hand-picked Z. The number
    * above is still the shop's — an area has no sequence of its own.
@@ -1546,8 +1589,25 @@ export interface ZReport {
   lateDocuments?: number;
   /** A pre-shift Z issued by one till: `machineId` set, no per-till sections. */
   legacy?: boolean;
+  /**
+   * `till`: produced by the till itself (zMode = till), over that till alone. It has no
+   * shop number (`shopSequenceNumber` null) — its number is `machineSequenceNumber`.
+   */
+  origin?: 'cloud' | 'till' | null;
+  /** The till's own Z number, 1, 2, 3 … per till, gapless. Till Zs only. */
+  machineSequenceNumber?: number | null;
+  /** Set on till Zs (and on legacy rows). */
   machineId?: string | null;
   machineName?: string | null;
+  /**
+   * The till's register number, if the list sends it; the detail has it on its one
+   * `perMachine` section.
+   */
+  posNumber?: string | null;
+  /** Who produced it; null on a till Z produced for a dashboard request with nobody there. */
+  createdByName?: string | null;
+  /** Till Zs: the till's own figures differed from the ones the cloud built. */
+  totalsMismatch?: boolean;
   /** Legacy rows only: the till's own Z blob. */
   payload?: Record<string, unknown> | null;
   /** Legacy rows only. */
@@ -2030,8 +2090,12 @@ export interface DaySummaryContributor {
   zReportId: string;
   /** This till's section of the Z includes a shift closed from the cloud (dead till). */
   reconstructed?: boolean;
-  /** The shop's Z number. Null on a Z from a terminal with no shop. */
+  /** The shop's Z number. Null on a Z from a terminal with no shop, and on a till Z. */
   shopSequenceNumber?: number | null;
+  /** `till` = the till produced this Z itself; its number is `machineSequenceNumber`. */
+  origin?: 'cloud' | 'till' | null;
+  machineSequenceNumber?: number | null;
+  posNumber?: string | null;
   machineId: string;
   machineName?: string | null;
   shopId?: string | null;

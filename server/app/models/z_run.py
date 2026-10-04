@@ -79,9 +79,6 @@ class ZRun(Base):
     #: till counted (`app.services.z_runs.verify_item`) — or the till was deferred by the
     #: operator's typed "סגור". False for the dashboard's runs.
     strict_cloud_check = Column(Boolean, nullable=False, default=False, server_default="false")
-    #: "machine" for a till's own Z ("Z לכל קופה" — the run is for that till alone, and its
-    #: Z takes the till's own number), "shop" otherwise. Fixed when the run starts.
-    z_scope = Column(String(16), nullable=False, default="shop", server_default="shop")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

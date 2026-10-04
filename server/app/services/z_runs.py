@@ -17,7 +17,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
+from typing import Dict, Iterable, List, Optional, Sequence, Set
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, joinedload
@@ -42,6 +42,7 @@ from app.services.shifts import is_foreign_shift, shift_exists
 from app.services.z_builder import (
     EMPTY_Z,
     EMPTY_Z_MESSAGE,
+    Z_MODE_TILL,
     ZBuildRefused,
     build_z,
     shift_order_key,
@@ -59,66 +60,19 @@ Z_SCOPE_SHOP = "shop"
 Z_SCOPE_MACHINE = "machine"
 
 
-def _scope_in(layer: Any) -> Optional[str]:
-    settings = getattr(layer, "settings", None) if layer is not None else None
-    raw = settings.get("zScope") if isinstance(settings, dict) else None
-    return raw if raw in (Z_SCOPE_SHOP, Z_SCOPE_MACHINE) else None
+def z_scope_of(tenant: Optional[Tenant]) -> str:
+    """The tenant's `zScope` setting: one Z per shop (default) or one till per Z."""
+    raw = ((tenant.settings or {}) if tenant is not None else {}).get("zScope")
+    return Z_SCOPE_MACHINE if raw == Z_SCOPE_MACHINE else Z_SCOPE_SHOP
 
 
-def z_scope_of(tenant: Optional[Tenant], shop: Optional[Shop] = None, area: Any = None) -> str:
+def issues_own_z(machine: Optional[POSMachine]) -> bool:
     """
-    `zScope` — "Z סניפי" (one Z for the shop's tills, the default) or "Z לכל קופה" (each
-    till its own Z). Set on the point of sale (area), else its shop, else the
-    organization's default: the first layer that says wins.
+    A till in `zMode = till` (docs/SHIFTS_API.md §5): it produces its own Z, and no cloud
+    Z — a shop's, an area's, the master till's — ever selects it, waits for it, or counts
+    it as left behind.
     """
-    for layer in (area, shop, tenant):
-        found = _scope_in(layer)
-        if found is not None:
-            return found
-    return Z_SCOPE_SHOP
-
-
-def z_scope_of_machine(
-    db: Session, machine: POSMachine, tenant: Optional[Tenant] = None, shop: Optional[Shop] = None
-) -> str:
-    """The Z mode this till is under: its point of sale's, its shop's, its organization's."""
-    from app.models.shop_area import ShopArea
-
-    area = db.get(ShopArea, machine.area_id) if getattr(machine, "area_id", None) else None
-    if shop is None or str(shop.id) != str(machine.shop_id):
-        shop = db.get(Shop, machine.shop_id) if machine.shop_id else None
-    if tenant is None:
-        tenant = db.get(Tenant, machine.tenant_id) if machine.tenant_id else None
-    return z_scope_of(tenant, shop, area)
-
-
-def per_till_ids(
-    db: Session, machines: Sequence[POSMachine], tenant: Optional[Tenant], shop: Optional[Shop]
-) -> set:
-    """The tills among these that produce their own Z ("Z לכל קופה")."""
-    return {m.id for m in machines if z_scope_of_machine(db, m, tenant, shop) == Z_SCOPE_MACHINE}
-
-
-def tills_not_closed(db: Session, machines: Sequence[POSMachine]) -> List[dict]:
-    """
-    Of these tills, the ones a change of Z mode would cut through: an open shift, or
-    closed shifts no Z has taken yet. The mode changes only over a clean break — every
-    till closed and in a Z — so the first Z under the new mode starts from nothing.
-    """
-    out = []
-    for m in machines:
-        if m.shop_id is None:
-            continue
-        cand = till_candidates(db, m, m.shop_id)
-        if cand.open_shift is not None or cand.closed:
-            out.append({
-                "machineId": str(m.id),
-                "posNumber": m.pos_number,
-                "name": m.name,
-                "openShift": cand.open_shift is not None,
-                "awaitingZ": len(cand.closed),
-            })
-    return out
+    return machine is not None and getattr(machine, "z_mode", None) == Z_MODE_TILL
 
 
 # ── Candidates ────────────────────────────────────────────────────────────────
@@ -399,7 +353,6 @@ def tills_left_out(
     selections: Dict[uuid.UUID, MachineSelection],
     *,
     area=None,
-    own_z: Optional[set] = None,
 ) -> List[LeftOutTill]:
     """
     The tills of the shop this Z would leave something behind on: a selected till whose
@@ -408,14 +361,13 @@ def tills_left_out(
 
     Bounded the way the candidates are: an area's Z looks at that area's tills only, a
     distributor at their own terminals only. A till another run is already producing a
-    Z for is that run's business, not this one's — and so is a till that produces its own
-    Z (`own_z`, "Z לכל קופה"): a shop Z never waits for it, nor does another till's Z.
+    Z for is that run's business, not this one's — and so is a till in `zMode = till`
+    (docs/SHIFTS_API.md §5): it produces its own Z, so a cloud Z never leaves it out.
     """
-    own_z = own_z or set()
     considered = [
         m for m in tills.values()
         if (area is None or (str(m.area_id) == str(area.id) and is_seated_in(m, shop.id)))
-        and (m.id in selections or m.id not in own_z)
+        and not issues_own_z(m)
     ]
     if user.role == UserRole.DISTRIBUTOR:
         considered = [m for m in considered if str(m.distributor_id) == str(user.id)]
@@ -445,7 +397,7 @@ def open_tills_rule(db: Session, tenant: Optional[Tenant], shop: Shop) -> Option
     A value that is neither option (one renamed since) reads as "confirm": the rule
     still holds, the gentler way.
     """
-    if z_scope_of(tenant, shop) != Z_SCOPE_SHOP:
+    if z_scope_of(tenant) != Z_SCOPE_SHOP:
         return None
     from app.services import till_parameters as TP
 
@@ -566,13 +518,18 @@ def run_may_have_activity(
     it would take (`shifts_show_activity`), or a till it asks to close that says it has
     documents not yet on the cloud. False is a run that could only end in "nothing to
     report" — no Z on 0.
+
+    A till in `zMode = till` is never part of a cloud Z (§5), so neither its shifts nor
+    its pending documents count here.
     """
     per_till: List[List[Shift]] = []
     for item in run.items:
         if item.status == ZRunItemStatus.EXCLUDED:
             continue
+        machine = (machines or {}).get(item.machine_id) or item.machine
+        if issues_own_z(machine):
+            continue
         if item.status in PENDING_ITEM_STATUSES:
-            machine = (machines or {}).get(item.machine_id) or item.machine
             if _reported_pending_documents(machine) > 0:
                 return True
         per_till.append(_item_shifts(db, run, item))
@@ -584,7 +541,8 @@ def shop_activity(db: Session, shop_id: uuid.UUID, machines: Sequence[POSMachine
     What a shop Z of these tills could report, as the cloud knows it now — what the
     master till asks before it offers to start one. Per till: the documents in its shifts
     no Z has taken (open ones too) and whether they show activity; and the documents the
-    tills say they still have to send. `hasActivity` false: no Z on 0.
+    tills say they still have to send. `hasActivity` false: no Z on 0. A till in
+    `zMode = till` is not counted: no cloud Z takes it (§5).
     """
     from app.services.shift_totals import compute_totals as _totals
     from app.services.z_builder import figures_show_activity, z_cash_summary
@@ -594,6 +552,8 @@ def shop_activity(db: Session, shop_id: uuid.UUID, machines: Sequence[POSMachine
     documents = 0
     pending = 0
     for machine in machines:
+        if issues_own_z(machine):
+            continue
         shifts = unreported_shifts(db, machine.id, shop_id=shop_id)
         totals = _totals(db, [s.id for s in shifts]) if shifts else None
         count = (totals.transactions_count + totals.non_sale_count) if totals is not None else 0
@@ -657,24 +617,25 @@ def create_z_run(
     if not selections:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no_machines")
     wanted = list(dict.fromkeys(sel.machine_id for sel in selections))
-
-    tills = {m.id: m for m in shop_tills(db, shop.id)}
-    # "Z לכל קופה" (its point of sale's, its shop's or the organization's mode): such a
-    # till's Z is its own — never one Z for it and another till.
-    own_z = per_till_ids(db, list(tills.values()), tenant, shop)
-    if len(wanted) > 1 and any(machine_id in own_z for machine_id in wanted):
+    if z_scope_of(tenant) == Z_SCOPE_MACHINE and len(wanted) > 1:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="z_scope_machine_one_till"
         )
-    # A till's own Z leaves no other till behind: they are not part of it.
-    run_scope = Z_SCOPE_SHOP
-    if len(wanted) == 1 and wanted[0] in own_z:
-        run_scope = Z_SCOPE_MACHINE
-        own_z = set(tills) - {wanted[0]}
+
+    tills = {m.id: m for m in shop_tills(db, shop.id)}
     for machine_id in wanted:
         if machine_id not in tills:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"machine_not_in_shop:{machine_id}"
+            )
+    for machine_id in wanted:
+        if getattr(tills[machine_id], "z_mode", None) == Z_MODE_TILL:
+            # It produces its own Z (docs/SHIFTS_API.md §5): the shop's Z never takes it.
+            from app.services.till_z import TillZRefused
+
+            raise TillZRefused(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {"detail": "machine_issues_its_own_z", "machineId": str(machine_id)},
             )
     if area is not None:
         for machine_id in wanted:
@@ -697,7 +658,7 @@ def create_z_run(
     refuse_z_with_open_tables(db, shop, area.id if area is not None else None)
 
     by_id = {sel.machine_id: sel for sel in selections}
-    left_out = tills_left_out(db, user, shop, tills, by_id, area=area, own_z=own_z)
+    left_out = tills_left_out(db, user, shop, tills, by_id, area=area)
     record_left_out = check_open_tills(db, tenant, shop, left_out, confirmed=confirm_open_tills)
 
     run = ZRun(
@@ -710,7 +671,6 @@ def create_z_run(
         business_date=business_date,
         expires_at=now + timedelta(hours=Z_RUN_TTL_HOURS),
         strict_cloud_check=bool(strict_cloud_check),
-        z_scope=run_scope,
     )
     db.add(run)
     db.flush()
@@ -773,7 +733,16 @@ def create_z_run(
     # shifts this run would take have no activity, and no till it would close says it has
     # documents still to send, refuse now — before any till closes a shift for a Z that
     # could not be made. (The build refuses it too, whatever comes in meanwhile.)
-    if not run_may_have_activity(db, run, tills):
+    #
+    # Up front only where the cloud's word is final: the master till's shop Z (strict, its
+    # screen offers the start only with activity), or a run with no shift left to close.
+    # A dashboard run that asks a till to close an open shift starts as it always did —
+    # the till may still sell before it closes — and its build refuses an empty Z then
+    # (the run ends `empty`, no number drawn).
+    final_now = strict_cloud_check or not any(
+        i.status in PENDING_ITEM_STATUSES for i in run.items
+    )
+    if final_now and not run_may_have_activity(db, run, tills):
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1060,7 +1029,6 @@ def finalise_if_ready(
             area_id=run.area_id,
             open_tills_left_out=open_tills_left_out(db, run),
             now=now,
-            per_till=getattr(run, "z_scope", None) == Z_SCOPE_MACHINE,
         )
         savepoint.commit()
     except ZBuildRefused as refused:
@@ -1477,56 +1445,3 @@ def run_to_out(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> dic
             if not is_left_out_marker(i)
         ],
     }
-
-
-# ── "Z לכל קופה": the shift is the Z ─────────────────────────────────────────────
-
-
-class _OwnTillActor:
-    """The run's author when a till's own close produces its Z: the till's distributor."""
-
-    def __init__(self, machine: POSMachine):
-        self.id = machine.distributor_id
-        self.role = UserRole.SHOP_MANAGER
-        self.username = f"קופה {machine.pos_number}" if machine.pos_number else (machine.name or "קופה")
-        self.email = None
-
-
-def z_on_own_close(db: Session, machine: POSMachine, shift: Shift) -> Optional[ZRun]:
-    """
-    Under "Z לכל קופה" a till does not work by shifts: its accepted close *is* its Z. The
-    cloud starts the till's own run at once, so the Z is built — and numbered by the till's
-    own counter — as soon as the close is in, online or synced later from offline.
-
-    Never fails the close: anything that stops it (a run already under way, open tables,
-    nothing to report) is logged and the shift waits for the next Z like any other.
-    """
-    if shift.z_report_id is not None or machine.shop_id is None:
-        return None
-    try:
-        if z_scope_of_machine(db, machine) != Z_SCOPE_MACHINE:
-            return None
-    except Exception:  # noqa: BLE001 - see the docstring
-        logger.warning("till %s: its Z mode could not be read on close", machine.id, exc_info=True)
-        return None
-    if _live_items(db, [machine.id]):
-        return None  # a run is already taking this till (on_shift_close_accepted answers it)
-    shop = db.get(Shop, machine.shop_id)
-    tenant = db.get(Tenant, machine.tenant_id) if machine.tenant_id else None
-    if shop is None or tenant is None:
-        return None
-    savepoint = db.begin_nested()
-    try:
-        run = create_z_run(
-            db,
-            _OwnTillActor(machine),  # type: ignore[arg-type]
-            tenant,
-            shop,
-            [MachineSelection(machine_id=machine.id)],
-        )
-        savepoint.commit()
-        return run
-    except Exception:  # noqa: BLE001 - see the docstring
-        _rollback_savepoint(savepoint)
-        logger.warning("till %s: its own Z on close was not started", machine.id, exc_info=True)
-        return None

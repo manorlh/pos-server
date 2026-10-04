@@ -100,8 +100,6 @@ class POSMachine(Base):
     #: (app/services/licenses.py). Set by a super admin only.
     license_type = Column(String(16), nullable=False, default="permanent", server_default="permanent")
     license_expires_on = Column(Date, nullable=True)
-    #: "Z לכל קופה": the number this till's next own Z takes (app/services/z_sequence.py).
-    next_z_number = Column(Integer, nullable=False, default=1, server_default="1")
     is_active = Column(Boolean, default=True, nullable=False)
 
     # Bumped whenever this terminal is unpaired. Machine tokens carry the version
@@ -242,6 +240,13 @@ class POSMachine(Base):
     #: Agamento names them. Kept once seen: a reply that omits them does not clear them.
     terminal_merchant_name = Column(String(120), nullable=True)
     terminal_supplier_number = Column(String(30), nullable=True)
+    # ── Who produces this till's Z (docs/SHIFTS_API.md §5.1) ──────────────────
+    # "cloud": the shop's Z run builds it, numbered in the shop's run — the default, and
+    # every till's behaviour before this column existed. "till": the till asks for its
+    # own Z (`POST /sync/{id}/till-z`), numbered per till (`machine_z_sequences`), and no
+    # cloud Z ever takes its shifts. Changed only through `app.services.till_z.set_z_mode`,
+    # which refuses a switch while shifts are waiting for a Z of the old mode.
+    z_mode = Column(String(8), nullable=False, default="cloud", server_default="cloud")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

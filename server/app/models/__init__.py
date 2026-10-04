@@ -28,6 +28,7 @@ from app.models.transaction_payment import TransactionPayment
 from app.models.z_report import ZReport
 from app.models.pos_user import PosUser, PosUserRole
 from app.models.shop_z_sequence import ShopZSequence
+from app.models.machine_z_sequence import MachineZSequence
 from app.models.shop_register_sequence import ShopRegisterSequence
 from app.models.org_number_sequence import OrgNumberSequence
 from app.models.tenant_sku_sequence import TenantSkuSequence
@@ -38,6 +39,7 @@ from app.models.issued_voucher import IssuedVoucher, IssuedVoucherStatus
 from app.models.stock_level import StockLevel
 from app.models.z_run import ZRun, ZRunItem, ZRunItemStatus, ZRunStatus
 from app.models.shift_close_request import ShiftCloseRequest, ShiftCloseRequestStatus
+from app.models.till_z_request import TillZRequest, TillZRequestStatus
 from app.models.card_transmission import (
     CardTransmission,
     CardTransmissionItem,
@@ -114,6 +116,8 @@ __all__ = [
     "StockMovement", "StockMovementReason",
     "ZRun", "ZRunItem", "ZRunStatus", "ZRunItemStatus",
     "ShiftCloseRequest", "ShiftCloseRequestStatus",
+    "TillZRequest", "TillZRequestStatus",
+    "MachineZSequence",
     "CardTransmission", "CardTransmissionItem", "TransmitRequest", "TransmitRequestStatus",
     "TillParameter", "TillParameterValue",
     "OfflineAuthorization", "OfflineAuthorizationItem",

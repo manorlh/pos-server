@@ -5,10 +5,10 @@
 * `pos_machines.settings_updated_at` — when they last changed. NULL for every existing
   till, so no till's settings watermark moves on upgrade.
 
-Parent is the till's printer state (f1a2b3c4d5e6).
+Parent is Z on the till (a2b3c4d5e6f7), which follows the till's printer state (f1a2b3c4d5e6).
 
 Revision ID: b8c9d0e1f2a3
-Revises: f1a2b3c4d5e6
+Revises: a2b3c4d5e6f7
 Create Date: 2026-10-03 17:00:00.000000
 """
 
@@ -20,7 +20,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = "b8c9d0e1f2a3"
-down_revision = "f1a2b3c4d5e6"
+down_revision = "a2b3c4d5e6f7"
 branch_labels = None
 depends_on = None
 

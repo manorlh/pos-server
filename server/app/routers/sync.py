@@ -132,6 +132,9 @@ from app.services.till_parameters import till_parameters_for_machine
 from app.models.app_release import AppRelease, AppReleaseMachineStatus
 from app.schemas.app_release import AppUpdateOffer, AppUpdateStatusIn, AppUpdateStatusOut
 from app.services import app_updates
+from app.schemas.till_z import TillZAckIn, TillZIn
+from app.services import till_z
+from app.routers.z_reports import z_detail_out
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -1212,11 +1215,6 @@ def post_shift_close(
         from app.services.exceptions import detect_safely, detect_shift_close
 
         detect_safely(db, detect_shift_close, shift.id)
-        # "Z לכל קופה": the close is the till's Z — built now, its number in this answer.
-        from app.services.z_runs import z_on_own_close
-
-        if z_on_own_close(db, machine, shift) is not None:
-            db.commit()
     db.refresh(shift)
 
     return ShiftCloseResponse(
@@ -1420,6 +1418,84 @@ def post_offline_authorization(
     )
 
 
+# ── Z on the till (docs/SHIFTS_API.md §5) ─────────────────────────────────────
+
+
+def _till_z_refusal(db: Session, refused: "till_z.TillZRefused") -> JSONResponse:
+    if refused.keep:
+        db.commit()
+    else:
+        db.rollback()
+    return JSONResponse(status_code=refused.status_code, content=refused.body)
+
+
+@router.post("/{machine_id}/till-z", status_code=status.HTTP_201_CREATED)
+def post_till_z(
+    machine_id: str,
+    body: TillZIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    A till in `zMode = till` asks for its Z (§5.2), after its last shift close was
+    accepted. Built here, in one transaction, by the same builder as a cloud Z over this
+    till's closed shifts up to `throughShiftId`, and numbered in the till's own run.
+
+    `201 created` · `200 duplicate` (this `clientRequestId` was answered before: the same
+    Z, nothing new numbered) · `409 till_z_disabled | shift_not_closed | shift_unknown |
+    nothing_to_report | z_run_in_progress:<runId>` · `403 shift_belongs_to_another_machine`.
+    """
+    _require_assigned_machine(machine)
+    try:
+        z, outcome = till_z.produce_till_z(db, machine, body)
+        db.commit()
+    except till_z.TillZRefused as refused:
+        return _till_z_refusal(db, refused)
+    except IntegrityError:
+        # Only a second attempt racing past the counter lock could get here (the lock
+        # makes it wait, then find the first's Z). Answer the Z that won.
+        db.rollback()
+        z = (
+            db.query(ZReport)
+            .filter(ZReport.client_request_id == body.client_request_id, ZReport.machine_id == machine.id)
+            .first()
+        )
+        if z is None:
+            raise
+        outcome = "duplicate"
+    db.refresh(z)
+    return JSONResponse(
+        status_code=status.HTTP_201_CREATED if outcome == "created" else status.HTTP_200_OK,
+        content={
+            "status": outcome,
+            "zReport": z_detail_out(db, z).model_dump(by_alias=True, mode="json"),
+            "shiftIds": [str(i) for i in till_z.z_shift_ids(db, z)],
+            "totalsMismatch": bool(z.totals_mismatch),
+            "serverTime": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+@router.post("/{machine_id}/till-z/ack")
+def post_till_z_ack(
+    machine_id: str,
+    body: TillZAckIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """The till acknowledges a dashboard request for its Z (§5.3). Never completes it."""
+    req = till_z.apply_ack(
+        db,
+        machine,
+        request_id=body.request_id,
+        phase=body.phase,
+        error_code=body.error_code,
+        error_message=body.error_message,
+    )
+    db.commit()
+    return {"ok": True, "status": req.status}
+
+
 # ── Removed with the move to shifts (docs/SHIFTS_API.md §1.8) ─────────────────
 #
 # Still authenticated first, so an unpaired caller gets 401/403 and a paired till
@@ -1432,7 +1508,10 @@ def _upgrade_required() -> None:
 
 @router.post("/{machine_id}/z-report", status_code=status.HTTP_410_GONE)
 def post_z_report_removed(machine_id: str, machine: POSMachine = Depends(get_pos_machine_for_sync_path)):
-    """Removed: the Z is built in the cloud; the till closes shifts."""
+    """
+    Removed: the Z is built in the cloud; the till closes shifts. Stays 410 for a
+    pre-shift build — a till in `zMode = till` asks with `POST /till-z` (§5.2).
+    """
     _upgrade_required()
 
 

@@ -115,6 +115,8 @@ class ZCandidateMachineOut(BaseModel):
     machine_id: uuid.UUID = Field(..., alias="machineId")
     machine_name: Optional[str] = Field(None, alias="machineName")
     pos_number: Optional[str] = Field(None, alias="posNumber")
+    #: "cloud" (taken by the shop's Z run) or "till" (produces its own Z, §5).
+    z_mode: str = Field("cloud", alias="zMode")
     online: bool = False
     status: Optional[str] = None
     pending_documents: Optional[int] = Field(None, alias="pendingDocuments")
@@ -132,9 +134,6 @@ class ZCandidateMachineOut(BaseModel):
     #: The till's area now (not its shifts' stamps).
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
     area_name: Optional[str] = Field(None, alias="areaName")
-    #: "Z לכל קופה" for this till (its point of sale's, shop's or organization's mode): it
-    #: gets a Z of its own, never one shared with another till.
-    own_z: bool = Field(False, alias="ownZ")
 
 
 class ZCandidatesOut(BaseModel):
@@ -147,13 +146,13 @@ class ZCandidatesOut(BaseModel):
     area_name: Optional[str] = Field(None, alias="areaName")
     z_scope: str = Field("shop", alias="zScope")
     #: The shop's `shopZOpenTills` rule for a shop Z leaving tills behind: "block",
-    #: "confirm", or null (a per-till Z, or the parameter is off). Advisory: the
+    #: "confirm", or null (tenant `zScope = machine`, or the parameter is off). Advisory: the
     #: server enforces it on `POST /z-runs`.
     open_tills_rule: Optional[str] = Field(None, alias="openTillsRule")
     machines: List[ZCandidateMachineOut] = Field(default_factory=list)
     #: The shop's main till ("קופה ראשית": {machineId, posNumber, name}), or null.
     main_till: Optional[Dict[str, Any]] = Field(None, alias="mainTill")
     #: The shop Z is the main till's alone (`shopZFrom` «הקופה הראשית בלבד»): the wizard
-    #: may start only tills' own Zs here. Advisory: `POST /z-runs` refuses it (409
-    #: `z_only_from_main_till`).
+    #: starts no cloud Z here (a till in `zMode = till` is still asked for its own Z, §5.5).
+    #: Advisory: `POST /z-runs` refuses it (409 `z_only_from_main_till`).
     dashboard_z_blocked: bool = Field(False, alias="dashboardZBlocked")

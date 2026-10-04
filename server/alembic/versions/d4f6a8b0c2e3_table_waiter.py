@@ -4,7 +4,7 @@ The waiter a table is theirs ("מלצר"): its opener unless handed to another; 
 reports go by it.
 
 Revision ID: d4f6a8b0c2e3
-Revises: c3e5f7a9b1d4
+Revises: b2d4f6a8c0e1
 Create Date: 2026-10-04
 """
 from typing import Sequence, Union
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = 'd4f6a8b0c2e3'
-down_revision: Union[str, Sequence[str], None] = 'c3e5f7a9b1d4'
+down_revision: Union[str, Sequence[str], None] = 'b2d4f6a8c0e1'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

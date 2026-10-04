@@ -198,7 +198,7 @@ def list_accounting_z_reports(
                 id=z.id,
                 shop_id=z.shop_id,
                 shop_name=z.shop.name if z.shop else None,
-                # The number the Z is known by: a till's own under "Z לכל קופה", else the shop's.
+                # The number the Z is quoted by: its till's own run on a till Z (§5), else the shop's.
                 shop_sequence_number=z.z_number,
                 business_date=z.business_date,
                 closed_at=z.closed_at,

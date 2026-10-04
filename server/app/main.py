@@ -51,6 +51,7 @@ from app.routers import (
     z_runs as z_runs_router,
     shift_close_requests as shift_close_requests_router,
     transmit_requests as transmit_requests_router,
+    till_z_requests as till_z_requests_router,
     tax_reports,
     reports,
     till_parameters as till_parameters_router,
@@ -135,6 +136,7 @@ app.include_router(shifts_router.router, prefix=_prefix)
 app.include_router(z_runs_router.router, prefix=_prefix)
 app.include_router(shift_close_requests_router.router, prefix=_prefix)
 app.include_router(transmit_requests_router.router, prefix=_prefix)
+app.include_router(till_z_requests_router.router, prefix=_prefix)
 app.include_router(pos_users.router, prefix=_prefix)
 app.include_router(tenants.router, prefix=_prefix)
 app.include_router(settings_router.router, prefix=_prefix)
