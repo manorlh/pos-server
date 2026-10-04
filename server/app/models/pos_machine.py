@@ -190,6 +190,14 @@ class POSMachine(Base):
     printer_status_at = Column(DateTime(timezone=True), nullable=True)
     printer_last_ok_at = Column(DateTime(timezone=True), nullable=True)
     printer_reported_at = Column(DateTime(timezone=True), nullable=True)
+
+    # ── Who produces this till's Z (docs/SHIFTS_API.md §5.1) ──────────────────
+    # "cloud": the shop's Z run builds it, numbered in the shop's run — the default, and
+    # every till's behaviour before this column existed. "till": the till asks for its
+    # own Z (`POST /sync/{id}/till-z`), numbered per till (`machine_z_sequences`), and no
+    # cloud Z ever takes its shifts. Changed only through `app.services.till_z.set_z_mode`,
+    # which refuses a switch while shifts are waiting for a Z of the old mode.
+    z_mode = Column(String(8), nullable=False, default="cloud", server_default="cloud")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

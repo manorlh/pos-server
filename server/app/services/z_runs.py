@@ -37,7 +37,13 @@ from app.models.z_run import (
 from app.services.close_progress import documents_on_cloud, till_backlog
 from app.services.machine_status import is_online
 from app.services.shifts import is_foreign_shift, shift_exists
-from app.services.z_builder import ZBuildRefused, build_z, shift_order_key, unreported_shifts
+from app.services.z_builder import (
+    Z_MODE_TILL,
+    ZBuildRefused,
+    build_z,
+    shift_order_key,
+    unreported_shifts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -312,6 +318,15 @@ def create_z_run(
         if machine_id not in tills:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"machine_not_in_shop:{machine_id}"
+            )
+    for machine_id in wanted:
+        if getattr(tills[machine_id], "z_mode", None) == Z_MODE_TILL:
+            # It produces its own Z (docs/SHIFTS_API.md §5): the shop's Z never takes it.
+            from app.services.till_z import TillZRefused
+
+            raise TillZRefused(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {"detail": "machine_issues_its_own_z", "machineId": str(machine_id)},
             )
     if area is not None:
         for machine_id in wanted:
@@ -762,7 +777,7 @@ def run_to_out(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> dic
         from app.models.z_report import ZReport
 
         z = db.query(ZReport).filter(ZReport.id == run.z_report_id).first()
-        z_number = z.shop_sequence_number if z is not None else None
+        z_number = z.z_number if z is not None else None
     # Once built, the name the Z froze; until then, what the area is called now.
     area_name = None
     if run.area_id is not None:

@@ -515,11 +515,15 @@ Response
   "recentShiftZs": [                 // this till's shifts taken by a Z in the last 30 days, newest Z first, at most 50. Always present ([] if none).
     {"shiftId": "…", "zReportId": "…", "zNumber": 7}
   ],
-  "pendingCloseShift": {"requestId": "…", "shiftId": "…"}   // only when a remote close is waiting for this till
+  "pendingCloseShift": {"requestId": "…", "shiftId": "…"},  // only when a remote close is waiting for this till
+  "zMode": "cloud",                  // or "till" (§5.1). Always present.
+  "pendingTillZ": {"requestId": "…", "initiatedBy": "…", "createdAt": "…"}   // only while a dashboard asks this till for its Z (§5.3)
 }
 ```
 `recentShiftZs` is how the till learns the Z number of an older shift (for shift history and
-X reprints); the close response only carries it when the shift is already in a Z.
+X reprints); the close response only carries it when the shift is already in a Z. A till Z
+(§5) is listed exactly like a cloud Z, its `zNumber` being its `machineSequenceNumber`, and it
+counts for `zReportedThroughSequence` the same way.
 Card transmission adds the optional `transmission` block to the request and
 `pendingTransmit` to the response — §4.2.
 The till's printer adds the optional `printer` block to the request — §1.6a.
@@ -619,6 +623,7 @@ in a Z), `from`, `to` (on `businessDate`), `page` (1), `pageSize` (50, max 200).
   "shopId": "…", "shopName": "…", "zScope": "shop",   // or "machine": one till per Z
   "machines": [{
     "machineId": "…", "machineName": "…", "posNumber": "2",
+    "zMode": "cloud",                          // or "till": produces its own Z (§5); POST /z-runs refuses it
     "online": true, "status": "online", "pendingDocuments": 0, "pendingAsOf": "…",
     "openShift": ShiftSummary | null,
     "tillReportedOpenShiftId": "…" | null,   // from the heartbeat (the cloud may not have the open yet); null unless a
@@ -663,7 +668,8 @@ visible before the Z is produced.
   `400 {"detail": "through_shift_not_candidate:<machineId>"}` ·
   `409 {"detail": "nothing_to_report"}` (no till has a closed shift to include or an open one to close) ·
   `409 {"detail": "z_run_in_progress:<runId>"}` (a live run already covers one of these tills) ·
-  `422 {"detail": "z_scope_machine_one_till"}` (tenant `zScope = machine` and more than one till).
+  `422 {"detail": "z_scope_machine_one_till"}` (tenant `zScope = machine` and more than one till) ·
+  `422 {"detail": "machine_issues_its_own_z", "machineId": "…"}` (a `zMode = till` till, §5.4).
 - A till in the list with nothing to include gets an `excluded` item with `errorCode: "nothing_to_report"`.
 
 ### 2.5 `GET /z-runs/{id}`
@@ -693,7 +699,8 @@ still closes its shift; that shift simply waits for the next Z. `409 run_not_wai
 ### 2.8 Z reports
 - `GET /z-reports` — as before plus `shopId` (already there). `from`/`to` now filter on the Z's
   `businessDate`; `closedFrom`/`closedTo` (ISO datetimes, naive = UTC) on `closedAt`.
-  `machineId`/`machineIds` match a Z that contains that till. **With none of `from`, `to`,
+  `machineId`/`machineIds` match a Z that contains that till. `origin` (`cloud` | `till`)
+  keeps one kind (§5.5); till Zs are listed among the shop's, by `closedAt` within a date. **With none of `from`, `to`,
   `closedFrom`, `closedTo` given, the list covers the last 90 days** (`from` = today − 90 days,
   UTC). Items are **ZReport** (§3.5) without `perMachine`/`shifts`. The response says which
   window applied:
@@ -730,6 +737,9 @@ not a shift the cloud holds closed, not another till's.
 `closed_shifts_awaiting_z` (closed un-Z'd shifts with a businessDate before today); "today" is
 the tenant's timezone.
 Printer fields and the `printer_problem` flag: §1.6a.
+`zMode` (`cloud` | `till`, always present) says who produces the till's Z (§5.1); `PUT
+/machines/{id}` with `{"zMode": …}` changes it. `closedShiftsAwaitingZ` and the
+`closed_shifts_awaiting_z` flag mean the same for a `till` till: closed shifts no Z (its own) took.
 
 ### 2.10b A till keeps its shop while it has shifts to report
 `PUT /machines/{id}` changing `shopId` (to another shop or to null) or setting `isActive: false`,
@@ -758,8 +768,9 @@ other settings still saves. The dashboard edits it in the tenant settings dialog
 
 ### 2.13 Day summary `GET /reports/day-summary`
 Unchanged path and totals. Groups Zs by the Z's `businessDate`. `contributors` are per-till
-sections of each Z (one row per Z × till: `zReportId`, `shopSequenceNumber`, `machineId`,
-`machineName`, …); `machineCount` = distinct tills across those sections. The variance
+sections of each Z (one row per Z × till: `zReportId`, `shopSequenceNumber`, `origin`,
+`machineSequenceNumber`, `posNumber`, `machineId`, `machineName`, …; a till Z (§5) is one row
+with `shopSequenceNumber: null`); `machineCount` = distinct tills across those sections. The variance
 is the sum of the Zs' own over/short (`discrepancy`, §3.6), withheld if any Z's is unknown;
 a contributor is `uncounted` when its section's count or over/short is null.
 
@@ -906,7 +917,8 @@ it (`409 z_run_in_progress`).
   "lateDocuments": 0,                      // documents of its shifts that arrived (or moved in) after it was built (not in its figures)
   "amendedDocuments": 0,                   // documents of its shifts rewritten after it was built (its figures are as built)
   "legacy": false,                         // true for a pre-shift, till-issued Z (machineId set, no perMachine)
-  "machineId": null, "machineName": null   // legacy rows only
+  "machineId": null, "machineName": null,  // set on till Zs and legacy rows
+  // §5.5: "origin", "machineSequenceNumber", "posNumber", "createdByName", "totalsMismatch"
 }
 ```
 
@@ -1296,6 +1308,229 @@ refused because of, a transmission.**
 
 ---
 
+## 5. Z on the till (`zMode = till`) — contract
+
+A per-till mode in which **the till produces its own Z**, numbered per till, instead of the
+cloud producing a shop Z. Shifts are unchanged (open, close, X, §1). Decided with the owner
+on 2026-10-01:
+
+- **Per till.** Each till is `zMode = "cloud"` (default, everything as today) or `"till"`.
+- **Online only.** A till Z needs the cloud: the cloud allocates the number and builds the
+  figures from the documents it holds, so the till and the cloud can never disagree and two
+  Zs can never share a number. Without a connection the till says so and makes no Z.
+- **The till does the Z.** A cashier (any signed-in till user, no manager approval) presses
+  "הפק Z", or the dashboard asks the till to. Either way the till closes its open shift
+  first (a normal §1.3 close), then asks for the Z (§5.2), then prints it.
+- **Numbering per till, from 1.** A gapless counter per machine, independent of the shop's
+  cloud Z numbering. It never resets, also not when the till switches mode and back.
+- **Business day.** Opened by the first shift after the previous Z, closed by the Z; may
+  contain any number of shifts. The Z's `businessDate` = the `businessDate` of the first
+  shift it includes. Nothing forces a Z: until one is made, the day stays open.
+- **Dashboard trigger.** "Z לכל הקופות" for a shop asks every `till`-mode till to produce
+  its own Z (§5.4); `cloud`-mode tills of the shop get the normal cloud Z run (§2.4).
+- **The cloud never builds a Z for a `till`-mode till** (§2.4 refuses it). Dead-till
+  recovery (§2.9 administrative close) is unchanged; the closed shift then waits for a till
+  Z, or the till is switched to `cloud` by an admin and taken into a cloud Z.
+
+### 5.1 The setting
+
+On the machine: `zMode: "cloud" | "till"` (`pos_machines.z_mode`, default `cloud`).
+
+- **Read:** on `GET /machines`, `GET /machines/{id}` (dashboard), and in the heartbeat
+  **response** (`"zMode": "till"`, always present) — the till takes its mode from there.
+- **Write:** `PUT /machines/{machineId}` with `{"zMode": "till"}` — the machine-admin roles
+  that may produce Zs (same set as `POST /z-runs`), within their scope.
+- **Switching rule:** a switch is refused with `409 {"detail": "unreported_shifts", "count": N}`
+  while the till has **closed** shifts that no Z includes, and with
+  `409 {"detail": "z_in_progress"}` while a live Z run item or a pending till-Z request holds
+  the till. An **open** shift does not block (it will be in the next Z of the new mode).
+  Setting the current value again is a `200` no-op.
+
+### 5.2 `POST /sync/{machineId}/till-z` — the till asks for its Z (till)
+
+Machine token. Sent **after** the till's last shift close (§1.3) has been accepted.
+
+Request
+```json
+{
+  "clientRequestId": "…",        // uuid made by the till BEFORE the first attempt and kept
+                                 // until it has the Z: the idempotency key (retry = same id)
+  "tillZRequestId": "…",         // the dashboard request it answers (§5.4), else null/absent
+  "throughShiftId": "…",         // the newest shift the till wants in this Z (its last closed one)
+  "createdByUserId": "…", "createdByName": "…",   // nullable; who pressed it (null when remote)
+  "unattended": false,           // true when produced for a dashboard request with nobody at the till
+  "till": { …§3.3 keys… }        // optional: the till's own sum over the included shifts, for audit
+}
+```
+
+What the cloud does, in one transaction (the machine's counter row `FOR UPDATE`):
+1. The machine must be `zMode = till` → else `409 {"detail": "till_z_disabled"}`.
+2. Its shifts are taken oldest first, every **closed** shift no Z includes, up to and including
+   `throughShiftId`. A shift of this machine still `open` or `closing` before `throughShiftId`
+   → `409 {"detail": "shift_not_closed", "shiftId": "…"}` (close it, retry). `throughShiftId`
+   unknown/not this machine's → `409 {"detail": "shift_unknown"}` / `403
+   shift_belongs_to_another_machine`. Nothing to include → `409 {"detail": "nothing_to_report"}`.
+3. A live Z run item holding the till → `409 {"detail": "z_run_in_progress:<runId>"}`.
+4. The Z is built with the **same builder** as a cloud Z (`build_z`), over this one till: the
+   same figures, the same `perMachine[]` section (§3.6, exactly one), the same frozen header (§3.7).
+5. It gets `machineSequenceNumber` = this machine's counter + 1 (gapless, starts at 1),
+   `origin: "till"`, `machineId` = the till, `shopSequenceNumber: null`, `businessDate` =
+   first included shift's business date. The included shifts get `zReportId` like any Z.
+6. `totalsMismatch` = the optional `till` figures differ from the built Z by > 0.01 on any
+   §3.3 key (stored, shown; never a refusal).
+7. A `tillZRequestId` names a pending request of this till (§5.4) → it becomes `completed`
+   with this Z.
+
+Responses
+- `201` — `{ "status": "created", "zReport": ZReport (§3.5 + §5.5 fields, with its single
+  perMachine section), "shiftIds": ["…"], "totalsMismatch": false, "serverTime": "…" }`
+- `200` — same body with `"status": "duplicate"` for a `clientRequestId` already answered:
+  the **same** Z, nothing new numbered.
+- `409` as above; `403`/`404` as the other `/sync` paths.
+
+The till persists `clientRequestId` before sending, and only forgets it once the Z is
+stored locally. So a crash, a timeout or a lost response is retried with the same id and
+returns the same Z — never a second number.
+
+### 5.3 Heartbeat and Ably — the dashboard asks a till for its Z
+
+Heartbeat **response** additions:
+```json
+"zMode": "till",
+"pendingTillZ": {"requestId": "…", "initiatedBy": "manager name", "createdAt": "…"}   // or absent
+```
+Ably event `till-z` on `pos:{tenantId}:{machineId}`: `{"serverTime", "requestId", "initiatedBy"}`.
+Same instruction; idempotent by `requestId`.
+
+The till then, unattended: refuses to start while a card payment or a print is in flight
+(ack `deferred`, `errorCode: "card_in_flight"` / `"printing"`, retries by itself); closes its
+open shift if any (§1.3, `unattended: true`, no count, `closeRequestId` absent); flushes;
+calls §5.2 with `tillZRequestId` and `unattended: true`; **prints the Z**. A till with no
+open shift and nothing to report answers `nothing_to_report` — the request becomes
+`completed` with no Z (`errorCode: "nothing_to_report"`).
+
+`POST /sync/{machineId}/till-z/ack` (till):
+```json
+{"requestId": "…", "phase": "received|deferred|failed", "errorCode": "…", "errorMessage": "…"}
+```
+`200 {"ok": true, "status": "<request status>"}` · `404 {"detail": "till_z_request_not_found"}`.
+`completed` comes only from §5.2, never from an ack.
+
+### 5.4 Dashboard → cloud
+
+- `POST /shops/{shopId}/till-z` `{"machineIds": ["…"]}` (optional; default = every assigned,
+  active `till`-mode till of the shop) → `201 [TillZRequest]`. A till that already has a
+  pending request returns that one (no second request). A `cloud`-mode till in the list →
+  `422 {"detail": "machine_not_till_z", "machineId": "…"}`.
+- `POST /machines/{machineId}/till-z` → `201 TillZRequest` (one till).
+- `GET /till-z-requests?shopId=…&status=…` → list; `GET /till-z-requests/{id}`;
+  `POST /till-z-requests/{id}/cancel` → `cancelled` (`409 request_not_pending`).
+- `POST /z-runs` (§2.4) refuses a `till`-mode till: `422 {"detail": "machine_issues_its_own_z",
+  "machineId": "…"}`. `GET /shops/{shopId}/z-candidates` (§2.3) lists every till with its
+  `zMode`, so the wizard can split them.
+- Roles: as `POST /z-runs` (machine admins), narrowed to their scope.
+
+**TillZRequest**
+```json
+{
+  "id", "machineId", "machineName", "shopId",
+  "status": "waiting|in_progress|completed|failed|expired|cancelled",
+  "errorCode", "errorMessage",
+  "createdAt", "updatedAt", "expiresAt", "createdByUserId", "initiatedBy",
+  "sentAt", "receivedAt", "completedAt",
+  "zReportId": null, "machineSequenceNumber": null,   // set when completed with a Z
+  "online": true, "pendingDocuments": 3, "pendingAsOf": "…"   // as on a Z run item (§3.4)
+}
+```
+Statuses: `waiting` (created, not acknowledged) → `in_progress` (`received`/`deferred` ack;
+`deferred` keeps its errorCode) → `completed` (§5.2 answered it, or `nothing_to_report`).
+Ends early as `failed` (a `failed` ack), `expired` (36 h after creation, like a Z run) or
+`cancelled`. A till holds at most one pending request.
+
+### 5.5 ZReport additions (§3.5)
+
+```json
+"origin": "cloud" | "till",
+"machineSequenceNumber": 12,     // till Zs only; null on cloud Zs
+"machineId", "machineName",      // set on till Zs (and on legacy rows)
+"createdByName": "…", "unattended": false,
+"totalsMismatch": false          // till Zs: the till's own figures differed
+```
+`GET /z-reports` accepts `machineId` and `origin` filters and sorts till Zs among the shop's
+by `closedAt`. A till Z's display number is "קופה {posNumber or machineName} · Z {machineSequenceNumber}".
+Every consumer of Z reports (Z detail and print, day summary §2.13, tax exports/OpenFormat,
+area sales, tips report) must treat a till Z as a Z of one till — check each for an assumption
+that `shopSequenceNumber` is set.
+
+### 5.6 What the till keeps
+
+- `zMode` from every heartbeat response (settings key; no default flip until the first beat
+  says `till`).
+- A local table of its till Zs: id, `machineSequenceNumber`, `businessDate`, `closedAt`, the
+  full response JSON (to reprint without a connection), `printedAt`. Unprinted ones are offered
+  for printing like missing receipts.
+- The included shifts are marked "נכללה בדו״ח Z מס׳ N" at once from the response `shiftIds`
+  (and later from the heartbeat's `recentShiftZs`, as today). The local purge rule is
+  unchanged: it deletes only shifts the cloud named in a Z.
+
+### 5.7 The printed till Z
+
+Header as on a receipt/X (business name, VAT number, address, branch). Title "דו״ח Z מס׳ N"
+and the till ("קופה …"), business date, period (first shift opened → Z time), the shifts it
+includes (sequence numbers), document range and counts, gross/discounts/net/refunds, VAT,
+payment breakdown (cash, card, exchange, other), tips, the drawer section (§3.6: opening,
+cash net, between-shift adjustments, expected, counted, over/short — "לא נספר" when withheld),
+card transmission line (§4.11), who produced it ("הופק ע״י …" or "הופק מרחוק ע״י …"), and
+"עותק" on a reprint. Hebrew, RTL, same renderer family as the X.
+
+### 5.8 Server notes (what the cloud does beyond the text above)
+
+- **`throughShiftId` absent** = every closed shift of the till no Z has taken, oldest first,
+  up to its newest closed one (an open shift after it stays out). As on a Z run (§2.4).
+- **`409 {"detail": "client_request_id_conflict"}`** — the `clientRequestId` names another
+  till's Z. Never expected; a till must make a fresh uuid per Z.
+- **A duplicate wins over everything:** a `clientRequestId` already answered returns its Z
+  (`200 duplicate`) even if the till has since been switched to `cloud` or closed another
+  shift — the retry repeats the answer, it is not a new request.
+- **A till Z answers the till's pending request even unnamed.** A till holds at most one
+  pending request (§5.4); a Z made at the till (no `tillZRequestId`) while one is pending
+  completes it with that Z — the dashboard asked for exactly that, and left pending it would
+  make the till close the shift it opens next and file a second Z. A request created after
+  the Z is not touched.
+- **`nothing_to_report`** completes the named request (`errorCode: "nothing_to_report"`,
+  no Z) whether the till says so by calling §5.2 with `tillZRequestId` (answered `409
+  nothing_to_report`, the request change is kept) or by a `failed` ack with that
+  `errorCode`. An ack with phase `completed` is accepted and changes nothing.
+- **`unattended` on a till Z** means only "produced for a dashboard request with nobody at
+  the till" (shown "הופק מרחוק"). Whether its shifts were closed unattended is on its section
+  (`unattendedShiftCount`). On a cloud Z its meaning is unchanged (§3.5).
+- **Who:** `createdByName` and the till user's id (stored as `created_by_pos_user_id`, text)
+  are the till's; `createdByUserId` on a till Z is the dashboard user whose request it
+  answered (null for one pressed at the till).
+- **Dead-till recovery vs the switching rule.** A till whose waiting shifts include one closed
+  administratively (§2.9, `reconstructed`) may be switched **to `cloud`** despite
+  `unreported_shifts`, so its shifts can reach the shop's Z; every other switch with waiting
+  shifts is refused as §5.1 says.
+- **`POST /machines/{machineId}/till-z`** answers `201` with the pending request when one
+  exists (no second request), as the shop endpoint does.
+- **`GET /till-z-requests`** — a bare array, newest `createdAt` first, at most 200; without
+  `status`, only requests of the last 7 days. Filters: `shopId`, `machineId`, `status`.
+  Shop endpoint: an unknown or other-shop till in `machineIds` is `400
+  machine_not_in_shop:<id>`; an unassigned/inactive one `409 machine_not_assigned`.
+- **Numbering** is allocated under the till's `machine_z_sequences` row `FOR UPDATE`; a
+  switch of `zMode` takes the same lock. Two attempts at once serialise (verified on Postgres:
+  the same id → one `created`, one `duplicate`; two ids → numbers 1 and 2). A refused attempt
+  burns no number; a lost counter row continues from the highest number on file.
+- **The builder refuses** a `till`-mode till in any cloud Z (`machine_issues_its_own_z`),
+  so a run that held the till before a switch is failed by its build, not completed with it.
+- **Every Z number on the wire** (`zNumber` on a shift, a close response, `recentShiftZs`) is
+  the Z's own: `machineSequenceNumber` for a till Z, `shopSequenceNumber` for a cloud Z.
+- **Z list items** also carry `posNumber` (a till Z: its till's register number as frozen in
+  its section; null on a cloud Z); the detail adds `tillTotals` (what the till sent). Day
+  summary contributors carry `origin`, `machineSequenceNumber` and `posNumber`.
+
+---
+
 ## Deviations from the plan
 
 - A Z run can be `failed` (build refused under lock, see §2.6) — the plan lists the status but
@@ -1320,3 +1555,5 @@ refused because of, a transmission.**
 - A shift is one machine's: another machine's shift id (a till re-paired as a new machine
   with a shift open) makes the document an orphan, the open/close a 403, and the heartbeat
   claim "none open" (§1.1). The plan did not cover re-pairing mid-shift.
+- Z on the till (§5) is new: the plan had every Z built by the cloud over a shop. The server's
+  reading of the §5 contract where it was silent or self-contradictory is in §5.8.

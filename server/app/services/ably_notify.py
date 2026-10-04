@@ -141,6 +141,24 @@ def publish_transmit_notify(
     publish_notify(tenant_id, machine_id, "transmit", body)
 
 
+def publish_till_z_notify(
+    tenant_id: str,
+    machine_id: str,
+    request_id: str,
+    initiated_by: str,
+) -> None:
+    """
+    Ask a till in `zMode = till` to produce its own Z now (docs/SHIFTS_API.md §5.3).
+
+    The fast path only, like `close-shift`: the heartbeat's `pendingTillZ` hands the same
+    instruction to a till that missed this. The till dedupes by `requestId`.
+    """
+    body = _notify_base()
+    body["requestId"] = request_id
+    body["initiatedBy"] = initiated_by
+    publish_notify(tenant_id, machine_id, "till-z", body)
+
+
 def publish_transactions_synced(tenant_id: str, machine_id: str, count: int) -> None:
     body = _notify_base()
     body["count"] = count

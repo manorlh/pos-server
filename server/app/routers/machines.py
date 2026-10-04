@@ -69,7 +69,10 @@ from app.services.remote_close import (
 )
 from app.services.z_runs import _reported_open_is_live
 from app.services import transmissions, transmit_requests
+from app.services import till_z
+from app.schemas.till_z import TillZRequestOut
 from app.schemas.transmission import ReplacementCodeBody
+from fastapi.responses import JSONResponse
 from sqlalchemy import func
 
 logger = logging.getLogger(__name__)
@@ -167,6 +170,7 @@ def _enrich_machine_status(
         "areaId": machine.area_id,
         "areaName": machine.area_name,
         "posNumber": machine.pos_number,
+        "zMode": till_z.z_mode_of(machine),
         "distributorId": machine.distributor_id,
         "mqttClientId": machine.mqtt_client_id,
         "pairingStatus": machine.pairing_status,
@@ -487,6 +491,8 @@ def post_my_heartbeat(
     if body is not None and body.printer is not None:
         apply_printer_block(machine, body.printer)
     pending_transmit = transmit_requests.take_pending(db, machine)
+    # The pull half of "produce your Z" (§5.3), for a till in `zMode = till`.
+    pending_till_z = till_z.take_pending(db, machine)
     through = z_reported_through_sequence(db, machine.id)
     recent = recent_shift_zs(db, machine.id)
     db.commit()
@@ -497,12 +503,17 @@ def post_my_heartbeat(
         # Drives the till's purge: documents of shifts at or below it are in a Z.
         "zReportedThroughSequence": through,
         # So a reprint of an older shift's X can carry the Z number it ended up in.
+        # A till Z's shifts are here exactly like a cloud Z's (§5.6).
         "recentShiftZs": recent,
+        # Who produces this till's Z (§5.1), on every beat: the till takes its mode from here.
+        "zMode": till_z.z_mode_of(machine),
     }
     if pending is not None:
         response["pendingCloseShift"] = pending
     if pending_transmit is not None:
         response["pendingTransmit"] = pending_transmit
+    if pending_till_z is not None:
+        response["pendingTillZ"] = pending_till_z
     return response
 
 
@@ -549,6 +560,15 @@ def update_machine(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     update_data = machine_data.model_dump(exclude_unset=True, by_alias=False)
+    # Who produces its Z (§5.1): first, so a refused switch changes nothing else either.
+    # An explicit null is no change.
+    z_mode = update_data.pop("z_mode", None)
+    if z_mode is not None:
+        try:
+            till_z.set_z_mode(db, machine, z_mode)
+        except till_z.TillZRefused as refused:
+            db.rollback()
+            return JSONResponse(status_code=refused.status_code, content=refused.body)
 
     # Leaving its shop, or being retired, with shifts that belong to it: refused (409).
     leaving = "shop_id" in update_data and str(update_data["shop_id"]) != str(machine.shop_id)
@@ -787,6 +807,38 @@ def request_remote_shift_close(
     if not created:
         response.status_code = status.HTTP_200_OK
     return close_requests.request_to_out(db, req)
+
+
+@router.post(
+    "/{machine_id}/till-z",
+    response_model=TillZRequestOut,
+    response_model_by_alias=True,
+    status_code=status.HTTP_201_CREATED,
+)
+def request_till_z(
+    machine_id: uuid_mod.UUID,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Ask this till (`zMode = till`) to produce its own Z now (docs/SHIFTS_API.md §5.4).
+
+    The till gets the `till-z` Ably event if online and `pendingTillZ` on its heartbeat
+    either way; it closes its open shift unattended, asks for its Z and prints it. A till
+    with a request pending gets that one back. `422 machine_not_till_z` for a `cloud`
+    till, `409 machine_not_assigned`. Same roles as a remote shift close. Progress:
+    `GET /till-z-requests/{id}`.
+    """
+    machine = machine_for_shift_admin(db, machine_id, current_user, active_tenant_id)
+    try:
+        req, _created = till_z.request_for_machine(db, current_user, machine)
+    except till_z.TillZRefused as refused:
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
+    db.commit()
+    db.refresh(req)
+    return till_z.request_to_out(db, req)
 
 
 # ── Card transmission (docs/SHIFTS_API.md §4) ─────────────────────────────────

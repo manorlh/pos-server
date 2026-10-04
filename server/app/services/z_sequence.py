@@ -23,6 +23,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.models.machine_z_sequence import MachineZSequence
 from app.models.shop_z_sequence import DEFAULT_SHOP_Z_SEQUENCE_START, ShopZSequence
 from app.models.z_report import ZReport
 
@@ -99,5 +100,71 @@ def allocate_shop_z_number(db: Session, shop_id: Optional[uuid.UUID]) -> Optiona
 
     assigned = int(row.next_value)
     row.next_value = assigned + 1
+    db.flush()
+    return assigned
+
+
+# ── Per-till numbering (till Zs, docs/SHIFTS_API.md §5) ───────────────────────
+
+
+def _highest_machine_number(db: Session, machine_id: uuid.UUID) -> int:
+    """The last till Z number of this till already on file (0 if none) — as above, so a
+    lost counter row continues the run rather than reissuing printed numbers."""
+    highest = (
+        db.query(ZReport.machine_sequence_number)
+        .filter(
+            ZReport.machine_id == machine_id,
+            ZReport.machine_sequence_number.isnot(None),
+        )
+        .order_by(ZReport.machine_sequence_number.desc())
+        .first()
+    )
+    return int(highest[0]) if highest and highest[0] else 0
+
+
+def lock_machine_z_sequence(db: Session, machine_id: uuid.UUID) -> MachineZSequence:
+    """
+    The till's counter row, created if missing and locked `FOR UPDATE`.
+
+    Taken first by every till Z of the till and by a change of its `z_mode`, so those
+    serialise: a second request of the same till waits here, and then reads the first's
+    Z (its `clientRequestId`, its shifts) as committed.
+    """
+    dialect = db.get_bind().dialect.name
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    elif dialect == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert
+    else:  # pragma: no cover - no other database is used
+        insert = None
+    if insert is not None:
+        db.execute(
+            insert(MachineZSequence.__table__)
+            .values(machine_id=machine_id, last_number=_highest_machine_number(db, machine_id))
+            .on_conflict_do_nothing(index_elements=["machine_id"])
+        )
+    row = (
+        db.query(MachineZSequence)
+        .filter(MachineZSequence.machine_id == machine_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if row is None:  # pragma: no cover - only without an upsert
+        row = MachineZSequence(machine_id=machine_id, last_number=_highest_machine_number(db, machine_id))
+        db.add(row)
+        db.flush()
+    return row
+
+
+def allocate_machine_z_number(db: Session, machine_id: uuid.UUID) -> int:
+    """
+    The next till Z number of `machine_id`: 1 for its first. The caller is inside the
+    transaction that inserts the Z (a rollback un-allocates it) and has already answered
+    a retried `clientRequestId` with the Z it has — a retry never draws a number.
+    """
+    row = lock_machine_z_sequence(db, machine_id)
+    assigned = int(row.last_number or 0) + 1
+    row.last_number = assigned
     db.flush()
     return assigned

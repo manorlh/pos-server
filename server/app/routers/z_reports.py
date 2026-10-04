@@ -15,7 +15,7 @@ from app.models.pos_machine import POSMachine
 from app.models.shift import Shift
 from app.models.shop import Shop
 from app.models.user import User, UserRole
-from app.models.z_report import ZReport
+from app.models.z_report import ZOrigin, ZReport
 from app.schemas.z_report import (
     ZReportBusinessOut,
     ZReportDetailOut,
@@ -84,7 +84,11 @@ def z_to_out(z: ZReport, cls=ZReportOut):
         # Not validated from the row directly: its `shifts` relationship would be read
         # into the detail's `shifts` field as ORM rows. The caller fills that in.
         item = cls(**item.model_dump())
+    # A till Z has a machine too, but also its section: legacy is the shape, not the till.
     item.legacy = z.per_machine is None and z.machine_id is not None
+    item.origin = z.origin or ZOrigin.CLOUD
+    if z.is_till_z and z.per_machine:
+        item.pos_number = z.per_machine[0].get("posNumber")
     if z.total_sales is not None:
         item.net_sales = Decimal(z.total_sales) - Decimal(z.total_refunds or 0)
         if z.discounts_total is not None:
@@ -109,6 +113,9 @@ def list_z_reports(
     area_id: Optional[str] = Query(
         None, alias="areaId", description="The area a Z was started for, or `none`."
     ),
+    origin: Optional[str] = Query(
+        None, pattern="^(cloud|till)$", description="`till`: the tills' own Zs (§5); `cloud`: Z runs'."
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200, alias="pageSize"),
     current_user: User = Depends(get_current_user),
@@ -121,7 +128,9 @@ def list_z_reports(
     `from`/`to` filter on the Z's `business_date`. `closedFrom`/`closedTo` are ISO
     datetimes on `closed_at`. `machineId`/`machineIds` match a Z containing that till
     (a shift of it, or a legacy till-issued Z). `areaId` matches the area a Z was run
-    for; `none` is every whole-shop, hand-picked or legacy Z.
+    for; `none` is every whole-shop, hand-picked or legacy Z. `origin` keeps the tills'
+    own Zs (`till`, docs/SHIFTS_API.md §5) or the Z runs' (`cloud`); a till Z is listed
+    among its shop's, ordered by when it closed within its business date.
     """
     area_filter = parse_area_filter(area_id)
     query = (
@@ -143,6 +152,8 @@ def list_z_reports(
     if shop_id:
         query = query.filter(ZReport.shop_id == shop_id)
     query = filter_on_column(query, ZReport.area_id, area_filter)
+    if isinstance(origin, str):  # (a direct call leaves the Query default in place)
+        query = query.filter(ZReport.origin == origin)
 
     defaulted = from_date is None and to_date is None and closed_from is None and closed_to is None
     if defaulted:
@@ -166,7 +177,9 @@ def list_z_reports(
 
     total = query.count()
     rows = (
-        query.order_by(ZReport.business_date.desc(), ZReport.created_at.desc())
+        query.order_by(
+            ZReport.business_date.desc(), ZReport.closed_at.desc(), ZReport.created_at.desc()
+        )
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
@@ -223,7 +236,14 @@ def get_z_report(
     z = query.first()
     if not z:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Z-report not found")
+    return z_detail_out(db, z)
 
+
+def z_detail_out(db: Session, z: ZReport) -> ZReportDetailOut:
+    """
+    The Z with its sections, shifts and frozen header — the dashboard's detail, and the
+    body a till gets back for its own Z (docs/SHIFTS_API.md §5.2), so both print one thing.
+    """
     out = z_to_out(z, ZReportDetailOut)
     out.per_machine = [_with_derived_sales(section) for section in (z.per_machine or [])]
     shifts = (
@@ -236,10 +256,11 @@ def get_z_report(
     out.shifts = [
         shift_to_out(
             s,
-            z_number=z.shop_sequence_number,
+            z_number=z.z_number,
             machine_name=s.machine.name if s.machine else None,
         )
         for s in shifts
     ]
     out.business = _business_of(z)
+    out.till_totals = z.till_totals
     return out
