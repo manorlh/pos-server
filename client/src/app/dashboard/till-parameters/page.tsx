@@ -11,10 +11,11 @@
  */
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { Pencil, Plus, Printer, Search, Trash2, X } from 'lucide-react';
 import { deleteTillParameter, fetchTillParameters } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import type { TillParameter } from '@/lib/types';
@@ -64,10 +65,14 @@ function TillParametersAdmin() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<TillParameter | null>(null);
 
-  const { data: parameters = [], isLoading } = useQuery<TillParameter[]>({
+  const { data: all = [], isLoading } = useQuery<TillParameter[]>({
     queryKey: ['till-parameters'],
     queryFn: fetchTillParameters,
   });
+  // The printing settings are edited on the printers page, by shop → point of sale →
+  // till (`managedOn: 'printers'`); this page leaves them out and links there.
+  const parameters = all.filter((p) => !p.managedOn);
+  const onPrinters = all.filter((p) => p.managedOn === 'printers');
   const selected = parameters.find((p) => p.id === selectedId) ?? null;
 
   // Search over the key, the Hebrew label and the description — "שומר מסך",
@@ -116,6 +121,16 @@ function TillParametersAdmin() {
         <span>{t('precedence')}</span>
         <p className="text-muted-foreground text-xs mt-1">{t('precedenceHint')}</p>
       </div>
+
+      {onPrinters.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed p-3 text-sm">
+          <Printer className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span>{t('movedToPrinters', { names: onPrinters.map((p) => p.label).join(' · ') })}</span>
+          <Link href="/dashboard/kitchen-printers" className="font-medium text-primary underline-offset-4 hover:underline">
+            {t('movedToPrintersLink')}
+          </Link>
+        </div>
+      ) : null}
 
       <div className="relative max-w-md">
         <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

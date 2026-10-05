@@ -255,9 +255,71 @@ def expire_overdue_runs(db: Session, *, now: Optional[datetime] = None) -> int:
             run.error_code = "expired"
             run.error_message = "The Z run was not finished in time"
             changed += 1
+    # A run already stalled before `end_if_stalled` ran on its tills' answers.
+    for candidate in db.query(ZRun).filter(ZRun.status == ZRunStatus.WAITING).all():
+        if _stalled(candidate) and end_if_stalled(db, candidate):
+            changed += 1
     if changed:
         db.flush()
     return changed
+
+
+#: A till's refusal in words, for the run's message (the till's own codes, §close-shift).
+_FAILED_REASONS = {
+    "open_tables": "יש בה שולחנות פתוחים",
+    "no_open_shift": "אין בה משמרת פתוחה",
+    "unknown_shift": "המשמרת בה השתנתה",
+    "shift_changed": "המשמרת בה השתנתה",
+    "shift_belongs_to_another_machine": "המשמרת שייכת לקופה אחרת",
+    "expired": "לא נסגרה בזמן",
+}
+#: The till's English detail before the list it names ("open tables: 3, מנור").
+_OPEN_TABLES_PREFIX = "open tables:"
+TILLS_FAILED = "tills_failed"
+
+
+def _stalled(run: ZRun) -> bool:
+    """No till is still closing and none is ready, and one failed: nothing can move it."""
+    statuses = [i.status for i in run.items]
+    if any(s in PENDING_ITEM_STATUSES or s == ZRunItemStatus.READY for s in statuses):
+        return False
+    return any(s in (ZRunItemStatus.FAILED, ZRunItemStatus.EXPIRED) for s in statuses)
+
+
+def _failure_text(item: ZRunItem) -> str:
+    machine = item.machine
+    name = (machine.name or "").strip() if machine is not None else ""
+    if machine is not None and (machine.pos_number or "").strip():
+        name = f"{name} #{machine.pos_number.strip()}".strip()
+    name = name or "קופה"
+    reason = _FAILED_REASONS.get(item.error_code or "", "הסגירה נכשלה")
+    detail = (item.error_message or "").strip()
+    if item.error_code == "open_tables" and detail.lower().startswith(_OPEN_TABLES_PREFIX):
+        reason += f" ({detail[len(_OPEN_TABLES_PREFIX):].strip()})"
+    return f"{name}: {reason}"
+
+
+def end_if_stalled(db: Session, run: ZRun) -> bool:
+    """
+    End a run that nothing can move any more: every till failed (open tables on it, no
+    open shift, …) or was left out, so no close is on its way and nothing is ready to
+    build. It would otherwise wait for its TTL behind a "producing the Z" screen with no
+    way on, holding the shop's next Z. It fails now with the tills' reasons; their
+    shifts stay as they are, and a new Z can start once the reason is fixed.
+
+    A run with a ready till is not ended here: the operator may still build it without
+    the failed ones (`proceed_without`).
+    """
+    run = lock_run(db, run)
+    if run.status != ZRunStatus.WAITING or not _stalled(run):
+        return False
+    failed = [i for i in run.items if i.status in (ZRunItemStatus.FAILED, ZRunItemStatus.EXPIRED)]
+    run.status = ZRunStatus.FAILED
+    run.error_code = TILLS_FAILED
+    run.error_message = "; ".join(_failure_text(i) for i in failed) + ". מתקנים ומתחילים שוב."
+    db.flush()
+    logger.info("Z run %s ended: %s", run.id, run.error_message)
+    return True
 
 
 # ── Create ────────────────────────────────────────────────────────────────────
@@ -1259,6 +1321,9 @@ def apply_close_shift_ack(
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid phase")
     db.flush()
+    if phase == "failed":
+        # The last till it waited for refused: the run ends now rather than at its TTL.
+        end_if_stalled(db, run)
     return item
 
 

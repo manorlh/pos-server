@@ -179,6 +179,25 @@ def incompatible_values(
 #: setting `brandReceiptLogoUrl`: the till prefers this when it has a value.
 RECEIPT_LOGO_KEY = "receiptLogoUrl"
 
+#: Edited on the dashboard's printers page ("מדפסות"), by shop → point of sale → till,
+#: not on the till parameters page (`app/services/printers.py` `SETTING_KEYS`, and the
+#: print server till of its own card).
+PRINTERS_PAGE_KEYS = (
+    "receiptPrinter",
+    "receiptPrinterAddress",
+    "receiptPrinterModel",
+    "cashDrawer",
+    "askBeforePrint",
+    "kitchenTicketsOnSale",
+    "kitchenTicketsOnTill",
+    "printHostTill",
+)
+
+
+def managed_on(key: str) -> Optional[str]:
+    """The dashboard tab that edits this parameter instead of the parameters page."""
+    return "printers" if key in PRINTERS_PAGE_KEYS else None
+
 #: String parameters whose value is an image URL. The dashboard edits them with an
 #: image picker (upload through `POST /images/branding?kind=<kind>`, preview, clear)
 #: instead of a text field. Keyed by parameter key → branding upload kind, so the
@@ -741,6 +760,42 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "שיצאו למטבח/לבר."
         ),
     ),
+    # A quick order's details ("פרטי הזמנה"): take-away or eat-in, the customer's name —
+    # asked on the way to payment or when the order is opened, printed on the kitchen ticket.
+    BuiltinParameter(
+        key="askEatInTakeAway",
+        label="הזמנה מהירה — לקחת / לשבת",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: בהזמנה מהירה (מכירה רגילה, לא שולחן) הקופה שואלת \"לקחת או לשבת?\" — חובה — "
+            "והתשובה מודפסת בבולט בראש הבון למטבח/לבר. מתי שואלים — בפרמטר \"הזמנה מהירה — מתי לשאול\". "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key="askOrderName",
+        label="הזמנה מהירה — שם לקוח",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: בהזמנה מהירה (מכירה רגילה, לא שולחן) הקופה מבקשת שם לקוח להזמנה — חובה — "
+            "והשם מודפס בגדול בראש הבון למטבח/לבר, כדי לקרוא ללקוח כשההזמנה מוכנה. מתי שואלים — "
+            "בפרמטר \"הזמנה מהירה — מתי לשאול\". ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key="orderDetailsAt",
+        label="הזמנה מהירה — מתי לשאול (לקחת/לשבת, שם)",
+        value_type="enum",
+        enum_options=("במעבר לתשלום", "בפתיחת הזמנה"),
+        default_value="במעבר לתשלום",
+        description=(
+            "מתי הקופה שואלת את פרטי ההזמנה המהירה שהופעלו (\"לקחת / לשבת\", \"שם לקוח\"): "
+            "«במעבר לתשלום» — בלחיצה על תשלום; «בפתיחת הזמנה» — כשמוסיפים את הפריט הראשון להזמנה חדשה. "
+            "בכל מקרה, הזמנה שהגיעה לתשלום בלי הפרטים נשאלת עליהם לפני התשלום."
+        ),
+    ),
     BuiltinParameter(
         key="printHostTill",
         label="שרת הדפסות (בונים)",
@@ -764,6 +819,18 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "כשמופעל: אחרי הוספת מנה שיש לה \"הגדלת מכירה\" (למשל צ'יפס ליד המבורגר, או \"להפוך לארוחה?\") "
             "מופיע בקופה כרטיס הצעה קטן שלא עוצר את העבודה — נגיעה אחת מוסיפה, ✕ סוגר. "
             "את ההצעות מגדירים בדשבורד תחת \"הגדלות מכירה\". כבוי — לא מוצגות הצעות."
+        ),
+    ),
+    BuiltinParameter(
+        key="modifiersAutoOpen",
+        label="תוספות — חלון קופץ אוטומטי",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: לחיצה על מנה שיש לה תוספות (קבוצות תוספות בתפריט) פותחת מיד את חלון התוספות, "
+            "גם כשהבחירה בהן לא חובה. מנה שיש לה רק הערות לא פותחת חלון — הערה למנה מוסיפים בלחיצה "
+            "על השורה בהזמנה. כבוי (ברירת מחדל) — החלון נפתח לבד רק כשחייבים לבחור (תוספת חובה או "
+            "ארוחה), ואחרת בכפתור + שעל המנה. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
     BuiltinParameter(

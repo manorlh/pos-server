@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -184,6 +184,11 @@ class TicketIn(BaseModel):
     source_name: Optional[str] = Field(None, alias="sourceName", max_length=TICKET_TEXT_MAX)
     #: A course the waiter fired ("הוצא: עיקריות"), printed as a band (docs/SPEC_MENU_MODIFIERS.md §8).
     fire: Optional[str] = Field(None, max_length=TICKET_TEXT_MAX)
+    #: A counter sale's name ("שם להזמנה", till parameter `askOrderName`): the ticket's
+    #: headline, the name the kitchen calls out.
+    customer_name: Optional[str] = Field(None, alias="customerName", max_length=TICKET_TEXT_MAX)
+    #: A counter sale's "לקחת / לשבת" (till parameter `askEatInTakeAway`), printed as a band.
+    dining: Optional[Literal["eat_in", "take_away"]] = None
 
 
 class PrintJobIn(BaseModel):
@@ -289,8 +294,11 @@ class PrintHostReportIn(BaseModel):
 
 class KitchenOptionsIn(BaseModel):
     """
-    The two till parameters at one level of the shop. A key left out is unchanged; an
-    explicit null removes the value there (the level inherits again).
+    The printers page's till parameters at one level of the shop. A key left out is
+    unchanged; an explicit null removes the value there (the level inherits again).
+
+    `values` takes any of `printers.SETTING_KEYS` (receipt printer, drawer, ask before
+    print, kitchen tickets); the two named fields are its older spelling.
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -299,6 +307,7 @@ class KitchenOptionsIn(BaseModel):
     scope_id: uuid.UUID = Field(alias="scopeId")
     kitchen_tickets_on_sale: Optional[bool] = Field(None, alias="kitchenTicketsOnSale")
     kitchen_tickets_on_till: Optional[bool] = Field(None, alias="kitchenTicketsOnTill")
+    values: Optional[Dict[str, Any]] = None
 
 
 __all__ = [

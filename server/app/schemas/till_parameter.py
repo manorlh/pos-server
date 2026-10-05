@@ -141,6 +141,9 @@ class TillParameterOut(BaseModel):
     widget: Optional[str] = None
     #: For `widget: "image"`: the `POST /images/branding?kind=` its uploads go through.
     image_kind: Optional[str] = Field(None, alias="imageKind")
+    #: The dashboard tab that edits this parameter instead of the till parameters page
+    #: ("printers" for the printing settings, `PRINTERS_PAGE_KEYS`); null otherwise.
+    managed_on: Optional[str] = Field(None, alias="managedOn")
     created_at: Optional[datetime] = Field(None, alias="createdAt")
     updated_at: Optional[datetime] = Field(None, alias="updatedAt")
 

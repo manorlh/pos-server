@@ -3,6 +3,7 @@
  * docs/SPEC_PROMOTIONS_TABLES_SHOPZ.md §4.
  */
 import { api } from './api';
+import type { TillParameterValueType } from './types';
 
 export type PrinterConnectionType = 'network' | 'bluetooth' | 'cloud' | 'till' | 'usb';
 /** kitchen — "מדפסת בונים" (tickets, by the routing); receipt — "מדפסת חשבוניות" (bills, receipts, the drawer). */
@@ -58,14 +59,34 @@ export interface KitchenPrinterInput {
   sortOrder?: number;
 }
 
-export type KitchenOptionKey = 'kitchenTicketsOnSale' | 'kitchenTicketsOnTill';
-export type KitchenOptionValues = Partial<Record<KitchenOptionKey, boolean>>;
+/** A printing setting's value (a till parameter: text, number or on/off). */
+export type PrinterSettingValue = string | number | boolean;
+/** The values set at one level, by parameter key; a key left out inherits. */
+export type PrinterSettingValues = Record<string, PrinterSettingValue>;
 
+/** One printing setting (a till parameter the printers page edits). */
+export interface PrinterSettingDef {
+  key: string;
+  label: string;
+  description?: string | null;
+  valueType: TillParameterValueType;
+  enumOptions?: string[] | null;
+  defaultValue?: PrinterSettingValue | null;
+}
+
+/**
+ * The printing settings ("הגדרות הדפסה") by shop → point of sale → till. `inherited` is
+ * what the shop takes from above it: the company's value (keys in `fromCompany`), else
+ * the default.
+ */
 export interface KitchenOptions {
-  defaults: Record<KitchenOptionKey, boolean>;
-  shop: KitchenOptionValues;
-  areas: Record<string, KitchenOptionValues>;
-  machines: Record<string, KitchenOptionValues>;
+  parameters: PrinterSettingDef[];
+  defaults: Record<string, PrinterSettingValue | null>;
+  inherited: Record<string, PrinterSettingValue | null>;
+  fromCompany: string[];
+  shop: PrinterSettingValues;
+  areas: Record<string, PrinterSettingValues>;
+  machines: Record<string, PrinterSettingValues>;
 }
 
 export interface KitchenPrintersPage {
@@ -264,17 +285,17 @@ export async function saveProductRoute(
   return data;
 }
 
-/** One level's kitchen options; `null` removes the value there (inherit). */
-export async function saveKitchenOptions(
+/** One level's printing settings; `null` removes the value there (it inherits again). */
+export async function savePrinterSettings(
   shopId: string,
   scopeType: 'shop' | 'area' | 'machine',
   scopeId: string,
-  values: Partial<Record<KitchenOptionKey, boolean | null>>,
+  values: Record<string, PrinterSettingValue | null>,
 ): Promise<KitchenOptions> {
   const { data } = await api.put<KitchenOptions>(`/shops/${shopId}/printer-options`, {
     scopeType,
     scopeId,
-    ...values,
+    values,
   });
   return data;
 }

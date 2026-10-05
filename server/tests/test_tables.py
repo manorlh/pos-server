@@ -749,6 +749,9 @@ class TestDashboard:
         assert out["cancellations"]["byReason"] == [{"reason": "לקוח עזב", "count": 1, "total": 98.0}]
         assert out["cancellations"]["byEmployee"][0]["employee"] == "דנה"
         assert out["cancellations"]["rows"][0]["approvedBy"] == "מנהלת רותי"
+        # The till reads the same report for its own shop ("דוחות שולחנות" on the till).
+        till = R.get_tables_reports(str(w.a.id), day - timedelta(days=1), day + timedelta(days=1), machine=w.a, db=w.db)
+        assert till == out
 
     def test_the_waiters_report_and_handing_a_table_to_another_waiter(self, w):
         # Dana opens and serves table 1; Avi opens table 2, then hands it to Dana's colleague Yossi.

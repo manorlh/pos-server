@@ -236,10 +236,10 @@ export default function KitchenPrintersPage() {
               {table(receipts, t('receiptEmpty'))}
             </section>
 
+            <OptionsCard page={page} />
             <PrintServerCard page={page} />
             <RoutingEditor shopId={shopId} printers={kitchen} canEdit={canEdit} />
             <StationsCard shopId={shopId} printers={kitchen} canEditShop={canEdit} />
-            <OptionsCard page={page} />
 
             {dialog && (
               <PrinterDialog

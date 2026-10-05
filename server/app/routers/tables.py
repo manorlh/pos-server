@@ -194,6 +194,27 @@ def report_local_tables(
     return out
 
 
+@router.get("/sync/{machine_id}/tables/reports")
+def get_tables_reports(
+    machine_id: str,
+    date_from: date = Query(..., alias="from"),
+    date_to: date = Query(..., alias="to"),
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    The tables reports on the till ("דוחות שולחנות"), for the till's shop: the dashboard's
+    own (`GET /tables/report`) — per table and zone, the waiters', every table a waiter
+    served, and the cancellations.
+    """
+    if machine.shop_id is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no_shop")
+    shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
+    if shop is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no_shop")
+    return T.report(db, shop, date_from, date_to)
+
+
 @router.get("/sync/{machine_id}/tables/host-seed")
 def get_host_seed(
     machine_id: str,

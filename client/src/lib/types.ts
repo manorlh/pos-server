@@ -2338,6 +2338,8 @@ export interface TillParameter {
   widget?: 'image' | null;
   /** For `widget: 'image'`: the branding upload kind its images go through. */
   imageKind?: BrandingImageKind | 'media' | null;
+  /** The dashboard tab that edits it instead of this page (`'printers'`), or null. */
+  managedOn?: 'printers' | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 }

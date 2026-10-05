@@ -350,6 +350,50 @@ class TestTheTillsPull:
         assert pull(k, t2)["options"]["kitchenTicketsOnSale"] is True
         assert refused(put, "machine", k.other_till.id, kitchenTicketsOnSale=True).detail == "scope_not_in_shop"
 
+    def test_the_printing_settings_by_shop_point_of_sale_and_till(self, k):
+        from app.services.till_parameters import PRINTERS_PAGE_KEYS, managed_on, till_parameters_for_machine
+
+        t1, t2 = k.tills
+        area = ShopArea(id=uuid.uuid4(), tenant_id=k.tenant.id, shop_id=k.shop.id, name="Bar")
+        k.db.add(area)
+        t2.area_id = area.id
+        k.db.commit()
+
+        def put(scope_type, scope_id, values):
+            body = KitchenOptionsIn.model_validate(
+                {"scopeType": scope_type, "scopeId": str(scope_id), "values": values}
+            )
+            tasks = BackgroundTasks()
+            out = R.put_options(k.shop.id, body, tasks, **_ctx(k))
+            _run(tasks)
+            return out
+
+        page = R.list_printers(k.shop.id, **_ctx(k))["options"]
+        assert [p["key"] for p in page["parameters"]] == list(K.SETTING_KEYS)
+        assert page["inherited"]["receiptPrinter"] == "מובנית בקופה"
+        assert set(K.SETTING_KEYS) < set(PRINTERS_PAGE_KEYS)
+        assert managed_on("cashDrawer") == "printers" and managed_on("fastCash") is None
+
+        put("shop", k.shop.id, {"askBeforePrint": True, "cashDrawer": "בתשלום מזומן"})
+        put("area", area.id, {"receiptPrinter": "רשת (IP)", "receiptPrinterAddress": "192.168.1.60"})
+        out = put("machine", t2.id, {"askBeforePrint": False})
+        assert out["shop"] == {"askBeforePrint": True, "cashDrawer": "בתשלום מזומן"}
+        assert out["areas"][str(area.id)] == {"receiptPrinter": "רשת (IP)", "receiptPrinterAddress": "192.168.1.60"}
+        assert out["machines"][str(t2.id)] == {"askBeforePrint": False}
+
+        one = till_parameters_for_machine(k.db, t1).parameters
+        two = till_parameters_for_machine(k.db, t2).parameters
+        assert (one["askBeforePrint"], two["askBeforePrint"]) == (True, False)
+        assert two["receiptPrinter"] == "רשת (IP)" and one.get("receiptPrinter") != "רשת (IP)"
+        assert two["cashDrawer"] == "בתשלום מזומן"
+
+        # null removes the level's value; the till inherits the area's again.
+        out = put("area", area.id, {"receiptPrinterAddress": None})
+        assert out["areas"][str(area.id)] == {"receiptPrinter": "רשת (IP)"}
+        assert refused(put, "shop", k.shop.id, {"fastCash": False}).detail == "unknown_setting:fastCash"
+        assert refused(put, "shop", k.shop.id, {"cashDrawer": "תמיד"}).detail.startswith("invalid_value:cashDrawer")
+        assert refused(put, "shop", k.shop.id, {"askBeforePrint": "yes"}).detail.startswith("invalid_value:")
+
     def test_the_etag_answers_unchanged_until_something_changes(self, k):
         create(k, name="Kitchen")
         first = pull(k, k.tills[0])

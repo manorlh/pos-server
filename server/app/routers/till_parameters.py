@@ -72,6 +72,7 @@ def _out(parameter: TillParameter, value_count: int = 0) -> TillParameterOut:
         value_count=value_count,
         widget=TP.parameter_widget(parameter.key, parameter.value_type),
         image_kind=TP.image_kind(parameter.key, parameter.value_type),
+        managed_on=TP.managed_on(parameter.key),
         created_at=parameter.created_at,
         updated_at=parameter.updated_at,
     )

@@ -69,6 +69,17 @@ from app.services.company_hierarchy import user_covers_company
 ON_SALE_KEY = "kitchenTicketsOnSale"
 ON_TILL_KEY = "kitchenTicketsOnTill"
 OPTION_KEYS = (ON_SALE_KEY, ON_TILL_KEY)
+#: Every till parameter the printers page edits by shop → point of sale → till ("הגדרות
+#: הדפסה"); the till parameters page leaves them to it (`PRINTERS_PAGE_KEYS`).
+SETTING_KEYS = (
+    "receiptPrinter",
+    "receiptPrinterAddress",
+    "receiptPrinterModel",
+    "cashDrawer",
+    "askBeforePrint",
+    ON_SALE_KEY,
+    ON_TILL_KEY,
+)
 
 #: A relayed ticket nobody printed by then is failed for its sender.
 JOB_TTL = timedelta(minutes=5)
@@ -1002,22 +1013,28 @@ def product_state(
     return out
 
 
-# ── Options (two till parameters) ─────────────────────────────────────────────
+# ── Printing settings (till parameters, by shop → point of sale → till) ────────
 
 
 def _option_parameters(db: Session) -> Dict[str, TillParameter]:
     from app.services.till_parameters import ensure_builtin_parameters
 
     ensure_builtin_parameters(db)
-    rows = db.query(TillParameter).filter(TillParameter.key.in_(OPTION_KEYS)).all()
+    rows = db.query(TillParameter).filter(TillParameter.key.in_(SETTING_KEYS)).all()
     return {row.key: row for row in rows}
 
 
 def options_out(db: Session, shop: Shop) -> Dict[str, Any]:
-    """The values set at the shop, its areas and its tills — what this page edits."""
+    """
+    The printing settings as this page edits them: each parameter's definition, what the
+    shop inherits from above it (`inherited`: the company's value, else the default), and
+    the values set at the shop, its areas and its tills.
+    """
     parameters = _option_parameters(db)
     by_id = {p.id: key for key, p in parameters.items()}
     scope_ids = [shop.id] + [a.id for a in shop_areas(db, shop.id)] + [m.id for m in shop_machines(db, shop.id)]
+    if shop.company_id is not None:
+        scope_ids.append(shop.company_id)
     values = (
         db.query(TillParameterValue)
         .filter(
@@ -1028,25 +1045,51 @@ def options_out(db: Session, shop: Shop) -> Dict[str, Any]:
         if by_id
         else []
     )
-    levels: Dict[str, Dict[str, Dict[str, Any]]] = {"shop": {}, "area": {}, "machine": {}}
+    levels: Dict[str, Dict[str, Dict[str, Any]]] = {"company": {}, "shop": {}, "area": {}, "machine": {}}
     for row in values:
-        if row.scope_type not in levels or not isinstance(row.value, bool):
+        if row.scope_type not in levels:
             continue
         levels[row.scope_type].setdefault(str(row.scope_id), {})[by_id[row.parameter_id]] = row.value
-    defaults = {
-        key: (bool(p.default_value) if isinstance(p.default_value, bool) else False)
-        for key, p in parameters.items()
-    }
+    company = levels["company"].get(str(shop.company_id), {}) if shop.company_id is not None else {}
+    ordered = [parameters[key] for key in SETTING_KEYS if key in parameters]
     return {
-        "defaults": defaults,
+        "parameters": [
+            {
+                "key": p.key,
+                "label": p.label,
+                "description": p.description,
+                "valueType": p.value_type,
+                "enumOptions": p.enum_options,
+                "defaultValue": p.default_value,
+            }
+            for p in ordered
+        ],
+        "defaults": {p.key: p.default_value for p in ordered},
+        "inherited": {p.key: company.get(p.key, p.default_value) for p in ordered},
+        "fromCompany": sorted(company),
         "shop": levels["shop"].get(str(shop.id), {}),
         "areas": levels["area"],
         "machines": levels["machine"],
     }
 
 
+def _wanted_settings(body: KitchenOptionsIn) -> Dict[str, Any]:
+    """`key → value or None (remove)` for what the body sets; unknown keys are refused."""
+    sent = body.model_fields_set
+    wanted: Dict[str, Any] = {}
+    if "kitchen_tickets_on_sale" in sent:
+        wanted[ON_SALE_KEY] = body.kitchen_tickets_on_sale
+    if "kitchen_tickets_on_till" in sent:
+        wanted[ON_TILL_KEY] = body.kitchen_tickets_on_till
+    for key, value in (body.values or {}).items():
+        if key not in SETTING_KEYS:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"unknown_setting:{key}")
+        wanted[key] = value
+    return wanted
+
+
 def set_options(db: Session, shop: Shop, body: KitchenOptionsIn) -> List[NotifyTarget]:
-    """Upsert / remove the two parameters at one level of the shop; the tills to tell."""
+    """Upsert / remove printing settings at one level of the shop; the tills to tell."""
     if body.scope_type == "shop":
         if str(body.scope_id) != str(shop.id):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="scope_not_in_shop")
@@ -1062,15 +1105,23 @@ def set_options(db: Session, shop: Shop, body: KitchenOptionsIn) -> List[NotifyT
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="scope_not_in_shop")
         tills = [machine]
 
+    from app.services.till_parameters import TillParameterValueError, validate_value
+
     parameters = _option_parameters(db)
-    sent = body.model_fields_set
-    wanted = {
-        ON_SALE_KEY: ("kitchen_tickets_on_sale", body.kitchen_tickets_on_sale),
-        ON_TILL_KEY: ("kitchen_tickets_on_till", body.kitchen_tickets_on_till),
-    }
+    wanted = _wanted_settings(body)
+    for key, value in list(wanted.items()):
+        if value is None or key not in parameters:
+            continue
+        parameter = parameters[key]
+        try:
+            wanted[key] = validate_value(parameter.value_type, value, parameter.enum_options)
+        except TillParameterValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"invalid_value:{key}: {exc}"
+            ) from exc
     now = _now()
-    for key, (field, value) in wanted.items():
-        if field not in sent or key not in parameters:
+    for key, value in wanted.items():
+        if key not in parameters:
             continue
         parameter = parameters[key]
         row = (
