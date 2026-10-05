@@ -2,10 +2,9 @@
 The tenant's `zScope` setting, as the dashboard's tenant settings dialog writes it.
 
 It decides whether the Z wizard may put several tills in one Z, so what is pinned is the
-path the dashboard uses: it is stored at the tenant level, changed only by a distributor
-or super admin (the branding roles — a company manager is a tenant admin too, and must
-not switch it for every merchant in the tenant), refused anywhere else, and read back by
-the Z runs.
+path the dashboard uses: stored at the tenant level, changed by the super admin only (the
+owner's rule), only while every till of the tenant is closed and in a Z, refused anywhere
+else, and read back by the Z runs. Each till's own `zMode` is tests/test_till_z.py's.
 """
 from __future__ import annotations
 
@@ -39,9 +38,11 @@ def _user(role: UserRole) -> User:
     return u
 
 
-def _patch(tenant, db, body, *, may_manage=True, role=UserRole.DISTRIBUTOR):
+def _patch(tenant, db, body, *, may_manage=True, role=UserRole.SUPER_ADMIN, not_closed=()):
     with patch("app.routers.settings._can_manage_tenant", return_value=may_manage), patch(
         "app.routers.settings.notify_machines_for_tenant_settings"
+    ), patch("app.services.z_runs.tills_not_closed", return_value=list(not_closed)), patch(
+        "app.routers.settings._tenant_tills", return_value=[]
     ):
         return patch_tenant_settings(
             tenant_id=str(tenant.id),
@@ -51,7 +52,7 @@ def _patch(tenant, db, body, *, may_manage=True, role=UserRole.DISTRIBUTOR):
         )
 
 
-def test_a_distributor_switches_to_one_till_per_z_and_back() -> None:
+def test_the_super_admin_switches_to_one_till_per_z_and_back() -> None:
     tenant, db = _tenant({"receiptPrinterName": "P1"})
 
     res = _patch(tenant, db, {"zScope": "machine"})
@@ -73,7 +74,7 @@ def test_the_same_guard_as_the_other_tenant_settings() -> None:
     assert z_scope_of(tenant) == "shop"
 
 
-def test_it_has_no_company_or_shop_layer() -> None:
+def test_it_has_no_company_or_till_layer() -> None:
     with pytest.raises(HTTPException) as e:
         _refuse_tenant_only_keys(PosSettingsV1Patch.model_validate({"zScope": "machine"}))
     assert e.value.status_code == 400
@@ -87,16 +88,16 @@ def test_only_the_two_values_are_accepted() -> None:
         PosSettingsV1Patch.model_validate({"zScope": "company"})
 
 
-def test_the_roles_are_the_branding_roles() -> None:
-    from app.routers.settings import BRANDING_WRITE_ROLES, Z_SCOPE_WRITE_ROLES
+def test_the_super_admin_alone() -> None:
+    from app.routers.settings import Z_SCOPE_WRITE_ROLES
 
-    assert Z_SCOPE_WRITE_ROLES == BRANDING_WRITE_ROLES == {UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR}
+    assert Z_SCOPE_WRITE_ROLES == {UserRole.SUPER_ADMIN}
 
 
 @pytest.mark.parametrize(
-    "role", [UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER, UserRole.CASHIER]
+    "role", [UserRole.DISTRIBUTOR, UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER, UserRole.CASHIER]
 )
-def test_a_tenant_admin_below_a_distributor_may_not_change_it(role) -> None:
+def test_nobody_below_the_super_admin_may_change_it(role) -> None:
     tenant, db = _tenant({"zScope": "shop"})
 
     with pytest.raises(HTTPException) as e:
@@ -112,6 +113,18 @@ def test_a_super_admin_may() -> None:
     _patch(tenant, db, {"zScope": "machine"}, role=UserRole.SUPER_ADMIN)
 
     assert z_scope_of(tenant) == "machine"
+
+
+def test_not_while_a_till_is_open_or_awaits_a_z() -> None:
+    tenant, db = _tenant()
+    till = {"machineId": "m1", "posNumber": "2", "name": "Bar", "openShift": True, "awaitingZ": 0}
+
+    with pytest.raises(HTTPException) as e:
+        _patch(tenant, db, {"zScope": "machine"}, not_closed=[till])
+
+    assert e.value.status_code == 409
+    assert e.value.detail == {"code": "z_scope_tills_open", "tills": [till]}
+    assert z_scope_of(tenant) == "shop"
 
 
 @pytest.mark.parametrize("stored", [{"zScope": "machine"}, {}])

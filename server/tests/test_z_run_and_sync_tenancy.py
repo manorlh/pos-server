@@ -31,6 +31,8 @@ from app.services import ably_notify
 from app.services.auth import create_machine_token
 from shift_world import accept_str_uuids, make_world
 
+pytestmark = pytest.mark.usefixtures("z_activity_unchecked")  # not about "no Z on 0"
+
 
 @pytest.fixture
 def w(monkeypatch):

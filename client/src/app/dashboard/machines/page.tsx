@@ -4,7 +4,7 @@ import { useMemo, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, fetchMachines } from '@/lib/api';
-import { PosMachine, Shop, Company } from '@/lib/types';
+import { PosMachine, Shop, Company, type DeviceModel } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
 import { usePageScope } from '@/lib/scope';
@@ -26,16 +26,24 @@ import { ClockDriftBanner } from '@/components/dashboard/machine-health';
 import { formatDistanceToNow, format } from 'date-fns';
 import { QRCodeSVG } from 'qrcode.react';
 import type { PairingSessionCreateResponse } from '@/lib/types';
+import { useRoleAccess } from '@/lib/accessApi';
 import { he } from 'date-fns/locale';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MachineStatusDot, machineStatus } from '@/components/dashboard/machine-status';
 import { MachinesTable } from '@/components/dashboard/machines/machines-table';
 import { RemoteShiftCloseDialog } from '@/components/dashboard/machines/remote-shift-close';
 import { TransmitNowDialog } from '@/components/dashboard/machines/card-transmission';
+import {
+  TerminalMismatchAlert,
+  TerminalNumberDialog,
+  type TerminalNumberTarget,
+} from '@/components/dashboard/machines/card-terminal';
 import { RequestTillZDialog, ZModeDialog } from '@/components/dashboard/till-z/till-z-dialogs';
 import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
 import { MachineAreaDialog } from '@/components/dashboard/areas/machine-area-dialog';
+import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
 import { AREA_NONE } from '@/lib/api';
+import { DeviceModelDialog, DeviceModelSelect } from '@/components/dashboard/machines/device-model';
 
 const MQTT_ONLINE_WINDOW_MS = 300 * 1000;
 
@@ -63,6 +71,8 @@ export default function MachinesPage() {
   const [pairCompanyId, setPairCompanyId] = useState('');
   const [pairShopId, setPairShopId] = useState('');
   const [pairPreAssignLabel, setPairPreAssignLabel] = useState<string | null>(null);
+  /** Required before a code is generated: the till learns from it whether it prints. */
+  const [pairDeviceModel, setPairDeviceModel] = useState<DeviceModel | ''>('');
 
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignShopId, setAssignShopId] = useState('');
@@ -83,13 +93,17 @@ export default function MachinesPage() {
   // upfront whether the row will be hard-deleted or only decommissioned.
   const [removeMachineHasHistory, setRemoveMachineHasHistory] = useState(false);
 
+  // "הרשאות": the super admin may have taken a device action from this role (the server
+  // refuses it too); the roles' own rules stand.
+  const { denied } = useRoleAccess();
   const canAssignMachine =
-    authHydrated && (me?.role === 'distributor' || me?.role === 'super_admin');
+    authHydrated && (me?.role === 'distributor' || me?.role === 'super_admin') && !denied.has('pairDevices');
   const canEditAssignedShop =
     authHydrated &&
-    (me?.role === 'company_manager' || me?.role === 'distributor' || me?.role === 'super_admin');
+    (me?.role === 'company_manager' || me?.role === 'distributor' || me?.role === 'super_admin') &&
+    !denied.has('moveDevices');
   const canRemoveMachine =
-    authHydrated && (me?.role === 'distributor' || me?.role === 'super_admin');
+    authHydrated && (me?.role === 'distributor' || me?.role === 'super_admin') && !denied.has('removeDevices');
   // Producing a Z and closing a till's shift remotely need the same roles.
   const canProduceZ = useCanProduceZ();
   const showAssignHelp =
@@ -144,6 +158,11 @@ export default function MachinesPage() {
   /** `''` = every area, `none` = tills in no area, else an area id. */
   const [areaFilter, setAreaFilter] = useState('');
   const [areaTarget, setAreaTarget] = useState<PosMachine | null>(null);
+  const [settingsTarget, setSettingsTarget] = useState<PosMachine | null>(null);
+  const [deviceModelTarget, setDeviceModelTarget] = useState<PosMachine | null>(null);
+  const [terminalTarget, setTerminalTarget] = useState<TerminalNumberTarget | null>(null);
+  /** Narrow the rows to tills on the wrong card terminal (the alert's toggle). */
+  const [onlyTerminalMismatch, setOnlyTerminalMismatch] = useState(false);
 
   const visibleMachines = effective.machineId
     ? machines.filter((m) => sameId(m.id, effective.machineId))
@@ -161,6 +180,7 @@ export default function MachinesPage() {
     setPairCompanyId('');
     setPairShopId('');
     setPairPreAssignLabel(null);
+    setPairDeviceModel('');
   };
 
   /**
@@ -184,10 +204,11 @@ export default function MachinesPage() {
   };
 
   const generateCode = useMutation({
-    mutationFn: (payload: { companyId?: string; shopId?: string }) =>
+    mutationFn: (payload: { companyId?: string; shopId?: string; deviceModel: DeviceModel }) =>
       api.post('/pairing/generate', {
         ...(payload.companyId ? { companyId: payload.companyId } : {}),
         ...(payload.shopId ? { shopId: payload.shopId } : {}),
+        deviceModel: payload.deviceModel,
       }),
     onSuccess: (res) => {
       setPairingCode(res.data.code);
@@ -430,9 +451,23 @@ export default function MachinesPage() {
       ? areaFilter
       : '';
 
+  const terminalMismatchCount = visibleMachines.filter(
+    (m) => m.terminalStatus === 'mismatch',
+  ).length;
+
+  // Every till of the shop, not only the rows the filters leave: the write reaches them all.
+  const openTerminalForShop = (shop: Shop) =>
+    setTerminalTarget({
+      level: 'shop',
+      shopId: shop.id,
+      shopName: shop.name,
+      machines: machines.filter((m) => sameId(m.shopId, shop.id)),
+    });
+
   const shownMachines = (
     statusFilter ? visibleMachines.filter((m) => machineStatus(m) === statusFilter) : visibleMachines
   )
+    .filter((m) => !onlyTerminalMismatch || m.terminalStatus === 'mismatch')
     .filter((m) =>
       activeAreaFilter === ''
         ? true
@@ -451,12 +486,12 @@ export default function MachinesPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {canProduceZ ? (
             <Link
               href={zWizardHref(effective.shopId, effective.machineId)}
@@ -513,6 +548,13 @@ export default function MachinesPage() {
 
       <ScopeGate resolution={resolution}>
       {!isLoading ? <ClockDriftBanner machines={visibleMachines} /> : null}
+      {!isLoading ? (
+        <TerminalMismatchAlert
+          count={terminalMismatchCount}
+          onlyMismatch={onlyTerminalMismatch}
+          onToggle={setOnlyTerminalMismatch}
+        />
+      ) : null}
 
       {/*
         Status tallies, doubling as a filter.
@@ -648,11 +690,15 @@ export default function MachinesPage() {
               onCloseShift: setCloseShiftTarget,
               onTransmit: setTransmitTarget,
               onEditArea: setAreaTarget,
+              onEditSettings: setSettingsTarget,
+              onEditDeviceModel: setDeviceModelTarget,
+              onTerminalNumber: (m) => setTerminalTarget({ level: 'machine', machine: m }),
               onRequestTillZ: setTillZTarget,
               onEditZMode: setZModeTarget,
             }}
             isDeviceOnline={isDeviceOnline}
             onAddMachineToShop={openPairForShop}
+            onTerminalNumberForShop={canProduceZ ? openTerminalForShop : undefined}
           />
         )}
         </>
@@ -688,6 +734,16 @@ export default function MachinesPage() {
               {pairPreAssignLabel ? (
                 <p className="text-sm text-muted-foreground">{t('pairPreAssigned', { target: pairPreAssignLabel })}</p>
               ) : null}
+              {/* A peek, not a reservation: shown only until the device pairs, since the
+                  shop's next number moves on the moment this one is taken. */}
+              {!pairingComplete &&
+              pairShopId &&
+              pairNextRegister &&
+              sameId(pairNextRegister.shopId, pairShopId) ? (
+                <p className="text-sm font-medium">
+                  {t('pairWillGetNumber', { number: pairNextRegister.nextRegisterNumber })}
+                </p>
+              ) : null}
               {pairingComplete ? (
                 <Button className="w-full" onClick={finishPairDialog}>
                   {t('pairFinish')}
@@ -717,6 +773,15 @@ export default function MachinesPage() {
                   placeholder={t('machineCodePlaceholder')}
                 />
                 <p className="text-xs text-muted-foreground">{t('machineCodeHint')}</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="pair-device-model">{t('deviceModel.label')}</Label>
+                <DeviceModelSelect
+                  id="pair-device-model"
+                  value={pairDeviceModel}
+                  onChange={setPairDeviceModel}
+                />
+                <p className="text-xs text-muted-foreground">{t('deviceModel.hint')}</p>
               </div>
               <div className="space-y-3 rounded-lg border border-dashed p-3">
                 <div>
@@ -794,12 +859,15 @@ export default function MachinesPage() {
                     } else {
                       setPairPreAssignLabel(null);
                     }
+                    if (!pairDeviceModel) return;
                     generateCode.mutate({
                       ...(pairCompanyId ? { companyId: pairCompanyId } : {}),
                       ...(pairShopId ? { shopId: pairShopId } : {}),
+                      deviceModel: pairDeviceModel,
                     });
                   }}
-                  disabled={!machineCode || generateCode.isPending}
+                  disabled={!machineCode || !pairDeviceModel || generateCode.isPending}
+                  title={!pairDeviceModel ? t('deviceModel.required') : undefined}
                 >
                   {t('generate')}
                 </Button>
@@ -862,6 +930,34 @@ export default function MachinesPage() {
         machine={areaTarget}
         open={!!areaTarget}
         onOpenChange={(open) => (!open ? setAreaTarget(null) : undefined)}
+      />
+
+      {/* This till's own POS settings, over what it inherits from its shop. */}
+      <EntityPosSettingsDialog
+        level="machine"
+        entityId={settingsTarget?.id ?? null}
+        open={!!settingsTarget}
+        onOpenChange={(open) => (!open ? setSettingsTarget(null) : undefined)}
+      />
+
+      <DeviceModelDialog
+        machine={deviceModelTarget}
+        open={!!deviceModelTarget}
+        onOpenChange={(open) => (!open ? setDeviceModelTarget(null) : undefined)}
+      />
+
+      {/* One till's card terminal number, or every till's in a shop. */}
+      <TerminalNumberDialog
+        key={
+          terminalTarget
+            ? terminalTarget.level === 'machine'
+              ? `terminal-${terminalTarget.machine.id}`
+              : `terminal-shop-${terminalTarget.shopId}`
+            : 'terminal-none'
+        }
+        target={terminalTarget}
+        open={!!terminalTarget}
+        onOpenChange={(open) => (!open ? setTerminalTarget(null) : undefined)}
       />
 
       <Dialog open={shopEditOpen} onOpenChange={setShopEditOpen}>

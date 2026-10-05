@@ -54,6 +54,17 @@ const KNOWN = new Set([
   'untransmitted_card_sales',
   'transmit_request_not_found',
   'transmission_failed',
+  'open_tills_block_z',
+  'open_tills_need_confirmation',
+  // Synced-mode tables still open in the shop ("חסימת סגירת יום עם שולחנות פתוחים").
+  'open_tables_block_z',
+  // A till refused a remote close for the same reason (its ack's error code).
+  'open_tables',
+  // The shop Z comes from the shop's main till only ("Z סניפי — מאיפה מפיקים").
+  'z_only_from_main_till',
+  // A till's Z mode: the super admin's alone, with the till's shift closed first.
+  'till_open',
+  'super_admin_only',
   'unreported_shifts',
   'z_in_progress',
   'machine_not_till_z',

@@ -21,6 +21,8 @@ from app.services import shift_close_requests as SCR
 from app.services import z_runs as ZR
 from shift_world import NOW, accept_str_uuids, make_world
 
+pytestmark = pytest.mark.usefixtures("z_activity_unchecked")  # not about "no Z on 0"
+
 
 @pytest.fixture
 def w(monkeypatch):
@@ -77,7 +79,8 @@ class TestTheZListWindow:
     def _list(self, w, **kw):
         args = dict(
             machine_id=None, machine_ids=None, shop_id=None, from_date=None, to_date=None,
-            closed_from=None, closed_to=None, page=1, page_size=50,
+            closed_from=None, closed_to=None, area_id=None, date_basis="business", tz=None,
+            page=1, page_size=50,
             current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
         )
         args.update(kw)
@@ -86,8 +89,14 @@ class TestTheZListWindow:
     def test_the_default_is_the_last_90_days_and_says_so(self, w):
         out = self._list(w).model_dump(by_alias=True, mode="json")
         expected = (datetime.now(timezone.utc) - timedelta(days=90)).date().isoformat()
-        assert out["window"] == {"from": expected, "to": None, "defaulted": True}
+        assert out["window"] == {
+            "from": expected, "to": None, "defaulted": True,
+            "dateBasis": "business", "timezone": "Asia/Jerusalem",
+        }
 
     def test_a_given_range_is_echoed(self, w):
         out = self._list(w, from_date=date(2026, 9, 1), to_date=date(2026, 9, 30)).model_dump(by_alias=True, mode="json")
-        assert out["window"] == {"from": "2026-09-01", "to": "2026-09-30", "defaulted": False}
+        assert out["window"] == {
+            "from": "2026-09-01", "to": "2026-09-30", "defaulted": False,
+            "dateBasis": "business", "timezone": "Asia/Jerusalem",
+        }

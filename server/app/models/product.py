@@ -3,7 +3,7 @@ import enum
 
 from sqlalchemy import (
     Column, String, Boolean, ForeignKey, Numeric, Integer,
-    Enum as SQLEnum, DateTime, Index, UniqueConstraint, text,
+    Enum as SQLEnum, DateTime, Index, UniqueConstraint, text, JSON,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -55,6 +55,13 @@ class Product(Base):
     barcode = Column(String(100), nullable=True)
     tax_rate = Column(Numeric(5, 2), nullable=True)
     voucher_id = Column(UUID(as_uuid=True), ForeignKey("vouchers.id"), nullable=True, index=True)
+    # Item-ticket ("שובר") mode. NULL inherits the category's `ticket_mode`; any value
+    # (including "off") wins over it. See app/services/item_ticket.py.
+    ticket_mode = Column(String(16), nullable=True)
+    # An entry ticket ("כרטיס כניסה"): how many entries one unit grants. More than 1 prints
+    # that many separate tickets per unit ("כניסה 2/4"), whatever the ticket mode. NULL or 1
+    # is an ordinary product.
+    ticket_entries = Column(Integer, nullable=True)
     track_stock = Column(Boolean, default=False, nullable=False, server_default="false")
     # "General item": the cashier types the amount at the till. `price` is then only the
     # starting suggestion the till pre-fills, never the amount charged on its own.
@@ -79,6 +86,24 @@ class Product(Base):
     # deleted; open price, standard VAT, sold in every shop of its company. Everything
     # about it lives in app/services/general_item.py.
     is_general = Column(Boolean, default=False, nullable=False, server_default="false")
+
+    # "לא מקבל הנחות": the till gives this product no discount of any kind — the
+    # cashier's line discount is refused, a basket discount is taken over the other
+    # lines only, and promotions ("מבצעים") never discount it (it still counts towards
+    # a spend threshold). Enforced on the till; the cloud only carries the flag.
+    no_discount = Column(Boolean, default=False, nullable=False, server_default="false")
+
+    # The menu layer (docs/SPEC_MENU_MODIFIERS.md): the allergen codes the dish contains
+    # (app.models.menu.ALLERGENS), and the course its table lines are fired in by default
+    # — null inherits the category's. Not a key, like the routes: a deleted course reads
+    # as none.
+    allergens = Column(JSON, nullable=True)
+    course_id = Column(UUID(as_uuid=True), nullable=True)
+    #: At most this many in one order (a promotional item limited to 1); null: no limit.
+    max_per_order = Column(Integer, nullable=True)
+    #: Refills at no charge ("כוס נוספת") — `max_refills` per line, null = unlimited.
+    refillable = Column(Boolean, nullable=False, default=False, server_default="false")
+    max_refills = Column(Integer, nullable=True)
 
     # Where a global product is sold. Null is every product that predates this: its
     # shops are whatever rows somebody added by hand on the assortment page. "company"

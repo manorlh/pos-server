@@ -32,6 +32,7 @@ from app.services.machine_status import StatusInput, resolve_status
 from app.services.remote_close import close_shift_pending_machine_ids
 from app.services.shifts import orphan_documents_by_machine, shift_to_out
 from app.services import areas
+from app.services import main_till as MT
 from app.services import z_runs as ZR
 from app.services.till_z import TillZRefused, z_mode_of
 from fastapi.responses import JSONResponse
@@ -133,6 +134,7 @@ def get_z_candidates(
     pending_close = close_shift_pending_machine_ids(db, ids)
     awaiting = _awaiting_z_by_machine(db, ids)
     timezones = _tenant_timezones(db, tills)
+    tenant = _tenant(db, active_tenant_id)
     machines = []
     for machine in tills:
         cand = ZR.till_candidates(db, machine, shop.id)
@@ -194,8 +196,11 @@ def get_z_candidates(
         shop_name=shop.name,
         area_id=area.id if area is not None else None,
         area_name=area.name if area is not None else None,
-        z_scope=ZR.z_scope_of(_tenant(db, active_tenant_id)),
+        z_scope=ZR.z_scope_of(tenant),
+        open_tills_rule=ZR.open_tills_rule(db, tenant, shop),
         machines=machines,
+        main_till=MT.till_ref(MT.main_till_of_shop(db, shop.id)),
+        dashboard_z_blocked=MT.dashboard_z_refusal(db, shop) is not None,
     )
 
 
@@ -211,8 +216,22 @@ def post_z_run(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """Start a Z for one shop. Multi-shop from the UI is one call per shop."""
+    """
+    Start a Z for one shop. Multi-shop from the UI is one call per shop.
+
+    409 `{code: open_tills_block_z | open_tills_need_confirmation, tills}` when a shop Z
+    would leave tills with open (or un-Z'd) shifts behind and the shop's `shopZOpenTills`
+    parameter forbids it, or wants `confirmOpenTills: true` first.
+    """
     shop = _shop_for(db, body.shop_id, current_user, active_tenant_id)
+    # "Z only from the main till" (app/services/main_till.py): a shop Z of a shop that has
+    # one is started there, not here — 409 `z_only_from_main_till`. A till's own Z ("Z לכל
+    # קופה") is not a shop Z and stays the dashboard's to start.
+    refusal = MT.dashboard_z_refusal(db, shop)
+    if refusal is not None:
+        own_z = ZR.per_till_ids(db, ZR.shop_tills(db, shop.id), _tenant(db, active_tenant_id), shop)
+        if any(m.machine_id not in own_z for m in body.machines):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refusal)
     if _is_distributor(current_user):
         wanted = [m.machine_id for m in body.machines]
         found = db.query(POSMachine).filter(POSMachine.id.in_(wanted)).all() if wanted else []
@@ -235,6 +254,7 @@ def post_z_run(
             ],
             business_date=body.business_date,
             area_id=body.area_id,
+            confirm_open_tills=body.confirm_open_tills,
         )
     except TillZRefused as refused:
         # `422 machine_issues_its_own_z` with the till's id beside the detail (§5.4).

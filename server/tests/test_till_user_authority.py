@@ -223,7 +223,8 @@ class TestTillRoleMap:
     def test_a_shop_manager_holds_every_scope(self):
         assert pos_user_till_scopes(PosUserRole.SHOP_MANAGER) == {
             Scope.REFUND, Scope.DISCOUNT, Scope.DAY_CLOSE, Scope.SHIFT_CLOSE,
-            Scope.CATALOG_WRITE, Scope.TRANSMIT,
+            Scope.CATALOG_WRITE, Scope.TRANSMIT, Scope.TABLE_CANCEL, Scope.TABLE_UNLOCK,
+            Scope.USER_SESSION_RELEASE,
         }
 
     def test_a_till_shop_manager_matches_a_cloud_shop_manager(self):
@@ -706,3 +707,85 @@ class TestCategorySync:
         _here, _there, category, override, _db = _two_shops_one_category()
         out = _serialize_category(category, override)
         assert out["updatedAt"] == override.updated_at.isoformat()
+
+
+# ── A category placed on a shop or a company reaches only its tills ───────────
+
+
+def _shop_scoped_world():
+    tenant = uuid.uuid4()
+    company_a, company_b = uuid.uuid4(), uuid.uuid4()
+    here, next_door, elsewhere = (_machine(tenant_id=tenant) for _ in range(3))
+    shops = [
+        Shop(id=here.shop_id, tenant_id=tenant, company_id=company_a, name="Here"),
+        Shop(id=next_door.shop_id, tenant_id=tenant, company_id=company_a, name="Next door"),
+        Shop(id=elsewhere.shop_id, tenant_id=tenant, company_id=company_b, name="Other company"),
+    ]
+    general = _category(tenant, name="General")
+    company_wide = _category(tenant, name="Company A")
+    company_wide.company_id = company_a
+    shop_own = _category(tenant, name="Here only")
+    shop_own.company_id, shop_own.shop_id = company_a, here.shop_id
+    machines = [
+        POSMachine(id=m.id, shop_id=m.shop_id, tenant_id=tenant) for m in (here, next_door, elsewhere)
+    ]
+    db = _FakeDb(general, company_wide, shop_own, *shops, *machines)
+    return here, next_door, elsewhere, shop_own, db
+
+
+def _names(db, machine):
+    from app.services.sync import get_categories_for_sync
+
+    return sorted(c["name"] for c in get_categories_for_sync(db, str(machine.tenant_id), str(machine.id)))
+
+
+class TestCategoryPlacement:
+    def test_each_till_gets_the_general_its_company_and_its_own_shops(self, monkeypatch):
+        from app.services import sync as sync_service
+
+        here, next_door, elsewhere, _own, db = _shop_scoped_world()
+        monkeypatch.setattr(sync_service, "_category_ids_listed_in_shop", lambda *_a: set())
+
+        assert _names(db, here) == ["Company A", "General", "Here only"]
+        assert _names(db, next_door) == ["Company A", "General"]
+        assert _names(db, elsewhere) == ["General"]
+
+    def test_a_category_a_listed_product_uses_still_comes(self, monkeypatch):
+        """Placed on another shop, but a product this shop lists is filed under it."""
+        from app.services import sync as sync_service
+
+        _here, next_door, _elsewhere, own, db = _shop_scoped_world()
+        monkeypatch.setattr(
+            sync_service, "_category_ids_listed_in_shop", lambda *_a: {str(own.id)}
+        )
+
+        assert "Here only" in _names(db, next_door)
+
+    def test_a_category_added_from_a_till_is_its_shops_alone(self, monkeypatch):
+        from app.middleware.auth import CatalogActor
+        from app.routers import sync as sync_router
+        from app.schemas.category import CategoryCreate
+
+        machine, shop, _category_row = _shop_setup()
+        shop.company_id = uuid.uuid4()
+        db = _FakeDb(shop)
+        notified = []
+        monkeypatch.setattr(
+            sync_router, "notify_machines_for_shop", lambda _db, shop_id, reason: notified.append(shop_id)
+        )
+        monkeypatch.setattr(
+            sync_router, "notify_all_machines_for_tenant", lambda *a, **k: notified.append("WHOLE TENANT")
+        )
+        monkeypatch.setattr(sync_router, "_audit", lambda *a, **k: None)
+
+        created = sync_router.machine_create_cloud_category(
+            str(machine.id),
+            CategoryCreate(name="Specials"),
+            machine=machine,
+            actor=CatalogActor(pos_user_id=uuid.uuid4()),
+            db=db,
+        )
+
+        assert created.shop_id == shop.id
+        assert created.company_id == shop.company_id
+        assert notified == [str(shop.id)], "only this shop's tills are woken"

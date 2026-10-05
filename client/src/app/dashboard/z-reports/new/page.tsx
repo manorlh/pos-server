@@ -25,6 +25,11 @@
  * close that is not a Z. `?shopId=&areaId=` opens it on one area of a shop (the shop
  * page's "Run Z for this area"): the candidates are that area's tills and the run
  * records the area. It is still the shop's Z, numbered in the shop's sequence.
+ *
+ * A shop Z that leaves tills with open (or un-Z'd) shifts behind is subject to the
+ * shop's `shopZOpenTills` till parameter (components/dashboard/z-wizard/open-tills.tsx):
+ * the wizard shows those tills before starting, and on the server's 409 either lists
+ * them as blocking or asks the operator to confirm and sends the run again.
  */
 
 import { useMemo, useState } from 'react';
@@ -39,7 +44,7 @@ import { splitCandidatesByZMode } from '@/lib/tillZ';
 import { usePageScope } from '@/lib/scope';
 import { findBySameId } from '@/lib/entityLookup';
 import { useCanProduceZ } from '@/lib/zAccess';
-import type { TillZRequest, ZCandidates, ZRun, ZRunMachineSelection } from '@/lib/types';
+import type { TillZRequest, ZCandidates, ZOpenTill, ZRun, ZRunMachineSelection } from '@/lib/types';
 import {
   ShopCandidatesCard,
   defaultSelection,
@@ -53,6 +58,13 @@ import { ZRunProgress } from '@/components/dashboard/z-wizard/z-run-progress';
 import { TillZShopCard } from '@/components/dashboard/z-wizard/till-z-shop-card';
 import { TillZRequestLive } from '@/components/dashboard/till-z/till-z-request';
 import { ZAreaSelect } from '@/components/dashboard/z-wizard/z-area-select';
+import {
+  OpenTillsBlocked,
+  OpenTillsConfirmDialog,
+  OpenTillsNotice,
+  openTillsRefusal,
+  type OpenTillsHold,
+} from '@/components/dashboard/z-wizard/open-tills';
 import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
 import { useTillHeading } from '@/components/dashboard/shifts/shift-parts';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -97,6 +109,32 @@ function machineBody(
   return body;
 }
 
+/**
+ * The tills a shop Z of this selection would leave behind — what the server's
+ * `shopZOpenTills` rule looks at: a till whose open shift is not closed into the Z, and
+ * an unselected till with closed shifts awaiting one. A till already in another run is
+ * that run's. Advisory only: the server decides on the tills as they are at the start.
+ */
+function tillsLeftOut(c: ZCandidates, sels: Record<string, TillSelection>): ZOpenTill[] {
+  const out: ZOpenTill[] = [];
+  for (const m of c.machines) {
+    if (m.activeRun) continue;
+    const body = machineBody(m, sels[m.machineId]);
+    // Only a till seated in the shop can be asked to close; the server looks no further.
+    const open = m.inShop !== false && hasOpenShift(m);
+    const leavesOpen = open && body?.includeOpenShift !== true;
+    const leavesClosed = !body && m.closedShifts.length > 0;
+    if (!leavesOpen && !leavesClosed) continue;
+    out.push({
+      id: m.machineId,
+      posNumber: m.posNumber,
+      name: m.machineName,
+      openShiftId: leavesOpen ? (m.openShift?.id ?? m.tillReportedOpenShiftId ?? null) : null,
+    });
+  }
+  return out;
+}
+
 /** The progress view for these runs and till-Z requests. */
 function progressHref(runIds: string[], tillZIds: string[]): string {
   const search = new URLSearchParams();
@@ -113,6 +151,15 @@ interface PlannedRun {
   /** Set on a per-till run (zScope = machine): the till's name, for its error line. */
   tillName?: string;
 }
+
+interface StartSession {
+  started: ZRun[];
+  failed: string[];
+  /** Shops whose `shopZOpenTills` rule refused the Z while tills were left out. */
+  blocked: OpenTillsHold<PlannedRun>[];
+}
+
+const EMPTY_SESSION: StartSession = { started: [], failed: [], blocked: [] };
 
 /**
  * The wizard's state lives in the component, so it is keyed by what the URL asks for:
@@ -214,7 +261,12 @@ function ProduceZ() {
     return cloud.machines.length === 0 && till.length > 0;
   };
 
-  /** One request body per run: per shop, or per till when the tenant wants one till per Z. */
+  /**
+   * One request body per run: per shop over its cloud tills, or — under the tenant's
+   * `zScope = machine` — one per till. A till in `zMode = till` is not here at all: it is
+   * asked for its own Z (TillZShopCard). "Z only from the main till" leaves the shop Z to
+   * that till.
+   */
   const plannedRuns: PlannedRun[] = loaded.flatMap((c) => {
     const sels = selectionsFor(c);
     const machines = c.machines
@@ -223,6 +275,8 @@ function ProduceZ() {
     if (machines.length === 0) return [];
     const areaId = areaByShop[c.shopId];
     const area = areaId ? { areaId } : {};
+    // "Z only from the main till": the shop Z is not this wizard's to start.
+    if (c.dashboardZBlocked) return [];
     if (c.zScope === 'machine') {
       return machines.map(({ m, body }) => ({
         shopId: c.shopId,
@@ -234,49 +288,91 @@ function ProduceZ() {
     return [{ shopId: c.shopId, ...area, machines: machines.map((x) => x.body) }];
   });
 
+  /**
+   * What one press of Start (and the confirmation that may follow it) achieved. A
+   * confirmation re-sends only the runs it was asked for, so its results are added to
+   * the press's rather than replacing them.
+   */
+  const [session, setSession] = useState<StartSession>(EMPTY_SESSION);
+  /** Runs refused until the operator confirms leaving tills out (`open_tills_need_confirmation`). */
+  const [toConfirm, setToConfirm] = useState<OpenTillsHold<PlannedRun>[]>([]);
+
+  const goToProgress = (started: ZRun[]) => {
+    setOverrides({});
+    setShopIds([]);
+    router.replace(progressHref(started.map((r) => r.id), sentTillZ.map((r) => r.id)));
+  };
+
   const start = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ runs, confirmOpenTills }: { runs: PlannedRun[]; confirmOpenTills?: boolean }) => {
       const started: ZRun[] = [];
       const failed: string[] = [];
+      const blocked: OpenTillsHold<PlannedRun>[] = [];
+      const needConfirm: OpenTillsHold<PlannedRun>[] = [];
       // Sequential on purpose: runs of different shops are independent, but a list of
       // failures in order is easier to read than a burst of parallel ones.
-      for (const body of plannedRuns) {
+      for (const body of runs) {
         try {
           started.push(
             await createZRun({
               shopId: body.shopId,
               machines: body.machines,
               ...(body.areaId ? { areaId: body.areaId } : {}),
+              ...(confirmOpenTills ? { confirmOpenTills: true } : {}),
             }),
           );
         } catch (e) {
           const shop = candidateShopName(body.shopId);
           const who = body.tillName ? `${shop} · ${body.tillName}` : shop;
+          const open = openTillsRefusal(e);
+          if (open?.code === 'open_tills_need_confirmation' && !confirmOpenTills) {
+            needConfirm.push({ run: body, shopName: who, tills: open.tills });
+            continue;
+          }
+          if (open?.code === 'open_tills_block_z') blocked.push({ run: body, shopName: who, tills: open.tills });
           failed.push(`${who}: ${errors.forError(e)}`);
         }
       }
       // Every till just put into a run is no longer a candidate. Awaited while the
       // button still reads "starting", so a second click cannot resend them.
       await qc.invalidateQueries({ queryKey: ['z-candidates'] });
-      return { started, failed };
+      return { started, failed, blocked, needConfirm };
     },
-    onSuccess: ({ started, failed }) => {
-      if (failed.length > 0) {
+    onSuccess: ({ started, failed, blocked, needConfirm }, { confirmOpenTills }) => {
+      const before = confirmOpenTills ? session : EMPTY_SESSION;
+      const next: StartSession = {
+        started: [...before.started, ...started],
+        failed: [...before.failed, ...failed],
+        blocked: [...before.blocked, ...blocked],
+      };
+      setSession(next);
+      if (needConfirm.length > 0) {
+        setToConfirm(needConfirm);
+        return;
+      }
+      if (next.failed.length > 0) {
         // Stay here: the failures are listed below and the tills that did start are
         // now marked as in a run (sanitizeSelection drops them), so pressing Start
         // again retries only the rest, with the operator's other choices kept.
         return;
       }
-      if (started.length > 0) {
-        setOverrides({});
-        setShopIds([]);
-        router.replace(progressHref(started.map((r) => r.id), sentTillZ.map((r) => r.id)));
-      }
+      if (next.started.length > 0) goToProgress(next.started);
     },
     onError: (e) => toast.error(errors.forError(e)),
   });
-  const outcome = start.data;
-  const partial = outcome && outcome.failed.length > 0 ? outcome : null;
+  const partial = session.failed.length > 0 ? session : null;
+
+  const confirmOpenTills = () => {
+    const runs = toConfirm.map((h) => h.run);
+    setToConfirm([]);
+    start.mutate({ runs, confirmOpenTills: true });
+  };
+  /** Not confirmed: those runs did not start; the others (if any) did. */
+  const declineOpenTills = () => {
+    const declined = toConfirm.map((h) => `${h.shopName}: ${t('openTills.notConfirmed')}`);
+    setToConfirm([]);
+    setSession((prev) => ({ ...prev, failed: [...prev.failed, ...declined] }));
+  };
 
   /**
    * Till-Z requests just sent. While cloud tills are still to be decided on, they are
@@ -386,7 +482,7 @@ function ProduceZ() {
           ) : (
             <div className="grid max-h-56 gap-1 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
               {shopsToOffer.map((shop) => (
-                <label key={shop.id} className="flex items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted/40">
+                <label key={shop.id} className="flex items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted/40 pointer-coarse:min-h-10">
                   <input
                     type="checkbox"
                     className="h-4 w-4 accent-primary"
@@ -442,6 +538,23 @@ function ProduceZ() {
                             }
                           />
                         ) : null}
+                        {!onlyTill && q.data.dashboardZBlocked ? (
+                          <Card className="border-amber-500/50">
+                            <CardContent className="py-3 text-sm">
+                              {t('onlyFromMainTill', {
+                                till: q.data.mainTill?.posNumber
+                                  ? t('mainTillNumber', { n: q.data.mainTill.posNumber })
+                                  : (q.data.mainTill?.name ?? ''),
+                              })}
+                            </CardContent>
+                          </Card>
+                        ) : null}
+                        {!onlyTill && q.data.zScope === 'shop' && q.data.openTillsRule && !q.data.dashboardZBlocked ? (
+                          <OpenTillsNotice
+                            rule={q.data.openTillsRule}
+                            tills={tillsLeftOut(cloud, selectionsFor(cloud))}
+                          />
+                        ) : null}
                         {till.length > 0 ? (
                           <TillZShopCard
                             shopId={q.data.shopId}
@@ -462,6 +575,8 @@ function ProduceZ() {
           })}
         </div>
       )}
+
+      <OpenTillsBlocked holds={session.blocked} />
 
       {partial ? (
         <Card className="border-destructive/50">
@@ -499,8 +614,16 @@ function ProduceZ() {
           <Button
             // After a clean start the page is on its way to the progress view; a second
             // click in that moment would try to start the same runs again.
-            disabled={plannedRuns.length === 0 || start.isPending || (start.isSuccess && !partial)}
-            onClick={() => start.mutate()}
+            disabled={
+              plannedRuns.length === 0 ||
+              start.isPending ||
+              toConfirm.length > 0 ||
+              (start.isSuccess && !partial && session.started.length > 0)
+            }
+            onClick={() => {
+              setSession(EMPTY_SESSION);
+              start.mutate({ runs: plannedRuns });
+            }}
           >
             <FilePlus2 className="h-4 w-4 me-1" aria-hidden />
             {start.isPending ? t('starting') : t('start', { count: plannedRuns.length })}
@@ -512,6 +635,15 @@ function ProduceZ() {
             {waiting > 0 ? ` ${t('startWaits', { count: waiting })}` : ''}
           </span>
         </div>
+      ) : null}
+
+      {toConfirm.length > 0 ? (
+        <OpenTillsConfirmDialog
+          holds={toConfirm}
+          pending={start.isPending}
+          onConfirm={confirmOpenTills}
+          onCancel={declineOpenTills}
+        />
       ) : null}
     </div>
   );

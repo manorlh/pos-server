@@ -17,10 +17,19 @@ import { toast } from 'sonner';
 import { api, fetchCompanies } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { buildCompanyTree, companyPathLabel, MAX_TREE_INDENT_DEPTH } from '@/lib/companyTree';
+import { withoutTrainingFields } from '@/lib/trainingMode';
 import type { Company, Shop } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import {
+  LicenseFields,
+  licenseIncomplete,
+  licensePayload,
+  useIsSuperAdmin,
+  withoutLicense,
+} from '@/components/dashboard/license-fields';
 import {
   Dialog,
   DialogContent,
@@ -85,11 +94,16 @@ function ShopForm({
 }) {
   const t = useTranslations('shops');
   const tc = useTranslations('common');
+  const tTraining = useTranslations('trainingMode');
   const qc = useQueryClient();
   const [draft, setDraft] = useState<Partial<Shop>>(
     () => shop ?? { ...EMPTY, companyId: defaultCompanyId ?? undefined },
   );
   const isNew = !draft.id;
+  const isSuperAdmin = useIsSuperAdmin();
+  // A new shop opens in training mode unless unticked; an existing one changes it on the
+  // shop page's "מצב הדרכה" card, never through this form.
+  const [trainingMode, setTrainingMode] = useState(true);
 
   const { data: companies = [] } = useQuery<Company[]>({
     queryKey: ['companies'],
@@ -99,9 +113,16 @@ function ShopForm({
 
   const save = useMutation({
     mutationFn: async (s: Partial<Shop>) => {
+      // The draft is the row as read, license included; only a super admin may send that
+      // part back ("לקוח קבוע / זמני"), so it is rebuilt rather than echoed.
+      const payload = {
+        ...withoutTrainingFields(withoutLicense(s)),
+        ...licensePayload(s, isSuperAdmin),
+        ...(s.id ? {} : { trainingMode }),
+      };
       const { data } = s.id
-        ? await api.put<Shop>(`/shops/${s.id}`, s)
-        : await api.post<Shop>('/shops', s);
+        ? await api.put<Shop>(`/shops/${s.id}`, payload)
+        : await api.post<Shop>('/shops', payload);
       return data;
     },
     onSuccess: (data) => {
@@ -185,12 +206,28 @@ function ShopForm({
             onChange={(e) => setDraft((s) => ({ ...s, address: e.target.value }))}
           />
         </div>
+        {isNew ? (
+          <div className="flex items-start justify-between gap-3 rounded-md border border-orange-200 bg-orange-50/60 p-3 dark:border-orange-900 dark:bg-orange-950/30">
+            <div>
+              <Label htmlFor="shop-training-mode" className="cursor-pointer">
+                {tTraining('createSwitch')}
+              </Label>
+              <p className="mt-0.5 text-xs text-muted-foreground">{tTraining('createHint')}</p>
+            </div>
+            <Switch id="shop-training-mode" checked={trainingMode} onCheckedChange={setTrainingMode} />
+          </div>
+        ) : null}
+        <LicenseFields
+          idPrefix="shop"
+          value={draft}
+          onChange={(v) => setDraft((s) => ({ ...s, ...v }))}
+        />
       </div>
       <DialogFooter>
         <Button variant="outline" onClick={() => onOpenChange(false)}>
           {tc('cancel')}
         </Button>
-        <Button onClick={() => save.mutate(draft)} disabled={save.isPending}>
+        <Button onClick={() => save.mutate(draft)} disabled={save.isPending || licenseIncomplete(draft, isSuperAdmin)}>
           {save.isPending ? tc('saving') : tc('save')}
         </Button>
       </DialogFooter>

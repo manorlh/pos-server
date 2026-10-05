@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,6 +16,7 @@ import {
 } from '@/lib/paymentOptions';
 import { SELL_SCREEN_TOOLS, SELL_SCREEN_TOOL_DEFAULT } from '@/lib/sellScreen';
 import { REFUND_SETTINGS, REFUND_SETTING_DEFAULT } from '@/lib/refundSettings';
+import { TIP_PRESETS_MAX } from '@/lib/types';
 import type { PosSettingsPatch, PosSettingsV1, ResettableSwitchKey } from '@/lib/types';
 
 /**
@@ -279,12 +281,8 @@ export function PosSettingsForm({
             inherited,
             opt.enabledByDefault,
           );
-          const tips = resolvePaymentOptionKey(
-            opt.tipsKey,
-            value,
-            inherited,
-            PAYMENT_OPTION_FALLBACK.tips,
-          );
+          // Whether the option asks for a tip is set in the tips section below, with
+          // the percentages it would offer — one place for everything about tips.
           return (
             <div key={opt.id} className="rounded-lg border p-3 space-y-2">
               <div>
@@ -302,26 +300,6 @@ export function PosSettingsForm({
                 </div>
                 <Switch checked={allowed} onCheckedChange={(c) => set(opt.enabledKey, c)} />
               </div>
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <Label className={allowed ? undefined : 'text-muted-foreground'}>
-                    {t('payTips')}
-                    {overrideBadge(opt.tipsKey)}
-                  </Label>
-                  {inheritedHint(opt.tipsKey, onOff)}
-                  {resetToInherited(opt.tipsKey)}
-                  {!allowed ? (
-                    <p className="text-xs text-muted-foreground">{t('payTipsHiddenHint')}</p>
-                  ) : null}
-                </div>
-                {/* Left as stored while the option is hidden, so turning the
-                    option back on brings the earlier tip choice back with it. */}
-                <Switch
-                  checked={tips}
-                  disabled={!allowed}
-                  onCheckedChange={(c) => set(opt.tipsKey, c)}
-                />
-              </div>
             </div>
           );
         })}
@@ -337,40 +315,97 @@ export function PosSettingsForm({
           <p className="text-sm font-medium">{t('tipsTitle')}</p>
           <p className="text-xs text-muted-foreground">{t('tipsAppliesTo')}</p>
         </div>
+
+        {/* Where the till asks: one switch per payment option. A hidden option's
+            switch is left as stored, so showing the option again brings it back. */}
+        <div className="space-y-2">
+          <p className="text-sm">{t('tipsAskOn')}</p>
+          {PAYMENT_OPTIONS.map((opt) => {
+            const allowed = resolvePaymentOptionKey(
+              opt.enabledKey,
+              value,
+              inherited,
+              opt.enabledByDefault,
+            );
+            const tips = resolvePaymentOptionKey(
+              opt.tipsKey,
+              value,
+              inherited,
+              PAYMENT_OPTION_FALLBACK.tips,
+            );
+            return (
+              <div key={opt.id} className="flex items-center justify-between gap-4">
+                <div>
+                  <Label className={allowed ? undefined : 'text-muted-foreground'}>
+                    {t(opt.labelKey)}
+                    {overrideBadge(opt.tipsKey)}
+                  </Label>
+                  {inheritedHint(opt.tipsKey, onOff)}
+                  {resetToInherited(opt.tipsKey)}
+                  {!allowed ? (
+                    <p className="text-xs text-muted-foreground">{t('payTipsHiddenHint')}</p>
+                  ) : null}
+                </div>
+                <Switch
+                  checked={tips}
+                  disabled={!allowed}
+                  onCheckedChange={(c) => set(opt.tipsKey, c)}
+                />
+              </div>
+            );
+          })}
+        </div>
+
         <div className="space-y-1">
           <Label>
-            {t('tipPresets')}
-            {overrideBadge('tipPresets')}
+            {t('tipPromptText')}
+            {overrideBadge('tipPromptText')}
           </Label>
           <Input
-            placeholder={
-              (inherited?.tipPresets ?? [10, 12, 15]).join(', ')
-            }
-            value={
-              value.tipPresets !== undefined
-                ? value.tipPresets.join(', ')
-                : ''
-            }
-            onChange={(e) => {
-              const raw = e.target.value.trim();
-              if (!raw) {
-                set('tipPresets', undefined);
-                return;
-              }
-              const nums = raw
-                .split(',')
-                .map((s) => parseInt(s.trim(), 10))
-                .filter((n) => !Number.isNaN(n) && n >= 0 && n <= 100);
-              set('tipPresets', nums.length ? nums : undefined);
-            }}
+            maxLength={80}
+            placeholder={placeholderFor('tipPromptText', value, inherited) || t('tipPromptTextDefault')}
+            value={value.tipPromptText ?? ''}
+            onChange={(e) => set('tipPromptText', e.target.value === '' ? undefined : e.target.value)}
           />
-          {inheritedHint('tipPresets')}
+          <p className="text-xs text-muted-foreground">{t('tipPromptTextDesc')}</p>
+          {inheritedHint('tipPromptText')}
+          {value.tipPromptText != null && showOverrideHints ? (
+            <Button
+              type="button"
+              variant="link"
+              size="xs"
+              className="h-auto px-0 text-xs"
+              onClick={() => set('tipPromptText', null)}
+            >
+              {t('payResetToInherited')}
+            </Button>
+          ) : null}
         </div>
+
+        <TipPresetsEditor
+          value={value.tipPresets}
+          inherited={inherited?.tipPresets}
+          onChange={(next) => set('tipPresets', next)}
+          badge={overrideBadge('tipPresets')}
+          showInherited={!!showOverrideHints && !!inherited}
+        />
+
         <div className="space-y-1">
           <Label>
             {t('tipDistribution')}
             {overrideBadge('tipDistribution')}
           </Label>
+          {value.tipDistribution != null && showOverrideHints ? (
+            <Button
+              type="button"
+              variant="link"
+              size="xs"
+              className="h-auto px-0 text-xs"
+              onClick={() => set('tipDistribution', null)}
+            >
+              {t('payResetToInherited')}
+            </Button>
+          ) : null}
           <Select
             value={value.tipDistribution ?? inherited?.tipDistribution ?? 'direct'}
             onValueChange={(v) =>
@@ -393,6 +428,103 @@ export function PosSettingsForm({
           </Select>
           {inheritedHint('tipDistribution')}
         </div>
+      </div>
+
+      {/* The card terminal each till must be on: one number for the whole shop, or a
+          till's own in that till's settings. The till checks it against Agamento. */}
+      <div className="border-t pt-4 space-y-2">
+        <p className="text-sm font-medium">{t('terminalTitle')}</p>
+        <p className="text-xs text-muted-foreground">{t('terminalDesc')}</p>
+        <Label>
+          {t('terminalNumber')}
+          {overrideBadge('expectedTerminalNumber')}
+        </Label>
+        <Input
+          dir="ltr"
+          inputMode="numeric"
+          className="font-mono"
+          placeholder={placeholderFor('expectedTerminalNumber', value, inherited)}
+          value={value.expectedTerminalNumber ?? ''}
+          onChange={(e) => {
+            const v = e.target.value.replace(/\D/g, '').slice(0, 20);
+            set('expectedTerminalNumber', v === '' ? undefined : v);
+          }}
+        />
+        {inheritedHint('expectedTerminalNumber')}
+        {value.expectedTerminalNumber != null && showOverrideHints ? (
+          <Button
+            type="button"
+            variant="link"
+            size="xs"
+            className="h-auto px-0 text-xs"
+            onClick={() => set('expectedTerminalNumber', null)}
+          >
+            {t('payResetToInherited')}
+          </Button>
+        ) : null}
+        {/* Off unless some level turns it on; `null` hands the choice back to the parent. */}
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <Label>
+              {t('forceTerminalNumber')}
+              {overrideBadge('forceTerminalNumber')}
+            </Label>
+            <p className="text-xs text-muted-foreground">{t('forceTerminalNumberDesc')}</p>
+            {inheritedHint('forceTerminalNumber', onOff)}
+            {typeof value.forceTerminalNumber === 'boolean' && showOverrideHints ? (
+              <Button
+                type="button"
+                variant="link"
+                size="xs"
+                className="h-auto px-0 text-xs"
+                onClick={() => set('forceTerminalNumber', null)}
+              >
+                {t('payResetToInherited')}
+              </Button>
+            ) : null}
+          </div>
+          <Switch
+            checked={value.forceTerminalNumber ?? inherited?.forceTerminalNumber === true}
+            onCheckedChange={(c) => set('forceTerminalNumber', c)}
+          />
+        </div>
+        <Label>
+          {t('clearingServer')}
+          {overrideBadge('clearingServer')}
+        </Label>
+        <Select
+          value={value.clearingServer ?? inherited?.clearingServer ?? ''}
+          onValueChange={(v) =>
+            set('clearingServer', v as PosSettingsFormState['clearingServer'])
+          }
+          items={[
+            { value: '', label: t('clearingServerKeep') },
+            { value: 'SHVA', label: t('clearingServerShva') },
+            { value: 'PELECARD', label: t('clearingServerPelecard') },
+          ]}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="" label={t('clearingServerKeep')}>{t('clearingServerKeep')}</SelectItem>
+            <SelectItem value="SHVA" label={t('clearingServerShva')}>{t('clearingServerShva')}</SelectItem>
+            <SelectItem value="PELECARD" label={t('clearingServerPelecard')}>{t('clearingServerPelecard')}</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">{t('clearingServerDesc')}</p>
+        {inheritedHint('clearingServer')}
+        {value.clearingServer != null && showOverrideHints ? (
+          <Button
+            type="button"
+            variant="link"
+            size="xs"
+            className="h-auto px-0 text-xs"
+            onClick={() => set('clearingServer', null)}
+          >
+            {t('payResetToInherited')}
+          </Button>
+        ) : null}
       </div>
 
       <div className="border-t pt-4 space-y-3">
@@ -520,6 +652,139 @@ export function PosSettingsForm({
           <p className="text-xs text-muted-foreground">{t('zScopeTenantWide')}</p>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** What the till offers when no layer sets any percentages (its own default). */
+const TILL_DEFAULT_TIP_PRESETS = [10, 12, 15];
+
+/**
+ * The tip percentages of one layer, as the till's square buttons.
+ *
+ * `undefined`/`null` = this layer sets none and inherits (shown greyed, from the layer
+ * above, or the till's default); a list = this layer's own, in the order the till shows
+ * them; `[]` = deliberately none, so the till asks for no tip. The same rules as the
+ * server (TIP_PRESETS_MAX, 1–100, no repeats) are checked here so a save is not refused.
+ */
+function TipPresetsEditor({
+  value,
+  inherited,
+  onChange,
+  badge,
+  showInherited,
+}: {
+  value: number[] | null | undefined;
+  inherited?: number[];
+  onChange: (next: number[] | null) => void;
+  badge: ReactNode;
+  showInherited: boolean;
+}) {
+  const t = useTranslations('posSettings');
+  const [draft, setDraft] = useState('');
+  const own = value ?? null;
+  const shown = own ?? inherited ?? TILL_DEFAULT_TIP_PRESETS;
+  const isInherited = own === null;
+
+  const n = Number(draft);
+  const draftError =
+    draft.trim() === ''
+      ? null
+      : !Number.isInteger(n) || n < 1 || n > 100
+        ? t('tipPresetsRange')
+        : shown.includes(n)
+          ? t('tipPresetsRepeat')
+          : shown.length >= TIP_PRESETS_MAX
+            ? t('tipPresetsMax', { max: TIP_PRESETS_MAX })
+            : null;
+
+  const add = () => {
+    if (draft.trim() === '' || draftError) return;
+    // Adding to an inherited list starts this layer's own list from it, so the
+    // operator edits what they see rather than an empty list.
+    const base = own ?? [...shown];
+    if (base.includes(n) || base.length >= TIP_PRESETS_MAX) return;
+    onChange([...base, n]);
+    setDraft('');
+  };
+
+  const remove = (p: number) => onChange((own ?? [...shown]).filter((x) => x !== p));
+
+  return (
+    <div className="space-y-2">
+      <Label>
+        {t('tipPresets')}
+        {badge}
+      </Label>
+      <p className="text-xs text-muted-foreground">
+        {t('tipPresetsDesc', { max: TIP_PRESETS_MAX })}
+      </p>
+
+      {/* The till's tip screen, in miniature: one square per percentage. */}
+      {shown.length > 0 ? (
+        <div className={`grid gap-2 ${shown.length === 2 || shown.length === 4 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+          {shown.map((p) => (
+            <div
+              key={p}
+              className={`relative aspect-square rounded-lg border flex items-center justify-center text-xl font-semibold ${
+                isInherited ? 'bg-muted text-muted-foreground' : 'bg-primary/10'
+              }`}
+            >
+              <span dir="ltr">{p}%</span>
+              <button
+                type="button"
+                aria-label={t('tipPresetsRemove', { value: p })}
+                className="absolute top-1 end-1 rounded px-1 text-sm text-muted-foreground hover:text-destructive"
+                onClick={() => remove(p)}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-amber-700 dark:text-amber-400">{t('tipPresetsNone')}</p>
+      )}
+      {isInherited && showInherited ? (
+        <p className="text-xs text-muted-foreground">
+          {t('inherited', { value: shown.map((p) => `${p}%`).join(', ') || '—' })}
+        </p>
+      ) : null}
+
+      <div className="flex gap-2">
+        <Input
+          type="number"
+          inputMode="numeric"
+          min={1}
+          max={100}
+          placeholder={t('tipPresetsAddPlaceholder')}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              add();
+            }
+          }}
+        />
+        <Button type="button" variant="outline" onClick={add} disabled={!!draftError || draft.trim() === ''}>
+          {t('tipPresetsAdd')}
+        </Button>
+      </div>
+      {draftError ? <p className="text-xs text-destructive">{draftError}</p> : null}
+
+      <div className="flex flex-wrap gap-x-4">
+        {!isInherited && showInherited ? (
+          <Button type="button" variant="link" size="xs" className="h-auto px-0 text-xs" onClick={() => onChange(null)}>
+            {t('payResetToInherited')}
+          </Button>
+        ) : null}
+        {shown.length > 0 ? (
+          <Button type="button" variant="link" size="xs" className="h-auto px-0 text-xs" onClick={() => onChange([])}>
+            {t('tipPresetsClear')}
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }

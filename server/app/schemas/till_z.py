@@ -29,6 +29,10 @@ class TillZIn(BaseModel):
     unattended: bool = False
     #: The till's own sum over the included shifts (§3.3 keys); audit only.
     till: Optional[Dict[str, Any]] = None
+    #: A training Z ("מצב הדרכה"): the till's own, quarantined; no cloud Z is built.
+    training: bool = False
+    #: Its number in the till's training run ("ה-3"), with `training`.
+    number: Optional[str] = Field(None, max_length=100)
 
     @field_validator("till", mode="before")
     @classmethod

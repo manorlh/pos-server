@@ -244,3 +244,6 @@ class ReplacementCodeBody(BaseModel):
     #: the operator has the recovery list and accepts that the new device will not
     #: transmit them.
     acknowledge_untransmitted: bool = Field(False, alias="acknowledgeUntransmitted")
+    #: The replacement unit's hardware ("N55F" | "MODO"), set on the till when it pairs.
+    #: Omitted keeps the model the till already has.
+    device_model: Optional[Literal["N55F", "MODO"]] = Field(None, alias="deviceModel")

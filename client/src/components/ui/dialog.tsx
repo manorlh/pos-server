@@ -53,16 +53,24 @@ function DialogContent({
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          // A phone: an iOS sheet — up from the bottom edge, full width, its top corners
+          // rounded, a grabber on top, clear of the home bar. Wider screens keep the
+          // centred dialog. (max-sm wins over a caller's max-w-*, which is unprefixed.)
+          "max-sm:top-auto max-sm:bottom-0 max-sm:left-0 max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:max-h-[calc(100dvh-env(safe-area-inset-top)-1rem)] max-sm:rounded-none max-sm:rounded-t-2xl max-sm:pt-6 max-sm:pb-[calc(1rem+env(safe-area-inset-bottom))] max-sm:duration-200 max-sm:data-open:zoom-in-100 max-sm:data-open:slide-in-from-bottom max-sm:data-closed:zoom-out-100 max-sm:data-closed:slide-out-to-bottom",
           // The phone margin is a width, not a max-width, so a caller's
           // max-w-* replaces only the 24rem default and never the margin.
           // The close button sits in the header's inline-end corner, so the
           // header keeps that corner clear and a long title wraps before it.
+          // The height cap keeps a long form on a phone scrollable inside the
+          // dialog rather than running off the screen.
           showCloseButton && "[&_[data-slot=dialog-header]]:pe-8",
           className
         )}
         {...props}
       >
+        {/* The sheet's grabber (a phone only). */}
+        <span aria-hidden className="pointer-events-none absolute top-2 left-1/2 h-1.5 w-10 -translate-x-1/2 rounded-full bg-foreground/15 sm:hidden" />
         {children}
         {showCloseButton && (
           <DialogPrimitive.Close
@@ -108,6 +116,8 @@ function DialogFooter({
       data-slot="dialog-footer"
       className={cn(
         "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 p-4 sm:flex-row sm:justify-end",
+        // In a phone's sheet: the buttons full width and clear of the home bar.
+        "max-sm:sticky max-sm:bottom-0 max-sm:mb-[calc(-1rem-env(safe-area-inset-bottom))] max-sm:rounded-none max-sm:pb-[calc(1rem+env(safe-area-inset-bottom))] max-sm:backdrop-blur-xl max-sm:*:w-full",
         className
       )}
       {...props}

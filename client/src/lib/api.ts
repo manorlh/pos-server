@@ -3,21 +3,35 @@ import { useAuth } from './auth';
 import type {
   CashierSalesReport,
   DaySummaryReport,
+  OfflineAuthorizationReport,
   CategoryReorderEntry,
   CategoryReorderResponse,
   Company,
   DashboardBreakdown,
   DashboardStats,
+  OverviewReport,
+  LiveItemsReport,
+  TillMessage,
+  TillMessageCreate,
+  TillMessageList,
+  TillMessageUpdate,
   BrandingImageKind,
   BrandingUploadResult,
   EntitySettingsResponse,
   PosMachine,
+  DeviceModel,
   PosSettingsPatch,
   ProductSalesReport,
   SalesByAreaReport,
   Shop,
   ShopArea,
   ShopSettingsResponse,
+  MachineSettingsResponse,
+  AreaSettingsResponse,
+  AppRelease,
+  AppReleaseAssignment,
+  AppReleaseLevel,
+  AppReleaseRolloutRow,
   StockLevel,
   TipsRangeReport,
   TipsReport,
@@ -29,6 +43,8 @@ import type {
   ZCandidates,
   ZReportDetail,
   ZReportListResponse,
+  ZPrintDoc,
+  ZPrintDocList,
   ShiftCloseRequest,
   CardTransmission,
   CardTransmissionList,
@@ -39,6 +55,11 @@ import type {
   ZMode,
   ZRun,
   ZRunMachineSelection,
+  TillParameter,
+  TillParameterInput,
+  TillParameterScalar,
+  TillParameterScope,
+  TillParameterValue,
 } from './types';
 import { normalizePosMachine } from './posMachine';
 import { tenantFallbackAfterForbidden } from './tenantSwitch';
@@ -62,6 +83,9 @@ export type CloudinaryUploadParams = {
 export type ImageUploadResult = {
   url: string;
   publicId: string;
+  /** The image as uploaded, when the server cut its background out. */
+  originalUrl?: string | null;
+  backgroundRemoved?: boolean;
 };
 
 /** The slice of Clerk's browser global this module reads. */
@@ -113,12 +137,30 @@ export async function fetchImageUploadParams(
   return data;
 }
 
-/** Signed direct upload to Cloudinary, then return secure_url for product.imageUrl. */
+/**
+ * Upload an image and return its URL for product.imageUrl / category.imageUrl.
+ *
+ * Product images go through pos-server, which removes the background and stores
+ * a trimmed transparent PNG (the original is kept as `originalUrl`); pass
+ * `keepBackground` to store the image as is. Categories use a signed direct
+ * upload to Cloudinary.
+ */
 export async function uploadProductImage(
   file: File,
   resource: 'products' | 'categories' = 'products',
+  options: { keepBackground?: boolean } = {},
 ): Promise<ImageUploadResult> {
   validateImageFile(file);
+  if (resource === 'products') {
+    const body = new FormData();
+    body.append('file', file);
+    const { data } = await api.post<ImageUploadResult>('/images/upload', body, {
+      params: { resource, keepBackground: options.keepBackground ?? false },
+      // Let the browser set multipart/form-data with its own boundary.
+      headers: { 'Content-Type': undefined },
+    });
+    return data;
+  }
   const params = await fetchImageUploadParams(resource);
 
   const form = new FormData();
@@ -157,6 +199,27 @@ export async function uploadBrandingImage(
   const { data } = await api.post<BrandingUploadResult>('/images/branding', form, {
     params: { kind },
     // Let the browser set multipart/form-data with its own boundary.
+    headers: { 'Content-Type': undefined },
+  });
+  return data;
+}
+
+/** What `POST /images/media` answers. */
+export type MediaUploadResult = {
+  url: string;
+  kind: 'image' | 'video';
+  bytes: number;
+};
+
+/**
+ * An image or a short MP4/WebM video (up to 25 MB), stored as uploaded — the startup
+ * hero's video goes this way. Like a branding upload, every upload gets a new URL, so
+ * the till's copy of a replaced video is never mistaken for the new one.
+ */
+export async function uploadBrandingMedia(file: File): Promise<MediaUploadResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const { data } = await api.post<MediaUploadResult>('/images/media', form, {
     headers: { 'Content-Type': undefined },
   });
   return data;
@@ -302,8 +365,13 @@ export async function patchTenantSettings(
   return data;
 }
 
-export async function fetchCompanySettings(companyId: string): Promise<EntitySettingsResponse> {
-  const { data } = await api.get<EntitySettingsResponse>(`/companies/${companyId}/settings`);
+export async function fetchCompanySettings(
+  companyId: string,
+  includeEffective = false,
+): Promise<ShopSettingsResponse> {
+  const { data } = await api.get<ShopSettingsResponse>(`/companies/${companyId}/settings`, {
+    params: includeEffective ? { includeEffective: true } : undefined,
+  });
   return data;
 }
 
@@ -330,6 +398,50 @@ export async function patchShopSettings(
   patch: PosSettingsPatch,
 ): Promise<ShopSettingsResponse> {
   const { data } = await api.patch<ShopSettingsResponse>(`/shops/${shopId}/settings`, patch);
+  return data;
+}
+
+/**
+ * One till's own settings — the last layer, under its shop. `effective` is what it
+ * inherits from its shop, company and tenant; `settingsUpdatedAt` is null until first set.
+ */
+export async function fetchMachineSettings(
+  machineId: string,
+  includeEffective = true,
+): Promise<MachineSettingsResponse> {
+  const { data } = await api.get<MachineSettingsResponse>(`/machines/${machineId}/settings`, {
+    params: includeEffective ? { includeEffective: true } : undefined,
+  });
+  return data;
+}
+
+export async function patchMachineSettings(
+  machineId: string,
+  patch: PosSettingsPatch,
+): Promise<MachineSettingsResponse> {
+  const { data } = await api.patch<MachineSettingsResponse>(`/machines/${machineId}/settings`, patch);
+  return data;
+}
+
+/**
+ * One point of sale's (shop area's) own settings — the layer between its shop and its
+ * tills. `effective` is what it inherits from its shop, company and tenant.
+ */
+export async function fetchAreaSettings(
+  areaId: string,
+  includeEffective = true,
+): Promise<AreaSettingsResponse> {
+  const { data } = await api.get<AreaSettingsResponse>(`/areas/${areaId}/settings`, {
+    params: includeEffective ? { includeEffective: true } : undefined,
+  });
+  return data;
+}
+
+export async function patchAreaSettings(
+  areaId: string,
+  patch: PosSettingsPatch,
+): Promise<AreaSettingsResponse> {
+  const { data } = await api.patch<AreaSettingsResponse>(`/areas/${areaId}/settings`, patch);
   return data;
 }
 
@@ -392,7 +504,8 @@ export type ReportWindowParams = {
 };
 
 export async function fetchProductSalesReport(
-  params: ReportWindowParams & { cashierId?: string; limit?: number },
+  /** `meals`: "components" (default) reports a meal as its components; "meals" as the meal. */
+  params: ReportWindowParams & { cashierId?: string; limit?: number; meals?: 'components' | 'meals' },
 ): Promise<ProductSalesReport> {
   const { data } = await api.get<ProductSalesReport>('/reports/products', { params });
   return data;
@@ -429,6 +542,20 @@ export async function fetchDaySummaryReport(params: {
   return data;
 }
 
+/** The tills' offline authorization runs over a range (days on the run's time). */
+export async function fetchOfflineAuthorizationsReport(params: {
+  from?: string;
+  to?: string;
+  tz?: string;
+  shopId?: string;
+  machineId?: string;
+}): Promise<OfflineAuthorizationReport> {
+  const { data } = await api.get<OfflineAuthorizationReport>('/reports/offline-authorizations', {
+    params,
+  });
+  return data;
+}
+
 export async function fetchTipsRangeReport(
   params: ReportWindowParams,
 ): Promise<TipsRangeReport> {
@@ -440,9 +567,11 @@ export type ZReportListParams = {
   /** Repeatable. Serialised as `machineIds=a&machineIds=b` (no `[]` suffix). */
   machineIds?: string[];
   shopId?: string;
-  /** Filters the Z's `businessDate`. */
+  /** Filters the Z's `businessDate`, or its production date with `dateBasis`. */
   from?: string;
   to?: string;
+  /** What `from`/`to` and the order are on; the server's default is `business`. */
+  dateBasis?: 'business' | 'production';
   /** ISO datetimes on `closed_at`; naive values are read as UTC server-side. */
   closedFrom?: string;
   closedTo?: string;
@@ -482,7 +611,7 @@ export async function administrativeCloseShift(
  */
 export async function createReplacementCode(
   machineId: string,
-  opts: { acknowledgeUntransmitted?: boolean } = {},
+  opts: { acknowledgeUntransmitted?: boolean; deviceModel?: DeviceModel } = {},
 ): Promise<{
   code: string;
   expiresAt: string;
@@ -492,6 +621,7 @@ export async function createReplacementCode(
 }> {
   const { data } = await api.post(`/machines/${machineId}/replacement-code`, {
     acknowledgeUntransmitted: !!opts.acknowledgeUntransmitted,
+    ...(opts.deviceModel ? { deviceModel: opts.deviceModel } : {}),
   });
   return data;
 }
@@ -530,6 +660,32 @@ export async function fetchZReports(params: ZReportListParams): Promise<ZReportL
   return data;
 }
 
+/** One Z as the till's 80 mm print document. */
+export async function fetchZPrintDocument(id: string): Promise<ZPrintDoc> {
+  const { data } = await api.get<ZPrintDoc>(`/z-reports/${id}/print-document`);
+  return data;
+}
+
+export type ZPrintDocumentsParams = {
+  /** Explicit Zs; or a range of one shop (`shopId` with dates and/or Z numbers). */
+  ids?: string[];
+  shopId?: string;
+  from?: string;
+  to?: string;
+  fromNumber?: number;
+  toNumber?: number;
+  dateBasis?: 'business' | 'production';
+};
+
+/** Several Zs as print documents, in Z-number order. The server refuses more than 200. */
+export async function fetchZPrintDocuments(params: ZPrintDocumentsParams): Promise<ZPrintDocList> {
+  const { ids, ...rest } = params;
+  const { data } = await api.get<ZPrintDocList>('/z-reports/print-documents', {
+    params: { ...rest, ...(ids && ids.length ? { ids: ids.join(',') } : {}) },
+  });
+  return data;
+}
+
 export type TaxOpenFormatParams = {
   scope: 'shop' | 'company';
   shopId?: string;
@@ -563,6 +719,21 @@ export async function fetchDashboardStats(params: {
   machineId?: string;
 }): Promise<DashboardStats> {
   const { data } = await api.get<DashboardStats>('/dashboard/stats', { params });
+  return data;
+}
+
+/**
+ * The manager overview: today's takings (tenant timezone) as company › shop › area › till,
+ * scoped by role on the server and narrowed by the scope bar here.
+ */
+export async function fetchOverview(params: {
+  /** `YYYY-MM-DD`; the server's today when omitted. */
+  date?: string;
+  companyId?: string;
+  shopId?: string;
+  machineId?: string;
+}): Promise<OverviewReport> {
+  const { data } = await api.get<OverviewReport>('/reports/overview', { params });
   return data;
 }
 
@@ -626,6 +797,11 @@ export async function createZRun(body: {
    * every listed till must currently be in the area.
    */
   areaId?: string;
+  /**
+   * The operator confirms producing a shop Z without the tills a 409
+   * `open_tills_need_confirmation` listed. Recorded on the Z.
+   */
+  confirmOpenTills?: boolean;
 }): Promise<ZRun> {
   const { data } = await api.post<ZRun>('/z-runs', body);
   return data;
@@ -806,6 +982,24 @@ export async function setShopAreaMachines(areaId: string, machineIds: string[]):
   return data;
 }
 
+/** Record which hardware a till is ("N55F" | "MODO" | "P18"); the till reads `hasPrinter` from it. */
+export async function updateMachineDeviceModel(
+  machineId: string,
+  deviceModel: DeviceModel,
+): Promise<PosMachine> {
+  const { data } = await api.put(`/machines/${machineId}`, { deviceModel });
+  return normalizePosMachine(data as Record<string, unknown>);
+}
+
+/** "לקוח קבוע / זמני" on this till alone — the super admin's. */
+export async function updateMachineLicense(
+  machineId: string,
+  license: { licenseType?: 'permanent' | 'temporary'; licenseExpiresOn?: string | null },
+): Promise<PosMachine> {
+  const { data } = await api.put(`/machines/${machineId}`, license);
+  return normalizePosMachine(data as Record<string, unknown>);
+}
+
 /** Move one till to an area of its shop, or — with `null` — out of any area. */
 export async function setMachineArea(machineId: string, areaId: string | null): Promise<PosMachine> {
   const { data } = await api.put(`/machines/${machineId}`, { areaId });
@@ -820,6 +1014,135 @@ export async function fetchSalesByArea(params: {
 }): Promise<SalesByAreaReport> {
   const { data } = await api.get<SalesByAreaReport>('/reports/sales-by-area', { params });
   return data;
+}
+
+// ── Till parameters ("פרמטרים לקופות", super admin only) ─────────────────────
+
+/** Every definition, by key, with how many levels set a value for it. */
+export async function fetchTillParameters(): Promise<TillParameter[]> {
+  const { data } = await api.get<TillParameter[]>('/till-parameters');
+  return Array.isArray(data) ? data : [];
+}
+
+/** `409 till_parameter_key_taken` when the key exists, in any case. */
+export async function createTillParameter(body: TillParameterInput): Promise<TillParameter> {
+  const { data } = await api.post<TillParameter>('/till-parameters', body);
+  return data;
+}
+
+/**
+ * Partial. `409 till_parameter_values_incompatible` when a new type or option list
+ * would no longer accept a value already set somewhere.
+ */
+export async function updateTillParameter(
+  id: string,
+  body: Partial<TillParameterInput>,
+): Promise<TillParameter> {
+  const { data } = await api.put<TillParameter>(`/till-parameters/${id}`, body);
+  return data;
+}
+
+/** Removes the parameter and every value set for it. */
+export async function deleteTillParameter(id: string): Promise<void> {
+  await api.delete(`/till-parameters/${id}`);
+}
+
+/** The levels that set this parameter, least specific first, with entity names. */
+export async function fetchTillParameterValues(id: string): Promise<TillParameterValue[]> {
+  const { data } = await api.get<TillParameterValue[]>(`/till-parameters/${id}/values`);
+  return Array.isArray(data) ? data : [];
+}
+
+/** Set (or replace) the value at one level. `404 <level>_not_found` for a missing entity. */
+export async function setTillParameterValue(
+  id: string,
+  body: { scopeType: TillParameterScope; scopeId: string; value: TillParameterScalar },
+): Promise<TillParameterValue> {
+  const { data } = await api.put<TillParameterValue>(`/till-parameters/${id}/values`, body);
+  return data;
+}
+
+export async function deleteTillParameterValue(id: string, valueId: string): Promise<void> {
+  await api.delete(`/till-parameters/${id}/values/${valueId}`);
+}
+
+// ── Till app releases ("עדכון קופות", super admin) ──────────────────────────
+
+/** Every release, newest first. */
+export async function fetchAppReleases(): Promise<AppRelease[]> {
+  const { data } = await api.get<AppRelease[]>('/app-releases');
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * Upload one APK. The server reads versionName / versionCode from the APK itself; the
+ * typed values are only needed when it cannot (`422 apk_version_required`), and must
+ * match when given (`422 apk_version_mismatch`).
+ */
+export async function uploadAppRelease(
+  file: File,
+  fields: { versionName?: string; versionCode?: number; notes?: string },
+  onProgress?: (fraction: number) => void,
+): Promise<AppRelease> {
+  const form = new FormData();
+  form.append('file', file);
+  if (fields.versionName) form.append('versionName', fields.versionName);
+  if (fields.versionCode !== undefined) form.append('versionCode', String(fields.versionCode));
+  if (fields.notes) form.append('notes', fields.notes);
+  const { data } = await api.post<AppRelease>('/app-releases', form, {
+    // Let the browser set multipart/form-data with its own boundary.
+    headers: { 'Content-Type': undefined },
+    onUploadProgress: (e) => {
+      if (onProgress && e.total) onProgress(e.loaded / e.total);
+    },
+  });
+  return data;
+}
+
+/** Notes, or retire / reinstate (`isActive`). */
+export async function updateAppRelease(
+  id: string,
+  body: { notes?: string | null; isActive?: boolean },
+): Promise<AppRelease> {
+  const { data } = await api.patch<AppRelease>(`/app-releases/${id}`, body);
+  return data;
+}
+
+export async function fetchAppReleaseAssignments(
+  releaseId: string,
+  includeCancelled = false,
+): Promise<AppReleaseAssignment[]> {
+  const { data } = await api.get<AppReleaseAssignment[]>(`/app-releases/${releaseId}/assignments`, {
+    params: includeCancelled ? { includeCancelled: true } : undefined,
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+/** `404 <level>_not_found`, `409 app_release_retired`. */
+export async function createAppReleaseAssignment(
+  releaseId: string,
+  body: { level: AppReleaseLevel; targetId: string; autoInstall: boolean },
+): Promise<AppReleaseAssignment> {
+  const { data } = await api.post<AppReleaseAssignment>(`/app-releases/${releaseId}/assignments`, body);
+  return data;
+}
+
+export async function cancelAppReleaseAssignment(assignmentId: string): Promise<void> {
+  await api.delete(`/app-release-assignments/${assignmentId}`);
+}
+
+/** Per till of the active organization: version, target release, last report. */
+export async function fetchAppReleaseRollout(params: {
+  companyId?: string;
+  shopId?: string;
+}): Promise<AppReleaseRolloutRow[]> {
+  const { data } = await api.get<AppReleaseRolloutRow[]>('/app-releases/rollout', {
+    params: {
+      ...(params.companyId ? { companyId: params.companyId } : {}),
+      ...(params.shopId ? { shopId: params.shopId } : {}),
+    },
+  });
+  return Array.isArray(data) ? data : [];
 }
 
 // Attach Clerk JWT on every request
@@ -889,4 +1212,62 @@ function recheckActiveTenant(requestTenantId: string | null): Promise<void> {
     }
   })();
   return tenantRecheck;
+}
+
+// ── Live sales by item (`GET /reports/live-items`) ────────────────────────────
+
+/**
+ * Per product, what the scope has sold so far: a day (default today), a range, or the
+ * shifts open now (`shift: 'open'`). The product sales report's figures, scoped by role.
+ */
+export async function fetchLiveItems(params: {
+  date?: string;
+  from?: string;
+  to?: string;
+  shift?: 'open';
+  companyId?: string;
+  shopId?: string;
+  areaId?: string;
+  machineId?: string;
+  limit?: number;
+}): Promise<LiveItemsReport> {
+  const { data } = await api.get<LiveItemsReport>('/reports/live-items', { params });
+  return data;
+}
+
+// ── Messages to tills (הודעות לקופות) ─────────────────────────────────────────
+
+export async function fetchTillMessages(params: { limit?: number; offset?: number } = {}): Promise<TillMessageList> {
+  const { data } = await api.get<TillMessageList>('/till-messages', { params });
+  return data;
+}
+
+export async function sendTillMessage(body: TillMessageCreate): Promise<TillMessage> {
+  const { data } = await api.post<TillMessage>('/till-messages', body);
+  return data;
+}
+
+export async function cancelTillMessage(id: string): Promise<TillMessage> {
+  const { data } = await api.post<TillMessage>(`/till-messages/${id}/cancel`);
+  return data;
+}
+
+export async function resendTillMessage(id: string): Promise<TillMessage & { notified: number }> {
+  const { data } = await api.post<TillMessage & { notified: number }>(`/till-messages/${id}/resend`);
+  return data;
+}
+
+export async function updateTillMessage(id: string, body: TillMessageUpdate): Promise<TillMessage> {
+  const { data } = await api.patch<TillMessage>(`/till-messages/${id}`, body);
+  return data;
+}
+
+export async function pauseTillMessage(id: string): Promise<TillMessage> {
+  const { data } = await api.post<TillMessage>(`/till-messages/${id}/pause`);
+  return data;
+}
+
+export async function resumeTillMessage(id: string): Promise<TillMessage> {
+  const { data } = await api.post<TillMessage>(`/till-messages/${id}/resume`);
+  return data;
 }

@@ -5,13 +5,24 @@ GET  /sync/{machine_id}/catalog?since=ISO_TS   → full or delta catalog
 POST /sync/{machine_id}/catalog                → retired (410); see `post_catalog_changes`
 PUT  /sync/{machine_id}/machine-catalog        → the till's own mode and list, on a
                                                  manager's authority
+PUT  /sync/{machine_id}/products/{id}/availability
+PUT  /sync/{machine_id}/categories/{id}/availability
+                                               → make a product / category inactive (or
+                                                 active) for this till, its area or its
+                                                 shop, on a manager's authority
+DELETE /sync/{machine_id}/products/{id}, /categories/{id}
+                                               → refused (409): deactivate instead
+GET  /sync/{machine_id}/app-update             → the app release offered to this till
+GET  /sync/{machine_id}/app-update/{id}/apk    → its APK
+POST /sync/{machine_id}/app-update/status      → how taking it is going
 """
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -54,7 +65,8 @@ from app.services.payment_options import legacy_tip_flags, resolve_payment_optio
 from app.services.refund_settings import resolve_refund_settings
 from app.services.sell_screen import resolve_sell_screen
 from app.services import general_item
-from app.services.areas import as_utc, machine_area_for_sync
+from app.services import item_ticket
+from app.services.areas import as_utc, get_area, machine_area_for_sync
 from app.schemas.transaction import (
     TransactionsBatchEnvelope,
     TransactionsBatchResponse,
@@ -71,10 +83,13 @@ from app.schemas.shift import (
 )
 from app.services.catalog_notify import notify_all_machines_for_tenant, notify_machines_for_shop
 from app.services import product_availability as availability
+from app.services import category_availability
+from app.schemas.product_availability import TillAvailabilityResponse, TillAvailabilitySet
 from app.services.product_validation import validate_open_price_update
 from app.services.sku_sequence import resolve_sku_for_create
 from app.services.tenant_sku_sequence import allocate_global_sku
 from app.services.sync import (
+    category_sent_to_machine,
     get_categories_for_sync,
     get_customers_for_sync,
     get_products_for_sync,
@@ -107,9 +122,18 @@ from app.services.remote_close import apply_close_shift_ack, on_shift_close_acce
 from app.services.stock import effective_stock_updated_at, get_levels_for_shop
 from app.schemas.transmission import TransmissionReportIn, TransmitAckIn
 from app.services import transmissions, transmit_requests
+from app.schemas.offline_authorization import OfflineAuthorizationIn
+from app.services import offline_authorizations
+from app.models.z_report import ZReport
+from app.services import z_print
+from app.services.reports import _load_zoneinfo, resolve_report_timezone
+from app.schemas.till_parameter import TillParametersSyncResponse
+from app.services.till_parameters import till_parameters_for_machine
+from app.models.app_release import AppRelease, AppReleaseMachineStatus
+from app.schemas.app_release import AppUpdateOffer, AppUpdateStatusIn, AppUpdateStatusOut
+from app.services import app_updates
 from app.schemas.till_z import TillZAckIn, TillZIn
 from app.services import till_z
-from app.models.z_report import ZReport
 from app.routers.z_reports import z_detail_out
 
 logger = logging.getLogger(__name__)
@@ -132,6 +156,11 @@ class CatalogSyncResponse(BaseModel):
     # delta. The product rows carry `inMachineCatalog`; this says how to apply it. An
     # older till ignores both and keeps selling the shop's whole catalog.
     machine_catalog: Optional[Dict[str, Any]] = Field(None, alias="machineCatalog")
+    # The menu layer — modifier groups, note chips, meals, upsells, courses
+    # (docs/SPEC_MENU_MODIFIERS.md §10.1), whole. On a full pull always; on a delta pull
+    # only when the menu changed after `since` — absent means "keep what you have". An
+    # older till ignores the key.
+    menu: Optional[Dict[str, Any]] = None
 
     class Config:
         populate_by_name = True
@@ -218,8 +247,19 @@ def get_catalog_sync(
     mqid = str(machine.id)
 
     _ensure_shop_general_item(db, machine)
-    products = get_products_for_sync(db, tid, mqid, since=since_dt)
-    categories = get_categories_for_sync(db, tid, mqid, since=since_dt)
+    # "סקירת שינויים לפני שידור לקופות" (docs/SPEC_MENU_BROADCAST_REVIEW.md): a shop in
+    # review mode (tables on) is served the menu of its latest broadcast, not the live
+    # catalog tables (the draft); what is the till's own stays live. Any other shop: as
+    # always — `live_since` is None only once, right after a shop left review mode.
+    from app.services import menu_broadcast
+
+    review_pull = menu_broadcast.catalog_pull(db, machine, since_dt)
+    published = review_pull.published
+    if published is not None:
+        products, categories = published.products, published.categories
+    else:
+        products = get_products_for_sync(db, tid, mqid, since=review_pull.live_since)
+        categories = get_categories_for_sync(db, tid, mqid, since=review_pull.live_since)
     vouchers = get_vouchers_for_sync(db, tid, since=since_dt)
     # Same `since` semantics as everything else in this payload: on a delta pull only
     # customers touched after `since` come back. Unlike products there is no merge
@@ -227,8 +267,22 @@ def get_catalog_sync(
     # attached to a *document*, which travels the other way.
     customers = get_customers_for_sync(db, tid, since=since_dt)
     if since_dt and products:
-        categories = merge_categories_referenced_by_products(db, machine, products, categories)
+        # The published catalog merges its own (from the publication).
+        if published is None and review_pull.live_since is not None:
+            categories = merge_categories_referenced_by_products(db, machine, products, categories)
         vouchers = merge_vouchers_referenced_by_products(db, products, vouchers)
+
+    # Read before the stamp below, so a menu edit landing during this pull is not lost
+    # between `serverTime` and the next delta.
+    from app.services import menu as menu_service
+
+    if published is not None:
+        menu = published.menu
+    else:
+        menu = menu_service.menu_block(db, machine) if (
+            machine.tenant_id is not None
+            and menu_service.include_menu(db, machine, review_pull.live_since)
+        ) else None
 
     update_machine_sync_timestamp(db, mqid)
 
@@ -240,6 +294,7 @@ def get_catalog_sync(
         vouchers=vouchers,
         customers=customers,
         machine_catalog=machine_catalog_for_sync(machine),
+        menu=menu,
     )
 
 
@@ -283,14 +338,21 @@ def post_catalog_changes(
 #   * the master's own fields — name, barcode, category — may only be edited when
 #     the product is listed in this shop and nowhere else, i.e. when it is
 #     effectively this shop's own item.
-#   * "delete" unlists from this shop. The master survives, which is both the right
-#     meaning ("take it off my till", not "erase it from the chain") and the only
-#     safe one: `transaction_items.product_id` is a foreign key with no ON DELETE,
-#     so removing a product that has ever been sold raises IntegrityError.
+#   * there is no delete any more (409 `delete_disabled_use_deactivate`). A till makes
+#     a product or category inactive for itself, its area or its shop instead
+#     (`.../availability`), which every till it reaches picks up on sync and which the
+#     same screen can undo. The master always survives —
+#     `transaction_items.product_id` is a foreign key with no ON DELETE.
 #
-# Categories have no shop tier at all — `get_categories_for_sync` serves tenant
-# globals to any machine with a shop — so a till may add one, but may only rename
-# or remove one whose products all belong to this shop alone.
+# Categories have no shop tier for their own fields — `get_categories_for_sync` serves
+# tenant globals to any machine with a shop — so a till may add one and rename it for
+# its own shop (`shop_category_overrides`), and switch it off per till, area or shop.
+
+#: The answer to a till's DELETE of a product or a category.
+DELETE_DISABLED = "delete_disabled_use_deactivate"
+
+#: The answer when a till asks for its area's scope while standing in none.
+MACHINE_HAS_NO_AREA = "machine_has_no_area"
 
 
 def _audit(
@@ -440,9 +502,12 @@ def machine_create_cloud_product(
         stock_quantity=data.stock_quantity,
         barcode=data.barcode,
         tax_rate=data.tax_rate,
+        ticket_mode=item_ticket.normalize(data.ticket_mode),
+        ticket_entries=data.ticket_entries,
         is_open_price=data.is_open_price,
         is_weighed=data.is_weighed,
         unit_label=data.unit_label,
+        no_discount=data.no_discount,
         # Only `ensure_general_item` makes a general item (the request cannot ask).
         is_general=False,
     )
@@ -475,7 +540,8 @@ def machine_create_cloud_product(
     )
     db.commit()
     db.refresh(product)
-    notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="product_created")
+    # Listed in this shop alone: the other shops' tills have nothing to pull.
+    notify_machines_for_shop(db, str(shop.id), reason="product_created")
     return product
 
 
@@ -507,6 +573,13 @@ def machine_update_cloud_product(
     updates.pop("is_general", None)
     if "is_listed" in updates and not updates["is_listed"]:
         general_item.refuse_general_item_unlist(product)
+    # The item-ticket ("שובר") mode set from the till's catalog screen: written on the
+    # product itself — replacing whatever it had, including "inherit the category" —
+    # and allowed on a shared product too, unlike the rest of the master record. The
+    # till asks the cashier to confirm that it overrides the cloud's setting.
+    ticket_mode_set = "ticket_mode" in updates
+    if ticket_mode_set:
+        product.ticket_mode = item_ticket.normalize(updates.pop("ticket_mode"))
     master_fields = {k: v for k, v in updates.items() if k not in _OVERRIDE_FIELDS}
     override_fields = {k: v for k, v in updates.items() if k in _OVERRIDE_FIELDS}
 
@@ -547,6 +620,14 @@ def machine_update_cloud_product(
             else:
                 setattr(override, field, value)
 
+    # Kitchen / bar printers ("מדפסות בונים") of this shop, from the till's product dialog.
+    if data.kitchen_printers is not None:
+        from app.services import printers as kitchen_printers
+
+        kitchen_printers.apply_patch(
+            db, shop, "product", product.id, data.kitchen_printers, machine_id=machine.id
+        )
+
     _audit(
         db,
         machine=machine,
@@ -571,37 +652,17 @@ def machine_delete_cloud_product(
     db: Session = Depends(get_db),
 ):
     """
-    Take a product off this shop's tills.
+    Refused: a till no longer removes products. 409 `delete_disabled_use_deactivate`,
+    and nothing is written.
 
-    Unlists rather than deletes. The master row is chain data and may be referenced
-    by issued invoices — `transaction_items.product_id` has no ON DELETE, so a hard
-    delete of anything ever sold raises IntegrityError rather than removing it.
+    It used to unlist the product from the till's shop. A manager at one till cannot
+    see what that takes away from the shop's other tills and from the dashboard's
+    assortment, so the till now makes a product inactive instead — for itself, its
+    area or its shop — through `PUT .../products/{id}/availability`, which can be undone
+    from the same screen. Still gated like every catalog write, so a cashier's till gets
+    the usual 401 before learning anything.
     """
-    _require_assigned_machine(machine)
-    shop = _shop_or_400(db, machine)
-    product = _machine_editable_product(db, machine, product_id)
-    general_item.refuse_general_item_delete(product)
-
-    override = _override_for(db, shop.id, product.id)
-    if override is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Product not listed in this shop"
-        )
-    override.is_listed = False
-    db.add(override)
-
-    _audit(
-        db,
-        machine=machine,
-        actor=actor,
-        entity=SyncEntityType.PRODUCTS,
-        action=SyncAction.DELETE,
-        entity_id=product.id,
-        note="unlisted_from_shop",
-    )
-    db.commit()
-    notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="product_deleted")
-    return None
+    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DELETE_DISABLED)
 
 
 @router.put("/{machine_id}/machine-catalog", response_model=MachineCatalogWriteResponse)
@@ -655,15 +716,6 @@ def machine_set_own_catalog(
     )
 
 
-def _category_belongs_only_to(db: Session, category: Category, shop_id) -> bool:
-    """True when every product in this category is listed by this shop alone."""
-    products = db.query(Product).filter(Product.category_id == category.id).all()
-    for product in products:
-        if not _product_belongs_only_to(db, product, shop_id):
-            return False
-    return True
-
-
 def _machine_editable_category(db: Session, machine: POSMachine, category_id: str) -> Category:
     category = db.query(Category).filter(Category.id == category_id).first()
     if not category:
@@ -693,12 +745,11 @@ def machine_create_cloud_category(
     db: Session = Depends(get_db),
 ):
     """
-    Add a category from the till.
+    Add a category from the till, for its own shop.
 
-    Tenant-wide, because `get_categories_for_sync` serves tenant globals to every
-    machine that has a shop — there is no shop tier for categories to live in. That
-    is acceptable for *adding* one (additive, and invisible until something is filed
-    under it) but not for renaming one, which is why the edit path is narrower.
+    Placed on the shop (`shop_id`), so `get_categories_for_sync` sends it to that shop's
+    tills only, and the dashboard lists it under the shop. Global level all the same:
+    products — which are company masters — may be filed under it.
     """
     _require_assigned_machine(machine)
     shop = _shop_or_400(db, machine)
@@ -714,7 +765,9 @@ def machine_create_cloud_category(
     category = Category(
         tenant_id=machine.tenant_id,
         company_id=shop.company_id,
-        shop_id=None,
+        # This shop's own: `get_categories_for_sync` sends a shop-placed category to
+        # that shop's tills only. Global level all the same, so products may use its id.
+        shop_id=shop.id,
         pos_machine_id=None,
         catalog_level=CategoryCatalogLevel.GLOBAL,
         name=data.name,
@@ -737,7 +790,8 @@ def machine_create_cloud_category(
     )
     db.commit()
     db.refresh(category)
-    notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="category_created")
+    # Only this shop's tills can see it, so only they need waking.
+    notify_machines_for_shop(db, str(shop.id), reason="category_created")
     return category
 
 
@@ -796,6 +850,12 @@ def machine_update_cloud_category(
         # pull finds this change by this timestamp and nothing else.
         override.updated_at = datetime.now(timezone.utc)
 
+    # Kitchen / bar printers ("מדפסות בונים") of this shop, from the till's category dialog.
+    if data.kitchen_printers is not None:
+        from app.services import printers as kitchen_printers
+
+        kitchen_printers.apply_patch(db, shop, "category", category.id, data.kitchen_printers)
+
     _audit(
         db,
         machine=machine,
@@ -824,33 +884,338 @@ def machine_delete_cloud_category(
     actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
     db: Session = Depends(get_db),
 ):
+    """
+    Refused: a till no longer removes categories. 409 `delete_disabled_use_deactivate`,
+    and nothing is written.
+
+    Deleting from a till removed a tenant row that other shops' tills and the dashboard
+    may still use. The till now makes a category inactive instead — for itself, its area
+    or its shop — through `PUT .../categories/{id}/availability`. Removing a category
+    for good stays the dashboard's.
+    """
+    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DELETE_DISABLED)
+
+
+# ── Active / inactive from the till, per till, area or shop ───────────────────
+#
+# The till's replacement for delete. One body for products and categories:
+# `{"scope": "machine"|"area"|"shop", "active": true|false|null}`, null clearing that
+# scope back to inherit. The scope's target is always derived from the authenticated
+# machine — its own id, its `area_id`, its `shop_id` — never read from the request, so
+# a till can only ever reach its own shop. The rule each one feeds is in
+# `product_availability` and `category_availability`; the answer's `effectiveActive` is
+# what this till resolves to after the change, the same value its next sync carries.
+
+
+def _scope_target(machine: POSMachine, scope: str):
+    """The id the scope names for this till; 400 `machine_has_no_area` for "area" without one."""
+    if scope == "machine":
+        return machine.id
+    if scope == "area":
+        if machine.area_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=MACHINE_HAS_NO_AREA
+            )
+        return machine.area_id
+    return machine.shop_id
+
+
+@router.put(
+    "/{machine_id}/products/{product_id}/availability",
+    response_model=TillAvailabilityResponse,
+)
+def machine_set_product_availability(
+    machine_id: str,
+    product_id: str,
+    body: TillAvailabilitySet,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    db: Session = Depends(get_db),
+):
+    """
+    Make a product inactive (locked: shown, not sellable) or active again for this till,
+    its area or its shop — the till's own, area and shop levels of
+    `product_availability`. The product must be in this shop's assortment (404
+    otherwise), as for the dashboard's per-till setting.
+    """
     _require_assigned_machine(machine)
     shop = _shop_or_400(db, machine)
+    product = _machine_editable_product(db, machine, product_id)
+    row = _override_for(db, shop.id, product.id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Product not in shop assortment"
+        )
+    target = _scope_target(machine, body.scope)
+
+    if body.scope == "machine":
+        availability.set_machine_availability(db, target, product.id, body.active)
+    elif body.scope == "area":
+        availability.set_area_availability(db, target, product.id, body.active)
+    else:
+        availability.set_shop_availability(row, body.active)
+    _audit(
+        db,
+        machine=machine,
+        actor=actor,
+        entity=SyncEntityType.PRODUCTS,
+        action=SyncAction.UPDATE,
+        entity_id=product.id,
+        note=f"availability scope={body.scope} active={body.active}",
+    )
+    db.commit()
+
+    effective = bool(row.is_listed) and availability.effective_availability(db, product, machine)
+    if body.scope == "machine":
+        availability.notify_machine_change(machine)
+    elif body.scope == "area":
+        availability.notify_area_change(db, target)
+    else:
+        availability.notify_shop_change(db, shop.id)
+    return TillAvailabilityResponse(
+        id=product.id, scope=body.scope, active=body.active, effective_active=effective
+    )
+
+
+class ProductOrderIn(BaseModel):
+    """"סידור פריטים" from a till's edit mode: the buttons' order, saved at a level."""
+
+    scope: Literal["machine", "area", "shop"]
+    #: The products' order; absent = this write leaves it as it is.
+    product_ids: Optional[List[str]] = Field(None, alias="productIds", max_length=5000)
+    #: The categories' order (the tabs above the buttons); absent = left as it is.
+    category_ids: Optional[List[str]] = Field(None, alias="categoryIds", max_length=2000)
+
+    class Config:
+        populate_by_name = True
+
+
+@router.put("/{machine_id}/product-order")
+def machine_set_product_order(
+    machine_id: str,
+    body: ProductOrderIn,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    db: Session = Depends(get_db),
+):
+    """
+    The order of the till's product buttons (`productOrder` in the settings layers) for
+    this till, its point of sale or its shop — a manager's, as any catalog write from a
+    till. Saved at the shop or the point of sale, this till's own lower levels let go of
+    theirs so the new order shows here too; other tills keep any order of their own.
+    An empty list clears the level (back to inherit, then to the names' order).
+    """
+    from app.services.settings_merge import patch_settings_json, utc_now
+    from app.services import settings_notify
+    from app.models.shop_area import ShopArea
+
+    _require_assigned_machine(machine)
+    shop = _shop_or_400(db, machine)
+    target = _scope_target(machine, body.scope)
+
+    def clean(raw_ids) -> List[str]:
+        out: List[str] = []
+        seen = set()
+        for raw in raw_ids or []:
+            pid = str(raw).strip()
+            if pid and pid not in seen:
+                seen.add(pid)
+                out.append(pid)
+        return out
+
+    patch: Dict[str, Any] = {}
+    if body.product_ids is not None:
+        patch["productOrder"] = clean(body.product_ids) or None
+    if body.category_ids is not None:
+        patch["categoryOrder"] = clean(body.category_ids) or None
+    if not patch:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="nothing_to_order")
+    ids = patch.get("productOrder") or []
+    now = utc_now()
+
+    def write(row) -> None:
+        row.settings = patch_settings_json(row.settings, patch)
+        row.settings_updated_at = now
+
+    def clear(row) -> None:
+        held = row.settings if row is not None and isinstance(row.settings, dict) else None
+        if held is not None and any(k in held for k in patch):
+            row.settings = patch_settings_json(held, {k: None for k in patch})
+            row.settings_updated_at = now
+
+    area = db.get(ShopArea, machine.area_id) if machine.area_id else None
+    if body.scope == "machine":
+        write(machine)
+    elif body.scope == "area":
+        write(area)
+        clear(machine)
+    else:
+        write(shop)
+        clear(area)
+        clear(machine)
+    _audit(
+        db,
+        machine=machine,
+        actor=actor,
+        entity=SyncEntityType.PRODUCTS,
+        action=SyncAction.UPDATE,
+        entity_id=None,
+        note=f"order scope={body.scope} products={len(ids)} categories={len(patch.get('categoryOrder') or [])}",
+    )
+    db.commit()
+    if body.scope == "machine":
+        settings_notify.notify_machine_settings(db, machine, reason="product_order")
+    elif body.scope == "area":
+        settings_notify.notify_machines_for_area_settings(db, str(target), reason="product_order")
+    else:
+        settings_notify.notify_machines_for_shop_settings(db, str(shop.id), reason="product_order")
+    return {"scope": body.scope, "count": len(ids)}
+
+
+class PaymentTerminalIn(BaseModel):
+    """The till's Nayax pinpad on the network, as a manager typed it in at the till."""
+
+    #: An IPv4 address or a host name; validated in app/services/payment_terminal.py.
+    host: str = Field(..., max_length=300)
+    #: SPICy's port; absent = 8080.
+    port: Optional[int] = Field(None, ge=1, le=65535)
+    #: SPICy's path; absent = "/SPICy".
+    path: Optional[str] = Field(None, max_length=200)
+
+
+@router.put("/{machine_id}/payment-terminal")
+def machine_set_payment_terminal(
+    machine_id: str,
+    body: PaymentTerminalIn,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    db: Session = Depends(get_db),
+):
+    """
+    The address of the Nayax pinpad this till charges on, typed at the till: a till with
+    no card terminal of its own (a P18) asks for it before its first card payment.
+    Written to the till's own settings layer (`nayaxEnabled`, `nayaxDeviceHost`,
+    `nayaxDevicePort`, `nayaxSpicyPath`), where the dashboard's per-till settings show it
+    and can change it. A manager's write, gated like the till's other manager writes (a
+    signed-in manager, or a manager's grant). 422 with `host_invalid`, `host_required`,
+    `port_invalid` or `path_invalid` for an address the till must not be sent.
+    """
+    from app.services import payment_terminal, settings_notify
+    from app.services.settings_merge import patch_settings_json, utc_now
+
+    _require_assigned_machine(machine)
+    try:
+        host = payment_terminal.clean_pinpad_host(body.host)
+        port = payment_terminal.clean_pinpad_port(body.port)
+        path = payment_terminal.clean_pinpad_path(body.path)
+    except payment_terminal.PinpadAddressError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.code)
+    machine.settings = patch_settings_json(
+        machine.settings, payment_terminal.pinpad_settings_patch(host, port, path)
+    )
+    machine.settings_updated_at = utc_now()
+    # No SyncLog row: its entity types are a database enum, and a new one is a migration.
+    # The write is the till's own layer, and the log names who made it.
+    logger.info(
+        "payment terminal set from till %s: %s:%s%s (user %s, till user %s)",
+        machine.id, host, port, path, actor.user_id, actor.pos_user_id,
+    )
+    db.commit()
+    settings_notify.notify_machine_settings(db, machine, reason="payment_terminal")
+    return {"nayaxEnabled": True, "host": host, "port": port, "path": path}
+
+
+@router.post("/{machine_id}/products/{product_id}/image")
+async def machine_upload_product_image(
+    machine_id: str,
+    product_id: str,
+    file: UploadFile = File(...),
+    keep_background: bool = Query(False, alias="keepBackground"),
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    db: Session = Depends(get_db),
+):
+    """
+    A product's picture taken or picked on the till: stored as the dashboard's upload
+    stores it — the background cut out unless `keepBackground`, the upload kept beside
+    it (`originalUrl`, to go back to with a product update) — and set on the product.
+    The picture is the product's own, so only for a product this shop alone lists
+    (403 `shared_product_master_readonly`), as for every master field from a till.
+    """
+    from app.routers import images
+
+    _require_assigned_machine(machine)
+    shop = _shop_or_400(db, machine)
+    product = _machine_editable_product(db, machine, product_id)
+    if not _product_belongs_only_to(db, product, shop.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="shared_product_master_readonly")
+    if file.content_type not in images._ALLOWED_TYPES:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="unsupported_image_type")
+    contents = await file.read()
+    if len(contents) > images._MAX_SIZE_BYTES:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="image_too_large")
+    stored = await images.store_upload(contents, machine.tenant_id, "products", keep_background)
+    product.image_url = stored.url
+    _audit(
+        db,
+        machine=machine,
+        actor=actor,
+        entity=SyncEntityType.PRODUCTS,
+        action=SyncAction.UPDATE,
+        entity_id=product.id,
+        note="image" + (" background removed" if stored.background_removed else ""),
+    )
+    db.commit()
+    notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="product_updated")
+    return {
+        "url": stored.url,
+        "originalUrl": stored.original_url,
+        "backgroundRemoved": stored.background_removed,
+    }
+
+
+@router.put(
+    "/{machine_id}/categories/{category_id}/availability",
+    response_model=TillAvailabilityResponse,
+)
+def machine_set_category_availability(
+    machine_id: str,
+    category_id: str,
+    body: TillAvailabilitySet,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    db: Session = Depends(get_db),
+):
+    """
+    Switch a category off (or on again) for this till, its area or its shop. The
+    category's own tenant-wide flag stays the dashboard's and stays the floor: a till
+    cannot switch on what the tenant switched off. The category must be one this till
+    is sent (404 otherwise).
+    """
+    _require_assigned_machine(machine)
+    _shop_or_400(db, machine)
     category = _machine_editable_category(db, machine, category_id)
+    if not category_sent_to_machine(db, machine, category):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+    target = _scope_target(machine, body.scope)
 
-    if not _category_belongs_only_to(db, category, shop.id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="shared_category_readonly"
-        )
-    if db.query(Product).filter(Product.category_id == category_id).count():
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Category has associated products",
-        )
-
-    tid = str(category.tenant_id)
+    category_availability.set_override(db, body.scope, target, category.id, body.active)
     _audit(
         db,
         machine=machine,
         actor=actor,
         entity=SyncEntityType.CATEGORIES,
-        action=SyncAction.DELETE,
+        action=SyncAction.UPDATE,
         entity_id=category.id,
+        note=f"availability scope={body.scope} active={body.active}",
     )
-    db.delete(category)
     db.commit()
-    notify_all_machines_for_tenant(db, tid, reason="category_deleted")
-    return None
+
+    effective = category_availability.effective_active(db, category, machine)
+    category_availability.notify_level(db, body.scope, target, machine=machine)
+    return TillAvailabilityResponse(
+        id=category.id, scope=body.scope, active=body.active, effective_active=effective
+    )
 
 
 # ── Transactions (POS → server) ────────────────────────────────────
@@ -878,7 +1243,18 @@ def post_transactions(
     """
     _require_assigned_machine(machine)
 
-    valid, refused, unidentified = validate_documents(body.transactions)
+    # "מצב הדרכה": training documents go to the quarantine and are answered like real ones
+    # (app/services/training_mode.py); the real documents go on below exactly as before.
+    from app.services import training_mode as TM
+
+    positions, real_documents, training = TM.divert_transactions(db, machine, body.transactions)
+    valid, refused, unidentified = validate_documents(real_documents)
+    if training:
+        # Back to the positions in the till's own batch.
+        valid = [(positions[i], tx, w) for i, tx, w in valid]
+        refused = [(positions[i], r) for i, r in refused]
+        for u in unidentified:
+            u.index = positions[u.index]
     try:
         upserted = upsert_transactions(db, machine, [tx for _i, tx, _w in valid])
     except ShiftConflict as conflict:
@@ -931,7 +1307,19 @@ def post_transactions(
 
     if accepted_count > 0:
         publish_transactions_synced(machine.tenant_id, machine.id, accepted_count)
+        # Exceptions ("חריגות"), after the commit and never failing the push.
+        from app.services.exceptions import detect_safely, detect_transactions
 
+        detect_safely(db, detect_transactions, [r.id for r in results if r.status == "accepted"])
+
+    if training:
+        # The training answers too, in the order the till sent them.
+        results = [
+            r for _i, r in sorted(
+                [(i, r) for (i, _tx, _w), r in zip(valid, upserted)] + refused + training,
+                key=lambda pair: pair[0],
+            )
+        ]
     return TransactionsBatchResponse(
         server_time=datetime.now(timezone.utc),
         results=results,
@@ -960,6 +1348,13 @@ def post_shift_open(
     open — with an ordered outbox that means the previous close has not arrived yet.
     """
     _require_assigned_machine(machine)
+    # "מצב הדרכה": a training shift is quarantined, never a real shift.
+    from app.services import training_mode as TM
+
+    training = TM.divert_shift_open(db, machine, data)
+    if training is not None:
+        db.commit()
+        return training
     shift = report_shift_open(db, machine, data)
     db.commit()
     db.refresh(shift)
@@ -1005,6 +1400,15 @@ def post_shift_close(
 
     # Before the missing-ids check: another till's shift is a 403 whatever the till
     # lists — its documents are not this till's, so the 409 loop could never end.
+    # "מצב הדרכה": a training shift's close is quarantined and answered like a real one —
+    # before the checks below, which look for its documents in the real table.
+    from app.services import training_mode as TM
+
+    training = TM.divert_shift_close(db, machine, shift_id, body)
+    if training is not None:
+        db.commit()
+        return training
+
     refuse_foreign_shift(db, machine, shift_id)
 
     missing, stale = check_close_preconditions(db, machine, shift_id, body.transaction_ids)
@@ -1055,6 +1459,11 @@ def post_shift_close(
         conflict_note="shift close" if outcome == "accepted" else "duplicate shift close",
     ))
     db.commit()
+    if outcome == "accepted":
+        # Exceptions ("חריגות"): the cash difference at close. Never fails the close.
+        from app.services.exceptions import detect_safely, detect_shift_close
+
+        detect_safely(db, detect_shift_close, shift.id)
     db.refresh(shift)
 
     return ShiftCloseResponse(
@@ -1124,6 +1533,91 @@ def post_transmission_report(
     )
 
 
+@router.get("/{machine_id}/transmissions")
+def list_own_transmissions(
+    machine_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    This till's own transmission history, newest first — the same rows and shape the
+    dashboard reads (`GET /machines/{id}/transmissions`), but with the machine token, so
+    the till's "היסטוריית שידורים" shows every attempt the cloud holds for the device,
+    not only the few still in its local database.
+    """
+    return transmissions.list_for_machine(db, machine, limit=limit, offset=offset)
+
+
+def _own_shop_z_query(db: Session, machine: POSMachine):
+    """The Zs of this till's shop, in its tenant. A Z belongs to a shop, not a till."""
+    _require_assigned_machine(machine)
+    return db.query(ZReport).filter(
+        ZReport.shop_id == machine.shop_id, ZReport.tenant_id == machine.tenant_id
+    )
+
+
+@router.get("/{machine_id}/z-reports")
+def list_own_shop_z_reports(
+    machine_id: str,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    The Zs of this till's shop, newest first, for the till's "reprint a Z" list. Each
+    row prints from `GET /sync/{machine_id}/z-reports/{id}/print-document`.
+    """
+    query = _own_shop_z_query(db, machine)
+    total = query.count()
+    rows = (
+        query.order_by(
+            ZReport.shop_sequence_number.is_(None),
+            ZReport.shop_sequence_number.desc(),
+            ZReport.closed_at.desc(),
+        )
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    tzinfo = _load_zoneinfo(resolve_report_timezone(db, machine.tenant_id, None))
+    return {"items": [z_print.list_item(z, tzinfo) for z in rows], "total": total}
+
+
+@router.get("/{machine_id}/z-reports/{z_report_id}/print-document")
+def get_own_shop_z_print_document(
+    machine_id: str,
+    z_report_id: uuid.UUID,
+    part: Optional[str] = Query(None, description="summary: the shop's totals and one line per till"),
+    till: Optional[uuid.UUID] = Query(None, description="one till's detail, as a document of its own"),
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    One Z of this till's shop as the 80 mm print document (`app/services/z_print.py`) —
+    the same document the dashboard's till view prints. Another shop's Z is a 404.
+
+    In parts, for a shop Z over several tills (what the master till prints): `?part=summary`
+    — the shop's totals and one compact line per till, with `tills` to print apart — and
+    `?till=<machineId>` — that till's detail with its own header (404 if the Z has none).
+    """
+    z = _own_shop_z_query(db, machine).filter(ZReport.id == z_report_id).first()
+    if z is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Z-report not found")
+    tzinfo = _load_zoneinfo(resolve_report_timezone(db, machine.tenant_id, None))
+    # isinstance: called as a plain function (the tests do), the defaults are Query objects.
+    if isinstance(till, uuid.UUID):
+        doc = z_print.build_till_document(z, till, tzinfo)
+        if doc is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="till_not_in_z")
+        return doc
+    if isinstance(part, str) and part == "summary":
+        return z_print.build_summary_document(z, tzinfo)
+    return z_print.build_print_document(z, tzinfo)
+
+
 @router.post("/{machine_id}/transmit/ack")
 def post_transmit_ack(
     machine_id: str,
@@ -1173,6 +1667,13 @@ def post_till_z(
     nothing_to_report | z_run_in_progress:<runId>` · `403 shift_belongs_to_another_machine`.
     """
     _require_assigned_machine(machine)
+    # "מצב הדרכה": a training Z is the till's own — quarantined, no cloud Z is built.
+    from app.services import training_mode as TM
+
+    training = TM.divert_till_z(db, machine, body)
+    if training is not None:
+        db.commit()
+        return JSONResponse(status_code=training[0], content=training[1])
     try:
         z, outcome = till_z.produce_till_z(db, machine, body)
         db.commit()
@@ -1221,6 +1722,34 @@ def post_till_z_ack(
     )
     db.commit()
     return {"ok": True, "status": req.status}
+
+
+# ── Offline card authorization (Agamento `authorizePendingTransactions`) ──────
+
+
+@router.post("/{machine_id}/offline-authorizations", status_code=status.HTTP_201_CREATED)
+def post_offline_authorization(
+    machine_id: str,
+    body: OfflineAuthorizationIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    One run that sent the terminal's offline-approved card sales for authorization, with
+    the uids approved and declined. Idempotent by `id`: `201` the first time, `200` after;
+    another till's id is `409`. Not refused for a till that has left its shop, as for a
+    transmission report.
+    """
+    outcome = offline_authorizations.record_report(db, machine, body)
+    db.commit()
+    return JSONResponse(
+        status_code=status.HTTP_201_CREATED if outcome.created else status.HTTP_200_OK,
+        content={
+            "ok": True,
+            "authorizationId": str(outcome.authorization.id),
+            "created": outcome.created,
+        },
+    )
 
 
 # ── Removed with the move to shifts (docs/SHIFTS_API.md §1.8) ─────────────────
@@ -1374,7 +1903,13 @@ def get_settings_sync(
     # The till's area is part of what it shows, so a move between areas (the machine's
     # `area_changed_at`) and a rename (the area's `updated_at`) move the watermark too —
     # otherwise a delta pull after the notification would answer "unchanged".
-    watermark = max([as_utc(effective_settings_updated_at(company, shop, tenant))] + area_stamps)
+    # The till's own settings layer moves it too (`pos_machines.settings_updated_at`).
+    # The till's point of sale has a settings layer of its own, between the shop and the
+    # till (`shop_areas.settings`); its `settings_updated_at` moves the watermark too.
+    area_layer = get_area(db, getattr(machine, "area_id", None))
+    watermark = max(
+        [as_utc(effective_settings_updated_at(company, shop, tenant, machine, area_layer))] + area_stamps
+    )
     since_dt: Optional[datetime] = None
     if since:
         try:
@@ -1390,9 +1925,11 @@ def get_settings_sync(
             settings={},
             business_info=None,
             area=area,
+            training_mode=bool(shop.training_mode),
         )
 
-    all_settings = merge_all_settings_layers(company, shop, tenant)
+    # Tenant → company → shop → area → this till: the till's own overrides win.
+    all_settings = merge_all_settings_layers(company, shop, tenant, machine, area_layer)
     effective = {k: all_settings[k] for k in MANAGED_SETTING_KEYS if k in all_settings}
     # The payment option keys always go out, resolved, so the till never has to
     # guess what an absent key means. The legacy pair is overwritten with values
@@ -1408,6 +1945,11 @@ def get_settings_sync(
     effective.update(resolve_sell_screen(all_settings))
     # The return-flow switches too (unset -> on).
     effective.update(resolve_refund_settings(all_settings))
+    # And the force switch (unset -> off): a layer reset to inherit must reach the till
+    # as `false`, not as a missing key it might read as "keep what you had".
+    effective["forceTerminalNumber"] = all_settings.get("forceTerminalNumber") is True
+    # "מצב הדרכה": the shop's flag, never a layer's setting (docs/SPEC_TRAINING_MODE.md).
+    effective["trainingMode"] = bool(shop.training_mode)
     business_info = build_business_info(company, shop, all_settings)
 
     update_machine_sync_timestamp(db, str(machine.id))
@@ -1419,6 +1961,7 @@ def get_settings_sync(
         settings=effective,
         business_info=business_info,
         area=area,
+        training_mode=bool(shop.training_mode),
     )
 
 
@@ -1483,3 +2026,170 @@ def get_stock_sync(
         stock_updated_at=watermark,
         levels=out,
     )
+
+
+@router.get(
+    "/{machine_id}/parameters",
+    response_model=TillParametersSyncResponse,
+    response_model_by_alias=True,
+)
+def get_till_parameters_sync(
+    machine_id: str,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    request: Request = None,
+    db: Session = Depends(get_db),
+):
+    """
+    This till's parameters ("פרמטרים לקופות"), resolved till → area → shop → company →
+    default (app/services/till_parameters.py). Always the full set:
+    `{"parameters": {key: value}, "updatedAt": ISO-8601 | null}`. Pulled on start and
+    on an Ably `settings` notify with reason `till_parameters_updated`.
+    """
+    resolved = till_parameters_for_machine(db, machine)
+    body = TillParametersSyncResponse(
+        parameters=resolved.parameters,
+        updated_at=resolved.updated_at,
+    )
+    # Only changes cross the wire: the till pulls this on every heartbeat, so an answer
+    # identical to the one it holds is a bare 304. The ETag is a hash of the resolved
+    # map itself — a deleted value or a deactivated parameter changes it too, which a
+    # timestamp watermark would miss.
+    if request is None:  # called directly, not over HTTP
+        return body
+    import hashlib
+    import json as _json
+
+    from fastapi.responses import JSONResponse, Response as _Response
+
+    payload = body.model_dump(mode="json", by_alias=True)
+    etag = '"' + hashlib.sha1(
+        _json.dumps(payload["parameters"], sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    ).hexdigest() + '"'
+    if request is not None and request.headers.get("if-none-match") == etag:
+        return _Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})
+    return JSONResponse(content=payload, headers={"ETag": etag})
+
+
+# ── App updates ("עדכון קופות", server → POS) ────────────────────────────────
+
+
+@router.get(
+    "/{machine_id}/app-update",
+    response_model=AppUpdateOffer,
+    response_model_by_alias=True,
+)
+def get_app_update(
+    machine_id: str,
+    version_code: int = Query(..., alias="versionCode"),
+    version_name: Optional[str] = Query(None, alias="versionName"),
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """
+    The release assigned to this till, if it should take it. Asked on every sync with
+    the version the till runs. Resolved till → area → shop → company → tenant, newest at
+    a level (app/services/app_updates.py); `available` only when that release is not
+    what the till runs and not a lower versionCode. Every key is always present.
+    """
+    resolved = app_updates.resolved_for_machine(db, machine)
+    if resolved is None:
+        return AppUpdateOffer(available=False)
+    assignment, release = resolved
+    if not app_updates.offer_for(release, version_code, version_name):
+        return AppUpdateOffer(available=False)
+    return AppUpdateOffer(
+        available=True,
+        release_id=str(release.id),
+        version_code=release.version_code,
+        version_name=release.version_name,
+        sha256=release.sha256,
+        size_bytes=release.size_bytes,
+        notes=release.notes,
+        auto_install=bool(assignment.auto_install),
+    )
+
+
+@router.get("/{machine_id}/app-update/{release_id}/apk")
+def get_app_update_apk(
+    machine_id: str,
+    release_id: uuid.UUID,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """
+    The APK of the release this till resolves to now — `404` for any other release, so
+    a till can only ever fetch what it was sent. Streamed from disk.
+    """
+    resolved = app_updates.resolved_for_machine(db, machine)
+    if resolved is None or resolved[1].id != release_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App release not found")
+    release = resolved[1]
+    if not os.path.isfile(release.file_path):
+        logger.error("app release %s: file missing at %s", release.id, release.file_path)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App release file missing")
+    return FileResponse(
+        release.file_path,
+        media_type="application/vnd.android.package-archive",
+        filename=f"app-{release.version_name}.apk",
+    )
+
+
+@router.post(
+    "/{machine_id}/app-update/status",
+    response_model=AppUpdateStatusOut,
+    response_model_by_alias=True,
+)
+def post_app_update_status(
+    machine_id: str,
+    body: AppUpdateStatusIn,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """
+    How taking a release is going on this till. One row per (till, release), replaced
+    by each report. `404` for an unknown release; any known one is accepted, assigned
+    or not, so a report that crosses a cancellation is still recorded.
+    """
+    release = db.query(AppRelease).filter(AppRelease.id == body.release_id).first()
+    if release is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App release not found")
+    now = datetime.now(timezone.utc)
+    row = (
+        db.query(AppReleaseMachineStatus)
+        .filter(
+            AppReleaseMachineStatus.machine_id == machine.id,
+            AppReleaseMachineStatus.release_id == release.id,
+        )
+        .first()
+    )
+    if row is None:
+        row = AppReleaseMachineStatus(
+            id=uuid.uuid4(),
+            machine_id=machine.id,
+            release_id=release.id,
+            created_at=now,
+        )
+        db.add(row)
+    row.status = body.status
+    row.message = body.message
+    row.version_name = body.version_name
+    row.updated_at = now
+    try:
+        db.commit()
+    except IntegrityError:
+        # Two reports of one pair raced; the other one's row is there now — update it.
+        db.rollback()
+        row = (
+            db.query(AppReleaseMachineStatus)
+            .filter(
+                AppReleaseMachineStatus.machine_id == machine.id,
+                AppReleaseMachineStatus.release_id == release.id,
+            )
+            .one()
+        )
+        row.status = body.status
+        row.message = body.message
+        row.version_name = body.version_name
+        row.updated_at = now
+        db.commit()
+    return AppUpdateStatusOut(release_id=release.id, status=row.status, updated_at=row.updated_at)

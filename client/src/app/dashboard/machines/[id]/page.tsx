@@ -16,11 +16,11 @@
 import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Monitor, Pencil, Store, Wifi, WifiOff } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
-import { api, fetchMachine, fetchShifts, fetchShops, fetchZReports } from '@/lib/api';
+import { api, fetchMachine, fetchShifts, fetchShops, fetchZReports, updateMachineLicense } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
 import { usePageScope, useSyncScopeFromRoute } from '@/lib/scope';
@@ -30,7 +30,14 @@ import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
 import { MachineHealthPanel, ClockSkewChip } from '@/components/dashboard/machine-health';
 import { SalesStats } from '@/components/dashboard/sales-stats';
 import { MachineCatalogCard } from '@/components/dashboard/machines/machine-catalog';
-import { MachineShiftSummary } from '@/components/dashboard/machines/machine-row';
+import {
+  MachineNameMismatchHint,
+  MachineShiftSummary,
+} from '@/components/dashboard/machines/machine-row';
+import { DeviceModelDialog } from '@/components/dashboard/machines/device-model';
+import { LicenseBadge, useIsSuperAdmin } from '@/components/dashboard/license-fields';
+import { TrainingBadge, TrainingStripe } from '@/components/dashboard/training-badge';
+import { LicenseDialog } from '@/components/dashboard/tenant-license-dialog';
 import { DeadTillRecovery } from '@/components/dashboard/dead-till-recovery';
 import {
   TransmissionHistory,
@@ -106,7 +113,12 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
   const canProduceZ = useCanProduceZ();
   const [closeShiftOpen, setCloseShiftOpen] = useState(false);
   const [areaOpen, setAreaOpen] = useState(false);
+  const [deviceModelOpen, setDeviceModelOpen] = useState(false);
   const tAreas = useTranslations('areas');
+  const tLicense = useTranslations('license');
+  const isSuperAdmin = useIsSuperAdmin();
+  const [licenseOpen, setLicenseOpen] = useState(false);
+  const queryClient = useQueryClient();
 
   usePageScope({ maxLevel: 'machine', silent: true });
 
@@ -217,6 +229,8 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="space-y-6">
+      {/* The till's shop is in training mode: whatever it sells is practice. */}
+      <TrainingStripe shop={shop} />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -227,6 +241,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
             {registerLabel && machine.name.trim() !== registerLabel ? (
               <span className="text-base text-muted-foreground">{machine.name}</span>
             ) : null}
+            <MachineNameMismatchHint m={machine} />
             <Badge variant="outline">
               {tMachines(`pairingStatusLabels.${machine.pairingStatus}`)}
             </Badge>
@@ -243,6 +258,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
               <Link href={`/dashboard/shops/${shop.id}`} className="hover:underline">
                 {shop.name}
               </Link>
+              <TrainingBadge shop={shop} />
             </p>
           ) : (
             <p className="text-sm text-muted-foreground">{t('shopNone')}</p>
@@ -284,6 +300,33 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
             />
           ) : null}
           <Field label={t('machineCode')} value={<span className="font-mono">{machine.machineCode}</span>} />
+          <Field
+            label={tMachines('deviceModel.label')}
+            value={
+              <span className="inline-flex items-center gap-1">
+                {machine.deviceModel ? (
+                  tMachines(`deviceModel.${machine.deviceModel}`)
+                ) : (
+                  <span className="text-muted-foreground" title={tMachines('deviceModel.unknownHint')}>
+                    {tMachines('deviceModel.unknown')}
+                  </span>
+                )}
+                {/* PUT /machines/{id} is the machine admins' — the same set that produces a Z. */}
+                {canProduceZ && !removed ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0"
+                    onClick={() => setDeviceModelOpen(true)}
+                    aria-label={tMachines('deviceModel.editTitle')}
+                    title={tMachines('deviceModel.editTitle')}
+                  >
+                    <Pencil className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
+                ) : null}
+              </span>
+            }
+          />
           {machine.shopId ? (
             <Field
               label={tAreas('area')}
@@ -313,7 +356,8 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
             value={
               <ZModeField
                 machine={machine}
-                canEdit={canProduceZ && !removed && machine.pairingStatus === 'assigned'}
+                // The owner's rule: the super admin alone switches a till's Z mode.
+                canEdit={isSuperAdmin && !removed && machine.pairingStatus === 'assigned'}
               />
             }
           />
@@ -361,6 +405,32 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
                   >
                     {shiftLabel({ sequenceNumber: machine.openShiftSequence ?? null })}
                   </Link>
+                ) : null}
+              </span>
+            }
+          />
+          {/* "לקוח קבוע / זמני" for this till alone — a till lent to an event. The super
+              admin's to change; the till also keeps any earlier end of its shop or above. */}
+          <Field
+            label={tLicense('label')}
+            value={
+              <span className="inline-flex items-center gap-1">
+                {machine.licenseType === 'temporary' ? (
+                  <LicenseBadge value={machine} />
+                ) : (
+                  tLicense('permanent')
+                )}
+                {isSuperAdmin && !removed ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0"
+                    onClick={() => setLicenseOpen(true)}
+                    aria-label={tLicense('machineTitle', { name: machine.name })}
+                    title={tLicense('machineTitle', { name: machine.name })}
+                  >
+                    <Pencil className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
                 ) : null}
               </span>
             }
@@ -639,6 +709,18 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
       </Card>
 
       <MachineAreaDialog machine={machine} open={areaOpen} onOpenChange={setAreaOpen} />
+      <DeviceModelDialog machine={machine} open={deviceModelOpen} onOpenChange={setDeviceModelOpen} />
+      <LicenseDialog
+        title={tLicense('machineTitle', { name: machine.name })}
+        initial={machine}
+        open={licenseOpen}
+        onOpenChange={setLicenseOpen}
+        onSave={async (v) => {
+          await updateMachineLicense(machine.id, v);
+          await queryClient.invalidateQueries({ queryKey: ['machine', id] });
+          await queryClient.invalidateQueries({ queryKey: ['machines'] });
+        }}
+      />
 
       <RemoteShiftCloseDialog
         key={machine.id}

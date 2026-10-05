@@ -240,7 +240,9 @@ function ZModeForm({
         : t('unreportedShiftsNoCount')
       : refusal?.code === 'z_in_progress'
         ? t('zInProgress')
-        : errors.forError(save.error);
+        : refusal?.code === 'till_open'
+          ? t('tillOpen')
+          : errors.forError(save.error);
 
   return (
     <>

@@ -13,7 +13,12 @@ from app.models.category import Category, CatalogLevel as CategoryCatalogLevel
 from app.models.product import Product, CatalogLevel as ProductCatalogLevel
 from app.models.sync_log import SyncLog, SyncDirection, SyncEntityType, SyncAction, SyncStatus
 from app.models.shop_product_override import ShopProductOverride
-from app.models.product_availability_override import CompanyProductOverride, MachineProductOverride
+from app.models.product_availability_override import (
+    AreaProductOverride,
+    CompanyProductOverride,
+    MachineProductOverride,
+)
+from app.models.category_availability_override import CategoryAvailabilityOverride
 from app.models.machine_catalog_item import MachineCatalogItem
 from app.models.shop_category_override import ShopCategoryOverride
 from app.models.shift import Shift, ShiftStatus
@@ -25,6 +30,7 @@ from app.models.pos_user import PosUser, PosUserRole
 from app.models.shop_z_sequence import ShopZSequence
 from app.models.machine_z_sequence import MachineZSequence
 from app.models.shop_register_sequence import ShopRegisterSequence
+from app.models.org_number_sequence import OrgNumberSequence
 from app.models.tenant_sku_sequence import TenantSkuSequence
 from app.models.tenant_local_sku_sequence import TenantLocalSkuSequence
 from app.models.voucher import Voucher, ValueDisplayMode
@@ -40,6 +46,40 @@ from app.models.card_transmission import (
     TransmitRequest,
     TransmitRequestStatus,
 )
+from app.models.till_parameter import TillParameter, TillParameterValue
+from app.models.offline_authorization import OfflineAuthorization, OfflineAuthorizationItem
+from app.models.app_release import AppRelease, AppReleaseAssignment, AppReleaseMachineStatus
+from app.models.accounting import AccountingExportBatch, AccountingExportItem, AccountingSettings
+from app.models.till_message import TillMessage, TillMessageReceipt
+from app.models.audit_exception import AuditException, ExceptionRuleValue, TillEvent
+from app.models.prepaid_voucher import (
+    PrepaidVoucher,
+    PrepaidVoucherBatch,
+    PrepaidVoucherBatchItem,
+    PrepaidVoucherRedemption,
+)
+from app.models.promotion import Promotion, TransactionPromotion
+from app.models.tables import DiningTable, TableCancelReason, TableEvent, TableOrder, TableReservation, TableZone
+from app.models.platform_setting import PlatformSetting
+from app.models.printers import KitchenPrinter, KitchenPrinterRoute, KitchenPrintJob
+from app.models.menu import (
+    MealSlot,
+    MealSlotOption,
+    MenuCourse,
+    MenuSyncState,
+    ModifierGroup,
+    ModifierLink,
+    ModifierOption,
+    PrepNotePreset,
+    TransactionItemPart,
+    UpsellRule,
+    UpsellStat,
+)
+from app.models.product_cost import ProductCost
+from app.models.report_event import ReportEvent, ReportEventMachine
+from app.models.training import DemoMenuItem, TrainingAuditLog, TrainingDocument
+from app.models.pos_user_session import PosUserSession
+from app.models.menu_broadcast import CatalogPublication, ShopWorkTypes
 
 __all__ = [
     "User", "UserRole",
@@ -58,9 +98,11 @@ __all__ = [
     "SyncLog", "SyncDirection", "SyncEntityType", "SyncAction", "SyncStatus",
     "ShopProductOverride",
     "CompanyProductOverride",
+    "AreaProductOverride",
     "MachineProductOverride",
     "MachineCatalogItem",
     "ShopCategoryOverride",
+    "CategoryAvailabilityOverride",
     "Shift", "ShiftStatus",
     "Transaction", "TransactionStatus",
     "TransactionItem",
@@ -68,6 +110,7 @@ __all__ = [
     "ZReport",
     "PosUser", "PosUserRole",
     "ShopRegisterSequence",
+    "OrgNumberSequence",
     "TenantSkuSequence",
     "TenantLocalSkuSequence",
     "Voucher", "ValueDisplayMode",
@@ -80,4 +123,20 @@ __all__ = [
     "TillZRequest", "TillZRequestStatus",
     "MachineZSequence",
     "CardTransmission", "CardTransmissionItem", "TransmitRequest", "TransmitRequestStatus",
+    "TillParameter", "TillParameterValue",
+    "OfflineAuthorization", "OfflineAuthorizationItem",
+    "AppRelease", "AppReleaseAssignment", "AppReleaseMachineStatus",
+    "AccountingSettings", "AccountingExportBatch", "AccountingExportItem",
+    "TillMessage", "TillMessageReceipt",
+    "AuditException", "ExceptionRuleValue", "TillEvent",
+    "PrepaidVoucherBatch", "PrepaidVoucherBatchItem", "PrepaidVoucher", "PrepaidVoucherRedemption",
+    "Promotion", "TransactionPromotion",
+    "TableZone", "DiningTable", "TableOrder", "TableEvent", "TableCancelReason", "TableReservation", "PlatformSetting",
+    "KitchenPrinter", "KitchenPrinterRoute", "KitchenPrintJob",
+    "ModifierGroup", "ModifierOption", "ModifierLink", "PrepNotePreset", "MealSlot", "MealSlotOption",
+    "UpsellRule", "UpsellStat", "MenuCourse", "MenuSyncState", "TransactionItemPart",
+    "ReportEvent", "ReportEventMachine",
+    "TrainingDocument", "TrainingAuditLog", "DemoMenuItem",
+    "PosUserSession",
+    "CatalogPublication", "ShopWorkTypes",
 ]

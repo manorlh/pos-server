@@ -27,6 +27,8 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { OverShort } from '@/components/dashboard/shifts/shift-parts';
 import { ZBadges } from '@/components/dashboard/z-report/z-badges';
+import { NumberPill } from '@/components/dashboard/number-pill';
+import { numberedLabel } from '@/lib/orgNumber';
 import { useZNumberLabel } from '@/components/dashboard/z-report/z-number';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
@@ -36,11 +38,16 @@ import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { ChevronLeft, ChevronRight, FilePlus2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileDown, FilePlus2, ListOrdered, Printer } from 'lucide-react';
+import { ZPrintViewToggle, type ZPrintView } from '@/components/dashboard/z-report/z-print-view-toggle';
+import { ZA4Batch, useZSequencePrint } from '@/components/dashboard/z-report/z-sequence-print';
+import { ZRangePrintDialog } from '@/components/dashboard/z-report/z-range-print-dialog';
 
 const PAGE_SIZE = 50;
 const ORIGIN_ANY = '__any__';
-const COLS = 12;
+const COLS = 14;
+
+type DateBasis = 'business' | 'production';
 
 /** The zone a `datetime-local` input's value is read in — the browser's own. */
 const BROWSER_TZ = (() => {
@@ -85,6 +92,15 @@ export default function ZReportsPage() {
   const [page, setPage] = useState(1);
   /** `''` = any, `none` = Zs run for no area, else an area of the shop in scope. */
   const [area, setArea] = useState<string>('');
+  /** What `from`/`to` and the order are on: the business date (default) or production. */
+  const [dateBasis, setDateBasis] = useState<DateBasis>('business');
+  const tp = useTranslations('zReports.tillPrint');
+  /** Zs ticked for "הדפס רצף" — kept across pages and filters until cleared. */
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  /** Which paper a sequence prints on: A4, or the till's 80 mm roll. */
+  const [printView, setPrintView] = useState<ZPrintView>('a4');
+  const [rangeOpen, setRangeOpen] = useState(false);
+  const sequence = useZSequencePrint();
   /** `''` = both, `cloud` = the shop's Zs, `till` = Zs the tills produced themselves. */
   const [origin, setOrigin] = useState<'' | 'cloud' | 'till'>('');
 
@@ -122,9 +138,10 @@ export default function ZReportsPage() {
     if (cf) p.closedFrom = cf;
     if (ct) p.closedTo = ct;
     if (area) p.areaId = area;
+    if (dateBasis !== 'business') p.dateBasis = dateBasis;
     if (origin) p.origin = origin;
     return p;
-  }, [machineId, shopId, from, to, closedFrom, closedTo, area, origin, page]);
+  }, [machineId, shopId, from, to, closedFrom, closedTo, area, dateBasis, origin, page]);
   const originItems = [
     { value: ORIGIN_ANY, label: t('originAll') },
     { value: 'cloud', label: t('originCloudOption') },
@@ -142,8 +159,27 @@ export default function ZReportsPage() {
   const hasClosedFilter = Boolean(closedFrom || closedTo);
   const open = (z: ZReport) => router.push(`/dashboard/z-reports/${z.id}`);
 
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const pageIds = data?.items.map((z) => z.id) ?? [];
+  const allOnPage = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+  const togglePage = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allOnPage) pageIds.forEach((id) => next.delete(id));
+      else pageIds.forEach((id) => next.add(id));
+      return next;
+    });
+  const printSelected = (pdf: boolean) => void sequence.run({ ids: [...selected] }, printView, pdf);
+
   return (
-    <div className="space-y-4">
+    <>
+    <div className="space-y-4 print:hidden">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{t('title')}</h1>
@@ -159,9 +195,33 @@ export default function ZReportsPage() {
 
       <ScopeGate resolution={resolution}>
       <div className="rounded-lg border bg-card p-4 space-y-3">
+        {/* Which date the range and the order are on. A Z produced after midnight is
+            filed under the day before as a business date, under the new day as produced. */}
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label={t('dateBasisLabel')}>
+          <span className="text-muted-foreground text-xs">{t('dateBasisLabel')}</span>
+          <div className="inline-flex rounded-md border p-0.5">
+            {(['business', 'production'] as const).map((basis) => (
+              <button
+                key={basis}
+                type="button"
+                aria-pressed={dateBasis === basis}
+                onClick={() => { setDateBasis(basis); resetPage(); }}
+                className={`rounded px-2.5 py-1 text-xs ${
+                  dateBasis === basis
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {t(`dateBasis.${basis}`)}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="grid gap-3 md:grid-cols-4">
           <div className="space-y-1">
-            <Label className="text-xs">{t('filterFrom')}</Label>
+            <Label className="text-xs">
+              {dateBasis === 'production' ? t('filterFromProduction') : t('filterFrom')}
+            </Label>
             <Input
               type="date"
               value={from}
@@ -169,7 +229,9 @@ export default function ZReportsPage() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">{t('filterTo')}</Label>
+            <Label className="text-xs">
+              {dateBasis === 'production' ? t('filterToProduction') : t('filterTo')}
+            </Label>
             <Input
               type="date"
               value={to}
@@ -204,7 +266,11 @@ export default function ZReportsPage() {
             </Select>
           </div>
         </div>
-        <p className="text-muted-foreground text-xs">{t('businessDateFilterHint')}</p>
+        <p className="text-muted-foreground text-xs">
+          {dateBasis === 'production'
+            ? t('productionDateFilterHint', { tz: data?.window?.timezone ?? '—' })
+            : t('businessDateFilterHint')}
+        </p>
         {/* With no date at all the server answers the last 90 days, not everything. */}
         {!from && !to && !closedFrom && !closedTo ? (
           <p className="text-muted-foreground text-xs">{t('defaultWindowHint')}</p>
@@ -245,16 +311,119 @@ export default function ZReportsPage() {
         ) : null}
       </div>
 
+      {/* Printing several Zs: the ticked ones, or a range of one shop, in Z-number order. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <ZPrintViewToggle value={printView} onChange={setPrintView} />
+        <span className="text-muted-foreground text-xs tabular-nums">
+          {tp('selected', { count: selected.size })}
+        </span>
+        {selected.size > 0 ? (
+          <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+            {tp('clearSelection')}
+          </Button>
+        ) : null}
+        <Button size="sm" disabled={selected.size === 0 || sequence.busy} onClick={() => printSelected(false)}>
+          <Printer className="h-4 w-4 me-1" aria-hidden />
+          {tp('printSequence')}
+        </Button>
+        <Button size="sm" variant="outline" disabled={selected.size === 0 || sequence.busy} onClick={() => printSelected(true)}>
+          <FileDown className="h-4 w-4 me-1" aria-hidden />
+          {tp('pdfSequence')}
+        </Button>
+        <Button size="sm" variant="outline" disabled={sequence.busy} onClick={() => setRangeOpen(true)}>
+          <ListOrdered className="h-4 w-4 me-1" aria-hidden />
+          {tp('printRange')}
+        </Button>
+      </div>
+
       {isError ? (
         <ReportErrorState message={axiosErrorToToastMessage(error, tc('error'))} />
       ) : (
-      <div className="rounded-lg border bg-card overflow-x-auto">
+      <>
+      {/* A phone gets one card per Z; the twelve-column table from md up. */}
+      <ul className="divide-y rounded-lg border bg-card md:hidden">
+        {isLoading ? (
+          Array.from({ length: 5 }).map((_, i) => (
+            <li key={i} className="p-3"><Skeleton className="h-12 w-full" /></li>
+          ))
+        ) : !data || data.items.length === 0 ? (
+          <li className="py-6 text-center text-sm text-muted-foreground">{t('noReports')}</li>
+        ) : (
+          data.items.map((z) => {
+            const shopName = z.shopName ?? findBySameId(scope.shops, z.shopId)?.name;
+            return (
+              <li key={z.id} className="flex items-start">
+                <input
+                  type="checkbox"
+                  className="ms-3 mt-4 h-4 w-4 shrink-0"
+                  aria-label={tp('select')}
+                  checked={selected.has(z.id)}
+                  onChange={() => toggle(z.id)}
+                />
+                <Link href={`/dashboard/z-reports/${z.id}`} className="block min-w-0 flex-1 space-y-1 p-3 text-sm hover:bg-muted/50">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="font-medium tabular-nums">
+                      {t('zNumber')} {(z.zNumber ?? z.shopSequenceNumber) ?? '—'}
+                      <ZBadges z={z} />
+                    </span>
+                    <span className="font-medium tabular-nums">{formatCurrency(z.totalSales)}</span>
+                  </div>
+                  <div className="text-muted-foreground flex flex-wrap gap-x-2 text-xs">
+                    {/* Both dates, the chosen basis first. */}
+                    {dateBasis === 'production' && z.productionDate ? (
+                      <>
+                        <span>{t('productionDate')} {formatDate(z.productionDate)}</span>
+                        <span>· {t('businessDate')} {formatDate(z.businessDate)}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>{t('businessDate')} {formatDate(z.businessDate)}</span>
+                        {z.productionDate ? (
+                          <span>· {t('productionDate')} {formatDate(z.productionDate)}</span>
+                        ) : null}
+                      </>
+                    )}
+                    <span>· {numberedLabel(z.shopNumber, shopName ?? '—')}</span>
+                    {z.areaName ? <span>· {z.areaName}</span> : null}
+                    {z.legacy && z.machineName ? <span>· {z.machineName}</span> : null}
+                  </div>
+                  <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 text-xs">
+                    <span>{t('cash')} {formatCurrency(z.totalCashSales)}</span>
+                    <span>{t('card')} {formatCurrency(z.totalCardSales)}</span>
+                    <span className="inline-flex items-center gap-1">
+                      {t('discrepancy')}{' '}
+                      <OverShort value={z.discrepancy} uncountedLabel={t('discrepancyWithheld')} />
+                    </span>
+                  </div>
+                </Link>
+              </li>
+            );
+          })
+        )}
+      </ul>
+
+      <div className="hidden rounded-lg border bg-card overflow-x-auto md:block">
         <Table>
           <TableHeader>
             <TableRow>
-              {/* First column: it is the document's name, not an attribute of it. */}
+              <TableHead className="w-8">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 align-middle"
+                  aria-label={tp('selectAll')}
+                  checked={allOnPage}
+                  disabled={pageIds.length === 0}
+                  onChange={togglePage}
+                />
+              </TableHead>
+              {/* First column after the tick: it is the document's name, not an attribute of it. */}
               <TableHead>{t('zNumber')}</TableHead>
-              <TableHead>{t('businessDate')}</TableHead>
+              <TableHead className={dateBasis === 'business' ? 'text-foreground' : undefined}>
+                {t('businessDate')}
+              </TableHead>
+              <TableHead className={dateBasis === 'production' ? 'text-foreground' : undefined}>
+                {t('productionDate')}
+              </TableHead>
               <TableHead>{t('shop')}</TableHead>
               <TableHead>{t('area')}</TableHead>
               <TableHead>{t('period')}</TableHead>
@@ -285,6 +454,15 @@ export default function ZReportsPage() {
                 const shopName = z.shopName ?? findBySameId(scope.shops, z.shopId)?.name;
                 return (
                   <TableRow key={z.id} className="cursor-pointer" onClick={() => open(z)}>
+                    <TableCell className="w-8" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 align-middle"
+                        aria-label={tp('select')}
+                        checked={selected.has(z.id)}
+                        onChange={() => toggle(z.id)}
+                      />
+                    </TableCell>
                     <TableCell className="font-medium tabular-nums whitespace-nowrap">
                       <Link
                         href={`/dashboard/z-reports/${z.id}`}
@@ -298,7 +476,9 @@ export default function ZReportsPage() {
                       <ZBadges z={z} />
                     </TableCell>
                     <TableCell>{formatDate(z.businessDate)}</TableCell>
+                    <TableCell>{z.productionDate ? formatDate(z.productionDate) : '—'}</TableCell>
                     <TableCell>
+                      <NumberPill n={z.shopNumber} className="me-1" />
                       {shopName ?? '—'}
                       {(z.legacy || z.origin === 'till') && z.machineName ? (
                         <div className="text-muted-foreground text-xs">{z.machineName}</div>
@@ -331,6 +511,7 @@ export default function ZReportsPage() {
           </TableBody>
         </Table>
       </div>
+      </>
       )}
 
       {data && data.total > 0 && (
@@ -353,6 +534,19 @@ export default function ZReportsPage() {
         </div>
       )}
       </ScopeGate>
+      <ZRangePrintDialog
+        open={rangeOpen}
+        onOpenChange={setRangeOpen}
+        shopId={shopId}
+        dateBasis={dateBasis}
+        view={printView}
+        onViewChange={setPrintView}
+        busy={sequence.busy}
+        onPrint={(range, pdf) => sequence.run({ range }, printView, pdf)}
+      />
     </div>
+    {/* The A4 documents of a sequence: hidden on screen, one per printed page. */}
+    <ZA4Batch batch={sequence.a4} />
+    </>
   );
 }

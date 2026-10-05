@@ -1,7 +1,7 @@
 import uuid
 import enum
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum as SQLEnum
+from sqlalchemy import Column, Date, String, DateTime, ForeignKey, Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -29,6 +29,11 @@ class Tenant(Base):
     timezone = Column(String(100), nullable=False, default="UTC")
     default_currency = Column(String(8), nullable=False, default="ILS")
     locale = Column(String(32), nullable=False, default="en")
+    #: "permanent" | "temporary" — a short-term customer or a one-off event. A temporary
+    #: one stops selling after `license_expires_on` (app/services/licenses.py). Set by
+    #: the super admin only.
+    license_type = Column(String(16), nullable=False, default="permanent", server_default="permanent")
+    license_expires_on = Column(Date, nullable=True)
     settings = Column(JSONB, nullable=True)
     settings_updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)

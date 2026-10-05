@@ -25,6 +25,11 @@ import type { Shift } from '@/lib/types';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import { PeriodTransmissionSummary } from '@/components/dashboard/machines/card-transmission';
 import {
+  OfflineDeclinedList,
+  OfflineNotice,
+  offlineOf,
+} from '@/components/dashboard/z-report/offline-summary';
+import {
   CountedCash,
   Fact,
   MoneyRow,
@@ -113,6 +118,7 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
   const late = shift.lateDocuments ?? 0;
   const basis = shift.reconstructionBasis ?? null;
   const till = shift.tillTotals ?? null;
+  const offline = offlineOf(shift.offline);
 
   return (
     <div className="space-y-6">
@@ -312,6 +318,14 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
           </Card>
         ) : null}
       </div>
+
+      {/* Offline-approved card sales of the shift the acquirer then declined (or approved). */}
+      {offline ? (
+        <div className="space-y-2">
+          <OfflineNotice figures={offline} />
+          <OfflineDeclinedList declined={shift.offline?.declined ?? []} />
+        </div>
+      ) : null}
 
       {shift.totalsMismatch && till ? (
         <Card>

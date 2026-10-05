@@ -12,11 +12,12 @@ accepted close — is here too, behind `app.services.remote_close`.
 """
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Dict, Iterable, List, Optional, Sequence, Set
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, joinedload
@@ -25,7 +26,7 @@ from app.models.pos_machine import PairingStatus, POSMachine
 from app.models.shift import Shift, ShiftStatus
 from app.models.shop import Shop
 from app.models.tenant import Tenant
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.z_run import (
     LIVE_ITEM_STATUSES,
     PENDING_ITEM_STATUSES,
@@ -36,12 +37,16 @@ from app.models.z_run import (
 )
 from app.services.close_progress import documents_on_cloud, till_backlog
 from app.services.machine_status import is_online
+from app.services.shift_totals import compute_totals, till_totals_mismatch
 from app.services.shifts import is_foreign_shift, shift_exists
 from app.services.z_builder import (
+    EMPTY_Z,
+    EMPTY_Z_MESSAGE,
     Z_MODE_TILL,
     ZBuildRefused,
     build_z,
     shift_order_key,
+    shifts_show_activity,
     unreported_shifts,
 )
 
@@ -59,6 +64,39 @@ def z_scope_of(tenant: Optional[Tenant]) -> str:
     """The tenant's `zScope` setting: one Z per shop (default) or one till per Z."""
     raw = ((tenant.settings or {}) if tenant is not None else {}).get("zScope")
     return Z_SCOPE_MACHINE if raw == Z_SCOPE_MACHINE else Z_SCOPE_SHOP
+
+
+def per_till_ids(
+    db: Session, machines: Sequence[POSMachine], tenant: Optional[Tenant] = None, shop: Optional[Shop] = None
+) -> set:
+    """
+    The tills among these that produce their own Z (`zMode = till`, docs/SHIFTS_API.md
+    §5): a shop Z neither takes them nor waits for them.
+    """
+    return {m.id for m in machines if getattr(m, "z_mode", None) == Z_MODE_TILL}
+
+
+def tills_not_closed(db: Session, machines: Sequence[POSMachine]) -> List[dict]:
+    """
+    Of these tills, the ones a change of Z mode would cut through: an open shift, or
+    closed shifts no Z has taken yet. The mode changes only over a clean break — every
+    till closed and in a Z — so the first Z under the new mode starts from nothing
+    (`app.services.till_z.set_z_mode`, the super admin's).
+    """
+    out = []
+    for m in machines:
+        if m.shop_id is None:
+            continue
+        cand = till_candidates(db, m, m.shop_id)
+        if cand.open_shift is not None or cand.closed:
+            out.append({
+                "machineId": str(m.id),
+                "posNumber": m.pos_number,
+                "name": m.name,
+                "openShift": cand.open_shift is not None,
+                "awaitingZ": len(cand.closed),
+            })
+    return out
 
 
 # ── Candidates ────────────────────────────────────────────────────────────────
@@ -193,6 +231,21 @@ def expire_overdue_runs(db: Session, *, now: Optional[datetime] = None) -> int:
                 item.error_message = "The till did not close its shift in time"
                 item.failed_at = now
                 changed += 1
+        if getattr(run, "strict_cloud_check", False):
+            # A shop Z from the master till never goes without a till the operator did not
+            # defer: built now only if every till still checks out, else expired whole.
+            db.flush()
+            expired_any = any(i.status == ZRunItemStatus.EXPIRED for i in run.items)
+            if not expired_any and finalise_if_ready(db, run, now=now):
+                changed += 1
+                continue
+            run = lock_run(db, run)
+            if run.status == ZRunStatus.WAITING:
+                run.status = ZRunStatus.EXPIRED
+                run.error_code = "expired"
+                run.error_message = "The shop Z was not finished in time: not every till was confirmed by the cloud"
+            changed += 1
+            continue
         if any(i.status == ZRunItemStatus.READY for i in run.items):
             db.flush()
             finalise_if_ready(db, run, now=now, left_out=LEFT_OUT_AT_EXPIRY)
@@ -202,9 +255,71 @@ def expire_overdue_runs(db: Session, *, now: Optional[datetime] = None) -> int:
             run.error_code = "expired"
             run.error_message = "The Z run was not finished in time"
             changed += 1
+    # A run already stalled before `end_if_stalled` ran on its tills' answers.
+    for candidate in db.query(ZRun).filter(ZRun.status == ZRunStatus.WAITING).all():
+        if _stalled(candidate) and end_if_stalled(db, candidate):
+            changed += 1
     if changed:
         db.flush()
     return changed
+
+
+#: A till's refusal in words, for the run's message (the till's own codes, §close-shift).
+_FAILED_REASONS = {
+    "open_tables": "יש בה שולחנות פתוחים",
+    "no_open_shift": "אין בה משמרת פתוחה",
+    "unknown_shift": "המשמרת בה השתנתה",
+    "shift_changed": "המשמרת בה השתנתה",
+    "shift_belongs_to_another_machine": "המשמרת שייכת לקופה אחרת",
+    "expired": "לא נסגרה בזמן",
+}
+#: The till's English detail before the list it names ("open tables: 3, מנור").
+_OPEN_TABLES_PREFIX = "open tables:"
+TILLS_FAILED = "tills_failed"
+
+
+def _stalled(run: ZRun) -> bool:
+    """No till is still closing and none is ready, and one failed: nothing can move it."""
+    statuses = [i.status for i in run.items]
+    if any(s in PENDING_ITEM_STATUSES or s == ZRunItemStatus.READY for s in statuses):
+        return False
+    return any(s in (ZRunItemStatus.FAILED, ZRunItemStatus.EXPIRED) for s in statuses)
+
+
+def _failure_text(item: ZRunItem) -> str:
+    machine = item.machine
+    name = (machine.name or "").strip() if machine is not None else ""
+    if machine is not None and (machine.pos_number or "").strip():
+        name = f"{name} #{machine.pos_number.strip()}".strip()
+    name = name or "קופה"
+    reason = _FAILED_REASONS.get(item.error_code or "", "הסגירה נכשלה")
+    detail = (item.error_message or "").strip()
+    if item.error_code == "open_tables" and detail.lower().startswith(_OPEN_TABLES_PREFIX):
+        reason += f" ({detail[len(_OPEN_TABLES_PREFIX):].strip()})"
+    return f"{name}: {reason}"
+
+
+def end_if_stalled(db: Session, run: ZRun) -> bool:
+    """
+    End a run that nothing can move any more: every till failed (open tables on it, no
+    open shift, …) or was left out, so no close is on its way and nothing is ready to
+    build. It would otherwise wait for its TTL behind a "producing the Z" screen with no
+    way on, holding the shop's next Z. It fails now with the tills' reasons; their
+    shifts stay as they are, and a new Z can start once the reason is fixed.
+
+    A run with a ready till is not ended here: the operator may still build it without
+    the failed ones (`proceed_without`).
+    """
+    run = lock_run(db, run)
+    if run.status != ZRunStatus.WAITING or not _stalled(run):
+        return False
+    failed = [i for i in run.items if i.status in (ZRunItemStatus.FAILED, ZRunItemStatus.EXPIRED)]
+    run.status = ZRunStatus.FAILED
+    run.error_code = TILLS_FAILED
+    run.error_message = "; ".join(_failure_text(i) for i in failed) + ". מתקנים ומתחילים שוב."
+    db.flush()
+    logger.info("Z run %s ended: %s", run.id, run.error_message)
+    return True
 
 
 # ── Create ────────────────────────────────────────────────────────────────────
@@ -260,7 +375,7 @@ def _initiator(user: User) -> str:
 
 
 def _send_close(machine: POSMachine, item: ZRunItem, user: User, now: datetime) -> None:
-    from app.services.ably_notify import publish_close_shift_notify
+    from app.services.ably_notify import is_enabled, publish_close_shift_notify
 
     if not machine.tenant_id or not is_online(machine.last_heartbeat_at, now=now):
         # Offline is a delay, not a failure: the till collects it on its next heartbeat.
@@ -272,7 +387,272 @@ def _send_close(machine: POSMachine, item: ZRunItem, user: User, now: datetime) 
         str(named_shift_id(item)) if named_shift_id(item) else None,
         _initiator(user),
     )
-    item.sent_at = now
+    # "Sent" only when realtime really carried it: without Ably the publish is skipped, and
+    # the heartbeat that hands the close over stamps it (`take_pending_close_shift`) — so a
+    # run's timeline shows when the till actually got its command.
+    if is_enabled():
+        item.sent_at = now
+
+
+# ── Tills a shop Z leaves out ─────────────────────────────────────────────────
+
+#: The `error_code` of a marker item: a till this run was confirmed to go without
+#: (`shopZOpenTills` = "allowed with the operator's confirmation"). Always EXCLUDED, never
+#: sent to the till and never built from — it only carries the confirmation from the
+#: request that started the run to the build, which may come hours later, and is shown
+#: on the run (`openTillsLeftOut`) rather than among its items.
+LEFT_OUT_CODE = "open_till_left_out"
+
+
+@dataclass
+class LeftOutTill:
+    machine: POSMachine
+    #: The open shift left open (the cloud's row, else the one the till claims); None
+    #: when only closed shifts are left behind.
+    open_shift_id: Optional[uuid.UUID]
+
+    def to_json(self) -> dict:
+        return {
+            "id": str(self.machine.id),
+            "posNumber": self.machine.pos_number,
+            "name": self.machine.name,
+            "openShiftId": str(self.open_shift_id) if self.open_shift_id else None,
+        }
+
+
+def _open_shift_of(db: Session, machine: POSMachine, cand: TillCandidates, shop_id) -> Optional[uuid.UUID]:
+    """The till's open shift as a run would ask it to close, or None if it has none."""
+    if not is_seated_in(machine, shop_id):
+        return None
+    if cand.open_shift is not None:
+        return cand.open_shift.id
+    if _reported_open_is_live(db, machine):
+        return machine.reported_open_shift_id
+    return None
+
+
+def tills_left_out(
+    db: Session,
+    user: User,
+    shop: Shop,
+    tills: Dict[uuid.UUID, POSMachine],
+    selections: Dict[uuid.UUID, MachineSelection],
+    *,
+    area=None,
+    own_z: Optional[set] = None,
+) -> List[LeftOutTill]:
+    """
+    The tills of the shop this Z would leave something behind on: a selected till whose
+    open shift is not being closed into it, and an unselected till with an open shift or
+    closed shifts awaiting a Z.
+
+    Bounded the way the candidates are: an area's Z looks at that area's tills only, a
+    distributor at their own terminals only. A till another run is already producing a
+    Z for is that run's business, not this one's — and so is a till that produces its own
+    Z (`own_z`, `zMode = till`): a shop Z never waits for it.
+    """
+    own_z = own_z or set()
+    considered = [
+        m for m in tills.values()
+        if (area is None or (str(m.area_id) == str(area.id) and is_seated_in(m, shop.id)))
+        and (m.id in selections or m.id not in own_z)
+    ]
+    if user.role == UserRole.DISTRIBUTOR:
+        considered = [m for m in considered if str(m.distributor_id) == str(user.id)]
+    busy = _live_items(db, [m.id for m in considered if m.id not in selections])
+
+    left: List[LeftOutTill] = []
+    for machine in considered:
+        if machine.id in busy:
+            continue
+        cand = till_candidates(db, machine, shop.id)
+        open_id = _open_shift_of(db, machine, cand, shop.id)
+        sel = selections.get(machine.id)
+        if sel is not None:
+            leaves_open = open_id is not None and sel.include_open_shift is False
+            if leaves_open:
+                left.append(LeftOutTill(machine=machine, open_shift_id=open_id))
+        elif open_id is not None or cand.closed:
+            left.append(LeftOutTill(machine=machine, open_shift_id=open_id))
+    return left
+
+
+def open_tills_rule(db: Session, tenant: Optional[Tenant], shop: Shop) -> Optional[str]:
+    """
+    `shopZOpenTills` for this shop: "block" or "confirm"; None when it does not apply —
+    one till per Z (the tenant's `zScope`), or the parameter missing or deactivated by a
+    super admin.
+
+    A value that is neither option (one renamed since) reads as "confirm": the rule
+    still holds, the gentler way.
+    """
+    if z_scope_of(tenant) != Z_SCOPE_SHOP:
+        return None
+    from app.services import till_parameters as TP
+
+    value = TP.resolve_for_shop(db, shop).get(TP.SHOP_Z_OPEN_TILLS_KEY)
+    if value is None:
+        return None
+    return "block" if value == TP.SHOP_Z_OPEN_TILLS_BLOCK else "confirm"
+
+
+def check_open_tills(
+    db: Session,
+    tenant: Optional[Tenant],
+    shop: Shop,
+    left_out: Sequence[LeftOutTill],
+    *,
+    confirmed: bool,
+) -> bool:
+    """
+    Refuse a shop Z the rule does not allow (409); True when it goes ahead on the
+    operator's confirmation, and so the tills it goes without are to be recorded.
+    """
+    if not left_out:
+        return False
+    rule = open_tills_rule(db, tenant, shop)
+    if rule is None:
+        return False
+    tills = [t.to_json() for t in left_out]
+    if rule == "block":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "open_tills_block_z", "tills": tills},
+        )
+    if not confirmed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "open_tills_need_confirmation", "tills": tills},
+        )
+    return True
+
+
+def _left_out_marker(run: ZRun, till: LeftOutTill) -> ZRunItem:
+    return ZRunItem(
+        id=uuid.uuid4(),
+        run_id=run.id,
+        machine_id=till.machine.id,
+        include_open_shift=False,
+        status=ZRunItemStatus.EXCLUDED,
+        error_code=LEFT_OUT_CODE,
+        error_message=json.dumps(till.to_json(), ensure_ascii=False),
+    )
+
+
+def is_left_out_marker(item: ZRunItem) -> bool:
+    return item.error_code == LEFT_OUT_CODE and item.status == ZRunItemStatus.EXCLUDED
+
+
+def open_tills_left_out(db: Session, run: ZRun) -> Optional[dict]:
+    """
+    The confirmation a run was started with: the tills it went without, and who
+    confirmed it (the operator who started the run — the confirmation is part of that
+    request) and when. None for a run that needed none.
+    """
+    markers = [i for i in run.items if is_left_out_marker(i)]
+    if not markers:
+        return None
+    tills = []
+    for item in markers:
+        try:
+            tills.append(json.loads(item.error_message or "{}"))
+        except ValueError:
+            tills.append({"id": str(item.machine_id), "posNumber": None, "name": None, "openShiftId": None})
+    confirmer = db.query(User).filter(User.id == run.created_by_user_id).first()
+    # Started from a master till: the till user who typed the confirmation, as stamped on
+    # the markers (app/routers/till_shop_z.py) — not the user the run is filed under.
+    stamped = next((t.get("confirmedBy") for t in tills if isinstance(t, dict) and t.get("confirmedBy")), None)
+    # A till deferred with "סגור" while the run waited carries its own moment.
+    stamped_at = next((t.get("confirmedAt") for t in tills if isinstance(t, dict) and t.get("confirmedAt")), None)
+    return {
+        "tills": tills,
+        "confirmedByUserId": str(run.created_by_user_id) if run.created_by_user_id else None,
+        "confirmedByName": stamped or (_initiator(confirmer) if confirmer is not None else None),
+        "confirmedAt": stamped_at or (_aware(run.created_at).isoformat() if run.created_at else None),
+    }
+
+
+# ── No Z on nothing ───────────────────────────────────────────────────────────
+
+
+def _reported_pending_documents(machine: Optional[POSMachine]) -> int:
+    """The till's own last count of documents not yet sent (a reading, not live)."""
+    if machine is None:
+        return 0
+    pending = machine.pending_documents
+    if pending is None:
+        pending = machine.pending_count
+    try:
+        return max(int(pending or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _item_shifts(db: Session, run: ZRun, item: ZRunItem) -> List[Shift]:
+    """The shifts the Z would take for this item, as the cloud holds them now."""
+    shifts = unreported_shifts(db, item.machine_id, shop_id=run.shop_id)
+    if item.status == ZRunItemStatus.READY and item.through_shift_id is not None:
+        ids = [s.id for s in shifts]
+        if item.through_shift_id in ids:
+            return shifts[: ids.index(item.through_shift_id) + 1]
+    # A till asked to close: every un-Z'd shift of it here, the open one included.
+    return shifts
+
+
+def run_may_have_activity(
+    db: Session, run: ZRun, machines: Optional[Dict[uuid.UUID, POSMachine]] = None
+) -> bool:
+    """
+    Whether the Z this run would build can have anything in it: activity in the shifts
+    it would take (`shifts_show_activity`), or a till it asks to close that says it has
+    documents not yet on the cloud. False is a run that could only end in "nothing to
+    report" — no Z on 0.
+    """
+    per_till: List[List[Shift]] = []
+    for item in run.items:
+        if item.status == ZRunItemStatus.EXCLUDED:
+            continue
+        if item.status in PENDING_ITEM_STATUSES:
+            machine = (machines or {}).get(item.machine_id) or item.machine
+            if _reported_pending_documents(machine) > 0:
+                return True
+        per_till.append(_item_shifts(db, run, item))
+    return shifts_show_activity(db, per_till)
+
+
+def shop_activity(db: Session, shop_id: uuid.UUID, machines: Sequence[POSMachine]) -> dict:
+    """
+    What a shop Z of these tills could report, as the cloud knows it now — what the
+    master till asks before it offers to start one. Per till: the documents in its shifts
+    no Z has taken (open ones too) and whether they show activity; and the documents the
+    tills say they still have to send. `hasActivity` false: no Z on 0.
+    """
+    from app.services.shift_totals import compute_totals as _totals
+    from app.services.z_builder import figures_show_activity, z_cash_summary
+
+    tills: Dict[str, dict] = {}
+    any_activity = False
+    documents = 0
+    pending = 0
+    for machine in machines:
+        shifts = unreported_shifts(db, machine.id, shop_id=shop_id)
+        totals = _totals(db, [s.id for s in shifts]) if shifts else None
+        count = (totals.transactions_count + totals.non_sale_count) if totals is not None else 0
+        active = bool(shifts) and figures_show_activity(
+            totals, z_cash_summary([shifts])["between_shifts"]
+        )
+        waiting = _reported_pending_documents(machine) if is_seated_in(machine, shop_id) else 0
+        tills[str(machine.id)] = {"documents": count, "pendingDocuments": waiting, "active": active}
+        any_activity = any_activity or active or waiting > 0
+        documents += count
+        pending += waiting
+    return {
+        "hasActivity": any_activity,
+        "documents": documents,
+        "pendingDocuments": pending,
+        "message": None if any_activity else EMPTY_Z_MESSAGE,
+        "tills": tills,
+    }
 
 
 def create_z_run(
@@ -284,10 +664,20 @@ def create_z_run(
     *,
     business_date: Optional[date] = None,
     area_id: Optional[uuid.UUID] = None,
+    confirm_open_tills: bool = False,
+    strict_cloud_check: bool = False,
     now: Optional[datetime] = None,
 ) -> ZRun:
     """
     Start a run (and build at once when nothing needs closing). Raises HTTPException.
+
+    `strict_cloud_check` (a shop Z from the master till): the Z is built only once the
+    cloud has verified every till (`verify_item`), whenever that happens.
+
+    A shop Z that leaves tills behind (`tills_left_out`) is subject to the shop's
+    `shopZOpenTills` parameter: refused outright, or refused until the request carries
+    `confirm_open_tills` — and then the tills it goes without are recorded on the run
+    and frozen into the Z's header (`openTillsLeftOut`).
 
     With `area_id`, a Z for that area of the shop: the area must be a live one of this
     shop and every listed till must be in it now. Nothing else changes — the same shop
@@ -314,6 +704,9 @@ def create_z_run(
         )
 
     tills = {m.id: m for m in shop_tills(db, shop.id)}
+    # A till in `zMode = till` makes its own Z: the shop's Z neither takes it (refused
+    # below) nor waits for it.
+    own_z = per_till_ids(db, list(tills.values()), tenant, shop)
     for machine_id in wanted:
         if machine_id not in tills:
             raise HTTPException(
@@ -343,6 +736,15 @@ def create_z_run(
             detail=f"z_run_in_progress:{next(iter(live.values())).run_id}",
         )
 
+    # "חסימת סגירת יום עם שולחנות פתוחים": 409 `open_tables_block_z` with the tables.
+    from app.services.tables import refuse_z_with_open_tables
+
+    refuse_z_with_open_tables(db, shop, area.id if area is not None else None)
+
+    by_id = {sel.machine_id: sel for sel in selections}
+    left_out = tills_left_out(db, user, shop, tills, by_id, area=area, own_z=own_z)
+    record_left_out = check_open_tills(db, tenant, shop, left_out, confirmed=confirm_open_tills)
+
     run = ZRun(
         id=uuid.uuid4(),
         tenant_id=tenant.id,
@@ -352,11 +754,11 @@ def create_z_run(
         status=ZRunStatus.WAITING,
         business_date=business_date,
         expires_at=now + timedelta(hours=Z_RUN_TTL_HOURS),
+        strict_cloud_check=bool(strict_cloud_check),
     )
     db.add(run)
     db.flush()
 
-    by_id = {sel.machine_id: sel for sel in selections}
     to_notify: List[tuple] = []
     for machine_id in wanted:
         sel = by_id[machine_id]
@@ -402,16 +804,219 @@ def create_z_run(
             item.error_message = "No closed shift waiting for a Z"
         db.add(item)
 
+    if record_left_out:
+        for till in left_out:
+            db.add(_left_out_marker(run, till))
+
     db.flush()
     db.refresh(run)
     if all(i.status == ZRunItemStatus.EXCLUDED for i in run.items):
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="nothing_to_report")
+    # No Z on nothing ("אל תאפשר לסגור Z על 0"): when the cloud already knows that the
+    # shifts this run would take have no activity, and no till it would close says it has
+    # documents still to send, refuse now — before any till closes a shift for a Z that
+    # could not be made. (The build refuses it too, whatever comes in meanwhile.)
+    if not run_may_have_activity(db, run, tills):
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": EMPTY_Z, "message": EMPTY_Z_MESSAGE},
+        )
 
     for machine, item in to_notify:
         _send_close(machine, item, user, now)
     finalise_if_ready(db, run, now=now)
     return run
+
+
+# ── Strict cloud verification (a shop Z from the master till) ─────────────────
+#
+# "Don't close the Z until the cloud confirms every till is closed." A strict run builds
+# only when, for every till it takes, each shift the Z would take is closed on the cloud,
+# its close accepted, and the till's own figures at the close (its count of documents and
+# its totals) agree with the documents the cloud holds — every sale is here. A till that
+# does not check out keeps the run waiting (`waiting_transactions` on its item) and is
+# looked at again on every poll and whenever a late document of its shifts arrives. The
+# only way past it is the operator's typed "סגור", which defers the till to the next Z
+# and records who decided (`proceed_without(..., deferred_by=...)`).
+
+#: A ready till whose close disagrees with the cloud's documents: waiting for them.
+WAITING_TRANSACTIONS = "waiting_transactions"
+#: Everything the verification writes on an item, and clears once the till checks out.
+VERIFY_CODES = (WAITING_TRANSACTIONS, "shift_not_closed", "close_not_accepted")
+#: The marker of a till the operator deferred with "סגור" while the run waited for it.
+DEFERRED_BY_OPERATOR = "excluded_by_operator"
+
+
+@dataclass
+class ItemCheck:
+    """The cloud's own word on one ready till: may its shifts go into the Z now?"""
+
+    ok: bool
+    code: Optional[str] = None
+    #: Σ the till's own `transactionsCount` at its closes (None: it sent no figures).
+    till_documents: Optional[int] = None
+    #: Σ the documents the cloud counts for the same shifts (sales and credit notes).
+    cloud_documents: Optional[int] = None
+
+
+def _int_or_none(value) -> Optional[int]:
+    try:
+        return None if value is None else int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def verify_item(db: Session, run: ZRun, item: ZRunItem) -> ItemCheck:
+    """
+    Verify a ready item against the cloud: every shift the Z would take of this till
+    (its un-Z'd shifts of the run's shop, oldest first, through the item's shift) is
+    closed, its close accepted, and the figures the till filed with the close agree with
+    the documents the cloud holds (`till_totals_mismatch`, the count included). A close
+    that carried no figures claims nothing and is taken as the cloud holds it (an
+    administrative close, an older till build).
+
+    A through shift that is no longer waiting is not this check's business: the build
+    refuses it (`through_shift_unavailable`) as before.
+    """
+    if item.status != ZRunItemStatus.READY or item.through_shift_id is None:
+        return ItemCheck(ok=item.status == ZRunItemStatus.READY)
+    shifts = unreported_shifts(db, item.machine_id, shop_id=run.shop_id)
+    ids = [s.id for s in shifts]
+    if item.through_shift_id not in ids:
+        return ItemCheck(ok=True)
+    till_documents: Optional[int] = None
+    cloud_documents = 0
+    mismatch = False
+    for shift in shifts[: ids.index(item.through_shift_id) + 1]:
+        if shift.status != ShiftStatus.CLOSED:
+            return ItemCheck(ok=False, code="shift_not_closed")
+        if shift.close_accepted_at is None:
+            return ItemCheck(ok=False, code="close_not_accepted")
+        totals = compute_totals(db, [shift.id])
+        cloud_documents += totals.transactions_count
+        claimed = shift.till_totals if isinstance(shift.till_totals, dict) else None
+        if not claimed:
+            continue
+        count = _int_or_none(claimed.get("transactionsCount"))
+        if count is not None:
+            till_documents = (till_documents or 0) + count
+        if till_totals_mismatch(claimed, totals):
+            mismatch = True
+    if mismatch:
+        return ItemCheck(
+            ok=False, code=WAITING_TRANSACTIONS,
+            till_documents=till_documents, cloud_documents=cloud_documents,
+        )
+    return ItemCheck(ok=True, till_documents=till_documents, cloud_documents=cloud_documents)
+
+
+def _check_message(check: ItemCheck) -> str:
+    if check.code == WAITING_TRANSACTIONS:
+        if check.till_documents is not None and check.cloud_documents is not None:
+            return (
+                f"Waiting for transactions: the till counted {check.till_documents}, "
+                f"the cloud holds {check.cloud_documents}"
+            )
+        return "Waiting for transactions: the till's totals disagree with the cloud's documents"
+    if check.code == "shift_not_closed":
+        return "A shift of this till is not closed on the cloud yet"
+    return "The till's close has not been accepted by the cloud yet"
+
+
+def _strict_check(db: Session, run: ZRun) -> bool:
+    """
+    A strict run's last word before the build: True when every ready till checks out.
+    A till that does not keeps its reason on its item (and loses it once it does).
+    """
+    ok = True
+    for item in run.items:
+        if item.status != ZRunItemStatus.READY:
+            continue
+        check = verify_item(db, run, item)
+        if check.ok:
+            if item.error_code in VERIFY_CODES:
+                item.error_code = None
+                item.error_message = None
+            continue
+        ok = False
+        if item.error_code != check.code:
+            logger.info("Z run %s waits for till %s: %s", run.id, item.machine_id, check.code)
+        item.error_code = check.code
+        item.error_message = _check_message(check)
+    db.flush()
+    return ok
+
+
+def retry_strict_runs(db: Session, machine_ids: Iterable[uuid.UUID], *, now: Optional[datetime] = None) -> int:
+    """
+    Documents landed in closed shifts of these tills: a strict run that was waiting for
+    them may build now. Never raises past a failed build (`finalise_if_ready`). Returns
+    how many runs were built.
+    """
+    ids = list({m for m in machine_ids if m is not None})
+    if not ids:
+        return 0
+    runs = (
+        db.query(ZRun)
+        .join(ZRunItem, ZRunItem.run_id == ZRun.id)
+        .filter(
+            ZRun.status == ZRunStatus.WAITING,
+            ZRun.strict_cloud_check.is_(True),
+            ZRunItem.machine_id.in_(ids),
+            ZRunItem.status == ZRunItemStatus.READY,
+        )
+        .distinct()
+        .all()
+    )
+    return sum(1 for run in runs if finalise_if_ready(db, run, now=now))
+
+
+# ── The fast heartbeat while a shop Z is about ───────────────────────────────
+
+#: The master till's "סגירת Z סניפי" screen polls every few seconds while it is open;
+#: each poll keeps its shop on the fast beat this much longer.
+SHOP_Z_SCREEN_TTL = timedelta(seconds=45)
+#: A waiting run keeps its shop's tills on the fast beat for its first minutes.
+FAST_BEAT_RUN_WINDOW = timedelta(minutes=10)
+
+
+def note_shop_z_screen(machine: POSMachine, *, now: Optional[datetime] = None) -> None:
+    """The master till has the shop Z screen open (it polled just now)."""
+    machine.shop_z_screen_until = (now or datetime.now(timezone.utc)) + SHOP_Z_SCREEN_TTL
+
+
+def shop_z_fast_beat(db: Session, machine: POSMachine, *, now: Optional[datetime] = None) -> bool:
+    """
+    Should this till beat fast (every few seconds) now?
+
+    While its shop's master till has the shop Z screen open, and for the first minutes of
+    a run waiting in its shop. Without realtime the heartbeat is how a close reaches a
+    till, and at its ordinary 30 s a shop Z would wait up to that long per till; the
+    screen being open first means the tills are already beating fast when the operator
+    presses the button. Cheap: two indexed lookups, on the shop.
+    """
+    if machine.shop_id is None:
+        return False
+    now = now or datetime.now(timezone.utc)
+    screen = (
+        db.query(POSMachine.id)
+        .filter(POSMachine.shop_id == machine.shop_id, POSMachine.shop_z_screen_until > now)
+        .first()
+    )
+    if screen is not None:
+        return True
+    run = (
+        db.query(ZRun.id)
+        .filter(
+            ZRun.shop_id == machine.shop_id,
+            ZRun.status == ZRunStatus.WAITING,
+            ZRun.created_at > now - FAST_BEAT_RUN_WINDOW,
+        )
+        .first()
+    )
+    return run is not None
 
 
 # ── Finalise / proceed / cancel ───────────────────────────────────────────────
@@ -461,6 +1066,10 @@ def finalise_if_ready(
     a bug): the run is marked failed with the reason, and the caller's own work (a till's
     accepted close, above all) still commits. The build runs in a savepoint so a failure
     leaves nothing of it behind. A till whose close raised here would retry it forever.
+
+    A strict run (a shop Z from the master till) is first verified against the cloud
+    (`_strict_check`): while any ready till does not check out it is not built — it
+    waits, and is tried again on the next poll or late document.
     """
     run = lock_run(db, run)
     if run.status != ZRunStatus.WAITING:
@@ -471,6 +1080,17 @@ def finalise_if_ready(
     if not any(s == ZRunItemStatus.READY for s in statuses):
         return False
     now = now or datetime.now(timezone.utc)
+    if getattr(run, "strict_cloud_check", False):
+        checkpoint = db.begin_nested()
+        try:
+            verified = _strict_check(db, run)
+            checkpoint.commit()
+        except Exception:  # noqa: BLE001 - the caller's close must still commit
+            _rollback_savepoint(checkpoint)
+            logger.exception("Z run %s: the cloud verification failed; the run waits", run.id)
+            return False
+        if not verified:
+            return False
     savepoint = db.begin_nested()
     try:
         z = build_z(
@@ -482,13 +1102,16 @@ def finalise_if_ready(
             z_run_id=run.id,
             business_date=run.business_date,
             area_id=run.area_id,
+            open_tills_left_out=open_tills_left_out(db, run),
             now=now,
         )
         savepoint.commit()
     except ZBuildRefused as refused:
         savepoint.rollback()
         logger.warning("Z run %s refused: %s (%s)", run.id, refused.code, refused.message)
-        run.status = ZRunStatus.FAILED
+        # Nothing to report is an end of its own, not a failure: no Z, no number drawn, and
+        # the shifts stay closed for whichever later Z has activity.
+        run.status = ZRunStatus.EMPTY if refused.code == EMPTY_Z else ZRunStatus.FAILED
         run.error_code = refused.code
         run.error_message = refused.message
         db.flush()
@@ -529,32 +1152,76 @@ def _require_waiting(run: ZRun) -> None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="run_not_waiting")
 
 
+def _deferred_marker(run: ZRun, item: ZRunItem, operator: str, now: datetime) -> ZRunItem:
+    """
+    A left-out marker (`LEFT_OUT_CODE`) for a till the operator deferred with "סגור"
+    while the run waited for it: frozen into the Z's header (`openTillsLeftOut`) with who
+    decided and when, exactly as a confirmation given at the start is.
+    """
+    machine = item.machine
+    pending = item.status in PENDING_ITEM_STATUSES
+    data = {
+        "id": str(item.machine_id),
+        "posNumber": machine.pos_number if machine is not None else None,
+        "name": machine.name if machine is not None else None,
+        "openShiftId": str(named_shift_id(item)) if pending and named_shift_id(item) else None,
+        "reason": item.error_code if not pending else "not_closed",
+        "deferred": True,
+        "confirmedBy": operator,
+        "confirmedAt": now.isoformat(),
+    }
+    return ZRunItem(
+        id=uuid.uuid4(),
+        run_id=run.id,
+        machine_id=item.machine_id,
+        include_open_shift=False,
+        status=ZRunItemStatus.EXCLUDED,
+        error_code=LEFT_OUT_CODE,
+        error_message=json.dumps(data, ensure_ascii=False),
+    )
+
+
 def proceed_without(
-    db: Session, run: ZRun, exclude_machine_ids: Iterable[uuid.UUID], *, now: Optional[datetime] = None
+    db: Session,
+    run: ZRun,
+    exclude_machine_ids: Iterable[uuid.UUID],
+    *,
+    now: Optional[datetime] = None,
+    deferred_by: Optional[str] = None,
 ) -> ZRun:
     """
     Build now without the listed tills; their shifts wait for the next Z (no gap).
 
     Only a till that is **not** ready is left out: a ready till named in the list stays
     in (the list is "the tills I am giving up on waiting for", and a stale screen must
-    not silently drop a till whose shifts were ready to go).
+    not silently drop a till whose shifts were ready to go). On a strict run, a ready
+    till the cloud has not verified (`verify_item`) is not ready in this sense.
+
+    `deferred_by` (the master till's operator who typed "סגור"): each till left out here
+    is recorded on the Z as left out, with who decided and when.
     """
     now = now or datetime.now(timezone.utc)
     expire_overdue_runs(db, now=now)
     run = lock_run(db, run)
     _require_waiting(run)
+    strict = bool(getattr(run, "strict_cloud_check", False))
     excluded = set(exclude_machine_ids)
-    for item in run.items:
-        if item.machine_id in excluded and item.status not in (
-            ZRunItemStatus.EXCLUDED,
-            ZRunItemStatus.READY,
-        ):
-            item.status = ZRunItemStatus.EXCLUDED
-            item.error_code = item.error_code or "excluded_by_operator"
+    for item in list(run.items):
+        if item.machine_id not in excluded or item.status == ZRunItemStatus.EXCLUDED:
+            continue
+        if item.status == ZRunItemStatus.READY and (not strict or verify_item(db, run, item).ok):
+            continue
+        if deferred_by:
+            run.items.append(_deferred_marker(run, item, deferred_by, now))
+        item.status = ZRunItemStatus.EXCLUDED
+        if not item.error_code or item.error_code in VERIFY_CODES:
+            item.error_code = DEFERRED_BY_OPERATOR
     not_ready = [
         str(i.machine_id)
         for i in run.items
         if i.status not in (ZRunItemStatus.READY, ZRunItemStatus.EXCLUDED)
+        # A strict run's ready till the cloud has not verified is not ready either.
+        or (strict and i.status == ZRunItemStatus.READY and not verify_item(db, run, i).ok)
     ]
     if not_ready:
         db.rollback()
@@ -654,6 +1321,9 @@ def apply_close_shift_ack(
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid phase")
     db.flush()
+    if phase == "failed":
+        # The last till it waited for refused: the run ends now rather than at its TTL.
+        end_if_stalled(db, run)
     return item
 
 
@@ -771,6 +1441,21 @@ def run_to_out(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> dic
     """
     waiting = [i for i in run.items if i.status in PENDING_ITEM_STATUSES]
     held = documents_on_cloud(db, [named_shift_id(i) for i in waiting])
+    strict = bool(getattr(run, "strict_cloud_check", False))
+    # A strict run still waiting: the cloud's word on each ready till, as the master shows it.
+    checks: Dict[uuid.UUID, ItemCheck] = {}
+    if strict and run.status == ZRunStatus.WAITING:
+        checks = {i.id: verify_item(db, run, i) for i in run.items if i.status == ZRunItemStatus.READY}
+    # Who deferred which till with "סגור" (the markers `proceed_without` left).
+    deferred_by: Dict[uuid.UUID, str] = {}
+    for marker in run.items:
+        if is_left_out_marker(marker):
+            try:
+                data = json.loads(marker.error_message or "{}")
+            except ValueError:
+                data = {}
+            if isinstance(data, dict) and data.get("deferred") and data.get("confirmedBy"):
+                deferred_by[marker.machine_id] = data["confirmedBy"]
     z_number = None
     z = None
     if run.z_report_id is not None:
@@ -798,11 +1483,26 @@ def run_to_out(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> dic
         "zNumber": z_number,
         "errorCode": run.error_code,
         "errorMessage": run.error_message,
+        "openTillsLeftOut": open_tills_left_out(db, run),
+        "strictCloudCheck": strict,
+        # For a till's elapsed-seconds display: the cloud's clock, not the till's.
+        "serverTime": now or datetime.now(timezone.utc),
         "items": [
             {
                 "id": i.id,
                 "machineId": i.machine_id,
                 "machineName": i.machine.name if i.machine is not None else None,
+                "posNumber": i.machine.pos_number if i.machine is not None else None,
+                # Strict runs: the ready till checked out on the cloud (closed, accepted,
+                # every sale it counted is here); null while it is not ready yet.
+                "cloudVerified": (
+                    (checks[i.id].ok if i.id in checks else run.status == ZRunStatus.COMPLETED)
+                    if strict and i.status == ZRunItemStatus.READY
+                    else None
+                ),
+                "tillDocuments": checks[i.id].till_documents if i.id in checks else None,
+                "cloudDocuments": checks[i.id].cloud_documents if i.id in checks else None,
+                "deferredBy": deferred_by.get(i.machine_id) if i.status == ZRunItemStatus.EXCLUDED else None,
                 "throughShiftId": i.through_shift_id,
                 "closeShiftId": named_shift_id(i),
                 "status": i.status,
@@ -820,5 +1520,7 @@ def run_to_out(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> dic
                 ),
             }
             for i in run.items
+            if not is_left_out_marker(i)
         ],
     }
+

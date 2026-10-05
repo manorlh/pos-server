@@ -5,11 +5,17 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.category import Category, CatalogLevel
+from app.services import item_ticket
+from app.models.pos_machine import POSMachine
 from app.models.product import Product
+from app.models.shop import Shop
+from app.models.shop_area import ShopArea
 from app.models.user import User, UserRole
+from app.services import category_availability
 from app.services.permission_matrix import SHOP_SCOPED_ROLES, Action, Resource, roles_for
 from app.schemas.category import (
     CategoryCreate,
+    CategoryInactiveAt,
     CategoryReorderRequest,
     CategoryReorderResponse,
     CategoryResponse,
@@ -130,7 +136,44 @@ def list_categories(
     if is_active is not None:
         query = query.filter(Category.is_active == is_active)
 
-    return query.order_by(Category.sort_order, Category.name).offset(skip).limit(limit).all()
+    rows = query.order_by(Category.sort_order, Category.name).offset(skip).limit(limit).all()
+    return _with_inactive_at(db, rows)
+
+
+def _with_inactive_at(db: Session, rows: List[Category]) -> List[CategoryResponse]:
+    """Each category with the shops, areas and tills that switched it off."""
+    off = category_availability.inactive_targets(db, [c.id for c in rows])
+    ids = {level: set() for level in category_availability.LEVELS}
+    for found in off.values():
+        for row in found:
+            ids[row.level].add(row.target_id)
+    names = {}
+    for level, model in (
+        (category_availability.SHOP, Shop),
+        (category_availability.AREA, ShopArea),
+        (category_availability.MACHINE, POSMachine),
+    ):
+        if ids[level]:
+            for target in db.query(model).filter(model.id.in_(list(ids[level]))).all():
+                names[(level, str(target.id))] = target.name
+    out = []
+    for c in rows:
+        response = CategoryResponse.model_validate(c)
+        response.inactive_at = [
+            CategoryInactiveAt(
+                level=row.level,
+                target_id=row.target_id,
+                name=names.get((row.level, str(row.target_id))),
+            )
+            for row in sorted(
+                off.get(str(c.id), []),
+                key=lambda r: (category_availability.LEVELS.index(r.level), str(r.target_id)),
+            )
+            # A shop, area or till that no longer exists switches nothing off.
+            if (row.level, str(row.target_id)) in names
+        ]
+        out.append(response)
+    return out
 
 
 @router.post("", response_model=CategoryResponse, status_code=status.HTTP_201_CREATED)
@@ -172,6 +215,7 @@ def create_category(
         image_url=data.image_url,
         parent_id=data.parent_id,
         voucher_id=data.voucher_id,
+        ticket_mode=item_ticket.normalize(data.ticket_mode),
         is_active=data.is_active,
         sort_order=data.sort_order,
     )
@@ -282,13 +326,18 @@ def update_category(
 
     patch = data.model_dump(exclude_unset=True, by_alias=False)
     voucher_changed = "voucher_id" in patch and patch["voucher_id"] != category.voucher_id
+    if "ticket_mode" in patch:
+        patch["ticket_mode"] = item_ticket.normalize(patch["ticket_mode"])
+    # Products without their own mode inherit this one, and the till reads the resolved
+    # mode off each product — so a change has to reach them through delta sync too.
+    ticket_changed = "ticket_mode" in patch and patch["ticket_mode"] != category.ticket_mode
 
     for field, value in patch.items():
         setattr(category, field, value)
 
     # Products inherit the category voucher when they have none of their own. Their own
     # updated_at is unchanged by a category edit, so bump it to keep delta sync correct.
-    if voucher_changed:
+    if voucher_changed or ticket_changed:
         db.query(Product).filter(Product.category_id == category.id).update(
             {Product.updated_at: func.now()}, synchronize_session=False
         )

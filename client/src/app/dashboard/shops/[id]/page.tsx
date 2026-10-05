@@ -13,6 +13,7 @@
 import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
+import { NumberPill } from '@/components/dashboard/number-pill';
 import { useQuery } from '@tanstack/react-query';
 import {
   Boxes,
@@ -34,6 +35,11 @@ import { ShopFormDialog } from '@/components/dashboard/shop-form-dialog';
 import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
 import { ClockSkewChip } from '@/components/dashboard/machine-health';
 import { ShopAreasCard } from '@/components/dashboard/areas/shop-areas-card';
+import { ZScopeCard } from '@/components/dashboard/z-scope-card';
+import { MainTillCard } from '@/components/dashboard/main-till-card';
+import { TrainingBadge, TrainingStripe } from '@/components/dashboard/training-badge';
+import { TrainingModeCard } from '@/components/dashboard/training-mode-card';
+import { DemoMenuCard } from '@/components/dashboard/demo-menu-card';
 import { AreaName } from '@/components/dashboard/areas/area-filter';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -145,11 +151,14 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
 
   return (
     <div className="space-y-6">
+      <TrainingStripe shop={shop} />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <Store className="h-5 w-5 text-muted-foreground" aria-hidden />
+            <NumberPill n={shop.shopNumber} className="text-sm" />
             <h1 className="text-2xl font-bold">{shop.name}</h1>
+            <TrainingBadge shop={shop} />
             <Badge variant={shop.isActive ? 'outline' : 'destructive'}>
               {shop.isActive ? tc('active') : tc('inactive')}
             </Badge>
@@ -244,6 +253,14 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
       </div>
 
       <ShopAreasCard shopId={shop.id} machines={machines} />
+
+      <ZScopeCard shopId={shop.id} />
+
+      <MainTillCard shopId={shop.id} />
+
+      <TrainingModeCard shopId={shop.id} shopName={shop.name} />
+
+      <DemoMenuCard companyId={shop.companyId} shopId={shop.id} companyName={company?.name} />
 
       <Card>
         <CardHeader className="pb-2">

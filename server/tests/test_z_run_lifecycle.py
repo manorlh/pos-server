@@ -29,6 +29,8 @@ from app.services.administrative_close import close_shift_administratively
 from app.services.shifts import apply_shift_close
 from shift_world import NOW, accept_str_uuids, make_world
 
+pytestmark = pytest.mark.usefixtures("z_activity_unchecked")  # not about "no Z on 0"
+
 
 @pytest.fixture
 def w(monkeypatch):
@@ -116,6 +118,47 @@ class TestExpiryFinalisesWithTheReadyTills:
         r = _run(w, w.tills[0])
         assert ZR.expire_overdue_runs(w.db, now=NOW + timedelta(hours=1)) == 0
         assert r.status == ZRunStatus.WAITING
+
+
+class TestARunNothingCanMoveEnds:
+    """The till stuck on "מפיק את ה-Z…": its only till refused (open tables), so nothing
+    was on its way and nothing ready, yet the run waited 36 hours for its TTL."""
+
+    def test_the_last_till_refusing_ends_the_run_with_its_reason(self, w):
+        t1 = w.tills[0]
+        w.shift(t1, 1, status=ShiftStatus.OPEN)
+        r = _run(w, t1)
+        ZR.apply_close_shift_ack(
+            w.db, t1, request_id=_item(r, t1).id, phase="failed",
+            error_code="open_tables", error_message="open tables: 3, מנור",
+        )
+        assert r.status == ZRunStatus.FAILED
+        assert r.error_code == ZR.TILLS_FAILED
+        assert "שולחנות פתוחים (3, מנור)" in r.error_message
+        # The shop is free for a new Z once the tables are closed.
+        assert ZR.expire_overdue_runs(w.db, now=NOW + timedelta(minutes=5)) == 0
+
+    def test_a_till_still_closing_keeps_it_waiting(self, w):
+        t1, t2 = w.tills
+        w.shift(t1, 1, status=ShiftStatus.OPEN)
+        w.shift(t2, 1, status=ShiftStatus.OPEN)
+        r = _run(w, t1, t2)
+        ZR.apply_close_shift_ack(w.db, t1, request_id=_item(r, t1).id, phase="failed", error_code="open_tables")
+        assert r.status == ZRunStatus.WAITING
+        ZR.apply_close_shift_ack(w.db, t2, request_id=_item(r, t2).id, phase="failed", error_code="no_open_shift")
+        assert r.status == ZRunStatus.FAILED
+        assert "יש בה שולחנות פתוחים" in r.error_message and "אין בה משמרת פתוחה" in r.error_message
+
+    def test_a_run_already_stalled_ends_on_the_next_read(self, w):
+        t1 = w.tills[0]
+        w.shift(t1, 1, status=ShiftStatus.OPEN)
+        r = _run(w, t1)
+        item = _item(r, t1)
+        item.status = ZRunItemStatus.FAILED  # as a run stalled before this fix
+        item.error_code = "open_tables"
+        w.db.flush()
+        assert ZR.expire_overdue_runs(w.db, now=NOW + timedelta(minutes=5)) == 1
+        assert r.status == ZRunStatus.FAILED
 
 
 class TestEveryRoadToAClosedShiftCompletesTheWait:

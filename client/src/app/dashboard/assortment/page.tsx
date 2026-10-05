@@ -201,7 +201,7 @@ function AssortmentEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-md max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t('editTitle')}</DialogTitle>
           <p className="text-sm text-muted-foreground">
@@ -315,6 +315,15 @@ function AssortmentRow({
     <TableRow className="cursor-pointer" onClick={onEdit}>
       <TableCell className="font-medium">
         <div className="flex flex-wrap items-center gap-1.5">
+          {row.tillPosition ? (
+            // Its place on the tills, as a manager arranged them there ("עריכת מסך").
+            <span
+              title={t('tillPositionHint')}
+              className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary/10 px-1.5 text-xs font-semibold text-primary tabular-nums"
+            >
+              {row.tillPosition}
+            </span>
+          ) : null}
           <span>{row.name}</span>
           {row.isGeneral ? <Badge variant="secondary">{t('systemItemBadge')}</Badge> : null}
         </div>

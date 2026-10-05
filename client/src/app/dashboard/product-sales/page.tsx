@@ -44,6 +44,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 
 const LIMIT_OPTIONS = [50, 100, 200, 500, 1000];
 const COLS = 9;
@@ -67,7 +68,9 @@ export default function ProductSalesReportPage() {
     hours: WHOLE_DAY,
   });
   const [limit, setLimit] = useState(200);
-  const [applied, setApplied] = useState<{ filters: ReportFiltersState; limit: number } | null>(
+  // A meal as its components (burgers inside meals count as burgers) or as the meal.
+  const [meals, setMeals] = useState<'components' | 'meals'>('components');
+  const [applied, setApplied] = useState<{ filters: ReportFiltersState; limit: number; meals: 'components' | 'meals' } | null>(
     null,
   );
 
@@ -82,6 +85,7 @@ export default function ProductSalesReportPage() {
       ...hourQueryParams(f.hours),
       ...(f.areaId ? { areaId: f.areaId } : {}),
       limit: applied.limit,
+      meals: applied.meals,
     };
   }, [applied, scopeMachineId, scopeShopId]);
 
@@ -102,7 +106,7 @@ export default function ProductSalesReportPage() {
         <ReportFilters
           value={filters}
           onChange={setFilters}
-          onRun={() => setApplied({ filters, limit })}
+          onRun={() => setApplied({ filters, limit, meals })}
           isFetching={isFetching}
           showArea
           areaShopId={scopeShopId}
@@ -126,6 +130,29 @@ export default function ProductSalesReportPage() {
               </SelectContent>
             </Select>
           </div>
+          <div className="space-y-1">
+            <Label className="text-xs">{t('meals.label')}</Label>
+            <Select
+              value={meals}
+              onValueChange={(v) => setMeals(v === 'meals' ? 'meals' : 'components')}
+              items={[
+                { value: 'components', label: t('meals.components') },
+                { value: 'meals', label: t('meals.meals') },
+              ]}
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="components" label={t('meals.components')}>
+                  {t('meals.components')}
+                </SelectItem>
+                <SelectItem value="meals" label={t('meals.meals')}>
+                  {t('meals.meals')}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </ReportFilters>
 
         {!applied ? (
@@ -144,6 +171,34 @@ export default function ProductSalesReportPage() {
           <ReportErrorState message={axiosErrorToToastMessage(error, tc('error'))} />
         ) : data ? (
           <div className="space-y-4">
+            <ReportExportToolbar
+              title={t('title')}
+              from={data.window.from}
+              to={data.window.to}
+              getSheets={() => ({
+                name: t('title'),
+                columns: [
+                  { header: t('col.product'), width: 30 },
+                  { header: t('col.sku'), width: 14 },
+                  { header: t('col.unitsSold'), kind: 'number' },
+                  { header: t('col.unitsRefunded'), kind: 'number' },
+                  { header: t('col.unitsNet'), kind: 'number' },
+                  { header: t('col.gross'), kind: 'money' },
+                  { header: t('col.discounts'), kind: 'money' },
+                  { header: t('col.refunds'), kind: 'money' },
+                  { header: t('col.net'), kind: 'money' },
+                ],
+                rows: data.rows.map((r) => [
+                  r.productName ?? t('unknownProduct'), r.sku ?? null, r.unitsSold, r.unitsRefunded,
+                  r.unitsNet, r.gross, r.discounts, r.refunds, r.net,
+                ]),
+                totals: [
+                  data.truncated ? t('footerTotalsTruncated') : t('footerTotals'), null,
+                  data.totals.unitsSold, data.totals.unitsRefunded, data.totals.unitsNet,
+                  data.totals.gross, data.totals.discounts, data.totals.refunds, data.totals.net,
+                ],
+              })}
+            />
             <ReportWindowSummary window={data.window} generatedAt={data.generatedAt} />
 
             {/* Totals first — this is the answer to "what did we take". */}
@@ -224,6 +279,11 @@ export default function ProductSalesReportPage() {
                         </TableCell>
                         <TableCell className="text-end tabular-nums">
                           {formatQuantity(row.unitsSold)}
+                          {row.unitsInMeals ? (
+                            <span className="text-muted-foreground block text-[11px]">
+                              {t('meals.inMeals', { n: formatQuantity(row.unitsInMeals) })}
+                            </span>
+                          ) : null}
                         </TableCell>
                         <TableCell className="text-end tabular-nums">
                           {row.unitsRefunded ? formatQuantity(row.unitsRefunded) : '—'}

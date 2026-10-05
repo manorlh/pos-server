@@ -39,7 +39,7 @@ import uuid as uuid_mod
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from fastapi import HTTPException, status
 from sqlalchemy import Integer, String, and_, case, cast, func, or_
@@ -75,6 +75,7 @@ from app.schemas.reports import (
     TipsRangeReportResponse,
 )
 from app.services.areas import transaction_area_predicate
+from app.services.offline_authorizations import section_declined
 from app.services.dashboard_stats import SALE_STATUSES
 from app.services.scoping import scope_query_by_user, scope_transactions_by_user
 from app.services.tenders import CREDIT_NOTE_DOCUMENT_TYPE as _CREDIT_NOTE_DOCUMENT_TYPE
@@ -424,6 +425,74 @@ def normalize_tender(method: Optional[str]) -> str:
 
 # ── 2a. Product sales report ──────────────────────────────────────────────────
 
+def _meal_item_ids(db: Session):
+    """The sold lines that are meals: those with components (docs/SPEC_MENU_MODIFIERS.md)."""
+    from app.models.menu import TransactionItemPart
+
+    return db.query(TransactionItemPart.item_id).filter(TransactionItemPart.kind == "component")
+
+
+def _merge_meal_components(db: Session, tx_sub, acc: List[Dict[str, Any]]) -> None:
+    """
+    Meals' components into the product rows: each component's units and its allocated
+    share of its meal line's gross, discounts and refunds — into the row of that product
+    when there is one, else a row of its own. `unitsInMeals` says how many of a product's
+    units were sold inside meals.
+    """
+    from app.models.menu import TransactionItemPart as P
+    from app.models.product import Product
+
+    is_refund = tx_sub.c.is_refund
+    parts = (
+        db.query(
+            P.product_id,
+            P.name,
+            func.coalesce(func.sum(case((is_refund.is_(False), P.quantity), else_=0)), 0),
+            func.coalesce(func.sum(case((is_refund.is_(True), P.quantity), else_=0)), 0),
+            func.coalesce(func.sum(case((is_refund.is_(False), P.gross), else_=0)), 0),
+            func.coalesce(func.sum(case((is_refund.is_(False), func.coalesce(P.discount, 0)), else_=0)), 0),
+            func.coalesce(func.sum(case((is_refund.is_(True), P.gross), else_=0)), 0),
+            func.count(func.distinct(case((is_refund.is_(False), P.item_id), else_=None))),
+            func.count(func.distinct(case((is_refund.is_(True), P.item_id), else_=None))),
+        )
+        .join(tx_sub, tx_sub.c.tx_id == P.transaction_id)
+        .filter(P.kind == "component")
+        .group_by(P.product_id, P.name)
+        .all()
+    )
+    if not parts:
+        return
+    by_product: Dict[str, Dict[str, Any]] = {}
+    for row in acc:
+        if row["product_id"] is not None:
+            by_product.setdefault(str(row["product_id"]), row)
+    ids = [p[0] for p in parts if p[0] is not None]
+    products = {str(p.id): p for p in db.query(Product).filter(Product.id.in_(ids))} if ids else {}
+    for pid, name, sold, refunded, gross, discount, refunds, lines_sold, lines_refunded in parts:
+        key = str(pid) if pid is not None else None
+        row = by_product.get(key) if key else None
+        if row is None:
+            product = products.get(key) if key else None
+            row = {
+                "product_id": pid,
+                "product_name": product.name if product is not None else name,
+                "sku": product.sku if product is not None else None,
+                "units_sold": 0.0, "units_refunded": 0.0, "gross": 0.0, "discounts": 0.0,
+                "refunds": 0.0, "lines_sold": 0, "lines_refunded": 0, "units_in_meals": 0.0,
+            }
+            acc.append(row)
+            if key:
+                by_product[key] = row
+        row["units_sold"] += _to_float(sold)
+        row["units_refunded"] += _to_float(refunded)
+        row["units_in_meals"] += _to_float(sold)
+        row["gross"] += _to_float(gross)
+        row["discounts"] += _to_float(discount)
+        row["refunds"] += _to_float(refunds)
+        row["lines_sold"] += int(lines_sold or 0)
+        row["lines_refunded"] += int(lines_refunded or 0)
+
+
 def build_product_sales_report(
     db: Session,
     current_user: User,
@@ -435,7 +504,12 @@ def build_product_sales_report(
     cashier_id: Optional[str] = None,
     limit: int = PRODUCT_ROWS_DEFAULT,
     area_filter=None,
+    meals: str = "components",
 ) -> ProductSalesReportResponse:
+    """
+    `meals`: "components" (the default) reports a meal's line as its components with
+    the line's money allocated to them; "meals" reports the meal product itself.
+    """
     now = datetime.now(timezone.utc)
     empty_totals = ProductSalesTotals(
         units_sold=0.0, units_refunded=0.0, units_net=0.0,
@@ -461,9 +535,10 @@ def build_product_sales_report(
     is_refund = tx_sub.c.is_refund
     qty = TransactionItem.quantity
     line_gross = TransactionItem.total_price
-    line_discount = func.coalesce(TransactionItem.discount, 0)
+    # The line's own discount and its promotions' share: both are this product's.
+    line_discount = func.coalesce(TransactionItem.discount, 0) + func.coalesce(TransactionItem.promotion_discount, 0)
 
-    rows = (
+    query = (
         db.query(
             TransactionItem.product_id.label("product_id"),
             TransactionItem.sku.label("sku"),
@@ -487,6 +562,15 @@ def build_product_sales_report(
         )
         .select_from(TransactionItem)
         .join(tx_sub, tx_sub.c.tx_id == TransactionItem.transaction_id)
+    )
+    explode_meals = meals != "meals"
+    if explode_meals:
+        # A meal's line is reported as its components (below), with its money allocated
+        # to them (docs/SPEC_MENU_MODIFIERS.md §5.2) — so a burger inside a meal is a
+        # burger sold, and the money still adds up to the receipts.
+        query = query.filter(~TransactionItem.id.in_(_meal_item_ids(db)))
+    rows = (
+        query
         # Grouped on the snapshot triple, not just product_id: the snapshot is what
         # keeps a line readable after the product is renamed or deleted, and lines
         # with a null product_id would otherwise collapse into one nameless row.
@@ -498,14 +582,33 @@ def build_product_sales_report(
         .all()
     )
 
+    acc: List[Dict[str, Any]] = [
+        {
+            "product_id": r.product_id,
+            "product_name": r.product_name,
+            "sku": r.sku,
+            "units_sold": _to_float(r.units_sold),
+            "units_refunded": _to_float(r.units_refunded),
+            "gross": _to_float(r.gross),
+            "discounts": _to_float(r.discounts),
+            "refunds": _to_float(r.refunds),
+            "lines_sold": int(r.lines_sold or 0),
+            "lines_refunded": int(r.lines_refunded or 0),
+            "units_in_meals": 0.0,
+        }
+        for r in rows
+    ]
+    if explode_meals:
+        _merge_meal_components(db, tx_sub, acc)
+
     out_rows: List[ProductSalesRow] = []
     t_units_sold = t_units_refunded = t_gross = t_discounts = t_refunds = 0.0
-    for r in rows:
-        units_sold = _to_float(r.units_sold)
-        units_refunded = _to_float(r.units_refunded)
-        gross = _to_float(r.gross)
-        discounts = _to_float(r.discounts)
-        refunds = _to_float(r.refunds)
+    for r in acc:
+        units_sold = r["units_sold"]
+        units_refunded = r["units_refunded"]
+        gross = r["gross"]
+        discounts = r["discounts"]
+        refunds = r["refunds"]
         t_units_sold += units_sold
         t_units_refunded += units_refunded
         t_gross += gross
@@ -513,9 +616,9 @@ def build_product_sales_report(
         t_refunds += refunds
         out_rows.append(
             ProductSalesRow(
-                product_id=r.product_id,
-                product_name=r.product_name,
-                sku=r.sku,
+                product_id=r["product_id"],
+                product_name=r["product_name"],
+                sku=r["sku"],
                 units_sold=units_sold,
                 units_refunded=units_refunded,
                 units_net=units_sold - units_refunded,
@@ -523,8 +626,9 @@ def build_product_sales_report(
                 discounts=discounts,
                 refunds=refunds,
                 net=gross - discounts - refunds,
-                lines_sold=int(r.lines_sold or 0),
-                lines_refunded=int(r.lines_refunded or 0),
+                lines_sold=r["lines_sold"],
+                lines_refunded=r["lines_refunded"],
+                units_in_meals=r["units_in_meals"],
             )
         )
 
@@ -1142,6 +1246,8 @@ class _Accumulator:
     actual_cash: Decimal = Decimal("0")
     variance: Decimal = Decimal("0")
     uncounted: int = 0
+    offline_declined: int = 0
+    offline_declined_amount: Decimal = Decimal("0")
     #: Z reports rolled in. Zero means there is nothing to reconcile and nothing to
     #: declare, which is not the same as a reconciliation that came to zero.
     z_count: int = 0
@@ -1158,6 +1264,10 @@ class _Accumulator:
         self.transactions_count += int(z.transactions_count or 0)
         self.opening_cash += _dec_or_zero(z.opening_cash)
         self.expected_cash += _dec_or_zero(z.expected_cash)
+        for section in z.per_machine or []:
+            count, amount = section_declined(section)
+            self.offline_declined += count
+            self.offline_declined_amount += amount
 
         vat = _z_vat(z)
         if vat is None:
@@ -1198,6 +1308,8 @@ class _Accumulator:
             actual_cash=_to_float(self.actual_cash) if counted else None,
             variance=_to_float(self.variance) if counted else None,
             uncounted_count=self.uncounted,
+            offline_declined_count=self.offline_declined,
+            offline_declined_amount=_to_float(self.offline_declined_amount),
         )
 
 
@@ -1269,6 +1381,7 @@ def _contributors_of(z: ZReport) -> List[DaySummaryContributor]:
     for section in z.per_machine:
         sales = _dec_or_zero(section.get("totalSales"))
         refunds = _dec_or_zero(section.get("totalRefunds"))
+        declined, declined_amount = section_declined(section)
         out.append(
             DaySummaryContributor(
                 **common,
@@ -1293,6 +1406,8 @@ def _contributors_of(z: ZReport) -> List[DaySummaryContributor]:
                 expected_cash=_to_float(_dec_or_zero(section.get("expectedCash"))),
                 actual_cash=_float_or_none(section.get("countedCash")),
                 discrepancy=_float_or_none(section.get("overShort")),
+                offline_declined_count=declined,
+                offline_declined_amount=_to_float(declined_amount),
             )
         )
     return out

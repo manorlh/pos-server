@@ -617,19 +617,30 @@ class TestModeSwitching:
 
         assert (out.status_code, json.loads(out.body)) == (409, {"detail": "unreported_shifts", "count": 1})
 
-    def test_an_open_shift_does_not_block(self, w):
-        w.shift(w.tills[1], 1, status=ShiftStatus.OPEN)
-
-        assert put_mode(w, w.tills[1], "till").z_mode == "till"
-
-    def test_a_live_z_run_blocks_it(self, w):
-        w.shift(w.tills[1], 1, status=ShiftStatus.OPEN)
-        run = cloud_run(w, w.tills[1])
-        assert run.status == ZRunStatus.WAITING
+    def test_an_open_shift_blocks_it(self, w):
+        # The owner's rule (app/services/z_mode_policy.py): a switch only over a clean
+        # break — the till's shift closed first, so its first Z of the new mode starts
+        # from nothing.
+        shift = w.shift(w.tills[1], 1, status=ShiftStatus.OPEN)
 
         out = put_mode(w, w.tills[1], "till")
 
-        assert (out.status_code, json.loads(out.body)) == (409, {"detail": "z_in_progress"})
+        assert out.status_code == 409
+        assert json.loads(out.body) == {
+            "detail": "till_open", "machineId": str(w.tills[1].id), "shiftId": str(shift.id),
+        }
+
+    def test_a_live_z_run_blocks_it(self, w):
+        shift = w.shift(w.tills[1], 1, status=ShiftStatus.OPEN)
+        w.doc(w.tills[1], shift, "10.00")  # something to report: no Z on nothing
+        run = cloud_run(w, w.tills[1])
+        assert run.status == ZRunStatus.WAITING
+
+        # Straight through `set_z_mode` (the open shift alone would stop the router).
+        with pytest.raises(TZ.TillZRefused) as e:
+            TZ.set_z_mode(w.db, w.tills[1], "till")
+
+        assert (e.value.status_code, e.value.body) == (409, {"detail": "z_in_progress"})
 
     def test_a_pending_till_z_request_blocks_it(self, w):
         request(w)

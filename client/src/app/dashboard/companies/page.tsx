@@ -29,8 +29,10 @@ import {
 import { sameId } from '@/lib/entityLookup';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { CompanyFormDialog } from '@/components/dashboard/company-form-dialog';
+import { LicenseBadge } from '@/components/dashboard/license-fields';
 import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
 import { ScopeIgnoredNote } from '@/components/dashboard/scope-gate';
+import { NumberPill } from '@/components/dashboard/number-pill';
 import { Company, CompanyTreeNode, Shop } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -102,7 +104,7 @@ export default function CompaniesPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
@@ -185,6 +187,7 @@ export default function CompaniesPage() {
                             ↳
                           </span>
                         ) : null}
+                        <NumberPill n={c.companyNumber} className="me-1.5" />
                         <Link
                           href={href}
                           className="hover:underline"
@@ -192,6 +195,7 @@ export default function CompaniesPage() {
                         >
                           {c.name}
                         </Link>
+                        <LicenseBadge value={c} className="ms-2" />
                         {node.parentMissing && c.parentCompanyId ? (
                           <Badge variant="secondary" title={t('parentOutsideScope')}>
                             {t('parentOutsideScope')}

@@ -230,9 +230,11 @@ export function hasBetweenShiftAdjustments(value: Money | null | undefined): boo
 /** A label/value pair for the detail grids. */
 export function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="space-y-0.5">
+    // min-w-0 + break-words: in a two-column grid on a phone, a long address or id
+    // wraps inside its cell instead of widening the page.
+    <div className="min-w-0 space-y-0.5">
       <p className="text-muted-foreground text-xs">{label}</p>
-      <div className="text-sm font-medium">{children ?? '—'}</div>
+      <div className="text-sm font-medium break-words">{children ?? '—'}</div>
     </div>
   );
 }

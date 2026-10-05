@@ -4,7 +4,12 @@ from typing import Optional, Dict, Any, List, Literal
 import uuid
 from app.models.pos_machine import PairingStatus as ModelPairingStatus
 from app.schemas.printer import HeartbeatPrinter
+from app.schemas.terminal import HeartbeatTerminal
 from app.schemas.transmission import HeartbeatTransmission
+
+
+#: The hardware a till is (`app.models.pos_machine.DEVICE_MODELS`).
+DeviceModel = Literal["N55F", "MODO", "P18"]
 
 
 class PairingStatus(str):
@@ -32,6 +37,12 @@ class POSMachineUpdate(BaseModel):
     #: An area of the machine's shop (its new one, when `shopId` is sent too). An
     #: explicit null clears it; omitted leaves it as it is.
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
+    #: "N55F" (built-in printer) or "MODO" (none). An explicit null records "unknown",
+    #: which the till reads as a 55F; omitted leaves it as it is.
+    device_model: Optional[DeviceModel] = Field(None, alias="deviceModel")
+    #: "לקוח קבוע / זמני" for this till alone — the super admin's (app/services/licenses.py).
+    license_type: Optional[Literal["permanent", "temporary"]] = Field(None, alias="licenseType")
+    license_expires_on: Optional[date] = Field(None, alias="licenseExpiresOn")
     #: Who produces this till's Z (docs/SHIFTS_API.md §5.1). A switch is refused while
     #: the till has shifts waiting for a Z of the old mode (409); the same value is a no-op.
     z_mode: Optional[Literal["cloud", "till"]] = Field(None, alias="zMode")
@@ -99,6 +110,9 @@ class MachineHeartbeatBody(BaseModel):
     #: The till's printer as it last observed it (docs/SHIFTS_API.md §1.6a). Dropped
     #: whole when not an object, like `transmission`; an unknown status is "unknown".
     printer: Optional[HeartbeatPrinter] = None
+    #: The till's card terminal (Agamento): its number, clearing server, offline mode and
+    #: the till's last write into it. Absent or null leaves the stored reading as it was.
+    terminal: Optional[HeartbeatTerminal] = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -164,6 +178,9 @@ class POSMachineResponse(POSMachineBase):
     #: The register number in its shop — "קופה 2". Null when the machine has no shop.
     #: Text, because documents copy it verbatim; it is always a plain integer when set.
     pos_number: Optional[str] = Field(None, alias="posNumber")
+    #: Its shop's number in its company, and that company's in the tenant; null without a shop.
+    shop_number: Optional[int] = Field(None, alias="shopNumber")
+    company_number: Optional[int] = Field(None, alias="companyNumber")
     #: "cloud" (the shop's Z run builds its Z) or "till" (it produces its own, §5).
     z_mode: str = Field("cloud", alias="zMode")
 
@@ -177,7 +194,21 @@ class POSMachineResponse(POSMachineBase):
     mqtt_client_id: Optional[str] = Field(None, alias="mqttClientId")
     pairing_status: ModelPairingStatus = Field(..., alias="pairingStatus")
     device_info: Optional[Dict[str, Any]] = Field(None, alias="deviceInfo")
+    #: "N55F" | "MODO", null = unknown. `hasPrinter` is false for a Modo only.
+    device_model: Optional[str] = Field(None, alias="deviceModel")
+    has_printer: bool = Field(True, alias="hasPrinter")
+    #: False for a till with no card terminal of its own (a P18): it charges on a Nayax
+    #: pinpad on the network (app/services/payment_terminal.py).
+    has_builtin_terminal: bool = Field(True, alias="hasBuiltinTerminal")
+    license_type: str = Field("permanent", alias="licenseType")
+    license_expires_on: Optional[date] = Field(None, alias="licenseExpiresOn")
     is_active: bool = Field(..., alias="isActive")
+
+    @field_validator("license_type", mode="before")
+    @classmethod
+    def _unset_license_is_permanent(cls, v):
+        # A row not yet flushed has no column default applied.
+        return v or "permanent"
     last_heartbeat_at: Optional[datetime] = Field(None, alias="lastHeartbeatAt")
     mqtt_connected: Optional[bool] = Field(None, alias="mqttConnected")
     app_version: Optional[str] = Field(None, alias="appVersion")
@@ -243,6 +274,33 @@ class POSMachineResponse(POSMachineBase):
     printer_last_ok_at: Optional[datetime] = Field(None, alias="printerLastOkAt")
     #: When the cloud received it; null = the till never sent a printer block.
     printer_reported_at: Optional[datetime] = Field(None, alias="printerReportedAt")
+    # ── The card terminal (app/services/terminal_status.py) ─────────────────────
+    #: What the till's Agamento reports; all null for a till that never reported.
+    terminal_number: Optional[str] = Field(None, alias="terminalNumber")
+    terminal_clearing_server: Optional[str] = Field(None, alias="terminalClearingServer")
+    terminal_offline_mode: Optional[bool] = Field(None, alias="terminalOfflineMode")
+    terminal_reported_at: Optional[datetime] = Field(None, alias="terminalReportedAt")
+    #: {field, value, ok, error, at} of the till's last write into Agamento.
+    terminal_last_write: Optional[Dict[str, Any]] = Field(None, alias="terminalLastWrite")
+    #: The business name and supplier number the terminal is set up under, as it names them.
+    terminal_merchant_name: Optional[str] = Field(None, alias="terminalMerchantName")
+    terminal_supplier_number: Optional[str] = Field(None, alias="terminalSupplierNumber")
+    #: The till's effective settings: the number it must be on, whether it forces it, and
+    #: the level `forceTerminalNumber` comes from ("tenant" … "machine"; null = default).
+    expected_terminal_number: Optional[str] = Field(None, alias="expectedTerminalNumber")
+    force_terminal_number: Optional[bool] = Field(None, alias="forceTerminalNumber")
+    force_terminal_number_source: Optional[str] = Field(None, alias="forceTerminalNumberSource")
+    #: "match" | "mismatch" | "unknown" (no report yet) | "not_required" (no expected number).
+    terminal_status: Optional[str] = Field(None, alias="terminalStatus")
+    # ── The network pinpad (app/services/payment_terminal.py) ───────────────────
+    #: The merged `nayaxEnabled`, and the merged address (`nayaxDeviceHost`, `nayaxDevicePort`).
+    pinpad_enabled: Optional[bool] = Field(None, alias="pinpadEnabled")
+    pinpad_host: Optional[str] = Field(None, alias="pinpadHost")
+    pinpad_port: Optional[str] = Field(None, alias="pinpadPort")
+    #: The till charges on a network pinpad: it has no terminal of its own, or is told to.
+    pinpad_required: Optional[bool] = Field(None, alias="pinpadRequired")
+    #: It does, and no level gives it an address: the machines page asks for one.
+    pinpad_address_missing: Optional[bool] = Field(None, alias="pinpadAddressMissing")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 

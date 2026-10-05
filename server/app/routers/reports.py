@@ -38,10 +38,23 @@ from app.models.user import User
 from app.schemas.reports import (
     CashierSalesReportResponse,
     DaySummaryReportResponse,
+    OverviewResponse,
     ProductSalesReportResponse,
     SalesByAreaResponse,
     ShopTransactionsResponse,
     TipsRangeReportResponse,
+)
+from app.schemas.offline_authorization import OfflineAuthorizationReportResponse
+from app.services import offline_authorizations
+from app.services.overview import build_overview
+from app.schemas.live_items import LiveItemsResponse
+from app.services.live_items import (
+    LIVE_ITEMS_DEFAULT,
+    LIVE_ITEMS_MAX,
+    PERIOD_DAY,
+    PERIOD_RANGE,
+    PERIOD_SHIFT,
+    build_live_items,
 )
 from app.services.reports import (
     PRODUCT_ROWS_DEFAULT,
@@ -97,6 +110,8 @@ def get_product_sales_report(
     cashier_id: Optional[str] = Query(None, alias="cashierId"),
     limit: int = Query(PRODUCT_ROWS_DEFAULT, ge=1, le=PRODUCT_ROWS_MAX),
     area_id: Optional[str] = Query(None, alias="areaId", description=_AREA_DESC),
+    meals: str = Query("components", pattern="^(components|meals)$",
+                       description="components: a meal's line as its components; meals: as the meal"),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -105,7 +120,8 @@ def get_product_sales_report(
     Units and revenue per product over the range. Dashboard-only (Clerk/user JWT).
 
     A credit note's lines reduce the product's `net` and `unitsNet`; they are never
-    added to `gross`. Cancelled and pending documents are excluded.
+    added to `gross`. Cancelled and pending documents are excluded. A meal is reported
+    as its components, with its money allocated to them (`meals=meals`: as the meal).
     """
     window = resolve_report_window(
         db, active_tenant_id,
@@ -115,7 +131,7 @@ def get_product_sales_report(
     return build_product_sales_report(
         db, current_user, active_tenant_id, window,
         shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id, limit=limit,
-        area_filter=parse_area_filter(area_id),
+        area_filter=parse_area_filter(area_id), meals=meals,
     )
 
 
@@ -321,4 +337,142 @@ def get_day_summary_report(
     return build_day_summary_report(
         db, current_user, active_tenant_id, window,
         shop_ids=shop_ids, machine_ids=machine_ids,
+    )
+
+
+@router.get(
+    "/offline-authorizations",
+    response_model=OfflineAuthorizationReportResponse,
+    response_model_by_alias=True,
+)
+def get_offline_authorizations_report(
+    from_date: Optional[date] = Query(None, alias="from", description=_FROM_DESC),
+    to_date: Optional[date] = Query(None, alias="to", description=_TO_DESC),
+    tz: Optional[str] = Query(None, description=_TZ_DESC),
+    shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
+    machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The tills' offline authorization runs over the range (עסקאות במצב לא מקוון), newest
+    first: what each run approved, and each uid it declined matched to the till's card
+    leg — or `matched: false` when no document of the till carries it.
+
+    Dashboard-only (Clerk/user JWT). Days are on the run's `authorizedAt`, not on the
+    original sale's time.
+    """
+    window = resolve_report_window(
+        db, active_tenant_id,
+        from_date=from_date, to_date=to_date, tz=tz,
+    )
+    return offline_authorizations.build_report(
+        db, current_user, active_tenant_id, window,
+        shop_id=shop_id, machine_id=machine_id,
+    )
+
+
+@router.get(
+    "/overview",
+    response_model=OverviewResponse,
+    response_model_by_alias=True,
+)
+def get_overview_report(
+    day: Optional[date] = Query(
+        None,
+        alias="date",
+        description="The day, in the report timezone. Defaults to today.",
+    ),
+    tz: Optional[str] = Query(None, description=_TZ_DESC),
+    company_id: Optional[uuid.UUID] = Query(
+        None, alias="companyId", description="Narrow to this company and its subsidiaries."
+    ),
+    shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
+    machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The manager overview (לוח מנהל): one day's takings as company › shop › area › till.
+
+    Dashboard-only (Clerk/user JWT). Lists every shop and active till the caller can
+    see — with zeros where nothing was sold — and the day's money for each, the
+    per-cashier report's figures exactly, from a fixed number of grouped queries.
+
+    Sales only: whether a till is online, its open shift and its alerts are the
+    machines list's (`GET /machines`); the dashboard joins the two on the till's id.
+    """
+    if day is None:
+        # "Today" is the report timezone's today, not the server's.
+        day = resolve_report_window(db, active_tenant_id, from_date=None, to_date=None, tz=tz).to_date
+    window = resolve_report_window(db, active_tenant_id, from_date=day, to_date=day, tz=tz)
+    return build_overview(
+        db, current_user, active_tenant_id, window,
+        company_id=company_id, shop_id=shop_id, machine_id=machine_id,
+    )
+
+
+@router.get(
+    "/live-items",
+    response_model=LiveItemsResponse,
+    response_model_by_alias=True,
+)
+def get_live_items_report(
+    day: Optional[date] = Query(
+        None, alias="date", description="One day, in the report timezone. Defaults to today."
+    ),
+    from_date: Optional[date] = Query(None, alias="from", description="Start day of a custom range."),
+    to_date: Optional[date] = Query(None, alias="to", description="End day of a custom range."),
+    shift: Optional[str] = Query(
+        None,
+        description="`open`: the documents of the shifts open now in the scope, from whenever "
+        "each began, instead of a day.",
+    ),
+    tz: Optional[str] = Query(None, description=_TZ_DESC),
+    company_id: Optional[uuid.UUID] = Query(
+        None, alias="companyId", description="Narrow to this company and its subsidiaries."
+    ),
+    shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
+    area_id: Optional[str] = Query(None, alias="areaId", description=_AREA_DESC),
+    machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    limit: int = Query(LIVE_ITEMS_DEFAULT, ge=1, le=LIVE_ITEMS_MAX),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Live sales by item (מכירות לפי פריט — חי): per product, qty, gross, net and its
+    share of the scope's net, best earner first. Dashboard-only (Clerk/user JWT).
+
+    The product sales report's figures over the same documents, from one grouped query,
+    scoped like every report; `companyId` / `shopId` / `areaId` / `machineId` only
+    narrow. The period is `date` (default today), or `from`–`to`, or `shift=open`.
+    """
+    if isinstance(shift, str) and shift.strip().lower() == "open":
+        period = PERIOD_SHIFT
+        window = resolve_report_window(db, active_tenant_id, from_date=None, to_date=None, tz=tz)
+        window = resolve_report_window(
+            db, active_tenant_id, from_date=window.to_date, to_date=window.to_date, tz=tz
+        )
+    elif isinstance(from_date, date) or isinstance(to_date, date):
+        period = PERIOD_RANGE
+        window = resolve_report_window(
+            db, active_tenant_id,
+            from_date=from_date if isinstance(from_date, date) else None,
+            to_date=to_date if isinstance(to_date, date) else None,
+            tz=tz,
+        )
+    else:
+        period = PERIOD_DAY
+        if not isinstance(day, date):
+            day = resolve_report_window(
+                db, active_tenant_id, from_date=None, to_date=None, tz=tz
+            ).to_date
+        window = resolve_report_window(db, active_tenant_id, from_date=day, to_date=day, tz=tz)
+    return build_live_items(
+        db, current_user, active_tenant_id, window,
+        period=period, company_id=company_id, shop_id=shop_id, machine_id=machine_id,
+        area_filter=parse_area_filter(area_id), limit=limit if isinstance(limit, int) else LIVE_ITEMS_DEFAULT,
     )

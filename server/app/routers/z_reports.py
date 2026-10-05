@@ -1,7 +1,7 @@
 """Dashboard read endpoints for Z reports (Clerk-user JWT). Contract: docs/SHIFTS_API.md §2.8."""
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Literal, Optional
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -24,6 +24,10 @@ from app.schemas.z_report import (
     ZReportWindow,
 )
 from app.services.areas import filter_on_column, parse_area_filter
+from app.services import card_brands, offline_authorizations, z_print
+from app.services.shift_totals import compute_totals
+from app.services.z_waiters import waiter_breakdown
+from app.services.reports import _load_zoneinfo, resolve_report_timezone
 from app.services.scoping import scope_query_by_user
 from app.services.shifts import shift_to_out
 
@@ -78,7 +82,12 @@ def _between_shift_adjustments(sections) -> Optional[Decimal]:
     return sum((Decimal(str(v)) for v in values), Decimal("0"))
 
 
-def z_to_out(z: ZReport, cls=ZReportOut):
+def _local_midnight_utc(day: date, tzinfo) -> datetime:
+    """The instant `day` starts in `tzinfo`, in UTC."""
+    return datetime.combine(day, datetime.min.time(), tzinfo=tzinfo).astimezone(timezone.utc)
+
+
+def z_to_out(z: ZReport, cls=ZReportOut, tzinfo=None):
     item = ZReportOut.model_validate(z)
     if cls is not ZReportOut:
         # Not validated from the row directly: its `shifts` relationship would be read
@@ -94,10 +103,20 @@ def z_to_out(z: ZReport, cls=ZReportOut):
         if z.discounts_total is not None:
             item.gross_sales = Decimal(z.total_sales) + Decimal(z.discounts_total)
     item.between_shift_adjustments = _between_shift_adjustments(z.per_machine)
+    offline = offline_authorizations.z_totals(z.per_machine)
+    if offline is not None:
+        item.offline_authorization_count = offline["authorization_count"]
+        item.offline_approved_count = offline["approved_count"]
+        item.offline_declined_count = offline["declined_count"]
+        item.offline_declined_amount = offline["declined_amount"]
     item.machine_name = z.machine.name if z.machine_id and z.machine else None
     item.shop_name = z.shop.name if z.shop else None
+    item.shop_number = z.shop.shop_number if z.shop else None
     # The frozen name, never the area's name today: a Z keeps what it was filed as.
     item.area_name = (z.header or {}).get("areaName") if z.area_id is not None else None
+    if tzinfo is not None and z.closed_at is not None:
+        closed = z.closed_at if z.closed_at.tzinfo else z.closed_at.replace(tzinfo=timezone.utc)
+        item.production_date = closed.astimezone(tzinfo).date()
     return item
 
 
@@ -113,6 +132,17 @@ def list_z_reports(
     area_id: Optional[str] = Query(
         None, alias="areaId", description="The area a Z was started for, or `none`."
     ),
+    date_basis: Literal["business", "production"] = Query(
+        "business",
+        alias="dateBasis",
+        description="What `from`/`to` and the order are on: the business date, or the "
+        "local date the Z was produced (`closedAt`).",
+    ),
+    tz: Optional[str] = Query(
+        None,
+        description="IANA timezone production dates are measured in. Defaults to the "
+        "tenant's configured timezone, else Asia/Jerusalem.",
+    ),
     origin: Optional[str] = Query(
         None, pattern="^(cloud|till)$", description="`till`: the tills' own Zs (§5); `cloud`: Z runs'."
     ),
@@ -125,7 +155,10 @@ def list_z_reports(
     """
     Z report history over a range. Dashboard-only (Clerk/user JWT).
 
-    `from`/`to` filter on the Z's `business_date`. `closedFrom`/`closedTo` are ISO
+    `from`/`to` filter on the Z's `business_date`, or with `dateBasis=production` on the
+    local date of its `closed_at` (when it was produced) in the tenant's timezone — a Z
+    produced at 00:30 belongs to that new day. The order follows the same date. Every row
+    carries both (`businessDate`, `productionDate`). `closedFrom`/`closedTo` are ISO
     datetimes on `closed_at`. `machineId`/`machineIds` match a Z containing that till
     (a shift of it, or a legacy till-issued Z). `areaId` matches the area a Z was run
     for; `none` is every whole-shop, hand-picked or legacy Z. `origin` keeps the tills'
@@ -155,15 +188,38 @@ def list_z_reports(
     if isinstance(origin, str):  # (a direct call leaves the Query default in place)
         query = query.filter(ZReport.origin == origin)
 
+    # A direct call (the tests) leaves the Query defaults in place: read them as unset.
+    if not isinstance(date_basis, str):
+        date_basis = "business"
+    tz_name = resolve_report_timezone(db, active_tenant_id, tz if isinstance(tz, str) else None)
+    tzinfo = _load_zoneinfo(tz_name)
+    production = date_basis == "production"
+
     defaulted = from_date is None and to_date is None and closed_from is None and closed_to is None
     if defaulted:
-        from_date = (datetime.now(timezone.utc) - timedelta(days=DEFAULT_WINDOW_DAYS)).date()
-    window = ZReportWindow(from_date=from_date, to_date=to_date, defaulted=defaulted)
+        now = datetime.now(timezone.utc)
+        from_date = ((now.astimezone(tzinfo) if production else now) - timedelta(days=DEFAULT_WINDOW_DAYS)).date()
+    window = ZReportWindow(
+        from_date=from_date,
+        to_date=to_date,
+        defaulted=defaulted,
+        date_basis=date_basis,
+        timezone=tz_name,
+    )
 
-    if from_date is not None:
-        query = query.filter(ZReport.business_date >= from_date)
-    if to_date is not None:
-        query = query.filter(ZReport.business_date <= to_date)
+    if production:
+        # Local days as absolute bounds, so the filter stays on the indexed instant.
+        if from_date is not None:
+            query = query.filter(ZReport.closed_at >= _local_midnight_utc(from_date, tzinfo))
+        if to_date is not None:
+            query = query.filter(
+                ZReport.closed_at < _local_midnight_utc(to_date + timedelta(days=1), tzinfo)
+            )
+    else:
+        if from_date is not None:
+            query = query.filter(ZReport.business_date >= from_date)
+        if to_date is not None:
+            query = query.filter(ZReport.business_date <= to_date)
 
     # A naive datetime from a caller is read as UTC, matching /dashboard/stats.
     if closed_from is not None:
@@ -176,10 +232,13 @@ def list_z_reports(
         query = query.filter(ZReport.closed_at <= closed_to)
 
     total = query.count()
+    order = (
+        (ZReport.closed_at.desc(), ZReport.created_at.desc())
+        if production
+        else (ZReport.business_date.desc(), ZReport.created_at.desc())
+    )
     rows = (
-        query.order_by(
-            ZReport.business_date.desc(), ZReport.closed_at.desc(), ZReport.created_at.desc()
-        )
+        query.order_by(*order)
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
@@ -188,9 +247,150 @@ def list_z_reports(
         page=page,
         page_size=page_size,
         total=total,
-        items=[z_to_out(r) for r in rows],
+        items=[z_to_out(r, tzinfo=tzinfo) for r in rows],
         window=window,
     )
+
+
+# ── Print documents (the till's 80 mm Z) ──────────────────────────────────────
+
+#: Zs one print request may carry — a sequence, or a range, for one sitting at a printer.
+PRINT_DOCUMENTS_MAX = 200
+
+
+def _print_order(query):
+    """Z-number order: a sequence prints as the shop's counter runs."""
+    return query.order_by(
+        ZReport.shop_sequence_number.is_(None),
+        ZReport.shop_sequence_number.asc(),
+        ZReport.business_date.asc(),
+        ZReport.closed_at.asc(),
+    )
+
+
+def _parse_ids(raw: str) -> List[uuid.UUID]:
+    out: List[uuid.UUID] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            value = uuid.UUID(part)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid Z-report id '{part}'")
+        if value not in out:
+            out.append(value)
+    return out
+
+
+def _too_many(count: int) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"too_many_z_reports: {count} Z reports match; at most {PRINT_DOCUMENTS_MAX} print at once",
+    )
+
+
+@router.get("/print-documents")
+def get_z_print_documents(
+    ids: Optional[str] = Query(None, description="Comma-separated Z ids."),
+    shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
+    from_date: Optional[date] = Query(None, alias="from"),
+    to_date: Optional[date] = Query(None, alias="to"),
+    from_number: Optional[int] = Query(None, alias="fromNumber", ge=0),
+    to_number: Optional[int] = Query(None, alias="toNumber", ge=0),
+    date_basis: Literal["business", "production"] = Query("business", alias="dateBasis"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Several Zs as 80 mm print documents (`app/services/z_print.py`), in Z-number order,
+    for printing a sequence: `ids=a,b,c`, or one shop's range — `shopId` with `from`/`to`
+    (dates on `dateBasis`) and/or `fromNumber`/`toNumber` (its Z numbers). At most
+    PRINT_DOCUMENTS_MAX; a larger request is refused (400) rather than cut short. Scoped
+    like `GET /z-reports/{id}`: an id the caller may not see is a 404.
+    """
+    query = (
+        db.query(ZReport)
+        .options(joinedload(ZReport.machine), joinedload(ZReport.shop))
+        .filter(ZReport.tenant_id == active_tenant_id)
+    )
+    wanted: List[uuid.UUID] = []
+    if ids:
+        wanted = _parse_ids(ids)
+        if not wanted:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No Z-report ids")
+        if len(wanted) > PRINT_DOCUMENTS_MAX:
+            raise _too_many(len(wanted))
+        query = query.filter(ZReport.id.in_(wanted))
+    elif shop_id is not None:
+        if from_date is None and to_date is None and from_number is None and to_number is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A range needs from/to dates or fromNumber/toNumber",
+            )
+        query = query.filter(ZReport.shop_id == shop_id)
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Pass ids, or shopId with a range")
+
+    tzinfo = _load_zoneinfo(resolve_report_timezone(db, active_tenant_id, None))
+    if not wanted:
+        if date_basis == "production":
+            if from_date is not None:
+                query = query.filter(ZReport.closed_at >= _local_midnight_utc(from_date, tzinfo))
+            if to_date is not None:
+                query = query.filter(ZReport.closed_at < _local_midnight_utc(to_date + timedelta(days=1), tzinfo))
+        else:
+            if from_date is not None:
+                query = query.filter(ZReport.business_date >= from_date)
+            if to_date is not None:
+                query = query.filter(ZReport.business_date <= to_date)
+        if from_number is not None:
+            query = query.filter(ZReport.shop_sequence_number >= from_number)
+        if to_number is not None:
+            query = query.filter(ZReport.shop_sequence_number <= to_number)
+
+    query = _scope_by_user(query, current_user, db)
+    if query is None:
+        if wanted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Z-report not found")
+        return {"items": [], "total": 0}
+
+    rows = _print_order(query).limit(PRINT_DOCUMENTS_MAX + 1).all()
+    if wanted and len(rows) != len(wanted):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Z-report not found")
+    if len(rows) > PRINT_DOCUMENTS_MAX:
+        raise _too_many(query.count())
+    printed_at = datetime.now(timezone.utc)
+    return {
+        "items": [
+            {
+                "id": str(z.id),
+                "number": z.z_number,
+                "shopId": str(z.shop_id) if z.shop_id else None,
+                "document": z_print.build_print_document(z, tzinfo, printed_at=printed_at),
+            }
+            for z in rows
+        ],
+        "total": len(rows),
+    }
+
+
+@router.get("/{z_report_id}/print-document")
+def get_z_print_document(
+    z_report_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """One Z as the 80 mm print document the till prints (`app/services/z_print.py`)."""
+    query = db.query(ZReport).filter(ZReport.id == z_report_id, ZReport.tenant_id == active_tenant_id)
+    query = _scope_by_user(query, current_user, db)
+    z = query.first() if query is not None else None
+    if not z:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Z-report not found")
+    tzinfo = _load_zoneinfo(resolve_report_timezone(db, active_tenant_id, None))
+    return z_print.build_print_document(z, tzinfo)
 
 
 def _with_derived_sales(section: dict) -> dict:
@@ -262,5 +462,19 @@ def z_detail_out(db: Session, z: ZReport) -> ZReportDetailOut:
         for s in shifts
     ]
     out.business = _business_of(z)
+    sections = [s for s in (z.per_machine or []) if isinstance(s, dict)]
+    if any("cardBrands" in s for s in sections):
+        out.card_brands = card_brands.merge_breakdowns(s.get("cardBrands") for s in sections)
+        out.card_brands_source = "stored"
+    elif z.per_machine is not None and shifts:
+        out.card_brands = compute_totals(db, [s.id for s in shifts]).card_brands_json()
+        out.card_brands_source = "documents"
+    stored_waiters = (z.header or {}).get("byWaiter")
+    if isinstance(stored_waiters, list):
+        out.by_waiter = stored_waiters
+        out.by_waiter_source = "stored"
+    elif z.per_machine is not None and shifts:
+        out.by_waiter = waiter_breakdown(db, [s.id for s in shifts], z.shop_id)
+        out.by_waiter_source = "documents"
     out.till_totals = z.till_totals
     return out

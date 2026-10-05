@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -28,6 +28,9 @@ class ZRunCreateIn(BaseModel):
     #: A Z for this area of the shop: every listed till must be in it now (some may be
     #: left off). Still the shop's Z, under the shop's number (docs/AREAS_API.md §2.3).
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
+    #: The operator confirms producing a shop Z without the tills a 409
+    #: `open_tills_need_confirmation` listed (`shopZOpenTills`). Recorded on the Z.
+    confirm_open_tills: bool = Field(False, alias="confirmOpenTills")
 
 
 class ZRunProceedIn(BaseModel):
@@ -58,6 +61,17 @@ class ZRunItemOut(BaseModel):
     #: While waiting for the till's close: documents of the closing shift the cloud
     #: already holds. Null once the item is ready/excluded/ended, or if the shift is unknown.
     documents_on_cloud: Optional[int] = Field(None, alias="documentsOnCloud")
+    pos_number: Optional[str] = Field(None, alias="posNumber")
+    #: A strict run's ready till (a shop Z from the master till): true once the cloud
+    #: holds its shifts closed, accepted and with every sale it counted; false while it
+    #: waits for transactions (`errorCode` says why). Null for any other item.
+    cloud_verified: Optional[bool] = Field(None, alias="cloudVerified")
+    #: While a strict run waits: the documents the till counted at its closes, and those
+    #: the cloud holds for the same shifts.
+    till_documents: Optional[int] = Field(None, alias="tillDocuments")
+    cloud_documents: Optional[int] = Field(None, alias="cloudDocuments")
+    #: Left out by the operator's typed "סגור" on the master till: who decided.
+    deferred_by: Optional[str] = Field(None, alias="deferredBy")
 
 
 class ZRunOut(BaseModel):
@@ -77,6 +91,14 @@ class ZRunOut(BaseModel):
     z_number: Optional[int] = Field(None, alias="zNumber")
     error_code: Optional[str] = Field(None, alias="errorCode")
     error_message: Optional[str] = Field(None, alias="errorMessage")
+    #: The tills the operator confirmed producing this shop Z without, and who confirmed
+    #: it: `{tills: [{id, posNumber, name, openShiftId}], confirmedByUserId,
+    #: confirmedByName, confirmedAt}`. Null when no confirmation was needed.
+    open_tills_left_out: Optional[Dict[str, Any]] = Field(None, alias="openTillsLeftOut")
+    #: Started from the shop's master till: built only once the cloud verifies every till.
+    strict_cloud_check: bool = Field(False, alias="strictCloudCheck")
+    #: The cloud's clock when this was read (a till times its waits against it).
+    server_time: Optional[datetime] = Field(None, alias="serverTime")
     items: List[ZRunItemOut] = Field(default_factory=list)
 
 
@@ -123,4 +145,14 @@ class ZCandidatesOut(BaseModel):
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
     area_name: Optional[str] = Field(None, alias="areaName")
     z_scope: str = Field("shop", alias="zScope")
+    #: The shop's `shopZOpenTills` rule for a shop Z leaving tills behind: "block",
+    #: "confirm", or null (a per-till Z, or the parameter is off). Advisory: the
+    #: server enforces it on `POST /z-runs`.
+    open_tills_rule: Optional[str] = Field(None, alias="openTillsRule")
     machines: List[ZCandidateMachineOut] = Field(default_factory=list)
+    #: The shop's main till ("קופה ראשית": {machineId, posNumber, name}), or null.
+    main_till: Optional[Dict[str, Any]] = Field(None, alias="mainTill")
+    #: The shop Z is the main till's alone (`shopZFrom` «הקופה הראשית בלבד»): the wizard
+    #: may start only tills' own Zs here. Advisory: `POST /z-runs` refuses it (409
+    #: `z_only_from_main_till`).
+    dashboard_z_blocked: bool = Field(False, alias="dashboardZBlocked")

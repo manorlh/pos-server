@@ -67,6 +67,9 @@ class ShiftOpenIn(BaseModel):
     opening_cash: Optional[Decimal] = Field(None, alias="openingCash", **MONEY)
     opened_by_user_id: Optional[str] = Field(None, alias="openedByUserId", max_length=100)
     opened_by_name: Optional[str] = Field(None, alias="openedByName", max_length=255)
+    #: A training shift ("מצב הדרכה", app/services/training_mode.py): quarantined, never
+    #: a real shift. Absent on a real one.
+    training: bool = False
 
     @field_validator("opening_cash", mode="before")
     @classmethod
@@ -93,6 +96,8 @@ class ShiftCloseIn(BaseModel):
     #: The till's own X figures. Stored for audit and compared; never used for a Z.
     till: Optional[Dict[str, Any]] = None
     close_request_id: Optional[uuid.UUID] = Field(None, alias="closeRequestId")
+    #: A training shift's close ("מצב הדרכה"): quarantined, answered like a real close.
+    training: bool = False
 
     # Optional open fields, so a shift whose open event never arrived can still close.
     business_date: Optional[date] = Field(None, alias="businessDate")
@@ -186,6 +191,13 @@ class ShiftOut(BaseModel):
     #: Card transmission of the shift's sales, informational (docs/SHIFTS_API.md §4.11).
     #: On the X detail (`GET /shifts/{id}`) only; null elsewhere.
     transmission: Optional[Dict[str, Any]] = None
+    #: Offline-approved card sales of the shift and how their authorization went. On the
+    #: X detail only, like `transmission`.
+    offline: Optional[Dict[str, Any]] = None
+    #: Card legs of the shift that an offline authorization run of its till declined.
+    #: Filled on the dashboard list and detail reads; null elsewhere.
+    offline_declined_count: Optional[int] = Field(None, alias="offlineDeclinedCount")
+    offline_declined_amount: Optional[Decimal] = Field(None, alias="offlineDeclinedAmount")
 
 
 class ShiftCloseResponse(BaseModel):

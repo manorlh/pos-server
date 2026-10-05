@@ -1,4 +1,4 @@
-"""Notify POS machines via Ably that settings for their shop/company changed."""
+"""Notify POS machines via Ably that settings for their till/area/shop/company/tenant changed."""
 from sqlalchemy.orm import Session
 
 from app.models.company import Company
@@ -12,6 +12,21 @@ def _notify_machines(db: Session, machines: list, reason: str) -> None:
         tid = str(m.tenant_id) if m.tenant_id else None
         if tid:
             publish_settings_notify(tid, str(m.id), reason=reason)
+
+
+def notify_machine_settings(db: Session, machine: POSMachine, reason: str) -> None:
+    """Notify the one till whose own settings layer changed."""
+    if machine.is_active:
+        _notify_machines(db, [machine], reason)
+
+
+def notify_machines_for_area_settings(db: Session, area_id: str, reason: str) -> None:
+    """Notify every active machine standing in this area (point of sale)."""
+    machines = db.query(POSMachine).filter(
+        POSMachine.area_id == area_id,
+        POSMachine.is_active.is_(True),
+    ).all()
+    _notify_machines(db, machines, reason)
 
 
 def notify_machines_for_shop_settings(db: Session, shop_id: str, reason: str) -> None:

@@ -41,6 +41,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 
 type Mode = 'distribution' | 'range';
 
@@ -135,7 +136,7 @@ export default function TipsReportPage() {
         <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
       </div>
 
-      <div className="flex flex-wrap gap-2" role="tablist" aria-label={t('modeLabel')}>
+      <div className="flex flex-wrap gap-2 print:hidden" role="tablist" aria-label={t('modeLabel')}>
         <Button
           role="tab"
           aria-selected={mode === 'distribution'}
@@ -162,7 +163,7 @@ export default function TipsReportPage() {
       <ScopeGate resolution={resolution}>
         {mode === 'distribution' ? (
           <>
-            <div className="flex flex-wrap gap-4 items-end">
+            <div className="flex flex-wrap gap-4 items-end print:hidden">
               <div className="space-y-1">
                 <Label>{t('from')}</Label>
                 <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -193,6 +194,31 @@ export default function TipsReportPage() {
               <ReportErrorState message={axiosErrorToToastMessage(error, tc('error'))} />
             ) : report ? (
               <div className="space-y-4">
+                <ReportExportToolbar
+                  title={`${t('title')} · ${t('modeDistribution')}`}
+                  from={from}
+                  to={to}
+                  getSheets={() => ({
+                    name: t('modeDistribution'),
+                    columns: [
+                      { header: t('cashier') },
+                      { header: t('workerNumber'), width: 10 },
+                      { header: t('tipsCollected'), kind: 'money' },
+                      { header: t('cashTips'), kind: 'money' },
+                      { header: t('cardTips'), kind: 'money' },
+                      { header: t('sales'), kind: 'money' },
+                      { header: t('amountOwed'), kind: 'money' },
+                    ],
+                    rows: report.cashiers.map((r) => [
+                      r.cashierName ?? null, r.workerNumber ?? null, r.tipsCollected, r.cashTips, r.cardTips,
+                      r.salesTotal, r.amountOwed,
+                    ]),
+                    totals: [
+                      tc('total'), null, report.totalTips, report.totalCashTips, report.totalCardTips, null,
+                      report.cashiers.reduce((sum, r) => sum + r.amountOwed, 0),
+                    ],
+                  })}
+                />
                 <div className="flex flex-wrap gap-2 items-center">
                   <Badge variant="outline">{distLabel(report.distribution)}</Badge>
                   <span className="text-sm text-muted-foreground">
@@ -269,6 +295,48 @@ export default function TipsReportPage() {
               <ReportErrorState message={axiosErrorToToastMessage(rangeQuery.error, tc('error'))} />
             ) : rangeQuery.data ? (
               <div className="space-y-4">
+                <ReportExportToolbar
+                  title={`${t('title')} · ${t('modeRange')}`}
+                  from={rangeQuery.data.window.from}
+                  to={rangeQuery.data.window.to}
+                  getSheets={() => {
+                    const d = rangeQuery.data!;
+                    return [
+                      {
+                        name: t('cashier'),
+                        columns: [
+                          { header: t('cashier') },
+                          { header: t('workerNumber'), width: 10 },
+                          { header: t('tipsTotal'), kind: 'money' },
+                          { header: t('cashTips'), kind: 'money' },
+                          { header: t('cardTips'), kind: 'money' },
+                          { header: t('otherTips'), kind: 'money' },
+                          { header: t('tippedDocuments'), kind: 'number' },
+                          { header: t('salesNet'), kind: 'money' },
+                        ],
+                        rows: d.byCashier.map((r) => [
+                          r.cashierName ?? t('unknownCashier'), r.workerNumber ?? null, r.tipsTotal, r.tipsCash,
+                          r.tipsCard, r.tipsOther, r.tippedDocumentCount, r.salesNet,
+                        ]),
+                        totals: [
+                          tc('total'), null, d.tipsTotal, d.tipsCash, d.tipsCard, d.tipsOther,
+                          d.byCashier.reduce((sum, r) => sum + r.tippedDocumentCount, 0),
+                          d.byCashier.reduce((sum, r) => sum + r.salesNet, 0),
+                        ],
+                      },
+                      {
+                        name: t('method'),
+                        columns: [
+                          { header: t('method') },
+                          { header: t('amount'), kind: 'money' },
+                          { header: t('tippedDocuments'), kind: 'number' },
+                        ],
+                        rows: d.byMethod.map((r) => [methodLabel(r.method), r.amount, r.documentCount]),
+                        totals: [tc('total'), d.tipsTotal, d.byMethod.reduce((sum, r) => sum + r.documentCount, 0)],
+                      },
+                    ];
+                  }}
+                />
                 <ReportWindowSummary
                   window={rangeQuery.data.window}
                   generatedAt={rangeQuery.data.generatedAt}

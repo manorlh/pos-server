@@ -41,6 +41,8 @@ from app.services.shifts import apply_shift_close, z_reported_through_sequence
 from app.services.z_builder import ZBuildRefused, build_z, included_shifts
 from shift_world import NOW, TODAY, accept_str_uuids, freeze_z_run_clock, make_world
 
+pytestmark = pytest.mark.usefixtures("z_activity_unchecked")  # not about "no Z on 0"
+
 
 @pytest.fixture
 def w(monkeypatch):

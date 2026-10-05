@@ -30,6 +30,7 @@
 
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { ArrowDown, ArrowUp } from 'lucide-react';
 import type { Company, PosMachine, Shop } from '@/lib/types';
 import { buildCompanyTree, companyPathLabel } from '@/lib/companyTree';
 import { findBySameId } from '@/lib/entityLookup';
@@ -83,6 +84,8 @@ export interface MachinesTableProps {
   isDeviceOnline: (m: PosMachine) => boolean;
   /** Opens the pairing dialog with this shop's company and shop pre-selected. */
   onAddMachineToShop: (shop: Shop, companyLabel: string) => void;
+  /** Opens the terminal number dialog for every till of this shop. */
+  onTerminalNumberForShop?: (shop: Shop) => void;
 }
 
 /**
@@ -127,12 +130,15 @@ export function MachinesTable({
   actions,
   isDeviceOnline,
   onAddMachineToShop,
+  onTerminalNumberForShop,
 }: MachinesTableProps) {
   const t = useTranslations('machines');
   // Seeded from storage once, then owned outright — a toggle writes to both, so this
   // map is the only thing render reads.
   const [collapsed, setCollapsed] = useState<Map<string, boolean>>(readCollapsedAll);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(() => new Set());
+  /** Register numbers run 1, 2, 3 by default; the "קופה" caption flips them. */
+  const [registerDesc, setRegisterDesc] = useState(false);
 
   const tree = useMemo(() => buildCompanyTree(companies), [companies]);
 
@@ -168,7 +174,9 @@ export function MachinesTable({
     for (const group of list) {
       // Register number first — the shop's tills read 1, 2, 3 — then by name for the
       // few without one.
-      group.machines.sort(compareByRegisterNumber);
+      group.machines.sort((a, b) =>
+        registerDesc ? compareByRegisterNumber(b, a) : compareByRegisterNumber(a, b),
+      );
       const counts = new Map<MachineStatusValue, number>();
       for (const m of group.machines) {
         const s = machineStatus(m);
@@ -190,7 +198,7 @@ export function MachinesTable({
     });
 
     return list;
-  }, [machines, shops, tree, t]);
+  }, [machines, shops, tree, t, registerDesc]);
 
   // Groups default to expanded; only what storage explicitly marks comes back collapsed.
   const isCollapsed = (key: string): boolean => collapsed.get(key) ?? false;
@@ -218,11 +226,22 @@ export function MachinesTable({
         className={`hidden border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground ${MACHINE_ROW_GRID}`}
       >
         <span>{t('columns.status')}</span>
-        <span>{t('columns.terminal')}</span>
-        <span>{t('columns.area')}</span>
-        <span>{t('columns.flags')}</span>
+        <button
+          type="button"
+          onClick={() => setRegisterDesc((d) => !d)}
+          className="inline-flex items-center gap-1 justify-self-start hover:text-foreground"
+          title={t('columns.sortByRegister')}
+          aria-label={t('columns.sortByRegister')}
+        >
+          {t('columns.terminal')}
+          {registerDesc ? (
+            <ArrowUp className="h-3 w-3" aria-hidden />
+          ) : (
+            <ArrowDown className="h-3 w-3" aria-hidden />
+          )}
+        </button>
         <span>{t('columns.shift')}</span>
-        <span>{t('columns.pending')}</span>
+        <span>{t('columns.flags')}</span>
         <span>{t('columns.lastSeen')}</span>
         <span className="text-end">{t('columns.actions')}</span>
       </div>
@@ -232,6 +251,7 @@ export function MachinesTable({
           <MachineGroupHeader
             companyLabel={group.companyLabel}
             shopName={group.shopName}
+            shopNumber={group.shop?.shopNumber}
             unassigned={group.unassigned}
             count={group.machines.length}
             tallies={group.tallies}
@@ -240,6 +260,11 @@ export function MachinesTable({
             onAddMachine={
               group.shop
                 ? () => onAddMachineToShop(group.shop!, group.companyLabel ?? '')
+                : undefined
+            }
+            onTerminalNumber={
+              group.shop && onTerminalNumberForShop
+                ? () => onTerminalNumberForShop(group.shop!)
                 : undefined
             }
           />

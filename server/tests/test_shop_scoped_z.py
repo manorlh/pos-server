@@ -30,6 +30,8 @@ from app.services import ably_notify
 from app.services import z_runs as ZR
 from shift_world import NOW, accept_str_uuids, freeze_z_run_clock, make_world
 
+pytestmark = pytest.mark.usefixtures("z_activity_unchecked")  # not about "no Z on 0"
+
 
 @pytest.fixture
 def w(monkeypatch):

@@ -34,6 +34,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TillCloseProgress } from '@/components/dashboard/close-progress';
 import { useZErrorText } from './z-errors';
+import { OpenTillsRecord } from './open-tills';
 
 const WAITING_ITEM = new Set<ZRunItemStatus>(['waiting_close', 'closing']);
 
@@ -157,6 +158,7 @@ export function ZRunProgress({ runId }: { runId: string }) {
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
+        <OpenTillsRecord left={run.openTillsLeftOut} />
         {isError ? (
           <p className="text-xs text-destructive">{t('pollFailed', { error: errors.forError(error) })}</p>
         ) : null}

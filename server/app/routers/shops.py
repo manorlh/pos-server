@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.services import licenses
 from app.database import get_db
 from app.models.shop import Shop
 from app.models.company import Company
@@ -36,6 +37,7 @@ from app.services.company_hierarchy import (
 from app.services.product_shop_scope import product_allowed_in_shop, reconcile_shops
 from app.services.pos_user_defaults import ensure_default_pos_user
 from app.services.register_number import peek_next_register_number, set_machine_shop
+from app.services.org_numbers import assign_shop_number
 from app.services.settings_notify import notify_machines_for_shop_settings
 from app.services.permission_matrix import SHOP_SCOPED_ROLES
 
@@ -112,12 +114,23 @@ def list_shop_product_overrides(
         )
     )
     total = base_q.count()
-    page_rows = (
-        base_q.order_by(Product.name)
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-        .all()
-    )
+    # "סידור פריטים": in the order the shop's tills show their buttons (`productOrder`, set
+    # from a till's edit mode), the rest by name after them — as on the tills.
+    till_order = shop.settings.get("productOrder") if isinstance(shop.settings, dict) else None
+    rank = {str(pid): i for i, pid in enumerate(till_order)} if isinstance(till_order, list) else {}
+    if rank:
+        ordered = sorted(
+            base_q.order_by(Product.name).all(),
+            key=lambda row: rank.get(str(row[1].id), len(rank)),
+        )
+        page_rows = ordered[(page - 1) * page_size: page * page_size]
+    else:
+        page_rows = (
+            base_q.order_by(Product.name)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
 
     # The shop's own company is the only company level consulted here (and everywhere).
     company_levels = availability.company_overrides(
@@ -140,6 +153,7 @@ def list_shop_product_overrides(
                 effective_available=levels[availability.Level.SHOP].available,
                 inherited_available=levels[availability.Level.COMPANY].available,
                 is_general=general_item.is_general(p),
+                till_position=(rank[str(p.id)] + 1) if str(p.id) in rank else None,
             )
         )
     return ShopProductCatalogRowListResponse(page=page, page_size=page_size, total=total, items=items)
@@ -439,11 +453,20 @@ def create_shop(
         city=data.city,
         is_active=data.is_active,
     )
+    # "לקוח קבוע / זמני": the super admin's to set (app/services/licenses.py).
+    licenses.apply_license(current_user, shop, data.model_dump(include=set(licenses.FIELDS)), creating=True)
     db.add(shop)
     # Flush to materialise shop.id, then seed the default POS user in the same transaction
     # so a shop can never exist without an operator a till can sign in as.
     db.flush()
+    # Shop 1, 2, 3 in its company, drawn in this transaction like the till numbers.
+    assign_shop_number(db, shop)
     ensure_default_pos_user(db, shop)
+    if data.training_mode:
+        # "מצב הדרכה" from the start: no till yet, so no real shift to wait for.
+        from app.services import training_mode
+
+        training_mode.start(db, shop, current_user, check_shifts=False)
     # A new shop receives every product whose "all shops of company X" rule covers it.
     # No till can be paired to it yet, so there is nobody to notify.
     reconcile_shops(db, [shop])
@@ -512,6 +535,8 @@ def update_shop(
     _check_shop_override_write(current_user, shop, db)
 
     updates = data.model_dump(exclude_unset=True, by_alias=False)
+    # The license fields leave `updates` here: the super admin's only.
+    licenses.apply_license(current_user, shop, updates)
     profile_changed = bool(_SHOP_PROFILE_FIELDS & set(updates.keys()))
     was_active, old_company_id = shop.is_active, shop.company_id
     for field, value in updates.items():

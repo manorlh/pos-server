@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DeviceModelSelect } from '@/components/dashboard/machines/device-model';
+import type { DeviceModel } from '@/lib/types';
 import {
   claimDevice,
   clearPairingSessionToken,
@@ -34,6 +36,8 @@ export function MobilePairContent() {
   const [companyId, setCompanyId] = useState('');
   const [shopId, setShopId] = useState('');
   const [machineName, setMachineName] = useState('');
+  // Kept between claims: a field install is usually one kind of hardware.
+  const [deviceModel, setDeviceModel] = useState<DeviceModel | ''>('');
   const [scanOpen, setScanOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -154,6 +158,10 @@ export function MobilePairContent() {
       setMessage('יש להזין שם לקופה לפני הסריקה');
       return;
     }
+    if (!deviceModel) {
+      setMessage(t('deviceModel.required'));
+      return;
+    }
     setMessage(null);
     setScanOpen(true);
     await new Promise((r) => setTimeout(r, 150));
@@ -193,6 +201,7 @@ export function MobilePairContent() {
         companyId,
         shopId,
         machineName: name,
+        ...(deviceModel ? { deviceModel } : {}),
       });
       setClaims((prev) => [{ ...res, machineName: name, at: new Date().toISOString() }, ...prev]);
       setPendingConfirm(null);
@@ -291,13 +300,17 @@ export function MobilePairContent() {
             <p className="text-xs text-muted-foreground">{t('registerNameSuggested')}</p>
           ) : null}
         </div>
+        <div className="space-y-2">
+          <Label htmlFor="device-model">{t('deviceModel.label')}</Label>
+          <DeviceModelSelect id="device-model" value={deviceModel} onChange={setDeviceModel} />
+        </div>
       </div>
 
       {!scanOpen && !pendingConfirm ? (
         <Button
           className="w-full h-14 text-lg"
           onClick={() => void startScanner()}
-          disabled={busy || !companyId || !shopId || !machineName.trim()}
+          disabled={busy || !companyId || !shopId || !machineName.trim() || !deviceModel}
         >
           סרוק QR מהקופה
         </Button>

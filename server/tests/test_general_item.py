@@ -79,6 +79,11 @@ _TABLES = (
     "shop_product_overrides", "company_product_overrides", "machine_product_overrides", "machine_catalog_items",
     "customers", "tenant_local_sku_sequences", "shop_category_overrides", "sync_logs",
     "transaction_items", "users",
+    "shop_areas", "area_product_overrides", "category_availability_overrides",
+    "org_number_sequences",
+    # The menu block rides the catalog pull (docs/SPEC_MENU_MODIFIERS.md §10.1).
+    "modifier_groups", "modifier_options", "modifier_links", "prep_note_presets", "meal_slots",
+    "meal_slot_options", "upsell_rules", "menu_courses", "menu_sync_state",
 )
 
 
@@ -461,12 +466,15 @@ class TestProtected:
     def test_the_till_cannot_unlist_delete_or_reshape_it(self, world):
         w = world
         g = _general(w, w.H)
-        # (The till unlists through DELETE: ProductUpdate carries no isListed.)
         for body in ({"isOpenPrice": False, "price": 5}, {"isGeneral": False}, {"taxRate": 0}):
             _refused(sync_router.machine_update_cloud_product, str(w.t_h1.id), str(g.id),
                      ProductUpdate.model_validate(body), machine=w.t_h1, actor=_ACTOR, db=w.db)
-        _refused(sync_router.machine_delete_cloud_product, str(w.t_h1.id), str(g.id),
-                 machine=w.t_h1, actor=_ACTOR, db=w.db)
+        # A till deletes nothing any more, the general item included (409, see sync).
+        with pytest.raises(HTTPException) as info:
+            sync_router.machine_delete_cloud_product(
+                str(w.t_h1.id), str(g.id), machine=w.t_h1, actor=_ACTOR, db=w.db
+            )
+        assert info.value.status_code == 409
         assert _rows(w, g)[str(w.h1.id)].is_listed is True
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -18,6 +19,7 @@ from app.services.areas import filter_on_column, parse_area_filter
 from app.services.scoping import scope_query_by_user
 from app.services.shift_totals import compute_totals
 from app.services.shifts import shift_to_out
+from app.services.offline_authorizations import declined_by_shift, offline_block
 from app.services.transmissions import period_block
 
 router = APIRouter(prefix="/shifts", tags=["shifts"])
@@ -99,7 +101,14 @@ def list_shifts(
         .limit(page_size)
         .all()
     )
-    return ShiftListResponse(page=page, page_size=page_size, total=total, items=[_out(s) for s in rows])
+    items = [_out(s) for s in rows]
+    # One query for the page: the card legs of each shift an offline run declined.
+    declined = declined_by_shift(db, [s.id for s in rows])
+    for item in items:
+        item.offline_declined_count, item.offline_declined_amount = declined.get(
+            item.id, (0, Decimal("0.00"))
+        )
+    return ShiftListResponse(page=page, page_size=page_size, total=total, items=items)
 
 
 @router.get("/{shift_id}", response_model=ShiftOut, response_model_by_alias=True)
@@ -118,4 +127,7 @@ def get_shift(
     if shift.machine is not None:
         # Informational only: the shift's card sales and the batches that carried them.
         out.transmission = period_block(db, shift.machine, [shift])
+        out.offline = offline_block(db, shift.machine, [shift])
+        out.offline_declined_count = out.offline["declinedCount"]
+        out.offline_declined_amount = Decimal(out.offline["declinedAmount"])
     return out

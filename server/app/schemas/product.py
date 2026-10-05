@@ -4,6 +4,9 @@ import uuid
 from decimal import Decimal
 from datetime import datetime
 
+from app.services.item_ticket import ProductTicketMode
+from app.schemas.kitchen_printers import KitchenPrintersPatch
+
 
 class ShopScopeIn(BaseModel):
     """
@@ -88,6 +91,10 @@ class ProductBase(BaseModel):
     barcode: Optional[str] = None
     tax_rate: Optional[Decimal] = Field(None, ge=0, alias="taxRate")
     voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
+    # Item-ticket ("שובר") mode — see app/services/item_ticket.py. "inherit" (stored
+    # as null) uses the category's mode.
+    ticket_mode: Optional[ProductTicketMode] = Field(None, alias="ticketMode")
+    ticket_entries: Optional[int] = Field(None, ge=1, le=50, alias="ticketEntries")
     track_stock: bool = Field(False, alias="trackStock")
     # "General item": the cashier types the amount at the till, so `price` is only the
     # suggestion the till pre-fills.
@@ -105,6 +112,8 @@ class ProductBase(BaseModel):
     # to open.
     is_weighed: bool = Field(False, alias="isWeighed")
     unit_label: Optional[str] = Field(None, max_length=16, alias="unitLabel")
+    # "לא מקבל הנחות": no line discount, no basket-discount share, no promotion at the till.
+    no_discount: bool = Field(False, alias="noDiscount")
 
     @field_validator("name", "sku")
     @classmethod
@@ -152,16 +161,25 @@ class ProductUpdate(BaseModel):
     tax_rate: Optional[Decimal] = Field(None, ge=0, alias="taxRate")
     is_local_override: Optional[bool] = Field(None, alias="isLocalOverride")
     voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
+    # Item-ticket ("שובר") mode — see app/services/item_ticket.py. "inherit" (stored
+    # as null) uses the category's mode.
+    ticket_mode: Optional[ProductTicketMode] = Field(None, alias="ticketMode")
+    ticket_entries: Optional[int] = Field(None, ge=1, le=50, alias="ticketEntries")
     track_stock: Optional[bool] = Field(None, alias="trackStock")
     is_open_price: Optional[bool] = Field(None, alias="isOpenPrice")
     is_weighed: Optional[bool] = Field(None, alias="isWeighed")
     unit_label: Optional[str] = Field(None, max_length=16, alias="unitLabel")
+    no_discount: Optional[bool] = Field(None, alias="noDiscount")
     # Never changes. Echoing the current value (a form sending the product back) is
     # fine; anything else is refused — see app/services/general_item.py.
     is_general: Optional[bool] = Field(None, alias="isGeneral")
     # Omitted: the scope is left exactly as it is.
     shop_scope: Optional[ShopScopeIn] = Field(None, alias="shopScope")
     shop_prices: Optional[List[ShopPriceIn]] = Field(None, alias="shopPrices")
+    # Kitchen / bar printers ("מדפסות בונים") in the writing till's shop — applied by the
+    # till's product PUT (app/routers/sync.py). Excluded from `model_dump`, so no handler
+    # mistakes it for a column of the product.
+    kitchen_printers: Optional[KitchenPrintersPatch] = Field(None, alias="kitchenPrinters", exclude=True)
 
     @field_validator("shop_prices")
     @classmethod
@@ -202,10 +220,14 @@ class ProductResponse(BaseModel):
     barcode: Optional[str]
     tax_rate: Optional[Decimal] = Field(None, alias="taxRate")
     voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
+    # Own value; null inherits the category's.
+    ticket_mode: Optional[str] = Field(None, alias="ticketMode")
+    ticket_entries: Optional[int] = Field(None, alias="ticketEntries")
     track_stock: bool = Field(False, alias="trackStock")
     is_open_price: bool = Field(False, alias="isOpenPrice")
     is_weighed: bool = Field(False, alias="isWeighed")
     unit_label: Optional[str] = Field(None, alias="unitLabel")
+    no_discount: bool = Field(False, alias="noDiscount")
     # The company's built-in "פריט כללי", which the till's calculator sells through.
     is_general: bool = Field(False, alias="isGeneral")
     shop_scope: Optional[ShopScopeOut] = Field(None, alias="shopScope")

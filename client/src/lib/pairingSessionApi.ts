@@ -84,6 +84,8 @@ export function claimDevice(payload: {
   companyId: string;
   shopId: string;
   machineName?: string;
+  /** "N55F" | "MODO" | "P18" — the hardware being paired. */
+  deviceModel?: string;
 }): Promise<MobileClaimResponse> {
   return pairingFetch<MobileClaimResponse>('/pairing/mobile/claim', {
     method: 'POST',

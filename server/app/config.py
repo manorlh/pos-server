@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import List
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -66,6 +67,21 @@ class Settings(BaseSettings):
     cloudinary_cloud_name: str = ""
     cloudinary_api_key: str = ""
     cloudinary_api_secret: str = ""
+
+    # Product image background removal (POST /images/upload?resource=products).
+    # A per-upload `keepBackground=true` skips it; this switches it off server-wide.
+    product_image_bg_removal: bool = True
+    # rembg model: isnet-general-use (~170 MB, ~1.5 s per image on CPU) cuts cleaner
+    # than u2netp (~5 MB, ~0.2 s). Downloaded on the first product upload.
+    product_image_bg_model: str = "isnet-general-use"
+    product_image_bg_model_dir: str = str(Path(__file__).resolve().parent.parent / "var" / "rembg")
+    product_image_max_side: int = 1024
+
+    # Till app releases ("עדכון קופות"): uploaded APKs, one `<release id>.apk` each.
+    # Local disk, not Cloudinary — the tills download them through the API, which
+    # checks that the release is the one assigned to that till.
+    app_releases_dir: str = str(Path(__file__).resolve().parent.parent / "var" / "app_releases")
+    app_release_max_bytes: int = 200 * 1024 * 1024
 
 
 @lru_cache()

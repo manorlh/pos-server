@@ -2,6 +2,9 @@ from pydantic import BaseModel, Field, field_validator
 from typing import List, Literal, Optional
 import uuid
 import re
+
+from app.services.item_ticket import TicketMode
+from app.schemas.kitchen_printers import KitchenPrintersPatch
 from datetime import datetime
 
 
@@ -12,6 +15,8 @@ class CategoryBase(BaseModel):
     image_url: Optional[str] = Field(None, alias="imageUrl")
     parent_id: Optional[uuid.UUID] = Field(None, alias="parentId")
     voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
+    # Item-ticket ("שובר") mode — see app/services/item_ticket.py. Null is "off".
+    ticket_mode: Optional[TicketMode] = Field(None, alias="ticketMode")
     is_active: bool = Field(True, alias="isActive")
     sort_order: int = Field(0, alias="sortOrder")
 
@@ -47,8 +52,13 @@ class CategoryUpdate(BaseModel):
     image_url: Optional[str] = Field(None, alias="imageUrl")
     parent_id: Optional[uuid.UUID] = Field(None, alias="parentId")
     voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
+    # Item-ticket ("שובר") mode — see app/services/item_ticket.py. Null is "off".
+    ticket_mode: Optional[TicketMode] = Field(None, alias="ticketMode")
     is_active: Optional[bool] = Field(None, alias="isActive")
     sort_order: Optional[int] = Field(None, alias="sortOrder")
+    # Kitchen / bar printers ("מדפסות בונים") in the writing till's shop — applied by the
+    # till's category PUT (app/routers/sync.py); excluded from `model_dump`.
+    kitchen_printers: Optional[KitchenPrintersPatch] = Field(None, alias="kitchenPrinters", exclude=True)
 
     @field_validator("name")
     @classmethod
@@ -104,6 +114,17 @@ class CategoryReorderResponse(BaseModel):
     updated: int
 
 
+class CategoryInactiveAt(BaseModel):
+    """One shop, area or till where the category is switched off (`category_availability`)."""
+
+    level: Literal["shop", "area", "machine"]
+    target_id: uuid.UUID = Field(..., alias="targetId")
+    name: Optional[str] = None
+
+    class Config:
+        populate_by_name = True
+
+
 class CategoryResponse(BaseModel):
     id: uuid.UUID
     tenant_id: Optional[uuid.UUID] = Field(None, alias="tenantId")
@@ -116,11 +137,15 @@ class CategoryResponse(BaseModel):
     image_url: Optional[str] = Field(None, alias="imageUrl")
     parent_id: Optional[uuid.UUID] = Field(None, alias="parentId")
     voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
+    ticket_mode: Optional[str] = Field(None, alias="ticketMode")
     is_active: bool = Field(..., alias="isActive")
     sort_order: int = Field(..., alias="sortOrder")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
     children: Optional[list["CategoryResponse"]] = None
+    #: Where it is switched off below the tenant — filled by the list only, for the
+    #: dashboard's "not active at" badge. Empty when nowhere.
+    inactive_at: List[CategoryInactiveAt] = Field(default_factory=list, alias="inactiveAt")
 
     class Config:
         from_attributes = True

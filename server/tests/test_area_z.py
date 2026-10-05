@@ -144,7 +144,7 @@ class TestZForAnArea:
             out = z_reports_router.list_z_reports(
                 machine_id=None, machine_ids=None, shop_id=None, from_date=date(2026, 1, 1),
                 to_date=None, closed_from=None, closed_to=None, area_id=area_id,
-                page=1, page_size=50, **_ctx(w),
+                date_basis="business", tz=None, page=1, page_size=50, **_ctx(w),
             )
             return [(i.id, i.area_name) for i in out.items]
 

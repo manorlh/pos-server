@@ -309,12 +309,17 @@ def notify_tills(machines: Iterable[POSMachine]) -> None:
     The till then pulls `GET /sync/{id}/settings`, whose watermark has moved with the
     change (`area_changed_at`, or the area's `updated_at` on a rename). Call after the
     commit: a till that refetches before it would read the old area.
+
+    And a catalog notification beside it: the area is also a level of product
+    availability and category activity, so a till that changed area may sell
+    differently. Its catalog watermark and delta pull move by `area_changed_at` too.
     """
-    from app.services.ably_notify import publish_settings_notify
+    from app.services.ably_notify import publish_catalog_notify, publish_settings_notify
 
     for machine in machines:
         if machine.tenant_id and machine.is_active:
             publish_settings_notify(str(machine.tenant_id), str(machine.id), reason=AREA_NOTIFY_REASON)
+            publish_catalog_notify(str(machine.tenant_id), str(machine.id), reason=AREA_NOTIFY_REASON)
 
 
 def area_tills(db: Session, area_id) -> List[POSMachine]:

@@ -1,4 +1,4 @@
-import type { PosMachine } from '@/lib/types';
+import { DEVICE_MODELS, type DeviceModel, type PosMachine } from '@/lib/types';
 
 const BATTERY_STATUSES = ['charging', 'discharging', 'full', 'not_charging', 'unknown'] as const;
 const PRINTER_STATUSES = ['ok', 'no_paper', 'overheated', 'error', 'unavailable', 'unknown'] as const;
@@ -40,10 +40,60 @@ function printerStatus(value: unknown): PosMachine['printerStatus'] {
     : 'unknown';
 }
 
+const TERMINAL_STATUSES = ['match', 'mismatch', 'unknown', 'not_required'] as const;
+
+/**
+ * Absent (a server that predates it) stays absent and shows nothing; a value the
+ * dashboard does not know reads as "unknown", never as "match".
+ */
+function terminalStatus(value: unknown): PosMachine['terminalStatus'] {
+  const s = nullableString(value);
+  if (!s) return undefined;
+  return (TERMINAL_STATUSES as readonly string[]).includes(s)
+    ? (s as PosMachine['terminalStatus'])
+    : 'unknown';
+}
+
+function terminalLastWrite(value: unknown): PosMachine['terminalLastWrite'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const w = value as Record<string, unknown>;
+  return {
+    field: nullableString(w.field),
+    value: nullableString(w.value),
+    ok: typeof w.ok === 'boolean' ? w.ok : null,
+    error: nullableString(w.error),
+    at: nullableString(w.at),
+  };
+}
+
+/** Exported for the force answer, whose rows carry the same terminal fields. */
+export function normalizeTerminalFields(raw: Record<string, unknown>) {
+  return {
+    terminalNumber: nullableString(raw.terminalNumber),
+    terminalClearingServer: nullableString(raw.terminalClearingServer),
+    terminalOfflineMode: typeof raw.terminalOfflineMode === 'boolean' ? raw.terminalOfflineMode : null,
+    terminalReportedAt: nullableString(raw.terminalReportedAt),
+    terminalLastWrite: terminalLastWrite(raw.terminalLastWrite),
+    terminalMerchantName: nullableString(raw.terminalMerchantName),
+    terminalSupplierNumber: nullableString(raw.terminalSupplierNumber),
+    expectedTerminalNumber: nullableString(raw.expectedTerminalNumber),
+    forceTerminalNumber: raw.forceTerminalNumber === true,
+    forceTerminalNumberSource: (nullableString(raw.forceTerminalNumberSource) ??
+      null) as PosMachine['forceTerminalNumberSource'],
+    terminalStatus: terminalStatus(raw.terminalStatus),
+  };
+}
+
 /** What is waiting for this till's close: a Z run, a standalone request, or nothing known. */
 function closeSource(value: unknown): PosMachine['pendingCloseSource'] {
   const s = nullableString(value);
   return s === 'z_run' || s === 'request' ? s : null;
+}
+
+/** A model this build knows, else null (unknown — read as a 55F). */
+function deviceModel(value: unknown): PosMachine['deviceModel'] {
+  const s = nullableString(value)?.toUpperCase();
+  return (DEVICE_MODELS as readonly string[]).includes(s ?? '') ? (s as DeviceModel) : null;
 }
 
 /** Absent (an older server) or anything unknown is the default, `cloud`. */
@@ -77,6 +127,12 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     areaId: nullableString(raw.areaId ?? raw.area_id),
     areaName: nullableString(raw.areaName ?? raw.area_name),
     pairingStatus,
+    shopNumber: nullableNumber(raw.shopNumber ?? raw.shop_number),
+    companyNumber: nullableNumber(raw.companyNumber ?? raw.company_number),
+    deviceModel: deviceModel(raw.deviceModel ?? raw.device_model),
+    hasPrinter: typeof raw.hasPrinter === 'boolean' ? raw.hasPrinter : undefined,
+    licenseType: (raw.licenseType ?? raw.license_type) === 'temporary' ? 'temporary' : 'permanent',
+    licenseExpiresOn: nullableString(raw.licenseExpiresOn ?? raw.license_expires_on),
     mqttClientId: (raw.mqttClientId ?? raw.mqtt_client_id) as string | undefined,
     deviceInfo: (raw.deviceInfo ?? raw.device_info) as Record<string, unknown> | undefined,
     isActive: Boolean(raw.isActive ?? raw.is_active ?? true),
@@ -131,6 +187,7 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     printerStatusAt: nullableString(raw.printerStatusAt),
     printerLastOkAt: nullableString(raw.printerLastOkAt),
     printerReportedAt: nullableString(raw.printerReportedAt),
+    ...normalizeTerminalFields(raw),
     zMode: zMode(raw.zMode ?? raw.z_mode),
     createdAt: String(raw.createdAt ?? raw.created_at ?? ''),
     updatedAt: String(raw.updatedAt ?? raw.updated_at ?? ''),

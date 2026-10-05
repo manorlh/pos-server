@@ -43,6 +43,12 @@ def _settings_or_raise(settings: Settings | None = None) -> Settings:
     return s
 
 
+def cloudinary_configured(settings: Settings | None = None) -> bool:
+    """Whether Cloudinary credentials are set; without them uploads go to local media."""
+    s = settings or get_settings()
+    return bool(s.cloudinary_cloud_name and s.cloudinary_api_key and s.cloudinary_api_secret)
+
+
 def configure_cloudinary(settings: Settings | None = None) -> Settings:
     s = _settings_or_raise(settings)
     cloudinary.config(

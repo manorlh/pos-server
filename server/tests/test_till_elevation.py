@@ -375,17 +375,27 @@ def test_till_catalog_endpoints_never_read_scope_from_the_request_body():
     assert "shop.company_id" in source
 
 
-def test_till_delete_unlists_rather_than_deleting_the_master():
+def test_till_delete_is_refused_and_writes_nothing():
     """
-    `transaction_items.product_id` is a foreign key with no ON DELETE, so deleting a
-    product that has ever been sold raises IntegrityError. The till's delete must
-    therefore unlist from the shop, never remove the row.
+    A till no longer deletes (or unlists) products or categories: both answer 409
+    `delete_disabled_use_deactivate` and touch nothing — the till deactivates per
+    till, area or shop instead. A session that records any write fails the test.
     """
     from app.routers import sync as sync_router
 
-    source = inspect.getsource(sync_router.machine_delete_cloud_product)
-    assert "is_listed = False" in source
-    assert "db.delete(" not in source
+    db = MagicMock()
+    machine = _machine()
+    for handler, entity_id in (
+        (sync_router.machine_delete_cloud_product, str(uuid.uuid4())),
+        (sync_router.machine_delete_cloud_category, str(uuid.uuid4())),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            handler(str(machine.id), entity_id, machine=machine, actor=MagicMock(), db=db)
+        assert exc.value.status_code == 409
+        assert exc.value.detail == "delete_disabled_use_deactivate"
+    assert db.method_calls == [], "a refused delete must not touch the session"
+    for handler in (sync_router.machine_delete_cloud_product, sync_router.machine_delete_cloud_category):
+        assert "db.delete(" not in inspect.getsource(handler)
 
 
 # ── Machine tokens ────────────────────────────────────────────────────────────

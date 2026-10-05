@@ -5,6 +5,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    Date,
     DateTime,
     Enum as SQLEnum,
     ForeignKey,
@@ -15,7 +16,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -37,6 +38,58 @@ BATTERY_STATUSES = ("charging", "discharging", "full", "not_charging", "unknown"
 # Values the till may report for `printer_status` (the heartbeat's `printer` block). The
 # same rule as the battery: an unexpected string is stored as "unknown", never a 422.
 PRINTER_STATUSES = ("ok", "no_paper", "overheated", "error", "unavailable", "unknown")
+
+# The hardware a till is, as the dashboard records it. A Nova 55F has a built-in printer;
+# a Modo has none. A Nebullar P18 (Kozen) is a tablet: its printer speaks Kozen's own SDK,
+# which the till does not drive yet, so it does not print either. NULL is "not recorded"
+# and reads as a 55F, which every till that existed before the column was.
+DEVICE_MODEL_N55F = "N55F"
+DEVICE_MODEL_MODO = "MODO"
+DEVICE_MODEL_P18 = "P18"
+DEVICE_MODELS = (DEVICE_MODEL_N55F, DEVICE_MODEL_MODO, DEVICE_MODEL_P18)
+
+_NO_PRINTER_MODELS = frozenset({DEVICE_MODEL_MODO, DEVICE_MODEL_P18})
+
+#: What a till reports as its model (Android's `Build.MODEL`, `device_info["model"]`),
+#: lower-cased, for the hardware it tells apart on its own. The 55F and the Modo are not
+#: here: the units met so far do not report a model that names them.
+_REPORTED_MODELS = {
+    "nebullar p18": DEVICE_MODEL_P18,
+    "p18": DEVICE_MODEL_P18,
+}
+
+
+def device_has_printer(device_model) -> bool:
+    """Whether a till of this model prints: a 55F, or a till whose model is unknown."""
+    return device_model not in _NO_PRINTER_MODELS
+
+
+#: Models with no card terminal of their own. A P18 has a secure payment chip, but it is
+#: Kozen's and the till does not drive it, so a P18 always charges on an external Nayax
+#: pinpad on the network (app/services/payment_terminal.py). A Modo has no printer, but it
+#: does have Agamento.
+_NO_BUILTIN_TERMINAL_MODELS = frozenset({DEVICE_MODEL_P18})
+
+
+def device_has_builtin_terminal(device_model) -> bool:
+    """
+    Whether a till of this model charges cards on its own terminal (Agamento on the
+    device): a 55F, a Modo, or a till whose model is unknown. A P18 does not.
+    """
+    return device_model not in _NO_BUILTIN_TERMINAL_MODELS
+
+
+def detect_device_model(device_info) -> "str | None":
+    """
+    The model a till names itself at pairing (`device_info["model"]`), when it is one we
+    recognise — so a Nebullar P18 is a P18 without anyone choosing it. None otherwise.
+    """
+    if not isinstance(device_info, dict):
+        return None
+    reported = device_info.get("model")
+    if not isinstance(reported, str):
+        return None
+    return _REPORTED_MODELS.get(" ".join(reported.split()).lower())
 
 
 class POSMachine(Base):
@@ -79,6 +132,14 @@ class POSMachine(Base):
     mqtt_client_id = Column(String(255), unique=True, nullable=True)
     pairing_status = Column(SQLEnum(PairingStatus, values_callable=lambda x: [e.value for e in x]), nullable=False, default=PairingStatus.UNPAIRED)
     device_info = Column(JSON, nullable=True)
+    #: "N55F" | "MODO" (`DEVICE_MODELS`), chosen on the dashboard; null = unknown, read
+    #: as a 55F. The till learns whether it has a printer from `GET /machines/me`.
+    device_model = Column(String(16), nullable=True)
+    #: "לקוח קבוע / זמני" for this till alone — a till lent for an event in a permanent
+    #: shop. The earliest end among the till, its shop, companies and organization wins
+    #: (app/services/licenses.py). Set by a super admin only.
+    license_type = Column(String(16), nullable=False, default="permanent", server_default="permanent")
+    license_expires_on = Column(Date, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
 
     # Bumped whenever this terminal is unpaired. Machine tokens carry the version
@@ -148,6 +209,15 @@ class POSMachine(Base):
     catalog_mode = Column(String(16), nullable=False, default="all", server_default="all")
     catalog_mode_updated_at = Column(DateTime(timezone=True), nullable=True)
 
+    # ── POS settings for this one till ────────────────────────────────────────
+    # The last layer of tenant → company → shop → till (`settings_merge`): the same
+    # keys, so a till can ask for a tip where the rest of its shop does not, or offer
+    # different percentages at the bar than at the counter. Empty for almost every till.
+    # `settings_updated_at` NULL means never written — every till that existed when the
+    # column was added — so the settings watermark does not move for them.
+    settings = Column(JSONB, nullable=False, default=dict, server_default="{}")
+    settings_updated_at = Column(DateTime(timezone=True), nullable=True)
+
     # ── The shift the till says it has open, from its heartbeat ──────────────
     # The cloud learns of a shift from the till's open event, which an offline till
     # queues. This is the till's own claim, refreshed every beat, so the Z wizard can
@@ -155,6 +225,10 @@ class POSMachine(Base):
     # Not an identity and not a foreign key: the shift may not exist here yet.
     reported_open_shift_id = Column(UUID(as_uuid=True), nullable=True)
     reported_open_shift_opened_at = Column(DateTime(timezone=True), nullable=True)
+    #: The shop's master till has "סגירת Z סניפי" on screen until then (refreshed while it
+    #: is open). Meanwhile the heartbeat tells every till of the shop to beat fast, so the
+    #: close a shop Z sends is picked up in seconds even when realtime is down.
+    shop_z_screen_until = Column(DateTime(timezone=True), nullable=True)
 
     # ── Card transmission, as the till last reported it (docs/SHIFTS_API.md §4.2) ─
     # A snapshot from the heartbeat's `transmission` block, replaced whole whenever a beat
@@ -191,6 +265,21 @@ class POSMachine(Base):
     printer_last_ok_at = Column(DateTime(timezone=True), nullable=True)
     printer_reported_at = Column(DateTime(timezone=True), nullable=True)
 
+    # ── The card terminal (Agamento), as the till last reported it ────────────
+    # From the heartbeat's `terminal` block; a beat without one leaves these alone.
+    # `terminal_reported_at` is when we received it — null = the till never reported.
+    terminal_number = Column(String(20), nullable=True)
+    #: "SHVA" or "PELECARD" as the terminal reports it.
+    terminal_clearing_server = Column(String(16), nullable=True)
+    terminal_offline_mode = Column(Boolean, nullable=True)
+    terminal_reported_at = Column(DateTime(timezone=True), nullable=True)
+    #: The till's last write into Agamento (`forceTerminalNumber`, `clearingServer`):
+    #: {field, value, ok, error, at}. Kept until the till reports a newer one.
+    terminal_last_write = Column(JSONB, nullable=True)
+    #: The business name and supplier number (מספר ספק) the terminal is set up under, as
+    #: Agamento names them. Kept once seen: a reply that omits them does not clear them.
+    terminal_merchant_name = Column(String(120), nullable=True)
+    terminal_supplier_number = Column(String(30), nullable=True)
     # ── Who produces this till's Z (docs/SHIFTS_API.md §5.1) ──────────────────
     # "cloud": the shop's Z run builds it, numbered in the shop's run — the default, and
     # every till's behaviour before this column existed. "till": the till asks for its
@@ -211,3 +300,11 @@ class POSMachine(Base):
     def area_name(self):
         """The current area's name, for responses built straight from the row."""
         return self.area.name if self.area is not None else None
+
+    @property
+    def has_printer(self) -> bool:
+        return device_has_printer(self.device_model)
+
+    @property
+    def has_builtin_terminal(self) -> bool:
+        return device_has_builtin_terminal(self.device_model)

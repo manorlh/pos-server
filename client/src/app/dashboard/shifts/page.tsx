@@ -42,6 +42,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 
 const PAGE_SIZE = 50;
 const COLS = 12;
@@ -181,7 +182,7 @@ export default function ShiftsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3 print:hidden">
         <div>
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
@@ -195,7 +196,7 @@ export default function ShiftsPage() {
       </div>
 
       <ScopeGate resolution={resolution}>
-        <div className="rounded-lg border bg-card p-4 space-y-3">
+        <div className="rounded-lg border bg-card p-4 space-y-3 print:hidden">
           <div className="grid gap-3 md:grid-cols-5">
             <div className="space-y-1">
               <Label className="text-xs">{t('filter.status')}</Label>
@@ -259,6 +260,36 @@ export default function ShiftsPage() {
           <p className="text-muted-foreground text-xs">{t('filter.dateHint')}</p>
         </div>
 
+        {!rangeInvalid && data && data.items.length > 0 ? (
+          <ReportExportToolbar
+            title={t('title')}
+            from={from || undefined}
+            to={to || undefined}
+            getSheets={() => ({
+              name: t('title'),
+              columns: [
+                { header: t('col.shift'), width: 14 },
+                { header: t('col.businessDate'), kind: 'date' },
+                { header: t('col.till') },
+                { header: t('col.area'), width: 14 },
+                { header: t('col.opened'), kind: 'datetime' },
+                { header: t('col.closed'), kind: 'datetime' },
+                { header: t('col.sales'), kind: 'money' },
+                { header: t('col.cash'), kind: 'money' },
+                { header: t('col.expected'), kind: 'money' },
+                { header: t('col.counted'), kind: 'money' },
+                { header: t('col.overShort'), kind: 'money' },
+              ],
+              rows: data.items.map((s) => [
+                shiftLabel(s), s.businessDate,
+                s.machineName ?? findBySameId(scope.machines, s.machineId)?.name ?? null,
+                s.areaName ?? null, s.openedAt, s.status === 'open' ? null : (s.closedAt ?? null),
+                s.serverTotals?.totalSales ?? null, s.serverTotals?.totalCash ?? null, s.expectedCash ?? null,
+                s.status === 'open' ? null : (s.countedCash ?? null), s.status === 'open' ? null : (s.discrepancy ?? null),
+              ]),
+            })}
+          />
+        ) : null}
         {rangeInvalid ? null : isError ? (
           <ReportErrorState message={axiosErrorToToastMessage(error, tc('error'))} />
         ) : (
@@ -345,6 +376,14 @@ export default function ShiftsPage() {
                         </TableCell>
                         <TableCell className="text-end font-medium">
                           {formatCurrency(s.serverTotals?.totalSales)}
+                          {(s.offlineDeclinedCount ?? 0) > 0 ? (
+                            <div className="text-destructive text-xs font-normal whitespace-nowrap">
+                              {t('offlineDeclined', {
+                                count: s.offlineDeclinedCount ?? 0,
+                                amount: formatCurrency(s.offlineDeclinedAmount),
+                              })}
+                            </div>
+                          ) : null}
                         </TableCell>
                         <TableCell className="text-end">
                           {formatCurrency(s.serverTotals?.totalCash)}
@@ -369,7 +408,7 @@ export default function ShiftsPage() {
         )}
 
         {!rangeInvalid && data && data.total > 0 ? (
-          <div className="flex items-center justify-end gap-2 text-sm">
+          <div className="flex items-center justify-end gap-2 text-sm print:hidden">
             <Button
               size="sm"
               variant="outline"

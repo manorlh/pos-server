@@ -1,7 +1,7 @@
 import uuid
 
 from sqlalchemy import (
-    Column, String, ForeignKey, Numeric, Integer, Text, Index,
+    Column, String, ForeignKey, Numeric, Integer, Text, Index, JSON,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -44,6 +44,18 @@ class TransactionItem(Base):
     #: cloud after its credit note. Resolved within the tenant when read; it settles the
     #: original per line and names the base document of the line in the tax export.
     refund_of_item_id = Column(UUID(as_uuid=True), nullable=True)
+    #: The line's share of what promotions ("מבצעים") took off, as an amount. Distinct
+    #: from `discount` (the cashier's own line discount), and like it inside the
+    #: document's `document_discount`, never in `total_price` (gross). Null: none.
+    promotion_discount = Column(Numeric(12, 2), nullable=True)
+    #: The promotion that took it (the largest share, when several did). Not a key.
+    promotion_id = Column(UUID(as_uuid=True), nullable=True)
+    #: What the dish was ordered with, as the till sent it (docs/SPEC_MENU_MODIFIERS.md
+    #: §3.8): modifiers, notes, allergies, seat, course, a meal's components. Taken apart
+    #: for the reports into `transaction_item_parts`. Null: a plain line.
+    details = Column(JSON, nullable=True)
+    #: The upsell rule ("הגדלת מכירה") the line was added by, when it was. Not a key.
+    upsell_rule_id = Column(UUID(as_uuid=True), nullable=True)
 
     transaction = relationship("Transaction", back_populates="items")
     product = relationship("Product")

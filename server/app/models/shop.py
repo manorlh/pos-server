@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, String, Boolean, ForeignKey, DateTime
+from sqlalchemy import Column, Date, String, Boolean, ForeignKey, DateTime, Integer, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -10,15 +10,34 @@ from app.database import Base
 
 class Shop(Base):
     __tablename__ = "shops"
+    __table_args__ = (
+        UniqueConstraint("company_id", "shop_number", name="uq_shops_company_shop_number"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True)
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False, index=True)
     name = Column(String(255), nullable=False)
+    #: Shop 1, 2, 3 in its company, from `org_number_sequences`, never reused; a shop
+    #: moved to another company draws that company's next (`app.services.org_numbers`).
+    shop_number = Column(Integer, nullable=True)
     branch_id = Column(String(50), nullable=True)        # Israeli tax authority branch code
     address = Column(String(500), nullable=True)
     city = Column(String(100), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    #: "permanent" | "temporary" — a short-term customer or a one-off event. A temporary
+    #: one stops selling after `license_expires_on` (app/services/licenses.py). Set by
+    #: the super admin only.
+    license_type = Column(String(16), nullable=False, default="permanent", server_default="permanent")
+    license_expires_on = Column(Date, nullable=True)
+    #: "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md, app/services/training_mode.py): the shop's
+    #: tills sell for practice — their documents go to `training_documents`, never to the
+    #: real tables. Reaches the till as `trainingMode` (GET /machines/me, the settings sync).
+    training_mode = Column(Boolean, nullable=False, default=False, server_default="false")
+    training_started_at = Column(DateTime(timezone=True), nullable=True)
+    training_started_by = Column(UUID(as_uuid=True), nullable=True)
+    training_ended_at = Column(DateTime(timezone=True), nullable=True)
+    training_ended_by = Column(UUID(as_uuid=True), nullable=True)
     settings = Column(JSONB, nullable=False, server_default="{}")
     settings_updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

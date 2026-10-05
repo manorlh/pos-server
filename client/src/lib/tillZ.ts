@@ -134,7 +134,9 @@ export function zNumberOf(z: ZNumberSource): ZNumber {
 /** What a refused zMode switch says (§5.1), or null for any other failure. */
 export type ZModeSwitchRefusal =
   | { code: 'unreported_shifts'; count: number | null }
-  | { code: 'z_in_progress' };
+  | { code: 'z_in_progress' }
+  // The owner's rule: the till's shift closed first.
+  | { code: 'till_open' };
 
 /**
  * Reads the 409 of `PUT /machines/{id}` `{zMode}`. The count may ride beside `detail`
@@ -160,5 +162,6 @@ export function zModeSwitchRefusal(err: unknown): ZModeSwitchRefusal | null {
     return { code, count: count != null && Number.isFinite(n) ? n : null };
   }
   if (code === 'z_in_progress') return { code };
+  if (code === 'till_open') return { code };
   return null;
 }

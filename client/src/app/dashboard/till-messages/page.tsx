@@ -1,0 +1,917 @@
+'use client';
+
+/**
+ * Messages to tills (הודעות לקופות): write a message, send it to a company, shop,
+ * point of sale or single till, and watch each till receive it and its employee
+ * acknowledge it ("קראתי").
+ *
+ * A till shows the message full-screen until acknowledged; it fetches on the realtime
+ * wake-up the send triggers, or on its 30 s heartbeat. Who it reaches is fixed when it
+ * goes out: the active tills in the target this manager can see. Same roles as manage
+ * tills (the machines admins); the server decides the scope.
+ *
+ * "מתי לשלוח": now, at a chosen time (מתוזמן), or on fixed weekdays at a fixed time
+ * (קבוע). Times are the tenant's local time; the server sends scheduled ones when they
+ * come due (lazily, on the tills' next fetch), and each recurring occurrence needs its
+ * own "קראתי". A recurring message's list row shows its latest occurrence.
+ */
+
+import { useEffect, useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { format, formatDistanceToNow } from 'date-fns';
+import { he } from 'date-fns/locale';
+import {
+  Ban,
+  CalendarClock,
+  CheckCheck,
+  ChevronDown,
+  Megaphone,
+  Pause,
+  Pencil,
+  Play,
+  RefreshCw,
+  Repeat,
+  Send,
+} from 'lucide-react';
+import {
+  cancelTillMessage,
+  fetchTillMessages,
+  pauseTillMessage,
+  resendTillMessage,
+  resumeTillMessage,
+  sendTillMessage,
+  updateTillMessage,
+} from '@/lib/api';
+import { axiosErrorToToastMessage } from '@/lib/apiError';
+import type {
+  TillMessage,
+  TillMessageLevel,
+  TillMessageReceipt,
+  TillMessageScheduleKind,
+  TillMessageUpdate,
+} from '@/lib/types';
+import { cn } from '@/lib/utils';
+import {
+  EMPTY_ORG_SCOPE,
+  deepestOrgScope,
+  type OrgScope,
+} from '@/components/dashboard/org-scope-cascade';
+import { ScopePicker, useOrgScopeLabel } from '@/components/dashboard/live/scope-picker';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
+const REFRESH_MS = 15_000;
+const BODY_MAX = 2000;
+const TITLE_MAX = 200;
+const DEFAULT_TZ = 'Asia/Jerusalem';
+const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+const WORK_DAYS = [0, 1, 2, 3, 4];
+
+type Expiry = 'none' | '1h' | '4h' | 'endOfDay' | 'custom';
+const EXPIRIES: Expiry[] = ['none', '1h', '4h', 'endOfDay', 'custom'];
+const WHEN: TillMessageScheduleKind[] = ['now', 'scheduled', 'recurring'];
+/** Recurring: how long each occurrence is shown ('eod' = to the end of its day), in hours. */
+const TTL_HOURS = ['eod', '1', '2', '4', '8', '12'];
+
+const pad = (n: number) => String(n).padStart(2, '0');
+
+/** A datetime-local value ("YYYY-MM-DDTHH:mm") for a Date, in the browser's zone. */
+function localInput(d: Date): string {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** An instant as "YYYY-MM-DDTHH:mm" wall time in `tz` (for editing in the tenant's zone). */
+function inZone(iso: string | null | undefined, tz: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    })
+      .formatToParts(d)
+      .map((p) => [p.type, p.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+/**
+ * The expiry to send. Sent now: an instant (ISO). Scheduled: relative to the send time,
+ * as wall time without an offset — the server reads it in the tenant's zone.
+ */
+function expiryValue(choice: Expiry, custom: string, sendAtLocal: string | null): string | null {
+  if (choice === 'none') return null;
+  if (sendAtLocal) {
+    const base = new Date(sendAtLocal);
+    if (Number.isNaN(base.getTime())) return null;
+    if (choice === '1h') return localInput(new Date(base.getTime() + 3_600_000));
+    if (choice === '4h') return localInput(new Date(base.getTime() + 4 * 3_600_000));
+    if (choice === 'endOfDay') return `${sendAtLocal.slice(0, 10)}T23:59`;
+    return custom || null;
+  }
+  const now = new Date();
+  if (choice === '1h') return new Date(now.getTime() + 3_600_000).toISOString();
+  if (choice === '4h') return new Date(now.getTime() + 4 * 3_600_000).toISOString();
+  if (choice === 'endOfDay') {
+    const end = new Date(now);
+    end.setHours(23, 59, 59, 0);
+    return end.toISOString();
+  }
+  if (choice === 'custom' && custom) {
+    const d = new Date(custom);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  return null;
+}
+
+function time(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : format(d, 'dd/MM HH:mm', { locale: he });
+}
+
+/** dd/MM HH:mm in the message's zone (the tenant's), whatever the browser's. */
+function zonedTime(iso: string | null | undefined, tz: string | null | undefined): string {
+  const local = inZone(iso, tz || DEFAULT_TZ);
+  return local ? `${local.slice(8, 10)}/${local.slice(5, 7)} ${local.slice(11, 16)}` : '';
+}
+
+function shortDate(ymd: string | null | undefined): string {
+  return ymd ? `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}/${ymd.slice(2, 4)}` : '';
+}
+
+function browserZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return DEFAULT_TZ;
+  }
+}
+
+function useErrorText() {
+  const t = useTranslations('tillMessages');
+  const tc = useTranslations('common');
+  return (err: unknown) => {
+    const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+    if (typeof detail === 'string' && t.has(`errors.${detail}`)) return t(`errors.${detail}`);
+    return axiosErrorToToastMessage(err, tc('error'));
+  };
+}
+
+const RECEIPT_STYLE: Record<TillMessageReceipt['status'], string> = {
+  sent: 'border-muted-foreground/30 text-muted-foreground',
+  delivered: 'border-sky-400/60 text-sky-800 dark:text-sky-300',
+  acknowledged: 'border-emerald-400/60 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300',
+};
+
+const MESSAGE_STYLE: Record<TillMessage['status'], string> = {
+  active: 'bg-primary/10 text-primary',
+  expired: 'bg-muted text-muted-foreground',
+  cancelled: 'bg-destructive/10 text-destructive',
+  scheduled: 'bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-300',
+  paused: 'bg-muted text-muted-foreground',
+  ended: 'bg-muted text-muted-foreground',
+};
+
+// ── Recurrence fields (compose and edit) ─────────────────────────────────────
+
+interface RecurrenceDraft {
+  days: number[];
+  time: string;
+  startDate: string;
+  endDate: string;
+  ttl: string;
+}
+
+const EMPTY_RECURRENCE: RecurrenceDraft = { days: WORK_DAYS, time: '08:00', startDate: '', endDate: '', ttl: 'eod' };
+
+function recurrenceBody(r: RecurrenceDraft) {
+  return {
+    recurDays: r.days,
+    recurTime: r.time,
+    recurStartDate: r.startDate || null,
+    recurEndDate: r.endDate || null,
+    occurrenceTtlMinutes: r.ttl === 'eod' ? null : Math.round(Number(r.ttl) * 60),
+  };
+}
+
+function recurrenceValid(r: RecurrenceDraft): boolean {
+  return r.days.length > 0 && /^\d{2}:\d{2}$/.test(r.time) && (!r.startDate || !r.endDate || r.endDate >= r.startDate);
+}
+
+function useDaysLabel() {
+  const t = useTranslations('tillMessages');
+  return (days: number[]) => {
+    const sorted = [...days].sort();
+    if (sorted.length === 7) return t('schedule.everyDay');
+    if (sorted.join() === WORK_DAYS.join()) return t('schedule.weekdays');
+    return sorted.map((d) => t(`weekdays.${d}`)).join(' ');
+  };
+}
+
+function RecurrenceFields({
+  value,
+  onChange,
+  idPrefix,
+}: {
+  value: RecurrenceDraft;
+  onChange: (next: RecurrenceDraft) => void;
+  idPrefix: string;
+}) {
+  const t = useTranslations('tillMessages');
+  const set = (patch: Partial<RecurrenceDraft>) => onChange({ ...value, ...patch });
+  const ttlOptions = TTL_HOURS.includes(value.ttl) ? TTL_HOURS : [...TTL_HOURS, value.ttl];
+  const ttlLabel = (x: string) => (x === 'eod' ? t('schedule.ttlEndOfDay') : t('schedule.ttlHours', { count: Number(x) }));
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1">
+        <Label>{t('schedule.days')}</Label>
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('schedule.days')}>
+          {ALL_DAYS.map((d) => {
+            const on = value.days.includes(d);
+            return (
+              <button
+                key={d}
+                type="button"
+                aria-pressed={on}
+                onClick={() => set({ days: on ? value.days.filter((x) => x !== d) : [...value.days, d].sort() })}
+                className={cn(
+                  'min-h-11 min-w-11 rounded-full border px-2 text-sm font-medium transition-colors',
+                  on ? 'border-primary bg-primary text-primary-foreground' : 'border-input bg-transparent text-foreground',
+                )}
+              >
+                {t(`weekdays.${d}`)}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex gap-3 text-xs">
+          <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={() => set({ days: ALL_DAYS })}>
+            {t('schedule.everyDay')}
+          </button>
+          <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={() => set({ days: WORK_DAYS })}>
+            {t('schedule.weekdays')}
+          </button>
+        </div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1">
+          <Label htmlFor={`${idPrefix}-time`}>{t('schedule.time')}</Label>
+          <Input
+            id={`${idPrefix}-time`}
+            type="time"
+            required
+            value={value.time}
+            onChange={(e) => set({ time: e.target.value })}
+            className="h-11"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label>{t('schedule.ttl')}</Label>
+          <Select
+            value={value.ttl}
+            onValueChange={(v) => v && set({ ttl: v as string })}
+            items={ttlOptions.map((x) => ({ value: x, label: ttlLabel(x) }))}
+          >
+            <SelectTrigger className="h-11 w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ttlOptions.map((x) => (
+                <SelectItem key={x} value={x} label={ttlLabel(x)}>
+                  {ttlLabel(x)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`${idPrefix}-start`}>{t('schedule.startDate')}</Label>
+          <Input
+            id={`${idPrefix}-start`}
+            type="date"
+            value={value.startDate}
+            onChange={(e) => set({ startDate: e.target.value })}
+            className="h-11"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`${idPrefix}-end`}>{t('schedule.endDate')}</Label>
+          <Input
+            id={`${idPrefix}-end`}
+            type="date"
+            value={value.endDate}
+            min={value.startDate || undefined}
+            onChange={(e) => set({ endDate: e.target.value })}
+            className="h-11"
+          />
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">{t('schedule.ttlHint')}</p>
+    </div>
+  );
+}
+
+// ── The list ─────────────────────────────────────────────────────────────────
+
+function ReceiptRow({ r }: { r: TillMessageReceipt }) {
+  const t = useTranslations('tillMessages');
+  const where = [r.shopName, r.areaName].filter(Boolean).join(' › ');
+  return (
+    <li className="flex min-h-11 items-center gap-2 px-3 py-2 text-sm">
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-medium">
+          {r.machineName}
+          {r.posNumber ? <span className="ms-1 text-xs text-muted-foreground">({t('register', { n: r.posNumber })})</span> : null}
+        </p>
+        {where ? <p className="truncate text-xs text-muted-foreground">{where}</p> : null}
+      </div>
+      <span
+        className={cn('inline-flex shrink-0 items-center rounded border px-1.5 py-1 text-[11px] leading-tight', RECEIPT_STYLE[r.status])}
+        title={r.deliveredAt ? t('receipt.deliveredAt', { at: time(r.deliveredAt) }) : undefined}
+      >
+        {r.status === 'acknowledged'
+          ? t('receipt.acknowledgedBy', {
+              name: r.acknowledgedByName || t('receipt.unknownUser'),
+              at: time(r.acknowledgedAt),
+            })
+          : t(`receipt.${r.status}`)}
+      </span>
+    </li>
+  );
+}
+
+function ScheduleLine({ m }: { m: TillMessage }) {
+  const t = useTranslations('tillMessages');
+  const daysLabel = useDaysLabel();
+  const tz = m.timezone || DEFAULT_TZ;
+  if (m.scheduleKind === 'scheduled' && m.status === 'scheduled') {
+    return (
+      <p className="flex items-center gap-1.5 text-xs font-medium text-amber-900 dark:text-amber-300">
+        <CalendarClock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        {t('schedule.scheduledFor', { at: zonedTime(m.sendAt, tz) })}
+      </p>
+    );
+  }
+  if (m.scheduleKind !== 'recurring' || !m.recurrence) return null;
+  const r = m.recurrence;
+  const range =
+    r.startDate && r.endDate
+      ? t('schedule.range', { from: shortDate(r.startDate), to: shortDate(r.endDate) })
+      : r.startDate
+        ? t('schedule.from', { from: shortDate(r.startDate) })
+        : r.endDate
+          ? t('schedule.until', { to: shortDate(r.endDate) })
+          : '';
+  return (
+    <div className="space-y-0.5 text-xs">
+      <p className="flex items-center gap-1.5 font-medium">
+        <Repeat className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        <span>
+          {t('schedule.recurringSummary', { days: daysLabel(r.days), time: r.time })}
+          {range ? ` · ${range}` : ''}
+        </span>
+      </p>
+      <p className="text-muted-foreground">
+        {m.status === 'cancelled' || m.status === 'paused'
+          ? null
+          : m.nextOccurrenceAt
+            ? t('schedule.next', { at: zonedTime(m.nextOccurrenceAt, tz) })
+            : t('schedule.noNext')}
+        {m.status !== 'cancelled' && m.status !== 'paused' ? ' · ' : ''}
+        {m.occurrence ? t('schedule.occurrence', { at: zonedTime(m.occurrence.startsAt, tz) }) : t('schedule.occurrenceNone')}
+      </p>
+    </div>
+  );
+}
+
+function EditPanel({ m, onDone }: { m: TillMessage; onDone: () => void }) {
+  const t = useTranslations('tillMessages');
+  const errorText = useErrorText();
+  const qc = useQueryClient();
+  const tz = m.timezone || DEFAULT_TZ;
+  const [title, setTitle] = useState(m.title ?? '');
+  const [body, setBody] = useState(m.body);
+  const [sendAt, setSendAt] = useState(inZone(m.sendAt, tz));
+  const [rec, setRec] = useState<RecurrenceDraft>(() => {
+    const r = m.recurrence;
+    if (!r) return EMPTY_RECURRENCE;
+    return {
+      days: r.days,
+      time: r.time,
+      startDate: r.startDate ?? '',
+      endDate: r.endDate ?? '',
+      ttl: r.occurrenceTtlMinutes ? String(r.occurrenceTtlMinutes / 60) : 'eod',
+    };
+  });
+  const recurring = m.scheduleKind === 'recurring';
+  const valid = body.trim().length > 0 && (recurring ? recurrenceValid(rec) : !!sendAt);
+
+  const save = useMutation({
+    mutationFn: () => {
+      const patch: TillMessageUpdate = { title: title.trim() || null, body: body.trim() };
+      Object.assign(patch, recurring ? recurrenceBody(rec) : { sendAt });
+      return updateTillMessage(m.id, patch);
+    },
+    onSuccess: () => {
+      toast.success(t('schedule.saved'));
+      void qc.invalidateQueries({ queryKey: ['till-messages'] });
+      onDone();
+    },
+    onError: (err) => toast.error(errorText(err)),
+  });
+
+  return (
+    <form
+      className="space-y-3 border-t bg-muted/30 p-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (valid && !save.isPending) save.mutate();
+      }}
+    >
+      <div className="space-y-1">
+        <Label htmlFor={`edit-title-${m.id}`}>{t('compose.titleLabel')}</Label>
+        <Input
+          id={`edit-title-${m.id}`}
+          value={title}
+          maxLength={TITLE_MAX}
+          onChange={(e) => setTitle(e.target.value)}
+          className="h-11 text-base"
+        />
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor={`edit-body-${m.id}`}>{t('compose.bodyLabel')}</Label>
+        <textarea
+          id={`edit-body-${m.id}`}
+          required
+          rows={3}
+          value={body}
+          maxLength={BODY_MAX}
+          onChange={(e) => setBody(e.target.value)}
+          className="w-full min-w-0 rounded-lg border border-input bg-background px-2.5 py-2 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+        />
+      </div>
+      {recurring ? (
+        <RecurrenceFields value={rec} onChange={setRec} idPrefix={`edit-${m.id}`} />
+      ) : (
+        <div className="space-y-1">
+          <Label htmlFor={`edit-send-${m.id}`}>{t('schedule.sendAt')}</Label>
+          <Input
+            id={`edit-send-${m.id}`}
+            type="datetime-local"
+            required
+            value={sendAt}
+            onChange={(e) => setSendAt(e.target.value)}
+            className="h-11"
+          />
+        </div>
+      )}
+      <p className="text-xs text-muted-foreground">{t('schedule.editHint')}</p>
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" className="min-h-11 flex-1 sm:flex-none" disabled={!valid || save.isPending}>
+          {t('schedule.save')}
+        </Button>
+        <Button type="button" variant="ghost" className="min-h-11" onClick={onDone}>
+          {t('schedule.cancelEdit')}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function MessageCard({ m }: { m: TillMessage }) {
+  const t = useTranslations('tillMessages');
+  const errorText = useErrorText();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const refresh = () => void qc.invalidateQueries({ queryKey: ['till-messages'] });
+
+  const cancel = useMutation({
+    mutationFn: () => cancelTillMessage(m.id),
+    onSuccess: () => {
+      toast.success(t('cancelled'));
+      refresh();
+    },
+    onError: (err) => toast.error(errorText(err)),
+  });
+  const resend = useMutation({
+    mutationFn: () => resendTillMessage(m.id),
+    onSuccess: (out) => {
+      toast.success(t('resent', { count: out.notified }));
+      refresh();
+    },
+    onError: (err) => toast.error(errorText(err)),
+  });
+  const pause = useMutation({
+    mutationFn: () => (m.status === 'paused' ? resumeTillMessage(m.id) : pauseTillMessage(m.id)),
+    onSuccess: (out) => {
+      toast.success(out.status === 'paused' ? t('schedule.paused') : t('schedule.resumed'));
+      refresh();
+    },
+    onError: (err) => toast.error(errorText(err)),
+  });
+
+  const kind = m.scheduleKind ?? 'now';
+  const pct = m.counts.total ? Math.round((m.counts.acknowledged / m.counts.total) * 100) : 0;
+  const showCounts = kind === 'now' || m.counts.total > 0;
+  const occurrenceLive = kind !== 'recurring' || !!m.occurrence?.live;
+  return (
+    <li className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
+      <div className="space-y-2 p-3">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            {m.title ? <p className="font-semibold">{m.title}</p> : null}
+            <p className="whitespace-pre-wrap break-words text-sm">{m.body}</p>
+          </div>
+          <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px]', MESSAGE_STYLE[m.status])}>
+            {t(`status.${m.status}`)}
+          </span>
+        </div>
+        <ScheduleLine m={m} />
+        <p className="text-xs text-muted-foreground">
+          {t('meta', {
+            target: `${t(`levels.${m.targetLevel}`)} ${m.targetName ?? ''}`.trim(),
+            at: time(m.createdAt),
+            sender: m.senderName ?? '—',
+          })}
+          {m.expiresAt && (m.status === 'active' || m.status === 'scheduled') ? ` · ${t('expiresAt', { at: time(m.expiresAt) })}` : ''}
+        </p>
+        {showCounts ? (
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-xs">
+              <span>
+                {t('counts', {
+                  acknowledged: m.counts.acknowledged,
+                  delivered: m.counts.delivered,
+                  total: m.counts.total,
+                })}
+              </span>
+              <span className="tabular-nums text-muted-foreground">{pct}%</span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden>
+              <div className="h-full rounded-full bg-emerald-500" style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          {m.tills.length > 0 ? (
+            <Button
+              variant="ghost"
+              className="min-h-11 flex-1 justify-between sm:flex-none"
+              onClick={() => setOpen((o) => !o)}
+              aria-expanded={open}
+            >
+              {t('tills', { count: m.tills.length })}
+              <ChevronDown className={cn('h-4 w-4 transition-transform', open && 'rotate-180')} aria-hidden />
+            </Button>
+          ) : null}
+          {m.canManage ? (
+            <>
+              {m.status === 'active' && m.counts.total > 0 && occurrenceLive ? (
+                <Button
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={resend.isPending || m.counts.acknowledged === m.counts.total}
+                  onClick={() => resend.mutate()}
+                >
+                  <RefreshCw className="h-4 w-4" aria-hidden />
+                  {t('resend')}
+                </Button>
+              ) : null}
+              {m.canEdit ? (
+                <Button
+                  variant="outline"
+                  className="min-h-11"
+                  aria-expanded={editing}
+                  onClick={() => setEditing((e) => !e)}
+                >
+                  <Pencil className="h-4 w-4" aria-hidden />
+                  {t('schedule.edit')}
+                </Button>
+              ) : null}
+              {kind === 'recurring' ? (
+                <Button variant="outline" className="min-h-11" disabled={pause.isPending} onClick={() => pause.mutate()}>
+                  {m.status === 'paused' ? <Play className="h-4 w-4" aria-hidden /> : <Pause className="h-4 w-4" aria-hidden />}
+                  {m.status === 'paused' ? t('schedule.resume') : t('schedule.pause')}
+                </Button>
+              ) : null}
+              <Button
+                variant="outline"
+                className="min-h-11 text-destructive"
+                disabled={cancel.isPending}
+                onClick={() => {
+                  if (window.confirm(kind === 'now' ? t('cancelConfirm') : t('schedule.cancelConfirm'))) cancel.mutate();
+                }}
+              >
+                <Ban className="h-4 w-4" aria-hidden />
+                {t('cancel')}
+              </Button>
+            </>
+          ) : null}
+        </div>
+      </div>
+      {editing ? <EditPanel m={m} onDone={() => setEditing(false)} /> : null}
+      {open ? (
+        <ul className="divide-y border-t">
+          {m.tills.map((r) => (
+            <ReceiptRow key={r.machineId} r={r} />
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  );
+}
+
+// ── The page ─────────────────────────────────────────────────────────────────
+
+export default function TillMessagesPage() {
+  const t = useTranslations('tillMessages');
+  const errorText = useErrorText();
+  const qc = useQueryClient();
+
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [scope, setScope] = useState<OrgScope>(EMPTY_ORG_SCOPE);
+  const [expiry, setExpiry] = useState<Expiry>('none');
+  const [customExpiry, setCustomExpiry] = useState('');
+  const [when, setWhen] = useState<TillMessageScheduleKind>('now');
+  const [sendAt, setSendAt] = useState('');
+  const [rec, setRec] = useState<RecurrenceDraft>(EMPTY_RECURRENCE);
+  const target = deepestOrgScope(scope);
+  const targetLabel = useOrgScopeLabel(scope);
+
+  const list = useQuery({
+    queryKey: ['till-messages'],
+    queryFn: () => fetchTillMessages({ limit: 50 }),
+    refetchInterval: REFRESH_MS,
+    refetchOnWindowFocus: true,
+  });
+
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => tick((n) => n + 1), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const tenantZone = list.data?.items.find((i) => i.timezone)?.timezone ?? DEFAULT_TZ;
+  const zoneDiffers = useMemo(() => browserZone() !== tenantZone, [tenantZone]);
+
+  const expiresAt = useMemo(
+    () => (when === 'recurring' ? null : expiryValue(expiry, customExpiry, when === 'scheduled' ? sendAt || null : null)),
+    [customExpiry, expiry, sendAt, when],
+  );
+  const canSend =
+    body.trim().length > 0 &&
+    !!target &&
+    target.level !== 'tenant' &&
+    !!target.id &&
+    (when === 'recurring' || expiry !== 'custom' || !!expiresAt) &&
+    (when !== 'scheduled' || !!sendAt) &&
+    (when !== 'recurring' || recurrenceValid(rec));
+
+  const send = useMutation({
+    mutationFn: () =>
+      sendTillMessage({
+        title: title.trim() || null,
+        body: body.trim(),
+        targetLevel: target!.level as TillMessageLevel,
+        targetId: target!.id!,
+        expiresAt,
+        scheduleKind: when,
+        ...(when === 'scheduled' ? { sendAt } : {}),
+        ...(when === 'recurring' ? recurrenceBody(rec) : {}),
+      }),
+    onSuccess: (out) => {
+      toast.success(
+        when === 'scheduled'
+          ? t('schedule.scheduledToast')
+          : when === 'recurring'
+            ? t('schedule.recurringToast')
+            : t('sent', { count: out.counts?.total ?? 0 }),
+      );
+      setTitle('');
+      setBody('');
+      void qc.invalidateQueries({ queryKey: ['till-messages'] });
+    },
+    onError: (err) => toast.error(errorText(err)),
+  });
+
+  const submitLabel = send.isPending
+    ? t('compose.sending')
+    : when === 'scheduled'
+      ? t('schedule.submitScheduled')
+      : when === 'recurring'
+        ? t('schedule.submitRecurring')
+        : t('compose.send');
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold">{t('title')}</h1>
+          <p className="text-sm text-muted-foreground">{t('subtitle')}</p>
+        </div>
+        <Megaphone className="mt-1 h-6 w-6 shrink-0 text-muted-foreground" aria-hidden />
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t('compose.title')}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (canSend && !send.isPending) send.mutate();
+            }}
+          >
+            <div className="space-y-1">
+              <Label htmlFor="msg-title">{t('compose.titleLabel')}</Label>
+              <Input
+                id="msg-title"
+                value={title}
+                maxLength={TITLE_MAX}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder={t('compose.titlePlaceholder')}
+                className="h-11 text-base"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="msg-body">{t('compose.bodyLabel')}</Label>
+              <textarea
+                id="msg-body"
+                required
+                rows={4}
+                value={body}
+                maxLength={BODY_MAX}
+                onChange={(e) => setBody(e.target.value)}
+                placeholder={t('compose.bodyPlaceholder')}
+                className="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-2 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+              />
+              <p className="text-end text-[11px] tabular-nums text-muted-foreground">
+                {body.length}/{BODY_MAX}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>{t('compose.target')}</Label>
+              <ScopePicker value={scope} onChange={setScope} defaultOpen />
+            </div>
+
+            <div className="space-y-2">
+              <Label id="msg-when">{t('schedule.when')}</Label>
+              <div role="radiogroup" aria-labelledby="msg-when" className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+                {WHEN.map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    role="radio"
+                    aria-checked={when === k}
+                    onClick={() => setWhen(k)}
+                    className={cn(
+                      'flex min-h-11 items-center justify-center gap-1.5 rounded-md px-2 text-sm font-medium transition-colors',
+                      when === k ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground',
+                    )}
+                  >
+                    {k === 'now' ? (
+                      <Send className="h-4 w-4" aria-hidden />
+                    ) : k === 'scheduled' ? (
+                      <CalendarClock className="h-4 w-4" aria-hidden />
+                    ) : (
+                      <Repeat className="h-4 w-4" aria-hidden />
+                    )}
+                    {t(`schedule.${k}`)}
+                  </button>
+                ))}
+              </div>
+              {when === 'scheduled' ? (
+                <div className="space-y-1">
+                  <Label htmlFor="msg-send-at">{t('schedule.sendAt')}</Label>
+                  <Input
+                    id="msg-send-at"
+                    type="datetime-local"
+                    required
+                    value={sendAt}
+                    min={localInput(new Date())}
+                    onChange={(e) => setSendAt(e.target.value)}
+                    className="h-11"
+                  />
+                </div>
+              ) : null}
+              {when === 'recurring' ? (
+                <>
+                  <RecurrenceFields value={rec} onChange={setRec} idPrefix="msg-rec" />
+                  <p className="text-xs text-muted-foreground">{t('schedule.audienceHint')}</p>
+                </>
+              ) : null}
+              {when !== 'now' && zoneDiffers ? (
+                <p className="text-xs text-muted-foreground">{t('schedule.tzHint', { tz: tenantZone })}</p>
+              ) : null}
+            </div>
+
+            {when !== 'recurring' ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label>{t('compose.expiry')}</Label>
+                  <Select
+                    value={expiry}
+                    onValueChange={(v) => v && setExpiry(v as Expiry)}
+                    items={EXPIRIES.map((x) => ({ value: x, label: t(`expiry.${x}`) }))}
+                  >
+                    <SelectTrigger className="h-11 w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {EXPIRIES.map((x) => (
+                        <SelectItem key={x} value={x} label={t(`expiry.${x}`)}>
+                          {t(`expiry.${x}`)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {expiry === 'custom' ? (
+                  <div className="space-y-1">
+                    <Label htmlFor="msg-expiry">{t('compose.expiryAt')}</Label>
+                    <Input
+                      id="msg-expiry"
+                      type="datetime-local"
+                      value={customExpiry}
+                      onChange={(e) => setCustomExpiry(e.target.value)}
+                      className="h-11"
+                    />
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="sticky bottom-0 -mx-4 space-y-2 border-t bg-card/95 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0">
+              <p className="text-xs text-muted-foreground">
+                {target ? t('compose.sendTo', { target: targetLabel }) : t('compose.pickTarget')}
+              </p>
+              <Button type="submit" className="min-h-11 w-full sm:w-auto" disabled={!canSend || send.isPending}>
+                {when === 'recurring' ? (
+                  <Repeat className="h-4 w-4" aria-hidden />
+                ) : when === 'scheduled' ? (
+                  <CalendarClock className="h-4 w-4" aria-hidden />
+                ) : (
+                  <Send className="h-4 w-4" aria-hidden />
+                )}
+                {submitLabel}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="flex items-center gap-2 font-semibold">
+            <CheckCheck className="h-4 w-4 text-muted-foreground" aria-hidden />
+            {t('sentTitle')}
+          </h2>
+          <span className="text-xs text-muted-foreground" aria-live="polite">
+            {list.dataUpdatedAt
+              ? t('updatedAgo', {
+                  ago: formatDistanceToNow(new Date(list.dataUpdatedAt), { addSuffix: true, locale: he }),
+                })
+              : null}
+          </span>
+        </div>
+        {list.isError && !list.data ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+            <span>{axiosErrorToToastMessage(list.error, t('loadError'))}</span>
+            <Button variant="outline" size="sm" onClick={() => void list.refetch()}>
+              {t('retry')}
+            </Button>
+          </div>
+        ) : list.isPending ? (
+          <div className="space-y-2">
+            <Skeleton className="h-28 w-full rounded-xl" />
+            <Skeleton className="h-28 w-full rounded-xl" />
+          </div>
+        ) : (list.data?.items.length ?? 0) === 0 ? (
+          <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">{t('empty')}</p>
+        ) : (
+          <ul className="space-y-2">
+            {list.data!.items.map((m) => (
+              <MessageCard key={m.id} m={m} />
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}

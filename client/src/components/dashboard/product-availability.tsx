@@ -1,12 +1,12 @@
 'use client';
 
 /**
- * "Available for sale" for a catalog product: per company, per shop, per till.
+ * "Available for sale" for a catalog product: per company, per shop, per area, per till.
  *
  * Locked means the till still shows the product and will not sell it (hiding is the
- * shop's "listed" flag, elsewhere). Nearest level wins — till, then shop, then the
- * shop's own company, then the product itself — and a parent company's setting never
- * reaches a sub-company's shops.
+ * shop's "listed" flag, elsewhere). Nearest level wins — till, then the area (point of
+ * sale) it stands in, then shop, then the shop's own company, then the product itself —
+ * and a parent company's setting never reaches a sub-company's shops.
  *
  * The rule lives on the server (app/services/product_availability.py). Everything shown
  * here — what each level inherits, what it resolves to, which level decided — comes from
@@ -23,6 +23,7 @@ import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { cn } from '@/lib/utils';
 import type {
+  AreaAvailability,
   AvailabilityLevel,
   AvailabilityNode,
   CompanyAvailability,
@@ -107,6 +108,7 @@ const SOURCE_KEY: Record<AvailabilityLevel, string> = {
   product: 'sourceProduct',
   company: 'sourceCompany',
   shop: 'sourceShop',
+  area: 'sourceArea',
   machine: 'sourceMachine',
 };
 
@@ -167,28 +169,27 @@ function NodeRow({
 }
 
 function MachineRows({
-  shop,
+  machines,
+  overrideLabel,
   onSet,
   pending,
   t,
 }: {
-  shop: ShopAvailability;
+  machines: MachineAvailability[];
+  overrideLabel: string;
   onSet: (path: string, value: boolean | null) => void;
   pending: boolean;
   t: Translate;
 }) {
-  if (shop.machines.length === 0) {
-    return <p className="py-1 text-xs text-muted-foreground">{t('noMachines')}</p>;
-  }
   return (
     <>
-      {shop.machines.map((m: MachineAvailability) => (
+      {machines.map((m: MachineAvailability) => (
         <NodeRow
           key={m.machineId}
           title={m.name}
           subtitle={m.posNumber ? t('machineNumber', { number: m.posNumber }) : undefined}
           node={m}
-          overrideLabel={t('overridesShop')}
+          overrideLabel={overrideLabel}
           onChange={(v) => onSet(`machines/${m.machineId}`, v)}
           pending={pending}
           extra={
@@ -202,6 +203,59 @@ function MachineRows({
           t={t}
         />
       ))}
+    </>
+  );
+}
+
+/** The shop's tills, each under the area it stands in; those in none straight under the shop. */
+function ShopChildren({
+  shop,
+  onSet,
+  pending,
+  t,
+}: {
+  shop: ShopAvailability;
+  onSet: (path: string, value: boolean | null) => void;
+  pending: boolean;
+  t: Translate;
+}) {
+  const areas: AreaAvailability[] = shop.areas ?? [];
+  const areaIds = new Set(areas.map((a) => a.areaId));
+  const direct = shop.machines.filter((m) => !m.areaId || !areaIds.has(m.areaId));
+  if (shop.machines.length === 0 && areas.length === 0) {
+    return <p className="py-1 text-xs text-muted-foreground">{t('noMachines')}</p>;
+  }
+  return (
+    <>
+      {areas.map((area) => (
+        <div key={area.areaId} className="py-0.5">
+          <NodeRow
+            title={area.name}
+            subtitle={t('areaLevel')}
+            node={area}
+            overrideLabel={t('overridesShop')}
+            onChange={(v) => onSet(`areas/${area.areaId}`, v)}
+            pending={pending}
+            t={t}
+          />
+          <div className="ms-2 border-s ps-3">
+            <MachineRows
+              machines={shop.machines.filter((m) => m.areaId === area.areaId)}
+              overrideLabel={t('overridesArea')}
+              onSet={onSet}
+              pending={pending}
+              t={t}
+            />
+          </div>
+        </div>
+      ))}
+      <MachineRows
+        machines={direct}
+        overrideLabel={t('overridesShop')}
+        onSet={onSet}
+        pending={pending}
+        t={t}
+      />
     </>
   );
 }
@@ -242,7 +296,7 @@ function CompanyBlock({
               t={t}
             />
             <div className="ms-2 border-s ps-3">
-              <MachineRows shop={shop} onSet={onSet} pending={pending} t={t} />
+              <ShopChildren shop={shop} onSet={onSet} pending={pending} t={t} />
             </div>
           </div>
         ))}

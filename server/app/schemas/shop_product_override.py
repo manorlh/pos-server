@@ -37,6 +37,8 @@ class ShopProductCatalogRow(BaseModel):
     inherited_available: bool = Field(serialization_alias="inheritedAvailable")
     # The company's built-in general item: it cannot be unlisted or removed here.
     is_general: bool = Field(default=False, serialization_alias="isGeneral")
+    # Its place on the shop's tills ("סידור פריטים", 1 = first); null — not placed (by name).
+    till_position: Optional[int] = Field(default=None, serialization_alias="tillPosition")
 
 
 class ShopProductOverrideUpsert(BaseModel):

@@ -14,9 +14,11 @@ import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import {
   fetchCompanySettings,
+  fetchMachineSettings,
   fetchShopSettings,
   fetchTenantSettings,
   patchCompanySettings,
+  patchMachineSettings,
   patchShopSettings,
   patchTenantSettings,
 } from '@/lib/api';
@@ -34,7 +36,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
-export type SettingsEntityLevel = 'tenant' | 'company' | 'shop';
+/** `machine` is one till: the last layer, under its shop. */
+export type SettingsEntityLevel = 'tenant' | 'company' | 'shop' | 'machine';
 
 export function EntityPosSettingsDialog({
   level,
@@ -54,11 +57,11 @@ export function EntityPosSettingsDialog({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [paymentOptionsRejected, setPaymentOptionsRejected] = useState(false);
-  // Only a distributor or super admin may change the Z scope (the server's
-  // Z_SCOPE_WRITE_ROLES, the branding roles); everyone else sees it read-only.
+  // Only the super admin may change the Z mode (the server's Z_SCOPE_WRITE_ROLES);
+  // everyone else sees it read-only. The shop's and its points of sale's are on the
+  // shop page (ZScopeCard).
   const { user, authHydrated } = useAuth();
-  const canChangeZScope =
-    authHydrated && (user?.role === 'super_admin' || user?.role === 'distributor');
+  const canChangeZScope = authHydrated && user?.role === 'super_admin';
 
   useEffect(() => {
     if (!open || !entityId) return;
@@ -76,7 +79,10 @@ export function EntityPosSettingsDialog({
           const res = await fetchCompanySettings(entityId);
           if (!cancelled) setValue(res.settings ?? {});
         } else {
-          const res = await fetchShopSettings(entityId, true);
+          const res =
+            level === 'shop'
+              ? await fetchShopSettings(entityId, true)
+              : await fetchMachineSettings(entityId, true);
           if (!cancelled) {
             setValue(res.settings ?? {});
             setInherited(res.effective);
@@ -100,7 +106,9 @@ export function EntityPosSettingsDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entityId, level, open]);
 
-  const inheritedForForm = level === 'shop' ? inherited : undefined;
+  // Shop and till both sit on a layer above them, and show what they inherit.
+  const showsInherited = level === 'shop' || level === 'machine';
+  const inheritedForForm = showsInherited ? inherited : undefined;
   const noneAllowed = noPaymentOptionAllowed(value, inheritedForForm);
 
   const handleChange = (next: PosSettingsFormState) => {
@@ -116,13 +124,15 @@ export function EntityPosSettingsDialog({
     const patch = { ...value };
     delete patch.tipsEnabled;
     delete patch.cashTipsEnabled;
-    // Never sent by someone who may not change it: the stored value stays as it is.
-    if (!canChangeZScope) delete patch.zScope;
+    // Never sent by someone who may not change it, nor from below the organization —
+    // a shop's own mode is changed on its page (ZScopeCard), over a clean break.
+    if (!canChangeZScope || level !== 'tenant') delete patch.zScope;
     setSaving(true);
     try {
       if (level === 'tenant') await patchTenantSettings(entityId, patch);
       else if (level === 'company') await patchCompanySettings(entityId, patch);
-      else await patchShopSettings(entityId, patch);
+      else if (level === 'shop') await patchShopSettings(entityId, patch);
+      else await patchMachineSettings(entityId, patch);
       toast.success(tps('saved'));
       onOpenChange(false);
     } catch (err: unknown) {
@@ -142,11 +152,13 @@ export function EntityPosSettingsDialog({
       ? tps('tenantSubtitle')
       : level === 'company'
         ? tps('companySubtitle')
-        : tps('shopSubtitle');
+        : level === 'shop'
+          ? tps('shopSubtitle')
+          : tps('machineSubtitle');
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-md max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{level === 'tenant' ? tps('tenantTitle') : tps('title')}</DialogTitle>
           <p className="text-sm text-muted-foreground">{subtitle}</p>
@@ -155,7 +167,7 @@ export function EntityPosSettingsDialog({
           value={value}
           onChange={handleChange}
           inherited={inheritedForForm}
-          showOverrideHints={level === 'shop'}
+          showOverrideHints={showsInherited}
           paymentOptionsRejected={paymentOptionsRejected}
           tenantLevel={level === 'tenant'}
           zScopeEditable={canChangeZScope}

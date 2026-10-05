@@ -25,6 +25,8 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { NumberPill } from '@/components/dashboard/number-pill';
+import { numberedLabel } from '@/lib/orgNumber';
 import {
   Select,
   SelectContent,
@@ -102,13 +104,19 @@ export function ScopeBar() {
       value: node.company.id,
       // The trigger shows the whole path, so a nested company still reads
       // unambiguously once the popup is closed.
-      label: companyPathLabel(scope.tree, node.company.id, node.company.name),
+      label: numberedLabel(
+        node.company.companyNumber,
+        companyPathLabel(scope.tree, node.company.id, node.company.name),
+      ),
     })),
   ];
 
   const shopItems = [
     { value: ALL, label: t('allShops') },
-    ...scope.shopOptions.map((shop) => ({ value: shop.id, label: shop.name })),
+    ...scope.shopOptions.map((shop) => ({
+      value: shop.id,
+      label: numberedLabel(shop.shopNumber, shop.name),
+    })),
   ];
 
   const machineItems = [
@@ -159,7 +167,10 @@ export function ScopeBar() {
                 <SelectItem
                   key={node.company.id}
                   value={node.company.id}
-                  label={companyPathLabel(scope.tree, node.company.id, node.company.name)}
+                  label={numberedLabel(
+                    node.company.companyNumber,
+                    companyPathLabel(scope.tree, node.company.id, node.company.name),
+                  )}
                 >
                   <span style={indentStyle(node.depth)} className="flex items-center gap-1.5">
                     {node.depth > 0 ? (
@@ -167,6 +178,7 @@ export function ScopeBar() {
                         ↳
                       </span>
                     ) : null}
+                    <NumberPill n={node.company.companyNumber} />
                     <span className="truncate">{node.company.name}</span>
                     {node.parentMissing ? (
                       <span
@@ -205,8 +217,15 @@ export function ScopeBar() {
                 {t('allShops')}
               </SelectItem>
               {scope.shopOptions.map((shop) => (
-                <SelectItem key={shop.id} value={shop.id} label={shop.name}>
-                  {shop.name}
+                <SelectItem
+                  key={shop.id}
+                  value={shop.id}
+                  label={numberedLabel(shop.shopNumber, shop.name)}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <NumberPill n={shop.shopNumber} />
+                    <span className="truncate">{shop.name}</span>
+                  </span>
                 </SelectItem>
               ))}
             </SelectContent>

@@ -499,7 +499,7 @@ class TestCallSites:
         db.pairing_code = SimpleNamespace(
             is_used=False, expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
             tenant_id=TENANT, distributor_id=uuid.uuid4(), target_machine_id=None,
-            shop_id=DIZENGOFF, used_at=None, pos_machine_id=None,
+            shop_id=DIZENGOFF, used_at=None, pos_machine_id=None, device_model=None,
         )
         fresh = db.machine(shop_id=None, pairing_status=PairingStatus.PAIRED)
 
@@ -637,7 +637,7 @@ class TestReplacement:
             is_used=False, expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
             tenant_id=TENANT, distributor_id=uuid.uuid4(), target_machine_id=dead.id,
             shop_id=None, used_at=None, pos_machine_id=None,
-            untransmitted_acknowledged_at=None,
+            untransmitted_acknowledged_at=None, device_model=None,
         )
 
         machine = P.validate_pairing_code(db, "ABCD1234", {"model": "new"}, "F21")
@@ -683,6 +683,7 @@ class TestApi:
                 m, db, open_shifts_by_machine={}, pending_close={},
                 awaiting_z={}, timezones={}, orphans={},
                 untransmitted={}, latest_transmissions={}, pending_transmit={},
+                terminal_settings={},
             )
 
         assert row["posNumber"] == "1"

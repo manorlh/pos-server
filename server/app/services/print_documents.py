@@ -1,0 +1,489 @@
+"""
+Reprints from the cloud: a copy of a document's tax document, and its card vouchers.
+
+Both are built only from what the till synced. A field the till does not send is left
+off the paper rather than guessed — a copy of a fiscal document that states something
+the original did not is worse than one that says less.
+
+Two things are read at print time rather than taken from the sale, because the cloud
+holds no per-document snapshot of them: the business header (`snapshot_header`, the
+same block a Z freezes) and the card terminal's number and merchant name (the machine's
+last heartbeat). Everything else — lines, money, VAT, tenders, the acquirer's reply —
+is the document's own.
+
+Every page is marked "העתק": these are reprints, never originals.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Any, List, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from sqlalchemy.orm import Session
+
+from app.models.pos_machine import POSMachine
+from app.models.pos_user import PosUser
+from app.models.transaction import Transaction, TransactionStatus
+from app.models.transaction_payment import TransactionPayment
+from app.schemas.print_document import PrintDocumentOut, PrintRow, PrintSection
+from app.services.reports import resolve_report_timezone
+from app.services.tenders import (
+    CREDIT_NOTE_DOCUMENT_TYPE,
+    is_refund_document,
+    normalize_tender,
+)
+from app.services.transmissions import (
+    _result_of,
+    _text,
+    approval_number_of,
+    card_last4_of,
+    terminal_uid_of,
+)
+from app.services.z_header import snapshot_header
+
+COPY_MARK = "העתק"
+SIGNATURE_LINE = "חתימת הלקוח: ____________________"
+
+#: The document types the till issues, in the words its own receipt prints.
+DOCUMENT_TITLES = {
+    305: "חשבונית מס",
+    320: "חשבונית מס/קבלה",
+    330: "חשבונית זיכוי",
+    400: "קבלה",
+}
+
+TENDER_LABELS = {
+    "cash": "מזומן",
+    "card": "כרטיס אשראי",
+    "exchange": "קיזוז החלפה",
+    "voucher": "שובר",
+    "mixed": "משולב",
+    "other": "אחר",
+}
+
+#: Agamento's `result.mutag` (card brand). Only the codes Shva and Pelecard agree on;
+#: 0 and 3 mean different things on the two, so they are left unnamed.
+CARD_BRANDS = {
+    1: "מאסטרקארד",
+    2: "ויזה",
+    4: "אמריקן אקספרס",
+    5: "ישראכרט",
+    6: "JCB",
+    7: "דיסקבר",
+}
+
+#: Agamento's `tranType` for a refund (`TRAN_TYPE_REFUND` on the till).
+REFUND_TRAN_TYPE = 53
+
+#: A tap that never completed (declined, abandoned) is stored as a document too; it
+#: has no voucher to reprint.
+_NO_VOUCHER_STATUSES = (TransactionStatus.PENDING, TransactionStatus.CANCELLED)
+
+_STATUS_LABELS = {
+    TransactionStatus.PENDING: "ממתין",
+    TransactionStatus.CANCELLED: "מבוטל",
+    TransactionStatus.REFUNDED: "זוכה",
+    TransactionStatus.PARTIAL_REFUND: "זוכה חלקית",
+}
+
+
+class NoCardPayment(Exception):
+    """The document has no card payment with a voucher to print."""
+
+
+# ── Formatting ──────────────────────────────────────────────────────────────────────
+
+
+def _dec(value: Any) -> Decimal:
+    if value is None:
+        return Decimal("0")
+    return value if isinstance(value, Decimal) else Decimal(str(value))
+
+
+def money(value: Any) -> str:
+    amount = _dec(value).quantize(Decimal("0.01"))
+    sign = "-" if amount < 0 else ""
+    return f"{sign}₪{abs(amount):,.2f}"
+
+
+def _qty(value: Any) -> str:
+    return f"{_dec(value).normalize():f}"
+
+
+def _zone(db: Session, tenant_id: Optional[uuid.UUID]):
+    try:
+        return ZoneInfo(resolve_report_timezone(db, tenant_id, None))
+    except (ZoneInfoNotFoundError, ValueError, KeyError):
+        return ZoneInfo("Asia/Jerusalem")
+
+
+def _stamp(moment: Optional[datetime], zone) -> str:
+    if moment is None:
+        return ""
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(zone).strftime("%d/%m/%Y %H:%M")
+
+
+def _row(label: str, value: Any = "", emphasis: bool = False) -> PrintRow:
+    return PrintRow(label=label, value="" if value is None else str(value), emphasis=emphasis)
+
+
+def document_title(document_type: Optional[int]) -> str:
+    if document_type in DOCUMENT_TITLES:
+        return DOCUMENT_TITLES[document_type]
+    return f"מסמך {document_type}" if document_type is not None else "מסמך"
+
+
+def tender_label(method: Optional[str]) -> str:
+    key = (method or "").strip().lower()
+    return TENDER_LABELS.get(key) or (method or TENDER_LABELS["other"])
+
+
+# ── Shared pieces ───────────────────────────────────────────────────────────────────
+
+
+def _header(db: Session, tx: Transaction) -> tuple[str, List[str]]:
+    """The business name and the lines under it: VAT number, address, branch."""
+    header = snapshot_header(db, tx.shop) or {}
+    name = header.get("businessName") or header.get("shopName") or ""
+    lines: List[str] = []
+    if header.get("vatNumber"):
+        lines.append(f"עוסק מורשה / ח.פ. {header['vatNumber']}")
+    if header.get("companyRegNumber"):
+        lines.append(f"מס׳ חברה {header['companyRegNumber']}")
+    street = " ".join(p for p in (header.get("address"), header.get("addressNumber")) if p)
+    place = ", ".join(p for p in (street, header.get("city"), header.get("zip")) if p)
+    if place:
+        lines.append(place)
+    if header.get("shopName"):
+        branch = f"סניף: {header['shopName']}"
+        if header.get("branchId"):
+            branch += f" · מס׳ סניף {header['branchId']}"
+        lines.append(branch)
+    return name, lines
+
+
+def _cashier_name(db: Session, tx: Transaction) -> Optional[str]:
+    raw = (tx.cashier_id or "").strip()
+    if not raw:
+        return None
+    try:
+        pos_user_id = uuid.UUID(raw)
+    except (ValueError, AttributeError, TypeError):
+        return raw
+    pu = (
+        db.query(PosUser)
+        .filter(PosUser.id == pos_user_id, PosUser.tenant_id == tx.tenant_id)
+        .first()
+    )
+    if pu is None:
+        return raw
+    name = " ".join(p for p in (pu.first_name or "", pu.last_name or "") if p).strip()
+    return name or pu.username
+
+
+def _register(tx: Transaction) -> Optional[str]:
+    machine: Optional[POSMachine] = tx.machine
+    number = tx.pos_number or (machine.pos_number if machine is not None else None)
+    if number and machine is not None and machine.name:
+        return f"{number} ({machine.name})"
+    return number or (machine.name if machine is not None else None)
+
+
+def _printed_footer(zone) -> str:
+    return f"הודפס מהענן: {_stamp(datetime.now(timezone.utc), zone)}"
+
+
+def _meta(leg: TransactionPayment) -> dict:
+    return leg.nayax_meta if isinstance(leg.nayax_meta, dict) else {}
+
+
+def _installments(meta: dict) -> Optional[int]:
+    for raw in (meta.get("creditPayments"), _result_of(meta).get("creditPayments")):
+        if isinstance(raw, bool):
+            continue
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if n > 0:
+            return n
+    return None
+
+
+def _first_payment(meta: dict) -> Optional[Decimal]:
+    """`firstPaymentAmount` is in agorot, as the terminal answers it."""
+    for raw in (meta.get("firstPaymentAmount"), _result_of(meta).get("firstPaymentAmount")):
+        if raw is None or isinstance(raw, bool):
+            continue
+        try:
+            return (Decimal(str(raw)) / 100).quantize(Decimal("0.01"))
+        except (ArithmeticError, ValueError):
+            continue
+    return None
+
+
+def _card_brand(meta: dict) -> Optional[str]:
+    for key in ("cardBrand", "brand", "cardName"):
+        text = _text(meta.get(key)) or _text(_result_of(meta).get(key))
+        if text:
+            return text
+    raw = _result_of(meta).get("mutag")
+    if isinstance(raw, bool):
+        return None
+    try:
+        return CARD_BRANDS.get(int(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def _card_text(meta: dict) -> Optional[str]:
+    last4 = card_last4_of(meta)
+    brand = _card_brand(meta)
+    masked = f"****{last4}" if last4 else None
+    parts = [p for p in (brand, masked) if p]
+    return " ".join(parts) if parts else None
+
+
+def _entry_mode(meta: dict) -> Optional[str]:
+    explicit = _text(meta.get("entryMode")) or _text(_result_of(meta).get("entryMode"))
+    if explicit:
+        return explicit
+    keyed = meta.get("keyed")
+    if keyed is True:
+        return "הקלדה ידנית (כרטיס לא נוכח)"
+    if keyed is False:
+        return "כרטיס נוכח"
+    return None
+
+
+def _is_refund_leg(tx: Transaction, meta: dict) -> bool:
+    if is_refund_document(
+        document_type=tx.document_type, refund_of_transaction_id=tx.refund_of_transaction_id
+    ):
+        return True
+    raw = _result_of(meta).get("tranType")
+    try:
+        return int(raw) == REFUND_TRAN_TYPE
+    except (TypeError, ValueError):
+        return False
+
+
+# ── The tax document ────────────────────────────────────────────────────────────────
+
+
+def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
+    zone = _zone(db, tx.tenant_id)
+    business, subtitle = _header(db, tx)
+    credit = is_refund_document(
+        document_type=tx.document_type, refund_of_transaction_id=tx.refund_of_transaction_id
+    )
+    title_type = tx.document_type if tx.document_type is not None else (
+        CREDIT_NOTE_DOCUMENT_TYPE if credit else None
+    )
+
+    details: List[PrintRow] = [
+        _row("מס׳ מסמך", tx.transaction_number, emphasis=True),
+        _row("תאריך הנפקה", _stamp(tx.document_production_date or tx.created_at, zone)),
+    ]
+    register = _register(tx)
+    if register:
+        details.append(_row("קופה", register))
+    cashier = _cashier_name(db, tx)
+    if cashier:
+        details.append(_row("קופאי/ת", cashier))
+    if tx.refund_of_transaction_id is not None:
+        original = (
+            db.query(Transaction.transaction_number)
+            .filter(
+                Transaction.id == tx.refund_of_transaction_id,
+                Transaction.tenant_id == tx.tenant_id,
+            )
+            .first()
+        )
+        if original is not None:
+            details.append(_row("זיכוי עבור מסמך", original[0]))
+    if tx.status in _STATUS_LABELS:
+        details.append(_row("סטטוס", _STATUS_LABELS[tx.status], emphasis=True))
+    customer_name = tx.customer_name or (tx.customer.name if tx.customer is not None else None)
+    if customer_name:
+        details.append(_row("שם הלקוח", customer_name))
+    if tx.customer is not None and tx.customer.vat_number:
+        details.append(_row("ח.פ. / ע.מ. לקוח", tx.customer.vat_number))
+    if tx.customer_phone:
+        details.append(_row("טלפון", tx.customer_phone))
+    if tx.customer_address:
+        details.append(_row("כתובת", tx.customer_address))
+
+    lines: List[PrintRow] = []
+    for item in tx.items:
+        name = item.product_name or item.sku or "פריט"
+        lines.append(_row(f"{name} ×{_qty(item.quantity)}", money(item.total_price)))
+        # A sale line's total is gross with `discount` taken off it; a credit-note line
+        # is already net (see app/services/reports.py), so its discount is not repeated.
+        if not credit and _dec(item.discount) > 0:
+            lines.append(_row("  הנחה", money(-_dec(item.discount))))
+    # Each promotion ("מבצעים") as the till printed it, under the items; part of the
+    # document's discount below.
+    if not credit:
+        from app.models.promotion import TransactionPromotion
+
+        for promo in (
+            db.query(TransactionPromotion).filter(TransactionPromotion.transaction_id == tx.id).all()
+        ):
+            if _dec(promo.discount_amount) > 0:
+                lines.append(
+                    _row(f"הנחת מבצע: {promo.promotion_name or ''}".strip(), money(-_dec(promo.discount_amount)))
+                )
+
+    totals: List[PrintRow] = []
+    discount = _dec(tx.document_discount)
+    if credit:
+        due = _dec(tx.total_amount)
+    else:
+        due = _dec(tx.total_amount) - discount
+        if discount > 0:
+            totals.append(_row('סה"כ פריטים', money(tx.total_amount)))
+            totals.append(_row("הנחה", money(-discount)))
+    if tx.net_amount is not None:
+        totals.append(_row('סה"כ לפני מע"מ', money(tx.net_amount)))
+    if tx.vat_amount is not None:
+        rate = ""
+        if tx.vat_rate is not None:
+            pct = (_dec(tx.vat_rate) * 100).normalize()
+            rate = f" {pct:f}%"
+        totals.append(_row(f'מע"מ{rate}', money(tx.vat_amount)))
+    totals.append(_row("סכום זיכוי" if credit else 'סה"כ לתשלום', money(due), emphasis=True))
+
+    payments: List[PrintRow] = []
+    for leg in tx.payments:
+        label = tender_label(leg.method)
+        meta = _meta(leg)
+        if normalize_tender(leg.method) == "card":
+            last4 = card_last4_of(meta)
+            if last4:
+                label = f"{label} ****{last4}"
+            n = _installments(meta)
+            if n and n > 1:
+                label = f"{label} · {n} תשלומים"
+        payments.append(_row(label, money(leg.amount)))
+    if not tx.payments and tx.payment_method:
+        payments.append(_row(tender_label(tx.payment_method), money(due)))
+    tip = _dec(tx.tip_amount)
+    if tip > 0:
+        tip_label = "תשר"
+        if tx.tip_payment_method:
+            tip_label = f"תשר ({tender_label(tx.tip_payment_method)})"
+        payments.append(_row(tip_label, money(tip)))
+    if tx.amount_tendered is not None and _dec(tx.change_amount) > 0:
+        payments.append(_row("התקבל", money(tx.amount_tendered)))
+    if _dec(tx.change_amount) > 0:
+        payments.append(_row("עודף", money(tx.change_amount)))
+
+    sections = [PrintSection(title="", rows=details)]
+    if lines:
+        sections.append(PrintSection(title="פריטים", rows=lines))
+    sections.append(PrintSection(title='סיכום', rows=totals))
+    if payments:
+        sections.append(PrintSection(title="אמצעי תשלום", rows=payments))
+
+    return PrintDocumentOut(
+        title=f"{document_title(title_type)} {tx.transaction_number}",
+        copy_mark=COPY_MARK,
+        business_name=business,
+        subtitle=subtitle,
+        sections=sections,
+        footer=["העתק נאמן למקור — אינו מהווה מסמך מקור", _printed_footer(zone)],
+    )
+
+
+# ── The card voucher ────────────────────────────────────────────────────────────────
+
+
+def card_legs(tx: Transaction) -> List[TransactionPayment]:
+    if tx.status in _NO_VOUCHER_STATUSES:
+        return []
+    return [leg for leg in tx.payments if normalize_tender(leg.method) == "card"]
+
+
+def build_card_slips(
+    db: Session, tx: Transaction, payment_id: Optional[uuid.UUID] = None
+) -> List[PrintDocumentOut]:
+    """One voucher per card payment, or the one `payment_id` names. Raises NoCardPayment."""
+    legs = card_legs(tx)
+    if payment_id is not None:
+        legs = [leg for leg in legs if leg.id == payment_id]
+    if not legs:
+        raise NoCardPayment()
+    zone = _zone(db, tx.tenant_id)
+    business, subtitle = _header(db, tx)
+    machine: Optional[POSMachine] = tx.machine
+    all_card = card_legs(tx)
+    return [
+        _card_slip(tx, leg, zone, business, subtitle, machine, all_card.index(leg) + 1, len(all_card))
+        for leg in legs
+    ]
+
+
+def _card_slip(
+    tx: Transaction,
+    leg: TransactionPayment,
+    zone,
+    business: str,
+    subtitle: List[str],
+    machine: Optional[POSMachine],
+    position: int,
+    of: int,
+) -> PrintDocumentOut:
+    meta = _meta(leg)
+    refund = _is_refund_leg(tx, meta)
+    merchant = (machine.terminal_merchant_name if machine is not None else None) or business
+    lines = list(subtitle)
+    if machine is not None and machine.terminal_supplier_number:
+        lines.append(f"מס׳ ספק: {machine.terminal_supplier_number}")
+
+    rows: List[PrintRow] = []
+    if machine is not None and machine.terminal_number:
+        rows.append(_row("מס׳ מסוף", machine.terminal_number))
+    register = _register(tx)
+    if register:
+        rows.append(_row("קופה", register))
+    rows.append(_row("תאריך ושעה", _stamp(tx.document_production_date or tx.created_at, zone)))
+    card = _card_text(meta)
+    if card:
+        rows.append(_row("כרטיס", card))
+    rows.append(_row("סוג עסקה", "זיכוי" if refund else "חיוב (מכירה)", emphasis=True))
+    entry = _entry_mode(meta)
+    if entry:
+        rows.append(_row("אופן ביצוע", entry))
+    rows.append(_row("סכום", money(leg.amount), emphasis=True))
+    n = _installments(meta)
+    if n:
+        rows.append(_row("מס׳ תשלומים", n))
+        first = _first_payment(meta)
+        if n > 1 and first is not None:
+            rows.append(_row("תשלום ראשון", money(first)))
+    approval = approval_number_of(meta)
+    if approval:
+        rows.append(_row("מס׳ אישור", approval))
+    uid = leg.terminal_uid or terminal_uid_of(meta)
+    if uid:
+        rows.append(_row("מס׳ שובר (UID)", uid))
+    acquirer_tx = _text(_result_of(meta).get("transactionId"))
+    if acquirer_tx:
+        rows.append(_row("מס׳ עסקה", acquirer_tx))
+    rows.append(_row("מסמך", f"{document_title(tx.document_type)} {tx.transaction_number}"))
+    if of > 1:
+        rows.append(_row("תשלום", f"{position} מתוך {of}"))
+
+    return PrintDocumentOut(
+        title="שובר זיכוי אשראי" if refund else "שובר אשראי",
+        copy_mark=COPY_MARK,
+        business_name=merchant,
+        subtitle=lines,
+        sections=[PrintSection(title="", rows=rows)],
+        footer=[SIGNATURE_LINE, "העתק — אינו מהווה שובר מקור", _printed_footer(zone)],
+    )

@@ -1,7 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field
-from typing import List, Optional
+from typing import List, Literal, Optional
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 
 class CompanyBase(BaseModel):
@@ -13,6 +13,10 @@ class CompanyBase(BaseModel):
     address: Optional[str] = None
     city: Optional[str] = None
     is_active: bool = Field(True, alias="isActive")
+    #: "permanent" | "temporary" (a short-term customer, an event) — super admin only.
+    license_type: Optional[Literal["permanent", "temporary"]] = Field(None, alias="licenseType")
+    #: A temporary customer's last day of sales.
+    license_expires_on: Optional[date] = Field(None, alias="licenseExpiresOn")
 
     class Config:
         populate_by_name = True
@@ -30,6 +34,10 @@ class CompanyUpdate(BaseModel):
     address: Optional[str] = None
     city: Optional[str] = None
     is_active: Optional[bool] = Field(None, alias="isActive")
+    #: "permanent" | "temporary" (a short-term customer, an event) — super admin only.
+    license_type: Optional[Literal["permanent", "temporary"]] = Field(None, alias="licenseType")
+    #: A temporary customer's last day of sales.
+    license_expires_on: Optional[date] = Field(None, alias="licenseExpiresOn")
 
     class Config:
         populate_by_name = True
@@ -40,10 +48,14 @@ class CompanyResponse(BaseModel):
     tenant_id: Optional[uuid.UUID] = Field(None, alias="tenantId")
     parent_company_id: Optional[uuid.UUID] = Field(None, alias="parentCompanyId")
     name: str
+    #: Company 1, 2, 3 in its tenant; never reused.
+    company_number: Optional[int] = Field(None, alias="companyNumber")
     vat_number: Optional[str] = Field(None, alias="vatNumber")
     address: Optional[str]
     city: Optional[str]
     is_active: bool = Field(..., alias="isActive")
+    license_type: str = Field("permanent", alias="licenseType")
+    license_expires_on: Optional[date] = Field(None, alias="licenseExpiresOn")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 

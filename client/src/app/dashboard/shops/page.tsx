@@ -13,6 +13,9 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import { NumberPill } from '@/components/dashboard/number-pill';
+import { LicenseBadge } from '@/components/dashboard/license-fields';
+import { TrainingBadge } from '@/components/dashboard/training-badge';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, fetchCompanies, fetchMachines, fetchShops } from '@/lib/api';
 import { usePageScope } from '@/lib/scope';
@@ -85,7 +88,7 @@ export default function ShopsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
@@ -147,6 +150,7 @@ export default function ShopsPage() {
                     title={t('openHint')}
                   >
                     <TableCell className="font-medium">
+                      <NumberPill n={s.shopNumber} className="me-1.5" />
                       <Link
                         href={href}
                         className="hover:underline"
@@ -154,6 +158,8 @@ export default function ShopsPage() {
                       >
                         {s.name}
                       </Link>
+                      <TrainingBadge shop={s} className="ms-2 align-middle" />
+                      <LicenseBadge value={s} className="ms-2" />
                     </TableCell>
                     <TableCell>
                       {company ? (
@@ -165,6 +171,7 @@ export default function ShopsPage() {
                           // unambiguous without opening the company.
                           title={companyPathLabel(tree, company.id, company.name)}
                         >
+                          <NumberPill n={company.companyNumber} className="me-1" />
                           {company.name}
                         </Link>
                       ) : (
