@@ -1130,15 +1130,13 @@ async def machine_upload_product_image(
     machine_id: str,
     product_id: str,
     file: UploadFile = File(...),
-    keep_background: bool = Query(False, alias="keepBackground"),
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
     db: Session = Depends(get_db),
 ):
     """
     A product's picture taken or picked on the till: stored as the dashboard's upload
-    stores it — the background cut out unless `keepBackground`, the upload kept beside
-    it (`originalUrl`, to go back to with a product update) — and set on the product.
+    stores it (as uploaded) and set on the product.
     The picture is the product's own, so only for a product this shop alone lists
     (403 `shared_product_master_readonly`), as for every master field from a till.
     """
@@ -1154,7 +1152,7 @@ async def machine_upload_product_image(
     contents = await file.read()
     if len(contents) > images._MAX_SIZE_BYTES:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="image_too_large")
-    stored = await images.store_upload(contents, machine.tenant_id, "products", keep_background)
+    stored = await images.store_upload(contents, machine.tenant_id, "products")
     product.image_url = stored.url
     _audit(
         db,
@@ -1163,15 +1161,11 @@ async def machine_upload_product_image(
         entity=SyncEntityType.PRODUCTS,
         action=SyncAction.UPDATE,
         entity_id=product.id,
-        note="image" + (" background removed" if stored.background_removed else ""),
+        note="image",
     )
     db.commit()
     notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="product_updated")
-    return {
-        "url": stored.url,
-        "originalUrl": stored.original_url,
-        "backgroundRemoved": stored.background_removed,
-    }
+    return {"url": stored.url}
 
 
 @router.put(

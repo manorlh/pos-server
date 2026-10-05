@@ -106,28 +106,26 @@ class TestProductOrder:
 
 
 class TestProductImage:
-    def _upload(self, w, product, keep=False):
+    def _upload(self, w, product):
         f = UploadFile(file=io.BytesIO(b"\x89PNG fake"), filename="p.jpg", headers=Headers({"content-type": "image/jpeg"}))
         return asyncio.run(sync_router.machine_upload_product_image(
-            str(w.h1.id), str(product.id), file=f, keep_background=keep, machine=w.h1, actor=_actor(), db=w.db,
+            str(w.h1.id), str(product.id), file=f, machine=w.h1, actor=_actor(), db=w.db,
         ))
 
     def test_stored_and_set_on_a_product_of_this_shop_alone(self, w, monkeypatch):
         seen = {}
 
-        async def fake_store(contents, tenant_id, resource, keep_background):
-            seen.update(resource=resource, keep=keep_background)
-            return images_router.ImageUploadResponse(
-                url="https://img/cut.png", publicId="p1", originalUrl="https://img/orig.jpg", backgroundRemoved=True,
-            )
+        async def fake_store(contents, tenant_id, resource):
+            seen.update(resource=resource)
+            return images_router.ImageUploadResponse(url="https://img/p1.jpg", publicId="p1")
 
         monkeypatch.setattr(images_router, "store_upload", fake_store)
         monkeypatch.setattr(sync_router, "_product_belongs_only_to", lambda db, p, sid: True)
         monkeypatch.setattr(sync_router, "notify_all_machines_for_tenant", lambda *a, **k: None)
         out = self._upload(w, w.P)
-        assert out == {"url": "https://img/cut.png", "originalUrl": "https://img/orig.jpg", "backgroundRemoved": True}
-        assert seen == {"resource": "products", "keep": False}
-        assert w.db.get(type(w.P), w.P.id).image_url == "https://img/cut.png"
+        assert out == {"url": "https://img/p1.jpg"}
+        assert seen == {"resource": "products"}
+        assert w.db.get(type(w.P), w.P.id).image_url == "https://img/p1.jpg"
 
     def test_a_product_other_shops_list_too_is_refused(self, w, monkeypatch):
         monkeypatch.setattr(sync_router, "_product_belongs_only_to", lambda db, p, sid: False)

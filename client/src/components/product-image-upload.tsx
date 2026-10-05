@@ -26,18 +26,13 @@ export function ProductImageUpload({
   const t = useTranslations('products');
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
-  const [keepBackground, setKeepBackground] = useState(false);
-  // The image as uploaded while the one shown is the server's cut-out of it, so a
-  // bad cut can be reverted without uploading again.
-  const [original, setOriginal] = useState<{ cut: string; url: string } | null>(null);
 
   const handleFile = async (file: File | undefined) => {
     if (!file || disabled) return;
     setUploading(true);
     try {
-      const { url, originalUrl } = await uploadProductImage(file, 'products', { keepBackground });
+      const { url } = await uploadProductImage(file, 'products');
       onChange(url);
-      setOriginal(originalUrl ? { cut: url, url: originalUrl } : null);
     } catch (err: unknown) {
       toast.error(axiosErrorToToastMessage(err, t('uploadError')));
     } finally {
@@ -91,21 +86,6 @@ export function ProductImageUpload({
           >
             {uploading ? t('uploading') : value ? t('replaceImage') : t('uploadImage')}
           </Button>
-          {original && value === original.cut && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="justify-start px-2"
-              disabled={disabled || uploading}
-              onClick={() => {
-                onChange(original.url);
-                setOriginal(null);
-              }}
-            >
-              {t('useOriginalImage')}
-            </Button>
-          )}
           {value && (
             <Button
               type="button"
@@ -119,16 +99,6 @@ export function ProductImageUpload({
               {t('removeImage')}
             </Button>
           )}
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="h-4 w-4 accent-primary"
-              checked={keepBackground}
-              disabled={disabled || uploading}
-              onChange={(e) => setKeepBackground(e.target.checked)}
-            />
-            {t('keepBackground')}
-          </label>
           <p className="text-xs text-muted-foreground">{t('imageHint')}</p>
         </div>
       </div>

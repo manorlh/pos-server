@@ -83,9 +83,6 @@ export type CloudinaryUploadParams = {
 export type ImageUploadResult = {
   url: string;
   publicId: string;
-  /** The image as uploaded, when the server cut its background out. */
-  originalUrl?: string | null;
-  backgroundRemoved?: boolean;
 };
 
 /** The slice of Clerk's browser global this module reads. */
@@ -140,22 +137,20 @@ export async function fetchImageUploadParams(
 /**
  * Upload an image and return its URL for product.imageUrl / category.imageUrl.
  *
- * Product images go through pos-server, which removes the background and stores
- * a trimmed transparent PNG (the original is kept as `originalUrl`); pass
- * `keepBackground` to store the image as is. Categories use a signed direct
+ * Product images go through pos-server, which stores them as uploaded (in its own
+ * media store when Cloudinary is not configured). Categories use a signed direct
  * upload to Cloudinary.
  */
 export async function uploadProductImage(
   file: File,
   resource: 'products' | 'categories' = 'products',
-  options: { keepBackground?: boolean } = {},
 ): Promise<ImageUploadResult> {
   validateImageFile(file);
   if (resource === 'products') {
     const body = new FormData();
     body.append('file', file);
     const { data } = await api.post<ImageUploadResult>('/images/upload', body, {
-      params: { resource, keepBackground: options.keepBackground ?? false },
+      params: { resource },
       // Let the browser set multipart/form-data with its own boundary.
       headers: { 'Content-Type': undefined },
     });

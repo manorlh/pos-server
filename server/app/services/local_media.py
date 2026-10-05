@@ -34,14 +34,12 @@ def store(
     contents: bytes,
     folder: str,
     *,
-    public_id: Optional[str] = None,
-    fmt: Optional[str] = None,
     limit: Optional[tuple[int, int]] = None,
 ) -> Dict[str, Any]:
     """Write [contents] under `folder` and return a Cloudinary-shaped result.
 
     [limit] (width, height) scales the image down to fit, as Cloudinary's "limit" crop
-    does for branding; [fmt] forces the stored format ("png").
+    does for branding.
     """
     from PIL import Image
 
@@ -49,10 +47,10 @@ def store(
     image.load()
     if limit and (image.width > limit[0] or image.height > limit[1]):
         image.thumbnail(limit, Image.LANCZOS)
-    ext = (fmt or (image.format or "png")).lower()
+    ext = (image.format or "png").lower()
     if ext == "jpeg":
         ext = "jpg"
-    pid = public_id or f"{folder}/{uuid.uuid4().hex}"
+    pid = f"{folder}/{uuid.uuid4().hex}"
     path = MEDIA_DIR / f"{pid}.{ext}"
     path.parent.mkdir(parents=True, exist_ok=True)
     out = io.BytesIO()

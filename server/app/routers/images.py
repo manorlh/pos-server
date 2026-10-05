@@ -1,14 +1,13 @@
 """
 Product image uploads via Cloudinary.
 
-Products: POST /upload (server-side proxy) — the server cuts the background out
-(app/services/product_image_processing.py) before storing, so it has to see the
-bytes. The untouched upload is kept next to it as `<public_id>_orig`.
+Products: POST /upload (server-side proxy), stored as uploaded — in Cloudinary, or
+the server's own media store when Cloudinary is not configured.
 Categories: GET /upload-params → client signed direct upload to Cloudinary
-(POST /upload also still accepts them, stored as uploaded).
+(POST /upload also still accepts them).
 Branding: POST /branding (server-side proxy — the size/dimension limits below
 have to be enforced somewhere the browser cannot skip, so white-label images do
-not use the signed direct-upload path). Never background-removed.
+not use the signed direct-upload path).
 """
 import logging
 import uuid
@@ -20,14 +19,12 @@ from pydantic import BaseModel, Field
 
 import cloudinary.uploader
 
-from app.config import get_settings
 from app.middleware.auth import get_active_tenant_id, get_current_user
 from app.models.user import User, UserRole
 from app.services.permission_matrix import Action, Resource, roles_for
 from app.services.cloudinary_service import build_upload_params, cloudinary_configured, configure_cloudinary, upload_folder
 from app.services import local_media
 from app.services.image_validation import ALLOWED_BRANDING_CONTENT_TYPES, read_image_dimensions
-from app.services.product_image_processing import process_product_image
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/images", tags=["images"])
@@ -105,10 +102,6 @@ class ImageUploadParamsResponse(BaseModel):
 class ImageUploadResponse(BaseModel):
     url: str
     public_id: str = Field(..., alias="publicId")
-    # Set only when the background was removed: the image as uploaded, so a bad
-    # cut can be reverted by saving this URL on the product instead.
-    original_url: Optional[str] = Field(None, alias="originalUrl")
-    background_removed: bool = Field(False, alias="backgroundRemoved")
 
     class Config:
         populate_by_name = True
@@ -139,13 +132,10 @@ def get_upload_params(
 async def upload_image(
     file: UploadFile = File(...),
     resource: Optional[Literal["products", "categories"]] = Query("products"),
-    keep_background: bool = Query(False, alias="keepBackground"),
     current_user: User = Depends(get_current_user),
     active_tenant_id: uuid.UUID = Depends(get_active_tenant_id),
 ):
-    """Server-side upload. Product images get their background removed and are
-    stored as a trimmed transparent PNG, unless `?keepBackground=true` or
-    PRODUCT_IMAGE_BG_REMOVAL is off. Categories are stored as uploaded."""
+    """Server-side upload: the image is stored as uploaded."""
     _check_image_role(current_user)
 
     if file.content_type not in _ALLOWED_TYPES:
@@ -160,88 +150,34 @@ async def upload_image(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="File exceeds 5 MB limit",
         )
-    return await store_upload(contents, active_tenant_id, resource or "products", keep_background)
+    return await store_upload(contents, active_tenant_id, resource or "products")
 
 
-async def store_upload(
-    contents: bytes, active_tenant_id, resource: str, keep_background: bool
-) -> "ImageUploadResponse":
+async def store_upload(contents: bytes, active_tenant_id, resource: str) -> "ImageUploadResponse":
     """
-    Store an image that passed the type and size checks: a product's with its background
-    cut out (unless `keep_background` or PRODUCT_IMAGE_BG_REMOVAL is off) and the upload
-    kept beside it; anything else as it came. Shared by the dashboard's upload and the
-    till's (`POST /sync/{m}/products/{id}/image`).
+    Store an image that passed the type and size checks, as it came. Shared by the
+    dashboard's upload and the till's (`POST /sync/{m}/products/{id}/image`).
     """
     use_cloudinary = cloudinary_configured()
     if use_cloudinary:
         configure_cloudinary()
-    resource = resource or "products"
-    folder = upload_folder(active_tenant_id, resource)
-
-    processed = None
-    if (
-        resource == "products"
-        and get_settings().product_image_bg_removal
-        and not keep_background
-    ):
-        # Seconds of CPU on a model — never on the event loop.
-        processed = await run_in_threadpool(process_product_image, contents)
+    folder = upload_folder(active_tenant_id, resource or "products")
 
     try:
-        if processed is None:
-            if use_cloudinary:
-                result = await run_in_threadpool(
-                    cloudinary.uploader.upload,
-                    contents,
-                    folder=folder,
-                    resource_type="image",
-                    overwrite=False,
-                )
-            else:
-                result = await run_in_threadpool(local_media.store, contents, folder)
-            return ImageUploadResponse(url=result["secure_url"], public_id=result["public_id"])
-
         if use_cloudinary:
             result = await run_in_threadpool(
                 cloudinary.uploader.upload,
-                processed.png,
+                contents,
                 folder=folder,
                 resource_type="image",
-                format="png",
                 overwrite=False,
             )
         else:
-            result = await run_in_threadpool(local_media.store, processed.png, folder, fmt="png")
+            result = await run_in_threadpool(local_media.store, contents, folder)
     except Exception as exc:
         logger.error("Cloudinary upload failed: %s", exc)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Image upload failed") from exc
-
-    # Keep the upload as it came in, next to the cut-out, so a bad cut can be undone.
-    # Best effort: the cut-out is already stored and is what the caller asked for.
-    original_url = None
-    try:
-        if use_cloudinary:
-            original = await run_in_threadpool(
-                cloudinary.uploader.upload,
-                contents,
-                public_id=f"{result['public_id']}_orig",
-                resource_type="image",
-                overwrite=False,
-            )
-        else:
-            original = await run_in_threadpool(
-                local_media.store, contents, folder, public_id=f"{result['public_id']}_orig",
-            )
-        original_url = original.get("secure_url")
-    except Exception as exc:
-        logger.warning("Keeping the original of %s failed: %s", result["public_id"], exc)
-
-    return ImageUploadResponse(
-        url=result["secure_url"],
-        public_id=result["public_id"],
-        original_url=original_url,
-        background_removed=True,
-    )
+    return ImageUploadResponse(url=result["secure_url"], public_id=result["public_id"])
 
 
 class BrandingUploadResponse(BaseModel):
