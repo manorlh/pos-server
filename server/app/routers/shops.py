@@ -114,12 +114,23 @@ def list_shop_product_overrides(
         )
     )
     total = base_q.count()
-    page_rows = (
-        base_q.order_by(Product.name)
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-        .all()
-    )
+    # "סידור פריטים": in the order the shop's tills show their buttons (`productOrder`, set
+    # from a till's edit mode), the rest by name after them — as on the tills.
+    till_order = shop.settings.get("productOrder") if isinstance(shop.settings, dict) else None
+    rank = {str(pid): i for i, pid in enumerate(till_order)} if isinstance(till_order, list) else {}
+    if rank:
+        ordered = sorted(
+            base_q.order_by(Product.name).all(),
+            key=lambda row: rank.get(str(row[1].id), len(rank)),
+        )
+        page_rows = ordered[(page - 1) * page_size: page * page_size]
+    else:
+        page_rows = (
+            base_q.order_by(Product.name)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
 
     # The shop's own company is the only company level consulted here (and everywhere).
     company_levels = availability.company_overrides(
@@ -142,6 +153,7 @@ def list_shop_product_overrides(
                 effective_available=levels[availability.Level.SHOP].available,
                 inherited_available=levels[availability.Level.COMPANY].available,
                 is_general=general_item.is_general(p),
+                till_position=(rank[str(p.id)] + 1) if str(p.id) in rank else None,
             )
         )
     return ShopProductCatalogRowListResponse(page=page, page_size=page_size, total=total, items=items)

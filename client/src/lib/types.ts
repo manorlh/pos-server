@@ -406,6 +406,8 @@ export interface ShopProductCatalogRow {
   inheritedAvailable: boolean;
   /** What this shop's tills get when the till itself sets nothing — resolved on the server. */
   effectiveAvailable: boolean;
+  /** Its place on the shop's tills ("סידור פריטים", 1 = first); null — not placed, by name. */
+  tillPosition?: number | null;
   /** The company's built-in general item: it cannot be hidden in or removed from a shop. */
   isGeneral?: boolean;
 }

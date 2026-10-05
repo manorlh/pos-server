@@ -34,6 +34,9 @@ MANAGED_SETTING_KEYS = (
     # unlinkedCardCreditEnabled, refundCustomerDetailsRequired — refund_settings.py.
     *REFUND_SETTING_KEYS,
     "tipPresets",
+    # "סידור פריטים": the till's buttons in this order (product ids), set from a till's
+    # edit mode at the shop, the point of sale or the till itself.
+    "productOrder",
     # The customer's tip question; the till falls back to its own wording when unset.
     "tipPromptText",
     "tipDistribution",

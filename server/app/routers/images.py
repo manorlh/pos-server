@@ -160,7 +160,18 @@ async def upload_image(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="File exceeds 5 MB limit",
         )
+    return await store_upload(contents, active_tenant_id, resource or "products", keep_background)
 
+
+async def store_upload(
+    contents: bytes, active_tenant_id, resource: str, keep_background: bool
+) -> "ImageUploadResponse":
+    """
+    Store an image that passed the type and size checks: a product's with its background
+    cut out (unless `keep_background` or PRODUCT_IMAGE_BG_REMOVAL is off) and the upload
+    kept beside it; anything else as it came. Shared by the dashboard's upload and the
+    till's (`POST /sync/{m}/products/{id}/image`).
+    """
     use_cloudinary = cloudinary_configured()
     if use_cloudinary:
         configure_cloudinary()

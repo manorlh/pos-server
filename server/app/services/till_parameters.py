@@ -607,6 +607,18 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         ),
     ),
     BuiltinParameter(
+        key="productOrderScope",
+        label="סידור פריטים בקופה — היקף",
+        value_type="enum",
+        enum_options=("סניף", "נקודת מכירה", "קופה", "לשאול בקופה"),
+        default_value="סניף",
+        description=(
+            "לחיצה ארוכה על פריט בקופה פותחת \"עריכת מסך\" (מנהל או אישור מנהל): הפריטים רוטטים, גוררים "
+            "אותם למקומם, ו-X הופך פריט ללא פעיל. כשלוחצים \"סיום\" הסדר נשמר: לכל הסניף, לנקודת המכירה "
+            "של הקופה, לקופה עצמה — או שהקופה שואלת בכל פעם."
+        ),
+    ),
+    BuiltinParameter(
         key="cashDrawer",
         label="פתיחת מגירה",
         value_type="enum",

@@ -21,7 +21,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
@@ -958,6 +958,135 @@ def machine_set_product_availability(
     return TillAvailabilityResponse(
         id=product.id, scope=body.scope, active=body.active, effective_active=effective
     )
+
+
+class ProductOrderIn(BaseModel):
+    """"סידור פריטים" from a till's edit mode: the buttons' order, saved at a level."""
+
+    scope: Literal["machine", "area", "shop"]
+    product_ids: List[str] = Field(..., alias="productIds", max_length=5000)
+
+    class Config:
+        populate_by_name = True
+
+
+@router.put("/{machine_id}/product-order")
+def machine_set_product_order(
+    machine_id: str,
+    body: ProductOrderIn,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    db: Session = Depends(get_db),
+):
+    """
+    The order of the till's product buttons (`productOrder` in the settings layers) for
+    this till, its point of sale or its shop — a manager's, as any catalog write from a
+    till. Saved at the shop or the point of sale, this till's own lower levels let go of
+    theirs so the new order shows here too; other tills keep any order of their own.
+    An empty list clears the level (back to inherit, then to the names' order).
+    """
+    from app.services.settings_merge import patch_settings_json, utc_now
+    from app.services import settings_notify
+    from app.models.shop_area import ShopArea
+
+    _require_assigned_machine(machine)
+    shop = _shop_or_400(db, machine)
+    target = _scope_target(machine, body.scope)
+    ids: List[str] = []
+    seen = set()
+    for raw in body.product_ids:
+        pid = str(raw).strip()
+        if pid and pid not in seen:
+            seen.add(pid)
+            ids.append(pid)
+    value = ids or None
+    now = utc_now()
+
+    def write(row) -> None:
+        row.settings = patch_settings_json(row.settings, {"productOrder": value})
+        row.settings_updated_at = now
+
+    def clear(row) -> None:
+        if row is not None and isinstance(row.settings, dict) and "productOrder" in row.settings:
+            row.settings = patch_settings_json(row.settings, {"productOrder": None})
+            row.settings_updated_at = now
+
+    area = db.get(ShopArea, machine.area_id) if machine.area_id else None
+    if body.scope == "machine":
+        write(machine)
+    elif body.scope == "area":
+        write(area)
+        clear(machine)
+    else:
+        write(shop)
+        clear(area)
+        clear(machine)
+    _audit(
+        db,
+        machine=machine,
+        actor=actor,
+        entity=SyncEntityType.PRODUCTS,
+        action=SyncAction.UPDATE,
+        entity_id=None,
+        note=f"product order scope={body.scope} count={len(ids)}",
+    )
+    db.commit()
+    if body.scope == "machine":
+        settings_notify.notify_machine_settings(db, machine, reason="product_order")
+    elif body.scope == "area":
+        settings_notify.notify_machines_for_area_settings(db, str(target), reason="product_order")
+    else:
+        settings_notify.notify_machines_for_shop_settings(db, str(shop.id), reason="product_order")
+    return {"scope": body.scope, "count": len(ids)}
+
+
+@router.post("/{machine_id}/products/{product_id}/image")
+async def machine_upload_product_image(
+    machine_id: str,
+    product_id: str,
+    file: UploadFile = File(...),
+    keep_background: bool = Query(False, alias="keepBackground"),
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    db: Session = Depends(get_db),
+):
+    """
+    A product's picture taken or picked on the till: stored as the dashboard's upload
+    stores it — the background cut out unless `keepBackground`, the upload kept beside
+    it (`originalUrl`, to go back to with a product update) — and set on the product.
+    The picture is the product's own, so only for a product this shop alone lists
+    (403 `shared_product_master_readonly`), as for every master field from a till.
+    """
+    from app.routers import images
+
+    _require_assigned_machine(machine)
+    shop = _shop_or_400(db, machine)
+    product = _machine_editable_product(db, machine, product_id)
+    if not _product_belongs_only_to(db, product, shop.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="shared_product_master_readonly")
+    if file.content_type not in images._ALLOWED_TYPES:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="unsupported_image_type")
+    contents = await file.read()
+    if len(contents) > images._MAX_SIZE_BYTES:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="image_too_large")
+    stored = await images.store_upload(contents, machine.tenant_id, "products", keep_background)
+    product.image_url = stored.url
+    _audit(
+        db,
+        machine=machine,
+        actor=actor,
+        entity=SyncEntityType.PRODUCTS,
+        action=SyncAction.UPDATE,
+        entity_id=product.id,
+        note="image" + (" background removed" if stored.background_removed else ""),
+    )
+    db.commit()
+    notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="product_updated")
+    return {
+        "url": stored.url,
+        "originalUrl": stored.original_url,
+        "backgroundRemoved": stored.background_removed,
+    }
 
 
 @router.put(
