@@ -82,6 +82,18 @@ class TestProductOrder:
         assert w.woken[-1] == ("shop", str(w.h_shop.id))
         assert _effective(w, w.h1) == ["a", "b"]
 
+    def test_the_categories_order_alone_leaves_the_products(self, w):
+        _order(w, "machine", ["a", "b"])
+        body = sync_router.ProductOrderIn(scope="machine", categoryIds=["c2", "c1"])
+        sync_router.machine_set_product_order(str(w.h1.id), body, machine=w.h1, actor=_actor(), db=w.db)
+        assert w.h1.settings["productOrder"] == ["a", "b"]
+        assert w.h1.settings["categoryOrder"] == ["c2", "c1"]
+        assert "categoryOrder" in MANAGED_SETTING_KEYS
+        with pytest.raises(HTTPException):
+            sync_router.machine_set_product_order(
+                str(w.h1.id), sync_router.ProductOrderIn(scope="machine"), machine=w.h1, actor=_actor(), db=w.db,
+            )
+
     def test_an_empty_list_clears_the_level(self, w):
         _order(w, "machine", ["a"])
         _order(w, "machine", [])

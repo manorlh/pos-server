@@ -964,7 +964,10 @@ class ProductOrderIn(BaseModel):
     """"סידור פריטים" from a till's edit mode: the buttons' order, saved at a level."""
 
     scope: Literal["machine", "area", "shop"]
-    product_ids: List[str] = Field(..., alias="productIds", max_length=5000)
+    #: The products' order; absent = this write leaves it as it is.
+    product_ids: Optional[List[str]] = Field(None, alias="productIds", max_length=5000)
+    #: The categories' order (the tabs above the buttons); absent = left as it is.
+    category_ids: Optional[List[str]] = Field(None, alias="categoryIds", max_length=2000)
 
     class Config:
         populate_by_name = True
@@ -992,23 +995,35 @@ def machine_set_product_order(
     _require_assigned_machine(machine)
     shop = _shop_or_400(db, machine)
     target = _scope_target(machine, body.scope)
-    ids: List[str] = []
-    seen = set()
-    for raw in body.product_ids:
-        pid = str(raw).strip()
-        if pid and pid not in seen:
-            seen.add(pid)
-            ids.append(pid)
-    value = ids or None
+
+    def clean(raw_ids) -> List[str]:
+        out: List[str] = []
+        seen = set()
+        for raw in raw_ids or []:
+            pid = str(raw).strip()
+            if pid and pid not in seen:
+                seen.add(pid)
+                out.append(pid)
+        return out
+
+    patch: Dict[str, Any] = {}
+    if body.product_ids is not None:
+        patch["productOrder"] = clean(body.product_ids) or None
+    if body.category_ids is not None:
+        patch["categoryOrder"] = clean(body.category_ids) or None
+    if not patch:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="nothing_to_order")
+    ids = patch.get("productOrder") or []
     now = utc_now()
 
     def write(row) -> None:
-        row.settings = patch_settings_json(row.settings, {"productOrder": value})
+        row.settings = patch_settings_json(row.settings, patch)
         row.settings_updated_at = now
 
     def clear(row) -> None:
-        if row is not None and isinstance(row.settings, dict) and "productOrder" in row.settings:
-            row.settings = patch_settings_json(row.settings, {"productOrder": None})
+        held = row.settings if row is not None and isinstance(row.settings, dict) else None
+        if held is not None and any(k in held for k in patch):
+            row.settings = patch_settings_json(held, {k: None for k in patch})
             row.settings_updated_at = now
 
     area = db.get(ShopArea, machine.area_id) if machine.area_id else None
@@ -1028,7 +1043,7 @@ def machine_set_product_order(
         entity=SyncEntityType.PRODUCTS,
         action=SyncAction.UPDATE,
         entity_id=None,
-        note=f"product order scope={body.scope} count={len(ids)}",
+        note=f"order scope={body.scope} products={len(ids)} categories={len(patch.get('categoryOrder') or [])}",
     )
     db.commit()
     if body.scope == "machine":

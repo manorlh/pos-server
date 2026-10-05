@@ -607,6 +607,27 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         ),
     ),
     BuiltinParameter(
+        key="screenEditEnabled",
+        label="עריכת מסך בקופה (לחיצה ארוכה)",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "לחיצה ארוכה על פריט בקופה פותחת \"עריכת מסך\": סידור הפריטים והמחלקות בגרירה והפיכת פריט "
+            "ללא פעיל — מנהל או באישור מנהל. כשגם \"נעילת מוצר בלחיצה ארוכה\" פעיל, הלחיצה הארוכה פותחת "
+            "תפריט קטן עם שתי האפשרויות. כבוי — הלחיצה הארוכה כמו קודם (נעילת מוצר, אם הוגדרה)."
+        ),
+    ),
+    BuiltinParameter(
+        key="productPhotoFromTill",
+        label="תמונת מוצר מהקופה",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "בעריכת המסך בקופה: צילום תמונה למוצר או בחירה מהגלריה, עם הסרת רקע כמו בענן. "
+            "ההעלאה צורכת נתונים. כבוי — לא מוצג כפתור המצלמה."
+        ),
+    ),
+    BuiltinParameter(
         key="productOrderScope",
         label="סידור פריטים בקופה — היקף",
         value_type="enum",
