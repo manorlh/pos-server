@@ -62,6 +62,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { formatCurrency, formatHashNumber } from '@/lib/format';
+import { integrationBadge, missingFieldsLabel } from '@/lib/paymentIntegration';
 import type { PosMachine } from '@/lib/types';
 import { registerNumberOf } from '@/lib/registerNumber';
 import { zWizardHref } from '@/lib/zAccess';
@@ -710,6 +711,33 @@ export function MachineAlerts({
       ),
     );
   }
+  // "סוג אינטגרציית אשראי" short of a field it needs ("חסר: מספר מסוף"); the address the
+  // alert above already names is not said twice. Opens the till's settings, like it.
+  const integrationMissing = missingFieldsLabel(
+    (m.paymentIntegrationMissing ?? []).filter((k) => !(m.pinpadAddressMissing && k === 'nayaxDeviceHost')),
+  );
+  if (integrationMissing) {
+    const title = integrationBadge(m)?.title ?? integrationMissing;
+    items.push(
+      onPinpadAddress ? (
+        <button
+          key="integration-missing"
+          type="button"
+          className={`${ALERT_AMBER} hover:underline`}
+          title={title}
+          onClick={() => onPinpadAddress(m)}
+        >
+          <CreditCard className="h-3 w-3" aria-hidden />
+          {integrationMissing}
+        </button>
+      ) : (
+        <span key="integration-missing" className={ALERT_AMBER} title={title}>
+          <CreditCard className="h-3 w-3" aria-hidden />
+          {integrationMissing}
+        </span>
+      ),
+    );
+  }
   for (const f of flags) {
     const text = tStatus.has(`flag.${f}`) ? tStatus(`flag.${f}`) : f;
     if (f === 'transmission_overdue' || f === 'transmission_critical') {
@@ -781,6 +809,25 @@ export function MachineAlerts({
   return <span className="flex min-w-0 flex-wrap items-center gap-1">{items}</span>;
 }
 
+/** The card integration the till charges on ("Z-Credit", "מובנה (אוטומטי)"); amber while short of a field. */
+function IntegrationBadge({ m }: { m: PosMachine }) {
+  const badge = integrationBadge(m);
+  if (!badge) return null;
+  return (
+    <Badge
+      variant="outline"
+      className={`h-4 shrink-0 px-1 text-[10px] font-normal ${
+        badge.tone === 'warn'
+          ? 'border-amber-400/60 text-amber-800 dark:text-amber-300'
+          : 'text-muted-foreground'
+      }`}
+      title={badge.title}
+    >
+      {badge.label}
+    </Badge>
+  );
+}
+
 /** Clicks on these do what they are, not open the row's details. */
 const INTERACTIVE = 'a, button, input, select, textarea, [role="menuitem"], [role="menu"]';
 
@@ -841,6 +888,7 @@ export function MachineRow({
               {m.machineCode}
             </span>
             <DeviceModelBadge m={m} />
+            <IntegrationBadge m={m} />
             {/* Only the exception is marked: most tills are on the shop's cloud Z. */}
             {zModeOf(m) === 'till' ? (
               <ZModeBadge mode="till" className="h-4 shrink-0 px-1 text-[10px]" />

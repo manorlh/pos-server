@@ -49,6 +49,7 @@ from app.models.voucher import Voucher
 from app.services import general_item
 from app.services import item_ticket
 from app.services import machine_catalog
+from app.services import product_alerts
 from app.services import product_availability as availability
 from app.services import category_availability
 
@@ -133,6 +134,8 @@ def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[s
         "maxPerOrder": getattr(p, "max_per_order", None),
         "refillable": bool(getattr(p, "refillable", False)),
         "maxRefills": getattr(p, "max_refills", None),
+        # "הודעות לעובד" and "פריטים נלווים" (app/services/product_alerts.py).
+        **product_alerts.sync_fields(p),
         "isGeneral": _is_general(p),
         # A machine-local or tenant-level row is the till's own: always on its list.
         "inMachineCatalog": True,
@@ -253,6 +256,9 @@ def _serialize_merged_product(
         "maxPerOrder": getattr(global_p, "max_per_order", None),
         "refillable": bool(getattr(global_p, "refillable", False)),
         "maxRefills": getattr(global_p, "max_refills", None),
+        # "הודעות לעובד" and "פריטים נלווים", from the global row like the rest of what the
+        # product is (app/services/product_alerts.py).
+        **product_alerts.sync_fields(global_p),
         # From the global row like the rest of what the product *is*: a till's local
         # copy of the general item is still the general item.
         "isGeneral": general_item.is_general(global_p),

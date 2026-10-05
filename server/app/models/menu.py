@@ -200,11 +200,31 @@ class MealSlotOption(Base):
     sort_order = Column(Integer, nullable=False, default=0, server_default="0")
 
 
+#: An upsell's trigger: a product, a category (with its sub-categories), or every order
+#: ("בכל הזמנה" — asked when a table is sent to the kitchen or its bill asked for, and
+#: when a quick order goes to payment).
+UPSELL_TRIGGERS = ("product", "category", "order")
+#: How the till offers it: the small card that never stops the cashier (default), or a
+#: centred window with the options as tiles ("חלון בחירה").
+UPSELL_DISPLAYS = ("card", "popup")
+#: Where it is offered: quick orders, tables, or both (default).
+UPSELL_PLACES = ("quick", "tables", "both")
+
+
 class UpsellRule(Base):
+    """
+    "הגדלת מכירה". A rule made before "חלון בחירה" has one `product_id`, `options` null,
+    the card, both places, and keeps working exactly as it did. `options` lists what is
+    offered — products and/or categories (a category: its products); `product_id` is kept
+    only when that is one product, so a till that predates options still reads the rule.
+    """
+
     __tablename__ = "upsell_rules"
     __table_args__ = (
-        CheckConstraint("trigger_type IN ('product', 'category')", name="ck_upsell_rules_trigger_type"),
+        CheckConstraint("trigger_type IN ('product', 'category', 'order')", name="ck_upsell_rules_trigger_type"),
         CheckConstraint("action IN ('add', 'upgrade')", name="ck_upsell_rules_action"),
+        CheckConstraint("display IN ('card', 'popup')", name="ck_upsell_rules_display"),
+        CheckConstraint("place IN ('quick', 'tables', 'both')", name="ck_upsell_rules_place"),
         Index("ix_upsell_rules_tenant", "tenant_id"),
     )
 
@@ -216,8 +236,9 @@ class UpsellRule(Base):
     #: Product or category ids (a category includes its sub-categories).
     trigger_ids = Column(JSON, nullable=False)
     action = Column(String(16), nullable=False, default="add", server_default="add")
-    #: What is suggested: the product to add, or the one the line becomes.
-    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    #: What is suggested: the product to add, or the one the line becomes. Null when the
+    #: rule offers several options or a category (`options`).
+    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=True)
     #: Shown on the till's card; empty: the till's own wording.
     message = Column(String(200), nullable=True)
     show_price = Column(Boolean, nullable=False, default=True, server_default="true")
@@ -229,6 +250,19 @@ class UpsellRule(Base):
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    #: What is offered: `[{"type": "product" | "category", "id": "…"}]`, in order. Null:
+    #: the one `product_id` (a rule from before options).
+    options = Column(JSON, nullable=True)
+    #: The question the till asks ("האם הצעת שתייה ללקוח?"); null: `message` or the till's own.
+    prompt = Column(String(200), nullable=True)
+    #: UPSELL_DISPLAYS. A rule triggered by every order is always asked in the window.
+    display = Column(String(16), nullable=False, default="card", server_default="card")
+    #: UPSELL_PLACES ("where": הזמנה מהירה / שולחנות / שניהם).
+    place = Column(String(16), nullable=False, default="both", server_default="both")
+    #: Not offered when the order already holds one of the options (an "add" rule).
+    skip_if_present = Column(Boolean, nullable=False, default=True, server_default="true")
+    #: Offered at most once per order (else once per triggering line, as before).
+    once_per_order = Column(Boolean, nullable=False, default=False, server_default="false")
 
 
 class UpsellStat(Base):
@@ -251,6 +285,11 @@ class UpsellStat(Base):
     accepted = Column(Integer, nullable=False, default=0, server_default="0")
     dismissed = Column(Integer, nullable=False, default=0, server_default="0")
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    #: "הלקוח סירב" in the window (`dismissed`: closed without an answer — "לא, תודה", or
+    #: the card's ✕).
+    declined = Column(Integer, nullable=False, default=0, server_default="0")
+    #: Taken, per option: `{product id: count}`. Null from a till that predates options.
+    accepted_options = Column(JSON, nullable=True)
 
 
 class MenuCourse(Base):

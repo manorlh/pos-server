@@ -22,7 +22,7 @@ from app.services.open_format.tax_report_generator import (
     generate_tax_report,
 )
 from app.services.settings_merge import build_business_info, merge_all_settings_layers
-from app.services.tenders import CREDIT_NOTE_DOCUMENT_TYPE
+from app.services.tenders import RECEIPT_DOCUMENT_TYPES, is_refund_document
 
 MAX_TRANSACTIONS_PER_EXPORT = 50_000
 
@@ -69,6 +69,8 @@ def business_info_to_dict(bi) -> BusinessInfoDict:
         "withholdingFileNumber": "000000000",
         "hasBranches": bool(bi.has_branches),
         "branchId": bi.branch_id or "",
+        # "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md): shown on the export's preview.
+        "dealerType": getattr(bi, "dealer_type", None) or "company",
     }
 
 
@@ -328,14 +330,17 @@ def _document_split(
         return _decimal_to_float(tx.net_amount), _decimal_to_float(tx.vat_amount)
 
     settled = gross_total if _is_credit_note(tx) else gross_total - discount
+    if tx.document_type in RECEIPT_DOCUMENT_TYPES:
+        # An exempt dealer's receipt never carried VAT (docs/SPEC_BUSINESS_TYPE.md).
+        return round(settled, 2), 0.0
     net = settled / (1 + tax_rate) if tax_rate > 0 else settled
     return round(net, 2), round(settled - net, 2)
 
 
 def _is_credit_note(tx: Transaction) -> bool:
-    return (
-        tx.document_type == CREDIT_NOTE_DOCUMENT_TYPE
-        or tx.refund_of_transaction_id is not None
+    # 330, or an exempt dealer's receipt refund (-400) — `tenders.is_refund_document`.
+    return is_refund_document(
+        document_type=tx.document_type, refund_of_transaction_id=tx.refund_of_transaction_id
     )
 
 

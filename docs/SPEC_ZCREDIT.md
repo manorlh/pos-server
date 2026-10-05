@@ -198,7 +198,23 @@
   - `hardware/payment/TerminalFrameBridge.kt`, `hardware/payment/zcredit/{ZCreditRequests,ZCreditReplies,ZCreditClient,ZCreditTerminal}.kt`.
   - `ui/settings/ZCreditDiagnosticsSection.kt`.
   - נגיעות ב-`PaymentTerminalConfig.kt`, `SwitchingEmvDevice.kt`, `nayax/PaymentTerminal.kt` (`TerminalKind.ZCREDIT`), `SettingsRepository.kt`, `AppContainer.kt`, `PinpadDiagnosticsSection.kt`, `strings.xml`.
-- **דשבורד:** בחירת הסוג בפתיחת חנות, בדיאלוג הגדרות החנות והקופה, ותג ברשימת הקופות.
+- **דשבורד:**
+  - `src/lib/paymentIntegration.ts` (+ `.test.ts`), `src/lib/paymentIntegrationApi.ts`, `src/components/payment-integration-section.tsx`.
+  - נגיעות ב-`pos-settings-form.tsx`, `entity-settings-dialog.tsx`, `shop-form-dialog.tsx`, `machine-row.tsx`, `posMachine.ts`, `types.ts`, `package.json`.
+
+### בדיקות
+
+- **שרת:** `tests/test_payment_integration.py`, 33 בדיקות:
+  - הרזולוציה בין השכבות, auto ותאימות;
+  - ולידציה לפי סוג וכלל הקופה בלי מסוף מובנה;
+  - סודות: לא ב-JSON, מוצפנים, המסכה שומרת ו-`null` מוחק, יורדים רק לקופה על Z-Credit, ומוסתרים בלוג הבקשות;
+  - רשימת הקופות, ה-context ופתיחת חנות.
+- **קופה:** 54 בדיקות.
+  - `PaymentIntegrationTest`: 12.
+  - `ZCreditRepliesTest`: 16, על הדוגמאות מהתיעוד ועל התשובה האמיתית `-80`.
+  - `ZCreditTerminalTest`: 20, עם שער מזויף: מכירה פעם אחת, כפילות, תשובה שאבדה, זיכוי, ביטול, הפקדה, הגשר מול מסגרות checkout, ואין סודות בלוג.
+  - `SwitchingIntegrationTest`: 6, החלפה רק כשאין עסקה באוויר.
+- **דשבורד:** 49 בדיקות ב-`paymentIntegration.test.ts`.
 
 ## שאלות פתוחות
 

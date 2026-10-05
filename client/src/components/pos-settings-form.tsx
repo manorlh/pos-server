@@ -17,7 +17,8 @@ import {
 import { SELL_SCREEN_TOOLS, SELL_SCREEN_TOOL_DEFAULT } from '@/lib/sellScreen';
 import { REFUND_SETTINGS, REFUND_SETTING_DEFAULT } from '@/lib/refundSettings';
 import { TIP_PRESETS_MAX } from '@/lib/types';
-import type { PosSettingsPatch, PosSettingsV1, ResettableSwitchKey } from '@/lib/types';
+import type { PosSettingsPatch, PosSettingsV1, ResettableSwitchKey, SettingsLevel } from '@/lib/types';
+import { PaymentIntegrationSection } from '@/components/payment-integration-section';
 
 /**
  * A patch, not plain settings, so a payment-option or sell-screen key can hold `null`
@@ -40,6 +41,12 @@ type Props = {
   tenantLevel?: boolean;
   /** May change the Z scope (distributor / super admin); otherwise it is shown read-only. */
   zScopeEditable?: boolean;
+  /**
+   * The layer edited and its id: the payment-integration section then reads what the
+   * server knows (a till's hardware, saved secrets, what it charges on). Optional.
+   */
+  settingsLevel?: SettingsLevel;
+  entityId?: string | null;
 };
 
 const Z_SCOPES = ['shop', 'machine'] as const;
@@ -76,6 +83,8 @@ export function PosSettingsForm({
   paymentOptionsRejected,
   tenantLevel,
   zScopeEditable = false,
+  settingsLevel,
+  entityId,
 }: Props) {
   const t = useTranslations('posSettings');
 
@@ -556,55 +565,17 @@ export function PosSettingsForm({
         </div>
       </div>
 
-      <div className="border-t pt-4 space-y-3">
-        <p className="text-sm font-medium">{t('nayaxTitle')}</p>
-        <div className="flex items-center justify-between gap-4">
-          <Label>
-            {t('nayaxEnabled')}
-            {overrideBadge('nayaxEnabled')}
-          </Label>
-          <Switch
-            checked={value.nayaxEnabled ?? inherited?.nayaxEnabled ?? false}
-            onCheckedChange={(c) => set('nayaxEnabled', c)}
-          />
-        </div>
-        <div className="space-y-1">
-          <Label>
-            {t('nayaxHost')}
-            {overrideBadge('nayaxDeviceHost')}
-          </Label>
-          <Input
-            placeholder={placeholderFor('nayaxDeviceHost', value, inherited)}
-            value={value.nayaxDeviceHost ?? ''}
-            onChange={(e) => set('nayaxDeviceHost', e.target.value || undefined)}
-          />
-          {inheritedHint('nayaxDeviceHost')}
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <Label>
-              {t('nayaxPort')}
-              {overrideBadge('nayaxDevicePort')}
-            </Label>
-            <Input
-              placeholder={placeholderFor('nayaxDevicePort', value, inherited) || '8080'}
-              value={value.nayaxDevicePort ?? ''}
-              onChange={(e) => set('nayaxDevicePort', e.target.value || undefined)}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label>
-              {t('nayaxPath')}
-              {overrideBadge('nayaxSpicyPath')}
-            </Label>
-            <Input
-              placeholder={placeholderFor('nayaxSpicyPath', value, inherited) || '/SPICy'}
-              value={value.nayaxSpicyPath ?? ''}
-              onChange={(e) => set('nayaxSpicyPath', e.target.value || undefined)}
-            />
-          </div>
-        </div>
-      </div>
+      {/* "סוג אינטגרציית אשראי" and the fields of the type chosen (Nayax's address
+          among them). The older `nayaxEnabled` switch is gone: choosing Nayax is the way
+          now, though "אוטומטי" with it on still means Nayax. */}
+      <PaymentIntegrationSection
+        value={value}
+        onChange={onChange}
+        inherited={inherited}
+        showOverrideHints={showOverrideHints}
+        settingsLevel={settingsLevel}
+        entityId={entityId}
+      />
 
       {/* How the tenant's Zs are produced. One choice for the whole tenant, read by the
           Z wizard and enforced by POST /z-runs (422 z_scope_machine_one_till). */}

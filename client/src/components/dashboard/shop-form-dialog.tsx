@@ -18,7 +18,9 @@ import { api, fetchCompanies } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { buildCompanyTree, companyPathLabel, MAX_TREE_INDENT_DEPTH } from '@/lib/companyTree';
 import { withoutTrainingFields } from '@/lib/trainingMode';
+import type { PaymentIntegration } from '@/lib/paymentIntegration';
 import type { Company, Shop } from '@/lib/types';
+import { ShopPaymentIntegrationSelect } from '@/components/payment-integration-section';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -104,6 +106,8 @@ function ShopForm({
   // A new shop opens in training mode unless unticked; an existing one changes it on the
   // shop page's "מצב הדרכה" card, never through this form.
   const [trainingMode, setTrainingMode] = useState(true);
+  // "סוג אינטגרציית אשראי" for all the new shop's tills; changed later in its settings.
+  const [paymentIntegration, setPaymentIntegration] = useState<PaymentIntegration>('auto');
 
   const { data: companies = [] } = useQuery<Company[]>({
     queryKey: ['companies'],
@@ -119,6 +123,8 @@ function ShopForm({
         ...withoutTrainingFields(withoutLicense(s)),
         ...licensePayload(s, isSuperAdmin),
         ...(s.id ? {} : { trainingMode }),
+        // "אוטומטי" stores nothing, so it is not sent.
+        ...(s.id || paymentIntegration === 'auto' ? {} : { paymentIntegration }),
       };
       const { data } = s.id
         ? await api.put<Shop>(`/shops/${s.id}`, payload)
@@ -216,6 +222,9 @@ function ShopForm({
             </div>
             <Switch id="shop-training-mode" checked={trainingMode} onCheckedChange={setTrainingMode} />
           </div>
+        ) : null}
+        {isNew ? (
+          <ShopPaymentIntegrationSelect value={paymentIntegration} onChange={setPaymentIntegration} />
         ) : null}
         <LicenseFields
           idPrefix="shop"

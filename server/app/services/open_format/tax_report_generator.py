@@ -26,6 +26,9 @@ class BusinessInfoDict(TypedDict, total=False):
     withholdingFileNumber: str
     hasBranches: bool
     branchId: str
+    #: "company" | "licensed" | "exempt" (docs/SPEC_BUSINESS_TYPE.md). Informational:
+    #: what a document is filed as comes from its own stored type.
+    dealerType: str
 
 
 class RecordCounts(TypedDict):
@@ -275,6 +278,37 @@ def _parse_dt(value: Any, fallback: Any) -> datetime:
     return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
 
 
+#: Stored document types an exempt dealer (עוסק פטור) issues — a receipt and a receipt
+#: refund (docs/SPEC_BUSINESS_TYPE.md; `tenders.RECEIPT_DOCUMENT_TYPES`). Both are filed
+#: as 400 (קבלה): there is no מבנה אחיד code for a receipt in the other direction, so the
+#: refund is a 400 with negative amounts. A receipt has no item lines (D110) — only its
+#: header (C100) and its payments (D120).
+RECEIPT_DOCUMENT_TYPE = 400
+RECEIPT_REFUND_DOCUMENT_TYPE = -400
+RECEIPT_TYPES = (RECEIPT_DOCUMENT_TYPE, RECEIPT_REFUND_DOCUMENT_TYPE)
+
+
+def is_receipt_document(transaction: Dict[str, Any]) -> bool:
+    """An exempt dealer's receipt or receipt refund: filed as 400, without D110 lines."""
+    return transaction.get("documentType") in RECEIPT_TYPES
+
+
+def open_format_document_type(stored: Optional[int], is_refund: bool) -> Tuple[int, int]:
+    """
+    (C100 field 1203, the sign of the document's amounts) for a stored document.
+
+    320 / 330 as before — a credit note is a 330 by type **or** by its link to an
+    original. An exempt dealer's 400 is a 400, and its receipt refund (-400) a 400 whose
+    amounts are negative. The one place the internal -400 is translated: if the
+    accountant rules another code for the refund, it changes here.
+    """
+    if stored == RECEIPT_REFUND_DOCUMENT_TYPE:
+        return RECEIPT_DOCUMENT_TYPE, -1
+    if stored == RECEIPT_DOCUMENT_TYPE:
+        return RECEIPT_DOCUMENT_TYPE, 1
+    return (330 if is_refund else 320), 1
+
+
 def build_c100_record(
     transaction: Dict[str, Any],
     vat_number: str,
@@ -283,6 +317,7 @@ def build_c100_record(
     *,
     doc_type: Optional[int] = None,
     global_tax_rate: Optional[float] = None,
+    amount_sign: int = 1,
 ) -> str:
     vat = normalize_israeli_9_digit(vat_number)
     cart = transaction.get("cart") or {}
@@ -334,11 +369,15 @@ def build_c100_record(
     net_after_discount = float(cart.get("subtotal") or 0)
     tax_amount = float(cart.get("taxAmount") or 0)
     total_amount = float(cart.get("totalAmount") or 0)
-    f1219 = format_amount(net_after_discount + doc_disc_excl_vat)
-    f1220 = format_amount(-doc_disc_excl_vat if doc_disc_excl_vat > 0 else 0)
-    f1221 = format_amount(net_after_discount)
-    f1222 = format_amount(tax_amount)
-    f1223 = format_amount(total_amount)
+    # `amount_sign` is -1 only for an exempt dealer's receipt refund, filed as a 400
+    # with negative amounts (`open_format_document_type`). The identities above hold in
+    # signed arithmetic: 1219 + 1220 == 1221 and 1221 + 1222 == 1223.
+    s = -1 if amount_sign < 0 else 1
+    f1219 = format_amount(s * (net_after_discount + doc_disc_excl_vat))
+    f1220 = format_amount(s * -doc_disc_excl_vat if doc_disc_excl_vat > 0 else 0)
+    f1221 = format_amount(s * net_after_discount)
+    f1222 = format_amount(s * tax_amount)
+    f1223 = format_amount(s * total_amount)
     wht = float(transaction.get("whtDeduction") or 0)
     f1224 = format_amount12(wht)
     seq_key = pad_left(str(record_number % 10_000_000_000_000), 15, "0")[-15:]
@@ -631,8 +670,12 @@ def generate_tax_report(
         # A credit note is type 330 **or** linked to an original. Reading only the link
         # filed a return with no original receipt (picked from the catalogue) as a 320 —
         # a sale — so the period overstated turnover by twice the refund.
-        is_refund = bool(refund_id) or transaction.get("documentType") == 330
-        doc_type = 330 if is_refund else 320
+        stored_type = transaction.get("documentType")
+        is_refund = bool(refund_id) or stored_type in (330, RECEIPT_REFUND_DOCUMENT_TYPE)
+        # An exempt dealer's receipt (400) and receipt refund (-400) are filed as 400 —
+        # the refund with negative amounts — with no item lines (docs/SPEC_BUSINESS_TYPE.md).
+        doc_type, amount_sign = open_format_document_type(stored_type, is_refund)
+        receipt = stored_type in RECEIPT_TYPES
         # The document's base document: the original when it is in this export, else
         # what the caller resolved for it (`baseDocument`, which reaches outside the
         # export window). Each line may name its own (`base` on the item).
@@ -655,13 +698,15 @@ def generate_tax_report(
                 link_id7,
                 doc_type=doc_type,
                 global_tax_rate=global_tax_rate,
+                amount_sign=amount_sign,
             )
         )
         record_counts["C100"] += 1
         record_number += 1
 
         line_number = 1
-        for item in (transaction.get("cart") or {}).get("items") or []:
+        # A receipt carries no item lines: its header and its payments only.
+        for item in [] if receipt else (transaction.get("cart") or {}).get("items") or []:
             base = (item.get("base") or document_base) if is_refund else None
             bkmv_lines.append(
                 build_d110_record(
@@ -691,6 +736,10 @@ def generate_tax_report(
         for payment_line, (leg_method, leg_amount) in enumerate(
             resolve_payment_legs(transaction), start=1
         ):
+            if amount_sign < 0:
+                # A receipt refund: the money went back, so each payment is negative.
+                whole = float((transaction.get("cart") or {}).get("totalAmount") or 0)
+                leg_amount = -abs(leg_amount if leg_amount is not None else whole)
             bkmv_lines.append(
                 build_d120_record(
                     transaction,
@@ -706,7 +755,10 @@ def generate_tax_report(
             record_counts["D120"] += 1
             record_number += 1
 
-    for product in collect_unique_products_for_m100(transactions):
+    # Only the items of documents written with item lines (a receipt has none).
+    for product in collect_unique_products_for_m100(
+        [t for t in transactions if not is_receipt_document(t)]
+    ):
         bkmv_lines.append(build_m100_record(business_info["vatNumber"], record_number, product))
         record_counts["M100"] += 1
         record_number += 1

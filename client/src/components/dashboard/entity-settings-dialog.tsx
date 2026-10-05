@@ -11,6 +11,7 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   fetchCompanySettings,
@@ -26,6 +27,8 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
 import { isNoPaymentOptionAllowedError, noPaymentOptionAllowed } from '@/lib/paymentOptions';
 import { PosSettingsForm, type PosSettingsFormState } from '@/components/pos-settings-form';
+import { usePaymentIntegrationValidation } from '@/components/payment-integration-section';
+import { PI_TEXT, paymentIntegrationErrorMessage, withSendableSecrets } from '@/lib/paymentIntegration';
 import type { PosSettingsV1 } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import {
@@ -110,6 +113,15 @@ export function EntityPosSettingsDialog({
   const showsInherited = level === 'shop' || level === 'machine';
   const inheritedForForm = showsInherited ? inherited : undefined;
   const noneAllowed = noPaymentOptionAllowed(value, inheritedForForm);
+  // "סוג אינטגרציית אשראי": the same checks the section shows; Save waits for them.
+  const qc = useQueryClient();
+  const payment = usePaymentIntegrationValidation({
+    level,
+    entityId,
+    value,
+    inherited: inheritedForForm,
+    enabled: open,
+  });
 
   const handleChange = (next: PosSettingsFormState) => {
     setValue(next);
@@ -117,11 +129,17 @@ export function EntityPosSettingsDialog({
   };
 
   const handleSave = async () => {
-    if (!entityId || noneAllowed) return;
+    if (!entityId || noneAllowed || !payment.valid) return;
     // The form round-trips whatever the layer holds, including the legacy tip
     // switches it no longer shows. Leaving them out of the PATCH keeps their
     // stored value (the server's fallback) without the dashboard writing them.
-    const patch = { ...value };
+    // A Z-Credit secret goes only when typed (never the "••••" mask, never ''), and
+    // only while Z-Credit is the type shown.
+    const patch = withSendableSecrets({ ...value });
+    if (payment.integration.effective !== 'zcredit') {
+      delete patch.zcreditPassword;
+      delete patch.zcreditKey;
+    }
     delete patch.tipsEnabled;
     delete patch.cashTipsEnabled;
     // Never sent by someone who may not change it, nor from below the organization —
@@ -134,11 +152,20 @@ export function EntityPosSettingsDialog({
       else if (level === 'shop') await patchShopSettings(entityId, patch);
       else await patchMachineSettings(entityId, patch);
       toast.success(tps('saved'));
+      // Every layer's context (a layer below inherits this one), and the machines list's
+      // integration badges.
+      void qc.invalidateQueries({ queryKey: ['payment-integration-context'] });
+      void qc.invalidateQueries({ queryKey: ['machines'] });
+      void qc.invalidateQueries({ queryKey: ['machine'] });
       onOpenChange(false);
     } catch (err: unknown) {
+      const paymentMsg = paymentIntegrationErrorMessage(err);
       if (isNoPaymentOptionAllowedError(err)) {
         setPaymentOptionsRejected(true);
         toast.error(tps('payNoneAllowed'));
+      } else if (paymentMsg) {
+        // 422 `agamento_needs_builtin_terminal` / `secret_invalid`: the server's words.
+        toast.error(paymentMsg);
       } else {
         toast.error(axiosErrorToToastMessage(err, tc('error')));
       }
@@ -171,14 +198,21 @@ export function EntityPosSettingsDialog({
           paymentOptionsRejected={paymentOptionsRejected}
           tenantLevel={level === 'tenant'}
           zScopeEditable={canChangeZScope}
+          settingsLevel={level}
+          entityId={entityId}
         />
+        {!payment.valid && !loading ? (
+          <p role="alert" className="text-sm text-destructive">
+            {PI_TEXT.formInvalid}
+          </p>
+        ) : null}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {tc('cancel')}
           </Button>
           <Button
             onClick={() => void handleSave()}
-            disabled={saving || loading || !entityId || noneAllowed}
+            disabled={saving || loading || !entityId || noneAllowed || !payment.valid}
           >
             {saving ? tc('saving') : tc('save')}
           </Button>

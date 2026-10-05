@@ -50,6 +50,11 @@ export default function UpsellsPage() {
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
   });
 
+  const ts = useTranslations('specials.upsell');
+  // What it offers: its options by name ("קולה / ספרייט / מים"), else its one product.
+  const offered = (r: UpsellRule) =>
+    (r.options?.length ? r.options.map((o) => o.name ?? '—').join(' / ') : r.productName) ?? '—';
+
   const whenText = (r: UpsellRule) => {
     const parts: string[] = [];
     if (r.weekdays?.length) parts.push(r.weekdays.map((d) => tw(String(d))).join(' '));
@@ -65,6 +70,7 @@ export default function UpsellsPage() {
       <div>
         <h1 className="text-2xl font-bold">{t('title')}</h1>
         <p className="text-sm text-muted-foreground">{t('subtitle')}</p>
+        <p className="text-sm text-muted-foreground">{ts('example')}</p>
       </div>
       <IosCanvas>
         <div className="mx-auto max-w-3xl">
@@ -128,18 +134,28 @@ export default function UpsellsPage() {
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="text-[16px] font-semibold">{r.name}</span>
                         <IosTag tone={r.action === 'upgrade' ? 'blue' : 'green'}>{t(`action.${r.action}`)}</IosTag>
+                        {/* "חלון בחירה", where and once per order — only when not as before. */}
+                        {r.display === 'popup' || r.triggerType === 'order' ? <IosTag tone="orange">{ts('tagPopup')}</IosTag> : null}
+                        {r.where === 'quick' ? <IosTag>{ts('tagQuick')}</IosTag> : null}
+                        {r.where === 'tables' ? <IosTag>{ts('tagTables')}</IosTag> : null}
+                        {r.oncePerOrder ? <IosTag>{ts('tagOnce')}</IosTag> : null}
                         {!r.isActive ? <IosTag>{t('inactive')}</IosTag> : null}
                       </div>
                       <p className="text-[13px] text-[#3C3C43] dark:text-white/70">
-                        {t('flow', {
-                          triggers: r.triggerNames.filter(Boolean).join(', ') || '—',
-                          product: r.productName ?? '—',
-                        })}
+                        {r.triggerType === 'order'
+                          ? ts('flowOrder', { product: offered(r) })
+                          : t('flow', {
+                              triggers: r.triggerNames.filter(Boolean).join(', ') || '—',
+                              product: offered(r),
+                            })}
                       </p>
-                      {r.message ? <p className="text-[13px] italic text-[#6D6D72]">“{r.message}”</p> : null}
+                      {r.prompt || r.message ? (
+                        <p className="text-[13px] italic text-[#6D6D72]">“{r.prompt || r.message}”</p>
+                      ) : null}
                       <p className="text-[12px] text-[#8E8E93]">
                         {whenText(r)}
                         {s ? ` · ${t('stats.line', { shown: s.shown, accepted: s.accepted, rate: s.acceptanceRate !== null ? Math.round(s.acceptanceRate * 100) : 0 })}` : ''}
+                        {s?.declined ? ` · ${ts('declined', { count: s.declined })}` : ''}
                       </p>
                     </div>
                     {r.canEdit ? (

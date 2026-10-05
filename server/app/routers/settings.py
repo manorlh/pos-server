@@ -25,7 +25,9 @@ from app.schemas.pos_settings import (
 from app.services.payment_options import (
     PAYMENT_OPTION_ALLOWED_KEYS,
     PAYMENT_OPTION_SETTING_KEYS,
+    PAY_ORDER_KEY,
     any_allowed,
+    resolve_pay_order,
     resolve_payment_options,
 )
 from app.services.refund_settings import REFUND_SETTING_KEYS, resolve_refund_settings
@@ -164,6 +166,8 @@ TIP_RESETTABLE_KEYS = (
     "clearingServer",
     "forceTerminalNumber",
     "payInstallmentsMax",
+    # "סדר אמצעי התשלום": the dashboard's "איפוס לברירת מחדל / ירושה" sends `null`.
+    PAY_ORDER_KEY,
 )
 
 
@@ -338,6 +342,13 @@ def _inherited_preview(layers: List[Any]):
     effective.update(resolve_payment_options(effective, effective=False))
     effective.update(resolve_sell_screen(effective))
     effective.update(resolve_refund_settings(effective))
+    # The inherited payment order completed (every method, the unlisted ones after);
+    # absent when no level above sets one — the default order.
+    pay_order = resolve_pay_order(effective)
+    if pay_order is None:
+        effective.pop(PAY_ORDER_KEY, None)
+    else:
+        effective[PAY_ORDER_KEY] = pay_order
     return effective, settings_sources(present)
 
 

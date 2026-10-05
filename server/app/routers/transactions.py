@@ -108,7 +108,8 @@ def _search_filters(query, *, q=None, card_last4=None, item=None, method=None):
     # anything that is not text is "not given".
     q, card_last4, item, method = (v if isinstance(v, str) else None for v in (q, card_last4, item, method))
     if method == "refunds":
-        query = query.filter(Transaction.document_type == 330)
+        # Credit notes, and an exempt dealer's receipt refunds (-400).
+        query = query.filter(Transaction.document_type.in_((330, -400)))
     elif method == "split":
         legs = (
             select(func.count(TransactionPayment.id))

@@ -1,4 +1,5 @@
 import { DEVICE_MODELS, type DeviceModel, type PosMachine } from '@/lib/types';
+import { normalizeMachineIntegration } from '@/lib/paymentIntegration';
 
 const BATTERY_STATUSES = ['charging', 'discharging', 'full', 'not_charging', 'unknown'] as const;
 const PRINTER_STATUSES = ['ok', 'no_paper', 'overheated', 'error', 'unavailable', 'unknown'] as const;
@@ -81,6 +82,13 @@ export function normalizeTerminalFields(raw: Record<string, unknown>) {
     forceTerminalNumberSource: (nullableString(raw.forceTerminalNumberSource) ??
       null) as PosMachine['forceTerminalNumberSource'],
     terminalStatus: terminalStatus(raw.terminalStatus),
+    // The network pinpad (app/services/payment_terminal.py): dropped here before, so the
+    // "נדרשת כתובת IP למסופון" alert never showed.
+    pinpadEnabled: raw.pinpadEnabled === true,
+    pinpadHost: nullableString(raw.pinpadHost),
+    pinpadPort: nullableString(raw.pinpadPort),
+    pinpadRequired: raw.pinpadRequired === true,
+    pinpadAddressMissing: raw.pinpadAddressMissing === true,
   };
 }
 
@@ -188,6 +196,8 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     printerLastOkAt: nullableString(raw.printerLastOkAt),
     printerReportedAt: nullableString(raw.printerReportedAt),
     ...normalizeTerminalFields(raw),
+    // "סוג אינטגרציית אשראי" and the fields it still lacks (the machines list's badge).
+    ...normalizeMachineIntegration(raw),
     zMode: zMode(raw.zMode ?? raw.z_mode),
     createdAt: String(raw.createdAt ?? raw.created_at ?? ''),
     updatedAt: String(raw.updatedAt ?? raw.updated_at ?? ''),

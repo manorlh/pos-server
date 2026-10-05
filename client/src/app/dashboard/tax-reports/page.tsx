@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
+import { dealerTypeOf } from '@/lib/dealerType';
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -35,6 +36,7 @@ function triggerBlobDownload(blob: Blob, filename: string) {
 export default function TaxReportsPage() {
   const t = useTranslations('taxReports');
   const tc = useTranslations('common');
+  const tb = useTranslations('businessType');
 
   /**
    * The export's own "scope" select is gone: the endpoint's two modes map exactly
@@ -221,6 +223,13 @@ export default function TaxReportsPage() {
                 rate: preview.globalTaxRate,
               })}
             </p>
+            {/* "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md): an exempt dealer's file is receipts. */}
+            <p className="text-muted-foreground">
+              {tb('title')}: {tb(dealerTypeOf(preview.businessInfo.dealerType))}
+            </p>
+            {dealerTypeOf(preview.businessInfo.dealerType) === 'exempt' ? (
+              <p className="text-muted-foreground">{tb('taxReportExempt')}</p>
+            ) : null}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
               {Object.entries(preview.recordCounts).map(([type, count]) => (
                 <div key={type} className="rounded border px-2 py-1 bg-background">

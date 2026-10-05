@@ -187,10 +187,19 @@ def _sales_rows(z: ZReport) -> List[Optional[dict]]:
     return rows
 
 
-def _vat_rows(z: ZReport) -> List[Optional[dict]]:
+#: An exempt dealer's Z, in place of the VAT split (docs/SPEC_BUSINESS_TYPE.md).
+EXEMPT_NO_VAT = "עוסק פטור — ללא מע״מ"
+
+
+def _vat_rows(z: ZReport, dealer_type: Optional[str] = None) -> List[Optional[dict]]:
     vat = _dec(z.vat_total)
     sales = _dec(z.total_sales)
     net = None if sales is None else sales - (_dec(z.total_refunds) or ZERO)
+    dealer = dealer_type or (getattr(z, "header", None) or {}).get("dealerType")
+    # An exempt dealer's Z has no VAT to split. Only when it really has none: a Z of the
+    # day the type changed may still hold VAT documents, and then the split is printed.
+    if dealer == "exempt" and (vat is None or vat == 0):
+        return [row("מע״מ", EXEMPT_NO_VAT)]
     if vat is None:
         return [row("מע״מ", "לא ידוע")]
     return [
@@ -399,7 +408,10 @@ def _subtitle(z: ZReport, tzinfo) -> List[str]:
 
     subtitle: List[str] = []
     if reg:
-        subtitle.append(f"ח.פ. {reg}")
+        # "ח.פ." / "עוסק מורשה" / "עוסק פטור" as the Z was built (SPEC_BUSINESS_TYPE.md).
+        from app.services.dealer_types import reg_label
+
+        subtitle.append(f"{reg_label(header.get('dealerType'))} {reg}")
     if shop_name:
         subtitle.append(f"סניף {shop_name}" + (f" #{shop_number}" if shop_number is not None else ""))
     area = header.get("areaName") if z.area_id is not None else None
@@ -638,7 +650,7 @@ def build_till_document(
     sections: List[dict] = [
         section("משמרות", [row("משמרות", shifts), row("מסמכים", docs) if docs else None]),
         section("מכירות", _sales_rows(view)),  # type: ignore[arg-type]
-        section("מע״מ", _vat_rows(view)),  # type: ignore[arg-type]
+        section("מע״מ", _vat_rows(view, (z.header or {}).get("dealerType"))),  # type: ignore[arg-type]
         section("אמצעי תשלום", _payment_rows(view)),  # type: ignore[arg-type]
         section("תשר", _tips_rows(view)),  # type: ignore[arg-type]
         section("קופה", _cash_rows(view)),  # type: ignore[arg-type]

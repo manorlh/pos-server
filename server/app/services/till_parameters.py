@@ -410,6 +410,10 @@ TILL_Z_OFFLINE_KEY = "tillZOffline"
 #: (docs/SPEC_TERMINAL_TIP.md). Read by the till only.
 TERMINAL_TIP_PROMPT_KEY = "terminalTipPrompt"
 
+#: "גודל ריבוע מוצר": the sizes, smallest first, and "as the size it falls back to".
+TILE_SIZES = ("קטן מאוד", "קטן", "בינוני", "גדול")
+TILE_SIZE_INHERIT = "ברירת מחדל"
+
 #: "מסופון ברשת ללא הצפנה (HTTP)": plain HTTP to a pinpad on a private network. Read by
 #: the till only (hardware/payment/net on Android).
 PINPAD_ALLOW_HTTP_KEY = "pinpadAllowHttp"
@@ -560,6 +564,26 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "(כל עובד עם קוד — מי שמקיש הוא שממשיך). 0 — כבוי. 10–3600. "
             "לא ננעלת באמצע תשלום. שולחן פתוח נשמר לפני הנעילה; במצב מסונכרן בלי חיבור לענן "
             "הקופה ממתינה לחיבור ולא ננעלת, כדי לא לאבד את מה שלא נשמר."
+        ),
+    ),
+    # Read by the till only (pos-android system/KioskLock.kt, docs/KIOSK.md): Android's lock
+    # task mode while on. The cloud stays the authority — off releases the lock at the
+    # till's next sync, whatever a manager did there.
+    BuiltinParameter(
+        key="kioskMode",
+        label="נעילת קופה (מצב קיוסק)",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל, הקופה ננעלת בתוך האפליקציה: אי אפשר לצאת ממנה למסך הבית של Android, "
+            "לאפליקציות אחרות, לשורת ההתראות או להגדרות המכשיר, ו\"חזור\" במסך הראשי לא סוגר אותה. "
+            "במכשיר רגיל Android מבקש פעם אחת לאשר \"הצמדת אפליקציה\", ואת ההצמדה אפשר לבטל "
+            "במחווה של המערכת. נעילה מלאה ושקטה — בלי שאלה ובלי דרך יציאה, והקופה כמסך הבית — "
+            "דורשת הגדרה חד-פעמית של המכשיר: הגדרת הקופה כבעלת המכשיר (Device Owner) על ידי "
+            "טכנאי, או הוספת הקופה לרשימת הקיוסק בניהול המכשירים של הספק (Kozen / Nayax). "
+            "יציאה לתחזוקה: בתפריט הקופה \"יציאה מנעילת קופה\", באישור מנהל (קוד מנהל שנבדק בקופה, "
+            "עובד גם בלי אינטרנט) — עד ההפעלה הבאה של הקופה או עד \"נעילת הקופה מחדש\". "
+            "כיבוי הפרמטר משחרר את הנעילה בסנכרון הבא. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
     BuiltinParameter(
@@ -951,6 +975,47 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "הראשון להזמנה חדשה. בכל מקרה, הזמנה שהגיעה לתשלום בלי הפרטים נשאלת עליהם לפני התשלום."
         ),
     ),
+    # "גודל ריבוע מוצר": the product tiles on the till (domain/TileSize.kt, tileSizeFor) —
+    # the quick order's, and on their own when set: a table's order, a tablet's, a tablet's
+    # table. "ברירת מחדל": as the size it falls back to.
+    BuiltinParameter(
+        key="productTileSize",
+        label="גודל ריבוע מוצר",
+        value_type="enum",
+        enum_options=TILE_SIZES,
+        default_value="בינוני",
+        description=(
+            "גודל ריבועי המוצרים במסך המכירה (הזמנה מהירה). \"קטן מאוד\" מכניס הכי הרבה מוצרים למסך, "
+            "\"גדול\" מציג את התמונה בגדול. חל גם על שולחנות ועל טאבלט, אלא אם נקבע להם גודל משלהם."
+        ),
+    ),
+    BuiltinParameter(
+        key="productTileSizeTables",
+        label="גודל ריבוע מוצר — שולחנות",
+        value_type="enum",
+        enum_options=(TILE_SIZE_INHERIT,) + TILE_SIZES,
+        default_value=TILE_SIZE_INHERIT,
+        description="גודל ריבועי המוצרים בתוך הזמנת שולחן. «ברירת מחדל» — כמו בהזמנה המהירה.",
+    ),
+    BuiltinParameter(
+        key="productTileSizeTablet",
+        label="גודל ריבוע מוצר בטאבלט — הזמנה מהירה",
+        value_type="enum",
+        enum_options=(TILE_SIZE_INHERIT,) + TILE_SIZES,
+        default_value=TILE_SIZE_INHERIT,
+        description="גודל ריבועי המוצרים בהזמנה המהירה בטאבלט. «ברירת מחדל» — כמו \"גודל ריבוע מוצר\".",
+    ),
+    BuiltinParameter(
+        key="productTileSizeTabletTables",
+        label="גודל ריבוע מוצר בטאבלט — שולחנות",
+        value_type="enum",
+        enum_options=(TILE_SIZE_INHERIT,) + TILE_SIZES,
+        default_value=TILE_SIZE_INHERIT,
+        description=(
+            "גודל ריבועי המוצרים בתוך הזמנת שולחן בטאבלט. «ברירת מחדל» — כמו ההזמנה המהירה בטאבלט, "
+            "ואם גם היא לא נקבעה — כמו בשולחנות."
+        ),
+    ),
     BuiltinParameter(
         key="printHostTill",
         label="שרת הדפסות (בונים)",
@@ -988,7 +1053,9 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         description=(
             "כשמופעל: אחרי הוספת מנה שיש לה \"הגדלת מכירה\" (למשל צ'יפס ליד המבורגר, או \"להפוך לארוחה?\") "
             "מופיע בקופה כרטיס הצעה קטן שלא עוצר את העבודה — נגיעה אחת מוסיפה, ✕ סוגר. "
-            "את ההצעות מגדירים בדשבורד תחת \"הגדלות מכירה\". כבוי — לא מוצגות הצעות."
+            "כלל שהוגדר כ\"חלון בחירה\" (או \"בכל הזמנה\") מוצג בחלון במרכז המסך עם האפשרויות "
+            "(\"האם הצעת שתייה ללקוח?\"). "
+            "את ההצעות מגדירים בדשבורד תחת \"הגדלות מכירה\". כבוי — לא מוצגות הצעות, לא כרטיס ולא חלון."
         ),
     ),
     BuiltinParameter(
@@ -1012,6 +1079,20 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "כשמופעל: לחיצה על מנה שהוגדרו לה הערות מהירות משלה (או לקטגוריה שלה) פותחת מיד את חלון המנה "
             "עם ההערות לבחירה. הערות שהוגדרו לכל המנות לא פותחות חלון. כבוי (ברירת מחדל) — הערה למנה "
             "מוסיפים בלחיצה על השורה בהזמנה או בכפתור + שעל המנה."
+        ),
+    ),
+    # "הודעות לעובד על פריט" (app/services/product_alerts.py) — read by the till.
+    BuiltinParameter(
+        key="productAlertsEnabled",
+        label="הודעות לעובד על פריט",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "מופעל (ברירת מחדל): פריט שהוגדרו לו \"הודעות לעובד\" בטופס המוצר (למשל \"מכיל ביצים — "
+            "תעדכן לקוח!\", או אזהרת האלרגנים שלו) מציג אותן בחלון במרכז המסך כשמוסיפים אותו להזמנה, "
+            "לפני שהוא נכנס. הודעה שמסומנת \"חובה לאשר\" מוסיפה את הפריט רק אחרי \"עדכנתי את הלקוח\" "
+            "(\"ביטול\" לא מוסיף), והאישור — מי ומתי — נשמר על השורה ומגיע לענן. כבוי — לא מוצגות הודעות "
+            "והפריט נכנס כרגיל. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
     BuiltinParameter(

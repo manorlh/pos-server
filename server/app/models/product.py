@@ -105,6 +105,18 @@ class Product(Base):
     refillable = Column(Boolean, nullable=False, default=False, server_default="false")
     max_refills = Column(Integer, nullable=True)
 
+    # "הודעות לעובד על פריט" (app/services/product_alerts.py): what the till shows the
+    # employee on adding the product, before it enters the order —
+    # `[{text, kind, requireAck, whereShown}]`, in order. Null: none, as before.
+    alerts = Column(JSON, nullable=True)
+    #: "הצג אזהרת אלרגנים": one more alert, built from `allergens` in Hebrew.
+    allergen_alert = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: That alert must be confirmed ("עדכנתי את הלקוח") — on by default.
+    allergen_alert_require_ack = Column(Boolean, nullable=False, default=True, server_default="true")
+    # "פריטים נלווים": products the till adds with this one, as lines of their own under
+    # it — `[{productId, name, quantity, priceMode, price, kitchenPrint}]`. Null: none.
+    companions = Column(JSON, nullable=True)
+
     # Where a global product is sold. Null is every product that predates this: its
     # shops are whatever rows somebody added by hand on the assortment page. "company"
     # is a rule — every shop of `shop_scope_company_id` (and, if asked, of the

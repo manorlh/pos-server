@@ -92,6 +92,21 @@ class PosSettingsV1Patch(BaseModel):
     pay_installments_max: Optional[int] = Field(
         None, alias="payInstallmentsMax", ge=INSTALLMENTS_MIN, le=INSTALLMENTS_MAX
     )
+    #: "סדר אמצעי התשלום": the payment methods' ids in the order the till lists them
+    #: (DEFAULT_PAY_ORDER in app/services/payment_options.py) — known ids only, no repeats;
+    #: any left out follow in the default order. Unset = the default order; `null` in a
+    #: PATCH resets the layer to inherit (TIP_RESETTABLE_KEYS in app/routers/settings.py).
+    pay_order: Optional[List[str]] = Field(None, alias="payOrder")
+
+    @field_validator("pay_order")
+    @classmethod
+    def _check_pay_order(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return None
+        from app.services.payment_options import validate_pay_order
+
+        return validate_pay_order(v)
+
     # ── Optional tools on the till's sell screen ──
     # Unset = shown. Resolution lives in app/services/sell_screen.py.
     sell_search_enabled: Optional[bool] = Field(None, alias="sellSearchEnabled")
@@ -268,6 +283,9 @@ class BusinessInfoSync(BaseModel):
     company_reg_number: Optional[str] = Field(None, alias="companyRegNumber")
     has_branches: bool = Field(False, alias="hasBranches")
     branch_id: Optional[str] = Field(None, alias="branchId")
+    #: "סוג עוסק" of the company (docs/SPEC_BUSINESS_TYPE.md): "company" | "licensed" |
+    #: "exempt". `vatNumber` above is then the ח.פ., the עוסק מורשה or the עוסק פטור number.
+    dealer_type: str = Field("company", alias="dealerType")
 
     class Config:
         populate_by_name = True

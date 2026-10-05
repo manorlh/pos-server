@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 import uuid
 from decimal import Decimal
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -273,13 +273,42 @@ class CategoryMenuIn(_Body):
     notes: Optional[NotesIn] = None
 
 
+#: The most options one upsell rule offers ("חלון בחירה").
+UPSELL_OPTIONS_MAX = 30
+
+
+class UpsellOptionIn(_Body):
+    """One thing an upsell offers: a product, or a category (its products, sub-categories too)."""
+
+    type: Literal["product", "category"]
+    id: uuid.UUID
+
+
 class UpsellIn(_Body):
+    """
+    An upsell rule. A body from before "חלון בחירה" — one `productId`, no `options` — is
+    read as it always was: one product, the card, both places. `options` (products and/or
+    categories) replaces `productId` when sent; `productId` is then kept only when the
+    options are one product (what a till that predates options reads).
+
+    `triggerType` "order" ("בכל הזמנה") needs no `triggerIds`: the till asks when a table
+    is sent to the kitchen or its bill asked for, and when a quick order goes to payment
+    — always in the window, and only for an "add" rule.
+    """
+
     name: str = Field(min_length=1, max_length=120)
     company_id: Optional[uuid.UUID] = Field(None, alias="companyId")
-    trigger_type: Literal["product", "category"] = Field(alias="triggerType")
-    trigger_ids: List[uuid.UUID] = Field(alias="triggerIds", min_length=1, max_length=200)
+    trigger_type: Literal["product", "category", "order"] = Field(alias="triggerType")
+    trigger_ids: List[uuid.UUID] = Field(default_factory=list, alias="triggerIds", max_length=200)
     action: Literal["add", "upgrade"] = "add"
-    product_id: uuid.UUID = Field(alias="productId")
+    product_id: Optional[uuid.UUID] = Field(None, alias="productId")
+    options: Optional[List[UpsellOptionIn]] = Field(None, max_length=UPSELL_OPTIONS_MAX)
+    #: The question in the window ("האם הצעת שתייה ללקוח?").
+    prompt: Optional[str] = Field(None, max_length=200)
+    display: Literal["card", "popup"] = "card"
+    where: Literal["quick", "tables", "both"] = "both"
+    skip_if_present: bool = Field(True, alias="skipIfPresent")
+    once_per_order: bool = Field(False, alias="oncePerOrder")
     message: Optional[str] = Field(None, max_length=200)
     show_price: bool = Field(True, alias="showPrice")
     start_time: Optional[str] = Field(None, alias="startTime")
@@ -288,12 +317,12 @@ class UpsellIn(_Body):
     priority: int = Field(0, ge=0, le=100)
     is_active: bool = Field(True, alias="isActive")
 
-    @field_validator("name", "message", mode="before")
+    @field_validator("name", "message", "prompt", mode="before")
     @classmethod
     def _trim(cls, v):
         return v.strip() if isinstance(v, str) else v
 
-    @field_validator("message")
+    @field_validator("message", "prompt")
     @classmethod
     def _empty_message(cls, v):
         return v or None
@@ -315,7 +344,28 @@ class UpsellIn(_Body):
         for t in (self.start_time, self.end_time):
             if t is not None and not _HHMM.match(t):
                 raise ValueError("times are HH:MM")
-        if self.trigger_type == "product" and self.product_id in self.trigger_ids and self.action == "add":
+        if self.trigger_type == "order":
+            # Every order: nothing to name, asked in the window, only to add.
+            self.trigger_ids = []
+            self.display = "popup"
+            if self.action != "add":
+                raise ValueError("a rule for every order adds a product (action add)")
+        elif not self.trigger_ids:
+            raise ValueError("choose the products or categories that trigger it")
+        chosen: List[UpsellOptionIn] = []
+        seen = set()
+        for o in self.options or ([UpsellOptionIn(type="product", id=self.product_id)] if self.product_id else []):
+            if (o.type, o.id) not in seen:
+                seen.add((o.type, o.id))
+                chosen.append(o)
+        if not chosen:
+            raise ValueError("choose what is offered (productId or options)")
+        if self.action == "upgrade" and (len(chosen) != 1 or chosen[0].type != "product"):
+            raise ValueError("an upgrade offers exactly one product")
+        self.options = chosen
+        self.product_id = chosen[0].id if len(chosen) == 1 and chosen[0].type == "product" else None
+        offered = {o.id for o in chosen if o.type == "product"}
+        if self.trigger_type == "product" and self.action == "add" and offered & set(self.trigger_ids):
             raise ValueError("a product cannot suggest itself")
         if len(set(self.trigger_ids)) != len(self.trigger_ids):
             raise ValueError("a trigger is listed twice")
@@ -346,6 +396,27 @@ class UpsellStatIn(_Body):
     shown: int = Field(0, ge=0, le=1_000_000)
     accepted: int = Field(0, ge=0, le=1_000_000)
     dismissed: int = Field(0, ge=0, le=1_000_000)
+    #: "הלקוח סירב" in the window; `dismissed` is closed without an answer.
+    declined: int = Field(0, ge=0, le=1_000_000)
+    #: Taken, per option: `{product id: count}` (a till that predates options sends none).
+    accepted_options: Optional[Dict[str, int]] = Field(None, alias="acceptedOptions")
+
+    @field_validator("accepted_options")
+    @classmethod
+    def _per_option(cls, v):
+        if v is None:
+            return None
+        if len(v) > 60:
+            raise ValueError("at most 60 options")
+        out = {}
+        for key, count in v.items():
+            key = str(key).strip()[:64]
+            if not key:
+                continue
+            if not isinstance(count, int) or count < 0 or count > 1_000_000:
+                raise ValueError("an option's count is 0 … 1,000,000")
+            out[key] = count
+        return out
 
 
 class UpsellStatsIn(_Body):

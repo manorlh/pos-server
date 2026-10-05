@@ -35,6 +35,8 @@ MANAGED_SETTING_KEYS = (
     *PAYMENT_OPTION_SETTING_KEYS,
     # The most instalments the `card` option's picker offers; unset = the terminal decides.
     "payInstallmentsMax",
+    # "סדר אמצעי התשלום": the payment methods in the till's order (payment_options.py).
+    "payOrder",
     # sellSearchEnabled, sellScanEnabled, sellCalculatorEnabled — spelled out once in
     # sell_screen.py.
     *SELL_SCREEN_SETTING_KEYS,
@@ -195,7 +197,17 @@ def build_business_info(
         company_reg_number=bi_override.get("companyRegNumber"),
         has_branches=bi_override.get("hasBranches", has_branches),
         branch_id=bi_override.get("branchId") or branch_id,
+        # Always the company's: a shop has no business identity of its own, and a
+        # `businessInfo` override in settings does not change the dealer type
+        # (docs/SPEC_BUSINESS_TYPE.md, open question 7).
+        dealer_type=dealer_type_of(company),
     )
+
+
+def dealer_type_of(company: Optional[Company]) -> str:
+    """The company's "סוג עוסק", "company" when unset or unknown (today's behaviour)."""
+    value = getattr(company, "dealer_type", None)
+    return value if value in ("company", "licensed", "exempt") else "company"
 
 
 def patch_settings_json(current: Any, patch: Dict[str, Any]) -> Dict[str, Any]:

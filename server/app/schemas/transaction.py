@@ -204,6 +204,9 @@ class TransactionItemIn(BaseModel):
     oth_reason: Optional[str] = Field(None, alias="othReason")
     oth_by: Optional[str] = Field(None, alias="othBy")
     oth_approved_by: Optional[str] = Field(None, alias="othApprovedBy")
+    #: "הודעות לעובד על פריט": who confirmed the product's alerts, and when. Optional — the
+    #: till sends it inside `details` too; cleaned, never a reason to refuse the document.
+    alerts_ack: Optional[Any] = Field(None, alias="alertsAck")
 
     class Config:
         populate_by_name = True
@@ -418,6 +421,8 @@ class TransactionItemOut(BaseModel):
     oth_reason: Optional[str] = Field(None, alias="othReason")
     oth_by: Optional[str] = Field(None, alias="othBy")
     oth_approved_by: Optional[str] = Field(None, alias="othApprovedBy")
+    #: "הודעות לעובד על פריט": who confirmed the product's alerts, and when.
+    alerts_ack: Optional[List[Dict[str, Any]]] = Field(None, alias="alertsAck")
 
     class Config:
         from_attributes = True

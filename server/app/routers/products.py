@@ -37,6 +37,7 @@ from app.middleware.auth import (
 from app.models.pos_machine import POSMachine
 from app.services import general_item
 from app.services import item_ticket
+from app.services import product_alerts
 from app.services import product_list_filters as list_filters
 from app.services import product_shop_scope as scope_svc
 from app.services.catalog_notify import (
@@ -467,6 +468,8 @@ def create_product(
     )
     # An explicit id so the shop rows below can reference it before the insert.
     product.id = uuid_mod.uuid4()
+    # "הודעות לעובד" / "פריטים נלווים": only what the request sent.
+    product_alerts.apply(db, product, data, active_tenant_id)
     db.add(product)
     if data.shop_scope is not None:
         _apply_shop_scope(db, current_user, product, data.shop_scope, active_tenant_id)
@@ -566,6 +569,8 @@ def update_product(
 
     for field, value in updates.items():
         setattr(product, field, value)
+    # "הודעות לעובד" / "פריטים נלווים" (not in `updates`): what the request sent, validated.
+    product_alerts.apply(db, product, data, active_tenant_id)
 
     # The general item's scope can only be restated (checked above), and restating it
     # has nothing to apply — so it never asks for write access to every shop.

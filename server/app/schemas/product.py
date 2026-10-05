@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import List, Optional, Literal
+from typing import Any, Dict, List, Optional, Literal
 import uuid
 from decimal import Decimal
 from datetime import datetime
@@ -65,6 +65,77 @@ def _no_repeated_shop(prices):
     if len(ids) != len(set(ids)):
         raise ValueError("shopPrices names the same shop twice")
     return prices
+
+
+class ProductAlertIn(BaseModel):
+    """
+    One "הודעה לעובד" (app/services/product_alerts.py): shown on the till when the product
+    is added, before it enters the order.
+    """
+
+    text: str = Field(..., min_length=1, max_length=200)
+    #: מידע / אזהרה / אלרגן.
+    kind: Literal["info", "warning", "allergen"] = "info"
+    #: "חובה לאשר": added only after "עדכנתי את הלקוח".
+    require_ack: bool = Field(False, alias="requireAck")
+    #: הזמנה מהירה / שולחנות / שניהם.
+    where_shown: Literal["quick", "tables", "both"] = Field("both", alias="whereShown")
+
+    @field_validator("text")
+    @classmethod
+    def _text(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("alert text cannot be empty")
+        return v.strip()
+
+    class Config:
+        populate_by_name = True
+
+
+class ProductCompanionIn(BaseModel):
+    """One "פריט נלווה": added by the till with the product, as a line of its own under it."""
+
+    product_id: uuid.UUID = Field(..., alias="productId")
+    #: Per unit of the product.
+    quantity: int = Field(1, ge=1, le=99)
+    #: מחיר הפריט / חינם (₪0) / מחיר מותאם.
+    price_mode: Literal["item", "free", "custom"] = Field("item", alias="priceMode")
+    #: The price of one, for "custom" only.
+    price: Optional[Decimal] = Field(None, ge=0, le=99999)
+    #: "הדפס במטבח": null — as the companion's own routing; true — with the product's;
+    #: false — not printed.
+    kitchen_print: Optional[bool] = Field(None, alias="kitchenPrint")
+    #: The name as the form shows it; ignored (the server names it).
+    name: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _price_for_custom(self):
+        if self.price_mode == "custom":
+            if self.price is None:
+                raise ValueError("price is required when priceMode is 'custom'")
+        else:
+            self.price = None
+        return self
+
+    class Config:
+        populate_by_name = True
+
+
+def _alerts_limit(alerts):
+    if alerts is not None and len(alerts) > 10:
+        raise ValueError("at most 10 alerts")
+    return alerts
+
+
+def _companions_limit(companions):
+    if companions is None:
+        return companions
+    if len(companions) > 10:
+        raise ValueError("at most 10 companions")
+    ids = [c.product_id for c in companions]
+    if len(ids) != len(set(ids)):
+        raise ValueError("companions names the same product twice")
+    return companions
 
 
 class ShopScopeOut(BaseModel):
@@ -141,11 +212,26 @@ class ProductCreate(ProductBase):
     # silently ignored: every company's one general item is built in (see
     # app/services/general_item.py).
     is_general: Optional[bool] = Field(None, alias="isGeneral")
+    # "הודעות לעובד" and "פריטים נלווים" (app/services/product_alerts.py). Omitted: none.
+    alerts: Optional[List[ProductAlertIn]] = None
+    allergen_alert: Optional[bool] = Field(None, alias="allergenAlert")
+    allergen_alert_require_ack: Optional[bool] = Field(None, alias="allergenAlertRequireAck")
+    companions: Optional[List[ProductCompanionIn]] = None
 
     @field_validator("shop_prices")
     @classmethod
     def _prices_name_each_shop_once(cls, v):
         return _no_repeated_shop(v)
+
+    @field_validator("alerts")
+    @classmethod
+    def _alerts_at_most(cls, v):
+        return _alerts_limit(v)
+
+    @field_validator("companions")
+    @classmethod
+    def _companions_valid(cls, v):
+        return _companions_limit(v)
 
 
 class ProductUpdate(BaseModel):
@@ -180,11 +266,28 @@ class ProductUpdate(BaseModel):
     # till's product PUT (app/routers/sync.py). Excluded from `model_dump`, so no handler
     # mistakes it for a column of the product.
     kitchen_printers: Optional[KitchenPrintersPatch] = Field(None, alias="kitchenPrinters", exclude=True)
+    # "הודעות לעובד" and "פריטים נלווים" (app/services/product_alerts.py): omitted — left as
+    # they are; `[]` clears. Applied by the products router, never as plain columns
+    # (excluded from `model_dump`).
+    alerts: Optional[List[ProductAlertIn]] = Field(None, exclude=True)
+    allergen_alert: Optional[bool] = Field(None, alias="allergenAlert", exclude=True)
+    allergen_alert_require_ack: Optional[bool] = Field(None, alias="allergenAlertRequireAck", exclude=True)
+    companions: Optional[List[ProductCompanionIn]] = Field(None, exclude=True)
 
     @field_validator("shop_prices")
     @classmethod
     def _prices_name_each_shop_once(cls, v):
         return _no_repeated_shop(v)
+
+    @field_validator("alerts")
+    @classmethod
+    def _alerts_at_most(cls, v):
+        return _alerts_limit(v)
+
+    @field_validator("companions")
+    @classmethod
+    def _companions_valid(cls, v):
+        return _companions_limit(v)
 
     @field_validator("name", "sku")
     @classmethod
@@ -231,8 +334,37 @@ class ProductResponse(BaseModel):
     # The company's built-in "פריט כללי", which the till's calculator sells through.
     is_general: bool = Field(False, alias="isGeneral")
     shop_scope: Optional[ShopScopeOut] = Field(None, alias="shopScope")
+    # "הודעות לעובד" and "פריטים נלווים" (app/services/product_alerts.py), as stored.
+    alerts: List[Dict[str, Any]] = Field(default_factory=list)
+    allergen_alert: bool = Field(False, alias="allergenAlert")
+    allergen_alert_require_ack: bool = Field(True, alias="allergenAlertRequireAck")
+    companions: List[Dict[str, Any]] = Field(default_factory=list)
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
+
+    @field_validator("alerts", mode="before")
+    @classmethod
+    def _alerts_out(cls, v):
+        from app.services.product_alerts import alerts_out
+
+        return alerts_out(v)
+
+    @field_validator("companions", mode="before")
+    @classmethod
+    def _companions_out(cls, v):
+        from app.services.product_alerts import companions_out
+
+        return companions_out(v)
+
+    @field_validator("allergen_alert", mode="before")
+    @classmethod
+    def _flag_off(cls, v):
+        return bool(v)
+
+    @field_validator("allergen_alert_require_ack", mode="before")
+    @classmethod
+    def _flag_on(cls, v):
+        return True if v is None else bool(v)
 
     class Config:
         from_attributes = True

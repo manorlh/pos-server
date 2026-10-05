@@ -16,10 +16,18 @@ POST   /till-messages/{id}/resume     → … and starts again from its next occ
 `occurrenceTtlMinutes`); local times are the tenant's. Scheduled deliveries are lazy:
 they go out on the first till fetch (or dashboard list) after they come due.
 
+`display` on POST: "fullscreen" (default) or "banner" — the specials strip ("באנר
+מבצעים") on the sell screen and the tables floor, with an optional `productId` (its chip
+adds the product to the order) and `color` (amber / blue / green / red / purple / dark);
+`expiresAt` is its end ("עד מתי"; none: until cancelled). A banner that went out can
+still change its text, product, colour and end (PATCH).
+
 Till (machine JWT only, like the till's other `/sync/{machine_id}/...` writes):
 
 GET    /sync/{machine_id}/messages              → unacknowledged, unexpired, oldest first;
-                                                  the first fetch marks delivery
+                                                  the first fetch marks delivery. Banners
+                                                  under `banners` (live, acknowledged or
+                                                  not), never in `items`
 POST   /sync/{machine_id}/messages/{id}/ack     → "קראתי"; idempotent; 404 when the
                                                   message was not addressed to this till
 
@@ -78,6 +86,9 @@ def send_till_message(
         recur_start_date=body.recur_start_date,
         recur_end_date=body.recur_end_date,
         occurrence_ttl_minutes=body.occurrence_ttl_minutes,
+        display=body.display,
+        product_id=body.product_id,
+        color=body.color,
     )
     targets = TM.notify_targets(TM.unacknowledged_machines(db, message))
     db.commit()
@@ -195,13 +206,15 @@ def get_own_till_messages(
     db: Session = Depends(get_db),
 ):
     """
-    `{"items": [{"id", "title", "body", "sentAt", "senderName"}]}`: this till's
-    unacknowledged, unexpired messages, oldest first. Marks each delivered on its first
-    fetch.
+    `{"items": [{"id", "title", "body", "sentAt", "senderName"}], "banners": [...]}`:
+    this till's unacknowledged, unexpired full-screen messages, oldest first, and its
+    live banners (`… "color", "productId", "productName", "expiresAt"`). Marks each
+    delivered on its first fetch. A till that predates banners reads `items` only.
     """
     items = TM.pending_for_machine(db, machine)
+    banners = TM.banners_for_machine(db, machine, materialize=False)
     db.commit()
-    return {"items": items}
+    return {"items": items, "banners": banners}
 
 
 @router.post("/sync/{machine_id}/messages/{message_id}/ack")

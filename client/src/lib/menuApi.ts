@@ -257,17 +257,37 @@ export async function saveCourses(
 /* ---------------- upsells ---------------- */
 
 export type UpsellAction = 'add' | 'upgrade';
+/** "בכל הזמנה" (order): asked when a table is sent / its bill asked for, and when a quick order goes to payment. */
+export type UpsellTrigger = 'product' | 'category' | 'order';
+/** card = the small card (as before); popup = "חלון בחירה", the options as tiles. */
+export type UpsellDisplay = 'card' | 'popup';
+export type UpsellWhere = 'quick' | 'tables' | 'both';
+
+/** One thing a rule offers: a product, or a category (its products). */
+export interface UpsellOption {
+  type: 'product' | 'category';
+  id: string;
+  name?: string | null;
+}
 
 export interface UpsellRule {
   id: string;
   name: string;
   companyId: string | null;
-  triggerType: 'product' | 'category';
+  triggerType: UpsellTrigger;
   triggerIds: string[];
   triggerNames: (string | null)[];
   action: UpsellAction;
-  productId: string;
+  /** Null for a rule of several options or a category. */
+  productId: string | null;
   productName: string | null;
+  /** Absent from an older server: the one product. */
+  options?: UpsellOption[];
+  prompt?: string | null;
+  display?: UpsellDisplay;
+  where?: UpsellWhere;
+  skipIfPresent?: boolean;
+  oncePerOrder?: boolean;
   message: string | null;
   showPrice: boolean;
   startTime: string | null;
@@ -282,10 +302,16 @@ export interface UpsellRule {
 export interface UpsellInput {
   name: string;
   companyId: string | null;
-  triggerType: 'product' | 'category';
+  triggerType: UpsellTrigger;
   triggerIds: string[];
   action: UpsellAction;
-  productId: string;
+  /** What is offered, in order (products and/or categories). */
+  options: { type: 'product' | 'category'; id: string }[];
+  prompt: string | null;
+  display: UpsellDisplay;
+  where: UpsellWhere;
+  skipIfPresent: boolean;
+  oncePerOrder: boolean;
   message: string | null;
   showPrice: boolean;
   startTime: string | null;
@@ -378,6 +404,10 @@ export interface UpsellReportRow {
   shown: number;
   accepted: number;
   dismissed: number;
+  /** "הלקוח סירב" in the window (absent from an older server). */
+  declined?: number;
+  /** Which options were taken, most first. */
+  optionsTaken?: { productId: string; name: string | null; count: number }[];
   acceptanceRate: number | null;
   revenue: number;
   lines: number;
@@ -386,7 +416,15 @@ export interface UpsellReportRow {
 export interface UpsellReport {
   window: ReportWindowOut;
   generatedAt: string;
-  totals: { shown: number; accepted: number; dismissed: number; acceptanceRate: number | null; revenue: number; lines: number };
+  totals: {
+    shown: number;
+    accepted: number;
+    dismissed: number;
+    declined?: number;
+    acceptanceRate: number | null;
+    revenue: number;
+    lines: number;
+  };
   rows: UpsellReportRow[];
 }
 

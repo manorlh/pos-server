@@ -101,7 +101,8 @@ def _settings_out(db: Session, company: Company, shop: Optional[Shop]) -> Accoun
         company=company_settings,
         shop=shop_settings,
         effective=effective,
-        missing=missing_core(effective),
+        # An exempt dealer needs no VAT account (docs/SPEC_BUSINESS_TYPE.md).
+        missing=missing_core(effective, getattr(company, "dealer_type", None)),
         account_keys=list(ACCOUNT_KEYS),
         updated_at=max(stamps) if stamps else None,
     )

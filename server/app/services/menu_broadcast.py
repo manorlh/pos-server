@@ -933,6 +933,8 @@ _GROUP_FIELDS = ("name", "kind", "minSelect", "maxSelect", "freeCount", "allowQu
 _OPTION_FIELDS = ("name", "price", "isDefault", "kitchenName", "linkedProductId", "maxQty", "allergens")
 _UPSELL_HOURS = ("startTime", "endTime", "weekdays")
 _UPSELL_FIELDS = ("name", "triggerType", "triggerIds", "action", "productId", "message", "showPrice", "priority")
+#: "חלון בחירה": compared only when both snapshots carry them (an older one does not).
+_UPSELL_NEW_FIELDS = ("options", "prompt", "display", "where", "skipIfPresent", "oncePerOrder")
 
 
 def _item(kind: str, ident: Any, name: Any, changes=None, detail: Optional[str] = None) -> Dict[str, Any]:
@@ -1182,6 +1184,18 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
                 ))
             else:
                 others.append(_change(f, shown(f, a.get(f), True), shown(f, b.get(f))))
+        for f in _UPSELL_NEW_FIELDS:
+            if f not in a or f not in b or _same(a.get(f), b.get(f)):
+                continue
+            if f == "options":
+                def option_names(opts, old_side=False):
+                    return [
+                        (category_name if (o or {}).get("type") == "category" else product_name)((o or {}).get("id"), old_side)
+                        for o in opts or []
+                    ]
+                others.append(_change(f, option_names(a.get(f), True), option_names(b.get(f))))
+            else:
+                others.append(_change(f, a.get(f), b.get(f)))
         if others:
             out["menu"].append(_item("changed", key, b.get("name"), others, detail="upsell"))
 

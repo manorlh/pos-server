@@ -61,7 +61,12 @@ from app.services.settings_merge import (
     effective_settings_updated_at,
     merge_all_settings_layers,
 )
-from app.services.payment_options import legacy_tip_flags, resolve_payment_options
+from app.services.payment_options import (
+    PAY_ORDER_KEY,
+    legacy_tip_flags,
+    resolve_pay_order,
+    resolve_payment_options,
+)
 from app.services.refund_settings import resolve_refund_settings
 from app.services.sell_screen import resolve_sell_screen
 from app.services import general_item
@@ -1948,6 +1953,10 @@ def get_settings_sync(
     # And the force switch (unset -> off): a layer reset to inherit must reach the till
     # as `false`, not as a missing key it might read as "keep what you had".
     effective["forceTerminalNumber"] = all_settings.get("forceTerminalNumber") is True
+    # "סדר אמצעי התשלום": the deepest level's order, completed with every method it does
+    # not list; `[]` when no level sets one — the till then keeps each screen's own
+    # (today's) order. Always sent, so a reset to inherit reaches the till on any pull.
+    effective[PAY_ORDER_KEY] = resolve_pay_order(all_settings) or []
     # "סוג אינטגרציית אשראי": the explicit choice down the layers (absent = automatic),
     # and Z-Credit's password for a till that charges there — its only way out of the
     # server (app/services/payment_integration.py).
@@ -1963,6 +1972,9 @@ def get_settings_sync(
     # "מצב הדרכה": the shop's flag, never a layer's setting (docs/SPEC_TRAINING_MODE.md).
     effective["trainingMode"] = bool(shop.training_mode)
     business_info = build_business_info(company, shop, all_settings)
+    # "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md): the company's, on every full / delta pull,
+    # beside the identity. The till picks its document type and VAT by it.
+    effective["dealerType"] = business_info.dealer_type
 
     update_machine_sync_timestamp(db, str(machine.id))
 

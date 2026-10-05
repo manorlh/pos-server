@@ -61,6 +61,9 @@ def snapshot_header(
         "city": info.company_city or None,
         "zip": info.company_zip or None,
         "branchId": info.branch_id,
+        # "סוג עוסק" as of the build (docs/SPEC_BUSINESS_TYPE.md): an exempt dealer's Z
+        # prints "עוסק פטור — ללא מע״מ", and a later change does not rewrite it.
+        "dealerType": info.dealer_type,
         "shopId": str(shop.id),
         "shopName": shop.name,
         **area_fields,

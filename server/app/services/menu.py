@@ -1044,7 +1044,22 @@ def get_upsell(db: Session, tenant_id, rule_id) -> UpsellRule:
     return row
 
 
+def upsell_options(r: UpsellRule) -> List[Dict[str, str]]:
+    """
+    What the rule offers, in order: `[{"type": "product" | "category", "id"}]`. A rule
+    from before options offers its one product.
+    """
+    out = []
+    for o in r.options or []:
+        if isinstance(o, dict) and o.get("type") in ("product", "category") and o.get("id"):
+            out.append({"type": o["type"], "id": str(o["id"])})
+    if not out and r.product_id is not None:
+        out.append({"type": "product", "id": str(r.product_id)})
+    return out
+
+
 def upsell_out(r: UpsellRule, names: Dict[str, str], can_edit: bool) -> Dict[str, Any]:
+    options = upsell_options(r)
     return {
         "id": str(r.id),
         "name": r.name,
@@ -1053,8 +1068,14 @@ def upsell_out(r: UpsellRule, names: Dict[str, str], can_edit: bool) -> Dict[str
         "triggerIds": [str(i) for i in (r.trigger_ids or [])],
         "triggerNames": [names.get(str(i)) for i in (r.trigger_ids or [])],
         "action": r.action,
-        "productId": str(r.product_id),
-        "productName": names.get(str(r.product_id)),
+        "productId": _s(r.product_id),
+        "productName": names.get(str(r.product_id)) if r.product_id is not None else None,
+        "options": [{**o, "name": names.get(o["id"])} for o in options],
+        "prompt": r.prompt,
+        "display": r.display or "card",
+        "where": r.place or "both",
+        "skipIfPresent": True if r.skip_if_present is None else bool(r.skip_if_present),
+        "oncePerOrder": bool(r.once_per_order),
         "message": r.message,
         "showPrice": bool(r.show_price),
         "startTime": r.start_time,
@@ -1071,12 +1092,17 @@ def _upsell_names(db: Session, rules: List[UpsellRule]) -> Dict[str, str]:
     product_ids: Set[uuid.UUID] = set()
     category_ids: Set[uuid.UUID] = set()
     for r in rules:
-        product_ids.add(r.product_id)
+        if r.product_id is not None:
+            product_ids.add(r.product_id)
         for i in r.trigger_ids or []:
             ident = _as_uuid(i)
             if ident is None:
                 continue
             (product_ids if r.trigger_type == "product" else category_ids).add(ident)
+        for o in upsell_options(r):
+            ident = _as_uuid(o["id"])
+            if ident is not None:
+                (product_ids if o["type"] == "product" else category_ids).add(ident)
     names: Dict[str, str] = {}
     if product_ids:
         names.update({str(p.id): p.name for p in db.query(Product).filter(Product.id.in_(product_ids))})
@@ -1104,10 +1130,12 @@ def one_upsell_out(db: Session, user: User, tenant_id, r: UpsellRule) -> Dict[st
 
 
 def _apply_upsell(db: Session, tenant_id, r: UpsellRule, body: UpsellIn) -> None:
-    _check_products(db, tenant_id, [body.product_id])
+    options = body.options or []
+    _check_products(db, tenant_id, [o.id for o in options if o.type == "product"])
+    _check_categories(db, tenant_id, [o.id for o in options if o.type == "category"])
     if body.trigger_type == "product":
         _check_products(db, tenant_id, body.trigger_ids)
-    else:
+    elif body.trigger_type == "category":
         _check_categories(db, tenant_id, body.trigger_ids)
     r.name = body.name
     r.company_id = body.company_id
@@ -1115,6 +1143,14 @@ def _apply_upsell(db: Session, tenant_id, r: UpsellRule, body: UpsellIn) -> None
     r.trigger_ids = [str(i) for i in body.trigger_ids]
     r.action = body.action
     r.product_id = body.product_id
+    # A rule of one product keeps `options` null: exactly what it was before options.
+    legacy = len(options) == 1 and options[0].type == "product"
+    r.options = None if legacy else [{"type": o.type, "id": str(o.id)} for o in options]
+    r.prompt = body.prompt
+    r.display = body.display
+    r.place = body.where
+    r.skip_if_present = body.skip_if_present
+    r.once_per_order = body.once_per_order
     r.message = body.message
     r.show_price = body.show_price
     r.start_time = body.start_time
@@ -1265,19 +1301,38 @@ def menu_block(db: Session, machine: POSMachine) -> Dict[str, Any]:
         triggers = [str(i) for i in (r.trigger_ids or [])]
         if r.trigger_type == "category":
             triggers = _with_descendants(triggers, children)
+        display = "popup" if r.trigger_type == "order" else (r.display or "card")
+        place = r.place or "both"
+        # A till that predates "חלון בחירה" reads `productId` only: it gets the rules it
+        # can honour as they are (one product, the card, both places, a product or
+        # category trigger) and skips the rest (a null productId).
+        legacy = (
+            r.product_id is not None and display == "card" and place == "both"
+            and r.trigger_type in ("product", "category")
+        )
         upsells.append({
             "id": str(r.id),
             "name": r.name,
             "triggerType": r.trigger_type,
             "triggerIds": triggers,
             "action": r.action,
-            "productId": str(r.product_id),
+            "productId": str(r.product_id) if legacy else None,
             "message": r.message,
             "showPrice": bool(r.show_price),
             "startTime": r.start_time,
             "endTime": r.end_time,
             "weekdays": r.weekdays,
             "priority": r.priority or 0,
+            # A category option arrives with its sub-categories, as the triggers do.
+            "options": [
+                {**o, "categoryIds": _with_descendants([o["id"]], children)} if o["type"] == "category" else o
+                for o in upsell_options(r)
+            ],
+            "prompt": r.prompt,
+            "display": display,
+            "where": place,
+            "skipIfPresent": True if r.skip_if_present is None else bool(r.skip_if_present),
+            "oncePerOrder": bool(r.once_per_order),
         })
 
     # Order limits and refills per product (§3.9), only for the products that have one —
@@ -1650,11 +1705,18 @@ def record_upsell_stats(db: Session, machine: POSMachine, body: UpsellStatsIn) -
             row = UpsellStat(
                 id=uuid.uuid4(), tenant_id=machine.tenant_id, machine_id=machine.id,
                 shop_id=machine.shop_id, rule_id=s.rule_id, day=day, shown=0, accepted=0, dismissed=0,
+                declined=0,
             )
             db.add(row)
         row.shown = max(row.shown or 0, s.shown)
         row.accepted = max(row.accepted or 0, s.accepted)
         row.dismissed = max(row.dismissed or 0, s.dismissed)
+        row.declined = max(row.declined or 0, s.declined)
+        if s.accepted_options:
+            merged = dict(row.accepted_options or {})
+            for key, count in s.accepted_options.items():
+                merged[key] = max(int(merged.get(key) or 0), count)
+            row.accepted_options = merged
         row.updated_at = _now()
         saved += 1
     db.flush()
@@ -1883,11 +1945,17 @@ def build_meal_sales_report(db: Session, user: User, tenant_id, window, *, shop_
 
 
 def build_upsell_report(db: Session, user: User, tenant_id, window, *, shop_id=None, machine_id=None) -> Dict[str, Any]:
-    """דוח הגדלות מכירה: per rule — shown, taken, dismissed, the rate, and what the taken lines sold for."""
+    """
+    דוח הגדלות מכירה: per rule — shown, taken, dismissed ("לא, תודה" / ✕), declined
+    ("הלקוח סירב"), the rate, what the taken lines sold for, and which options were taken.
+    """
     from app.services.overview import _visible_shops_query
 
     out = _empty(window)
-    totals = {"shown": 0, "accepted": 0, "dismissed": 0, "acceptanceRate": None, "revenue": 0.0, "lines": 0}
+    totals = {
+        "shown": 0, "accepted": 0, "dismissed": 0, "declined": 0, "acceptanceRate": None,
+        "revenue": 0.0, "lines": 0,
+    }
     out.update({"totals": totals, "rows": []})
     shops = _visible_shops_query(db, user, tenant_id)
     if shops is None:
@@ -1897,6 +1965,7 @@ def build_upsell_report(db: Session, user: User, tenant_id, window, *, shop_id=N
         func.coalesce(func.sum(UpsellStat.shown), 0),
         func.coalesce(func.sum(UpsellStat.accepted), 0),
         func.coalesce(func.sum(UpsellStat.dismissed), 0),
+        func.coalesce(func.sum(UpsellStat.declined), 0),
     ).filter(
         UpsellStat.tenant_id == tenant_id,
         UpsellStat.day >= window.from_date,
@@ -1914,14 +1983,25 @@ def build_upsell_report(db: Session, user: User, tenant_id, window, *, shop_id=N
     def row_for(rule_id) -> Dict[str, Any]:
         return rows.setdefault(str(rule_id), {
             "ruleId": str(rule_id), "name": None, "action": None, "productName": None,
-            "shown": 0, "accepted": 0, "dismissed": 0, "revenue": 0.0, "lines": 0,
+            "shown": 0, "accepted": 0, "dismissed": 0, "declined": 0, "revenue": 0.0, "lines": 0,
+            "optionsTaken": [],
         })
 
-    for rule_id, shown, accepted, dismissed in stats_q.group_by(UpsellStat.rule_id).all():
+    for rule_id, shown, accepted, dismissed, declined in stats_q.group_by(UpsellStat.rule_id).all():
         r = row_for(rule_id)
         r["shown"] += int(shown or 0)
         r["accepted"] += int(accepted or 0)
         r["dismissed"] += int(dismissed or 0)
+        r["declined"] += int(declined or 0)
+
+    # Which options were taken, per rule (the tills' per-option counts, summed).
+    per_option: Dict[str, Dict[str, int]] = {}
+    for rule_id, taken in stats_q.with_entities(UpsellStat.rule_id, UpsellStat.accepted_options).filter(
+        UpsellStat.accepted_options.isnot(None)
+    ).all():
+        bucket = per_option.setdefault(str(rule_id), {})
+        for key, count in (taken or {}).items():
+            bucket[str(key)] = bucket.get(str(key), 0) + int(count or 0)
 
     tx = _scoped_tx(db, user, tenant_id, window, shop_id, machine_id)
     if tx is not None:
@@ -1947,16 +2027,26 @@ def build_upsell_report(db: Session, user: User, tenant_id, window, *, shop_id=N
     rule_ids = [_as_uuid(k) for k in rows]
     rules = {str(r.id): r for r in db.query(UpsellRule).filter(UpsellRule.id.in_([i for i in rule_ids if i]))} if rule_ids else {}
     names = _upsell_names(db, list(rules.values()))
+    taken_ids = {_as_uuid(k) for b in per_option.values() for k in b} - {None}
+    if taken_ids:
+        names.update({str(p.id): p.name for p in db.query(Product).filter(Product.id.in_(taken_ids))})
     result = []
     for key, r in rows.items():
         rule = rules.get(key)
         if rule is not None:
             r["name"] = rule.name
             r["action"] = rule.action
-            r["productName"] = names.get(str(rule.product_id))
+            r["productName"] = (
+                names.get(str(rule.product_id)) if rule.product_id is not None
+                else ", ".join(n for n in (names.get(o["id"]) for o in upsell_options(rule)) if n) or None
+            )
+        r["optionsTaken"] = sorted(
+            ({"productId": pid, "name": names.get(pid), "count": n} for pid, n in per_option.get(key, {}).items() if n),
+            key=lambda o: (-o["count"], o["name"] or ""),
+        )
         r["acceptanceRate"] = round(r["accepted"] / r["shown"], 4) if r["shown"] else None
         r["revenue"] = round(r["revenue"], 2)
-        for k in ("shown", "accepted", "dismissed", "lines"):
+        for k in ("shown", "accepted", "dismissed", "declined", "lines"):
             totals[k] += r[k]
         totals["revenue"] += r["revenue"]
         result.append(r)

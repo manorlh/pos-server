@@ -317,10 +317,11 @@ def _is_refund_condition():
     legacy row may have a null `document_type`, and a credit note raised outside
     the refund flow may not carry the back-link.
     """
-    return or_(
-        Transaction.document_type == CREDIT_NOTE_DOCUMENT_TYPE,
-        Transaction.refund_of_transaction_id.isnot(None),
-    )
+    # The same rule as `tenders.refund_condition`, which also knows an exempt dealer's
+    # receipt refund (-400, docs/SPEC_BUSINESS_TYPE.md).
+    from app.services.tenders import refund_condition
+
+    return refund_condition()
 
 
 def _to_float(value) -> float:

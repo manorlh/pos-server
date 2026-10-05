@@ -8,7 +8,12 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.models.till_message import TILL_MESSAGE_LEVELS, TILL_MESSAGE_SCHEDULES
+from app.models.till_message import (
+    TILL_MESSAGE_COLORS,
+    TILL_MESSAGE_DISPLAYS,
+    TILL_MESSAGE_LEVELS,
+    TILL_MESSAGE_SCHEDULES,
+)
 
 TITLE_MAX = 200
 BODY_MAX = 2000
@@ -36,6 +41,21 @@ def _clean_body(value):
     if len(value) > BODY_MAX:
         raise ValueError(f"body is at most {BODY_MAX} characters")
     return value
+
+
+def _clean_display(value):
+    value = value or "fullscreen"
+    if value not in TILL_MESSAGE_DISPLAYS:
+        raise ValueError(f"display must be one of {', '.join(TILL_MESSAGE_DISPLAYS)}")
+    return value
+
+
+def _clean_color(value):
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if not isinstance(value, str) or value.strip() not in TILL_MESSAGE_COLORS:
+        raise ValueError(f"color must be one of {', '.join(TILL_MESSAGE_COLORS)}")
+    return value.strip()
 
 
 def _clean_days(value):
@@ -93,10 +113,25 @@ class TillMessageCreate(_ScheduleFields):
     body: str
     target_level: str = Field(..., alias="targetLevel")
     target_id: uuid.UUID = Field(..., alias="targetId")
-    #: When it stops being shown; null = until every till has acknowledged it.
-    #: Not for recurring messages (see `occurrenceTtlMinutes`).
+    #: When it stops being shown; null = until every till has acknowledged it (a banner:
+    #: until cancelled). Not for recurring messages (see `occurrenceTtlMinutes`).
     expires_at: Optional[datetime] = Field(None, alias="expiresAt")
     schedule_kind: str = Field("now", alias="scheduleKind")
+    #: "fullscreen" (default) or "banner" — the specials strip on the sell screen and the
+    #: tables floor. `productId` and `color` are a banner's only.
+    display: str = "fullscreen"
+    product_id: Optional[uuid.UUID] = Field(None, alias="productId")
+    color: Optional[str] = None
+
+    @field_validator("display", mode="before")
+    @classmethod
+    def _display(cls, value):
+        return _clean_display(value)
+
+    @field_validator("color", mode="before")
+    @classmethod
+    def _color(cls, value):
+        return _clean_color(value)
 
     @field_validator("title", mode="before")
     @classmethod
@@ -125,6 +160,8 @@ class TillMessageCreate(_ScheduleFields):
 
     @model_validator(mode="after")
     def _schedule(self):
+        if self.display != "banner" and (self.product_id is not None or self.color is not None):
+            raise ValueError("productId and color are for a banner (display: banner)")
         if self.schedule_kind == "scheduled" and self.send_at is None:
             raise ValueError("a scheduled message needs sendAt")
         if self.schedule_kind == "recurring":
@@ -149,6 +186,11 @@ class TillMessageUpdate(_ScheduleFields):
     title: Optional[str] = None
     body: Optional[str] = None
     expires_at: Optional[datetime] = Field(None, alias="expiresAt")
+    #: A banner's own fields. A banner already showing can change its text, product,
+    #: colour and end at any time; `display` only before it goes out.
+    display: Optional[str] = None
+    product_id: Optional[uuid.UUID] = Field(None, alias="productId")
+    color: Optional[str] = None
 
     @field_validator("title", mode="before")
     @classmethod
@@ -159,6 +201,16 @@ class TillMessageUpdate(_ScheduleFields):
     @classmethod
     def _body(cls, value):
         return None if value is None else _clean_body(value)
+
+    @field_validator("display", mode="before")
+    @classmethod
+    def _display(cls, value):
+        return None if value is None else _clean_display(value)
+
+    @field_validator("color", mode="before")
+    @classmethod
+    def _color(cls, value):
+        return _clean_color(value)
 
 
 class TillMessageAckIn(BaseModel):

@@ -40,6 +40,9 @@ class Resource(str, enum.Enum):
     BRANDING = "branding"
     #: Moving a company under another in the group tree.
     COMPANY_TREE = "company_tree"
+    #: "סוג עוסק" of a company — whether its tills issue tax invoices with VAT or
+    #: receipts without (docs/SPEC_BUSINESS_TYPE.md).
+    DEALER_TYPE = "dealer_type"
     #: Till operators — creating them, editing them, resetting their PINs. Staffing is a
     #: manager's job: an operator's PIN is what authorises sales, and whoever can mint
     #: one can decide who rings up money.
@@ -98,6 +101,13 @@ _MATRIX: Dict[Tuple[Resource, Action], FrozenSet[UserRole]] = {
     (Resource.COMPANY_TREE, Action.WRITE): frozenset({
         UserRole.SUPER_ADMIN,
         UserRole.DISTRIBUTOR,
+    }),
+    # The legal entity's tax status decides which fiscal documents every till of the
+    # company issues, so it is the company's administrators' — never a branch's.
+    (Resource.DEALER_TYPE, Action.WRITE): frozenset({
+        UserRole.SUPER_ADMIN,
+        UserRole.DISTRIBUTOR,
+        UserRole.COMPANY_MANAGER,
     }),
 }
 

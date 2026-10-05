@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import { receiptDocumentKey } from '@/lib/dealerType';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { usePageScope } from '@/lib/scope';
@@ -83,8 +84,13 @@ function OfflineOutcomeBadge({ outcome }: { outcome?: OfflineOutcome | null }) {
 
 function useDocumentTypeLabel() {
   const t = useTranslations('transactions');
-  return (type: number | null | undefined): string =>
-    type === 320 ? t('documentTypes.320') : type === 330 ? t('documentTypes.330') : String(type ?? '—');
+  // An exempt dealer's receipt (400) and receipt refund (-400, docs/SPEC_BUSINESS_TYPE.md).
+  const tb = useTranslations('businessType');
+  return (type: number | null | undefined): string => {
+    const receipt = receiptDocumentKey(type);
+    if (receipt) return tb(receipt);
+    return type === 320 ? t('documentTypes.320') : type === 330 ? t('documentTypes.330') : String(type ?? '—');
+  };
 }
 
 export default function TransactionsPage() {

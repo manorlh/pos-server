@@ -22,6 +22,7 @@
 import { useTranslations } from 'next-intl';
 import { formatCurrency, formatDate, formatDateTime, moneyValue } from '@/lib/format';
 import type { Money, ZReportDetail, ZReportMachineSection } from '@/lib/types';
+import { numberLabelKey, zShowsExempt } from '@/lib/dealerType';
 import {
   hasBetweenShiftAdjustments,
   usePaymentMethodLabel,
@@ -81,8 +82,11 @@ function SubHeading({ children }: { children: React.ReactNode }) {
 }
 
 /** Sales from gross to net, in the order they are computed (see the Z page's SalesRows). */
-function SalesRows({ x }: { x: ZReportDetail | ZReportMachineSection }) {
+function SalesRows({ x, dealerType }: { x: ZReportDetail | ZReportMachineSection; dealerType?: string | null }) {
   const t = useTranslations('zReports.print');
+  const tb = useTranslations('businessType');
+  // An exempt dealer's Z has no VAT to split (docs/SPEC_BUSINESS_TYPE.md).
+  const exempt = zShowsExempt(dealerType, x.vatTotal);
   const hasGross = x.grossSales != null;
   const missing = 'vatMissingCount' in x ? (x.vatMissingCount ?? 0) : 0;
   return (
@@ -100,7 +104,9 @@ function SalesRows({ x }: { x: ZReportDetail | ZReportMachineSection }) {
       <Row
         label={t('vat')}
         value={
-          x.vatTotal == null
+          exempt
+            ? tb('zExemptNoVat')
+            : x.vatTotal == null
             ? t('vatMissing')
             : missing > 0
               ? t('vatPartial', { amount: formatCurrency(x.vatTotal), count: missing })
@@ -143,7 +149,7 @@ function OfflineRows({ s }: { s: ZReportMachineSection }) {
   );
 }
 
-function TillSection({ s }: { s: ZReportMachineSection }) {
+function TillSection({ s, dealerType }: { s: ZReportMachineSection; dealerType?: string | null }) {
   const t = useTranslations('zReports.print');
   const heading = useTillHeading()(s);
   const uncounted = (s.uncountedShiftCount ?? 0) > 0;
@@ -169,7 +175,7 @@ function TillSection({ s }: { s: ZReportMachineSection }) {
           <Row label={t('creditNotesCount')} value={count(s.creditNotesCount)} />
           <Row label={t('nonSaleCount')} value={count(s.nonSaleDocumentsCount)} />
           <Row label={t('documents')} value={count(s.transactionsCount)} />
-          <SalesRows x={s} />
+          <SalesRows x={s} dealerType={dealerType} />
           <SubHeading>{t('paymentsTitle')}</SubHeading>
           <Payments breakdown={s.paymentBreakdown} />
           <SubHeading>{t('cashTitle')}</SubHeading>
@@ -208,6 +214,7 @@ function signedMoney(v: Money | null | undefined): React.ReactNode {
 
 export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: string }) {
   const t = useTranslations('zReports.print');
+  const tb = useTranslations('businessType');
   const tz = useTranslations('zReports');
   const shiftLabel = useShiftLabel();
   const offlineLine = useOfflineLine();
@@ -227,7 +234,13 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
     <div className="hidden bg-white text-[11px] leading-snug text-black print:block" dir="rtl">
       <header className="border-b-2 border-black pb-2">
         <p className="text-base font-bold">{b?.businessName ?? z.shopName ?? '—'}</p>
-        {b?.vatNumber ? <p>{t('vatNumber', { number: b.vatNumber })}</p> : null}
+        {b?.vatNumber ? (
+          <p>
+            {b.dealerType === 'exempt' || b.dealerType === 'licensed'
+              ? `${tb(numberLabelKey(b.dealerType))} ${b.vatNumber}`
+              : t('vatNumber', { number: b.vatNumber })}
+          </p>
+        ) : null}
         {b?.companyRegNumber ? <p>{t('companyReg', { number: b.companyRegNumber })}</p> : null}
         {place ? <p>{place}</p> : null}
         <p>
@@ -273,7 +286,7 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
       <Section title={t('totalsTitle')}>
         <table className="w-full text-xs">
           <tbody>
-            <SalesRows x={z} />
+            <SalesRows x={z} dealerType={z.business?.dealerType} />
             <Row label={t('documents')} value={count(z.transactionsCount)} />
           </tbody>
         </table>
@@ -325,7 +338,7 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
       </Section>
 
       {z.perMachine.map((s) => (
-        <TillSection key={s.machineId} s={s} />
+        <TillSection key={s.machineId} s={s} dealerType={z.business?.dealerType} />
       ))}
 
       {z.shifts.length > 0 ? (

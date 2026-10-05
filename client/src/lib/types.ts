@@ -1,4 +1,5 @@
 import type { CardBrandBreakdownRow } from './cardBrands';
+import type { DealerType, DealerTypeChange } from './dealerType';
 
 /**
  * Listed most senior first, matching the server's `ROLE_LEVEL`, so a reader does
@@ -86,10 +87,21 @@ export interface Company {
   /** "לקוח זמני": the tills stop selling after `licenseExpiresOn`. */
   licenseType?: LicenseType;
   licenseExpiresOn?: string | null;
+  /**
+   * "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md). Absent on a server that predates it, which
+   * means "company" — see `dealerTypeOf` in lib/dealerType.ts.
+   */
+  dealerType?: DealerType;
+  dealerTypeChangedAt?: string | null;
+  dealerTypeChangedBy?: string | null;
+  dealerTypeHistory?: DealerTypeChange[];
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
 }
+
+/** חברה בע״מ (ח.פ.) / עוסק מורשה / עוסק פטור — defined in lib/dealerType.ts. */
+export type { DealerType, DealerTypeChange };
 
 // ── Dashboard scope (organization ▸ company ▸ shop ▸ device) ───────────────────
 
@@ -213,6 +225,17 @@ export interface PosSettingsV1 {
   nayaxDeviceHost?: string;
   nayaxDevicePort?: string;
   nayaxSpicyPath?: string;
+  /**
+   * "סוג אינטגרציית אשראי" (lib/paymentIntegration.ts). Unset = automatic: a till with a
+   * terminal of its own charges on Agamento (or Nayax when `nayaxEnabled`), a tablet on
+   * an external one. `auto` is never stored.
+   */
+  paymentIntegration?: 'auto' | 'agamento' | 'nayax_lan' | 'zcredit' | 'tap_to_pay';
+  /** Z-Credit: the terminal number, digits with leading zeros kept. */
+  zcreditTerminalNumber?: string;
+  /** Z-Credit: the PinPad id, stored without the "PINPAD" prefix. */
+  zcreditPinpadId?: string;
+  zcreditMode?: 'test' | 'production';
   outOfStockPolicy?: OutOfStockPolicy;
   /**
    * Legacy tip switches. The server still reads them as the fallback for the
@@ -238,6 +261,12 @@ export interface PosSettingsV1 {
    * terminal decides.
    */
   payInstallmentsMax?: number;
+  /**
+   * "סדר אמצעי התשלום": the payment methods' ids in the order the till lists them (see
+   * lib/payOrder.ts). Unset = the default order. In `effective` the server sends it
+   * completed (every method); a layer's own list is as it was saved.
+   */
+  payOrder?: string[];
   // Optional tools on the till's sell screen. Unset = shown; see lib/sellScreen.ts.
   sellSearchEnabled?: boolean;
   sellScanEnabled?: boolean;
@@ -327,9 +356,13 @@ export type PosSettingsPatch = Partial<
     | 'tipDistribution'
     | 'tipPromptText'
     | 'payInstallmentsMax'
+    | 'payOrder'
     | ResettableSwitchKey
+    | PaymentIntegrationSettingKey
   >
 > & {
+  /** `null` = unset this layer's payment order and inherit the level above's again. */
+  payOrder?: string[] | null;
   brandLogoUrl?: string | null;
   brandHeroUrl?: string | null;
   brandPrimaryColor?: string | null;
@@ -347,9 +380,35 @@ export type PosSettingsPatch = Partial<
   tipPromptText?: string | null;
   /** `null` = unset this layer's most instalments and inherit the level above's again. */
   payInstallmentsMax?: number | null;
+  // "סוג אינטגרציית אשראי": `null` = inherit the level above's again (`auto` too, for the type).
+  paymentIntegration?: PosSettingsV1['paymentIntegration'] | null;
+  zcreditTerminalNumber?: string | null;
+  zcreditPinpadId?: string | null;
+  zcreditMode?: 'test' | 'production' | null;
+  nayaxEnabled?: boolean | null;
+  nayaxDeviceHost?: string | null;
+  nayaxDevicePort?: string | null;
+  nayaxSpicyPath?: string | null;
+  /**
+   * Write-only Z-Credit secrets: never returned by a GET. A string sets this layer's,
+   * `null` removes it, absent leaves it as it is. Never send the "••••" mask or ''.
+   */
+  zcreditPassword?: string | null;
+  zcreditKey?: string | null;
 } & {
   [K in ResettableSwitchKey]?: boolean | null;
 };
+
+/** Settings keys of the payment integration whose PATCH takes `null` (= inherit again). */
+export type PaymentIntegrationSettingKey =
+  | 'paymentIntegration'
+  | 'zcreditTerminalNumber'
+  | 'zcreditPinpadId'
+  | 'zcreditMode'
+  | 'nayaxEnabled'
+  | 'nayaxDeviceHost'
+  | 'nayaxDevicePort'
+  | 'nayaxSpicyPath';
 
 /** The most tip percentages a layer may offer: the till lays them out as square buttons. */
 export const TIP_PRESETS_MAX = 6;
@@ -607,6 +666,13 @@ export interface PosMachine {
   pinpadRequired?: boolean;
   /** It does, and no level gives it an address: "נדרשת כתובת IP למסופון". */
   pinpadAddressMissing?: boolean;
+  /** "סוג אינטגרציית אשראי" the till charges on; null on an older server. */
+  paymentIntegration?: 'agamento' | 'nayax_lan' | 'zcredit' | null;
+  /** The level that chose it; null = automatic (hardware / `nayaxEnabled`). */
+  paymentIntegrationSource?: SettingsLevel | null;
+  paymentIntegrationAutomatic?: boolean | null;
+  /** Fields it still needs ("zcreditTerminalNumber", "nayaxDeviceHost", …); [] = none. */
+  paymentIntegrationMissing?: string[];
   /**
    * Who produces this till's Z (docs/SHIFTS_API.md §5.1): the cloud, as part of the
    * shop's Z (`cloud`, the default), or the till itself, numbered per till (`till`).
@@ -1043,6 +1109,8 @@ export interface TaxOpenFormatPreview {
     companyName?: string;
     companyCity?: string;
     branchId?: string;
+    /** "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md); absent on an older server. */
+    dealerType?: DealerType;
   };
   globalTaxRate: number;
   dateRange: { year?: number; from?: string; to?: string };
@@ -1751,6 +1819,8 @@ export interface ZReportBusiness {
   capturedAt?: string | null;
   /** Frozen too: the tills the operator confirmed producing this shop Z without. */
   openTillsLeftOut?: ZOpenTillsLeftOut | null;
+  /** "סוג עוסק" as the Z was built (docs/SPEC_BUSINESS_TYPE.md); absent on older Zs. */
+  dealerType?: DealerType | null;
 }
 
 export interface ZReportDetail extends ZReport {
@@ -2543,6 +2613,10 @@ export type TillMessageLevel = 'company' | 'shop' | 'area' | 'machine';
 /** scheduled = not gone out yet; paused / ended = a recurring message's schedule. */
 export type TillMessageStatus = 'active' | 'expired' | 'cancelled' | 'scheduled' | 'paused' | 'ended';
 export type TillMessageScheduleKind = 'now' | 'scheduled' | 'recurring';
+/** fullscreen = until "קראתי" (the default); banner = the specials strip on the sell screen and the floor. */
+export type TillMessageDisplay = 'fullscreen' | 'banner';
+/** A banner's colour preset; none = amber. */
+export type TillMessageColor = 'amber' | 'blue' | 'green' | 'red' | 'purple' | 'dark';
 
 /** Days are 0 = Sunday (א׳) … 6 = Saturday (ש׳); `time` is "HH:MM" in the tenant's zone. */
 export interface TillMessageRecurrence {
@@ -2595,6 +2669,12 @@ export interface TillMessage {
   recurrence?: TillMessageRecurrence | null;
   nextOccurrenceAt?: string | null;
   occurrence?: { date: string; startsAt: string; expiresAt: string; live: boolean } | null;
+  /** Absent from an older server: full-screen. */
+  display?: TillMessageDisplay;
+  /** A banner's product (its chip adds it to the order on the till). */
+  productId?: string | null;
+  productName?: string | null;
+  color?: TillMessageColor | null;
 }
 
 export interface TillMessageList {
@@ -2616,12 +2696,26 @@ export interface TillMessageCreate {
   recurStartDate?: string | null;
   recurEndDate?: string | null;
   occurrenceTtlMinutes?: number | null;
+  display?: TillMessageDisplay;
+  productId?: string | null;
+  color?: TillMessageColor | null;
 }
 
 /** Only the fields sent change; null clears an optional one. */
 export type TillMessageUpdate = Partial<
   Pick<
     TillMessageCreate,
-    'title' | 'body' | 'expiresAt' | 'sendAt' | 'recurDays' | 'recurTime' | 'recurStartDate' | 'recurEndDate' | 'occurrenceTtlMinutes'
+    | 'title'
+    | 'body'
+    | 'expiresAt'
+    | 'sendAt'
+    | 'recurDays'
+    | 'recurTime'
+    | 'recurStartDate'
+    | 'recurEndDate'
+    | 'occurrenceTtlMinutes'
+    | 'display'
+    | 'productId'
+    | 'color'
   >
 >;

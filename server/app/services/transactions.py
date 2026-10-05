@@ -49,6 +49,7 @@ from app.services.shifts import (
 from app.services.stock import apply_movement
 from app.services.promotions import replace_document_promotions
 from app.services import menu as _menu
+from app.services import product_alerts as _product_alerts
 from app.services.z_runs import _rollback_savepoint
 from app.services.tenders import (
     UNKNOWN_PAYMENT_METHOD,
@@ -893,6 +894,8 @@ def upsert_transactions(
                         oth_reason=getattr(it, "oth_reason", None),
                         oth_by=getattr(it, "oth_by", None),
                         oth_approved_by=getattr(it, "oth_approved_by", None),
+                        # "הודעות לעובד על פריט": who confirmed the alerts, and when.
+                        alerts_ack=_product_alerts.item_ack(it),
                     )
                     for i, it in enumerate(tx.items)
                 ])

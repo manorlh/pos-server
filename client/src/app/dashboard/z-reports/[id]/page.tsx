@@ -18,6 +18,7 @@
 import { use, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
+import { zShowsExempt } from '@/lib/dealerType';
 import { NumberPill } from '@/components/dashboard/number-pill';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, FileBarChart, FileDown, Printer } from 'lucide-react';
@@ -139,9 +140,12 @@ interface SalesFigures {
  * only in the net line. A server that does not send gross yet gets the same sales line,
  * with the discounts marked as already deducted.
  */
-function SalesRows({ x }: { x: SalesFigures }) {
+function SalesRows({ x, dealerType }: { x: SalesFigures; dealerType?: string | null }) {
   const t = useTranslations('zReports');
+  const tb = useTranslations('businessType');
   const hasGross = x.grossSales != null;
+  // An exempt dealer's Z has no VAT to split (docs/SPEC_BUSINESS_TYPE.md).
+  const exempt = zShowsExempt(dealerType, x.vatTotal);
   return (
     <>
       {hasGross ? (
@@ -155,7 +159,9 @@ function SalesRows({ x }: { x: SalesFigures }) {
       <MoneyRow label={t('refundsAndCredits')} value={x.totalRefunds} />
       {x.netSales != null ? <MoneyRow label={t('netSales')} value={x.netSales} strong /> : null}
       <MoneyRow label={t('vatNetOfCredits')}>
-        {x.vatTotal == null ? (
+        {exempt ? (
+          <span className="text-muted-foreground text-xs">{tb('zExemptNoVat')}</span>
+        ) : x.vatTotal == null ? (
           <span className="text-muted-foreground text-xs">{t('vatMissing')}</span>
         ) : (
           <>
@@ -174,7 +180,7 @@ function SalesRows({ x }: { x: SalesFigures }) {
   );
 }
 
-function TillCard({ s, shifts }: { s: ZReportMachineSection; shifts: Shift[] }) {
+function TillCard({ s, shifts, dealerType }: { s: ZReportMachineSection; shifts: Shift[]; dealerType?: string | null }) {
   const t = useTranslations('zReports');
   const heading = useTillHeading()(s);
   const uncounted = (s.uncountedShiftCount ?? 0) > 0;
@@ -234,7 +240,7 @@ function TillCard({ s, shifts }: { s: ZReportMachineSection; shifts: Shift[] }) 
         </div>
         <div className="grid gap-4 md:grid-cols-3 text-sm">
           <div className="space-y-1 rounded border bg-muted/30 p-3">
-            <SalesRows x={s} />
+            <SalesRows x={s} dealerType={dealerType} />
           </div>
           <div className="rounded border bg-muted/30 p-3">
             <PaymentBreakdownRows breakdown={s.paymentBreakdown} />
@@ -463,7 +469,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
               <CardTitle className="text-sm font-medium text-muted-foreground">{t('totalsTitle')}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-1 text-sm">
-              <SalesRows x={z} />
+              <SalesRows x={z} dealerType={z.business?.dealerType} />
               <MoneyRow label={t('documentsSalesAndCredits')}>{z.transactionsCount ?? '—'}</MoneyRow>
               <p className="text-muted-foreground pt-1 text-xs">{t('salesNetHint')}</p>
             </CardContent>
@@ -513,7 +519,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
           <div className="space-y-3">
             <h2 className="text-lg font-semibold">{t('tillsTitle')}</h2>
             {z.perMachine.map((s) => (
-              <TillCard key={s.machineId} s={s} shifts={shiftsOf(s.machineId)} />
+              <TillCard key={s.machineId} s={s} shifts={shiftsOf(s.machineId)} dealerType={z.business?.dealerType} />
             ))}
           </div>
         ) : z.shifts.length > 0 ? (

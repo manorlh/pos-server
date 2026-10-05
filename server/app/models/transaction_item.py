@@ -63,6 +63,10 @@ class TransactionItem(Base):
     #: id, as the till sent them; free text like `transactions.cashier_id`).
     oth_by = Column(String(100), nullable=True)
     oth_approved_by = Column(String(100), nullable=True)
+    #: "הודעות לעובד על פריט" (app/services/product_alerts.py): the employee confirmed the
+    #: product's alerts before it was added — `[{at, by, byName, alerts: [{text, kind}]}]`,
+    #: one per confirmed add. Null: nothing had to be confirmed.
+    alerts_ack = Column(JSON, nullable=True)
 
     transaction = relationship("Transaction", back_populates="items")
     product = relationship("Product")

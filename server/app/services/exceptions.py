@@ -50,6 +50,8 @@ from app.models.transaction import Transaction, TransactionStatus
 logger = logging.getLogger(__name__)
 
 CREDIT_NOTE = 330
+#: An exempt dealer's receipt refund (app/services/tenders.RECEIPT_REFUND_DOCUMENT_TYPE).
+RECEIPT_REFUND = -400
 
 # ── The catalog ──────────────────────────────────────────────────────────────
 
@@ -374,7 +376,8 @@ def detect_transaction(
         return found
 
     items = list(tx.items or [])
-    if tx.document_type == CREDIT_NOTE:
+    # A credit note, or an exempt dealer's receipt refund (-400, SPEC_BUSINESS_TYPE.md).
+    if tx.document_type in (CREDIT_NOTE, RECEIPT_REFUND):
         rule = rules.get("refund")
         amount = abs(_money(tx.total_amount))
         if rule and rule.enabled and amount > 0 and _meets(amount, rule.params.get("minAmount", 0)):

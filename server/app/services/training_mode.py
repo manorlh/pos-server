@@ -793,7 +793,8 @@ def report(db: Session, shop: Shop) -> Dict[str, Any]:
         first_at = first_at or row.received_at
         last_at = row.received_at
         amount = _dec(doc.get("totalAmount")) - _dec(doc.get("documentDiscount"))
-        if str(doc.get("documentType")) == "330":
+        # A credit note, or an exempt dealer's receipt refund (SPEC_BUSINESS_TYPE.md).
+        if str(doc.get("documentType")) in ("330", "-400"):
             refunds_count += 1
             refunds_total += abs(amount)
             continue

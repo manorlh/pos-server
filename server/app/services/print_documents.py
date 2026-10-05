@@ -29,8 +29,10 @@ from app.models.transaction import Transaction, TransactionStatus
 from app.models.transaction_payment import TransactionPayment
 from app.schemas.print_document import PrintDocumentOut, PrintRow, PrintSection
 from app.services.reports import resolve_report_timezone
+from app.services.dealer_types import reg_label
 from app.services.tenders import (
     CREDIT_NOTE_DOCUMENT_TYPE,
+    RECEIPT_DOCUMENT_TYPES,
     is_refund_document,
     normalize_tender,
 )
@@ -52,6 +54,8 @@ DOCUMENT_TITLES = {
     320: "חשבונית מס/קבלה",
     330: "חשבונית זיכוי",
     400: "קבלה",
+    # An exempt dealer's money back (internal -400, docs/SPEC_BUSINESS_TYPE.md).
+    -400: "קבלה – החזר כספי",
 }
 
 TENDER_LABELS = {
@@ -151,7 +155,15 @@ def _header(db: Session, tx: Transaction) -> tuple[str, List[str]]:
     name = header.get("businessName") or header.get("shopName") or ""
     lines: List[str] = []
     if header.get("vatNumber"):
-        lines.append(f"עוסק מורשה / ח.פ. {header['vatNumber']}")
+        # The document's own kind first: a receipt (400 / -400) was issued by an exempt
+        # dealer whatever the company is today (docs/SPEC_BUSINESS_TYPE.md).
+        if tx.document_type in RECEIPT_DOCUMENT_TYPES:
+            label = "עוסק פטור"
+        elif header.get("dealerType") == "licensed":
+            label = reg_label("licensed")
+        else:
+            label = "עוסק מורשה / ח.פ."
+        lines.append(f"{label} {header['vatNumber']}")
     if header.get("companyRegNumber"):
         lines.append(f"מס׳ חברה {header['companyRegNumber']}")
     street = " ".join(p for p in (header.get("address"), header.get("addressNumber")) if p)
@@ -354,9 +366,11 @@ def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
         if discount > 0:
             totals.append(_row('סה"כ פריטים', money(tx.total_amount)))
             totals.append(_row("הנחה", money(-discount)))
-    if tx.net_amount is not None:
+    # An exempt dealer's receipt (400 / -400) states no VAT (docs/SPEC_BUSINESS_TYPE.md).
+    receipt = tx.document_type in RECEIPT_DOCUMENT_TYPES
+    if tx.net_amount is not None and not receipt:
         totals.append(_row('סה"כ לפני מע"מ', money(tx.net_amount)))
-    if tx.vat_amount is not None:
+    if tx.vat_amount is not None and not receipt:
         rate = ""
         if tx.vat_rate is not None:
             pct = (_dec(tx.vat_rate) * 100).normalize()
