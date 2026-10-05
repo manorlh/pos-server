@@ -13,7 +13,7 @@ class PairingCodeGenerateRequest(BaseModel):
 
     company_id: Optional[uuid.UUID] = Field(None, alias="companyId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
-    #: The hardware the new device is: "N55F" or "MODO". Copied onto the machine when it
+    #: The hardware the new device is: "N55F", "MODO" or "P18". Copied onto the machine when it
     #: pairs. Optional here so an older dashboard still generates codes; the dashboard
     #: requires it.
     device_model: Optional[DeviceModel] = Field(None, alias="deviceModel")

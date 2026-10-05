@@ -421,8 +421,11 @@ export interface ShopProductCatalogCandidate {
   globalPrice: number;
 }
 
-/** The hardware a till is: a Nova 55F (built-in printer) or a Modo (no printer). */
-export const DEVICE_MODELS = ['N55F', 'MODO'] as const;
+/**
+ * The hardware a till is: a Nova 55F (built-in printer), a Modo (no printer) or a Nebullar
+ * P18 tablet (no printing yet). A P18 is recognised by itself when it pairs.
+ */
+export const DEVICE_MODELS = ['N55F', 'MODO', 'P18'] as const;
 export type DeviceModel = (typeof DEVICE_MODELS)[number];
 
 export interface PosMachine {
@@ -448,10 +451,15 @@ export interface PosMachine {
   /** Its shop's number in its company, and that company's in the tenant; null without a shop. */
   shopNumber?: number | null;
   companyNumber?: number | null;
-  /** "N55F" | "MODO"; null when never recorded, which reads as a 55F. */
+  /** "N55F" | "MODO" | "P18"; null when never recorded, which reads as a 55F. */
   deviceModel?: DeviceModel | null;
   /** False for a Modo only. Absent on a server that predates it. */
   hasPrinter?: boolean;
+  /**
+   * False for a till with no card terminal of its own (a P18): it charges on a Nayax
+   * pinpad on the network. Absent on a server that predates it.
+   */
+  hasBuiltinTerminal?: boolean;
   /** "לקוח זמני" on this till alone; the till keeps the earliest end above it too. */
   licenseType?: LicenseType;
   licenseExpiresOn?: string | null;
@@ -587,6 +595,15 @@ export interface PosMachine {
   forceTerminalNumberSource?: SettingsLevel | null;
   /** Server-resolved, ignoring leading zeros as the till does. */
   terminalStatus?: TerminalStatus;
+  /** The merged `nayaxEnabled`: the till charges on a Nayax pinpad on the network. */
+  pinpadEnabled?: boolean;
+  /** The merged pinpad address (`nayaxDeviceHost`, `nayaxDevicePort`); null = not set. */
+  pinpadHost?: string | null;
+  pinpadPort?: string | null;
+  /** The till charges on a network pinpad: no terminal of its own, or `pinpadEnabled`. */
+  pinpadRequired?: boolean;
+  /** It does, and no level gives it an address: "נדרשת כתובת IP למסופון". */
+  pinpadAddressMissing?: boolean;
   /**
    * Who produces this till's Z (docs/SHIFTS_API.md §5.1): the cloud, as part of the
    * shop's Z (`cloud`, the default), or the till itself, numbered per till (`till`).

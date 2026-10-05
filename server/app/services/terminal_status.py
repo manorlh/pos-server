@@ -18,6 +18,7 @@ from app.models.company import Company
 from app.models.shop import Shop
 from app.models.shop_area import ShopArea
 from app.models.tenant import Tenant
+from app.services.payment_terminal import merged_pinpad_host, pinpad_required
 from app.services.settings_merge import merge_all_settings_layers, settings_sources
 
 if TYPE_CHECKING:
@@ -89,6 +90,11 @@ class TerminalSettings:
     force: bool = False
     #: The level `forceTerminalNumber` comes from; None = no level sets it (off).
     force_source: Optional[str] = None
+    #: The merged `nayaxEnabled`: this till charges on a Nayax pinpad on the network.
+    pinpad_enabled: bool = False
+    #: The merged pinpad address (`nayaxDeviceHost`, `nayaxDevicePort`); None = not set.
+    pinpad_host: Optional[str] = None
+    pinpad_port: Optional[str] = None
 
 
 def _by_id(db: Session, model, ids: Iterable[Any]) -> Dict[Any, Any]:
@@ -130,16 +136,21 @@ def terminal_settings_for(db: Session, machines: List["POSMachine"]) -> Dict[Any
             ]
         sources = settings_sources(layers)
         expected = merged.get("expectedTerminalNumber")
+        port = merged.get("nayaxDevicePort")
         out[m.id] = TerminalSettings(
             expected=expected if isinstance(expected, str) and expected.strip() else None,
             force=merged.get("forceTerminalNumber") is True,
             force_source=sources.get("forceTerminalNumber"),
+            pinpad_enabled=merged.get("nayaxEnabled") is True,
+            pinpad_host=merged_pinpad_host(merged),
+            pinpad_port=str(port).strip() if port is not None and str(port).strip() else None,
         )
     return out
 
 
 def machine_terminal_fields(machine: "POSMachine", settings: TerminalSettings) -> Dict[str, Any]:
     """The terminal fields of a machine's list/detail response."""
+    required = pinpad_required(machine.has_builtin_terminal, settings.pinpad_enabled)
     return {
         "terminalNumber": machine.terminal_number,
         "terminalClearingServer": machine.terminal_clearing_server,
@@ -154,4 +165,12 @@ def machine_terminal_fields(machine: "POSMachine", settings: TerminalSettings) -
         "terminalStatus": terminal_status(
             machine.terminal_number, machine.terminal_reported_at, settings.expected
         ),
+        # The network pinpad (app/services/payment_terminal.py): whether this till charges
+        # on one, where, and whether it still has no address, which the machines page
+        # flags ("נדרשת כתובת IP למסופון") until someone types it at the till or here.
+        "pinpadEnabled": settings.pinpad_enabled,
+        "pinpadHost": settings.pinpad_host,
+        "pinpadPort": settings.pinpad_port,
+        "pinpadRequired": required,
+        "pinpadAddressMissing": required and settings.pinpad_host is None,
     }

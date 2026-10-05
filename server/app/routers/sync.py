@@ -1055,6 +1055,59 @@ def machine_set_product_order(
     return {"scope": body.scope, "count": len(ids)}
 
 
+class PaymentTerminalIn(BaseModel):
+    """The till's Nayax pinpad on the network, as a manager typed it in at the till."""
+
+    #: An IPv4 address or a host name; validated in app/services/payment_terminal.py.
+    host: str = Field(..., max_length=300)
+    #: SPICy's port; absent = 8080.
+    port: Optional[int] = Field(None, ge=1, le=65535)
+    #: SPICy's path; absent = "/SPICy".
+    path: Optional[str] = Field(None, max_length=200)
+
+
+@router.put("/{machine_id}/payment-terminal")
+def machine_set_payment_terminal(
+    machine_id: str,
+    body: PaymentTerminalIn,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    db: Session = Depends(get_db),
+):
+    """
+    The address of the Nayax pinpad this till charges on, typed at the till: a till with
+    no card terminal of its own (a P18) asks for it before its first card payment.
+    Written to the till's own settings layer (`nayaxEnabled`, `nayaxDeviceHost`,
+    `nayaxDevicePort`, `nayaxSpicyPath`), where the dashboard's per-till settings show it
+    and can change it. A manager's write, gated like the till's other manager writes (a
+    signed-in manager, or a manager's grant). 422 with `host_invalid`, `host_required`,
+    `port_invalid` or `path_invalid` for an address the till must not be sent.
+    """
+    from app.services import payment_terminal, settings_notify
+    from app.services.settings_merge import patch_settings_json, utc_now
+
+    _require_assigned_machine(machine)
+    try:
+        host = payment_terminal.clean_pinpad_host(body.host)
+        port = payment_terminal.clean_pinpad_port(body.port)
+        path = payment_terminal.clean_pinpad_path(body.path)
+    except payment_terminal.PinpadAddressError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.code)
+    machine.settings = patch_settings_json(
+        machine.settings, payment_terminal.pinpad_settings_patch(host, port, path)
+    )
+    machine.settings_updated_at = utc_now()
+    # No SyncLog row: its entity types are a database enum, and a new one is a migration.
+    # The write is the till's own layer, and the log names who made it.
+    logger.info(
+        "payment terminal set from till %s: %s:%s%s (user %s, till user %s)",
+        machine.id, host, port, path, actor.user_id, actor.pos_user_id,
+    )
+    db.commit()
+    settings_notify.notify_machine_settings(db, machine, reason="payment_terminal")
+    return {"nayaxEnabled": True, "host": host, "port": port, "path": path}
+
+
 @router.post("/{machine_id}/products/{product_id}/image")
 async def machine_upload_product_image(
     machine_id: str,

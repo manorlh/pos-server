@@ -1,4 +1,4 @@
-import type { PosMachine } from '@/lib/types';
+import { DEVICE_MODELS, type DeviceModel, type PosMachine } from '@/lib/types';
 
 const BATTERY_STATUSES = ['charging', 'discharging', 'full', 'not_charging', 'unknown'] as const;
 const PRINTER_STATUSES = ['ok', 'no_paper', 'overheated', 'error', 'unavailable', 'unknown'] as const;
@@ -93,7 +93,7 @@ function closeSource(value: unknown): PosMachine['pendingCloseSource'] {
 /** A model this build knows, else null (unknown — read as a 55F). */
 function deviceModel(value: unknown): PosMachine['deviceModel'] {
   const s = nullableString(value)?.toUpperCase();
-  return s === 'N55F' || s === 'MODO' ? s : null;
+  return (DEVICE_MODELS as readonly string[]).includes(s ?? '') ? (s as DeviceModel) : null;
 }
 
 /** Absent (an older server) or anything unknown is the default, `cloud`. */

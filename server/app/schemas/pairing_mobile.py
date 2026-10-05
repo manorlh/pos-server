@@ -58,7 +58,8 @@ class MobileClaimRequest(BaseModel):
     company_id: uuid.UUID = Field(..., alias="companyId")
     shop_id: uuid.UUID = Field(..., alias="shopId")
     machine_name: Optional[str] = Field(None, alias="machineName")
-    #: "N55F" | "MODO", as on `POST /pairing/generate`; omitted leaves it unknown (a 55F).
+    #: "N55F" | "MODO" | "P18", as on `POST /pairing/generate`; omitted leaves it unknown (a
+    #: 55F) unless the device names its model itself.
     device_model: Optional[DeviceModel] = Field(None, alias="deviceModel")
 
 

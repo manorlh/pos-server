@@ -982,7 +982,7 @@ export async function setShopAreaMachines(areaId: string, machineIds: string[]):
   return data;
 }
 
-/** Record which hardware a till is ("N55F" | "MODO"); the till reads `hasPrinter` from it. */
+/** Record which hardware a till is ("N55F" | "MODO" | "P18"); the till reads `hasPrinter` from it. */
 export async function updateMachineDeviceModel(
   machineId: string,
   deviceModel: DeviceModel,

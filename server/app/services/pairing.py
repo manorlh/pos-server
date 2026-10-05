@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models.pairing_code import PairingCode
-from app.models.pos_machine import POSMachine, PairingStatus
+from app.models.pos_machine import POSMachine, PairingStatus, detect_device_model
 from app.models.company import Company
 from app.models.shop import Shop
 from app.models.user import User
@@ -102,7 +102,8 @@ def create_pairing_code(
 
     `target_machine_id` makes it a *replacement* code: the device that redeems it adopts
     that existing machine row rather than creating a new one. See `validate_pairing_code`.
-    `device_model` ("N55F" | "MODO") is copied onto the machine the code pairs.
+    `device_model` ("N55F" | "MODO" | "P18") is copied onto the machine the code pairs,
+    unless the device names a model of its own (`detect_device_model`).
     """
     code = generate_pairing_code()
     while db.query(PairingCode).filter(PairingCode.code == code).first():
@@ -167,9 +168,11 @@ def validate_pairing_code(
         )
         if pos_machine is None:
             return None
-        # The replacement unit may be other hardware; a code with no model keeps the old one.
-        if pairing_code.device_model:
-            pos_machine.device_model = pairing_code.device_model
+        # The replacement unit may be other hardware; a code with no model, from a device
+        # that does not name one, keeps the old one.
+        replacement_model = detect_device_model(device_info) or pairing_code.device_model
+        if replacement_model:
+            pos_machine.device_model = replacement_model
     else:
         pos_machine = create_pos_machine(
             db,
@@ -228,7 +231,9 @@ def create_pos_machine(
         mqtt_client_id=mqtt_client_id,
         pairing_status=PairingStatus.PAIRED,
         device_info=device_info,
-        device_model=device_model,
+        # The hardware's own word wins over a model chosen on the dashboard: a tablet
+        # paired with a code generated for a 55F is still a tablet.
+        device_model=detect_device_model(device_info) or device_model,
         # The till already puts its serial in `device_info` at pairing time, on both
         # the code path (POST /pairing/validate) and the QR path (POST
         # /pairing/device/register → claim). Lift it into the column so a machine is

@@ -57,6 +57,7 @@ import {
   type SketchElement,
   type SketchKind,
   type SketchTemplate,
+  uniqueElements,
 } from '@/lib/tableSketch';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -102,7 +103,7 @@ export function MapEditor({
   const [sketch, setSketch] = useState<Sketch>(() => ({
     template: zone.sketch?.template ?? null,
     background: zone.sketch?.background ?? null,
-    elements: zone.sketch?.elements ?? [],
+    elements: uniqueElements(zone.sketch?.elements ?? []),
   }));
   const background = backgroundOf(sketch, !!zone.backgroundUrl);
   const [sketchDirty, setSketchDirty] = useState(false);
@@ -389,7 +390,7 @@ export function MapEditor({
     setSketch({
       template: zone.sketch?.template ?? null,
       background: zone.sketch?.background ?? null,
-      elements: zone.sketch?.elements ?? [],
+      elements: uniqueElements(zone.sketch?.elements ?? []),
     });
     setSketchDirty(false);
     setSelectedEl(null);

@@ -40,16 +40,56 @@ BATTERY_STATUSES = ("charging", "discharging", "full", "not_charging", "unknown"
 PRINTER_STATUSES = ("ok", "no_paper", "overheated", "error", "unavailable", "unknown")
 
 # The hardware a till is, as the dashboard records it. A Nova 55F has a built-in printer;
-# a Modo has none. NULL is "not recorded" and reads as a 55F, which every till that
-# existed before the column was.
+# a Modo has none. A Nebullar P18 (Kozen) is a tablet: its printer speaks Kozen's own SDK,
+# which the till does not drive yet, so it does not print either. NULL is "not recorded"
+# and reads as a 55F, which every till that existed before the column was.
 DEVICE_MODEL_N55F = "N55F"
 DEVICE_MODEL_MODO = "MODO"
-DEVICE_MODELS = (DEVICE_MODEL_N55F, DEVICE_MODEL_MODO)
+DEVICE_MODEL_P18 = "P18"
+DEVICE_MODELS = (DEVICE_MODEL_N55F, DEVICE_MODEL_MODO, DEVICE_MODEL_P18)
+
+_NO_PRINTER_MODELS = frozenset({DEVICE_MODEL_MODO, DEVICE_MODEL_P18})
+
+#: What a till reports as its model (Android's `Build.MODEL`, `device_info["model"]`),
+#: lower-cased, for the hardware it tells apart on its own. The 55F and the Modo are not
+#: here: the units met so far do not report a model that names them.
+_REPORTED_MODELS = {
+    "nebullar p18": DEVICE_MODEL_P18,
+    "p18": DEVICE_MODEL_P18,
+}
 
 
 def device_has_printer(device_model) -> bool:
-    """Whether a till of this model prints: everything but a Modo (unknown included)."""
-    return device_model != DEVICE_MODEL_MODO
+    """Whether a till of this model prints: a 55F, or a till whose model is unknown."""
+    return device_model not in _NO_PRINTER_MODELS
+
+
+#: Models with no card terminal of their own. A P18 has a secure payment chip, but it is
+#: Kozen's and the till does not drive it, so a P18 always charges on an external Nayax
+#: pinpad on the network (app/services/payment_terminal.py). A Modo has no printer, but it
+#: does have Agamento.
+_NO_BUILTIN_TERMINAL_MODELS = frozenset({DEVICE_MODEL_P18})
+
+
+def device_has_builtin_terminal(device_model) -> bool:
+    """
+    Whether a till of this model charges cards on its own terminal (Agamento on the
+    device): a 55F, a Modo, or a till whose model is unknown. A P18 does not.
+    """
+    return device_model not in _NO_BUILTIN_TERMINAL_MODELS
+
+
+def detect_device_model(device_info) -> "str | None":
+    """
+    The model a till names itself at pairing (`device_info["model"]`), when it is one we
+    recognise — so a Nebullar P18 is a P18 without anyone choosing it. None otherwise.
+    """
+    if not isinstance(device_info, dict):
+        return None
+    reported = device_info.get("model")
+    if not isinstance(reported, str):
+        return None
+    return _REPORTED_MODELS.get(" ".join(reported.split()).lower())
 
 
 class POSMachine(Base):
@@ -264,3 +304,7 @@ class POSMachine(Base):
     @property
     def has_printer(self) -> bool:
         return device_has_printer(self.device_model)
+
+    @property
+    def has_builtin_terminal(self) -> bool:
+        return device_has_builtin_terminal(self.device_model)

@@ -5,7 +5,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CHAIR, CHAIR_REACH, chairLayout, chairSides } from './tableSketch';
+import { CHAIR, CHAIR_REACH, chairLayout, chairSides, uniqueElements, type SketchElement } from './tableSketch';
 
 describe('chairSides', () => {
   it('shares a square table round its four sides', () => {
@@ -46,5 +46,22 @@ describe('chairLayout', () => {
     assert.deepEqual(c.map((x) => x.angle), [0, 90, 180, 270]);
     assert.equal(chairLayout(false, 400, 80, 60).length, CHAIR.maxDrawn);
     assert.equal(chairLayout(false, 80, 80, 0).length, 0);
+  });
+});
+
+describe('uniqueElements', () => {
+  const line = (id: string, x: number): SketchElement => ({
+    id, kind: 'line', x, y: 0, w: 10, h: 0, rotation: 0, text: null, color: '#111827', stroke: 6, filled: null,
+  });
+
+  it('keeps each id once, the first one, in order', () => {
+    const kept = uniqueElements([line('a', 1), line('b', 2), line('a', 3), line('c', 4), line('b', 5)]);
+    assert.deepEqual(kept.map((e) => [e.id, e.x]), [['a', 1], ['b', 2], ['c', 4]]);
+  });
+
+  it('leaves a sketch without repeats as it is', () => {
+    const els = [line('a', 1), line('b', 2)];
+    assert.deepEqual(uniqueElements(els), els);
+    assert.deepEqual(uniqueElements([]), []);
   });
 });

@@ -193,6 +193,8 @@ def _enrich_machine_status(
         "deviceInfo": machine.device_info,
         "deviceModel": machine.device_model,
         "hasPrinter": machine.has_printer,
+        # False for a P18: it charges on a Nayax pinpad on the network (`pinpad*` below).
+        "hasBuiltinTerminal": machine.has_builtin_terminal,
         "isActive": machine.is_active,
         "lastHeartbeatAt": machine.last_heartbeat_at,
         "mqttConnected": machine.mqtt_connected,
@@ -465,6 +467,9 @@ def get_my_machine(
         # `hasPrinter` false (a Modo) must not try to print; null reads as a 55F.
         "deviceModel": machine.device_model,
         "hasPrinter": machine.has_printer,
+        # False (a P18): the till has no card terminal of its own and charges on a Nayax
+        # pinpad on the network, at the address its settings carry (`nayaxDeviceHost`).
+        "hasBuiltinTerminal": machine.has_builtin_terminal,
         # "לקוח זמני": the license end this till keeps (app/services/licenses.py).
         # Called directly (a test), `db` is its Depends default: the machine's own session.
         "license": licenses.effective_license(

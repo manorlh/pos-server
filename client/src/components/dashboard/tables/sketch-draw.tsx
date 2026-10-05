@@ -158,6 +158,18 @@ export function useDrawTools({
   const [selected, setSelected] = useState<string[]>([]);
   /** The shape being drawn (not in the sketch until it is finished). */
   const [draft, setDraft] = useState<SketchElement | null>(null);
+  /**
+   * The draft as of the last change, for finishing it. A finished shape used to be added
+   * from inside a `setDraft` updater — and React may run an updater twice (StrictMode
+   * always does), so the line went into the sketch twice, under one id. It is read here
+   * instead, and the updater stays pure.
+   */
+  const draftRef = useRef<SketchElement | null>(null);
+  const changeDraft = (next: SketchElement | null | ((cur: SketchElement | null) => SketchElement | null)) => {
+    const value = typeof next === 'function' ? next(draftRef.current) : next;
+    draftRef.current = value;
+    setDraft(value);
+  };
   /** A wall in the making: its corners so far, and where the pointer is. */
   const [corners, setCorners] = useState<Pt[]>([]);
   const [hover, setHover] = useState<Pt | null>(null);
@@ -211,19 +223,19 @@ export function useDrawTools({
       case 'line': {
         const start = place(p, null, false);
         drag.current = { type: 'line', start };
-        setDraft(withPoints(base('line'), [start, start]));
+        changeDraft(withPoints(base('line'), [start, start]));
         break;
       }
       case 'rect': {
         const start = place(p, null, false);
         drag.current = { type: 'rect', start };
-        setDraft({ ...base('rect'), x: start.x, y: start.y });
+        changeDraft({ ...base('rect'), x: start.x, y: start.y });
         break;
       }
       case 'freehand': {
         const start = onCanvas(p, cw, ch);
         drag.current = { type: 'free', pts: [start] };
-        setDraft(withPoints(base('freehand'), [start, start]));
+        changeDraft(withPoints(base('freehand'), [start, start]));
         break;
       }
       case 'polyline': {
@@ -322,11 +334,11 @@ export function useDrawTools({
     if (!d) return;
     switch (d.type) {
       case 'line':
-        setDraft((cur) => (cur ? withPoints(cur, [d.start, place(p, d.start, e.shiftKey)]) : cur));
+        changeDraft((cur) => (cur ? withPoints(cur, [d.start, place(p, d.start, e.shiftKey)]) : cur));
         break;
       case 'rect': {
         const q = place(p, null, false);
-        setDraft((cur) =>
+        changeDraft((cur) =>
           cur
             ? {
                 ...cur,
@@ -344,7 +356,7 @@ export function useDrawTools({
         const last = d.pts[d.pts.length - 1];
         if (Math.hypot(q.x - last.x, q.y - last.y) >= 2 * perPx && d.pts.length < MAX_POINTS * 4) {
           d.pts.push(q);
-          setDraft((cur) => (cur ? withPoints(cur, d.pts) : cur));
+          changeDraft((cur) => (cur ? withPoints(cur, d.pts) : cur));
         }
         break;
       }
@@ -383,19 +395,17 @@ export function useDrawTools({
     drag.current = null;
     if (!d) return;
     if (d.type === 'line') {
-      setDraft((cur) => {
-        const pts = pairs(cur?.points);
-        if (cur && pts.length === 2 && Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y) >= 2) add(cur);
-        return null;
-      });
+      const cur = draftRef.current;
+      changeDraft(null);
+      const pts = pairs(cur?.points);
+      if (cur && pts.length === 2 && Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y) >= 2) add(cur);
     } else if (d.type === 'rect') {
-      setDraft((cur) => {
-        if (cur && cur.w >= 2 && cur.h >= 2) add(cur);
-        return null;
-      });
+      const cur = draftRef.current;
+      changeDraft(null);
+      if (cur && cur.w >= 2 && cur.h >= 2) add(cur);
     } else if (d.type === 'free') {
       const pts = simplify(d.pts, 0.75 * perPx).slice(0, MAX_POINTS);
-      setDraft(null);
+      changeDraft(null);
       if (pts.length >= 2) add(withPoints(base('freehand'), pts));
     }
   };
@@ -463,7 +473,7 @@ export function useDrawTools({
   const chooseTool = (t: DrawTool) => {
     if (corners.length >= 2) finishWall(corners);
     else setCorners([]);
-    setDraft(null);
+    changeDraft(null);
     setHover(null);
     setTool(t);
     if (t !== 'select') setSelected([]);
@@ -501,7 +511,7 @@ export function useDrawTools({
       } else if (key === 'escape') {
         if (corners.length >= 2) finishWall(corners);
         else setCorners([]);
-        setDraft(null);
+        changeDraft(null);
         setHover(null);
         setSelected([]);
       }

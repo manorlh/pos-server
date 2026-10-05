@@ -9,7 +9,7 @@ from app.schemas.transmission import HeartbeatTransmission
 
 
 #: The hardware a till is (`app.models.pos_machine.DEVICE_MODELS`).
-DeviceModel = Literal["N55F", "MODO"]
+DeviceModel = Literal["N55F", "MODO", "P18"]
 
 
 class PairingStatus(str):
@@ -197,6 +197,9 @@ class POSMachineResponse(POSMachineBase):
     #: "N55F" | "MODO", null = unknown. `hasPrinter` is false for a Modo only.
     device_model: Optional[str] = Field(None, alias="deviceModel")
     has_printer: bool = Field(True, alias="hasPrinter")
+    #: False for a till with no card terminal of its own (a P18): it charges on a Nayax
+    #: pinpad on the network (app/services/payment_terminal.py).
+    has_builtin_terminal: bool = Field(True, alias="hasBuiltinTerminal")
     license_type: str = Field("permanent", alias="licenseType")
     license_expires_on: Optional[date] = Field(None, alias="licenseExpiresOn")
     is_active: bool = Field(..., alias="isActive")
@@ -289,6 +292,15 @@ class POSMachineResponse(POSMachineBase):
     force_terminal_number_source: Optional[str] = Field(None, alias="forceTerminalNumberSource")
     #: "match" | "mismatch" | "unknown" (no report yet) | "not_required" (no expected number).
     terminal_status: Optional[str] = Field(None, alias="terminalStatus")
+    # ── The network pinpad (app/services/payment_terminal.py) ───────────────────
+    #: The merged `nayaxEnabled`, and the merged address (`nayaxDeviceHost`, `nayaxDevicePort`).
+    pinpad_enabled: Optional[bool] = Field(None, alias="pinpadEnabled")
+    pinpad_host: Optional[str] = Field(None, alias="pinpadHost")
+    pinpad_port: Optional[str] = Field(None, alias="pinpadPort")
+    #: The till charges on a network pinpad: it has no terminal of its own, or is told to.
+    pinpad_required: Optional[bool] = Field(None, alias="pinpadRequired")
+    #: It does, and no level gives it an address: the machines page asks for one.
+    pinpad_address_missing: Optional[bool] = Field(None, alias="pinpadAddressMissing")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 

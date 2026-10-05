@@ -58,7 +58,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight, Lock, FileSpreadsheet } from 'lucide-react';
+import { Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight, Lock, FileSpreadsheet, Sparkles } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { ProductPrintersSection } from '@/components/dashboard/kitchen-printers/product-printers-section';
 import { ProductMenuSection } from '@/components/dashboard/menu/menu-sections';
@@ -355,6 +355,10 @@ export default function ProductsPage() {
               <FileSpreadsheet className="h-4 w-4 ms-1" /> {t('importExport')}
             </Link>
           ) : null}
+          {/* "אשף הקמת מוצר": a dish with its add-ons, its "בלי", a meal and its notes, in one pass. */}
+          <Link href="/dashboard/products/wizard" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+            <Sparkles className="h-4 w-4 ms-1" /> {t('wizard')}
+          </Link>
           <Button onClick={openNew} size="sm">
             <Plus className="h-4 w-4 ms-1" /> {t('add')}
           </Button>

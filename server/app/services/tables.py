@@ -616,7 +616,7 @@ def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
     The LAN mode's tables host ("קופה ראשית לשולחנות"): the active till whose
     `tablesHostTill` resolves on — the lowest register number of several, so every till
     agrees on one — else the shop's main till ("קופה ראשית", app/services/main_till.py),
-    else the shop's print server, else none.
+    else the shop's print server, else the shop's only till, else none.
     """
     from app.services.main_till import main_till_of_shop
     from app.services.printers import print_host_of_shop, shop_machines
@@ -629,7 +629,14 @@ def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
         if till_parameters_for_machine(db, m).parameters.get(TABLES_HOST_KEY) is True
     ]
     if not hosts:
-        return main_till_of_shop(db, shop_id) or print_host_of_shop(db, shop_id)
+        named = main_till_of_shop(db, shop_id) or print_host_of_shop(db, shop_id)
+        if named is not None:
+            return named
+        # A shop with one till: it holds the tables, there being no other. Without this a
+        # one-till shop in the LAN mode had no host at all, and its till — the main one by
+        # any reading — said the main till was out of reach and refused every table.
+        tills = shop_machines(db, shop_id)
+        return tills[0] if len(tills) == 1 else None
 
     def order(m: POSMachine):
         number = (m.pos_number or "").strip()
@@ -696,6 +703,51 @@ def heartbeat(db: Session, actor: Actor, table_id: Any, *, now: Optional[datetim
         "version": order.version if order is not None else None,
         "orderId": str(order.id) if order is not None else None,
     }
+
+
+def peek(db: Session, machine: POSMachine, table_id: Any, *, now: Optional[datetime] = None) -> dict:
+    """
+    A table's open order read without entering it — no lock taken, nobody inside is
+    disturbed ("הדפסת חשבון" from the floor's long press). The order as `enter` gives it.
+    """
+    now = now or _now()
+    _require_synced(db, machine)
+    table = table_for_machine(db, machine, table_id)
+    order = open_order(db, table.id)
+    return {
+        "table": table_out(table),
+        "order": order_full(order),
+        "lock": lock_out(db, table, now, viewer=machine),
+        "serverTime": now.isoformat(),
+    }
+
+
+def mark_bill_printed(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[datetime] = None) -> dict:
+    """
+    The bill printed from the floor, the order read by `peek` (`body`: orderId and the
+    version read): the table is awaiting payment, as `save` with `bill` marks it from
+    inside. Refused while another till is inside it (409 `table_locked`) or once the order
+    moved on since it was read (409 `table_version_conflict`, with it) — the till prints
+    only after this went through. Idempotent by the request id.
+    """
+    now = now or _now()
+    _require_synced(db, actor.machine)
+    table = table_for_machine(db, actor.machine, table_id)
+    replay = _replayed(db, body.order_id, body.request_id)
+    if replay is not None:
+        return {"order": order_full(replay) if replay.status == "open" else order_summary(replay), "replayed": True}
+    if lock_live(table, now) and table.lock_machine_id != actor.machine.id:
+        raise _locked(db, table, now)
+    current = open_order(db, table.id)
+    if current is None:
+        raise _conflict("table_version_conflict", order=None)
+    _check_version(current, body.order_id, body.expected_version)
+    current.version = (current.version or 0) + 1
+    current.bill_printed_at = now
+    _touch(current, actor, now, body.request_id)
+    db.flush()
+    record_event(db, "bill", table, current, actor=actor, now=now, details={"from": "floor"})
+    return {"order": order_full(current), "replayed": False}
 
 
 def _check_version(current: Optional[TableOrder], order_id: Any, expected: Optional[int]) -> None:

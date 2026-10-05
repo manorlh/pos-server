@@ -1,10 +1,11 @@
 'use client';
 
 /**
- * Which hardware a till is: a Nova 55F (built-in printer) or a Modo (no printer).
+ * Which hardware a till is: a Nova 55F (built-in printer), a Modo (no printer) or a
+ * Nebullar P18 tablet (no printing yet).
  *
  * Chosen when a terminal is added (the pairing code carries it onto the machine) and
- * editable afterwards. The till reads `hasPrinter` from `GET /machines/me`; a till whose
+ * editable afterwards; a P18 names itself when it pairs, whatever the code says. The till reads `hasPrinter` from `GET /machines/me`; a till whose
  * model was never recorded is treated as a 55F, which every till before this was.
  */
 

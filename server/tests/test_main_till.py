@@ -130,6 +130,17 @@ def test_the_main_till_hosts_the_tables_and_the_printing_unless_another_is_named
     assert tables_host_of_shop(w.db, w.shop.id).id == t1.id
 
 
+def test_a_shop_with_one_till_has_it_host_the_tables(w):
+    t1, t2 = w.tills
+    # Two tills and none named: nobody is guessed.
+    assert tables_host_of_shop(w.db, w.shop.id) is None
+    t2.is_active = False
+    w.db.flush()
+    assert tables_host_of_shop(w.db, w.shop.id).id == t1.id
+    # Not the shop's main till for the rest (the shop Z keeps its rules).
+    assert MT.main_till_of_shop(w.db, w.shop.id) is None
+
+
 def test_several_marked_the_lowest_number_wins(w):
     t1, t2 = w.tills
     make_main(w, t2)

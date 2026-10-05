@@ -45,6 +45,7 @@ export function tillAlertCount(m: PosMachine | undefined, rollout?: AppReleaseRo
       !(f === 'transmission_overdue' && flags.includes('transmission_critical')),
   ).length;
   if (m.terminalStatus === 'mismatch') n++;
+  if (m.pinpadAddressMissing) n++;
   if (m.pendingAsOf && (m.pendingDocuments ?? 0) > 0) n++;
   if ((m.orphanDocuments ?? 0) > 0) n++;
   if (m.terminalOfflineMode) n++;

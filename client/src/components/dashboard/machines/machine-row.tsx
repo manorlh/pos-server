@@ -642,7 +642,14 @@ const ALERT_RED = `${ALERT_BASE} border-destructive/50 bg-destructive/5 text-des
  * unsent documents with their age, and documents with no shift. The light stays the
  * server's; none of this changes it.
  */
-export function MachineAlerts({ m }: { m: PosMachine }) {
+export function MachineAlerts({
+  m,
+  onPinpadAddress,
+}: {
+  m: PosMachine;
+  /** Opens the till's own settings, where the pinpad's address is typed; absent = shown only. */
+  onPinpadAddress?: (m: PosMachine) => void;
+}) {
   const t = useTranslations('machines');
   const tStatus = useTranslations('machineStatus');
   const tTerminal = useTranslations('cardTerminal');
@@ -677,6 +684,30 @@ export function MachineAlerts({ m }: { m: PosMachine }) {
         <CreditCard className="h-3 w-3" aria-hidden />
         {t('alerts.terminal')}
       </span>,
+    );
+  }
+  // A till that charges on a network pinpad (a P18 always) with no address anywhere: it
+  // cannot take a card until one is typed, here or at the till.
+  if (m.pinpadAddressMissing) {
+    const text = t('alerts.pinpadAddress');
+    items.push(
+      onPinpadAddress ? (
+        <button
+          key="pinpad"
+          type="button"
+          className={`${ALERT_AMBER} hover:underline`}
+          title={t('alerts.pinpadAddressHint')}
+          onClick={() => onPinpadAddress(m)}
+        >
+          <CreditCard className="h-3 w-3" aria-hidden />
+          {text}
+        </button>
+      ) : (
+        <span key="pinpad" className={ALERT_AMBER} title={t('alerts.pinpadAddressHint')}>
+          <CreditCard className="h-3 w-3" aria-hidden />
+          {text}
+        </span>
+      ),
     );
   }
   for (const f of flags) {
@@ -823,7 +854,13 @@ export function MachineRow({
         </div>
 
         <div className="min-w-0 max-md:order-6">
-          <MachineAlerts m={m} />
+          {/* The pinpad's address opens the till's own settings: the same rule as that menu item. */}
+          <MachineAlerts
+            m={m}
+            onPinpadAddress={
+              permissions.canProduceZ && actions.onEditSettings && m.shopId ? actions.onEditSettings : undefined
+            }
+          />
         </div>
 
         <div className="truncate text-xs text-muted-foreground max-md:order-7">

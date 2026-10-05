@@ -16,7 +16,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.pairing_code import PairingCode
-from app.models.pos_machine import POSMachine, device_has_printer
+from app.models.pos_machine import POSMachine, detect_device_model, device_has_printer
 from app.routers import machines as machines_router
 from app.schemas.pairing_code import PairingCodeGenerateRequest, PairingCodeResponse
 from app.schemas.pairing_mobile import MobileClaimRequest
@@ -56,11 +56,59 @@ def _code(w, *, device_model=None, target=None, shop_id=None) -> PairingCode:
 
 class TestHasPrinter:
     @pytest.mark.parametrize(
-        "model, expected", [("N55F", True), (None, True), ("MODO", False)]
+        "model, expected", [("N55F", True), (None, True), ("MODO", False), ("P18", False)]
     )
-    def test_only_a_modo_has_no_printer(self, model, expected):
+    def test_a_modo_and_a_p18_do_not_print(self, model, expected):
         assert device_has_printer(model) is expected
         assert POSMachine(device_model=model).has_printer is expected
+
+
+class TestDetection:
+    @pytest.mark.parametrize(
+        "info, expected",
+        [
+            ({"model": "Nebullar P18"}, "P18"),
+            ({"model": "  nebullar   p18 "}, "P18"),
+            ({"model": "P18"}, "P18"),
+            ({"model": "F20"}, None),
+            ({"model": ""}, None),
+            ({"model": None}, None),
+            ({}, None),
+            (None, None),
+            ("Nebullar P18", None),
+        ],
+    )
+    def test_the_till_names_its_model(self, info, expected):
+        assert detect_device_model(info) == expected
+
+    def test_a_p18_pairs_as_a_p18_with_no_model_on_the_code(self, w):
+        code = _code(w)
+        machine = P.validate_pairing_code(w.db, code.code, {"model": "Nebullar P18"}, "Tablet")
+        assert machine.device_model == "P18" and machine.has_printer is False
+
+    def test_the_hardware_wins_over_the_codes_model(self, w):
+        code = _code(w, device_model="N55F")
+        machine = P.validate_pairing_code(w.db, code.code, {"model": "Nebullar P18"}, "Tablet")
+        assert machine.device_model == "P18"
+
+    def test_an_unrecognised_device_keeps_the_codes_model(self, w):
+        code = _code(w, device_model="MODO")
+        machine = P.validate_pairing_code(w.db, code.code, {"model": "F20"}, "Bar")
+        assert machine.device_model == "MODO"
+
+    def test_a_p18_replacing_a_55f(self, w):
+        till = w.tills[0]
+        till.device_model = "N55F"
+        code = _code(w, target=till.id)
+        P.validate_pairing_code(w.db, code.code, {"model": "Nebullar P18"}, None)
+        assert till.device_model == "P18"
+
+    def test_the_requests_accept_it(self):
+        assert PairingCodeGenerateRequest(deviceModel="P18").device_model == "P18"
+        body = MobileClaimRequest(
+            deviceNonce="n", companyId=uuid.uuid4(), shopId=uuid.uuid4(), deviceModel="P18"
+        )
+        assert body.device_model == "P18"
 
 
 class TestPairing:

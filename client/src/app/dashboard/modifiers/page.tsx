@@ -42,7 +42,9 @@ import {
   IosTag,
   IosTextButton,
 } from '@/components/dashboard/menu/ios';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
+import Link from 'next/link';
+import { Sparkles } from 'lucide-react';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -51,13 +53,19 @@ type Tab = 'groups' | 'notes' | 'courses';
 
 export default function ModifiersPage() {
   const t = useTranslations('menu');
+  const tw = useTranslations('products');
   const [tab, setTab] = useState<Tab>('groups');
 
   return (
     <div className="space-y-4">
-      <div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
         <h1 className="text-2xl font-bold">{t('title')}</h1>
         <p className="text-sm text-muted-foreground">{t('subtitle')}</p>
+        </div>
+        <Link href="/dashboard/products/wizard" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+          <Sparkles className="h-4 w-4 ms-1" /> {tw('wizard')}
+        </Link>
       </div>
       <IosCanvas>
         <IosSegmented

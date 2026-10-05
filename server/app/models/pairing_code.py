@@ -36,7 +36,7 @@ class PairingCode(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
     untransmitted_acknowledged_at = Column(DateTime(timezone=True), nullable=True)
-    #: The hardware the code was generated for ("N55F" | "MODO"), copied onto the machine
+    #: The hardware the code was generated for ("N55F" | "MODO" | "P18"), copied onto the machine
     #: when a device redeems it. Null leaves the machine's model as it is.
     device_model = Column(String(16), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)

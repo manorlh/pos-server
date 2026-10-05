@@ -181,6 +181,16 @@ export const SKETCH_DEFAULT_TEXT: Partial<Record<SketchKind, string>> = {
   stage: 'במה',
 };
 
+/**
+ * The elements with each id once (the first kept). A sketch saved while the line tool
+ * added a finished line twice holds two elements under one id; loading it through here
+ * shows it once, and the next save stores it once.
+ */
+export function uniqueElements(elements: SketchElement[]): SketchElement[] {
+  const seen = new Set<string>();
+  return elements.filter((el) => (seen.has(el.id) ? false : (seen.add(el.id), true)));
+}
+
 export function newElementId(): string {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 }
