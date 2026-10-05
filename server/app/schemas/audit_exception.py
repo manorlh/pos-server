@@ -25,6 +25,8 @@ class TillEventIn(BaseModel):
     amount: Optional[Decimal] = Field(None, ge=-10_000_000, le=10_000_000)
     transaction_id: Optional[uuid.UUID] = Field(None, alias="transactionId")
     details: Optional[Dict[str, Any]] = None
+    #: A training event ("מצב הדרכה"): quarantined, never an exception to review.
+    training: bool = False
 
     class Config:
         populate_by_name = True

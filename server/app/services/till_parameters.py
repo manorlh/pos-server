@@ -191,6 +191,7 @@ PRINTERS_PAGE_KEYS = (
     "kitchenTicketsOnSale",
     "kitchenTicketsOnTill",
     "printHostTill",
+    "printerFailoverPrompt",
 )
 
 
@@ -789,6 +790,34 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         default_value=90,
         description="אחרי כמה דקות מפתיחת השולחן זמן הישיבה מוצג באדום במסך השולחנות.",
     ),
+    # "סקירת שינויים לפני שידור לקופות" — app/services/menu_broadcast.py reads it per shop
+    # (its own value, else its company's). The till ignores it.
+    BuiltinParameter(
+        key="menuBroadcastReview",
+        label="סקירת שינויים לפני שידור לקופות",
+        value_type="enum",
+        enum_options=("אוטומטי (לפי שולחנות)", "תמיד", "אף פעם"),
+        default_value="אוטומטי (לפי שולחנות)",
+        description=(
+            "«אוטומטי (לפי שולחנות)» — בסניף שמודול השולחנות פעיל בו (ניהול שולחנות לא «כבוי» "
+            "באחת מקופותיו), שינויי תפריט בדשבורד נשמרים כטיוטה ומגיעים לקופות רק אחרי "
+            "«שדר לקופות» וסקירה ואישור; בסניף בלי שולחנות — השינויים מגיעים לקופות מיד, כמו היום. "
+            "«תמיד» — סקירה גם בלי שולחנות. «אף פעם» — בלי סקירה גם עם שולחנות. "
+            "נקבע לסניף או לחברה (ערכים ברמת נקודת מכירה או קופה לא נחשבים). "
+            "זמינות/אזל מהקופה, סדר כפתורים ותמונות מהקופה מגיעים תמיד מיד."
+        ),
+    ),
+    BuiltinParameter(
+        key="tablesAskGuests",
+        label="שאלת מספר סועדים בפתיחת שולחן",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשמופעל (ברירת המחדל) — פתיחת שולחן פנוי שואלת כמה סועדים יושבים בו. כשכבוי — הקופה "
+            "נכנסת ישר להזמנה בלי לשאול; מספר הסועדים נשאר ריק, ואפשר לקבוע אותו אחר כך מסרגל "
+            "השולחן (\"סועדים\")."
+        ),
+    ),
     # Kitchen printers ("מדפסות בונים") — app/services/printers.py; also set by the shop's
     # managers from the dashboard's kitchen printers page (shop / area / till).
     BuiltinParameter(
@@ -860,6 +889,21 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "כבוי (ברירת מחדל) — כל קופה מדפיסה ישירות."
         ),
     ),
+    # "מדפסת חלופית" (docs/SPEC_PRINT_BY_ZONE.md): read by the till's kitchen queue and its
+    # receipt printer; edited on the dashboard's printers page.
+    BuiltinParameter(
+        key="printerFailoverPrompt",
+        label="שאלה על מדפסת חלופית כשמדפסת לא זמינה",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשמופעל (ברירת מחדל): כשבון לא מצליח לצאת במדפסת (המדפסת לא עונה, תקלה, שרת ההדפסות "
+            "לא זמין) — הקופה שואלת מיד את העובד אם לשלוח אותו למדפסת אחרת: מדפסת מטבח/בר אחרת, "
+            "מדפסת החשבוניות או המדפסת של הקופה, עם \"נסה שוב\" ו\"השאר בתור\". אפשר גם לשלוח לשם "
+            "את הבונים הבאים לרבע שעה. כך גם במדפסת חשבוניות חיצונית שלא עונה. הבון מסומן \"הופנה מ:\" "
+            "וההפניה נרשמת. כבוי — כמו קודם: הבון ממתין בתור ומנסה שוב, עם ההתראה האדומה."
+        ),
+    ),
     # The menu layer ("תוספות ושינויים", docs/SPEC_MENU_MODIFIERS.md) — read by the till.
     BuiltinParameter(
         key="upsellEnabled",
@@ -924,6 +968,32 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "כשמופעל: כל מנה בשולחן משויכת לשלב (ראשונות, עיקריות, קינוחים…). \"שלח\" שולח למטבח רק "
             "את השלבים שהוצאו; השאר מסומנים \"בהמתנה\" עד \"הוצא\". בדלפק — הכול יוצא מיד. "
             "את השלבים מגדירים בדשבורד תחת \"תוספות ושינויים\"."
+        ),
+    ),
+    # "עובד מחובר בקופה אחת בלבד" — app/services/user_sessions.py reads both, and the till.
+    BuiltinParameter(
+        key="exclusiveUserLogin",
+        label="עובד מחובר בקופה אחת בלבד",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: עובד/מלצר שמחובר בקופה אחת לא יכול להתחבר בקופה אחרת עד שיתנתק בה. "
+            "בכניסה בקופה אחרת מוצגת הודעה איפה הוא מחובר ומאז מתי, ואפשר \"שחרור באישור מנהל\" "
+            "(קוד מנהל; נרשם בחריגות). התנתקות, החלפת עובד ונעילה בחוסר שימוש משחררות. "
+            "קופה בלי אינטרנט לא נחסמת: הכניסה מותרת והבדיקה נעשית כשהחיבור חוזר. "
+            "קופה שהפסיקה לדווח משתחררת לבד אחרי \"עובד בקופה אחת — שחרור אוטומטי אחרי (דקות)\". "
+            "את המחוברים כעת רואים (ומשחררים) בדשבורד בדף \"קופאים (POS)\"."
+        ),
+    ),
+    BuiltinParameter(
+        key="exclusiveUserLoginStaleMinutes",
+        label="עובד בקופה אחת — שחרור אוטומטי אחרי (דקות)",
+        value_type="integer",
+        default_value=15,
+        description=(
+            "קופה שמחובר בה עובד ולא דיווחה לענן (נפלה, כבויה, בלי רשת) במשך מספר הדקות הזה — "
+            "החיבור שלו בה משתחרר לבד, כך שקופה תקועה לא נועלת עובד לתמיד (2–720; ברירת מחדל 15). "
+            "קופה פעילה מדווחת כל דקה."
         ),
     ),
 )

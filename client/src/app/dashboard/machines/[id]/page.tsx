@@ -36,6 +36,7 @@ import {
 } from '@/components/dashboard/machines/machine-row';
 import { DeviceModelDialog } from '@/components/dashboard/machines/device-model';
 import { LicenseBadge, useIsSuperAdmin } from '@/components/dashboard/license-fields';
+import { TrainingBadge, TrainingStripe } from '@/components/dashboard/training-badge';
 import { LicenseDialog } from '@/components/dashboard/tenant-license-dialog';
 import { DeadTillRecovery } from '@/components/dashboard/dead-till-recovery';
 import {
@@ -228,6 +229,8 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="space-y-6">
+      {/* The till's shop is in training mode: whatever it sells is practice. */}
+      <TrainingStripe shop={shop} />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -255,6 +258,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
               <Link href={`/dashboard/shops/${shop.id}`} className="hover:underline">
                 {shop.name}
               </Link>
+              <TrainingBadge shop={shop} />
             </p>
           ) : (
             <p className="text-sm text-muted-foreground">{t('shopNone')}</p>

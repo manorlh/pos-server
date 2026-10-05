@@ -40,6 +40,7 @@ from app.models.tables import DiningTable, TableEvent, TableOrder, TableZone
 from app.models.till_parameter import TillParameter, TillParameterValue
 from app.routers import tables as R
 from app.schemas.tables import (
+    TableBillPrintedIn,
     TableCleanedIn,
     BulkTablesIn,
     DashboardCancelIn,
@@ -1379,6 +1380,74 @@ class TestTillLayout:
         e = self.refused(w, w.a, {"tables": [{"id": str(w.t[1].id), "x": 5, "y": 5}]}, operator=w.cashier)
         assert (e.status_code, e.detail) == (401, "elevation_required")
 
+    # ── The map designer on the till: the whole floor plan ─────────────────────
+
+    @staticmethod
+    def sample_sketch() -> dict:
+        import os
+
+        path = os.path.join(os.path.dirname(__file__), "fixtures", "sketch_dashboard_sample.json")
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_the_plan_drawn_on_the_till_is_stored_as_the_dashboard_stores_it(self, w):
+        sample = self.sample_sketch()
+        R.update_zone(w.hall.id, ZoneUpdate.model_validate({"sketch": sample}), BackgroundTasks(), **ctx(w))
+        from_dashboard = json.loads(json.dumps(w.db.get(type(w.hall), w.hall.id).sketch))
+        R.update_zone(w.hall.id, ZoneUpdate.model_validate({"sketch": None}), BackgroundTasks(), **ctx(w))
+        w.woken.clear()
+        out = self.save(w, w.a, {"zones": [{"id": str(w.hall.id), "sketch": sample}]})
+        from_till = json.loads(json.dumps(w.db.get(type(w.hall), w.hall.id).sketch))
+        assert from_till == from_dashboard
+        got = next(z for z in out["zones"] if z["id"] == str(w.hall.id))["sketch"]
+        assert len(got["elements"]) == len(sample["elements"]) == 20
+        assert (got["template"], got["background"]) == ("cafeBar", "tiles")
+        counter = next(e for e in got["elements"] if e["kind"] == "counter")
+        assert (counter["variant"], counter["stools"]) == ("L", 7)
+        free = next(e for e in got["elements"] if e["kind"] == "freehand")
+        assert free["points"] == [500, 500, 510.5, 507.1, 525.3, 515, 540.5, 520.2] and free["color"] == "#dc2626"
+        label = next(e for e in got["elements"] if e["kind"] == "label")
+        assert (label["text"], label["color"]) == ("רחבת ריקודים", "#2563eb") and "stroke" not in label
+        assert {str(m) for m, _ in w.woken} >= {str(w.b.id)}
+
+    def test_a_new_zone_comes_with_its_plan_and_floor(self, w):
+        sketch = {"template": None, "background": None, "elements": [
+            {"id": "w1", "kind": "wall", "x": 0, "y": 0, "w": 600, "h": 10, "rotation": 0, "text": None}]}
+        out = self.save(w, w.a, {"zones": [{"clientId": "n", "name": "מרפסת", "sketch": sketch, "background": "dark"}]})
+        z = next(z for z in out["zones"] if z["name"] == "מרפסת")
+        assert z["sketch"]["background"] == "dark" and z["sketch"]["elements"][0]["id"] == "w1"
+
+    def test_a_plan_not_sent_is_kept_null_clears_it_and_a_floor_goes_under_a_plan(self, w):
+        sample = self.sample_sketch()
+        self.save(w, w.a, {"zones": [{"id": str(w.hall.id), "sketch": sample}]})
+        self.save(w, w.a, {"zones": [{"id": str(w.hall.id), "name": "אולם גדול"}]})
+        assert len(w.db.get(type(w.hall), w.hall.id).sketch["elements"]) == 20
+        self.save(w, w.a, {"zones": [{"id": str(w.hall.id), "sketch": sample, "background": "wood"}]})
+        assert w.db.get(type(w.hall), w.hall.id).sketch["background"] == "wood"
+        self.save(w, w.a, {"zones": [{"id": str(w.hall.id), "sketch": None}]})
+        assert w.db.get(type(w.hall), w.hall.id).sketch is None
+
+    def test_a_plan_from_the_till_is_checked_as_the_dashboards(self):
+        from pydantic import ValidationError
+
+        bad = [
+            {"id": "x", "kind": "line", "x": 0, "y": 0, "w": 1, "h": 1},  # no points
+            {"id": "x", "kind": "pool", "x": 0, "y": 0, "w": 1, "h": 1},  # no such shape
+            {"id": "x", "kind": "rect", "x": 0, "y": 0, "w": 1, "h": 1, "color": "red"},
+            {"id": "x", "kind": "wall", "x": 0, "y": 0, "w": 1, "h": 1, "rotation": 400},
+        ]
+        for element in bad:
+            with pytest.raises(ValidationError):
+                TillLayoutIn.model_validate({"zones": [{"id": str(uuid.uuid4()), "sketch": {"elements": [element]}}]})
+        with pytest.raises(ValidationError):
+            TillLayoutIn.model_validate({"zones": [{"id": str(uuid.uuid4()), "sketch": {"elements": [
+                {"id": f"e{i}", "kind": "wall", "x": 0, "y": 0, "w": 1, "h": 1} for i in range(601)]}}]})
+
+    def test_a_table_turned_on_the_till_keeps_its_rotation(self, w):
+        self.save(w, w.a, {"tables": [{"id": str(w.t[2].id), "rotation": 45, "shape": "rect", "width": 140, "height": 70}]})
+        t = w.db.get(DiningTable, w.t[2].id)
+        assert (t.rotation, t.shape, t.width, t.height) == (45, "rect", 140, 70)
+
     def test_a_new_zone_needs_a_name_and_a_table_a_zone(self, w):
         assert self.refused(w, w.a, {"zones": [{"clientId": "n", "name": "  "}]}).detail == "zone_name_required"
         assert self.refused(w, w.a, {"tables": [{"number": 70}]}).detail == "table_zone_required"
@@ -1455,6 +1524,99 @@ class TestLanMode:
         R.report_local_tables(str(w.b.id), TablesReportIn(orders=[item]), machine=w.b, db=w.db)
         row = w.db.get(TableOrder, item.id)
         assert (row.source, row.status, row.version, float(row.total)) == ("local", "open", 3, 120.0)
+
+
+# ── "הדפסת חשבון" from the floor: read without a lock, marked after ────────────
+
+
+def peek(w, till, table):
+    return R.peek_table_order(str(till.id), table.id, machine=till, db=w.db)
+
+
+def bill_printed(w, till, table, order_id, expected, request_id=None):
+    tasks = BackgroundTasks()
+    body = TableBillPrintedIn(orderId=order_id, expectedVersion=expected, requestId=request_id or uuid.uuid4().hex,
+                              posUserId="pu-yossi", posUserName="יוסי")
+    out = R.table_bill_printed(str(till.id), table.id, body, tasks, machine=till, db=w.db)
+    run(tasks)
+    return out
+
+
+class TestBillFromFloor:
+    def _sent(self, w):
+        enter(w, w.a, w.t[1])
+        oid = uuid.uuid4()
+        save(w, w.a, w.t[1], oid, None, action="send", lines=("l1", "l2"), total="80")
+        return oid
+
+    def test_the_order_is_read_without_taking_the_lock(self, w):
+        oid = self._sent(w)
+        out = peek(w, w.b, w.t[1])
+        assert out["order"]["id"] == str(oid)
+        assert json.loads(out["order"]["cartJson"])["lines"][1]["id"] == "l2"
+        assert out["order"]["sendCount"] == 1
+        assert out["lock"] is None
+        # Nobody holds it after the read: the first till enters again at once.
+        assert w.db.get(DiningTable, w.t[1].id).lock_machine_id is None
+        enter(w, w.a, w.t[1])
+
+    def test_a_free_table_reads_as_no_order(self, w):
+        assert peek(w, w.b, w.t[2])["order"] is None
+
+    def test_reading_while_another_till_is_inside_leaves_its_lock(self, w):
+        self._sent(w)
+        enter(w, w.a, w.t[1])
+        out = peek(w, w.b, w.t[1])
+        assert out["lock"]["machineId"] == str(w.a.id) and out["lock"]["mine"] is False
+        assert w.db.get(DiningTable, w.t[1].id).lock_machine_id == w.a.id
+
+    def test_the_bill_marks_the_table_awaiting_payment(self, w):
+        oid = self._sent(w)
+        out = bill_printed(w, w.b, w.t[1], oid, 1)
+        assert out["order"]["billPrintedAt"] is not None and out["order"]["version"] == 2
+        state = T.till_state(w.db, w.b)
+        row = next(t for t in state["tables"] if t["id"] == str(w.t[1].id))
+        assert row["state"] == "awaiting_payment"
+        event = w.db.query(TableEvent).filter(TableEvent.kind == "bill").one()
+        assert event.details == {"from": "floor"} and event.pos_user_name == "יוסי"
+        assert ("%s" % w.a.id, "tables") in w.woken
+
+    def test_refused_while_another_till_is_inside(self, w):
+        oid = self._sent(w)
+        enter(w, w.a, w.t[1])
+        e = refused(bill_printed, w, w.b, w.t[1], oid, 1)
+        assert e.status_code == 409 and e.detail["code"] == "table_locked"
+        assert w.db.get(TableOrder, oid).bill_printed_at is None
+
+    def test_refused_once_the_order_moved_on(self, w):
+        oid = self._sent(w)
+        enter(w, w.a, w.t[1])
+        save(w, w.a, w.t[1], oid, 1, action="leave", lines=("l1", "l2", "l3"))
+        e = refused(bill_printed, w, w.b, w.t[1], oid, 1)
+        assert e.detail["code"] == "table_version_conflict" and e.detail["order"]["version"] == 2
+        assert refused(bill_printed, w, w.b, w.t[2], uuid.uuid4(), 1).detail == {
+            "code": "table_version_conflict", "order": None,
+        }
+
+    def test_a_retry_is_answered_not_marked_twice(self, w):
+        oid = self._sent(w)
+        first = bill_printed(w, w.b, w.t[1], oid, 1, request_id="bill-1")
+        again = bill_printed(w, w.b, w.t[1], oid, 1, request_id="bill-1")
+        assert again["replayed"] is True and again["order"]["version"] == first["order"]["version"] == 2
+
+    def test_only_in_the_synced_mode(self, w):
+        set_param(w, "tablesMode", "machine", w.b.id, "קופה אחת")
+        assert refused(peek, w, w.b, w.t[1]).detail["code"] == "tables_not_synced"
+
+
+class TestAskGuests:
+    def test_asked_by_default_and_switched_off_per_layer(self, w):
+        spec = w.params["tablesAskGuests"]
+        assert (spec.value_type, spec.label) == ("boolean", "שאלת מספר סועדים בפתיחת שולחן")
+        assert TP.till_parameters_for_machine(w.db, w.a).parameters.get("tablesAskGuests") is True
+        set_param(w, "tablesAskGuests", "machine", w.a.id, False)
+        assert TP.till_parameters_for_machine(w.db, w.a).parameters.get("tablesAskGuests") is False
+        assert TP.till_parameters_for_machine(w.db, w.b).parameters.get("tablesAskGuests") is True
 
 
 def test_the_migration_is_a_single_head():

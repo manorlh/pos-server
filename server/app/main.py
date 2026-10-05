@@ -69,8 +69,13 @@ from app.routers import (
     printers as printers_router,
     menu as menu_router,
     insights as insights_router,
+    report_events as report_events_router,
     catalog_import as catalog_import_router,
+    training_mode as training_mode_router,
 )
+from app.routers import user_sessions as user_sessions_router
+from app.routers import printer_discovery as printer_discovery_router, printer_zones as printer_zones_router
+from app.routers import print_redirects as print_redirects_router
 from app.services.ably_notify import is_enabled as ably_enabled
 from starlette.middleware.gzip import GZipMiddleware
 
@@ -155,11 +160,26 @@ app.include_router(exceptions_router.till_router, prefix=_prefix)
 app.include_router(promotions_router.router, prefix=_prefix)
 app.include_router(tables_router.router, prefix=_prefix)
 app.include_router(printers_router.router, prefix=_prefix)
+# "חיפוש מדפסות ברשת" and "הפניה לפי אזור שולחנות" (docs/SPEC_PRINT_BY_ZONE.md).
+app.include_router(printer_discovery_router.router, prefix=_prefix)
+app.include_router(printer_zones_router.router, prefix=_prefix)
+app.include_router(print_redirects_router.router, prefix=_prefix)
 app.include_router(menu_router.router, prefix=_prefix)
 app.include_router(insights_router.router, prefix=_prefix)
+app.include_router(report_events_router.router, prefix=_prefix)
 # The menu as a spreadsheet; the public half is the share link's download (no login).
 app.include_router(catalog_import_router.router, prefix=_prefix)
 app.include_router(catalog_import_router.public_router, prefix=_prefix)
+# "מצב הדרכה" and the demo menu (docs/SPEC_TRAINING_MODE.md).
+app.include_router(training_mode_router.router, prefix=_prefix)
+# "עובד מחובר בקופה אחת בלבד" (docs/SPEC_EXCLUSIVE_LOGIN.md): the till's claim / heartbeat /
+# release, and the dashboard's who-is-signed-in-where.
+app.include_router(user_sessions_router.till_router, prefix=_prefix)
+app.include_router(user_sessions_router.router, prefix=_prefix)
+# "סקירת שינויים לפני שידור לקופות" (docs/SPEC_MENU_BROADCAST_REVIEW.md).
+from app.routers import menu_broadcast as menu_broadcast_router  # noqa: E402
+
+app.include_router(menu_broadcast_router.router, prefix=_prefix)
 
 
 @app.on_event("startup")

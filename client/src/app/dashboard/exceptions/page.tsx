@@ -79,6 +79,7 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   card_failures: 'bg-yellow-100 text-yellow-900 dark:bg-yellow-950 dark:text-yellow-200',
   table_cancelled: 'bg-red-200 text-red-950 dark:bg-red-900 dark:text-red-100',
   reprint: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+  user_session_release: 'bg-cyan-100 text-cyan-900 dark:bg-cyan-950 dark:text-cyan-200',
 };
 
 function TypeBadge({ type }: { type: ExceptionType }) {
@@ -536,6 +537,8 @@ function useMeasure() {
 function detailLine(row: AuditException): string | null {
   const d = row.details ?? {};
   if (typeof d.productName === 'string') return d.productName;
+  // Written by the cloud in Hebrew (a forced release: who, from which till, who approved).
+  if (typeof d.summary === 'string' && d.summary) return d.summary;
   const lines = (d.lineDiscounts ?? d.lines) as Array<{ name?: string | null }> | undefined;
   if (Array.isArray(lines) && lines.length) {
     return lines

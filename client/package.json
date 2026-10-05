@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "rm -rf .test-build && tsc src/lib/tenantSwitch.ts src/lib/tenantSwitch.test.ts src/lib/tillZ.ts src/lib/tillZ.test.ts src/lib/tableSketch.ts src/lib/tableSketch.test.ts --outDir .test-build --module commonjs --target es2020 --types node --strict --esModuleInterop --skipLibCheck && node --test .test-build/*.test.js"
+    "test": "rm -rf .test-build && tsc src/lib/tenantSwitch.ts src/lib/tenantSwitch.test.ts src/lib/tillZ.ts src/lib/tillZ.test.ts src/lib/tableSketch.ts src/lib/tableSketch.test.ts src/lib/trainingMode.ts src/lib/trainingMode.test.ts src/lib/eventReport.ts src/lib/eventReport.test.ts --outDir .test-build --module commonjs --target es2020 --types node --strict --esModuleInterop --skipLibCheck && node --test .test-build/*.test.js"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

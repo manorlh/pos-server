@@ -269,6 +269,9 @@ class SettingsSyncResponse(BaseModel):
     #: The till's area, `{id, name}`, or null for none (docs/AREAS_API.md §3). Sent on
     #: every response, "unchanged" included, so it is always the current truth.
     area: Optional[Dict[str, str]] = None
+    #: "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md): the shop's flag, on every response,
+    #: "unchanged" included (also `settings.trainingMode` on a full / delta pull).
+    training_mode: bool = Field(False, alias="trainingMode")
 
     class Config:
         populate_by_name = True

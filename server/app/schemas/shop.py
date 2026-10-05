@@ -21,6 +21,9 @@ class ShopBase(BaseModel):
 
 class ShopCreate(ShopBase):
     company_id: uuid.UUID = Field(..., alias="companyId")
+    #: Open the shop in "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md). The dashboard's form
+    #: sends it on by default; absent (an older client, an API caller) is off.
+    training_mode: bool = Field(False, alias="trainingMode")
 
 
 class ShopUpdate(BaseModel):
@@ -50,6 +53,9 @@ class ShopResponse(BaseModel):
     is_active: bool = Field(..., alias="isActive")
     license_type: str = Field("permanent", alias="licenseType")
     license_expires_on: Optional[date] = Field(None, alias="licenseExpiresOn")
+    #: "מצב הדרכה": the badge and the stripe on the dashboard.
+    training_mode: bool = Field(False, alias="trainingMode")
+    training_started_at: Optional[datetime] = Field(None, alias="trainingStartedAt")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 

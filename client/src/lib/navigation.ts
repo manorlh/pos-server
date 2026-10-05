@@ -46,6 +46,7 @@ import {
   Package,
   Package2,
   Palette,
+  PartyPopper,
   Percent,
   Printer,
   QrCode,
@@ -162,6 +163,14 @@ export const NAV_SECTIONS: NavSection[] = [
       // Sits next to the closing reports it is made of, so the relationship is
       // obvious: this is a roll-up of those, not a separate kind of document.
       { href: '/dashboard/day-summary', labelKey: 'daySummary', icon: CalendarRange },
+      // Temporary events: a shop's tills grouped for a report only, with the producer's
+      // report, reconciliations and the confirmation that freezes it (docs/SPEC_EVENTS.md).
+      {
+        href: '/dashboard/events',
+        labelKey: 'events',
+        icon: PartyPopper,
+        matchPrefixes: ['/dashboard/events/'],
+      },
       // Card sales the terminal approved offline, and the ones the acquirer declined after.
       { href: '/dashboard/offline-transactions', labelKey: 'offlineTransactions', icon: WifiOff },
       { href: '/dashboard/product-sales', labelKey: 'productSales', icon: Package2 },

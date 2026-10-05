@@ -30,6 +30,14 @@ class Shop(Base):
     #: the super admin only.
     license_type = Column(String(16), nullable=False, default="permanent", server_default="permanent")
     license_expires_on = Column(Date, nullable=True)
+    #: "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md, app/services/training_mode.py): the shop's
+    #: tills sell for practice — their documents go to `training_documents`, never to the
+    #: real tables. Reaches the till as `trainingMode` (GET /machines/me, the settings sync).
+    training_mode = Column(Boolean, nullable=False, default=False, server_default="false")
+    training_started_at = Column(DateTime(timezone=True), nullable=True)
+    training_started_by = Column(UUID(as_uuid=True), nullable=True)
+    training_ended_at = Column(DateTime(timezone=True), nullable=True)
+    training_ended_by = Column(UUID(as_uuid=True), nullable=True)
     settings = Column(JSONB, nullable=False, server_default="{}")
     settings_updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

@@ -193,6 +193,9 @@ export interface Shop {
   city?: string;
   licenseType?: LicenseType;
   licenseExpiresOn?: string | null;
+  /** "מצב הדרכה": the shop's tills sell for practice (docs/SPEC_TRAINING_MODE.md). */
+  trainingMode?: boolean;
+  trainingStartedAt?: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;

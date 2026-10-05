@@ -462,6 +462,11 @@ def create_shop(
     # Shop 1, 2, 3 in its company, drawn in this transaction like the till numbers.
     assign_shop_number(db, shop)
     ensure_default_pos_user(db, shop)
+    if data.training_mode:
+        # "מצב הדרכה" from the start: no till yet, so no real shift to wait for.
+        from app.services import training_mode
+
+        training_mode.start(db, shop, current_user, check_shifts=False)
     # A new shop receives every product whose "all shops of company X" rule covers it.
     # No till can be paired to it yet, so there is nobody to notify.
     reconcile_shops(db, [shop])

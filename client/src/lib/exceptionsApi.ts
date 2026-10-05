@@ -23,6 +23,8 @@ export const EXCEPTION_TYPES = [
   'table_cancelled',
   // A table's bill or kitchen tickets printed again, with the approving manager.
   'reprint',
+  // An employee signed in at another till, released by a manager to sign in here.
+  'user_session_release',
 ] as const;
 
 export type ExceptionType = (typeof EXCEPTION_TYPES)[number];

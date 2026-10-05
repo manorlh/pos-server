@@ -94,6 +94,10 @@ RULES: Tuple[RuleSpec, ...] = (
     # "הדפסה חוזרת" at a table — the bill or the kitchen tickets again — with the manager
     # who approved it (till event).
     RuleSpec("reprint", True, (), "medium", "till_event"),
+    # An employee signed in at another till released by a manager's PIN, so they could
+    # sign in at this one ("עובד מחובר בקופה אחת בלבד"; app/services/user_sessions.py
+    # records it as a till event).
+    RuleSpec("user_session_release", True, (), "medium", "till_event"),
     # From the first line to payment, ≥ X minutes.
     RuleSpec("long_order", True, (ParamSpec("minutes", 10, 1, 24 * 60, integer=True),), "low", "till_event"),
     # A tip above X% of what the sale collected.
@@ -489,7 +493,7 @@ def detect_event(event: TillEvent, rules: Dict[str, EffectiveRule]) -> List[Foun
     amount = abs(_money(event.amount)) if event.amount is not None else None
     kind = event.event_type
 
-    if kind in ("drawer_open", "reprint"):
+    if kind in ("drawer_open", "reprint", "user_session_release"):
         rule = rules.get(kind)
         if rule and rule.enabled:
             return [Found(type=kind, key=f"{kind}:{event.id}", amount=amount, details=details, **common)]

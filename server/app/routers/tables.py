@@ -10,6 +10,8 @@ POST  /sync/{machine_id}/tables/report                  → single-till mode: or
 POST  /sync/{machine_id}/tables/{table_id}/enter        → lock it; its order (or null)
 POST  /sync/{machine_id}/tables/{table_id}/heartbeat    → extend the lock (409 table_lock_lost)
 POST  /sync/{machine_id}/tables/{table_id}/save         → save | send | bill | leave (versioned)
+GET   /sync/{machine_id}/tables/{table_id}/order        → its open order, read without a lock
+POST  /sync/{machine_id}/tables/{table_id}/bill-printed → the bill printed from the floor (versioned)
 POST  /sync/{machine_id}/tables/{table_id}/pay          → paid with a sale document
 POST  /sync/{machine_id}/tables/{table_id}/cancel       → reason + approval (`table:cancel`)
 POST  /sync/{machine_id}/tables/{table_id}/move         → to a free table
@@ -67,6 +69,7 @@ from app.models.tables import TableCancelReason
 from app.models.user import User
 from app.routers.shops import _check_shop_access, _check_shop_override_write
 from app.schemas.tables import (
+    TableBillPrintedIn,
     TableCleanedIn,
     BulkTablesIn,
     DashboardCancelIn,
@@ -321,6 +324,33 @@ def save_table(
     db: Session = Depends(get_db),
 ):
     out = T.save(db, _actor(machine, body), table_id, body)
+    db.commit()
+    _wake(background_tasks, db, machine, str(table_id))
+    return out
+
+
+@router.get("/sync/{machine_id}/tables/{table_id}/order")
+def peek_table_order(
+    machine_id: str,
+    table_id: uuid.UUID,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """The table's open order, read without entering it (no lock): the bill from the floor."""
+    return T.peek(db, machine, table_id)
+
+
+@router.post("/sync/{machine_id}/tables/{table_id}/bill-printed")
+def table_bill_printed(
+    machine_id: str,
+    table_id: uuid.UUID,
+    body: TableBillPrintedIn,
+    background_tasks: BackgroundTasks,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """The bill printed from the floor: awaiting payment (409 `table_locked` / `table_version_conflict`)."""
+    out = T.mark_bill_printed(db, _actor(machine, body), table_id, body)
     db.commit()
     _wake(background_tasks, db, machine, str(table_id))
     return out

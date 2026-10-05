@@ -81,6 +81,15 @@ def post_till_event(
     """
     if machine.shop_id is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="machine_not_assigned")
+    # "מצב הדרכה": a training event is quarantined (app/services/training_mode.py) — no
+    # till event, no exception to review — and answered like a real one.
+    from app.services import training_mode as TM
+
+    training = TM.divert_till_event(db, machine, body)
+    if training is not None:
+        db.commit()
+        response.status_code = status.HTTP_201_CREATED if training else status.HTTP_200_OK
+        return TillEventOut(id=body.id, status="accepted" if training else "duplicate")
     existing = db.get(TillEvent, body.id)
     if existing is not None and existing.machine_id != machine.id:
         # Another till's id: nothing to overwrite, nothing to tell.

@@ -15,6 +15,7 @@ import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { NumberPill } from '@/components/dashboard/number-pill';
 import { LicenseBadge } from '@/components/dashboard/license-fields';
+import { TrainingBadge } from '@/components/dashboard/training-badge';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, fetchCompanies, fetchMachines, fetchShops } from '@/lib/api';
 import { usePageScope } from '@/lib/scope';
@@ -157,6 +158,7 @@ export default function ShopsPage() {
                       >
                         {s.name}
                       </Link>
+                      <TrainingBadge shop={s} className="ms-2 align-middle" />
                       <LicenseBadge value={s} className="ms-2" />
                     </TableCell>
                     <TableCell>

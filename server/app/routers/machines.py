@@ -475,6 +475,13 @@ def get_my_machine(
         "license": licenses.effective_license(
             db if isinstance(db, Session) else object_session(machine), machine
         ),
+        # "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md): the shop's tills sell for practice.
+        "trainingMode": bool(shop is not None and getattr(shop, "training_mode", False)),
+        "trainingStartedAt": (
+            shop.training_started_at.isoformat()
+            if shop is not None and getattr(shop, "training_mode", False) and shop.training_started_at
+            else None
+        ),
         **machine_realtime_refresh_info(machine=machine),
     }
 
@@ -567,6 +574,8 @@ def post_my_heartbeat(
         "license": licenses.effective_license(db, machine),
         # Who produces this till's Z (§5.1), on every beat: the till takes its mode from here.
         "zMode": till_z.z_mode_of(machine),
+        # "מצב הדרכה", every beat too: the till switches at its next shift boundary.
+        "trainingMode": bool(machine.shop is not None and getattr(machine.shop, "training_mode", False)),
     }
     if fast_beat:
         response["fastBeat"] = True

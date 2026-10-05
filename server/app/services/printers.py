@@ -79,6 +79,8 @@ SETTING_KEYS = (
     "askBeforePrint",
     ON_SALE_KEY,
     ON_TILL_KEY,
+    # "מדפסת חלופית": ask the employee for another printer when one is not available.
+    "printerFailoverPrompt",
 )
 
 #: A relayed ticket nobody printed by then is failed for its sender.
@@ -282,6 +284,13 @@ def delete_printer(db: Session, printer: KitchenPrinter) -> None:
     db.query(KitchenPrinterRoute).filter(KitchenPrinterRoute.printer_id == printer.id).delete(
         synchronize_session=False
     )
+    # Its zone redirects, either way (ON DELETE CASCADE too; explicit for a database that
+    # does not enforce foreign keys).
+    from app.models.printers import KitchenZoneRedirect
+
+    db.query(KitchenZoneRedirect).filter(
+        or_(KitchenZoneRedirect.from_printer_id == printer.id, KitchenZoneRedirect.to_printer_id == printer.id)
+    ).delete(synchronize_session=False)
     db.delete(printer)
     db.flush()
 
@@ -1299,6 +1308,18 @@ def sync_payload(db: Session, machine: POSMachine) -> Dict[str, Any]:
             if applies and kitchen:
                 in_scope_ids.add(str(printer.id))
 
+    # "הפניה לפי אזור שולחנות": a table zone's redirect wins over the printer's scope, so
+    # its targets are listed even when narrowed away from this till (docs/SPEC_PRINT_BY_ZONE.md).
+    zone_redirects: Dict[str, Dict[str, str]] = {}
+    if machine.shop_id is not None:
+        from app.services.printer_zones import till_zone_redirects
+
+        zone_redirects, targets = till_zone_redirects(db, machine)
+        listed = {p["id"] for p in printers}
+        for printer in targets:
+            if str(printer.id) not in listed:
+                printers.append(printer_for_till(printer, machine, False, serves))
+
     category_routes: Dict[str, List[str]] = {}
     product_routes: Dict[str, List[str]] = {}
     if machine.shop_id is not None:
@@ -1356,6 +1377,9 @@ def sync_payload(db: Session, machine: POSMachine) -> Dict[str, Any]:
         "hostsLan": serves,
         #: Presented to / checked by the print server on the LAN.
         "printSecret": print_secret(machine.shop_id) if machine.shop_id is not None else None,
+        #: Table zone id → {from printer id: to printer id}: a table line in that zone that
+        #: routes to the one prints on the other (applied by the till after the routing).
+        "zoneRedirects": zone_redirects,
     }
 
 

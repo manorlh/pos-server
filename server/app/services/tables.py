@@ -2063,7 +2063,9 @@ def _merged_sketch(zone: TableZone, background: str) -> dict:
 def apply_till_layout(db: Session, machine: POSMachine, body, *, now: Optional[datetime] = None) -> dict:
     """
     "שמור" in a till's edit mode: zones and tables added, changed and removed — all of it,
-    or (on any refusal) none of it. Only the zones and tables this till sees. Refused:
+    or (on any refusal) none of it. A zone may carry its whole floor plan (`sketch`, from
+    the till's map designer — the dashboard's shape and validation). Only the zones and
+    tables this till sees. Refused:
     a table someone is at that would move, change its number or go (409 `table_in_use`);
     a number another live table of the shop has once the batch is applied (409
     `table_number_taken`); a zone removed with tables still in it (409 `zone_not_empty`).
@@ -2096,8 +2098,12 @@ def apply_till_layout(db: Session, machine: POSMachine, body, *, now: Optional[d
                 canvas_width=item.canvas_width or 1000,
                 canvas_height=item.canvas_height or 700,
                 sort_order=len(visible) + len(created),
-                sketch={"template": None, "background": item.background, "elements": []} if item.background else None,
+                sketch=sketch_json(item.sketch) if item.sketch is not None else (
+                    {"template": None, "background": item.background, "elements": []} if item.background else None
+                ),
             )
+            if item.sketch is not None and item.background is not None:
+                zone.sketch = _merged_sketch(zone, item.background)
             db.add(zone)
             created[item.client_id] = zone
             continue
@@ -2110,6 +2116,10 @@ def apply_till_layout(db: Session, machine: POSMachine, body, *, now: Optional[d
             zone.name = item.name
         if item.layout is not None:
             zone.layout = item.layout
+        # The plan drawn on the till's map designer: the whole sketch, as the dashboard
+        # saves it (null clears it); a floor sent beside it is laid under it.
+        if "sketch" in fields:
+            zone.sketch = sketch_json(item.sketch)
         if item.background is not None:
             zone.sketch = _merged_sketch(zone, item.background)
         if item.canvas_width is not None:

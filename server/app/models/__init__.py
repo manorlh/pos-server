@@ -76,6 +76,10 @@ from app.models.menu import (
     UpsellStat,
 )
 from app.models.product_cost import ProductCost
+from app.models.report_event import ReportEvent, ReportEventMachine
+from app.models.training import DemoMenuItem, TrainingAuditLog, TrainingDocument
+from app.models.pos_user_session import PosUserSession
+from app.models.menu_broadcast import CatalogPublication, ShopWorkTypes
 
 __all__ = [
     "User", "UserRole",
@@ -131,4 +135,8 @@ __all__ = [
     "KitchenPrinter", "KitchenPrinterRoute", "KitchenPrintJob",
     "ModifierGroup", "ModifierOption", "ModifierLink", "PrepNotePreset", "MealSlot", "MealSlotOption",
     "UpsellRule", "UpsellStat", "MenuCourse", "MenuSyncState", "TransactionItemPart",
+    "ReportEvent", "ReportEventMachine",
+    "TrainingDocument", "TrainingAuditLog", "DemoMenuItem",
+    "PosUserSession",
+    "CatalogPublication", "ShopWorkTypes",
 ]

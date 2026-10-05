@@ -28,6 +28,7 @@ import { SalesStats } from '@/components/dashboard/sales-stats';
 import { CompanyFormDialog } from '@/components/dashboard/company-form-dialog';
 import { CompanyMoveDialog } from '@/components/dashboard/company-move-dialog';
 import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
+import { TrainingBadge } from '@/components/dashboard/training-badge';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -263,6 +264,7 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
                             <Store className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                             <NumberPill n={shop.shopNumber} />
                             <span className="truncate">{shop.name}</span>
+                            <TrainingBadge shop={shop} />
                             <span className="ms-auto flex items-center gap-1 text-xs text-muted-foreground">
                               <Monitor className="h-3.5 w-3.5" aria-hidden />
                               {shopMachines}

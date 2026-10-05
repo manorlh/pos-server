@@ -554,10 +554,17 @@ def get_pending_print_jobs(
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
 ):
-    """`{"jobs": [{id, kind, printerId, printer: {connection…}, ticket, createdAt, expiresAt}]}`."""
+    """
+    `{"jobs": [{id, kind, printerId, printer: {connection…}, ticket, createdAt, expiresAt}],
+    "scan": {id, requestedAt, expiresAt} | null}` — `scan`: the dashboard asked this till to
+    scan its LAN for printers (app/services/printer_discovery.py), handed out now.
+    """
+    from app.services.printer_discovery import take_scan_request
+
     jobs = K.pending_jobs(db, machine)
+    scan = take_scan_request(db, machine)
     db.commit()
-    return {"jobs": jobs}
+    return {"jobs": jobs, "scan": scan}
 
 
 @router.post("/sync/{machine_id}/print-jobs/{job_id}/ack")

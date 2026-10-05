@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
+import { SignedInNowCard } from '@/components/dashboard/signed-in-now-card';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
   PosUser, PosUserCreate, PosUserUpdate, PosUserRole,
@@ -190,6 +191,8 @@ export default function PosUsersPage() {
       </div>
 
       <ScopeGate resolution={resolution}>
+        {/* "עובד מחובר בקופה אחת בלבד": who is signed in where, and a manager's release. */}
+        {shopId && <SignedInNowCard shopId={shopId} canRelease={canManage} />}
         <div className="rounded-lg border bg-card p-4 flex flex-wrap items-end gap-4">
           <div className="flex items-center gap-2">
             <Switch

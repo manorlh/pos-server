@@ -300,3 +300,113 @@ class KitchenStationTarget(Base):
     station_id = Column(
         UUID(as_uuid=True), ForeignKey("kitchen_stations.id", ondelete="CASCADE"), nullable=False, index=True
     )
+
+
+PRINTER_SCAN_STATUSES = ("pending", "scanning", "done", "failed", "expired")
+PRINTER_SCAN_SOURCES = ("dashboard", "till")
+
+
+class PrinterScan(Base):
+    """
+    "חיפוש מדפסות ברשת": one scan of the shop's LAN by one of its tills
+    (app/services/printer_discovery.py). Asked for from the dashboard — pending until the
+    till picks it up with its print-jobs poll, scanning until it reports, done / failed —
+    or expired when the till never did. A scan run at the till itself is stored done. The
+    results are the till's report as JSON (IP, port, name, kind, response time, paper).
+    """
+
+    __tablename__ = "printer_scans"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'scanning', 'done', 'failed', 'expired')", name="ck_printer_scans_status"
+        ),
+        CheckConstraint("source IN ('dashboard', 'till')", name="ck_printer_scans_source"),
+        Index("ix_printer_scans_shop", "shop_id", "created_at"),
+        Index("ix_printer_scans_machine_status", "machine_id", "status"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
+    #: The till that runs (ran) it.
+    machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id", ondelete="SET NULL"), nullable=True)
+    #: The dashboard user who asked; null for a scan run at the till.
+    requested_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    source = Column(String(16), nullable=False, default="dashboard", server_default="dashboard")
+    status = Column(String(16), nullable=False, default="pending", server_default="pending")
+    #: What was scanned ("192.168.1.0/24") and the till's own address there.
+    subnet = Column(String(64), nullable=True)
+    lan_address = Column(String(64), nullable=True)
+    #: `[{host, port, name, model, kind, responseMs, paper, offline, otherPorts, services}]`.
+    results = Column(JSON, nullable=True)
+    error = Column(String(500), nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    #: Pending: picked up by then; scanning: reported by then — else expired.
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class KitchenZoneRedirect(Base):
+    """
+    "הפניית מדפסות לפי אזור שולחנות" (docs/SPEC_PRINT_BY_ZONE.md): a line of a table in
+    `zone_id` that routes to `from_printer_id` prints on `to_printer_id` instead. Both are
+    kitchen printers of the zone's shop. The routing itself is untouched; the till applies
+    the redirect after it (KitchenRouting.kt). A printer or zone deleted takes its rows.
+    """
+
+    __tablename__ = "kitchen_zone_redirects"
+    __table_args__ = (Index("ix_kitchen_zone_redirects_shop", "shop_id"),)
+
+    zone_id = Column(
+        UUID(as_uuid=True), ForeignKey("table_zones.id", ondelete="CASCADE"), primary_key=True
+    )
+    from_printer_id = Column(
+        UUID(as_uuid=True), ForeignKey("kitchen_printers.id", ondelete="CASCADE"), primary_key=True
+    )
+    to_printer_id = Column(
+        UUID(as_uuid=True), ForeignKey("kitchen_printers.id", ondelete="CASCADE"), nullable=False
+    )
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class KitchenPrintRedirect(Base):
+    """
+    "מדפסת חלופית": a ticket or a receipt the till could not print on its printer, sent to
+    another one by the employee (till parameter `printerFailoverPrompt`,
+    app/services/print_redirects.py). Logged by the till, idempotent by `id`; the printers
+    page lists the last ones. `temporary_until`: "the next ones too" — this till sent
+    that printer's tickets to the other one until then (or until it answered again).
+    """
+
+    __tablename__ = "kitchen_print_redirects"
+    __table_args__ = (
+        CheckConstraint("kind IN ('kitchen', 'receipt')", name="ck_kitchen_print_redirects_kind"),
+        Index("ix_kitchen_print_redirects_shop", "shop_id", "created_at"),
+    )
+
+    #: Chosen by the till, so a retried upload is the same row.
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
+    machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id", ondelete="SET NULL"), nullable=True)
+    kind = Column(String(8), nullable=False, default="kitchen", server_default="kitchen")
+    from_printer_id = Column(
+        UUID(as_uuid=True), ForeignKey("kitchen_printers.id", ondelete="SET NULL"), nullable=True
+    )
+    from_name = Column(String(100), nullable=True)
+    #: Null with `to_name`: the till's own printer.
+    to_printer_id = Column(UUID(as_uuid=True), ForeignKey("kitchen_printers.id", ondelete="SET NULL"), nullable=True)
+    to_name = Column(String(100), nullable=True)
+    #: What was sent ("שולחן 12", "מכירה 1043", "קבלה").
+    ticket = Column(String(200), nullable=True)
+    #: Why the printer was not available, as the till saw it.
+    error = Column(String(500), nullable=True)
+    temporary_until = Column(DateTime(timezone=True), nullable=True)
+    pos_user_id = Column(UUID(as_uuid=True), nullable=True)
+    pos_user_name = Column(String(100), nullable=True)
+    occurred_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

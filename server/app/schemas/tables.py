@@ -72,6 +72,10 @@ class TableSaveIn(_Versioned, WaiterRef):
     total: Decimal = Field(Decimal("0"), ge=-10_000_000, le=10_000_000)
 
 
+class TableBillPrintedIn(_Versioned):
+    """"הדפסת חשבון" from the floor: the order as the till read it (orderId, its version)."""
+
+
 class TablePayIn(_Versioned):
     transaction_id: str = Field(..., alias="transactionId", min_length=1, max_length=100)
     transaction_number: Optional[str] = Field(None, alias="transactionNumber", max_length=50)
@@ -459,6 +463,9 @@ class TillZoneIn(_Camel):
     layout: Optional[Literal["map", "grid"]] = None
     #: The floor under the map — merged into the zone's sketch; its drawn shapes are kept.
     background: Optional[Literal["wood", "tiles", "light", "dark", "image"]] = None
+    #: The whole floor plan drawn on the till's map designer — the dashboard's own shape
+    #: and rules (`SketchIn`); sent as null it clears the plan. Not sent: left as it is.
+    sketch: Optional[SketchIn] = None
     canvas_width: Optional[int] = Field(None, alias="canvasWidth", ge=200, le=5000)
     canvas_height: Optional[int] = Field(None, alias="canvasHeight", ge=200, le=5000)
     archive: bool = False

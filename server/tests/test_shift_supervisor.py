@@ -37,7 +37,7 @@ class TestWhatItMayAuthoriseAtTheTill:
         assert till_grantable_scopes(SUP) == frozenset(
             {
                 Scope.REFUND, Scope.DISCOUNT, Scope.DAY_CLOSE, Scope.SHIFT_CLOSE, Scope.TRANSMIT,
-                Scope.TABLE_CANCEL, Scope.TABLE_UNLOCK,
+                Scope.TABLE_CANCEL, Scope.TABLE_UNLOCK, Scope.USER_SESSION_RELEASE,
             }
         )
 
@@ -78,7 +78,7 @@ class TestPerActionReauthorisation:
         """
         assert PER_ACTION_SCOPES == {
             Scope.REFUND, Scope.DISCOUNT, Scope.DAY_CLOSE, Scope.SHIFT_CLOSE, Scope.TRANSMIT,
-            Scope.TABLE_CANCEL, Scope.TABLE_UNLOCK,
+            Scope.TABLE_CANCEL, Scope.TABLE_UNLOCK, Scope.USER_SESSION_RELEASE,
         }
 
 

@@ -55,6 +55,9 @@ class Scope(str, enum.Enum):
     TABLE_CANCEL = "table:cancel"
     #: Release another till's lock on a table by force (a till that went down inside it).
     TABLE_UNLOCK = "table:unlock"
+    #: Release an employee signed in at another till, so they can sign in here
+    #: ("עובד מחובר בקופה אחת בלבד", docs/SPEC_EXCLUSIVE_LOGIN.md).
+    USER_SESSION_RELEASE = "user-session:release"
 
 
 #: Scopes that must be re-authorised for every single action rather than held for
@@ -73,6 +76,7 @@ PER_ACTION_SCOPES: FrozenSet[Scope] = frozenset({
     Scope.TRANSMIT,
     Scope.TABLE_CANCEL,
     Scope.TABLE_UNLOCK,
+    Scope.USER_SESSION_RELEASE,
 })
 
 
@@ -91,6 +95,7 @@ _MANAGER_SCOPES = frozenset({
     Scope.TRANSMIT,
     Scope.TABLE_CANCEL,
     Scope.TABLE_UNLOCK,
+    Scope.USER_SESSION_RELEASE,
 })
 
 #: What a shift supervisor (אחמ"ש) may authorise: the money decisions and the close of
@@ -104,6 +109,7 @@ _SUPERVISOR_SCOPES = frozenset({
     Scope.TRANSMIT,
     Scope.TABLE_CANCEL,
     Scope.TABLE_UNLOCK,
+    Scope.USER_SESSION_RELEASE,
 })
 
 _TILL_SCOPES_BY_ROLE: dict[UserRole, FrozenSet[Scope]] = {

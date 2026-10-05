@@ -247,8 +247,19 @@ def get_catalog_sync(
     mqid = str(machine.id)
 
     _ensure_shop_general_item(db, machine)
-    products = get_products_for_sync(db, tid, mqid, since=since_dt)
-    categories = get_categories_for_sync(db, tid, mqid, since=since_dt)
+    # "סקירת שינויים לפני שידור לקופות" (docs/SPEC_MENU_BROADCAST_REVIEW.md): a shop in
+    # review mode (tables on) is served the menu of its latest broadcast, not the live
+    # catalog tables (the draft); what is the till's own stays live. Any other shop: as
+    # always — `live_since` is None only once, right after a shop left review mode.
+    from app.services import menu_broadcast
+
+    review_pull = menu_broadcast.catalog_pull(db, machine, since_dt)
+    published = review_pull.published
+    if published is not None:
+        products, categories = published.products, published.categories
+    else:
+        products = get_products_for_sync(db, tid, mqid, since=review_pull.live_since)
+        categories = get_categories_for_sync(db, tid, mqid, since=review_pull.live_since)
     vouchers = get_vouchers_for_sync(db, tid, since=since_dt)
     # Same `since` semantics as everything else in this payload: on a delta pull only
     # customers touched after `since` come back. Unlike products there is no merge
@@ -256,16 +267,22 @@ def get_catalog_sync(
     # attached to a *document*, which travels the other way.
     customers = get_customers_for_sync(db, tid, since=since_dt)
     if since_dt and products:
-        categories = merge_categories_referenced_by_products(db, machine, products, categories)
+        # The published catalog merges its own (from the publication).
+        if published is None and review_pull.live_since is not None:
+            categories = merge_categories_referenced_by_products(db, machine, products, categories)
         vouchers = merge_vouchers_referenced_by_products(db, products, vouchers)
 
     # Read before the stamp below, so a menu edit landing during this pull is not lost
     # between `serverTime` and the next delta.
     from app.services import menu as menu_service
 
-    menu = menu_service.menu_block(db, machine) if (
-        machine.tenant_id is not None and menu_service.include_menu(db, machine, since_dt)
-    ) else None
+    if published is not None:
+        menu = published.menu
+    else:
+        menu = menu_service.menu_block(db, machine) if (
+            machine.tenant_id is not None
+            and menu_service.include_menu(db, machine, review_pull.live_since)
+        ) else None
 
     update_machine_sync_timestamp(db, mqid)
 
@@ -1226,7 +1243,18 @@ def post_transactions(
     """
     _require_assigned_machine(machine)
 
-    valid, refused, unidentified = validate_documents(body.transactions)
+    # "מצב הדרכה": training documents go to the quarantine and are answered like real ones
+    # (app/services/training_mode.py); the real documents go on below exactly as before.
+    from app.services import training_mode as TM
+
+    positions, real_documents, training = TM.divert_transactions(db, machine, body.transactions)
+    valid, refused, unidentified = validate_documents(real_documents)
+    if training:
+        # Back to the positions in the till's own batch.
+        valid = [(positions[i], tx, w) for i, tx, w in valid]
+        refused = [(positions[i], r) for i, r in refused]
+        for u in unidentified:
+            u.index = positions[u.index]
     try:
         upserted = upsert_transactions(db, machine, [tx for _i, tx, _w in valid])
     except ShiftConflict as conflict:
@@ -1284,6 +1312,14 @@ def post_transactions(
 
         detect_safely(db, detect_transactions, [r.id for r in results if r.status == "accepted"])
 
+    if training:
+        # The training answers too, in the order the till sent them.
+        results = [
+            r for _i, r in sorted(
+                [(i, r) for (i, _tx, _w), r in zip(valid, upserted)] + refused + training,
+                key=lambda pair: pair[0],
+            )
+        ]
     return TransactionsBatchResponse(
         server_time=datetime.now(timezone.utc),
         results=results,
@@ -1312,6 +1348,13 @@ def post_shift_open(
     open — with an ordered outbox that means the previous close has not arrived yet.
     """
     _require_assigned_machine(machine)
+    # "מצב הדרכה": a training shift is quarantined, never a real shift.
+    from app.services import training_mode as TM
+
+    training = TM.divert_shift_open(db, machine, data)
+    if training is not None:
+        db.commit()
+        return training
     shift = report_shift_open(db, machine, data)
     db.commit()
     db.refresh(shift)
@@ -1357,6 +1400,15 @@ def post_shift_close(
 
     # Before the missing-ids check: another till's shift is a 403 whatever the till
     # lists — its documents are not this till's, so the 409 loop could never end.
+    # "מצב הדרכה": a training shift's close is quarantined and answered like a real one —
+    # before the checks below, which look for its documents in the real table.
+    from app.services import training_mode as TM
+
+    training = TM.divert_shift_close(db, machine, shift_id, body)
+    if training is not None:
+        db.commit()
+        return training
+
     refuse_foreign_shift(db, machine, shift_id)
 
     missing, stale = check_close_preconditions(db, machine, shift_id, body.transaction_ids)
@@ -1615,6 +1667,13 @@ def post_till_z(
     nothing_to_report | z_run_in_progress:<runId>` · `403 shift_belongs_to_another_machine`.
     """
     _require_assigned_machine(machine)
+    # "מצב הדרכה": a training Z is the till's own — quarantined, no cloud Z is built.
+    from app.services import training_mode as TM
+
+    training = TM.divert_till_z(db, machine, body)
+    if training is not None:
+        db.commit()
+        return JSONResponse(status_code=training[0], content=training[1])
     try:
         z, outcome = till_z.produce_till_z(db, machine, body)
         db.commit()
@@ -1866,6 +1925,7 @@ def get_settings_sync(
             settings={},
             business_info=None,
             area=area,
+            training_mode=bool(shop.training_mode),
         )
 
     # Tenant → company → shop → area → this till: the till's own overrides win.
@@ -1888,6 +1948,8 @@ def get_settings_sync(
     # And the force switch (unset -> off): a layer reset to inherit must reach the till
     # as `false`, not as a missing key it might read as "keep what you had".
     effective["forceTerminalNumber"] = all_settings.get("forceTerminalNumber") is True
+    # "מצב הדרכה": the shop's flag, never a layer's setting (docs/SPEC_TRAINING_MODE.md).
+    effective["trainingMode"] = bool(shop.training_mode)
     business_info = build_business_info(company, shop, all_settings)
 
     update_machine_sync_timestamp(db, str(machine.id))
@@ -1899,6 +1961,7 @@ def get_settings_sync(
         settings=effective,
         business_info=business_info,
         area=area,
+        training_mode=bool(shop.training_mode),
     )
 
 
