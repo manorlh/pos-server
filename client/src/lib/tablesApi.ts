@@ -38,6 +38,8 @@ export interface DiningTable {
   width: number;
   height: number;
   rotation: number;
+  /** "לניקוי": paid, and not marked clean since (ISO); null when laid. */
+  cleaningSince?: string | null;
 }
 
 export interface TablesLayout {
@@ -61,6 +63,8 @@ export interface TableOrderSummary {
   sentAt: string | null;
   sendCount: number;
   billPrintedAt: string | null;
+  /** The table's waiter: its own, else its opener. */
+  waiterName?: string | null;
 }
 
 export interface TableLock {

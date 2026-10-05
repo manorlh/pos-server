@@ -40,6 +40,7 @@ from app.models.tables import DiningTable, TableEvent, TableOrder, TableZone
 from app.models.till_parameter import TillParameter, TillParameterValue
 from app.routers import tables as R
 from app.schemas.tables import (
+    TableCleanedIn,
     BulkTablesIn,
     DashboardCancelIn,
     LocalOrderIn,
@@ -389,6 +390,35 @@ class TestLifecycle:
         enter(w, w.b, w.t[3])
         assert T.open_order(w.db, w.t[3].id) is None
         assert float(w.db.get(TableOrder, oid).paid_total) == 45.0
+
+    def test_a_paid_table_waits_to_be_cleared_until_marked_or_reseated(self, w):
+        enter(w, w.a, w.t[3])
+        oid = uuid.uuid4()
+        save(w, w.a, w.t[3], oid, None)
+        assert w.db.get(DiningTable, w.t[3].id).cleaning_since is None
+        pay(w, w.a, w.t[3], oid, 1)
+        since = w.db.get(DiningTable, w.t[3].id).cleaning_since
+        assert since is not None
+        state = R.get_tables_state(str(w.b.id), machine=w.b, db=w.db)
+        row = next(t for t in state["tables"] if t["id"] == str(w.t[3].id))
+        assert row["cleaningSince"] is not None and row["order"] is None
+        # "נוקה", from any till — twice is once.
+        tasks = BackgroundTasks()
+        out = R.table_cleaned(str(w.b.id), w.t[3].id, tasks, TableCleanedIn(posUserId="pu-dana", posUserName="דנה"),
+                              machine=w.b, db=w.db)
+        assert out["cleaningSince"] is None
+        assert R.table_cleaned(str(w.b.id), w.t[3].id, BackgroundTasks(), None, machine=w.b, db=w.db)["cleaningSince"] is None
+        kinds = [e.kind for e in w.db.query(TableEvent).filter(TableEvent.table_id == w.t[3].id).all()]
+        assert kinds.count("cleaned") == 1
+        # Paid again, then guests seated before anyone cleared it: laid by the new order.
+        enter(w, w.a, w.t[3])
+        o2 = uuid.uuid4()
+        save(w, w.a, w.t[3], o2, None)
+        pay(w, w.a, w.t[3], o2, 1, tx="tx-2")
+        assert w.db.get(DiningTable, w.t[3].id).cleaning_since is not None
+        enter(w, w.a, w.t[3])
+        save(w, w.a, w.t[3], uuid.uuid4(), None)
+        assert w.db.get(DiningTable, w.t[3].id).cleaning_since is None
 
     def test_pay_on_a_stale_version_is_kept_and_flagged(self, w):
         enter(w, w.a, w.t[3])
@@ -1211,6 +1241,13 @@ class TestSketch:
         for element in bad:
             with pytest.raises(ValidationError):
                 ZoneUpdate.model_validate({"sketch": {"elements": [element]}})
+
+    def test_the_fixtures_with_a_symbol_are_kept(self, w):
+        kinds = ["stairs", "cashier", "host", "exit", "stage", "sofa"]
+        sketch = {"elements": [{"id": k, "kind": k, "x": 10, "y": 10, "w": 80, "h": 60} for k in kinds]}
+        R.update_zone(w.hall.id, ZoneUpdate.model_validate({"sketch": sketch}), BackgroundTasks(), **ctx(w))
+        got = R.get_tables_state(str(w.a.id), machine=w.a, db=w.db)["zones"][0]["sketch"]["elements"]
+        assert [e["kind"] for e in got] == kinds
 
     def test_an_unknown_shape_is_refused(self):
         from pydantic import ValidationError

@@ -49,6 +49,9 @@ TABLE_ORDER_STATUSES = ("open", "paid", "cancelled", "void", "merged")
 #: The shapes a zone's sketch is drawn from (walls, a bar, the kitchen pass…).
 SKETCH_KINDS = (
     "wall", "bar", "door", "kitchen", "window", "restroom", "plant", "column", "label", "counter",
+    # Fixtures drawn with a symbol: stairs, the cash desk, the host's stand, the emergency
+    # exit, a stage, a sofa.
+    "stairs", "cashier", "host", "exit", "stage", "sofa",
     "line", "polyline", "freehand", "rect",
 )
 TABLE_ORDER_SOURCES = ("synced", "local")
@@ -112,6 +115,9 @@ class DiningTable(Base):
     width = Column(Float, nullable=False, default=80, server_default="80")
     height = Column(Float, nullable=False, default=80, server_default="80")
     rotation = Column(Integer, nullable=False, default=0, server_default="0")
+    #: "לניקוי": since when the table waits to be cleared — set when its order is paid,
+    #: cleared when someone marks it clean or a new order opens on it.
+    cleaning_since = Column(DateTime(timezone=True), nullable=True)
     archived_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

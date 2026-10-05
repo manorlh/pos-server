@@ -148,10 +148,15 @@ export function TablesLive({ shopId }: { shopId: string }) {
                   </span>
                 </>
               ) : null}
+              {tb.order?.waiterName ? <span className="text-xs opacity-90">{tb.order.waiterName}</span> : null}
               {tb.lock ? (
                 <span className="text-xs">
                   {t('lockedBy', { till: tb.lock.posNumber ?? tb.lock.machineName ?? '?', user: tb.lock.posUserName ?? '' })}
                 </span>
+              ) : null}
+              {!tb.order && tb.cleaningSince ? (
+                // Paid, not cleared yet — as the till shows it.
+                <span className="mt-1 rounded-full bg-[#8e8e93] px-2 py-0.5 text-xs font-semibold text-white">{t('cleaning')}</span>
               ) : null}
             </button>
           ))}

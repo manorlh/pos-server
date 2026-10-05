@@ -396,6 +396,7 @@ def table_out(table: DiningTable) -> dict:
         "width": table.width,
         "height": table.height,
         "rotation": table.rotation,
+        "cleaningSince": _iso(table.cleaning_since),
     }
 
 
@@ -793,6 +794,8 @@ def save(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[dateti
         except IntegrityError:
             raise _conflict("table_version_conflict", order=order_full(open_order(db, table.id)))
         created = True
+        # Guests seated at it: whatever was waiting to be cleared, it is laid now.
+        table.cleaning_since = None
     else:
         current.version = (current.version or 0) + 1
 
@@ -908,6 +911,10 @@ def pay(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[datetim
     )
     if conflict:
         logger.warning("table %s paid on a stale version (order %s)", table.id, order.id)
+    # "לניקוי": the guests have paid; the table waits to be cleared (unless another order
+    # is open on it already).
+    if open_order(db, table.id) is None:
+        table.cleaning_since = now
     release_lock(db, table, actor.machine)
     return {"order": order_summary(order), "conflict": bool(conflict), "replayed": False}
 
@@ -1333,6 +1340,18 @@ def merge(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[datet
     for table in tables:
         release_lock(db, table, actor.machine)
     return {"order": order_full(current), "replayed": False}
+
+
+def mark_cleaned(db: Session, actor: Actor, table_id: Any, *, now: Optional[datetime] = None) -> dict:
+    """"נוקה": the table is cleared and laid again. Idempotent; any mode, any till of the shop."""
+    now = now or _now()
+    table = table_for_machine(db, actor.machine, table_id)
+    if table.cleaning_since is not None:
+        since = table.cleaning_since
+        table.cleaning_since = None
+        db.flush()
+        record_event(db, "cleaned", table, None, actor=actor, now=now, details={"since": _iso(since)})
+    return table_out(table)
 
 
 def rename(db: Session, actor: Actor, table_id: Any, name: Optional[str], *, now: Optional[datetime] = None) -> dict:

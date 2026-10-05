@@ -18,6 +18,14 @@ export type SketchKind =
   | 'column'
   | 'label'
   | 'counter'
+  // Fixtures drawn with a symbol: stairs, the cash desk, the host's stand, the emergency
+  // exit, a stage, a sofa.
+  | 'stairs'
+  | 'cashier'
+  | 'host'
+  | 'exit'
+  | 'stage'
+  | 'sofa'
   // Drawn with the drawing tools: free lines and shapes in a colour and a stroke width.
   | 'line'
   | 'polyline'
@@ -58,7 +66,8 @@ export interface Sketch {
 }
 
 export const SKETCH_KINDS: SketchKind[] = [
-  'wall', 'door', 'window', 'counter', 'bar', 'kitchen', 'restroom', 'plant', 'column', 'label',
+  'wall', 'door', 'window', 'counter', 'bar', 'kitchen', 'restroom', 'plant', 'column',
+  'stairs', 'cashier', 'host', 'exit', 'stage', 'sofa', 'label',
 ];
 
 /** The background a zone is drawn on: an explicit choice, else its image, else wood. */
@@ -145,6 +154,12 @@ export const SKETCH_STYLE: Record<SketchKind, { fill: string; stroke: string; ro
   column: { fill: '#94a3b8', stroke: '#475569', text: '#0f172a' },
   label: { fill: 'transparent', stroke: 'transparent', text: '#0f172a' },
   counter: { fill: '#fafaf9', stroke: '#a8a29e', text: '#57534e' },
+  stairs: { fill: '#e5e7eb', stroke: '#6b7280', text: '#1f2937' },
+  cashier: { fill: '#fde68a', stroke: '#b45309', text: '#78350f' },
+  host: { fill: '#fbcfe8', stroke: '#be185d', text: '#831843' },
+  exit: { fill: '#22c55e', stroke: '#15803d', text: '#ffffff' },
+  stage: { fill: '#ddd6fe', stroke: '#6d28d9', text: '#3b0764' },
+  sofa: { fill: '#d6c4a8', stroke: '#8b6f47', text: '#3f2e1c' },
   // Drawn shapes take their own colour; these are the defaults.
   line: { fill: 'transparent', stroke: '#6b4423', text: '#0f172a' },
   polyline: { fill: 'transparent', stroke: '#6b4423', text: '#0f172a' },
@@ -159,6 +174,11 @@ export const SKETCH_DEFAULT_TEXT: Partial<Record<SketchKind, string>> = {
   kitchen: 'מטבח',
   restroom: 'שירותים',
   label: 'טקסט',
+  stairs: 'מדרגות',
+  cashier: 'קופה',
+  host: 'מארחת',
+  exit: 'יציאת חירום',
+  stage: 'במה',
 };
 
 export function newElementId(): string {
@@ -179,6 +199,12 @@ export function newElement(kind: SketchKind, cw: number, ch: number): SketchElem
     column: [s * 0.04, s * 0.04],
     label: [s * 0.2, s * 0.05],
     counter: [s * 0.6, s * 0.18],
+    stairs: [s * 0.12, s * 0.2],
+    cashier: [s * 0.14, s * 0.1],
+    host: [s * 0.1, s * 0.08],
+    exit: [s * 0.16, s * 0.05],
+    stage: [s * 0.35, s * 0.14],
+    sofa: [s * 0.24, s * 0.09],
     line: [s * 0.3, 0],
     polyline: [s * 0.3, 0],
     freehand: [s * 0.1, s * 0.1],
@@ -301,6 +327,90 @@ export function defaultTableSize(cw: number, ch: number, shape: 'round' | 'squar
   const side = Math.max(40, Math.round(Math.min(cw, ch) * 0.12));
   return shape === 'rect' ? { width: Math.round(side * 1.5), height: Math.round(side * 0.8) } : { width: side, height: side };
 }
+
+// ── Chairs ("כסאות") ──────────────────────────────────────────────────────────
+
+/**
+ * The chairs round a table, from its seats — the till draws the same
+ * (domain/TableFloor.kt, ChairLayout): a chair's depth and its gap from the table as a
+ * fraction of the table's shorter side; at most 24 drawn.
+ */
+export const CHAIR = { depth: 0.22, gap: 0.05, maxDrawn: 24 };
+export const CHAIR_REACH = CHAIR.depth + CHAIR.gap;
+
+/** A chair: its centre from the table's top-left, its width along the edge, its depth, which way it faces out (0 = above). */
+export interface Chair {
+  cx: number;
+  cy: number;
+  width: number;
+  depth: number;
+  angle: number;
+}
+
+/** How many chairs on each side — top, right, bottom, left — the long sides first. */
+export function chairSides(seats: number, w: number, h: number): [number, number, number, number] {
+  const n = Math.max(0, Math.min(CHAIR.maxDrawn, Math.round(seats)));
+  const out: [number, number, number, number] = [0, 0, 0, 0];
+  if (!n) return out;
+  const horizontal = w >= h;
+  const long = Math.max(w, h);
+  const short = Math.max(0.0001, Math.min(w, h));
+  const [l1, l2] = horizontal ? [0, 2] : [1, 3];
+  const [e1, e2] = horizontal ? [3, 1] : [0, 2];
+  if (long / short < 1.3) {
+    const order = [l1, l2, e1, e2];
+    for (let i = 0; i < n; i++) out[order[i % 4]]++;
+    return out;
+  }
+  const ends = n >= 6 ? 2 : n === 5 ? 1 : 0;
+  const m = n - ends;
+  out[l1] = Math.ceil(m / 2);
+  out[l2] = Math.floor(m / 2);
+  if (ends >= 1) out[e1] = 1;
+  if (ends === 2) out[e2] = 1;
+  return out;
+}
+
+export function chairLayout(round: boolean, w: number, h: number, seats: number): Chair[] {
+  const n = Math.max(0, Math.min(CHAIR.maxDrawn, Math.round(seats)));
+  if (!n || w <= 0 || h <= 0) return [];
+  const short = Math.min(w, h);
+  const depth = short * CHAIR.depth;
+  const gap = short * CHAIR.gap;
+  if (round) {
+    const rx = w / 2;
+    const ry = h / 2;
+    const ring = 2 * Math.PI * ((rx + ry) / 2 + gap + depth / 2);
+    const width = Math.min(short * 0.36, (ring / n) * 0.72);
+    return Array.from({ length: n }, (_, i) => {
+      const a = ((-90 + (360 * i) / n) * Math.PI) / 180;
+      return {
+        cx: rx + (rx + gap + depth / 2) * Math.cos(a),
+        cy: ry + (ry + gap + depth / 2) * Math.sin(a),
+        width,
+        depth,
+        angle: ((i * 360) / n) % 360,
+      };
+    });
+  }
+  const per = chairSides(n, w, h);
+  const out: Chair[] = [];
+  per.forEach((k, side) => {
+    if (!k) return;
+    const along = side === 0 || side === 2 ? w : h;
+    const width = Math.min((along / k) * 0.7, short * 0.36);
+    for (let i = 0; i < k; i++) {
+      const t = (along * (i + 0.5)) / k;
+      if (side === 0) out.push({ cx: t, cy: -gap - depth / 2, width, depth, angle: 0 });
+      else if (side === 1) out.push({ cx: w + gap + depth / 2, cy: t, width, depth, angle: 90 });
+      else if (side === 2) out.push({ cx: w - t, cy: h + gap + depth / 2, width, depth, angle: 180 });
+      else out.push({ cx: -gap - depth / 2, cy: h - t, width, depth, angle: 270 });
+    }
+  });
+  return out;
+}
+
+export const CHAIR_LOOK = { wood: '#d8b68a', back: '#b88a5c', edge: '#9c7448' };
 
 export const TABLE_SIZE_MIN = 30;
 export const TABLE_SIZE_MAX = 600;

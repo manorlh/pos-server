@@ -67,6 +67,7 @@ from app.models.tables import TableCancelReason
 from app.models.user import User
 from app.routers.shops import _check_shop_access, _check_shop_override_write
 from app.schemas.tables import (
+    TableCleanedIn,
     BulkTablesIn,
     DashboardCancelIn,
     MergePrepareIn,
@@ -403,6 +404,22 @@ def merge_tables(
 ):
     """Step two: the merged order, every version checked; the sources are freed."""
     out = T.merge(db, _actor(machine, body), table_id, body)
+    db.commit()
+    _wake(background_tasks, db, machine, str(table_id))
+    return out
+
+
+@router.post("/sync/{machine_id}/tables/{table_id}/cleaned")
+def table_cleaned(
+    machine_id: str,
+    table_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    body: Optional[TableCleanedIn] = None,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """"נוקה": the table waiting to be cleared ("לניקוי") is laid again. Idempotent."""
+    out = T.mark_cleaned(db, _actor(machine, body), table_id)
     db.commit()
     _wake(background_tasks, db, machine, str(table_id))
     return out

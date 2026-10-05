@@ -179,6 +179,10 @@ class TableReleaseIn(PosUserRef):
     force: bool = False
 
 
+class TableCleanedIn(PosUserRef):
+    """"נוקה": the table is cleared and laid again."""
+
+
 class TableRenameIn(PosUserRef):
     #: Null or blank: the table goes back to its number alone.
     name: Optional[str] = Field(None, max_length=60)
@@ -273,6 +277,7 @@ class TableRestoreIn(_Camel):
 
 SKETCH_KINDS = (
     "wall", "bar", "door", "kitchen", "window", "restroom", "plant", "column", "label", "counter",
+    "stairs", "cashier", "host", "exit", "stage", "sofa",
     # Drawn with the editor's tools: a line, a polyline (a wall of several segments),
     # a freehand stroke, a rectangle (outline or filled).
     "line", "polyline", "freehand", "rect",
@@ -288,6 +293,7 @@ class SketchElementIn(_Camel):
     id: str = Field(..., min_length=1, max_length=64)
     kind: Literal[
         "wall", "bar", "door", "kitchen", "window", "restroom", "plant", "column", "label", "counter",
+        "stairs", "cashier", "host", "exit", "stage", "sofa",
         "line", "polyline", "freehand", "rect",
     ]
     x: float = Field(..., ge=-100, le=5100)

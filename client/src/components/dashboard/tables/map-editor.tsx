@@ -21,7 +21,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Brush, Copy, Grid3x3, MousePointer2, PenTool, Redo2, RotateCcw, RotateCw, Save, Trash2, Undo2 } from 'lucide-react';
+import { Brush, Copy, Grid3x3, Maximize2, MousePointer2, PenTool, Redo2, RotateCcw, RotateCw, Save, Trash2, Undo2 } from 'lucide-react';
 import {
   createTable,
   saveTablePositions,
@@ -46,6 +46,8 @@ import {
   SKETCH_KINDS,
   SKETCH_STYLE,
   SKETCH_TEMPLATES,
+  CHAIR_LOOK,
+  chairLayout,
   TABLE_LOOK,
   templateSketch,
   TILE,
@@ -483,6 +485,28 @@ export function MapEditor({
           <Grid3x3 className="h-4 w-4 me-1" />
           {snap ? t('sketch.snapOn') : t('sketch.snapOff')}
         </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={saving || dirty || (cw >= 5000 && ch >= 5000)}
+          title={dirty ? t('sketch.enlargeSaveFirst') : `${cw}×${ch}`}
+          onClick={async () => {
+            // More floor for more tables: a quarter wider and taller, to the right and down,
+            // so nothing already on it moves.
+            try {
+              await updateZone(zone.id, {
+                canvasWidth: Math.min(5000, Math.round(cw * 1.25)),
+                canvasHeight: Math.min(5000, Math.round(ch * 1.25)),
+              });
+              onSaved();
+            } catch (err) {
+              onError(err);
+            }
+          }}
+        >
+          <Maximize2 className="h-4 w-4 me-1" />
+          {t('sketch.enlarge')}
+        </Button>
         <div className="flex items-center gap-1 rounded-lg border px-1 py-0.5">
           <span className="text-xs text-muted-foreground px-1">{t('sketch.floor')}</span>
           {SKETCH_BACKGROUNDS.filter((bg) => bg !== 'image' || zone.backgroundUrl).map((bg) => (
@@ -782,6 +806,17 @@ export function MapEditor({
                         />
                       )
                     ) : null}
+                    {chairLayout(tb.shape === 'round', p.width, p.height, tb.seats).map((c, i) => (
+                      // The chairs, from the table's seats — as the till draws them.
+                      <g key={`c${i}`} transform={`translate(${p.x + c.cx} ${p.y + c.cy}) rotate(${c.angle})`}>
+                        <rect
+                          x={-c.width / 2} y={-c.depth / 2} width={c.width} height={c.depth} rx={c.depth * 0.28}
+                          fill={CHAIR_LOOK.wood} stroke={CHAIR_LOOK.edge} strokeWidth={Math.max(perPx, c.depth * 0.06)}
+                          filter="url(#table-shadow)"
+                        />
+                        <rect x={-c.width / 2} y={-c.depth / 2} width={c.width} height={c.depth * 0.34} rx={c.depth * 0.28} fill={CHAIR_LOOK.back} />
+                      </g>
+                    ))}
                     {tb.shape === 'round' ? (
                       <ellipse
                         cx={cx} cy={cy} rx={p.width / 2} ry={p.height / 2}
@@ -1015,6 +1050,10 @@ export function SketchShape({
   const fs = text ? Math.max(9 * perPx, Math.min(short * 0.55, (long * 1.6) / Math.max(2, text.length))) : 0;
   const vertical = el.h > el.w * 1.6;
   const handle = 12 * perPx;
+  // A fixture with a symbol: the symbol, and the word under it, when both fit.
+  const iconSize = SYMBOLS[el.kind] ? Math.min(short * 0.55, long * 0.4) : 0;
+  const stacked = !!text && iconSize >= 14 * perPx && short >= iconSize + fs * 0.9 * 1.3;
+  const textFs = stacked ? Math.min(fs, short * 0.24) : fs;
   if (hasPoints(el.kind)) {
     // A drawn line, wall or stroke: its points, its colour and width — with a wider,
     // invisible line over it so a finger can pick it.
@@ -1060,6 +1099,12 @@ export function SketchShape({
       <g transform={`rotate(${el.rotation} ${cx} ${cy})`} onPointerDown={onDown} style={{ cursor: onDown ? 'move' : undefined }}>
         {el.kind === 'counter' ? (
           <CounterShape el={el} perPx={perPx} selected={selected} />
+        ) : el.kind === 'plant' ? (
+          <PlantShape el={el} />
+        ) : el.kind === 'sofa' ? (
+          <SofaShape el={el} perPx={perPx} />
+        ) : el.kind === 'stairs' ? (
+          <StairsShape el={el} perPx={perPx} />
         ) : el.kind === 'label' ? (
           <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="transparent" stroke={selected ? '#2563eb' : 'none'} strokeDasharray="4 4" />
         ) : st.round ? (
@@ -1074,13 +1119,27 @@ export function SketchShape({
             strokeDasharray={st.dashed ? `${8 * perPx} ${6 * perPx}` : undefined}
           />
         )}
-        {text && fs >= 6 * perPx && el.kind !== 'counter' ? (
+        {selected && (el.kind === 'plant' || el.kind === 'sofa' || el.kind === 'stairs') ? (
+          <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="none" stroke="#2563eb" strokeWidth={1.5 * perPx} strokeDasharray={`${6 * perPx} ${4 * perPx}`} />
+        ) : null}
+        {stacked ? (
+          // The symbol above the word, when there is room for both.
+          <FixtureSymbol
+            kind={el.kind}
+            cx={cx}
+            cy={cy - (iconSize + textFs * 1.25) / 2 + iconSize / 2}
+            size={iconSize}
+            color={st.stroke}
+            transform={vertical ? `rotate(-90 ${cx} ${cy})` : undefined}
+          />
+        ) : null}
+        {text && (stacked || fs >= 6 * perPx) && el.kind !== 'counter' && el.kind !== 'sofa' ? (
           <text
             x={cx}
-            y={cy}
+            y={stacked ? cy + (iconSize + textFs * 1.25) / 2 - textFs * 0.6 : cy}
             textAnchor="middle"
             dominantBaseline="central"
-            fontSize={fs}
+            fontSize={textFs}
             fill={el.kind === 'label' && el.color ? el.color : st.text}
             transform={vertical ? `rotate(-90 ${cx} ${cy})` : undefined}
           >
@@ -1099,6 +1158,122 @@ export function SketchShape({
           onPointerDown={onResize}
         />
       ) : null}
+    </g>
+  );
+}
+
+/** The fixtures drawn with a symbol in them (the till draws the same). */
+const SYMBOLS: Partial<Record<SketchKind, true>> = { restroom: true, cashier: true, host: true, exit: true };
+
+/** A figure of the WC sign: a head and a body — a dress for `dress`. */
+function Figure({ cx, cy, size, color, dress }: { cx: number; cy: number; size: number; color: string; dress: boolean }) {
+  const top = cy - size * 0.12;
+  const bottom = cy + size * 0.48;
+  const body = dress
+    ? `M ${cx - size * 0.12} ${top} L ${cx + size * 0.12} ${top} L ${cx + size * 0.28} ${bottom} L ${cx - size * 0.28} ${bottom} Z`
+    : `M ${cx - size * 0.2} ${top} L ${cx + size * 0.2} ${top} L ${cx + size * 0.17} ${bottom} L ${cx - size * 0.17} ${bottom} Z`;
+  return (
+    <g fill={color}>
+      <circle cx={cx} cy={cy - size * 0.32} r={size * 0.16} />
+      <path d={body} />
+    </g>
+  );
+}
+
+function FixtureSymbol({ kind, cx, cy, size, color, transform }: { kind: SketchKind; cx: number; cy: number; size: number; color: string; transform?: string }) {
+  return (
+    <g transform={transform} pointerEvents="none">
+      {kind === 'restroom' ? (
+        <>
+          <Figure cx={cx - size * 0.28} cy={cy} size={size * 0.62} color={color} dress={false} />
+          <line x1={cx} y1={cy - size * 0.32} x2={cx} y2={cy + size * 0.32} stroke={color} strokeOpacity={0.5} strokeWidth={size * 0.04} />
+          <Figure cx={cx + size * 0.28} cy={cy} size={size * 0.62} color={color} dress />
+        </>
+      ) : kind === 'host' ? (
+        <Figure cx={cx} cy={cy} size={size * 0.8} color={color} dress />
+      ) : kind === 'cashier' ? (
+        <g fill={color}>
+          <rect x={cx - size * 0.22} y={cy - size * 0.4} width={size * 0.44} height={size * 0.26} rx={size * 0.05} />
+          <rect x={cx - size * 0.04} y={cy - size * 0.14} width={size * 0.08} height={size * 0.12} />
+          <rect x={cx - size * 0.4} y={cy - size * 0.02} width={size * 0.8} height={size * 0.38} rx={size * 0.06} />
+        </g>
+      ) : kind === 'exit' ? (
+        <path
+          d={`M ${cx - size * 0.36} ${cy} L ${cx + size * 0.3} ${cy} M ${cx + size * 0.08} ${cy - size * 0.22} L ${cx + size * 0.3} ${cy} L ${cx + size * 0.08} ${cy + size * 0.22}`}
+          fill="none" stroke={color} strokeWidth={size * 0.08} strokeLinecap="round" strokeLinejoin="round"
+        />
+      ) : null}
+    </g>
+  );
+}
+
+/** A plant from above: a rosette of leaves round a dark heart. */
+function PlantShape({ el }: { el: SketchElement }) {
+  const cx = el.x + el.w / 2;
+  const cy = el.y + el.h / 2;
+  const r = Math.min(el.w, el.h) / 2;
+  const ring = (count: number, reach: number, tone: string, turn: number) =>
+    Array.from({ length: count }, (_, i) => (
+      <ellipse
+        key={`${count}-${i}`}
+        cx={cx} cy={cy - r * reach * 0.52} rx={r * 0.2 * reach} ry={r * 0.475 * reach}
+        fill={tone} transform={`rotate(${(i * 360) / count + turn} ${cx} ${cy})`}
+      />
+    ));
+  return (
+    <g>
+      <circle cx={cx} cy={cy + r * 0.08} r={r * 0.95} fill="#000" opacity={0.2} />
+      {ring(8, 1, '#2f9e44', 0)}
+      {ring(6, 0.68, '#51cf66', 30)}
+      <circle cx={cx} cy={cy} r={r * 0.16} fill="#1b5e20" />
+    </g>
+  );
+}
+
+/** A sofa from above: its back along the top, arms at the ends, the seat in cushions. */
+function SofaShape({ el, perPx }: { el: SketchElement; perPx: number }) {
+  const st = SKETCH_STYLE.sofa;
+  const r = Math.min(el.w, el.h) * 0.18;
+  const back = el.h * 0.3;
+  const arm = Math.min(el.w * 0.12, el.h * 0.35);
+  const seats = Math.max(1, Math.floor((el.w - 2 * arm) / (el.h * 0.9)));
+  const each = (el.w - 2 * arm) / seats;
+  return (
+    <g>
+      <rect x={el.x} y={el.y} width={el.w} height={el.h} rx={r} fill={st.fill} filter="url(#table-shadow)" />
+      <rect x={el.x} y={el.y} width={el.w} height={back} rx={r} fill={st.stroke} opacity={0.55} />
+      <rect x={el.x} y={el.y} width={arm} height={el.h} rx={r} fill={st.stroke} opacity={0.45} />
+      <rect x={el.x + el.w - arm} y={el.y} width={arm} height={el.h} rx={r} fill={st.stroke} opacity={0.45} />
+      {Array.from({ length: seats - 1 }, (_, i) => (
+        <line
+          key={i}
+          x1={el.x + arm + each * (i + 1)} y1={el.y + back} x2={el.x + arm + each * (i + 1)} y2={el.y + el.h * 0.94}
+          stroke={st.stroke} strokeOpacity={0.6} strokeWidth={1.5 * perPx}
+        />
+      ))}
+      <rect x={el.x} y={el.y} width={el.w} height={el.h} rx={r} fill="none" stroke={st.stroke} strokeWidth={1.5 * perPx} />
+    </g>
+  );
+}
+
+/** Stairs from above: the treads across the run. */
+function StairsShape({ el, perPx }: { el: SketchElement; perPx: number }) {
+  const st = SKETCH_STYLE.stairs;
+  const vertical = el.h >= el.w;
+  const run = vertical ? el.h : el.w;
+  const step = Math.max(6, Math.min(el.w, el.h) * 0.32);
+  const treads: number[] = [];
+  for (let t = step; t < run - 2; t += step) treads.push(t);
+  return (
+    <g>
+      <rect x={el.x} y={el.y} width={el.w} height={el.h} fill={st.fill} stroke={st.stroke} strokeWidth={1.6 * perPx} />
+      {treads.map((t) =>
+        vertical ? (
+          <line key={t} x1={el.x} y1={el.y + t} x2={el.x + el.w} y2={el.y + t} stroke={st.stroke} strokeWidth={1.4 * perPx} />
+        ) : (
+          <line key={t} x1={el.x + t} y1={el.y} x2={el.x + t} y2={el.y + el.h} stroke={st.stroke} strokeWidth={1.4 * perPx} />
+        ),
+      )}
     </g>
   );
 }
