@@ -261,6 +261,14 @@ class TakeOverIn(_Camel):
     pos_user_name: Optional[str] = Field(None, alias="posUserName", max_length=200)
 
 
+class TableRestoreIn(_Camel):
+    """"שחזור שולחן": who at the till restores it, and the manager who approved (checked on the till)."""
+
+    pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)
+    pos_user_name: Optional[str] = Field(None, alias="posUserName", max_length=200)
+    approved_by: Optional[str] = Field(None, alias="approvedBy", max_length=200)
+
+
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 SKETCH_KINDS = (

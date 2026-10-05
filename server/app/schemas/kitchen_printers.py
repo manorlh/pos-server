@@ -189,6 +189,8 @@ class TicketIn(BaseModel):
     customer_name: Optional[str] = Field(None, alias="customerName", max_length=TICKET_TEXT_MAX)
     #: A counter sale's "לקחת / לשבת" (till parameter `askEatInTakeAway`), printed as a band.
     dining: Optional[Literal["eat_in", "take_away"]] = None
+    #: A band at the head: "הדפסה חוזרת" (a reprint, approved by a manager) or "זרז" (a rush).
+    notice: Optional[str] = Field(None, max_length=TICKET_TEXT_MAX)
 
 
 class PrintJobIn(BaseModel):

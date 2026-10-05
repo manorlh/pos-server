@@ -21,6 +21,8 @@ export const EXCEPTION_TYPES = [
   'card_failures',
   // An open table cancelled with a reason and a manager's approval (table management).
   'table_cancelled',
+  // A table's bill or kitchen tickets printed again, with the approving manager.
+  'reprint',
 ] as const;
 
 export type ExceptionType = (typeof EXCEPTION_TYPES)[number];

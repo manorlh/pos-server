@@ -55,6 +55,7 @@ from app.schemas.tables import (
     TablePositionsIn,
     TableSaveIn,
     TablesReportIn,
+    TableRestoreIn,
     TableUpdate,
     TillLayoutIn,
     ZoneCreate,
@@ -752,6 +753,31 @@ class TestDashboard:
         # The till reads the same report for its own shop ("דוחות שולחנות" on the till).
         till = R.get_tables_reports(str(w.a.id), day - timedelta(days=1), day + timedelta(days=1), machine=w.a, db=w.db)
         assert till == out
+
+    def test_closed_tables_are_listed_and_restored_once(self, w):
+        enter(w, w.a, w.t[1])
+        paid = uuid.uuid4()
+        save(w, w.a, w.t[1], paid, None, total="60")
+        pay(w, w.a, w.t[1], paid, 1, tx="tx-paid", total="60")
+        enter(w, w.a, w.t[2])
+        gone = uuid.uuid4()
+        save(w, w.a, w.t[2], gone, None, total="30")
+        cancel(w, w.a, w.t[2], gone, 1)
+        rows = R.get_closed_tables(str(w.a.id), machine=w.a, db=w.db)["orders"]
+        by_id = {r["orderId"]: r for r in rows}
+        assert by_id[str(paid)]["status"] == "paid" and by_id[str(paid)]["transactionIds"] == ["tx-paid"]
+        assert by_id[str(gone)]["status"] == "cancelled" and by_id[str(gone)]["transactionIds"] == []
+        assert by_id[str(paid)]["cartJson"]
+
+        body = TableRestoreIn(posUserName="דנה", approvedBy="מנהלת רותי")
+        out = R.restore_closed_table(str(w.a.id), str(gone), body, BackgroundTasks(), machine=w.a, db=w.db)
+        assert out["orderId"] == str(gone)
+        # Once: a second till, or a second tap, is refused — and it left the list.
+        with pytest.raises(HTTPException) as e:
+            R.restore_closed_table(str(w.a.id), str(gone), body, BackgroundTasks(), machine=w.a, db=w.db)
+        assert e.value.detail["code"] == "already_restored" if isinstance(e.value.detail, dict) else e.value.detail == "already_restored"
+        left = {r["orderId"] for r in R.get_closed_tables(str(w.a.id), machine=w.a, db=w.db)["orders"]}
+        assert str(gone) not in left and str(paid) in left
 
     def test_the_waiters_report_and_handing_a_table_to_another_waiter(self, w):
         # Dana opens and serves table 1; Avi opens table 2, then hands it to Dana's colleague Yossi.

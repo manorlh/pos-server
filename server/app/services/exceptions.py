@@ -91,6 +91,9 @@ RULES: Tuple[RuleSpec, ...] = (
     # An open table cancelled with a reason and a manager's approval (app/services/tables.py
     # records it as a till event), ≥ ₪X.
     RuleSpec("table_cancelled", True, (ParamSpec("minAmount", 0),), "high", "till_event"),
+    # "הדפסה חוזרת" at a table — the bill or the kitchen tickets again — with the manager
+    # who approved it (till event).
+    RuleSpec("reprint", True, (), "medium", "till_event"),
     # From the first line to payment, ≥ X minutes.
     RuleSpec("long_order", True, (ParamSpec("minutes", 10, 1, 24 * 60, integer=True),), "low", "till_event"),
     # A tip above X% of what the sale collected.
@@ -117,7 +120,7 @@ RULES_BY_TYPE: Dict[str, RuleSpec] = {r.type: r for r in RULES}
 EXCEPTION_TYPES = tuple(RULES_BY_TYPE)
 
 #: Till event types this server accepts, and the rule each one feeds.
-TILL_EVENT_TYPES = ("drawer_open", "line_void", "basket_cancel", "basket_completed")
+TILL_EVENT_TYPES = ("drawer_open", "line_void", "basket_cancel", "basket_completed", "reprint")
 
 
 class RuleValueError(ValueError):
@@ -486,10 +489,10 @@ def detect_event(event: TillEvent, rules: Dict[str, EffectiveRule]) -> List[Foun
     amount = abs(_money(event.amount)) if event.amount is not None else None
     kind = event.event_type
 
-    if kind == "drawer_open":
-        rule = rules.get("drawer_open")
+    if kind in ("drawer_open", "reprint"):
+        rule = rules.get(kind)
         if rule and rule.enabled:
-            return [Found(type="drawer_open", key=f"drawer_open:{event.id}", details=details, **common)]
+            return [Found(type=kind, key=f"{kind}:{event.id}", amount=amount, details=details, **common)]
     elif kind in ("line_void", "basket_cancel", "table_cancelled"):
         rule = rules.get(kind)
         if rule and rule.enabled and _meets(amount or Decimal("0"), rule.params.get("minAmount", 0)):

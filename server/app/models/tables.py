@@ -205,6 +205,9 @@ class TableOrder(Base):
     cancelled_items = Column(JSONB, nullable=True)
     #: Merged: the order its lines went into.
     merged_into_id = Column(UUID(as_uuid=True), nullable=True)
+    #: "שחזור שולחן": a till put this closed order's lines back on a table (once).
+    restored_at = Column(DateTime(timezone=True), nullable=True)
+    restored_by_pos_user_name = Column(String(200), nullable=True)
 
 
 class TableEvent(Base):

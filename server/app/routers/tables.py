@@ -90,6 +90,7 @@ from app.schemas.tables import (
     TableReleaseIn,
     TableSaveIn,
     TablesReportIn,
+    TableRestoreIn,
     TakeOverIn,
     TableUpdate,
     TillLayoutIn,
@@ -213,6 +214,36 @@ def get_tables_reports(
     if shop is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no_shop")
     return T.report(db, shop, date_from, date_to)
+
+
+@router.get("/sync/{machine_id}/tables/closed")
+def get_closed_tables(
+    machine_id: str,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """"נסגרו היום": the shop's tables paid or cancelled in the last day, for "שחזור שולחן"."""
+    return {"orders": T.closed_orders(db, machine)}
+
+
+@router.post("/sync/{machine_id}/tables/closed/{order_id}/restore")
+def restore_closed_table(
+    machine_id: str,
+    order_id: str,
+    body: TableRestoreIn,
+    background_tasks: BackgroundTasks,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    "שחזור שולחן": claims a closed order for restoring — once (409 `already_restored`);
+    the till then opens the table with its lines. A paid order's payments are cancelled
+    first, by credit notes at the till.
+    """
+    order = T.mark_restored(db, machine, order_id, _actor(machine, body), approved_by=body.approved_by)
+    db.commit()
+    _wake(background_tasks, db, machine, str(order.table_id))
+    return {"orderId": str(order.id), "restoredAt": order.restored_at.isoformat()}
 
 
 @router.get("/sync/{machine_id}/tables/host-seed")

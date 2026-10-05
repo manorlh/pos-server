@@ -307,6 +307,12 @@ class TestTillEvents:
         assert kinds == ["basket_cancel", "drawer_open", "line_void"]
         assert found(w, "line_void")[0].details == {"productName": "Wine"}
 
+    def test_a_reprint_at_a_table_is_an_exception_with_its_approver(self, w):
+        details = {"kind": "bill", "table": "5", "approvedBy": "רותי", "approvedById": "pu-9"}
+        event(w, w.tills[0], "reprint", amount="120", details=details)
+        rows = found(w, "reprint")
+        assert len(rows) == 1 and rows[0].details["approvedBy"] == "רותי"
+
     def test_a_resent_event_is_a_duplicate(self, w):
         ident = uuid.uuid4()
         assert event(w, w.tills[0], "drawer_open", event_id=ident).status == "accepted"

@@ -2276,6 +2276,106 @@ def _day_bounds(db: Session, tenant_id: Any, start: date, end: date) -> Tuple[da
     return lo, hi
 
 
+# ── "שחזור שולחן": closed orders, put back on a table ─────────────────────────
+
+#: How far back the till's "נסגרו היום" list reaches.
+CLOSED_WINDOW = timedelta(hours=24)
+
+
+def _transaction_ids(order: TableOrder) -> List[str]:
+    """Every payment document of an order: its part-payments, then the closing sale."""
+    ids: List[str] = []
+    try:
+        extras = json.loads(order.extras_json) if order.extras_json else {}
+    except (TypeError, ValueError):
+        extras = {}
+    for p in extras.get("partials") or [] if isinstance(extras, dict) else []:
+        tx = p.get("tx") if isinstance(p, dict) else None
+        if tx and tx not in ids:
+            ids.append(str(tx))
+    if order.transaction_id and order.transaction_id not in ids:
+        ids.append(order.transaction_id)
+    return ids
+
+
+def closed_orders(db: Session, machine: POSMachine, *, now: Optional[datetime] = None) -> List[dict]:
+    """
+    The till's "נסגרו היום": its shop's tables paid or cancelled in the last day, not merged
+    and not restored yet, newest first — with what was on them (`cartJson`) and every
+    payment document (`transactionIds`), so a till can cancel the payments and restore one.
+    """
+    if machine.shop_id is None:
+        return []
+    now = now or _now()
+    rows = (
+        db.query(TableOrder)
+        .filter(
+            TableOrder.shop_id == machine.shop_id,
+            TableOrder.status.in_(("paid", "cancelled")),
+            TableOrder.closed_at >= now - CLOSED_WINDOW,
+            TableOrder.merged_into_id.is_(None),
+            TableOrder.restored_at.is_(None),
+        )
+        .order_by(TableOrder.closed_at.desc())
+        .limit(100)
+        .all()
+    )
+    zone_names = {z.id: z.name for z in db.query(TableZone).filter(TableZone.shop_id == machine.shop_id).all()}
+    return [
+        {
+            "orderId": str(o.id),
+            "tableId": str(o.table_id),
+            "tableNumber": o.table_number,
+            "tableName": o.table_name,
+            "zoneName": zone_names.get(o.zone_id),
+            "status": o.status,
+            "closedAt": _iso(o.closed_at),
+            "total": _float(o.paid_total if o.status == "paid" and o.paid_total is not None else o.total),
+            "guests": o.guests,
+            "waiter": o.waiter_pos_user_name or o.opened_by_pos_user_name,
+            "closedBy": o.closed_by_pos_user_name,
+            "transactionIds": _transaction_ids(o),
+            "transactionNumber": o.transaction_number,
+            "cancelReason": o.cancel_reason_text,
+            "cartJson": o.cart_json,
+            "extrasJson": o.extras_json,
+        }
+        for o in rows
+    ]
+
+
+def mark_restored(
+    db: Session,
+    machine: POSMachine,
+    order_id: Any,
+    actor: Actor,
+    *,
+    approved_by: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> TableOrder:
+    """
+    A till restores a closed order ("שחזור שולחן"): claimed here first, once — a second
+    till (or a second tap) gets 409 `already_restored` — then the till opens the table with
+    its lines. The order itself stays as it was (its documents are what they are).
+    """
+    order = db.get(TableOrder, _uuid(order_id))
+    if order is None or order.shop_id != machine.shop_id:
+        raise _not_found("order_not_found")
+    if order.status not in ("paid", "cancelled") or order.merged_into_id is not None:
+        raise _conflict("order_not_closed")
+    if order.restored_at is not None:
+        raise _conflict("already_restored")
+    order.restored_at = now or _now()
+    order.restored_by_pos_user_name = actor.pos_user_name
+    table = db.get(DiningTable, order.table_id)
+    record_event(
+        db, "restore", table, order, actor=actor,
+        details={"status": order.status, "approvedBy": approved_by, "transactionIds": _transaction_ids(order)},
+    )
+    db.flush()
+    return order
+
+
 def report(db: Session, shop: Shop, start: date, end: date) -> dict:
     """
     The tables report for the local days `start`..`end`: revenue and seating time per

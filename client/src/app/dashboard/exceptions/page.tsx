@@ -78,6 +78,7 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   price_override: 'bg-teal-100 text-teal-900 dark:bg-teal-950 dark:text-teal-200',
   card_failures: 'bg-yellow-100 text-yellow-900 dark:bg-yellow-950 dark:text-yellow-200',
   table_cancelled: 'bg-red-200 text-red-950 dark:bg-red-900 dark:text-red-100',
+  reprint: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
 };
 
 function TypeBadge({ type }: { type: ExceptionType }) {
