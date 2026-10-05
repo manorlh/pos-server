@@ -47,6 +47,7 @@ import {
   type PageSize,
 } from '@/components/dashboard/products/product-list-params';
 import { ProductImageUpload } from '@/components/product-image-upload';
+import { MenuBroadcastBanner } from '@/components/dashboard/menu/broadcast-banner';
 import Link from 'next/link';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -343,6 +344,7 @@ export default function ProductsPage() {
 
   return (
     <div className="space-y-4">
+      <MenuBroadcastBanner />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{t('title')}</h1>

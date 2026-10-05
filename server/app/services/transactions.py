@@ -583,6 +583,10 @@ def _serialize_tx_for_upsert(
         "tip_payment_method": tx.tip_payment_method,
         "total_discount": tx.total_discount,
         "document_discount": tx.document_discount,
+        # The basket discount on its own and its kind (`club` / `manual`), when sent.
+        "basket_discount": getattr(tx, "basket_discount", None),
+        "basket_discount_percent": getattr(tx, "basket_discount_percent", None),
+        "basket_discount_kind": getattr(tx, "basket_discount_kind", None),
         "wht_deduction": tx.wht_deduction,
         "customer_id": tx.customer_id,
         "customer_ref_id": customer_ref_id,
@@ -885,6 +889,10 @@ def upsert_transactions(
                         # What the dish was ordered with (docs/SPEC_MENU_MODIFIERS.md).
                         details=_menu.clean_details(it.details),
                         upsell_rule_id=_promotion_uuid(it.upsell_rule_id),
+                        # OTH ("על חשבון הבית"): why the line went free, by whom, approved by whom.
+                        oth_reason=getattr(it, "oth_reason", None),
+                        oth_by=getattr(it, "oth_by", None),
+                        oth_approved_by=getattr(it, "oth_approved_by", None),
                     )
                     for i, it in enumerate(tx.items)
                 ])

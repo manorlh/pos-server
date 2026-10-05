@@ -57,6 +57,7 @@ from app.schemas.extra_reports import (
     SequenceGap,
     SequenceRow,
 )
+from app.services.company_hierarchy import descendant_company_ids
 from app.services.reports import (
     ReportWindow,
     _is_refund_condition,
@@ -298,11 +299,22 @@ def build_hourly_report(
     shop_id: Optional[uuid_mod.UUID] = None,
     machine_id: Optional[uuid_mod.UUID] = None,
     cashier_id: Optional[str] = None,
+    company_id: Optional[uuid_mod.UUID] = None,
+    area_filter=None,
 ) -> HourlyReportResponse:
+    """
+    `company_id` (the company and its subsidiaries, as on the overview) and `area_filter`
+    (the area each document's shift was stamped with) only narrow the caller's scope —
+    the control board's hourly chart for a company or a point of sale.
+    """
     now = datetime.now(timezone.utc)
     tx_q = build_scoped_transaction_query(
-        db, current_user, tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id
+        db, current_user, tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id,
+        area_filter=area_filter,
     )
+    if tx_q is not None and company_id is not None:
+        group = descendant_company_ids(db, company_id)
+        tx_q = tx_q.filter(Transaction.shop_id.in_(db.query(Shop.id).filter(Shop.company_id.in_(group))))
     grid: Dict[Tuple[int, int], List] = defaultdict(lambda: [0.0, 0, 0])  # net, docs, sales
     if tx_q is not None:
         net = _signed_document_net()

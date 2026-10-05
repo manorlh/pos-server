@@ -255,6 +255,7 @@ def post_z_run(
             business_date=body.business_date,
             area_id=body.area_id,
             confirm_open_tills=body.confirm_open_tills,
+            force=body.force,
         )
     except TillZRefused as refused:
         # `422 machine_issues_its_own_z` with the till's id beside the detail (§5.4).

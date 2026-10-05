@@ -1317,7 +1317,11 @@ on 2026-10-01:
 - **Per till.** Each till is `zMode = "cloud"` (default, everything as today) or `"till"`.
 - **Online only.** A till Z needs the cloud: the cloud allocates the number and builds the
   figures from the documents it holds, so the till and the cloud can never disagree and two
-  Zs can never share a number. Without a connection the till says so and makes no Z.
+  Zs can never share a number. Without a connection the till says so and makes no Z —
+  unless the till parameter `tillZOffline` is on: then the till closes, numbers and prints
+  the Z itself and uploads it when the connection is back (docs/SPEC_OFFLINE_TILL_Z.md:
+  `POST till-z` with `offline`, `lastTillZNumber` on the heartbeat, the card transmission
+  at a Z, and the forced remote Z close).
 - **The till does the Z.** A cashier (any signed-in till user, no manager approval) presses
   "הפק Z", or the dashboard asks the till to. Either way the till closes its open shift
   first (a normal §1.3 close), then asks for the Z (§5.2), then prints it.

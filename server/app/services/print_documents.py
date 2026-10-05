@@ -325,7 +325,9 @@ def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
         # A sale line's total is gross with `discount` taken off it; a credit-note line
         # is already net (see app/services/reports.py), so its discount is not repeated.
         if not credit and _dec(item.discount) > 0:
-            lines.append(_row("  הנחה", money(-_dec(item.discount))))
+            # A line given free ("על חשבון הבית") says so, with its reason.
+            oth = getattr(item, "oth_reason", None)
+            lines.append(_row(f"  OTH — {oth}" if oth else "  הנחה", money(-_dec(item.discount))))
     # Each promotion ("מבצעים") as the till printed it, under the items; part of the
     # document's discount below.
     if not credit:
@@ -338,6 +340,10 @@ def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
                 lines.append(
                     _row(f"הנחת מבצע: {promo.promotion_name or ''}".strip(), money(-_dec(promo.discount_amount)))
                 )
+        # The club button's basket discount ("הנחת מועדון 10%"), as the till printed it.
+        if getattr(tx, "basket_discount_kind", None) == "club" and _dec(tx.basket_discount) > 0:
+            rate = f" {_dec(tx.basket_discount_percent).normalize():f}%" if tx.basket_discount_percent is not None else ""
+            lines.append(_row(f"הנחת מועדון{rate}", money(-_dec(tx.basket_discount))))
 
     totals: List[PrintRow] = []
     discount = _dec(tx.document_discount)

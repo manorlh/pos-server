@@ -168,6 +168,52 @@ class PosSettingsV1Patch(BaseModel):
     #: next sync (only while idle, with nothing left to transmit), reads it back and
     #: reports the result in its heartbeat. Unset = false; `null` in a PATCH = inherit.
     force_terminal_number: Optional[bool] = Field(None, alias="forceTerminalNumber")
+    # ── "סוג אינטגרציית אשראי" (app/services/payment_integration.py) ──
+    #: auto | agamento | nayax_lan | zcredit (tap_to_pay is reserved and refused).
+    #: "auto" or `null` in a PATCH = inherit again; `agamento` on a till without a
+    #: terminal of its own is a 422 (`agamento_needs_builtin_terminal`).
+    payment_integration: Optional[str] = Field(None, alias="paymentIntegration")
+    #: Z-Credit's terminal number (digits, leading zeros kept), its PinPad id (with or
+    #: without the "PINPAD" prefix; stored without) and "test" | "production".
+    zcredit_terminal_number: Optional[str] = Field(None, alias="zcreditTerminalNumber")
+    zcredit_pinpad_id: Optional[str] = Field(None, alias="zcreditPinpadId")
+    zcredit_mode: Optional[str] = Field(None, alias="zcreditMode")
+    #: Write-only secrets: never dumped into the layer's settings JSON (`exclude`), stored
+    #: encrypted apart (app/services/payment_secrets.py). "" or `null` removes this
+    #: layer's; the dashboard's "••••" sent back unchanged keeps it.
+    zcredit_password: Optional[str] = Field(None, alias="zcreditPassword", exclude=True, repr=False)
+    zcredit_key: Optional[str] = Field(None, alias="zcreditKey", exclude=True, repr=False)
+
+    @field_validator("payment_integration")
+    @classmethod
+    def _check_payment_integration(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_integration
+
+        return validate_integration(v)
+
+    @field_validator("zcredit_terminal_number")
+    @classmethod
+    def _check_zcredit_terminal(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_terminal_number
+
+        return validate_terminal_number(v)
+
+    @field_validator("zcredit_pinpad_id")
+    @classmethod
+    def _check_zcredit_pinpad(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import clean_pinpad_id
+
+        return clean_pinpad_id(v)
+
+    @field_validator("zcredit_mode")
+    @classmethod
+    def _check_zcredit_mode(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_mode
+
+        return validate_mode(v)
+
+    # The secrets are checked in the router (payment_secrets.secret_patch), not here: a
+    # validation error would echo the value back in its `input`, and into the error log.
 
     @field_validator("clearing_server")
     @classmethod

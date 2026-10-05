@@ -73,7 +73,9 @@ def request_shop_till_z(
     for machine in machines:
         check_shift_admin_access(db, machine, current_user, active_tenant_id)
     try:
-        requests = till_z.request_for_shop(db, current_user, shop, machines)
+        requests = till_z.request_for_shop(
+            db, current_user, shop, machines, force=bool(body.force) if body is not None else False
+        )
     except till_z.TillZRefused as refused:
         db.rollback()
         return JSONResponse(status_code=refused.status_code, content=refused.body)

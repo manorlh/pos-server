@@ -14,6 +14,9 @@ POST   /promotions/{id}/duplicate     → a paused copy
 DELETE /promotions/{id}
 GET    /reports/promotions            → times applied and discount, by promotion, shop,
                                         till and day
+GET    /reports/discounts             → OTH ("על חשבון הבית") by item, employee, reason,
+                                        till and day; club discounts by till and day
+                                        (app/services/discounts_report.py)
 
 Till (machine JWT, like its other pulls):
 
@@ -172,6 +175,28 @@ def get_promotions_report(
         db, current_user, active_tenant_id, window,
         shop_id=shop_id, machine_id=machine_id, promotion_id=promotion_id,
     )
+
+
+@router.get("/reports/discounts")
+def get_discounts_report(
+    from_date: Optional[date] = Query(None, alias="from"),
+    to_date: Optional[date] = Query(None, alias="to"),
+    from_hour: Optional[int] = Query(None, alias="fromHour"),
+    to_hour: Optional[int] = Query(None, alias="toHour"),
+    tz: Optional[str] = Query(None),
+    shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
+    machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """OTH ("על חשבון הבית") and club discounts ("הנחת מועדון") over the window's sales."""
+    from app.services.discounts_report import build_discounts_report
+
+    window = resolve_report_window(
+        db, active_tenant_id, from_date=from_date, to_date=to_date, from_hour=from_hour, to_hour=to_hour, tz=tz
+    )
+    return build_discounts_report(db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id)
 
 
 # ── The till's side ───────────────────────────────────────────────────────────

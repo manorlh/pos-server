@@ -52,6 +52,7 @@ from app.services.areas import get_area
 from app.models.pos_machine import POSMachine
 from app.routers.machines import _machine_for_read
 from app.services.terminal_status import machine_terminal_fields, terminal_settings_for
+from app.services import payment_integration, payment_secrets
 
 router = APIRouter(tags=["settings"])
 
@@ -236,14 +237,37 @@ def _check_z_scope_write(user: User, data: PosSettingsV1Patch, stored: Any) -> N
 def _build_patch(data: PosSettingsV1Patch, user: User) -> Dict[str, Any]:
     branding = _branding_patch(data)
     _check_branding_write(user, branding)
-    return {
+    return payment_integration.normalize_patch({
         **patch_to_camel_dict(data),
         **branding,
         **_payment_options_patch(data),
         **_sell_screen_patch(data),
         **_refund_settings_patch(data),
         **_tip_settings_patch(data),
-    }
+        # The integration type and Z-Credit's fields: `null` resets, "auto" is not stored.
+        **payment_integration.resettable_patch(data),
+    })
+
+
+def _secret_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
+    """The write-only secrets in a PATCH (`zcreditPassword`…), apart from the settings JSON."""
+    try:
+        return payment_secrets.secret_patch(data)
+    except payment_secrets.PaymentSecretError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": exc.code, "msg": "A secret must be at most 200 characters, with no control characters."},
+        )
+
+
+def _store_secrets(db: Session, level: str, entity: Any, secrets: Dict[str, Any], user: User) -> None:
+    """Store a layer's secrets encrypted (app/services/payment_secrets.py), never in its JSON."""
+    if not secrets:
+        return
+    tenant_id = entity.id if level == "tenant" else getattr(entity, "tenant_id", None)
+    payment_secrets.apply_secret_patch(
+        db, level, entity.id, secrets, tenant_id=tenant_id, user_id=getattr(user, "id", None)
+    )
 
 
 #: Stable code for the dashboard to match on; the message is for people and may change.
@@ -358,7 +382,8 @@ def patch_tenant_settings(
     _check_z_scope_write(current_user, data, tenant.settings)
     _guard_z_scope_change(db, data, tenant.settings, lambda: _tenant_tills(db, tenant.id), default="shop")
     patch = _build_patch(data, current_user)
-    if not patch:
+    secrets = _secret_patch(data)
+    if not patch and not secrets:
         return EntitySettingsResponse(
             settings=tenant.settings or {},
             settings_updated_at=tenant.settings_updated_at,
@@ -366,6 +391,7 @@ def patch_tenant_settings(
 
     _check_leaves_a_payment_option([], tenant.settings, patch)
     tenant.settings = patch_settings_json(tenant.settings, patch)
+    _store_secrets(db, "tenant", tenant, secrets, current_user)
     tenant.settings_updated_at = utc_now()
     db.commit()
     db.refresh(tenant)
@@ -426,7 +452,8 @@ def patch_company_settings(
 
     _refuse_tenant_only_keys(data)
     patch = _build_patch(data, current_user)
-    if not patch:
+    secrets = _secret_patch(data)
+    if not patch and not secrets:
         return EntitySettingsResponse(
             settings=company.settings or {},
             settings_updated_at=company.settings_updated_at,
@@ -436,6 +463,7 @@ def patch_company_settings(
         [_settings_of(_tenant_of(company, db))], company.settings, patch
     )
     company.settings = patch_settings_json(company.settings, patch)
+    _store_secrets(db, "company", company, secrets, current_user)
     company.settings_updated_at = utc_now()
     db.commit()
     db.refresh(company)
@@ -501,7 +529,8 @@ def patch_shop_settings(
 
     _refuse_tenant_only_keys(data)
     patch = _build_patch(data, current_user)
-    if not patch:
+    secrets = _secret_patch(data)
+    if not patch and not secrets:
         return ShopSettingsResponse(
             settings=shop.settings or {},
             settings_updated_at=shop.settings_updated_at,
@@ -513,6 +542,7 @@ def patch_shop_settings(
         [_settings_of(tenant), _settings_of(company)], shop.settings, patch
     )
     shop.settings = patch_settings_json(shop.settings, patch)
+    _store_secrets(db, "shop", shop, secrets, current_user)
     shop.settings_updated_at = utc_now()
     db.commit()
     db.refresh(shop)
@@ -592,7 +622,8 @@ def patch_area_settings(
     _check_shop_settings_write(current_user, shop, db)
     _refuse_tenant_only_keys(data)
     patch = _build_patch(data, current_user)
-    if not patch:
+    secrets = _secret_patch(data)
+    if not patch and not secrets:
         return AreaSettingsResponse(
             settings=area.settings or {},
             settings_updated_at=area.settings_updated_at,
@@ -604,6 +635,7 @@ def patch_area_settings(
         [_settings_of(tenant), _settings_of(company), _settings_of(shop)], area.settings, patch
     )
     area.settings = patch_settings_json(area.settings, patch)
+    _store_secrets(db, "area", area, secrets, current_user)
     area.settings_updated_at = utc_now()
     db.commit()
     db.refresh(area)
@@ -679,7 +711,10 @@ def patch_machine_settings(
     machine = _machine_for_read(db, machine_id, current_user, active_tenant_id)
     _refuse_tenant_only_keys(data)
     patch = _build_patch(data, current_user)
-    if not patch:
+    # A till without a terminal of its own (a P18) may only be given an external one.
+    payment_integration.check_machine_choice(machine, patch)
+    secrets = _secret_patch(data)
+    if not patch and not secrets:
         return MachineSettingsResponse(
             settings=machine.settings or {},
             settings_updated_at=machine.settings_updated_at,
@@ -692,6 +727,7 @@ def patch_machine_settings(
         patch,
     )
     machine.settings = patch_settings_json(machine.settings, patch)
+    _store_secrets(db, "machine", machine, secrets, current_user)
     machine.settings_updated_at = utc_now()
     db.commit()
     db.refresh(machine)

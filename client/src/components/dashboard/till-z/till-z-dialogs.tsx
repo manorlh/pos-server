@@ -37,6 +37,7 @@ import {
   useTillZRequest,
   ZModeBadge,
 } from './till-z-request';
+import { ForceCloseOption } from '@/components/dashboard/z-wizard/force-close-option';
 
 /** Whether this till can be asked for its own Z now. */
 export function canRequestTillZ(m: PosMachine): boolean {
@@ -60,12 +61,16 @@ export function RequestTillZDialog({
   const qc = useQueryClient();
   const refresh = useRefreshAfterTillZ();
   const [created, setCreated] = useState<TillZRequest | null>(null);
+  const [force, setForce] = useState(false);
 
   // A fresh dialog for each opening: the last till's request must not show on the next.
   const [wasOpen, setWasOpen] = useState(open);
   if (wasOpen !== open) {
     setWasOpen(open);
-    if (open) setCreated(null);
+    if (open) {
+      setCreated(null);
+      setForce(false);
+    }
   }
   const handleOpenChange = (next: boolean) => {
     if (!next) setCreated(null);
@@ -80,7 +85,7 @@ export function RequestTillZDialog({
   );
 
   const create = useMutation({
-    mutationFn: () => requestMachineTillZ(machine!.id),
+    mutationFn: () => requestMachineTillZ(machine!.id, force),
     onSuccess: (next) => {
       qc.setQueryData(['till-z-request', next.id], next);
       setCreated(next);
@@ -119,6 +124,7 @@ export function RequestTillZDialog({
               <p className="text-amber-700 dark:text-amber-400">{t('confirmOffline')}</p>
             ) : null}
             <p className="text-muted-foreground text-xs">{t('cardHint')}</p>
+            <ForceCloseOption checked={force} onChange={setForce} className="pt-1" />
           </div>
         ) : (
           <div className="space-y-2">

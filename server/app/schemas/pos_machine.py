@@ -301,6 +301,14 @@ class POSMachineResponse(POSMachineBase):
     pinpad_required: Optional[bool] = Field(None, alias="pinpadRequired")
     #: It does, and no level gives it an address: the machines page asks for one.
     pinpad_address_missing: Optional[bool] = Field(None, alias="pinpadAddressMissing")
+    # ── "סוג אינטגרציית אשראי" (app/services/payment_integration.py) ────────────
+    #: agamento | nayax_lan | zcredit: what the till charges on.
+    payment_integration: Optional[str] = Field(None, alias="paymentIntegration")
+    #: The level that chose it ("tenant" … "machine"); null = automatic.
+    payment_integration_source: Optional[str] = Field(None, alias="paymentIntegrationSource")
+    payment_integration_automatic: Optional[bool] = Field(None, alias="paymentIntegrationAutomatic")
+    #: The fields it still needs ("zcreditTerminalNumber", "nayaxDeviceHost", …).
+    payment_integration_missing: List[str] = Field(default_factory=list, alias="paymentIntegrationMissing")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 

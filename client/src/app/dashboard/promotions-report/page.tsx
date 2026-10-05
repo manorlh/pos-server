@@ -20,6 +20,7 @@ import {
   type PromotionsReport,
 } from '@/lib/promotionsApi';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
+import { OthClubReport } from '@/components/dashboard/discounts/oth-club-report';
 import { ReportFilters, type ReportFiltersState } from '@/components/dashboard/report-filters';
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 import { ReportErrorState, ReportWindowSummary } from '@/components/dashboard/report-window-summary';
@@ -180,6 +181,8 @@ export default function PromotionsReportPage() {
             )}
           </div>
         ) : null}
+        {/* OTH ("על חשבון הבית") and the club discount, over the same window and scope. */}
+        <OthClubReport params={params} />
       </ScopeGate>
     </div>
   );

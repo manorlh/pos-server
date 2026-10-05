@@ -34,7 +34,8 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Sequence, Tuple
+from decimal import Decimal
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -62,7 +63,11 @@ from app.services.z_builder import (
     unreported_shifts,
 )
 from app.services.z_runs import Z_RUN_TTL_HOURS, _initiator
-from app.services.z_sequence import lock_machine_z_sequence
+from app.services.z_sequence import (
+    claim_machine_z_number,
+    lock_machine_z_sequence,
+    machine_z_number_holder,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +270,9 @@ def produce_till_z(
     if z_mode_of(machine) != Z_MODE_TILL:
         raise _conflict("till_z_disabled")
 
+    if body.offline is not None:
+        return _produce_offline(db, machine, body, now)
+
     shop_id, included = _included(db, machine, body)
     if not included:
         named = _find_pending_for_till(db, machine, body.till_z_request_id)
@@ -308,9 +316,267 @@ def produce_till_z(
         raise _conflict(refused.code)
     if z.totals_mismatch:
         logger.warning("till Z %s of machine %s: the till's figures differ %s", z.id, machine.id, body.till)
+    _note_card_transmission(db, machine, z, body)
     _complete_requests(db, machine, z, body.till_z_request_id, now)
     db.flush()
     return z, "created"
+
+
+# ── A Z closed at the till with no connection (docs/SPEC_OFFLINE_TILL_Z.md) ───
+
+
+#: What a refusal of an offline Z means to the till: wait and upload again, or a
+#: conflict a person has to settle (the Z stays pending on the till).
+OFFLINE_RETRY_DETAILS = ("shift_not_closed", "shift_unknown")
+
+#: The till's §3.3 keys and the per-till section's key holding the same quantity.
+#: `totalSales` is the till's gross (before document discounts), as on a close.
+OFFLINE_COMPARED = (
+    ("totalSales", "grossSales"),
+    ("totalDiscounts", "discountsTotal"),
+    ("totalRefunds", "totalRefunds"),
+    ("totalCash", "totalCash"),
+    ("totalCard", "totalCard"),
+    ("totalExchange", "totalExchange"),
+    ("totalTips", "totalTips"),
+    ("vatTotal", "vatTotal"),
+    ("transactionsCount", "transactionsCount"),
+)
+
+#: Drawer figures compared from the section the till printed, when it sent them.
+OFFLINE_COMPARED_DRAWER = ("openingCash", "expectedCash", "countedCash", "overShort")
+
+_CENT = Decimal("0.01")
+
+
+def _as_decimal(value: Any) -> Optional[Decimal]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        out = Decimal(str(value))
+    except (ArithmeticError, ValueError):
+        return None
+    return out if out.is_finite() else None
+
+
+def _differs(till_value: Any, cloud_value: Any) -> bool:
+    ours, theirs = _as_decimal(cloud_value), _as_decimal(till_value)
+    if theirs is None and ours is None:
+        return False
+    if theirs is None or ours is None:
+        return True
+    return abs(ours - theirs) > _CENT
+
+
+def offline_discrepancies(
+    *,
+    number: int,
+    counter_before: int,
+    till_totals: Optional[dict],
+    till_report: Optional[dict],
+    till_shift_ids: Sequence[Any],
+    cloud_shift_ids: Sequence[Any],
+    till_first_document: Optional[str],
+    till_last_document: Optional[str],
+    section: dict,
+) -> List[dict]:
+    """
+    Where a Z closed offline differs from what the cloud built from the documents, as
+    `{key, till, cloud}` — empty when it agrees. Pure.
+
+    Compared: the number against the till's run (a jump), the shifts, the document range,
+    the §3.3 figures the till sent (money to the agora), and the drawer figures of the
+    section it printed. A key the till did not send is not a claim and is not compared.
+    """
+    out: List[dict] = []
+    if number != counter_before + 1:
+        out.append({"key": "machineSequenceNumber", "till": number, "cloud": counter_before + 1})
+    till_ids = [str(i) for i in till_shift_ids]
+    cloud_ids = [str(i) for i in cloud_shift_ids]
+    if set(till_ids) != set(cloud_ids):
+        out.append({"key": "shiftIds", "till": till_ids, "cloud": cloud_ids})
+    for key, value in (("firstDocumentNumber", till_first_document), ("lastDocumentNumber", till_last_document)):
+        cloud = section.get(key)
+        if value is not None and str(value) != (None if cloud is None else str(cloud)):
+            out.append({"key": key, "till": value, "cloud": cloud})
+    for till_key, section_key in OFFLINE_COMPARED:
+        if not till_totals or till_key not in till_totals or till_totals[till_key] is None:
+            continue
+        if _differs(till_totals[till_key], section.get(section_key)):
+            out.append({"key": till_key, "till": till_totals[till_key], "cloud": section.get(section_key)})
+    for key in OFFLINE_COMPARED_DRAWER:
+        if not till_report or key not in till_report:
+            continue
+        if _differs(till_report.get(key), section.get(key)):
+            out.append({"key": key, "till": till_report.get(key), "cloud": section.get(key)})
+    return out
+
+
+def _produce_offline(db: Session, machine: POSMachine, body: TillZIn, now: datetime) -> Tuple[ZReport, str]:
+    """
+    A Z the till closed with no connection (§6.1), under the counter lock the caller took
+    and after its duplicate and mode checks. Its number and id are the till's; its figures
+    are built here from the documents, and every difference from the till's paper is
+    kept and reported (`offline_z_gap`) — never silently overwritten.
+    """
+    off = body.offline
+    number = off.machine_sequence_number
+    if db.query(ZReport.id).filter(ZReport.id == off.id).first() is not None:
+        raise _conflict("offline_z_id_conflict", zReportId=str(off.id))
+    holder = machine_z_number_holder(db, machine.id, number)
+    if holder is not None:
+        from app.services.z_sequence import last_machine_z_number
+
+        raise _conflict(
+            "offline_z_number_taken",
+            zNumber=number,
+            takenByZReportId=str(holder.id),
+            nextNumber=last_machine_z_number(db, machine.id) + 1,
+        )
+    taken = (
+        db.query(Shift)
+        .filter(Shift.id.in_(list(off.shift_ids)), Shift.z_report_id.isnot(None))
+        .first()
+    )
+    if taken is not None:
+        raise _conflict(
+            "offline_z_shift_in_another_z", shiftId=str(taken.id), zReportId=str(taken.z_report_id)
+        )
+    shop_id, included = _included(db, machine, body.model_copy(update={"through_shift_id": off.shift_ids[-1]}))
+    if not included:  # pragma: no cover - the check above found none of them taken
+        raise _conflict("offline_z_shift_in_another_z", shiftId=str(off.shift_ids[-1]))
+    item = live_z_run_item(db, machine.id)
+    if item is not None:
+        raise _conflict(f"z_run_in_progress:{item.run_id}")
+
+    closed_at = _aware(off.closed_at)
+    counter_before = claim_machine_z_number(db, machine.id, number)
+    named = _find_pending_for_till(db, machine, body.till_z_request_id)
+    try:
+        z = build_z(
+            db,
+            tenant_id=machine.tenant_id,
+            shop_id=shop_id,
+            selections=[(machine, included[-1].id)],
+            created_by_user_id=named.created_by_user_id if named is not None else None,
+            created_by_name=body.created_by_name,
+            created_by_pos_user_id=body.created_by_user_id,
+            client_request_id=body.client_request_id,
+            till_totals=body.till,
+            unattended=body.unattended,
+            origin=ZOrigin.TILL,
+            now=closed_at,
+            z_id=off.id,
+            machine_sequence_number=number,
+            allow_empty=True,
+        )
+    except ZBuildRefused as refused:
+        logger.warning("offline till Z %s of machine %s refused: %s", off.id, machine.id, refused.code)
+        raise _conflict(refused.code)
+    z.built_offline = True
+    z.uploaded_at = now
+    z.offline_report = {
+        "machineSequenceNumber": number,
+        "closedAt": closed_at.isoformat(),
+        "businessDate": off.business_date.isoformat() if off.business_date else None,
+        "shiftIds": [str(i) for i in off.shift_ids],
+        "firstDocumentNumber": off.first_document_number,
+        "lastDocumentNumber": off.last_document_number,
+        "report": off.report,
+        "till": body.till,
+    }
+    section = (z.per_machine or [{}])[0]
+    found = offline_discrepancies(
+        number=number,
+        counter_before=counter_before,
+        till_totals=body.till,
+        till_report=off.report,
+        till_shift_ids=off.shift_ids,
+        cloud_shift_ids=[s.id for s in included],
+        till_first_document=off.first_document_number,
+        till_last_document=off.last_document_number,
+        section=section,
+    )
+    z.offline_discrepancies = found or None
+    if found:
+        logger.warning(
+            "offline till Z %s (#%s) of machine %s differs from the cloud: %s", z.id, number, machine.id, found
+        )
+        _record_safely(
+            db, machine,
+            exception_type="offline_z_gap",
+            key=f"offline_z_gap:{z.id}",
+            occurred_at=closed_at,
+            details={
+                "zReportId": str(z.id),
+                "zNumber": number,
+                "closedAt": closed_at.isoformat(),
+                "uploadedAt": now.isoformat(),
+                "discrepancies": found,
+                # The line the exceptions list shows.
+                "summary": f"Z מס׳ {number}: " + ", ".join(
+                    f"{d['key']} — קופה {_shown(d['till'])} / ענן {_shown(d['cloud'])}" for d in found[:4]
+                ),
+            },
+            pos_user_id=body.created_by_user_id,
+        )
+    _note_card_transmission(db, machine, z, body)
+    _complete_requests(db, machine, z, body.till_z_request_id, now)
+    db.flush()
+    return z, "created"
+
+
+def _shown(value: Any) -> str:
+    """One side of a discrepancy, short: a list of shifts by its count."""
+    if isinstance(value, list):
+        return f"{len(value)} משמרות"
+    return "—" if value is None else str(value)
+
+
+def _record_safely(db: Session, machine: POSMachine, **kwargs) -> None:
+    """An exception about a Z; a failure to record it never refuses the Z."""
+    from app.services.exceptions import record_z_exception
+
+    try:
+        record_z_exception(db, machine, **kwargs)
+    except Exception:  # noqa: BLE001 - the Z is what matters; the log keeps the rest
+        logger.exception("could not record %s for machine %s", kwargs.get("exception_type"), machine.id)
+
+
+#: A transmission at a Z that did not go through.
+TRANSMISSION_FAILED_OUTCOMES = ("failed", "unknown", "busy")
+
+
+def _note_card_transmission(db: Session, machine: POSMachine, z: ZReport, body: TillZIn) -> None:
+    """
+    The card transmission the till ran before the Z, kept on it (§7.3). One that failed
+    — closed on the cashier's confirmation, or unattended — is an exception.
+    """
+    report = body.card_transmission
+    if not isinstance(report, dict) or not report:
+        return
+    z.card_transmission = report
+    if str(report.get("outcome") or "").lower() in TRANSMISSION_FAILED_OUTCOMES:
+        _record_safely(
+            db, machine,
+            exception_type="z_transmission_failed",
+            key=f"z_transmission_failed:{z.id}",
+            occurred_at=z.closed_at,
+            details={
+                "zReportId": str(z.id),
+                "zNumber": z.machine_sequence_number,
+                **report,
+                "summary": " · ".join(
+                    part for part in (
+                        f"Z מס׳ {z.machine_sequence_number}",
+                        str(report.get("statusMessage") or report.get("error") or report.get("outcome") or ""),
+                        f"אישר: {report['confirmedByName']}" if report.get("confirmedByName") else "",
+                    ) if part
+                ),
+            },
+            amount=report.get("amount"),
+            pos_user_id=body.created_by_user_id,
+        )
 
 
 def _complete_requests(
@@ -378,17 +644,23 @@ def _check_requestable(machine: POSMachine) -> None:
 
 
 def request_for_machine(
-    db: Session, user: User, machine: POSMachine, *, now: Optional[datetime] = None
+    db: Session, user: User, machine: POSMachine, *, force: bool = False, now: Optional[datetime] = None
 ) -> Tuple[TillZRequest, bool]:
     """
     Ask one till for its Z. Returns `(request, created)`: a till that already has a
-    pending request gets that one back — it is never sent a second instruction.
+    pending request gets that one back — it is never sent a second instruction, except
+    that asking again with `force` ("כפה סגירה (גם באמצע מכירה)", docs/SPEC_OFFLINE_TILL_Z.md
+    §9) makes the pending one forced and says so to the till again.
     """
     now = _now(now)
     expire_overdue(db, now=now)
     _check_requestable(machine)
     existing = _pending_query(db, machine.id).order_by(TillZRequest.created_at.asc()).first()
     if existing is not None:
+        if force and not existing.force_close:
+            existing.force_close = True
+            db.flush()
+            _send(machine, existing, now)
         return existing, False
     req = TillZRequest(
         id=uuid.uuid4(),
@@ -398,6 +670,7 @@ def request_for_machine(
         created_by_user_id=user.id,
         initiated_by=_initiator(user),
         status=S.WAITING,
+        force_close=bool(force),
         expires_at=now + timedelta(hours=TILL_Z_REQUEST_TTL_HOURS),
         created_at=now,
         updated_at=now,
@@ -424,7 +697,13 @@ def shop_till_z_machines(db: Session, shop: Shop) -> List[POSMachine]:
 
 
 def request_for_shop(
-    db: Session, user: User, shop: Shop, machines: Sequence[POSMachine], *, now: Optional[datetime] = None
+    db: Session,
+    user: User,
+    shop: Shop,
+    machines: Sequence[POSMachine],
+    *,
+    force: bool = False,
+    now: Optional[datetime] = None,
 ) -> List[TillZRequest]:
     """
     One request per till (the pending one where it has one). Every till is checked
@@ -437,7 +716,7 @@ def request_for_shop(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"machine_not_in_shop:{machine.id}"
             )
         _check_requestable(machine)
-    return [request_for_machine(db, user, machine, now=now)[0] for machine in machines]
+    return [request_for_machine(db, user, machine, force=force, now=now)[0] for machine in machines]
 
 
 def _send(machine: POSMachine, req: TillZRequest, now: datetime) -> None:
@@ -446,7 +725,10 @@ def _send(machine: POSMachine, req: TillZRequest, now: datetime) -> None:
     if not machine.tenant_id or not is_online(machine.last_heartbeat_at, now=now):
         # Offline is a delay, not a failure: the heartbeat hands it over on the next beat.
         return
-    publish_till_z_notify(str(machine.tenant_id), str(machine.id), str(req.id), req.initiated_by or "")
+    publish_till_z_notify(
+        str(machine.tenant_id), str(machine.id), str(req.id), req.initiated_by or "",
+        force=bool(req.force_close),
+    )
     req.sent_at = now
 
 
@@ -554,11 +836,15 @@ def take_pending(db: Session, machine: POSMachine, *, now: Optional[datetime] = 
         return None
     if req.sent_at is None:
         req.sent_at = now
-    return {
+    out = {
         "requestId": str(req.id),
         "initiatedBy": req.initiated_by,
         "createdAt": _aware(req.created_at).isoformat() if req.created_at else None,
     }
+    if req.force_close:
+        # "Even mid-sale" (docs/SPEC_OFFLINE_TILL_Z.md §9); absent = as always.
+        out["force"] = True
+    return out
 
 
 def pending_by_machine(db: Session, machine_ids: List[uuid.UUID]) -> Dict[uuid.UUID, uuid.UUID]:
@@ -604,5 +890,6 @@ def request_to_out(db: Session, req: TillZRequest, *, now: Optional[datetime] = 
         "completedAt": req.completed_at,
         "zReportId": req.z_report_id,
         "machineSequenceNumber": z.machine_sequence_number if z is not None else None,
+        "force": bool(req.force_close),
         **till_backlog(machine, now=now),
     }

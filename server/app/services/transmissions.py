@@ -29,8 +29,8 @@ from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from fastapi import HTTPException, status
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, case, func, select
+from sqlalchemy.orm import Session, aliased
 
 from app.models.card_transmission import (
     CardTransmission,
@@ -341,6 +341,43 @@ def mark_legs_on_ingest(db: Session, machine: POSMachine, legs: Iterable[Tuple[u
 # ── Our records: untransmitted card legs ──────────────────────────────────────
 
 
+def _charged_expr():
+    """
+    A card leg as the terminal's batch holds it: the goods it paid for plus the document's
+    card tip, which the terminal charged on the same card (a tip at the till, or one the
+    terminal asked for — "טיפ במסופון"). A tip is not a leg in the ledger, but it is in the
+    batch, and the untransmitted figure is read against the terminal's. Added to the card
+    leg that settled the document (its last), so a tip is never counted twice — as the
+    till's own pending figure does (TransmissionStores.kt, PENDING_LEGS_SQL).
+    """
+    other = aliased(TransactionPayment)
+    last_card = (
+        select(func.max(other.sequence))
+        .where(other.transaction_id == TransactionPayment.transaction_id, other.method == CARD_METHOD)
+        .scalar_subquery()
+    )
+    return TransactionPayment.amount + case(
+        (
+            and_(Transaction.tip_payment_method == CARD_METHOD, TransactionPayment.sequence == last_card),
+            func.coalesce(Transaction.tip_amount, 0),
+        ),
+        else_=0,
+    )
+
+
+def _charged_by_leg(db: Session, leg_ids: Sequence[uuid.UUID]) -> Dict[uuid.UUID, Decimal]:
+    """[_charged_expr] for these legs."""
+    if not leg_ids:
+        return {}
+    rows = (
+        db.query(TransactionPayment.id, _charged_expr())
+        .join(Transaction, Transaction.id == TransactionPayment.transaction_id)
+        .filter(TransactionPayment.id.in_(list(leg_ids)))
+        .all()
+    )
+    return {r[0]: Decimal(r[1]).quantize(Decimal("0.01")) for r in rows}
+
+
 def _untransmitted_query(db: Session):
     """Card legs with a uid, in no successful batch, after their till's tracking start."""
     return (
@@ -368,7 +405,7 @@ def untransmitted_summary(
         db.query(
             Transaction.machine_id,
             func.count(TransactionPayment.id),
-            func.coalesce(func.sum(TransactionPayment.amount), 0),
+            func.coalesce(func.sum(_charged_expr()), 0),
             func.min(Transaction.created_at),
         )
         .select_from(TransactionPayment)
@@ -399,6 +436,7 @@ def untransmitted_items(db: Session, machine: POSMachine) -> List[dict]:
         .order_by(Transaction.created_at.asc(), TransactionPayment.sequence.asc())
         .all()
     )
+    charged = _charged_by_leg(db, [leg.id for leg, _tx in rows])
     out = []
     for leg, tx in rows:
         meta = leg.nayax_meta if isinstance(leg.nayax_meta, dict) else {}
@@ -410,7 +448,8 @@ def untransmitted_items(db: Session, machine: POSMachine) -> List[dict]:
                 "createdAt": _utc(tx.created_at),
                 "shiftId": str(tx.shift_id) if tx.shift_id else None,
                 "legId": str(leg.id),
-                "amount": money(leg.amount),
+                # As the terminal charged it: the card tip included (see _charged_expr).
+                "amount": money(charged.get(leg.id, leg.amount)),
                 "approvalNumber": approval_number_of(meta),
                 "terminalTransactionId": leg.terminal_uid,
                 "cardLast4": card_last4_of(meta),
@@ -727,7 +766,9 @@ def period_block(
         "cardLegs": card_legs,
         "transmittedLegs": len(transmitted),
         "untransmittedLegs": len(untransmitted),
-        "untransmittedAmount": money(sum((leg.amount for leg in untransmitted), ZERO)),
+        "untransmittedAmount": money(sum(
+            (amount for amount in _charged_by_leg(db, [leg.id for leg in untransmitted]).values()), ZERO,
+        )),
         "untrackedLegs": len(untracked),
         "tillPendingCount": machine.transmission_pending_count if reported else None,
         "tillPendingAmount": money(machine.transmission_pending_amount) if reported else None,

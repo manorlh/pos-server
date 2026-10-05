@@ -18,6 +18,7 @@ import { daysBackIso, todayIso } from '@/lib/reportWindow';
 import { cn } from '@/lib/utils';
 import { deleteUpsell, fetchUpsellReport, fetchUpsells, type UpsellReport, type UpsellRule } from '@/lib/menuApi';
 import { UpsellEditorDialog } from '@/components/dashboard/menu/upsell-editor';
+import { MenuBroadcastBanner } from '@/components/dashboard/menu/broadcast-banner';
 import { IosCanvas, IosCard, IosFootnote, IosSectionHeader, IosTag, IosTextButton } from '@/components/dashboard/menu/ios';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -60,6 +61,7 @@ export default function UpsellsPage() {
 
   return (
     <div className="space-y-4">
+      <MenuBroadcastBanner />
       <div>
         <h1 className="text-2xl font-bold">{t('title')}</h1>
         <p className="text-sm text-muted-foreground">{t('subtitle')}</p>

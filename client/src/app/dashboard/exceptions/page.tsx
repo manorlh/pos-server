@@ -58,6 +58,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { othExceptionLine } from '@/components/dashboard/discounts/oth-club-report';
 
 const PAGE_SIZE = 50;
 const ANY = '__any__';
@@ -80,6 +81,10 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   table_cancelled: 'bg-red-200 text-red-950 dark:bg-red-900 dark:text-red-100',
   reprint: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
   user_session_release: 'bg-cyan-100 text-cyan-900 dark:bg-cyan-950 dark:text-cyan-200',
+  oth: 'bg-pink-100 text-pink-900 dark:bg-pink-950 dark:text-pink-200',
+  offline_z_gap: 'bg-amber-200 text-amber-950 dark:bg-amber-900 dark:text-amber-100',
+  z_transmission_failed: 'bg-yellow-200 text-yellow-950 dark:bg-yellow-900 dark:text-yellow-100',
+  forced_z_close: 'bg-rose-200 text-rose-950 dark:bg-rose-900 dark:text-rose-100',
 };
 
 function TypeBadge({ type }: { type: ExceptionType }) {
@@ -588,7 +593,12 @@ function ExceptionRow({
 }) {
   const t = useTranslations('exceptions');
   const measure = useMeasure()(row);
-  const detail = row.type === 'table_cancelled' ? tableCancelLine(row.details ?? {}, t) : detailLine(row);
+  const detail =
+    row.type === 'table_cancelled'
+      ? tableCancelLine(row.details ?? {}, t)
+      : row.type === 'oth'
+        ? othExceptionLine(row.details ?? {}, (name) => t('tableCancel.approvedBy', { name }))
+        : detailLine(row);
   const till = [row.machineName, row.posNumber ? t('register', { n: row.posNumber }) : null]
     .filter(Boolean)
     .join(' · ');

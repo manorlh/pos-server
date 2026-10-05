@@ -20,6 +20,13 @@ MANAGED_SETTING_KEYS = (
     "nayaxDeviceHost",
     "nayaxDevicePort",
     "nayaxSpicyPath",
+    # "סוג אינטגרציית אשראי" and Z-Credit's non-secret fields
+    # (app/services/payment_integration.py). The password is not a setting: it lives
+    # encrypted apart (payment_secrets.py) and only the till's sync adds it.
+    "paymentIntegration",
+    "zcreditTerminalNumber",
+    "zcreditPinpadId",
+    "zcreditMode",
     "outOfStockPolicy",
     "tipsEnabled",
     "cashTipsEnabled",

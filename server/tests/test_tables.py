@@ -1618,6 +1618,13 @@ class TestAskGuests:
         assert TP.till_parameters_for_machine(w.db, w.a).parameters.get("tablesAskGuests") is False
         assert TP.till_parameters_for_machine(w.db, w.b).parameters.get("tablesAskGuests") is True
 
+    def test_the_tablet_cash_box_is_on_by_default_and_switched_off_per_layer(self, w):
+        spec = w.params["cashChangeInPanel"]
+        assert (spec.value_type, spec.label) == ("boolean", "מזומן עם חישוב עודף בפאנל ההזמנה (טאבלט)")
+        assert TP.till_parameters_for_machine(w.db, w.a).parameters.get("cashChangeInPanel") is True
+        set_param(w, "cashChangeInPanel", "shop", w.shop.id, False)
+        assert TP.till_parameters_for_machine(w.db, w.a).parameters.get("cashChangeInPanel") is False
+
 
 def test_the_migration_is_a_single_head():
     from alembic.config import Config

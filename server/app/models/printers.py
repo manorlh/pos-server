@@ -114,6 +114,9 @@ class KitchenPrinter(Base):
     )
     host_connection = Column(String(16), nullable=True)
     paper_width = Column(Integer, nullable=False, default=80, server_default="80")
+    #: "רוחב הדפסה": the dots the head prints across (576 / 512 / 432 / 384); null — by the
+    #: paper (58 → 384, 80 → 576). A head narrower than the raster skews the ticket.
+    print_width_dots = Column(Integer, nullable=True)
     copies = Column(Integer, nullable=False, default=1, server_default="1")
     cut_paper = Column(Boolean, nullable=False, default=True, server_default="true")
     beep = Column(Boolean, nullable=False, default=False, server_default="false")

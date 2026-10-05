@@ -1,13 +1,40 @@
 """Z on the till (`zMode = till`) payloads. The wire contract is docs/SHIFTS_API.md §5."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, List, Literal, Optional
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.shift import finite_json
+
+
+class OfflineTillZIn(BaseModel):
+    """
+    A till Z the till closed with no connection to the cloud, uploaded now
+    (docs/SPEC_OFFLINE_TILL_Z.md §5.5). Numbered by the till; the cloud builds its own
+    figures from the documents and compares.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: The Z's id, made by the till — also the ZReport's id here.
+    id: uuid.UUID
+    machine_sequence_number: int = Field(..., alias="machineSequenceNumber", ge=1, le=10_000_000)
+    closed_at: datetime = Field(..., alias="closedAt")
+    business_date: Optional[date] = Field(None, alias="businessDate")
+    #: The shifts the till took into it, oldest first.
+    shift_ids: List[uuid.UUID] = Field(..., alias="shiftIds", min_length=1, max_length=500)
+    first_document_number: Optional[str] = Field(None, alias="firstDocumentNumber", max_length=64)
+    last_document_number: Optional[str] = Field(None, alias="lastDocumentNumber", max_length=64)
+    #: Its per-till section as the till printed it (§3.6 keys), kept for audit.
+    report: Optional[Dict[str, Any]] = None
+
+    @field_validator("report", mode="before")
+    @classmethod
+    def _finite_report(cls, value):
+        return finite_json(value)
 
 
 class TillZIn(BaseModel):
@@ -33,8 +60,14 @@ class TillZIn(BaseModel):
     training: bool = False
     #: Its number in the till's training run ("ה-3"), with `training`.
     number: Optional[str] = Field(None, max_length=100)
+    #: The card batch transmission the till ran before this Z, with the terminal's answer
+    #: (docs/SPEC_OFFLINE_TILL_Z.md §7.3). Stored on the Z; a confirmed failure is an
+    #: exception.
+    card_transmission: Optional[Dict[str, Any]] = Field(None, alias="cardTransmission")
+    #: A Z closed at the till with no connection (§5.5); absent for a Z asked for online.
+    offline: Optional[OfflineTillZIn] = None
 
-    @field_validator("till", mode="before")
+    @field_validator("till", "card_transmission", mode="before")
     @classmethod
     def _finite_till(cls, value):
         return finite_json(value)
@@ -58,6 +91,17 @@ class ShopTillZIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     machine_ids: Optional[List[uuid.UUID]] = Field(None, alias="machineIds")
+    #: "כפה סגירה (גם באמצע מכירה)" (docs/SPEC_OFFLINE_TILL_Z.md §9).
+    force: bool = False
+
+
+class MachineTillZIn(BaseModel):
+    """`POST /machines/{machineId}/till-z` — optional body."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: "כפה סגירה (גם באמצע מכירה)" (docs/SPEC_OFFLINE_TILL_Z.md §9).
+    force: bool = False
 
 
 class TillZRequestOut(BaseModel):
@@ -85,6 +129,8 @@ class TillZRequestOut(BaseModel):
     #: on a request completed with nothing to report).
     z_report_id: Optional[uuid.UUID] = Field(None, alias="zReportId")
     machine_sequence_number: Optional[int] = Field(None, alias="machineSequenceNumber")
+    #: Asked "even mid-sale" (§9 of docs/SPEC_OFFLINE_TILL_Z.md).
+    force: bool = False
     # The till's last report, as the status light reads it (a reading, not live).
     online: Optional[bool] = None
     pending_documents: Optional[int] = Field(None, alias="pendingDocuments")

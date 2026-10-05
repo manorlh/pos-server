@@ -467,6 +467,13 @@ def create_shop(
         from app.services import training_mode
 
         training_mode.start(db, shop, current_user, check_shifts=False)
+    if data.payment_integration and data.payment_integration != "auto":
+        # "סוג אינטגרציית אשראי" chosen at creation: the shop's layer, so every till in it
+        # charges there until one is set apart (app/services/payment_integration.py).
+        from app.services.settings_merge import patch_settings_json, utc_now
+
+        shop.settings = patch_settings_json(shop.settings, {"paymentIntegration": data.payment_integration})
+        shop.settings_updated_at = utc_now()
     # A new shop receives every product whose "all shops of company X" rule covers it.
     # No till can be paired to it yet, so there is nobody to notify.
     reconcile_shops(db, [shop])

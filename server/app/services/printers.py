@@ -221,6 +221,7 @@ def printer_out(printer: KitchenPrinter, machines: Dict[uuid.UUID, POSMachine] |
         "machineId": str(printer.machine_id) if printer.machine_id else None,
         "machineName": machine_label(narrowed_till),
         "paperWidth": printer.paper_width,
+        "printWidthDots": printer.print_width_dots,
         "copies": printer.copies,
         "cutPaper": bool(printer.cut_paper),
         "beep": bool(printer.beep),
@@ -262,6 +263,7 @@ def apply_printer(db: Session, shop: Shop, printer: KitchenPrinter, body: Printe
     printer.area_id = body.area_id
     printer.machine_id = body.machine_id
     printer.paper_width = body.paper_width
+    printer.print_width_dots = body.print_width_dots
     printer.copies = body.copies
     printer.cut_paper = body.cut_paper
     printer.beep = body.beep
@@ -1225,6 +1227,8 @@ def printer_for_till(
         #: Lines of this till's tickets may route to it (false: listed only as a host).
         "inScope": in_scope,
         "paperWidth": printer.paper_width,
+        #: "רוחב הדפסה": the raster width in dots; null — by the paper.
+        "printWidthDots": printer.print_width_dots,
         "copies": printer.copies,
         "cutPaper": bool(printer.cut_paper),
         "beep": bool(printer.beep),
@@ -1443,6 +1447,7 @@ def _job_printer_block(printer: Optional[KitchenPrinter]) -> Optional[Dict[str, 
         "btAddress": printer.bt_address,
         "btName": printer.bt_name,
         "paperWidth": printer.paper_width,
+        "printWidthDots": printer.print_width_dots,
         "copies": printer.copies,
         "cutPaper": bool(printer.cut_paper),
         "beep": bool(printer.beep),

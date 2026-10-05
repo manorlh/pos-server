@@ -3,6 +3,8 @@
 import { useTranslations } from 'next-intl';
 import type { ZReport } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
+import { formatDateTime } from '@/lib/format';
+import { zTransmissionFailed } from '@/lib/offlineZ';
 
 /**
  * What kind of Z this is, on its face: produced by the till itself (and whether nobody
@@ -30,6 +32,26 @@ export function ZBadges({ z }: { z: ZReport }) {
       {z.totalsMismatch ? (
         <Badge variant="destructive" className="ms-2 text-[11px]" title={t('totalsMismatchNotice')}>
           {t('totalsMismatch')}
+        </Badge>
+      ) : null}
+      {/* Closed at the till with no connection to the cloud (docs/SPEC_OFFLINE_TILL_Z.md). */}
+      {z.builtOffline ? (
+        <Badge
+          variant="outline"
+          className="ms-2 text-[11px] border-amber-500 text-amber-700 dark:text-amber-300"
+          title={t('builtOfflineHint', { at: formatDateTime(z.uploadedAt) })}
+        >
+          {t('builtOffline')}
+        </Badge>
+      ) : null}
+      {z.offlineDiscrepancies && z.offlineDiscrepancies.length > 0 ? (
+        <Badge variant="destructive" className="ms-2 text-[11px]" title={t('offlineGapHint')}>
+          {t('offlineGap')}
+        </Badge>
+      ) : null}
+      {zTransmissionFailed(z.cardTransmission) ? (
+        <Badge variant="destructive" className="ms-2 text-[11px]" title={t('transmissionFailedHint')}>
+          {t('transmissionFailed')}
         </Badge>
       ) : null}
       {z.reconstructed ? (

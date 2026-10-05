@@ -95,6 +95,8 @@ class TerminalSettings:
     #: The merged pinpad address (`nayaxDeviceHost`, `nayaxDevicePort`); None = not set.
     pinpad_host: Optional[str] = None
     pinpad_port: Optional[str] = None
+    #: "סוג אינטגרציית אשראי" as resolved for this till (app/services/payment_integration.py).
+    integration: Optional[Any] = None
 
 
 def _by_id(db: Session, model, ids: Iterable[Any]) -> Dict[Any, Any]:
@@ -115,6 +117,17 @@ def terminal_settings_for(db: Session, machines: List["POSMachine"]) -> Dict[Any
     companies = _by_id(db, Company, (s.company_id for s in shops.values()))
     tenants = _by_id(db, Tenant, (c.tenant_id for c in companies.values()))
     areas = _by_id(db, ShopArea, (getattr(m, "area_id", None) for m in machines))
+    # The integration's secrets (only whether they are set): one query for every layer.
+    from app.services import payment_integration, payment_secrets
+
+    secret_rows = payment_secrets.secrets_for_layers(
+        db,
+        [("tenant", t) for t in tenants]
+        + [("company", c) for c in companies]
+        + [("shop", s) for s in shops]
+        + [("area", a) for a in areas]
+        + [("machine", m.id) for m in machines],
+    )
     out: Dict[Any, TerminalSettings] = {}
     for m in machines:
         shop = shops.get(m.shop_id)
@@ -135,6 +148,15 @@ def terminal_settings_for(db: Session, machines: List["POSMachine"]) -> Dict[Any
                 ("machine", m.settings),
             ]
         sources = settings_sources(layers)
+        if company is None:
+            id_layers = [("machine", m.id)]
+        else:
+            id_layers = payment_integration.secret_layers(tenant, company, shop, area, m)
+        integration = payment_integration.resolve(
+            layers,
+            bool(getattr(m, "has_builtin_terminal", True)),
+            secrets_set=list(payment_secrets.merged_secret_sources(id_layers, secret_rows)),
+        )
         expected = merged.get("expectedTerminalNumber")
         port = merged.get("nayaxDevicePort")
         out[m.id] = TerminalSettings(
@@ -144,6 +166,7 @@ def terminal_settings_for(db: Session, machines: List["POSMachine"]) -> Dict[Any
             pinpad_enabled=merged.get("nayaxEnabled") is True,
             pinpad_host=merged_pinpad_host(merged),
             pinpad_port=str(port).strip() if port is not None and str(port).strip() else None,
+            integration=integration,
         )
     return out
 
@@ -173,4 +196,13 @@ def machine_terminal_fields(machine: "POSMachine", settings: TerminalSettings) -
         "pinpadPort": settings.pinpad_port,
         "pinpadRequired": required,
         "pinpadAddressMissing": required and settings.pinpad_host is None,
+        # "סוג אינטגרציית אשראי": what the till charges on, from which level, and what
+        # it still lacks (the machines page's badge, "חסר: מספר מסוף").
+        **_integration_fields(settings),
     }
+
+
+def _integration_fields(settings: TerminalSettings) -> Dict[str, Any]:
+    from app.services.payment_integration import machine_fields
+
+    return machine_fields(settings.integration)

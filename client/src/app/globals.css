@@ -46,6 +46,26 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+  /* The control board's palette (`--cb-*` below): bg-cb-page, text-cb-ink, bg-cb-blue/10 … */
+  --color-cb-page: var(--cb-page);
+  --color-cb-card: var(--cb-card);
+  --color-cb-line: var(--cb-line);
+  --color-cb-ink: var(--cb-ink);
+  --color-cb-muted: var(--cb-muted);
+  --color-cb-soft: var(--cb-soft);
+  --color-cb-blue: var(--cb-blue);
+  --color-cb-blue-ink: var(--cb-blue-ink);
+  --color-cb-teal: var(--cb-teal);
+  --color-cb-teal-ink: var(--cb-teal-ink);
+  --color-cb-amber: var(--cb-amber);
+  --color-cb-amber-ink: var(--cb-amber-ink);
+  --color-cb-green: var(--cb-green);
+  --color-cb-green-ink: var(--cb-green-ink);
+  --color-cb-red: var(--cb-red);
+  --color-cb-red-ink: var(--cb-red-ink);
+  --color-cb-purple: var(--cb-purple);
+  --color-cb-purple-ink: var(--cb-purple-ink);
+  --color-cb-navy: var(--cb-navy);
 }
 
 :root {
@@ -117,6 +137,78 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+}
+
+/*
+ * The control board (the dashboard's home, app/dashboard/page.tsx): a light blue-grey
+ * page, white cards, blue for the figures, teal for cash, amber for warnings, green for
+ * a till that is up. `*-ink` is the same hue dark enough for text (≥ 4.5:1 on the card);
+ * the plain one is for fills, bars and lines. The board puts `.dark` on itself when the
+ * system is dark, so these follow it even while the rest of the app has no dark theme.
+ */
+:root {
+  --cb-page: #f3f6fb;
+  --cb-card: #ffffff;
+  --cb-line: #e3e8f1;
+  --cb-soft: #eef2f8;
+  --cb-ink: #0f1b3d;
+  --cb-muted: #5b6b82;
+  --cb-navy: #0f1b3d;
+  --cb-blue: #2563eb;
+  --cb-blue-ink: #1d4ed8;
+  --cb-teal: #14b8a6;
+  --cb-teal-ink: #0f766e;
+  --cb-amber: #f59e0b;
+  --cb-amber-ink: #b45309;
+  --cb-green: #22c55e;
+  --cb-green-ink: #15803d;
+  --cb-red: #ef4444;
+  --cb-red-ink: #b91c1c;
+  --cb-purple: #8b5cf6;
+  --cb-purple-ink: #6d28d9;
+  --cb-shadow: 0 1px 2px rgb(15 27 61 / 0.04), 0 6px 20px rgb(15 27 61 / 0.05);
+}
+
+.dark {
+  --cb-page: #0b1220;
+  --cb-card: #131c2e;
+  --cb-line: #26334b;
+  --cb-soft: #1b2639;
+  --cb-ink: #e7edf6;
+  --cb-muted: #9aa8bd;
+  --cb-navy: #e7edf6;
+  --cb-blue: #5b8def;
+  --cb-blue-ink: #8fb2f5;
+  --cb-teal: #11a898;
+  --cb-teal-ink: #5eead4;
+  --cb-amber: #fbbf24;
+  --cb-amber-ink: #fcd34d;
+  --cb-green: #34d399;
+  --cb-green-ink: #6ee7b7;
+  --cb-red: #f87171;
+  --cb-red-ink: #fca5a5;
+  --cb-purple: #9b7bf7;
+  --cb-purple-ink: #c4b5fd;
+  --cb-shadow: none;
+}
+
+/* Inside the board (and its sheets), the shared components take the board's colours. */
+.cb-board {
+  --background: var(--cb-card);
+  --foreground: var(--cb-ink);
+  --card: var(--cb-card);
+  --card-foreground: var(--cb-ink);
+  --popover: var(--cb-card);
+  --popover-foreground: var(--cb-ink);
+  --primary: var(--cb-blue);
+  --muted: var(--cb-soft);
+  --muted-foreground: var(--cb-muted);
+  --accent: var(--cb-soft);
+  --accent-foreground: var(--cb-ink);
+  --border: var(--cb-line);
+  --input: var(--cb-line);
+  --ring: var(--cb-blue);
+  color: var(--cb-ink);
 }
 
 @layer base {

@@ -369,6 +369,9 @@ def build_z(
     client_request_id: Optional[uuid.UUID] = None,
     till_totals: Optional[dict] = None,
     unattended: bool = False,
+    z_id: Optional[uuid.UUID] = None,
+    machine_sequence_number: Optional[int] = None,
+    allow_empty: bool = False,
 ) -> ZReport:
     """
     Build and write one Z over `selections` — (till, through shift id) pairs of one shop.
@@ -390,6 +393,12 @@ def build_z(
 
     The caller owns the transaction: on `ZBuildRefused` nothing has been written, and the
     caller rolls back (or releases its savepoint).
+
+    A till Z closed at the till with no connection (docs/SPEC_OFFLINE_TILL_Z.md §6.1)
+    comes with its own `z_id` and `machine_sequence_number` — the till numbered it and
+    printed it, the caller has already claimed the number (`claim_machine_z_number`) — and
+    `allow_empty`: the paper exists, so a set the cloud finds empty is a discrepancy for
+    the caller to record, not a refusal.
 
     `open_tills_left_out` (`app.services.z_runs.open_tills_left_out`): the tills the
     operator confirmed producing this shop Z without, and who confirmed it. Frozen into
@@ -442,7 +451,7 @@ def build_z(
     overall = compute_totals(db, [s.id for s in all_shifts])
     # No Z on nothing ("אל תאפשר לסגור Z על 0"): refused here, before a number is drawn.
     between = z_cash_summary([shifts for _m, shifts in per_machine])["between_shifts"]
-    if not figures_show_activity(overall, between):
+    if not allow_empty and not figures_show_activity(overall, between):
         raise ZBuildRefused(EMPTY_Z, EMPTY_Z_MESSAGE)
     sections = [
         machine_section(machine, shifts, compute_totals(db, [s.id for s in shifts]))
@@ -465,7 +474,7 @@ def build_z(
             per_machine[0][1][0].business_date if till_z else max(s.business_date for s in all_shifts)
         )
     z = ZReport(
-        id=uuid.uuid4(),
+        id=z_id or uuid.uuid4(),
         tenant_id=tenant_id,
         machine_id=per_machine[0][0].id if till_z else None,
         origin=ZOrigin.TILL if till_z else ZOrigin.CLOUD,
@@ -514,7 +523,9 @@ def build_z(
         ),
         # One run or the other, never both: a till Z is not a number in the shop's run.
         shop_sequence_number=None if till_z else allocate_shop_z_number(db, shop_id),
-        machine_sequence_number=allocate_machine_z_number(db, per_machine[0][0].id) if till_z else None,
+        machine_sequence_number=(
+            (machine_sequence_number or allocate_machine_z_number(db, per_machine[0][0].id)) if till_z else None
+        ),
     )
     if open_tills_left_out and z.header is not None:
         z.header = {**z.header, "openTillsLeftOut": open_tills_left_out}

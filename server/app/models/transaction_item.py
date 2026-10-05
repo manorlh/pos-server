@@ -56,6 +56,13 @@ class TransactionItem(Base):
     details = Column(JSON, nullable=True)
     #: The upsell rule ("הגדלת מכירה") the line was added by, when it was. Not a key.
     upsell_rule_id = Column(UUID(as_uuid=True), nullable=True)
+    #: OTH ("על חשבון הבית", till parameter `othEnabled`): the reason the line was given
+    #: free — a 100% line discount, in `discount` like any other. Null: an ordinary line.
+    oth_reason = Column(String(100), nullable=True)
+    #: The till user who gave it, and who approved it (a till user's or a cloud account's
+    #: id, as the till sent them; free text like `transactions.cashier_id`).
+    oth_by = Column(String(100), nullable=True)
+    oth_approved_by = Column(String(100), nullable=True)
 
     transaction = relationship("Transaction", back_populates="items")
     product = relationship("Product")

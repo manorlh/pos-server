@@ -31,6 +31,9 @@ class ZRunCreateIn(BaseModel):
     #: The operator confirms producing a shop Z without the tills a 409
     #: `open_tills_need_confirmation` listed (`shopZOpenTills`). Recorded on the Z.
     confirm_open_tills: bool = Field(False, alias="confirmOpenTills")
+    #: "כפה סגירה (גם באמצע מכירה)": each till parks an open basket and closes; only a
+    #: card charge in flight is waited for (docs/SPEC_OFFLINE_TILL_Z.md §9).
+    force: bool = False
 
 
 class ZRunProceedIn(BaseModel):
@@ -97,6 +100,8 @@ class ZRunOut(BaseModel):
     open_tills_left_out: Optional[Dict[str, Any]] = Field(None, alias="openTillsLeftOut")
     #: Started from the shop's master till: built only once the cloud verifies every till.
     strict_cloud_check: bool = Field(False, alias="strictCloudCheck")
+    #: Asked "even mid-sale" (docs/SPEC_OFFLINE_TILL_Z.md §9).
+    force: bool = False
     #: The cloud's clock when this was read (a till times its waits against it).
     server_time: Optional[datetime] = Field(None, alias="serverTime")
     items: List[ZRunItemOut] = Field(default_factory=list)

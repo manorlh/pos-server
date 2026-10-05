@@ -402,6 +402,22 @@ SHOP_Z_OPEN_TILLS_KEY = "shopZOpenTills"
 SHOP_Z_OPEN_TILLS_BLOCK = "חובה לסגור את כל הקופות"
 SHOP_Z_OPEN_TILLS_CONFIRM = "מותר באישור העובד"
 
+#: "סגירת Z ללא חיבור לענן" — read by the till, only in `zMode = till`
+#: (docs/SPEC_OFFLINE_TILL_Z.md).
+TILL_Z_OFFLINE_KEY = "tillZOffline"
+
+#: "טיפ במסופון": the card terminal asks for the tip, the till records it
+#: (docs/SPEC_TERMINAL_TIP.md). Read by the till only.
+TERMINAL_TIP_PROMPT_KEY = "terminalTipPrompt"
+
+#: "מסופון ברשת ללא הצפנה (HTTP)": plain HTTP to a pinpad on a private network. Read by
+#: the till only (hardware/payment/net on Android).
+PINPAD_ALLOW_HTTP_KEY = "pinpadAllowHttp"
+
+#: "הזמנה מהירה — מתי לשאול": a new order starts with its details — "לקחת או לשבת?", then
+#: the name — before the first item; the default (ui/sell/MenuSheetState.kt; alembic e4f6a8b0c2d4).
+ORDER_DETAILS_DINING_FIRST = "בתחילת הזמנה (לשבת/לקחת ואז שם)"
+
 
 @dataclass(frozen=True)
 class BuiltinParameter:
@@ -430,6 +446,20 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             f"«{SHOP_Z_OPEN_TILLS_CONFIRM}» — ה-Z מופק רק אחרי שהעובד מאשר את רשימת "
             "הקופות שנשארות בחוץ, והאישור (מי ואילו קופות) נרשם על ה-Z. "
             "חל רק על Z ברמת סניף; Z לפי קופה אינו מושפע."
+        ),
+    ),
+    # Read by the till (docs/SPEC_OFFLINE_TILL_Z.md); honoured only in `zMode = till`.
+    BuiltinParameter(
+        key=TILL_Z_OFFLINE_KEY,
+        label="סגירת Z ללא חיבור לענן (Z לכל קופה)",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל, קופה שעובדת במצב \"Z לכל קופה\" יכולה לסגור Z גם בלי חיבור לענן: ה-Z נבנה "
+            "וממוספר בקופה, מודפס עם הסימון \"ממתין לסנכרון לענן\", ועולה לענן אוטומטית כשהחיבור "
+            "חוזר. בענן הוא נבדק מול המסמכים, ופער נרשם כחריגה. שידור האשראי מתבצע לפני הסגירה "
+            "(דרך המסוף, לא דרך הענן). חל רק במצב \"Z לכל קופה\" — ב-Z סניפי וב-Z לפי נקודת "
+            "מכירה הפרמטר לא משפיע."
         ),
     ),
     # Read by the till, not the cloud; built in because the dashboard edits it with an
@@ -570,6 +600,17 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         ),
     ),
     BuiltinParameter(
+        key="cashChangeInPanel",
+        label="מזומן עם חישוב עודף בפאנל ההזמנה (טאבלט)",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "בהזמנה המהירה בטאבלט: מעל כפתורי התשלום מוצג \"התקבל מזומן\" — סכומים עגולים מוצעים, "
+            "\"מדויק\" ושדה סכום — והעודף מחושב מיד; לחיצה על \"מזומן\" גובה בסכום שהתקבל. "
+            "כבוי — רק כפתור המזומן המהיר (בדיוק הסכום). לא משפיע על קופה ניידת."
+        ),
+    ),
+    BuiltinParameter(
         key="receiptPrinter",
         label="מדפסת חשבוניות",
         value_type="enum",
@@ -583,6 +624,9 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "גם קופה בלי מדפסת (MODO) מדפיסה כך. מגדירים בדרך כלל לקופה בודדת. "
             "מדפסות חשבוניות משותפות (למשל בדלפק, עם מגירה) מגדירים בדשבורד בדף \"מדפסות\" — שם אפשר גם "
             "לחבר מגירה ולקבוע לאילו קופות; בהדפסת חשבון הקופה שואלת לאן להדפיס."
+            " לכל מדפסת שם (חובה) — והקופה מציגה אותו: כשיש לקופה יותר ממדפסת חשבוניות אחת (כולל "
+            "המדפסת שלה), היא שואלת \"באיזו מדפסת להדפיס?\" במסמכים ובדוחות, וזוכרת את הבחירה "
+            "(\"זכור לקופה הזו\"; משנים במסך \"מדפסות\" בקופה)."
         ),
     ),
     BuiltinParameter(
@@ -618,15 +662,44 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "בכפתור \"טיפ\" במסך התשלום (שמופיע כל עוד אמצעי תשלום כלשהו מקבל טיפ)."
         ),
     ),
+    # Read by the till (docs/SPEC_TERMINAL_TIP.md): the card terminal asks for the tip.
+    BuiltinParameter(
+        key=TERMINAL_TIP_PROMPT_KEY,
+        label="טיפ במסופון (Agamento שואל את הלקוח)",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: בתשלום באשראי המסופון (Agamento — המובנה ב-Nova 55F או מסופון Nayax ברשת) "
+            "שואל את הלקוח על הטיפ, והקופה רק רושמת את הטיפ שהמסופון גבה בפועל — כטיפ באשראי של "
+            "המלצר/הקופאי, ב-Z, בדוחות ובטיפים לעובד. שאלת הטיפ של הקופה (מסך הטיפ, הטיפ מראש "
+            "בכפתור \"טיפ\") לא מוצגת בתשלום באשראי; במזומן היא נשארת כמו שהיא. "
+            "חובה להפעיל את שאלת הטיפ גם בצד המסופון (הגדרות Nayax / המסופון) — אחרת המסופון לא "
+            "ישאל והעסקה תירשם בלי טיפ. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    # Read by the till (hardware/payment/net): plain HTTP to a pinpad on the LAN.
+    BuiltinParameter(
+        key=PINPAD_ALLOW_HTTP_KEY,
+        label="מסופון ברשת ללא הצפנה (HTTP)",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: קופה שסולקת במסופון Nayax ברשת (Agamento, SPICy) רשאית לדבר איתו ב-HTTP "
+            "ללא הצפנה — רק כשכתובת המסופון ברשת פרטית (192.168.x.x, 10.x.x.x או 172.16–31.x.x). "
+            "HTTPS נשאר המועדף: הקופה מנסה קודם HTTPS ועוברת ל-HTTP רק כשהמסופון לא עונה ב-TLS "
+            "(או מיד, כשהכתובת נכתבה עם http://). כך עובדת גם הקופה השולחנית. כבוי (ברירת מחדל): "
+            "HTTPS בלבד. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
     BuiltinParameter(
         key="screenEditEnabled",
-        label="עריכת מסך בקופה (לחיצה ארוכה)",
+        label="עריכת מסך בקופה",
         value_type="boolean",
         default_value=True,
         description=(
-            "לחיצה ארוכה על פריט בקופה פותחת \"עריכת מסך\": סידור הפריטים והמחלקות בגרירה והפיכת פריט "
-            "ללא פעיל — מנהל או באישור מנהל. כשגם \"נעילת מוצר בלחיצה ארוכה\" פעיל, הלחיצה הארוכה פותחת "
-            "תפריט קטן עם שתי האפשרויות. כבוי — הלחיצה הארוכה כמו קודם (נעילת מוצר, אם הוגדרה)."
+            "\"עריכת מסך\" נפתחת מתפריט הקופה (ניהול ← עריכת מסך): סידור הפריטים והמחלקות בגרירה, "
+            "הפיכת פריט ללא פעיל ותמונת פריט — מנהל או באישור מנהל; השמירה כמו קודם. כבוי — הכניסה "
+            "לא מוצגת בתפריט. הלחיצה הארוכה על פריט נשארת לנעילת מוצר בלבד (7 שניות, אם הוגדרה)."
         ),
     ),
     BuiltinParameter(
@@ -868,12 +941,14 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         key="orderDetailsAt",
         label="הזמנה מהירה — מתי לשאול (לקחת/לשבת, שם)",
         value_type="enum",
-        enum_options=("במעבר לתשלום", "בפתיחת הזמנה"),
-        default_value="במעבר לתשלום",
+        enum_options=(ORDER_DETAILS_DINING_FIRST, "במעבר לתשלום", "בפתיחת הזמנה"),
+        default_value=ORDER_DETAILS_DINING_FIRST,
         description=(
             "מתי הקופה שואלת את פרטי ההזמנה המהירה שהופעלו (\"לקחת / לשבת\", \"שם לקוח\"): "
-            "«במעבר לתשלום» — בלחיצה על תשלום; «בפתיחת הזמנה» — כשמוסיפים את הפריט הראשון להזמנה חדשה. "
-            "בכל מקרה, הזמנה שהגיעה לתשלום בלי הפרטים נשאלת עליהם לפני התשלום."
+            f"«{ORDER_DETAILS_DINING_FIRST}» (ברירת המחדל) — הזמנה חדשה נפתחת בשאלות: קודם \"לקחת או "
+            "לשבת?\" ואז השם (כל אחת אם הופעלה), עוד לפני הפריט הראשון, ורק אז מתחילים להזמין; "
+            "«במעבר לתשלום» — הכול בלחיצה על תשלום; «בפתיחת הזמנה» — הכול כשמוסיפים את הפריט "
+            "הראשון להזמנה חדשה. בכל מקרה, הזמנה שהגיעה לתשלום בלי הפרטים נשאלת עליהם לפני התשלום."
         ),
     ),
     BuiltinParameter(
@@ -994,6 +1069,72 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "קופה שמחובר בה עובד ולא דיווחה לענן (נפלה, כבויה, בלי רשת) במשך מספר הדקות הזה — "
             "החיבור שלו בה משתחרר לבד, כך שקופה תקועה לא נועלת עובד לתמיד (2–720; ברירת מחדל 15). "
             "קופה פעילה מדווחת כל דקה."
+        ),
+    ),
+    # OTH ("על חשבון הבית") and the club button ("מועדון לקוחות") on the order screens —
+    # read by the till; the documents carry them to the cloud (exception "oth", the
+    # discounts in the promotions report). All off by default: nothing changes until set.
+    BuiltinParameter(
+        key="othEnabled",
+        label="כפתור OTH — על חשבון הבית",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: במסך ההזמנה (הזמנה מהירה ושולחן) מופיע כפתור \"OTH\", וגם בפעולות של כל שורה. "
+            "בוחרים פריטים וסיבה (מהפרמטר \"OTH — סיבות\"), והפריט הופך לחינם: הנחה של 100% שמסומנת OTH, "
+            "עם הסיבה ומי אישר. הפריט עדיין יוצא למטבח, מודפס בחשבונית \"OTH — סיבה\" עם המחיר המקורי ו-₪0, "
+            "ואפשר לבטל אותו (באותו אישור). לא מצטבר עם הנחה אחרת על השורה ולא נספר במבצעים. "
+            "כל פריט OTH נרשם בענן כחריגה \"OTH — על חשבון הבית\" ומופיע בדוח המבצעים וההנחות."
+        ),
+    ),
+    BuiltinParameter(
+        key="othRequiresManager",
+        label="OTH — באישור מנהל",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "מופעל (ברירת מחדל): עובד שאין לו הרשאת הנחה צריך קוד מנהל כדי לתת פריט על חשבון הבית "
+            "(וכדי לבטל OTH). מנהל שמחובר בקופה מאשר בעצמו. כבוי — כל עובד נותן OTH בלי אישור."
+        ),
+    ),
+    BuiltinParameter(
+        key="othReasons",
+        label="OTH — סיבות",
+        value_type="string",
+        default_value="לקוח קבוע,פיצוי,טעימה,עובד,אחר",
+        description=(
+            "הסיבות שהעובד בוחר מהן כשהוא נותן פריט על חשבון הבית, מופרדות בפסיקים "
+            "(למשל: לקוח קבוע,פיצוי,טעימה,עובד,אחר). הסיבה מודפסת בחשבונית ונרשמת בחריגה ובדוח."
+        ),
+    ),
+    BuiltinParameter(
+        key="clubButtonEnabled",
+        label="כפתור מועדון לקוחות במסך ההזמנה",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: במסך ההזמנה (הזמנה מהירה ושולחן) מופיע כפתור \"מועדון\". לחיצה נותנת על כל ההזמנה "
+            "את אחוז ההנחה הקבוע מהפרמטר \"מועדון — אחוז הנחה קבוע\" כהנחת סל \"הנחת מועדון X%\" — "
+            "בלי מוצרים שלא מקבלים הנחות, וגם על פריטים שנוספים אחר כך. לחיצה נוספת מסירה. "
+            "לא מצטברת עם הנחת סל ידנית (מחליפה אותה, באישור). מודפסת בחשבונית ונשלחת לענן כהנחת מועדון "
+            "(עם הלקוח, אם שויך) — בדוח המבצעים וההנחות."
+        ),
+    ),
+    BuiltinParameter(
+        key="clubDiscountPercent",
+        label="מועדון — אחוז הנחה קבוע",
+        value_type="decimal",
+        default_value=10,
+        description="אחוז ההנחה שכפתור המועדון נותן על ההזמנה (למשל 10 או 12.5; בין 0 ל-100).",
+    ),
+    BuiltinParameter(
+        key="clubRequiresCustomer",
+        label="מועדון — חובה לשייך לקוח",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: לחיצה על \"מועדון\" פותחת קודם את חיפוש הלקוחות (לפי טלפון או שם), וההנחה ניתנת "
+            "רק אחרי שיוך לקוח. כבוי — שיוך לקוח רשות."
         ),
     ),
 )

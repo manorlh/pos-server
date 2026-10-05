@@ -80,6 +80,7 @@ from app.models.report_event import ReportEvent, ReportEventMachine
 from app.models.training import DemoMenuItem, TrainingAuditLog, TrainingDocument
 from app.models.pos_user_session import PosUserSession
 from app.models.menu_broadcast import CatalogPublication, ShopWorkTypes
+from app.models.payment_secret import PaymentIntegrationSecret
 
 __all__ = [
     "User", "UserRole",
@@ -139,4 +140,5 @@ __all__ = [
     "TrainingDocument", "TrainingAuditLog", "DemoMenuItem",
     "PosUserSession",
     "CatalogPublication", "ShopWorkTypes",
+    "PaymentIntegrationSecret",
 ]

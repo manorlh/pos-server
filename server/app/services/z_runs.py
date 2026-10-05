@@ -386,6 +386,7 @@ def _send_close(machine: POSMachine, item: ZRunItem, user: User, now: datetime) 
         str(item.id),
         str(named_shift_id(item)) if named_shift_id(item) else None,
         _initiator(user),
+        force=bool(getattr(item.run, "force_close", False)),
     )
     # "Sent" only when realtime really carried it: without Ably the publish is skipped, and
     # the heartbeat that hands the close over stamps it (`take_pending_close_shift`) — so a
@@ -666,6 +667,7 @@ def create_z_run(
     area_id: Optional[uuid.UUID] = None,
     confirm_open_tills: bool = False,
     strict_cloud_check: bool = False,
+    force: bool = False,
     now: Optional[datetime] = None,
 ) -> ZRun:
     """
@@ -755,6 +757,8 @@ def create_z_run(
         business_date=business_date,
         expires_at=now + timedelta(hours=Z_RUN_TTL_HOURS),
         strict_cloud_check=bool(strict_cloud_check),
+        # "כפה סגירה (גם באמצע מכירה)" (docs/SPEC_OFFLINE_TILL_Z.md §9).
+        force_close=bool(force),
     )
     db.add(run)
     db.flush()
@@ -1389,10 +1393,14 @@ def take_pending_close_shift(db: Session, machine: POSMachine, *, now: Optional[
         return None
     if item.sent_at is None:
         item.sent_at = now
-    return {
+    out = {
         "requestId": str(item.id),
         "shiftId": str(named_shift_id(item)) if named_shift_id(item) else None,
     }
+    if item.run is not None and item.run.force_close:
+        # "Even mid-sale" (docs/SPEC_OFFLINE_TILL_Z.md §9); absent = as always.
+        out["force"] = True
+    return out
 
 
 def close_shift_pending_runs(db: Session, machine_ids: List[uuid.UUID]) -> Dict[uuid.UUID, uuid.UUID]:
@@ -1485,6 +1493,7 @@ def run_to_out(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> dic
         "errorMessage": run.error_message,
         "openTillsLeftOut": open_tills_left_out(db, run),
         "strictCloudCheck": strict,
+        "force": bool(getattr(run, "force_close", False)),
         # For a till's elapsed-seconds display: the cloud's clock, not the till's.
         "serverTime": now or datetime.now(timezone.utc),
         "items": [

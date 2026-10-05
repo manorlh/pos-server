@@ -95,6 +95,15 @@ class ZReportOut(BaseModel):
     created_by_name: Optional[str] = Field(None, alias="createdByName")
     #: A till Z whose till-sent figures differed from the built ones (shown, not refused).
     totals_mismatch: bool = Field(False, alias="totalsMismatch")
+    #: A till Z closed at the till with no connection and uploaded later
+    #: (docs/SPEC_OFFLINE_TILL_Z.md): "נסגר ללא חיבור", when it came up, and where the
+    #: cloud's figures differ from the till's paper (`[{key, till, cloud}]`, null = none).
+    built_offline: bool = Field(False, alias="builtOffline")
+    uploaded_at: Optional[datetime] = Field(None, alias="uploadedAt")
+    offline_discrepancies: Optional[List[Dict[str, Any]]] = Field(None, alias="offlineDiscrepancies")
+    #: The card batch transmission the till ran before the Z, with the terminal's answer
+    #: (`{outcome, batchNumber, statusMessage, transactionCount, amount, byBrand, …}`).
+    card_transmission: Optional[Dict[str, Any]] = Field(None, alias="cardTransmission")
     #: The till of a till Z, and of a legacy row; null on a cloud Z (it spans tills).
     machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
     #: Legacy rows: the till's own Z blob.
@@ -140,6 +149,9 @@ class ZReportDetailOut(ZReportOut):
     per_machine: List[Dict[str, Any]] = Field(default_factory=list, alias="perMachine")
     #: A till Z: the till's own sum as it sent it (audit; never the figures).
     till_totals: Optional[Dict[str, Any]] = Field(None, alias="tillTotals")
+    #: A Z closed offline: what the till printed (its number, shifts, document range and
+    #: section), kept beside the cloud's figures.
+    offline_report: Optional[Dict[str, Any]] = Field(None, alias="offlineReport")
     shifts: List[ShiftOut] = Field(default_factory=list)
     business: Optional[ZReportBusinessOut] = None
     #: Card legs per brand (מותג) × acquirer (חברת סליקה), summed over the sections:

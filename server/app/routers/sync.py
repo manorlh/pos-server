@@ -1948,6 +1948,18 @@ def get_settings_sync(
     # And the force switch (unset -> off): a layer reset to inherit must reach the till
     # as `false`, not as a missing key it might read as "keep what you had".
     effective["forceTerminalNumber"] = all_settings.get("forceTerminalNumber") is True
+    # "סוג אינטגרציית אשראי": the explicit choice down the layers (absent = automatic),
+    # and Z-Credit's password for a till that charges there — its only way out of the
+    # server (app/services/payment_integration.py).
+    from app.services import payment_integration
+
+    for key, value in payment_integration.till_sync_fields(
+        db, machine, tenant, company, shop, area_layer
+    ).items():
+        if value is None:
+            effective.pop(key, None)
+        else:
+            effective[key] = value
     # "מצב הדרכה": the shop's flag, never a layer's setting (docs/SPEC_TRAINING_MODE.md).
     effective["trainingMode"] = bool(shop.training_mode)
     business_info = build_business_info(company, shop, all_settings)

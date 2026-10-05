@@ -130,7 +130,7 @@ class TransmissionReportIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: uuid.UUID
-    trigger: Literal["shift_close", "daily", "manual", "remote"]
+    trigger: Literal["shift_close", "daily", "manual", "remote", "z_close"]
     request_id: Optional[uuid.UUID] = Field(None, alias="requestId")
     started_at: datetime = Field(..., alias="startedAt")
     finished_at: Optional[datetime] = Field(None, alias="finishedAt")

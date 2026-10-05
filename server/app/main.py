@@ -180,6 +180,10 @@ app.include_router(user_sessions_router.router, prefix=_prefix)
 from app.routers import menu_broadcast as menu_broadcast_router  # noqa: E402
 
 app.include_router(menu_broadcast_router.router, prefix=_prefix)
+# "סוג אינטגרציית אשראי" — what a settings layer's form needs (docs/SPEC_ZCREDIT.md).
+from app.routers import payment_integration as payment_integration_router  # noqa: E402
+
+app.include_router(payment_integration_router.router, prefix=_prefix)
 
 
 @app.on_event("startup")

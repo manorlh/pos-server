@@ -42,6 +42,7 @@ import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, GripVertical, Info } from 'lucide-react';
 import { TargetPrintersSection } from '@/components/dashboard/kitchen-printers/target-printers-section';
 import { CategoryMenuSection } from '@/components/dashboard/menu/menu-sections';
+import { MenuBroadcastBanner } from '@/components/dashboard/menu/broadcast-banner';
 
 const EMPTY: Partial<Category> = { name: '', description: '', color: '#6366f1', catalogLevel: 'global' };
 
@@ -168,6 +169,7 @@ export default function CategoriesPage() {
 
   return (
     <div className="space-y-4">
+      <MenuBroadcastBanner />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{t('title')}</h1>

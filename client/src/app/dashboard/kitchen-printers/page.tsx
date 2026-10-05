@@ -30,7 +30,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { PrinterDialog } from '@/components/dashboard/kitchen-printers/printer-dialog';
+import { PrinterDialog, type PrinterPrefill } from '@/components/dashboard/kitchen-printers/printer-dialog';
+import { NetworkScanCard } from '@/components/dashboard/kitchen-printers/network-scan';
+import { ZoneRedirectsCard } from '@/components/dashboard/kitchen-printers/zone-redirects-card';
+import { PrintRedirectsCard } from '@/components/dashboard/kitchen-printers/print-redirects-card';
 import { TestDialog } from '@/components/dashboard/kitchen-printers/test-dialog';
 import { RoutingEditor } from '@/components/dashboard/kitchen-printers/routing-editor';
 import { OptionsCard } from '@/components/dashboard/kitchen-printers/options-card';
@@ -52,7 +55,12 @@ export default function KitchenPrintersPage() {
     enabled: !!shopId,
   });
 
-  const [dialog, setDialog] = useState<{ printer: KitchenPrinter | null; purpose: PrinterPurpose } | null>(null);
+  const [dialog, setDialog] = useState<{
+    printer: KitchenPrinter | null;
+    purpose: PrinterPurpose;
+    /** A new printer the network scan found ("חיפוש ברשת"). */
+    prefill?: PrinterPrefill;
+  } | null>(null);
   const [testing, setTesting] = useState<{ printer: KitchenPrinter; jobIds: string[] } | null>(null);
 
   const refresh = () => {
@@ -67,6 +75,9 @@ export default function KitchenPrintersPage() {
       toast.success(v.id ? t('updated') : t('created'));
       setDialog(null);
       refresh();
+      // A printer added from the scan shows as configured there.
+      qc.invalidateQueries({ queryKey: ['printer-scan', shopId] });
+      qc.invalidateQueries({ queryKey: ['printer-zone-redirects', shopId] });
     },
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
   });
@@ -236,10 +247,24 @@ export default function KitchenPrintersPage() {
               {table(receipts, t('receiptEmpty'))}
             </section>
 
+            <NetworkScanCard
+              shopId={shopId}
+              canEdit={canEdit}
+              onChoose={(p) =>
+                setDialog({
+                  printer: null,
+                  purpose: 'kitchen',
+                  prefill: { host: p.host, port: p.port, name: p.name ?? p.model },
+                })
+              }
+            />
+
             <OptionsCard page={page} />
             <PrintServerCard page={page} />
             <RoutingEditor shopId={shopId} printers={kitchen} canEdit={canEdit} />
             <StationsCard shopId={shopId} printers={kitchen} canEditShop={canEdit} />
+            <ZoneRedirectsCard shopId={shopId} canEdit={canEdit} />
+            <PrintRedirectsCard shopId={shopId} />
 
             {dialog && (
               <PrinterDialog
@@ -247,6 +272,7 @@ export default function KitchenPrintersPage() {
                 open
                 printer={dialog.printer}
                 purpose={dialog.purpose}
+                prefill={dialog.prefill}
                 page={page}
                 saving={save.isPending}
                 onClose={() => setDialog(null)}

@@ -40,6 +40,7 @@ import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, FilePlus2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { createZRun, fetchZCandidates } from '@/lib/api';
+import { ForceCloseOption } from '@/components/dashboard/z-wizard/force-close-option';
 import { splitCandidatesByZMode } from '@/lib/tillZ';
 import { usePageScope } from '@/lib/scope';
 import { findBySameId } from '@/lib/entityLookup';
@@ -296,6 +297,8 @@ function ProduceZ() {
   const [session, setSession] = useState<StartSession>(EMPTY_SESSION);
   /** Runs refused until the operator confirms leaving tills out (`open_tills_need_confirmation`). */
   const [toConfirm, setToConfirm] = useState<OpenTillsHold<PlannedRun>[]>([]);
+  // "כפה סגירה (גם באמצע מכירה)" for the runs started from here.
+  const [force, setForce] = useState(false);
 
   const goToProgress = (started: ZRun[]) => {
     setOverrides({});
@@ -319,6 +322,7 @@ function ProduceZ() {
               machines: body.machines,
               ...(body.areaId ? { areaId: body.areaId } : {}),
               ...(confirmOpenTills ? { confirmOpenTills: true } : {}),
+              ...(force ? { force: true } : {}),
             }),
           );
         } catch (e) {
@@ -634,6 +638,7 @@ function ProduceZ() {
               : t('startSummary', { runs: plannedRuns.length, tills: totalTills })}
             {waiting > 0 ? ` ${t('startWaits', { count: waiting })}` : ''}
           </span>
+          <ForceCloseOption checked={force} onChange={setForce} disabled={start.isPending} className="basis-full" />
         </div>
       ) : null}
 

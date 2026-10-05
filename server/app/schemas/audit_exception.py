@@ -18,7 +18,7 @@ class TillEventIn(BaseModel):
     """
 
     id: uuid.UUID
-    type: Literal["drawer_open", "line_void", "basket_cancel", "basket_completed", "reprint"]
+    type: Literal["drawer_open", "line_void", "basket_cancel", "basket_completed", "reprint", "forced_z_close"]
     occurred_at: datetime = Field(..., alias="occurredAt")
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)

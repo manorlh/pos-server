@@ -109,6 +109,7 @@ def publish_close_shift_notify(
     request_id: str,
     shift_id: Optional[str],
     initiated_by: str,
+    force: bool = False,
 ) -> None:
     """
     Ask a till to close its open shift so a Z can include it (docs/SHIFTS_API.md §1.7).
@@ -120,6 +121,9 @@ def publish_close_shift_notify(
     body["requestId"] = request_id
     body["shiftId"] = shift_id
     body["initiatedBy"] = initiated_by
+    if force:
+        # "Even mid-sale" (docs/SPEC_OFFLINE_TILL_Z.md §9); absent = as always.
+        body["force"] = True
     publish_notify(tenant_id, machine_id, "close-shift", body)
 
 
@@ -146,6 +150,7 @@ def publish_till_z_notify(
     machine_id: str,
     request_id: str,
     initiated_by: str,
+    force: bool = False,
 ) -> None:
     """
     Ask a till in `zMode = till` to produce its own Z now (docs/SHIFTS_API.md §5.3).
@@ -156,6 +161,8 @@ def publish_till_z_notify(
     body = _notify_base()
     body["requestId"] = request_id
     body["initiatedBy"] = initiated_by
+    if force:
+        body["force"] = True
     publish_notify(tenant_id, machine_id, "till-z", body)
 
 

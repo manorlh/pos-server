@@ -78,7 +78,8 @@ from app.services.terminal_status import (
     terminal_settings_for,
 )
 from app.services import till_z, z_mode_policy
-from app.schemas.till_z import TillZRequestOut
+from app.schemas.till_z import MachineTillZIn, TillZRequestOut
+from app.services.z_sequence import last_machine_z_number
 from app.schemas.transmission import ReplacementCodeBody
 from fastapi.responses import JSONResponse
 from sqlalchemy import func
@@ -574,6 +575,9 @@ def post_my_heartbeat(
         "license": licenses.effective_license(db, machine),
         # Who produces this till's Z (§5.1), on every beat: the till takes its mode from here.
         "zMode": till_z.z_mode_of(machine),
+        # The last number of the till's own Z run (0: none yet), so a till in `zMode =
+        # till` can number a Z it closes with no connection (docs/SPEC_OFFLINE_TILL_Z.md §4).
+        "lastTillZNumber": last_machine_z_number(db, machine.id),
         # "מצב הדרכה", every beat too: the till switches at its next shift boundary.
         "trainingMode": bool(machine.shop is not None and getattr(machine.shop, "training_mode", False)),
     }
@@ -897,6 +901,7 @@ def request_remote_shift_close(
 )
 def request_till_z(
     machine_id: uuid_mod.UUID,
+    body: Optional[MachineTillZIn] = None,
     current_user: User = Depends(get_current_machine_admin),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -912,7 +917,9 @@ def request_till_z(
     """
     machine = machine_for_shift_admin(db, machine_id, current_user, active_tenant_id)
     try:
-        req, _created = till_z.request_for_machine(db, current_user, machine)
+        req, _created = till_z.request_for_machine(
+            db, current_user, machine, force=bool(body.force) if body is not None else False
+        )
     except till_z.TillZRefused as refused:
         db.rollback()
         return JSONResponse(status_code=refused.status_code, content=refused.body)

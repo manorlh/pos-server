@@ -802,6 +802,8 @@ export async function createZRun(body: {
    * `open_tills_need_confirmation` listed. Recorded on the Z.
    */
   confirmOpenTills?: boolean;
+  /** "כפה סגירה (גם באמצע מכירה)": the tills park an open basket and close. */
+  force?: boolean;
 }): Promise<ZRun> {
   const { data } = await api.post<ZRun>('/z-runs', body);
   return data;
@@ -897,17 +899,21 @@ export async function setMachineZMode(machineId: string, zMode: ZMode): Promise<
  * that already has a pending request returns that one. Omitting `machineIds` asks every
  * active `till`-mode till of the shop.
  */
-export async function requestShopTillZ(shopId: string, machineIds?: string[]): Promise<TillZRequest[]> {
-  const { data } = await api.post<TillZRequest[]>(
-    `/shops/${shopId}/till-z`,
-    machineIds ? { machineIds } : {},
-  );
+export async function requestShopTillZ(
+  shopId: string,
+  machineIds?: string[],
+  force?: boolean,
+): Promise<TillZRequest[]> {
+  const { data } = await api.post<TillZRequest[]>(`/shops/${shopId}/till-z`, {
+    ...(machineIds ? { machineIds } : {}),
+    ...(force ? { force: true } : {}),
+  });
   return Array.isArray(data) ? data : [];
 }
 
 /** Ask one `till`-mode till to produce its own Z. Returns the pending one if any. */
-export async function requestMachineTillZ(machineId: string): Promise<TillZRequest> {
-  const { data } = await api.post<TillZRequest>(`/machines/${machineId}/till-z`, {});
+export async function requestMachineTillZ(machineId: string, force?: boolean): Promise<TillZRequest> {
+  const { data } = await api.post<TillZRequest>(`/machines/${machineId}/till-z`, force ? { force: true } : {});
   return data;
 }
 

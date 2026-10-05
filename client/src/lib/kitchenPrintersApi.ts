@@ -30,6 +30,8 @@ export interface KitchenPrinter {
   machineId: string | null;
   machineName: string | null;
   paperWidth: 58 | 80;
+  /** "רוחב הדפסה" in dots; null — by the paper (58 mm → 384, 80 mm → 576). */
+  printWidthDots?: PrintWidthDots | null;
   copies: number;
   cutPaper: boolean;
   beep: boolean;
@@ -37,6 +39,10 @@ export interface KitchenPrinter {
   sortOrder: number;
   updatedAt: string | null;
 }
+
+/** How many dots wide the printer's head prints; a narrower head than the ticket skews it. */
+export type PrintWidthDots = 576 | 512 | 432 | 384;
+export const PRINT_WIDTHS: PrintWidthDots[] = [576, 512, 432, 384];
 
 export interface KitchenPrinterInput {
   name: string;
@@ -52,6 +58,7 @@ export interface KitchenPrinterInput {
   areaId?: string | null;
   machineId?: string | null;
   paperWidth: 58 | 80;
+  printWidthDots?: PrintWidthDots | null;
   copies: number;
   cutPaper: boolean;
   beep: boolean;

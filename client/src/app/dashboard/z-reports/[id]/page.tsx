@@ -42,6 +42,7 @@ import {
   useTillHeading,
 } from '@/components/dashboard/shifts/shift-parts';
 import { ZBadges } from '@/components/dashboard/z-report/z-badges';
+import { OfflineZPanel } from '@/components/dashboard/z-report/offline-z-panel';
 import { OpenTillsRecord } from '@/components/dashboard/z-wizard/open-tills';
 import { ZPrintDocument } from '@/components/dashboard/z-report/z-print-document';
 import { CardBrandSummaryCard } from '@/components/dashboard/z-report/card-brand-summary';
@@ -402,6 +403,8 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
             {t('totalsMismatchNotice')}
           </div>
         ) : null}
+        {/* Closed at the till with no connection, and the card transmission before it. */}
+        <OfflineZPanel z={z} />
         {z.reconstructed ? (
           <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950">
             {t('reconstructedNotice')}

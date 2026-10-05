@@ -87,6 +87,18 @@ class ZReport(Base):
     #: A till Z whose `till_totals` disagree with the built figures on a compared key.
     #: Shown, never a refusal: the figures are the cloud's either way.
     totals_mismatch = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: A till Z closed at the till with no connection to the cloud and uploaded later
+    #: (docs/SPEC_OFFLINE_TILL_Z.md): numbered by the till, built here from the documents
+    #: like any till Z, with what the till printed kept beside it (`offline_report`) and
+    #: every figure that differs listed (`offline_discrepancies`, null/empty = none).
+    built_offline = Column(Boolean, nullable=False, default=False, server_default="false")
+    uploaded_at = Column(DateTime(timezone=True), nullable=True)
+    offline_report = Column(JSONB, nullable=True)
+    offline_discrepancies = Column(JSONB, nullable=True)
+    #: The card batch transmission the till ran before this Z (doPeriodic), with the
+    #: terminal's answer — `{outcome, batchNumber, statusMessage, byBrand, …}`. Null when
+    #: the till sent none (a cloud Z, or a till from before it).
+    card_transmission = Column(JSONB, nullable=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True, index=True)
     #: The area the run that built it was for (`z_runs.area_id`); NULL for a whole-shop or
     #: hand-picked Z. Its name as of the build is frozen in `header.areaName`.

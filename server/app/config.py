@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 30
+
+    # Card-integration secrets at rest (the Z-Credit terminal password,
+    # app/services/payment_secrets.py): a Fernet key or a passphrase. Empty = derived
+    # from jwt_secret_key; set it in production before rotating that key.
+    payment_secrets_key: str = ""
     
     # Ably realtime notify (per-machine channel + token auth from GET /machines/me/ably-auth)
     ably_api_key: str = ""

@@ -477,4 +477,5 @@ def z_detail_out(db: Session, z: ZReport) -> ZReportDetailOut:
         out.by_waiter = waiter_breakdown(db, [s.id for s in shifts], z.shop_id)
         out.by_waiter_source = "documents"
     out.till_totals = z.till_totals
+    out.offline_report = z.offline_report
     return out

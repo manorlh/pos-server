@@ -157,6 +157,44 @@ def lock_machine_z_sequence(db: Session, machine_id: uuid.UUID) -> MachineZSeque
     return row
 
 
+def last_machine_z_number(db: Session, machine_id: uuid.UUID) -> int:
+    """
+    The last till Z number of this till (0 if none): its counter, else the highest on
+    file. A read for the heartbeat (`lastTillZNumber`), so the till can number a Z it
+    closes with no connection (docs/SPEC_OFFLINE_TILL_Z.md §4.1). No lock.
+    """
+    row = db.query(MachineZSequence.last_number).filter(MachineZSequence.machine_id == machine_id).first()
+    on_file = _highest_machine_number(db, machine_id)
+    return max(int(row[0] or 0) if row else 0, on_file)
+
+
+def machine_z_number_holder(db: Session, machine_id: uuid.UUID, number: int) -> Optional[ZReport]:
+    """The Z of this till already numbered `number`, if any."""
+    return (
+        db.query(ZReport)
+        .filter(ZReport.machine_id == machine_id, ZReport.machine_sequence_number == number)
+        .first()
+    )
+
+
+def claim_machine_z_number(db: Session, machine_id: uuid.UUID, number: int) -> int:
+    """
+    Take `number` — numbered by the till for a Z it closed with no connection — into the
+    till's run (docs/SPEC_OFFLINE_TILL_Z.md §4.2), and return the counter as it was.
+
+    The caller holds the counter lock and has checked that no Z of the till holds the
+    number. The counter only ever rises: the exact next number moves it by one, a jump
+    moves it to the number (the gap is the caller's to report), and a number below it —
+    a hole nobody filled — leaves it where it is.
+    """
+    row = lock_machine_z_sequence(db, machine_id)
+    before = int(row.last_number or 0)
+    if number > before:
+        row.last_number = number
+        db.flush()
+    return before
+
+
 def allocate_machine_z_number(db: Session, machine_id: uuid.UUID) -> int:
     """
     The next till Z number of `machine_id`: 1 for its first. The caller is inside the

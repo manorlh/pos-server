@@ -25,6 +25,15 @@ export const EXCEPTION_TYPES = [
   'reprint',
   // An employee signed in at another till, released by a manager to sign in here.
   'user_session_release',
+  // A line given free at the till ("OTH — על חשבון הבית"), at its list price.
+  'oth',
+  // A till Z closed with no connection whose figures differ from the cloud's
+  // (pos-server docs/SPEC_OFFLINE_TILL_Z.md §6.1).
+  'offline_z_gap',
+  // A till Z closed although the card transmission before it failed (§7.3).
+  'z_transmission_failed',
+  // A remote Z close forced "even mid-sale", with who forced it and what was parked (§9).
+  'forced_z_close',
 ] as const;
 
 export type ExceptionType = (typeof EXCEPTION_TYPES)[number];

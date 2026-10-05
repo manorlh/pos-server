@@ -15,6 +15,10 @@ from app.schemas.stock import StockMovementIn
 #: this is not one, and is kept cut, as text, rather than parsed.
 META_MAX_CHARS = 16 * 1024
 
+#: What a document's basket discount can be (`basketDiscountKind`): the club button
+#: ("הנחת מועדון", till parameter `clubButtonEnabled`) or the cashier's own.
+BASKET_DISCOUNT_KINDS = ("club", "manual")
+
 
 def cut_text(value, limit: int):
     """
@@ -194,9 +198,20 @@ class TransactionItemIn(BaseModel):
     details: Optional[Any] = None
     #: The upsell rule the line was added by. Optional; an unreadable id is dropped.
     upsell_rule_id: Optional[str] = Field(None, alias="upsellRuleId")
+    #: OTH ("על חשבון הבית"): the reason the line was given free (its 100% discount is in
+    #: `discount`), who gave it and who approved it. Optional; cut to the column, never
+    #: a reason to refuse the document.
+    oth_reason: Optional[str] = Field(None, alias="othReason")
+    oth_by: Optional[str] = Field(None, alias="othBy")
+    oth_approved_by: Optional[str] = Field(None, alias="othApprovedBy")
 
     class Config:
         populate_by_name = True
+
+    @field_validator("oth_reason", "oth_by", "oth_approved_by", mode="before")
+    @classmethod
+    def _cut_oth(cls, value):
+        return cut_text(value, 100)
 
 
 class TransactionPromotionIn(BaseModel):
@@ -236,6 +251,12 @@ class TransactionIn(BaseModel):
     tip_payment_method: Optional[Literal["cash", "card"]] = Field(None, alias="tipPaymentMethod")
     total_discount: Optional[Decimal] = Field(None, alias="totalDiscount")
     document_discount: Optional[Decimal] = Field(None, alias="documentDiscount")
+    #: The basket discount on its own (inside `documentDiscount`), its rate when it was
+    #: given as one, and its kind: `club` (the club button) or `manual`. Optional; an
+    #: older till sends none, and an unknown kind is stored as `manual`.
+    basket_discount: Optional[Decimal] = Field(None, alias="basketDiscount")
+    basket_discount_percent: Optional[Decimal] = Field(None, alias="basketDiscountPercent", ge=0, le=100)
+    basket_discount_kind: Optional[str] = Field(None, alias="basketDiscountKind")
     wht_deduction: Optional[Decimal] = Field(None, alias="whtDeduction")
 
     customer_id: Optional[str] = Field(None, alias="customerId")
@@ -294,6 +315,14 @@ class TransactionIn(BaseModel):
     @classmethod
     def _meta_as_dict(cls, value):
         return meta_as_dict(value)
+
+    @field_validator("basket_discount_kind", mode="before")
+    @classmethod
+    def _discount_kind(cls, value):
+        kind = cut_text(value, 16)
+        if kind is None:
+            return None
+        return kind.lower() if kind.lower() in BASKET_DISCOUNT_KINDS else "manual"
 
     @field_validator("customer_name", mode="before")
     @classmethod
@@ -385,6 +414,10 @@ class TransactionItemOut(BaseModel):
     #: What the dish was ordered with, as the till sent it (docs/SPEC_MENU_MODIFIERS.md).
     details: Optional[Dict[str, Any]] = None
     upsell_rule_id: Optional[uuid.UUID] = Field(None, alias="upsellRuleId")
+    #: OTH ("על חשבון הבית"): the reason, who gave it and who approved it.
+    oth_reason: Optional[str] = Field(None, alias="othReason")
+    oth_by: Optional[str] = Field(None, alias="othBy")
+    oth_approved_by: Optional[str] = Field(None, alias="othApprovedBy")
 
     class Config:
         from_attributes = True
@@ -451,6 +484,10 @@ class TransactionOut(BaseModel):
     tip_payment_method: Optional[str] = Field(None, alias="tipPaymentMethod")
     total_discount: Optional[Decimal] = Field(None, alias="totalDiscount")
     document_discount: Optional[Decimal] = Field(None, alias="documentDiscount")
+    #: The basket discount on its own, its rate and its kind (`club` | `manual`).
+    basket_discount: Optional[Decimal] = Field(None, alias="basketDiscount")
+    basket_discount_percent: Optional[Decimal] = Field(None, alias="basketDiscountPercent")
+    basket_discount_kind: Optional[str] = Field(None, alias="basketDiscountKind")
     wht_deduction: Optional[Decimal] = Field(None, alias="whtDeduction")
 
     customer_id: Optional[str] = Field(None, alias="customerId")

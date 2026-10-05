@@ -87,6 +87,54 @@ class TestHourly:
         assert row.average_basket == round(193.33 / 4, 2)
 
 
+class TestHourlyNarrowing:
+    """The control board's hourly chart follows its company and point-of-sale filters."""
+
+    @staticmethod
+    def hourly(w, **extra):
+        args = dict(shop_id=None, machine_id=None, cashier_id=None)
+        args.update(extra)
+        return router.get_hourly_report(**RANGE, **args, **_ctx(w))
+
+    def test_a_company_means_its_group(self, w, trading):
+        from app.models.company import Company
+
+        sub = Company(
+            id=uuid.uuid4(), tenant_id=w.tenant.id, name="North Ltd", vat_number="2",
+            parent_company_id=w.company.id,
+        )
+        w.db.add(sub)
+        w.db.flush()
+        w.other_shop.company_id = sub.id
+        w.db.commit()
+
+        assert self.hourly(w, company_id=sub.id).total == 50.0
+        # The parent: its own shop and its subsidiary's.
+        assert self.hourly(w, company_id=w.company.id).total == 193.33
+        # Only narrows — an unknown company is nothing, never everything.
+        assert self.hourly(w, company_id=uuid.uuid4()).total == 0
+        assert self.hourly(w).total == 193.33
+
+    def test_a_point_of_sale_is_the_area_its_shift_was_stamped_with(self, w):
+        from fastapi import HTTPException
+
+        from test_shop_areas import create, members, open_shift
+
+        t1, t2 = w.tills
+        bar = create(w, "Bar")
+        members(w, bar["id"], t1)
+        w.doc(t1, open_shift(w, t1, 1), "30.00")
+        w.doc(t2, open_shift(w, t2, 1), "12.00")
+        w.db.commit()
+
+        assert self.hourly(w, area_id=str(bar["id"])).total == 30.0
+        assert self.hourly(w, area_id="none").total == 12.0
+        assert self.hourly(w).total == 42.0
+        with pytest.raises(HTTPException) as e:
+            self.hourly(w, area_id="not-an-area")
+        assert e.value.status_code == 422
+
+
 class TestDepartments:
     def test_lines_roll_up_to_their_category_with_a_share(self, w):
         drinks = Category(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=w.company.id, name="Drinks")

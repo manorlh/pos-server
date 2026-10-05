@@ -68,6 +68,8 @@ class PrinterIn(BaseModel):
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
     machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
     paper_width: Literal[58, 80] = Field(80, alias="paperWidth")
+    #: "רוחב הדפסה" in dots; null — by the paper (58 mm → 384, 80 mm → 576).
+    print_width_dots: Optional[Literal[576, 512, 432, 384]] = Field(None, alias="printWidthDots")
     copies: int = Field(1, ge=1, le=COPIES_MAX)
     cut_paper: bool = Field(True, alias="cutPaper")
     beep: bool = False
@@ -140,6 +142,9 @@ class PrinterIn(BaseModel):
         if reach != "bluetooth":
             self.bt_address = None
             self.bt_name = None
+        # The till's own head prints its own width.
+        if reach == "till":
+            self.print_width_dots = None
         # Narrowed to one till: its area says nothing more.
         if self.machine_id is not None:
             self.area_id = None

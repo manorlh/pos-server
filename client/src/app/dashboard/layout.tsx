@@ -29,13 +29,18 @@ function ShellSkeleton() {
  * Suspense boundary for the route to keep prerendering.
  */
 function DashboardShell({ children }: { children: React.ReactNode }) {
+  // The home (the control board) draws its own filters over the same scope, phone-first;
+  // the bar above it would say the same thing twice.
+  const ownFilters = usePathname() === '/dashboard';
   return (
     <ScopeProvider>
       <div className="space-y-4">
-        <header className="space-y-3 print:hidden">
-          <Breadcrumbs />
-          <ScopeBar />
-        </header>
+        {ownFilters ? null : (
+          <header className="space-y-3 print:hidden">
+            <Breadcrumbs />
+            <ScopeBar />
+          </header>
+        )}
         <AccessGuard>{children}</AccessGuard>
       </div>
     </ScopeProvider>

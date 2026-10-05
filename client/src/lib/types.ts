@@ -1458,6 +1458,8 @@ export interface ZRun {
   errorMessage?: string | null;
   /** Set when the operator confirmed producing this shop Z without some tills. */
   openTillsLeftOut?: ZOpenTillsLeftOut | null;
+  /** "כפה סגירה (גם באמצע מכירה)" (docs/SPEC_OFFLINE_TILL_Z.md §9). */
+  force?: boolean;
   items: ZRunItem[];
 }
 
@@ -1532,6 +1534,30 @@ export interface TillZRequest {
   online?: boolean | null;
   pendingDocuments?: number | null;
   pendingAsOf?: string | null;
+  /** "כפה סגירה (גם באמצע מכירה)" (docs/SPEC_OFFLINE_TILL_Z.md §9). */
+  force?: boolean;
+}
+
+/** One figure where a Z closed offline differs from the cloud's own (docs/SPEC_OFFLINE_TILL_Z.md §6.1). */
+export interface ZOfflineDiscrepancy {
+  key: string;
+  till: unknown;
+  cloud: unknown;
+}
+
+/** The card batch transmitted before a till Z, as the terminal answered (§7.3). */
+export interface ZCardTransmission {
+  outcome: 'success' | 'failed' | 'busy' | 'unknown' | 'skipped';
+  batchNumber?: string | null;
+  statusCode?: number | null;
+  statusMessage?: string | null;
+  error?: string | null;
+  transactionCount?: number | null;
+  amount?: string | null;
+  byBrand?: { brand: string; count: number; amount: string }[];
+  at?: string | null;
+  confirmedFailure?: boolean;
+  confirmedByName?: string | null;
 }
 
 export interface ZReport {
@@ -1631,6 +1657,13 @@ export interface ZReport {
   createdByName?: string | null;
   /** Till Zs: the till's own figures differed from the ones the cloud built. */
   totalsMismatch?: boolean;
+  /** Closed at the till with no connection to the cloud, uploaded at `uploadedAt`. */
+  builtOffline?: boolean;
+  uploadedAt?: string | null;
+  /** Where the cloud's figures differ from the offline Z's paper; null/empty = none. */
+  offlineDiscrepancies?: ZOfflineDiscrepancy[] | null;
+  /** The card transmission the till ran before the Z. */
+  cardTransmission?: ZCardTransmission | null;
   /** Legacy rows only: the till's own Z blob. */
   payload?: Record<string, unknown> | null;
   /** Legacy rows only. */
@@ -1721,6 +1754,8 @@ export interface ZReportBusiness {
 }
 
 export interface ZReportDetail extends ZReport {
+  /** A Z closed offline: what the till printed (number, shifts, range, section). */
+  offlineReport?: Record<string, unknown> | null;
   perMachine: ZReportMachineSection[];
   shifts: Shift[];
   business?: ZReportBusiness | null;

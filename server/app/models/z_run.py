@@ -79,6 +79,9 @@ class ZRun(Base):
     #: till counted (`app.services.z_runs.verify_item`) — or the till was deferred by the
     #: operator's typed "סגור". False for the dashboard's runs.
     strict_cloud_check = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: "כפה סגירה (גם באמצע מכירה)": the tills park an open basket and close (only a card
+    #: charge in flight is waited for). Handed to the till as `force` with the close.
+    force_close = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

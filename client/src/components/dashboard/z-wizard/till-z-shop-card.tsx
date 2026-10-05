@@ -20,6 +20,7 @@ import { useMutation } from '@tanstack/react-query';
 import { Info, Loader2, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { requestShopTillZ } from '@/lib/api';
+import { ForceCloseOption } from './force-close-option';
 import { formatDateTime } from '@/lib/format';
 import { canAskTillForZ } from '@/lib/tillZ';
 import type { PosMachine, TillZRequest, ZCandidateMachine } from '@/lib/types';
@@ -138,8 +139,9 @@ export function TillZShopCard({
   const chosen = tills.filter(isChecked).map((m) => m.machineId);
   const sentFor = (machineId: string) => sent.find((r) => r.machineId === machineId) ?? null;
 
+  const [force, setForce] = useState(false);
   const send = useMutation({
-    mutationFn: () => requestShopTillZ(shopId, chosen),
+    mutationFn: () => requestShopTillZ(shopId, chosen, force),
     onSuccess: (requests) => {
       toast.success(tr('sentMany', { count: requests.length }));
       setOverrides({});
@@ -174,6 +176,7 @@ export function TillZShopCard({
             sent={sentFor(m.machineId)}
           />
         ))}
+        <ForceCloseOption checked={force} onChange={setForce} className="border-t pt-3" />
         <div className="flex flex-wrap items-center gap-3 border-t pt-3">
           <Button disabled={chosen.length === 0 || send.isPending} onClick={() => send.mutate()}>
             {send.isPending ? (

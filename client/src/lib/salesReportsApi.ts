@@ -128,7 +128,8 @@ export async function fetchPaymentMethodsReport(params: Params): Promise<Payment
   return (await api.get<PaymentMethodsReport>('/reports/payment-methods', { params })).data;
 }
 
-export async function fetchHourlyReport(params: Params): Promise<HourlyReport> {
+/** `companyId` (the company and its subsidiaries) narrows like `shopId`; the control board's chart. */
+export async function fetchHourlyReport(params: Params & { companyId?: string }): Promise<HourlyReport> {
   return (await api.get<HourlyReport>('/reports/hourly', { params })).data;
 }
 

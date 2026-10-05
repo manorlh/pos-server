@@ -84,6 +84,12 @@ class Transaction(Base):
     tip_payment_method = Column(String(10), nullable=True)
     total_discount = Column(Numeric(12, 2), nullable=True)
     document_discount = Column(Numeric(12, 2), nullable=True)
+    #: The basket discount on its own — inside `document_discount` with the line
+    #: discounts and the promotions — the rate it was given at (null for a sum), and what
+    #: it was: `club` (the club button, till parameter `clubButtonEnabled`) or `manual`.
+    basket_discount = Column(Numeric(12, 2), nullable=True)
+    basket_discount_percent = Column(Numeric(6, 2), nullable=True)
+    basket_discount_kind = Column(String(16), nullable=True)
     wht_deduction = Column(Numeric(12, 2), nullable=True)
 
     # Free text as sent by the till — a cloud customer UUID on a current build, but
