@@ -130,7 +130,7 @@ export function TablesEditor({ shopId }: { shopId: string }) {
   const uploadBackground = async (file: File) => {
     setUploading(true);
     try {
-      const result = await uploadProductImage(file, 'products', { keepBackground: true });
+      const result = await uploadProductImage(file, 'products');
       setZBackground(result.url);
     } catch (err) {
       fail(err);
