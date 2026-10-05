@@ -607,6 +607,17 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         ),
     ),
     BuiltinParameter(
+        key="tipAutoPrompt",
+        label="שאלת טיפ אוטומטית במעבר לתשלום",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "מופעל (ברירת מחדל): בבחירת אמצעי תשלום שמבקש טיפ (\"בקשת טיפ באמצעי התשלום\" בהגדרות), "
+            "הקופה פותחת ללקוח את מסך הטיפ לבד. כבוי: מסך הטיפ לא נפתח אוטומטית — טיפ מוסיפים רק "
+            "בכפתור \"טיפ\" במסך התשלום (שמופיע כל עוד אמצעי תשלום כלשהו מקבל טיפ)."
+        ),
+    ),
+    BuiltinParameter(
         key="screenEditEnabled",
         label="עריכת מסך בקופה (לחיצה ארוכה)",
         value_type="boolean",
