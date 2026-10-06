@@ -29,6 +29,7 @@ from __future__ import annotations
 import enum
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional
 
 from sqlalchemy import and_
@@ -215,6 +216,34 @@ def resolve_rows(
     )
 
 
+#: The levels a Z may reopen (app/services/availability_reopen.py): no Z closes a company's
+#: day, and the product's own flag is the catalog's.
+REOPENABLE = (Level.SHOP, Level.AREA, Level.MACHINE)
+
+
+def lock_info(levels: Dict[Level, Resolved], rows: Dict[Level, object]) -> Optional[Dict]:
+    """
+    The lock that decides a till's value, as the till is sent it (`availabilityLock`), so
+    that a Z the till closes with no connection can reopen it there and then
+    (docs/SPEC_AVAILABILITY.md): its level, "חסימה קבועה", when it began, and what the till
+    gets without it (`inherited`, the level above). None when the product is available, or
+    when the deciding level is one no Z reopens.
+
+    `levels` is `resolve_levels`' answer; `rows` the stored row of each level, by level.
+    """
+    final = levels[Level.MACHINE]
+    if final.available or final.source not in REOPENABLE:
+        return None
+    row = rows.get(final.source)
+    blocked_at = getattr(row, "blocked_at", None)
+    return {
+        "level": final.source.value,
+        "permanent": bool(getattr(row, "block_permanent", False)),
+        "blockedAt": blocked_at.isoformat() if blocked_at is not None else None,
+        "inherited": levels[level_above(final.source)].available,
+    }
+
+
 def effective_availability(db: Session, product, machine) -> bool:
     """May `machine` sell `product`? One product, one till — see the module docstring."""
     shop_row = None
@@ -248,6 +277,42 @@ def effective_availability(db: Session, product, machine) -> bool:
 # with a NULL and a fresh `updated_at`: the tills pull by delta and the catalog
 # watermark reads `max(updated_at)`, and neither can see a deleted row. `updated_at`
 # is stamped explicitly so that re-sending the same value still counts as a change.
+#
+# The shop, area and till levels also carry "חסימה קבועה" (`block_permanent`) and when
+# the lock began (`blocked_at`), for "פתיחת פריטים אוטומטית אחרי Z"
+# (app/services/availability_reopen.py) — see `mark_lock`. The company level has
+# neither: no Z closes a company's day.
+
+
+def mark_lock(
+    row,
+    was_locked: bool,
+    value: Optional[bool],
+    permanent: Optional[bool] = None,
+    at: Optional[datetime] = None,
+) -> None:
+    """
+    Keep `blocked_at` / `block_permanent` in step with a level's new value.
+
+    A new lock begins now — or at `at`, when a till queued it with no connection and says
+    when its manager set it (never later than now) — and is temporary unless `permanent`
+    says otherwise: the default for a till's "sold out" and for the dashboard alike. A lock
+    that stays a lock keeps when it began, and its flag unless `permanent` is given.
+    Anything else is no lock.
+    """
+    if value is False:
+        if not was_locked:
+            now = datetime.now(timezone.utc)
+            began = None
+            if at is not None:
+                began = at if at.tzinfo is not None else at.replace(tzinfo=timezone.utc)
+            row.blocked_at = began if began is not None and began <= now else now
+            row.block_permanent = bool(permanent)
+        elif permanent is not None:
+            row.block_permanent = bool(permanent)
+    else:
+        row.blocked_at = None
+        row.block_permanent = False
 
 
 def set_company_availability(
@@ -269,14 +334,25 @@ def set_company_availability(
     return row
 
 
-def set_shop_availability(row: ShopProductOverride, value: Optional[bool]) -> ShopProductOverride:
+def set_shop_availability(
+    row: ShopProductOverride,
+    value: Optional[bool],
+    permanent: Optional[bool] = None,
+    at: Optional[datetime] = None,
+) -> ShopProductOverride:
+    mark_lock(row, row.is_available is False, value, permanent, at)
     row.is_available = value
     row.updated_at = func.now()
     return row
 
 
 def set_area_availability(
-    db: Session, area_id, product_id, value: Optional[bool]
+    db: Session,
+    area_id,
+    product_id,
+    value: Optional[bool],
+    permanent: Optional[bool] = None,
+    at: Optional[datetime] = None,
 ) -> AreaProductOverride:
     row = (
         db.query(AreaProductOverride)
@@ -289,13 +365,19 @@ def set_area_availability(
     if row is None:
         row = AreaProductOverride(area_id=area_id, product_id=product_id)
         db.add(row)
+    mark_lock(row, row.is_available is False, value, permanent, at)
     row.is_available = value
     row.updated_at = func.now()
     return row
 
 
 def set_machine_availability(
-    db: Session, machine_id, product_id, value: Optional[bool]
+    db: Session,
+    machine_id,
+    product_id,
+    value: Optional[bool],
+    permanent: Optional[bool] = None,
+    at: Optional[datetime] = None,
 ) -> MachineProductOverride:
     row = (
         db.query(MachineProductOverride)
@@ -308,6 +390,7 @@ def set_machine_availability(
     if row is None:
         row = MachineProductOverride(machine_id=machine_id, product_id=product_id)
         db.add(row)
+    mark_lock(row, row.is_available is False, value, permanent, at)
     row.is_available = value
     row.updated_at = func.now()
     return row

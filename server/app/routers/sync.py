@@ -166,6 +166,11 @@ class CatalogSyncResponse(BaseModel):
     # only when the menu changed after `since` — absent means "keep what you have". An
     # older till ignores the key.
     menu: Optional[Dict[str, Any]] = None
+    # "תפריטים" (docs/SPEC_MENUS.md): the menus assigned along this till's chain, their
+    # schedules and assignments, and its fallback — the till works out which is active on
+    # its own clock. Full pull: always; delta: only when they changed after `since` —
+    # absent means "keep what you have". An older till ignores the key.
+    catalog_menus: Optional[Dict[str, Any]] = Field(None, alias="catalogMenus")
 
     class Config:
         populate_by_name = True
@@ -288,6 +293,10 @@ def get_catalog_sync(
             machine.tenant_id is not None
             and menu_service.include_menu(db, machine, review_pull.live_since)
         ) else None
+    # "תפריטים": live, or the shop's publication in review mode (app/services/catalog_menus.py).
+    from app.services import catalog_menus as catalog_menus_service
+
+    catalog_menus = catalog_menus_service.block_for_pull(db, machine, since_dt, review_pull)
 
     update_machine_sync_timestamp(db, mqid)
 
@@ -300,6 +309,7 @@ def get_catalog_sync(
         customers=customers,
         machine_catalog=machine_catalog_for_sync(machine),
         menu=menu,
+        catalog_menus=catalog_menus,
     )
 
 
@@ -514,6 +524,8 @@ def machine_create_cloud_product(
         unit_label=data.unit_label,
         no_discount=data.no_discount,
         dietary_tags=data.dietary_tags or None,
+        # "היכן הפריט נמכר" from the till's product dialog (app/services/sales_channel.py).
+        sales_channel=data.sales_channel,
         # Only `ensure_general_item` makes a general item (the request cannot ask).
         is_general=False,
     )
@@ -955,11 +967,15 @@ def machine_set_product_availability(
     target = _scope_target(machine, body.scope)
 
     if body.scope == "machine":
-        availability.set_machine_availability(db, target, product.id, body.active)
+        availability.set_machine_availability(
+            db, target, product.id, body.active, body.permanent, body.blocked_at
+        )
     elif body.scope == "area":
-        availability.set_area_availability(db, target, product.id, body.active)
+        availability.set_area_availability(
+            db, target, product.id, body.active, body.permanent, body.blocked_at
+        )
     else:
-        availability.set_shop_availability(row, body.active)
+        availability.set_shop_availability(row, body.active, body.permanent, body.blocked_at)
     _audit(
         db,
         machine=machine,
@@ -1180,6 +1196,42 @@ async def machine_upload_product_image(
     }
 
 
+@router.delete("/{machine_id}/products/{product_id}/image")
+def machine_remove_product_image(
+    machine_id: str,
+    product_id: str,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    db: Session = Depends(get_db),
+):
+    """
+    "הסרת תמונה" from the till's product dialog: the product goes back to no picture.
+    Gated exactly like the upload above — a manager's authority, and only for a product
+    this shop alone lists (403 `shared_product_master_readonly`). Removing a picture the
+    product does not have is a no-op that still answers 200, so a till replaying a
+    queued removal never sees a refusal for it.
+    """
+    _require_assigned_machine(machine)
+    shop = _shop_or_400(db, machine)
+    product = _machine_editable_product(db, machine, product_id)
+    if not _product_belongs_only_to(db, product, shop.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="shared_product_master_readonly")
+    if product.image_url is not None:
+        product.image_url = None
+        _audit(
+            db,
+            machine=machine,
+            actor=actor,
+            entity=SyncEntityType.PRODUCTS,
+            action=SyncAction.UPDATE,
+            entity_id=product.id,
+            note="image removed",
+        )
+        db.commit()
+        notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="product_updated")
+    return {"url": None}
+
+
 @router.put(
     "/{machine_id}/categories/{category_id}/availability",
     response_model=TillAvailabilityResponse,
@@ -1205,7 +1257,9 @@ def machine_set_category_availability(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
     target = _scope_target(machine, body.scope)
 
-    category_availability.set_override(db, body.scope, target, category.id, body.active)
+    category_availability.set_override(
+        db, body.scope, target, category.id, body.active, body.permanent, body.blocked_at
+    )
     _audit(
         db,
         machine=machine,
@@ -1725,9 +1779,15 @@ def get_till_z_history(
     """
     from app.services.z_sequence import last_machine_z_number
 
+    from app.services.z_sequence import current_machine_epoch
+
     zs = till_z.till_z_history(db, machine, days=days)
+    epoch, started = current_machine_epoch(db, machine.id)
     return {
         "lastTillZNumber": last_machine_z_number(db, machine.id),
+        # The run the till numbers in now (SPEC_INDEPENDENT_TILL §3.1).
+        "tillZEpoch": epoch,
+        "tillZEpochStartedAt": started.isoformat() if started is not None else None,
         "serverTime": datetime.now(timezone.utc).isoformat(),
         "items": [
             {
@@ -2067,6 +2127,17 @@ def get_settings_sync(
     # "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md): the company's, on every full / delta pull,
     # beside the identity. The till picks its document type and VAT by it.
     effective["dealerType"] = business_info.dealer_type
+    # Terminal configuration (clearing server, forced terminal number) is never inherited
+    # onto a kiosk or a till on an external pinpad: only its own layer's value goes out, and
+    # where each value comes from, for the till's own check (terminal_config_guard.py).
+    from app.services import terminal_config_guard
+
+    effective, terminal_sources = terminal_config_guard.guard(
+        effective,
+        machine=machine,
+        merged=all_settings,
+        layers=terminal_config_guard.layers_of(tenant, company, shop, area_layer, machine),
+    )
 
     update_machine_sync_timestamp(db, str(machine.id))
 
@@ -2078,6 +2149,7 @@ def get_settings_sync(
         business_info=business_info,
         area=area,
         training_mode=bool(shop.training_mode),
+        terminal_config_sources=terminal_sources,
     )
 
 

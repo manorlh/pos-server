@@ -531,7 +531,9 @@ class TestOpenFormat:
         records, _ = _export(w, [_get(w, sale), _get(w, credit)])
 
         types = [(r[22:25], r[49]) for r in records["D120"]]
-        assert types == [("320", "1"), ("320", "6"), ("330", "6")]
+        # The sale's legs only: a 330 carries no payment records (D120 is "פרטי קבלה",
+        # 1.31 §4.5; the simulator rejects one under a 330 header).
+        assert types == [("320", "1"), ("320", "6")]
 
     def test_a_single_exchange_leg_document_is_type_6_too(self):
         tx = {"documentType": 330, "paymentMethod": "exchange", "transactionNumber": "1",
@@ -601,7 +603,7 @@ class TestOpenFormat:
 
         assert records["C100"][0][22:25] == "330"
         assert records["D110"][0][22:25] == "330"
-        assert records["D120"][0][22:25] == "330"
+        assert "D120" not in records  # no payment records under a credit note
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────

@@ -159,6 +159,9 @@ class TestCatalog:
             "builtinTerminal": terminal,
             "cashDrawerPort": drawer,
             "driverPending": pending,
+            # The head's paper (docs/SPEC_SUNMI.md): 58 mm where there is one, none elsewhere.
+            "paperWidthMm": 58 if printer else None,
+            "builtinScanner": False,
         }
         m = POSMachine(device_model=model)
         assert (m.has_printer, m.has_builtin_terminal, m.has_cash_drawer_port, m.device_driver_pending) == (
@@ -166,7 +169,10 @@ class TestCatalog:
         )
 
     def test_six_models(self):
-        assert DEVICE_MODELS == ("N55F", "MODO", "P18", "LANDI", "FEITIAN_TABLET", "GENERIC_ANDROID")
+        # The six, then the SUNMI family (tests/test_sunmi_models.py), then the SynqPay
+        # terminals (tests/test_synqpay_devices.py).
+        assert DEVICE_MODELS[:6] == ("N55F", "MODO", "P18", "LANDI", "FEITIAN_TABLET", "GENERIC_ANDROID")
+        assert all(m.startswith("SUNMI") or m.startswith("SYNQPAY") for m in DEVICE_MODELS[6:])
 
     def test_no_driverless_model_claims_a_printer(self):
         assert not any(

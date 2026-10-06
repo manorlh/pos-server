@@ -18,7 +18,7 @@ import {
 } from '@/lib/kioskConfig';
 import type { KioskSourceProduct } from '@/lib/kioskApi';
 import { useKioskEditor, useKioskField } from './editor-context';
-import { FieldErrors, FieldShell, MediaInput, MoveButtons, SectionCard } from './fields';
+import { FieldErrors, FieldShell, MediaInput, MoveButtons, SectionCard, SwitchField } from './fields';
 
 function Thumb({ url, className }: { url: string | null | undefined; className?: string }) {
   if (!url) return <div className={cn('rounded-lg bg-muted', className)} />;
@@ -261,6 +261,10 @@ export function CatalogSection() {
           })}
         </ol>
         {view.categories.length === 0 ? <p className="text-sm text-muted-foreground">{ts('noProducts')}</p> : null}
+      </SectionCard>
+
+      <SectionCard title={t('menuModeTitle')} paths={['catalog.oneCategory']}>
+        <SwitchField path="catalog.oneCategory" label={t('oneCategory')} hint={t('oneCategoryHint')} />
       </SectionCard>
 
       <SectionCard title={t('featuredTitle')} paths={['catalog.featuredProductIds']}>

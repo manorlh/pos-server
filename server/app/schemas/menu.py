@@ -12,7 +12,7 @@ from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.models.menu import ALLERGENS
+from app.models.menu import ALLERGENS, UPSELL_STEPS
 
 NAME_MAX = 100
 OPTIONS_MAX = 60
@@ -292,14 +292,23 @@ class UpsellIn(_Body):
     options are one product (what a till that predates options reads).
 
     `triggerType` "order" ("בכל הזמנה") needs no `triggerIds`: the till asks when a table
-    is sent to the kitchen or its bill asked for, and when a quick order goes to payment
-    — always in the window, and only for an "add" rule.
+    is sent to the kitchen or its bill asked for, and when a quick order (or the kiosk)
+    goes to payment — always in the window, and only for an "add" rule.
+
+    `triggerType` "transition" ("מעבר בין מסכים"): `triggerIds` are step codes
+    (UPSELL_STEPS; `enter_category:<category id>`), each on at least one of the rule's
+    `places` — always in the window, only to add.
+
+    `places` ("איפה": any of quick / tables / kiosk) replaces `where`; a body with only
+    `where` (an older dashboard) keeps its meaning, the kiosk included as before it had a
+    place of its own ("quick" and "both" reached the kiosk).
     """
 
     name: str = Field(min_length=1, max_length=120)
     company_id: Optional[uuid.UUID] = Field(None, alias="companyId")
-    trigger_type: Literal["product", "category", "order"] = Field(alias="triggerType")
-    trigger_ids: List[uuid.UUID] = Field(default_factory=list, alias="triggerIds", max_length=200)
+    trigger_type: Literal["product", "category", "order", "transition"] = Field(alias="triggerType")
+    #: Product or category ids, or step codes for a "transition".
+    trigger_ids: List[str] = Field(default_factory=list, alias="triggerIds", max_length=200)
     action: Literal["add", "upgrade"] = "add"
     product_id: Optional[uuid.UUID] = Field(None, alias="productId")
     options: Optional[List[UpsellOptionIn]] = Field(None, max_length=UPSELL_OPTIONS_MAX)
@@ -307,6 +316,9 @@ class UpsellIn(_Body):
     prompt: Optional[str] = Field(None, max_length=200)
     display: Literal["card", "popup"] = "card"
     where: Literal["quick", "tables", "both"] = "both"
+    places: Optional[List[Literal["quick", "tables", "kiosk"]]] = Field(None, max_length=3)
+    #: The window's own picture (a special); null: the offered item's.
+    image_url: Optional[str] = Field(None, alias="imageUrl", max_length=500)
     skip_if_present: bool = Field(True, alias="skipIfPresent")
     once_per_order: bool = Field(False, alias="oncePerOrder")
     message: Optional[str] = Field(None, max_length=200)
@@ -317,7 +329,7 @@ class UpsellIn(_Body):
     priority: int = Field(0, ge=0, le=100)
     is_active: bool = Field(True, alias="isActive")
 
-    @field_validator("name", "message", "prompt", mode="before")
+    @field_validator("name", "message", "prompt", "image_url", mode="before")
     @classmethod
     def _trim(cls, v):
         return v.strip() if isinstance(v, str) else v
@@ -326,6 +338,15 @@ class UpsellIn(_Body):
     @classmethod
     def _empty_message(cls, v):
         return v or None
+
+    @field_validator("image_url")
+    @classmethod
+    def _image(cls, v):
+        if not v:
+            return None
+        if not (v.startswith("https://") or v.startswith("http://") or v.startswith("/")):
+            raise ValueError("imageUrl is an http(s) address or a path on this server")
+        return v
 
     @field_validator("weekdays")
     @classmethod
@@ -344,14 +365,59 @@ class UpsellIn(_Body):
         for t in (self.start_time, self.end_time):
             if t is not None and not _HHMM.match(t):
                 raise ValueError("times are HH:MM")
+        if self.places is None:
+            self.places = {"quick": ["quick", "kiosk"], "tables": ["tables"]}.get(self.where, ["quick", "tables", "kiosk"])
+        self.places = [p for p in ("quick", "tables", "kiosk") if p in set(self.places)]
+        if not self.places:
+            raise ValueError("choose where it is offered (places)")
+        self.where = (
+            "both" if {"quick", "tables"} <= set(self.places)
+            else "quick" if "quick" in self.places
+            else "tables" if "tables" in self.places
+            else "both"
+        )
         if self.trigger_type == "order":
             # Every order: nothing to name, asked in the window, only to add.
             self.trigger_ids = []
             self.display = "popup"
             if self.action != "add":
                 raise ValueError("a rule for every order adds a product (action add)")
+        elif self.trigger_type == "transition":
+            # Steps of the order: asked in the window, only to add.
+            self.display = "popup"
+            if self.action != "add":
+                raise ValueError("a rule for a step adds a product (action add)")
+            steps = set()
+            for p in self.places:
+                steps.update(UPSELL_STEPS[p])
+            codes: List[str] = []
+            for raw in self.trigger_ids:
+                code = str(raw).strip()
+                name, _, arg = code.partition(":")
+                if name not in steps:
+                    raise ValueError(f"the step {name} is not on the chosen places")
+                if name == "enter_category":
+                    try:
+                        code = f"enter_category:{uuid.UUID(arg)}"
+                    except ValueError:
+                        raise ValueError("enter_category names a category (enter_category:<id>)")
+                elif arg:
+                    raise ValueError(f"the step {name} takes nothing after it")
+                if code not in codes:
+                    codes.append(code)
+            if not codes:
+                raise ValueError("choose the steps that trigger it")
+            self.trigger_ids = codes
         elif not self.trigger_ids:
             raise ValueError("choose the products or categories that trigger it")
+        else:
+            ids: List[str] = []
+            for raw in self.trigger_ids:
+                try:
+                    ids.append(str(uuid.UUID(str(raw))))
+                except ValueError:
+                    raise ValueError("triggerIds are product or category ids")
+            self.trigger_ids = ids
         chosen: List[UpsellOptionIn] = []
         seen = set()
         for o in self.options or ([UpsellOptionIn(type="product", id=self.product_id)] if self.product_id else []):
@@ -364,7 +430,7 @@ class UpsellIn(_Body):
             raise ValueError("an upgrade offers exactly one product")
         self.options = chosen
         self.product_id = chosen[0].id if len(chosen) == 1 and chosen[0].type == "product" else None
-        offered = {o.id for o in chosen if o.type == "product"}
+        offered = {str(o.id) for o in chosen if o.type == "product"}
         if self.trigger_type == "product" and self.action == "add" and offered & set(self.trigger_ids):
             raise ValueError("a product cannot suggest itself")
         if len(set(self.trigger_ids)) != len(self.trigger_ids):

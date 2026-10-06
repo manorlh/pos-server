@@ -547,8 +547,8 @@ def update_shop(
     # The license fields leave `updates` here: the super admin's only.
     licenses.apply_license(current_user, shop, updates)
     if "branch_id" in updates:
-        # Never cleared, digits, unique in the company (400 / 409). Saving it is also how
-        # a code the migration assigned is confirmed ("ודאו מול רו״ח").
+        # Never cleared, digits, unique in the company (400 / 409). Once saved it is no
+        # longer the code the migration assigned (`branch_id_auto_assigned`).
         updates["branch_id"] = branch_code.check_branch_code(
             db, shop.company_id, updates["branch_id"], shop_id=shop.id
         )

@@ -11,7 +11,7 @@ import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
-import { FilePlus2, Loader2, LogOut, Pause, Play, Settings2, Undo2 } from 'lucide-react';
+import { FilePlus2, Loader2, LogOut, Settings2, Undo2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -41,6 +41,8 @@ import {
 import type { PosMachine, Shop } from '@/lib/types';
 import { agoText, ConnectionBadge, ModeBadge, StateBadges } from './kiosk-list';
 import { controllerOptions } from './convert-dialog';
+import { KioskLockControls, KioskScheduleControls } from './kiosk-lock-schedule';
+import { KioskOpsNotes, KioskTerminalIdentityNote } from './kiosk-ops-notes';
 
 const BON_TONE: Record<KioskBonStatus, string> = {
   printed: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200',
@@ -161,7 +163,6 @@ export function KioskDetailDialog({
   const zErrors = useZErrorText();
   const qc = useQueryClient();
   const timeZone = useTenantTimeZone();
-  const [pauseMessage, setPauseMessage] = useState('');
   const [force, setForce] = useState(false);
 
   const machineId = kiosk?.machineId ?? '';
@@ -190,7 +191,6 @@ export function KioskDetailDialog({
     onSuccess: (res: KioskCommandOut) => {
       if (res.status === 'refused') toast.error(res.detail || tcmd('status.refused'));
       else toast.success(res.status === 'applied' ? t('applied') : t('sent'));
-      setPauseMessage('');
       setForce(false);
       void qc.invalidateQueries({ queryKey: ['kiosks'] });
       void qc.invalidateQueries({ queryKey: ['kiosk-commands', machineId] });
@@ -248,6 +248,9 @@ export function KioskDetailDialog({
           ))}
         </div>
         {connection !== 'online' ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('staleStats')}</p> : null}
+        {/* "התראות לקופות" open now, and the last "סגירה יחד עם ה-Z הסניפי" */}
+        <KioskOpsNotes k={kiosk} />
+        <KioskTerminalIdentityNote k={kiosk} />
 
         {/* Remote actions */}
         <section className="space-y-3 rounded-2xl border p-4">
@@ -255,37 +258,9 @@ export function KioskDetailDialog({
           {!canWrite ? <p className="text-sm text-muted-foreground">{t('noWrite')}</p> : null}
           {connection !== 'online' && canWrite ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('offlineNote')}</p> : null}
 
-          {kiosk.paused ? (
-            <div className="flex flex-wrap items-center gap-3 rounded-xl bg-amber-50 p-3 dark:bg-amber-950/30">
-              <div className="min-w-0 flex-1 text-sm">
-                <div className="font-medium">{tk('paused')}</div>
-                <div className="text-xs text-muted-foreground">
-                  {t('pausedSince', { when: formatDateTime(kiosk.pausedAt), by: kiosk.pausedBy ?? '—' })}
-                </div>
-                {kiosk.pauseMessage ? <div className="mt-1 text-xs">“{kiosk.pauseMessage}”</div> : null}
-              </div>
-              {canWrite ? (
-                <Button size="sm" disabled={busy} onClick={() => command.mutate({ action: 'resume' })}>
-                  <Play /> {t('resume')}
-                </Button>
-              ) : null}
-            </div>
-          ) : canWrite ? (
-            <div className="flex flex-wrap items-end gap-2">
-              <label className="min-w-56 flex-1 space-y-1">
-                <span className="text-xs text-muted-foreground">{t('pauseMessage')}</span>
-                <Input value={pauseMessage} maxLength={300} placeholder={t('pauseMessagePlaceholder')} onChange={(e) => setPauseMessage(e.target.value)} />
-              </label>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => command.mutate({ action: 'pause', ...(pauseMessage.trim() ? { message: pauseMessage.trim() } : {}) })}
-              >
-                <Pause /> {t('pause')}
-              </Button>
-            </div>
-          ) : null}
+          {/* "נעילה למכירה" and "פתיחה אוטומטית" (docs/SPEC_KIOSK.md §15) */}
+          <KioskLockControls kiosk={kiosk} canWrite={canWrite} busy={busy} send={(body) => command.mutate(body)} />
+          <KioskScheduleControls kiosk={kiosk} canWrite={canWrite} busy={busy} send={(body) => command.mutate(body)} />
 
           {canWrite ? (
             <div className="grid gap-3 sm:grid-cols-2">

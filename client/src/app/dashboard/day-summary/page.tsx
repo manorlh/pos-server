@@ -71,8 +71,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
-import { BranchCode, useZIdentityLabel } from '@/components/dashboard/z-report/z-identity';
-import { zTillColumn } from '@/lib/zIdentity';
+import { BranchCode, useZIdentityLabel, ZRun } from '@/components/dashboard/z-report/z-identity';
+import { zRunDate, zTillColumn } from '@/lib/zIdentity';
+import { useTenantTimeZone } from '@/lib/auth';
 
 /** Day row + the expander cell. */
 const COLS = 10;
@@ -228,6 +229,8 @@ function DayRow({ row }: { row: DaySummaryRow }) {
                             {tz('originTill')}
                           </Badge>
                         ) : null}
+                        {/* One till can have two "Z 1": a later run says when it started. */}
+                        <ZRun z={c} className="block text-muted-foreground text-xs font-normal" />
                       </TableCell>
                       <TableCell className="font-medium">
                         {c.machineName ?? c.machineId}
@@ -301,6 +304,7 @@ export default function DaySummaryPage() {
   const tc = useTranslations('common');
   const tExport = useTranslations('independentTill.export');
   const zIdentity = useZIdentityLabel();
+  const timeZone = useTenantTimeZone();
 
   // The scope still applies — it decides what the multi-selects can even offer —
   // but the selection itself is explicit, because "these three branches" is not a
@@ -505,6 +509,7 @@ export default function DaySummaryPage() {
                   { header: tExport('z') },
                   { header: tExport('branchCode') },
                   { header: tExport('till') },
+                  { header: tExport('run') },
                   { header: t('drill.shop') },
                   { header: t('drill.net'), kind: 'money' },
                   { header: t('drill.cash'), kind: 'money' },
@@ -513,7 +518,7 @@ export default function DaySummaryPage() {
                 ],
                 rows: data.days.flatMap((d) =>
                   d.contributors.map((c) => [
-                    d.dayDate, zIdentity(c), c.branchCode ?? '', zTillColumn(c), c.shopName ?? '',
+                    d.dayDate, zIdentity(c), c.branchCode ?? '', zTillColumn(c), zRunDate(c, timeZone) ?? '', c.shopName ?? '',
                     c.net, c.cashSales, c.cardSales, c.tips,
                   ]),
                 ),

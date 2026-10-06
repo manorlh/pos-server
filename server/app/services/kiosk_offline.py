@@ -88,7 +88,9 @@ def trading(db: Session, machine: POSMachine, device: KioskDevice, cfg: Dict[str
     """Whether the kiosk should have been up at [at]: inside its hours, or — with none set — trading."""
     hours = cfg.get("hours") or {}
     if hours.get("enabled"):
-        return in_hours(hours.get("ranges"), _local(db, machine, at))
+        from app.services import kiosk_schedule
+
+        return kiosk_schedule.is_open(hours, _local(db, machine, at))
     status = device.status if isinstance(device.status, dict) else {}
     return bool(status.get("shiftOpen"))
 

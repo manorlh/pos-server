@@ -110,6 +110,15 @@ def fonts_wire() -> List[Dict[str, Any]]:
 # ── Vocabularies and limits ──────────────────────────────────────────────────
 
 FULFILLMENT_MODES = ("BON", "KDS")
+#: "התראות לקופות" — which tills: the main till (else all the shop's), all, or a chosen list.
+ALERT_TILLS = ("main", "all", "selected")
+#: …and who on them: everyone signed in, or only a manager signed in.
+ALERT_AUDIENCES = ("everyone", "managers")
+ALERT_KINDS = ("printer", "terminal", "help")
+ALERT_MACHINES_MAX = 50
+#: A help request clears by itself after this many minutes (staff said "בדרך" or not).
+HELP_CLEAR_MIN = 1
+HELP_CLEAR_MAX = 120
 SERVICE_TYPES = ("take_away", "eat_in")
 LANGUAGES = ("he", "en", "ar", "ru")
 SKIP_CART = ("off", "direct", "confirm")
@@ -163,6 +172,18 @@ MESSAGE_STYLES = ("info", "promo", "warning", "success")
 PAYMENT_METHODS = ("card",)
 RECEIPT_POLICIES = ("always", "ask", "never")
 CUSTOMER_FIELD_MODES = ("off", "optional", "required")
+#: "לקחת / לשבת": after "הזמינו כאן" (the current flow) or as two big buttons on the attract screen.
+SERVICE_PLACEMENTS = ("after_start", "attract")
+#: When the kiosk asks the customer's name / phone / table: after the service choice, before
+#: the cart, before payment (the current flow), or after payment.
+DETAILS_STEPS = ("after_service", "before_cart", "before_pay", "after_pay")
+#: "הגדלת מכירה" on the kiosk: the rules are the menu's (`upsell_rules`, place "kiosk" —
+#: docs/SPEC_KIOSK.md §21); the kiosk keeps only its cap, the windows in one order.
+UPSELL_MAX_SHOWN = 5
+#: Keys a kiosk layer no longer has: dropped when read or sent, never refused (the kiosk's
+#: own upsell rules of 06.10.2026, replaced by the menu's rules).
+RETIRED_KEYS = (("upsell", "rules"), ("upsell", "when"))
+SUCCESS_MESSAGE_MAX = 300
 BON_MODES = ("routing", "single")
 PICKUP_SCOPES = ("kiosk", "shop")
 MEDIA_KINDS = ("image", "video", "font")
@@ -199,6 +220,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "languages": ["he"],
         "skipCart": "off",
         "upsellEnabled": True,
+        # "לקחת / לשבת": after "הזמינו כאן" (default), or two big buttons on the attract screen.
+        "servicePlacement": "after_start",
         "searchEnabled": False,
         "notesEnabled": True,
         "quickNotesEnabled": True,
@@ -209,6 +232,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "reduceMotion": False,
         # "מצב שאין אינטרנט": a short sound on the kiosk when it loses the internet (off by default).
         "offlineSound": False,
+        # No internet never stops the kiosk by itself (docs/SPEC_KIOSK.md §17): the order, the
+        # documents and the Z are local, the card goes to the pinpad. "חסימת הזמנות כשאין
+        # אינטרנט" brings back the old rule (no orders, no payment while offline); off.
+        "blockWhenOffline": False,
+        # "הודעה ללקוח כשאין אינטרנט": a quiet line to the customer while offline; off.
+        "offlineNotice": False,
         "soldOutMode": "disable",
     },
     "theme": {
@@ -248,7 +277,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # the "wolt" style's (UI_PRESET_CTA): the look the button had before it was configurable.
         "cta": {
             "size": "l", "widthPct": 80, "heightDp": 88,
-            "position": "bottom_full", "x": 50, "y": 85,
+            "position": "bottom_center", "x": 50, "y": 85,
             "fillColor": None, "textColor": None,
             "fontSize": 24, "fontWeight": "bold",
             # 0 square … 100 pill (percent of half the height); null: the theme's button shape.
@@ -268,6 +297,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "hiddenProducts": [],
         "categoryImages": {},
         "featuredProductIds": [],
+        # "הצג כל מחלקה בנפרד": one category at a time, chosen from the rail (else one long list).
+        "oneCategory": True,
     },
     "messages": [],
     "hours": {
@@ -281,8 +312,17 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "receiptPolicy": "ask",
         "customerName": "optional",
         "customerPhone": "off",
+        # The table number: asked of an eat-in order only. (`general.askTableNumber`, the older
+        # switch, still asks it as optional.)
+        "tableNumber": "off",
+        # When name / phone / table are asked: after_service | before_cart | before_pay | after_pay.
+        "detailsStep": "before_pay",
         "minOrderAgorot": 0,
     },
+    # "הגדלת מכירה": the menu's rules for the kiosk (§21); at most `maxShown` windows in one order.
+    "upsell": {"maxShown": 2},
+    # "הודעת סיום": shown on the success screen for `timers.successSec`.
+    "success": {"message": "", "image": None},
     "printing": {
         "bonMode": "routing",
         "bonPrinterId": None,
@@ -291,11 +331,24 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # The small customer slip with the pickup number, on the receipt printer —
         # independent of `payment.receiptPolicy`.
         "pickupSlip": True,
+        # An unprinted bon prints again by itself when the printer comes back — once, and only
+        # when younger than this many minutes (docs/SPEC_KIOSK.md §16.8); 0: never by itself.
+        "bonAutoRetryMin": 10,
     },
     "pickup": {"scope": "kiosk", "prefix": "", "start": 1, "max": 999},
     "timers": {"inactivitySec": 60, "warningSec": 20, "successSec": 12, "attractSlideSec": 8},
     "club": {"enabled": False, "joinUrl": "", "title": "", "body": ""},
-    "operations": {"autoCloseAt": "", "pausedTitle": "", "pausedBody": ""},
+    "operations": {"autoCloseAt": "", "pausedTitle": "", "pausedBody": "", "closeWithShopZ": False},
+    # "התראות לקופות" (docs/SPEC_KIOSK.md §16): where the kiosk's alerts go — the printer
+    # (bon / receipt: offline, no paper, USB detached), the card terminal (no connection,
+    # not ready, a card result left for staff) and the customer's "בקשת עזרה". Per kind:
+    # which tills (`main` — the shop's main till if it has one, else all its tills; `all`;
+    # `selected` — `machineIds`) and who sees it (`everyone` signed in, or `managers` only).
+    "alerts": {
+        "printer": {"tills": "main", "machineIds": [], "audience": "everyone"},
+        "terminal": {"tills": "main", "machineIds": [], "audience": "everyone"},
+        "help": {"tills": "main", "machineIds": [], "audience": "everyone", "clearAfterMin": 10},
+    },
 }
 
 
@@ -357,17 +410,17 @@ PRESET_THEME_KEYS = tuple(UI_PRESETS["wolt"].keys())
 #: (the rest are the defaults'). Explicit values in any layer win, as for the theme.
 UI_PRESET_CTA: Dict[str, Dict[str, Any]] = {
     "ios": {
-        "size": "l", "position": "bottom_full", "fontSize": 22, "fontWeight": "bold",
+        "size": "l", "position": "bottom_center", "fontSize": 22, "fontWeight": "bold",
         "shadow": False, "icon": "none", "iconPosition": "end", "animation": "none",
         "borderColor": None, "borderWidth": 0,
     },
     "wolt": {
-        "size": "l", "position": "bottom_full", "fontSize": 24, "fontWeight": "bold",
+        "size": "l", "position": "bottom_center", "fontSize": 24, "fontWeight": "bold",
         "shadow": True, "icon": "none", "iconPosition": "end", "animation": "pulse",
         "borderColor": None, "borderWidth": 0,
     },
     "classic": {
-        "size": "xl", "position": "bottom_full", "fontSize": 34, "fontWeight": "black",
+        "size": "xl", "position": "bottom_center", "fontSize": 34, "fontWeight": "black",
         "shadow": True, "icon": "cart", "iconPosition": "start", "animation": "bounce",
         "borderColor": None, "borderWidth": 0,
     },
@@ -526,11 +579,14 @@ class Color(Node):
 
 
 class HHMM(Node):
-    def __init__(self, allow_empty: bool = False):
+    def __init__(self, allow_empty: bool = False, nullable: bool = False):
         self.allow_empty = allow_empty
+        self.nullable = nullable
 
     def check(self, value, path, errors):
         if self.allow_empty and value == "":
+            return value
+        if self.nullable and value is None:
             return value
         if not isinstance(value, str) or not _HHMM.match(value):
             return _fail(errors, path, "invalid_time", "must be a time HH:MM" + (' or ""' if self.allow_empty else ""))
@@ -731,6 +787,17 @@ class Map(Node):
 ID = Str(ID_MAX, min_len=1)
 PRINTER_ID = Str(36, min_len=36, pattern=_UUID, pattern_message="must be a printer id (UUID)", nullable=True)
 
+#: "התראות לקופות": one route per alert kind (printer / terminal / help).
+ALERT_ROUTE_FIELDS = {
+    "tills": Enum(ALERT_TILLS),
+    "machineIds": UList(
+        Str(36, min_len=36, pattern=_UUID, pattern_message="must be a till id (UUID)"),
+        max_len=ALERT_MACHINES_MAX, unique=True,
+    ),
+    "audience": Enum(ALERT_AUDIENCES),
+}
+ALERT_ROUTE = Obj(dict(ALERT_ROUTE_FIELDS))
+
 MESSAGE = Obj(
     {
         "id": Str(40, min_len=1, pattern=_MESSAGE_ID, pattern_message="1-40 characters of A-Z a-z 0-9 _ -"),
@@ -762,7 +829,8 @@ HOURS_RANGE = Obj(
     {
         "days": UList(Int(0, 6), min_len=1, max_len=7, unique=True),
         "open": HHMM(),
-        "close": HHMM(),
+        #: null: "פתיחה אוטומטית" with no closing time — it opens, and never closes by itself.
+        "close": HHMM(nullable=True),
     },
     merges=False,
 )
@@ -775,6 +843,7 @@ SCHEMA = Obj({
         "languages": UList(Enum(LANGUAGES), min_len=1, max_len=len(LANGUAGES), unique=True),
         "skipCart": Enum(SKIP_CART),
         "upsellEnabled": Bool(),
+        "servicePlacement": Enum(SERVICE_PLACEMENTS),
         "searchEnabled": Bool(),
         "notesEnabled": Bool(),
         "quickNotesEnabled": Bool(),
@@ -782,6 +851,8 @@ SCHEMA = Obj({
         "showDietary": Bool(),
         "reduceMotion": Bool(),
         "offlineSound": Bool(),
+        "blockWhenOffline": Bool(),
+        "offlineNotice": Bool(),
         "soldOutMode": Enum(SOLD_OUT_MODES),
     }),
     "theme": Obj({
@@ -846,6 +917,7 @@ SCHEMA = Obj({
         "hiddenProducts": UList(ID, unique=True),
         "categoryImages": Map(Media(("image",))),
         "featuredProductIds": UList(ID, max_len=FEATURED_MAX, unique=True),
+        "oneCategory": Bool(),
     }),
     "messages": UList(MESSAGE, max_len=MESSAGES_MAX),
     "hours": Obj({
@@ -860,7 +932,16 @@ SCHEMA = Obj({
         "receiptPolicy": Enum(RECEIPT_POLICIES),
         "customerName": Enum(CUSTOMER_FIELD_MODES),
         "customerPhone": Enum(CUSTOMER_FIELD_MODES),
+        "tableNumber": Enum(CUSTOMER_FIELD_MODES),
+        "detailsStep": Enum(DETAILS_STEPS),
         "minOrderAgorot": Int(0, MIN_ORDER_MAX),
+    }),
+    "upsell": Obj({
+        "maxShown": Int(1, UPSELL_MAX_SHOWN),
+    }),
+    "success": Obj({
+        "message": Str(SUCCESS_MESSAGE_MAX),
+        "image": Media(("image",), nullable=True),
     }),
     "printing": Obj({
         "bonMode": Enum(BON_MODES),
@@ -868,6 +949,7 @@ SCHEMA = Obj({
         "bonCopies": Int(1, 3),
         "receiptPrinterId": PRINTER_ID,
         "pickupSlip": Bool(),
+        "bonAutoRetryMin": Int(0, 120),
     }),
     "pickup": Obj({
         "scope": Enum(PICKUP_SCOPES),
@@ -891,6 +973,13 @@ SCHEMA = Obj({
         "autoCloseAt": HHMM(allow_empty=True),
         "pausedTitle": Str(MESSAGE_TITLE_MAX),
         "pausedBody": Str(MESSAGE_BODY_MAX),
+        # "סגירה יחד עם ה-Z הסניפי": the shop's Z closes the kiosk's shift and its own Z.
+        "closeWithShopZ": Bool(),
+    }),
+    "alerts": Obj({
+        "printer": ALERT_ROUTE,
+        "terminal": ALERT_ROUTE,
+        "help": Obj({**ALERT_ROUTE_FIELDS, "clearAfterMin": Int(HELP_CLEAR_MIN, HELP_CLEAR_MAX)}),
     }),
 })
 
@@ -913,6 +1002,8 @@ def limits() -> Dict[str, Any]:
         },
         "texts": {"max": TEXT_MAX},
         "hours": {"rangesMax": HOURS_RANGES_MAX},
+        "upsell": {"maxShown": {"min": 1, "max": UPSELL_MAX_SHOWN}},
+        "success": {"messageMax": SUCCESS_MESSAGE_MAX},
         "payment": {
             "tipPresets": {"min": 1, "max": 50, "maxCount": TIP_PRESETS_MAX},
             "minOrderAgorot": {"min": 0, "max": MIN_ORDER_MAX},
@@ -921,6 +1012,13 @@ def limits() -> Dict[str, Any]:
         "pickup": {"start": {"min": 1}, "max": {"max": 9999}, "prefixMax": PICKUP_PREFIX_MAX,
                    "prefixPattern": _PICKUP_PREFIX.pattern},
         "operations": {"pausedTitleMax": MESSAGE_TITLE_MAX, "pausedBodyMax": MESSAGE_BODY_MAX},
+        "alerts": {
+            "kinds": list(ALERT_KINDS),
+            "tills": list(ALERT_TILLS),
+            "audiences": list(ALERT_AUDIENCES),
+            "machinesMax": ALERT_MACHINES_MAX,
+            "helpClearAfterMin": {"min": HELP_CLEAR_MIN, "max": HELP_CLEAR_MAX},
+        },
         "club": {"titleMax": MESSAGE_TITLE_MAX, "bodyMax": MESSAGE_BODY_MAX},
         "media": {"urlMax": URL_MAX, "kinds": list(MEDIA_KINDS)},
         "enums": {
@@ -955,6 +1053,8 @@ def limits() -> Dict[str, Any]:
             "customerFieldModes": list(CUSTOMER_FIELD_MODES),
             "bonMode": list(BON_MODES),
             "pickupScope": list(PICKUP_SCOPES),
+            "servicePlacement": list(SERVICE_PLACEMENTS),
+            "detailsStep": list(DETAILS_STEPS),
             "fonts": [f.id for f in FONT_CATALOG],
         },
         "textKeys": list(TEXT_KEYS),
@@ -1039,6 +1139,11 @@ def _cross_field(cfg: Dict[str, Any], errors: List[Issue]) -> None:
     if _get(cfg, "hours", "enabled") is True and ranges == []:
         errors.append(Issue("hours.ranges", "too_few", "at least one range when hours are enabled"))
 
+    # "התראות לקופות": a chosen list must name at least one till.
+    for kind in ALERT_KINDS:
+        if _get(cfg, "alerts", kind, "tills") == "selected" and not _get(cfg, "alerts", kind, "machineIds"):
+            errors.append(Issue(f"alerts.{kind}.machineIds", "too_few", "choose at least one till"))
+
 
 def _parse_dt(value: Any) -> Optional[datetime]:
     if not isinstance(value, str) or not value:
@@ -1058,10 +1163,22 @@ def validate_layer(overrides: Any) -> Tuple[Dict[str, Any], List[Issue]]:
     `null`s dropped (inherit) and list items normalised; invalid parts are left out.
     """
     errors: List[Issue] = []
-    cleaned = SCHEMA.check_layer(overrides, "", errors)
+    cleaned = SCHEMA.check_layer(_without_retired(overrides), "", errors)
     if cleaned is _INVALID:
         cleaned = {}
     return _prune_empty(cleaned), errors
+
+
+def _without_retired(layer: Any) -> Any:
+    """The layer without RETIRED_KEYS (a copy; the rest untouched)."""
+    if not isinstance(layer, dict):
+        return layer
+    out = dict(layer)
+    for section, key in RETIRED_KEYS:
+        part = out.get(section)
+        if isinstance(part, dict) and key in part:
+            out[section] = {k: v for k, v in part.items() if k != key}
+    return out
 
 
 def _prune_empty(layer: Dict[str, Any]) -> Dict[str, Any]:
@@ -1152,6 +1269,10 @@ def repair(cfg: Dict[str, Any]) -> Dict[str, Any]:
         payment["tipPresets"] = list(DEFAULT_CONFIG["payment"]["tipPresets"])
     if cfg["hours"].get("enabled") and not cfg["hours"].get("ranges"):
         cfg["hours"]["enabled"] = False
+    for kind in ALERT_KINDS:
+        route = (cfg.get("alerts") or {}).get(kind)
+        if isinstance(route, dict) and route.get("tills") == "selected" and not route.get("machineIds"):
+            route["tills"] = "main"
     return cfg
 
 
@@ -1192,6 +1313,7 @@ def _media_refs(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     hidden = set(_get(cfg, "catalog", "hiddenCategories") or [])
     refs += [category_images[key] for key in sorted(category_images) if key not in hidden]
     refs += [m.get("image") for m in (_get(cfg, "messages") or []) if isinstance(m, dict)]
+    refs.append(_get(cfg, "success", "image"))
     return [r for r in refs if isinstance(r, dict) and r.get("url")]
 
 
@@ -1282,5 +1404,28 @@ def effective_bundle(db: Session, machine) -> Dict[str, Any]:
         "configVersion": config_version(cfg),
         "config": cfg,
         "font": font_of(cfg),
-        "media": media_manifest(cfg),
+        "media": media_manifest(cfg) + _upsell_media(db, machine, media_manifest(cfg)),
     }
+
+
+def _upsell_media(db: Session, machine, have: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    The pictures of the menu's upsell rules offered on the kiosk (a special's own picture,
+    docs/SPEC_KIOSK.md §21): downloaded with the rest, so the window shows them from disk.
+    """
+    from app.models.menu import UpsellRule, upsell_places_of
+    from app.services.menu import upsell_image_url
+
+    seen = {m["url"] for m in have}
+    out: List[Dict[str, Any]] = []
+    rows = (
+        db.query(UpsellRule)
+        .filter(UpsellRule.tenant_id == machine.tenant_id, UpsellRule.is_active.is_(True), UpsellRule.image_url.isnot(None))
+        .all()
+    )
+    for r in rows:
+        url = upsell_image_url(r.image_url)
+        if url and url not in seen and "kiosk" in upsell_places_of(r.place):
+            seen.add(url)
+            out.append({"url": url, "kind": "image", "sha256": None, "bytes": None})
+    return out

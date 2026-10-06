@@ -257,11 +257,26 @@ export async function saveCourses(
 /* ---------------- upsells ---------------- */
 
 export type UpsellAction = 'add' | 'upgrade';
-/** "בכל הזמנה" (order): asked when a table is sent / its bill asked for, and when a quick order goes to payment. */
-export type UpsellTrigger = 'product' | 'category' | 'order';
+/**
+ * "בכל הזמנה" (order): asked when a table is sent / its bill asked for, and when a quick order goes to payment.
+ * "מעבר בין מסכים" (transition): `triggerIds` are step codes (`UpsellListResponse.steps`; "enter_category:<category id>");
+ * always the popup, always "add".
+ */
+export type UpsellTrigger = 'product' | 'category' | 'order' | 'transition';
 /** card = the small card (as before); popup = "חלון בחירה", the options as tiles. */
 export type UpsellDisplay = 'card' | 'popup';
+/** Legacy "איפה" (still returned; null = a kiosk-only rule). The dashboard edits `places`. */
 export type UpsellWhere = 'quick' | 'tables' | 'both';
+/** "איפה": the till's quick order, its tables, the self-order kiosk. */
+export type UpsellPlace = 'quick' | 'tables' | 'kiosk';
+
+/** `GET /menu/upsells`: the rules, and the step codes each place has for "מעבר בין מסכים" (in its flow order). */
+export interface UpsellListResponse {
+  items: UpsellRule[];
+  canCreate: boolean;
+  /** Absent from an older server. */
+  steps?: Partial<Record<UpsellPlace, string[]>>;
+}
 
 /** One thing a rule offers: a product, or a category (its products). */
 export interface UpsellOption {
@@ -285,7 +300,12 @@ export interface UpsellRule {
   options?: UpsellOption[];
   prompt?: string | null;
   display?: UpsellDisplay;
-  where?: UpsellWhere;
+  /** Legacy; read `places`. */
+  where?: UpsellWhere | null;
+  /** Non-empty. Absent from an older server (then `where`). */
+  places?: UpsellPlace[];
+  /** The popup's own picture (a "ספיישל"); null = the offered item's picture. */
+  imageUrl?: string | null;
   skipIfPresent?: boolean;
   oncePerOrder?: boolean;
   message: string | null;
@@ -309,7 +329,12 @@ export interface UpsellInput {
   options: { type: 'product' | 'category'; id: string }[];
   prompt: string | null;
   display: UpsellDisplay;
-  where: UpsellWhere;
+  /** Legacy, not sent by this dashboard: `places` replaces it. */
+  where?: UpsellWhere;
+  /** "איפה", non-empty. */
+  places: UpsellPlace[];
+  /** An http(s) URL or a path starting with "/"; null = the offered item's picture. */
+  imageUrl: string | null;
   skipIfPresent: boolean;
   oncePerOrder: boolean;
   message: string | null;
@@ -321,8 +346,8 @@ export interface UpsellInput {
   isActive: boolean;
 }
 
-export async function fetchUpsells(): Promise<{ items: UpsellRule[]; canCreate: boolean }> {
-  return (await api.get<{ items: UpsellRule[]; canCreate: boolean }>('/menu/upsells')).data;
+export async function fetchUpsells(): Promise<UpsellListResponse> {
+  return (await api.get<UpsellListResponse>('/menu/upsells')).data;
 }
 
 export async function createUpsell(body: UpsellInput): Promise<UpsellRule> {

@@ -89,6 +89,16 @@ class ZReportOut(BaseModel):
     #: A till Z's number in its till's own run; null on a cloud Z (its number is
     #: `shopSequenceNumber`). Shown as "קופה {posNumber or machineName} · Z {this}".
     machine_sequence_number: Optional[int] = Field(None, alias="machineSequenceNumber")
+    #: A till Z's run: 0 for the till's first, +1 each time it was made independent (which
+    #: starts its Zs at 1 again), and when that run began — shown beside the number so two
+    #: "Z 1" of one till are told apart (docs/SPEC_INDEPENDENT_TILL.md §3.1).
+    machine_sequence_epoch: int = Field(0, alias="machineSequenceEpoch")
+    sequence_started_at: Optional[str] = Field(None, alias="sequenceStartedAt")
+    #: A local shop Z checked against the cloud's documents (docs/SPEC_INDEPENDENT_TILL.md
+    #: §8.12): `{state: waiting|incomplete|verified|mismatch|closed_by_support|unverified,
+    #: message, checkedAt, tills: [{machineId, posNumber, state, message, named, arrived,
+    #: missing, shiftsAwaited, …}]}`; null on any other Z.
+    verification: Optional[Dict[str, Any]] = None
     #: The register number of a till Z's till, as frozen in its section; null otherwise.
     pos_number: Optional[str] = Field(None, alias="posNumber")
     #: Who pressed "הפק Z" at the till; null when produced remotely, and on a cloud Z.
@@ -115,6 +125,12 @@ class ZReportOut(BaseModel):
     #: Produced by support from the cloud for a dead till (offline till Z spec §4.6):
     #: `{by, at, reason, reasonText, note, skippedNumbers}`; null otherwise.
     produced_by_support: Optional[Dict[str, Any]] = Field(None, alias="producedBySupport")
+    #: Late documents of a support Z this Z took, in their own section (§4.6.3).
+    late_from_earlier: Optional[List[Dict[str, Any]]] = Field(None, alias="lateFromEarlier")
+    #: Documents that arrived after this Z and were carried into the next one (§4.6.3).
+    late_carried_out: Optional[int] = Field(None, alias="lateCarriedOut")
+    #: "המכשיר הוחלף בתאריך …": the till(s) whose device was replaced before this Z (§4.6.2).
+    devices_replaced: Optional[List[Dict[str, Any]]] = Field(None, alias="devicesReplaced")
     #: The till of a till Z, and of a legacy row; null on a cloud Z (it spans tills).
     machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
     #: Legacy rows: the till's own Z blob.
@@ -153,6 +169,9 @@ class ZReportBusinessOut(BaseModel):
     #: (`shopZOpenTills`): `{tills: [{id, posNumber, name, openShiftId}],
     #: confirmedByUserId, confirmedByName, confirmedAt}`. Absent otherwise.
     open_tills_left_out: Optional[Dict[str, Any]] = Field(None, alias="openTillsLeftOut")
+    #: A local shop Z: stored exactly as the main till printed it — `{producedBy: {machineId,
+    #: posNumber, name}, note}` (docs/SPEC_INDEPENDENT_TILL.md §8.7). Absent otherwise.
+    as_printed: Optional[Dict[str, Any]] = Field(None, alias="asPrinted")
 
 
 class ZReportDetailOut(ZReportOut):

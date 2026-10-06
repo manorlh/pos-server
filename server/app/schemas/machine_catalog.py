@@ -50,6 +50,9 @@ class MachineCatalogProduct(BaseModel):
     available: bool
     #: Whether the till shows it right now, the mode and the shop listing applied.
     on_till: bool = Field(..., alias="onTill")
+    #: "היכן הפריט נמכר" (app/services/sales_channel.py): all / kiosk_only / pos_only —
+    #: the dashboard's kiosk editor leaves pos_only out, as the kiosk itself does.
+    sales_channel: str = Field("all", alias="salesChannel")
 
 
 class MachineCatalogCategory(BaseModel):

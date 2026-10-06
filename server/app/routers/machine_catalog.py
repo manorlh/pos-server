@@ -45,6 +45,7 @@ from app.schemas.machine_catalog import (
 from app.services import general_item
 from app.services import machine_catalog
 from app.services import product_availability as availability
+from app.services import sales_channel
 
 router = APIRouter(prefix="/machines", tags=["machine-catalog"])
 
@@ -113,6 +114,7 @@ def build_picture(db: Session, machine: POSMachine, shop: Shop, can_edit: bool) 
                 shop_listed=listed,
                 available=bool(listed and resolved.available),
                 on_till=listed and machine_catalog.on_till(mode, included),
+                sales_channel=sales_channel.out(getattr(p, "sales_channel", None)),
             )
         )
 

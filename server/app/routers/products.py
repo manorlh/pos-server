@@ -465,6 +465,8 @@ def create_product(
         no_discount=data.no_discount,
         # "סימוני תזונה", already cleaned by the schema (app/services/dietary.py).
         dietary_tags=data.dietary_tags or None,
+        # "היכן הפריט נמכר", validated by the schema (app/services/sales_channel.py).
+        sales_channel=data.sales_channel,
         # Only `ensure_general_item` makes a general item (the request cannot ask).
         is_general=False,
     )

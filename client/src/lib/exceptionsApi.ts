@@ -43,9 +43,19 @@ export const EXCEPTION_TYPES = [
   'support_z_produced',
   // Support ordered a reset of a till's data from the cloud — the only way (§4.7).
   'till_reset',
+  // "הוחלפה קופה": a replacement device took over a till (§4.6.2).
+  'till_replaced',
   // A super admin moved the shop Z's production before its producer handed over
   // ("קופה עצמאית בתוך סניף", docs/SPEC_INDEPENDENT_TILL.md §8).
   'shop_z_producer_forced',
+  // A local shop Z stored as printed whose cloud recomputation differs — an internal check
+  // for support only; the Z itself is never corrected (details: zReportId, zNumber,
+  // discrepancies [{key, till, cloud}], summary).
+  'local_shop_z_mismatch',
+  // A till of a local shop Z that did not finish syncing the documents the Z names (removed,
+  // dead, or 24 h late) — support closes its part on the Z's page (details: zReportId,
+  // zNumber, machineId, posNumber, named, arrived, missing, shiftsAwaited, reason, summary).
+  'local_shop_z_till_unsynced',
   // A self-order kiosk offline longer than the rule's minutes in its opening hours; closed
   // when it comes back (details: kiosk, offlineSince, backAt; value = minutes offline).
   'kiosk_offline',

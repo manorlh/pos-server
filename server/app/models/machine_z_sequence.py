@@ -19,14 +19,21 @@ class MachineZSequence(Base):
     the till — and a change of its `z_mode` — serialises on: two requests of one till at
     once take turns, and the second sees the first's Z.
 
-    Independent of the shop's numbering and never reset: a till switched to `cloud` and
-    back continues its run.
+    Independent of the shop's numbering. A till switched to `cloud` and back continues its
+    run — but a till made **independent** ("קופה עצמאית") starts a new run at 1 (the
+    owner): `epoch` goes up by one, `last_number` back to 0, `started_at` is when
+    (`z_sequence.start_new_machine_sequence`). Every till Z carries its run
+    (`z_reports.machine_sequence_epoch`), so numbers repeat across runs, never within one.
     """
 
     __tablename__ = "machine_z_sequences"
 
     machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id"), primary_key=True)
     last_number = Column(Integer, nullable=False, default=0, server_default="0")
+    #: The till's run: 0 for its first; +1 each time it is made independent.
+    epoch = Column(Integer, nullable=False, default=0, server_default="0")
+    #: When this run began; null for the first run (from before runs were counted).
+    started_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )

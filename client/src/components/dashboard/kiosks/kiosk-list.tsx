@@ -19,6 +19,7 @@ import { formatCurrency } from '@/lib/format';
 import { useTenantTimeZone } from '@/lib/auth';
 import { agorotToShekels, isoDayInZone, kioskConnection, kioskOffline, type KioskConnection } from '@/lib/kioskConfig';
 import type { KioskPrinterHealth, KioskSummary } from '@/lib/kioskApi';
+import { KioskAlertsBadge } from './kiosk-ops-notes';
 
 const DOT: Record<KioskConnection, string> = {
   online: 'bg-emerald-500',
@@ -176,10 +177,21 @@ export function TodayCell({ k, nowMs }: { k: KioskSummary; nowMs: number }) {
 export function UnprintedCell({ k }: { k: KioskSummary }) {
   const t = useTranslations('kiosks');
   const n = k.unprintedBons ?? 0;
-  if (n <= 0) return <span className="text-xs text-muted-foreground">0</span>;
+  // "התראות לקופות" open now, beside the bons (kiosk-ops-notes.tsx).
+  if (n <= 0) {
+    return (
+      <span className="inline-flex flex-col gap-0.5">
+        <span className="text-xs text-muted-foreground">0</span>
+        <KioskAlertsBadge k={k} />
+      </span>
+    );
+  }
   return (
-    <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-600 dark:text-red-400">
-      <AlertTriangle className="h-3.5 w-3.5" /> {t('unprinted', { n })}
+    <span className="inline-flex flex-col gap-0.5">
+      <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-600 dark:text-red-400">
+        <AlertTriangle className="h-3.5 w-3.5" /> {t('unprinted', { n })}
+      </span>
+      <KioskAlertsBadge k={k} />
     </span>
   );
 }

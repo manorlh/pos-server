@@ -7,8 +7,29 @@
  */
 
 import { useTranslations } from 'next-intl';
-import type { ZReport } from '@/lib/types';
+import type { ZReport, ZReportDetail } from '@/lib/types';
+import { asPrintedOf } from '@/lib/localShopZ';
 import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+
+/**
+ * "נשמר כפי שהודפס בקופה הראשית" on a local shop Z: the main till's printed Z is the Z —
+ * stored exactly as printed; the cloud never issues a corrective one.
+ */
+export function AsPrintedBadge({ z }: { z: ZReportDetail }) {
+  const t = useTranslations('independentTill.zReport');
+  const ti = useTranslations('independentTill');
+  const stamp = asPrintedOf(z);
+  if (!stamp) return null;
+  const by = stamp.producedBy?.posNumber
+    ? t('asPrintedBy', { till: ti('till', { n: stamp.producedBy.posNumber }) })
+    : null;
+  return (
+    <Badge variant="outline" className="ms-2 text-[11px]" title={[t('asPrintedHint'), by].filter(Boolean).join(' · ')}>
+      {stamp.note ?? t('asPrinted')}
+    </Badge>
+  );
+}
 
 export function ZScopeLine({
   z,

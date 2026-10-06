@@ -34,6 +34,10 @@ class ZRunCreateIn(BaseModel):
     #: "כפה סגירה (גם באמצע מכירה)": each till parks an open basket and closes; only a
     #: card charge in flight is waited for (docs/SPEC_OFFLINE_TILL_Z.md §9).
     force: bool = False
+    #: "אני מאשר שהנתונים בענן הם הנתונים הקיימים": required while a till the run takes
+    #: shows a warning — open shifts it cannot close, not seen, unsent documents or Zs
+    #: (docs/SPEC_OFFLINE_TILL_Z.md §4.6.1). Else `409 cloud_data_confirmation_required`.
+    confirm_cloud_data: bool = Field(False, alias="confirmCloudData")
 
 
 class ZRunProceedIn(BaseModel):
@@ -139,6 +143,10 @@ class ZCandidateMachineOut(BaseModel):
     #: The till's area now (not its shifts' stamps).
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
     area_name: Optional[str] = Field(None, alias="areaName")
+    #: The till as the cloud knows it before the Z (docs/SPEC_OFFLINE_TILL_Z.md §4.6.1):
+    #: last seen, open shifts, unsent documents and Zs, and `warnings` — any of which the
+    #: operator confirms explicitly before a cloud run takes the till.
+    data_state: Optional[Dict[str, Any]] = Field(None, alias="dataState")
 
 
 class ZCandidatesOut(BaseModel):

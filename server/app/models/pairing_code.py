@@ -36,6 +36,9 @@ class PairingCode(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
     untransmitted_acknowledged_at = Column(DateTime(timezone=True), nullable=True)
+    #: Why the till is being replaced, given with a replacement code — kept in the record
+    #: "הוחלפה קופה" when a device redeems it (docs/SPEC_OFFLINE_TILL_Z.md §4.6).
+    replacement_reason = Column(String(500), nullable=True)
     #: The hardware the code was generated for ("N55F" | "MODO" | "P18"), copied onto the machine
     #: when a device redeems it. Null leaves the machine's model as it is.
     device_model = Column(String(16), nullable=True)

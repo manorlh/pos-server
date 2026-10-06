@@ -57,6 +57,10 @@ class ZParticipationIn(BaseModel):
     #: The super admin moves the shop's Z production although its producer may still hold
     #: shop Zs the cloud does not (docs/SPEC_INDEPENDENT_TILL.md §8.10).
     force_producer_switch: bool = Field(False, alias="forceProducerSwitch")
+    #: Absent: unchanged. The participants that close through the cloud — "מרוחק (דרך הענן)",
+    #: a till or kiosk off the shop's LAN; every other participant is "מחובר ברשת המקומית"
+    #: (docs/SPEC_INDEPENDENT_TILL.md §8.14).
+    remote: Optional[List[uuid.UUID]] = None
 
 
 class ConflictResolveIn(BaseModel):
@@ -150,6 +154,52 @@ def post_resolve_shop_z_conflict(
     return out
 
 
+@router.get("/shops/{shop_id}/local-shop-zs/{z_id}/verification")
+def get_local_shop_z_verification(
+    shop_id: uuid.UUID,
+    z_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    A local shop Z checked against the cloud's documents now (docs/SPEC_INDEPENDENT_TILL.md
+    §8.12): per till "ממתין למסמכים מקופה N", "קופה N לא השלימה סנכרון", verified, or — only
+    when everything arrived and the same computation disagrees — a mismatch.
+    """
+    shop = _shop(db, shop_id, current_user, active_tenant_id)
+    z = db.get(LZ.ZReport, z_id)
+    if z is None or str(z.shop_id) != str(shop.id) or (z.offline_report or {}).get("kind") != "local_shop_z":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="local_shop_z_not_found")
+    out = LZ.verify(db, z)
+    db.commit()
+    return out
+
+
+@router.post("/shops/{shop_id}/local-shop-zs/{z_id}/tills/{machine_id}/close")
+def post_close_local_shop_z_part(
+    shop_id: uuid.UUID,
+    z_id: uuid.UUID,
+    machine_id: uuid.UUID,
+    body: ConflictResolveIn,
+    late: bool = False,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Support closes a till's part (`?late=true`: its late documents' part) of a local shop Z that will not complete ("קופה N לא השלימה
+    סנכרון", the super admin's): recorded with what never reached the cloud. The Z, as
+    printed, does not change.
+    """
+    shop = _shop(db, shop_id, current_user, active_tenant_id)
+    if current_user.role != UserRole.SUPER_ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_admin_only")
+    out = LZ.close_part_by_support(db, current_user, shop, z_id, machine_id, note=body.note, late=late)
+    db.commit()
+    return out
+
+
 @router.get("/shops/{shop_id}/local-shop-z-request")
 def get_local_shop_z_request(
     shop_id: uuid.UUID,
@@ -218,6 +268,8 @@ def put_z_participation(
     kwargs = {}
     if "main_till_id" in body.model_fields_set:
         kwargs["main_till_id"] = body.main_till_id
+    if body.remote is not None:
+        kwargs["remote"] = body.remote
     try:
         IT.apply_shop(
             db, current_user, shop,

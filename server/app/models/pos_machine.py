@@ -22,6 +22,8 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.database import Base
+from app.models.sunmi import SUNMI_MODEL_IDS, SUNMI_MODELS, detect_sunmi, sunmi_model
+from app.models.synqpay_devices import SYNQPAY_DEVICE_MODEL_IDS, detect_synqpay
 
 
 class PairingStatus(str, enum.Enum):
@@ -62,6 +64,11 @@ DEVICE_MODELS = (
     DEVICE_MODEL_LANDI,
     DEVICE_MODEL_FEITIAN_TABLET,
     DEVICE_MODEL_GENERIC_ANDROID,
+    # SUNMI (docs/SPEC_SUNMI.md, app/models/sunmi.py): handhelds, desktops, the K2 kiosk.
+    *SUNMI_MODEL_IDS,
+    # SynqPay terminals the till runs on (docs/SPEC_SYNQPAY.md §1.5, app/models/synqpay_devices.py):
+    # a terminal of their own, like the F20.
+    *SYNQPAY_DEVICE_MODEL_IDS,
 )
 
 _NO_PRINTER_MODELS = frozenset({
@@ -70,17 +77,21 @@ _NO_PRINTER_MODELS = frozenset({
     DEVICE_MODEL_LANDI,
     DEVICE_MODEL_FEITIAN_TABLET,
     DEVICE_MODEL_GENERIC_ANDROID,
+    *(m.id for m in SUNMI_MODELS if not m.printer),
+    # SynqPay's printer API (PAL) is in its SDK only, not in the app: no till receipts there yet.
+    *SYNQPAY_DEVICE_MODEL_IDS,
 })
 
 #: Models whose built-in printer / cash drawer the till cannot drive *yet*: the hardware
 #: has them, the vendor SDK has not been obtained. The dashboard says "בקרוב"; nothing
 #: claims they print.
-_DRIVER_PENDING_MODELS = frozenset({DEVICE_MODEL_LANDI, DEVICE_MODEL_FEITIAN_TABLET})
+_DRIVER_PENDING_MODELS = frozenset({DEVICE_MODEL_LANDI, DEVICE_MODEL_FEITIAN_TABLET, *SYNQPAY_DEVICE_MODEL_IDS})
 
-#: Models with a cash drawer port the till drives itself. None today: the F20 / Nova 55F
-#: has no drawer port (`FtReceiptPrinter.hasCashDrawer` is false), and every drawer in the
-#: field opens through an external receipt printer's RJ-11 port (its `cashDrawer` flag).
-_CASH_DRAWER_PORT_MODELS: frozenset = frozenset()
+#: Models with a cash drawer port the till drives itself: the SUNMI desktops (T1/T2/T2s/T3,
+#: D2/D2s/D3 — the print service's drawer API, docs/SPEC_SUNMI.md). The F20 / Nova 55F has
+#: no drawer port (`FtReceiptPrinter.hasCashDrawer` is false); elsewhere a drawer opens
+#: through an external receipt printer's RJ-11 port (its `cashDrawer` flag).
+_CASH_DRAWER_PORT_MODELS: frozenset = frozenset(m.id for m in SUNMI_MODELS if m.drawer_port)
 
 #: What a till reports as its model (Android's `Build.MODEL`, `device_info["model"]`),
 #: lower-cased, for the hardware it tells apart on its own. The 55F and the Modo are not
@@ -112,6 +123,9 @@ _NO_BUILTIN_TERMINAL_MODELS = frozenset({
     DEVICE_MODEL_LANDI,
     DEVICE_MODEL_FEITIAN_TABLET,
     DEVICE_MODEL_GENERIC_ANDROID,
+    # Every SUNMI: no Agamento on it. The P-series' own EMV reader is SUNMI's PayHardware,
+    # which the till does not drive — it charges on a network pinpad / Z-Credit.
+    *SUNMI_MODEL_IDS,
 })
 
 
@@ -125,8 +139,26 @@ def device_has_builtin_terminal(device_model) -> bool:
 
 
 def device_has_cash_drawer_port(device_model) -> bool:
-    """Whether a till of this model opens a drawer on a port of its own (none today)."""
+    """Whether a till of this model opens a drawer on a port of its own (the SUNMI desktops)."""
     return device_model in _CASH_DRAWER_PORT_MODELS
+
+
+def device_paper_width_mm(device_model) -> "int | None":
+    """
+    The paper a model's own head takes: 58 for a 55F (and a till whose model is unknown),
+    the SUNMI table's width for a SUNMI; None without a head (or a SUNMI the table does not
+    know — its print service says). The till prints at what its print service reports.
+    """
+    sunmi = sunmi_model(device_model)
+    if sunmi is not None:
+        return sunmi.paper_mm
+    return 58 if device_has_printer(device_model) else None
+
+
+def device_has_builtin_scanner(device_model) -> bool:
+    """A scan head of its own (SUNMI V2 PRO, V2s PLUS, V3, L2, K2) — not the camera."""
+    sunmi = sunmi_model(device_model)
+    return bool(sunmi and sunmi.scanner)
 
 
 def device_driver_pending(device_model) -> bool:
@@ -144,6 +176,8 @@ def device_capabilities(device_model, *, kiosk: bool = False) -> dict:
         "builtinTerminal": device_has_builtin_terminal(device_model) and not kiosk,
         "cashDrawerPort": device_has_cash_drawer_port(device_model),
         "driverPending": device_driver_pending(device_model),
+        "paperWidthMm": device_paper_width_mm(device_model),
+        "builtinScanner": device_has_builtin_scanner(device_model),
     }
 
 
@@ -172,6 +206,16 @@ def detect_device_model(device_info) -> "str | None":
     """
     if not isinstance(device_info, dict):
         return None
+    # A SynqPay terminal says so (its payment app is installed), then which one by its model
+    # (app/models/synqpay_devices.py): a terminal of its own, like the F20.
+    synqpay = detect_synqpay(device_info)
+    if synqpay is not None:
+        return synqpay
+    # A SUNMI names itself by its maker (or brand) and its model (app/models/sunmi.py); a
+    # SUNMI the table does not know is the generic "SUNMI".
+    sunmi = detect_sunmi(device_info)
+    if sunmi is not None:
+        return sunmi
     by_model = _REPORTED_MODELS.get(_normalized(device_info.get("model")) or "")
     if by_model is not None:
         return by_model
@@ -253,9 +297,10 @@ class POSMachine(Base):
     # Existing tokens in the field carry no version claim at all. Those are read as
     # version 1 — the default — so nothing that is paired today stops working.
     token_version = Column(Integer, default=1, nullable=False, server_default="1")
-    last_heartbeat_at = Column(DateTime(timezone=True), nullable=True)
+    # Indexed for the device search's "last seen" and "app version" (app/services/device_identity.py).
+    last_heartbeat_at = Column(DateTime(timezone=True), nullable=True, index=True)
     mqtt_connected = Column(Boolean, nullable=True)
-    app_version = Column(String(64), nullable=True)
+    app_version = Column(String(64), nullable=True, index=True)
     last_sync_at = Column(DateTime(timezone=True), nullable=True)
 
     # ── Device identity and health ────────────────────────────────────────────
@@ -267,6 +312,21 @@ class POSMachine(Base):
     # The terminal's hardware serial, e.g. "F2003183A700217". Indexed: support
     # gets handed a serial off the back of a unit and needs the machine row.
     serial_number = Column(String(64), nullable=True, index=True)
+
+    # ── Device identity for the cloud's device search (app/services/device_identity.py) ──
+    #: Where `serial_number` came from: "ftpos" | "sunmi" | "build" | "ro.serialno" — the
+    #: vendor SDK, Android's own serial, or the system property. Null: not said.
+    serial_source = Column(String(32), nullable=True)
+    #: The heartbeat's `cellular` block as last sent (SIMs, default data SIM, data path, LAN
+    #: address, phone numbers where the till may read them), and when.
+    cellular = Column(JSONB, nullable=True)
+    cellular_reported_at = Column(DateTime(timezone=True), nullable=True)
+    #: Flattened from `cellular` for the search: "פרטנר,סלקום" and "0541234567,0521234567".
+    sim_carriers = Column(String(200), nullable=True, index=True)
+    phone_numbers = Column(String(200), nullable=True, index=True)
+    #: The address the last heartbeat came from, as the cloud saw it; the device's own LAN one.
+    last_ip = Column(String(64), nullable=True, index=True)
+    lan_ip = Column(String(64), nullable=True, index=True)
 
     # NULL means the device could not read the battery, which is NOT 0. Never
     # coerce one into the other — "unknown charge" and "about to die" call for
@@ -375,6 +435,12 @@ class POSMachine(Base):
     # its guards and reports. The last command — kind, reason, who, when, status
     # (pending / done / refused / failed / expired) and the till's report. NULL: never.
     till_reset = Column(JSONB, nullable=True)
+    # ── "הוחלפה קופה" (offline till Z spec §4.6.2) ────────────────────────────
+    # Every replacement of the till, oldest first: the old and the new device, who, when,
+    # why, and whether support produced its Z first. And the last one, until the till's
+    # next Z says it ("המכשיר הוחלף בתאריך …"). NULL: never replaced / already said.
+    replacements = Column(JSONB, nullable=True)
+    replacement_note_pending = Column(JSONB, nullable=True)
     #: The first time this till said anything about transmissions. Card legs of documents
     #: from before it are never "untransmitted": the feature did not exist when they were
     #: sold. Cleared when a replacement device adopts the till, which starts it again.

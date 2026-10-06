@@ -4,6 +4,7 @@
  * the pickup label — the same rules the server and the till apply.
  */
 import { describe, it } from 'node:test';
+import { enterCategory, pickKioskUpsell, rulePlaces, upsellActiveAt, upsellTriggers, type UpsellRuleLite } from './kioskUpsell';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,6 +21,7 @@ import {
   getPath,
   googleFontsCssUrl,
   gridColumns,
+  catalogColumns,
   isoDayInZone,
   kioskCatalogView,
   kioskConnection,
@@ -42,6 +44,13 @@ import {
   dietaryTagsOf,
   messagePlacement,
   motionSpec,
+  addFrame,
+  addMs,
+  kioskAddPath,
+  ADD_MAX_MS,
+  ADD_END_ALPHA,
+  ADD_END_SCALE,
+  ADD_POP_LIFT_DP,
   presetLayer,
   rebaseInherited,
   repairKioskConfig,
@@ -64,6 +73,11 @@ import {
   ctaSize,
   attractSpans,
   fittingCount,
+  kioskOpenAt,
+  kioskScheduleIssues,
+  scheduleFormOf,
+  scheduleFormHours,
+  scheduleFormAutoClose,
   cartPanelShown,
   CTA_HINT_BLOCK,
   ATTRACT_CONTENT_GAP,
@@ -434,6 +448,16 @@ describe('helpers', () => {
     assert.equal(gridColumns('compact', true), 4);
   });
 
+  it('never shows one catalog column on a wide screen', () => {
+    // classic: large cards beside the cart panel
+    assert.equal(catalogColumns('large', true, true, true), 2);
+    assert.equal(catalogColumns('large', false, false, true), 1);
+    assert.equal(catalogColumns('comfortable', true, true, true), 2);
+    assert.equal(catalogColumns('comfortable', true, false, true), 3);
+    assert.equal(catalogColumns('compact', false, false, true), 2);
+    assert.equal(catalogColumns('compact', true, true, true), 3);
+  });
+
   it('builds the Google Fonts URL for the preview', () => {
     assert.equal(googleFontsCssUrl([FONT_CATALOG[0]]), null);
     const url = googleFontsCssUrl(FONT_CATALOG.filter((f) => f.id === 'rubik' || f.id === 'alef' || f.id === 'suez_one'));
@@ -574,14 +598,15 @@ describe('preview rules', () => {
     assert.equal(messagePlacement('product'), 'none');
   });
 
-  it('turns all motion off with reduceMotion, and scales it by the animation level', () => {
-    assert.deepEqual(motionSpec({ animation: 'lively' }, { reduceMotion: true }), { flyMs: 0, bounce: 0, countUpMs: 0, flyImage: false });
-    assert.deepEqual(motionSpec({ animation: 'subtle' }, { reduceMotion: true }), { flyMs: 0, bounce: 0, countUpMs: 0, flyImage: false });
+  it('turns the add into a fade with reduceMotion, and scales the pop and arc by the animation level', () => {
+    const fade = { popMs: 0, popScale: 1, flyMs: 0, arcDp: 0, fadeMs: 280, bounce: 0, countUpMs: 0 };
+    assert.deepEqual(motionSpec({ animation: 'lively' }, { reduceMotion: true }), fade);
+    assert.deepEqual(motionSpec({ animation: 'subtle' }, { reduceMotion: true }), fade);
     const subtle = motionSpec({ animation: 'subtle' }, { reduceMotion: false });
     const lively = motionSpec({ animation: 'lively' }, { reduceMotion: false });
-    assert.equal(subtle.flyImage, false);
-    assert.equal(lively.flyImage, true);
-    assert.ok(subtle.flyMs > 0 && subtle.flyMs < lively.flyMs && lively.flyMs < 600);
+    // The same pop-and-fly in both (the picture and the name): only how big and how high differ.
+    assert.ok(subtle.popScale < lively.popScale && subtle.arcDp < lively.arcDp);
+    assert.ok(addMs(subtle) > 0 && addMs(subtle) < addMs(lively) && addMs(lively) < ADD_MAX_MS);
     assert.ok(lively.bounce > subtle.bounce && subtle.bounce > 1);
   });
 
@@ -654,7 +679,7 @@ describe('"כפתור מסך הפתיחה" — the attract button', () => {
 
   it('defaults to the wolt button the kiosk always had, tap-anywhere on', () => {
     for (const key of PRESET_CTA_KEYS) assert.deepEqual(base[key], KIOSK_UI_PRESET_CTA.wolt[key], key);
-    assert.equal(base.position, 'bottom_full');
+    assert.equal(base.position, 'bottom_center');
     assert.equal(base.tapAnywhere, true);
     assert.equal(base.fillColor, null);
   });
@@ -696,36 +721,38 @@ describe('"כפתור מסך הפתיחה" — the attract button', () => {
   });
 
   it('sizes by screen, the full width at the bottom, never below a finger', () => {
-    assert.deepEqual(ctaSize(make({ size: 'l', position: 'bottom_center' }), 800, 1280), { w: 560, h: 84 });
-    assert.deepEqual(ctaSize(make({ size: 'xl', position: 'bottom_center' }), 800, 1280), { w: 680, h: 112 });
-    assert.deepEqual(ctaSize(make({ size: 'm', position: 'top_left' }), 800, 1280), { w: 440, h: 72 });
-    assert.deepEqual(ctaSize(make({ size: 'l' }), 800, 1280), { w: 744, h: 84 });
+    assert.deepEqual(ctaSize(make({ size: 'l', position: 'bottom_center' }), 800, 1280), { w: 520, h: 84 });
+    assert.deepEqual(ctaSize(make({ size: 'xl', position: 'bottom_center' }), 800, 1280), { w: 640, h: 112 });
+    assert.deepEqual(ctaSize(make({ size: 'm', position: 'top_left' }), 800, 1280), { w: 420, h: 72 });
+    assert.deepEqual(ctaSize(make({ size: 'l', position: 'bottom_full' }), 800, 1280), { w: 744, h: 84 });
+    assert.equal(ctaSize(make({ size: 'l' }), 785, 1396).w, 520);
     assert.equal(ctaSize(make({ size: 's', position: 'top_left' }), 360, 640).w, 160);
     assert.equal(ctaSize(make({ size: 'custom', widthPct: 100, position: 'top_left' }), 360, 640).w, 304);
     assert.equal(ctaSize(make({ size: 'custom', heightDp: 200 }), 360, 640).h, 192);
     assert.equal(ctaSize(make({ size: 'xl' }), 320, 150).h, 56);
-    assert.deepEqual(ctaSize(make({ size: 'm', position: 'top_right' }), 1280, 800), { w: 704, h: 72 });
-    assert.deepEqual(ctaSize(make({ size: 'l' }), 1920, 1080), { w: 1864, h: 84 });
+    assert.deepEqual(ctaSize(make({ size: 'm', position: 'top_right' }), 1280, 800), { w: 420, h: 72 });
+    assert.deepEqual(ctaSize(make({ size: 'l', position: 'bottom_full' }), 1920, 1080), { w: 1864, h: 84 });
   });
 
   it('places the 3x3 grid physically (right is the screen right): 800x1280, size m', () => {
     const m = make({ size: 'm' });
-    assert.deepEqual(at(ctaBox({ ...m, position: 'top_right' }, 800, 1280)), [332, 150]);
+    assert.deepEqual(at(ctaBox({ ...m, position: 'top_right' }, 800, 1280)), [352, 150]);
     assert.deepEqual(at(ctaBox({ ...m, position: 'top_left' }, 800, 1280)), [28, 150]);
-    assert.deepEqual(at(ctaBox({ ...m, position: 'middle_center' }, 800, 1280)), [180, 604]);
+    assert.deepEqual(at(ctaBox({ ...m, position: 'middle_center' }, 800, 1280)), [190, 604]);
     assert.equal(ctaBox({ ...m, position: 'bottom_center' }, 800, 1280).y, 1148);
     assert.equal(ctaBox({ ...m, position: 'bottom_center', tapAnywhere: false }, 800, 1280).y, 1180);
-    assert.deepEqual(ctaBox(make({ size: 'l' }), 800, 1280), { x: 28, y: 1136, w: 744, h: 84 });
-    assert.equal(ctaBox({ ...m, position: 'top_right' }, 1280, 800).x, 1280 - 28 - 704);
-    assert.deepEqual(ctaBox({ ...m, position: 'middle_left' }, 1920, 1080), { x: 28, y: 504, w: 1056, h: 72 });
-    assert.deepEqual(ctaBox(make({ size: 'l' }), 360, 640), { x: 28, y: 640 - 60 - 84, w: 304, h: 84 });
+    assert.deepEqual(ctaBox(make({ size: 'l', position: 'bottom_full' }), 800, 1280), { x: 28, y: 1136, w: 744, h: 84 });
+    assert.deepEqual(ctaBox(make({ size: 'l' }), 800, 1280), { x: 140, y: 1136, w: 520, h: 84 });
+    assert.equal(ctaBox({ ...m, position: 'top_right' }, 1280, 800).x, 1280 - 28 - 420);
+    assert.deepEqual(ctaBox({ ...m, position: 'middle_left' }, 1920, 1080), { x: 28, y: 504, w: 420, h: 72 });
+    assert.deepEqual(ctaBox(make({ size: 'l', position: 'bottom_full' }), 360, 640), { x: 28, y: 640 - 60 - 84, w: 304, h: 84 });
   });
 
   it('keeps a custom place (the centre, in percent) on the screen', () => {
     const m = make({ size: 'm', position: 'custom' });
-    assert.deepEqual(at(ctaBox({ ...m, x: 50, y: 50 }, 800, 1280)), [180, 604]);
+    assert.deepEqual(at(ctaBox({ ...m, x: 50, y: 50 }, 800, 1280)), [190, 604]);
     assert.deepEqual(at(ctaBox({ ...m, x: 0, y: 0 }, 800, 1280)), [28, 28]);
-    assert.deepEqual(at(ctaBox({ ...m, x: 100, y: 100 }, 800, 1280)), [332, 1180]);
+    assert.deepEqual(at(ctaBox({ ...m, x: 100, y: 100 }, 800, 1280)), [352, 1180]);
     const b = ctaBox({ ...m, x: 50, y: 50 }, 1080, 1920);
     assert.equal(b.x + Math.trunc(b.w / 2), 540);
   });
@@ -911,5 +938,291 @@ describe('the kiosk screens: their texts exist in he.json', () => {
       }
     }
     assert.deepEqual(missing, []);
+  });
+});
+
+describe('"נעילה למכירה" and "פתיחה אוטומטית" (the server kiosk_schedule.py)', () => {
+  const WEEK = [0, 1, 2, 3, 4, 5, 6];
+  it('opens by the hours, past midnight, and a range with no close never closes', () => {
+    const late = { enabled: true, ranges: [{ days: [5], open: '18:00', close: '02:00' }] };
+    assert.equal(kioskOpenAt(late, 5, 23 * 60), true);
+    assert.equal(kioskOpenAt(late, 6, 60 + 59), true); // Friday's, past midnight
+    assert.equal(kioskOpenAt(late, 6, 2 * 60), false);
+    assert.equal(kioskOpenAt(late, 6, 18 * 60 + 30), false);
+    assert.equal(kioskOpenAt({ enabled: true, ranges: [{ days: WEEK, open: '07:00', close: null }] }, 1, 3 * 60), true);
+    assert.equal(kioskOpenAt({ enabled: false, ranges: [] }, 1, 0), true);
+  });
+  it('close → automatic Z → open', () => {
+    const daily = { enabled: true, ranges: [{ days: WEEK, open: '07:00', close: '23:00' }] };
+    assert.deepEqual(kioskScheduleIssues(daily, '23:30'), []);
+    assert.deepEqual(kioskScheduleIssues(daily, '23:00'), []);
+    assert.equal(kioskScheduleIssues(daily, '22:00')[0].code, 'auto_z_while_open');
+    assert.equal(kioskScheduleIssues(daily, '07:00')[0].code, 'auto_z_at_opening');
+    assert.deepEqual(kioskScheduleIssues(daily, ''), []);
+    const late = { enabled: true, ranges: [{ days: WEEK, open: '18:00', close: '02:00' }] };
+    assert.equal(kioskScheduleIssues(late, '01:00')[0].code, 'auto_z_while_open');
+    assert.deepEqual(kioskScheduleIssues(late, '03:00'), []);
+  });
+  it('the simple form: the Z at the close unless given, all days by default', () => {
+    const f = scheduleFormOf({ enabled: true, open: '08:00', close: '22:00' });
+    assert.deepEqual(f.days, WEEK);
+    assert.equal(scheduleFormAutoClose(f, null), '22:00');
+    assert.equal(scheduleFormAutoClose({ ...f, autoCloseAt: '23:15' }, null), '23:15');
+    assert.equal(scheduleFormAutoClose({ ...f, close: null }, '02:00'), '02:00');
+    assert.deepEqual(scheduleFormHours({ ...f, close: null }).ranges[0].close, null);
+  });
+});
+
+describe('the owner UI batch: service placement, menu mode, details step, upsell, end message (the server kiosk_config.py)', () => {
+  const codes = (c: KioskConfig) => validateKioskConfig(c).map((e) => `${e.path}:${e.code}`);
+  it('defaults: "הזמינו כאן" first, one category at a time, details before payment, menu upsells, no end message', () => {
+    assert.equal(KIOSK_DEFAULTS.general.servicePlacement, 'after_start');
+    assert.equal(KIOSK_DEFAULTS.catalog.oneCategory, true);
+    assert.equal(KIOSK_DEFAULTS.payment.detailsStep, 'before_pay');
+    assert.equal(KIOSK_DEFAULTS.payment.tableNumber, 'off');
+    assert.deepEqual(KIOSK_DEFAULTS.upsell, { maxShown: 2 });
+    assert.deepEqual(KIOSK_DEFAULTS.success, { message: '', image: null });
+    assert.deepEqual(codes(resolveKioskConfig({})), []);
+  });
+  it('accepts every placement, step and upsell cap', () => {
+    for (const servicePlacement of ['after_start', 'attract']) {
+      for (const detailsStep of ['after_service', 'before_cart', 'before_pay', 'after_pay']) {
+        for (const maxShown of [1, 3, 5]) {
+          const c = cfg({ general: { servicePlacement }, payment: { detailsStep, tableNumber: 'required' }, upsell: { maxShown } });
+          assert.deepEqual(codes(c), [], `${servicePlacement} ${detailsStep} ${maxShown}`);
+        }
+      }
+    }
+  });
+  it('refuses unknown values, a bad count and a long end message', () => {
+    const c = cfg({
+      general: { servicePlacement: 'both' },
+      catalog: { oneCategory: 'yes' },
+      payment: { detailsStep: 'never', tableNumber: 'maybe' },
+      upsell: { maxShown: 6 },
+      success: { message: 'x'.repeat(301) },
+    });
+    assert.deepEqual(codes(c).sort(), [
+      'catalog.oneCategory:enum',
+      'general.servicePlacement:enum',
+      'payment.detailsStep:enum',
+      'payment.tableNumber:enum',
+      'success.message:tooLong',
+      'upsell.maxShown:range',
+    ]);
+  });
+  it("the kiosk's own rules of the first round are gone: a layer that has them loses them quietly", () => {
+    const layer = { upsell: { when: 'both', maxShown: 3, rules: [{ id: 'x', offerProductIds: ['muffin'] }] } };
+    const c = resolveKioskConfig(layer as never);
+    assert.deepEqual(c.upsell, { maxShown: 3 });
+    assert.deepEqual(codes(c), []);
+    assert.ok((layer.upsell.rules as unknown[]).length === 1, 'the layer itself is not changed');
+  });
+});
+
+describe('"הוסף לסל" — the add-to-cart pop-and-fly (the till\'s KioskMotion / KioskAddPath)', () => {
+  const from = { x: 300, y: 900 };
+  const to = { x: 400, y: 1500 };
+  it('a simple dish straight in, a meal or a required choice its window, sold out nothing', () => {
+    assert.equal(kioskAddPath(false, false, false), 'direct');
+    assert.equal(kioskAddPath(false, true, false), 'sheet');
+    assert.equal(kioskAddPath(false, false, true), 'sheet');
+    assert.equal(kioskAddPath(true, false, false), 'none');
+  });
+  it('pops by the card, flies an arc to the cart, lands small and faded, under 700 ms', () => {
+    for (const animation of ['lively', 'subtle'] as const) {
+      const m = motionSpec({ animation }, { reduceMotion: false });
+      assert.ok(m.popMs >= 150 && m.popMs <= 200 && m.flyMs >= 350 && m.flyMs <= 450, animation);
+      assert.ok(m.popScale >= 1.3 && m.popScale <= 1.5, animation);
+      assert.ok(addMs(m) < ADD_MAX_MS);
+      const start = addFrame(m, 0, from, to);
+      assert.deepEqual([start.x, start.y, start.scale, start.alpha], [from.x, from.y, 1, 1]);
+      const popped = addFrame(m, m.popMs, from, to);
+      assert.ok(Math.abs(popped.scale - m.popScale) < 1e-6);
+      assert.ok(Math.abs(popped.y - (from.y - ADD_POP_LIFT_DP)) < 1e-6);
+      // An arc: halfway, at least half its height above the straight line, both ways (rising first to a cart below).
+      const mid = addFrame(m, m.popMs + m.flyMs / 2, from, to);
+      const sy = from.y - ADD_POP_LIFT_DP;
+      assert.ok(Math.abs(mid.x - (from.x + to.x) / 2) < 1e-6);
+      assert.ok(mid.y <= (sy + to.y) / 2 - m.arcDp / 2 + 1e-6, 'above the straight line');
+      assert.ok(addFrame(m, m.popMs + m.flyMs * 0.2, from, to).y < sy, 'rises before it falls');
+      const up = addFrame(m, m.popMs + m.flyMs / 2, to, from);
+      assert.ok(up.y <= (to.y - ADD_POP_LIFT_DP + from.y) / 2 - m.arcDp / 2 + 1e-6, 'to a cart above: still bowed upwards');
+      const end = addFrame(m, addMs(m), from, to);
+      assert.ok(Math.abs(end.x - to.x) < 1e-6 && Math.abs(end.y - to.y) < 1e-6);
+      assert.ok(Math.abs(end.scale - ADD_END_SCALE) < 1e-6 && Math.abs(end.alpha - ADD_END_ALPHA) < 1e-6);
+    }
+  });
+  it('reduce motion: a fade where the dish was, nothing moves or grows', () => {
+    const m = motionSpec({ animation: 'lively' }, { reduceMotion: true });
+    for (let i = 0; i <= 10; i++) {
+      const f = addFrame(m, (addMs(m) * i) / 10, from, to);
+      assert.deepEqual([f.x, f.y, f.scale], [from.x, from.y, 1]);
+      assert.ok(Math.abs(f.alpha - (1 - i / 10)) < 1e-6);
+    }
+  });
+});
+
+/*
+ * Every flow rule under every UI style ("סגנון ממשק"): the styles differ in look only, never in
+ * flow or features — the till's KioskPresetFlowTest, and the preview / Windows kiosk screens,
+ * which never branch on the style's name.
+ */
+for (const style of UI_STYLES) {
+  describe(`the flow under the "${style}" style is the same as under every other`, () => {
+    const c = (patch: Record<string, unknown> = {}) => resolveKioskConfig({ ...patch, theme: { uiStyle: style, ...((patch.theme as object) ?? {}) } });
+    it('defaults: start button first, a category at a time, details before payment, the menu upsells, the end message off', () => {
+      const cfg = c();
+      assert.equal(cfg.theme.uiStyle, style);
+      assert.equal(cfg.general.servicePlacement, 'after_start');
+      assert.equal(cfg.catalog.oneCategory, true);
+      assert.equal(cfg.payment.detailsStep, 'before_pay');
+      assert.deepEqual(cfg.upsell, { maxShown: 2 });
+      assert.deepEqual(cfg.success, { message: '', image: null });
+      assert.deepEqual(validateKioskConfig(cfg), []);
+    });
+    it('every flow setting is accepted with the style', () => {
+      const cfg = c({
+        general: { servicePlacement: 'attract', reduceMotion: true },
+        catalog: { oneCategory: false },
+        payment: { detailsStep: 'after_pay', tableNumber: 'required', customerName: 'required' },
+        upsell: { maxShown: 3 },
+        success: { message: 'תודה!' },
+      });
+      assert.deepEqual(validateKioskConfig(cfg), []);
+      assert.equal(cfg.general.servicePlacement, 'attract');
+      assert.equal(cfg.catalog.oneCategory, false);
+      assert.equal(cfg.payment.detailsStep, 'after_pay');
+      assert.equal(cfg.success.message, 'תודה!');
+    });
+    it('the start button at the bottom centre of every screen', () => {
+      const cta = c().attract.cta;
+      assert.equal(cta.position, 'bottom_center');
+      for (const [w, h] of [[785, 1396], [800, 1280], [1280, 800], [1080, 1920], [400, 600]]) {
+        const box = ctaBox(cta, w, h);
+        assert.ok(Math.abs(box.x * 2 + box.w - w) <= 1, `${style} ${w}x${h} centred`);
+        assert.ok(box.y > h / 2, `${style} ${w}x${h} low`);
+      }
+    });
+    it('the pop-and-fly, and the fade with reduce motion', () => {
+      const cfg = c();
+      const m = motionSpec(cfg.theme, cfg.general);
+      assert.ok(m.popMs > 0 && m.flyMs > 0 && m.popScale >= 1.3 && m.bounce > 1 && m.countUpMs > 0);
+      assert.ok(addMs(m) < ADD_MAX_MS);
+      const reduced = c({ general: { reduceMotion: true } });
+      const r = motionSpec(reduced.theme, reduced.general);
+      assert.equal(r.flyMs, 0);
+      assert.ok(r.fadeMs > 0 && addMs(r) < ADD_MAX_MS);
+    });
+    it('messages centred, never on the payment', () => {
+      for (const s of ['attract', 'success', 'paused', 'closed']) assert.equal(messagePlacement(s), 'inline-center');
+      for (const s of ['service', 'catalog', 'cart']) assert.equal(messagePlacement(s), 'overlay-center');
+      assert.equal(messagePlacement('pay'), 'none');
+    });
+  });
+}
+
+describe('the kiosk screens never branch on the style\'s name (look only)', () => {
+  it('preview-screens.tsx and kiosk-preview.tsx', () => {
+    const dir = join(process.cwd(), 'src', 'components', 'dashboard', 'kiosks');
+    const branch = /uiStyle\s*(===|!==|==|!=)|case\s+'(ios|wolt|classic|minimal_dark)'|'(ios|wolt|classic|minimal_dark)'\s*(===|!==)/;
+    const offenders = ['preview-screens.tsx', 'kiosk-preview.tsx'].filter((f) => branch.test(readFileSync(join(dir, f), 'utf8')));
+    assert.deepEqual(offenders, []);
+  });
+});
+
+describe('"הגדלת מכירה" on the kiosk screens (lib/kioskUpsell.ts — the till\'s UpsellMatch / atStep)', () => {
+  const rule = (over: Partial<UpsellRuleLite>): UpsellRuleLite => ({
+    id: 'r', name: 'r', triggerType: 'product', triggerIds: [], options: [], places: ['quick', 'tables', 'kiosk'], ...over,
+  });
+  const noon = new Date(2026, 9, 6, 12, 0);
+  const catalog: Record<string, string[]> = { drinks: ['cola', 'water'], sweets: ['chocolate', 'gum'] };
+  const opts = (over: Partial<Parameters<typeof pickKioskUpsell>[2]> = {}) => ({
+    asked: [], inCart: [], cap: 2, now: noon, sellable: () => true,
+    productsOf: (ids: string[]) => ids.flatMap((c) => catalog[c] ?? []), ...over,
+  });
+  it('one test per scope: item, category, step, every order', () => {
+    const item = rule({ triggerType: 'product', triggerIds: ['coffee'] });
+    assert.ok(upsellTriggers(item, { kind: 'added', productId: 'coffee', categoryIds: ['hot'] }, 'kiosk'));
+    assert.ok(!upsellTriggers(item, { kind: 'step', code: 'to_pay' }, 'kiosk'));
+    const cat = rule({ triggerType: 'category', triggerIds: ['drinks'] });
+    assert.ok(upsellTriggers(cat, { kind: 'added', productId: 'cola', categoryIds: ['drinks'] }, 'kiosk'));
+    const step = rule({ triggerType: 'transition', triggerIds: ['order_start', enterCategory('drinks'), 'before_send'] });
+    assert.ok(upsellTriggers(step, { kind: 'step', code: 'order_start' }, 'kiosk'));
+    assert.ok(upsellTriggers(step, { kind: 'step', code: 'enter_category:drinks' }, 'kiosk'));
+    assert.ok(!upsellTriggers(step, { kind: 'step', code: 'before_send' }, 'kiosk'), 'a step the kiosk lacks');
+    assert.ok(upsellTriggers(step, { kind: 'step', code: 'before_send' }, 'tables'));
+    const every = rule({ triggerType: 'order' });
+    assert.ok(upsellTriggers(every, { kind: 'step', code: 'to_pay' }, 'kiosk'), 'every order = to_pay on the kiosk');
+    assert.ok(!upsellTriggers(every, { kind: 'step', code: 'to_pay' }, 'tables'));
+  });
+  it('places: the kiosk only where chosen; an older rule by its where', () => {
+    const kioskOnly = rule({ triggerType: 'product', triggerIds: ['coffee'], places: ['kiosk'] });
+    assert.ok(!upsellTriggers(kioskOnly, { kind: 'added', productId: 'coffee', categoryIds: [] }, 'quick'));
+    assert.deepEqual(rulePlaces({ where: 'quick' }), ['quick', 'kiosk']);
+    assert.deepEqual(rulePlaces({ where: 'tables' }), ['tables']);
+    assert.deepEqual(rulePlaces({ where: 'both' }), ['quick', 'tables', 'kiosk']);
+  });
+  it('priority, once per order, the cap, and what the basket holds is hidden', () => {
+    const low = rule({ id: 'low', name: 'low', triggerType: 'transition', triggerIds: ['to_pay'], priority: 1, options: [{ type: 'product', id: 'gum' }, { type: 'product', id: 'water' }] });
+    const high = rule({ id: 'high', name: 'high', triggerType: 'transition', triggerIds: ['to_pay'], priority: 5, options: [{ type: 'category', id: 'sweets' }] });
+    const at = { kind: 'step', code: 'to_pay' } as const;
+    assert.deepEqual(pickKioskUpsell([low, high], at, opts({ inCart: ['cola'] })), { rule: high, items: ['chocolate', 'gum'] });
+    assert.equal(pickKioskUpsell([low, high], at, opts({ inCart: ['cola'], asked: ['high'] }))?.rule.id, 'low');
+    assert.deepEqual(pickKioskUpsell([low], at, opts({ inCart: ['water'] }))?.items, ['gum']);
+    assert.equal(pickKioskUpsell([low], at, opts({ inCart: ['water', 'gum'] })), null, 'nothing left to offer');
+    assert.equal(pickKioskUpsell([low, high], at, opts({ asked: ['a', 'b'] })), null, 'the cap');
+    const every = rule({ id: 'every', triggerType: 'order', options: [{ type: 'product', id: 'gum' }] });
+    assert.equal(pickKioskUpsell([every], at, opts()), null, 'every order is never asked of an empty basket');
+  });
+  it('days and hours, past midnight', () => {
+    const late = { startTime: '22:00', endTime: '02:00', weekdays: [5] };
+    assert.ok(upsellActiveAt(late, new Date(2026, 9, 9, 23, 0)));
+    assert.ok(upsellActiveAt(late, new Date(2026, 9, 10, 1, 0)), 'Friday night, after midnight');
+    assert.ok(!upsellActiveAt(late, new Date(2026, 9, 10, 23, 0)));
+    assert.ok(!upsellActiveAt({ isActive: false }, noon));
+  });
+});
+
+describe('"התראות לקופות" and "סגירה יחד עם ה-Z הסניפי" (the server kiosk_config.py / kiosk_ops.py)', () => {
+  const codes = (c: KioskConfig) => validateKioskConfig(c).map((e) => `${e.path}:${e.code}`);
+  it('defaults: the main till (else all the shop tills), everyone, help clears after 10 minutes; no close with the shop Z', () => {
+    assert.deepEqual(KIOSK_DEFAULTS.alerts.printer, { tills: 'main', machineIds: [], audience: 'everyone' });
+    assert.equal(KIOSK_DEFAULTS.alerts.help.clearAfterMin, 10);
+    assert.equal(KIOSK_DEFAULTS.operations.closeWithShopZ, false);
+    assert.deepEqual(codes(cfg()), []);
+  });
+  it('validates which tills, who and the minutes', () => {
+    const c = cfg({
+      alerts: { printer: { tills: 'kitchen' }, terminal: { tills: 'selected' }, help: { audience: 'owners', clearAfterMin: 500 } },
+    });
+    assert.deepEqual(codes(c).sort(), [
+      'alerts.help.audience:enum',
+      'alerts.help.clearAfterMin:range',
+      'alerts.printer.tills:enum',
+      'alerts.terminal.machineIds:atLeastOne',
+    ]);
+    const ok = cfg({ alerts: { help: { tills: 'selected', machineIds: ['a0000000-0000-0000-0000-000000000001'], audience: 'managers' } } });
+    assert.deepEqual(codes(ok), []);
+    assert.deepEqual(codes(cfg({ operations: { closeWithShopZ: true } })), []);
+  });
+  it('a chosen list a parent left empty goes to the main till, as the server repairs it', () => {
+    const c = resolveKioskConfig({ alerts: { printer: { tills: 'selected', machineIds: [] } } });
+    assert.equal(c.alerts.printer.tills, 'main');
+  });
+  it('every alert text the editor asks exists in he.json', () => {
+    const he = JSON.parse(readFileSync(join(process.cwd(), 'src', 'messages', 'he.json'), 'utf8'));
+    const a = he.kiosks.alerts;
+    for (const key of ['intro', 'channels', 'tills', 'tillsHint', 'tillsMain', 'tillsAll', 'tillsSelected', 'machineIds',
+      'machineIdsHint', 'noneChosen', 'clear', 'noTills', 'audience', 'audienceEveryone', 'audienceManagers',
+      'clearAfterMin', 'clearAfterMinHint', 'minutes', 'open']) {
+      assert.equal(typeof a[key], 'string', key);
+    }
+    for (const kind of ['printer', 'terminal', 'help']) assert.equal(typeof a[kind].title, 'string', kind);
+    for (const state of ['pending', 'delivered', 'done', 'doneZ', 'failed', 'expired']) assert.equal(typeof a.shopZClose[state], 'string', state);
+    assert.equal(typeof he.kiosks.settings.sections.alerts, 'string');
+    assert.equal(typeof he.kiosks.fields.operations.closeWithShopZ, 'string');
+    assert.equal(typeof he.kiosks.timers.closeWithShopZHint, 'string');
+    assert.equal(typeof he.kiosks.validation.server.unknown_till, 'string');
   });
 });

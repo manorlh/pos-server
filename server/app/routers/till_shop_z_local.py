@@ -16,6 +16,13 @@ POST /sync/{machine_id}/shop-z/local           → a shop Z the main till produc
                                                  renumbered; `conflictRecorded: true`),
                                                  `shift_not_closed` / `shift_unknown` (wait:
                                                  a till's close has not reached the cloud)
+
+A participant off the LAN, closed through the cloud (§8.14):
+POST /sync/{machine_id}/shop-z/remote-close     → the main till asks: `{roundId, requests:
+                                                 [{machineId, requestId, force}]}`
+GET  /sync/{machine_id}/shop-z/remote-parts     → the main till pulls the round's answers
+POST /sync/{machine_id}/shop-z/remote-part      → the remote machine answers (the LAN close's
+                                                 report, with its section and manifest)
 """
 from __future__ import annotations
 
@@ -103,4 +110,88 @@ def till_shop_z_local_upload(
     db.commit()
     if outcome == "duplicate":
         return JSONResponse(status_code=status.HTTP_200_OK, content=out)
+    # "סגירה יחד עם ה-Z הסניפי": the shop's kiosks set so, and not in this local Z (an
+    # independent kiosk has no LAN), close and make their own Z (app/services/kiosk_ops.py).
+    try:
+        from app.services import kiosk_ops
+
+        kiosk_ops.on_local_shop_z(db, machine.shop_id, z)
+        db.commit()
+    except Exception:  # noqa: BLE001 - never fails the Z's upload
+        db.rollback()
+    return out
+
+
+# ── A participant off the LAN, closed through the cloud (§8.14) ────────────────
+
+
+class RemoteCloseRequestIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    machine_id: str = Field(..., alias="machineId", max_length=64)
+    request_id: str = Field(..., alias="requestId", min_length=1, max_length=64)
+    force: bool = True
+
+
+class RemoteCloseIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    round_id: str = Field(..., alias="roundId", min_length=1, max_length=64)
+    requests: list[RemoteCloseRequestIn] = Field(default_factory=list, max_length=200)
+
+
+def _refused(refused: "LZ.RemotePartRefused") -> JSONResponse:
+    return JSONResponse(status_code=refused.status_code, content=refused.body)
+
+
+@router.post("/sync/{machine_id}/shop-z/remote-close")
+def till_shop_z_remote_close(
+    machine_id: str,
+    body: RemoteCloseIn,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """The main till asks the cloud to close its remote participants for a round."""
+    machine = _machine(machine_id, machine)
+    try:
+        out = LZ.request_remote_parts(
+            db, machine, body.round_id,
+            [{"machineId": r.machine_id, "requestId": r.request_id, "force": r.force} for r in body.requests],
+        )
+    except LZ.RemotePartRefused as refused:
+        db.rollback()
+        return _refused(refused)
+    db.commit()
+    return out
+
+
+@router.get("/sync/{machine_id}/shop-z/remote-parts")
+def till_shop_z_remote_parts(
+    machine_id: str,
+    round_id: str = Query(..., alias="roundId", min_length=1, max_length=64),
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """The main till pulls its round's remote answers — each the LAN close's report, as sent."""
+    machine = _machine(machine_id, machine)
+    out = LZ.remote_parts(db, machine, round_id)
+    db.commit()
+    return out
+
+
+@router.post("/sync/{machine_id}/shop-z/remote-part")
+def till_shop_z_remote_part(
+    machine_id: str,
+    body: dict,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """A remote participant's answer to the main till's close: its report, section and manifest."""
+    machine = _machine(machine_id, machine)
+    try:
+        out = LZ.report_remote_part(db, machine, body)
+    except LZ.RemotePartRefused as refused:
+        db.rollback()
+        return _refused(refused)
+    db.commit()
     return out

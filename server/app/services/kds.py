@@ -230,6 +230,32 @@ def device_view(db: Session, machine: POSMachine) -> Dict[str, Any]:
 # ── Release ─────────────────────────────────────────────────────────────────────
 
 
+def is_kiosk_device(db: Session, machine: POSMachine) -> bool:
+    """Whether [machine] is a self-order kiosk (a `kiosk_devices` row)."""
+    from app.services import kiosk_control as KCTL
+
+    return KCTL.get_device(db, machine.id) is not None
+
+
+def kiosk_releases_to_kds(db: Session, machine: POSMachine) -> bool:
+    """
+    Whether a kiosk's paid orders go to the KDS: its effective `general.fulfillmentMode` is
+    KDS (the shop's `kdsEnabled` is checked by the caller, as for every source). A machine
+    that is not a kiosk (any more) releases nothing as `kiosk`.
+    """
+    from app.services import kiosk_config as KC
+    from app.services import kiosk_control as KCTL
+
+    device = KCTL.get_device(db, machine.id)
+    if device is None or not device.enabled:
+        return False
+    try:
+        mode = (KC.effective_config(db, machine).get("general") or {}).get("fulfillmentMode")
+    except Exception:  # noqa: BLE001 - a config that cannot be read is not KDS
+        return False
+    return mode == "KDS"
+
+
 def _check_policy(body: KdsReleaseIn, config: Dict[str, Any], order: Optional[KitchenOrder]) -> None:
     """§5: when a source may release. Raises 409 with the reason."""
     paid = body.paid or body.trigger == "payment" or (order is not None and order.paid)
@@ -351,6 +377,10 @@ def release(db: Session, machine: POSMachine, body: KdsReleaseIn) -> Dict[str, A
         if not config.get("enabled"):
             # The feature is off for this till: nothing is recorded, nothing changes.
             return {"accepted": False, "reason": "kds_disabled"}
+        # "מצב הקיוסק הוא מכירה": a kiosk's order reaches the KDS only when the kiosk is set to
+        # KDS (`general.fulfillmentMode`) — a BON kiosk never appears on a kitchen screen.
+        if body.source == "kiosk" and is_kiosk_device(db, machine) and not kiosk_releases_to_kds(db, machine):
+            return {"accepted": False, "reason": "kiosk_not_kds"}
         mode, switched = WF.resolve_mode(config, body.workflow_mode)
         _check_policy(body, config, None)
         order = KitchenOrder(

@@ -384,6 +384,11 @@ def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedPar
         from app.services.independent_till import apply_to_resolved
 
         resolved = apply_to_resolved(machine, parameters, values, resolved)
+    # "קוד טכנאי לקיוסק" (app/services/kiosk_technician.py): never sent in clear — the till
+    # gets the code's hash, salted with its own id.
+    from app.services.kiosk_technician import hash_for_machine
+
+    hash_for_machine(machine, resolved.parameters)
     return resolved
 
 
@@ -431,6 +436,37 @@ PINPAD_ALLOW_HTTP_KEY = "pinpadAllowHttp"
 #: "הזמנה מהירה — מתי לשאול": a new order starts with its details — "לקחת או לשבת?", then
 #: the name — before the first item; the default (ui/sell/MenuSheetState.kt; alembic e4f6a8b0c2d4).
 ORDER_DETAILS_DINING_FIRST = "בתחילת הזמנה (לשבת/לקחת ואז שם)"
+
+#: "כפתור תשלום מהיר 1 / 2": the two quick-pay buttons under the total of the tablet's quick
+#: order, in their order — the first at the start of the row (the right, in Hebrew). Read by
+#: the till only (pos-android domain/QuickCash.kt, quickPayButtons). Two enums rather than one
+#: ordered list: the parameter types have no ordered multi-choice.
+QUICK_PAY_BUTTON_1_KEY = "quickPayButton1"
+QUICK_PAY_BUTTON_2_KEY = "quickPayButton2"
+QUICK_PAY_FAST_CARD = "אשראי מהיר"
+QUICK_PAY_CASH_WITH_CHANGE = "מזומן עם עודף"
+QUICK_PAY_FAST_CASH = "מזומן מהיר"
+QUICK_PAY_CHOICES = (QUICK_PAY_FAST_CARD, QUICK_PAY_CASH_WITH_CHANGE, QUICK_PAY_FAST_CASH)
+
+#: "התקבל מזומן" (the cash box on the tablet's order panel) is gone; its switch with it.
+#: Not a built-in any more — alembic 3f8b6d2a9c41 retires an existing definition.
+RETIRED_CASH_CHANGE_IN_PANEL_KEY = "cashChangeInPanel"
+
+
+def _quick_pay_description(which: str) -> str:
+    return (
+        f"{which} "
+        "בהזמנה המהירה בטאבלט, מתחת לסה״כ, שני כפתורי תשלום מהיר זה לצד זה — כפתור 1 מימין, כפתור 2 "
+        "משמאלו — ומתחתיהם \"תשלום\": מסך התשלום עם כל אמצעי התשלום ופיצול. "
+        f"«{QUICK_PAY_FAST_CARD}» — חיוב האשראי מיד במסופון (תשלום אחד). "
+        f"«{QUICK_PAY_CASH_WITH_CHANGE}» — מסך המזומן: הסכום שהתקבל והעודף. "
+        f"«{QUICK_PAY_FAST_CASH}» — בדיוק הסכום לתשלום, והעסקה נסגרת מיד. "
+        "כפתור שאמצעי התשלום שלו לא מותר בקופה (באמצעי התשלום, או בפרמטרים \"אשראי מהיר\" / "
+        "\"מזומן מהיר\") לא מוצג, והכפתור השני תופס את כל הרוחב. אותה בחירה בשני הכפתורים — "
+        "הכפתור השני מתחלף באפשרות הראשונה שלא נבחרה (לפי הסדר: "
+        f"{QUICK_PAY_FAST_CARD}, {QUICK_PAY_CASH_WITH_CHANGE}, {QUICK_PAY_FAST_CASH}). "
+        "לא משפיע על קופה ניידת. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+    )
 
 
 @dataclass(frozen=True)
@@ -635,16 +671,22 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "כבוי — הכפתור לא מוצג בקופה. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
+    # The tablet quick order's two quick-pay buttons (read by the till only).
     BuiltinParameter(
-        key="cashChangeInPanel",
-        label="מזומן עם חישוב עודף בפאנל ההזמנה (טאבלט)",
-        value_type="boolean",
-        default_value=True,
-        description=(
-            "בהזמנה המהירה בטאבלט: מעל כפתורי התשלום מוצג \"התקבל מזומן\" — סכומים עגולים מוצעים, "
-            "\"מדויק\" ושדה סכום — והעודף מחושב מיד; לחיצה על \"מזומן\" גובה בסכום שהתקבל. "
-            "כבוי — רק כפתור המזומן המהיר (בדיוק הסכום). לא משפיע על קופה ניידת."
-        ),
+        key=QUICK_PAY_BUTTON_1_KEY,
+        label="כפתור תשלום מהיר 1 (הזמנה מהירה בטאבלט)",
+        value_type="enum",
+        enum_options=QUICK_PAY_CHOICES,
+        default_value=QUICK_PAY_FAST_CARD,
+        description=_quick_pay_description("הכפתור הראשון (מימין)."),
+    ),
+    BuiltinParameter(
+        key=QUICK_PAY_BUTTON_2_KEY,
+        label="כפתור תשלום מהיר 2 (הזמנה מהירה בטאבלט)",
+        value_type="enum",
+        enum_options=QUICK_PAY_CHOICES,
+        default_value=QUICK_PAY_CASH_WITH_CHANGE,
+        description=_quick_pay_description("הכפתור השני (משמאל)."),
     ),
     BuiltinParameter(
         key="receiptPrinter",
@@ -1083,6 +1125,17 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         ),
     ),
     BuiltinParameter(
+        key="upsellMaxPerOrder",
+        label="הגדלות מכירה — עד כמה הצעות בהזמנה",
+        value_type="integer",
+        default_value=0,
+        description=(
+            "כמה הצעות (כרטיס או חלון) הקופה מציגה לכל היותר בהזמנה אחת, מכל הכללים יחד — "
+            "בהזמנה מהירה ובשולחן. 0 (ברירת מחדל) — בלי הגבלה, כמו קודם; כל כלל עדיין מוצע לפי "
+            "ההגדרות שלו (פעם אחת בהזמנה, עדיפות, ימים ושעות). בקיוסק המגבלה נקבעת בהגדרות הקיוסק."
+        ),
+    ),
+    BuiltinParameter(
         key="modifiersAutoOpen",
         label="תוספות — חלון קופץ אוטומטי",
         value_type="boolean",
@@ -1312,6 +1365,29 @@ from app.services.kds_workflow import WORKFLOW_KEYS as _WORKFLOW_KEYS  # noqa: E
 from app.services.kds_workflow import WORKFLOW_PARAMETER_SPECS as _WORKFLOW_SPECS  # noqa: E402
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _WORKFLOW_SPECS)
+
+# "קוד טכנאי לקיוסק" (app/services/kiosk_technician.py): the kiosk technician screen's code.
+from app.services.kiosk_technician import TECHNICIAN_PARAMETER_SPECS as _TECHNICIAN_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TECHNICIAN_SPECS)
+
+# "מעבר אוטומטי לנתונים ניידים" (app/services/device_identity.py): the till's cloud traffic over
+# mobile data while the Wi-Fi has no internet (pos-android system/NetworkFallback.kt).
+from app.services.device_identity import CELLULAR_PARAMETER_SPECS as _CELLULAR_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CELLULAR_SPECS)
+
+
+def validate_keyed_value(key: str, value: Any) -> Any:
+    """A value checked for what its key needs beyond its type (`technicianCode`: 4–8 digits)."""
+    from app.services import kiosk_technician
+
+    if key == kiosk_technician.TECHNICIAN_CODE_KEY and value is not None:
+        try:
+            return kiosk_technician.clean_code(value)
+        except kiosk_technician.TechnicianCodeError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    return value
 
 
 def ensure_builtin_parameters(db: Session) -> List[str]:

@@ -4,13 +4,14 @@ import uuid as uuid_mod
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, ConfigDict, Field
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy.orm import Session, object_session, selectinload
 from sqlalchemy import or_, and_
 from sqlalchemy.exc import IntegrityError
 from app.services import licenses
 from app.services import access
 from app.services import device_profile
+from app.services import device_identity
 from app.services import document_prefix
 from app.services import support_z, till_reset
 from app.database import get_db
@@ -204,6 +205,8 @@ def _enrich_machine_status(
         "supportZ": getattr(machine, "support_z", None),
         # The last reset of the till's data support ordered from the cloud (§4.7), or null.
         "tillReset": getattr(machine, "till_reset", None),
+        # "הוחלפה קופה" — every replacement of the till's device (offline till Z §4.6.2).
+        "replacements": getattr(machine, "replacements", None) or [],
         # "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md).
         "independentTill": bool(getattr(machine, "independent_till", False)),
         "distributorId": machine.distributor_id,
@@ -284,6 +287,8 @@ def _enrich_machine_status(
     result["printerStatusAt"] = machine.printer_status_at
     result["printerLastOkAt"] = machine.printer_last_ok_at
     result["printerReportedAt"] = machine.printer_reported_at
+    # Device identity (app/services/device_identity.py): serial source, SIMs, addresses.
+    result.update(device_identity.machine_fields(machine))
     # The card terminal: what Agamento reports beside the number the settings expect.
     if terminal_settings is None:
         terminal_settings = terminal_settings_for(db, [machine])
@@ -527,11 +532,19 @@ def get_my_machine(
     }
 
 
+def _till_z_run(db: Session, machine: POSMachine) -> Dict[str, Any]:
+    from app.services.z_sequence import current_machine_epoch
+
+    epoch, started = current_machine_epoch(db, machine.id)
+    return {"tillZEpoch": epoch, "tillZEpochStartedAt": started.isoformat() if started is not None else None}
+
+
 @router.post("/me/heartbeat")
 def post_my_heartbeat(
     body: MachineHeartbeatBody | None = None,
     machine: POSMachine = Depends(get_pos_machine_from_machine_token),
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
     """
     Till / POS desktop: periodic online signal over HTTP (replaces MQTT heartbeat publish).
@@ -593,6 +606,8 @@ def post_my_heartbeat(
     # The card terminal (Agamento), the same kind of snapshot.
     if body is not None and body.terminal is not None:
         apply_terminal_block(machine, body.terminal)
+    # The serial's source, the SIMs and the address the beat came from (device search).
+    device_identity.apply_heartbeat(machine, body, request)
     # Zs closed at the till with no connection, not uploaded yet (offline till Z §4.4).
     if body is not None and body.offline_till_z is not None:
         till_z.apply_offline_report(machine, body.offline_till_z)
@@ -628,7 +643,22 @@ def post_my_heartbeat(
         from app.services.local_shop_z import note_heartbeat
 
         note_heartbeat(db, machine, body.local_shop_z)
+    # Local shop Zs of this shop still waiting for their tills' shifts and documents
+    # (docs/SPEC_INDEPENDENT_TILL.md §8.12): what arrived is linked, and a Z is verified once
+    # everything it names is here. Never fails a heartbeat.
+    if machine.shop_id is not None:
+        from app.services.local_shop_z import verify_pending
+
+        try:
+            with db.begin_nested():
+                verify_pending(db, machine.shop_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("local shop Z verification failed for shop %s", machine.shop_id)
     pending_shop_z = take_pending_for_main(db, machine)
+    # A participant off the LAN: the main till asked the cloud to close it (§8.14).
+    from app.services.local_shop_z import take_pending_remote_part
+
+    pending_shop_z_part = take_pending_remote_part(db, machine)
     # Support ordered a reset of this till's data (offline till Z §4.7): the only way.
     pending_reset = till_reset.take_pending(db, machine)
     through = z_reported_through_sequence(db, machine.id)
@@ -656,6 +686,8 @@ def post_my_heartbeat(
         # The last number of the till's own Z run (0: none yet), so a till in `zMode =
         # till` can number a Z it closes with no connection (docs/SPEC_OFFLINE_TILL_Z.md §4).
         "lastTillZNumber": last_machine_z_number(db, machine.id),
+        # Its run (SPEC_INDEPENDENT_TILL §3.1): made independent, a till starts again at Z 1.
+        **_till_z_run(db, machine),
         # "מצב הדרכה", every beat too: the till switches at its next shift boundary.
         "trainingMode": bool(machine.shop is not None and getattr(machine.shop, "training_mode", False)),
     }
@@ -674,6 +706,8 @@ def post_my_heartbeat(
         response["pendingTillZ"] = pending_till_z
     if pending_shop_z is not None:
         response["pendingShopZ"] = pending_shop_z
+    if pending_shop_z_part is not None:
+        response["pendingShopZPart"] = pending_shop_z_part
     if pending_reset is not None:
         response["pendingReset"] = pending_reset
     return response
@@ -1244,6 +1278,8 @@ class SupportZBody(BaseModel):
     #: destroyed | lost | permanent_failure (`support_z.REASONS`).
     reason: str = Field(..., max_length=32)
     note: Optional[str] = Field(None, max_length=500)
+    #: "אני מאשר שהנתונים בענן הם הנתונים הקיימים" — required while the state warns (§4.6.1).
+    confirm_data: bool = Field(False, alias="confirmData")
 
 
 @router.get("/{machine_id}/support-z")
@@ -1285,7 +1321,9 @@ def post_support_z(
     if not machine:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
     ensure_same_tenant(machine.tenant_id, active_tenant_id)
-    result = support_z.produce(db, current_user, machine, reason=body.reason, note=body.note)
+    result = support_z.produce(
+        db, current_user, machine, reason=body.reason, note=body.note, confirm_data=body.confirm_data,
+    )
     db.commit()
     return result
 
@@ -1408,6 +1446,10 @@ def create_replacement_pairing_code(
         # The replacement unit's hardware; none keeps the till's recorded model.
         device_model=body.device_model if body is not None else None,
     )
+    # Why — kept in "הוחלפה קופה" when a device redeems the code (offline till Z §4.6.2).
+    if body is not None and body.reason and body.reason.strip():
+        code.replacement_reason = body.reason.strip()[:500]
+        db.commit()
     return {
         "code": code.code,
         "expiresAt": code.expires_at,

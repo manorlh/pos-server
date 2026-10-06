@@ -9,6 +9,7 @@ POST /sync/{machine_id}/kiosk/sync                            every till; a kios
                                                               kiosks it controls
 POST /sync/{machine_id}/kiosk/orders                          paid kiosk orders (upsert by localId)
 POST /sync/{machine_id}/kiosk/pickup-number                   the shop's daily pickup sequence
+POST /sync/{machine_id}/kiosk/menu                            the kiosk admin's menu, for the shop
 POST /sync/{machine_id}/kiosks/{kiosk_machine_id}/commands    a controlling till's pause / resume /
                                                               close_shift / till_z
 
@@ -56,6 +57,7 @@ from app.models.user import User
 from app.schemas.kiosk import (
     KioskCommandIn,
     KioskCreateIn,
+    KioskMenuIn,
     KioskOrdersIn,
     KioskPatchIn,
     KioskSettingsIn,
@@ -64,6 +66,7 @@ from app.schemas.kiosk import (
 )
 from app.services import kiosk_config as cfgsvc
 from app.services import kiosk_control as svc
+from app.services import kiosk_menu
 from app.services import kiosk_pickup
 
 till_router = APIRouter(prefix="/sync", tags=["kiosks"])
@@ -78,7 +81,7 @@ def _command_answer(db: Session, result: svc.CommandResult, response: Optional[R
     error = result.error
     if isinstance(error, HTTPException):
         raise error
-    if isinstance(error, TillZRefused):
+    if isinstance(error, (TillZRefused, svc.KioskCommandRefused)):
         return JSONResponse(status_code=error.status_code, content=error.body)
     if response is not None:
         response.status_code = status.HTTP_201_CREATED
@@ -160,6 +163,31 @@ def post_pickup_number(
     return {"number": result.number, "label": result.label}
 
 
+@till_router.post("/{machine_id}/kiosk/menu")
+def put_kiosk_menu(
+    machine_id: str,
+    body: KioskMenuIn,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """
+    "עריכת תפריט הקיוסק": the kiosk's menu (order, hidden, featured) for every kiosk of its
+    shop, approved by a shop manager's PIN on the kiosk. 403 `not_a_kiosk` /
+    `kiosk_control_requires_manager`; 409 `kiosk_menu_changed` {menuVersion}; 422.
+    """
+    device = svc.require_kiosk_device(db, machine)
+    try:
+        out = kiosk_menu.save_from_kiosk(
+            db, machine, device, approver_id=body.approver_id, base_version=body.base_version, menu=body.menu,
+        )
+    except kiosk_menu.MenuRefused as refused:
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
+    db.commit()
+    kiosk_menu.wake_kiosks(machine.tenant_id, out["kiosks"])
+    return out
+
+
 @till_router.post("/{machine_id}/kiosks/{kiosk_machine_id}/commands", status_code=status.HTTP_201_CREATED)
 def post_till_kiosk_command(
     machine_id: str,
@@ -175,7 +203,16 @@ def post_till_kiosk_command(
     existing channels and their refusals pass through.
     """
     kiosk_machine, device = svc.controller_target(db, machine, kiosk_machine_id)
-    actor = svc.till_actor(machine, kiosk_machine, body.pos_user_name)
+    if body.action in ("pause", "resume", "schedule"):
+        # "נעילה למכירה" / "פתיחה אוטומטית" from a till: a manager's approval (docs/SPEC_KIOSK.md §15).
+        try:
+            manager = svc.require_till_manager(db, machine, body.pos_user_id)
+        except svc.KioskCommandRefused as refused:
+            return JSONResponse(status_code=refused.status_code, content=refused.body)
+        name = " ".join(p for p in (manager.first_name or "", manager.last_name or "") if p).strip() or manager.username
+        actor = svc.till_actor(machine, kiosk_machine, name)
+    else:
+        actor = svc.till_actor(machine, kiosk_machine, body.pos_user_name)
     result = svc.run_command(
         db,
         kiosk_machine=kiosk_machine,
@@ -187,6 +224,10 @@ def post_till_kiosk_command(
         actor=actor,
         requested_by_machine_id=machine.id,
         requested_by_name=actor.username,
+        until_mode=body.until_mode,
+        until_time=body.until_time,
+        minutes=body.minutes,
+        schedule=body.schedule,
     )
     return _command_answer(db, result, response)
 
@@ -252,6 +293,14 @@ def put_settings(
     "errors": [{path, code, message}]}}`, validated on the parents ⊕ this layer.
     """
     scope = svc.settings_scope(db, current_user, level, scope_id, active_tenant_id)
+    # "עריכת תפריט הקיוסק": the shop's menu changed on a kiosk since the dashboard loaded it.
+    if scope.level == "shop" and body.menu_version is not None:
+        stored = kiosk_menu.shop_layer(db, scope.shop_id)
+        if kiosk_menu.menu_of(cfgsvc.validate_layer(body.overrides)[0]) != kiosk_menu.menu_of(stored):
+            try:
+                kiosk_menu.check_version(db, scope.shop_id, body.menu_version)
+            except kiosk_menu.MenuRefused as refused:
+                return JSONResponse(status_code=refused.status_code, content=refused.body)
     try:
         try:
             svc.save_settings(db, current_user, scope, body.overrides)
@@ -434,6 +483,10 @@ def post_kiosk_command(
         actor=current_user,
         requested_by_user_id=current_user.id,
         requested_by_name=svc.user_name(current_user),
+        until_mode=body.until_mode,
+        until_time=body.until_time,
+        minutes=body.minutes,
+        schedule=body.schedule,
     )
     return _command_answer(db, result, response)
 

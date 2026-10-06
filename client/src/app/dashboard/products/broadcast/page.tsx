@@ -66,7 +66,13 @@ const DETAIL_KINDS = new Set([
   'meal',
   'upsell',
   'course',
+  // "תפריטים" (catalog_menus.diff): a menu, a target's menus, a target's fallback.
+  'catalog_menu',
+  'catalog_menu_assignment',
+  'catalog_menu_fallback',
 ]);
+/** Fields whose value is a code with a label under `values.<field>_<code>`. */
+const CODED_FIELDS = new Set(['channel', 'fallback']);
 
 function useCanBroadcast(): boolean {
   const role = useAuth((s) => s.user?.role);
@@ -322,7 +328,7 @@ function ReviewSection({ section, items }: { section: BroadcastSection; items: B
             {item.changes.length > 0 ? (
               <ul className="space-y-0.5 ps-1 text-xs">
                 {item.changes.map((c, i) => (
-                  <ChangeLine key={i} change={c} itemType={item.type} />
+                  <ChangeLine key={i} change={c} itemType={item.type} detail={item.detail} />
                 ))}
               </ul>
             ) : null}
@@ -333,15 +339,31 @@ function ReviewSection({ section, items }: { section: BroadcastSection; items: B
   );
 }
 
-function ChangeLine({ change, itemType }: { change: BroadcastChange; itemType: BroadcastItem['type'] }) {
+function ChangeLine({
+  change,
+  itemType,
+  detail,
+}: {
+  change: BroadcastChange;
+  itemType: BroadcastItem['type'];
+  detail?: string;
+}) {
   const t = useTranslations('menuBroadcast');
   const tw = useTranslations('promotions.weekdays');
   const fieldKey = change.field.replace(/\./g, '_');
   const label = t.has(`fields.${fieldKey}`) ? t(`fields.${fieldKey}`) : change.field;
+  // "תפריטים": a menu's price null is the catalog's; an assignment's label is its level.
+  const catalogMenu = !!detail?.startsWith('catalog_menu');
+  const changeLabel =
+    catalogMenu && change.label && t.has(`values.level_${change.label}`) ? t(`values.level_${change.label}`) : change.label;
 
   const show = (value: unknown): string => {
     if (value === null || value === undefined) {
-      return change.field === 'groups' || change.field === 'notes' ? t('values.inherit') : '—';
+      if (catalogMenu && change.field === 'price') return t('values.catalogPrice');
+      return change.field === 'groups' || change.field === 'notes' || change.field === 'fallback' ? t('values.inherit') : '—';
+    }
+    if (typeof value === 'string' && CODED_FIELDS.has(change.field) && t.has(`values.${change.field}_${value}`)) {
+      return t(`values.${change.field}_${value}`);
     }
     if (typeof value === 'boolean') return value ? t('values.yes') : t('values.no');
     if (typeof value === 'number' && MONEY_FIELDS.has(change.field)) return formatCurrency(value);
@@ -359,7 +381,7 @@ function ChangeLine({ change, itemType }: { change: BroadcastChange; itemType: B
   return (
     <li className="text-muted-foreground">
       <span className="text-foreground">{label}</span>
-      {change.label ? <span> · {change.label}</span> : null}
+      {changeLabel ? <span> · {changeLabel}</span> : null}
       {': '}
       {change.field === 'optionAdded' ? (
         <span>{show(change.after)}</span>

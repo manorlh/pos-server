@@ -88,7 +88,13 @@ class TestAFiledDocumentChangingIsFlagged:
 
         upsert_transactions(w.db, till, [_doc(shift.id, doc_id=orphan_id, number="2", updated=NOW + timedelta(minutes=1))])
 
-        assert (shift.late_documents, z.late_documents) == (1, 1)
+        # Moved into a shift a Z took, so not counted by it: carried into the next Z (§4.6.3).
+        from app.models.transaction import Transaction
+        from app.services.late_documents import is_carry
+
+        assert is_carry(w.db.get(Shift, w.db.get(Transaction, orphan_id).shift_id))
+        assert (shift.late_documents, z.late_documents) == (0, 0)
+        assert (z.header or {}).get("lateCarriedOut") == 1
         assert z.amended_documents == 0
 
     def test_the_shift_and_z_out_carry_the_count(self, w):

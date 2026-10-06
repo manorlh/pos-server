@@ -19,7 +19,10 @@ import {
 } from '@/lib/kioskConfig';
 import type { KioskLevel, KioskServerError, KioskSourceCatalog } from '@/lib/kioskApi';
 
-export type PreviewScreen = 'attract' | 'service' | 'catalog' | 'product' | 'cart' | 'pay' | 'success' | 'paused';
+import type { PreviewScreen } from '@/kiosk-shared/types';
+
+// Shared with the Windows kiosk (kiosk-desktop), which renders the same screens.
+export type { PreviewScreen };
 
 export interface KioskEditorValue {
   level: KioskLevel;

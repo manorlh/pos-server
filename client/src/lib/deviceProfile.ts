@@ -13,7 +13,59 @@
 export const DEVICE_ROLES = ['till', 'kiosk'] as const;
 export type DeviceRole = (typeof DEVICE_ROLES)[number];
 
-export const DEVICE_MODEL_IDS = ['N55F', 'MODO', 'P18', 'LANDI', 'FEITIAN_TABLET', 'GENERIC_ANDROID'] as const;
+/** SUNMI (pos-server docs/SPEC_SUNMI.md, app/models/sunmi.py): handhelds, PDAs, desktops, the K2 kiosk. */
+export const SUNMI_MODEL_IDS = [
+  'SUNMI_V1',
+  'SUNMI_V2',
+  'SUNMI_V2_PRO',
+  'SUNMI_V2S',
+  'SUNMI_V2S_PLUS',
+  'SUNMI_V3',
+  'SUNMI_P1',
+  'SUNMI_P2',
+  'SUNMI_P3',
+  'SUNMI_L2',
+  'SUNMI_M2',
+  'SUNMI_T1',
+  'SUNMI_T2',
+  'SUNMI_T2_MINI',
+  'SUNMI_T2S',
+  'SUNMI_T3',
+  'SUNMI_D2_MINI',
+  'SUNMI_D2S',
+  'SUNMI_D2S_PLUS',
+  'SUNMI_D3',
+  'SUNMI_D3_MINI',
+  'SUNMI_K2',
+  'SUNMI',
+] as const;
+
+/**
+ * SynqPay terminals the till runs on (pos-server docs/SPEC_SYNQPAY.md §1.5,
+ * app/models/synqpay_devices.py): a terminal of their own, like the F20; their printer needs
+ * SynqPay's SDK (PAL) — "בקרוב".
+ */
+export const SYNQPAY_DEVICE_MODEL_IDS = [
+  'SYNQPAY_DX8000',
+  'SYNQPAY_DX6000',
+  'SYNQPAY_EX8000',
+  'SYNQPAY_RX5000',
+  'SYNQPAY_S1P2',
+  'SYNQPAY_S1U2_M4',
+  'SYNQPAY_VERIFONE',
+  'SYNQPAY',
+] as const;
+
+export const DEVICE_MODEL_IDS = [
+  'N55F',
+  'MODO',
+  'P18',
+  'LANDI',
+  'FEITIAN_TABLET',
+  'GENERIC_ANDROID',
+  ...SUNMI_MODEL_IDS,
+  ...SYNQPAY_DEVICE_MODEL_IDS,
+] as const;
 export type DeviceModelId = (typeof DEVICE_MODEL_IDS)[number];
 
 export interface DeviceCapabilities {
@@ -21,10 +73,14 @@ export interface DeviceCapabilities {
   builtinPrinter: boolean;
   /** Charges cards on a terminal of its own (Agamento on the device). */
   builtinTerminal: boolean;
-  /** Opens a cash drawer on a port of its own (no model today: drawers open through a receipt printer). */
+  /** Opens a cash drawer on a port of its own (the SUNMI desktops; elsewhere through a receipt printer). */
   cashDrawerPort: boolean;
   /** The hardware has a printer / drawer the till has no driver for yet: "בקרוב". */
   driverPending: boolean;
+  /** The paper its own head takes (58 / 80 mm); null without a head, or a SUNMI the table does not know. */
+  paperWidthMm: 58 | 80 | null;
+  /** A scan head of its own (not the camera). */
+  builtinScanner: boolean;
 }
 
 const caps = (builtinPrinter: boolean, builtinTerminal: boolean, driverPending = false): DeviceCapabilities => ({
@@ -32,6 +88,18 @@ const caps = (builtinPrinter: boolean, builtinTerminal: boolean, driverPending =
   builtinTerminal,
   cashDrawerPort: false,
   driverPending,
+  paperWidthMm: builtinPrinter ? 58 : null,
+  builtinScanner: false,
+});
+
+/** A SUNMI: never a terminal of its own (its P-series EMV reader is not driven), never "בקרוב". */
+const sunmi = (paperWidthMm: 58 | 80 | null, cashDrawerPort: boolean, builtinScanner: boolean): DeviceCapabilities => ({
+  builtinPrinter: paperWidthMm !== null,
+  builtinTerminal: false,
+  cashDrawerPort,
+  driverPending: false,
+  paperWidthMm,
+  builtinScanner,
 });
 
 export const DEVICE_MODEL_CAPABILITIES: Record<DeviceModelId, DeviceCapabilities> = {
@@ -41,6 +109,39 @@ export const DEVICE_MODEL_CAPABILITIES: Record<DeviceModelId, DeviceCapabilities
   LANDI: caps(false, false, true),
   FEITIAN_TABLET: caps(false, false, true),
   GENERIC_ANDROID: caps(false, false),
+  SUNMI_V1: sunmi(58, false, false),
+  SUNMI_V2: sunmi(58, false, false),
+  SUNMI_V2_PRO: sunmi(58, false, true),
+  SUNMI_V2S: sunmi(58, false, false),
+  SUNMI_V2S_PLUS: sunmi(80, false, true),
+  SUNMI_V3: sunmi(58, false, true),
+  SUNMI_P1: sunmi(58, false, false),
+  SUNMI_P2: sunmi(58, false, false),
+  SUNMI_P3: sunmi(58, false, false),
+  SUNMI_L2: sunmi(null, false, true),
+  SUNMI_M2: sunmi(null, false, false),
+  SUNMI_T1: sunmi(80, true, false),
+  SUNMI_T2: sunmi(80, true, false),
+  SUNMI_T2_MINI: sunmi(80, true, false),
+  SUNMI_T2S: sunmi(80, true, false),
+  SUNMI_T3: sunmi(80, true, false),
+  SUNMI_D2_MINI: sunmi(58, true, false),
+  SUNMI_D2S: sunmi(58, true, false),
+  SUNMI_D2S_PLUS: sunmi(80, true, false),
+  SUNMI_D3: sunmi(80, true, false),
+  SUNMI_D3_MINI: sunmi(58, true, false),
+  SUNMI_K2: sunmi(80, false, true),
+  // Not in the table: prints if its print service answers, at the width it reports.
+  SUNMI: { ...sunmi(null, false, false), builtinPrinter: true },
+  // SynqPay: the terminal is the device (Local Mode); no till receipts on its head yet (SDK).
+  SYNQPAY_DX8000: caps(false, true, true),
+  SYNQPAY_DX6000: caps(false, true, true),
+  SYNQPAY_EX8000: caps(false, true, true),
+  SYNQPAY_RX5000: caps(false, true, true),
+  SYNQPAY_S1P2: caps(false, true, true),
+  SYNQPAY_S1U2_M4: caps(false, true, true),
+  SYNQPAY_VERIFONE: caps(false, true, true),
+  SYNQPAY: caps(false, true, true),
 };
 
 /** A model this build knows, else null. */

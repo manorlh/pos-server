@@ -9,6 +9,10 @@ import { join } from 'node:path';
 
 import {
   buildParticipationBody,
+  canBeRemote,
+  initialLinks,
+  linkHintOf,
+  remoteListOf,
   choiceForTick,
   conflictNumbersOf,
   effectOf,
@@ -204,6 +208,76 @@ describe('the summary', () => {
     assert.deepEqual(summarySegments(one, initialChoices(one), 'm1'), [
       { key: 'shopZOneMain', values: { tills: '1', main: '1' } },
     ]);
+  });
+});
+
+describe('"מחובר ברשת המקומית" / "מרוחק (דרך הענן)"', () => {
+  // Tills 1–5 in the shop Z on main till 1, kiosk 7 remote, till 6 independent.
+  const s = () =>
+    shop([
+      ...[1, 2, 3, 4, 5].map((n) => till(n, 'shop_z', { mainTill: n === 1, link: 'lan' as const, seenOnLan: true })),
+      till(6, 'independent', { link: 'lan', seenOnLan: null }),
+      till(7, 'shop_z', { kiosk: true, link: 'remote', seenOnLan: false }),
+    ]);
+
+  it('only a till in the shop Z, never the main till, may be remote', () => {
+    assert.equal(canBeRemote('m3', 'shop_z', 'm1'), true);
+    assert.equal(canBeRemote('m1', 'shop_z', 'm1'), false);
+    assert.equal(canBeRemote('m6', 'independent', 'm1'), false);
+    assert.equal(canBeRemote('m6', 'own_z', null), false);
+  });
+
+  it('nothing changed: no `remote` in the body', () => {
+    const st = s();
+    assert.deepEqual(initialLinks(st), { m1: 'lan', m2: 'lan', m3: 'lan', m4: 'lan', m5: 'lan', m6: 'lan', m7: 'remote' });
+    assert.equal(buildParticipationBody(st, initialChoices(st), 'm1', initialLinks(st)), null);
+    assert.deepEqual(remoteListOf(st, initialChoices(st), initialLinks(st), 'm1'), ['m7']);
+  });
+
+  it('setting till 4 remote sends the whole list, by number', () => {
+    const st = s();
+    const links = { ...initialLinks(st), m4: 'remote' as const };
+    assert.deepEqual(buildParticipationBody(st, initialChoices(st), 'm1', links), {
+      participants: [],
+      independent: [],
+      remote: ['m4', 'm7'],
+    });
+    const back = { ...initialLinks(st), m7: 'lan' as const };
+    assert.deepEqual(buildParticipationBody(st, initialChoices(st), 'm1', back), {
+      participants: [],
+      independent: [],
+      remote: [],
+    });
+  });
+
+  it('a remote till that leaves the shop Z, or becomes the main till, drops out of the list', () => {
+    const st = s();
+    const c = { ...initialChoices(st), m7: 'independent' as ZRole };
+    assert.deepEqual(buildParticipationBody(st, c, 'm1', initialLinks(st)), {
+      participants: [],
+      independent: ['m7'],
+      remote: [],
+    });
+    assert.deepEqual(remoteListOf(st, initialChoices(st), initialLinks(st), 'm7'), []);
+  });
+
+  it('the effect and the hint (a hint only)', () => {
+    assert.equal(effectOf('shop_z', true), 'remote');
+    assert.equal(effectOf('shop_z'), 'shopZ');
+    assert.equal(he.independentTill.effect.remote, 'נסגרת דרך הענן — הקופה הראשית ממתינה לחלק שלה');
+    assert.equal(linkHintOf('lan', false), 'maybeRemote');
+    assert.equal(linkHintOf('remote', true), 'heardOnLan');
+    assert.equal(linkHintOf('lan', true), null);
+    assert.equal(linkHintOf('remote', false), null);
+    assert.equal(linkHintOf('lan', null), null);
+  });
+
+  it('the summary names the remote tills', () => {
+    const st = s();
+    assert.equal(
+      render(summarySegments(st, initialChoices(st), 'm1', initialLinks(st))),
+      'קופות 1–5, 7 בזד הסניפי, נשענות על קופה 1 כשרת מקומי · קופה 7 מרוחקת (נסגרת דרך הענן) · קופה 6 עצמאית',
+    );
   });
 });
 

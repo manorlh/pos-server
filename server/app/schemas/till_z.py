@@ -22,6 +22,9 @@ class OfflineTillZIn(BaseModel):
     #: The Z's id, made by the till — also the ZReport's id here.
     id: uuid.UUID
     machine_sequence_number: int = Field(..., alias="machineSequenceNumber", ge=1, le=10_000_000)
+    #: The till's run it numbered it in (docs/SPEC_INDEPENDENT_TILL.md §3.1); absent from an
+    #: older till: its run is the current one.
+    machine_sequence_epoch: Optional[int] = Field(None, alias="machineSequenceEpoch", ge=0)
     closed_at: datetime = Field(..., alias="closedAt")
     business_date: Optional[date] = Field(None, alias="businessDate")
     #: The shifts the till took into it, oldest first.

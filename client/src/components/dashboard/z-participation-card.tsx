@@ -20,10 +20,13 @@ import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
   buildParticipationBody,
+  canBeRemote,
   choiceForTick,
   effectOf,
   initialChoices,
+  initialLinks,
   isKnownRefusal,
+  linkHintOf,
   mainTillOptions,
   producerBusyOf,
   refusalOf,
@@ -34,7 +37,9 @@ import {
   validateParticipation,
   type ParticipationRefusal,
   type ProducerBusy,
+  type TillLink,
   type ZChoices,
+  type ZLinks,
   type ZParticipationState,
   type ZParticipationTill,
   type ZRole,
@@ -70,7 +75,7 @@ export function ZParticipationCard({ shopId }: { shopId: string }) {
         ) : (
           // Keyed by what was saved: a save (or another admin's) starts the form afresh.
           <ZParticipationForm
-            key={`${data.mainTill?.machineId ?? ''}|${data.tills.map((x) => `${x.machineId}:${roleOf(x)}`).join(',')}`}
+            key={`${data.mainTill?.machineId ?? ''}|${data.tills.map((x) => `${x.machineId}:${roleOf(x)}:${x.link ?? 'lan'}`).join(',')}`}
             shopId={shopId}
             data={data}
           />
@@ -88,9 +93,13 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
   const [choices, setChoices] = useState<ZChoices>(() => initialChoices(data));
   const [mainTillId, setMainTillId] = useState<string>(data.mainTill?.machineId ?? '');
   const [refusal, setRefusal] = useState<ParticipationRefusal | null>(null);
+  // "מחובר ברשת המקומית" / "מרוחק (דרך הענן)" per till; saved whole as `remote`.
+  const [links, setLinks] = useState<ZLinks>(() => initialLinks(data));
+  // A setting of local mode (the main till closes the tills over the LAN), or one still set.
+  const showLinks = data.localMode || data.tills.some((x) => x.link === 'remote');
 
   const tills = sortTills(data.tills);
-  const body = buildParticipationBody(data, choices, mainTillId || null);
+  const body = buildParticipationBody(data, choices, mainTillId || null, links);
   const issues = validateParticipation(data, choices, mainTillId || null);
   const mainIssue = issues.find((i) => i.kind === 'main_not_participating');
   const options = mainTillOptions(data.tills, choices);
@@ -129,8 +138,14 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
     },
   });
 
-  const tillLabel = (x: { posNumber?: string | null; name?: string | null } | undefined) =>
-    !x ? '—' : x.posNumber ? t('till', { n: x.posNumber }) : (x.name ?? '—');
+  const tillLabel = (x: { posNumber?: string | null; name?: string | null; kiosk?: boolean } | undefined) =>
+    !x
+      ? '—'
+      : x.kiosk
+        ? t('kioskName', { name: x.name ?? x.posNumber ?? '—' })
+        : x.posNumber
+          ? t('till', { n: x.posNumber })
+          : (x.name ?? '—');
   const byId = (id: string | null | undefined) => tills.find((x) => x.machineId === id);
   const refusalText = (r: ParticipationRefusal): string => {
     if (r.message) return r.message;
@@ -143,7 +158,11 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
     setChoices((c) => ({ ...c, [id]: role }));
   };
   const busy = !data.canEdit || save.isPending;
-  const summary = summarySegments(data, choices, mainTillId || null)
+  const setLink = (id: string, link: TillLink) => {
+    setRefusal(null);
+    setLinks((l) => ({ ...l, [id]: link }));
+  };
+  const summary = summarySegments(data, choices, mainTillId || null, links)
     .map((s) => t(`summary.${s.key}`, s.values))
     .join(' · ');
 
@@ -156,9 +175,12 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
           {tills.map((x) => {
             const initial = roleOf(x);
             const choice = choiceOf(x);
-            const effect = effectOf(choice);
             const block = switchBlockOf(x);
             const isMain = !!mainTillId && x.machineId === mainTillId && choice === 'shop_z';
+            const link: TillLink = links[x.machineId] ?? 'lan';
+            const remoteAllowed = canBeRemote(x.machineId, choice, mainTillId || null);
+            const effect = effectOf(choice, remoteAllowed && link === 'remote');
+            const hint = remoteAllowed ? linkHintOf(link, x.seenOnLan) : null;
             const id = `zp-${shopId}-${x.machineId}`;
             return (
               <li key={x.machineId} className="space-y-1 px-3 py-2">
@@ -174,7 +196,11 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
                       onChange={(e) => set(x.machineId, choiceForTick(initial, e.target.checked))}
                     />
                     <span className="font-medium">{tillLabel(x)}</span>
-                    {x.name && x.name !== tillLabel(x) ? (
+                    {x.kiosk ? (
+                      <Badge variant="outline" className="h-4 px-1 text-[10px]">
+                        {t('kioskChip')}
+                      </Badge>
+                    ) : x.name && x.name !== tillLabel(x) ? (
                       <span className="text-xs text-muted-foreground">{x.name}</span>
                     ) : null}
                   </label>
@@ -205,6 +231,36 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
                   <p className="ps-6 text-xs text-amber-700 dark:text-amber-400">
                     {block === 'open_shift' ? t('blocked.openShift') : t('blocked.awaitingZ', { n: x.awaitingZ })}
                   </p>
+                ) : null}
+                {/* On the shop's LAN, or elsewhere and closed through the cloud. The main till
+                    is the LAN server; an independent till is outside the shop Z altogether. */}
+                {showLinks && isMain ? (
+                  <p className="ps-6 text-xs text-muted-foreground">{t('link.mainServer')}</p>
+                ) : showLinks && remoteAllowed ? (
+                  <div className="flex flex-wrap items-center gap-2 ps-6">
+                    <select
+                      aria-label={t('link.label')}
+                      className="border-input bg-background h-7 rounded-md border px-2 text-xs disabled:opacity-70"
+                      value={link}
+                      disabled={busy}
+                      onChange={(e) => setLink(x.machineId, e.target.value === 'remote' ? 'remote' : 'lan')}
+                    >
+                      <option value="lan">{t('link.lan')}</option>
+                      <option value="remote">{t('link.remote')}</option>
+                    </select>
+                    {/* What the main till hears: a hint only, never a change by itself. */}
+                    {hint ? (
+                      <span
+                        className={
+                          hint === 'maybeRemote'
+                            ? 'text-xs text-amber-700/80 dark:text-amber-400/80'
+                            : 'text-xs text-muted-foreground'
+                        }
+                      >
+                        {t(`link.${hint}`)}
+                      </span>
+                    ) : null}
+                  </div>
                 ) : null}
               </li>
             );

@@ -53,6 +53,7 @@ from app.services.catalog_sheet import (
     YES,
     Column,
 )
+from app.services.sales_channel import SALES_CHANNEL_LABELS_HE
 
 XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -257,6 +258,8 @@ def _validations(ws, columns: Sequence[Column], last_row: int, lists: Dict[str, 
             apply(_list_validation(lists["dietary"], strict=False, free_text=True,
                                    prompt="בחרו מהרשימה או כתבו כמה מופרדים בפסיק (למשל: טבעוני, חריף). "
                                           "'ללא' = לנקות, ריק = ללא שינוי"), key)
+        elif col.kind == "channel":
+            apply(_list_validation(lists["channels"], strict=True, error="בחרו מהרשימה"), key)
 
 
 def _data_sheet(ws, columns: Sequence[Column], examples: Sequence[Dict[str, Any]], rows: Sequence[Dict[str, Any]],
@@ -308,6 +311,7 @@ def _lists_sheet(wb: Workbook, view: TemplateView) -> Dict[str, str]:
         "units": list(UNIT_CHOICES),
         "tickets": [label for mode, label in TICKET_LABELS.items()],
         "dietary": list(DIETARY_LABELS_HE.values()) + [DIETARY_NONE],
+        "channels": list(SALES_CHANNEL_LABELS_HE.values()),
     }
     refs: Dict[str, str] = {}
     for index, (key, values) in enumerate(columns.items(), start=1):

@@ -47,7 +47,36 @@ export interface KioskGeneral {
   reduceMotion: boolean;
   /** "צליל התראה כשאין אינטרנט": a sound on the kiosk when it loses the internet. */
   offlineSound: boolean;
+  /** "חסימת הזמנות כשאין אינטרנט": the old rule — no orders while offline (docs/SPEC_KIOSK.md §17); off. */
+  blockWhenOffline: boolean;
+  /** "הודעה ללקוח כשאין אינטרנט": a quiet line to the customer while offline and still selling; off. */
+  offlineNotice: boolean;
   soldOutMode: SoldOutMode;
+  /** "לקחת / לשבת": after "הזמינו כאן" (default) or two big buttons on the attract screen. */
+  servicePlacement: ServicePlacement;
+}
+
+export type ServicePlacement = 'after_start' | 'attract';
+export const SERVICE_PLACEMENTS: ServicePlacement[] = ['after_start', 'attract'];
+export type DetailsStep = 'after_service' | 'before_cart' | 'before_pay' | 'after_pay';
+export const DETAILS_STEPS: DetailsStep[] = ['after_service', 'before_cart', 'before_pay', 'after_pay'];
+/**
+ * "הגדלת מכירה" on the kiosk: the rules are the menu's (place "kiosk", lib/kioskUpsell.ts,
+ * docs/SPEC_KIOSK.md §21); the kiosk keeps only its cap — the windows in one order.
+ */
+export interface KioskUpsell {
+  maxShown: number;
+}
+
+export const UPSELL_MAX_SHOWN = 5;
+
+/** Keys a kiosk layer no longer has (the kiosk's own rules of the first round): dropped, never refused. */
+export const RETIRED_KIOSK_KEYS: Array<[string, string]> = [['upsell', 'rules'], ['upsell', 'when']];
+
+/** "הודעת סיום": on the success screen for `timers.successSec`. */
+export interface KioskSuccess {
+  message: string;
+  image: MediaRef | null;
 }
 
 export type ThemeMode = 'light' | 'dark';
@@ -223,6 +252,8 @@ export interface KioskCatalog {
   hiddenProducts: string[];
   categoryImages: Record<string, MediaRef>;
   featuredProductIds: string[];
+  /** "הצג כל מחלקה בנפרד": one category at a time, chosen from the rail. */
+  oneCategory: boolean;
 }
 
 export type MessageKind = 'banner' | 'notice' | 'closed';
@@ -250,8 +281,8 @@ export interface HoursRange {
   /** 0 = Sunday … 6 = Saturday. */
   days: number[];
   open: string;
-  /** Before `open` = past midnight. */
-  close: string;
+  /** Before `open` = past midnight. null: "פתיחה אוטומטית" only — it opens, and never closes by itself. */
+  close: string | null;
 }
 
 export interface KioskHours {
@@ -270,6 +301,10 @@ export interface KioskPayment {
   customerName: CustomerFieldMode;
   customerPhone: CustomerFieldMode;
   minOrderAgorot: number;
+  /** The table number (eat-in only). */
+  tableNumber: CustomerFieldMode;
+  /** When name / phone / table are asked. */
+  detailsStep: DetailsStep;
 }
 
 export type BonMode = 'routing' | 'single';
@@ -281,6 +316,8 @@ export interface KioskPrinting {
   receiptPrinterId: string | null;
   /** A small customer slip with the pickup number on the receipt printer (whatever receiptPolicy says). */
   pickupSlip: boolean;
+  /** An unprinted bon prints again by itself when the printer comes back, if younger than this (min); 0: never. */
+  bonAutoRetryMin: number;
 }
 
 export type PickupScope = 'kiosk' | 'shop';
@@ -310,7 +347,27 @@ export interface KioskOperations {
   autoCloseAt: string;
   pausedTitle: string;
   pausedBody: string;
+  /** "סגירה יחד עם ה-Z הסניפי": the shop's Z closes the kiosk's shift and makes its own Z. */
+  closeWithShopZ: boolean;
 }
+
+/** "התראות לקופות" (docs/SPEC_KIOSK.md §16): which tills, and who on them. */
+export type KioskAlertTills = 'main' | 'all' | 'selected';
+export type KioskAlertAudience = 'everyone' | 'managers';
+export interface KioskAlertRoute {
+  tills: KioskAlertTills;
+  machineIds: string[];
+  audience: KioskAlertAudience;
+}
+export interface KioskAlerts {
+  printer: KioskAlertRoute;
+  terminal: KioskAlertRoute;
+  help: KioskAlertRoute & { clearAfterMin: number };
+}
+export const ALERT_KINDS = ['printer', 'terminal', 'help'] as const;
+export type KioskAlertKind = (typeof ALERT_KINDS)[number];
+export const ALERT_TILLS: KioskAlertTills[] = ['main', 'all', 'selected'];
+export const ALERT_AUDIENCES: KioskAlertAudience[] = ['everyone', 'managers'];
 
 export interface KioskConfig {
   general: KioskGeneral;
@@ -327,6 +384,9 @@ export interface KioskConfig {
   timers: KioskTimers;
   club: KioskClub;
   operations: KioskOperations;
+  alerts: KioskAlerts;
+  upsell: KioskUpsell;
+  success: KioskSuccess;
 }
 
 export type KioskSectionKey = keyof KioskConfig;
@@ -380,6 +440,8 @@ export const KIOSK_LIMITS = {
   ctaRadius: { min: 0, max: 100 },
   ctaBorderWidth: { min: 0, max: 8 },
   ctaSubtitleMax: 80,
+  alertMachinesMax: 50,
+  helpClearAfterMin: { min: 1, max: 120 },
 } as const;
 
 /** What a kiosk gets when no level sets anything — the server's defaults, key for key. */
@@ -398,7 +460,10 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     showDietary: true,
     reduceMotion: false,
     offlineSound: false,
+    blockWhenOffline: false,
+    offlineNotice: false,
     soldOutMode: 'disable',
+    servicePlacement: 'after_start',
   },
   theme: {
     mode: 'light',
@@ -438,7 +503,7 @@ export const KIOSK_DEFAULTS: KioskConfig = {
       size: 'l',
       widthPct: 80,
       heightDp: 88,
-      position: 'bottom_full',
+      position: 'bottom_center',
       x: 50,
       y: 85,
       fillColor: null,
@@ -463,6 +528,7 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     hiddenProducts: [],
     categoryImages: {},
     featuredProductIds: [],
+    oneCategory: true,
   },
   messages: [],
   hours: {
@@ -477,6 +543,8 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     customerName: 'optional',
     customerPhone: 'off',
     minOrderAgorot: 0,
+    tableNumber: 'off',
+    detailsStep: 'before_pay',
   },
   printing: {
     bonMode: 'routing',
@@ -484,11 +552,19 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     bonCopies: 1,
     receiptPrinterId: null,
     pickupSlip: true,
+    bonAutoRetryMin: 10,
   },
   pickup: { scope: 'kiosk', prefix: '', start: 1, max: 999 },
   timers: { inactivitySec: 60, warningSec: 20, successSec: 12, attractSlideSec: 8 },
   club: { enabled: false, joinUrl: '', title: '', body: '' },
-  operations: { autoCloseAt: '', pausedTitle: '', pausedBody: '' },
+  operations: { autoCloseAt: '', pausedTitle: '', pausedBody: '', closeWithShopZ: false },
+  alerts: {
+    printer: { tills: 'main', machineIds: [], audience: 'everyone' },
+    terminal: { tills: 'main', machineIds: [], audience: 'everyone' },
+    help: { tills: 'main', machineIds: [], audience: 'everyone', clearAfterMin: 10 },
+  },
+  upsell: { maxShown: 2 },
+  success: { message: '', image: null },
 };
 
 const GF = 'https://raw.githubusercontent.com/google/fonts/main/ofl';
@@ -618,6 +694,21 @@ function mergeInto(target: Dict, layer: Dict): void {
  * `base` ⊕ each layer in turn, as the server merges: dicts deep-merge; lists, MediaRefs
  * and scalars replace; a `null` (or absent) value inherits. Inputs are not mutated.
  */
+/** A layer without RETIRED_KIOSK_KEYS (a copy; as the server drops them). */
+export function withoutRetired(layer: KioskLayer | null | undefined): KioskLayer | null | undefined {
+  if (!layer || typeof layer !== 'object') return layer;
+  let out: KioskLayer = layer;
+  for (const [section, key] of RETIRED_KIOSK_KEYS) {
+    const part = out[section];
+    if (part && typeof part === 'object' && !Array.isArray(part) && key in (part as object)) {
+      const rest = { ...(part as Record<string, unknown>) };
+      delete rest[key];
+      out = { ...out, [section]: rest };
+    }
+  }
+  return out;
+}
+
 export function deepMergeKiosk<T extends object>(base: T, ...layers: Array<KioskLayer | null | undefined>): T {
   const out = cloneJson(base) as unknown as Dict;
   for (const layer of layers) {
@@ -776,17 +867,17 @@ export type UiPresetCta = Pick<KioskCta, PresetCtaKey>;
 /** Each style's attract button — the server's UI_PRESET_CTA and the till's KioskCta.PRESETS. */
 export const KIOSK_UI_PRESET_CTA: Record<UiStyle, UiPresetCta> = {
   ios: {
-    size: 'l', position: 'bottom_full', fontSize: 22, fontWeight: 'bold',
+    size: 'l', position: 'bottom_center', fontSize: 22, fontWeight: 'bold',
     shadow: false, icon: 'none', iconPosition: 'end', animation: 'none',
     borderColor: null, borderWidth: 0,
   },
   wolt: {
-    size: 'l', position: 'bottom_full', fontSize: 24, fontWeight: 'bold',
+    size: 'l', position: 'bottom_center', fontSize: 24, fontWeight: 'bold',
     shadow: true, icon: 'none', iconPosition: 'end', animation: 'pulse',
     borderColor: null, borderWidth: 0,
   },
   classic: {
-    size: 'xl', position: 'bottom_full', fontSize: 34, fontWeight: 'black',
+    size: 'xl', position: 'bottom_center', fontSize: 34, fontWeight: 'black',
     shadow: true, icon: 'cart', iconPosition: 'start', animation: 'bounce',
     borderColor: null, borderWidth: 0,
   },
@@ -859,6 +950,11 @@ export function repairKioskConfig(cfg: KioskConfig, opts: { kdsAvailable?: boole
   payment.methods = methods.length > 0 ? methods : ['card'];
   if (payment.tipEnabled && (payment.tipPresets ?? []).length === 0) payment.tipPresets = [...KIOSK_DEFAULTS.payment.tipPresets];
   if (hours.enabled && (hours.ranges ?? []).length === 0) hours.enabled = false;
+  // "התראות לקופות": a chosen list left empty by a parent's change goes to the main till.
+  for (const kind of ALERT_KINDS) {
+    const route = out.alerts?.[kind];
+    if (route && route.tills === 'selected' && (route.machineIds ?? []).length === 0) route.tills = 'main';
+  }
   return out;
 }
 
@@ -867,7 +963,8 @@ export function repairKioskConfig(cfg: KioskConfig, opts: { kdsAvailable?: boole
  * preset ⊕ the layers (company → shop → kiosk), repaired. Explicit values beat the preset.
  */
 export function resolveKioskConfig(...layers: Array<KioskLayer | null | undefined>): KioskConfig {
-  return repairKioskConfig(deepMergeKiosk(KIOSK_DEFAULTS, presetLayer(styleOf(...layers)), ...layers));
+  const current = layers.map(withoutRetired);
+  return repairKioskConfig(deepMergeKiosk(KIOSK_DEFAULTS, presetLayer(styleOf(...current)), ...current));
 }
 
 /**
@@ -1086,7 +1183,8 @@ export function validateKioskConfig(
   }
   checkEnum(e, 'general.skipCart', g.skipCart, ['off', 'direct', 'confirm']);
   checkEnum(e, 'general.soldOutMode', g.soldOutMode, ['disable', 'hide']);
-  for (const key of ['askTableNumber', 'upsellEnabled', 'searchEnabled', 'notesEnabled', 'quickNotesEnabled', 'showAllergens', 'showDietary', 'reduceMotion', 'offlineSound'] as const) {
+  checkEnum(e, 'general.servicePlacement', g.servicePlacement, SERVICE_PLACEMENTS);
+  for (const key of ['askTableNumber', 'upsellEnabled', 'searchEnabled', 'notesEnabled', 'quickNotesEnabled', 'showAllergens', 'showDietary', 'reduceMotion', 'offlineSound', 'blockWhenOffline', 'offlineNotice'] as const) {
     if (typeof g[key] !== 'boolean') e.push({ path: `general.${key}`, code: 'enum' });
   }
 
@@ -1169,6 +1267,7 @@ export function validateKioskConfig(
     e.push({ path: 'catalog.featuredProductIds', code: 'tooMany', params: { max: L.featuredMax } });
   }
   if (!uniq(c.featuredProductIds)) e.push({ path: 'catalog.featuredProductIds', code: 'duplicate' });
+  if (typeof c.oneCategory !== 'boolean') e.push({ path: 'catalog.oneCategory', code: 'enum' });
   for (const [catId, ref] of Object.entries(c.categoryImages ?? {})) {
     checkMedia(e, `catalog.categoryImages.${catId}`, ref, ['image'], false);
   }
@@ -1209,7 +1308,9 @@ export function validateKioskConfig(
     if (r.days.length === 0) e.push({ path: `${p}.days`, code: 'atLeastOne' });
     else if (!uniq(r.days) || r.days.some((d) => !isInt(d) || d < 0 || d > 6)) e.push({ path: `${p}.days`, code: 'enum' });
     if (!isHhMm(r.open)) e.push({ path: `${p}.open`, code: 'time' });
-    if (!isHhMm(r.close)) e.push({ path: `${p}.close`, code: 'time' });
+    if (r.close === null) {
+      // No closing time: allowed (it opens, and never closes by itself).
+    } else if (!isHhMm(r.close)) e.push({ path: `${p}.close`, code: 'time' });
     else if (r.close === r.open) e.push({ path: `${p}.close`, code: 'sameTimes' });
   });
 
@@ -1229,12 +1330,23 @@ export function validateKioskConfig(
   checkEnum(e, 'payment.customerName', pay.customerName, ['off', 'optional', 'required']);
   checkEnum(e, 'payment.customerPhone', pay.customerPhone, ['off', 'optional', 'required']);
   if (!isInt(pay.minOrderAgorot) || pay.minOrderAgorot < 0) e.push({ path: 'payment.minOrderAgorot', code: 'nonNegative' });
+  checkEnum(e, 'payment.tableNumber', pay.tableNumber, ['off', 'optional', 'required']);
+  checkEnum(e, 'payment.detailsStep', pay.detailsStep, DETAILS_STEPS);
+
+  // "הגדלת מכירה": the kiosk's cap (the rules are the menu's).
+  const up = cfg.upsell;
+  if (!isInt(up.maxShown) || up.maxShown < 1 || up.maxShown > UPSELL_MAX_SHOWN) {
+    e.push({ path: 'upsell.maxShown', code: 'range', params: { min: 1, max: UPSELL_MAX_SHOWN } });
+  }
+  if (cfg.success.message.length > 300) e.push({ path: 'success.message', code: 'tooLong', params: { max: 300 } });
+  checkMedia(e, 'success.image', cfg.success.image, ['image']);
 
   const pr = cfg.printing;
   checkEnum(e, 'printing.bonMode', pr.bonMode, ['routing', 'single']);
   if (pr.bonMode === 'single' && !pr.bonPrinterId) e.push({ path: 'printing.bonPrinterId', code: 'bonPrinterRequired' });
   checkRange(e, 'printing.bonCopies', pr.bonCopies, L.bonCopies);
   if (typeof pr.pickupSlip !== 'boolean') e.push({ path: 'printing.pickupSlip', code: 'enum' });
+  checkRange(e, 'printing.bonAutoRetryMin', pr.bonAutoRetryMin, { min: 0, max: 120 });
 
   const pk = cfg.pickup;
   checkEnum(e, 'pickup.scope', pk.scope, ['kiosk', 'shop']);
@@ -1266,6 +1378,21 @@ export function validateKioskConfig(
   if (ops.autoCloseAt !== '' && !isHhMm(ops.autoCloseAt)) e.push({ path: 'operations.autoCloseAt', code: 'time' });
   checkLength(e, 'operations.pausedTitle', ops.pausedTitle, L.pausedTitleMax);
   checkLength(e, 'operations.pausedBody', ops.pausedBody, L.pausedBodyMax);
+  if (typeof ops.closeWithShopZ !== 'boolean') e.push({ path: 'operations.closeWithShopZ', code: 'enum' });
+
+  // "התראות לקופות": which tills (a chosen list names at least one), who, help's minutes.
+  for (const kind of ALERT_KINDS) {
+    const route = cfg.alerts?.[kind];
+    if (!route) continue;
+    const p = `alerts.${kind}`;
+    checkEnum(e, `${p}.tills`, route.tills, ALERT_TILLS);
+    checkEnum(e, `${p}.audience`, route.audience, ALERT_AUDIENCES);
+    const ids = Array.isArray(route.machineIds) ? route.machineIds : [];
+    if (!Array.isArray(route.machineIds) || !uniq(ids)) e.push({ path: `${p}.machineIds`, code: 'enum' });
+    if (ids.length > L.alertMachinesMax) e.push({ path: `${p}.machineIds`, code: 'tooMany', params: { max: L.alertMachinesMax } });
+    if (route.tills === 'selected' && ids.length === 0) e.push({ path: `${p}.machineIds`, code: 'atLeastOne' });
+  }
+  if (cfg.alerts?.help) checkRange(e, 'alerts.help.clearAfterMin', cfg.alerts.help.clearAfterMin, L.helpClearAfterMin);
 
   return e;
 }
@@ -1495,6 +1622,16 @@ export function gridColumns(density: GridDensity, wide: boolean): number {
   return wide ? 3 : 2;
 }
 
+/**
+ * The catalog grid's columns: the density's count, one fewer beside the cart panel (and, for
+ * compact, beside a side rail on a narrow screen), but never one column on a wide screen: a
+ * single card across a kiosk shows two products a page (the classic style beside its panel).
+ */
+export function catalogColumns(density: GridDensity, wide: boolean, panel: boolean, side: boolean): number {
+  const n = gridColumns(density, wide) - (panel ? 1 : 0) - (side && !wide && density === 'compact' ? 1 : 0);
+  return Math.max(wide ? 2 : 1, n);
+}
+
 /** CSS aspect-ratio for an image ratio ("4:3" → "4 / 3"). */
 export function aspectRatioCss(ratio: ImageRatio): string {
   return ratio.replace(':', ' / ');
@@ -1517,6 +1654,9 @@ export const CTA_LAYOUT = {
   CYCLE_MS: 1800,
   PULSE_MS: 1100,
 } as const;
+
+/** The widest a preset size gets on a big screen (KioskCtaLayout.WIDTH_CAPS). */
+const CTA_WIDTH_CAPS: Record<Exclude<CtaSize, 'custom'>, number> = { s: 320, m: 420, l: 520, xl: 640 };
 
 const CTA_PRESET_SIZES: Record<Exclude<CtaSize, 'custom'>, [number, number]> = {
   s: [0.4, 64],
@@ -1553,7 +1693,9 @@ export function ctaSize(cta: CtaLayoutIn, screenW: number, screenH: number): { w
   const L = CTA_LAYOUT;
   const avail = Math.max(0, screenW - 2 * L.MARGIN);
   const [share, presetH] = cta.size === 'custom' ? [cta.widthPct / 100, cta.heightDp] : CTA_PRESET_SIZES[cta.size] ?? CTA_PRESET_SIZES.l;
-  const wantW = cta.position === 'bottom_full' ? avail : Math.round(screenW * share);
+  const capped = Math.round(screenW * share);
+  const cap = cta.size === 'custom' ? undefined : CTA_WIDTH_CAPS[cta.size];
+  const wantW = cta.position === 'bottom_full' ? avail : cap !== undefined ? Math.min(capped, cap) : capped;
   const lo = Math.min(L.MIN_W, avail);
   const w = clampInt(wantW, lo, Math.max(avail, lo));
   const maxH = Math.max(L.MIN_H, Math.min(L.MAX_H, Math.round(screenH * 0.3)));
@@ -1738,24 +1880,98 @@ export function messagePlacement(screen: string): MessagePlacement {
 export const MESSAGE_OVERLAY_MS = 8000;
 
 export interface MotionSpec {
-  /** The add-to-cart flight, ms (0 = none). */
+  /** The pop: the dish's picture and name lift out of the card and grow to `popScale`, ms (0 with reduce motion). */
+  popMs: number;
+  popScale: number;
+  /** The add-to-cart flight after the pop, on an arc `arcDp` high, ms (0 = none: only the fade). */
   flyMs: number;
+  arcDp: number;
+  /** Reduce motion's add: the copy fades out where the dish was, ms. */
+  fadeMs: number;
   /** The count badge's bounce scale (0 = none). */
   bounce: number;
   /** The total counting up to its new value, ms (0 = jumps). */
   countUpMs: number;
-  /** A thumbnail on an arc (lively) rather than a dot. */
-  flyImage: boolean;
 }
 
-/** The add-to-cart motion by `theme.animation`; nothing at all with `general.reduceMotion`. */
+/** The add never takes longer (the till's KioskMotion.ADD_MAX_MS). */
+export const ADD_MAX_MS = 700;
+export const ADD_POP_LIFT_DP = 18;
+export const ADD_END_SCALE = 0.25;
+export const ADD_END_ALPHA = 0.15;
+const ADD_FADE_FROM = 0.55;
+
+/**
+ * The add-to-cart motion by `theme.animation` (the till's KioskMotion, docs/SPEC_KIOSK.md §18):
+ * the same pop-and-fly in every UI style — the style sets only how big the pop and how high the
+ * arc; `general.reduceMotion` turns it into a short fade, with no bounce and no counting.
+ */
 export function motionSpec(
   theme: Pick<KioskTheme, 'animation'>,
   general: Pick<KioskGeneral, 'reduceMotion'>,
 ): MotionSpec {
-  if (general.reduceMotion) return { flyMs: 0, bounce: 0, countUpMs: 0, flyImage: false };
-  if (theme.animation === 'lively') return { flyMs: 520, bounce: 1.25, countUpMs: 450, flyImage: true };
-  return { flyMs: 380, bounce: 1.1, countUpMs: 300, flyImage: false };
+  if (general.reduceMotion) return { popMs: 0, popScale: 1, flyMs: 0, arcDp: 0, fadeMs: 280, bounce: 0, countUpMs: 0 };
+  if (theme.animation === 'lively') return { popMs: 190, popScale: 1.45, flyMs: 430, arcDp: 170, fadeMs: 0, bounce: 1.25, countUpMs: 380 };
+  return { popMs: 170, popScale: 1.3, flyMs: 380, arcDp: 110, fadeMs: 0, bounce: 1.12, countUpMs: 260 };
+}
+
+/** The whole add: pop and flight, or the fade. */
+export function addMs(m: MotionSpec): number {
+  return m.flyMs > 0 ? m.popMs + m.flyMs : m.fadeMs;
+}
+
+export interface AddFrame {
+  x: number;
+  y: number;
+  scale: number;
+  alpha: number;
+  /** 0…1. */
+  shadow: number;
+}
+
+const easeOutCubic = (t: number) => 1 - (1 - t) ** 3;
+const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2);
+const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
+
+/**
+ * The flying copy `ms` into the add, from the dish's picture to the cart's badge (px, `dp` px to
+ * a dp) — the till's KioskMotion.addFrame, so the preview and the Windows kiosk move the same.
+ */
+export function addFrame(m: MotionSpec, ms: number, from: { x: number; y: number }, to: { x: number; y: number }, dp = 1): AddFrame {
+  if (m.flyMs <= 0) {
+    const t = m.fadeMs <= 0 ? 1 : clamp01(ms / m.fadeMs);
+    return { x: from.x, y: from.y, scale: 1, alpha: 1 - t, shadow: 0 };
+  }
+  const lift = ADD_POP_LIFT_DP * dp;
+  if (ms < m.popMs) {
+    const p = easeOutCubic(clamp01(ms / m.popMs));
+    return { x: from.x, y: from.y - lift * p, scale: 1 + (m.popScale - 1) * p, alpha: 1, shadow: p };
+  }
+  const q = clamp01((ms - m.popMs) / m.flyMs);
+  const e = easeInOutCubic(q);
+  const sx = from.x;
+  const sy = from.y - lift;
+  const cx = (sx + to.x) / 2;
+  const cy = Math.min(sy, to.y) - m.arcDp * dp;
+  const u = 1 - e;
+  const alpha = q <= ADD_FADE_FROM ? 1 : 1 - ((1 - ADD_END_ALPHA) * (q - ADD_FADE_FROM)) / (1 - ADD_FADE_FROM);
+  return {
+    x: u * u * sx + 2 * u * e * cx + e * e * to.x,
+    y: u * u * sy + 2 * u * e * cy + e * e * to.y,
+    scale: m.popScale + (ADD_END_SCALE - m.popScale) * e,
+    alpha,
+    shadow: 1 - e,
+  };
+}
+
+/**
+ * What the card's "+" does (the till's KioskAddPath): straight in with the pop-and-fly when
+ * nothing must be chosen; a meal or a required choice opens the dish's window; sold out: nothing.
+ */
+export type AddPath = 'direct' | 'sheet' | 'none';
+export function kioskAddPath(soldOut: boolean, meal: boolean, requiredChoice: boolean): AddPath {
+  if (soldOut) return 'none';
+  return meal || requiredChoice ? 'sheet' : 'direct';
 }
 
 export const DIETARY_TAGS = ['vegan', 'vegetarian', 'dairy', 'meat', 'gluten_free', 'spicy'] as const;
@@ -1844,4 +2060,84 @@ export function isoDayInZone(date: Date, timeZone: string): string {
   } catch {
     return date.toISOString().slice(0, 10);
   }
+}
+
+/* ------------------------------------- "נעילה למכירה" and "פתיחה אוטומטית" */
+/*
+ * The server's app/services/kiosk_schedule.py and the kiosk's domain/KioskSchedule.kt, rule
+ * for rule (docs/SPEC_KIOSK.md §15). Days: 0 = Sunday.
+ */
+
+export type KioskLockMode = 'manual' | 'time' | 'minutes' | 'next_open';
+export const KIOSK_LOCK_MODES: KioskLockMode[] = ['manual', 'time', 'minutes', 'next_open'];
+
+function hhmmMinutes(v: string | null | undefined): number | null {
+  if (typeof v !== 'string' || !/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(v)) return null;
+  return Number(v.slice(0, 2)) * 60 + Number(v.slice(3));
+}
+
+/** Whether the hours let the kiosk take orders on `day` (0 = Sunday) at `minute` of the day. */
+export function kioskOpenAt(hours: Pick<KioskHours, 'enabled' | 'ranges'>, day: number, minute: number): boolean {
+  if (!hours.enabled) return true;
+  const ranges = (hours.ranges ?? []).filter((r) => hhmmMinutes(r.open) !== null);
+  if (ranges.length === 0) return true;
+  if (ranges.some((r) => r.close === null)) return true; // a range that never closes by itself
+  const yesterday = (day + 6) % 7;
+  return ranges.some((r) => {
+    const start = hhmmMinutes(r.open)!;
+    const end = hhmmMinutes(r.close);
+    if (end === null) return false;
+    if (start < end) return r.days.includes(day) && minute >= start && minute < end;
+    return (r.days.includes(day) && minute >= start) || (r.days.includes(yesterday) && minute < end);
+  });
+}
+
+export interface ScheduleIssue {
+  code: 'auto_z_while_open' | 'auto_z_at_opening';
+  time: string;
+}
+
+/** Close → automatic Z → open: the Z never while open by the hours, nor at an opening. */
+export function kioskScheduleIssues(hours: Pick<KioskHours, 'enabled' | 'ranges'>, autoCloseAt: string | null | undefined): ScheduleIssue[] {
+  if (!hours.enabled) return [];
+  const z = hhmmMinutes(autoCloseAt);
+  const ranges = (hours.ranges ?? []).filter((r) => hhmmMinutes(r.open) !== null);
+  if (z === null || ranges.length === 0) return [];
+  const time = autoCloseAt as string;
+  if (ranges.some((r) => r.days.length > 0 && hhmmMinutes(r.open) === z)) return [{ code: 'auto_z_at_opening', time }];
+  if (ranges.some((r) => r.close === null)) return [];
+  for (let day = 0; day < 7; day++) if (kioskOpenAt(hours, day, z)) return [{ code: 'auto_z_while_open', time }];
+  return [];
+}
+
+/** The simple "פתיחה אוטומטית" form → its command body (the server writes the kiosk's own level). */
+export interface KioskScheduleForm {
+  enabled: boolean;
+  days: number[];
+  open: string;
+  close: string | null;
+  /** null: unchanged; "": inherit; with a close and nothing given, the server puts the Z at the close. */
+  autoCloseAt?: string | null;
+}
+
+export function scheduleFormOf(s: { enabled: boolean; days?: number[] | null; open?: string | null; close?: string | null; autoCloseAt?: string | null } | null | undefined): KioskScheduleForm {
+  return {
+    enabled: !!s?.enabled,
+    days: Array.isArray(s?.days) && s!.days!.length ? [...s!.days!].sort((a, b) => a - b) : [0, 1, 2, 3, 4, 5, 6],
+    open: s?.open || '07:00',
+    close: s?.close ?? null,
+    autoCloseAt: s?.autoCloseAt ?? null,
+  };
+}
+
+/** The hours a form makes, for previewing its issues before it is sent. */
+export function scheduleFormHours(f: KioskScheduleForm): Pick<KioskHours, 'enabled' | 'ranges'> {
+  return { enabled: f.enabled, ranges: [{ days: f.days, open: f.open, close: f.close || null }] };
+}
+
+/** The automatic Z a form ends up with: its own, else the close (close → Z → open). */
+export function scheduleFormAutoClose(f: KioskScheduleForm, current: string | null | undefined): string | null {
+  if (f.autoCloseAt !== null && f.autoCloseAt !== undefined) return f.autoCloseAt;
+  if (f.enabled && f.close) return f.close;
+  return current ?? null;
 }

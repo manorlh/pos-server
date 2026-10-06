@@ -200,15 +200,44 @@ class MealSlotOption(Base):
     sort_order = Column(Integer, nullable=False, default=0, server_default="0")
 
 
-#: An upsell's trigger: a product, a category (with its sub-categories), or every order
+#: An upsell's trigger: a product, a category (with its sub-categories), every order
 #: ("בכל הזמנה" — asked when a table is sent to the kitchen or its bill asked for, and
-#: when a quick order goes to payment).
-UPSELL_TRIGGERS = ("product", "category", "order")
+#: when a quick order or the kiosk goes to payment), or a step of the order ("מעבר בין
+#: מסכים": `trigger_ids` are step codes, UPSELL_STEPS — docs/SPEC_KIOSK.md §21).
+UPSELL_TRIGGERS = ("product", "category", "order", "transition")
 #: How the till offers it: the small card that never stops the cashier (default), or a
 #: centred window with the options as tiles ("חלון בחירה").
 UPSELL_DISPLAYS = ("card", "popup")
-#: Where it is offered: quick orders, tables, or both (default).
-UPSELL_PLACES = ("quick", "tables", "both")
+#: The channels a rule may be offered on ("איפה"): quick orders, tables, the kiosk.
+UPSELL_PLACE_SET = ("quick", "tables", "kiosk")
+#: `place` as stored: the chosen channels, comma-joined in UPSELL_PLACE_SET's order. "both"
+#: (quick orders and tables, from before the kiosk) is still read as such.
+UPSELL_PLACES = (
+    "quick", "tables", "kiosk", "quick,tables", "quick,kiosk", "tables,kiosk", "quick,tables,kiosk", "both",
+)
+#: The steps a "transition" rule can name, per channel; `enter_category` takes a category
+#: id (`enter_category:<id>`). A step a channel does not have is ignored there. After
+#: payment there is no step: the order is paid and closed on every channel.
+UPSELL_STEPS = {
+    "quick": ("order_start", "enter_category", "to_pay"),
+    "tables": ("table_open", "enter_category", "before_send", "bill_request", "to_pay"),
+    "kiosk": ("order_start", "to_catalog", "enter_category", "to_cart", "to_pay"),
+}
+
+
+def upsell_places_of(place) -> tuple:
+    """The channels of a stored `place` (UPSELL_PLACE_SET order); "both" and unknown: quick and tables."""
+    if place in (None, "", "both"):
+        return ("quick", "tables")
+    parts = {p.strip() for p in str(place).split(",")}
+    out = tuple(p for p in UPSELL_PLACE_SET if p in parts)
+    return out or ("quick", "tables")
+
+
+def upsell_place_value(places) -> str:
+    """The stored `place` of a set of channels."""
+    chosen = {p for p in places or ()}
+    return ",".join(p for p in UPSELL_PLACE_SET if p in chosen)
 
 
 class UpsellRule(Base):
@@ -221,10 +250,16 @@ class UpsellRule(Base):
 
     __tablename__ = "upsell_rules"
     __table_args__ = (
-        CheckConstraint("trigger_type IN ('product', 'category', 'order')", name="ck_upsell_rules_trigger_type"),
+        CheckConstraint(
+            "trigger_type IN ('product', 'category', 'order', 'transition')", name="ck_upsell_rules_trigger_type",
+        ),
         CheckConstraint("action IN ('add', 'upgrade')", name="ck_upsell_rules_action"),
         CheckConstraint("display IN ('card', 'popup')", name="ck_upsell_rules_display"),
-        CheckConstraint("place IN ('quick', 'tables', 'both')", name="ck_upsell_rules_place"),
+        CheckConstraint(
+            "place IN ('quick', 'tables', 'kiosk', 'quick,tables', 'quick,kiosk', 'tables,kiosk', "
+            "'quick,tables,kiosk', 'both')",
+            name="ck_upsell_rules_place",
+        ),
         Index("ix_upsell_rules_tenant", "tenant_id"),
     )
 
@@ -257,12 +292,14 @@ class UpsellRule(Base):
     prompt = Column(String(200), nullable=True)
     #: UPSELL_DISPLAYS. A rule triggered by every order is always asked in the window.
     display = Column(String(16), nullable=False, default="card", server_default="card")
-    #: UPSELL_PLACES ("where": הזמנה מהירה / שולחנות / שניהם).
-    place = Column(String(16), nullable=False, default="both", server_default="both")
+    #: UPSELL_PLACES ("איפה": הזמנה מהירה / שולחנות / קיוסק — any of them; upsell_places_of).
+    place = Column(String(24), nullable=False, default="quick,tables,kiosk", server_default="quick,tables,kiosk")
     #: Not offered when the order already holds one of the options (an "add" rule).
     skip_if_present = Column(Boolean, nullable=False, default=True, server_default="true")
     #: Offered at most once per order (else once per triggering line, as before).
     once_per_order = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: "תמונה": the window's own picture (a special); null: the offered item's picture.
+    image_url = Column(String(500), nullable=True)
 
 
 class UpsellStat(Base):

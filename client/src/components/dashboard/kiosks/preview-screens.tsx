@@ -50,6 +50,9 @@ import {
   fittingCount,
   CTA_HINT_GAP,
   pickupLabel,
+  addFrame,
+  addMs,
+  type AddPath,
   type CtaBox,
   type DietaryTag,
   type KioskConfig,
@@ -61,7 +64,7 @@ import {
   type MotionSpec,
   type ResolvedThemeColors,
 } from '@/lib/kioskConfig';
-import type { PreviewScreen } from './editor-context';
+import type { LivePayPhase, PreviewScreen } from '@/kiosk-shared/types';
 
 /* ----------------------------------------------------------------- model */
 
@@ -74,6 +77,13 @@ export interface PProduct {
   description: string | null;
   categoryId: string | null;
   dietaryTags: DietaryTag[];
+  /** The real kiosk: a bigger picture for the product sheet (imageUrl is the card's). */
+  imageLarge?: string | null;
+  /**
+   * What its "+" does (kioskAddPath): 'direct' — straight into the cart with the pop-and-fly;
+   * otherwise, or unknown, its window opens, as a tap on the card does.
+   */
+  addPath?: AddPath;
 }
 
 export interface PCategory {
@@ -104,6 +114,49 @@ export interface PLine {
   qty: number;
   unit: number;
   extras: string[];
+  /** The options picked, as the real kiosk writes them on the document (the preview ignores them). */
+  options?: Array<{ groupId: string; optionId: string; name: string; price: number }>;
+  /** The free note typed for the kitchen (real kiosk). */
+  note?: string;
+}
+
+/**
+ * What the real kiosk (kiosk-desktop) adds over the preview when it drives these screens.
+ * Absent in the dashboard's preview, which then draws exactly as before.
+ */
+export interface KioskLive {
+  /** The header's back button (the till's KioskHeader). */
+  back?: () => void;
+  /** "התחלה מחדש" in the menu's header. */
+  startOver?: () => void;
+  /** The pay screen's real state, from the terminal. */
+  pay?: {
+    phase: LivePayPhase;
+    /** The status line under the instruction (the terminal's progress, or why it is blocked). */
+    message: string | null;
+    amount: number;
+    canCancel: boolean;
+    cancelling: boolean;
+    onCancel: () => void;
+    onRetry: () => void;
+    onBack: () => void;
+  };
+  /** The success screen's real order. */
+  success?: {
+    pickupLabel: string;
+    paid: number;
+    /** ask: the question is shown; the rest say what happened to the receipt. */
+    receipt: 'ask' | 'printing' | 'printed' | 'declined' | 'none' | 'failed';
+    onReceipt: (print: boolean) => void;
+    secondsLeft: number;
+    onNewOrder: () => void;
+  };
+  /** The product sheet's free note as a real field (the kiosk's own keyboard). */
+  noteField?: (value: string, onChange: (v: string) => void) => ReactNode;
+  /** Hide the customer fields on the cart: the real kiosk asks them on their own screen. */
+  detailsScreen?: boolean;
+  /** "עזרה" on the attract screen calls the staff (a help request to the tills). */
+  help?: () => void;
 }
 
 export type Translate = (key: string, values?: Record<string, string | number>) => string;
@@ -127,6 +180,10 @@ export interface PreviewModel {
   nowMs: number;
   go: (screen: PreviewScreen) => void;
   openProduct: (p: PProduct) => void;
+  /** The card's "+" on a dish with nothing to choose (addPath 'direct'): one more in the cart, flying from `from`. */
+  quickAdd?: (p: PProduct, from: DOMRect | null) => void;
+  /** A category the customer chose on the rail or the strip (not one the list scrolled into): "כניסה למחלקה". */
+  onCategoryPicked?: (id: string) => void;
   cart: PLine[];
   setCart: (lines: PLine[]) => void;
   service: 'take_away' | 'eat_in';
@@ -147,6 +204,8 @@ export interface PreviewModel {
   screen: { w: number; h: number };
   /** The attract button's box on that screen (ctaBox). */
   ctaBox: CtaBox;
+  /** Set by the real kiosk only (see KioskLive). */
+  live?: KioskLive;
 }
 
 /* --------------------------------------------------------------- helpers */
@@ -766,6 +825,40 @@ function measureStack(els: Array<HTMLDivElement | null>, count: number, span: nu
   return { keep, used };
 }
 
+/** "לקחת / לשבת" on the attract screen: two buttons in the button's place (servicePlacement = attract). */
+export function AttractServiceButtons({ m, box, onPick }: { m: PreviewModel; box: CtaBox; onPick: (t: 'take_away' | 'eat_in') => void }) {
+  const cta = m.cfg.attract.cta;
+  const fill = cta.fillColor ?? m.c.button;
+  const text = cta.textColor ?? m.c.buttonText;
+  const radius = ctaRadiusPx(cta, box.h, m.cfg.theme);
+  const fontSp = ctaFontSp({ ...cta, subtitle: '' }, box.h);
+  return (
+    <div className="absolute z-20 flex gap-3" style={{ left: box.x, top: box.y, width: box.w, height: box.h }}>
+      {m.cfg.general.serviceTypes.map((t) => (
+        <button
+          key={t}
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPick(t);
+          }}
+          className="flex flex-1 items-center justify-center px-2"
+          style={{
+            background: fill,
+            color: text,
+            borderRadius: radius,
+            fontSize: fontSp,
+            fontWeight: CTA_WEIGHT_CSS[cta.fontWeight] ?? 700,
+            boxShadow: cta.shadow ? '0 10px 24px rgba(0,0,0,0.20), 0 2px 6px rgba(0,0,0,0.12)' : undefined,
+          }}
+        >
+          {m.txt(t === 'take_away' ? 'takeAwayLabel' : 'eatInLabel')}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function AttractScreen({ m }: { m: PreviewModel }) {
   const { cfg } = m;
   const messages = messagesFor(cfg, 'attract', ['banner', 'notice'], m.nowMs);
@@ -864,9 +957,24 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
             </span>
           ) : null}
           {cfg.attract.showHelp ? (
-            <span className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium" style={ATTRACT_PILL} title={m.txt('helpText')}>
-              <CircleHelp className="h-3.5 w-3.5" /> {m.t('help')}
-            </span>
+            m.live?.help ? (
+              <button
+                type="button"
+                className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium"
+                style={ATTRACT_PILL}
+                title={m.txt('helpText')}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  m.live?.help?.();
+                }}
+              >
+                <CircleHelp className="h-3.5 w-3.5" /> {m.t('help')}
+              </button>
+            ) : (
+              <span className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium" style={ATTRACT_PILL} title={m.txt('helpText')}>
+                <CircleHelp className="h-3.5 w-3.5" /> {m.t('help')}
+              </span>
+            )
           ) : null}
         </div>
       </div>
@@ -888,12 +996,34 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
 
 /* ---------------------------------------------------------------- service */
 
+/** The real kiosk's back button at a header's start (the till's KioskHeader); nothing in the preview. */
+function LiveBack({ m, size = 36 }: { m: PreviewModel; size?: number }) {
+  const back = m.live?.back;
+  if (!back) return null;
+  return (
+    <button
+      type="button"
+      aria-label={m.t('back')}
+      onClick={back}
+      className="flex shrink-0 items-center justify-center rounded-full transition-transform duration-150 active:scale-95"
+      style={{ width: size, height: size, background: `${m.c.button}1A`, color: m.c.button }}
+    >
+      <ChevronRight className="h-5 w-5" />
+    </button>
+  );
+}
+
 export function ServiceScreen({ m }: { m: PreviewModel }) {
   const { cfg } = m;
   const types = cfg.general.serviceTypes;
   return (
     <ScreenBody m={m}>
       <div className="space-y-4 p-4">
+        {m.live?.back ? (
+          <div className="flex items-center">
+            <LiveBack m={m} />
+          </div>
+        ) : null}
         <ScreenImage m={m} k="service" height={110} />
         <h2 className="pt-2 text-center text-xl font-extrabold">{m.txt('serviceTitle')}</h2>
         {types.length < 2 ? (
@@ -952,6 +1082,13 @@ function ProductCard({ m, p }: { m: PreviewModel; p: PProduct }) {
           <span
             className="absolute bottom-2 end-2 flex h-7 w-7 items-center justify-center shadow-md transition-all duration-200 group-hover:scale-110"
             style={{ ...buttonStyle(m), borderRadius: 999, background: added ? m.c.accent : m.c.button }}
+            onClick={(e) => {
+              // Nothing to choose: straight in, the picture flying from its card. Anything else
+              // goes on to the card, which opens the dish's window.
+              if (p.addPath !== 'direct' || !m.quickAdd) return;
+              e.stopPropagation();
+              m.quickAdd(p, e.currentTarget.parentElement?.getBoundingClientRect() ?? null);
+            }}
           >
             {added ? <Check className="h-4 w-4 kiosk-pop" /> : <Plus className="h-4 w-4" />}
           </span>
@@ -1227,18 +1364,24 @@ function CatalogHeader({ m, children }: { m: PreviewModel; children?: ReactNode 
   return (
     <div className="z-10 shrink-0 space-y-2 pb-1 pt-3 backdrop-blur-md" style={{ background: `${m.c.background}E6` }}>
       <div className="flex items-center gap-2 px-3">
+        <LiveBack m={m} size={32} />
         <Logo m={m} size={30} />
         <h2 className="flex-1 truncate text-lg font-extrabold">{m.txt('catalogTitle')}</h2>
         <span className="px-2 py-0.5 kt-11 font-semibold" style={buttonStyle(m, 'soft')}>
           {m.service === 'take_away' ? m.txt('takeAwayLabel') : m.txt('eatInLabel')}
         </span>
+        {m.live?.startOver ? (
+          <button type="button" onClick={m.live.startOver} className="px-2.5 py-1 kt-11 font-semibold" style={{ ...cardStyle(m), borderRadius: 999 }}>
+            {m.t('startOver')}
+          </button>
+        ) : null}
       </div>
       {header ? (
         <div className="mx-3 overflow-hidden" style={{ borderRadius: m.radius, height: 64 }}>
           <Img src={header.url} className="h-full w-full object-cover" />
         </div>
       ) : null}
-      {m.cfg.general.searchEnabled ? (
+      {m.cfg.general.searchEnabled && !m.live ? (
         <div className="mx-3 flex items-center gap-2 px-3 py-2 text-xs" style={{ ...cardStyle(m), borderRadius: 999, color: m.c.mutedText }}>
           <Search className="h-3.5 w-3.5" /> {m.t('search')}
         </div>
@@ -1288,8 +1431,14 @@ function SideCatalog({ m }: { m: PreviewModel }) {
     if (found && found !== active) setActive(found);
   };
 
+  const one = m.cfg.catalog.oneCategory;
   const pick = (id: string) => {
     setActive(id);
+    m.onCategoryPicked?.(id);
+    if (one) {
+      scrollerRef.current?.scrollTo({ top: 0 });
+      return;
+    }
     const scroller = scrollerRef.current;
     const section = scroller?.querySelector<HTMLElement>(`[data-section="${CSS.escape(id)}"]`);
     if (scroller && section) {
@@ -1303,10 +1452,10 @@ function SideCatalog({ m }: { m: PreviewModel }) {
       <div className="flex min-h-0 flex-1">
         <CategoryRail m={m} active={current} onPick={pick} railRef={railRef} />
         <div className="flex min-w-0 flex-1 flex-col">
-          <div ref={scrollerRef} onScroll={onScroll} className="relative min-h-0 flex-1 space-y-5 overflow-y-auto px-3 pb-4 pt-2 [scrollbar-width:none]">
-            <FeaturedRow m={m} />
-            {m.categories.map((cat) => (
-              <section key={cat.id} data-section={cat.id} className="space-y-2">
+          <div ref={scrollerRef} onScroll={one ? undefined : onScroll} className="relative min-h-0 flex-1 space-y-5 overflow-y-auto px-3 pb-4 pt-2 [scrollbar-width:none]">
+            {one ? null : <FeaturedRow m={m} />}
+            {(one ? m.categories.filter((c) => c.id === current) : m.categories).map((cat) => (
+              <section key={cat.id} data-section={cat.id} className={cn('space-y-2', one && 'animate-in fade-in duration-300')}>
                 <h3 className="text-sm font-extrabold">{cat.name}</h3>
                 <ProductGrid m={m} products={cat.products} />
               </section>
@@ -1329,18 +1478,51 @@ function SideCatalog({ m }: { m: PreviewModel }) {
   );
 }
 
-/** Top layout: the strip, one category at a time (the original look). */
+/**
+ * Top layout: the strip over the dishes. "הצג כל מחלקה בנפרד" (catalog.oneCategory) as on the
+ * side rail: one category at a time, or the whole menu in one list that the strip follows.
+ */
 function TopCatalog({ m, activeCategory, onCategory }: { m: PreviewModel; activeCategory: string | null; onCategory: (id: string) => void }) {
   const current = m.categories.find((c) => c.id === activeCategory) ?? m.categories[0];
+  const one = m.cfg.catalog.oneCategory;
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const pick = (id: string) => {
+    onCategory(id);
+    m.onCategoryPicked?.(id);
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    if (one) {
+      scroller.scrollTo({ top: 0 });
+      return;
+    }
+    const section = scroller.querySelector<HTMLElement>(`[data-section="${CSS.escape(id)}"]`);
+    if (section) scroller.scrollTo({ top: section.offsetTop - 4, behavior: m.motion.flyMs > 0 ? 'smooth' : 'auto' });
+  };
+  const onScroll = () => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    let found: string | null = null;
+    for (const s of Array.from(scroller.querySelectorAll<HTMLElement>('[data-section]'))) {
+      if (s.offsetTop <= scroller.scrollTop + 16) found = s.dataset.section ?? found;
+    }
+    if (found && found !== current?.id) onCategory(found);
+  };
   return (
     <div className="flex h-full">
       <div className="flex min-w-0 flex-1 flex-col">
         <CatalogHeader m={m}>
-          <CategoryStrip m={m} active={current?.id ?? null} onPick={onCategory} />
+          <CategoryStrip m={m} active={current?.id ?? null} onPick={pick} />
         </CatalogHeader>
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 pb-4 pt-1 [scrollbar-width:none]">
-          <FeaturedRow m={m} />
-          {current ? (
+        <div ref={scrollerRef} onScroll={one ? undefined : onScroll} className="relative min-h-0 flex-1 space-y-4 overflow-y-auto px-3 pb-4 pt-1 [scrollbar-width:none]">
+          {one ? null : <FeaturedRow m={m} />}
+          {!one && m.categories.length > 0 ? (
+            m.categories.map((cat) => (
+              <section key={cat.id} data-section={cat.id} className="space-y-2">
+                <h3 className="text-sm font-extrabold">{cat.name}</h3>
+                <ProductGrid m={m} products={cat.products} />
+              </section>
+            ))
+          ) : current ? (
             <section key={current.id} className="space-y-2 animate-in fade-in duration-300">
               <h3 className="text-sm font-extrabold">{current.name}</h3>
               <ProductGrid m={m} products={current.products} />
@@ -1379,6 +1561,7 @@ export function ProductSheet({
   allergens,
   onClose,
   onAdd,
+  quickNotes,
 }: {
   m: PreviewModel;
   product: PProduct;
@@ -1387,6 +1570,8 @@ export function ProductSheet({
   onClose: () => void;
   /** `from`: where the add button was, for the add-to-cart flight. */
   onAdd: (line: PLine, from: DOMRect | null) => void;
+  /** The menu's quick notes for this product (the real kiosk); the preview shows samples. */
+  quickNotes?: string[];
 }) {
   const { cfg } = m;
   const [picked, setPicked] = useState<Record<string, string[]>>(() =>
@@ -1394,6 +1579,9 @@ export function ProductSheet({
   );
   const [qty, setQty] = useState(1);
   const [notes, setNotes] = useState<string[]>([]);
+  const [note, setNote] = useState('');
+  // A required group with fewer than its minimum picked: nothing goes in the order yet.
+  const missing = groups.some((g) => (picked[g.id] ?? []).length < g.min);
   const extras = groups.flatMap((g) => g.options.filter((o) => (picked[g.id] ?? []).includes(o.id)));
   const unit = product.price + extras.reduce((s, o) => s + o.price, 0);
   const toggle = (g: PGroup, id: string) => {
@@ -1405,20 +1593,30 @@ export function ProductSheet({
       return { ...prev, [g.id]: [...cur, id] };
     });
   };
-  const quick = [m.t('quickNote1'), m.t('quickNote2'), m.t('quickNote3')];
+  const quick = quickNotes ?? [m.t('quickNote1'), m.t('quickNote2'), m.t('quickNote3')];
   const showDietary = cfg.general.showDietary;
+  const picture = product.imageLarge ? { ...product, imageUrl: product.imageLarge } : product;
+  const pictureRef = useRef<HTMLDivElement>(null);
+  /** Where the add flies from: the picture's part in view, else the button. */
+  const flyFrom = (button: DOMRect): DOMRect => {
+    const pic = pictureRef.current?.getBoundingClientRect();
+    const view = pictureRef.current?.parentElement?.getBoundingClientRect();
+    if (!pic || !view) return button;
+    const top = Math.max(pic.top, view.top);
+    return pic.bottom - top >= 60 ? new DOMRect(pic.left, top, pic.width, pic.bottom - top) : button;
+  };
 
   return (
-    <div className="absolute inset-0 z-30 flex flex-col justify-end">
+    <div className="absolute inset-0 z-30 flex flex-col items-center justify-center p-3">
       <button type="button" aria-label={m.t('close')} className="absolute inset-0 bg-black/40 animate-in fade-in duration-200" onClick={onClose} />
       <div
-        className="relative flex max-h-[90%] flex-col overflow-hidden animate-in slide-in-from-bottom duration-300"
-        style={{ background: m.c.surface, color: m.c.text, borderTopLeftRadius: Math.max(16, m.radius), borderTopRightRadius: Math.max(16, m.radius) }}
+        className="relative flex max-h-[90%] w-full max-w-[420px] flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-300"
+        style={{ background: m.c.surface, color: m.c.text, borderRadius: Math.max(16, m.radius) }}
       >
         <div className="absolute inset-x-0 top-2 z-10 mx-auto h-1.5 w-10 rounded-full bg-white/80 shadow" />
         <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none]">
-          <div className="w-full" style={{ aspectRatio: m.ratio }}>
-            <ProductImage m={m} p={product} className="h-full w-full" />
+          <div ref={pictureRef} className="w-full" style={{ aspectRatio: m.ratio }}>
+            <ProductImage m={m} p={picture} className="h-full w-full" />
           </div>
           <div className="space-y-4 p-4">
             <div>
@@ -1495,7 +1693,7 @@ export function ProductSheet({
                 </div>
               </div>
             ))}
-            {cfg.general.quickNotesEnabled ? (
+            {cfg.general.quickNotesEnabled && quick.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
                 {quick.map((q) => {
                   const on = notes.includes(q);
@@ -1514,9 +1712,13 @@ export function ProductSheet({
               </div>
             ) : null}
             {cfg.general.notesEnabled ? (
-              <div className="px-3 py-2.5 text-xs" style={{ border: `1px solid ${m.c.border}`, borderRadius: Math.min(m.radius, 14), color: m.c.mutedText }}>
-                {m.t('notePlaceholder')}
-              </div>
+              m.live?.noteField ? (
+                m.live.noteField(note, setNote)
+              ) : (
+                <div className="px-3 py-2.5 text-xs" style={{ border: `1px solid ${m.c.border}`, borderRadius: Math.min(m.radius, 14), color: m.c.mutedText }}>
+                  {m.t('notePlaceholder')}
+                </div>
+              )
             ) : null}
           </div>
         </div>
@@ -1524,18 +1726,25 @@ export function ProductSheet({
           <Stepper m={m} value={qty} onChange={(n) => setQty(Math.max(1, n))} />
           <BigButton
             m={m}
-            onClick={(e) =>
+            disabledLook={missing}
+            onClick={(e) => {
+              if (missing) return;
+              const typed = note.trim();
               onAdd(
                 {
                   key: `${product.id}-${Date.now()}`,
                   product,
                   qty,
                   unit,
-                  extras: [...extras.map((o) => o.name), ...notes],
+                  extras: [...extras.map((o) => o.name), ...notes, ...(typed ? [typed] : [])],
+                  options: groups.flatMap((g) =>
+                    g.options.filter((o) => (picked[g.id] ?? []).includes(o.id)).map((o) => ({ groupId: g.id, optionId: o.id, name: o.name, price: o.price })),
+                  ),
+                  note: [...notes, ...(typed ? [typed] : [])].join(' · ') || undefined,
                 },
-                e.currentTarget.getBoundingClientRect(),
-              )
-            }
+                flyFrom(e.currentTarget.getBoundingClientRect()),
+              );
+            }}
           >
             {m.t('addToCart', { price: m.money(unit * qty) })}
           </BigButton>
@@ -1548,11 +1757,11 @@ export function ProductSheet({
 /** "Added — add more / pay" for skipCart = confirm. */
 export function ConfirmSheet({ m, onMore, onPay }: { m: PreviewModel; onMore: () => void; onPay: () => void }) {
   return (
-    <div className="absolute inset-0 z-30 flex flex-col justify-end">
+    <div className="absolute inset-0 z-30 flex flex-col items-center justify-center p-3">
       <div className="absolute inset-0 bg-black/40 animate-in fade-in duration-200" />
       <div
-        className="relative space-y-3 p-4 animate-in slide-in-from-bottom duration-300"
-        style={{ background: m.c.surface, color: m.c.text, borderTopLeftRadius: Math.max(16, m.radius), borderTopRightRadius: Math.max(16, m.radius) }}
+        className="relative w-full max-w-[420px] space-y-3 p-4 animate-in fade-in zoom-in-95 duration-300"
+        style={{ background: m.c.surface, color: m.c.text, borderRadius: Math.max(16, m.radius) }}
       >
         <div className="flex items-center gap-2">
           <span className="flex h-8 w-8 items-center justify-center rounded-full" style={{ background: m.c.accent, color: '#fff' }}>
@@ -1574,64 +1783,229 @@ export function ConfirmSheet({ m, onMore, onPay }: { m: PreviewModel; onMore: ()
   );
 }
 
-/** The add-to-cart flight: a dot (subtle) or a thumbnail on an arc (lively); never takes taps. */
+/**
+ * The add-to-cart flight (the till's KioskFlyLayer, docs/SPEC_KIOSK.md §18): the dish's picture
+ * and name pop out by its card, then fly on an arc into the cart, shrinking and fading; with
+ * reduce motion only a fade where the dish was. Never takes taps, so every tap flies its own.
+ */
 export interface Flight {
   id: number;
+  /** Where it starts (the dish's picture), in the screen's px. */
   x: number;
   y: number;
   imageUrl: string | null;
+  name: string;
+  /** Lands on the cart (the badge bounces then); a reduce-motion fade does not. */
+  lands: boolean;
 }
+
+/** The flying card's width on the device, in dp (the till's FLY_CARD_DP). */
+const FLY_CARD_DP = 128;
 
 export function Flyer({
   flight,
   motion,
-  color,
+  dp,
+  surface,
+  text,
   containerRef,
   targetRef,
   onDone,
 }: {
   flight: Flight;
   motion: MotionSpec;
-  color: string;
+  /** Screen px to a device dp (the frame's scale). */
+  dp: number;
+  surface: string;
+  text: string;
   containerRef: RefObject<HTMLDivElement | null>;
   targetRef: RefObject<HTMLDivElement | null>;
-  onDone: (id: number) => void;
+  onDone: (flight: Flight) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const { flyMs, flyImage } = motion;
+  // The numbers, not the object: the preview re-renders while a flight is in the air.
+  const { popMs, popScale, flyMs, arcDp, fadeMs } = motion;
   useEffect(() => {
+    const spec: MotionSpec = { popMs, popScale, flyMs, arcDp, fadeMs, bounce: 0, countUpMs: 0 };
     const el = ref.current;
     const box = containerRef.current?.getBoundingClientRect();
     const target = targetRef.current?.getBoundingClientRect();
-    if (!el || !box || !target || flyMs <= 0 || typeof el.animate !== 'function') {
-      const id = window.setTimeout(() => onDone(flight.id), 0);
+    const total = addMs(spec);
+    const flies = flyMs > 0;
+    if (!el || !box || total <= 0 || (flies && !target) || typeof el.animate !== 'function') {
+      const id = window.setTimeout(() => onDone(flight), 0);
       return () => window.clearTimeout(id);
     }
-    const dx = target.left + target.width / 2 - box.left - flight.x;
-    const dy = target.top + target.height / 2 - box.top - flight.y;
-    const frames: Keyframe[] = flyImage
-      ? [
-          { transform: 'translate(0px, 0px) scale(1)', opacity: 1 },
-          { transform: `translate(${dx * 0.5}px, ${Math.min(0, dy) * 0.5 - 80}px) scale(0.75)`, opacity: 1, offset: 0.5 },
-          { transform: `translate(${dx}px, ${dy}px) scale(0.25)`, opacity: 0.7 },
-        ]
-      : [
-          { transform: 'translate(0px, 0px) scale(1)', opacity: 1 },
-          { transform: `translate(${dx}px, ${dy}px) scale(0.6)`, opacity: 0.8 },
-        ];
-    const anim = el.animate(frames, { duration: flyMs, easing: 'cubic-bezier(.3,.7,.4,1)', fill: 'forwards' });
-    anim.onfinish = () => onDone(flight.id);
+    const from = { x: flight.x, y: flight.y };
+    const to = flies && target ? { x: target.left + target.width / 2 - box.left, y: target.top + target.height / 2 - box.top } : from;
+    const steps = 18;
+    const frames: Keyframe[] = Array.from({ length: steps + 1 }, (_, i) => {
+      const f = addFrame(spec, (total * i) / steps, from, to, dp);
+      return {
+        offset: i / steps,
+        transform: `translate(${f.x - from.x}px, ${f.y - from.y}px) scale(${f.scale})`,
+        opacity: f.alpha,
+        boxShadow: `0 ${Math.round(10 * f.shadow * dp)}px ${Math.round(28 * f.shadow * dp)}px rgba(0,0,0,${(0.3 * f.shadow).toFixed(3)})`,
+      };
+    });
+    const anim = el.animate(frames, { duration: total, easing: 'linear', fill: 'forwards' });
+    anim.onfinish = () => onDone(flight);
     return () => anim.cancel();
-  }, [flight, flyMs, flyImage, containerRef, targetRef, onDone]);
-  const size = flyImage ? 44 : 14;
+  }, [flight, popMs, popScale, flyMs, arcDp, fadeMs, dp, containerRef, targetRef, onDone]);
+  const w = Math.round(FLY_CARD_DP * dp);
+  const h = w + Math.round(30 * dp);
   return (
     <div
       ref={ref}
       aria-hidden
-      className="pointer-events-none absolute z-50 overflow-hidden shadow-lg"
-      style={{ left: flight.x - size / 2, top: flight.y - size / 2, width: size, height: size, borderRadius: flyImage ? 12 : 999, background: color }}
+      className="pointer-events-none absolute z-50 flex flex-col overflow-hidden"
+      style={{ left: flight.x - w / 2, top: flight.y - h / 2, width: w, height: h, borderRadius: Math.round(18 * dp), background: surface, color: text, opacity: 0, willChange: 'transform, opacity' }}
     >
-      {flyImage && flight.imageUrl ? <Img src={flight.imageUrl} className="h-full w-full object-cover" /> : null}
+      <div className="w-full shrink-0 overflow-hidden" style={{ height: w, background: '#00000010' }}>
+        {flight.imageUrl ? <Img src={flight.imageUrl} className="h-full w-full object-cover" /> : null}
+      </div>
+      <div className="flex flex-1 items-center justify-center truncate px-1.5 text-center font-bold" style={{ fontSize: Math.max(9, Math.round(15 * dp)) }}>
+        {flight.name}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- upsell */
+
+/**
+ * "הגדלת מכירה" — the window (the till's KioskUpsellUi.kt, docs/SPEC_KIOSK.md §21), the same in
+ * every style. One item (a special): its big picture — the rule's own, else the dish's, else
+ * its name on a quiet card, never an empty box — title, text, "הוספה להזמנה" / "לא תודה".
+ * Several (up to six): tiles with picture, name, price and a quick "+", the window staying
+ * while items go in ("המשך" closes it); each add flies to the cart from its picture.
+ */
+export function UpsellWindow({
+  m,
+  title,
+  text,
+  imageUrl,
+  items,
+  added,
+  showPrice,
+  onAdd,
+  onContinue,
+  onSkip,
+}: {
+  m: PreviewModel;
+  title: string;
+  text: string | null;
+  imageUrl: string | null;
+  items: PProduct[];
+  added: Record<string, number>;
+  showPrice: boolean;
+  onAdd: (p: PProduct, from: DOMRect | null) => void;
+  onContinue: () => void;
+  onSkip: () => void;
+}) {
+  const picture = (p: PProduct, own: string | null, className: string) =>
+    own || p.imageUrl ? (
+      <Img src={(own || p.imageUrl) as string} className={className} style={{ objectFit: 'cover' }} />
+    ) : (
+      <div
+        className={`flex items-center justify-center p-2 text-center font-bold ${className}`}
+        style={{ background: `linear-gradient(135deg, ${m.c.primary}22, ${m.c.accent}22)`, color: m.c.primary }}
+      >
+        {p.name}
+      </div>
+    );
+  const single = items.length <= 1 ? items[0] : null;
+  const anyAdded = Object.keys(added).length > 0;
+  return (
+    <div className="absolute inset-0 z-30 flex flex-col items-center justify-center p-3">
+      <button type="button" aria-label={m.t('close')} className="absolute inset-0 bg-black/40 animate-in fade-in duration-200" onClick={onSkip} />
+      <div
+        className="relative flex max-h-[90%] w-full max-w-[420px] flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-300"
+        style={{ background: m.c.surface, color: m.c.text, borderRadius: Math.max(16, m.radius) }}
+      >
+        <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none]">
+          {single ? (
+            <>
+              <div data-fly-from className="w-full" style={{ aspectRatio: '16 / 10' }}>
+                {picture(single, imageUrl, 'h-full w-full')}
+              </div>
+              <div className="space-y-1 p-4 text-center">
+                <div className="text-lg font-extrabold leading-tight">{title}</div>
+                {text ? <div className="kt-13" style={{ color: m.c.mutedText }}>{text}</div> : null}
+                {single.name !== title ? <div className="kt-15 font-bold">{single.name}</div> : null}
+              </div>
+            </>
+          ) : (
+            <div className="space-y-3 p-4">
+              <div>
+                <div className="text-lg font-extrabold leading-tight">{title}</div>
+                {text ? <div className="kt-13" style={{ color: m.c.mutedText }}>{text}</div> : null}
+              </div>
+              <div className={`grid gap-2 ${items.length === 4 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                {items.map((p) => {
+                  const count = added[p.id] ?? 0;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={(e) => onAdd(p, e.currentTarget.querySelector('[data-fly-from]')?.getBoundingClientRect() ?? null)}
+                      className="flex flex-col overflow-hidden text-start transition-transform duration-150 active:scale-[0.98]"
+                      style={cardStyle(m)}
+                    >
+                      <div data-fly-from className="relative w-full" style={{ aspectRatio: '4 / 3' }}>
+                        {picture(p, null, 'h-full w-full kt-11')}
+                        {count > 0 ? (
+                          <span className="absolute start-1 top-1 rounded-full px-1.5 py-0.5 kt-10 font-bold text-white" style={{ background: m.c.accent }}>
+                            ✓ ×{count}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="flex items-center gap-1 p-1.5">
+                        <div className="min-w-0 flex-1">
+                          <div className="line-clamp-2 kt-11 font-bold leading-snug">{p.name}</div>
+                          {showPrice ? <div className="kt-11 font-bold tabular-nums" style={{ color: m.c.primary }}>+{m.money(p.price)}</div> : null}
+                        </div>
+                        <span
+                          className="flex h-6 w-6 shrink-0 items-center justify-center"
+                          style={{ ...buttonStyle(m), borderRadius: 999, background: count > 0 ? m.c.accent : m.c.button }}
+                        >
+                          {count > 0 ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2 border-t p-3" style={{ borderColor: m.c.border }}>
+          {single ? (
+            <>
+              <BigButton m={m} variant="soft" onClick={onSkip}>
+                {m.t('upsellSkip')}
+              </BigButton>
+              <BigButton
+                m={m}
+                onClick={(e) => {
+                  const box = e.currentTarget.closest('.relative')?.querySelector('[data-fly-from]')?.getBoundingClientRect() ?? null;
+                  onAdd(single, box);
+                }}
+              >
+                {showPrice ? m.t('upsellAddToOrder', { price: m.money(single.price) }) : m.t('upsellContinue')}
+              </BigButton>
+            </>
+          ) : anyAdded ? (
+            <BigButton m={m} onClick={onContinue}>
+              {m.t('upsellContinue')}
+            </BigButton>
+          ) : (
+            <BigButton m={m} variant="soft" onClick={onSkip}>
+              {m.t('upsellSkip')}
+            </BigButton>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1675,8 +2049,9 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
     >
       <div className="space-y-4 p-4">
         <ScreenImage m={m} k="cart" height={80} />
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-extrabold">{m.txt('cartTitle')}</h2>
+        <div className="flex items-center justify-between gap-2">
+          <LiveBack m={m} />
+          <h2 className="flex-1 text-xl font-extrabold">{m.txt('cartTitle')}</h2>
           <button type="button" className="px-3 py-1 text-xs font-semibold" style={buttonStyle(m, 'soft')} onClick={() => m.go('catalog')}>
             {m.t('addMore')}
           </button>
@@ -1724,7 +2099,7 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
             </div>
           </section>
         ) : null}
-        {askName || askPhone || (m.service === 'eat_in' && cfg.general.askTableNumber) ? (
+        {!m.live?.detailsScreen && (askName || askPhone || (m.service === 'eat_in' && cfg.general.askTableNumber)) ? (
           <section className="space-y-2">
             <h3 className="text-sm font-extrabold">{m.txt('customerTitle')}</h3>
             <p className="kt-11 leading-snug" style={{ color: m.c.mutedText }}>
@@ -1787,11 +2162,98 @@ function PinpadScene({ m, muted = false }: { m: PreviewModel; muted?: boolean })
   );
 }
 
+/**
+ * The real kiosk's payment, as the till shows it: preparing (a spinner), the card awaited on
+ * the pinpad (with "ביטול" while allowed), declined (try again / back to the order), unknown
+ * (checked with the terminal — never charged again, no button), or blocked before anything was
+ * sent (no internet / no pinpad).
+ */
+function LivePay({ m, live }: { m: PreviewModel; live: NonNullable<KioskLive['pay']> }) {
+  const spinner = (
+    <span
+      aria-hidden
+      className="inline-block h-10 w-10 animate-spin rounded-full border-4"
+      style={{ borderColor: `${m.c.button}33`, borderTopColor: m.c.button }}
+    />
+  );
+  return (
+    <ScreenBody m={m}>
+      <div className="flex min-h-full flex-col items-center gap-4 p-4 text-center">
+        <ScreenImage m={m} k="pay" height={80} />
+        <h2 className="text-xl font-extrabold">{m.txt('payTitle')}</h2>
+        <div className="text-4xl font-black tabular-nums" style={{ color: m.c.text }}>
+          {m.money(live.amount)}
+        </div>
+        {live.phase === 'unknown' ? (
+          <div className="flex w-full flex-col items-center gap-3 p-4" style={cardStyle(m)}>
+            {spinner}
+            <div className="text-lg font-extrabold">{m.t('payUnknownTitle')}</div>
+            <div className="text-sm" style={{ color: m.c.mutedText }}>
+              {m.t('payUnknownBody')}
+            </div>
+          </div>
+        ) : live.phase === 'declined' || live.phase === 'blocked' ? (
+          <div className="flex w-full flex-col items-center gap-3 p-4" style={cardStyle(m)}>
+            <span className="flex h-12 w-12 items-center justify-center rounded-full" style={{ background: '#FEE2E2', color: '#B91C1C' }}>
+              <X className="h-7 w-7" />
+            </span>
+            <div className="text-lg font-extrabold">{live.phase === 'declined' ? m.t('payDeclined') : m.t('payBlockedTitle')}</div>
+            {live.message ? (
+              <div className="text-sm" style={{ color: m.c.mutedText }}>
+                {live.message}
+              </div>
+            ) : null}
+            <div className="grid w-full grid-cols-2 gap-2">
+              <BigButton m={m} variant="soft" onClick={live.onBack}>
+                {m.t('payBack')}
+              </BigButton>
+              {live.phase === 'declined' ? (
+                <BigButton m={m} onClick={live.onRetry}>
+                  {m.t('payRetry')}
+                </BigButton>
+              ) : null}
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/kiosk/card_terminals.png" alt="" className="w-full max-w-[300px] animate-in fade-in duration-500" style={{ aspectRatio: '900 / 480' }} />
+            {live.phase === 'starting' || live.phase === 'idle' ? (
+              <div className="flex flex-col items-center gap-2">
+                {spinner}
+                <p className="text-base font-bold">{m.t('payPreparing')}</p>
+              </div>
+            ) : (
+              <p className="text-base font-bold">{m.txt('payInstruction')}</p>
+            )}
+            {live.message ? (
+              <p className="kt-13" style={{ color: m.c.mutedText }}>
+                {live.message}
+              </p>
+            ) : null}
+            <p className="kt-11" style={{ color: m.c.mutedText }}>
+              {m.t('cardOnly')}
+            </p>
+            {live.canCancel ? (
+              <div className="mt-auto w-full">
+                <BigButton m={m} variant="soft" onClick={live.onCancel} disabledLook={live.cancelling}>
+                  {live.cancelling ? m.t('payCancelling') : m.t('payCancel')}
+                </BigButton>
+              </div>
+            ) : null}
+          </>
+        )}
+      </div>
+    </ScreenBody>
+  );
+}
+
 export function PayScreen({ m }: { m: PreviewModel }) {
   const { cfg } = m;
   const [tip, setTip] = useState<number | null>(null);
   const base = cartTotal(m.cart);
   const tipAmount = tip ? Math.round(base * tip) / 100 : 0;
+  if (m.live?.pay) return <LivePay m={m} live={m.live.pay} />;
   return (
     <ScreenBody m={m}>
       <div className="flex min-h-full flex-col items-center gap-4 p-4 text-center">
@@ -1823,7 +2285,8 @@ export function PayScreen({ m }: { m: PreviewModel }) {
             </div>
           </div>
         ) : null}
-        <PinpadScene m={m} />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/kiosk/card_terminals.png" alt="" className="w-full max-w-[300px] animate-in fade-in duration-500" style={{ aspectRatio: '900 / 480' }} />
         <p className="text-base font-bold">{m.txt('payInstruction')}</p>
         <p className="kt-11" style={{ color: m.c.mutedText }}>
           {m.t('cardOnly')}
@@ -1840,9 +2303,11 @@ export function PayScreen({ m }: { m: PreviewModel }) {
 
 export function SuccessScreen({ m }: { m: PreviewModel }) {
   const { cfg } = m;
-  const label = pickupLabel(cfg.pickup.prefix, Number.isFinite(cfg.pickup.start) ? cfg.pickup.start : 1);
+  const live = m.live?.success;
+  const label = live ? live.pickupLabel : pickupLabel(cfg.pickup.prefix, Number.isFinite(cfg.pickup.start) ? cfg.pickup.start : 1);
   const messages = messagesFor(cfg, 'success', ['banner', 'notice'], m.nowMs);
-  const receipt = cfg.payment.receiptPolicy;
+  // The real kiosk: the question only while it is still asked; what happened to the receipt after.
+  const receipt = live ? (live.receipt === 'ask' ? 'ask' : live.receipt === 'printing' || live.receipt === 'printed' ? 'always' : 'never') : cfg.payment.receiptPolicy;
   return (
     <ScreenBody m={m}>
       <div className="flex min-h-full flex-col items-center gap-3 p-5 text-center">
@@ -1862,6 +2327,8 @@ export function SuccessScreen({ m }: { m: PreviewModel }) {
         <p className="text-sm" style={{ color: m.c.mutedText }}>
           {m.txt('successBody')}
         </p>
+        {cfg.success.image ? <MediaView media={cfg.success.image} className="aspect-video w-full max-w-[260px] object-cover" style={{ borderRadius: m.radius }} /> : null}
+        {cfg.success.message.trim() ? <p className="text-base font-semibold">{cfg.success.message}</p> : null}
         <div className="flex flex-wrap justify-center gap-1.5 kt-11">
           <span className="rounded-full px-2.5 py-1" style={{ background: `${m.c.accent}1F` }}>
             {m.t('bonSent')}
@@ -1882,16 +2349,29 @@ export function SuccessScreen({ m }: { m: PreviewModel }) {
           <div className="w-full space-y-2">
             <div className="text-sm font-semibold">{m.t('receiptAsk')}</div>
             <div className="grid grid-cols-2 gap-2">
-              <BigButton m={m} variant="soft">
+              <BigButton m={m} variant="soft" onClick={live ? () => live.onReceipt(false) : undefined}>
                 {m.t('receiptNo')}
               </BigButton>
-              <BigButton m={m}>{m.t('receiptYes')}</BigButton>
+              <BigButton m={m} onClick={live ? () => live.onReceipt(true) : undefined}>
+                {m.t('receiptYes')}
+              </BigButton>
             </div>
           </div>
         ) : null}
-        <p className="mt-auto kt-11" style={{ color: m.c.mutedText }}>
-          {m.t('resetsIn', { n: cfg.timers.successSec })}
-        </p>
+        {live ? (
+          <div className="mt-auto w-full space-y-1.5">
+            <BigButton m={m} variant="soft" onClick={live.onNewOrder}>
+              {m.t('newOrder')}
+            </BigButton>
+            <p className="kt-11" style={{ color: m.c.mutedText }}>
+              {m.t('resetsIn', { n: live.secondsLeft })}
+            </p>
+          </div>
+        ) : (
+          <p className="mt-auto kt-11" style={{ color: m.c.mutedText }}>
+            {m.t('resetsIn', { n: cfg.timers.successSec })}
+          </p>
+        )}
       </div>
     </ScreenBody>
   );

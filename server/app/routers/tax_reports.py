@@ -112,12 +112,17 @@ def preview_tax_open_format(
             "to": ctx.end.date().isoformat(),
         }
 
+    from app.services.open_format import software
+
     return TaxOpenFormatPreviewResponse(
         transaction_count=len(tx_dicts),
         record_counts=dict(result.record_counts),
         business_info=dict(ctx.business_info),
         global_tax_rate=ctx.global_tax_rate,
         date_range=dr,
+        software=software.get_settings(db)["effective"],
+        # The A000 software fields still written as placeholders (not configured).
+        placeholders=software.placeholders(db),
     )
 
 
@@ -142,13 +147,15 @@ def download_tax_open_format(
         db, company=company, shop=shop, mode=mode,
         from_date=from_date, to_date=to_date, year=year,
     )
-    _, _, zip_bytes = build_tax_open_format_export(
+    result, _, zip_bytes = build_tax_open_format_export(
         db, active_tenant_id, ctx, company_id=cid, shop_id=sid,
     )
 
     vat8 = (ctx.business_info.get("vatNumber") or "00000000")[:8].zfill(8)
-    from datetime import datetime, timezone
-    ts = datetime.now(timezone.utc).strftime("%m%d%H%M")
+    from datetime import datetime
+    # MMDDhhmm of the production, local time — the same moment as A000 1026/1027.
+    produced = result.process_date or datetime.now(ctx.zone)
+    ts = produced.strftime("%m%d%H%M")
     filename = f"OPENFRMT-{vat8}-{ts}.zip"
 
     return Response(

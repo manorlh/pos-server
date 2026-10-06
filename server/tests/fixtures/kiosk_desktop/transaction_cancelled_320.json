@@ -1,0 +1,73 @@
+{
+  "transactions": [
+    {
+      "id": "c1a8f0e2-5b7d-4a1e-9f3c-6d2e8b1a4c77",
+      "transactionNumber": "57",
+      "documentPrefix": "4",
+      "status": "cancelled",
+      "documentType": 320,
+      "documentProductionDate": "2026-10-06T09:14:40.000Z",
+      "paymentMethod": "card",
+      "tipAmount": 0,
+      "totalAmount": 89,
+      "netAmount": 75.42,
+      "vatAmount": 13.58,
+      "vatRate": 0.18,
+      "cashierId": "kiosk:549e903c-4aba-4528-bc4a-c61b4019a64e",
+      "branchId": "12",
+      "nayaxMeta": {
+        "vuid": "4120000000122",
+        "outcome": "declined",
+        "resolvedBy": "getTransactionByVuid",
+        "requestedAmount": "8900",
+        "kind": "sale",
+        "message": "סירוב",
+        "resolvedAt": "2026-10-06T09:14:50.000Z"
+      },
+      "shiftId": "5b0c7e1d-1111-4222-8333-444455556666",
+      "businessDate": "2026-10-06",
+      "createdAt": "2026-10-06T09:14:40.000Z",
+      "updatedAt": "2026-10-06T09:15:01.300Z",
+      "items": [
+        {
+          "id": "0b1c2d3e-0000-4000-8000-0000000000c1",
+          "productId": "0b1c2d3e-0000-4000-8000-000000000001",
+          "productName": "המבורגר",
+          "sku": "1001",
+          "quantity": 1,
+          "unitPrice": 42,
+          "totalPrice": 42,
+          "transactionType": 2,
+          "details": {
+            "v": 1,
+            "basePrice": 38,
+            "modifiers": [
+              {
+                "groupId": "0b1c2d3e-0000-4000-8000-0000000000a1",
+                "optionId": "0b1c2d3e-0000-4000-8000-0000000000b1",
+                "name": "גבינה",
+                "price": 4,
+                "qty": 1,
+                "charged": 4
+              }
+            ],
+            "notes": [
+              "בלי בצל"
+            ]
+          },
+          "notes": "בלי בצל"
+        },
+        {
+          "id": "0b1c2d3e-0000-4000-8000-0000000000c2",
+          "productId": "0b1c2d3e-0000-4000-8000-000000000002",
+          "productName": "צ׳יפס",
+          "quantity": 2,
+          "unitPrice": 23.5,
+          "totalPrice": 47,
+          "transactionType": 2
+        }
+      ],
+      "payments": []
+    }
+  ]
+}

@@ -1,0 +1,2203 @@
+{
+ "about": "catalog menus ('תפריטים'): the same cases in pos-server tests/fixtures and pos-android app/src/test/resources (same bytes). Each case: a catalogMenus block (by its name in blocks), a local wall-clock moment, the surface (pos / kiosk) and the till's products in its own order; expected: catalog_menu_rules.sellable() - the resolution and the menu applied (null: the catalog as it is).",
+ "products": [
+  {
+   "id": "p-eggs",
+   "categoryId": "c-hot",
+   "price": 42.0
+  },
+  {
+   "id": "p-shakshuka",
+   "categoryId": "c-hot",
+   "price": 48.0
+  },
+  {
+   "id": "p-schnitzel",
+   "categoryId": "c-mains",
+   "price": 58.0
+  },
+  {
+   "id": "p-burger",
+   "categoryId": "c-mains",
+   "price": 52.0
+  },
+  {
+   "id": "p-pasta",
+   "categoryId": "c-mains",
+   "price": 46.0
+  },
+  {
+   "id": "p-coffee",
+   "categoryId": "c-drinks",
+   "price": 12.0
+  },
+  {
+   "id": "p-cola",
+   "categoryId": "c-drinks",
+   "price": 12.0
+  },
+  {
+   "id": "p-water",
+   "categoryId": "c-drinks",
+   "price": 8.0
+  },
+  {
+   "id": "p-beer",
+   "categoryId": "c-drinks",
+   "price": 28.0
+  },
+  {
+   "id": "p-cake",
+   "categoryId": "c-dessert",
+   "price": 30.0
+  },
+  {
+   "id": "p-sorbet",
+   "categoryId": "c-dessert",
+   "price": 24.5
+  }
+ ],
+ "blocks": {
+  "base": {
+   "updatedAt": "2026-10-06T08:00:00+00:00",
+   "fallback": "catalog",
+   "menus": [
+    {
+     "id": "m-breakfast",
+     "name": "בוקר",
+     "channel": "both",
+     "schedule": {
+      "always": false,
+      "days": null,
+      "ranges": [
+       [
+        "07:00",
+        "11:30"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-hot",
+       "all": true
+      },
+      {
+       "id": "c-drinks",
+       "all": true
+      }
+     ],
+     "products": [
+      {
+       "id": "p-coffee",
+       "price": 9
+      }
+     ]
+    },
+    {
+     "id": "m-lunch",
+     "name": "צהריים",
+     "channel": "pos",
+     "schedule": {
+      "always": false,
+      "days": [
+       0,
+       1,
+       2,
+       3,
+       4
+      ],
+      "ranges": [
+       [
+        "11:30",
+        "17:00"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-mains",
+       "all": false
+      },
+      {
+       "id": "c-drinks",
+       "all": true
+      }
+     ],
+     "products": [
+      {
+       "id": "p-burger",
+       "price": 48
+      },
+      {
+       "id": "p-schnitzel"
+      },
+      {
+       "id": "p-cola"
+      }
+     ]
+    },
+    {
+     "id": "m-happy",
+     "name": "הפי האוור",
+     "channel": "both",
+     "schedule": {
+      "always": false,
+      "days": [
+       2,
+       3,
+       4
+      ],
+      "ranges": [
+       [
+        "16:00",
+        "19:00"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-drinks",
+       "all": false
+      }
+     ],
+     "products": [
+      {
+       "id": "p-beer",
+       "price": 15
+      },
+      {
+       "id": "p-cola",
+       "price": 8.5
+      }
+     ]
+    },
+    {
+     "id": "m-night",
+     "name": "לילה",
+     "channel": "pos",
+     "schedule": {
+      "always": false,
+      "days": [
+       4,
+       5
+      ],
+      "ranges": [
+       [
+        "22:00",
+        "02:00"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-drinks",
+       "all": true
+      },
+      {
+       "id": "c-dessert",
+       "all": true
+      }
+     ],
+     "products": []
+    },
+    {
+     "id": "m-kiosk",
+     "name": "קיוסק",
+     "channel": "kiosk",
+     "schedule": {
+      "always": true,
+      "days": null,
+      "ranges": [],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-mains",
+       "all": true
+      },
+      {
+       "id": "c-dessert",
+       "all": true
+      }
+     ],
+     "products": [
+      {
+       "id": "p-sorbet",
+       "price": 19.9
+      }
+     ]
+    },
+    {
+     "id": "m-holiday",
+     "name": "חג",
+     "channel": "both",
+     "schedule": {
+      "always": true,
+      "days": null,
+      "ranges": [],
+      "from": "2026-12-24",
+      "to": "2026-12-26"
+     },
+     "categories": [
+      {
+       "id": "c-hot",
+       "all": true
+      }
+     ],
+     "products": []
+    }
+   ],
+   "assignments": [
+    {
+     "menuId": "m-holiday",
+     "level": "machine",
+     "depth": 0,
+     "priority": 0
+    },
+    {
+     "menuId": "m-happy",
+     "level": "shop",
+     "depth": 0,
+     "priority": 0
+    },
+    {
+     "menuId": "m-night",
+     "level": "shop",
+     "depth": 0,
+     "priority": 0
+    },
+    {
+     "menuId": "m-breakfast",
+     "level": "company",
+     "depth": 0,
+     "priority": 0
+    },
+    {
+     "menuId": "m-lunch",
+     "level": "company",
+     "depth": 0,
+     "priority": 0
+    },
+    {
+     "menuId": "m-kiosk",
+     "level": "company",
+     "depth": 1,
+     "priority": 0
+    }
+   ]
+  },
+  "sameLevel": {
+   "updatedAt": "2026-10-06T08:00:00+00:00",
+   "fallback": "catalog",
+   "menus": [
+    {
+     "id": "m-breakfast",
+     "name": "בוקר",
+     "channel": "both",
+     "schedule": {
+      "always": false,
+      "days": null,
+      "ranges": [
+       [
+        "07:00",
+        "11:30"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-hot",
+       "all": true
+      },
+      {
+       "id": "c-drinks",
+       "all": true
+      }
+     ],
+     "products": [
+      {
+       "id": "p-coffee",
+       "price": 9
+      }
+     ]
+    },
+    {
+     "id": "m-lunch",
+     "name": "צהריים",
+     "channel": "pos",
+     "schedule": {
+      "always": false,
+      "days": [
+       0,
+       1,
+       2,
+       3,
+       4
+      ],
+      "ranges": [
+       [
+        "11:30",
+        "17:00"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-mains",
+       "all": false
+      },
+      {
+       "id": "c-drinks",
+       "all": true
+      }
+     ],
+     "products": [
+      {
+       "id": "p-burger",
+       "price": 48
+      },
+      {
+       "id": "p-schnitzel"
+      },
+      {
+       "id": "p-cola"
+      }
+     ]
+    },
+    {
+     "id": "m-happy",
+     "name": "הפי האוור",
+     "channel": "both",
+     "schedule": {
+      "always": false,
+      "days": [
+       2,
+       3,
+       4
+      ],
+      "ranges": [
+       [
+        "16:00",
+        "19:00"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-drinks",
+       "all": false
+      }
+     ],
+     "products": [
+      {
+       "id": "p-beer",
+       "price": 15
+      },
+      {
+       "id": "p-cola",
+       "price": 8.5
+      }
+     ]
+    },
+    {
+     "id": "m-night",
+     "name": "לילה",
+     "channel": "pos",
+     "schedule": {
+      "always": false,
+      "days": [
+       4,
+       5
+      ],
+      "ranges": [
+       [
+        "22:00",
+        "02:00"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-drinks",
+       "all": true
+      },
+      {
+       "id": "c-dessert",
+       "all": true
+      }
+     ],
+     "products": []
+    },
+    {
+     "id": "m-kiosk",
+     "name": "קיוסק",
+     "channel": "kiosk",
+     "schedule": {
+      "always": true,
+      "days": null,
+      "ranges": [],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-mains",
+       "all": true
+      },
+      {
+       "id": "c-dessert",
+       "all": true
+      }
+     ],
+     "products": [
+      {
+       "id": "p-sorbet",
+       "price": 19.9
+      }
+     ]
+    },
+    {
+     "id": "m-holiday",
+     "name": "חג",
+     "channel": "both",
+     "schedule": {
+      "always": true,
+      "days": null,
+      "ranges": [],
+      "from": "2026-12-24",
+      "to": "2026-12-26"
+     },
+     "categories": [
+      {
+       "id": "c-hot",
+       "all": true
+      }
+     ],
+     "products": []
+    },
+    {
+     "id": "m-vip",
+     "name": "הפי האוור VIP",
+     "channel": "both",
+     "schedule": {
+      "always": false,
+      "days": [
+       2
+      ],
+      "ranges": [
+       [
+        "17:00",
+        "18:00"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-drinks",
+       "all": false
+      }
+     ],
+     "products": [
+      {
+       "id": "p-beer",
+       "price": 12
+      }
+     ]
+    },
+    {
+     "id": "m-alef",
+     "name": "א תפריט",
+     "channel": "pos",
+     "schedule": {
+      "always": false,
+      "days": [
+       3
+      ],
+      "ranges": [
+       [
+        "16:30",
+        "17:30"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-dessert",
+       "all": true
+      }
+     ],
+     "products": []
+    }
+   ],
+   "assignments": [
+    {
+     "menuId": "m-holiday",
+     "level": "machine",
+     "depth": 0,
+     "priority": 0
+    },
+    {
+     "menuId": "m-happy",
+     "level": "shop",
+     "depth": 0,
+     "priority": 0
+    },
+    {
+     "menuId": "m-night",
+     "level": "shop",
+     "depth": 0,
+     "priority": 0
+    },
+    {
+     "menuId": "m-breakfast",
+     "level": "company",
+     "depth": 0,
+     "priority": 0
+    },
+    {
+     "menuId": "m-lunch",
+     "level": "company",
+     "depth": 0,
+     "priority": 0
+    },
+    {
+     "menuId": "m-kiosk",
+     "level": "company",
+     "depth": 1,
+     "priority": 0
+    },
+    {
+     "menuId": "m-vip",
+     "level": "shop",
+     "depth": 0,
+     "priority": 5
+    },
+    {
+     "menuId": "m-alef",
+     "level": "shop",
+     "depth": 0,
+     "priority": 0
+    }
+   ]
+  },
+  "noSale": {
+   "updatedAt": "2026-10-06T08:00:00+00:00",
+   "fallback": "none",
+   "menus": [
+    {
+     "id": "m-breakfast",
+     "name": "בוקר",
+     "channel": "both",
+     "schedule": {
+      "always": false,
+      "days": null,
+      "ranges": [
+       [
+        "07:00",
+        "11:30"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-hot",
+       "all": true
+      },
+      {
+       "id": "c-drinks",
+       "all": true
+      }
+     ],
+     "products": [
+      {
+       "id": "p-coffee",
+       "price": 9
+      }
+     ]
+    },
+    {
+     "id": "m-lunch",
+     "name": "צהריים",
+     "channel": "pos",
+     "schedule": {
+      "always": false,
+      "days": [
+       0,
+       1,
+       2,
+       3,
+       4
+      ],
+      "ranges": [
+       [
+        "11:30",
+        "17:00"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-mains",
+       "all": false
+      },
+      {
+       "id": "c-drinks",
+       "all": true
+      }
+     ],
+     "products": [
+      {
+       "id": "p-burger",
+       "price": 48
+      },
+      {
+       "id": "p-schnitzel"
+      },
+      {
+       "id": "p-cola"
+      }
+     ]
+    },
+    {
+     "id": "m-happy",
+     "name": "הפי האוור",
+     "channel": "both",
+     "schedule": {
+      "always": false,
+      "days": [
+       2,
+       3,
+       4
+      ],
+      "ranges": [
+       [
+        "16:00",
+        "19:00"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-drinks",
+       "all": false
+      }
+     ],
+     "products": [
+      {
+       "id": "p-beer",
+       "price": 15
+      },
+      {
+       "id": "p-cola",
+       "price": 8.5
+      }
+     ]
+    },
+    {
+     "id": "m-night",
+     "name": "לילה",
+     "channel": "pos",
+     "schedule": {
+      "always": false,
+      "days": [
+       4,
+       5
+      ],
+      "ranges": [
+       [
+        "22:00",
+        "02:00"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-drinks",
+       "all": true
+      },
+      {
+       "id": "c-dessert",
+       "all": true
+      }
+     ],
+     "products": []
+    },
+    {
+     "id": "m-kiosk",
+     "name": "קיוסק",
+     "channel": "kiosk",
+     "schedule": {
+      "always": true,
+      "days": null,
+      "ranges": [],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-mains",
+       "all": true
+      },
+      {
+       "id": "c-dessert",
+       "all": true
+      }
+     ],
+     "products": [
+      {
+       "id": "p-sorbet",
+       "price": 19.9
+      }
+     ]
+    },
+    {
+     "id": "m-holiday",
+     "name": "חג",
+     "channel": "both",
+     "schedule": {
+      "always": true,
+      "days": null,
+      "ranges": [],
+      "from": "2026-12-24",
+      "to": "2026-12-26"
+     },
+     "categories": [
+      {
+       "id": "c-hot",
+       "all": true
+      }
+     ],
+     "products": []
+    }
+   ],
+   "assignments": [
+    {
+     "menuId": "m-holiday",
+     "level": "machine",
+     "depth": 0,
+     "priority": 0
+    },
+    {
+     "menuId": "m-happy",
+     "level": "shop",
+     "depth": 0,
+     "priority": 0
+    },
+    {
+     "menuId": "m-night",
+     "level": "shop",
+     "depth": 0,
+     "priority": 0
+    },
+    {
+     "menuId": "m-breakfast",
+     "level": "company",
+     "depth": 0,
+     "priority": 0
+    },
+    {
+     "menuId": "m-lunch",
+     "level": "company",
+     "depth": 0,
+     "priority": 0
+    },
+    {
+     "menuId": "m-kiosk",
+     "level": "company",
+     "depth": 1,
+     "priority": 0
+    }
+   ]
+  },
+  "edges": {
+   "updatedAt": "2026-10-06T08:00:00+00:00",
+   "fallback": "catalog",
+   "menus": [
+    {
+     "id": "m-allday",
+     "name": "כל היום",
+     "channel": "",
+     "schedule": {
+      "always": false,
+      "days": [
+       1
+      ],
+      "ranges": [
+       [
+        "00:00",
+        "00:00"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-dessert",
+       "all": false
+      },
+      {
+       "id": "c-empty",
+       "all": true
+      }
+     ],
+     "products": [
+      {
+       "id": "p-sorbet"
+      },
+      {
+       "id": "p-water",
+       "price": 5
+      },
+      {
+       "id": "p-unknown",
+       "price": 1
+      }
+     ]
+    },
+    {
+     "id": "m-area",
+     "name": "נקודת מכירה",
+     "channel": "both",
+     "schedule": {
+      "always": false,
+      "days": [
+       2
+      ],
+      "ranges": [
+       [
+        "06:00",
+        "06:00"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-hot",
+       "all": true
+      }
+     ],
+     "products": [
+      {
+       "id": "p-shakshuka",
+       "price": 0
+      },
+      {
+       "id": "p-eggs",
+       "price": 12.345
+      }
+     ]
+    },
+    {
+     "id": "m-company-tue",
+     "name": "שלישי",
+     "channel": "pos",
+     "schedule": {
+      "always": false,
+      "days": [
+       2
+      ],
+      "ranges": [
+       [
+        "09:00",
+        "11:00"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-dessert",
+       "all": true
+      }
+     ],
+     "products": []
+    }
+   ],
+   "assignments": [
+    {
+     "menuId": "m-allday",
+     "level": "company",
+     "depth": 2,
+     "priority": 0
+    },
+    {
+     "menuId": "m-area",
+     "level": "area",
+     "depth": 0,
+     "priority": -3
+    },
+    {
+     "menuId": "m-company-tue",
+     "level": "company",
+     "depth": 0,
+     "priority": 50
+    }
+   ]
+  },
+  "broken": {
+   "updatedAt": "2026-10-06T08:00:00+00:00",
+   "fallback": "catalog",
+   "menus": [
+    {
+     "id": "m-bad-range",
+     "name": "שעות שגויות",
+     "channel": "both",
+     "schedule": {
+      "always": false,
+      "days": null,
+      "ranges": [
+       [
+        "25:00",
+        "26:00"
+       ],
+       [
+        "7:5",
+        "08:00"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-hot",
+       "all": true
+      }
+     ],
+     "products": []
+    },
+    {
+     "id": "m-no-days",
+     "name": "בלי ימים",
+     "channel": "both",
+     "schedule": {
+      "always": false,
+      "days": [],
+      "ranges": [],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-mains",
+       "all": true
+      }
+     ],
+     "products": []
+    },
+    {
+     "id": "m-fine",
+     "name": "תקין",
+     "channel": "both",
+     "schedule": {
+      "always": true,
+      "days": null,
+      "ranges": [],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-dessert",
+       "all": true
+      }
+     ],
+     "products": []
+    }
+   ],
+   "assignments": [
+    {
+     "menuId": "m-bad-range",
+     "level": "company",
+     "depth": 0,
+     "priority": 9
+    },
+    {
+     "menuId": "m-no-days",
+     "level": "company",
+     "depth": 0,
+     "priority": 8
+    },
+    {
+     "menuId": "m-fine",
+     "level": "company",
+     "depth": 0,
+     "priority": 0
+    },
+    {
+     "menuId": "m-missing",
+     "level": "machine",
+     "depth": 0,
+     "priority": 0
+    }
+   ]
+  }
+ },
+ "cases": [
+  {
+   "name": "breakfast on a Tuesday morning - the company's menu, its coffee at the menu price",
+   "at": "2026-10-06T08:00",
+   "surface": "pos",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-breakfast",
+     "menuName": "בוקר",
+     "level": "company",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-hot",
+      "c-drinks"
+     ],
+     "products": [
+      {
+       "id": "p-eggs",
+       "categoryId": "c-hot",
+       "price": "42.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-shakshuka",
+       "categoryId": "c-hot",
+       "price": "48.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-coffee",
+       "categoryId": "c-drinks",
+       "price": "9.00",
+       "priceSource": "menu"
+      },
+      {
+       "id": "p-cola",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-water",
+       "categoryId": "c-drinks",
+       "price": "8.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-beer",
+       "categoryId": "c-drinks",
+       "price": "28.00",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "lunch at 12:00 - only the listed mains, the rest of the drinks after cola, burger at 48",
+   "at": "2026-10-06T12:00",
+   "surface": "pos",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-lunch",
+     "menuName": "צהריים",
+     "level": "company",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-mains",
+      "c-drinks"
+     ],
+     "products": [
+      {
+       "id": "p-burger",
+       "categoryId": "c-mains",
+       "price": "48.00",
+       "priceSource": "menu"
+      },
+      {
+       "id": "p-schnitzel",
+       "categoryId": "c-mains",
+       "price": "58.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-cola",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-coffee",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-water",
+       "categoryId": "c-drinks",
+       "price": "8.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-beer",
+       "categoryId": "c-drinks",
+       "price": "28.00",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "breakfast ends at 11:30 sharp - lunch starts (end exclusive, start inclusive)",
+   "at": "2026-10-06T11:30",
+   "surface": "pos",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-lunch",
+     "menuName": "צהריים",
+     "level": "company",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-mains",
+      "c-drinks"
+     ],
+     "products": [
+      {
+       "id": "p-burger",
+       "categoryId": "c-mains",
+       "price": "48.00",
+       "priceSource": "menu"
+      },
+      {
+       "id": "p-schnitzel",
+       "categoryId": "c-mains",
+       "price": "58.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-cola",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-coffee",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-water",
+       "categoryId": "c-drinks",
+       "price": "8.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-beer",
+       "categoryId": "c-drinks",
+       "price": "28.00",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "16:30 Tuesday - happy hour at the shop beats lunch at the company",
+   "at": "2026-10-06T16:30",
+   "surface": "pos",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-happy",
+     "menuName": "הפי האוור",
+     "level": "shop",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-drinks"
+     ],
+     "products": [
+      {
+       "id": "p-beer",
+       "categoryId": "c-drinks",
+       "price": "15.00",
+       "priceSource": "menu"
+      },
+      {
+       "id": "p-cola",
+       "categoryId": "c-drinks",
+       "price": "8.50",
+       "priceSource": "menu"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "19:00 Tuesday - happy hour over, lunch over, nothing: the full catalog",
+   "at": "2026-10-06T19:00",
+   "surface": "pos",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "catalog",
+     "menuId": null,
+     "menuName": null,
+     "level": null,
+     "depth": null,
+     "priority": null
+    },
+    "applied": null
+   }
+  },
+  {
+   "name": "the kiosk at 08:00 - breakfast (its own company) beats the kiosk menu (the company above)",
+   "at": "2026-10-06T08:00",
+   "surface": "kiosk",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-breakfast",
+     "menuName": "בוקר",
+     "level": "company",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-hot",
+      "c-drinks"
+     ],
+     "products": [
+      {
+       "id": "p-eggs",
+       "categoryId": "c-hot",
+       "price": "42.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-shakshuka",
+       "categoryId": "c-hot",
+       "price": "48.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-coffee",
+       "categoryId": "c-drinks",
+       "price": "9.00",
+       "priceSource": "menu"
+      },
+      {
+       "id": "p-cola",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-water",
+       "categoryId": "c-drinks",
+       "price": "8.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-beer",
+       "categoryId": "c-drinks",
+       "price": "28.00",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "the kiosk at 12:00 - lunch is the tills only: the kiosk menu",
+   "at": "2026-10-06T12:00",
+   "surface": "kiosk",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-kiosk",
+     "menuName": "קיוסק",
+     "level": "company",
+     "depth": 1,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-mains",
+      "c-dessert"
+     ],
+     "products": [
+      {
+       "id": "p-schnitzel",
+       "categoryId": "c-mains",
+       "price": "58.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-burger",
+       "categoryId": "c-mains",
+       "price": "52.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-pasta",
+       "categoryId": "c-mains",
+       "price": "46.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-sorbet",
+       "categoryId": "c-dessert",
+       "price": "19.90",
+       "priceSource": "menu"
+      },
+      {
+       "id": "p-cake",
+       "categoryId": "c-dessert",
+       "price": "30.00",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "the kiosk at 16:30 - happy hour is both: on the kiosk too",
+   "at": "2026-10-06T16:30",
+   "surface": "kiosk",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-happy",
+     "menuName": "הפי האוור",
+     "level": "shop",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-drinks"
+     ],
+     "products": [
+      {
+       "id": "p-beer",
+       "categoryId": "c-drinks",
+       "price": "15.00",
+       "priceSource": "menu"
+      },
+      {
+       "id": "p-cola",
+       "categoryId": "c-drinks",
+       "price": "8.50",
+       "priceSource": "menu"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "lunch is not on Saturday",
+   "at": "2026-10-10T12:00",
+   "surface": "pos",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "catalog",
+     "menuId": null,
+     "menuName": null,
+     "level": null,
+     "depth": null,
+     "priority": null
+    },
+    "applied": null
+   }
+  },
+  {
+   "name": "Thursday 22:00 - night starts",
+   "at": "2026-10-08T22:00",
+   "surface": "pos",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-night",
+     "menuName": "לילה",
+     "level": "shop",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-drinks",
+      "c-dessert"
+     ],
+     "products": [
+      {
+       "id": "p-coffee",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-cola",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-water",
+       "categoryId": "c-drinks",
+       "price": "8.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-beer",
+       "categoryId": "c-drinks",
+       "price": "28.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-cake",
+       "categoryId": "c-dessert",
+       "price": "30.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-sorbet",
+       "categoryId": "c-dessert",
+       "price": "24.50",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "Friday 01:00 - Thursday's night, after midnight",
+   "at": "2026-10-09T01:00",
+   "surface": "pos",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-night",
+     "menuName": "לילה",
+     "level": "shop",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-drinks",
+      "c-dessert"
+     ],
+     "products": [
+      {
+       "id": "p-coffee",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-cola",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-water",
+       "categoryId": "c-drinks",
+       "price": "8.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-beer",
+       "categoryId": "c-drinks",
+       "price": "28.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-cake",
+       "categoryId": "c-dessert",
+       "price": "30.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-sorbet",
+       "categoryId": "c-dessert",
+       "price": "24.50",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "Friday 02:00 - the night ended at 02:00",
+   "at": "2026-10-09T02:00",
+   "surface": "pos",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "catalog",
+     "menuId": null,
+     "menuName": null,
+     "level": null,
+     "depth": null,
+     "priority": null
+    },
+    "applied": null
+   }
+  },
+  {
+   "name": "Saturday 01:30 - Friday's night (the hours after midnight belong to the day it started)",
+   "at": "2026-10-10T01:30",
+   "surface": "pos",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-night",
+     "menuName": "לילה",
+     "level": "shop",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-drinks",
+      "c-dessert"
+     ],
+     "products": [
+      {
+       "id": "p-coffee",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-cola",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-water",
+       "categoryId": "c-drinks",
+       "price": "8.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-beer",
+       "categoryId": "c-drinks",
+       "price": "28.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-cake",
+       "categoryId": "c-dessert",
+       "price": "30.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-sorbet",
+       "categoryId": "c-dessert",
+       "price": "24.50",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "Sunday 01:00 - Saturday has no night: nothing",
+   "at": "2026-10-11T01:00",
+   "surface": "pos",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "catalog",
+     "menuId": null,
+     "menuName": null,
+     "level": null,
+     "depth": null,
+     "priority": null
+    },
+    "applied": null
+   }
+  },
+  {
+   "name": "Wednesday 01:00 - belongs to Tuesday, not a night day: nothing",
+   "at": "2026-10-07T01:00",
+   "surface": "pos",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "catalog",
+     "menuId": null,
+     "menuName": null,
+     "level": null,
+     "depth": null,
+     "priority": null
+    },
+    "applied": null
+   }
+  },
+  {
+   "name": "Thursday 2026-12-24 12:00 - the holiday at the till beats lunch at the company",
+   "at": "2026-12-24T12:00",
+   "surface": "pos",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-holiday",
+     "menuName": "חג",
+     "level": "machine",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-hot"
+     ],
+     "products": [
+      {
+       "id": "p-eggs",
+       "categoryId": "c-hot",
+       "price": "42.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-shakshuka",
+       "categoryId": "c-hot",
+       "price": "48.00",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "2026-12-26 23:59 - last minute of the holiday",
+   "at": "2026-12-26T23:59",
+   "surface": "pos",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-holiday",
+     "menuName": "חג",
+     "level": "machine",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-hot"
+     ],
+     "products": [
+      {
+       "id": "p-eggs",
+       "categoryId": "c-hot",
+       "price": "42.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-shakshuka",
+       "categoryId": "c-hot",
+       "price": "48.00",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "2026-12-27 12:00 Sunday - the holiday is over: lunch",
+   "at": "2026-12-27T12:00",
+   "surface": "pos",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-lunch",
+     "menuName": "צהריים",
+     "level": "company",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-mains",
+      "c-drinks"
+     ],
+     "products": [
+      {
+       "id": "p-burger",
+       "categoryId": "c-mains",
+       "price": "48.00",
+       "priceSource": "menu"
+      },
+      {
+       "id": "p-schnitzel",
+       "categoryId": "c-mains",
+       "price": "58.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-cola",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-coffee",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-water",
+       "categoryId": "c-drinks",
+       "price": "8.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-beer",
+       "categoryId": "c-drinks",
+       "price": "28.00",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "the holiday is both channels: the kiosk on 2026-12-25",
+   "at": "2026-12-25T15:00",
+   "surface": "kiosk",
+   "block": "base",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-holiday",
+     "menuName": "חג",
+     "level": "machine",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-hot"
+     ],
+     "products": [
+      {
+       "id": "p-eggs",
+       "categoryId": "c-hot",
+       "price": "42.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-shakshuka",
+       "categoryId": "c-hot",
+       "price": "48.00",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "same level - the higher priority wins (VIP 5 over happy hour 0)",
+   "at": "2026-10-06T17:15",
+   "surface": "pos",
+   "block": "sameLevel",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-vip",
+     "menuName": "הפי האוור VIP",
+     "level": "shop",
+     "depth": 0,
+     "priority": 5
+    },
+    "applied": {
+     "categories": [
+      "c-drinks"
+     ],
+     "products": [
+      {
+       "id": "p-beer",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "menu"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "same level, same priority - by name (א before ה)",
+   "at": "2026-10-07T17:00",
+   "surface": "pos",
+   "block": "sameLevel",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-alef",
+     "menuName": "א תפריט",
+     "level": "shop",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-dessert"
+     ],
+     "products": [
+      {
+       "id": "p-cake",
+       "categoryId": "c-dessert",
+       "price": "30.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-sorbet",
+       "categoryId": "c-dessert",
+       "price": "24.50",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "fallback none - no menu active: nothing to sell",
+   "at": "2026-10-06T19:30",
+   "surface": "pos",
+   "block": "noSale",
+   "expected": {
+    "resolution": {
+     "mode": "none",
+     "menuId": null,
+     "menuName": null,
+     "level": null,
+     "depth": null,
+     "priority": null
+    },
+    "applied": {
+     "categories": [],
+     "products": []
+    }
+   }
+  },
+  {
+   "name": "fallback none - a menu active: the menu",
+   "at": "2026-10-06T09:00",
+   "surface": "pos",
+   "block": "noSale",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-breakfast",
+     "menuName": "בוקר",
+     "level": "company",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-hot",
+      "c-drinks"
+     ],
+     "products": [
+      {
+       "id": "p-eggs",
+       "categoryId": "c-hot",
+       "price": "42.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-shakshuka",
+       "categoryId": "c-hot",
+       "price": "48.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-coffee",
+       "categoryId": "c-drinks",
+       "price": "9.00",
+       "priceSource": "menu"
+      },
+      {
+       "id": "p-cola",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-water",
+       "categoryId": "c-drinks",
+       "price": "8.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-beer",
+       "categoryId": "c-drinks",
+       "price": "28.00",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "00:00-00:00 is the whole day, Monday 23:59",
+   "at": "2026-10-05T23:59",
+   "surface": "pos",
+   "block": "edges",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-allday",
+     "menuName": "כל היום",
+     "level": "company",
+     "depth": 2,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-dessert",
+      "c-drinks"
+     ],
+     "products": [
+      {
+       "id": "p-sorbet",
+       "categoryId": "c-dessert",
+       "price": "24.50",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-water",
+       "categoryId": "c-drinks",
+       "price": "5.00",
+       "priceSource": "menu"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "00:00-00:00 does not run into Tuesday",
+   "at": "2026-10-06T00:00",
+   "surface": "kiosk",
+   "block": "edges",
+   "expected": {
+    "resolution": {
+     "mode": "catalog",
+     "menuId": null,
+     "menuName": null,
+     "level": null,
+     "depth": null,
+     "priority": null
+    },
+    "applied": null
+   }
+  },
+  {
+   "name": "06:00-06:00 is 24 hours from Tuesday 06:00 - Wednesday 05:59 still Tuesday's",
+   "at": "2026-10-07T05:59",
+   "surface": "pos",
+   "block": "edges",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-area",
+     "menuName": "נקודת מכירה",
+     "level": "area",
+     "depth": 0,
+     "priority": -3
+    },
+    "applied": {
+     "categories": [
+      "c-hot"
+     ],
+     "products": [
+      {
+       "id": "p-shakshuka",
+       "categoryId": "c-hot",
+       "price": "0.00",
+       "priceSource": "menu"
+      },
+      {
+       "id": "p-eggs",
+       "categoryId": "c-hot",
+       "price": "12.35",
+       "priceSource": "menu"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "the area beats the company (its own, priority 50) whatever the priorities",
+   "at": "2026-10-06T10:00",
+   "surface": "pos",
+   "block": "edges",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-area",
+     "menuName": "נקודת מכירה",
+     "level": "area",
+     "depth": 0,
+     "priority": -3
+    },
+    "applied": {
+     "categories": [
+      "c-hot"
+     ],
+     "products": [
+      {
+       "id": "p-shakshuka",
+       "categoryId": "c-hot",
+       "price": "0.00",
+       "priceSource": "menu"
+      },
+      {
+       "id": "p-eggs",
+       "categoryId": "c-hot",
+       "price": "12.35",
+       "priceSource": "menu"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "an empty channel is both; a listed product from an unnamed category brings it; an empty category goes",
+   "at": "2026-10-05T10:00",
+   "surface": "kiosk",
+   "block": "edges",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-allday",
+     "menuName": "כל היום",
+     "level": "company",
+     "depth": 2,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-dessert",
+      "c-drinks"
+     ],
+     "products": [
+      {
+       "id": "p-sorbet",
+       "categoryId": "c-dessert",
+       "price": "24.50",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-water",
+       "categoryId": "c-drinks",
+       "price": "5.00",
+       "priceSource": "menu"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "unreadable hours are never, no weekdays is never, an assignment of an unknown menu is nothing",
+   "at": "2026-10-06T07:30",
+   "surface": "pos",
+   "block": "broken",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-fine",
+     "menuName": "תקין",
+     "level": "company",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-dessert"
+     ],
+     "products": [
+      {
+       "id": "p-cake",
+       "categoryId": "c-dessert",
+       "price": "30.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-sorbet",
+       "categoryId": "c-dessert",
+       "price": "24.50",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

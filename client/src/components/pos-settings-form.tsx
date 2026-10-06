@@ -16,6 +16,7 @@ import {
 } from '@/lib/paymentOptions';
 import { SELL_SCREEN_TOOLS, SELL_SCREEN_TOOL_DEFAULT } from '@/lib/sellScreen';
 import { REFUND_SETTINGS, REFUND_SETTING_DEFAULT } from '@/lib/refundSettings';
+import { AUTO_REOPEN_DEFAULT, AUTO_REOPEN_MODES, type AutoReopenMode } from '@/lib/availabilityReopen';
 import { TIP_PRESETS_MAX } from '@/lib/types';
 import type { PosSettingsPatch, PosSettingsV1, ResettableSwitchKey, SettingsLevel } from '@/lib/types';
 import { PaymentIntegrationSection } from '@/components/payment-integration-section';
@@ -218,6 +219,72 @@ export function PosSettingsForm({
           </SelectContent>
         </Select>
         {inheritedHint('outOfStockPolicy')}
+      </div>
+
+      {/* "פתיחת פריטים אוטומטית אחרי Z" (lib/availabilityReopen.ts; also on the stock page,
+          per point of sale). "ירושה" sends null: this layer stops setting it. */}
+      <div className="space-y-1">
+        <Label>
+          {t('autoReopenAfterZ')}
+          {overrideBadge('autoReopenAfterZ')}
+        </Label>
+        {(() => {
+          const label = (m: AutoReopenMode) => t(`autoReopen_${m}`);
+          const items = [
+            {
+              value: 'inherit',
+              label: t('autoReopenInherit', { value: label(inherited?.autoReopenAfterZ ?? AUTO_REOPEN_DEFAULT) }),
+            },
+            ...AUTO_REOPEN_MODES.map((m) => ({ value: m, label: label(m) })),
+          ];
+          return (
+            <Select
+              value={value.autoReopenAfterZ ?? 'inherit'}
+              onValueChange={(v) =>
+                set('autoReopenAfterZ', v === 'inherit' ? null : (v as AutoReopenMode))
+              }
+              items={items}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {items.map((i) => (
+                  <SelectItem key={i.value} value={i.value} label={i.label}>
+                    {i.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          );
+        })()}
+        <p className="text-xs text-muted-foreground">{t('autoReopenDesc')}</p>
+      </div>
+
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <Label>
+            {t('autoReopenIgnoreStock')}
+            {overrideBadge('autoReopenIgnoreStock')}
+          </Label>
+          <p className="text-xs text-muted-foreground">{t('autoReopenIgnoreStockDesc')}</p>
+          {inheritedHint('autoReopenIgnoreStock', onOff)}
+          {typeof value.autoReopenIgnoreStock === 'boolean' ? (
+            <Button
+              type="button"
+              variant="link"
+              size="xs"
+              className="h-auto px-0 text-xs"
+              onClick={() => set('autoReopenIgnoreStock', null)}
+            >
+              {t('payResetToInherited')}
+            </Button>
+          ) : null}
+        </div>
+        <Switch
+          checked={value.autoReopenIgnoreStock ?? inherited?.autoReopenIgnoreStock === true}
+          onCheckedChange={(c) => set('autoReopenIgnoreStock', c)}
+        />
       </div>
 
       <div className="border-t pt-4 space-y-3">

@@ -1657,12 +1657,14 @@ class TestAskGuests:
         assert TP.till_parameters_for_machine(w.db, w.a).parameters.get("tablesAskGuests") is False
         assert TP.till_parameters_for_machine(w.db, w.b).parameters.get("tablesAskGuests") is True
 
-    def test_the_tablet_cash_box_is_on_by_default_and_switched_off_per_layer(self, w):
-        spec = w.params["cashChangeInPanel"]
-        assert (spec.value_type, spec.label) == ("boolean", "מזומן עם חישוב עודף בפאנל ההזמנה (טאבלט)")
-        assert TP.till_parameters_for_machine(w.db, w.a).parameters.get("cashChangeInPanel") is True
-        set_param(w, "cashChangeInPanel", "shop", w.shop.id, False)
-        assert TP.till_parameters_for_machine(w.db, w.a).parameters.get("cashChangeInPanel") is False
+    def test_the_tablet_cash_box_is_gone_and_its_quick_pay_buttons_are_set_per_layer(self, w):
+        # "התקבל מזומן" left the tablet's order panel; its switch is no longer a built-in
+        # (tests/test_quick_pay_buttons_parameter.py has the buttons that replaced it).
+        assert "cashChangeInPanel" not in w.params
+        assert w.params["quickPayButton1"].value_type == "enum"
+        assert TP.till_parameters_for_machine(w.db, w.a).parameters.get("quickPayButton1") == "אשראי מהיר"
+        set_param(w, "quickPayButton1", "shop", w.shop.id, "מזומן מהיר")
+        assert TP.till_parameters_for_machine(w.db, w.a).parameters.get("quickPayButton1") == "מזומן מהיר"
 
 
 def test_the_migration_is_a_single_head():

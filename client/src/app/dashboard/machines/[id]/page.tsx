@@ -56,6 +56,7 @@ import { MachineAreaDialog } from '@/components/dashboard/areas/machine-area-dia
 import { RequestTillZButton, ZModeField } from '@/components/dashboard/till-z/till-z-dialogs';
 import { SupportZButton } from '@/components/dashboard/machines/support-z-dialog';
 import { TillResetButton } from '@/components/dashboard/machines/till-reset-dialog';
+import { TillReplacements } from '@/components/dashboard/machines/till-replacements';
 import { tillResetTone, type TillResetRecord } from '@/lib/tillReset';
 import { IndependentTillBadge } from '@/components/dashboard/independent-till-badge';
 import { LatestTillZRequest } from '@/components/dashboard/till-z/till-z-request';
@@ -572,6 +573,9 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           </CardContent>
         </Card>
       ) : null}
+
+      {/* "הוחלפה קופה": the till's device replacements (offline till Z §4.6.2). */}
+      <TillReplacements replacements={machine.replacements} />
 
       <Card>
         <CardHeader className="pb-2">

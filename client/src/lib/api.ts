@@ -611,7 +611,7 @@ export async function administrativeCloseShift(
  */
 export async function createReplacementCode(
   machineId: string,
-  opts: { acknowledgeUntransmitted?: boolean; deviceModel?: DeviceModel } = {},
+  opts: { acknowledgeUntransmitted?: boolean; deviceModel?: DeviceModel; reason?: string } = {},
 ): Promise<{
   code: string;
   expiresAt: string;
@@ -622,6 +622,8 @@ export async function createReplacementCode(
   const { data } = await api.post(`/machines/${machineId}/replacement-code`, {
     acknowledgeUntransmitted: !!opts.acknowledgeUntransmitted,
     ...(opts.deviceModel ? { deviceModel: opts.deviceModel } : {}),
+    // Why — kept in "הוחלפה קופה" when a device redeems the code (offline till Z §4.6.2).
+    ...(opts.reason?.trim() ? { reason: opts.reason.trim() } : {}),
   });
   return data;
 }
@@ -804,6 +806,11 @@ export async function createZRun(body: {
   confirmOpenTills?: boolean;
   /** "כפה סגירה (גם באמצע מכירה)": the tills park an open basket and close. */
   force?: boolean;
+  /**
+   * "אני מאשר שהנתונים בענן הם הנתונים הקיימים": a till the run takes shows a warning
+   * (pos-server docs/SPEC_OFFLINE_TILL_Z.md §4.6.1). Else 409 `cloud_data_confirmation_required`.
+   */
+  confirmCloudData?: boolean;
 }): Promise<ZRun> {
   const { data } = await api.post<ZRun>('/z-runs', body);
   return data;

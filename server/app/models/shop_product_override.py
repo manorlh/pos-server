@@ -26,6 +26,12 @@ class ShopProductOverride(Base):
     # company locked it, false = locked here. New rows start at NULL. Resolved only in
     # app/services/product_availability.py.
     is_available = Column(Boolean, nullable=True, default=None)
+    # "חסימה קבועה": a lock at this level that "פתיחת פריטים אוטומטית אחרי Z" never opens
+    # (app/services/availability_reopen.py). Meaningful only while `is_available` is false.
+    block_permanent = Column(Boolean, nullable=False, default=False, server_default="false")
+    # When the current lock began (the moment `is_available` turned false); NULL when not
+    # locked, or for a lock older than the column. "Locked during the day" reads it.
+    blocked_at = Column(DateTime(timezone=True), nullable=True)
     # Created by the product's shop scope (app/services/product_shop_scope.py) rather
     # than by hand. The scope only ever touches rows carrying this flag; a hand-added
     # row is never listed, unlisted or deleted by it.

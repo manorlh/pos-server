@@ -1,0 +1,46 @@
+{
+  "status": 200,
+  "body": {
+    "syncType": "full",
+    "serverTime": "2026-10-06T14:06:32.087447Z",
+    "settingsUpdatedAt": "2026-10-06T12:53:11.086177Z",
+    "settings": {
+      "payFastCashEnabled": true,
+      "payFastCashTips": false,
+      "payCashEnabled": true,
+      "payCashTips": false,
+      "payFastCardEnabled": true,
+      "payFastCardTips": false,
+      "payCardEnabled": true,
+      "payCardTips": false,
+      "payManualCardEnabled": false,
+      "payManualCardTips": false,
+      "tipsEnabled": false,
+      "cashTipsEnabled": false,
+      "sellSearchEnabled": true,
+      "sellScanEnabled": true,
+      "sellCalculatorEnabled": true,
+      "unlinkedCardCreditEnabled": true,
+      "refundCustomerDetailsRequired": true,
+      "forceTerminalNumber": false,
+      "payOrder": [],
+      "trainingMode": false,
+      "dealerType": "licensed"
+    },
+    "businessInfo": {
+      "vatNumber": "123456782",
+      "companyName": "רויאל בר",
+      "companyAddress": "הרצל 12",
+      "companyAddressNumber": "99",
+      "companyCity": "ראשון לציון",
+      "companyZip": "6433222",
+      "companyRegNumber": null,
+      "hasBranches": true,
+      "branchId": "2",
+      "dealerType": "licensed"
+    },
+    "area": null,
+    "trainingMode": false,
+    "terminalConfigSources": {}
+  }
+}

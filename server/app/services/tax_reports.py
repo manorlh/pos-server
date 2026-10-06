@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from decimal import Decimal
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple, Union
 import uuid
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, joinedload
@@ -15,7 +16,10 @@ from app.models.company import Company
 from app.models.shop import Shop
 from app.models.transaction import Transaction
 from app.models.transaction_item import TransactionItem
+from app.services import kiosk_identity as _kiosk_identity
+from app.services.open_format.defaults import SoftwareInfo
 from app.services.open_format.tax_report_generator import (
+    DEFAULT_TIMEZONE,
     BusinessInfoDict,
     TaxReportResult,
     build_open_format_zip,
@@ -37,6 +41,24 @@ class TaxExportContext:
     date_range: Union[Dict[str, Any], Dict[str, int]]
     start: datetime
     end: datetime
+    #: The business's time zone: the export's days and every date and time in the file.
+    zone: tzinfo = DEFAULT_TIMEZONE
+    #: A000 1006–1010 (the platform setting `openFormat`, app/services/open_format/software.py).
+    software_info: Optional[SoftwareInfo] = None
+
+
+def export_timezone(db: Session, tenant_id: Optional[uuid.UUID]) -> tzinfo:
+    """
+    The time zone of the file's dates and of the export's days: the tenant's report time
+    zone, which is Asia/Jerusalem unless a tenant set another one ("UTC" counts as unset,
+    see `reports.resolve_report_timezone`).
+    """
+    from app.services.reports import resolve_report_timezone
+
+    try:
+        return ZoneInfo(resolve_report_timezone(db, tenant_id, None))
+    except (ZoneInfoNotFoundError, ValueError, KeyError):
+        return DEFAULT_TIMEZONE
 
 
 def _decimal_to_float(value: Any) -> float:
@@ -96,12 +118,21 @@ def parse_date_range(
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
     year: Optional[int] = None,
+    tz: Optional[tzinfo] = None,
 ) -> Tuple[datetime, datetime, Union[Dict[str, Any], Dict[str, int]]]:
+    """
+    The export window: whole calendar days **in the business's time zone** (`tz`,
+    Asia/Jerusalem by default), from the first instant of `from` to the last microsecond
+    of `to` — so a sale rung at 00:30 belongs to the day printed on it, and a day of a
+    daylight-saving change is 23 or 25 hours long, as it was in the shop.
+    1.31 §2.1: "את המסמכים יש לחתוך לפי תאריך המסמך (התאריך הרשום על גבי המסמך)".
+    """
+    zone = tz or DEFAULT_TIMEZONE
     if mode == "year":
         if year is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="year is required for year mode")
-        start = datetime(year, 1, 1, tzinfo=timezone.utc)
-        end = datetime(year, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+        start = datetime(year, 1, 1, tzinfo=zone)
+        end = datetime.combine(date(year, 12, 31), time.max, tzinfo=zone)
         return start, end, {"year": year}
 
     if from_date is None or to_date is None:
@@ -111,9 +142,15 @@ def parse_date_range(
         )
     if from_date > to_date:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="from must be before or equal to to")
-    start = datetime.combine(from_date, time.min, tzinfo=timezone.utc)
-    end = datetime.combine(to_date, time.max.replace(microsecond=0), tzinfo=timezone.utc)
+    start = datetime.combine(from_date, time.min, tzinfo=zone)
+    end = datetime.combine(to_date, time.max, tzinfo=zone)
     return start, end, {"start": start, "end": end}
+
+
+def _as_utc(moment: datetime) -> datetime:
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
 
 
 def load_transactions_for_tax_export(
@@ -138,8 +175,9 @@ def load_transactions_for_tax_export(
         )
         .filter(
             Transaction.tenant_id == tenant_id,
-            Transaction.created_at >= start,
-            Transaction.created_at <= end,
+            # The window's local days as UTC instants (documents are stamped in UTC).
+            Transaction.created_at >= _as_utc(start),
+            Transaction.created_at <= _as_utc(end),
         )
         .order_by(Transaction.created_at.asc())
     )
@@ -310,14 +348,16 @@ def _build_cart_from_items(
     till printed and handed the customer, so a filing built from it agrees with the paper
     by construction and a later VAT-rate change cannot re-state it.
 
-    `discountAmount` is returned gross so the caller can reconstruct field 1219 as
-    1221 + the discount, keeping 1219 − 1220 = 1221 exact. Note it carries *all*
-    discounts, line and basket together, because that is what the till sends as one
-    figure; the per-line breakdown is reported separately in D110 field 1266 against
-    line totals that are themselves gross, so the two views stay consistent.
+    `discountAmount` is every discount the document carries, line and basket together
+    (what the till sends as one figure, `document_discount`). `basketDiscount` is the
+    document-level part alone — what is left of it after the lines' own discounts (the
+    cashier's and the promotions') — and is what C100 1220 files: a line's discount is
+    the line's (D110 1266), and D110 1267 is the line after it ("בניכוי הנחת השורה"). A
+    credit note's lines already carry their share of the original's discounts, so its
+    `basketDiscount` is 0. See `tax_report_generator.document_amounts` for the rule.
 
-    `items` deliberately keep their gross line totals — D110 reports each line's own
-    discount in 1266 and must not have it subtracted twice.
+    `items` keep their stored line totals: gross for a sale line (its discount beside it),
+    already credited for a credit-note line.
     """
     items = tx.items
     tax_rate = global_tax_rate / 100.0
@@ -341,6 +381,8 @@ def _build_cart_from_items(
                 "totalPrice": total_price,
                 "discount": _decimal_to_float(it.discount),
                 "lineDiscount": _decimal_to_float(it.line_discount),
+                # The promotions' share of the line ("מבצעים"): a discount of the line's own.
+                "promotionDiscount": _decimal_to_float(getattr(it, "promotion_discount", None)),
                 "transactionType": it.transaction_type or 2,
                 # The receipt this credit-note line returns (D110 1256/1257), when the
                 # line names its original and the cloud holds it.
@@ -354,6 +396,15 @@ def _build_cart_from_items(
 
     discount = _decimal_to_float(tx.document_discount) or 0.0
     net, vat = _document_split(tx, gross_total, discount, tax_rate)
+    if _is_credit_note(tx):
+        basket = 0.0
+    else:
+        own = sum(
+            abs(_decimal_to_float(it.discount) or _decimal_to_float(it.line_discount))
+            + abs(_decimal_to_float(getattr(it, "promotion_discount", None)))
+            for it in items
+        )
+        basket = round(max(discount - own, 0.0), 2)
 
     return {
         "items": cart_items,
@@ -363,6 +414,7 @@ def _build_cart_from_items(
         # exactly. These are the same number on an undiscounted document.
         "totalAmount": round(net + vat, 2),
         "discountAmount": discount,
+        "basketDiscount": basket,
     }
 
 
@@ -416,9 +468,72 @@ def _payments_for_open_format(tx: Transaction) -> List[Dict[str, Any]]:
             "sequence": leg.sequence,
             "method": leg.method,
             "amount": _decimal_to_float(leg.amount),
+            # What the terminal answered, as the till stored it — D120 1313–1315 of a
+            # card leg (`tax_report_generator.card_fields`).
+            "cardAcquirer": getattr(leg, "card_acquirer", None),
+            "cardBrand": getattr(leg, "card_brand", None),
+            "creditPayments": _credit_payments_of(getattr(leg, "nayax_meta", None)),
         }
         for leg in legs
     ]
+
+
+def _credit_payments_of(meta: Any) -> Optional[int]:
+    """The number of instalments (תשלומים) of a card leg, if the till recorded it."""
+    if not isinstance(meta, dict):
+        return None
+    result = meta.get("result") if isinstance(meta.get("result"), dict) else {}
+    for raw in (meta.get("creditPayments"), result.get("creditPayments")):
+        if raw is None or isinstance(raw, bool):
+            continue
+        try:
+            count = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if count > 0:
+            return count
+    return None
+
+
+def cashier_user_names(db: Session, tenant_id: Optional[uuid.UUID], rows: Iterable[Transaction]) -> Dict[str, str]:
+    """
+    `cashier_id` → the till user's user name (`pos_users.username`), for C100 1233
+    ("מבצע הפעולה — שם המשתמש של מבצע הפעולה"). Only ids of this tenant's till users.
+    """
+    from app.models.pos_user import PosUser
+
+    ids = set()
+    for tx in rows:
+        raw = (tx.cashier_id or "").strip()
+        try:
+            ids.add(uuid.UUID(raw))
+        except (ValueError, AttributeError, TypeError):
+            continue
+    if not ids:
+        return {}
+    query = db.query(PosUser.id, PosUser.username).filter(PosUser.id.in_(list(ids)))
+    if tenant_id is not None:
+        query = query.filter(PosUser.tenant_id == tenant_id)
+    return {str(pid): (name or "") for pid, name in query.all()}
+
+
+def _cashier_name(tx: Transaction, user_names: Optional[Dict[str, str]]) -> str:
+    """
+    C100 1233: a kiosk's own short code; else the till user's user name; else the id as
+    the till sent it when it is not a bare UUID (an older or desktop client's own name or
+    code). An unresolved UUID is not a user name and is left blank.
+    """
+    kiosk = _kiosk_identity.open_format_code(tx.cashier_id)
+    if kiosk:
+        return kiosk
+    raw = (tx.cashier_id or "").strip()
+    if not raw:
+        return ""
+    try:
+        key = str(uuid.UUID(raw))
+    except (ValueError, AttributeError, TypeError):
+        return raw
+    return (user_names or {}).get(key, "")
 
 
 def _customer_for_open_format(tx: Transaction) -> Dict[str, Any]:
@@ -458,7 +573,10 @@ def _customer_for_open_format(tx: Transaction) -> Dict[str, Any]:
 
 
 def transform_transaction_for_open_format(
-    tx: Transaction, global_tax_rate: float, bases: Optional[BaseDocuments] = None
+    tx: Transaction,
+    global_tax_rate: float,
+    bases: Optional[BaseDocuments] = None,
+    user_names: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     status_val = tx.status.value if hasattr(tx.status, "value") else str(tx.status)
     doc_date = tx.document_production_date or tx.created_at
@@ -468,7 +586,14 @@ def transform_transaction_for_open_format(
         "transactionNumber": export_document_number(tx),
         "status": status_val,
         "documentType": tx.document_type or 320,
+        # Stored UTC; the generator writes it in the business's local time.
         "documentProductionDate": doc_date.isoformat() if doc_date else None,
+        # The rate the document was issued at (a fraction, 0.18): its lines' 1265–1268.
+        "vatRate": (
+            _decimal_to_float(getattr(tx, "vat_rate", None))
+            if getattr(tx, "vat_rate", None) is not None
+            else None
+        ),
         "paymentMethod": tx.payment_method,
         "documentDiscount": _decimal_to_float(tx.document_discount),
         "whtDeduction": _decimal_to_float(tx.wht_deduction),
@@ -486,7 +611,9 @@ def transform_transaction_for_open_format(
         # own payment-type code. See `resolve_payment_legs` for how the amounts are
         # apportioned and why.
         "payments": _payments_for_open_format(tx),
-        "cashier": {"name": tx.cashier_id or ""},
+        # A kiosk's documents carry its own operator ("kiosk:<machine>"): field 1233 gets its
+        # short code; a till user's, their user name (`_cashier_name`).
+        "cashier": {"name": _cashier_name(tx, user_names)},
         "customer": _customer_for_open_format(tx),
         "cart": _build_cart_from_items(tx, global_tax_rate, bases),
     }
@@ -502,11 +629,18 @@ def resolve_export_context(
     to_date: Optional[date] = None,
     year: Optional[int] = None,
 ) -> TaxExportContext:
-    start, end, date_range = parse_date_range(mode, from_date=from_date, to_date=to_date, year=year)
+    from app.services.open_format import software
+
+    zone = export_timezone(db, company.tenant_id)
+    start, end, date_range = parse_date_range(mode, from_date=from_date, to_date=to_date, year=year, tz=zone)
     merged = merge_all_settings_layers(company, shop)
     bi = build_business_info(company, shop, merged)
     business_info = business_info_to_dict(bi)
     validate_business_info(business_info)
+    # A000 1034 — the business's branches, not whether this one shop has a code (which
+    # every shop has): only an explicit `businessInfo.hasBranches` setting is taken as is.
+    override = merged.get("businessInfo") if isinstance(merged.get("businessInfo"), dict) else {}
+    business_info["hasBranches"] = company_has_branches(db, company, explicit=override.get("hasBranches"))
     global_tax_rate = _resolve_global_tax_rate(company, shop)
     return TaxExportContext(
         company=company,
@@ -516,7 +650,23 @@ def resolve_export_context(
         date_range=date_range,
         start=start,
         end=end,
+        zone=zone,
+        software_info=software.software_info(db),
     )
+
+
+def company_has_branches(db: Session, company: Company, *, explicit: Any = None, codes: Iterable[Optional[str]] = ()) -> bool:
+    """
+    A000 field 1034 ("1 - בעסק יש סניפים/ענפים"; הבהרה 3): the business has branches when
+    its company has more than one shop, or the export's documents carry more than one
+    branch code — whichever shop the export is for. A `businessInfo.hasBranches: true`
+    setting still turns it on; nothing turns it off for a business with several shops,
+    or two shops' `10000001` would file as the same document.
+    """
+    shops = db.query(Shop.branch_id).filter(Shop.company_id == company.id).all()
+    known = {(row[0] or "").strip() for row in shops} | {(c or "").strip() for c in codes}
+    known.discard("")
+    return len(shops) > 1 or len(known) > 1 or explicit is True
 
 
 def build_tax_open_format_export(
@@ -535,15 +685,29 @@ def build_tax_open_format_export(
         start=ctx.start,
         end=ctx.end,
     )
+    from app.services.open_format import software
+
     refuse_shops_without_branch_code(db, rows, ctx.shop)
     bases = load_base_documents(db, tenant_id, rows)
-    tx_dicts = [transform_transaction_for_open_format(tx, ctx.global_tax_rate, bases) for tx in rows]
+    user_names = cashier_user_names(db, tenant_id, rows)
+    tx_dicts = [
+        transform_transaction_for_open_format(tx, ctx.global_tax_rate, bases, user_names) for tx in rows
+    ]
+    business_info = dict(ctx.business_info)
+    business_info["hasBranches"] = company_has_branches(
+        db, ctx.company, explicit=business_info.get("hasBranches"), codes=[t["branchId"] for t in tx_dicts]
+    )
+    ctx.business_info["hasBranches"] = business_info["hasBranches"]
+    produced_at = datetime.now(ctx.zone)
     result = generate_tax_report(
         tx_dicts,
-        ctx.business_info,
+        business_info,
         ctx.date_range,
-        output_path="",
+        output_path=software.output_path(db, business_info.get("vatNumber", ""), produced_at),
         global_tax_rate=ctx.global_tax_rate,
+        software_info=ctx.software_info,
+        process_date=produced_at,
+        tz=ctx.zone,
     )
     zip_bytes = build_open_format_zip(result.ini_content, result.bkmv_content)
     return result, tx_dicts, zip_bytes

@@ -27,7 +27,22 @@ MANAGED_SETTING_KEYS = (
     "zcreditTerminalNumber",
     "zcreditPinpadId",
     "zcreditMode",
+    # SynqPay's non-secret fields (docs/SPEC_SYNQPAY.md); its API key is a secret like the
+    # Z-Credit password, added by the till's sync only.
+    "synqpayDeviceModel",
+    "synqpayConnection",
+    "synqpayHost",
+    "synqpayProtocol",
+    "synqpayPort",
+    "synqpayTls",
+    "synqpayUsbDevice",
+    "synqpaySerialNumber",
     "outOfStockPolicy",
+    # "פתיחת פריטים אוטומטית אחרי Z" ("off" | "day" | "all") and whether it opens an item
+    # that tracks stock and has none (app/services/availability_reopen.py). Sent to the
+    # tills too: a Z closed with no connection reopens the till's own locks itself.
+    "autoReopenAfterZ",
+    "autoReopenIgnoreStock",
     "tipsEnabled",
     "cashTipsEnabled",
     # payFastCashEnabled, payFastCashTips, payCashEnabled, ... — the eight payment

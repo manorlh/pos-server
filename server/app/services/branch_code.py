@@ -1,10 +1,11 @@
 """
 "קוד סניף" — mandatory for every shop (owner: "חייב שלסניף יהיה קוד").
 
-The code is what the open-format export writes in field 1231 (מזהה סניף/ענף) of every
-document record, and what tells two shops' documents apart in a company's file: till 1
-of each shop can both issue `10000057` (docs/SPEC_DOCUMENT_PREFIX.md), and the branch code
-is the rest of the document's identity. So:
+An **internal** code that identifies the branch (owner: "קוד סניף אינו למס הכנסה" — it is
+not registered with the Tax Authority). It is shown on Zs and reports, and the open-format
+export writes it in field 1231 (מזהה סניף/ענף) of every document record, because that is
+what tells two shops' documents apart in a company's file: till 1 of each shop can both
+issue `10000057` (docs/SPEC_DOCUMENT_PREFIX.md). So:
 
 * **Required** on create and on update (it can be changed, never cleared).
 * **Format.** Digits only, 1–7 characters: field 1231 is X(7) (`pad_right(..., 7)` in
@@ -15,8 +16,8 @@ is the rest of the document's identity. So:
   every shop, which is the ambiguity this rule exists to prevent.
 
 Shops that had none were given one by migration f3a9c2d7e1b4 (lowest free per company,
-in creation order) and are flagged `branch_id_auto_assigned` until someone saves the
-code on the dashboard ("קוד סניף הוקצה אוטומטית — ודאו מול רו״ח").
+in creation order). `branch_id_auto_assigned` records that, until the code is next saved;
+nothing asks for it to be confirmed — the code is internal.
 """
 from __future__ import annotations
 
@@ -31,7 +32,7 @@ from sqlalchemy.orm import Session
 BRANCH_CODE_MAX_LEN = 7
 BRANCH_CODE_RE = re.compile(rf"^[0-9]{{1,{BRANCH_CODE_MAX_LEN}}}$")
 
-REQUIRED_MESSAGE = "קוד סניף הוא שדה חובה — משמש בקובץ מס הכנסה ובמספור המסמכים."
+REQUIRED_MESSAGE = "קוד סניף הוא שדה חובה — קוד פנימי שמזהה את הסניף בדוחות Z ובדוחות."
 INVALID_MESSAGE = f"קוד סניף: ספרות בלבד, בין 1 ל-{BRANCH_CODE_MAX_LEN} תווים."
 
 
@@ -71,7 +72,7 @@ def check_branch_code(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"קוד הסניף {code} כבר משמש את הסניף \"{other.name}\" באותה חברה. "
-                "לכל סניף קוד משלו — הוא מזהה את מסמכי הסניף בקובץ מס הכנסה."
+                "לכל סניף בחברה קוד משלו — הוא מזהה את הסניף בדוחות ובמספור המסמכים."
             ),
         )
     return code

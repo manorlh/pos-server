@@ -168,6 +168,9 @@ TIP_RESETTABLE_KEYS = (
     "payInstallmentsMax",
     # "סדר אמצעי התשלום": the dashboard's "איפוס לברירת מחדל / ירושה" sends `null`.
     PAY_ORDER_KEY,
+    # "פתיחת פריטים אוטומטית אחרי Z": "ירושה" sends `null`.
+    "autoReopenAfterZ",
+    "autoReopenIgnoreStock",
 )
 
 

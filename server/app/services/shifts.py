@@ -475,10 +475,14 @@ def note_documents_after_close(
     machine_id: Optional[uuid.UUID] = None,
     moved_in: Optional[dict] = None,
     amended: Optional[dict] = None,
+    written: Optional[dict] = None,
     now: Optional[datetime] = None,
 ) -> None:
     """
     Documents were written into (or out of) shifts that are already closed.
+
+    `written` maps shift id → the documents this push wrote into it new or moved in: in a
+    shift a Z already took, exactly those are carried into the next Z (§4.6.3).
 
     `touched` maps shift id → how many of the written documents were *new* to the cloud.
     For each closed shift:
@@ -529,11 +533,14 @@ def note_documents_after_close(
         if z is not None:
             z.late_documents = int(z.late_documents or 0) + late
             z.amended_documents = int(z.amended_documents or 0) + rewritten
-            if late and (z.header or {}).get("producedBySupport"):
-                # The till came back with documents of support's Z (offline till Z §4.6).
-                from app.services.support_z import note_late_documents
+            # Documents a Z did not count (arrived, or moved in, after it): carried into the
+            # next Z — every document in exactly one Z (offline till Z §4.6.3).
+            from app.services import late_documents
 
-                note_late_documents(db, z, shift, late)
+            if late:
+                late_documents.carry(
+                    db, shift, z, doc_ids=(written or {}).get(shift_id) if written is not None else None, now=now,
+                )
         logger.warning(
             "shift %s is in Z %s: %s document(s) arrived or moved in after it, %s rewritten",
             shift.id, shift.z_report_id, late, rewritten,
@@ -702,6 +709,12 @@ def check_close_preconditions(
         and present[tx_id][0] != shift_id
         and present[tx_id][1] is None
     ]
+    if stale:
+        # A late document carried out of a support Z's shift into its till's next Z stays
+        # there (offline till Z §4.6.3): never "stale" — re-pushing would not move it back.
+        from app.services.late_documents import is_carry_shift
+
+        stale = [tx_id for tx_id in stale if not is_carry_shift(db, present[tx_id][0])]
     return missing, stale
 
 

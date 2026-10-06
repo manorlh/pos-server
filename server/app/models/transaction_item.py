@@ -67,6 +67,13 @@ class TransactionItem(Base):
     #: product's alerts before it was added — `[{at, by, byName, alerts: [{text, kind}]}]`,
     #: one per confirmed add. Null: nothing had to be confirmed.
     alerts_ack = Column(JSON, nullable=True)
+    #: "תפריטים" (docs/SPEC_MENUS.md): the menu that was active on the till when the line
+    #: was added, as the till sent it — not a key (a deleted menu stays named) — its name
+    #: then, and where the line's price came from: "menu" (the menu's own price) or
+    #: "catalog". Null: no menu was active, or a till that predates menus.
+    menu_id = Column(UUID(as_uuid=True), nullable=True)
+    menu_name = Column(String(80), nullable=True)
+    price_source = Column(String(16), nullable=True)
 
     transaction = relationship("Transaction", back_populates="items")
     product = relationship("Product")

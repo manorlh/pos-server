@@ -165,6 +165,11 @@ def validate_pairing_code(
     )
 
     if pairing_code.target_machine_id is not None:
+        # "הוחלפה קופה" (docs/SPEC_OFFLINE_TILL_Z.md §4.6.2): the old device, before the new
+        # one takes its place.
+        from app.services import till_replacement
+
+        replaced_before = till_replacement.snapshot(db, pairing_code.target_machine_id)
         pos_machine = adopt_machine(
             db,
             pairing_code.target_machine_id,
@@ -181,6 +186,7 @@ def validate_pairing_code(
             pos_machine.device_model = replacement_model
         if pairing_code.device_model:
             pos_machine.device_model_chosen = pairing_code.device_model
+        till_replacement.record(db, pos_machine, pairing_code, replaced_before, device_info=device_info)
     else:
         pos_machine = create_pos_machine(
             db,
@@ -215,6 +221,13 @@ def validate_pairing_code(
     device_profile.apply_on_pairing(db, pairing_code, pos_machine)
 
     return pos_machine
+
+
+def _serial_source(device_info: Optional[dict]) -> Optional[str]:
+    """`device_info.serial_source`, beside a serial (app/services/device_identity.py)."""
+    from app.services.device_identity import serial_source_from_device_info
+
+    return serial_source_from_device_info(device_info)
 
 
 def create_pos_machine(
@@ -258,6 +271,8 @@ def create_pos_machine(
         # identifiable by the number printed on the box from the moment it is paired,
         # rather than only after its first heartbeat. Heartbeats then keep it fresh.
         serial_number=serial_from_device_info(device_info),
+        # Where it came from: the vendor SDK, Android's own, or `ro.serialno` (device_identity).
+        serial_source=_serial_source(device_info),
     )
     db.add(pos_machine)
     db.flush()
@@ -350,6 +365,16 @@ def adopt_machine(
 
     if device_info:
         machine.device_info = device_info
+        # The new unit's serial and its source at once; the old unit's SIMs and addresses go
+        # (app/services/device_identity.py) — its first heartbeat reports its own.
+        if serial_from_device_info(device_info):
+            machine.serial_number = serial_from_device_info(device_info)
+            machine.serial_source = _serial_source(device_info)
+        machine.cellular = None
+        machine.cellular_reported_at = None
+        machine.sim_carriers = None
+        machine.phone_numbers = None
+        machine.lan_ip = None
     if machine_name:
         machine.name = machine_name
     machine.pairing_status = PairingStatus.PAIRED if machine.shop_id is None else PairingStatus.ASSIGNED

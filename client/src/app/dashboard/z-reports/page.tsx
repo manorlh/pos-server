@@ -28,7 +28,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { OverShort } from '@/components/dashboard/shifts/shift-parts';
 import { ZBadges } from '@/components/dashboard/z-report/z-badges';
 import { ZScopeLine } from '@/components/dashboard/z-report/z-scope-line';
-import { BranchCode } from '@/components/dashboard/z-report/z-identity';
+import { BranchCode, ZRun } from '@/components/dashboard/z-report/z-identity';
 import { NumberPill } from '@/components/dashboard/number-pill';
 import { numberedLabel } from '@/lib/orgNumber';
 import { useZNumberLabel } from '@/components/dashboard/z-report/z-number';
@@ -390,6 +390,7 @@ export default function ZReportsPage() {
                     {z.areaName ? <span>· {z.areaName}</span> : null}
                     {z.legacy && z.machineName ? <span>· {z.machineName}</span> : null}
                     {z.branchCode ? <span>· <BranchCode code={z.branchCode} /></span> : null}
+                    <ZRun z={z} prefix="· " />
                   </div>
                   <ZScopeLine z={z} compact />
                   <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 text-xs">
@@ -479,6 +480,8 @@ export default function ZReportsPage() {
                         {zNumberLabel(z)}
                       </Link>
                       <ZBadges z={z} />
+                      {/* One till can have two "Z 1": a later run says when it started. */}
+                      <ZRun z={z} className="block text-muted-foreground text-xs font-normal" />
                     </TableCell>
                     <TableCell>{formatDate(z.businessDate)}</TableCell>
                     <TableCell>{z.productionDate ? formatDate(z.productionDate) : '—'}</TableCell>

@@ -695,6 +695,9 @@ def upsert_transactions(
     # push rewrote in place — both flagged if that shift turns out to be in a Z.
     moved_in: Dict[uuid.UUID, int] = {}
     amended: Dict[uuid.UUID, int] = {}
+    # Per closed shift, the documents this push wrote into it new or moved in — those a Z
+    # that already took the shift did not count, carried into the next Z (§4.6.3).
+    written_into: Dict[uuid.UUID, List[uuid.UUID]] = {}
 
     # Pre-load existing rows in one query so we can classify accepted vs duplicate.
     incoming_ids = [tx.id for tx in transactions]
@@ -825,6 +828,13 @@ def upsert_transactions(
                         tx.id, previous.shift_id, held[1], target_shift_id,
                     )
                     target_shift_id = previous.shift_id
+                else:
+                    # A late document the cloud carried out of a support Z's shift stays in
+                    # its carry shift, bound for the till's next Z (offline till Z §4.6.3).
+                    from app.services.late_documents import is_carry_shift
+
+                    if is_carry_shift(db, previous.shift_id):
+                        target_shift_id = previous.shift_id
 
             # Before the row is rewritten: would this push change what the document
             # contributes to its shift's figures? Only asked for a closed shift, where a
@@ -906,6 +916,10 @@ def upsert_transactions(
                         oth_approved_by=getattr(it, "oth_approved_by", None),
                         # "הודעות לעובד על פריט": who confirmed the alerts, and when.
                         alerts_ack=_product_alerts.item_ack(it),
+                        # "תפריטים": the menu active when the line was added, and its price's source.
+                        menu_id=_promotion_uuid(getattr(it, "menu_id", None)),
+                        menu_name=getattr(it, "menu_name", None),
+                        price_source=getattr(it, "price_source", None),
                     )
                     for i, it in enumerate(tx.items)
                 ])
@@ -1037,8 +1051,10 @@ def upsert_transactions(
                     touched_closed.setdefault(target_shift_id, 0)
                     if previous is None:
                         touched_closed[target_shift_id] += 1
+                        written_into.setdefault(target_shift_id, []).append(tx.id)
                     elif moved:
                         moved_in[target_shift_id] = moved_in.get(target_shift_id, 0) + 1
+                        written_into.setdefault(target_shift_id, []).append(tx.id)
                     elif rewrites_fiscal:
                         amended[target_shift_id] = amended.get(target_shift_id, 0) + 1
                 if moved and previous.shift_id is not None:
@@ -1084,7 +1100,7 @@ def upsert_transactions(
 
     # A document for a shift that is already closed: recompute or flag (see shifts).
     note_documents_after_close(
-        db, touched_closed, machine_id=machine.id, moved_in=moved_in, amended=amended
+        db, touched_closed, machine_id=machine.id, moved_in=moved_in, amended=amended, written=written_into
     )
     return results
 

@@ -22,10 +22,12 @@ import {
   numberRanges,
   SUPPORT_Z_REASONS,
   supportZBlock,
+  supportZReady,
   type SupportZPreview,
   type SupportZReason,
   type SupportZRecord,
 } from '@/lib/supportZ';
+import { CloudDataConfirm, ZDataStateWarning } from '@/components/dashboard/z-data-state';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
   Dialog,
@@ -41,10 +43,16 @@ async function fetchPreview(machineId: string): Promise<SupportZPreview> {
   return data;
 }
 
-async function produce(machineId: string, reason: SupportZReason, note: string): Promise<SupportZRecord> {
+async function produce(
+  machineId: string,
+  reason: SupportZReason,
+  note: string,
+  confirmData: boolean,
+): Promise<SupportZRecord> {
   const { data } = await api.post<SupportZRecord>(`/machines/${machineId}/support-z`, {
     reason,
     ...(note.trim() ? { note: note.trim() } : {}),
+    ...(confirmData ? { confirmData: true } : {}),
   });
   return data;
 }
@@ -70,9 +78,10 @@ function SupportZDialog({ machineId, onClose }: { machineId: string; onClose: ()
   const preview = useQuery({ queryKey: ['support-z', machineId], queryFn: () => fetchPreview(machineId) });
   const [reason, setReason] = useState<SupportZReason | null>(null);
   const [note, setNote] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
   const [done, setDone] = useState<SupportZRecord | null>(null);
   const run = useMutation({
-    mutationFn: () => produce(machineId, reason!, note),
+    mutationFn: () => produce(machineId, reason!, note, confirmed),
     onSuccess: (record) => {
       setDone(record);
       void qc.invalidateQueries({ queryKey: ['machine', machineId] });
@@ -102,9 +111,9 @@ function SupportZDialog({ machineId, onClose }: { machineId: string; onClose: ()
             <p className="font-medium">
               {done.zNumber != null ? t('resultTill', { number: done.zNumber }) : t('resultShop')}
             </p>
-            {done.skippedNumbers.length > 0 ? (
-              <p className="text-amber-700 dark:text-amber-300">
-                {t('skipped', { numbers: numberRanges(done.skippedNumbers) })}
+            {(done.reportedByTill?.numbers.length ?? 0) > 0 ? (
+              <p className="text-muted-foreground">
+                {t('reported', { numbers: numberRanges(done.reportedByTill!.numbers) })}
               </p>
             ) : null}
             <div className="flex flex-wrap gap-2 pt-1">
@@ -125,6 +134,8 @@ function SupportZDialog({ machineId, onClose }: { machineId: string; onClose: ()
             </p>
             {block === 'online' ? <p className="text-destructive">{t('blockOnline')}</p> : null}
             {block === 'nothing' ? <p className="text-muted-foreground">{t('blockNothing')}</p> : null}
+            {/* The state first (§4.6.1): what may not have reached the cloud, prominently. */}
+            <ZDataStateWarning tills={p.state.tills} />
             <div className="rounded-md border p-2 space-y-1">
               <p className="font-medium">
                 {t('shifts', {
@@ -163,9 +174,9 @@ function SupportZDialog({ machineId, onClose }: { machineId: string; onClose: ()
                   ? t('shopLocal')
                   : t('shopCloud')}
             </p>
-            {p.skippedNumbers.length > 0 ? (
-              <p className="text-amber-700 dark:text-amber-300">
-                {t('skipped', { numbers: numberRanges(p.skippedNumbers) })}
+            {p.reportedByTill.numbers.length > 0 ? (
+              <p className="text-muted-foreground">
+                {t('reported', { numbers: numberRanges(p.reportedByTill.numbers) })}
               </p>
             ) : null}
             {p.documentCounters.gaps.map((g) => (
@@ -191,6 +202,9 @@ function SupportZDialog({ machineId, onClose }: { machineId: string; onClose: ()
               onChange={(e) => setNote(e.target.value)}
             />
             <p className="text-xs text-muted-foreground">{t('audit')}</p>
+            {p.state.requiresConfirmation ? (
+              <CloudDataConfirm checked={confirmed} onChange={setConfirmed} disabled={run.isPending} />
+            ) : null}
           </div>
         ) : null}
 
@@ -201,7 +215,7 @@ function SupportZDialog({ machineId, onClose }: { machineId: string; onClose: ()
           {!done ? (
             <Button
               variant="destructive"
-              disabled={!p || block !== null || reason === null || run.isPending}
+              disabled={!p || !supportZReady(p, reason, confirmed) || run.isPending}
               onClick={() => run.mutate()}
             >
               {run.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}

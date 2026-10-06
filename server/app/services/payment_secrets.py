@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -31,7 +32,12 @@ from app.models.payment_secret import PAYMENT_SECRET_LEVELS, PaymentIntegrationS
 #: Every secret a layer may hold, by its settings key.
 ZCREDIT_PASSWORD = "zcreditPassword"
 ZCREDIT_KEY = "zcreditKey"
-SECRET_KEYS: Tuple[str, ...] = (ZCREDIT_PASSWORD, ZCREDIT_KEY)
+#: The SynqPay terminal's API key, from its pairing (docs/SPEC_SYNQPAY.md).
+SYNQPAY_API_KEY = "synqpayApiKey"
+SECRET_KEYS: Tuple[str, ...] = (ZCREDIT_PASSWORD, ZCREDIT_KEY, SYNQPAY_API_KEY)
+
+#: A SynqPay API key as its pairing hands it out ("1234abcd" in the docs): letters and digits.
+_SYNQPAY_API_KEY = re.compile(r"^[A-Za-z0-9]{1,64}$")
 
 #: A secret's longest accepted value.
 SECRET_MAX = 200
@@ -117,13 +123,20 @@ def secret_patch(data: Any) -> Dict[str, Optional[str]]:
     """
     sent = getattr(data, "model_fields_set", set())
     out: Dict[str, Optional[str]] = {}
-    for field, key in (("zcredit_password", ZCREDIT_PASSWORD), ("zcredit_key", ZCREDIT_KEY)):
+    for field, key in (
+        ("zcredit_password", ZCREDIT_PASSWORD),
+        ("zcredit_key", ZCREDIT_KEY),
+        ("synqpay_api_key", SYNQPAY_API_KEY),
+    ):
         if field not in sent:
             continue
         raw = getattr(data, field, None)
         if is_mask(raw):
             continue
-        out[key] = clean_secret(raw)
+        value = clean_secret(raw)
+        if key == SYNQPAY_API_KEY and value is not None and not _SYNQPAY_API_KEY.match(value):
+            raise PaymentSecretError("secret_invalid")
+        out[key] = value
     return out
 
 

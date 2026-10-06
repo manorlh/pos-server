@@ -47,8 +47,11 @@ from app.models.menu import (
     ModifierOption,
     PrepNotePreset,
     TransactionItemPart,
+    UPSELL_STEPS,
     UpsellRule,
     UpsellStat,
+    upsell_place_value,
+    upsell_places_of,
 )
 from app.models.pos_machine import POSMachine
 from app.models.product import Product
@@ -1058,22 +1061,55 @@ def upsell_options(r: UpsellRule) -> List[Dict[str, str]]:
     return out
 
 
+def upsell_where(places) -> Optional[str]:
+    """The old single "where" of a set of channels (what a till from before the kiosk reads)."""
+    chosen = set(places)
+    if {"quick", "tables"} <= chosen:
+        return "both"
+    if "quick" in chosen:
+        return "quick"
+    if "tables" in chosen:
+        return "tables"
+    return None
+
+
+def upsell_image_url(url: Optional[str]) -> Optional[str]:
+    """A rule's picture as a device fetches it: a path on this server made absolute."""
+    if not url:
+        return None
+    if url.startswith("/"):
+        from app.services.local_media import _base_url
+        return _base_url() + url
+    return url
+
+
+def _step_category(code: str) -> Optional[str]:
+    name, _, arg = str(code).partition(":")
+    return arg if name == "enter_category" and arg else None
+
+
 def upsell_out(r: UpsellRule, names: Dict[str, str], can_edit: bool) -> Dict[str, Any]:
     options = upsell_options(r)
+    places = list(upsell_places_of(r.place))
     return {
         "id": str(r.id),
         "name": r.name,
         "companyId": _s(r.company_id),
         "triggerType": r.trigger_type,
         "triggerIds": [str(i) for i in (r.trigger_ids or [])],
-        "triggerNames": [names.get(str(i)) for i in (r.trigger_ids or [])],
+        "triggerNames": [
+            names.get(_step_category(i) or "") if r.trigger_type == "transition" else names.get(str(i))
+            for i in (r.trigger_ids or [])
+        ],
         "action": r.action,
         "productId": _s(r.product_id),
         "productName": names.get(str(r.product_id)) if r.product_id is not None else None,
         "options": [{**o, "name": names.get(o["id"])} for o in options],
         "prompt": r.prompt,
         "display": r.display or "card",
-        "where": r.place or "both",
+        "where": upsell_where(places),
+        "places": places,
+        "imageUrl": r.image_url,
         "skipIfPresent": True if r.skip_if_present is None else bool(r.skip_if_present),
         "oncePerOrder": bool(r.once_per_order),
         "message": r.message,
@@ -1095,6 +1131,11 @@ def _upsell_names(db: Session, rules: List[UpsellRule]) -> Dict[str, str]:
         if r.product_id is not None:
             product_ids.add(r.product_id)
         for i in r.trigger_ids or []:
+            if r.trigger_type == "transition":
+                ident = _as_uuid(_step_category(i))
+                if ident is not None:
+                    category_ids.add(ident)
+                continue
             ident = _as_uuid(i)
             if ident is None:
                 continue
@@ -1122,6 +1163,8 @@ def list_upsells(db: Session, user: User, tenant_id) -> Dict[str, Any]:
     return {
         "items": [upsell_out(r, names, may_write_company(db, user, tenant_id, r.company_id)) for r in rows],
         "canCreate": user.role in WRITE_ROLES,
+        # The steps a "transition" rule can name, per channel (the editor offers only these).
+        "steps": {place: list(codes) for place, codes in UPSELL_STEPS.items()},
     }
 
 
@@ -1137,6 +1180,8 @@ def _apply_upsell(db: Session, tenant_id, r: UpsellRule, body: UpsellIn) -> None
         _check_products(db, tenant_id, body.trigger_ids)
     elif body.trigger_type == "category":
         _check_categories(db, tenant_id, body.trigger_ids)
+    elif body.trigger_type == "transition":
+        _check_categories(db, tenant_id, [c for c in (_step_category(i) for i in body.trigger_ids) if c])
     r.name = body.name
     r.company_id = body.company_id
     r.trigger_type = body.trigger_type
@@ -1148,7 +1193,8 @@ def _apply_upsell(db: Session, tenant_id, r: UpsellRule, body: UpsellIn) -> None
     r.options = None if legacy else [{"type": o.type, "id": str(o.id)} for o in options]
     r.prompt = body.prompt
     r.display = body.display
-    r.place = body.where
+    r.place = upsell_place_value(body.places)
+    r.image_url = body.image_url
     r.skip_if_present = body.skip_if_present
     r.once_per_order = body.once_per_order
     r.message = body.message
@@ -1290,6 +1336,7 @@ def menu_block(db: Session, machine: POSMachine) -> Dict[str, Any]:
 
     children = _category_tree(db, tenant_id)
     upsells = []
+    kiosk_upsells = []
     for r in (
         db.query(UpsellRule)
         .filter(UpsellRule.tenant_id == tenant_id, UpsellRule.is_active.is_(True))
@@ -1301,16 +1348,24 @@ def menu_block(db: Session, machine: POSMachine) -> Dict[str, Any]:
         triggers = [str(i) for i in (r.trigger_ids or [])]
         if r.trigger_type == "category":
             triggers = _with_descendants(triggers, children)
-        display = "popup" if r.trigger_type == "order" else (r.display or "card")
-        place = r.place or "both"
+        elif r.trigger_type == "transition":
+            # Entering a category: its sub-categories too, as a category trigger.
+            expanded: List[str] = []
+            for code in triggers:
+                category = _step_category(code)
+                more = [f"enter_category:{c}" for c in _with_descendants([category], children)] if category else [code]
+                expanded += [c for c in more if c not in expanded]
+            triggers = expanded
+        display = "popup" if r.trigger_type in ("order", "transition") else (r.display or "card")
+        places = list(upsell_places_of(r.place))
         # A till that predates "חלון בחירה" reads `productId` only: it gets the rules it
         # can honour as they are (one product, the card, both places, a product or
         # category trigger) and skips the rest (a null productId).
         legacy = (
-            r.product_id is not None and display == "card" and place == "both"
+            r.product_id is not None and display == "card" and {"quick", "tables"} <= set(places)
             and r.trigger_type in ("product", "category")
         )
-        upsells.append({
+        (upsells if upsell_where(places) else kiosk_upsells).append({
             "id": str(r.id),
             "name": r.name,
             "triggerType": r.trigger_type,
@@ -1330,7 +1385,9 @@ def menu_block(db: Session, machine: POSMachine) -> Dict[str, Any]:
             ],
             "prompt": r.prompt,
             "display": display,
-            "where": place,
+            "where": upsell_where(places) or "both",
+            "places": places,
+            "imageUrl": upsell_image_url(r.image_url),
             "skipIfPresent": True if r.skip_if_present is None else bool(r.skip_if_present),
             "oncePerOrder": bool(r.once_per_order),
         })
@@ -1393,6 +1450,7 @@ def menu_block(db: Session, machine: POSMachine) -> Dict[str, Any]:
         "notes": notes,
         "meals": meals,
         "upsells": upsells,
+        "kioskUpsells": kiosk_upsells,
         "courses": courses,
         "productLimits": limits,
     }

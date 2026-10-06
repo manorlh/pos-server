@@ -19,6 +19,7 @@ from app.models.product_availability_override import (
     MachineProductOverride,
 )
 from app.models.category_availability_override import CategoryAvailabilityOverride
+from app.models.availability_reopen import AvailabilityDayClose, AvailabilityReopen
 from app.models.machine_catalog_item import MachineCatalogItem
 from app.models.shop_category_override import ShopCategoryOverride
 from app.models.shift import Shift, ShiftStatus
@@ -29,6 +30,7 @@ from app.models.z_report import ZReport
 from app.models.pos_user import PosUser, PosUserRole
 from app.models.shop_z_sequence import ShopZSequence
 from app.models.machine_z_sequence import MachineZSequence
+from app.models.shop_z_remote_part import ShopZRemotePart
 from app.models.shop_register_sequence import ShopRegisterSequence
 from app.models.org_number_sequence import OrgNumberSequence
 from app.models.tenant_sku_sequence import TenantSkuSequence
@@ -56,6 +58,7 @@ from app.models.prepaid_voucher import (
     PrepaidVoucher,
     PrepaidVoucherBatch,
     PrepaidVoucherBatchItem,
+    PrepaidVoucherEvent,
     PrepaidVoucherRedemption,
 )
 from app.models.promotion import Promotion, TransactionPromotion
@@ -82,6 +85,15 @@ from app.models.pos_user_session import PosUserSession
 # "נוכחות עובדים" (docs/SPEC_ATTENDANCE.md) — separate from PosUserSession on purpose.
 from app.models.attendance import AttendanceAdjustment, AttendanceBreak, AttendanceShift, EmployeeRole
 from app.models.menu_broadcast import CatalogPublication, ShopWorkTypes
+# "תפריטים" (docs/SPEC_MENUS.md) — named sales menus by schedule, not the modifier layer.
+from app.models.catalog_menu import (
+    CatalogMenu,
+    CatalogMenuAssignment,
+    CatalogMenuCategory,
+    CatalogMenuFallback,
+    CatalogMenuProduct,
+    CatalogMenuSyncState,
+)
 from app.models.payment_secret import PaymentIntegrationSecret
 # The self-order kiosk (app/services/kiosk_control.py) — not the device lock `kioskMode`.
 from app.models.kiosk import (
@@ -92,6 +104,8 @@ from app.models.kiosk import (
     KioskPickupCounter,
     KioskSettings,
 )
+# The kiosk's alerts to the tills and its close with the shop Z (docs/SPEC_KIOSK.md §16).
+from app.models.kiosk_ops import KioskAlert, KioskCloseRequest
 # "שירות הודעות ו-019" + "מועדון לקוחות" (docs/SPEC_NOTIFICATIONS_CLUB.md).
 from app.models.outbox import OutboxEvent
 from app.models.notifications import (
@@ -150,6 +164,7 @@ __all__ = [
     "ShiftCloseRequest", "ShiftCloseRequestStatus",
     "TillZRequest", "TillZRequestStatus",
     "MachineZSequence",
+    "ShopZRemotePart",
     "CardTransmission", "CardTransmissionItem", "TransmitRequest", "TransmitRequestStatus",
     "TillParameter", "TillParameterValue",
     "OfflineAuthorization", "OfflineAuthorizationItem",
@@ -158,6 +173,7 @@ __all__ = [
     "TillMessage", "TillMessageReceipt",
     "AuditException", "ExceptionRuleValue", "TillEvent",
     "PrepaidVoucherBatch", "PrepaidVoucherBatchItem", "PrepaidVoucher", "PrepaidVoucherRedemption",
+    "PrepaidVoucherEvent",
     "Promotion", "TransactionPromotion",
     "TableZone", "DiningTable", "TableOrder", "TableEvent", "TableCancelReason", "TableReservation", "PlatformSetting",
     "KitchenPrinter", "KitchenPrinterRoute", "KitchenPrintJob",
@@ -168,6 +184,8 @@ __all__ = [
     "PosUserSession",
     "EmployeeRole", "AttendanceShift", "AttendanceBreak", "AttendanceAdjustment",
     "CatalogPublication", "ShopWorkTypes",
+    "CatalogMenu", "CatalogMenuAssignment", "CatalogMenuCategory", "CatalogMenuFallback",
+    "CatalogMenuProduct", "CatalogMenuSyncState",
     "PaymentIntegrationSecret",
     "OutboxEvent",
     "Campaign", "CampaignRecipient", "DeliveryEvent", "Notification", "NotificationAttempt",

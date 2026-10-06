@@ -20,6 +20,7 @@ import {
   BadgePercent,
   BarChart3,
   BookOpenCheck,
+  BookOpenText,
   Boxes,
   Calculator,
   CalendarClock,
@@ -137,6 +138,8 @@ export const NAV_SECTIONS: NavSection[] = [
       // The menu layer: modifier groups, note chips and courses; and the till's upsells.
       { href: '/dashboard/modifiers', labelKey: 'modifiers', icon: ChefHat },
       { href: '/dashboard/upsells', labelKey: 'upsells', icon: Sparkles },
+      // "תפריטים": sales menus by schedule (בוקר, צהריים, הפי האוור…) and where they apply.
+      { href: '/dashboard/menus', labelKey: 'catalogMenus', icon: BookOpenText },
       // Both of these used to live at /dashboard/shops/… while being shown as
       // top-level items, and would now collide with the /dashboard/shops/[id]
       // drill-down. They are top-level routes to match where they appear.

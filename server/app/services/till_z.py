@@ -463,6 +463,17 @@ def _produce_offline(db: Session, machine: POSMachine, body: TillZIn, now: datet
     # keeps its Z exactly as printed. Supposed to be impossible: the till is the run's
     # only producer, and the cloud makes no Z for it while it may be producing (§4.4).
     expected = last_machine_z_number(db, machine.id) + 1
+    # Numbered in another run of the till (it was made independent since, which starts its
+    # Zs at 1 — docs/SPEC_INDEPENDENT_TILL.md §3.1): never filed into this one.
+    from app.services.z_sequence import current_machine_epoch
+
+    epoch_now = current_machine_epoch(db, machine.id)[0]
+    if off.machine_sequence_epoch is not None and off.machine_sequence_epoch != epoch_now:
+        raise _offline_conflict(
+            db, machine, body, "offline_z_other_sequence",
+            zNumber=number, expectedNumber=expected,
+            zEpoch=off.machine_sequence_epoch, currentEpoch=epoch_now,
+        )
     if number != expected:
         holder = machine_z_number_holder(db, machine.id, number)
         extra = {"takenByZReportId": str(holder.id)} if holder is not None else {}
@@ -510,6 +521,8 @@ def _produce_offline(db: Session, machine: POSMachine, body: TillZIn, now: datet
             z_id=off.id,
             machine_sequence_number=number,
             allow_empty=True,
+            # Its paper never had the cloud's carried late documents (§4.6.3).
+            leave_late_carry=True,
         )
     except ZBuildRefused as refused:
         logger.warning("offline till Z %s of machine %s refused: %s", off.id, machine.id, refused.code)
@@ -585,16 +598,18 @@ def till_z_history(
     """
     now = _now(now)
     base = db.query(ZReport).filter(ZReport.machine_id == machine.id, ZReport.origin == ZOrigin.TILL)
+    # By run, then number: an independent till starts again at 1 (SPEC_INDEPENDENT_TILL §3.1).
+    by_run = (ZReport.machine_sequence_epoch.desc(), ZReport.machine_sequence_number.desc())
     rows = (
         base.filter(ZReport.closed_at >= now - timedelta(days=days))
-        .order_by(ZReport.machine_sequence_number.desc())
+        .order_by(*by_run)
         .limit(TILL_Z_HISTORY_MAX)
         .all()
     )
-    newest = base.order_by(ZReport.machine_sequence_number.desc()).first()
+    newest = base.order_by(*by_run).first()
     if newest is not None and all(z.id != newest.id for z in rows):
         rows.append(newest)
-    return sorted(rows, key=lambda z: z.machine_sequence_number or 0)
+    return sorted(rows, key=lambda z: (z.machine_sequence_epoch or 0, z.machine_sequence_number or 0))
 
 
 def _shown(value: Any) -> str:
@@ -718,6 +733,17 @@ def apply_offline_report(machine: POSMachine, block, *, now: Optional[datetime] 
         machine.offline_till_z_pending = max(0, int(block.pending))
     if block.conflict is not None:
         machine.offline_till_z_conflict = bool(block.conflict)
+    epoch = getattr(block, "epoch", None)
+    if block.last_number is not None and epoch is not None:
+        # A report of another run of the till (SPEC_INDEPENDENT_TILL §3.1) says nothing of
+        # the current run's numbers.
+        from sqlalchemy.orm import object_session
+
+        from app.services.z_sequence import current_machine_epoch
+
+        session = object_session(machine)
+        if session is not None and int(epoch) != current_machine_epoch(session, machine.id)[0]:
+            block = block.model_copy(update={"last_number": None})
     if block.last_number is not None:
         # Never down (§4.7): a number the device printed stays its, whatever a later
         # report says — support's Z is numbered after it (§4.6).

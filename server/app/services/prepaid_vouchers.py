@@ -20,6 +20,14 @@ The rules, and why:
   set. Another tenant's voucher is "not found" — a till learns nothing about it.
 * **The QR carries only the code** ("PV:" + 16 characters of an unambiguous alphabet,
   80 bits of randomness), never a balance or a name: the paper proves nothing by itself.
+  A batch may print a Code 128 line barcode instead (`barcode_type`), carrying the same
+  "PV:" + code, and may print the code itself under it (`show_code`).
+* **Production in groups** ("קבוצות", docs/SPEC_VOUCHER_PRODUCTION.md): a run of 1000 in
+  groups of 10 gives every voucher a `group_no` (1..100) when it is issued — fixed, so an
+  envelope keeps its number. The last group is smaller when the count does not divide.
+  More vouchers later continue with the next group numbers. A whole group can be
+  cancelled in one action (a lost envelope), and every such action is in the batch's
+  audit trail (`prepaid_voucher_events`).
 """
 from __future__ import annotations
 
@@ -40,6 +48,7 @@ from app.models.prepaid_voucher import (
     PrepaidVoucher,
     PrepaidVoucherBatch,
     PrepaidVoucherBatchItem,
+    PrepaidVoucherEvent,
     PrepaidVoucherRedemption,
 )
 from app.models.product import CatalogLevel, Product
@@ -82,6 +91,13 @@ PARTIAL_NOT_ALLOWED = "prepaid_voucher_partial_not_allowed"
 INSUFFICIENT = "prepaid_voucher_insufficient"
 ITEM_NOT_ON_VOUCHER = "prepaid_voucher_item_not_on_voucher"
 REQUEST_CONFLICT = "prepaid_voucher_request_conflict"
+# Groups.
+GROUP_NOT_FOUND = "prepaid_voucher_group_not_found"
+ALREADY_GROUPED = "prepaid_voucher_already_grouped"
+NOT_GROUPED = "prepaid_voucher_not_grouped"
+
+#: What a voucher's barcode can be: a QR (2D) or a Code 128 line barcode (1D).
+BARCODE_TYPES = ("qr", "code128")
 
 
 def _now() -> datetime:
@@ -253,16 +269,45 @@ def _validate_products(db: Session, tenant_id, company_id, items) -> List[Produc
 # ── Dashboard writes ──────────────────────────────────────────────────────────
 
 
-def _issue(db: Session, batch: PrepaidVoucherBatch, count: int) -> List[PrepaidVoucher]:
+def group_plan(count: int, size: Optional[int], first_group: int = 1) -> List[Dict[str, int]]:
+    """
+    [count] vouchers in groups of [size]: `[{group, offset, count}]` in order, numbered from
+    [first_group]; the last group holds what is left (1005 in tens: 100 of 10, then 1 of 5).
+    Empty when not grouped (no size).
+    """
+    if not size or size < 1 or count < 1:
+        return []
+    return [
+        {"group": first_group + n, "offset": off, "count": min(size, count - off)}
+        for n, off in enumerate(range(0, count, size))
+    ]
+
+
+def _last_group(db: Session, batch_id) -> int:
+    return int(
+        db.query(func.max(PrepaidVoucher.group_no)).filter(PrepaidVoucher.batch_id == batch_id).scalar() or 0
+    )
+
+
+def _issue(
+    db: Session, batch: PrepaidVoucherBatch, count: int, group_size: Optional[int] = None
+) -> List[PrepaidVoucher]:
     remaining = {str(i.product_id): int(i.quantity) for i in batch.items}
     codes = _unique_codes(db, count)
     start = int(batch.next_serial or 1)
+    # Each new run of a grouped batch starts a new group: an envelope already packed and
+    # numbered never gets vouchers added to it.
+    groups: List[Optional[int]] = [None] * count
+    for g in group_plan(count, group_size, _last_group(db, batch.id) + 1 if group_size else 1):
+        for i in range(g["offset"], g["offset"] + g["count"]):
+            groups[i] = g["group"]
     vouchers = [
         PrepaidVoucher(
             id=uuid.uuid4(),
             tenant_id=batch.tenant_id,
             batch_id=batch.id,
             serial=start + n,
+            group_no=groups[n],
             code=code,
             remaining=dict(remaining),
             status="active",
@@ -272,6 +317,53 @@ def _issue(db: Session, batch: PrepaidVoucherBatch, count: int) -> List[PrepaidV
     batch.next_serial = start + count
     db.add_all(vouchers)
     return vouchers
+
+
+def _user_name(user: Optional[User]) -> Optional[str]:
+    if user is None:
+        return None
+    return getattr(user, "username", None) or getattr(user, "email", None)
+
+
+def _event(
+    db: Session,
+    batch: PrepaidVoucherBatch,
+    user: Optional[User],
+    action: str,
+    *,
+    group_no: Optional[int] = None,
+    voucher_id=None,
+    count: Optional[int] = None,
+    reason: Optional[str] = None,
+    details: Optional[Dict[str, Any]] = None,
+) -> PrepaidVoucherEvent:
+    """One line of the batch's audit trail. Never edited afterwards."""
+    ev = PrepaidVoucherEvent(
+        id=uuid.uuid4(),
+        tenant_id=batch.tenant_id,
+        batch_id=batch.id,
+        action=action,
+        group_no=group_no,
+        voucher_id=voucher_id,
+        count=count,
+        reason=(reason or "").strip() or None,
+        user_id=getattr(user, "id", None),
+        user_name=_user_name(user),
+        details=details or None,
+        created_at=_now(),
+    )
+    db.add(ev)
+    return ev
+
+
+def _issued_details(vouchers: List[PrepaidVoucher], group_size: Optional[int]) -> Dict[str, Any]:
+    if not vouchers:
+        return {}
+    groups = [v.group_no for v in vouchers if v.group_no is not None]
+    out: Dict[str, Any] = {"fromSerial": vouchers[0].serial, "toSerial": vouchers[-1].serial}
+    if groups:
+        out.update({"groupSize": group_size, "fromGroup": min(groups), "toGroup": max(groups)})
+    return out
 
 
 def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatch:
@@ -299,6 +391,11 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
         split_allowed=bool(body.split_allowed),
         status="active",
         next_serial=1,
+        group_size=body.group_size or None,
+        show_code=bool(body.show_code),
+        barcode_type=body.barcode_type or "qr",
+        customer_name=body.customer_name,
+        order_ref=body.order_ref,
         created_by=user.id,
         created_at=_now(),
         updated_at=_now(),
@@ -315,12 +412,19 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
     ]
     db.add(batch)
     db.flush()
-    _issue(db, batch, body.count)
+    issued = _issue(db, batch, body.count, batch.group_size)
+    _event(db, batch, user, "create", count=body.count, details=_issued_details(issued, batch.group_size))
     db.flush()
     return batch
 
 
-def add_vouchers(db: Session, user: User, tenant_id, batch_id, count: int) -> PrepaidVoucherBatch:
+def add_vouchers(
+    db: Session, user: User, tenant_id, batch_id, count: int, group_size: Optional[int] = None
+) -> PrepaidVoucherBatch:
+    """
+    More vouchers, with the next serials. A grouped batch issues them in groups too — of
+    [group_size] when given, else of the batch's own size — starting a new group.
+    """
     batch = get_batch(db, user, tenant_id, batch_id)
     # Serials are drawn under the batch's lock, so two clicks cannot hand out one twice.
     batch = (
@@ -331,7 +435,44 @@ def add_vouchers(db: Session, user: User, tenant_id, batch_id, count: int) -> Pr
     )
     if batch.status == "cancelled":
         raise _http(status.HTTP_409_CONFLICT, BATCH_CANCELLED)
-    _issue(db, batch, count)
+    size = group_size or batch.group_size
+    if size and not batch.group_size:
+        batch.group_size = size
+    issued = _issue(db, batch, count, size)
+    _event(db, batch, user, "add", count=count, details=_issued_details(issued, size))
+    db.flush()
+    return batch
+
+
+def assign_groups(db: Session, user: User, tenant_id, batch_id, group_size: int) -> PrepaidVoucherBatch:
+    """
+    Split the batch's vouchers that have no group yet (a batch made before groups, or
+    without them) into groups of [group_size], by serial, after the last group there is.
+    Groups already given are never changed: an envelope keeps its number.
+    """
+    batch = get_batch(db, user, tenant_id, batch_id)
+    batch = (
+        db.query(PrepaidVoucherBatch)
+        .filter(PrepaidVoucherBatch.id == batch.id)
+        .with_for_update()
+        .one()
+    )
+    loose = (
+        db.query(PrepaidVoucher)
+        .filter(PrepaidVoucher.batch_id == batch.id, PrepaidVoucher.group_no.is_(None))
+        .order_by(PrepaidVoucher.serial)
+        .all()
+    )
+    if not loose:
+        raise _http(status.HTTP_409_CONFLICT, ALREADY_GROUPED)
+    for g in group_plan(len(loose), group_size, _last_group(db, batch.id) + 1):
+        for v in loose[g["offset"]:g["offset"] + g["count"]]:
+            v.group_no = g["group"]
+            v.updated_at = _now()
+    if not batch.group_size:
+        batch.group_size = group_size
+    batch.updated_at = _now()
+    _event(db, batch, user, "assign_groups", count=len(loose), details=_issued_details(loose, group_size))
     db.flush()
     return batch
 
@@ -341,40 +482,85 @@ def update_batch(db: Session, user: User, tenant_id, batch_id, body) -> PrepaidV
     fields = body.model_dump(exclude_unset=True, by_alias=False)
     if "name" in fields and not fields["name"]:
         fields.pop("name")
+    # Print settings are never cleared by a null: they always have a value.
+    for key in ("show_code", "barcode_type"):
+        if key in fields and fields[key] is None:
+            fields.pop(key)
+    changed = sorted(k for k, v in fields.items() if getattr(batch, k) != v)
     for key, value in fields.items():
         setattr(batch, key, value)
     if batch.valid_from and batch.valid_until and _utc(batch.valid_until) <= _utc(batch.valid_from):
         raise _http(status.HTTP_400_BAD_REQUEST, "validUntil must be after validFrom")
     batch.updated_at = _now()
+    if changed:
+        _event(db, batch, user, "update", details={"fields": changed})
     db.flush()
     return batch
 
 
-def cancel_batch(db: Session, user: User, tenant_id, batch_id) -> PrepaidVoucherBatch:
+def _cancel_open(vouchers: Iterable[PrepaidVoucher], now: datetime) -> List[PrepaidVoucher]:
+    """Cancels the ones still open (unused or partly used); used ones stay as they are."""
+    out = []
+    for v in vouchers:
+        if v.status in ("active", "partially_used"):
+            v.status = "cancelled"
+            v.cancelled_at = now
+            v.updated_at = now
+            out.append(v)
+    return out
+
+
+def cancel_batch(db: Session, user: User, tenant_id, batch_id, reason: Optional[str] = None) -> PrepaidVoucherBatch:
     batch = get_batch(db, user, tenant_id, batch_id)
     if batch.status != "cancelled":
         now = _now()
         batch.status = "cancelled"
         batch.cancelled_at = now
         batch.updated_at = now
-        for v in db.query(PrepaidVoucher).filter(
-            PrepaidVoucher.batch_id == batch.id,
-            PrepaidVoucher.status.in_(("active", "partially_used")),
-        ):
-            v.status = "cancelled"
-            v.cancelled_at = now
-            v.updated_at = now
+        done = _cancel_open(db.query(PrepaidVoucher).filter(PrepaidVoucher.batch_id == batch.id), now)
+        _event(db, batch, user, "cancel_batch", count=len(done), reason=reason)
     db.flush()
     return batch
 
 
-def cancel_voucher(db: Session, user: User, tenant_id, voucher_id) -> PrepaidVoucher:
+def cancel_group(
+    db: Session, user: User, tenant_id, batch_id, group_no: int, reason: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Cancel a whole group in one action — the envelope of 10 that was lost. Its unused and
+    partly used vouchers are cancelled (a till refuses them from now on); used ones stay
+    used. Logged with who, when, why and the serials. Idempotent: a second call cancels
+    nothing more and logs nothing.
+    """
+    batch = get_batch(db, user, tenant_id, batch_id)
+    rows = (
+        db.query(PrepaidVoucher)
+        .filter(PrepaidVoucher.batch_id == batch.id, PrepaidVoucher.group_no == int(group_no))
+        .order_by(PrepaidVoucher.serial)
+        .with_for_update()
+        .all()
+    )
+    if not rows:
+        raise _http(status.HTTP_404_NOT_FOUND, GROUP_NOT_FOUND)
+    now = _now()
+    done = _cancel_open(rows, now)
+    if done:
+        batch.updated_at = now
+        _event(
+            db, batch, user, "cancel_group", group_no=int(group_no), count=len(done), reason=reason,
+            details={"serials": [v.serial for v in done]},
+        )
+    db.flush()
+    return {"group": int(group_no), "cancelled": len(done), "groupStats": group_stats(db, batch, int(group_no))}
+
+
+def cancel_voucher(db: Session, user: User, tenant_id, voucher_id, reason: Optional[str] = None) -> PrepaidVoucher:
     voucher = get_voucher(db, user, tenant_id, voucher_id)
-    if voucher.status in ("active", "partially_used"):
-        now = _now()
-        voucher.status = "cancelled"
-        voucher.cancelled_at = now
-        voucher.updated_at = now
+    if _cancel_open([voucher], _now()):
+        _event(
+            db, voucher.batch, user, "cancel_voucher", group_no=voucher.group_no, voucher_id=voucher.id,
+            count=1, reason=reason, details={"serial": voucher.serial},
+        )
     db.flush()
     return voucher
 
@@ -418,6 +604,80 @@ def _stats(db: Session, batch_ids: List[uuid.UUID]) -> Dict[str, Dict[str, int]]
     return out
 
 
+def _empty_counts() -> Dict[str, int]:
+    return {"total": 0, "active": 0, "partiallyUsed": 0, "used": 0, "cancelled": 0}
+
+
+def groups_report(db: Session, batch: PrepaidVoucherBatch, only_group: Optional[int] = None) -> List[Dict[str, Any]]:
+    """
+    Per group: its serials, how many vouchers, and how many are unused / partly used / used
+    (redeemed) / cancelled — "how much of envelope 7 came back". Vouchers with no group
+    (issued before the batch was grouped) are one row with `group` null, last.
+    """
+    q = db.query(
+        PrepaidVoucher.group_no,
+        PrepaidVoucher.status,
+        func.count(PrepaidVoucher.id),
+        func.min(PrepaidVoucher.serial),
+        func.max(PrepaidVoucher.serial),
+    ).filter(PrepaidVoucher.batch_id == batch.id)
+    if only_group is not None:
+        q = q.filter(PrepaidVoucher.group_no == only_group)
+    rows: Dict[Optional[int], Dict[str, Any]] = {}
+    for group_no, st, n, lo, hi in q.group_by(PrepaidVoucher.group_no, PrepaidVoucher.status):
+        row = rows.setdefault(
+            group_no, {"group": group_no, "fromSerial": lo, "toSerial": hi, **_empty_counts()}
+        )
+        key = {"partially_used": "partiallyUsed"}.get(st, st)
+        row[key] = row.get(key, 0) + int(n)
+        row["total"] += int(n)
+        row["fromSerial"] = min(row["fromSerial"], lo)
+        row["toSerial"] = max(row["toSerial"], hi)
+    out = sorted((r for g, r in rows.items() if g is not None), key=lambda r: r["group"])
+    if None in rows:
+        out.append(rows[None])
+    for r in out:
+        r["redeemed"] = r["used"] + r["partiallyUsed"]
+    return out
+
+
+def group_stats(db: Session, batch: PrepaidVoucherBatch, group_no: int) -> Optional[Dict[str, Any]]:
+    rows = groups_report(db, batch, only_group=group_no)
+    return rows[0] if rows else None
+
+
+def batch_groups(db: Session, user: User, tenant_id, batch_id) -> Dict[str, Any]:
+    batch = get_batch(db, user, tenant_id, batch_id)
+    return {"batchId": str(batch.id), "groupSize": batch.group_size, "items": groups_report(db, batch)}
+
+
+def _event_out(ev: PrepaidVoucherEvent) -> Dict[str, Any]:
+    return {
+        "id": str(ev.id),
+        "action": ev.action,
+        "group": ev.group_no,
+        "voucherId": str(ev.voucher_id) if ev.voucher_id else None,
+        "count": ev.count,
+        "reason": ev.reason,
+        "userName": ev.user_name,
+        "details": ev.details or {},
+        "createdAt": _iso(ev.created_at),
+    }
+
+
+def batch_events(db: Session, user: User, tenant_id, batch_id) -> Dict[str, Any]:
+    """The batch's audit trail, newest first."""
+    batch = get_batch(db, user, tenant_id, batch_id)
+    rows = (
+        db.query(PrepaidVoucherEvent)
+        .filter(PrepaidVoucherEvent.batch_id == batch.id)
+        .order_by(PrepaidVoucherEvent.created_at.desc())
+        .limit(500)
+        .all()
+    )
+    return {"items": [_event_out(e) for e in rows]}
+
+
 def batch_out(db: Session, batch: PrepaidVoucherBatch, stats: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
     if stats is None:
         stats = _stats(db, [batch.id]).get(str(batch.id))
@@ -441,9 +701,16 @@ def batch_out(db: Session, batch: PrepaidVoucherBatch, stats: Optional[Dict[str,
         "shopIds": list(batch.shop_ids) if batch.shop_ids else None,
         "shops": [{"id": s, "name": shop_names.get(s)} for s in (batch.shop_ids or [])],
         "items": _batch_items_out(batch),
-        "stats": stats or {"total": 0, "active": 0, "partiallyUsed": 0, "used": 0, "cancelled": 0},
+        "stats": stats or _empty_counts(),
         "createdAt": _iso(batch.created_at),
         "cancelledAt": _iso(batch.cancelled_at),
+        # Production (docs/SPEC_VOUCHER_PRODUCTION.md).
+        "groupSize": batch.group_size,
+        "groupCount": _last_group(db, batch.id),
+        "showCode": bool(batch.show_code),
+        "barcodeType": batch.barcode_type or "qr",
+        "customerName": batch.customer_name,
+        "orderRef": batch.order_ref,
     }
 
 
@@ -496,6 +763,7 @@ def voucher_out(
         "id": str(voucher.id),
         "batchId": str(voucher.batch_id),
         "serial": int(voucher.serial),
+        "groupNo": voucher.group_no,
         "code": voucher.code,
         "displayCode": format_code(voucher.code),
         "qrPayload": qr_payload(voucher.code),
@@ -527,6 +795,8 @@ def list_vouchers(
     serial: Optional[int] = None,
     limit: int = 100,
     offset: int = 0,
+    group_no: Optional[int] = None,
+    code: Optional[str] = None,
 ) -> Dict[str, Any]:
     batch = get_batch(db, user, tenant_id, batch_id)
     q = db.query(PrepaidVoucher).filter(PrepaidVoucher.batch_id == batch.id)
@@ -534,6 +804,17 @@ def list_vouchers(
         q = q.filter(PrepaidVoucher.status == status_filter)
     if serial is not None:
         q = q.filter(PrepaidVoucher.serial == serial)
+    if group_no is not None:
+        q = q.filter(PrepaidVoucher.group_no == group_no)
+    if code:
+        # The code as printed under the barcode, or part of it ("ABCD-EFGH…").
+        wanted = normalize_code(code)
+        if len(wanted) >= CODE_LENGTH:
+            q = q.filter(PrepaidVoucher.code == wanted[:CODE_LENGTH])
+        elif len(wanted) >= 4:
+            q = q.filter(PrepaidVoucher.code.contains(wanted))
+        else:
+            q = q.filter(PrepaidVoucher.id.is_(None))
     total = q.count()
     rows = q.order_by(PrepaidVoucher.serial).offset(offset).limit(limit).all()
     return {"total": total, "items": [voucher_out(db, v) for v in rows]}

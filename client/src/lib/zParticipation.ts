@@ -33,7 +33,19 @@ export interface ZParticipationTill {
   awaitingZ: number;
   mainTill: boolean;
   online?: boolean;
+  /** A self-order kiosk ("קיוסק {name}"). */
+  kiosk?: boolean;
+  /**
+   * In local mode: on the shop's LAN (`lan`, the default), or elsewhere with its own internet
+   * (`remote`) — the main till then asks the cloud to close it and takes its part from the
+   * cloud. The setting decides.
+   */
+  link?: TillLink;
+  /** The main till's view: does it hear this till on the LAN? null = unknown (main till silent). */
+  seenOnLan?: boolean | null;
 }
+
+export type TillLink = 'lan' | 'remote';
 
 export interface ZParticipationTillRef {
   machineId: string;
@@ -60,6 +72,8 @@ export interface ZParticipationBody {
   mainTillId?: string | null;
   /** A super admin's "העבר בכל זאת": switch although the producer has not handed over. */
   forceProducerSwitch?: boolean;
+  /** Every till set "מרוחק (דרך הענן)"; absent = unchanged. Participants only, never the main till. */
+  remote?: string[];
 }
 
 // ── The shop Z's one producer ("אין דבר כזה זד שממוספר מחדש") ─────────────────
@@ -193,12 +207,55 @@ export function choiceForTick(initial: ZRole, ticked: boolean): ZRole {
 }
 
 /** What a till's checkbox means for it, as the card labels it. */
-export type ZEffect = 'shopZ' | 'independent' | 'ownZ';
+export type ZEffect = 'shopZ' | 'remote' | 'independent' | 'ownZ';
 
-export function effectOf(choice: ZRole): ZEffect {
-  if (choice === 'shop_z') return 'shopZ';
+/** `remote`: a till in the shop Z set "מרוחק (דרך הענן)" — it is closed through the cloud. */
+export function effectOf(choice: ZRole, remote = false): ZEffect {
+  if (choice === 'shop_z') return remote ? 'remote' : 'shopZ';
   if (choice === 'independent') return 'independent';
   return 'ownZ';
+}
+
+// ── "מחובר ברשת המקומית" / "מרוחק (דרך הענן)" ─────────────────────────────────
+
+/** The link of each till, by machine id, as the card edits it. */
+export type ZLinks = Record<string, TillLink>;
+
+export function initialLinks(state: Pick<ZParticipationState, 'tills'>): ZLinks {
+  const out: ZLinks = {};
+  for (const t of state.tills) out[t.machineId] = t.link === 'remote' ? 'remote' : 'lan';
+  return out;
+}
+
+/** Only a till in the shop Z (not independent), and never the main till, may be remote. */
+export function canBeRemote(machineId: string, choice: ZRole, mainTillId: string | null): boolean {
+  return choice === 'shop_z' && machineId !== (mainTillId || null);
+}
+
+/**
+ * The tills set remote after the edit, by number — the `remote` list the PUT sends whole.
+ * A till that left the shop Z or became the main till drops out of it.
+ */
+export function remoteListOf(
+  state: Pick<ZParticipationState, 'tills'>,
+  choices: ZChoices,
+  links: ZLinks,
+  mainTillId: string | null,
+): string[] {
+  return sortTills(state.tills)
+    .filter((t) => canBeRemote(t.machineId, choices[t.machineId] ?? roleOf(t), mainTillId))
+    .filter((t) => (links[t.machineId] ?? (t.link === 'remote' ? 'remote' : 'lan')) === 'remote')
+    .map((t) => t.machineId);
+}
+
+/**
+ * The hint beside the control (a key under `independentTill.link`), from what the main till
+ * hears on the LAN — never a reason to change the setting by itself.
+ */
+export function linkHintOf(link: TillLink, seenOnLan: boolean | null | undefined): 'maybeRemote' | 'heardOnLan' | null {
+  if (link === 'lan' && seenOnLan === false) return 'maybeRemote';
+  if (link === 'remote' && seenOnLan === true) return 'heardOnLan';
+  return null;
 }
 
 /** Why a till cannot change sides now — the server refuses a switch over an unfinished shift. */
@@ -222,6 +279,7 @@ export function buildParticipationBody(
   state: Pick<ZParticipationState, 'tills' | 'mainTill'>,
   choices: ZChoices,
   mainTillId: string | null,
+  links?: ZLinks,
 ): ZParticipationBody | null {
   const participants: string[] = [];
   const independent: string[] = [];
@@ -235,7 +293,17 @@ export function buildParticipationBody(
   const body: ZParticipationBody = { participants, independent };
   const mainChanged = (mainTillId || null) !== mainIdOf(state);
   if (mainChanged) body.mainTillId = mainTillId || null;
-  return participants.length || independent.length || mainChanged ? body : null;
+  // The remote list, whole, when it differs from the saved one (the server's `link`s).
+  let remoteChanged = false;
+  if (links) {
+    const before = sortTills(state.tills)
+      .filter((t) => t.link === 'remote')
+      .map((t) => t.machineId);
+    const after = remoteListOf(state, choices, links, mainTillId || null);
+    remoteChanged = before.length !== after.length || before.some((id, i) => id !== after[i]);
+    if (remoteChanged) body.remote = after;
+  }
+  return participants.length || independent.length || mainChanged || remoteChanged ? body : null;
 }
 
 export type ParticipationIssue =
@@ -308,7 +376,9 @@ export interface SummarySegment {
     | 'independentMany'
     | 'independentOne'
     | 'ownZMany'
-    | 'ownZOne';
+    | 'ownZOne'
+    | 'remoteOne'
+    | 'remoteMany';
   values: Record<string, string>;
 }
 
@@ -320,6 +390,7 @@ export function summarySegments(
   state: Pick<ZParticipationState, 'tills'>,
   choices: ZChoices,
   mainTillId: string | null,
+  links?: ZLinks,
 ): SummarySegment[] {
   const of = (role: ZRole) => sortTills(state.tills.filter((t) => (choices[t.machineId] ?? roleOf(t)) === role));
   const shopZ = of('shop_z');
@@ -342,6 +413,14 @@ export function summarySegments(
         ? { key: 'shopZMain', values: { tills: formatTillNumbers(shopZ), main: mainLabel } }
         : { key: 'shopZNoMain', values: { tills: formatTillNumbers(shopZ) } },
     );
+  }
+  // In the shop Z but not on the LAN: closed through the cloud ("מרוחק (דרך הענן)").
+  if (links) {
+    const ids = new Set(remoteListOf(state, choices, links, mainTillId));
+    const remote = shopZ.filter((t) => ids.has(t.machineId));
+    if (remote.length > 0) {
+      out.push({ key: remote.length === 1 ? 'remoteOne' : 'remoteMany', values: { tills: formatTillNumbers(remote) } });
+    }
   }
   if (ownZ.length > 0) {
     out.push({ key: ownZ.length === 1 ? 'ownZOne' : 'ownZMany', values: { tills: formatTillNumbers(ownZ) } });
@@ -419,6 +498,8 @@ export const KNOWN_REFUSALS = [
   'till_in_both_lists',
   'main_till_independent',
   'shop_z_producer_busy',
+  'remote_not_participant',
+  'remote_main_till',
 ] as const;
 
 export type KnownRefusal = (typeof KNOWN_REFUSALS)[number];

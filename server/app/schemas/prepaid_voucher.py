@@ -13,6 +13,19 @@ TEXT_MAX = 1000
 MAX_VOUCHERS_PER_BATCH = 5000
 MAX_ITEMS_PER_VOUCHER = 30
 MAX_ITEM_QUANTITY = 100
+#: A group ("קבוצה", an envelope of 10 / 20 / any size); at most the whole run.
+MAX_GROUP_SIZE = MAX_VOUCHERS_PER_BATCH
+BARCODE_TYPES = ("qr", "code128")
+REF_MAX = 100
+
+
+def _barcode(value):
+    if value is None:
+        return None
+    value = str(value).strip().lower()
+    if value not in BARCODE_TYPES:
+        raise ValueError(f"one of {', '.join(BARCODE_TYPES)}")
+    return value
 
 
 def _clean_text(value, limit: int, *, required: bool = False):
@@ -52,11 +65,34 @@ class PrepaidVoucherBatchCreate(BaseModel):
     split_allowed: bool = Field(False, alias="splitAllowed")
     items: List[PrepaidVoucherItemIn]
     count: int = Field(..., ge=1, le=MAX_VOUCHERS_PER_BATCH)
+    #: Production in groups of this size (10, 20 or any); null: one run, no groups.
+    group_size: Optional[int] = Field(None, alias="groupSize", ge=1, le=MAX_GROUP_SIZE)
+    #: Print the voucher's code under its barcode.
+    show_code: bool = Field(False, alias="showCode")
+    #: "qr" (default) or "code128".
+    barcode_type: str = Field("qr", alias="barcodeType")
+    customer_name: Optional[str] = Field(None, alias="customerName")
+    order_ref: Optional[str] = Field(None, alias="orderRef")
 
     @field_validator("name", mode="before")
     @classmethod
     def _name(cls, value):
         return _clean_text(value, NAME_MAX, required=True)
+
+    @field_validator("barcode_type", mode="before")
+    @classmethod
+    def _barcode_type(cls, value):
+        return _barcode(value) or "qr"
+
+    @field_validator("customer_name", mode="before")
+    @classmethod
+    def _customer(cls, value):
+        return _clean_text(value, NAME_MAX)
+
+    @field_validator("order_ref", mode="before")
+    @classmethod
+    def _order(cls, value):
+        return _clean_text(value, REF_MAX)
 
     @field_validator("event_name", mode="before")
     @classmethod
@@ -97,11 +133,26 @@ class PrepaidVoucherBatchUpdate(BaseModel):
     free_text: Optional[str] = Field(None, alias="freeText")
     valid_from: Optional[datetime] = Field(None, alias="validFrom")
     valid_until: Optional[datetime] = Field(None, alias="validUntil")
+    # Print settings: they only change what the next print looks like.
+    show_code: Optional[bool] = Field(None, alias="showCode")
+    barcode_type: Optional[str] = Field(None, alias="barcodeType")
+    customer_name: Optional[str] = Field(None, alias="customerName")
+    order_ref: Optional[str] = Field(None, alias="orderRef")
 
-    @field_validator("name", "event_name", mode="before")
+    @field_validator("name", "event_name", "customer_name", mode="before")
     @classmethod
     def _names(cls, value):
         return _clean_text(value, NAME_MAX)
+
+    @field_validator("order_ref", mode="before")
+    @classmethod
+    def _order(cls, value):
+        return _clean_text(value, REF_MAX)
+
+    @field_validator("barcode_type", mode="before")
+    @classmethod
+    def _barcode_type(cls, value):
+        return _barcode(value)
 
     @field_validator("free_text", mode="before")
     @classmethod
@@ -115,7 +166,30 @@ class PrepaidVoucherBatchUpdate(BaseModel):
 
 
 class PrepaidVoucherAddIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     count: int = Field(..., ge=1, le=MAX_VOUCHERS_PER_BATCH)
+    #: In groups of this size (a new group first); null: the batch's own size, if any.
+    group_size: Optional[int] = Field(None, alias="groupSize", ge=1, le=MAX_GROUP_SIZE)
+
+
+class PrepaidVoucherGroupsIn(BaseModel):
+    """Split the vouchers that have no group yet into groups of this size."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    group_size: int = Field(..., alias="groupSize", ge=1, le=MAX_GROUP_SIZE)
+
+
+class PrepaidVoucherCancelIn(BaseModel):
+    """Why a voucher / a group / the batch is cancelled ("המעטפה אבדה"); kept in the audit trail."""
+
+    reason: Optional[str] = None
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _reason(cls, value):
+        return _clean_text(value, TEXT_MAX)
 
 
 class PrepaidVoucherNoteIn(BaseModel):

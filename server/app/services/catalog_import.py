@@ -72,6 +72,7 @@ from app.models.user import User
 from app.services import catalog_sheet as S
 from app.services import dietary
 from app.services import item_ticket
+from app.services import sales_channel
 from app.services import printers as K
 from app.services import product_shop_scope as scope_svc
 from app.services.catalog_template import PrinterRef, TemplateView, ticket_label
@@ -862,6 +863,7 @@ class _Planner:
         "active": lambda v: S.parse_bool(v, "פעיל"),
         "description": lambda v: S.parse_text(v, "תיאור", S.DESCRIPTION_MAX),
         "dietary": S.parse_dietary,
+        "channel": S.parse_channel,
     }
 
     def _product_row(self, raw_row: S.RawRow) -> ProductPlan:
@@ -973,6 +975,8 @@ class _Planner:
             "ticket_entries": entries if isinstance(entries, int) else None,
             "is_available": True if values.get("active") is None else bool(values.get("active")),
             "dietary_tags": list(values.get("dietary") or ()) or None,
+            # "ערוץ מכירה": empty is the default, קופות וקיוסק.
+            "sales_channel": values.get("channel") or sales_channel.ALL,
         }
         plan.cost = values.get("cost")
         plan.action = "create"
@@ -1033,6 +1037,16 @@ class _Planner:
                 changes.append(Change(
                     "dietary", "סימוני תזונה",
                     ", ".join(dietary.labels(current_tags)), ", ".join(dietary.labels(wanted_tags)),
+                ))
+        # "ערוץ מכירה": empty leaves it as it is.
+        wanted_channel = values.get("channel")
+        if wanted_channel is not None:
+            current_channel = sales_channel.out(p.sales_channel)
+            if wanted_channel != current_channel:
+                out["sales_channel"] = wanted_channel
+                changes.append(Change(
+                    "channel", "ערוץ מכירה",
+                    sales_channel.label(current_channel), sales_channel.label(wanted_channel),
                 ))
 
         if out.get("is_open_price") is False:
@@ -1384,6 +1398,7 @@ def apply_plan(db: Session, plan: Plan, user: User) -> ApplyResult:
             track_stock=False, is_open_price=v["is_open_price"], is_weighed=v["is_weighed"],
             unit_label=v.get("unit_label"), no_discount=v["no_discount"], is_general=False,
             dietary_tags=v.get("dietary_tags"),
+            sales_channel=v.get("sales_channel") or sales_channel.ALL,
         )
         db.add(product)
         # Sold in every active shop of the company: the product form's default rule.
@@ -1560,6 +1575,7 @@ def template_view(ctx: Context, *, with_data: bool, now: Optional[datetime] = No
                 "active": _yes_no(p.is_available),
                 "description": p.description or "",
                 "dietary": ", ".join(dietary.labels(p.dietary_tags)),
+                "channel": sales_channel.label(p.sales_channel),
             }
             if note:
                 row["notes"] = {"printers": note}

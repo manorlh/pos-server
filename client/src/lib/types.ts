@@ -1,5 +1,8 @@
 import type { CardBrandBreakdownRow } from './cardBrands';
 import type { DealerType, DealerTypeChange } from './dealerType';
+import type { TillDataState } from './zDataState';
+import type { AutoReopenMode } from './availabilityReopen';
+import { DEVICE_MODEL_IDS } from './deviceProfile';
 
 /**
  * Listed most senior first, matching the server's `ROLE_LEVEL`, so a reader does
@@ -200,10 +203,8 @@ export interface Shop {
   name: string;
   /** Shop #1, #2 … in its company; never reused. */
   shopNumber?: number | null;
-  /** "קוד סניף": mandatory, digits 1–7, unique in the company (lib/branchCode.ts). */
+  /** "קוד סניף": internal, mandatory, digits 1–7, unique in the company (lib/branchCode.ts). */
   branchId?: string;
-  /** The code was assigned automatically when it became mandatory: "ודאו מול רו״ח" until saved. */
-  branchIdAutoAssigned?: boolean;
   address?: string;
   city?: string;
   licenseType?: LicenseType;
@@ -233,13 +234,33 @@ export interface PosSettingsV1 {
    * terminal of its own charges on Agamento (or Nayax when `nayaxEnabled`), a tablet on
    * an external one. `auto` is never stored.
    */
-  paymentIntegration?: 'auto' | 'agamento' | 'nayax_lan' | 'zcredit' | 'tap_to_pay';
+  paymentIntegration?: 'auto' | 'agamento' | 'nayax_lan' | 'zcredit' | 'synqpay' | 'tap_to_pay';
   /** Z-Credit: the terminal number, digits with leading zeros kept. */
   zcreditTerminalNumber?: string;
   /** Z-Credit: the PinPad id, stored without the "PINPAD" prefix. */
   zcreditPinpadId?: string;
   zcreditMode?: 'test' | 'production';
+  /** SynqPay (docs/SPEC_SYNQPAY.md): the terminal's model (lib/paymentIntegration.ts SYNQPAY_MODELS). */
+  synqpayDeviceModel?: string;
+  /** SynqPay (an external terminal): `lan` | `usb`. */
+  synqpayConnection?: string;
+  synqpayHost?: string;
+  /** SynqPay over the network: `tcp` (default) | `http`. */
+  synqpayProtocol?: string;
+  /** Text, like `nayaxDevicePort`; unset = the protocol's documented port. */
+  synqpayPort?: string;
+  synqpayTls?: boolean;
+  /** USB serial: "" = detect, "VVVV:PPPP" (hex) or "COMn" (Windows). */
+  synqpayUsbDevice?: string;
+  synqpaySerialNumber?: string;
   outOfStockPolicy?: OutOfStockPolicy;
+  /**
+   * "פתיחת פריטים אוטומטית אחרי Z" (lib/availabilityReopen.ts, pos-server
+   * docs/SPEC_AVAILABILITY.md): unset = off. And whether it reopens an item that tracks
+   * stock and has none (unset = no).
+   */
+  autoReopenAfterZ?: AutoReopenMode;
+  autoReopenIgnoreStock?: boolean;
   /**
    * Legacy tip switches. The server still reads them as the fallback for the
    * per-option `pay*Tips` keys below, so they stay in the type, but the
@@ -360,10 +381,15 @@ export type PosSettingsPatch = Partial<
     | 'tipPromptText'
     | 'payInstallmentsMax'
     | 'payOrder'
+    | 'autoReopenAfterZ'
+    | 'autoReopenIgnoreStock'
     | ResettableSwitchKey
     | PaymentIntegrationSettingKey
   >
 > & {
+  /** `null` = inherit "פתיחת פריטים אוטומטית אחרי Z" from the level above again. */
+  autoReopenAfterZ?: AutoReopenMode | null;
+  autoReopenIgnoreStock?: boolean | null;
   /** `null` = unset this layer's payment order and inherit the level above's again. */
   payOrder?: string[] | null;
   brandLogoUrl?: string | null;
@@ -388,6 +414,14 @@ export type PosSettingsPatch = Partial<
   zcreditTerminalNumber?: string | null;
   zcreditPinpadId?: string | null;
   zcreditMode?: 'test' | 'production' | null;
+  synqpayDeviceModel?: string | null;
+  synqpayConnection?: string | null;
+  synqpayHost?: string | null;
+  synqpayProtocol?: string | null;
+  synqpayPort?: string | null;
+  synqpayTls?: boolean | null;
+  synqpayUsbDevice?: string | null;
+  synqpaySerialNumber?: string | null;
   nayaxEnabled?: boolean | null;
   nayaxDeviceHost?: string | null;
   nayaxDevicePort?: string | null;
@@ -398,6 +432,8 @@ export type PosSettingsPatch = Partial<
    */
   zcreditPassword?: string | null;
   zcreditKey?: string | null;
+  /** The SynqPay API key: write-only, as the Z-Credit password. */
+  synqpayApiKey?: string | null;
 } & {
   [K in ResettableSwitchKey]?: boolean | null;
 };
@@ -408,6 +444,14 @@ export type PaymentIntegrationSettingKey =
   | 'zcreditTerminalNumber'
   | 'zcreditPinpadId'
   | 'zcreditMode'
+  | 'synqpayDeviceModel'
+  | 'synqpayConnection'
+  | 'synqpayHost'
+  | 'synqpayProtocol'
+  | 'synqpayPort'
+  | 'synqpayTls'
+  | 'synqpayUsbDevice'
+  | 'synqpaySerialNumber'
   | 'nayaxEnabled'
   | 'nayaxDeviceHost'
   | 'nayaxDevicePort'
@@ -490,10 +534,10 @@ export interface ShopProductCatalogCandidate {
  * "דגם מכשיר" — the hardware a till is (pos-server docs/SPEC_DEVICE_ROLE_MODEL.md): a Feitian
  * F20 / Nova 55F (built-in printer and terminal), a Modo (terminal, no printer), a Kozen
  * Nebullar P18 tablet, a LANDI and a Feitian tablet (no printer / drawer driver yet), or a
- * plain Android tablet. Capabilities: lib/deviceProfile.ts. A P18 and a LANDI are
- * recognised by themselves when they pair.
+ * plain Android tablet — and every SUNMI (docs/SPEC_SUNMI.md). Capabilities:
+ * lib/deviceProfile.ts. A P18, a LANDI and a SUNMI are recognised by themselves when they pair.
  */
-export const DEVICE_MODELS = ['N55F', 'MODO', 'P18', 'LANDI', 'FEITIAN_TABLET', 'GENERIC_ANDROID'] as const;
+export const DEVICE_MODELS = DEVICE_MODEL_IDS;
 export type DeviceModel = (typeof DEVICE_MODELS)[number];
 
 export interface PosMachine {
@@ -682,6 +726,13 @@ export interface PosMachine {
   forceTerminalNumberSource?: SettingsLevel | null;
   /** Server-resolved, ignoring leading zeros as the till does. */
   terminalStatus?: TerminalStatus;
+  /** The level `expectedTerminalNumber` comes from; null = none sets it. */
+  expectedTerminalNumberSource?: string | null;
+  /**
+   * The till's card lock on its last report (docs/SPEC_KIOSK.md §20): a network pinpad needs
+   * the expected number on the till itself and a matching report; null = not locked.
+   */
+  cardLock?: 'mismatch' | 'not_configured' | 'unknown' | null;
   /** The merged `nayaxEnabled`: the till charges on a Nayax pinpad on the network. */
   pinpadEnabled?: boolean;
   /** The merged pinpad address (`nayaxDeviceHost`, `nayaxDevicePort`); null = not set. */
@@ -692,7 +743,7 @@ export interface PosMachine {
   /** It does, and no level gives it an address: "נדרשת כתובת IP למסופון". */
   pinpadAddressMissing?: boolean;
   /** "סוג אינטגרציית אשראי" the till charges on; null on an older server. */
-  paymentIntegration?: 'agamento' | 'nayax_lan' | 'zcredit' | null;
+  paymentIntegration?: 'agamento' | 'nayax_lan' | 'zcredit' | 'synqpay' | null;
   /** The level that chose it; null = automatic (hardware / `nayaxEnabled`). */
   paymentIntegrationSource?: SettingsLevel | null;
   paymentIntegrationAutomatic?: boolean | null;
@@ -714,6 +765,8 @@ export interface PosMachine {
   supportZ?: Record<string, unknown> | null;
   /** The last reset of the till's data support ordered from the cloud (§4.7); null otherwise. */
   tillReset?: Record<string, unknown> | null;
+  /** "הוחלפה קופה": every replacement of the till's device, oldest first (§4.6.2). */
+  replacements?: TillReplacement[] | null;
   /**
    * "קופה עצמאית" (always zMode `till`): its own Z, never part of the shop Z, and never
    * leaning on the shop's main till. Absent on a server that predates it.
@@ -926,6 +979,11 @@ export interface Product {
   /** "לא מקבל הנחות": no line, basket or promotion discount at the till. */
   noDiscount?: boolean;
   /**
+   * "היכן הפריט נמכר" (lib/productChannel.ts): all (קופות וקיוסק, the default) /
+   * kiosk_only (the tills hide it) / pos_only (the kiosk hides it).
+   */
+  salesChannel?: import('./productChannel').SalesChannel;
+  /**
    * "סימוני תזונה" (lib/productDietary.ts): vegan / vegetarian / dairy / meat / gluten_free /
    * spicy, in that order; [] when none. Shown in the kiosk and, by a till parameter, on the till.
    */
@@ -1000,6 +1058,12 @@ export interface AvailabilityNode {
   effective: boolean;
   source: AvailabilityLevel;
   canEdit: boolean;
+  /**
+   * "חסימה קבועה" on this level's own lock (only while `value` is false, never on the
+   * company level): "פתיחת פריטים אוטומטית אחרי Z" never opens it. And when the lock began.
+   */
+  permanent?: boolean;
+  blockedAt?: string | null;
 }
 
 export interface MachineAvailability extends AvailabilityNode {
@@ -1503,6 +1567,8 @@ export interface ZCandidateMachine {
   isActive?: boolean;
   /** `till`: the cloud never builds this till's Z; it is asked for its own (§5.4). */
   zMode?: ZMode;
+  /** The till as the cloud knows it before the Z, with its warnings (offline till Z §4.6.1). */
+  dataState?: TillDataState | null;
 }
 
 export interface ZCandidates {
@@ -1524,6 +1590,19 @@ export interface ZCandidates {
    * only tills' own Zs here. The server refuses the rest (409 `z_only_from_main_till`).
    */
   dashboardZBlocked?: boolean;
+}
+
+/** "הוחלפה קופה" — one replacement of a till's device (offline till Z §4.6.2). */
+export interface TillReplacement {
+  id: string;
+  at: string;
+  by?: string | null;
+  reason?: string | null;
+  oldDevice?: Record<string, unknown> | null;
+  newDevice?: Record<string, unknown> | null;
+  oldLastHeartbeatAt?: string | null;
+  supportZFirst?: boolean;
+  supportZ?: { at?: string; by?: string; zNumber?: number | null } | null;
 }
 
 /** A till as a small reference. */
@@ -1807,10 +1886,42 @@ export interface ZReport {
    * (the shop Z and an independent till's) are told apart with the till number.
    */
   branchCode?: string | null;
+  /**
+   * A till Z's run ("רצף"): a till made independent starts again at Z 1, and switching it
+   * back and making it independent again starts another run — so one till can have two
+   * "Z 1", told apart by the run's start. 0 = the till's first run.
+   */
+  machineSequenceEpoch?: number | null;
+  /** When the run started; set on runs > 0 and on every independent till Z, else null. */
+  sequenceStartedAt?: string | null;
+  /**
+   * A local shop Z's check against the cloud's documents (null on any other Z): stored as
+   * printed, compared only once every document it names has arrived.
+   */
+  verification?: ZVerification | null;
   /** The card transmission the till ran before the Z. */
   cardTransmission?: ZCardTransmission | null;
   /** Produced by support from the cloud for a dead till (offline till Z §4.6). */
-  producedBySupport?: { by?: string; at?: string; reasonText?: string; note?: string | null; skippedNumbers?: number[] } | null;
+  producedBySupport?: {
+    by?: string;
+    at?: string;
+    reasonText?: string;
+    note?: string | null;
+    reportedByTill?: { lastNumber?: number | null; pendingZs?: number; numbers?: number[] } | null;
+  } | null;
+  /** Late documents of a period support closed, carried into this Z — own section (§4.6.3). */
+  lateFromEarlier?: {
+    shiftId: string;
+    posNumber?: string | null;
+    label?: string;
+    sourceZNumber?: number | null;
+    documents: number;
+    firstDocumentNumber?: string | null;
+    lastDocumentNumber?: string | null;
+    totalSales?: string | null;
+  }[] | null;
+  /** "המכשיר הוחלף בתאריך …": the till(s) whose device was replaced before this Z (§4.6.2). */
+  devicesReplaced?: { machineId: string; posNumber?: string | null; name?: string | null; at?: string | null }[] | null;
   /** Legacy rows only: the till's own Z blob. */
   payload?: Record<string, unknown> | null;
   /** Legacy rows only. */
@@ -1822,6 +1933,67 @@ export interface ZReport {
  * `label` is the server's Hebrew sentence; `independentOutside` are the shop's independent
  * tills a shop Z leaves out.
  */
+/**
+ * A local shop Z's verification. Every till part carries a manifest (document ids, per-type
+ * count/first/last, totals, digest) computed the same on the till and in the cloud. The
+ * cloud compares only once every named document arrived — until then it waits; a dead,
+ * removed or 24 h-late till is "incomplete", for support to close. `mismatch` means every
+ * document arrived and the same computation still disagrees: a bug.
+ */
+export type ZVerificationState =
+  | 'waiting'
+  | 'incomplete'
+  | 'verified'
+  | 'mismatch'
+  | 'closed_by_support'
+  | 'unverified';
+
+export interface ZVerificationSupportClose {
+  by?: string | null;
+  at?: string | null;
+  note?: string | null;
+  /** Ids on the detail; a count (or absent) on the list. */
+  missingDocuments?: string[] | number | null;
+  missingShiftIds?: string[] | number | null;
+  printedTotals?: Record<string, unknown> | null;
+  printedTypes?: Record<string, unknown> | null;
+}
+
+export interface ZVerificationTill {
+  /**
+   * "<machineId>" for a till's regular part, "<machineId>:late" for its "late documents"
+   * part — one till can have both in one local shop Z.
+   */
+  key?: string | null;
+  /** The late part: documents from an earlier period; `label` names it. */
+  late?: boolean;
+  label?: string | null;
+  machineId: string;
+  posNumber?: string | null;
+  state: ZVerificationState | string;
+  /** Hebrew, ready to show. */
+  message?: string | null;
+  named?: number | null;
+  arrived?: number | null;
+  missing?: number | null;
+  shiftsAwaited?: number | null;
+  reason?: 'removed' | 'support_closed' | 'stale' | string | null;
+  closedBySupport?: ZVerificationSupportClose | null;
+  /** Detail only: the till's manifest as printed, and the cloud's from the documents. */
+  printed?: { totals?: Record<string, unknown>; types?: Record<string, unknown>; digest?: string } | null;
+  cloud?: { totals?: Record<string, unknown>; types?: Record<string, unknown>; digest?: string } | null;
+}
+
+export interface ZVerification {
+  state: ZVerificationState | string;
+  /** Hebrew, ready to show. */
+  message?: string | null;
+  checkedAt?: string | null;
+  tills?: ZVerificationTill[];
+  /** Detail only, on `mismatch`: [{key, printed, cloud}]. */
+  discrepancies?: { key: string; printed?: unknown; cloud?: unknown }[];
+}
+
 export interface ZReportScope {
   kind: 'shop' | 'area' | 'till' | 'independent_till';
   label?: string | null;
@@ -1832,6 +2004,12 @@ export interface ZReportScope {
 /** One register's section of a Z (§3.6) — what the regulation ties a Z to. */
 export interface ZReportMachineSection {
   machineId: string;
+  /**
+   * A local shop Z's "late documents" part of a till (it may also have its regular part):
+   * shown under `label`, never as a second "קופה N".
+   */
+  late?: boolean;
+  label?: string | null;
   machineName?: string | null;
   posNumber?: string | null;
   shiftIds?: string[];
@@ -1912,6 +2090,11 @@ export interface ZReportBusiness {
   openTillsLeftOut?: ZOpenTillsLeftOut | null;
   /** "סוג עוסק" as the Z was built (docs/SPEC_BUSINESS_TYPE.md); absent on older Zs. */
   dealerType?: DealerType | null;
+  /**
+   * A local shop Z: the main till's printed Z IS the Z — stored exactly as printed (figures,
+   * ranges, number), never corrected by the cloud.
+   */
+  asPrinted?: { producedBy?: TillRef | null; note?: string | null } | null;
 }
 
 export interface ZReportDetail extends ZReport {
@@ -1987,7 +2170,15 @@ export interface ZPrintDoc {
 
 /** `GET /z-reports/print-documents`: several Zs, in Z-number order. */
 export interface ZPrintDocList {
-  items: { id: string; number: number | null; shopId: string | null; document: ZPrintDoc }[];
+  items: {
+    id: string;
+    number: number | null;
+    shopId: string | null;
+    document: ZPrintDoc;
+    /** A till Z's run ("רצף") and its start — one till can have two "Z 1". */
+    sequenceEpoch?: number | null;
+    sequenceStartedAt?: string | null;
+  }[];
   total: number;
 }
 
@@ -2339,6 +2530,9 @@ export interface DaySummaryContributor {
   independent?: boolean;
   /** Its shop's branch code ("קוד סניף"). */
   branchCode?: string | null;
+  /** A till Z's run ("רצף") and when it started (see `ZReport.sequenceStartedAt`). */
+  machineSequenceEpoch?: number | null;
+  sequenceStartedAt?: string | null;
 }
 
 export interface DaySummaryRow {

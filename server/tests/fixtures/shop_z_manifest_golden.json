@@ -1,0 +1,998 @@
+{
+ "about": "Golden fixtures of the local shop Z manifest (pos-server docs/SPEC_INDEPENDENT_TILL.md §8.12). The SAME bytes live in pos-server server/tests/fixtures/ and pos-android app/src/test/resources/; both test suites compute every case and must match `expected` exactly, and both pin this file's SHA-256.",
+ "version": 1,
+ "cases": [
+  {
+   "name": "empty: no document, all zero, VAT zero",
+   "documents": [],
+   "expected": {
+    "version": 1,
+    "documents": 0,
+    "documentIds": [],
+    "types": {},
+    "totals": {
+     "documents": 0,
+     "gross": "0.00",
+     "discounts": "0.00",
+     "refunds": "0.00",
+     "net": "0.00",
+     "cash": "0.00",
+     "card": "0.00",
+     "exchange": "0.00",
+     "tips": "0.00",
+     "vat": "0.00",
+     "payments": {}
+    },
+    "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   }
+  },
+  {
+   "name": "one cash sale",
+   "documents": [
+    {
+     "id": "00000000-0000-4000-8000-000000000001",
+     "number": "101",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "12.00",
+     "discount": null,
+     "vat": "1.83",
+     "tip": "0.00",
+     "paymentMethod": "cash",
+     "payments": [
+      {
+       "method": "cash",
+       "amount": "12.00"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "version": 1,
+    "documents": 1,
+    "documentIds": [
+     "00000000-0000-4000-8000-000000000001"
+    ],
+    "types": {
+     "320": {
+      "count": 1,
+      "first": "101",
+      "last": "101"
+     }
+    },
+    "totals": {
+     "documents": 1,
+     "gross": "12.00",
+     "discounts": "0.00",
+     "refunds": "0.00",
+     "net": "12.00",
+     "cash": "12.00",
+     "card": "0.00",
+     "exchange": "0.00",
+     "tips": "0.00",
+     "vat": "1.83",
+     "payments": {
+      "cash": "12.00"
+     }
+    },
+    "digest": "ca0a2e6c5c19d76c6ffef72fba4dbd64f3b2f4f6fb1215dcba6cab57ac938823"
+   }
+  },
+  {
+   "name": "a shift: card, split, discount and a card tip, a credit note in cash, a cancelled and a pending attempt",
+   "documents": [
+    {
+     "id": "00000000-0000-4000-8000-000000000011",
+     "number": "201",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "50.00",
+     "discount": null,
+     "vat": "7.63",
+     "tip": "0.00",
+     "paymentMethod": "card",
+     "payments": [
+      {
+       "method": "card",
+       "amount": "50.00"
+      }
+     ]
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000012",
+     "number": "202",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "30.00",
+     "discount": null,
+     "vat": "4.58",
+     "tip": "0.00",
+     "paymentMethod": "mixed",
+     "payments": [
+      {
+       "method": "cash",
+       "amount": "10.00"
+      },
+      {
+       "method": "card",
+       "amount": "20.00"
+      }
+     ]
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000013",
+     "number": "203",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "40.00",
+     "discount": "4.00",
+     "vat": "5.49",
+     "tip": "5.00",
+     "paymentMethod": "card",
+     "payments": [
+      {
+       "method": "card",
+       "amount": "36.00"
+      }
+     ]
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000014",
+     "number": "57",
+     "type": 330,
+     "status": "completed",
+     "refundOf": "00000000-0000-4000-8000-000000000011",
+     "total": "12.00",
+     "discount": null,
+     "vat": "1.83",
+     "tip": "0.00",
+     "paymentMethod": "cash",
+     "payments": [
+      {
+       "method": "cash",
+       "amount": "12.00"
+      }
+     ]
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000015",
+     "number": "204",
+     "type": 320,
+     "status": "cancelled",
+     "refundOf": null,
+     "total": "99.00",
+     "discount": null,
+     "vat": "15.10",
+     "tip": "0.00",
+     "paymentMethod": "card",
+     "payments": [
+      {
+       "method": "card",
+       "amount": "99.00"
+      }
+     ]
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000016",
+     "number": "205",
+     "type": 320,
+     "status": "pending",
+     "refundOf": null,
+     "total": "7.00",
+     "discount": null,
+     "vat": "1.07",
+     "tip": "0.00",
+     "paymentMethod": "card",
+     "payments": []
+    }
+   ],
+   "expected": {
+    "version": 1,
+    "documents": 4,
+    "documentIds": [
+     "00000000-0000-4000-8000-000000000011",
+     "00000000-0000-4000-8000-000000000012",
+     "00000000-0000-4000-8000-000000000013",
+     "00000000-0000-4000-8000-000000000014"
+    ],
+    "types": {
+     "320": {
+      "count": 3,
+      "first": "201",
+      "last": "203"
+     },
+     "330": {
+      "count": 1,
+      "first": "57",
+      "last": "57"
+     }
+    },
+    "totals": {
+     "documents": 4,
+     "gross": "120.00",
+     "discounts": "4.00",
+     "refunds": "12.00",
+     "net": "104.00",
+     "cash": "-2.00",
+     "card": "106.00",
+     "exchange": "0.00",
+     "tips": "5.00",
+     "vat": "15.87",
+     "payments": {
+      "card": "106.00",
+      "cash": "-2.00"
+     }
+    },
+    "digest": "2b487203cbc2d62c0156d2e21cd7091de10ce29cf0bd6aae5590074710b1b9e7"
+   }
+  },
+  {
+   "name": "a sale since credited stays counted (refunded / partial_refund)",
+   "documents": [
+    {
+     "id": "00000000-0000-4000-8000-000000000021",
+     "number": "301",
+     "type": 320,
+     "status": "refunded",
+     "refundOf": null,
+     "total": "20.00",
+     "discount": null,
+     "vat": "3.05",
+     "tip": "0.00",
+     "paymentMethod": "cash",
+     "payments": [
+      {
+       "method": "cash",
+       "amount": "20.00"
+      }
+     ]
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000022",
+     "number": "302",
+     "type": 320,
+     "status": "partial_refund",
+     "refundOf": null,
+     "total": "15.00",
+     "discount": null,
+     "vat": "2.29",
+     "tip": "0.00",
+     "paymentMethod": "card",
+     "payments": [
+      {
+       "method": "card",
+       "amount": "15.00"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "version": 1,
+    "documents": 2,
+    "documentIds": [
+     "00000000-0000-4000-8000-000000000021",
+     "00000000-0000-4000-8000-000000000022"
+    ],
+    "types": {
+     "320": {
+      "count": 2,
+      "first": "301",
+      "last": "302"
+     }
+    },
+    "totals": {
+     "documents": 2,
+     "gross": "35.00",
+     "discounts": "0.00",
+     "refunds": "0.00",
+     "net": "35.00",
+     "cash": "20.00",
+     "card": "15.00",
+     "exchange": "0.00",
+     "tips": "0.00",
+     "vat": "5.34",
+     "payments": {
+      "card": "15.00",
+      "cash": "20.00"
+     }
+    },
+    "digest": "002c5569b7575b56f1474a88bf24c1a1f5d0013eeeae061208e462634f0d3952"
+   }
+  },
+  {
+   "name": "no tender rows: one leg by the payment method for the collectable amount, other when none",
+   "documents": [
+    {
+     "id": "00000000-0000-4000-8000-000000000031",
+     "number": "401",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "25.00",
+     "discount": "5.00",
+     "vat": "3.05",
+     "tip": "0.00",
+     "paymentMethod": "card",
+     "payments": []
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000032",
+     "number": "402",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "8.00",
+     "discount": null,
+     "vat": "1.22",
+     "tip": "0.00",
+     "paymentMethod": null,
+     "payments": []
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000033",
+     "number": "60",
+     "type": 330,
+     "status": "completed",
+     "refundOf": null,
+     "total": "6.00",
+     "discount": "1.00",
+     "vat": "0.92",
+     "tip": "0.00",
+     "paymentMethod": "cash",
+     "payments": []
+    }
+   ],
+   "expected": {
+    "version": 1,
+    "documents": 3,
+    "documentIds": [
+     "00000000-0000-4000-8000-000000000031",
+     "00000000-0000-4000-8000-000000000032",
+     "00000000-0000-4000-8000-000000000033"
+    ],
+    "types": {
+     "320": {
+      "count": 2,
+      "first": "401",
+      "last": "402"
+     },
+     "330": {
+      "count": 1,
+      "first": "60",
+      "last": "60"
+     }
+    },
+    "totals": {
+     "documents": 3,
+     "gross": "33.00",
+     "discounts": "5.00",
+     "refunds": "6.00",
+     "net": "22.00",
+     "cash": "-6.00",
+     "card": "20.00",
+     "exchange": "0.00",
+     "tips": "0.00",
+     "vat": "3.35",
+     "payments": {
+      "card": "20.00",
+      "cash": "-6.00",
+      "other": "8.00"
+     }
+    },
+    "digest": "96c3cee281e125e42ae7ce44ab6dd38fc738d4789a737d89813e1f61c432411c"
+   }
+  },
+  {
+   "name": "VAT unknown on one document withholds the VAT total",
+   "documents": [
+    {
+     "id": "00000000-0000-4000-8000-000000000041",
+     "number": "501",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "10.00",
+     "discount": null,
+     "vat": "1.53",
+     "tip": "0.00",
+     "paymentMethod": "cash",
+     "payments": [
+      {
+       "method": "cash",
+       "amount": "10.00"
+      }
+     ]
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000042",
+     "number": "502",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "11.00",
+     "discount": null,
+     "vat": null,
+     "tip": "0.00",
+     "paymentMethod": "cash",
+     "payments": [
+      {
+       "method": "cash",
+       "amount": "11.00"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "version": 1,
+    "documents": 2,
+    "documentIds": [
+     "00000000-0000-4000-8000-000000000041",
+     "00000000-0000-4000-8000-000000000042"
+    ],
+    "types": {
+     "320": {
+      "count": 2,
+      "first": "501",
+      "last": "502"
+     }
+    },
+    "totals": {
+     "documents": 2,
+     "gross": "21.00",
+     "discounts": "0.00",
+     "refunds": "0.00",
+     "net": "21.00",
+     "cash": "21.00",
+     "card": "0.00",
+     "exchange": "0.00",
+     "tips": "0.00",
+     "vat": null,
+     "payments": {
+      "cash": "21.00"
+     }
+    },
+    "digest": "816c490d7db2be6c08856dd46ecfb43595459c9b36a96c33f72a882caa0e9119"
+   }
+  },
+  {
+   "name": "rounding: half away from zero to the agora",
+   "documents": [
+    {
+     "id": "00000000-0000-4000-8000-000000000051",
+     "number": "601",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "10.005",
+     "discount": "0.145",
+     "vat": "1.525",
+     "tip": "0.005",
+     "paymentMethod": "card",
+     "payments": [
+      {
+       "method": "card",
+       "amount": "9.86"
+      }
+     ]
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000052",
+     "number": "602",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "2.675",
+     "discount": null,
+     "vat": "0.405",
+     "tip": "0.00",
+     "paymentMethod": "cash",
+     "payments": [
+      {
+       "method": "cash",
+       "amount": "2.675"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "version": 1,
+    "documents": 2,
+    "documentIds": [
+     "00000000-0000-4000-8000-000000000051",
+     "00000000-0000-4000-8000-000000000052"
+    ],
+    "types": {
+     "320": {
+      "count": 2,
+      "first": "601",
+      "last": "602"
+     }
+    },
+    "totals": {
+     "documents": 2,
+     "gross": "12.69",
+     "discounts": "0.15",
+     "refunds": "0.00",
+     "net": "12.54",
+     "cash": "2.68",
+     "card": "9.86",
+     "exchange": "0.00",
+     "tips": "0.01",
+     "vat": "1.94",
+     "payments": {
+      "card": "9.86",
+      "cash": "2.68"
+     }
+    },
+    "digest": "9e2885eebd081e9970ab811f4ae5a14338d1cabfc18e56775a195f3c6b2ae271"
+   }
+  },
+  {
+   "name": "an exempt dealer: receipts (400) and receipt refunds (-400), each type its own range",
+   "documents": [
+    {
+     "id": "00000000-0000-4000-8000-000000000061",
+     "number": "9",
+     "type": 400,
+     "status": "completed",
+     "refundOf": null,
+     "total": "30.00",
+     "discount": null,
+     "vat": "0.00",
+     "tip": "0.00",
+     "paymentMethod": "cash",
+     "payments": [
+      {
+       "method": "cash",
+       "amount": "30.00"
+      }
+     ]
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000062",
+     "number": "10",
+     "type": 400,
+     "status": "completed",
+     "refundOf": null,
+     "total": "45.50",
+     "discount": null,
+     "vat": "0.00",
+     "tip": "0.00",
+     "paymentMethod": "card",
+     "payments": [
+      {
+       "method": "card",
+       "amount": "45.50"
+      }
+     ]
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000063",
+     "number": "3",
+     "type": -400,
+     "status": "completed",
+     "refundOf": null,
+     "total": "5.50",
+     "discount": null,
+     "vat": "0.00",
+     "tip": "0.00",
+     "paymentMethod": "cash",
+     "payments": [
+      {
+       "method": "cash",
+       "amount": "5.50"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "version": 1,
+    "documents": 3,
+    "documentIds": [
+     "00000000-0000-4000-8000-000000000061",
+     "00000000-0000-4000-8000-000000000062",
+     "00000000-0000-4000-8000-000000000063"
+    ],
+    "types": {
+     "-400": {
+      "count": 1,
+      "first": "3",
+      "last": "3"
+     },
+     "400": {
+      "count": 2,
+      "first": "9",
+      "last": "10"
+     }
+    },
+    "totals": {
+     "documents": 3,
+     "gross": "75.50",
+     "discounts": "0.00",
+     "refunds": "5.50",
+     "net": "70.00",
+     "cash": "24.50",
+     "card": "45.50",
+     "exchange": "0.00",
+     "tips": "0.00",
+     "vat": "0.00",
+     "payments": {
+      "card": "45.50",
+      "cash": "24.50"
+     }
+    },
+    "digest": "0454fb486bd987b2258b7debf5723aba1241b049392b9f7e3ccd964502a8ab55"
+   }
+  },
+  {
+   "name": "per-type ranges in number order, not text order; a non-numeric number last",
+   "documents": [
+    {
+     "id": "00000000-0000-4000-8000-000000000071",
+     "number": "100",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "1.00",
+     "discount": null,
+     "vat": "0.15",
+     "tip": "0.00",
+     "paymentMethod": "cash",
+     "payments": [
+      {
+       "method": "cash",
+       "amount": "1.00"
+      }
+     ]
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000072",
+     "number": "9",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "1.00",
+     "discount": null,
+     "vat": "0.15",
+     "tip": "0.00",
+     "paymentMethod": "cash",
+     "payments": [
+      {
+       "method": "cash",
+       "amount": "1.00"
+      }
+     ]
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000073",
+     "number": "10",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "1.00",
+     "discount": null,
+     "vat": "0.15",
+     "tip": "0.00",
+     "paymentMethod": "cash",
+     "payments": [
+      {
+       "method": "cash",
+       "amount": "1.00"
+      }
+     ]
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000074",
+     "number": "A7",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "1.00",
+     "discount": null,
+     "vat": "0.15",
+     "tip": "0.00",
+     "paymentMethod": "cash",
+     "payments": [
+      {
+       "method": "cash",
+       "amount": "1.00"
+      }
+     ]
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000075",
+     "number": "8",
+     "type": 330,
+     "status": "completed",
+     "refundOf": null,
+     "total": "1.00",
+     "discount": null,
+     "vat": "0.15",
+     "tip": "0.00",
+     "paymentMethod": "cash",
+     "payments": [
+      {
+       "method": "cash",
+       "amount": "1.00"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "version": 1,
+    "documents": 5,
+    "documentIds": [
+     "00000000-0000-4000-8000-000000000071",
+     "00000000-0000-4000-8000-000000000072",
+     "00000000-0000-4000-8000-000000000073",
+     "00000000-0000-4000-8000-000000000074",
+     "00000000-0000-4000-8000-000000000075"
+    ],
+    "types": {
+     "320": {
+      "count": 4,
+      "first": "9",
+      "last": "A7"
+     },
+     "330": {
+      "count": 1,
+      "first": "8",
+      "last": "8"
+     }
+    },
+    "totals": {
+     "documents": 5,
+     "gross": "4.00",
+     "discounts": "0.00",
+     "refunds": "1.00",
+     "net": "3.00",
+     "cash": "3.00",
+     "card": "0.00",
+     "exchange": "0.00",
+     "tips": "0.00",
+     "vat": "0.45",
+     "payments": {
+      "cash": "3.00"
+     }
+    },
+    "digest": "2c295260beed179ad4bf55ee459f034bd55cd0fdc322dd4f5a896f32f3f887cb"
+   }
+  },
+  {
+   "name": "a mixed basket: the sale half paid partly by exchange, the credit half paid by exchange",
+   "documents": [
+    {
+     "id": "00000000-0000-4000-8000-000000000081",
+     "number": "701",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "80.00",
+     "discount": null,
+     "vat": "12.20",
+     "tip": "0.00",
+     "paymentMethod": "mixed",
+     "payments": [
+      {
+       "method": "exchange",
+       "amount": "30.00"
+      },
+      {
+       "method": "card",
+       "amount": "50.00"
+      }
+     ]
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000082",
+     "number": "88",
+     "type": 330,
+     "status": "completed",
+     "refundOf": null,
+     "total": "30.00",
+     "discount": null,
+     "vat": "4.58",
+     "tip": "0.00",
+     "paymentMethod": "exchange",
+     "payments": [
+      {
+       "method": "exchange",
+       "amount": "30.00"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "version": 1,
+    "documents": 2,
+    "documentIds": [
+     "00000000-0000-4000-8000-000000000081",
+     "00000000-0000-4000-8000-000000000082"
+    ],
+    "types": {
+     "320": {
+      "count": 1,
+      "first": "701",
+      "last": "701"
+     },
+     "330": {
+      "count": 1,
+      "first": "88",
+      "last": "88"
+     }
+    },
+    "totals": {
+     "documents": 2,
+     "gross": "80.00",
+     "discounts": "0.00",
+     "refunds": "30.00",
+     "net": "50.00",
+     "cash": "0.00",
+     "card": "50.00",
+     "exchange": "0.00",
+     "tips": "0.00",
+     "vat": "7.62",
+     "payments": {
+      "card": "50.00",
+      "exchange": "0.00"
+     }
+    },
+    "digest": "a3827951ce82bf056b072325d6278dfe18c27fd3d9ff613057c2e4db71b82224"
+   }
+  },
+  {
+   "name": "a legacy sale that names the sale it refunds is a credit; other tenders kept by name",
+   "documents": [
+    {
+     "id": "00000000-0000-4000-8000-000000000091",
+     "number": "801",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "40.00",
+     "discount": null,
+     "vat": "6.10",
+     "tip": "0.00",
+     "paymentMethod": "mixed",
+     "payments": [
+      {
+       "method": "voucher",
+       "amount": "15.00"
+      },
+      {
+       "method": " CASH ",
+       "amount": "25.00"
+      }
+     ]
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000092",
+     "number": "802",
+     "type": 320,
+     "status": "completed",
+     "refundOf": "00000000-0000-4000-8000-000000000091",
+     "total": "10.00",
+     "discount": null,
+     "vat": "1.53",
+     "tip": "0.00",
+     "paymentMethod": "cash",
+     "payments": [
+      {
+       "method": "cash",
+       "amount": "10.00"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "version": 1,
+    "documents": 2,
+    "documentIds": [
+     "00000000-0000-4000-8000-000000000091",
+     "00000000-0000-4000-8000-000000000092"
+    ],
+    "types": {
+     "320": {
+      "count": 2,
+      "first": "801",
+      "last": "802"
+     }
+    },
+    "totals": {
+     "documents": 2,
+     "gross": "40.00",
+     "discounts": "0.00",
+     "refunds": "10.00",
+     "net": "30.00",
+     "cash": "15.00",
+     "card": "0.00",
+     "exchange": "0.00",
+     "tips": "0.00",
+     "vat": "4.57",
+     "payments": {
+      "cash": "15.00",
+      "voucher": "15.00"
+     }
+    },
+    "digest": "ca5d1edc2644a7f3933a16d7f3cf58ed5751408c804a265fcf2aa6fa63af5e98"
+   }
+  },
+  {
+   "name": "ids and methods are read case-blind; the digest does not depend on the order documents come in",
+   "documents": [
+    {
+     "id": "00000000-0000-4000-8000-0000000000AB",
+     "number": "902",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "3.00",
+     "discount": null,
+     "vat": "0.46",
+     "tip": "0.00",
+     "paymentMethod": "Card",
+     "payments": [
+      {
+       "method": "Card",
+       "amount": "3.00"
+      }
+     ]
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000101",
+     "number": "901",
+     "type": 320,
+     "status": "completed",
+     "refundOf": null,
+     "total": "2.00",
+     "discount": null,
+     "vat": "0.31",
+     "tip": "0.00",
+     "paymentMethod": "cash",
+     "payments": [
+      {
+       "method": "cash",
+       "amount": "2.00"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "version": 1,
+    "documents": 2,
+    "documentIds": [
+     "00000000-0000-4000-8000-0000000000ab",
+     "00000000-0000-4000-8000-000000000101"
+    ],
+    "types": {
+     "320": {
+      "count": 2,
+      "first": "901",
+      "last": "902"
+     }
+    },
+    "totals": {
+     "documents": 2,
+     "gross": "5.00",
+     "discounts": "0.00",
+     "refunds": "0.00",
+     "net": "5.00",
+     "cash": "2.00",
+     "card": "3.00",
+     "exchange": "0.00",
+     "tips": "0.00",
+     "vat": "0.77",
+     "payments": {
+      "card": "3.00",
+      "cash": "2.00"
+     }
+    },
+    "digest": "6637873b7e91b0c76f3c2952f99e7e86ab7f279cecf9dbfe9b6e3faf04e770ab"
+   }
+  }
+ ]
+}

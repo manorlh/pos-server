@@ -57,7 +57,8 @@ type TerminalFields = Pick<
   | 'forceTerminalNumber'
   | 'forceTerminalNumberSource'
   | 'terminalStatus'
->;
+> &
+  Partial<Pick<PosMachine, 'cardLock' | 'expectedTerminalNumberSource'>>;
 
 const STATUS_CLASS: Record<TerminalStatus, string> = {
   match: 'bg-green-600/15 text-green-700 dark:text-green-400',
@@ -173,6 +174,10 @@ export function TerminalSummary({ m }: { m: TerminalFields }) {
             expected: m.expectedTerminalNumber ?? t('none'),
           })}
         </p>
+      ) : null}
+      {m.cardLock ? (
+        // "תנעל את האשראי, לא את הקופה": card payment only is locked on the till (SPEC_KIOSK.md §20).
+        <p className="text-xs font-semibold text-destructive">{t(`cardLock.${m.cardLock}`)}</p>
       ) : null}
       <LastWrite m={m} />
       <p className="text-xs text-muted-foreground">

@@ -100,10 +100,17 @@ const SERVER_TEXT_FIRST = new Set([
   // The shop Z's one producer is the main till on the LAN (or a switch is waiting on it).
   'shop_z_producer_local',
   'shop_z_producer_busy',
+  // A till the run takes shows a warning: the operator confirms the cloud's data (§4.6.1).
+  'cloud_data_confirmation_required',
 ]);
 
 /** Our own words for those of them not in `zErrors` (under `independentTill.zErrors`). */
-const LOCAL_KNOWN = new Set(['all_tills_required', 'local_mode_all_tills']);
+const LOCAL_KNOWN = new Set([
+  'all_tills_required',
+  'local_mode_all_tills',
+  // An offline till Z of an earlier run of the till: never filed into the new run.
+  'offline_z_other_sequence',
+]);
 
 export function useZErrorText() {
   const t = useTranslations('zErrors');

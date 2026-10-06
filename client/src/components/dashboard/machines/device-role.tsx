@@ -272,13 +272,20 @@ export function DeviceCapabilityList({
       <span className="sr-only">{on ? t('capYes') : t('capNo')}</span>
     </li>
   );
+  // SUNMI (docs/SPEC_SUNMI.md): the head's paper and a scan head of its own, from the model's table.
+  const isSunmi = typeof model === 'string' && model.startsWith('SUNMI');
   return (
     <div className="space-y-1 text-xs">
       <ul className="flex flex-wrap gap-x-3 gap-y-1">
-        {row(t('capPrinter'), printer)}
+        {row(
+          printer && table.paperWidthMm ? `${t('capPrinter')} · ${t('capPaper', { mm: table.paperWidthMm })}` : t('capPrinter'),
+          printer,
+        )}
         {row(t('capTerminal'), terminal)}
         {row(t('capDrawer'), drawer)}
+        {isSunmi ? row(t('capScanner'), table.builtinScanner) : null}
       </ul>
+      {isSunmi ? <p className="text-muted-foreground">{t('sunmiHint')}</p> : null}
       {kiosk ? <p className="text-muted-foreground">{tr('kioskTerminalNote')}</p> : null}
       {pending ? (
         <p className="text-amber-700 dark:text-amber-400" title={t('driverPendingHint')}>

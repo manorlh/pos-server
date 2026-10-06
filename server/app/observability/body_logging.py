@@ -23,6 +23,7 @@ SENSITIVE_KEYS = frozenset(
         # The card integration's secrets in a settings PATCH (app/services/payment_secrets.py).
         "zcreditpassword",
         "zcreditkey",
+        "synqpayapikey",
         # Notifications / club sign-up (docs/SPEC_NOTIFICATIONS_CLUB.md): the OTP code
         # (see `_redact_value`), the one-time tokens, the provider token and phone numbers
         # never reach a log.

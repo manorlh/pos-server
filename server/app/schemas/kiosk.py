@@ -54,15 +54,36 @@ class KioskOrdersIn(_Camel):
     orders: List[Any] = Field(default_factory=list, max_length=500)
 
 
+class KioskMenuIn(_Camel):
+    """`POST /sync/{id}/kiosk/menu` — "עריכת תפריט הקיוסק" (docs/SPEC_KIOSK.md §22)."""
+
+    #: The till user whose manager PIN was entered on the kiosk.
+    approver_id: Optional[str] = Field(None, alias="approverId", max_length=64)
+    #: The `menuVersion` the edit started from (kiosk/sync); another is refused 409.
+    base_version: Optional[str] = Field(None, alias="baseVersion", max_length=32)
+    #: The catalog's menu keys (categoryOrder, productOrder, hiddenCategories, hiddenProducts, featuredProductIds).
+    menu: Dict[str, Any] = Field(default_factory=dict)
+
+
 class PickupNumberIn(_Camel):
     order_key: str = Field(..., alias="orderKey", min_length=1, max_length=64)
     business_date: date = Field(..., alias="businessDate")
 
 
 class KioskCommandIn(_Camel):
-    action: Literal["pause", "resume", "close_shift", "till_z"]
+    #: `bon_print` / `bon_handled` ("הדפס עכשיו" / "סמן כטופל", docs/SPEC_KIOSK.md §16.8): the
+    #: order's local id in `message`.
+    action: Literal["pause", "resume", "close_shift", "till_z", "schedule", "bon_print", "bon_handled"]
     message: Optional[str] = Field(None, max_length=300)
     force: bool = False
+    #: "נעילה למכירה" (pause): until reopened by hand ("manual", the default), HH:MM today
+    #: ("time" + `untilTime`), for N minutes ("minutes" + `minutes`), or until the kiosk's next
+    #: automatic opening ("next_open") — docs/SPEC_KIOSK.md §15.
+    until_mode: Optional[Literal["manual", "time", "minutes", "next_open"]] = Field(None, alias="untilMode")
+    until_time: Optional[str] = Field(None, alias="untilTime", max_length=5)
+    minutes: Optional[int] = Field(None, ge=1, le=1440)
+    #: "פתיחה אוטומטית" (schedule): `{enabled, days, open, close?, autoCloseAt?}`.
+    schedule: Optional[Dict[str, Any]] = None
     #: The till user who pressed it, for the audit (a controlling till only).
     pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)
     pos_user_name: Optional[str] = Field(None, alias="posUserName", max_length=100)
@@ -89,3 +110,6 @@ class KioskSettingsIn(_Camel):
     """`PUT /kiosks/settings`: the whole partial layer of that level (replaces the stored one)."""
 
     overrides: Dict[str, Any] = Field(default_factory=dict)
+    #: The shop layer's `menuVersion` the dashboard loaded: a save that changes the kiosk menu
+    #: from another version is refused 409 `kiosk_menu_changed` (docs/SPEC_KIOSK.md §22).
+    menu_version: Optional[str] = Field(None, alias="menuVersion", max_length=32)

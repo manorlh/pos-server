@@ -82,6 +82,8 @@ export function normalizeTerminalFields(raw: Record<string, unknown>) {
     forceTerminalNumberSource: (nullableString(raw.forceTerminalNumberSource) ??
       null) as PosMachine['forceTerminalNumberSource'],
     terminalStatus: terminalStatus(raw.terminalStatus),
+    expectedTerminalNumberSource: nullableString(raw.expectedTerminalNumberSource),
+    cardLock: (['mismatch', 'not_configured', 'unknown'] as const).find((v) => v === raw.cardLock) ?? null,
     // The network pinpad (app/services/payment_terminal.py): dropped here before, so the
     // "נדרשת כתובת IP למסופון" alert never showed.
     pinpadEnabled: raw.pinpadEnabled === true,

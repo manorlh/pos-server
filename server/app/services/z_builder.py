@@ -445,6 +445,7 @@ def build_z(
     machine_sequence_number: Optional[int] = None,
     allow_empty: bool = False,
     shop_sequence_number: Optional[int] = None,
+    leave_late_carry: bool = False,
 ) -> ZReport:
     """
     Build and write one Z over `selections` — (till, through shift id) pairs of one shop.
@@ -518,9 +519,14 @@ def build_z(
     # (`shifts.shop_id`). A till since moved away, or retired, still has its shifts of
     # this shop taken here — and never its shifts of another shop.
     for machine, through_id in selections:
-        per_machine.append(
-            (machine, included_shifts(db, machine.id, through_id, shop_id=shop_id, lock=True))
-        )
+        taken = included_shifts(db, machine.id, through_id, shop_id=shop_id, lock=True)
+        if leave_late_carry:
+            # A Z the till built itself (with no connection) never had the cloud's carried
+            # late documents on its paper: they wait for the next Z the cloud builds (§4.6.3).
+            from app.services.late_documents import is_carry
+
+            taken = [s for s in taken if not is_carry(s)]
+        per_machine.append((machine, taken))
 
     all_shifts = [s for _m, shifts in per_machine for s in shifts]
     claimed = [s for s in all_shifts if s.z_report_id is not None]
@@ -619,9 +625,39 @@ def build_z(
         z.header = {**z.header, "byWaiter": waiter_breakdown(db, [s.id for s in all_shifts], shop_id)}
         # What this Z includes, in words (docs/SPEC_INDEPENDENT_TILL.md §7).
         z.header = {**z.header, "scope": z_scope(db, shop_id, [m for m, _s in per_machine], till_z, area_id)}
+    if till_z:
+        # The till's run (an independent till starts again at 1, SPEC_INDEPENDENT_TILL §3.1):
+        # its epoch on the row, and when it began on the header — printed and shown so two
+        # "Z 1" of one till are told apart.
+        from app.services.z_sequence import current_machine_epoch
+
+        epoch, started = current_machine_epoch(db, per_machine[0][0].id)
+        z.machine_sequence_epoch = epoch
+        if z.header is not None:
+            z.header = {
+                **z.header,
+                "sequence": {
+                    "epoch": epoch,
+                    "startedAt": started.isoformat() if started is not None else None,
+                    "independent": bool(getattr(per_machine[0][0], "independent_till", False)),
+                },
+            }
+    # "הוחלפה קופה" (docs/SPEC_OFFLINE_TILL_Z.md §4.6.2): the first Z of a till after its
+    # device was replaced says so, once ("המכשיר הוחלף בתאריך …").
+    from app.services.till_replacement import note_on_z
+
+    note_on_z(z, [m for m, _s in per_machine])
+    # Late documents of a support Z, carried into this Z: their own section (§4.6.3).
+    from app.services import late_documents
+
+    late_documents.note_on_z(db, z, all_shifts)
     db.add(z)
     db.flush()
     for shift in all_shifts:
         shift.z_report_id = z.id
     db.flush()
+    # "פתיחת פריטים אוטומטית אחרי Z" (docs/SPEC_AVAILABILITY.md): own savepoint, never raises.
+    from app.services.availability_reopen import after_z
+
+    after_z(db, z, [m for m, _s in per_machine])
     return z

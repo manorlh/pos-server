@@ -1,0 +1,26 @@
+{
+  "orders": [
+    {
+      "localId": "order-1",
+      "transactionId": "c1a8f0e2-5b7d-4a1e-9f3c-6d2e8b1a4c77",
+      "transactionNumber": "40000057",
+      "pickupNumber": 17,
+      "pickupLabel": "A-17",
+      "businessDate": "2026-10-06",
+      "serviceType": "take_away",
+      "tableRef": null,
+      "fulfillmentMode": "BON",
+      "configVersion": "c727da0ef0f5b92e",
+      "customerName": "דנה",
+      "customerPhone": null,
+      "itemCount": 3,
+      "totalAgorot": 8900,
+      "tipAgorot": 0,
+      "paidAt": "2026-10-06T09:15:01.300Z",
+      "bonStatus": "sent",
+      "bonDetail": null,
+      "receiptStatus": "declined",
+      "status": "paid"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "status": 200,
+  "body": {
+    "ok": true,
+    "serverTime": "2026-10-06T14:06:32.557964+00:00",
+    "zReportedThroughSequence": null,
+    "recentShiftZs": [],
+    "license": {
+      "type": "permanent",
+      "expiresOn": null,
+      "source": null,
+      "name": null,
+      "warnDays": 3
+    },
+    "zMode": "cloud",
+    "independentTill": false,
+    "lastTillZNumber": 0,
+    "tillZEpoch": 0,
+    "tillZEpochStartedAt": null,
+    "trainingMode": false
+  }
+}

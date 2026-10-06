@@ -10,9 +10,9 @@
 
 // ── Values ───────────────────────────────────────────────────────────────────
 
-export type PaymentIntegration = 'auto' | 'agamento' | 'nayax_lan' | 'zcredit' | 'tap_to_pay';
+export type PaymentIntegration = 'auto' | 'agamento' | 'nayax_lan' | 'zcredit' | 'synqpay' | 'tap_to_pay';
 /** What a till actually charges on (never `auto`). */
-export type ResolvedIntegration = 'agamento' | 'nayax_lan' | 'zcredit';
+export type ResolvedIntegration = 'agamento' | 'nayax_lan' | 'zcredit' | 'synqpay';
 export type ZcreditMode = 'test' | 'production';
 export type SettingsLevelName = 'tenant' | 'company' | 'shop' | 'area' | 'machine';
 
@@ -21,11 +21,12 @@ export const PAYMENT_INTEGRATIONS: readonly PaymentIntegration[] = [
   'agamento',
   'nayax_lan',
   'zcredit',
+  'synqpay',
   'tap_to_pay',
 ];
 
 /** Charged on a terminal outside the till: all a till without one of its own can use. */
-export const EXTERNAL_INTEGRATIONS: readonly PaymentIntegration[] = ['nayax_lan', 'zcredit', 'tap_to_pay'];
+export const EXTERNAL_INTEGRATIONS: readonly PaymentIntegration[] = ['nayax_lan', 'zcredit', 'synqpay', 'tap_to_pay'];
 /** Shown as "בקרוב" and refused by the server on write. */
 export const RESERVED_INTEGRATIONS: readonly PaymentIntegration[] = ['tap_to_pay'];
 
@@ -34,6 +35,7 @@ export const INTEGRATION_LABELS: Record<PaymentIntegration, string> = {
   agamento: 'מובנה — Agamento במכשיר',
   nayax_lan: 'Nayax — מסופון ברשת',
   zcredit: 'Z-Credit — מסופון חיצוני',
+  synqpay: 'SynqPay — מסוף חיצוני',
   tap_to_pay: 'Tap to Pay במכשיר (iPOSpays)',
 };
 
@@ -43,11 +45,100 @@ export const INTEGRATION_SHORT_LABELS: Record<PaymentIntegration, string> = {
   agamento: 'מובנה',
   nayax_lan: 'Nayax',
   zcredit: 'Z-Credit',
+  synqpay: 'SynqPay',
   tap_to_pay: 'Tap to Pay',
 };
 
 export const ZCREDIT_MODES: readonly ZcreditMode[] = ['test', 'production'];
 export const ZCREDIT_MODE_LABELS: Record<ZcreditMode, string> = { test: 'בדיקה', production: 'ייצור' };
+
+// ── SynqPay (docs/SPEC_SYNQPAY.md; server app/services/payment_integration.py) ──
+
+/** The terminal models SynqPay's docs name, and "other". */
+export type SynqpayModel = 'dx8000' | 'dx6000' | 'ex8000' | 'rx5000' | 's1p2' | 's1u2_m4' | 'verifone' | 'other';
+export const SYNQPAY_MODELS: readonly SynqpayModel[] = [
+  'dx8000',
+  'dx6000',
+  'ex8000',
+  'rx5000',
+  's1p2',
+  's1u2_m4',
+  'verifone',
+  'other',
+];
+export const SYNQPAY_MODEL_LABELS: Record<SynqpayModel, string> = {
+  dx8000: 'Ingenico DX8000',
+  dx6000: 'DX6000',
+  ex8000: 'EX8000',
+  rx5000: 'RX5000',
+  s1p2: 'Castles S1P2',
+  s1u2_m4: 'Castles S1U2-M4 (לא מאויש)',
+  verifone: 'Verifone',
+  other: 'אחר',
+};
+
+/**
+ * How a till reaches an EXTERNAL SynqPay terminal (the owner: "LAN/USB זה כשמדובר בקופה עם מסופון
+ * חיצוני"): `lan` the network (host, port, TLS — IP over USB too), `usb` the serial link on a cable,
+ * found by itself. A till running ON a SynqPay terminal charges on it as its built-in terminal —
+ * no setting (the server's app/models/synqpay_devices.py).
+ */
+export type SynqpayConnection = 'lan' | 'usb';
+export const SYNQPAY_CONNECTIONS: readonly SynqpayConnection[] = ['lan', 'usb'];
+export const SYNQPAY_CONNECTION_LABELS: Record<SynqpayConnection, string> = {
+  lan: 'רשת (LAN / Wi-Fi)',
+  usb: 'USB (זיהוי אוטומטי)',
+};
+/** The connections that reach the terminal at an address, and so need `synqpayHost`. */
+export const SYNQPAY_ADDRESSED: readonly SynqpayConnection[] = ['lan'];
+const SYNQPAY_CONNECTION_ALIASES: Record<string, SynqpayConnection> = { usb_serial: 'usb', serial: 'usb' };
+
+export type SynqpayProtocol = 'tcp' | 'http';
+export const SYNQPAY_PROTOCOLS: readonly SynqpayProtocol[] = ['tcp', 'http'];
+export const SYNQPAY_PROTOCOL_LABELS: Record<SynqpayProtocol, string> = { tcp: 'TCP', http: 'HTTP' };
+
+/** The only model SynqPay documents a serial (UART) API link for (changelog 1.3.1). */
+export const SYNQPAY_SERIAL_DOCUMENTED: readonly SynqpayModel[] = ['rx5000'];
+
+/** The documented ports: TCP 9000 / TLS 9443, HTTP 8000 / HTTPS 8443. */
+export function synqpayDefaultPort(protocol: unknown, tls: unknown): number {
+  const http = typeof protocol === 'string' && protocol.trim().toLowerCase() === 'http';
+  const secure = tls === true;
+  if (http) return secure ? 8443 : 8000;
+  return secure ? 9443 : 9000;
+}
+
+function choice<T extends string>(value: unknown, allowed: readonly T[]): T | null {
+  if (typeof value !== 'string') return null;
+  const t = value.trim().toLowerCase().replace(/-/g, '_');
+  return (allowed as readonly string[]).includes(t) ? (t as T) : null;
+}
+
+export const cleanSynqpayModel = (value: unknown): SynqpayModel | null => choice(value, SYNQPAY_MODELS);
+export const cleanSynqpayConnection = (value: unknown): SynqpayConnection | null => {
+  const alias = typeof value === 'string' ? SYNQPAY_CONNECTION_ALIASES[value.trim().toLowerCase().replace(/-/g, '_')] : undefined;
+  return alias ?? choice(value, SYNQPAY_CONNECTIONS);
+};
+export const cleanSynqpayProtocol = (value: unknown): SynqpayProtocol | null => choice(value, SYNQPAY_PROTOCOLS);
+
+const SYNQPAY_USB_RE = /^(?:[0-9A-F]{4}:[0-9A-F]{4}|COM[0-9]{1,3})$/;
+const SYNQPAY_SERIAL_RE = /^[A-Za-z0-9-]{4,32}$/;
+const SYNQPAY_KEY_RE = /^[A-Za-z0-9]{1,64}$/;
+
+/** "VVVV:PPPP" (hex) or "COMn", as the server stores it (upper case); null when it is neither. */
+export function cleanSynqpayUsbDevice(value: string): string | null {
+  const t = value.trim().toUpperCase();
+  return SYNQPAY_USB_RE.test(t) ? t : null;
+}
+
+export function isValidSynqpaySerial(value: string): boolean {
+  return SYNQPAY_SERIAL_RE.test(value.trim());
+}
+
+/** What the API key must look like for the server: letters and digits (the docs' "1234abcd"). */
+export function isValidSynqpayApiKey(value: string): boolean {
+  return SYNQPAY_KEY_RE.test(value.trim());
+}
 
 /** "בירושה מהחנות", "שמורה ברמת החנות". */
 export const LEVEL_LABELS: Record<SettingsLevelName, string> = {
@@ -64,8 +155,8 @@ export const NAYAX_DEFAULT_PATH = '/SPICy';
 
 // ── Fields ───────────────────────────────────────────────────────────────────
 
-export type PaymentSecretKey = 'zcreditPassword' | 'zcreditKey';
-export const PAYMENT_SECRET_KEYS: readonly PaymentSecretKey[] = ['zcreditPassword', 'zcreditKey'];
+export type PaymentSecretKey = 'zcreditPassword' | 'zcreditKey' | 'synqpayApiKey';
+export const PAYMENT_SECRET_KEYS: readonly PaymentSecretKey[] = ['zcreditPassword', 'zcreditKey', 'synqpayApiKey'];
 
 export type PaymentFieldKey =
   | 'paymentIntegration'
@@ -76,7 +167,16 @@ export type PaymentFieldKey =
   | 'zcreditPassword'
   | 'zcreditPinpadId'
   | 'zcreditMode'
-  | 'zcreditKey';
+  | 'zcreditKey'
+  | 'synqpayDeviceModel'
+  | 'synqpayConnection'
+  | 'synqpayHost'
+  | 'synqpayProtocol'
+  | 'synqpayPort'
+  | 'synqpayTls'
+  | 'synqpayUsbDevice'
+  | 'synqpaySerialNumber'
+  | 'synqpayApiKey';
 
 export const FIELD_LABELS: Record<PaymentFieldKey, string> = {
   paymentIntegration: 'סוג אינטגרציית אשראי',
@@ -88,16 +188,27 @@ export const FIELD_LABELS: Record<PaymentFieldKey, string> = {
   zcreditPinpadId: 'מזהה PinPad',
   zcreditMode: 'מצב בדיקה / ייצור',
   zcreditKey: 'מפתח (Key)',
+  synqpayDeviceModel: 'דגם המסוף',
+  synqpayConnection: 'סוג החיבור',
+  synqpayHost: 'כתובת IP של המסוף',
+  synqpayProtocol: 'פרוטוקול',
+  synqpayPort: 'פורט',
+  synqpayTls: 'חיבור מוצפן (TLS)',
+  synqpayUsbDevice: 'התקן USB',
+  synqpaySerialNumber: 'מספר סידורי של המסוף',
+  synqpayApiKey: 'מפתח API',
 };
 
 /**
  * The fields each integration needs before its first card, in the order the form shows
  * them (the server's REQUIRED_FIELDS). `auto` resolves to one of the others first.
+ * SynqPay's host only for a connection by address (`missingRequiredFields`).
  */
 export const REQUIRED_FIELDS: Record<Exclude<PaymentIntegration, 'auto'>, readonly PaymentFieldKey[]> = {
   agamento: [],
   nayax_lan: ['nayaxDeviceHost'],
   zcredit: ['zcreditTerminalNumber', 'zcreditPassword', 'zcreditPinpadId', 'zcreditMode'],
+  synqpay: ['synqpayDeviceModel', 'synqpayConnection', 'synqpayHost', 'synqpayApiKey'],
   tap_to_pay: [],
 };
 
@@ -107,6 +218,17 @@ export const FORM_FIELDS: Record<PaymentIntegration, readonly PaymentFieldKey[]>
   agamento: [],
   nayax_lan: ['nayaxDeviceHost', 'nayaxDevicePort', 'nayaxSpicyPath'],
   zcredit: ['zcreditTerminalNumber', 'zcreditPassword', 'zcreditPinpadId', 'zcreditMode', 'zcreditKey'],
+  synqpay: [
+    'synqpayDeviceModel',
+    'synqpayConnection',
+    'synqpayHost',
+    'synqpayProtocol',
+    'synqpayPort',
+    'synqpayTls',
+    'synqpayUsbDevice',
+    'synqpaySerialNumber',
+    'synqpayApiKey',
+  ],
   tap_to_pay: [],
 };
 
@@ -166,6 +288,27 @@ export const PI_TEXT = {
   formInvalid: 'יש לתקן את שדות סוג אינטגרציית האשראי לפני השמירה.',
   shopCreateHint:
     'חל על כל הקופות בחנות; פרטי החיבור (כתובת/מספר מסוף) מוגדרים בהגדרות החנות או הקופה. אפשר לשנות לכל קופה בנפרד',
+  synqpayHint:
+    'מסוף SynqPay חיצוני לקופה (טאבלט / קיוסק) — ברשת או בכבל USB. המפתח מתקבל בצימוד המסוף. קופה שרצה על מסוף SynqPay עצמו גובה בו כמסוף מובנה, בלי הגדרה.',
+  synqpayIdentityHint:
+    'זהות המסוף נבדקת: יש להגדיר "מספר מסוף צפוי" ברמת הקופה עצמה — אחרת, או כשהמסוף המחובר אחר, האשראי ננעל (הקופה ממשיכה לעבוד).',
+  synqpayModelPlaceholder: 'בחרו דגם',
+  synqpayConnectionPlaceholder: 'בחרו סוג חיבור',
+  synqpayModelRequired: 'יש לבחור את דגם המסוף',
+  synqpayConnectionRequired: 'יש לבחור סוג חיבור',
+  synqpayInvalidChoice: 'ערך לא מוכר',
+  synqpayHostHint: 'כתובת IPv4 או שם מארח, בלי http:// ובלי פורט',
+  synqpayPortHint: (port: number) => `ברירת מחדל ${port}`,
+  synqpayProtocolHint: 'TCP (ברירת מחדל) או HTTP — כפי שמוגדר במסוף',
+  synqpayTlsHint: 'רק אם במסוף מופעל חיבור מאובטח (secureConnection)',
+  synqpayUsbHint: 'ריק = זיהוי אוטומטי (מומלץ). רק אם יש כמה התקנים: VID:PID בהקס (למשל 0B00:0080), או COM3 בקיוסק ווינדוס',
+  synqpayUsbInvalid: 'VVVV:PPPP בהקס או COMn, או ריק לזיהוי אוטומטי',
+  synqpaySerialHint: 'כפי שמופיע במסוף — לצימוד ולבדיקה שזה המסוף הנכון',
+  synqpaySerialInvalid: '4–32 אותיות באנגלית, ספרות או מקף',
+  synqpayKeyHint: 'מתקבל בצימוד (pair / authenticate) — 8 תווים, למשל 1234abcd',
+  synqpayKeyInvalid: 'אותיות באנגלית וספרות בלבד, עד 64 תווים',
+  synqpaySerialUndocumented: 'חיבור סריאלי מתועד ב-SynqPay רק לדגם RX5000 — יש לוודא מול SynqPay',
+  synqpayHostHintLan: 'כתובת IPv4 או שם מארח, בלי http:// ובלי פורט. מסוף בחיבור IP over USB — הכתובת שהוא מקבל בכבל',
 } as const;
 
 /** "בירושה מהחנות: Z-Credit — מסופון חיצוני". */
@@ -181,7 +324,7 @@ export function inheritedValueLabel(value: string): string {
 
 /** "סיסמה שמורה", "סיסמה שמורה ברמת החנות", "מפתח שמור ברמת הארגון". */
 export function secretSavedLabel(key: PaymentSecretKey, source: SettingsLevelName | null | undefined, own: boolean): string {
-  const noun = key === 'zcreditPassword' ? 'סיסמה שמורה' : 'מפתח שמור';
+  const noun = key === 'zcreditPassword' ? 'סיסמה שמורה' : key === 'synqpayApiKey' ? 'מפתח API שמור' : 'מפתח שמור';
   return own || !source ? noun : `${noun} ברמת ${LEVEL_LABELS[source]}`;
 }
 
@@ -330,6 +473,8 @@ export interface ServerIntegrationOption {
   value: string;
   selectable: boolean;
   reason?: string | null;
+  /** The server's own name for it here ("מובנה — SynqPay במכשיר" on a SynqPay terminal). */
+  label?: string | null;
 }
 
 /**
@@ -363,7 +508,12 @@ export function integrationOptions(
             : null;
     return {
       value,
-      label: reason === 'soon' ? `${INTEGRATION_LABELS[value]} — ${PI_TEXT.soon}` : INTEGRATION_LABELS[value],
+      label:
+        reason === 'soon'
+          ? `${INTEGRATION_LABELS[value]} — ${PI_TEXT.soon}`
+          : value === 'agamento' && typeof server?.label === 'string' && server.label.trim()
+            ? server.label
+            : INTEGRATION_LABELS[value],
       selectable: reason === null,
       hidden: reason === 'needs_nfc',
       reason,
@@ -432,10 +582,19 @@ export interface PaymentIntegrationForm {
   zcreditMode?: string | null;
   zcreditPassword?: string | null;
   zcreditKey?: string | null;
+  synqpayDeviceModel?: string | null;
+  synqpayConnection?: string | null;
+  synqpayHost?: string | null;
+  synqpayProtocol?: string | null;
+  synqpayPort?: string | number | null;
+  synqpayTls?: boolean | null;
+  synqpayUsbDevice?: string | null;
+  synqpaySerialNumber?: string | null;
+  synqpayApiKey?: string | null;
 }
 
 /** What the layers above give (the settings GET's `effective`). */
-export type PaymentIntegrationInherited = Omit<PaymentIntegrationForm, 'zcreditPassword' | 'zcreditKey'>;
+export type PaymentIntegrationInherited = Omit<PaymentIntegrationForm, PaymentSecretKey>;
 
 export interface SecretStatus {
   set: boolean;
@@ -485,7 +644,7 @@ export function fieldPresent(
   inherited: PaymentIntegrationInherited | null | undefined,
   secrets: SecretsStatus | null | undefined,
 ): boolean {
-  if (key === 'zcreditPassword' || key === 'zcreditKey') {
+  if (key === 'zcreditPassword' || key === 'zcreditKey' || key === 'synqpayApiKey') {
     if (isTypedSecret(form[key])) return true;
     if (!secrets) return true;
     const status = secrets[key];
@@ -494,9 +653,21 @@ export function fieldPresent(
     return status?.set === true;
   }
   if (key === 'paymentIntegration') return true;
+  if (key === 'synqpayTls') {
+    return typeof form.synqpayTls === 'boolean' || typeof inherited?.synqpayTls === 'boolean';
+  }
   const own = form[key];
   if (own !== null && text(own) !== null) return true;
   return text(inherited?.[key]) !== null;
+}
+
+/** The SynqPay connection the form ends up on: this layer's own, else the inherited one. */
+export function formSynqpayConnection(
+  form: PaymentIntegrationForm,
+  inherited: PaymentIntegrationInherited | null | undefined,
+): SynqpayConnection | null {
+  if (form.synqpayConnection === null) return cleanSynqpayConnection(inherited?.synqpayConnection);
+  return cleanSynqpayConnection(form.synqpayConnection) ?? cleanSynqpayConnection(inherited?.synqpayConnection);
 }
 
 /** The required fields of [integration] that nothing gives, in form order. */
@@ -507,7 +678,12 @@ export function missingRequiredFields(
   secrets: SecretsStatus | null | undefined,
 ): PaymentFieldKey[] {
   if (integration === 'auto') return [];
-  return REQUIRED_FIELDS[integration].filter((key) => !fieldPresent(key, form, inherited, secrets));
+  const connection = integration === 'synqpay' ? formSynqpayConnection(form, inherited) : null;
+  return REQUIRED_FIELDS[integration].filter((key) => {
+    // SynqPay's host only on the network (lan), as the server.
+    if (key === 'synqpayHost' && !(connection !== null && SYNQPAY_ADDRESSED.includes(connection))) return false;
+    return !fieldPresent(key, form, inherited, secrets);
+  });
 }
 
 /**
@@ -561,16 +737,69 @@ export function validatePaymentIntegration(
     if (isTypedSecret(v)) {
       const err = secretError(v);
       if (err) errors[key] = err;
+      else if (key === 'synqpayApiKey' && !isValidSynqpayApiKey(v)) errors[key] = PI_TEXT.synqpayKeyInvalid;
     }
   }
+
+  // SynqPay's values, checked whatever the type (the server validates every one sent).
+  Object.assign(errors, synqpayFieldErrors(form));
 
   if (requireAll) {
     for (const key of missingRequiredFields(effective, form, inherited, secrets)) {
       if (errors[key]) continue;
-      errors[key] = key === 'zcreditMode' ? PI_TEXT.modeRequired : PI_TEXT.required;
+      errors[key] =
+        key === 'zcreditMode'
+          ? PI_TEXT.modeRequired
+          : key === 'synqpayDeviceModel'
+            ? PI_TEXT.synqpayModelRequired
+            : key === 'synqpayConnection'
+              ? PI_TEXT.synqpayConnectionRequired
+              : PI_TEXT.required;
     }
   }
   return errors;
+}
+
+/** Format errors of this layer's own SynqPay values (empty = fine), as the server's validators. */
+export function synqpayFieldErrors(form: PaymentIntegrationForm): PaymentIntegrationErrors {
+  const errors: PaymentIntegrationErrors = {};
+  const model = text(form.synqpayDeviceModel);
+  if (model !== null && cleanSynqpayModel(model) === null) errors.synqpayDeviceModel = PI_TEXT.synqpayInvalidChoice;
+  const connection = text(form.synqpayConnection);
+  if (connection !== null && cleanSynqpayConnection(connection) === null) {
+    errors.synqpayConnection = PI_TEXT.synqpayInvalidChoice;
+  }
+  const protocol = text(form.synqpayProtocol);
+  if (protocol !== null && cleanSynqpayProtocol(protocol) === null) errors.synqpayProtocol = PI_TEXT.synqpayInvalidChoice;
+  const host = text(form.synqpayHost);
+  if (host !== null && !isValidPinpadHost(host)) errors.synqpayHost = PI_TEXT.hostInvalid;
+  const port = text(form.synqpayPort);
+  if (port !== null && !isValidPort(port)) errors.synqpayPort = PI_TEXT.portInvalid;
+  const usb = text(form.synqpayUsbDevice);
+  if (usb !== null && cleanSynqpayUsbDevice(usb) === null) errors.synqpayUsbDevice = PI_TEXT.synqpayUsbInvalid;
+  const serial = text(form.synqpaySerialNumber);
+  if (serial !== null && !isValidSynqpaySerial(serial)) errors.synqpaySerialNumber = PI_TEXT.synqpaySerialInvalid;
+  return errors;
+}
+
+/**
+ * What is allowed but not documented for this combination, in Hebrew (shown, never blocking):
+ * a serial (USB) link on a model other than RX5000.
+ */
+export function synqpayWarnings(
+  form: PaymentIntegrationForm,
+  inherited: PaymentIntegrationInherited | null | undefined,
+): string[] {
+  const out: string[] = [];
+  const connection = formSynqpayConnection(form, inherited);
+  const model =
+    form.synqpayDeviceModel === null
+      ? cleanSynqpayModel(inherited?.synqpayDeviceModel)
+      : cleanSynqpayModel(form.synqpayDeviceModel) ?? cleanSynqpayModel(inherited?.synqpayDeviceModel);
+  if (connection === 'usb' && model !== null && model !== 'other' && !SYNQPAY_SERIAL_DOCUMENTED.includes(model)) {
+    out.push(PI_TEXT.synqpaySerialUndocumented);
+  }
+  return out;
 }
 
 export function hasPaymentIntegrationErrors(errors: PaymentIntegrationErrors): boolean {
@@ -619,7 +848,7 @@ export function normalizeMachineIntegration(raw: Record<string, unknown>): Requi
   const missingRaw = raw.paymentIntegrationMissing ?? raw.payment_integration_missing;
   const automatic = raw.paymentIntegrationAutomatic ?? raw.payment_integration_automatic;
   return {
-    paymentIntegration: v === 'agamento' || v === 'nayax_lan' || v === 'zcredit' ? v : null,
+    paymentIntegration: v === 'agamento' || v === 'nayax_lan' || v === 'zcredit' || v === 'synqpay' ? v : null,
     paymentIntegrationSource: cleanLevel(raw.paymentIntegrationSource ?? raw.payment_integration_source),
     paymentIntegrationAutomatic: typeof automatic === 'boolean' ? automatic : null,
     paymentIntegrationMissing: Array.isArray(missingRaw)

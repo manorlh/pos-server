@@ -6,6 +6,7 @@ from datetime import datetime
 
 from app.services.item_ticket import ProductTicketMode
 from app.services import dietary
+from app.services import sales_channel as channels
 from app.schemas.kitchen_printers import KitchenPrintersPatch
 
 #: The product's `description` column (String(1000)); the dashboard recommends 300 for
@@ -197,6 +198,8 @@ class ProductBase(BaseModel):
     no_discount: bool = Field(False, alias="noDiscount")
     # "סימוני תזונה" (app/services/dietary.py): codes, cleaned and ordered; omitted: none.
     dietary_tags: Optional[List[str]] = Field(None, alias="dietaryTags")
+    # "היכן הפריט נמכר" (app/services/sales_channel.py); omitted: קופות וקיוסק.
+    sales_channel: channels.SalesChannel = Field(channels.ALL, alias="salesChannel")
 
     @field_validator("name", "sku")
     @classmethod
@@ -275,6 +278,8 @@ class ProductUpdate(BaseModel):
     no_discount: Optional[bool] = Field(None, alias="noDiscount")
     # "סימוני תזונה": omitted — left as they are; `[]` or null clears.
     dietary_tags: Optional[List[str]] = Field(None, alias="dietaryTags")
+    # "היכן הפריט נמכר": omitted (or null) — left as it is.
+    sales_channel: Optional[channels.SalesChannel] = Field(None, alias="salesChannel")
     # Never changes. Echoing the current value (a form sending the product back) is
     # fine; anything else is refused — see app/services/general_item.py.
     is_general: Optional[bool] = Field(None, alias="isGeneral")
@@ -320,6 +325,14 @@ class ProductUpdate(BaseModel):
     def _dietary(cls, v):
         return _dietary_in(v)
 
+    @model_validator(mode="after")
+    def _channel_null_is_unchanged(self):
+        # The column is NOT NULL: an explicit null means "leave it", like an omitted key,
+        # so no handler's `model_dump(exclude_unset=True)` ever writes a null into it.
+        if self.sales_channel is None:
+            self.__pydantic_fields_set__.discard("sales_channel")
+        return self
+
     class Config:
         populate_by_name = True
 
@@ -357,6 +370,8 @@ class ProductResponse(BaseModel):
     no_discount: bool = Field(False, alias="noDiscount")
     # "סימוני תזונה", in the fixed order; [] when none.
     dietary_tags: List[str] = Field(default_factory=list, alias="dietaryTags")
+    # "היכן הפריט נמכר": all / kiosk_only / pos_only.
+    sales_channel: str = Field(channels.ALL, alias="salesChannel")
     # The company's built-in "פריט כללי", which the till's calculator sells through.
     is_general: bool = Field(False, alias="isGeneral")
     shop_scope: Optional[ShopScopeOut] = Field(None, alias="shopScope")
@@ -386,6 +401,11 @@ class ProductResponse(BaseModel):
     @classmethod
     def _dietary_out(cls, v):
         return dietary.tags_out(v)
+
+    @field_validator("sales_channel", mode="before")
+    @classmethod
+    def _channel_out(cls, v):
+        return channels.out(v)
 
     @field_validator("allergen_alert", mode="before")
     @classmethod

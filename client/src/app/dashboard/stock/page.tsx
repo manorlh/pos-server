@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { PackagePlus, ClipboardList, SlidersHorizontal } from 'lucide-react';
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import { AvailabilityReopenCard } from '@/components/dashboard/stock/availability-reopen-card';
 
 type ActionKind = 'receipt' | 'adjust' | 'stocktake';
 
@@ -283,6 +284,9 @@ export default function ShopStockPage() {
         </Table>
       </div>
       </ScopeGate>
+
+      {/* "פתיחת פריטים אוטומטית אחרי Z": the inventory setting, per company, shop or point of sale. */}
+      <AvailabilityReopenCard companyId={effective.companyId} shopId={effective.shopId} />
 
       <Dialog open={actionOpen} onOpenChange={setActionOpen}>
         <DialogContent className="max-w-sm">

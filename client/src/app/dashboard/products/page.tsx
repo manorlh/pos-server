@@ -73,6 +73,10 @@ import {
   ProductDescriptionField,
   ProductDietarySection,
 } from '@/components/dashboard/products/product-dietary-section';
+import {
+  ProductChannelBadge,
+  ProductChannelSection,
+} from '@/components/dashboard/products/product-channel-section';
 
 type SkuMode = 'auto' | 'manual';
 
@@ -454,7 +458,7 @@ export default function ProductsPage() {
                         {p.catalogLevel !== 'global' ? (
                           <Badge variant="outline">{tl('localBadge')}</Badge>
                         ) : null}
-                        {ticketBadge(p)}
+                        {ticketBadge(p)}<ProductChannelBadge channel={p.salesChannel} />
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground font-mono text-sm">{p.globalSku ?? '—'}</TableCell>
@@ -536,7 +540,7 @@ export default function ProductsPage() {
                           {t('systemItemBadge')}
                         </Badge>
                       ) : null}
-                      {ticketBadge(p)}
+                      {ticketBadge(p)}<ProductChannelBadge channel={p.salesChannel} />
                     </div>
                     <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
                       <span>₪{Number(p.price).toFixed(2)}</span>
@@ -813,6 +817,8 @@ export default function ProductsPage() {
                 onCheckedChange={(c) => setEditing((p) => ({ ...p, noDiscount: c }))}
               />
             </div>
+            {/* "היכן הפריט נמכר": קופות וקיוסק / קיוסק בלבד / קופות בלבד (docs/SPEC_PRODUCT_CHANNELS.md). */}
+            <ProductChannelSection product={editing} onChange={(patch) => setEditing((p) => ({ ...p, ...patch }))} />
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label>{t('barcode')}</Label>

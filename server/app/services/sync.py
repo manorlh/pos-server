@@ -47,6 +47,7 @@ from app.models.shop_category_override import ShopCategoryOverride
 from app.models.machine_catalog_item import MachineCatalogItem
 from app.models.voucher import Voucher
 from app.services import dietary
+from app.services import sales_channel
 from app.services import general_item
 from app.services import item_ticket
 from app.services import machine_catalog
@@ -132,6 +133,8 @@ def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[s
         "allergens": list(getattr(p, "allergens", None) or []),
         # "סימוני תזונה" (docs/SPEC_PRODUCT_DIETARY.md): codes in the fixed order, [] for none.
         "dietaryTags": dietary.tags_out(getattr(p, "dietary_tags", None)),
+        # "היכן הפריט נמכר" (docs/SPEC_PRODUCT_CHANNELS.md): all / kiosk_only / pos_only.
+        "salesChannel": sales_channel.out(getattr(p, "sales_channel", None)),
         "courseId": str(p.course_id) if getattr(p, "course_id", None) else None,
         # Order limits and refills (docs/SPEC_MENU_MODIFIERS.md §3.9).
         "maxPerOrder": getattr(p, "max_per_order", None),
@@ -210,6 +213,15 @@ def _serialize_merged_product(
         global_p, company_override, override, machine_override, area_row=area_override
     )
     is_avail = bool(shop_listed and resolved[availability.Level.MACHINE].available)
+    # The lock that decides, for a Z the till closes offline (docs/SPEC_AVAILABILITY.md).
+    lock = availability.lock_info(
+        resolved,
+        {
+            availability.Level.SHOP: override,
+            availability.Level.AREA: area_override,
+            availability.Level.MACHINE: machine_override,
+        },
+    ) if shop_listed else None
 
     catalog_level = local.catalog_level if local is not None else global_p.catalog_level
     is_local_override = local.is_local_override if local is not None else False
@@ -235,6 +247,7 @@ def _serialize_merged_product(
         "imageUrl": image_url,
         "inStock": effective_in_stock,
         "isAvailable": bool(is_avail),
+        "availabilityLock": lock,
         "stockQuantity": stock_qty,
         "barcode": global_p.barcode,
         "taxRate": float(global_p.tax_rate) if global_p.tax_rate is not None else None,
@@ -257,6 +270,9 @@ def _serialize_merged_product(
         "allergens": list(getattr(global_p, "allergens", None) or []),
         # "סימוני תזונה", from the global row like the allergens.
         "dietaryTags": dietary.tags_out(getattr(global_p, "dietary_tags", None)),
+        # "היכן הפריט נמכר", from the global row like the rest of what the product is: the
+        # till hides kiosk_only from its sell screen, the kiosk hides pos_only.
+        "salesChannel": sales_channel.out(getattr(global_p, "sales_channel", None)),
         "courseId": str(global_p.course_id) if getattr(global_p, "course_id", None) else None,
         "maxPerOrder": getattr(global_p, "max_per_order", None),
         "refillable": bool(getattr(global_p, "refillable", False)),
@@ -317,6 +333,9 @@ def _serialize_category(
         # The course its products fire in by default (docs/SPEC_MENU_MODIFIERS.md §8).
         "courseId": str(c.course_id) if getattr(c, "course_id", None) else None,
         "isActive": category_availability.resolve_rows(c, activity),
+        # The switch-off that decides it, for a Z the till closes offline
+        # (docs/SPEC_AVAILABILITY.md); null when active, or switched off by the tenant.
+        "activeLock": category_availability.lock_info(c.is_active, activity),
         "sortOrder": c.sort_order,
         "createdAt": c.created_at.isoformat() if c.created_at else None,
         "updatedAt": updated.isoformat() if updated else None,
@@ -1023,6 +1042,10 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
     from app.services.menu import menu_changed_at
 
     points.append(menu_changed_at(db, tid_uuid))
+    # And the "תפריטים" block (docs/SPEC_MENUS.md).
+    from app.services.catalog_menus import changed_at as catalog_menus_changed_at
+
+    points.append(catalog_menus_changed_at(db, tid_uuid))
 
     points = [p for p in points if p is not None]
     if not points:

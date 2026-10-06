@@ -24,6 +24,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     String,
@@ -66,6 +67,19 @@ class PrepaidVoucherBatch(Base):
     status = Column(String(16), nullable=False, default="active", server_default="active")
     #: The serial the next voucher of this batch gets (serials are 1..n per batch).
     next_serial = Column(Integer, nullable=False, default=1, server_default="1")
+
+    # ── Production ("הפקה", docs/SPEC_VOUCHER_PRODUCTION.md) ──────────────────
+    #: The group size the run was made in (an envelope of 10, 20 …); null: not grouped.
+    #: Each voucher keeps its own `group_no`, fixed when issued.
+    group_size = Column(Integer, nullable=True)
+    #: Print the voucher's code under its barcode (human-readable). Off by default: the
+    #: barcode is what is redeemed, and a printed code is one more way to copy a voucher.
+    show_code = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: `qr` (2D, any camera / imager) or `code128` (a line barcode, for 1D laser scanners).
+    barcode_type = Column(String(16), nullable=False, default="qr", server_default="qr")
+    #: Who ordered the run ("קייטרינג אלון") and their order number — cover sheets, manifest.
+    customer_name = Column(String(200), nullable=True)
+    order_ref = Column(String(100), nullable=True)
 
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -113,6 +127,7 @@ class PrepaidVoucher(Base):
             "status IN ('active', 'partially_used', 'used', 'cancelled')",
             name="ck_prepaid_vouchers_status",
         ),
+        Index("ix_prepaid_vouchers_batch_group", "batch_id", "group_no"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -124,6 +139,9 @@ class PrepaidVoucher(Base):
         index=True,
     )
     serial = Column(Integer, nullable=False)
+    #: The voucher's group within its batch (1..n), fixed when it was issued; null: the
+    #: batch was not made in groups. See `PrepaidVoucherBatch.group_size`.
+    group_no = Column(Integer, nullable=True)
     #: Random, unguessable, unique everywhere; the QR carries "PV:" + this.
     code = Column(String(32), nullable=False, unique=True, index=True)
     #: {global product id: quantity still to be taken}.
@@ -185,3 +203,44 @@ class PrepaidVoucherRedemption(Base):
 
     voucher = relationship("PrepaidVoucher", back_populates="redemptions")
     machine = relationship("POSMachine")
+
+
+#: `prepaid_voucher_events.action`.
+PREPAID_EVENT_ACTIONS = (
+    "create",          # the batch was made (count, groups)
+    "add",             # more vouchers issued (count, groups)
+    "assign_groups",   # an ungrouped batch split into groups
+    "update",          # print settings / texts changed
+    "cancel_batch",
+    "cancel_group",    # a whole group (a lost envelope) cancelled
+    "cancel_voucher",
+)
+
+
+class PrepaidVoucherEvent(Base):
+    """
+    A batch's audit trail ("יומן"): who made it, issued more, grouped it, cancelled a group
+    (a lost envelope), a voucher or the whole batch — when, and why. Never edited.
+    """
+
+    __tablename__ = "prepaid_voucher_events"
+    __table_args__ = (Index("ix_prepaid_voucher_events_batch", "batch_id", "created_at"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    batch_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("prepaid_voucher_batches.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    action = Column(String(32), nullable=False)
+    group_no = Column(Integer, nullable=True)
+    voucher_id = Column(UUID(as_uuid=True), nullable=True)
+    #: How many vouchers the action touched (issued, cancelled …).
+    count = Column(Integer, nullable=True)
+    reason = Column(Text, nullable=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    user_name = Column(String(200), nullable=True)
+    #: Anything else worth keeping: the serial range, the group size, the fields changed.
+    details = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

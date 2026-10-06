@@ -4,7 +4,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { branchCodeError, branchCodeInput, branchCodeNeedsCheck, normalizeBranchCode } from './branchCode';
+import { branchCodeError, branchCodeInput, normalizeBranchCode } from './branchCode';
 
 describe('branchCodeError', () => {
   it('a shop must have a code', () => {
@@ -33,14 +33,5 @@ describe('the field', () => {
 
   it('sends the code trimmed', () => {
     assert.equal(normalizeBranchCode(' 7 '), '7');
-  });
-});
-
-describe('an automatically assigned code', () => {
-  it('asks to be checked until saved', () => {
-    assert.equal(branchCodeNeedsCheck({ branchIdAutoAssigned: true }), true);
-    assert.equal(branchCodeNeedsCheck({ branchIdAutoAssigned: false }), false);
-    assert.equal(branchCodeNeedsCheck({}), false);
-    assert.equal(branchCodeNeedsCheck(null), false);
   });
 });

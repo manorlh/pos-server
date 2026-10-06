@@ -93,6 +93,11 @@ class Product(Base):
     # a spend threshold). Enforced on the till; the cloud only carries the flag.
     no_discount = Column(Boolean, default=False, nullable=False, server_default="false")
 
+    # "היכן הפריט נמכר" (docs/SPEC_PRODUCT_CHANNELS.md, app/services/sales_channel.py):
+    # all (קופות וקיוסק) / kiosk_only / pos_only. The till hides kiosk_only from its sell
+    # screen and the kiosk hides pos_only; the cloud only carries the code.
+    sales_channel = Column(String(16), default="all", nullable=False, server_default="all")
+
     # The menu layer (docs/SPEC_MENU_MODIFIERS.md): the allergen codes the dish contains
     # (app.models.menu.ALLERGENS), and the course its table lines are fired in by default
     # — null inherits the category's. Not a key, like the routes: a deleted course reads

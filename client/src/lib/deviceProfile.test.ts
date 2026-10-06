@@ -4,10 +4,14 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import {
   DEVICE_MODEL_CAPABILITIES,
   DEVICE_MODEL_IDS,
+  SYNQPAY_DEVICE_MODEL_IDS,
+  SUNMI_MODEL_IDS,
   addDeviceMissing,
   capabilitiesOf,
   deviceModelIdOf,
@@ -26,8 +30,12 @@ import {
 const noKiosk = { name: '', controllerMachineIds: [], lockDevice: false, pinpadHost: '', pinpadPort: '' };
 
 describe('the model catalog', () => {
-  it('six models, in the order the picker shows them', () => {
-    assert.deepEqual([...DEVICE_MODEL_IDS], ['N55F', 'MODO', 'P18', 'LANDI', 'FEITIAN_TABLET', 'GENERIC_ANDROID']);
+  it('six models, then the SUNMI family, in the order the picker shows them', () => {
+    assert.deepEqual(
+      [...DEVICE_MODEL_IDS].slice(0, 6),
+      ['N55F', 'MODO', 'P18', 'LANDI', 'FEITIAN_TABLET', 'GENERIC_ANDROID'],
+    );
+    assert.deepEqual([...DEVICE_MODEL_IDS].slice(6), [...SUNMI_MODEL_IDS, ...SYNQPAY_DEVICE_MODEL_IDS]);
   });
 
   it('the same capability table as the server', () => {
@@ -41,6 +49,8 @@ describe('the model catalog', () => {
     assert.deepEqual(row('LANDI'), [false, false, false, true]);
     assert.deepEqual(row('FEITIAN_TABLET'), [false, false, false, true]);
     assert.deepEqual(row('GENERIC_ANDROID'), [false, false, false, false]);
+    // SynqPay: the terminal is the device; its head waits for SynqPay's SDK.
+    for (const m of SYNQPAY_DEVICE_MODEL_IDS) assert.deepEqual(row(m), [false, true, false, true]);
   });
 
   it('a model with no driver never claims a printer or a drawer', () => {
@@ -55,6 +65,55 @@ describe('the model catalog', () => {
     assert.deepEqual(capabilitiesOf('X9'), DEVICE_MODEL_CAPABILITIES.N55F);
     assert.equal(deviceModelIdOf(' landi '), 'LANDI');
     assert.equal(deviceModelIdOf(''), null);
+  });
+});
+
+describe('SUNMI (docs/SPEC_SUNMI.md)', () => {
+  // The server's table (app/models/sunmi.py), shared byte-for-byte with pos-android.
+  const golden = JSON.parse(
+    readFileSync(join(process.cwd(), '..', 'server', 'tests', 'fixtures', 'sunmi_models_golden.json'), 'utf8'),
+  ) as { models: { id: string; printer: boolean; paperMm: number | null; drawerPort: boolean; scanner: boolean }[] };
+
+  it('the same SUNMI table as the server, model by model', () => {
+    assert.deepEqual(
+      golden.models.map((m) => m.id),
+      [...SUNMI_MODEL_IDS],
+    );
+    for (const m of golden.models) {
+      const c = DEVICE_MODEL_CAPABILITIES[m.id as keyof typeof DEVICE_MODEL_CAPABILITIES];
+      assert.deepEqual(
+        [c.builtinPrinter, c.paperWidthMm, c.cashDrawerPort, c.builtinScanner],
+        [m.printer, m.paperMm, m.drawerPort, m.scanner],
+        m.id,
+      );
+    }
+  });
+
+  it('no SUNMI charges on a terminal of its own, none is "בקרוב"', () => {
+    for (const m of SUNMI_MODEL_IDS) {
+      const c = DEVICE_MODEL_CAPABILITIES[m];
+      assert.equal(c.builtinTerminal, false, m);
+      assert.equal(c.driverPending, false, m);
+    }
+  });
+
+  it('the desktops have a drawer port, the handhelds do not', () => {
+    assert.equal(capabilitiesOf('SUNMI_T2S').cashDrawerPort, true);
+    assert.equal(capabilitiesOf('SUNMI_D3').cashDrawerPort, true);
+    assert.equal(capabilitiesOf('SUNMI_V2_PRO').cashDrawerPort, false);
+    assert.equal(capabilitiesOf('SUNMI_K2').cashDrawerPort, false);
+    assert.equal(capabilitiesOf('SUNMI_T3').paperWidthMm, 80);
+    assert.equal(capabilitiesOf('SUNMI_V2').paperWidthMm, 58);
+    assert.equal(deviceModelIdOf('sunmi_t2s'), 'SUNMI_T2S');
+  });
+
+  it('every model has its label and badge', () => {
+    const he = JSON.parse(readFileSync(join(process.cwd(), 'src', 'messages', 'he.json'), 'utf8'));
+    const labels = he.machines.deviceModel as Record<string, unknown> & { badge: Record<string, unknown> };
+    for (const m of DEVICE_MODEL_IDS) {
+      assert.equal(typeof labels[m], 'string', m);
+      assert.equal(typeof labels.badge[m], 'string', m);
+    }
   });
 });
 

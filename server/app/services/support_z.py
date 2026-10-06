@@ -10,11 +10,14 @@ the data the cloud already holds. Nobody types a number or a figure:
 * **The shifts** — every open one is closed from the cloud's documents
   (`close_shift_administratively`: reconstructed, unattended, uncounted).
 * **The Z** — per-till Z mode: the till's Z over all its shifts no Z has taken, built with
-  the same builder as any Z, numbered after the highest of the cloud's run and the last
-  number the till itself reported on its heartbeat. The numbers between are Zs the device
-  printed with no connection and never sent: recorded, never reused — never a duplicate
-  paper. Shop Z mode: no Z here — the shop's Z (a cloud run, or the main till in local
+  the same builder as any Z, and numbered as the next of the till's run in the cloud — the
+  owner: "הזד ממשיך להיות עוקב". Nothing skips ahead: what the till last reported (Zs it
+  closed with no connection and never sent, and their numbers) is recorded as information
+  only. Shop Z mode: no Z here — the shop's Z (a cloud run, or the main till in local
   mode, which is handed the section) takes the closed shifts as any other.
+* **The state first** (`app/services/z_state.py`) — the till's open shifts, when it was last
+  seen, the documents and Zs it reported unsent: shown before, and any of it has to be
+  confirmed explicitly ("אני מאשר שהנתונים בענן הם הנתונים הקיימים").
 * **The document counters** — the till's last reported counter per series; a replacement
   device starts after them, and any gap against the cloud is recorded.
 * **The machine is marked** (`support_z`): the till, if it ever comes back, is told on its
@@ -53,7 +56,8 @@ REASONS: Dict[str, str] = {
 
 EXCEPTION_TYPE = "support_z_produced"
 #: The words the record uses for numbers the device printed and the cloud never saw.
-LOST_NUMBERS_LABEL = "הודפסו במכשיר ללא חיבור ולא הגיעו לענן"
+#: What the till reported and the cloud never received — kept as information only.
+REPORTED_LABEL = "דווחו ע״י הקופה כ-Z שנסגרו ללא חיבור ולא הגיעו לענן — לידיעה בלבד"
 SERIES = ("320", "330", "400")
 
 
@@ -96,11 +100,24 @@ def _unreported(db: Session, machine: POSMachine) -> List[Shift]:
     return sorted(rows, key=shift_order_key)
 
 
-def skipped_numbers(cloud_last: int, reported_last: Optional[int]) -> List[int]:
-    """The numbers the device printed with no connection and never sent. Pure."""
-    if reported_last is None or reported_last <= cloud_last:
-        return []
-    return list(range(cloud_last + 1, reported_last + 1))
+def reported_by_till(machine: POSMachine, cloud_last: int) -> dict:
+    """
+    What the till last said it held and the cloud never received — information only: the
+    Z support produces is the next of the cloud's run whatever this says.
+    """
+    from app.services.z_state import reported_offline_numbers
+
+    reported_last = getattr(machine, "offline_till_z_last_number", None)
+    pending = int(getattr(machine, "offline_till_z_pending", None) or 0)
+    numbers = reported_offline_numbers(cloud_last, reported_last, pending)
+    return {
+        "lastNumber": reported_last,
+        "pendingZs": pending,
+        "conflict": bool(getattr(machine, "offline_till_z_conflict", False)),
+        "numbers": numbers,
+        "reportedAt": _iso(getattr(machine, "offline_till_z_reported_at", None)),
+        "label": REPORTED_LABEL if (numbers or pending) else None,
+    }
 
 
 def counter_gaps(cloud: Dict[str, int], reported: Optional[Dict[str, Any]]) -> List[dict]:
@@ -148,9 +165,12 @@ def preview(db: Session, machine: POSMachine, *, now: Optional[datetime] = None)
     mode = _shop_mode(db, machine)
     cloud_last = last_machine_z_number(db, machine.id)
     reported_last = getattr(machine, "offline_till_z_last_number", None)
-    skipped = skipped_numbers(cloud_last, reported_last) if mode["kind"] == "till" else []
-    number = (max(cloud_last, reported_last or 0) + 1) if mode["kind"] == "till" and shifts else None
+    # "הזד ממשיך להיות עוקב": the next of the cloud's run, never ahead of it.
+    number = (cloud_last + 1) if mode["kind"] == "till" and shifts else None
     cloud_counters = highest_transaction_numbers(db, machine.id)
+    from app.services import z_state
+
+    state = z_state.till_state(db, machine, now=now)
     return {
         "machineId": str(machine.id),
         "machineName": machine.name,
@@ -185,8 +205,14 @@ def preview(db: Session, machine: POSMachine, *, now: Optional[datetime] = None)
         "reportedLastZNumber": reported_last,
         "reportedPendingZs": getattr(machine, "offline_till_z_pending", None),
         "reportedAt": _iso(getattr(machine, "offline_till_z_reported_at", None)),
-        "skippedNumbers": skipped,
-        "skippedLabel": LOST_NUMBERS_LABEL if skipped else None,
+        # Information only: the Zs the till said it closed with no connection and never sent.
+        "reportedByTill": reported_by_till(machine, cloud_last),
+        # The warning before execution: every till taken, as the cloud knows it now.
+        "state": {
+            "tills": [state],
+            "requiresConfirmation": z_state.needs_confirmation([state]),
+            "confirmationText": z_state.CONFIRMATION_TEXT,
+        },
         "documentCounters": {
             "cloud": cloud_counters,
             "reported": getattr(machine, "reported_document_counters", None),
@@ -211,12 +237,15 @@ def produce(
     *,
     reason: str,
     note: Optional[str] = None,
+    confirm_data: bool = False,
     now: Optional[datetime] = None,
 ) -> dict:
     """
     Close the till's shifts and produce its Z from the cloud (per-till Z mode), mark the
     machine and record it all. The caller commits. Refused for anyone but support, for a
-    reason not on the list, and for a till that is online now (it can close itself).
+    reason not on the list, for a till that is online now (it can close itself), and —
+    while the state shows anything to warn about — without `confirm_data` ("אני מאשר
+    שהנתונים בענן הם הנתונים הקיימים", `409 confirmation_required`).
     """
     from app.services import till_z
     from app.services.administrative_close import close_shift_administratively
@@ -226,7 +255,7 @@ def produce(
         figures_show_activity,
         z_cash_summary,
     )
-    from app.services.z_sequence import claim_machine_z_number_after_device, lock_machine_z_sequence
+    from app.services.z_sequence import claim_machine_z_number, lock_machine_z_sequence
 
     check_permission(user)
     if reason not in REASONS:
@@ -244,6 +273,15 @@ def produce(
             },
         )
     before = preview(db, machine, now=now)
+    if before["state"]["requiresConfirmation"] and not confirm_data:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "confirmation_required",
+                "message": "יש משמרות, מסמכים או דוחות Z שלא הגיעו לענן — יש לאשר שהנתונים בענן הם הנתונים הקיימים.",
+                "warnings": sorted({w for t in before["state"]["tills"] for w in t["warnings"]}),
+            },
+        )
     label = f"הפקת Z מהענן ע״י התמיכה — {REASONS[reason]}" + (f": {note}" if note else "")
 
     closed: List[str] = []
@@ -254,7 +292,7 @@ def produce(
 
     mode = before["zMode"]
     z: Optional[ZReport] = None
-    skipped = before["skippedNumbers"]
+    reported = before["reportedByTill"]
     included = [s for s in _unreported(db, machine) if s.status == ShiftStatus.CLOSED]
     if mode["kind"] == "till" and included:
         shop_id = included[-1].shop_id or machine.shop_id
@@ -263,7 +301,8 @@ def produce(
         between = z_cash_summary([included])["between_shifts"]
         if figures_show_activity(totals, between):
             number = int(before["zNumber"])
-            claim_machine_z_number_after_device(db, machine.id, number)
+            # Strictly the next of the run, as any till Z (§4.2) — never ahead of it.
+            claim_machine_z_number(db, machine.id, number)
             try:
                 z = build_z(
                     db,
@@ -284,7 +323,7 @@ def produce(
                 "producedBySupport": {
                     "by": who, "byUserId": str(user.id), "at": now.isoformat(),
                     "reason": reason, "reasonText": REASONS[reason], "note": note,
-                    "skippedNumbers": skipped,
+                    "reportedByTill": reported,
                 },
             }
             till_z._complete_requests(db, machine, z, None, now)
@@ -302,8 +341,11 @@ def produce(
         "shiftIds": [str(s.id) for s in included] if mode["kind"] == "till" else list(closed),
         "closedShiftIds": closed,
         "lastShiftSequence": max((s.sequence_number or 0 for s in included), default=None) if included else None,
-        "skippedNumbers": skipped,
-        "skippedLabel": LOST_NUMBERS_LABEL if skipped else None,
+        "reportedByTill": reported,
+        # The state shown before, and that support confirmed the cloud's data as it is.
+        "stateBefore": before["state"]["tills"],
+        "confirmedData": bool(confirm_data),
+        "confirmationText": before["state"]["confirmationText"] if confirm_data else None,
         "basis": {
             "lastHeartbeatAt": before["lastHeartbeatAt"],
             "documentsOnCloud": (before["documents"] or {}).get("count", 0),
@@ -335,8 +377,15 @@ def _record(db: Session, machine: POSMachine, record: dict, user: User) -> Optio
     parts = [f"הופק ע״י {record['by']} — {record['reasonText']}"]
     if record.get("zNumber"):
         parts.append(f"Z מס׳ {record['zNumber']}")
-    if record.get("skippedNumbers"):
-        parts.append(f"{LOST_NUMBERS_LABEL}: {', '.join(str(n) for n in record['skippedNumbers'])}")
+    reported = record.get("reportedByTill") or {}
+    if reported.get("pendingZs") or reported.get("numbers"):
+        numbers = ", ".join(str(n) for n in reported.get("numbers") or [])
+        parts.append(
+            f"הקופה דיווחה על {reported.get('pendingZs') or len(reported.get('numbers') or [])} Z שלא הגיעו לענן"
+            + (f" (מס׳ {numbers})" if numbers else "") + " — לידיעה בלבד"
+        )
+    if record.get("confirmedData"):
+        parts.append("אושר: הנתונים בענן הם הנתונים הקיימים")
     gaps = (record.get("documentCounters") or {}).get("gaps") or []
     for gap in gaps:
         parts.append(f"מסמכים {gap['series']}: {gap['from']}–{gap['to']} לא הגיעו לענן")
@@ -367,14 +416,32 @@ def lan_section(db: Session, machine: POSMachine) -> Optional[dict]:
     till does not wait for the dead till; it takes this as its "closed" answer. None when
     support has not produced for it, or there is nothing left to take.
     """
-    from app.services.z_builder import machine_section
-
     if not getattr(machine, "support_z", None):
+        return None
+    # Heard from since: an ordinary participant again, asked over the LAN; its late
+    # documents are a part of their own (`lateDocuments`, offline till Z §4.6.3).
+    at, beat = _aware(getattr(machine, "support_z_at", None)), _aware(machine.last_heartbeat_at)
+    if at is not None and beat is not None and beat > at:
         return None
     shifts = [
         s for s in _unreported(db, machine)
         if s.status == ShiftStatus.CLOSED and (machine.shop_id is None or s.shop_id == machine.shop_id)
     ]
+    section = lan_section_of_shifts(db, machine, shifts)
+    if section is None:
+        return None
+    section["closedBySupport"] = {
+        "at": (machine.support_z or {}).get("at"),
+        "by": (machine.support_z or {}).get("by"),
+        "reason": (machine.support_z or {}).get("reasonText"),
+    }
+    return section
+
+
+def lan_section_of_shifts(db: Session, machine: POSMachine, shifts: List[Shift]) -> Optional[dict]:
+    """`shifts` of a till as a LAN part's section, from the cloud's documents (§8.3 shape)."""
+    from app.services.z_builder import machine_section
+
     if not shifts:
         return None
     totals = compute_totals(db, [s.id for s in shifts])
@@ -406,11 +473,6 @@ def lan_section(db: Session, machine: POSMachine) -> Optional[dict]:
             "transactionsCount": totals.transactions_count,
         },
         "report": report,
-        "closedBySupport": {
-            "at": (machine.support_z or {}).get("at"),
-            "by": (machine.support_z or {}).get("by"),
-            "reason": (machine.support_z or {}).get("reasonText"),
-        },
     }
 
 
@@ -428,7 +490,8 @@ def heartbeat_block(machine: POSMachine) -> Optional[dict]:
         "reason": record.get("reasonText"),
         "zReportId": record.get("zReportId"),
         "zNumber": record.get("zNumber"),
-        "skippedNumbers": record.get("skippedNumbers") or [],
+        # The till's own Zs of that period up to this number are kept as printed, never sent.
+        "reportedLastZNumber": (record.get("reportedByTill") or {}).get("lastNumber"),
         "shiftIds": record.get("shiftIds") or [],
         "lastShiftSequence": record.get("lastShiftSequence"),
     }

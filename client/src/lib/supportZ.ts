@@ -2,7 +2,12 @@
  * "הפקת Z מהענן ע״י התמיכה" — support produces a dead till's Z from the cloud
  * (pos-server docs/SPEC_OFFLINE_TILL_Z.md §4.6). The API, and the pure rules the dialog
  * shows. Kept free of React and of the `@/` alias so `npm test` runs it on its own.
+ *
+ * The Z continues the cloud's run ("הזד ממשיך להיות עוקב"); what the till reported is
+ * information only. The state comes first, and any warning is confirmed explicitly.
  */
+
+import type { TillDataState } from './zDataState';
 
 export type SupportZReason = 'destroyed' | 'lost' | 'permanent_failure';
 
@@ -43,14 +48,27 @@ export interface SupportZPreview {
     totalCard?: string | null;
     vatTotal?: string | null;
   } | null;
+  /** The next of the cloud's run, never ahead of it. */
   zNumber: number | null;
   cloudLastZNumber: number;
   reportedLastZNumber?: number | null;
   reportedPendingZs?: number | null;
-  skippedNumbers: number[];
+  /** What the till reported and the cloud never received — information only. */
+  reportedByTill: SupportZReported;
+  /** The state before execution (§4.6.1). */
+  state: { tills: TillDataState[]; requiresConfirmation: boolean; confirmationText?: string };
   documentCounters: { gaps: SupportZCounterGap[] };
   lastReportedPendingDocuments?: number | null;
   alreadyProduced?: SupportZRecord | null;
+}
+
+export interface SupportZReported {
+  lastNumber?: number | null;
+  pendingZs: number;
+  conflict?: boolean;
+  numbers: number[];
+  reportedAt?: string | null;
+  label?: string | null;
 }
 
 export interface SupportZRecord {
@@ -63,12 +81,12 @@ export interface SupportZRecord {
   zNumber?: number | null;
   closedShiftIds: string[];
   shiftIds: string[];
-  skippedNumbers: number[];
-  skippedLabel?: string | null;
+  reportedByTill?: SupportZReported | null;
+  confirmedData?: boolean;
   exceptionId?: string | null;
 }
 
-/** "3–5, 8": consecutive numbers as ranges, for "printed on the device and never sent". */
+/** "3–5, 8": consecutive numbers as ranges, for the Zs the till reported unsent. */
 export function numberRanges(numbers: readonly number[]): string {
   const sorted = [...new Set(numbers)].sort((a, b) => a - b);
   const parts: string[] = [];
@@ -92,4 +110,10 @@ export function supportZBlock(p: SupportZPreview): 'online' | 'nothing' | null {
   if (p.online) return 'online';
   if (p.shifts.length === 0) return 'nothing';
   return null;
+}
+
+/** Whether the confirm button may be pressed: no block, a reason, and the confirmation when the state warns. */
+export function supportZReady(p: SupportZPreview, reason: string | null, confirmed: boolean): boolean {
+  if (supportZBlock(p) !== null || !reason) return false;
+  return !p.state.requiresConfirmation || confirmed;
 }

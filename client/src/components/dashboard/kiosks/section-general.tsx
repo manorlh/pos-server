@@ -4,7 +4,7 @@ import { useTranslations } from 'next-intl';
 import { Check } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { LANGUAGES, SERVICE_TYPES, type KioskLanguage, type ServiceType, type SkipCartMode } from '@/lib/kioskConfig';
+import { LANGUAGES, SERVICE_PLACEMENTS, SERVICE_TYPES, type KioskLanguage, type ServicePlacement, type ServiceType, type SkipCartMode } from '@/lib/kioskConfig';
 import { useKioskField } from './editor-context';
 import { FieldShell, OrderedPick, SectionCard, SegmentField, SwitchField } from './fields';
 
@@ -64,6 +64,14 @@ export function GeneralSection() {
         {Array.isArray(services.value) && services.value.includes('eat_in') ? (
           <SwitchField path="general.askTableNumber" label={tf('general.askTableNumber')} hint={t('askTableHint')} />
         ) : null}
+        {Array.isArray(services.value) && services.value.length > 1 ? (
+          <SegmentField<ServicePlacement>
+            path="general.servicePlacement"
+            label={t('servicePlacement')}
+            hint={t('servicePlacementHint')}
+            options={SERVICE_PLACEMENTS.map((v) => ({ value: v, label: t(`servicePlacementOption.${v}`) }))}
+          />
+        ) : null}
         <SegmentField<SkipCartMode>
           path="general.skipCart"
           label={tf('general.skipCart')}
@@ -95,6 +103,8 @@ export function GeneralSection() {
           'general.showAllergens',
           'general.reduceMotion',
           'general.offlineSound',
+          'general.blockWhenOffline',
+          'general.offlineNotice',
           'general.soldOutMode',
         ]}
       >
@@ -110,6 +120,9 @@ export function GeneralSection() {
         ) : null}
         <SwitchField path="general.reduceMotion" label={tf('general.reduceMotion')} hint={t('reduceMotionHint')} />
         <SwitchField path="general.offlineSound" label={tf('general.offlineSound')} hint={t('offlineSoundHint')} />
+        {/* No internet never stops the kiosk by itself (docs/SPEC_KIOSK.md §17); both off by default. */}
+        <SwitchField path="general.blockWhenOffline" label={tf('general.blockWhenOffline')} hint={t('blockWhenOfflineHint')} />
+        <SwitchField path="general.offlineNotice" label={tf('general.offlineNotice')} hint={t('offlineNoticeHint')} />
         <SegmentField
           path="general.soldOutMode"
           label={tf('general.soldOutMode')}

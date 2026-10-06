@@ -82,11 +82,60 @@ def terminal_status(reported: Any, reported_at: Optional[datetime], expected: An
     return MATCH if have == want else MISMATCH
 
 
+#: The card lock's reasons (the till's CardLockReason, docs/SPEC_KIOSK.md §20).
+LOCK_MISMATCH = "mismatch"
+LOCK_NOT_CONFIGURED = "not_configured"
+LOCK_UNKNOWN = "unknown"
+
+
+def card_lock_of(
+    integration: Optional[str],
+    expected: Any,
+    expected_source: Optional[str],
+    force: bool,
+    reported: Any,
+    reported_at: Optional[datetime],
+) -> Optional[str]:
+    """
+    The till's card lock (domain/CardLock.kt) as the cloud can tell it from the last report.
+
+    A network pinpad (nayax_lan — every kiosk's) or an external SynqPay terminal (synqpay, LAN or
+    USB — docs/SPEC_SYNQPAY.md §2.1): the expected number must be set on the machine itself, never
+    inherited; unset → "not_configured", unreported → "unknown", another number → "mismatch". The
+    built-in terminal (agamento — on a SynqPay terminal, SynqPay's own): the effective number,
+    inherited included; locked only on another number with no forced setup on its way. Z-Credit
+    and others: not this rule (None).
+    """
+    want = normalize_terminal_number(expected)
+    have = normalize_terminal_number(reported) if reported_at is not None else None
+    if integration in ("nayax_lan", "synqpay"):
+        if want is None or expected_source != "machine":
+            return LOCK_NOT_CONFIGURED
+        if have is None:
+            return LOCK_UNKNOWN
+        return None if have == want else LOCK_MISMATCH
+    if integration == "agamento":
+        if want is None or force or have is None:
+            return None
+        return None if have == want else LOCK_MISMATCH
+    return None
+
+
+def card_lock_status(machine: "POSMachine", settings: "TerminalSettings") -> Optional[str]:
+    integration = getattr(settings.integration, "integration", None)
+    return card_lock_of(
+        integration, settings.expected, settings.expected_source, settings.force,
+        machine.terminal_number, machine.terminal_reported_at,
+    )
+
+
 @dataclass
 class TerminalSettings:
     """What the till's settings layers say about its terminal."""
 
     expected: Optional[str] = None
+    #: The level `expectedTerminalNumber` comes from ("machine", "shop"…); None = no level sets it.
+    expected_source: Optional[str] = None
     force: bool = False
     #: The level `forceTerminalNumber` comes from; None = no level sets it (off).
     force_source: Optional[str] = None
@@ -156,11 +205,14 @@ def terminal_settings_for(db: Session, machines: List["POSMachine"]) -> Dict[Any
             layers,
             bool(getattr(m, "has_builtin_terminal", True)),
             secrets_set=list(payment_secrets.merged_secret_sources(id_layers, secret_rows)),
+            # On a SynqPay terminal "synqpay" is its own terminal (docs/SPEC_SYNQPAY.md §1.5).
+            synqpay_device=payment_integration.is_synqpay_device(m),
         )
         expected = merged.get("expectedTerminalNumber")
         port = merged.get("nayaxDevicePort")
         out[m.id] = TerminalSettings(
             expected=expected if isinstance(expected, str) and expected.strip() else None,
+            expected_source=sources.get("expectedTerminalNumber"),
             force=merged.get("forceTerminalNumber") is True,
             force_source=sources.get("forceTerminalNumber"),
             pinpad_enabled=merged.get("nayaxEnabled") is True,
@@ -188,6 +240,10 @@ def machine_terminal_fields(machine: "POSMachine", settings: TerminalSettings) -
         "terminalStatus": terminal_status(
             machine.terminal_number, machine.terminal_reported_at, settings.expected
         ),
+        # "תנעל את האשראי, לא את הקופה" (docs/SPEC_KIOSK.md §20): whether the till locks card
+        # payment on what it last reported, and where its expected number comes from.
+        "expectedTerminalNumberSource": settings.expected_source,
+        "cardLock": card_lock_status(machine, settings),
         # The network pinpad (app/services/payment_terminal.py): whether this till charges
         # on one, where, and whether it still has no address, which the machines page
         # flags ("נדרשת כתובת IP למסופון") until someone types it at the till or here.

@@ -329,6 +329,8 @@ def set_till_parameter_value(
         value = TP.validate_value(parameter.value_type, body.value, parameter.enum_options)
         if TP.image_kind(parameter.key, parameter.value_type):
             value = TP.validate_image_url(value)
+        # "קוד טכנאי לקיוסק": digits only, 4–8 (app/services/kiosk_technician.py).
+        value = TP.validate_keyed_value(parameter.key, value)
     except TP.TillParameterValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 

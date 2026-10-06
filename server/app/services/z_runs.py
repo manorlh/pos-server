@@ -857,6 +857,15 @@ def create_z_run(
 
     for machine, item in to_notify:
         _send_close(machine, item, user, now)
+    # "סגירה יחד עם ה-Z הסניפי": the shop's kiosks set so, and not closed by this run, are
+    # asked to close and make their own Z (app/services/kiosk_ops.py). Never fails the run.
+    try:
+        from app.services import kiosk_ops
+
+        with db.begin_nested():
+            kiosk_ops.on_cloud_z_run(db, run, now=now)
+    except Exception:  # noqa: BLE001
+        logger.exception("kiosk close with the shop Z failed for run %s", getattr(run, "id", None))
     finalise_if_ready(db, run, now=now)
     return run
 

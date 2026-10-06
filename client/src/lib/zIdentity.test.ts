@@ -7,7 +7,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { zIdentityLabel, zIdentityParts, zTillColumn, type IdentityFormat } from './zIdentity';
+import {
+  isIndependentZ,
+  runDateOf,
+  zIdentityLabel,
+  zIdentityParts,
+  zRunDate,
+  zTillColumn,
+  type IdentityFormat,
+} from './zIdentity';
 
 const he = JSON.parse(readFileSync(join(__dirname, '..', 'src', 'messages', 'he.json'), 'utf8')) as {
   independentTill: { identity: Record<string, string> };
@@ -41,6 +49,36 @@ describe('zIdentityLabel', () => {
         { key: 'tillZ', values: { n: '4' } },
       ],
     );
+  });
+
+  it("an independent till's later run: its start, in the shop's timezone", () => {
+    const z = {
+      branchCode: '12',
+      origin: 'till' as const,
+      posNumber: '6',
+      machineSequenceNumber: 1,
+      scope: { kind: 'independent_till' },
+      // 22:30 UTC on the 5th is already the 6th in Israel.
+      sequenceStartedAt: '2026-10-05T22:30:00Z',
+    };
+    assert.equal(zIdentityLabel(z, format, 'Asia/Jerusalem'), 'קוד סניף 12 · קופה 6 (עצמאית) · Z מס׳ 1 · רצף מ-06/10/2026');
+    assert.equal(zIdentityLabel(z, format, 'UTC'), 'קוד סניף 12 · קופה 6 (עצמאית) · Z מס׳ 1 · רצף מ-05/10/2026');
+    // A day-summary row says "independent" itself; an unknown zone falls back to Israel.
+    assert.equal(
+      zIdentityLabel({ ...z, branchCode: null, scope: null, independent: true }, format, 'Not/AZone'),
+      'קופה 6 (עצמאית) · Z מס׳ 1 · רצף מ-06/10/2026',
+    );
+  });
+
+  it('no run start, or a shop Z: no run', () => {
+    assert.equal(
+      zIdentityLabel({ origin: 'till', posNumber: '2', machineSequenceNumber: 40, sequenceStartedAt: null }, format),
+      'קופה 2 · Z מס׳ 40',
+    );
+    assert.equal(zRunDate({ origin: 'cloud', shopSequenceNumber: 3, sequenceStartedAt: '2026-10-06T08:00:00Z' }), null);
+    assert.equal(zRunDate({ origin: 'till', posNumber: '6', sequenceStartedAt: '2026-10-06T08:00:00Z' }, 'UTC'), '06/10/2026');
+    assert.equal(runDateOf('not a date'), null);
+    assert.equal(isIndependentZ({ scope: { kind: 'till' } }), false);
   });
 
   it('the till column: the till of a till Z, empty on a shop Z', () => {

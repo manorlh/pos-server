@@ -69,6 +69,12 @@ class PosSettingsV1Patch(BaseModel):
     out_of_stock_policy: Optional[Literal["block", "warn", "allow"]] = Field(
         None, alias="outOfStockPolicy"
     )
+    #: "פתיחת פריטים אוטומטית אחרי Z" (docs/SPEC_AVAILABILITY.md): "off" (the default),
+    #: "day" — reopen what was locked or marked sold out during the day the Z closes —
+    #: or "all" — reopen every lock not marked "חסימה קבועה". `null` = inherit again.
+    auto_reopen_after_z: Optional[Literal["off", "day", "all"]] = Field(None, alias="autoReopenAfterZ")
+    #: Reopen an item that tracks stock even while it has none. Unset = false.
+    auto_reopen_ignore_stock: Optional[bool] = Field(None, alias="autoReopenIgnoreStock")
     # Legacy tip switches. Still accepted and stored: layers already hold them, and
     # they are the fallback for any option whose own tips key below is unset
     # (see app/services/payment_options.py).
@@ -198,6 +204,17 @@ class PosSettingsV1Patch(BaseModel):
     #: layer's; the dashboard's "••••" sent back unchanged keeps it.
     zcredit_password: Optional[str] = Field(None, alias="zcreditPassword", exclude=True, repr=False)
     zcredit_key: Optional[str] = Field(None, alias="zcreditKey", exclude=True, repr=False)
+    #: SynqPay (docs/SPEC_SYNQPAY.md): the terminal's model, how it is connected
+    #: (lan | usb — an external terminal) and where; the API key is write-only like the password.
+    synqpay_device_model: Optional[str] = Field(None, alias="synqpayDeviceModel")
+    synqpay_connection: Optional[str] = Field(None, alias="synqpayConnection")
+    synqpay_host: Optional[str] = Field(None, alias="synqpayHost")
+    synqpay_protocol: Optional[str] = Field(None, alias="synqpayProtocol")
+    synqpay_port: Optional[str] = Field(None, alias="synqpayPort")
+    synqpay_tls: Optional[bool] = Field(None, alias="synqpayTls")
+    synqpay_usb_device: Optional[str] = Field(None, alias="synqpayUsbDevice")
+    synqpay_serial_number: Optional[str] = Field(None, alias="synqpaySerialNumber")
+    synqpay_api_key: Optional[str] = Field(None, alias="synqpayApiKey", exclude=True, repr=False)
 
     @field_validator("payment_integration")
     @classmethod
@@ -226,6 +243,55 @@ class PosSettingsV1Patch(BaseModel):
         from app.services.payment_integration import validate_mode
 
         return validate_mode(v)
+
+    @field_validator("synqpay_device_model")
+    @classmethod
+    def _check_synqpay_model(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_synqpay_model
+
+        return validate_synqpay_model(v)
+
+    @field_validator("synqpay_connection")
+    @classmethod
+    def _check_synqpay_connection(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_synqpay_connection
+
+        return validate_synqpay_connection(v)
+
+    @field_validator("synqpay_host")
+    @classmethod
+    def _check_synqpay_host(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_synqpay_host
+
+        return validate_synqpay_host(v)
+
+    @field_validator("synqpay_protocol")
+    @classmethod
+    def _check_synqpay_protocol(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_synqpay_protocol
+
+        return validate_synqpay_protocol(v)
+
+    @field_validator("synqpay_port", mode="before")
+    @classmethod
+    def _check_synqpay_port(cls, v: Any) -> Optional[str]:
+        from app.services.payment_integration import validate_synqpay_port
+
+        return validate_synqpay_port(v)
+
+    @field_validator("synqpay_usb_device")
+    @classmethod
+    def _check_synqpay_usb_device(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_synqpay_usb_device
+
+        return validate_synqpay_usb_device(v)
+
+    @field_validator("synqpay_serial_number")
+    @classmethod
+    def _check_synqpay_serial(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_synqpay_serial
+
+        return validate_synqpay_serial(v)
 
     # The secrets are checked in the router (payment_secrets.secret_patch), not here: a
     # validation error would echo the value back in its `input`, and into the error log.
@@ -336,6 +402,11 @@ class SettingsSyncResponse(BaseModel):
     #: "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md): the shop's flag, on every response,
     #: "unchanged" included (also `settings.trainingMode` on a full / delta pull).
     training_mode: bool = Field(False, alias="trainingMode")
+    #: Where each terminal-config key (`clearingServer`, `expectedTerminalNumber`,
+    #: `forceTerminalNumber`) comes from — "machine", "area", "shop", "company", "tenant" —
+    #: on a full / delta pull. A kiosk or a till on an external pinpad writes its terminal only
+    #: over a "machine" value (app/services/terminal_config_guard.py). Absent on "unchanged".
+    terminal_config_sources: Optional[Dict[str, str]] = Field(None, alias="terminalConfigSources")
 
     class Config:
         populate_by_name = True

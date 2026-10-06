@@ -248,5 +248,17 @@ class ReplacementCodeBody(BaseModel):
     #: that module imports this one), set on the till when it pairs. Omitted keeps the
     #: model the till already has.
     device_model: Optional[
-        Literal["N55F", "MODO", "P18", "LANDI", "FEITIAN_TABLET", "GENERIC_ANDROID"]
+        Literal[
+            "N55F", "MODO", "P18", "LANDI", "FEITIAN_TABLET", "GENERIC_ANDROID",
+            "SUNMI_V1", "SUNMI_V2", "SUNMI_V2_PRO", "SUNMI_V2S", "SUNMI_V2S_PLUS", "SUNMI_V3",
+            "SUNMI_P1", "SUNMI_P2", "SUNMI_P3", "SUNMI_L2", "SUNMI_M2",
+            "SUNMI_T1", "SUNMI_T2", "SUNMI_T2_MINI", "SUNMI_T2S", "SUNMI_T3",
+            "SUNMI_D2_MINI", "SUNMI_D2S", "SUNMI_D2S_PLUS", "SUNMI_D3", "SUNMI_D3_MINI",
+            "SUNMI_K2", "SUNMI",
+            "SYNQPAY_DX8000", "SYNQPAY_DX6000", "SYNQPAY_EX8000", "SYNQPAY_RX5000",
+            "SYNQPAY_S1P2", "SYNQPAY_S1U2_M4", "SYNQPAY_VERIFONE", "SYNQPAY",
+        ]
     ] = Field(None, alias="deviceModel")
+    #: Why the till is replaced — kept in "הוחלפה קופה" when a device redeems the code
+    #: (docs/SPEC_OFFLINE_TILL_Z.md §4.6.2).
+    reason: Optional[str] = Field(None, max_length=500)

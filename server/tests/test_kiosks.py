@@ -190,10 +190,12 @@ def test_defaults_are_valid_and_complete():
     assert cfg["general"]["fulfillmentMode"] == "BON"
     assert cfg["payment"] == {
         "methods": ["card"], "tipEnabled": False, "tipPresets": [10, 12, 15], "receiptPolicy": "ask",
-        "customerName": "optional", "customerPhone": "off", "minOrderAgorot": 0,
+        "customerName": "optional", "customerPhone": "off", "tableNumber": "off", "detailsStep": "before_pay", "minOrderAgorot": 0,
     }
     assert cfg["printing"] == {
         "bonMode": "routing", "bonPrinterId": None, "bonCopies": 1, "receiptPrinterId": None, "pickupSlip": True,
+        # An unprinted bon prints again by itself when the printer is back, within this many minutes (§16.8).
+        "bonAutoRetryMin": 10,
     }
     assert cfg["timers"] == {"inactivitySec": 60, "warningSec": 20, "successSec": 12, "attractSlideSec": 8}
     assert cfg["hours"]["ranges"] == [{"days": [0, 1, 2, 3, 4, 5, 6], "open": "08:00", "close": "23:00"}]
@@ -392,7 +394,7 @@ def test_merge_through_the_settings_endpoints(w):
     assert {k: v for k, v in eff["attract"].items() if k != "cta"} == {
         "sections": ["hero", "club"], "playlist": [], "videoMuted": False, "showHelp": True,
     }
-    assert eff["attract"]["cta"]["position"] == "bottom_full"
+    assert eff["attract"]["cta"]["position"] == "bottom_center"
     assert out["configVersion"] == C.config_version(eff)
     assert out["updatedBy"] == "admin"
     bundle = R.get_effective(machine_id=w.kiosk.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
@@ -675,7 +677,7 @@ def test_sync_for_a_kiosk_and_its_controller(w):
     assert out["configVersion"] == C.config_version(out["config"])
     assert out["config"]["theme"]["font"] == "rubik" and out["font"]["id"] == "rubik"
     assert out["media"] == [{"url": f"{GF}/ofl/rubik/Rubik%5Bwght%5D.ttf", "kind": "font", "sha256": None, "bytes": None}]
-    assert out["state"] == {"paused": False, "message": None, "since": None, "by": None}
+    assert out["state"] == {"paused": False, "message": None, "since": None, "by": None, "until": None, "mode": None}
     assert out["kdsAvailable"] is False and out["controls"] == []
     device = w.db.get(KioskDevice, w.kiosk.id)
     assert device.status["flowState"] == "attract" and "junk" not in device.status
@@ -716,21 +718,34 @@ def test_pause_and_resume_from_the_dashboard(w):
     assert state["paused"] is True and state["message"] == "סגור להפסקה" and state["by"] == "admin"
     assert state["since"] is not None
     dashboard_command(w, w.kiosk, "resume")
-    assert sync(w, w.kiosk)["state"] == {"paused": False, "message": None, "since": None, "by": None}
+    assert sync(w, w.kiosk)["state"] == {"paused": False, "message": None, "since": None, "by": None, "until": None, "mode": None}
     history = R.get_kiosk_commands(machine_id=w.kiosk.id, limit=20, current_user=w.manager,
                                    active_tenant_id=w.tenant.id, db=w.db)
     assert [h["action"] for h in history] == ["resume", "pause"]
 
 
+def _pos_user(w, first, role):
+    from app.models.pos_user import PosUser
+
+    u = PosUser(id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=w.shop.id, username=f"u-{uuid.uuid4().hex[:6]}",
+                first_name=first, pin_hash="x", role=role, is_active=True)
+    w.db.add(u)
+    w.db.flush()
+    return u
+
+
 def test_pause_from_a_controlling_till(w):
+    from app.models.pos_user import PosUserRole
+
     convert(w)
-    out, code = till_command(w, w.till, w.kiosk, "pause", posUserName="דנה", message="רגע")
+    manager = _pos_user(w, "דנה", PosUserRole.SHOP_MANAGER)
+    out, code = till_command(w, w.till, w.kiosk, "pause", posUserId=str(manager.id), posUserName="דנה", message="רגע")
     assert code == 201 and out["source"] == "till" and out["requestedByName"] == "Till 2 · דנה"
     device = w.db.get(KioskDevice, w.kiosk.id)
     assert device.paused is True and device.paused_by == "Till 2 · דנה"
     row = w.db.query(KioskCommand).one()
     assert row.requested_by_machine_id == w.till.id and row.requested_by_user_id is None
-    till_command(w, w.till, w.kiosk, "resume")
+    till_command(w, w.till, w.kiosk, "resume", posUserId=str(manager.id))
     w.db.expire_all()
     assert w.db.get(KioskDevice, w.kiosk.id).paused is False
 
@@ -1126,7 +1141,7 @@ def test_the_exception_type_is_a_rule():
 
 def test_cta_defaults_validate_and_follow_the_style():
     cta = C.default_config()["attract"]["cta"]
-    assert cta["position"] == "bottom_full" and cta["tapAnywhere"] is True and cta["animation"] == "pulse"
+    assert cta["position"] == "bottom_center" and cta["tapAnywhere"] is True and cta["animation"] == "pulse"
     for style, preset in C.UI_PRESET_CTA.items():
         got = C.resolve({"theme": {"uiStyle": style}})["attract"]["cta"]
         assert {k: got[k] for k in C.PRESET_CTA_KEYS} == preset, style
@@ -1165,3 +1180,361 @@ def test_cta_validation():
     }
     for path, code in expected.items():
         assert got.get(path) == code, (path, got.get(path))
+
+
+# ── "לקיוסק אין עובד בפועל": the kiosk runs as itself ─────────────────────────
+
+
+def test_kiosk_sync_names_the_kiosk_as_its_own_operator(w):
+    from app.services import kiosk_identity as KI
+
+    convert(w, name="קיוסק רויאל")
+    out = sync(w, w.kiosk)
+    assert out["operator"] == {"id": f"kiosk:{w.kiosk.id}", "name": "קיוסק רויאל"}
+    assert KI.is_kiosk_operator(out["operator"]["id"]) and not KI.is_kiosk_operator(str(w.till.id))
+    assert KI.machine_id_of(out["operator"]["id"]) == w.kiosk.id
+    # A regular till has no kiosk operator.
+    assert "operator" not in sync(w, w.till)
+
+
+def test_documents_and_reports_carry_the_kiosk_identity(w):
+    from app.services import kiosk_identity as KI
+    from app.services import reports as RP
+    from app.services.exceptions import Detector
+
+    convert(w, name="קיוסק רויאל")
+    w.db.commit()
+    op = KI.operator_id(w.kiosk.id)
+    names = RP._load_cashier_names(w.db, [op, str(uuid.uuid4()), "legacy-name", None])
+    assert list(names) == [op]
+    assert RP._display_name(names[op]) == "קיוסק רויאל"
+    # Field 1233 of the open format: a short, stable kiosk code (9 characters).
+    code = KI.open_format_code(op)
+    assert code == "K" + w.kiosk.id.hex[:8] and len(code) == 9
+    assert KI.open_format_code(str(uuid.uuid4())) is None
+    # The exceptions feed names it too.
+    detector = Detector(w.db)
+    assert detector.name(op) == "קיוסק רויאל"
+
+
+def test_attendance_never_sees_the_kiosk(w):
+    from app.models.pos_user import PosUser
+    from app.services import kiosk_identity as KI
+
+    convert(w, name="קיוסק רויאל")
+    w.db.commit()
+    # Not a till user: no roster row, no PIN, nothing attendance could list or clock in.
+    assert w.db.query(PosUser).filter(PosUser.username.ilike("%kiosk%")).count() == 0
+    assert KI.machine_id_of(KI.operator_id(w.kiosk.id)) == w.kiosk.id
+
+
+# ── "נעילה למכירה" and "פתיחה אוטומטית" (docs/SPEC_KIOSK.md §15) ──────────────
+
+from zoneinfo import ZoneInfo  # noqa: E402
+
+from app.services import kiosk_schedule as KS  # noqa: E402
+
+IL = ZoneInfo("Asia/Jerusalem")
+WEEK = [0, 1, 2, 3, 4, 5, 6]
+
+
+def _at(y, mo, d, h, mi):
+    return datetime(y, mo, d, h, mi, tzinfo=IL)
+
+
+def test_lock_windows():
+    now = datetime(2026, 10, 6, 9, 0, tzinfo=timezone.utc)  # 12:00 in Israel
+    assert KS.lock_until("manual", now=now, zone=IL) is None
+    assert KS.lock_until(None, now=now, zone=IL) is None
+    assert KS.lock_until("minutes", now=now, zone=IL, minutes=45) == now + timedelta(minutes=45)
+    assert KS.lock_until("time", now=now, zone=IL, until_time="15:30") == datetime(2026, 10, 6, 12, 30, tzinfo=timezone.utc)
+    cases = (
+        ("time", {"until_time": "11:00"}, "until_passed"),
+        ("time", {"until_time": "25:00"}, "invalid_until_time"),
+        ("minutes", {"minutes": 0}, "invalid_minutes"),
+        ("minutes", {"minutes": 1441}, "invalid_minutes"),
+        ("next_open", {}, "no_schedule"),
+        ("forever", {}, "invalid_lock_mode"),
+    )
+    for mode, extra, code in cases:
+        with pytest.raises(KS.LockRefused) as caught:
+            KS.lock_until(mode, now=now, zone=IL, **extra)
+        assert caught.value.code == code and caught.value.message
+    # Until the next automatic opening: tomorrow 07:00 local.
+    hours = {"enabled": True, "ranges": [{"days": WEEK, "open": "07:00", "close": "23:00"}]}
+    assert KS.lock_until("next_open", now=now, zone=IL, hours=hours) == datetime(2026, 10, 7, 4, 0, tzinfo=timezone.utc)
+    # A lock with an end holds until then, on any clock (the kiosk's own, offline).
+    end = now + timedelta(minutes=10)
+    assert KS.lock_active(True, end, now) and not KS.lock_active(True, end, end) and KS.lock_active(True, None, end)
+    assert not KS.lock_active(False, None, now)
+
+
+def test_auto_open_schedule_across_midnight_and_dst():
+    late = {"enabled": True, "ranges": [{"days": [5], "open": "18:00", "close": "02:00"}]}  # Friday 18:00 to 02:00
+    assert KS.is_open(late, _at(2026, 10, 9, 23, 0))  # Friday night
+    assert KS.is_open(late, _at(2026, 10, 10, 1, 59))  # past midnight: Friday's
+    assert not KS.is_open(late, _at(2026, 10, 10, 2, 0))
+    assert not KS.is_open(late, _at(2026, 10, 10, 18, 30))  # Saturday is not in it
+    assert KS.next_opening(late, _at(2026, 10, 10, 2, 0)) == _at(2026, 10, 16, 18, 0)
+    # No closing time: it opens, and never closes by itself.
+    open_only = {"enabled": True, "ranges": [{"days": WEEK, "open": "07:00", "close": None}]}
+    assert KS.is_open(open_only, _at(2026, 10, 6, 3, 0))
+    assert KS.next_opening(open_only, _at(2026, 10, 6, 3, 0)) == _at(2026, 10, 6, 7, 0)
+    assert KS.next_opening(open_only, _at(2026, 10, 6, 7, 0)) == _at(2026, 10, 7, 7, 0)
+    # DST in Israel 2026: on 27.3 02:00 becomes 03:00; on 25.10 02:00 becomes 01:00.
+    gap = {"enabled": True, "ranges": [{"days": WEEK, "open": "02:30", "close": "10:00"}]}
+    opening = KS.next_opening(gap, _at(2026, 3, 27, 0, 0))
+    assert (opening.hour, opening.minute) == (3, 30) and opening.utcoffset() == timedelta(hours=3)
+    back = {"enabled": True, "ranges": [{"days": WEEK, "open": "01:30", "close": "10:00"}]}
+    first = KS.next_opening(back, _at(2026, 10, 25, 0, 0))
+    assert (first.hour, first.minute, first.utcoffset()) == (1, 30, timedelta(hours=3))  # the first of the two
+    # From one opening to the next across the fall-back night is 25 real hours.
+    daily = {"enabled": True, "ranges": [{"days": WEEK, "open": "07:00", "close": "23:00"}]}
+    a = KS.next_opening(daily, _at(2026, 10, 24, 8, 0))
+    assert a == _at(2026, 10, 25, 7, 0)
+    assert a.astimezone(timezone.utc) - _at(2026, 10, 24, 7, 0).astimezone(timezone.utc) == timedelta(hours=25)
+    assert KS.next_opening({"enabled": False}, _at(2026, 10, 6, 3, 0)) is None
+
+
+def test_schedule_and_auto_z_agree():
+    daily = {"enabled": True, "ranges": [{"days": WEEK, "open": "07:00", "close": "23:00"}]}
+    assert KS.schedule_issues(daily, "23:30") == []
+    assert KS.schedule_issues(daily, "23:00") == []  # the close itself: closed
+    assert KS.schedule_issues(daily, "22:00")[0]["code"] == "auto_z_while_open"
+    assert KS.schedule_issues(daily, "07:00")[0]["code"] == "auto_z_at_opening"
+    assert KS.schedule_issues(daily, "") == [] and KS.schedule_issues({"enabled": False}, "12:00") == []
+    late = {"enabled": True, "ranges": [{"days": WEEK, "open": "18:00", "close": "02:00"}]}
+    assert KS.schedule_issues(late, "01:00")[0]["code"] == "auto_z_while_open"
+    assert KS.schedule_issues(late, "03:00") == []
+    # The simple form: with a close and no Z time, the Z runs at the close.
+    hours, auto = KS.simple_schedule({"enabled": True, "days": [0, 1], "open": "08:00", "close": "22:00"})
+    assert hours == {"enabled": True, "ranges": [{"days": [0, 1], "open": "08:00", "close": "22:00"}]} and auto == "22:00"
+    assert KS.simple_schedule({"enabled": True, "open": "08:00"})[1] is None
+
+
+def test_lock_from_a_till_needs_a_manager_and_is_audited(w):
+    from app.models.pos_user import PosUserRole
+
+    convert(w)
+    cashier = _pos_user(w, "יוסי", PosUserRole.CASHIER)
+    manager = _pos_user(w, "דנה", PosUserRole.SHOP_MANAGER)
+    w.db.commit()
+    for who in (None, str(cashier.id), str(uuid.uuid4())):
+        out = till_command(w, w.till, w.kiosk, "pause", posUserId=who)[0]
+        assert out.status_code == 403 and b"kiosk_control_requires_manager" in out.body
+    assert w.db.query(KioskCommand).count() == 0
+    out, code = till_command(w, w.till, w.kiosk, "pause", posUserId=str(manager.id), untilMode="minutes", minutes=30, message="ניקיון")
+    assert code == 201
+    device = w.db.get(KioskDevice, w.kiosk.id)
+    assert device.paused and device.paused_mode == "minutes" and device.paused_until is not None
+    state = sync(w, w.kiosk)["state"]
+    assert state["paused"] and state["mode"] == "minutes" and state["until"] and state["by"] == "Till 2 · דנה"
+    # The controlling till sees who, since when and until when.
+    k = next(c for c in sync(w, w.till)["controls"] if c["machineId"] == str(w.kiosk.id))
+    assert k["paused"] and k["pausedBy"] == "Till 2 · דנה" and k["pausedUntil"] and k["pausedMode"] == "minutes"
+    # A refusal is audited, with a Hebrew message.
+    out = till_command(w, w.till, w.kiosk, "pause", posUserId=str(manager.id), untilMode="next_open")[0]
+    assert out.status_code == 422 and b"no_schedule" in out.body
+    assert w.db.query(KioskCommand).filter(KioskCommand.status == "refused").count() == 1
+
+
+def test_an_ended_lock_lifts_by_itself_once(w):
+    convert(w)
+    dashboard_command(w, w.kiosk, "pause", untilMode="minutes", minutes=5)
+    device = w.db.get(KioskDevice, w.kiosk.id)
+    later = S._aware(device.paused_until) + timedelta(seconds=1)
+    assert S.state_of(device, now=later)["paused"] is False  # already, before anything is written
+    S.expire_locks(w.db, [device], now=later)
+    S.expire_locks(w.db, [device], now=later)
+    assert device.paused is False and device.paused_until is None
+    auto = w.db.query(KioskCommand).filter(KioskCommand.source == "schedule").all()
+    assert len(auto) == 1 and auto[0].action == "resume" and auto[0].requested_by_name == "סיום נעילה"
+
+
+def test_auto_open_schedule_from_a_till_writes_the_kiosk_level(w):
+    from app.models.pos_user import PosUserRole
+
+    convert(w)
+    manager = _pos_user(w, "דנה", PosUserRole.SHOP_MANAGER)
+    w.db.commit()
+    form = {"enabled": True, "days": WEEK, "open": "07:00", "close": "23:00"}
+    out, code = till_command(w, w.till, w.kiosk, "schedule", posUserId=str(manager.id), schedule=form)
+    assert code == 201 and out["action"] == "schedule"
+    eff = sync(w, w.kiosk)["config"]
+    assert eff["hours"] == {"enabled": True, "ranges": [{"days": WEEK, "open": "07:00", "close": "23:00"}]}
+    assert eff["operations"]["autoCloseAt"] == "23:00"
+    # The dashboard sees it at the kiosk level (both ways).
+    layer = get_settings(w, "machine", w.kiosk.id)["overrides"]
+    assert layer["hours"]["ranges"][0]["open"] == "07:00"
+    # Inconsistent: a Z while open is refused, nothing written.
+    bad = {"enabled": True, "days": WEEK, "open": "07:00", "close": "23:00", "autoCloseAt": "12:00"}
+    out = till_command(w, w.till, w.kiosk, "schedule", posUserId=str(manager.id), schedule=bad)[0]
+    assert out.status_code == 422 and b"schedule_inconsistent" in out.body
+    assert sync(w, w.kiosk)["config"]["operations"]["autoCloseAt"] == "23:00"
+    # Opening only (no close); then a lock until the next opening.
+    dashboard_command(w, w.kiosk, "schedule", schedule={"enabled": True, "open": "07:00"})
+    eff = sync(w, w.kiosk)["config"]
+    assert eff["hours"]["ranges"][0]["close"] is None
+    out, code = dashboard_command(w, w.kiosk, "pause", untilMode="next_open")
+    assert code == 201
+    until = S._aware(w.db.get(KioskDevice, w.kiosk.id).paused_until).astimezone(IL)
+    assert (until.hour, until.minute) == (7, 0)
+
+
+# ── The kiosk UI batch: menu mode, service placement, details step, upsell, end message ─
+
+
+def test_ui_batch_defaults_and_validation():
+    d = C.default_config()
+    assert d["catalog"]["oneCategory"] is True
+    assert d["general"]["servicePlacement"] == "after_start"
+    assert (d["payment"]["detailsStep"], d["payment"]["tableNumber"]) == ("before_pay", "off")
+    assert d["upsell"] == {"maxShown": 2}
+    assert d["success"] == {"message": "", "image": None}
+    # Every style's button is centred at the bottom by default.
+    for style in C.UI_PRESET_CTA:
+        assert C.resolve({"theme": {"uiStyle": style}})["attract"]["cta"]["position"] == "bottom_center"
+    good = {
+        "catalog": {"oneCategory": False},
+        "general": {"servicePlacement": "attract"},
+        "payment": {"detailsStep": "after_service", "tableNumber": "required"},
+        "upsell": {"maxShown": 3},
+        "success": {"message": "תודה! נתראה", "image": {"url": "https://cdn/x.png", "kind": "image", "sha256": None, "bytes": None}},
+    }
+    cleaned, errors = C.validate_layer(good)
+    assert errors == [] and cleaned == good
+    # The kiosk's own rules of the first round are gone (the menu's rules, §19): a layer
+    # that still has them loses them quietly, never refused.
+    retired = {"upsell": {"when": "both", "maxShown": 2, "rules": [{"id": "x", "offerProductIds": ["p2"]}]}}
+    cleaned, errors = C.validate_layer(retired)
+    assert errors == [] and cleaned == {"upsell": {"maxShown": 2}}
+    assert retired["upsell"]["rules"], "the caller's layer is not changed"
+    _c, errors = C.validate_layer({
+        "general": {"servicePlacement": "lobby"},
+        "payment": {"detailsStep": "never", "tableNumber": "maybe"},
+        "upsell": {"maxShown": 6},
+        "success": {"message": "x" * 301},
+    })
+    got = paths(errors)
+    for path, code in {
+        "general.servicePlacement": "invalid_value", "payment.detailsStep": "invalid_value", "payment.tableNumber": "invalid_value",
+        "upsell.maxShown": "out_of_range", "success.message": "too_long",
+    }.items():
+        assert got.get(path) == code, (path, got.get(path))
+    # The end message's picture is downloaded with the rest of the kiosk's media.
+    eff = C.resolve(good)
+    assert any(m["url"] == "https://cdn/x.png" for m in C.media_manifest(eff))
+
+
+def test_a_specials_picture_reaches_the_kiosk_with_its_media(w):
+    """docs/SPEC_KIOSK.md §21: an upsell rule's own picture (place kiosk) is in the kiosk's media."""
+    from app.models.menu import UpsellRule
+
+    convert(w)
+    def rule(name, place, url, active=True):
+        w.db.add(UpsellRule(
+            id=uuid.uuid4(), tenant_id=w.tenant.id, name=name, trigger_type="transition", trigger_ids=["order_start"],
+            action="add", place=place, image_url=url, is_active=active, display="popup",
+        ))
+    rule("special", "kiosk", "https://cdn/special.png")
+    rule("till only", "quick,tables", "https://cdn/till.png")
+    rule("off", "kiosk", "https://cdn/off.png", active=False)
+    rule("relative", "quick,kiosk", "/media/x/special2.png")
+    w.db.flush()
+    urls = [m["url"] for m in C.effective_bundle(w.db, w.kiosk)["media"]]
+    assert "https://cdn/special.png" in urls
+    assert any(u.endswith("/media/x/special2.png") and u.startswith("http") for u in urls)
+    assert "https://cdn/till.png" not in urls and "https://cdn/off.png" not in urls
+
+
+# ── "עריכת תפריט הקיוסק" (docs/SPEC_KIOSK.md §22) ─────────────────────────────
+
+
+def _menu_put(w, machine, body):
+    from app.schemas.kiosk import KioskMenuIn
+
+    out = R.put_kiosk_menu(str(machine.id), KioskMenuIn.model_validate(body), machine=machine, db=w.db)
+    if isinstance(out, JSONResponse):
+        return out.status_code, json.loads(out.body)
+    return 200, out
+
+
+def test_the_kiosk_menu_is_saved_for_the_shop_with_a_manager_and_audited(w, monkeypatch):
+    from app.models.pos_user import PosUserRole
+    from app.services import kiosk_menu as KM
+
+    woken = []
+    monkeypatch.setattr(KM, "wake_kiosks", lambda tenant, ids: woken.extend(ids))
+    convert(w)
+    other = _till(w, "Kiosk 2", w.shop)
+    convert(w, other, name="קיוסק 2")
+    # The second kiosk had its own order (a machine layer): the shop's menu takes over.
+    C_layer = {"catalog": {"categoryOrder": ["old"], "oneCategory": False}}
+    S.save_settings(w.db, w.admin, S.SettingsScope("machine", other, w.tenant.id, machine_id=other.id), C_layer)
+    manager = _pos_user(w, "דנה", PosUserRole.SHOP_MANAGER)
+    cashier = _pos_user(w, "רון", PosUserRole.CASHIER)
+    w.db.commit()  # a refusal rolls the request back
+    sync = S.kiosk_sync(w.db, w.kiosk, {"flowState": "attract"})
+    base = sync["menuVersion"]
+    menu = {
+        "categoryOrder": ["c2", "c1"], "productOrder": {"c1": ["p2", "p1"]},
+        "hiddenCategories": ["c3"], "hiddenProducts": ["p9"], "featuredProductIds": ["p1"],
+    }
+    # A cashier's PIN is not enough; neither is no approver.
+    for approver in (str(cashier.id), None):
+        code, body = _menu_put(w, w.kiosk, {"approverId": approver, "baseVersion": base, "menu": menu})
+        assert (code, body["detail"]) == (403, "kiosk_control_requires_manager")
+    code, out = _menu_put(w, w.kiosk, {"approverId": str(manager.id), "baseVersion": base, "menu": menu})
+    assert code == 200 and out["savedBy"] == "דנה" and out["menuVersion"] != base
+    w.db.commit()
+    # Shop level: both kiosks get it; the second lost its own order but kept its other keys.
+    for k in (w.kiosk, other):
+        eff = C.effective_config(w.db, k)["catalog"]
+        assert (eff["categoryOrder"], eff["productOrder"], eff["hiddenProducts"], eff["featuredProductIds"]) == (
+            ["c2", "c1"], {"c1": ["p2", "p1"]}, ["p9"], ["p1"],
+        )
+    assert C.effective_config(w.db, other)["catalog"]["oneCategory"] is False
+    shop_row = C.layer_row(w.db, "shop", w.shop.id)
+    assert shop_row.overrides["catalog"]["hiddenCategories"] == ["c3"]
+    assert S.kiosk_sync(w.db, other, {"flowState": "attract"})["menuVersion"] == out["menuVersion"]
+    # Audited, by the manager's name, and the shop's kiosks woken.
+    audit = w.db.query(KioskCommand).filter(KioskCommand.action == "menu").one()
+    assert audit.status == "applied" and audit.requested_by_name.startswith("דנה") and "kioskLayersCleared=1" in audit.detail
+    assert set(woken) == {str(w.kiosk.id), str(other.id)}
+
+
+def test_the_kiosk_menu_version_check_and_validation(w, monkeypatch):
+    from app.models.pos_user import PosUserRole
+    from app.services import kiosk_menu as KM
+
+    monkeypatch.setattr(KM, "wake_kiosks", lambda tenant, ids: None)
+    convert(w)
+    manager = _pos_user(w, "דנה", PosUserRole.SHOP_MANAGER)
+    w.db.commit()  # a refusal rolls the request back
+    base = S.kiosk_sync(w.db, w.kiosk, {})["menuVersion"]
+    ok = {"approverId": str(manager.id), "baseVersion": base, "menu": {"categoryOrder": ["a", "b"]}}
+    assert _menu_put(w, w.kiosk, ok)[0] == 200
+    w.db.commit()
+    # A second save from the same (now old) version: refused, the current version handed back.
+    code, body = _menu_put(w, w.kiosk, {**ok, "menu": {"categoryOrder": ["b", "a"]}})
+    assert (code, body["detail"], body["message"]) == (409, "kiosk_menu_changed", "התפריט השתנה — טען מחדש")
+    assert body["menuVersion"] == S.kiosk_sync(w.db, w.kiosk, {})["menuVersion"]
+    # Only the menu's keys, valid ones.
+    current = body["menuVersion"]
+    for bad in ({"oneCategory": True}, {"categoryOrder": "x"}):
+        code, body = _menu_put(w, w.kiosk, {**ok, "baseVersion": current, "menu": bad})
+        assert (code, body["detail"]) == (422, "invalid_kiosk_menu")
+    # A till that is not a kiosk.
+    assert refused(R.put_kiosk_menu, str(w.till.id), __import__("app.schemas.kiosk", fromlist=["KioskMenuIn"]).KioskMenuIn(menu={}), machine=w.till, db=w.db).status_code == 403
+    # The dashboard's save of the shop layer passes the same check when it changes the menu.
+    view = S.settings_view(w.db, S.settings_scope(w.db, w.admin, "shop", w.shop.id, w.tenant.id))
+    assert view["menuVersion"] == current
+    from app.schemas.kiosk import KioskSettingsIn
+
+    stale = KioskSettingsIn.model_validate({"overrides": {"catalog": {"categoryOrder": ["z"]}}, "menuVersion": base})
+    out = R.put_settings(stale, level="shop", scope_id=w.shop.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+    assert isinstance(out, JSONResponse) and out.status_code == 409
+    # Not touching the menu (the same keys): no conflict, whatever the version.
+    same = KioskSettingsIn.model_validate({"overrides": {**view["overrides"], "theme": {"uiStyle": "ios"}}, "menuVersion": base})
+    out = R.put_settings(same, level="shop", scope_id=w.shop.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+    assert not isinstance(out, JSONResponse) and out["overrides"]["theme"]["uiStyle"] == "ios"

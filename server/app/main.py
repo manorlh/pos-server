@@ -28,6 +28,7 @@ from app.routers import (
     elevation,
     products,
     product_availability,
+    availability_reopen as availability_reopen_router,
     machine_catalog,
     categories,
     companies,
@@ -112,6 +113,11 @@ app.include_router(users.router, prefix=_prefix)
 app.include_router(companies.router, prefix=_prefix)
 app.include_router(shops.router, prefix=_prefix)
 app.include_router(areas_router.router, prefix=_prefix)
+# "חיפוש מכשיר" (app/routers/machine_search.py): before the machines router, so
+# `/machines/search` is never read as `/machines/{machine_id}`.
+from app.routers import machine_search as machine_search_router  # noqa: E402
+
+app.include_router(machine_search_router.router, prefix=_prefix)
 app.include_router(machines.router, prefix=_prefix)
 app.include_router(close_day.router, prefix=_prefix)
 app.include_router(pairing.router, prefix=_prefix)
@@ -119,6 +125,7 @@ app.include_router(pairing_mobile.router, prefix=_prefix)
 app.include_router(elevation.router, prefix=_prefix)
 app.include_router(products.router, prefix=_prefix)
 app.include_router(product_availability.router, prefix=_prefix)
+app.include_router(availability_reopen_router.router, prefix=_prefix)
 app.include_router(machine_catalog.router, prefix=_prefix)
 app.include_router(categories.router, prefix=_prefix)
 app.include_router(vouchers.router, prefix=_prefix)
@@ -223,6 +230,19 @@ from app.routers import kiosks as kiosks_router  # noqa: E402
 
 app.include_router(kiosks_router.till_router, prefix=_prefix)
 app.include_router(kiosks_router.router, prefix=_prefix)
+# A kiosk's alerts on the tills ("התראות לקופות", app/routers/kiosk_alerts.py).
+from app.routers import kiosk_alerts as kiosk_alerts_router  # noqa: E402
+
+app.include_router(kiosk_alerts_router.till_router, prefix=_prefix)
+# "בדיקות ומידע קיוסק": where a till stands, for the kiosk's technician screen (app/routers/kiosk_technician.py).
+from app.routers import kiosk_technician as kiosk_technician_router  # noqa: E402
+
+app.include_router(kiosk_technician_router.till_router, prefix=_prefix)
+# "תפריטים" (docs/SPEC_MENUS.md): named sales menus by schedule, their assignments, what is
+# active where and the report by menu. The tills get them in the catalog pull.
+from app.routers import catalog_menus as catalog_menus_router  # noqa: E402
+
+app.include_router(catalog_menus_router.router, prefix=_prefix)
 
 
 @app.on_event("startup")

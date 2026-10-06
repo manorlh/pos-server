@@ -498,9 +498,10 @@ class TestTaxExport:
         c100 = [_number(line) for line in _records(result, "C100")]
         assert c100 == ["10000057".ljust(20), "20000057".ljust(20), "20000058".ljust(20)]
         assert len(set(c100)) == 3
-        # Every line and every payment carries its header's number, in the same order.
+        # Every line and every payment carries its header's number, in the same order. The
+        # credit note has no payment record (D120 only under a receipt, 1.31 §4.5).
         assert [_number(line) for line in _records(result, "D110")] == c100
-        assert [_number(line) for line in _records(result, "D120")] == c100
+        assert [_number(line) for line in _records(result, "D120")] == c100[:2]
         # The credit note's line names its base document as printed: D110 1256/1257.
         credit_line = _records(result, "D110")[2]
         base_at = NUMBER_AT + DOCUMENT_NUMBER_WIDTH + 4  # after the line number (1255)

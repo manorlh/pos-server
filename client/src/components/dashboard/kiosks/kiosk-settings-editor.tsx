@@ -38,6 +38,7 @@ import {
   fetchKioskSettings,
   fetchKioskSourceCatalog,
   kioskConfigErrors,
+  isKioskMenuChanged,
   saveKioskSettings,
   type KioskLevel,
   type KioskServerError,
@@ -53,20 +54,24 @@ import { AttractSectionEditor } from './section-attract';
 import { CatalogSection } from './section-catalog';
 import { ClubSection, PickupSection } from './section-club-pickup';
 import { GeneralSection } from './section-general';
-import { MessagesSection } from './section-messages';
+import { MessagesSection, SuccessMessageCard } from './section-messages';
 import { PaymentSection } from './section-payment';
 import { PrintingSection } from './section-printing';
 import { TimersSection } from './section-timers';
+import { AlertsSection } from './section-alerts';
+import { UpsellSection } from './section-upsell';
 
 type SectionKey =
   | 'general'
   | 'appearance'
   | 'attract'
   | 'catalog'
+  | 'upsell'
   | 'messages'
   | 'payment'
   | 'printing'
   | 'timers'
+  | 'alerts'
   | 'club'
   | 'pickup';
 
@@ -75,10 +80,13 @@ const SECTIONS: { key: SectionKey; screen: PreviewScreen; paths: string[] }[] = 
   { key: 'appearance', screen: 'catalog', paths: ['theme', 'texts', 'screenImages'] },
   { key: 'attract', screen: 'attract', paths: ['attract'] },
   { key: 'catalog', screen: 'catalog', paths: ['catalog'] },
-  { key: 'messages', screen: 'attract', paths: ['messages'] },
+  { key: 'upsell', screen: 'catalog', paths: ['upsell'] },
+  { key: 'messages', screen: 'attract', paths: ['messages', 'success'] },
   { key: 'payment', screen: 'pay', paths: ['payment'] },
   { key: 'printing', screen: 'success', paths: ['printing'] },
   { key: 'timers', screen: 'paused', paths: ['timers', 'hours', 'operations'] },
+  // "התראות לקופות": printer / card terminal / help, each to its tills and people.
+  { key: 'alerts', screen: 'attract', paths: ['alerts'] },
   { key: 'club', screen: 'attract', paths: ['club'] },
   { key: 'pickup', screen: 'success', paths: ['pickup'] },
 ];
@@ -177,7 +185,7 @@ function EditorBody({
   });
 
   const save = useMutation({
-    mutationFn: () => saveKioskSettings(level, targetId, layer),
+    mutationFn: () => saveKioskSettings(level, targetId, layer, settings.menuVersion),
     onSuccess: (next) => {
       toast.success(t('saved'));
       setReviewOpen(false);
@@ -187,6 +195,13 @@ function EditorBody({
       void qc.invalidateQueries({ queryKey: ['kiosks'] });
     },
     onError: (err) => {
+      if (isKioskMenuChanged(err)) {
+        // A kiosk saved the shop's menu meanwhile: reload before saving over it.
+        toast.error(t('menuChanged'));
+        setReviewOpen(false);
+        void qc.invalidateQueries({ queryKey: ['kiosk-settings', level, targetId] });
+        return;
+      }
       const fieldErrors = kioskConfigErrors(err);
       if (fieldErrors) {
         setServerErrors(fieldErrors);
@@ -334,14 +349,21 @@ function EditorBody({
               <AttractSectionEditor />
             ) : section === 'catalog' ? (
               <CatalogSection />
+            ) : section === 'upsell' ? (
+              <UpsellSection />
             ) : section === 'messages' ? (
-              <MessagesSection nowMs={nowMs} />
+              <div className="space-y-4">
+                <MessagesSection nowMs={nowMs} />
+                <SuccessMessageCard />
+              </div>
             ) : section === 'payment' ? (
               <PaymentSection />
             ) : section === 'printing' ? (
               <PrintingSection />
             ) : section === 'timers' ? (
               <TimersSection />
+            ) : section === 'alerts' ? (
+              <AlertsSection />
             ) : section === 'club' ? (
               <ClubSection />
             ) : (

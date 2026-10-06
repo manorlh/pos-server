@@ -21,7 +21,7 @@ import {
   type MessageStyle,
 } from '@/lib/kioskConfig';
 import { useKioskEditor, useKioskField } from './editor-context';
-import { ChipToggles, FieldErrors, FieldShell, MediaInput, MoveButtons, OptionSelect, SectionCard, Segmented } from './fields';
+import { ChipToggles, FieldErrors, FieldShell, MediaField, MediaInput, MoveButtons, OptionSelect, SectionCard, Segmented, TextField } from './fields';
 
 const NO_PRODUCT = '__none__';
 
@@ -306,6 +306,17 @@ export function MessagesSection({ nowMs }: { nowMs: number }) {
           </ol>
         )}
       </FieldShell>
+    </SectionCard>
+  );
+}
+
+/** "הודעת סיום": the message (and picture) on the success screen, for its time. */
+export function SuccessMessageCard() {
+  const t = useTranslations('kiosks.messages');
+  return (
+    <SectionCard title={t('successTitle')} description={t('successHint')} paths={['success.message', 'success.image']}>
+      <TextField path="success.message" label={t('successMessage')} max={300} multiline placeholder={t('successPlaceholder')} />
+      <MediaField path="success.image" label={t('successImage')} />
     </SectionCard>
   );
 }

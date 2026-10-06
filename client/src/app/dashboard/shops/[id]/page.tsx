@@ -32,7 +32,6 @@ import { useAuth } from '@/lib/auth';
 import { formatQuantity } from '@/lib/format';
 import { SalesStats } from '@/components/dashboard/sales-stats';
 import { ShopFormDialog } from '@/components/dashboard/shop-form-dialog';
-import { BranchCodeNotice } from '@/components/dashboard/branch-code-notice';
 import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
 import { ClockSkewChip } from '@/components/dashboard/machine-health';
 import { DeviceModelBadge } from '@/components/dashboard/machines/device-model';
@@ -190,9 +189,6 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
           </Button>
         </div>
       </div>
-
-      {/* "קוד סניף הוקצה אוטומטית — ודאו מול רו״ח" until the code is saved. */}
-      <BranchCodeNotice shop={shop} canEdit />
 
       <Card>
         <CardContent className="grid grid-cols-2 gap-4 pt-4 sm:grid-cols-4">

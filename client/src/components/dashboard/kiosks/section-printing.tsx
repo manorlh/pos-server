@@ -79,6 +79,14 @@ export function PrintingSection() {
           min={KIOSK_LIMITS.bonCopies.min}
           max={KIOSK_LIMITS.bonCopies.max}
         />
+        {/* An unprinted bon: printed again by itself when the printer comes back (docs/SPEC_KIOSK.md §16.8). */}
+        <NumberField
+          path="printing.bonAutoRetryMin"
+          label={tf('printing.bonAutoRetryMin')}
+          hint={t('bonAutoRetryHint')}
+          min={0}
+          max={120}
+        />
       </SectionCard>
 
       <SectionCard title={t('receiptTitle')} paths={['printing.receiptPrinterId', 'printing.pickupSlip']}>

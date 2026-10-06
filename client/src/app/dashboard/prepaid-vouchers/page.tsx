@@ -35,6 +35,7 @@ import { fetchCompanies, fetchShops, uploadBrandingImage } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
   addPrepaidVouchers,
+  assignPrepaidGroups,
   cancelPrepaidBatch,
   cancelPrepaidVoucher,
   createPrepaidBatch,
@@ -44,15 +45,20 @@ import {
   fetchPrepaidVoucher,
   fetchPrepaidVouchers,
   searchPrepaidProducts,
+  updatePrepaidBatch,
+  type PrepaidBarcodeType,
   type PrepaidProductOption,
   type PrepaidVoucher,
   type PrepaidVoucherBatch,
   type PrepaidVoucherStatus,
 } from '@/lib/prepaidVouchersApi';
+import { groupPlan, groupSizeOf, serialRange, type GroupMode } from '@/lib/prepaidVoucherGroups';
+import { PrepaidBatchGroupsView } from '@/components/dashboard/prepaid-vouchers/batch-groups';
 import { cn } from '@/lib/utils';
 import {
   PAGE_PRESETS,
   VoucherPreview,
+  geometryOf,
   printVouchers,
   type PagePresetId,
   type PrintLayout,
@@ -116,8 +122,88 @@ function useErrorText() {
 function useCardLabels(): VoucherLabels {
   const t = useTranslations('prepaidVouchers.card');
   return useMemo(
-    () => ({ serial: (n: string) => t('serial', { n }), splitAllowed: t('splitAllowed'), oneTime: t('oneTime') }),
+    () => ({
+      serial: (n: string) => t('serial', { n }),
+      splitAllowed: t('splitAllowed'),
+      oneTime: t('oneTime'),
+      group: (g: number) => t('group', { g }),
+      validUntil: (until: string) => t('validUntil', { until }),
+      validFrom: (since: string) => t('validFrom', { since }),
+      validBetween: (since: string, until: string) => t('validBetween', { since, until }),
+    }),
     [t],
+  );
+}
+
+/** "100 קבוצות של 10 …" — what a run of [count] in groups of [size] comes out as; null when not grouped. */
+function useGroupPlanText() {
+  const t = useTranslations('prepaidVouchers.create');
+  return (count: number, size: number | null): string | null => {
+    const plan = groupPlan(count, size);
+    if (!plan) return null;
+    if (plan.full === 0) return t('groupPlanSingle', { last: plan.last ?? 0 });
+    if (plan.last) return t('groupPlanUneven', { full: plan.full, size: plan.size, last: plan.last, groups: plan.groups });
+    return t('groupPlanEven', { groups: plan.groups, size: plan.size });
+  };
+}
+
+/** None / 10 / 20 / a custom size — the same control on the new-batch form and on "split into groups". */
+function GroupSizePicker({ mode, custom, onMode, onCustom, idPrefix }: {
+  mode: GroupMode;
+  custom: string;
+  onMode: (m: GroupMode) => void;
+  onCustom: (v: string) => void;
+  idPrefix: string;
+}) {
+  const t = useTranslations('prepaidVouchers.create');
+  const modes: GroupMode[] = ['none', '10', '20', 'custom'];
+  const label = (m: GroupMode) =>
+    m === 'none' ? t('groupingNone') : m === 'custom' ? t('groupingCustom') : t(m === '10' ? 'grouping10' : 'grouping20');
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <div className="space-y-1">
+        <Label>{t('groupingLabel')}</Label>
+        <Select value={mode} onValueChange={(v) => v && onMode(v as GroupMode)} items={modes.map((m) => ({ value: m, label: label(m) }))}>
+          <SelectTrigger className="h-9 w-56"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {modes.map((m) => (
+              <SelectItem key={m} value={m} label={label(m)}>{label(m)}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      {mode === 'custom' ? (
+        <div className="space-y-1">
+          <Label htmlFor={`${idPrefix}-group-size`}>{t('groupSizeCustom')}</Label>
+          <Input id={`${idPrefix}-group-size`} type="number" min={1} max={5000} className="h-9 w-28" value={custom}
+            onChange={(e) => onCustom(e.target.value)} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function BarcodeTypePicker({ value, onChange, disabled }: {
+  value: PrepaidBarcodeType;
+  onChange: (v: PrepaidBarcodeType) => void;
+  disabled?: boolean;
+}) {
+  const t = useTranslations('prepaidVouchers.create');
+  const types: PrepaidBarcodeType[] = ['qr', 'code128'];
+  const label = (v: PrepaidBarcodeType) => (v === 'qr' ? t('barcodeQr') : t('barcodeCode128'));
+  return (
+    <div className="space-y-1">
+      <Label>{t('barcodeType')}</Label>
+      <Select value={value} disabled={disabled} onValueChange={(v) => v && onChange(v as PrepaidBarcodeType)}
+        items={types.map((v) => ({ value: v, label: label(v) }))}>
+        <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          {types.map((v) => (
+            <SelectItem key={v} value={v} label={label(v)}>{label(v)}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
 
@@ -153,6 +239,14 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   const [items, setItems] = useState<DraftItem[]>([]);
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
+  // Production (docs/SPEC_VOUCHER_PRODUCTION.md): groups, the code under the barcode, the barcode, who ordered.
+  const [groupMode, setGroupMode] = useState<GroupMode>('none');
+  const [groupCustom, setGroupCustom] = useState('');
+  const [showCode, setShowCode] = useState(false);
+  const [barcodeType, setBarcodeType] = useState<PrepaidBarcodeType>('qr');
+  const [customerName, setCustomerName] = useState('');
+  const [orderRef, setOrderRef] = useState('');
+  const planText = useGroupPlanText();
 
   useEffect(() => {
     const id = window.setTimeout(() => setDebounced(search), 300);
@@ -182,10 +276,19 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
     setCount('50');
     setItems([]);
     setSearch('');
+    setGroupMode('none');
+    setGroupCustom('');
+    setShowCode(false);
+    setBarcodeType('qr');
+    setCustomerName('');
+    setOrderRef('');
   };
 
   const n = parseInt(count, 10);
-  const canCreate = name.trim() && companyId && items.length > 0 && n >= 1 && n <= 5000 &&
+  const groupSize = groupSizeOf(groupMode, groupCustom);
+  const groupOk = groupMode === 'none' || groupSize !== null;
+  const plan = groupOk ? planText(n, groupSize) : null;
+  const canCreate = name.trim() && companyId && items.length > 0 && n >= 1 && n <= 5000 && groupOk &&
     (!validFrom || !validUntil || validFrom <= validUntil);
 
   const create = useMutation({
@@ -202,6 +305,11 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
         splitAllowed,
         items: items.map((i) => ({ productId: i.product.id, quantity: i.quantity })),
         count: n,
+        groupSize,
+        showCode,
+        barcodeType,
+        customerName: customerName.trim() || null,
+        orderRef: orderRef.trim() || null,
       }),
     onSuccess: (b) => {
       toast.success(t('created', { count: b.stats.total }));
@@ -317,6 +425,37 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
                 <p className="text-xs text-muted-foreground">{splitAllowed ? t('splitOnHint') : t('splitOffHint')}</p>
               </div>
               <Switch checked={splitAllowed} onCheckedChange={(v) => setSplitAllowed(!!v)} aria-label={t('splitLabel')} />
+            </div>
+          </div>
+
+          <div className="space-y-2 rounded-lg border p-3">
+            <GroupSizePicker mode={groupMode} custom={groupCustom} onMode={setGroupMode} onCustom={setGroupCustom} idPrefix="pv-create" />
+            {!groupOk ? (
+              <p className="text-xs text-destructive">{t('groupSizeInvalid')}</p>
+            ) : plan ? (
+              <p className="text-sm font-medium" aria-live="polite">{plan}</p>
+            ) : null}
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{t('showCode')}</p>
+                <p className="text-xs text-muted-foreground">{t('showCodeHint')}</p>
+              </div>
+              <Switch checked={showCode} onCheckedChange={(v) => setShowCode(!!v)} aria-label={t('showCode')} />
+            </div>
+            <BarcodeTypePicker value={barcodeType} onChange={setBarcodeType} />
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label htmlFor="pv-customer">{t('customerName')}</Label>
+              <Input id="pv-customer" value={customerName} maxLength={200} onChange={(e) => setCustomerName(e.target.value)} placeholder={t('customerPlaceholder')} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="pv-order">{t('orderRef')}</Label>
+              <Input id="pv-order" value={orderRef} maxLength={100} onChange={(e) => setOrderRef(e.target.value)} />
             </div>
           </div>
 
@@ -561,17 +700,26 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
   const [offset, setOffset] = useState(0);
   const [openHistory, setOpenHistory] = useState<string | null>(null);
   const [editingNote, setEditingNote] = useState<string | null>(null);
-  const [view, setView] = useState<'vouchers' | 'report'>('vouchers');
+  const [view, setView] = useState<'vouchers' | 'groups' | 'report'>('vouchers');
   const [addCount, setAddCount] = useState('10');
   const [busy, setBusy] = useState<string | null>(null);
+  const [groupText, setGroupText] = useState('');
+  const [codeText, setCodeText] = useState('');
+  const [assignMode, setAssignMode] = useState<GroupMode>('10');
+  const [assignCustom, setAssignCustom] = useState('');
+  const planText = useGroupPlanText();
   const serial = parseInt(serialText, 10);
+  const groupNo = parseInt(groupText, 10);
+  const codeQuery = codeText.replace(/[^0-9a-z]/gi, '').length >= 4 ? codeText.trim() : '';
 
   const list = useQuery({
-    queryKey: ['prepaid-vouchers', batch.id, statusFilter, serialText, offset],
+    queryKey: ['prepaid-vouchers', batch.id, statusFilter, serialText, offset, groupText, codeQuery],
     queryFn: () =>
       fetchPrepaidVouchers(batch.id, {
         status: statusFilter === 'all' ? undefined : statusFilter,
         serial: Number.isFinite(serial) && serial > 0 ? serial : undefined,
+        group: Number.isFinite(groupNo) && groupNo > 0 ? groupNo : undefined,
+        code: codeQuery || undefined,
         limit: PAGE_SIZE,
         offset,
       }),
@@ -580,7 +728,22 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['prepaid-voucher-batches'] });
     void qc.invalidateQueries({ queryKey: ['prepaid-vouchers', batch.id] });
+    void qc.invalidateQueries({ queryKey: ['prepaid-voucher-groups', batch.id] });
+    void qc.invalidateQueries({ queryKey: ['prepaid-voucher-events', batch.id] });
   };
+
+  // Print settings: only what the next print looks like changes (the code under the barcode, the barcode).
+  const saveSettings = useMutation({
+    mutationFn: (body: { showCode?: boolean; barcodeType?: PrepaidBarcodeType }) => updatePrepaidBatch(batch.id, body),
+    onSuccess: () => { toast.success(t('production.settingsSaved')); refresh(); },
+    onError: (err) => toast.error(errorText(err)),
+  });
+  const assignSize = groupSizeOf(assignMode, assignCustom);
+  const assignGroups = useMutation({
+    mutationFn: () => assignPrepaidGroups(batch.id, assignSize ?? 0),
+    onSuccess: (b) => { toast.success(t('production.assigned', { n: b.groupCount ?? 0 })); refresh(); },
+    onError: (err) => toast.error(errorText(err)),
+  });
 
   const cancelBatch = useMutation({
     mutationFn: () => cancelPrepaidBatch(batch.id),
@@ -602,19 +765,31 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
 
   // PDF and ZIP are drawn on the server — the same file in every browser (the browser-side
   // rasterising came out blank on some, e.g. Safari / iPhone).
-  const serverFile = (format: 'pdf' | 'zip', l: PrintLayout, fileName: string, voucherId?: string) =>
+  const serverFile = (
+    format: 'pdf' | 'zip' | 'groups' | 'csv',
+    l: PrintLayout,
+    fileName: string,
+    voucherId?: string,
+    group?: number,
+  ) =>
     downloadPrepaidVouchersFile(batch.id, {
       format,
       layout: l.preset,
       width: l.preset === 'custom' ? l.width : undefined,
       height: l.preset === 'custom' ? l.height : undefined,
       voucherId,
+      group,
       fileName,
     });
 
-  const runAll = async (kind: 'print' | 'pdf' | 'zip') => {
+  const runAll = async (kind: 'print' | 'pdf' | 'zip' | 'groups' | 'csv') => {
     setBusy(kind === 'print' ? t('printPreparing') : t('fileServerPreparing'));
     try {
+      if (kind === 'groups' || kind === 'csv') {
+        // A file per group (each opened by its cover sheet) and the codes' manifest, in one ZIP.
+        await serverFile(kind, layout, kind === 'csv' ? `${fileBase}.csv` : `${fileBase}.zip`);
+        return;
+      }
       if (kind !== 'print') {
         // A ZIP holds a file per voucher: one voucher per page, even for an A4 sheet.
         const l: PrintLayout = kind === 'zip' && layout.preset === 'a4grid' ? { preset: 'a6' } : layout;
@@ -649,10 +824,23 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
     }
   };
 
+  const groupPdf = async (group: number, range: [number, number]) => {
+    setBusy(t('fileServerPreparing'));
+    try {
+      await serverFile('pdf', layout, `${fileBase}-${group}-${serialRange(range[0], range[1])}.pdf`, undefined, group);
+    } catch (err) {
+      toast.error(errorText(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const sample = list.data?.items[0] ?? {
-    id: 'sample', serial: 1, displayCode: 'XXXX-XXXX-XXXX-XXXX', qrPayload: 'PV:SAMPLE',
+    id: 'sample', serial: 1, displayCode: 'XXXX-XXXX-XXXX-XXXX', qrPayload: 'PV:SAMPLE', groupNo: batch.groupCount ? 1 : null,
   };
   const cancelled = batch.status === 'cancelled';
+  const grouped = (batch.groupCount ?? 0) > 0;
+  const narrowLine = batch.barcodeType === 'code128' && geometryOf(layout).cardW < 70;
   const statuses: ('all' | PrepaidVoucherStatus)[] = ['all', 'active', 'partially_used', 'used', 'cancelled'];
 
   return (
@@ -675,6 +863,14 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
             {' · '}
             {batch.shops.length ? batch.shops.map((s) => s.name).join(', ') : t('allShopsOf', { company: batch.companyName ?? '' })}
           </p>
+          {batch.customerName || batch.orderRef ? (
+            <p className="text-xs text-muted-foreground">
+              {[
+                batch.customerName ? t('production.customer', { name: batch.customerName }) : null,
+                batch.orderRef ? t('production.order', { ref: batch.orderRef }) : null,
+              ].filter(Boolean).join(' · ')}
+            </p>
+          ) : null}
         </div>
         <span className={cn('rounded-full px-2 py-0.5 text-[11px]', cancelled ? STATUS_STYLE.cancelled : STATUS_STYLE.active)}>
           {t(`batchStatus.${batch.status}`)}
@@ -684,7 +880,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
       <StatsBar b={batch} />
 
       <div className="flex gap-1 print:hidden" role="tablist" aria-label={t('viewLabel')}>
-        {(['vouchers', 'report'] as const).map((v) => (
+        {(['vouchers', 'groups', 'report'] as const).map((v) => (
           <Button key={v} role="tab" aria-selected={view === v} size="sm"
             variant={view === v ? 'default' : 'outline'} onClick={() => setView(v)}>
             {t(`view.${v}`)}
@@ -692,13 +888,28 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
         ))}
       </div>
 
-      {view === 'report' ? <PrepaidBatchReportView batch={batch} /> : (<>
+      {view === 'report' ? <PrepaidBatchReportView batch={batch} /> : view === 'groups' ? (
+        <PrepaidBatchGroupsView batch={batch} busy={!!busy} onGroupPdf={(g, r) => void groupPdf(g, r)} />
+      ) : (<>
       <Card>
         <CardHeader>
           <CardTitle>{t('printTitle')}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <LayoutPicker layout={layout} onChange={setLayout} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{t('create.showCode')}</p>
+                <p className="text-xs text-muted-foreground">{t('create.showCodeHint')}</p>
+              </div>
+              <Switch checked={!!batch.showCode} disabled={saveSettings.isPending || cancelled}
+                onCheckedChange={(v) => saveSettings.mutate({ showCode: !!v })} aria-label={t('create.showCode')} />
+            </div>
+            <BarcodeTypePicker value={batch.barcodeType ?? 'qr'} disabled={saveSettings.isPending || cancelled}
+              onChange={(v) => saveSettings.mutate({ barcodeType: v })} />
+          </div>
+          {narrowLine ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('production.code128Narrow')}</p> : null}
           <div className="overflow-x-auto py-1">
             <VoucherPreview batch={batch} voucher={sample} layout={layout} labels={labels} />
           </div>
@@ -716,11 +927,43 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
               <Printer className="h-4 w-4" />
               {t('printAll')}
             </Button>
+            <Button variant="outline" onClick={() => void runAll('csv')} disabled={!!busy} title={t('production.csvHint')}>
+              <FileDown className="h-4 w-4" />
+              {t('production.csv')}
+            </Button>
             {busy ? (
               <span className="flex items-center gap-1 text-sm text-muted-foreground" aria-live="polite">
                 <Loader2 className="h-4 w-4 animate-spin" /> {busy}
               </span>
             ) : null}
+          </div>
+          <div className="space-y-2 rounded-lg border p-3">
+            <p className="text-sm font-medium">{t('production.title')}</p>
+            {grouped ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm text-muted-foreground">
+                  {t('production.groupsInfo', { groups: batch.groupCount ?? 0, size: batch.groupSize ?? 0 })}
+                </p>
+                <Button onClick={() => void runAll('groups')} disabled={!!busy || cancelled}>
+                  <FileDown className="h-4 w-4" />
+                  {t('production.zipGroups')}
+                </Button>
+              </div>
+            ) : (
+              <>
+                <p className="text-xs text-muted-foreground">{t('production.notGrouped')}</p>
+                <div className="flex flex-wrap items-end gap-2">
+                  <GroupSizePicker mode={assignMode} custom={assignCustom} onMode={setAssignMode} onCustom={setAssignCustom} idPrefix="pv-assign" />
+                  <Button variant="outline" size="sm" disabled={!assignSize || assignGroups.isPending || cancelled}
+                    onClick={() => assignGroups.mutate()}>
+                    {t('production.assign')}
+                  </Button>
+                </div>
+                {assignSize ? (
+                  <p className="text-xs text-muted-foreground">{planText(batch.stats.total, assignSize)}</p>
+                ) : null}
+              </>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -734,6 +977,9 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
           <Button variant="outline" size="sm" disabled={addMore.isPending || !(parseInt(addCount, 10) >= 1)} onClick={() => addMore.mutate()}>
             <Plus className="h-4 w-4" /> {t('add')}
           </Button>
+          {batch.groupSize ? (
+            <span className="text-xs text-muted-foreground">{t('production.addHint', { size: batch.groupSize })}</span>
+          ) : null}
           <div className="flex-1" />
           <Button
             variant="destructive"
@@ -768,6 +1014,18 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
             <Input id="pv-serial" inputMode="numeric" className="h-9 w-28" value={serialText}
               onChange={(e) => { setSerialText(e.target.value.replace(/\D/g, '')); setOffset(0); }} />
           </div>
+          {grouped ? (
+            <div className="space-y-1">
+              <Label htmlFor="pv-group">{t('groupFilter')}</Label>
+              <Input id="pv-group" inputMode="numeric" className="h-9 w-24" value={groupText} placeholder={t('groupAll')}
+                onChange={(e) => { setGroupText(e.target.value.replace(/\D/g, '')); setOffset(0); }} />
+            </div>
+          ) : null}
+          <div className="space-y-1">
+            <Label htmlFor="pv-code">{t('codeSearch')}</Label>
+            <Input id="pv-code" dir="ltr" className="h-9 w-48 font-mono" value={codeText} placeholder="ABCD-EFGH-…"
+              onChange={(e) => { setCodeText(e.target.value); setOffset(0); }} />
+          </div>
           <span className="ms-auto text-xs text-muted-foreground">{list.data ? t('count', { n: list.data.total }) : null}</span>
         </div>
 
@@ -781,6 +1039,9 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
               <li key={v.id} className="space-y-2 px-3 py-2">
                 <div className="flex flex-wrap items-center gap-2 text-sm">
                   <span className="w-14 font-semibold tabular-nums">#{v.serial}</span>
+                  {v.groupNo ? (
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] tabular-nums">{t('groupBadge', { g: v.groupNo })}</span>
+                  ) : null}
                   <span className={cn('rounded-full px-2 py-0.5 text-[11px]', STATUS_STYLE[v.status])}>{t(`status.${v.status}`)}</span>
                   <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                     {v.items.map((i) => t('remainingOf', { name: i.name, left: i.remaining, total: i.quantity })).join(' · ')}

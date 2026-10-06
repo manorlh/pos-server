@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { formatDateTime } from '@/lib/format';
 import { zTransmissionFailed } from '@/lib/offlineZ';
 import { isShopZ } from '@/lib/zParticipation';
+import { ZVerificationBadge } from '@/components/dashboard/z-report/z-verification-panel';
 
 /**
  * What kind of Z this is, on its face: produced by the till itself (and whether nobody
@@ -55,6 +56,30 @@ export function ZBadges({ z }: { z: ZReport }) {
           {t('producedBySupport')}
         </Badge>
       ) : null}
+      {/* Late documents of a period support closed, in this Z's own section (§4.6.3). */}
+      {z.lateFromEarlier && z.lateFromEarlier.length > 0 ? (
+        <Badge
+          variant="outline"
+          className="ms-2 text-[11px]"
+          title={z.lateFromEarlier
+            .map((l) => `${l.label ?? ''}: ${t('lateFromEarlierHint', { count: l.documents, sales: l.totalSales ?? '—' })}`)
+            .join(' · ')}
+        >
+          {t('lateFromEarlier')}
+        </Badge>
+      ) : null}
+      {/* The first Z after a till's device was replaced (docs/SPEC_OFFLINE_TILL_Z.md §4.6.2). */}
+      {z.devicesReplaced && z.devicesReplaced.length > 0 ? (
+        <Badge
+          variant="outline"
+          className="ms-2 text-[11px]"
+          title={z.devicesReplaced
+            .map((d) => t('deviceReplacedHint', { till: d.posNumber ?? d.name ?? '—', at: d.at ? formatDateTime(d.at) : '—' }))
+            .join(' · ')}
+        >
+          {t('deviceReplaced')}
+        </Badge>
+      ) : null}
       {/* Closed at the till with no connection to the cloud (docs/SPEC_OFFLINE_TILL_Z.md). */}
       {z.builtOffline ? (
         <Badge
@@ -70,11 +95,14 @@ export function ZBadges({ z }: { z: ZReport }) {
           {t('builtOffline')}
         </Badge>
       ) : null}
-      {z.offlineDiscrepancies && z.offlineDiscrepancies.length > 0 ? (
+      {/* A local shop Z is stored as printed: its check is its verification state, below. */}
+      {z.offlineDiscrepancies && z.offlineDiscrepancies.length > 0 && !isShopZ(z) ? (
         <Badge variant="destructive" className="ms-2 text-[11px]" title={t('offlineGapHint')}>
           {t('offlineGap')}
         </Badge>
       ) : null}
+      {/* Waiting for documents, a till that did not finish syncing, or (super admin) a mismatch. */}
+      <ZVerificationBadge z={z} />
       {zTransmissionFailed(z.cardTransmission) ? (
         <Badge variant="destructive" className="ms-2 text-[11px]" title={t('transmissionFailedHint')}>
           {t('transmissionFailed')}

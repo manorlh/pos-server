@@ -9,10 +9,35 @@
 
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, CloudOff, CreditCard } from 'lucide-react';
-import type { ZReportDetail } from '@/lib/types';
+import type { ZOfflineDiscrepancy, ZReportDetail } from '@/lib/types';
 import { formatCurrency, formatDateTime } from '@/lib/format';
 import { discrepancyValue, sortedDiscrepancies, zTransmissionFailed } from '@/lib/offlineZ';
+import { missingShiftRowsOf } from '@/lib/localShopZ';
 import { isShopZ } from '@/lib/zParticipation';
+
+/**
+ * On a local shop Z, `offlineDiscrepancies` holds only "N:missing" rows: a till in the shop
+ * Z that had closed shifts not on the paper. The Z's check against the cloud's documents is
+ * its verification (z-verification-panel.tsx) — never shown as the Z's figures.
+ */
+function ShopZMissingShifts({ gaps }: { gaps: ZOfflineDiscrepancy[] }) {
+  const t = useTranslations('independentTill.zReport');
+  const ti = useTranslations('independentTill');
+  const rows = missingShiftRowsOf(gaps);
+  if (rows.length === 0) return null;
+  return (
+    <ul className="space-y-0.5 border-t pt-2 text-xs">
+      {rows.map((r) => {
+        const till = ti('till', { n: r.posNumber });
+        return (
+          <li key={r.posNumber}>
+            {r.shifts != null ? t('missingShifts', { till, n: r.shifts }) : t('missingShiftsUnknown', { till })}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 export function OfflineZPanel({ z }: { z: ZReportDetail }) {
   const t = useTranslations('zReports');
@@ -33,7 +58,11 @@ export function OfflineZPanel({ z }: { z: ZReportDetail }) {
               ? ti('builtOfflineShopNotice', { closedAt: formatDateTime(closedAt), uploadedAt: formatDateTime(z.uploadedAt) })
               : t('builtOfflineNotice', { closedAt: formatDateTime(closedAt), uploadedAt: formatDateTime(z.uploadedAt) })}
           </div>
-          {gaps.length > 0 ? (
+          {isShopZ(z) ? (
+            // A local shop Z IS what the main till printed; its check against the cloud's
+            // documents is the verification block — never shown as the Z's figures.
+            <ShopZMissingShifts gaps={gaps} />
+          ) : gaps.length > 0 ? (
             <>
               <div className="flex gap-2 text-destructive">
                 <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden />

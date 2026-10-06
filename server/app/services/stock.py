@@ -82,6 +82,7 @@ def apply_movement(
         .filter(StockLevel.shop_id == shop_id, StockLevel.product_id == global_pid)
         .first()
     )
+    before = Decimal(str(level.quantity)) if level else Decimal("0")
     if level:
         level.quantity = Decimal(str(level.quantity)) + delta
         level.updated_at = utc_now()
@@ -95,7 +96,36 @@ def apply_movement(
                 updated_at=utc_now(),
             )
         )
+    if (before > 0) != (before + Decimal(str(delta)) > 0):
+        _wake_shop_on_crossing(db, shop_id, global_pid)
     return True
+
+
+#: `reason` of the catalog signal a till gets when an item it sells runs out (or is back).
+STOCK_CROSSED_REASON = "stock_crossed_zero"
+
+
+def _wake_shop_on_crossing(db: Session, shop_id: uuid.UUID, product_id: uuid.UUID) -> None:
+    """
+    A product that tracks stock ran out in the shop (or came back): every till of the shop
+    — the kiosk included — pulls its stock after the commit, so the item shows "אזל" there
+    within seconds of the sale on another till rather than at its next periodic sync
+    (docs/SPEC_AVAILABILITY.md). The dashboard's own stock writes signal for themselves.
+    """
+    tracked = db.query(Product.track_stock).filter(Product.id == product_id).scalar()
+    if not tracked:
+        return
+    from app.models.pos_machine import POSMachine
+    from app.services.commit_signals import catalog_signal_after_commit
+
+    tills = (
+        db.query(POSMachine.tenant_id, POSMachine.id)
+        .filter(POSMachine.shop_id == shop_id, POSMachine.is_active.is_(True))
+        .all()
+    )
+    catalog_signal_after_commit(
+        db, [(str(t), str(m)) for t, m in tills if t is not None], STOCK_CROSSED_REASON
+    )
 
 
 def set_quantity(

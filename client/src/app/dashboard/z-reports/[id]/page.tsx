@@ -44,8 +44,10 @@ import {
 } from '@/components/dashboard/shifts/shift-parts';
 import { ZBadges } from '@/components/dashboard/z-report/z-badges';
 import { OfflineZPanel } from '@/components/dashboard/z-report/offline-z-panel';
-import { ZScopeLine } from '@/components/dashboard/z-report/z-scope-line';
-import { BranchCode } from '@/components/dashboard/z-report/z-identity';
+import { ZVerificationPanel } from '@/components/dashboard/z-report/z-verification-panel';
+import { latePartTitleOf, sectionKeyOf, sectionShiftsOf } from '@/lib/localShopZ';
+import { AsPrintedBadge, ZScopeLine } from '@/components/dashboard/z-report/z-scope-line';
+import { BranchCode, ZRun } from '@/components/dashboard/z-report/z-identity';
 import { OpenTillsRecord } from '@/components/dashboard/z-wizard/open-tills';
 import { ZPrintDocument } from '@/components/dashboard/z-report/z-print-document';
 import { CardBrandSummaryCard } from '@/components/dashboard/z-report/card-brand-summary';
@@ -185,6 +187,8 @@ function SalesRows({ x, dealerType }: { x: SalesFigures; dealerType?: string | n
 function TillCard({ s, shifts, dealerType }: { s: ZReportMachineSection; shifts: Shift[]; dealerType?: string | null }) {
   const t = useTranslations('zReports');
   const heading = useTillHeading()(s);
+  // A local shop Z's "late documents" part of a till: its label, not a second "קופה N".
+  const lateTitle = latePartTitleOf(s);
   const uncounted = (s.uncountedShiftCount ?? 0) > 0;
   const offline = offlineOf(s.offline);
   return (
@@ -193,9 +197,9 @@ function TillCard({ s, shifts, dealerType }: { s: ZReportMachineSection; shifts:
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <CardTitle className="text-base">
             <Link href={`/dashboard/machines/${s.machineId}`} className="hover:underline">
-              {heading.title}
+              {lateTitle ?? heading.title}
             </Link>
-            {heading.name ? (
+            {heading.name && !lateTitle ? (
               <span className="text-muted-foreground ms-2 text-sm font-normal">{heading.name}</span>
             ) : null}
           </CardTitle>
@@ -350,7 +354,8 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
   const offline = offlineOfZ(z);
   // Frozen in the header when the Z was built, so a later rename does not rewrite it.
   const areaName = z.business?.areaName ?? z.areaName ?? null;
-  const shiftsOf = (machineId: string) => z.shifts.filter((s) => s.machineId === machineId);
+  // A till with two parts (regular + "late documents") splits its shifts by each part's ids.
+  const sectionShifts = (s: ZReportMachineSection) => sectionShiftsOf(s, z.perMachine, z.shifts);
 
   const title = zPrintTitle([(z.zNumber ?? z.shopSequenceNumber)]);
   const print = (pdf = false) => {
@@ -380,6 +385,9 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
               <FileBarChart className="h-5 w-5 text-muted-foreground me-1" aria-hidden />
               <h1 className="text-2xl font-bold">{zTitle(zNumberSourceOf(z))}</h1>
               <ZBadges z={z} />
+              {/* A local shop Z: the printed Z is the Z. A till Z of a later run: its start. */}
+              <AsPrintedBadge z={z} />
+              <ZRun z={z} className="ms-2 text-sm text-muted-foreground" />
             </div>
             <p className="text-muted-foreground text-sm">
               <NumberPill n={z.shopNumber} className="me-1" />
@@ -416,6 +424,8 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
         ) : null}
         {/* Closed at the till with no connection, and the card transmission before it. */}
         <OfflineZPanel z={z} />
+        {/* A local shop Z: its check against the cloud's documents, and support's close. */}
+        <ZVerificationPanel z={z} />
         {z.reconstructed ? (
           <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950">
             {t('reconstructedNotice')}
@@ -524,7 +534,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
           <div className="space-y-3">
             <h2 className="text-lg font-semibold">{t('tillsTitle')}</h2>
             {z.perMachine.map((s) => (
-              <TillCard key={s.machineId} s={s} shifts={shiftsOf(s.machineId)} dealerType={z.business?.dealerType} />
+              <TillCard key={sectionKeyOf(s)} s={s} shifts={sectionShifts(s)} dealerType={z.business?.dealerType} />
             ))}
           </div>
         ) : z.shifts.length > 0 ? (

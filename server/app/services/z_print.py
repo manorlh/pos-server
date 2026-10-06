@@ -453,6 +453,27 @@ def till_number_of(z: ZReport) -> Optional[str]:
     return str(pos).strip() if pos not in (None, "") else None
 
 
+def sequence_started_of(z: ZReport) -> Optional[str]:
+    """
+    When a till Z's run began (`header.sequence.startedAt`), for a run that is not the
+    till's first: an independent till starts again at Z 1 (SPEC_INDEPENDENT_TILL §3.1), and
+    the date tells its "Z 1" from an older one. None for a first run or a shop Z.
+    """
+    seq = (getattr(z, "header", None) or {}).get("sequence") or {}
+    if not getattr(z, "is_till_z", False) or not int(getattr(z, "machine_sequence_epoch", 0) or 0):
+        return None
+    return seq.get("startedAt")
+
+
+def sequence_started_label(z: ZReport, tzinfo=None) -> Optional[str]:
+    """ "רצף מ-06/10/2026": a till Z's run, by the day it began (None: the till's first run)."""
+    started = _parse_iso(sequence_started_of(z))
+    if started is None:
+        return None
+    local = _local(started, tzinfo) if tzinfo is not None else started
+    return f"רצף מ-{local.strftime('%d/%m/%Y')}"
+
+
 def _subtitle(z: ZReport, tzinfo) -> List[str]:
     """Who issued it and when: the lines under the title, the same on every part."""
     header = z.header or {}
@@ -482,7 +503,12 @@ def _subtitle(z: ZReport, tzinfo) -> List[str]:
     if till:
         # A till Z is told apart from the shop's Z, and from another till's, by its till.
         independent = (header.get("scope") or {}).get("kind") == "independent_till"
-        subtitle.append(f"קופה {till}" + (" (קופה עצמאית)" if independent else ""))
+        line = f"קופה {till}" + (" (עצמאית)" if independent else "")
+        # Made independent, a till starts again at Z 1: the run's first day says which "Z 1".
+        run = sequence_started_label(z, tzinfo)
+        if run:
+            line += f" · {run}"
+        subtitle.append(line)
     scope = header.get("scope") or {}
     if scope.get("kind") in ("shop", "area") and scope.get("label"):
         subtitle.append(str(scope["label"]))
@@ -491,10 +517,54 @@ def _subtitle(z: ZReport, tzinfo) -> List[str]:
     return subtitle
 
 
-def _footer_notes(z: ZReport) -> List[str]:
+def _replaced_line(note: dict, tzinfo=None) -> Optional[str]:
+    """"המכשיר הוחלף בתאריך …" — the first Z after a till's device was replaced (§4.6.2)."""
+    raw = note.get("at")
+    if not raw:
+        return None
+    try:
+        moment = datetime.fromisoformat(str(raw))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    when = day(moment.astimezone(tzinfo).date()) if tzinfo is not None else day(moment.date())
+    till = note.get("posNumber") or note.get("name")
+    return f"המכשיר הוחלף בתאריך {when}" + (f" (קופה {till})" if till else "")
+
+
+def _late_section(late: dict) -> dict:
+    """"מסמכים מאוחרים מתקופה קודמת (קופה N, הופקו לפני Z מס׳ X שהופק ע״י התמיכה)"."""
+    first, last = late.get("firstDocumentNumber"), late.get("lastDocumentNumber")
+    number = late.get("sourceZNumber")
+    # The 80 mm title is short; the rest of the owner's words are the first rows.
+    return section(
+        "מסמכים מאוחרים מתקופה קודמת",
+        [
+            row("קופה", late.get("posNumber")),
+            row("הופקו לפני Z" if late.get("producedBySupport", True) else "הגיעו אחרי Z",
+                f"מס׳ {number if number is not None else DASH}"),
+            row("ה-Z הופק ע״י", "התמיכה") if late.get("producedBySupport", True) else None,
+            row("המשמרת נסגרה ע״י", "התמיכה") if late.get("shiftClosedBySupport") else None,
+            row("מסמכים", _count(late.get("documents"))),
+            row("מס׳", f"{first}–{last}" if first and last and first != last else (first or last)) if (first or last) else None,
+            row("מכירות", money(late.get("totalSales"))),
+            row("זיכויים", credit(late.get("totalRefunds"))) if late.get("totalRefunds") not in (None, "0.00") else None,
+            row("מזומן", money(late.get("totalCash"))),
+            row("אשראי", money(late.get("totalCard"))),
+            row("מע״מ", money(late.get("vatTotal"))) if late.get("vatTotal") is not None else None,
+        ],
+    )
+
+
+def _footer_notes(z: ZReport, tzinfo=None) -> List[str]:
     """What the Z says about itself: reconstructed, remote closes, late documents, tills left out."""
     header = z.header or {}
     footer: List[str] = []
+    for note in header.get("devicesReplaced") or []:
+        line = _replaced_line(note, tzinfo)
+        if line:
+            footer.append(line)
     if z.reconstructed:
         footer.append("כולל משמרת ששוחזרה בענן")
     if z.unattended:
@@ -547,13 +617,16 @@ def build_print_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] =
     offline = _offline_section(z)
     if offline is not None:
         sections.append(offline)
+    # Late documents of a support Z, carried into this Z (SPEC_OFFLINE_TILL_Z §4.6.3).
+    for late in (z.header or {}).get("lateFromEarlier") or []:
+        sections.append(_late_section(late))
     waiters = _waiters_section(z)
     if waiters is not None:
         sections.append(waiters)
     for s in _sections_of(z):
         sections.append(_till_section(s))
 
-    footer = _footer_notes(z)
+    footer = _footer_notes(z, tzinfo)
     footer.append(f"הודפס {stamp(printed_at or datetime.now(timezone.utc), tzinfo)}")
     footer.append(f"סוף {TITLE}" + (f" #{z.z_number}" if z.z_number is not None else ""))
 
@@ -647,6 +720,9 @@ def build_summary_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime]
     offline = _offline_section(z)
     if offline is not None:
         sections.append(offline)
+    # Late documents of a support Z, carried into this Z (SPEC_OFFLINE_TILL_Z §4.6.3).
+    for late in (z.header or {}).get("lateFromEarlier") or []:
+        sections.append(_late_section(late))
     lines = [_till_line(s) for s in _ordered_sections(z)]
     if lines:
         sections.append(section("קופות", lines))
@@ -654,7 +730,7 @@ def build_summary_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime]
     if waiters is not None:
         sections.append(waiters)
 
-    footer = _footer_notes(z)
+    footer = _footer_notes(z, tzinfo)
     if lines:
         footer.append("פירוט מלא לכל קופה — בהדפסה נפרדת")
     footer.append(f"הודפס {stamp(printed_at or datetime.now(timezone.utc), tzinfo)}")
@@ -763,4 +839,7 @@ def list_item(z: ZReport, tzinfo) -> Dict[str, Any]:
         # Two Zs of one branch with the same number are told apart by the till (§11).
         "branchCode": branch_code_of(z),
         "posNumber": till_number_of(z),
+        # …and two "Z 1" of one till by its run (SPEC_INDEPENDENT_TILL §3.1).
+        "sequenceEpoch": int(getattr(z, "machine_sequence_epoch", 0) or 0),
+        "sequenceStartedAt": sequence_started_of(z),
     }

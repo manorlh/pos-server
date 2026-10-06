@@ -129,6 +129,16 @@ def _node(levels, level: Level, value) -> Dict:
     }
 
 
+def _lock(row) -> Dict:
+    """"חסימה קבועה" and when the lock began, for a level whose own value is a lock."""
+    if row is None or getattr(row, "is_available", None) is not False:
+        return {}
+    return {
+        "permanent": bool(getattr(row, "block_permanent", False)),
+        "blocked_at": getattr(row, "blocked_at", None),
+    }
+
+
 # ── The picture ──────────────────────────────────────────────────────────────
 
 
@@ -288,6 +298,7 @@ def get_product_availability(
             is_listed=bool(ovr.is_listed),
             can_edit=shop_can_edit,
             **_node(shop_levels, Level.SHOP, ovr.is_available),
+            **_lock(ovr),
         )
         for a in areas_by_shop.get(str(shop.id), []):
             a_value = area_value(a.id)
@@ -300,6 +311,7 @@ def get_product_availability(
                     name=a.name,
                     can_edit=shop_can_edit,
                     **_node(a_levels, Level.AREA, a_value),
+                    **_lock(area_levels.get(str(a.id))),
                 )
             )
         for m in sorted(machines_by_shop.get(str(shop.id), []), key=lambda x: (x.pos_number or "", x.name or "")):
@@ -323,6 +335,7 @@ def get_product_availability(
                     ),
                     area_id=m.area_id,
                     **_node(m_levels, Level.MACHINE, m_value),
+                    **_lock(m_row),
                 )
             )
         node.shops.append(shop_node)
@@ -599,7 +612,7 @@ def set_shop_availability(
             status_code=status.HTTP_404_NOT_FOUND, detail="Product not in shop assortment"
         )
 
-    availability.set_shop_availability(row, body.is_available)
+    availability.set_shop_availability(row, body.is_available, body.is_permanent)
     db.commit()
     availability.notify_shop_change(db, shop.id)
     return AvailabilityWriteResponse(level="shop", value=body.is_available)
@@ -633,7 +646,7 @@ def set_area_availability(
             status_code=status.HTTP_404_NOT_FOUND, detail="Product not in shop assortment"
         )
 
-    availability.set_area_availability(db, area.id, product.id, body.is_available)
+    availability.set_area_availability(db, area.id, product.id, body.is_available, body.is_permanent)
     db.commit()
     availability.notify_area_change(db, area.id)
     return AvailabilityWriteResponse(level="area", value=body.is_available)
@@ -674,7 +687,9 @@ def set_machine_availability(
             status_code=status.HTTP_404_NOT_FOUND, detail="Product not in shop assortment"
         )
 
-    availability.set_machine_availability(db, machine.id, product.id, body.is_available)
+    availability.set_machine_availability(
+        db, machine.id, product.id, body.is_available, body.is_permanent
+    )
     db.commit()
     availability.notify_machine_change(machine)
     return AvailabilityWriteResponse(level="machine", value=body.is_available)

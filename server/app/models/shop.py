@@ -25,8 +25,8 @@ class Shop(Base):
     #: 1231). Mandatory: digits, 1–7, unique in the company (`app.services.branch_code`).
     #: Nullable only for rows from before the rule; migration f3a9c2d7e1b4 filled those.
     branch_id = Column(String(50), nullable=True)
-    #: True for a code migration f3a9c2d7e1b4 assigned on its own: the dashboard asks for
-    #: it to be checked with the accountant until someone saves the shop's code.
+    #: True for a code migration f3a9c2d7e1b4 assigned on its own, until the shop's code is
+    #: next saved. A record only: the code is internal (owner: "קוד סניף אינו למס הכנסה").
     branch_id_auto_assigned = Column(Boolean, nullable=False, default=False, server_default="false")
     address = Column(String(500), nullable=True)
     city = Column(String(100), nullable=True)

@@ -7,6 +7,8 @@ import assert from 'node:assert/strict';
 import {
   cleanIntegration,
   cleanPinpadId,
+  cleanSynqpayConnection,
+  cleanSynqpayUsbDevice,
   fieldPresent,
   formEffectiveIntegration,
   hasPaymentIntegrationErrors,
@@ -25,6 +27,9 @@ import {
   resolveFormIntegration,
   secretSavedLabel,
   spicyPathError,
+  SYNQPAY_CONNECTIONS,
+  synqpayDefaultPort,
+  synqpayWarnings,
   validatePaymentIntegration,
   withSendableSecrets,
 } from './paymentIntegration';
@@ -424,5 +429,138 @@ describe('paymentIntegrationErrorMessage', () => {
     assert.equal(paymentIntegrationErrorMessage(err('Not found')), null);
     assert.equal(paymentIntegrationErrorMessage(err({ code: 'other', msg: 'x' })), null);
     assert.equal(paymentIntegrationErrorMessage(new Error('boom')), null);
+  });
+});
+
+// ── SynqPay (docs/SPEC_SYNQPAY.md) ───────────────────────────────────────────
+
+describe('SynqPay', () => {
+  const synqSecrets = (set: boolean): SecretsStatus => ({
+    ...noSecrets,
+    synqpayApiKey: { set, source: set ? 'machine' : null, own: set },
+  });
+  const lan: PaymentIntegrationForm = {
+    paymentIntegration: 'synqpay',
+    synqpayDeviceModel: 'dx8000',
+    synqpayConnection: 'lan',
+    synqpayHost: '192.168.1.40',
+  };
+
+  it('is a selectable external type', () => {
+    assert.equal(cleanIntegration('SynqPay'), 'synqpay');
+    assert.equal(isExternal('synqpay'), true);
+    const options = integrationOptions({ hasBuiltinTerminal: false, hasNfc: null });
+    const synq = options.find((o) => o.value === 'synqpay');
+    assert.ok(synq && synq.selectable && !synq.hidden);
+  });
+
+  it('needs model, connection and the API key, and a host only for a connection by address', () => {
+    assert.deepEqual(missingRequiredFields('synqpay', { paymentIntegration: 'synqpay' }, null, synqSecrets(false)), [
+      'synqpayDeviceModel',
+      'synqpayConnection',
+      'synqpayApiKey',
+    ]);
+    assert.deepEqual(missingRequiredFields('synqpay', { ...lan, synqpayHost: null }, null, synqSecrets(true)), ['synqpayHost']);
+    assert.deepEqual(missingRequiredFields('synqpay', lan, null, synqSecrets(true)), []);
+    const serial: PaymentIntegrationForm = { ...lan, synqpayConnection: 'usb', synqpayHost: null };
+    assert.deepEqual(missingRequiredFields('synqpay', serial, null, synqSecrets(true)), []);
+    // The connection inherited from the shop counts too.
+    assert.deepEqual(
+      missingRequiredFields('synqpay', { paymentIntegration: 'synqpay', synqpayDeviceModel: 'rx5000' }, { synqpayConnection: 'lan' }, synqSecrets(true)),
+      ['synqpayHost'],
+    );
+  });
+
+  it('validates every field as the server does', () => {
+    const errors = validatePaymentIntegration(
+      {
+        ...lan,
+        synqpayDeviceModel: 'a920',
+        synqpayConnection: 'bluetooth',
+        synqpayProtocol: 'ws',
+        synqpayHost: 'http://10.0.0.1',
+        synqpayPort: '70000',
+        synqpayUsbDevice: '/dev/ttyS1',
+        synqpaySerialNumber: 'a b',
+        synqpayApiKey: '12 34',
+      },
+      null,
+      synqSecrets(false),
+    );
+    assert.equal(errors.synqpayDeviceModel, PI_TEXT.synqpayInvalidChoice);
+    assert.equal(errors.synqpayConnection, PI_TEXT.synqpayInvalidChoice);
+    assert.equal(errors.synqpayProtocol, PI_TEXT.synqpayInvalidChoice);
+    assert.equal(errors.synqpayHost, PI_TEXT.hostInvalid);
+    assert.equal(errors.synqpayPort, PI_TEXT.portInvalid);
+    assert.equal(errors.synqpayUsbDevice, PI_TEXT.synqpayUsbInvalid);
+    assert.equal(errors.synqpaySerialNumber, PI_TEXT.synqpaySerialInvalid);
+    assert.equal(errors.synqpayApiKey, PI_TEXT.synqpayKeyInvalid);
+  });
+
+  it('accepts a full LAN setup and a USB serial one', () => {
+    assert.equal(
+      hasPaymentIntegrationErrors(
+        validatePaymentIntegration({ ...lan, synqpayProtocol: 'http', synqpayPort: '8000', synqpayApiKey: '1234abcd' }, null, synqSecrets(false)),
+      ),
+      false,
+    );
+    const serial: PaymentIntegrationForm = {
+      paymentIntegration: 'synqpay',
+      synqpayDeviceModel: 'rx5000',
+      synqpayConnection: 'usb',
+      synqpayUsbDevice: '0b00:0080',
+      synqpaySerialNumber: '244RKR528387',
+    };
+    assert.deepEqual(validatePaymentIntegration(serial, null, synqSecrets(true)), {});
+    assert.equal(cleanSynqpayUsbDevice(' com3 '), 'COM3');
+    assert.equal(cleanSynqpayUsbDevice('0b00:0080'), '0B00:0080');
+    assert.equal(cleanSynqpayUsbDevice('0b00'), null);
+  });
+
+  it('says what a required SynqPay choice is missing, in its own words', () => {
+    const errors = validatePaymentIntegration({ paymentIntegration: 'synqpay' }, null, synqSecrets(false));
+    assert.equal(errors.synqpayDeviceModel, PI_TEXT.synqpayModelRequired);
+    assert.equal(errors.synqpayConnection, PI_TEXT.synqpayConnectionRequired);
+    assert.equal(errors.synqpayApiKey, PI_TEXT.required);
+  });
+
+  it('documents the ports by protocol and TLS', () => {
+    assert.equal(synqpayDefaultPort(null, false), 9000);
+    assert.equal(synqpayDefaultPort('tcp', true), 9443);
+    assert.equal(synqpayDefaultPort('HTTP', false), 8000);
+    assert.equal(synqpayDefaultPort('http', true), 8443);
+  });
+
+  it('warns, without blocking, about what SynqPay does not document', () => {
+    assert.deepEqual(synqpayWarnings({ synqpayDeviceModel: 'dx8000', synqpayConnection: 'usb' }, null), [
+      PI_TEXT.synqpaySerialUndocumented,
+    ]);
+    assert.deepEqual(synqpayWarnings({ synqpayDeviceModel: 'rx5000', synqpayConnection: 'usb' }, null), []);
+    assert.deepEqual(synqpayWarnings(lan, null), []);
+  });
+
+  it('never sends the key mask, and names the stored key', () => {
+    assert.deepEqual(withSendableSecrets({ synqpayApiKey: '••••' }), {});
+    assert.deepEqual(withSendableSecrets({ synqpayApiKey: '1234abcd' }), { synqpayApiKey: '1234abcd' });
+    assert.equal(secretSavedLabel('synqpayApiKey', 'shop', false), 'מפתח API שמור ברמת החנות');
+  });
+
+  it('LAN or USB for an external terminal; built-in is no setting', () => {
+    assert.deepEqual([...SYNQPAY_CONNECTIONS], ['lan', 'usb']);
+    assert.equal(cleanSynqpayConnection('usb_serial'), 'usb');
+    assert.equal(cleanSynqpayConnection('builtin'), null);
+    assert.equal(cleanSynqpayConnection('usb_ip'), null);
+    const on = integrationOptions({ hasBuiltinTerminal: true }, [{ value: 'agamento', selectable: true, label: 'מובנה — SynqPay במכשיר' }]);
+    assert.equal(on.find((o) => o.value === 'agamento')?.label, 'מובנה — SynqPay במכשיר');
+  });
+
+  it('shows the machines list badge', () => {
+    const row = normalizeMachineIntegration({ paymentIntegration: 'synqpay', paymentIntegrationMissing: ['synqpayApiKey'] });
+    assert.equal(row.paymentIntegration, 'synqpay');
+    const badge = integrationBadge(row);
+    assert.ok(badge);
+    assert.equal(badge.label, 'SynqPay');
+    assert.equal(badge.tone, 'warn');
+    assert.equal(badge.missing, 'חסר: מפתח API');
   });
 });

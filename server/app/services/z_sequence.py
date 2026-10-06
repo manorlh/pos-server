@@ -107,19 +107,48 @@ def allocate_shop_z_number(db: Session, shop_id: Optional[uuid.UUID]) -> Optiona
 # ── Per-till numbering (till Zs, docs/SHIFTS_API.md §5) ───────────────────────
 
 
-def _highest_machine_number(db: Session, machine_id: uuid.UUID) -> int:
+def _highest_machine_number(db: Session, machine_id: uuid.UUID, epoch: Optional[int] = None) -> int:
     """The last till Z number of this till already on file (0 if none) — as above, so a
-    lost counter row continues the run rather than reissuing printed numbers."""
+    lost counter row continues the run rather than reissuing printed numbers. Within one
+    run (`epoch`, the till's current one when not given): an independent till starts at 1
+    (docs/SPEC_INDEPENDENT_TILL.md §3.1)."""
+    if epoch is None:
+        epoch = current_machine_epoch(db, machine_id)[0]
     highest = (
         db.query(ZReport.machine_sequence_number)
         .filter(
             ZReport.machine_id == machine_id,
+            ZReport.machine_sequence_epoch == epoch,
             ZReport.machine_sequence_number.isnot(None),
         )
         .order_by(ZReport.machine_sequence_number.desc())
         .first()
     )
     return int(highest[0]) if highest and highest[0] else 0
+
+
+def current_machine_epoch(db: Session, machine_id: uuid.UUID):
+    """The till's current run: `(epoch, started_at)` — `(0, None)` before it has a counter."""
+    row = (
+        db.query(MachineZSequence.epoch, MachineZSequence.started_at)
+        .filter(MachineZSequence.machine_id == machine_id)
+        .first()
+    )
+    return (int(row[0] or 0), row[1]) if row else (0, None)
+
+
+def start_new_machine_sequence(db: Session, machine_id: uuid.UUID, now) -> MachineZSequence:
+    """
+    A new run of this till's Zs, starting at 1 — the till was made independent (the owner:
+    "מעבר בין קופה בסניפי לעצמאי מתחיל את הקופה מ-Z אחד"). Under the counter lock; the
+    caller ran the switch's checks (nothing waiting for a Z, nothing unsynced).
+    """
+    row = lock_machine_z_sequence(db, machine_id)
+    row.epoch = int(row.epoch or 0) + 1
+    row.last_number = 0
+    row.started_at = now
+    db.flush()
+    return row
 
 
 def lock_machine_z_sequence(db: Session, machine_id: uuid.UUID) -> MachineZSequence:
@@ -140,7 +169,7 @@ def lock_machine_z_sequence(db: Session, machine_id: uuid.UUID) -> MachineZSeque
     if insert is not None:
         db.execute(
             insert(MachineZSequence.__table__)
-            .values(machine_id=machine_id, last_number=_highest_machine_number(db, machine_id))
+            .values(machine_id=machine_id, last_number=_highest_machine_number(db, machine_id, 0))
             .on_conflict_do_nothing(index_elements=["machine_id"])
         )
     row = (
@@ -151,7 +180,7 @@ def lock_machine_z_sequence(db: Session, machine_id: uuid.UUID) -> MachineZSeque
         .first()
     )
     if row is None:  # pragma: no cover - only without an upsert
-        row = MachineZSequence(machine_id=machine_id, last_number=_highest_machine_number(db, machine_id))
+        row = MachineZSequence(machine_id=machine_id, last_number=_highest_machine_number(db, machine_id, 0))
         db.add(row)
         db.flush()
     return row
@@ -163,16 +192,26 @@ def last_machine_z_number(db: Session, machine_id: uuid.UUID) -> int:
     file. A read for the heartbeat (`lastTillZNumber`), so the till can number a Z it
     closes with no connection (docs/SPEC_OFFLINE_TILL_Z.md §4.1). No lock.
     """
-    row = db.query(MachineZSequence.last_number).filter(MachineZSequence.machine_id == machine_id).first()
-    on_file = _highest_machine_number(db, machine_id)
+    row = (
+        db.query(MachineZSequence.last_number, MachineZSequence.epoch)
+        .filter(MachineZSequence.machine_id == machine_id)
+        .first()
+    )
+    # The current run's (an independent till starts again at 1).
+    on_file = _highest_machine_number(db, machine_id, int(row[1] or 0) if row else 0)
     return max(int(row[0] or 0) if row else 0, on_file)
 
 
 def machine_z_number_holder(db: Session, machine_id: uuid.UUID, number: int) -> Optional[ZReport]:
-    """The Z of this till already numbered `number`, if any."""
+    """The Z of this till already numbered `number` in its current run, if any."""
+    epoch = current_machine_epoch(db, machine_id)[0]
     return (
         db.query(ZReport)
-        .filter(ZReport.machine_id == machine_id, ZReport.machine_sequence_number == number)
+        .filter(
+            ZReport.machine_id == machine_id,
+            ZReport.machine_sequence_epoch == epoch,
+            ZReport.machine_sequence_number == number,
+        )
         .first()
     )
 
@@ -191,26 +230,9 @@ def claim_machine_z_number(db: Session, machine_id: uuid.UUID, number: int) -> i
     refused it with the expected number; this is the backstop under the lock).
     """
     row = lock_machine_z_sequence(db, machine_id)
-    before = max(int(row.last_number or 0), _highest_machine_number(db, machine_id))
+    before = max(int(row.last_number or 0), _highest_machine_number(db, machine_id, int(row.epoch or 0)))
     if number != before + 1:
         raise ZNumberOutOfSequence(f"Z {number} of machine {machine_id}: expected {before + 1}")
-    row.last_number = number
-    db.flush()
-    return before
-
-
-def claim_machine_z_number_after_device(db: Session, machine_id: uuid.UUID, number: int) -> int:
-    """
-    Support's Z of a dead till (docs/SPEC_OFFLINE_TILL_Z.md §4.6): `number` is one past the
-    highest of the cloud's run and the last number the device itself reported. The numbers
-    between are Zs the device printed with no connection and never sent: they stay its,
-    recorded by the caller as such, never reused — never a duplicate paper. Returns the
-    counter as it was; refuses a number at or below it.
-    """
-    row = lock_machine_z_sequence(db, machine_id)
-    before = max(int(row.last_number or 0), _highest_machine_number(db, machine_id))
-    if number <= before:
-        raise ZNumberOutOfSequence(f"Z {number} of machine {machine_id}: at or below {before}")
     row.last_number = number
     db.flush()
     return before
@@ -224,7 +246,7 @@ def allocate_machine_z_number(db: Session, machine_id: uuid.UUID) -> int:
     """
     row = lock_machine_z_sequence(db, machine_id)
     # Never below a number on file: a counter behind the run would issue a number twice.
-    assigned = max(int(row.last_number or 0), _highest_machine_number(db, machine_id)) + 1
+    assigned = max(int(row.last_number or 0), _highest_machine_number(db, machine_id, int(row.epoch or 0))) + 1
     row.last_number = assigned
     db.flush()
     return assigned
@@ -234,9 +256,9 @@ def allocate_machine_z_number(db: Session, machine_id: uuid.UUID) -> int:
 #
 # The same contract as a till Z closed with no connection (`claim_machine_z_number`,
 # docs/SPEC_OFFLINE_TILL_Z.md §4): the main till numbers the shop's next Z itself — one
-# after the last it knows — and the cloud takes exactly the next number or nothing. A
-# jump or a number already used is refused with the expected number, and the main till
-# renumbers its still-pending Z to it: the shop's run never has a gap.
+# after the last it knows, only as the shop's producer — and the cloud takes exactly the
+# next number or nothing. Nothing is ever renumbered: a number that does not fit is kept
+# as printed for support (docs/SPEC_INDEPENDENT_TILL.md §8.11).
 
 
 def last_shop_z_number(db: Session, shop_id: uuid.UUID) -> int:

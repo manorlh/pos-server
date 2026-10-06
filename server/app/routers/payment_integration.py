@@ -82,6 +82,10 @@ def _options(machine: Any) -> List[Dict[str, Any]]:
     """The select's choices, each with whether it may be picked here and why not."""
     builtin = True if machine is None else bool(getattr(machine, "has_builtin_terminal", True))
     nfc = None if machine is None else PI.device_has_nfc(machine)
+    # On a SynqPay terminal the built-in terminal is SynqPay's own (docs/SPEC_SYNQPAY.md §1.5).
+    from app.models.synqpay_devices import synqpay_device_model
+
+    synqpay_device = machine is not None and synqpay_device_model(getattr(machine, "device_model", None)) is not None
     out = []
     for value in PI.INTEGRATIONS:
         reason = None
@@ -89,7 +93,8 @@ def _options(machine: Any) -> List[Dict[str, Any]]:
             reason = "soon" if nfc is not False else "needs_nfc"
         elif value == PI.AGAMENTO and not builtin:
             reason = "needs_builtin_terminal"
-        out.append({"value": value, "label": PI.LABELS_HE[value], "selectable": reason is None, "reason": reason})
+        label = PI.BUILTIN_SYNQPAY_LABEL_HE if value == PI.AGAMENTO and synqpay_device else PI.LABELS_HE[value]
+        out.append({"value": value, "label": label, "selectable": reason is None, "reason": reason})
     return out
 
 
@@ -123,6 +128,7 @@ def get_payment_integration_context(
             [(lvl, getattr(entity, "settings", None)) for lvl, entity in present],
             bool(getattr(machine, "has_builtin_terminal", True)),
             secrets_set=[k for k, v in secrets.items() if v["set"]],
+            synqpay_device=PI.is_synqpay_device(machine),
         )
         resolved = {
             "integration": res.integration,

@@ -10,6 +10,12 @@ PATCH  /prepaid-vouchers/batches/{id}                 → texts, logo, validity
 POST   /prepaid-vouchers/batches/{id}/vouchers        → issue more vouchers (next serials)
 POST   /prepaid-vouchers/batches/{id}/cancel          → cancel the batch and its open vouchers
 GET    /prepaid-vouchers/batches/{id}/vouchers        → its vouchers (codes for printing)
+GET    /prepaid-vouchers/batches/{id}/file            → PDF / ZIP (a PDF per voucher, or per group
+                                                        with cover sheets) / CSV manifest
+GET    /prepaid-vouchers/batches/{id}/groups          → per group: serials and how many redeemed
+POST   /prepaid-vouchers/batches/{id}/groups          → split the vouchers with no group into groups
+POST   /prepaid-vouchers/batches/{id}/groups/{n}/cancel → cancel a whole group (a lost envelope)
+GET    /prepaid-vouchers/batches/{id}/events          → the batch's audit trail
 GET    /prepaid-vouchers/batches/{id}/report          → counts, goods taken, redemptions by
                                                         hour / day / shop / till / employee
 GET    /prepaid-vouchers/vouchers/{id}                → one voucher with its redemptions
@@ -41,6 +47,8 @@ from app.schemas.prepaid_voucher import (
     PrepaidVoucherAddIn,
     PrepaidVoucherBatchCreate,
     PrepaidVoucherBatchUpdate,
+    PrepaidVoucherCancelIn,
+    PrepaidVoucherGroupsIn,
     PrepaidVoucherLookupIn,
     PrepaidVoucherNoteIn,
     PrepaidVoucherRedeemIn,
@@ -107,7 +115,7 @@ def add_prepaid_vouchers(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    batch = PV.add_vouchers(db, current_user, active_tenant_id, batch_id, body.count)
+    batch = PV.add_vouchers(db, current_user, active_tenant_id, batch_id, body.count, body.group_size)
     db.commit()
     return PV.batch_out(db, batch)
 
@@ -115,13 +123,68 @@ def add_prepaid_vouchers(
 @router.post("/prepaid-vouchers/batches/{batch_id}/cancel")
 def cancel_prepaid_voucher_batch(
     batch_id: str,
+    body: Optional[PrepaidVoucherCancelIn] = None,
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    batch = PV.cancel_batch(db, current_user, active_tenant_id, batch_id)
+    batch = PV.cancel_batch(db, current_user, active_tenant_id, batch_id, (body.reason if body else None))
     db.commit()
     return PV.batch_out(db, batch)
+
+
+@router.get("/prepaid-vouchers/batches/{batch_id}/groups")
+def prepaid_voucher_groups(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Per group: its serials, its vouchers and how many are unused / partly used / used / cancelled."""
+    return PV.batch_groups(db, current_user, active_tenant_id, batch_id)
+
+
+@router.post("/prepaid-vouchers/batches/{batch_id}/groups")
+def assign_prepaid_voucher_groups(
+    batch_id: str,
+    body: PrepaidVoucherGroupsIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Split the vouchers that have no group yet into groups of `groupSize` (409 when none is left)."""
+    batch = PV.assign_groups(db, current_user, active_tenant_id, batch_id, body.group_size)
+    db.commit()
+    return PV.batch_out(db, batch)
+
+
+@router.post("/prepaid-vouchers/batches/{batch_id}/groups/{group_no}/cancel")
+def cancel_prepaid_voucher_group(
+    batch_id: str,
+    group_no: int,
+    body: Optional[PrepaidVoucherCancelIn] = None,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Cancel a whole group in one action (an envelope lost): its open vouchers are refused
+    at every till from now on; used ones stay used. Logged with the reason.
+    """
+    out = PV.cancel_group(db, current_user, active_tenant_id, batch_id, group_no, (body.reason if body else None))
+    db.commit()
+    return out
+
+
+@router.get("/prepaid-vouchers/batches/{batch_id}/events")
+def prepaid_voucher_events(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The batch's audit trail, newest first: made, issued, grouped, cancelled — by whom and why."""
+    return PV.batch_events(db, current_user, active_tenant_id, batch_id)
 
 
 @router.get("/prepaid-vouchers/batches/{batch_id}/vouchers")
@@ -131,6 +194,8 @@ def list_prepaid_vouchers(
     serial: Optional[int] = Query(None, ge=1),
     limit: int = Query(100, ge=1, le=5000),
     offset: int = Query(0, ge=0),
+    group: Optional[int] = Query(None, ge=1),
+    code: Optional[str] = Query(None, max_length=100, description="The code under the barcode, or 4+ characters of it"),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -138,36 +203,63 @@ def list_prepaid_vouchers(
     return PV.list_vouchers(
         db, current_user, active_tenant_id, batch_id,
         status_filter=status_filter, serial=serial, limit=limit, offset=offset,
+        group_no=_given(group), code=_given(code),
     )
+
+
+def _given(value):
+    """A query parameter's value; None for the declaration itself (a direct call that left it out)."""
+    from fastapi.params import Param
+
+    return None if isinstance(value, Param) else value
 
 
 @router.get("/prepaid-vouchers/batches/{batch_id}/file")
 def prepaid_vouchers_file(
     batch_id: str,
-    fmt: str = Query("pdf", alias="format", pattern="^(pdf|zip)$"),
+    fmt: str = Query("pdf", alias="format", pattern="^(pdf|zip|groups|csv)$"),
     layout: str = Query("ticket80x50"),
     width: Optional[float] = Query(None, ge=30, le=300),
     height: Optional[float] = Query(None, ge=30, le=300),
     voucher_id: Optional[str] = Query(None, alias="voucherId"),
     include_used: bool = Query(True, alias="includeUsed"),
+    group: Optional[int] = Query(None, ge=1),
+    covers: bool = Query(True),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
     """
     The vouchers as a file, drawn on the server (see app/services/prepaid_voucher_pdf.py):
-    `format=pdf` — one PDF, a page per voucher (or a sheet of several for `a4grid`);
-    `format=zip` — a ZIP with a PDF per voucher. `voucherId` narrows it to one voucher.
-    Cancelled vouchers are never included.
+
+    * `format=pdf` — one PDF, a page per voucher (or a sheet of several for `a4grid`);
+      `group=n` narrows it to that group, opened by its cover sheet (`covers`).
+    * `format=zip` — a ZIP with a PDF per voucher.
+    * `format=groups` — production in groups: a ZIP with a PDF per group ("1000 in tens" is
+      100 files of 10), each opened by its cover sheet, and the CSV manifest. 409
+      `prepaid_voucher_not_grouped` for a batch with no groups.
+    * `format=csv` — the manifest: every voucher of the batch (any status) with its code.
+
+    `voucherId` narrows it to one voucher. Cancelled vouchers are never printed.
     """
     from fastapi import HTTPException
-    from fastapi.responses import Response
-    from urllib.parse import quote
 
     from app.models.prepaid_voucher import PrepaidVoucher
     from app.services import prepaid_voucher_pdf as PDF
+    from app.services.reports import _load_zoneinfo, resolve_report_timezone
 
+    group = _given(group)
+    covers = True if _given(covers) is None else covers
     batch = PV.get_batch(db, current_user, active_tenant_id, batch_id)
+    pdf_name, zip_name = PDF.file_names(batch)
+    base = pdf_name[:-4]
+
+    if fmt == "csv":
+        everything = (
+            db.query(PrepaidVoucher).filter(PrepaidVoucher.batch_id == batch.id).order_by(PrepaidVoucher.serial).all()
+        )
+        return _attachment(PDF.manifest_csv(batch, everything), f"{base}_רשימת-קודים.csv", "text/csv; charset=utf-8", "csv")
+
     q = db.query(PrepaidVoucher).filter(
         PrepaidVoucher.batch_id == batch.id, PrepaidVoucher.status != "cancelled"
     )
@@ -175,22 +267,54 @@ def prepaid_vouchers_file(
         q = q.filter(PrepaidVoucher.id == PV._as_uuid(voucher_id))
     if not include_used:
         q = q.filter(PrepaidVoucher.status != "used")
+    if group is not None:
+        q = q.filter(PrepaidVoucher.group_no == group)
     vouchers = q.order_by(PrepaidVoucher.serial).all()
+    groups_total = PV._last_group(db, batch.id)
+    if fmt == "groups" and groups_total == 0:
+        raise HTTPException(status_code=409, detail=PV.NOT_GROUPED)
     if not vouchers:
         raise HTTPException(status_code=404, detail="no_vouchers")
+
+    zone = _load_zoneinfo(resolve_report_timezone(db, batch.tenant_id, None))
+    opts = PDF.options_for(batch, zone)
+    made = PDF._local_day(batch.created_at, zone)
     g = PDF.geometry(layout, width, height)
     logo = PDF.load_logo(batch.logo_url)
-    pdf_name, zip_name = PDF.file_names(batch)
-    if voucher_id:
-        pdf_name = pdf_name[:-4] + f"-{str(vouchers[0].serial).zfill(4)}.pdf"
+    issued = {r["group"]: (r["fromSerial"], r["toSerial"], r["total"]) for r in PV.groups_report(db, batch) if r["group"]}
+
+    if fmt == "groups":
+        everything = (
+            db.query(PrepaidVoucher).filter(PrepaidVoucher.batch_id == batch.id).order_by(PrepaidVoucher.serial).all()
+        )
+        data, _ = PDF.render_groups_zip(
+            batch, vouchers, g, groups_total=groups_total, group_ranges=issued, logo=logo, opts=opts,
+            covers=covers, made=made, manifest=PDF.manifest_csv(batch, everything),
+        )
+        return _attachment(data, f"{base}_קבוצות.zip", "application/zip", "zip")
     if fmt == "zip":
-        data, name, media = PDF.render_zip(batch, vouchers, g, logo=logo), zip_name, "application/zip"
-    else:
-        data, name, media = PDF.render_pdf(batch, vouchers, g, logo=logo), pdf_name, "application/pdf"
+        return _attachment(PDF.render_zip(batch, vouchers, g, logo=logo, opts=opts), zip_name, "application/zip", "zip")
+
+    cover = None
+    if group is not None and group in issued:
+        low, high, total = issued[group]
+        if covers:
+            cover = PDF.GroupInfo(group=group, groups=groups_total, low=low, high=high, count=len(vouchers), issued=total)
+        pdf_name = PDF.group_file_name(base, group, groups_total, low, high)
+    elif voucher_id:
+        pdf_name = f"{base}-{str(vouchers[0].serial).zfill(4)}.pdf"
+    data = PDF.render_pdf(batch, vouchers, g, logo=logo, opts=opts, cover=cover, made=made)
+    return _attachment(data, pdf_name, "application/pdf", "pdf")
+
+
+def _attachment(data: bytes, name: str, media: str, ext: str):
+    from fastapi.responses import Response
+    from urllib.parse import quote
+
     return Response(
         content=data,
         media_type=media,
-        headers={"Content-Disposition": f"attachment; filename=\"vouchers.{fmt}\"; filename*=UTF-8''{quote(name)}"},
+        headers={"Content-Disposition": f"attachment; filename=\"vouchers.{ext}\"; filename*=UTF-8''{quote(name)}"},
     )
 
 
@@ -208,11 +332,12 @@ def get_prepaid_voucher(
 @router.post("/prepaid-vouchers/vouchers/{voucher_id}/cancel")
 def cancel_prepaid_voucher(
     voucher_id: str,
+    body: Optional[PrepaidVoucherCancelIn] = None,
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    voucher = PV.cancel_voucher(db, current_user, active_tenant_id, voucher_id)
+    voucher = PV.cancel_voucher(db, current_user, active_tenant_id, voucher_id, (body.reason if body else None))
     db.commit()
     return PV.voucher_out(db, voucher, with_redemptions=True)
 

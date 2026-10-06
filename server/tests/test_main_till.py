@@ -107,7 +107,8 @@ def start(w, till):
 
 def dashboard_run(w, *tills, user=None):
     return z_runs_router.post_z_run(
-        ZRunCreateIn(shopId=w.shop.id, machines=[{"machineId": str(t.id)} for t in tills]),
+        # The tills here are not seen "now": the state is confirmed (offline till Z §4.6.1).
+        ZRunCreateIn(shopId=w.shop.id, machines=[{"machineId": str(t.id)} for t in tills], confirmCloudData=True),
         current_user=user or w.admin, active_tenant_id=w.tenant.id, db=w.db,
     )
 

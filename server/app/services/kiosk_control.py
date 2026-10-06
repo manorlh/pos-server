@@ -43,6 +43,8 @@ from app.models.shop import Shop
 from app.models.user import User, UserRole
 from app.schemas.kiosk import KioskOrderIn
 from app.services import kiosk_config as cfgsvc
+from app.services import kiosk_identity
+from app.services import kiosk_schedule
 from app.services.company_hierarchy import user_covers_company, user_may_use_machine, visible_shop_ids
 from app.services.machine_status import is_online, local_today
 
@@ -350,6 +352,21 @@ def _status_of(device: KioskDevice) -> Dict[str, Any]:
     return device.status if isinstance(device.status, dict) else {}
 
 
+def _terminal_identity(machine: POSMachine, settings: Any, lock_of: Any) -> Dict[str, Any]:
+    """
+    "אל תאפשר לקיוסק לעבוד עם מסוף לא תואם": the terminal set for the kiosk (counted only when
+    set on the kiosk itself) and the one it last reported, with the card lock that follows.
+    """
+    return {
+        "expected": settings.expected,
+        "expectedSource": settings.expected_source,
+        "reportedNumber": machine.terminal_number,
+        "reportedMerchant": machine.terminal_merchant_name,
+        "reportedAt": _iso(machine.terminal_reported_at),
+        "cardLock": lock_of(machine, settings),
+    }
+
+
 def summaries(db: Session, devices: Sequence[KioskDevice], *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """KioskSummary for each device (contract §2.2), batched."""
     from app.services import till_z
@@ -388,6 +405,18 @@ def summaries(db: Session, devices: Sequence[KioskDevice], *, now: Optional[date
         .all()
     )
     open_shifts = open_shifts_for_machines(db, ids)
+    from app.services import kiosk_ops
+
+    ops_alerts = kiosk_ops.brief_by_kiosk(db, ids)
+    ops_close = kiosk_ops.close_state_by_kiosk(db, ids, now=now)
+    ops_unprinted = kiosk_ops.unprinted_by_kiosk(
+        db, ids, {d.machine_id: today_by_tenant.get(machines[d.machine_id].tenant_id) for d in devices if d.machine_id in machines},
+    )
+
+    # The terminal set for each kiosk beside the one it last reported (docs/SPEC_KIOSK.md §20).
+    from app.services.terminal_status import TerminalSettings, card_lock_status, terminal_settings_for
+
+    terminal = terminal_settings_for(db, list(machines.values()))
 
     controller_ids = {
         _uuid(c) for d in devices for c in (d.controller_machine_ids or []) if _uuid(c) is not None
@@ -433,6 +462,10 @@ def summaries(db: Session, devices: Sequence[KioskDevice], *, now: Optional[date
             "pauseMessage": d.pause_message,
             "pausedAt": _iso(d.paused_at),
             "pausedBy": d.paused_by,
+            "pausedUntil": _iso(d.paused_until) if d.paused else None,
+            "pausedMode": (d.paused_mode or "manual") if d.paused else None,
+            # "פתיחה אוטומטית": the kiosk's hours and automatic Z, for the controlling till's form.
+            "schedule": _schedule_of(db, machine),
             "flowState": st.get("flowState"),
             "shiftOpen": bool(shift_open),
             "zMode": till_z.z_mode_of(machine),
@@ -445,6 +478,12 @@ def summaries(db: Session, devices: Sequence[KioskDevice], *, now: Optional[date
             "lastOrderAt": _iso(last_order.get(d.machine_id)) or st.get("lastOrderAt"),
             "unprintedBons": st.get("unprintedBons"),
             "pendingOrders": st.get("pendingOrders"),
+            # "התראות לקופות" open now, and the last "סגירה יחד עם ה-Z הסניפי" (kiosk_ops.py).
+            "alerts": ops_alerts.get(d.machine_id, []),
+            "shopZClose": ops_close.get(d.machine_id),
+            # Unprinted bons nobody handled, with "הדפס עכשיו" / "סמן כטופל" on the till (§16.8).
+            "unprintedOrders": ops_unprinted.get(d.machine_id, []),
+            "terminalIdentity": _terminal_identity(machine, terminal.get(machine.id) or TerminalSettings(), card_lock_status),
             "controllerMachineIds": controllers,
             "controllers": [
                 {"machineId": c, "name": controller_names.get(_uuid(c))} for c in controllers
@@ -474,6 +513,7 @@ def list_kiosks(
     )
     # "מצב שאין אינטרנט — תתריע": a kiosk quiet for too long during its hours gets its exception.
     _note_offline(db, devices, now=now)
+    expire_locks(db, devices, now=now)
     return summaries(db, devices, now=now)
 
 
@@ -596,13 +636,43 @@ def controlled_devices(db: Session, till: POSMachine) -> List[KioskDevice]:
     return [d for d in devices if str(till.id) in {str(c) for c in (d.controller_machine_ids or [])}]
 
 
-def state_of(device: KioskDevice) -> Dict[str, Any]:
+def state_of(device: KioskDevice, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """The pause ("נעילה למכירה") as the kiosk gets it: `until` lets it lift the lock by its own clock."""
+    paused = kiosk_schedule.lock_active(device.paused, _aware(device.paused_until), _now(now))
     return {
-        "paused": bool(device.paused),
-        "message": device.pause_message if device.paused else None,
-        "since": _iso(device.paused_at) if device.paused else None,
-        "by": device.paused_by if device.paused else None,
+        "paused": paused,
+        "message": device.pause_message if paused else None,
+        "since": _iso(device.paused_at) if paused else None,
+        "by": device.paused_by if paused else None,
+        "until": _iso(device.paused_until) if paused else None,
+        "mode": (device.paused_mode or "manual") if paused else None,
     }
+
+
+def _aware(value: Optional[datetime]) -> Optional[datetime]:
+    """A stored time with no zone is UTC (SQLite drops it)."""
+    return value.replace(tzinfo=timezone.utc) if value is not None and value.tzinfo is None else value
+
+
+def expire_locks(db: Session, devices: Sequence[KioskDevice], *, now: Optional[datetime] = None) -> None:
+    """A lock whose time came lifts — written and audited once ("סיום נעילה"). The caller commits."""
+    now = _now(now)
+    for device in devices:
+        if device.paused and device.paused_until is not None and now >= _aware(device.paused_until):
+            mode = device.paused_mode
+            device.paused = False
+            device.pause_message = None
+            device.paused_at = None
+            device.paused_by = None
+            device.paused_until = None
+            device.paused_mode = None
+            db.add(KioskCommand(
+                id=uuid.uuid4(), tenant_id=device.tenant_id, kiosk_machine_id=device.machine_id,
+                action="resume", message=None, force=False, source="schedule",
+                requested_by_name="פתיחה אוטומטית" if mode == "next_open" else "סיום נעילה",
+                status="applied", detail=f"lock ended ({mode or 'time'})", created_at=now,
+            ))
+    db.flush()
 
 
 def kiosk_sync(db: Session, machine: POSMachine, raw_status: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
@@ -629,10 +699,16 @@ def kiosk_sync(db: Session, machine: POSMachine, raw_status: Any, *, now: Option
             device.shop_id = machine.shop_id
             device.company_id = _company_of(db, machine)
         db.flush()
-    controls = summaries(db, controlled_devices(db, machine), now=now)
+    controlled = controlled_devices(db, machine)
+    expire_locks(db, controlled + ([device] if device is not None else []), now=now)
+    controls = summaries(db, controlled, now=now)
     if device is None or not device.enabled:
         return {"kiosk": False, "serverTime": _iso(now), "controls": controls}
     bundle = cfgsvc.effective_bundle(db, machine)
+    # "התראות לקופות" and "סגירה יחד עם ה-Z הסניפי" (app/services/kiosk_ops.py).
+    from app.services import kiosk_ops
+
+    ops = kiosk_ops.on_kiosk_sync(db, machine, device, raw_status, bundle["config"], now=now)
     return {
         "kiosk": True,
         "serverTime": _iso(now),
@@ -642,10 +718,23 @@ def kiosk_sync(db: Session, machine: POSMachine, raw_status: Any, *, now: Option
         "config": bundle["config"],
         "font": bundle["font"],
         "media": bundle["media"],
-        "state": state_of(device),
+        # "עריכת תפריט הקיוסק": the shop menu's version the kiosk's edit starts from (kiosk_menu.py).
+        "menuVersion": _menu_version(db, machine),
+        "state": state_of(device, now=now),
+        # "לקיוסק אין עובד בפועל": the kiosk's shifts, documents and Zs run as itself.
+        "operator": kiosk_identity.operator_of(device, machine),
         "kdsAvailable": cfgsvc.kds_available(),
         "controls": controls,
+        "alerts": ops["alerts"],
+        "closeRequest": ops["closeRequest"],
+        "bonCommands": ops["bonCommands"],
     }
+
+
+def _menu_version(db: Session, machine: POSMachine) -> Optional[str]:
+    from app.services import kiosk_menu
+
+    return kiosk_menu.menu_version(db, machine.shop_id) if machine.shop_id is not None else None
 
 
 def require_kiosk_device(db: Session, machine: POSMachine) -> KioskDevice:
@@ -808,6 +897,108 @@ def till_actor(till: POSMachine, kiosk_machine: POSMachine, pos_user_name: Optio
     return types.SimpleNamespace(id=kiosk_machine.distributor_id, username=name, email=None)
 
 
+class KioskCommandRefused(Exception):
+    """A refusal answered as `{"detail": code, "message": Hebrew}` (422 / 403)."""
+
+    def __init__(self, status_code: int, code: str, message: str):
+        super().__init__(code)
+        self.status_code = status_code
+        self.body = {"detail": code, "message": message}
+
+
+def kiosk_zone(db: Session, machine: POSMachine):
+    """The kiosk's local time zone (the tenant's report zone), else UTC."""
+    from zoneinfo import ZoneInfo
+
+    from app.services.reports import resolve_report_timezone
+
+    try:
+        name = resolve_report_timezone(db, machine.tenant_id, None)
+        return ZoneInfo(name) if name else timezone.utc
+    except Exception:  # noqa: BLE001 - an unreadable zone is UTC
+        return timezone.utc
+
+
+def _schedule_of(db: Session, machine: Optional[POSMachine]) -> Optional[Dict[str, Any]]:
+    """The kiosk's effective hours and automatic Z, as the simple form shows them."""
+    if machine is None:
+        return None
+    try:
+        cfg = cfgsvc.effective_config(db, machine)
+    except Exception:  # noqa: BLE001 - a summary never fails over this
+        return None
+    hours = cfg.get("hours") or {}
+    first = (hours.get("ranges") or [{}])[0]
+    return {
+        "enabled": bool(hours.get("enabled")),
+        "days": first.get("days") or [0, 1, 2, 3, 4, 5, 6],
+        "open": first.get("open"),
+        "close": first.get("close"),
+        "ranges": len(hours.get("ranges") or []),
+        "autoCloseAt": (cfg.get("operations") or {}).get("autoCloseAt") or "",
+    }
+
+
+def require_till_manager(db: Session, till: POSMachine, pos_user_id: Optional[str]) -> Any:
+    """
+    A controlling till's lock / schedule needs a manager's approval (a PIN on that till): the
+    till user it names must be an active shop manager of the till's shop, by the cloud's own
+    roster. 403 `kiosk_control_requires_manager` otherwise.
+    """
+    from app.models.pos_user import PosUser, PosUserRole
+
+    ident = _uuid(pos_user_id)
+    user = db.get(PosUser, ident) if ident is not None else None
+    if (
+        user is None
+        or not user.is_active
+        or user.shop_id != till.shop_id
+        or user.role != PosUserRole.SHOP_MANAGER
+    ):
+        raise KioskCommandRefused(
+            status.HTTP_403_FORBIDDEN, "kiosk_control_requires_manager",
+            "נדרש אישור מנהל הסניף (קוד מנהל בקופה) כדי לשנות את הגדרות הקיוסק.",
+        )
+    return user
+
+
+def _save_schedule(db: Session, kiosk_machine: POSMachine, device: KioskDevice, form: Any, actor: Any, now: datetime) -> str:
+    """Write "פתיחה אוטומטית" into the kiosk's own layer; the audit's detail. Raises KioskCommandRefused."""
+    if not isinstance(form, dict):
+        raise KioskCommandRefused(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_schedule", "פרטי הפתיחה האוטומטית חסרים.")
+    if form.get("enabled") and kiosk_schedule.minutes_of(form.get("open")) is None:
+        raise KioskCommandRefused(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_schedule", "שעת הפתיחה חייבת להיות בתבנית HH:MM.")
+    hours, auto = kiosk_schedule.simple_schedule(form)
+    if not hours["enabled"]:
+        hours = {"enabled": False}
+    scope = SettingsScope(
+        "machine", kiosk_machine, kiosk_machine.tenant_id,
+        company_id=_company_of(db, kiosk_machine), shop_id=kiosk_machine.shop_id, machine_id=kiosk_machine.id,
+    )
+    row = cfgsvc.layer_row(db, "machine", kiosk_machine.id)
+    layer = cfgsvc.merge({}, row.overrides) if row is not None and isinstance(row.overrides, dict) else {}
+    layer["hours"] = hours
+    if auto is not None:
+        operations = dict(layer.get("operations") or {})
+        operations["autoCloseAt"] = auto
+        layer["operations"] = operations
+    merged = cfgsvc.merge(cfgsvc.resolve(*_parent_layers(db, scope)), cfgsvc.validate_layer(layer)[0])
+    issues = kiosk_schedule.schedule_issues(merged.get("hours"), (merged.get("operations") or {}).get("autoCloseAt"))
+    if issues:
+        raise KioskCommandRefused(status.HTTP_422_UNPROCESSABLE_ENTITY, "schedule_inconsistent", issues[0]["message"])
+    try:
+        save_settings(db, actor, scope, layer, now=now)
+    except cfgsvc.KioskConfigInvalid as invalid:
+        first = invalid.errors[0] if getattr(invalid, "errors", None) else None
+        where = getattr(first, "path", None) or (first.get("path") if isinstance(first, dict) else "")
+        raise KioskCommandRefused(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_kiosk_config", f"הגדרה לא תקינה: {where}") from invalid
+    rng = hours.get("ranges", [{}])[0] if hours.get("enabled") else {}
+    return (
+        f"schedule enabled={bool(hours.get('enabled'))} open={rng.get('open')} close={rng.get('close')} "
+        f"days={rng.get('days')} autoCloseAt={auto if auto is not None else '(unchanged)'}"
+    )
+
+
 class CommandResult:
     """The audit row, and the refusal to answer with (an HTTPException or a TillZRefused) if any."""
 
@@ -830,6 +1021,10 @@ def run_command(
     requested_by_machine_id=None,
     requested_by_name: Optional[str] = None,
     now: Optional[datetime] = None,
+    until_mode: Optional[str] = None,
+    until_time: Optional[str] = None,
+    minutes: Optional[int] = None,
+    schedule: Any = None,
 ) -> CommandResult:
     """
     Apply one command and audit it. A refusal of the existing channels rolls their work
@@ -864,17 +1059,50 @@ def run_command(
         return row
 
     if action == "pause":
+        # "נעילה למכירה": until reopened by hand, HH:MM today, N minutes, or the next opening.
+        try:
+            until = kiosk_schedule.lock_until(
+                until_mode, now=now, zone=kiosk_zone(db, kiosk_machine), until_time=until_time, minutes=minutes,
+                hours=(cfgsvc.effective_config(db, kiosk_machine).get("hours") if until_mode == "next_open" else None),
+            )
+        except kiosk_schedule.LockRefused as refused:
+            error = KioskCommandRefused(status.HTTP_422_UNPROCESSABLE_ENTITY, refused.code, refused.message)
+            return CommandResult(audit("refused", detail=refused.code), error)
         device.paused = True
         device.pause_message = message
         device.paused_at = now
         device.paused_by = (requested_by_name or None) and requested_by_name[:200]
-        return CommandResult(audit("applied"))
+        device.paused_until = until
+        device.paused_mode = until_mode or "manual"
+        return CommandResult(audit("applied", detail=f"until={_iso(until) or 'manual'} mode={device.paused_mode}"))
     if action == "resume":
         device.paused = False
         device.pause_message = None
         device.paused_at = None
         device.paused_by = None
+        device.paused_until = None
+        device.paused_mode = None
         return CommandResult(audit("applied"))
+    if action == "schedule":
+        # "פתיחה אוטומטית": the kiosk's own layer (the dashboard's kiosk level) — both ways.
+        try:
+            detail = _save_schedule(db, kiosk_machine, device, schedule, actor, now)
+        except KioskCommandRefused as refused:
+            db.rollback()
+            return CommandResult(audit("refused", detail=refused.body["detail"]), refused)
+        return CommandResult(audit("applied", detail=detail))
+    if action in ("bon_print", "bon_handled"):
+        # "הדפס עכשיו" / "סמן כטופל" for an unprinted bon: handed to the kiosk on its next
+        # kiosk/sync, which does it and says so (kiosk_ops.py); audited here.
+        from app.services import kiosk_ops
+
+        order = kiosk_ops.kiosk_order(db, kiosk_machine, message)
+        if order is None:
+            error = KioskCommandRefused(status.HTTP_404_NOT_FOUND, "order_not_found", "ההזמנה לא נמצאה בקיוסק")
+            return CommandResult(audit("refused", detail="order_not_found"), error)
+        row = audit("requested", detail=f"order {order.pickup_label or order.transaction_number or order.local_id}")
+        kiosk_ops.wake_machine(kiosk_machine, "kiosk_bon")
+        return CommandResult(row)
     if action not in ("close_shift", "till_z"):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_action")
 
@@ -987,10 +1215,18 @@ def settings_view(db: Session, scope: SettingsScope) -> Dict[str, Any]:
         "inheritedLayers": cfgsvc.explicit_layers(*parents),
         "effective": effective,
         "configVersion": cfgsvc.config_version(effective),
+        # The kiosk menu's version (a shop layer): sent back on save, checked (kiosk_menu.py).
+        "menuVersion": _layer_menu_version(overrides) if scope.level == "shop" else None,
         "updatedAt": _iso(row.updated_at) if row is not None else None,
         "updatedBy": updated_by,
         "updatedByUserId": str(row.updated_by_user_id) if row is not None and row.updated_by_user_id else None,
     }
+
+
+def _layer_menu_version(overrides: Any) -> str:
+    from app.services import kiosk_menu
+
+    return kiosk_menu.version_of(kiosk_menu.menu_of(overrides))
 
 
 def save_settings(
@@ -1002,6 +1238,10 @@ def save_settings(
     """
     cleaned, errors = cfgsvc.validate_layer(overrides)
     merged = cfgsvc.merge(cfgsvc.resolve(*_parent_layers(db, scope)), cleaned)
+    # "התראות לקופות": the tills a layer names must be this business's tills (kiosk_ops.py).
+    from app.services import kiosk_ops
+
+    errors = list(errors) + kiosk_ops.check_alert_tills(db, scope.tenant_id, cleaned)
     errors = cfgsvc._dedupe(list(errors) + cfgsvc.validate_config(merged))
     if errors:
         raise cfgsvc.KioskConfigInvalid(errors)

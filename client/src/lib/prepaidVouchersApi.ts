@@ -40,7 +40,19 @@ export interface PrepaidVoucherBatch {
   stats: PrepaidBatchStats;
   createdAt: string | null;
   cancelledAt: string | null;
+  /** Production in groups (docs/SPEC_VOUCHER_PRODUCTION.md): the run's group size; null: not grouped. */
+  groupSize?: number | null;
+  /** The highest group number issued (0: no groups). */
+  groupCount?: number;
+  /** Print the voucher's code under its barcode. */
+  showCode?: boolean;
+  barcodeType?: PrepaidBarcodeType;
+  customerName?: string | null;
+  orderRef?: string | null;
 }
+
+/** QR (any camera / 2D imager) or a Code 128 line barcode (1D laser scanners). */
+export type PrepaidBarcodeType = 'qr' | 'code128';
 
 export interface PrepaidVoucherItem extends PrepaidBatchItem {
   remaining: number;
@@ -71,6 +83,8 @@ export interface PrepaidVoucher {
   id: string;
   batchId: string;
   serial: number;
+  /** Its group in a run made in groups; null otherwise. */
+  groupNo?: number | null;
   code: string;
   displayCode: string;
   qrPayload: string;
@@ -96,6 +110,11 @@ export interface PrepaidBatchCreate {
   splitAllowed: boolean;
   items: { productId: string; quantity: number }[];
   count: number;
+  groupSize?: number | null;
+  showCode?: boolean;
+  barcodeType?: PrepaidBarcodeType;
+  customerName?: string | null;
+  orderRef?: string | null;
 }
 
 /** A catalog product as the item picker needs it (`GET /products`, global level). */
@@ -123,25 +142,99 @@ export async function createPrepaidBatch(body: PrepaidBatchCreate): Promise<Prep
 
 export async function updatePrepaidBatch(
   id: string,
-  body: Partial<Pick<PrepaidBatchCreate, 'name' | 'eventName' | 'logoUrl' | 'freeText' | 'validFrom' | 'validUntil'>>,
+  body: Partial<Pick<
+    PrepaidBatchCreate,
+    'name' | 'eventName' | 'logoUrl' | 'freeText' | 'validFrom' | 'validUntil' | 'showCode' | 'barcodeType' | 'customerName' | 'orderRef'
+  >>,
 ): Promise<PrepaidVoucherBatch> {
   const { data } = await api.patch<PrepaidVoucherBatch>(`/prepaid-vouchers/batches/${id}`, body);
   return data;
 }
 
-export async function addPrepaidVouchers(id: string, count: number): Promise<PrepaidVoucherBatch> {
-  const { data } = await api.post<PrepaidVoucherBatch>(`/prepaid-vouchers/batches/${id}/vouchers`, { count });
+/** More vouchers; a grouped batch issues them in new groups (of [groupSize], else its own size). */
+export async function addPrepaidVouchers(id: string, count: number, groupSize?: number | null): Promise<PrepaidVoucherBatch> {
+  const { data } = await api.post<PrepaidVoucherBatch>(`/prepaid-vouchers/batches/${id}/vouchers`, {
+    count,
+    ...(groupSize ? { groupSize } : {}),
+  });
   return data;
 }
 
-export async function cancelPrepaidBatch(id: string): Promise<PrepaidVoucherBatch> {
-  const { data } = await api.post<PrepaidVoucherBatch>(`/prepaid-vouchers/batches/${id}/cancel`);
+export async function cancelPrepaidBatch(id: string, reason?: string | null): Promise<PrepaidVoucherBatch> {
+  const { data } = await api.post<PrepaidVoucherBatch>(`/prepaid-vouchers/batches/${id}/cancel`, reason ? { reason } : undefined);
   return data;
+}
+
+// ── Groups (`/prepaid-vouchers/batches/{id}/groups`) ─────────────────────────
+
+export interface PrepaidGroupRow extends PrepaidBatchStats {
+  /** Null: the vouchers issued before the batch was grouped. */
+  group: number | null;
+  fromSerial: number;
+  toSerial: number;
+  /** Used + partly used. */
+  redeemed: number;
+}
+
+export async function fetchPrepaidGroups(batchId: string): Promise<{ groupSize: number | null; items: PrepaidGroupRow[] }> {
+  const { data } = await api.get<{ groupSize: number | null; items: PrepaidGroupRow[] }>(
+    `/prepaid-vouchers/batches/${batchId}/groups`,
+  );
+  return data;
+}
+
+/** Split the vouchers with no group yet into groups of [groupSize]. */
+export async function assignPrepaidGroups(batchId: string, groupSize: number): Promise<PrepaidVoucherBatch> {
+  const { data } = await api.post<PrepaidVoucherBatch>(`/prepaid-vouchers/batches/${batchId}/groups`, { groupSize });
+  return data;
+}
+
+/** Cancel a whole group (a lost envelope); the reason goes into the audit trail. */
+export async function cancelPrepaidGroup(
+  batchId: string,
+  group: number,
+  reason?: string | null,
+): Promise<{ group: number; cancelled: number; groupStats: PrepaidGroupRow | null }> {
+  const { data } = await api.post<{ group: number; cancelled: number; groupStats: PrepaidGroupRow | null }>(
+    `/prepaid-vouchers/batches/${batchId}/groups/${group}/cancel`,
+    reason ? { reason } : undefined,
+  );
+  return data;
+}
+
+export type PrepaidEventAction =
+  | 'create' | 'add' | 'assign_groups' | 'update' | 'cancel_batch' | 'cancel_group' | 'cancel_voucher';
+
+export interface PrepaidBatchEvent {
+  id: string;
+  action: PrepaidEventAction;
+  group: number | null;
+  voucherId: string | null;
+  count: number | null;
+  reason: string | null;
+  userName: string | null;
+  details: Record<string, unknown>;
+  createdAt: string | null;
+}
+
+/** The batch's audit trail, newest first. */
+export async function fetchPrepaidEvents(batchId: string): Promise<PrepaidBatchEvent[]> {
+  const { data } = await api.get<{ items: PrepaidBatchEvent[] }>(`/prepaid-vouchers/batches/${batchId}/events`);
+  return data.items ?? [];
 }
 
 export async function fetchPrepaidVouchers(
   batchId: string,
-  params: { status?: PrepaidVoucherStatus; serial?: number; limit?: number; offset?: number } = {},
+  params: {
+    status?: PrepaidVoucherStatus;
+    serial?: number;
+    limit?: number;
+    offset?: number;
+    /** One group of a run made in groups. */
+    group?: number;
+    /** The code under the barcode, or 4+ characters of it. */
+    code?: string;
+  } = {},
 ): Promise<{ total: number; items: PrepaidVoucher[] }> {
   const { data } = await api.get<{ total: number; items: PrepaidVoucher[] }>(
     `/prepaid-vouchers/batches/${batchId}/vouchers`,
@@ -166,8 +259,8 @@ export async function fetchPrepaidVoucher(id: string): Promise<PrepaidVoucher> {
   return data;
 }
 
-export async function cancelPrepaidVoucher(id: string): Promise<PrepaidVoucher> {
-  const { data } = await api.post<PrepaidVoucher>(`/prepaid-vouchers/vouchers/${id}/cancel`);
+export async function cancelPrepaidVoucher(id: string, reason?: string | null): Promise<PrepaidVoucher> {
+  const { data } = await api.post<PrepaidVoucher>(`/prepaid-vouchers/vouchers/${id}/cancel`, reason ? { reason } : undefined);
   return data;
 }
 
@@ -250,17 +343,20 @@ export async function searchPrepaidProducts(search: string, companyId?: string):
 
 /**
  * The vouchers as a file drawn on the server (`GET /prepaid-vouchers/batches/{id}/file`):
- * `pdf` — one PDF; `zip` — a PDF per voucher. Downloaded as `fileName`.
+ * `pdf` — one PDF (`group` narrows it to one group, opened by its cover sheet); `zip` — a PDF
+ * per voucher; `groups` — a PDF per group with cover sheets, and the CSV manifest, in a ZIP;
+ * `csv` — the manifest of every code. Downloaded as `fileName`.
  * Used vouchers are left out, as in printing; `voucherId` narrows it to one.
  */
 export async function downloadPrepaidVouchersFile(
   batchId: string,
   opts: {
-    format: 'pdf' | 'zip';
+    format: 'pdf' | 'zip' | 'groups' | 'csv';
     layout: string;
     width?: number;
     height?: number;
     voucherId?: string;
+    group?: number;
     fileName: string;
   },
 ): Promise<void> {
@@ -270,6 +366,7 @@ export async function downloadPrepaidVouchersFile(
       layout: opts.layout,
       ...(opts.width ? { width: opts.width } : {}),
       ...(opts.height ? { height: opts.height } : {}),
+      ...(opts.group ? { group: opts.group } : {}),
       ...(opts.voucherId ? { voucherId: opts.voucherId, includeUsed: true } : { includeUsed: false }),
     },
     responseType: 'blob',

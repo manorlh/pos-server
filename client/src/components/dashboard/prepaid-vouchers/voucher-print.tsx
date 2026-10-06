@@ -12,12 +12,17 @@
  *   rasterised at ~300 dpi and placed on a page of the same size with jsPDF. Text in
  *   the file is therefore an image — fine for printing, not for copy-paste.
  *
- * The QR carries only `PV:<code>`; the code is printed under it for typing by hand.
+ * The barcode — a QR, or a Code 128 line barcode when the batch asks for one (`barcodeType`) —
+ * carries only `PV:<code>`. Under it: the code itself when the batch says so (`showCode`), then
+ * the serial (and the group, in a run made in groups). The validity dates are printed when set.
+ * The server draws the same card into its PDF (app/services/prepaid_voucher_pdf.py).
  */
 
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QRCodeSVG } from 'qrcode.react';
+import { format } from 'date-fns';
 import type { PrepaidVoucher, PrepaidVoucherBatch } from '@/lib/prepaidVouchersApi';
+import { code128Bars } from '@/lib/barcode128';
 
 export type PagePresetId = 'ticket80x50' | 'card86x54' | 'card54x86' | 'ticket80x120' | 'a6' | 'a4grid' | 'custom';
 
@@ -82,6 +87,63 @@ export interface VoucherLabels {
   serial: (n: string) => string;
   splitAllowed: string;
   oneTime: string;
+  /** "קבוצה 3", after the serial in a run made in groups. */
+  group?: (g: number) => string;
+  /** "בתוקף עד 14/08/2026" and the like; dates already formatted. */
+  validUntil?: (until: string) => string;
+  validFrom?: (since: string) => string;
+  validBetween?: (since: string, until: string) => string;
+}
+
+function day(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : format(d, 'dd/MM/yyyy');
+}
+
+/** The validity line printed on the voucher, or null without dates (or without the labels). */
+export function validityLine(batch: Pick<PrepaidVoucherBatch, 'validFrom' | 'validUntil'>, labels: VoucherLabels): string | null {
+  const since = day(batch.validFrom);
+  const until = day(batch.validUntil);
+  if (since && until) return labels.validBetween?.(since, until) ?? null;
+  if (until) return labels.validUntil?.(until) ?? null;
+  if (since) return labels.validFrom?.(since) ?? null;
+  return null;
+}
+
+type CardVoucher = Pick<PrepaidVoucher, 'serial' | 'displayCode' | 'qrPayload'> & { groupNo?: number | null };
+
+/** What is printed under the barcode, top to bottom: the code when the batch shows it, then the serial (and group). */
+export function underBarcodeLines(
+  batch: Pick<PrepaidVoucherBatch, 'showCode'>,
+  voucher: CardVoucher,
+  labels: VoucherLabels,
+): { text: string; code: boolean }[] {
+  const lines: { text: string; code: boolean }[] = [];
+  if (batch.showCode) lines.push({ text: voucher.displayCode, code: true });
+  let serial = labels.serial(String(voucher.serial).padStart(4, '0'));
+  if (voucher.groupNo && labels.group) serial += ` · ${labels.group(voucher.groupNo)}`;
+  lines.push({ text: serial, code: false });
+  return lines;
+}
+
+/** A Code 128 symbol as an SVG of [width]×[height] mm, bars at whole module widths of the viewBox. */
+function Code128Svg({ value, width, height }: { value: string; width: number; height: number }) {
+  const { bars, width: modules } = code128Bars(value);
+  return (
+    <svg
+      viewBox={`0 0 ${modules} 10`}
+      preserveAspectRatio="none"
+      shapeRendering="crispEdges"
+      style={{ width: mm(width), height: mm(height), display: 'block' }}
+      aria-hidden
+    >
+      <rect x={0} y={0} width={modules} height={10} fill="#fff" />
+      {bars.map(([x, bw]) => (
+        <rect key={x} x={x} y={0} width={bw} height={10} fill="#000" />
+      ))}
+    </svg>
+  );
 }
 
 /** One voucher, sized `cardW`×`cardH` mm. Inline styles only: it is printed outside the app's CSS. */
@@ -93,22 +155,28 @@ function VoucherCard({
   labels,
 }: {
   batch: PrepaidVoucherBatch;
-  voucher: Pick<PrepaidVoucher, 'serial' | 'displayCode' | 'qrPayload'>;
+  voucher: CardVoucher;
   g: Geometry;
   logoSrc: string | null;
   labels: VoucherLabels;
 }) {
   const w = g.cardW;
   const h = g.cardH;
-  const landscape = w >= h * 1.15;
+  const linear = batch.barcodeType === 'code128';
+  // A line barcode needs the card's width: it always sits across the bottom.
+  const landscape = w >= h * 1.15 && !linear;
   const s = Math.min(w, h) / 50; // 1 at a 50 mm short side
   const pad = 2.6 * s;
   const n = batch.items.length;
   const itemFont = 3.1 * s * (n > 4 ? Math.max(0.55, Math.sqrt(4 / n)) : 1);
-  const serialText = labels.serial(String(voucher.serial).padStart(4, '0'));
+  const under = underBarcodeLines(batch, voucher, labels);
+  const underH = under.reduce((sum, l) => sum + (l.code ? 2.6 : 2.4) * s * 1.25, 0.6 * s);
+  const validity = validityLine(batch, labels);
   const qrSide = landscape
-    ? Math.min(h - 2 * pad - 5.5 * s, w * 0.42)
+    ? Math.min(h - 2 * pad - underH, w * 0.42)
     : Math.min(w - 2 * pad, h * 0.38);
+  const barW = w - 2 * pad;
+  const barH = Math.min(Math.max(8, h * 0.2), 16);
 
   const title = batch.eventName || batch.name;
   const text = (
@@ -144,19 +212,34 @@ function VoucherCard({
       {batch.freeText ? (
         <div style={{ fontSize: mm(2.5 * s), lineHeight: 1.2, whiteSpace: 'pre-wrap' }}>{batch.freeText}</div>
       ) : null}
-      <div style={{ fontSize: mm(2.1 * s), color: '#444' }}>
+      {validity ? (
+        <div style={{ fontSize: mm(2.3 * s), fontWeight: 700, textAlign: landscape ? 'start' : 'center' }}>{validity}</div>
+      ) : null}
+      <div style={{ fontSize: mm(2.1 * s), color: '#444', textAlign: landscape ? 'start' : 'center' }}>
         {batch.splitAllowed ? labels.splitAllowed : labels.oneTime}
       </div>
     </div>
   );
   const qr = (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: mm(0.6 * s), flexShrink: 0 }}>
-      <div style={{ width: mm(qrSide), height: mm(qrSide), background: '#fff' }}>
-        <QRCodeSVG value={voucher.qrPayload} size={256} level="M" marginSize={2} style={{ width: '100%', height: '100%', display: 'block' }} />
-      </div>
-      {/* The serial only: the code is never printed — the till redeems by camera, so a
-          code to type would only be a way to copy the voucher. */}
-      <div style={{ fontSize: mm(2.2 * s), fontWeight: 700 }}>{serialText}</div>
+      {linear ? (
+        <Code128Svg value={voucher.qrPayload} width={barW} height={barH} />
+      ) : (
+        <div style={{ width: mm(qrSide), height: mm(qrSide), background: '#fff' }}>
+          <QRCodeSVG value={voucher.qrPayload} size={256} level="M" marginSize={2} style={{ width: '100%', height: '100%', display: 'block' }} />
+        </div>
+      )}
+      {/* The code only when the batch asks for it (`showCode`, off by default: a printed
+          code is one more way to copy a voucher); then the serial, and the group. */}
+      {under.map((l) =>
+        l.code ? (
+          <div key="code" dir="ltr" style={{ fontSize: mm(2.6 * s), fontWeight: 700, fontFamily: 'Consolas, "Courier New", monospace', letterSpacing: '0.04em' }}>
+            {l.text}
+          </div>
+        ) : (
+          <div key="serial" style={{ fontSize: mm(2.2 * s), fontWeight: 700 }}>{l.text}</div>
+        ),
+      )}
     </div>
   );
 
@@ -197,7 +280,7 @@ html, body { margin: 0; padding: 0; background: #fff; -webkit-print-color-adjust
 .pv-card * { box-sizing: border-box; }`;
 }
 
-type PrintableVoucher = Pick<PrepaidVoucher, 'id' | 'serial' | 'displayCode' | 'qrPayload'>;
+type PrintableVoucher = Pick<PrepaidVoucher, 'id' | 'serial' | 'displayCode' | 'qrPayload'> & { groupNo?: number | null };
 
 /** The vouchers in pages of `cols × rows`. */
 function pagesOf<T>(items: T[], perPage: number): T[][] {

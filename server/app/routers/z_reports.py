@@ -104,6 +104,9 @@ def z_to_out(z: ZReport, cls=ZReportOut, tzinfo=None):
             item.gross_sales = Decimal(z.total_sales) + Decimal(z.discounts_total)
     item.between_shift_adjustments = _between_shift_adjustments(z.per_machine)
     item.produced_by_support = (z.header or {}).get("producedBySupport")
+    item.late_from_earlier = (z.header or {}).get("lateFromEarlier")
+    item.late_carried_out = (z.header or {}).get("lateCarriedOut")
+    item.devices_replaced = (z.header or {}).get("devicesReplaced")
     offline = offline_authorizations.z_totals(z.per_machine)
     if offline is not None:
         item.offline_authorization_count = offline["authorization_count"]
@@ -121,6 +124,27 @@ def z_to_out(z: ZReport, cls=ZReportOut, tzinfo=None):
     from app.services.z_print import branch_code_of, till_number_of
 
     item.branch_code = branch_code_of(z)
+    # A till Z's run and when it began (SPEC_INDEPENDENT_TILL §3.1).
+    item.machine_sequence_epoch = int(getattr(z, "machine_sequence_epoch", 0) or 0)
+    item.sequence_started_at = ((z.header or {}).get("sequence") or {}).get("startedAt")
+    # A local shop Z against the cloud's documents (§8.12) — never its figures.
+    verification = (z.offline_report or {}).get("verification") if isinstance(z.offline_report, dict) else None
+    if isinstance(verification, dict):
+        item.verification = {
+            **{k: verification.get(k) for k in ("state", "message", "checkedAt")},
+            "tills": [
+                {
+                    **{k: t.get(k) for k in (
+                        "machineId", "posNumber", "state", "message", "named", "arrived", "missing", "shiftsAwaited",
+                        "reason",
+                    ) if k in t},
+                    **({"closedBySupport": {
+                        k: v for k, v in t["closedBySupport"].items() if k != "missingDocumentIds"
+                    }} if isinstance(t.get("closedBySupport"), dict) else {}),
+                }
+                for t in verification.get("tills") or [] if isinstance(t, dict)
+            ],
+        }
     if item.pos_number is None:
         item.pos_number = till_number_of(z)
     if tzinfo is not None and z.closed_at is not None:

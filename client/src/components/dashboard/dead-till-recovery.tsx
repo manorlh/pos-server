@@ -95,16 +95,21 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
   // the server refuses the code until someone accepts that, having exported the list.
   const [untransmittedOpen, setUntransmittedOpen] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
+  // "הוחלפה קופה" is documented with why (offline till Z §4.6.2): asked before the code.
+  const [reasonOpen, setReasonOpen] = useState(false);
+  const [reason, setReason] = useState('');
   const replaceMutation = useMutation({
     mutationFn: (acknowledgeUntransmitted: boolean) =>
-      createReplacementCode(m.id, { acknowledgeUntransmitted }),
+      createReplacementCode(m.id, { acknowledgeUntransmitted, reason }),
     onSuccess: (res) => {
+      setReasonOpen(false);
       setUntransmittedOpen(false);
       setCode({ code: res.code, expiresAt: res.expiresAt ?? null });
     },
     onError: (e) => {
       const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
       if (errorCodeOf(detail) === 'untransmitted_card_sales') {
+        setReasonOpen(false);
         setAcknowledged(false);
         setUntransmittedOpen(true);
         return;
@@ -136,7 +141,10 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
           // Blocked in the UI as well as on the server, so the operator is told now rather
           // than with an engineer standing at the counter holding a new terminal.
           disabled={hasOpenShift || replaceMutation.isPending}
-          onClick={() => replaceMutation.mutate(false)}
+          onClick={() => {
+            setReason('');
+            setReasonOpen(true);
+          }}
           title={hasOpenShift ? t('closeShiftFirst') : undefined}
         >
           <RefreshCw className="h-4 w-4 ms-1" />
@@ -192,6 +200,38 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
                 disabled={closeMutation.isPending || !shiftId}
               >
                 {closeMutation.isPending ? tc('loading') : t('confirmClose')}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={reasonOpen} onOpenChange={setReasonOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t('replaceReasonTitle')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <p className="text-muted-foreground">{t('replaceReasonHint')}</p>
+            <div className="space-y-1.5">
+              <Label htmlFor="replace-reason">{t('replaceReasonLabel')}</Label>
+              <Input
+                id="replace-reason"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder={t('replaceReasonPlaceholder')}
+                maxLength={500}
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setReasonOpen(false)}>
+                {tc('cancel')}
+              </Button>
+              <Button
+                disabled={reason.trim().length < 3 || replaceMutation.isPending}
+                onClick={() => replaceMutation.mutate(false)}
+              >
+                {replaceMutation.isPending ? tc('loading') : t('replaceReasonConfirm')}
               </Button>
             </div>
           </div>

@@ -207,6 +207,12 @@ class TransactionItemIn(BaseModel):
     #: "הודעות לעובד על פריט": who confirmed the product's alerts, and when. Optional — the
     #: till sends it inside `details` too; cleaned, never a reason to refuse the document.
     alerts_ack: Optional[Any] = Field(None, alias="alertsAck")
+    #: "תפריטים" (docs/SPEC_MENUS.md): the menu active when the line was added, its name,
+    #: and where the price came from ("menu" | "catalog"). Optional; an unreadable id is
+    #: dropped and text cut — never a reason to refuse the document.
+    menu_id: Optional[str] = Field(None, alias="menuId")
+    menu_name: Optional[str] = Field(None, alias="menuName")
+    price_source: Optional[str] = Field(None, alias="priceSource")
 
     class Config:
         populate_by_name = True
@@ -215,6 +221,16 @@ class TransactionItemIn(BaseModel):
     @classmethod
     def _cut_oth(cls, value):
         return cut_text(value, 100)
+
+    @field_validator("menu_name", mode="before")
+    @classmethod
+    def _cut_menu_name(cls, value):
+        return cut_text(value, 80)
+
+    @field_validator("price_source", mode="before")
+    @classmethod
+    def _cut_price_source(cls, value):
+        return cut_text(value, 16)
 
 
 class TransactionPromotionIn(BaseModel):
@@ -435,6 +451,10 @@ class TransactionItemOut(BaseModel):
     oth_approved_by: Optional[str] = Field(None, alias="othApprovedBy")
     #: "הודעות לעובד על פריט": who confirmed the product's alerts, and when.
     alerts_ack: Optional[List[Dict[str, Any]]] = Field(None, alias="alertsAck")
+    #: "תפריטים": the menu active when the line was added, and where its price came from.
+    menu_id: Optional[uuid.UUID] = Field(None, alias="menuId")
+    menu_name: Optional[str] = Field(None, alias="menuName")
+    price_source: Optional[str] = Field(None, alias="priceSource")
 
     class Config:
         from_attributes = True

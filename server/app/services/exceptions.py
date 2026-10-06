@@ -124,6 +124,16 @@ RULES: Tuple[RuleSpec, ...] = (
     # holding it might still have shop Zs the cloud does not (SPEC_INDEPENDENT_TILL §8.10).
     # (A shop Z that cannot be filed as printed is an `offline_z_conflict`, like a till Z.)
     RuleSpec("shop_z_producer_forced", True, (), "high", "z"),
+    # A shop Z the main till printed in local mode that does not verify against the cloud's
+    # documents ("אי-התאמה בין Z מקומי לנתוני הענן — לבדיקת התמיכה", SPEC_INDEPENDENT_TILL
+    # §8.12): every document its tills' manifests name has arrived, and the same computation
+    # disagrees — a bug, never a till still syncing. The Z is stored as printed.
+    RuleSpec("local_shop_z_mismatch", True, (), "high", "z"),
+    # A till's part of a local shop Z that will not complete ("קופה N לא השלימה סנכרון",
+    # §8.12): its documents or shifts never reached the cloud — it died, was removed, support
+    # closed it, or a day went by. The only allowed gap: support closes it, recording what is
+    # missing. Never a mismatch.
+    RuleSpec("local_shop_z_till_unsynced", True, (), "medium", "z"),
     # A Z closed at the till with no connection that the cloud could not take as it is —
     # a number out of sequence or taken, a shift in another Z, a till no longer in its
     # mode. Never renumbered: the till keeps it as printed, held for support
@@ -137,6 +147,9 @@ RULES: Tuple[RuleSpec, ...] = (
     # ("איפוס נתוני קופה (תמיכה)", docs/SPEC_OFFLINE_TILL_Z.md §4.7): who, when, why, what
     # the cloud saw before, and what the till did or why it refused.
     RuleSpec("till_reset", True, (), "high", "z"),
+    # "הוחלפה קופה": a replacement device took over a till (§4.6.2) — the old and the new
+    # device, who, when, why, and whether support produced its Z first.
+    RuleSpec("till_replaced", True, (), "medium", "z"),
     # A till Z closed although the card batch transmission before it failed — on the
     # cashier's explicit confirmation, or unattended ("שידור אשראי נכשל בסגירת Z", §7.3).
     RuleSpec("z_transmission_failed", True, (), "high", "z"),
@@ -672,7 +685,10 @@ class Detector:
             ident = _uuid(pos_user_id)
             pu = self.db.get(PosUser, ident) if ident else None
             if pu is None:
-                self._names[pos_user_id] = None
+                # A self-order kiosk's own operator reads as the kiosk's name.
+                from app.services import kiosk_identity
+
+                self._names[pos_user_id] = kiosk_identity.name_of(self.db, pos_user_id)
             else:
                 full = " ".join(p for p in (pu.first_name or "", pu.last_name or "") if p).strip()
                 self._names[pos_user_id] = full or pu.username

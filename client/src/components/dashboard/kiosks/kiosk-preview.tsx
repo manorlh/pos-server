@@ -13,7 +13,8 @@ import { useTranslations } from 'next-intl';
 import { Smartphone, Tablet } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/format';
-import { fetchGroups, fetchProductMenu } from '@/lib/menuApi';
+import { fetchGroups, fetchProductMenu, fetchUpsells } from '@/lib/menuApi';
+import { enterCategory, pickKioskUpsell, type UpsellMoment, type UpsellPick, type UpsellRuleLite } from '@/lib/kioskUpsell';
 import {
   aspectRatioCss,
   buttonRadius,
@@ -21,9 +22,10 @@ import {
   categoryRailImage,
   ctaBox,
   fontStack,
-  gridColumns,
+  catalogColumns,
   kioskCatalogView,
   messagePlacement,
+  addMs,
   motionSpec,
   resolveThemeColors,
   typeScaleFactor,
@@ -38,12 +40,14 @@ import type { KioskSourceCatalog } from '@/lib/kioskApi';
 import type { PreviewScreen } from './editor-context';
 import {
   AttractCta,
+  AttractServiceButtons,
   AttractScreen,
   CartScreen,
   CatalogScreen,
   ConfirmSheet,
   Flyer,
   MessageOverlay,
+  UpsellWindow,
   PausedScreen,
   PayScreen,
   PREVIEW_CSS,
@@ -95,6 +99,7 @@ function useSampleCatalog(): { categories: { id: string; name: string }[]; produ
       description: desc ? t(`${id}d`) : null,
       categoryId,
       dietaryTags: tags,
+      addPath: SAMPLE_SIMPLE.has(id) ? 'direct' : 'sheet',
     });
     return {
       categories,
@@ -109,6 +114,9 @@ function useSampleCatalog(): { categories: { id: string; name: string }[]; produ
     };
   }, [t]);
 }
+
+/** The sample dishes with nothing to choose (no size, no extras): their "+" adds straight in. */
+const SAMPLE_SIMPLE = new Set(['p4', 'p5', 'p6']);
 
 /** The modifier groups and allergens of a real product, for the product sheet; sample ones otherwise. */
 function useProductGroups(productId: string | null, real: boolean): { groups: PGroup[]; allergens: string[] } {
@@ -130,6 +138,7 @@ function useProductGroups(productId: string | null, real: boolean): { groups: PG
   });
   return useMemo(() => {
     if (!real) {
+      if (productId && SAMPLE_SIMPLE.has(productId)) return { groups: [], allergens: [ta('gluten')] };
       return {
         groups: [
           {
@@ -175,7 +184,7 @@ function useProductGroups(productId: string | null, real: boolean): { groups: PG
     }
     const allergens = (m.allergens ?? []).map((a) => (ta.has(a) ? ta(a) : a));
     return { groups: out, allergens };
-  }, [real, menu.data, groups.data, ts, ta]);
+  }, [real, productId, menu.data, groups.data, ts, ta]);
 }
 
 export function KioskPreview({
@@ -221,6 +230,10 @@ export function KioskPreview({
   }, []);
   const justAddedTimer = useRef<number | null>(null);
   const flightSeq = useRef(0);
+  // "הגדלת מכירה": the window up, and the rules asked and steps reached in this order.
+  const [upsellWin, setUpsellWin] = useState<{ pick: UpsellPick; then: PreviewScreen | null; added: Record<string, number> } | null>(null);
+  const upsellAsked = useRef<string[]>([]);
+  const upsellSteps = useRef<string[]>([]);
 
   const font = fonts.find((f) => f.id === config.theme.font);
   useGoogleFonts([font]);
@@ -267,6 +280,32 @@ export function KioskPreview({
   const product = allProducts.find((p) => p.id === productId) ?? firstAvailable;
   const { groups, allergens } = useProductGroups(product?.id ?? null, real);
 
+  // The menu's upsell rules (the kiosk's are those marked "קיוסק"), on a real catalog.
+  const upsellQuery = useQuery({ queryKey: ['kiosk-preview-upsells'], queryFn: fetchUpsells, enabled: real, retry: false, staleTime: 60_000 });
+  const kioskRules: UpsellRuleLite[] = useMemo(
+    () =>
+      (upsellQuery.data?.items ?? []).map((r) => ({
+        id: r.id,
+        name: r.name,
+        triggerType: r.triggerType,
+        triggerIds: r.triggerIds,
+        action: r.action,
+        options: r.options?.length ? r.options.map((o) => ({ type: o.type, id: o.id })) : r.productId ? [{ type: 'product' as const, id: r.productId }] : [],
+        prompt: r.prompt ?? null,
+        message: r.message,
+        showPrice: r.showPrice,
+        places: r.places ?? null,
+        where: r.where ?? null,
+        imageUrl: r.imageUrl ?? null,
+        priority: r.priority,
+        isActive: r.isActive,
+        startTime: r.startTime,
+        endTime: r.endTime,
+        weekdays: r.weekdays,
+      })),
+    [upsellQuery.data],
+  );
+
   // The cart and pay screens with nothing chosen yet show a sample basket.
   const sampleCart: PLine[] = useMemo(
     () =>
@@ -283,16 +322,58 @@ export function KioskPreview({
   const side = config.theme.categoryLayout !== 'top';
   const motion = motionSpec(config.theme, config.general);
   const colors = resolveThemeColors(config.theme);
-  const cols = Math.max(
-    1,
-    gridColumns(config.theme.gridDensity, wide) - (panel ? 1 : 0) - (side && !wide && config.theme.gridDensity === 'compact' ? 1 : 0),
-  );
+  const cols = catalogColumns(config.theme.gridDensity, wide, panel, side);
+
+  /** The window for [moment], if a rule for the kiosk asks one (true: shown). */
+  const offerUpsell = (moment: UpsellMoment, then: PreviewScreen | null): boolean => {
+    if (!config.general.upsellEnabled || upsellWin || kioskRules.length === 0) return false;
+    const pick = pickKioskUpsell(kioskRules, moment, {
+      asked: upsellAsked.current,
+      inCart: cart.map((l) => l.product.id),
+      cap: config.upsell.maxShown,
+      now: new Date(),
+      sellable: (id) => allProducts.some((p) => p.id === id && !p.soldOut),
+      productsOf: (ids) => allProducts.filter((p) => p.categoryId !== null && ids.includes(p.categoryId)).map((p) => p.id),
+    });
+    if (!pick) return false;
+    upsellAsked.current = [...upsellAsked.current, pick.rule.id];
+    setUpsellWin({ pick, then, added: {} });
+    return true;
+  };
+  /** The order reached [code] (each step once in an order). */
+  const reachStep = (code: string, then: PreviewScreen | null = null): boolean => {
+    if (upsellSteps.current.includes(code)) return false;
+    upsellSteps.current = [...upsellSteps.current, code];
+    return offerUpsell({ kind: 'step', code }, then);
+  };
 
   const navigate = (s: PreviewScreen) => {
+    // On the way to payment: a rule for "to_pay" first (the menu's "בכל הזמנה" too).
+    if (s === 'pay' && (screen === 'cart' || screen === 'catalog') && reachStep('to_pay', 'pay')) return;
     setConfirming(false);
     if (s !== 'product') setProductId(null);
     setVisit((v) => v + 1);
     onScreen(s);
+    if (s === 'attract') {
+      upsellAsked.current = [];
+      upsellSteps.current = [];
+      setUpsellWin(null);
+    }
+    if (s === 'catalog' && (screen === 'attract' || screen === 'service') && !reachStep('order_start')) reachStep('to_catalog');
+    if (s === 'cart' && screen === 'catalog') reachStep('to_cart');
+  };
+
+  const closeUpsell = () => {
+    const then = upsellWin?.then ?? null;
+    setUpsellWin(null);
+    if (then) navigate(then);
+  };
+  const addFromUpsell = (p: PProduct, from: DOMRect | null) => {
+    if (!upsellWin) return;
+    const key = `${p.id}-u-${upsellWin.pick.rule.id}`;
+    addLine({ key, product: p, qty: 1, unit: p.price, extras: [], options: [] }, from, (l) => l.key === key, true);
+    if (upsellWin.pick.items.length <= 1) closeUpsell();
+    else setUpsellWin({ ...upsellWin, added: { ...upsellWin.added, [p.id]: (upsellWin.added[p.id] ?? 0) + 1 } });
   };
 
   const model: PreviewModel = {
@@ -317,6 +398,14 @@ export function KioskPreview({
       setProductId(p.id);
       onScreen('product');
     },
+    quickAdd: (p, from) => {
+      const plain = (l: PLine) => l.product.id === p.id && l.extras.length === 0 && !l.note && (l.options?.length ?? 0) === 0;
+      // At most one plain line per dish (the next joins it), so its key is unique.
+      addLine({ key: `${p.id}-plain`, product: p, qty: 1, unit: p.price, extras: [], options: [] }, from, plain);
+    },
+    onCategoryPicked: (id) => {
+      reachStep(enterCategory(id));
+    },
     cart: effectiveCart,
     setCart,
     service,
@@ -330,28 +419,47 @@ export function KioskPreview({
     ctaBox: ctaBox(config.attract.cta, FRAME_SIZE[frame].w, FRAME_SIZE[frame].h),
   };
 
-  const removeFlight = useCallback((id: number) => setFlights((list) => list.filter((f) => f.id !== id)), []);
+  // A flight that lands bounces the badge then; a reduce-motion fade already did at the tap.
+  const removeFlight = useCallback((flight: Flight) => {
+    setFlights((list) => list.filter((f) => f.id !== flight.id));
+    if (flight.lands) setCartBump((n) => n + 1);
+  }, []);
 
-  const addLine = (line: PLine, from: DOMRect | null) => {
-    setCart((c) => [...c, line]);
-    setCartBump((n) => n + 1);
+  /** `merge`: the cart line this one joins (the same plain dish, as on the till); `stay`: from an upsell window. */
+  const addLine = (line: PLine, from: DOMRect | null, merge?: (l: PLine) => boolean, stay = false) => {
+    setCart((c) => {
+      const i = merge ? c.findIndex(merge) : -1;
+      return i >= 0 ? c.map((l, j) => (j === i ? { ...l, qty: l.qty + line.qty } : l)) : [...c, line];
+    });
     setJustAdded(line.product.id);
     if (justAddedTimer.current) window.clearTimeout(justAddedTimer.current);
     justAddedTimer.current = window.setTimeout(() => setJustAdded(null), 900);
     const box = screenRef.current?.getBoundingClientRect();
-    if (motion.flyMs > 0 && from && box) {
+    const lands = motion.flyMs > 0;
+    if (addMs(motion) > 0 && from && box && (!lands || cartTargetRef.current)) {
       flightSeq.current += 1;
       setFlights((list) => [
-        ...list,
+        ...list.slice(-7),
         {
           id: flightSeq.current,
           x: from.left + from.width / 2 - box.left,
           y: from.top + from.height / 2 - box.top,
           imageUrl: line.product.imageUrl,
+          name: line.product.name,
+          lands,
         },
       ]);
+      if (!lands) setCartBump((n) => n + 1);
+    } else {
+      setCartBump((n) => n + 1);
     }
+    if (stay) return;
     setProductId(null);
+    // "הגדלת מכירה" on adding an item ("פריט" / "כל פריטי מחלקה").
+    if (offerUpsell({ kind: 'added', productId: line.product.id, categoryIds: line.product.categoryId ? [line.product.categoryId] : [] }, null)) {
+      onScreen('catalog');
+      return;
+    }
     const mode = config.general.skipCart;
     if (mode === 'direct') onScreen('pay');
     else {
@@ -484,6 +592,20 @@ export function KioskPreview({
                   <PausedScreen m={model} variant={pausedVariant} />
                 )}
               </div>
+              {upsellWin ? (
+                <UpsellWindow
+                  m={model}
+                  title={upsellWin.pick.rule.prompt || upsellWin.pick.rule.message || config.texts?.upsellTitle || tb('upsellTitle')}
+                  text={upsellWin.pick.rule.prompt && upsellWin.pick.rule.message !== upsellWin.pick.rule.prompt ? upsellWin.pick.rule.message ?? null : null}
+                  imageUrl={upsellWin.pick.rule.imageUrl ?? null}
+                  items={upsellWin.pick.items.map((id) => allProducts.find((p) => p.id === id)).filter((p): p is PProduct => !!p)}
+                  added={upsellWin.added}
+                  showPrice={upsellWin.pick.rule.showPrice !== false}
+                  onAdd={addFromUpsell}
+                  onContinue={closeUpsell}
+                  onSkip={closeUpsell}
+                />
+              ) : null}
               {screen === 'product' && product ? (
                 <ProductSheet
                   key={`${product.id}-${groups.length}`}
@@ -495,7 +617,19 @@ export function KioskPreview({
                   onAdd={addLine}
                 />
               ) : null}
-              {screen === 'attract' ? <AttractCta m={model} box={model.ctaBox} screen={model.screen} onMove={onCtaMove} /> : null}
+              {screen === 'attract' ? (
+                config.general.servicePlacement === 'attract' && config.general.serviceTypes.length > 1 ? (
+                  <AttractServiceButtons m={model} box={model.ctaBox} onPick={(t) => {
+                    setService(t);
+                    navigate('catalog');
+                  }} />
+                ) : (
+                  <AttractCta m={model} box={model.ctaBox} screen={model.screen} onMove={onCtaMove} />
+                )
+              ) : null}
+              <div className="pointer-events-none absolute inset-x-0 bottom-0.5 z-20 text-center text-[8px] font-medium tracking-[0.12em]" style={{ color: colors.mutedText, opacity: 0.6 }}>
+                POWERED BY R2M POS
+              </div>
               {confirming && screen === 'catalog' ? (
                 <ConfirmSheet m={model} onMore={() => setConfirming(false)} onPay={() => navigate('pay')} />
               ) : null}
@@ -508,7 +642,9 @@ export function KioskPreview({
                 key={f.id}
                 flight={f}
                 motion={motion}
-                color={colors.button}
+                dp={size.w / FRAME_DEVICE_DP[frame]}
+                surface={colors.surface}
+                text={colors.text}
                 containerRef={screenRef}
                 targetRef={cartTargetRef}
                 onDone={removeFlight}

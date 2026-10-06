@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import {
   FIELD_LABELS,
   FORM_FIELDS,
@@ -29,10 +30,20 @@ import {
   PI_TEXT,
   REQUIRED_FIELDS,
   SECRET_MASK,
+  SYNQPAY_ADDRESSED,
+  SYNQPAY_CONNECTIONS,
+  SYNQPAY_CONNECTION_LABELS,
+  SYNQPAY_MODELS,
+  SYNQPAY_MODEL_LABELS,
+  SYNQPAY_PROTOCOLS,
+  SYNQPAY_PROTOCOL_LABELS,
   ZCREDIT_MODES,
   ZCREDIT_MODE_LABELS,
   cleanIntegration,
   formEffectiveIntegration,
+  formSynqpayConnection,
+  synqpayDefaultPort,
+  synqpayWarnings,
   hasPaymentIntegrationErrors,
   inheritedLabel,
   inheritedValueLabel,
@@ -99,6 +110,14 @@ function inheritedFor(
     zcreditTerminalNumber: inherited?.zcreditTerminalNumber ?? null,
     zcreditPinpadId: inherited?.zcreditPinpadId ?? null,
     zcreditMode: inherited?.zcreditMode ?? null,
+    synqpayDeviceModel: inherited?.synqpayDeviceModel ?? null,
+    synqpayConnection: inherited?.synqpayConnection ?? null,
+    synqpayHost: inherited?.synqpayHost ?? null,
+    synqpayProtocol: inherited?.synqpayProtocol ?? null,
+    synqpayPort: inherited?.synqpayPort ?? null,
+    synqpayTls: inherited?.synqpayTls ?? null,
+    synqpayUsbDevice: inherited?.synqpayUsbDevice ?? null,
+    synqpaySerialNumber: inherited?.synqpaySerialNumber ?? null,
   };
 }
 
@@ -229,7 +248,16 @@ export function PaymentIntegrationSection({
   };
 
   const textField = (
-    key: 'nayaxDeviceHost' | 'nayaxDevicePort' | 'nayaxSpicyPath' | 'zcreditTerminalNumber' | 'zcreditPinpadId',
+    key:
+      | 'nayaxDeviceHost'
+      | 'nayaxDevicePort'
+      | 'nayaxSpicyPath'
+      | 'zcreditTerminalNumber'
+      | 'zcreditPinpadId'
+      | 'synqpayHost'
+      | 'synqpayPort'
+      | 'synqpayUsbDevice'
+      | 'synqpaySerialNumber',
     opts: { placeholder?: string; hint?: string; numeric?: boolean; mono?: boolean; maxLength?: number },
   ) => (
     <div className="space-y-1">
@@ -259,6 +287,70 @@ export function PaymentIntegrationSection({
   const hiddenErrors = (Object.keys(errors) as PaymentFieldKey[]).filter(
     (key) => key !== 'paymentIntegration' && !shownFields.includes(key),
   );
+
+  // SynqPay: the connection decides which of its fields show; the port's placeholder is the
+  // documented one for the protocol and TLS the layer ends up on.
+  const synqpayConnection = formSynqpayConnection(value, inh);
+  const synqpayTls = typeof value.synqpayTls === 'boolean' ? value.synqpayTls : inh.synqpayTls === true;
+  const synqpayPort = synqpayDefaultPort(
+    typeof value.synqpayProtocol === 'string' && value.synqpayProtocol !== '' ? value.synqpayProtocol : inh.synqpayProtocol,
+    synqpayTls,
+  );
+
+  /** A select over [options] for one of SynqPay's choice fields; '' = inherit (`null` in the PATCH). */
+  const choiceField = <T extends string>(
+    key: 'synqpayDeviceModel' | 'synqpayConnection' | 'synqpayProtocol',
+    options: readonly T[],
+    labels: Record<T, string>,
+    placeholder: string,
+    hint?: string,
+  ) => {
+    const own = ownText(key);
+    const inhValue = inheritedText(key);
+    const items = options.map((o) => ({ value: o, label: labels[o] }));
+    return (
+      <div className="space-y-1">
+        {fieldLabel(key)}
+        <Select
+          value={own}
+          onValueChange={(next: unknown) =>
+            set({
+              [key]: typeof next === 'string' && (options as readonly string[]).includes(next) ? next : null,
+            } as Partial<PosSettingsPatch>)
+          }
+          items={items}
+        >
+          <SelectTrigger id={`pi-${key}`} aria-invalid={errors[key] ? true : undefined}>
+            <SelectValue
+              placeholder={
+                inhValue && inhValue in labels ? `${labels[inhValue as T]} ${PI_TEXT.inheritedSuffix}` : placeholder
+              }
+            />
+          </SelectTrigger>
+          <SelectContent>
+            {items.map((m) => (
+              <SelectItem key={m.value} value={m.value} label={m.label}>
+                {m.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {own !== '' && showOverrideHints && inhValue ? (
+          <Button
+            type="button"
+            variant="link"
+            size="xs"
+            className="h-auto px-0 text-xs"
+            onClick={() => set({ [key]: null } as Partial<PosSettingsPatch>)}
+          >
+            {PI_TEXT.resetToInherited}
+          </Button>
+        ) : null}
+        {hint ? <p className={HINT}>{hint}</p> : null}
+        {fieldError(key)}
+      </div>
+    );
+  };
 
   const modeOwn = typeof value.zcreditMode === 'string' ? value.zcreditMode : '';
   const modeInherited = inheritedText('zcreditMode');
@@ -412,6 +504,77 @@ export function PaymentIntegrationSection({
         </div>
       ) : null}
 
+      {integration.effective === 'synqpay' ? (
+        <div className="space-y-3 rounded-lg border p-3">
+          <p className={HINT}>{PI_TEXT.synqpayHint}</p>
+          <div className="grid grid-cols-2 gap-3">
+            {choiceField('synqpayDeviceModel', SYNQPAY_MODELS, SYNQPAY_MODEL_LABELS, PI_TEXT.synqpayModelPlaceholder)}
+            {choiceField(
+              'synqpayConnection',
+              SYNQPAY_CONNECTIONS,
+              SYNQPAY_CONNECTION_LABELS,
+              PI_TEXT.synqpayConnectionPlaceholder,
+            )}
+          </div>
+          {synqpayConnection !== null && SYNQPAY_ADDRESSED.includes(synqpayConnection) ? (
+            <>
+              {textField('synqpayHost', {
+                placeholder: PI_TEXT.hostPlaceholder,
+                hint: PI_TEXT.synqpayHostHintLan,
+                maxLength: 253,
+              })}
+              <div className="grid grid-cols-2 gap-3">
+                {choiceField(
+                  'synqpayProtocol',
+                  SYNQPAY_PROTOCOLS,
+                  SYNQPAY_PROTOCOL_LABELS,
+                  SYNQPAY_PROTOCOL_LABELS.tcp,
+                  PI_TEXT.synqpayProtocolHint,
+                )}
+                {textField('synqpayPort', {
+                  placeholder: String(synqpayPort),
+                  hint: PI_TEXT.synqpayPortHint(synqpayPort),
+                  numeric: true,
+                  maxLength: 5,
+                })}
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="space-y-1">
+                  {fieldLabel('synqpayTls')}
+                  <p className={HINT}>{PI_TEXT.synqpayTlsHint}</p>
+                </div>
+                <Switch
+                  checked={synqpayTls}
+                  onCheckedChange={(checked: boolean) => set({ synqpayTls: checked })}
+                  aria-label={FIELD_LABELS.synqpayTls}
+                />
+              </div>
+            </>
+          ) : null}
+          {synqpayConnection === 'usb'
+            ? textField('synqpayUsbDevice', { placeholder: 'auto', hint: PI_TEXT.synqpayUsbHint, mono: true, maxLength: 9 })
+            : null}
+          {textField('synqpaySerialNumber', { hint: PI_TEXT.synqpaySerialHint, mono: true, maxLength: 32 })}
+          <div className="space-y-1">
+            <SecretField
+              secretKey="synqpayApiKey"
+              label={fieldLabel('synqpayApiKey')}
+              value={value.synqpayApiKey}
+              status={context?.secrets?.synqpayApiKey}
+              error={fieldError('synqpayApiKey')}
+              onChange={(next) => set({ synqpayApiKey: next })}
+            />
+            <p className={HINT}>{PI_TEXT.synqpayKeyHint}</p>
+          </div>
+          <p className={WARN}>{PI_TEXT.synqpayIdentityHint}</p>
+          {synqpayWarnings(value, inh).map((warning) => (
+            <p key={warning} className={WARN}>
+              {warning}
+            </p>
+          ))}
+        </div>
+      ) : null}
+
       {integration.effective === 'tap_to_pay' ? (
         <div className="space-y-2 rounded-lg border p-3 opacity-70">
           <p className={HINT}>{PI_TEXT.tapToPayHint}</p>
@@ -432,7 +595,7 @@ export function PaymentIntegrationSection({
                 className="h-auto px-0 text-xs"
                 onClick={() =>
                   set({
-                    [key]: key === 'zcreditPassword' || key === 'zcreditKey' ? undefined : null,
+                    [key]: key === 'zcreditPassword' || key === 'zcreditKey' || key === 'synqpayApiKey' ? undefined : null,
                   } as Partial<PosSettingsPatch>)
                 }
               >

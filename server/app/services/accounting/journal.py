@@ -196,6 +196,21 @@ def _leg_brand(leg: TransactionPayment) -> Tuple[str, str]:
     return (brand or "other", acquirer or card_brands.UNKNOWN)
 
 
+def _till_label_of(z: ZReport) -> Optional[str]:
+    """
+    A till's own Z named by its register ("קופה 2") — and, for an independent till's later
+    run, by the run's first day too, its numbers starting again at 1 (SPEC_INDEPENDENT_TILL
+    §3.1): "קופה 6 (רצף מ-06/10/2026)".
+    """
+    if not z.is_till_z or z.machine is None:
+        return None
+    label = f"קופה {z.machine.pos_number}" if z.machine.pos_number else z.machine.name
+    from app.services.z_print import sequence_started_label
+
+    run = sequence_started_label(z)
+    return f"{label} ({run})" if label and run else label
+
+
 def load_z_facts(
     db: Session,
     z: ZReport,
@@ -238,11 +253,7 @@ def load_z_facts(
         vat_total=None if vat is None else _dec(vat),
         net=sum(breakdown.values(), ZERO),
         # A till's own Z (`zMode = till`): named by its register, "קופה 2".
-        till_label=(
-            f"קופה {z.machine.pos_number}"
-            if z.is_till_z and z.machine is not None and z.machine.pos_number
-            else (z.machine.name if z.is_till_z and z.machine is not None else None)
-        ),
+        till_label=_till_label_of(z),
     )
 
     if z.per_machine is None:

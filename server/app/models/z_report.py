@@ -48,10 +48,13 @@ class ZReport(Base):
             "shop_sequence_number",
             unique=True,
         ),
-        # The same for a till's own run. Partial, so the cloud Zs (all NULL) are free.
+        # The same for a till's own run — per run (`machine_sequence_epoch`): an independent
+        # till starts again at 1 (docs/SPEC_INDEPENDENT_TILL.md §3.1). Partial, so the cloud
+        # Zs (all NULL) are free.
         Index(
             "uq_z_reports_machine_sequence",
             "machine_id",
+            "machine_sequence_epoch",
             "machine_sequence_number",
             unique=True,
             postgresql_where=text("machine_sequence_number IS NOT NULL"),
@@ -71,6 +74,9 @@ class ZReport(Base):
     #: A till Z's number in its till's own run — 1, 2, 3 … per till, gapless, never reset
     #: (`machine_z_sequences`). NULL on a cloud Z, whose number is the shop's.
     machine_sequence_number = Column(Integer, nullable=True)
+    #: The till's run this number is in (`machine_z_sequences.epoch`): 0 for its first,
+    #: one more each time it is made independent — which starts its Zs at 1 again.
+    machine_sequence_epoch = Column(Integer, nullable=False, default=0, server_default="0")
     #: The till's idempotency key for a till Z (`clientRequestId`): a retried request
     #: answers this row again instead of numbering a second Z. NULL on a cloud Z.
     client_request_id = Column(UUID(as_uuid=True), nullable=True)

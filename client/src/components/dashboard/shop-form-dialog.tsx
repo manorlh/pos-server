@@ -15,7 +15,7 @@ import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, fetchCompanies } from '@/lib/api';
-import { branchCodeError, branchCodeInput, branchCodeNeedsCheck, normalizeBranchCode } from '@/lib/branchCode';
+import { branchCodeError, branchCodeInput, normalizeBranchCode } from '@/lib/branchCode';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { buildCompanyTree, companyPathLabel, MAX_TREE_INDENT_DEPTH } from '@/lib/companyTree';
 import { withoutTrainingFields } from '@/lib/trainingMode';
@@ -125,7 +125,7 @@ function ShopForm({
       // part back ("לקוח קבוע / זמני"), so it is rebuilt rather than echoed.
       const payload = {
         ...withoutTrainingFields(withoutLicense(s)),
-        // "קוד סניף" is mandatory; saving it is also how an assigned one is confirmed.
+        // "קוד סניף" is mandatory: an internal code identifying the branch (lib/branchCode.ts).
         branchId: normalizeBranchCode(s.branchId),
         ...licensePayload(s, isSuperAdmin),
         ...(s.id ? {} : { trainingMode }),
@@ -217,9 +217,6 @@ function ShopForm({
               <p className="text-destructive text-xs">
                 {branchError === 'required' ? t('branchIdRequired') : t('branchIdInvalid')}
               </p>
-            ) : null}
-            {branchCodeNeedsCheck(shop) ? (
-              <p className="text-xs text-amber-700 dark:text-amber-400">{t('branchIdAutoAssigned')}</p>
             ) : null}
           </div>
           <div className="space-y-1">

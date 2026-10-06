@@ -59,6 +59,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { othExceptionLine } from '@/components/dashboard/discounts/oth-club-report';
+import { ZExceptionLink, ZMismatchTable } from '@/components/dashboard/z-report/z-exception-details';
 
 const PAGE_SIZE = 50;
 const ANY = '__any__';
@@ -89,7 +90,10 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   offline_z_conflict: 'bg-red-300 text-red-950 dark:bg-red-800 dark:text-red-50',
   support_z_produced: 'bg-purple-200 text-purple-950 dark:bg-purple-900 dark:text-purple-100',
   till_reset: 'bg-purple-200 text-purple-950 dark:bg-purple-900 dark:text-purple-100',
+  till_replaced: 'bg-sky-200 text-sky-950 dark:bg-sky-900 dark:text-sky-100',
   shop_z_producer_forced: 'bg-amber-200 text-amber-950 dark:bg-amber-900 dark:text-amber-100',
+  local_shop_z_mismatch: 'bg-red-300 text-red-950 dark:bg-red-800 dark:text-red-50',
+  local_shop_z_till_unsynced: 'bg-amber-200 text-amber-950 dark:bg-amber-900 dark:text-amber-100',
   kiosk_offline: 'bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100',
 };
 
@@ -659,7 +663,10 @@ function ExceptionRow({
             {[measure, detail].filter(Boolean).join(' · ')}
           </div>
         ) : null}
+        {/* A local shop Z stored as printed: what it printed beside the cloud's check. */}
+        {row.type === 'local_shop_z_mismatch' ? <ZMismatchTable details={row.details} /> : null}
         <div className="flex flex-wrap items-center gap-3 text-xs">
+          <ZExceptionLink details={row.details} />
           {row.transactionId ? (
             <Link
               href={`/dashboard/transactions?tx=${row.transactionId}`}

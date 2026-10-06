@@ -1,7 +1,7 @@
 """Tax report API schemas."""
 
 from datetime import date
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -12,6 +12,10 @@ class TaxOpenFormatPreviewResponse(BaseModel):
     business_info: Dict[str, Any] = Field(..., alias="businessInfo")
     global_tax_rate: float = Field(..., alias="globalTaxRate")
     date_range: Dict[str, Any] = Field(..., alias="dateRange")
+    #: A000 1006–1010 as the file writes them (`/system/open-format`).
+    software: Optional[Dict[str, Any]] = None
+    #: The software fields still written as placeholders, for the owner to fill in.
+    placeholders: List[str] = Field(default_factory=list)
 
     class Config:
         populate_by_name = True

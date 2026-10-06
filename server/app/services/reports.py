@@ -399,11 +399,15 @@ def _load_cashier_names(db: Session, cashier_ids: Sequence[str]) -> Dict[str, Po
             valid.append(uuid_mod.UUID(str(raw)))
         except (ValueError, AttributeError, TypeError):
             continue
+    # A self-order kiosk's own operator ("kiosk:<machine>") reads as the kiosk's name.
+    from app.services import kiosk_identity
+
+    kiosks = {k: kiosk_identity.as_pos_user(k, n) for k, n in kiosk_identity.names_for(db, cashier_ids).items()}
     if not valid:
-        return {}
+        return kiosks
     return {
-        str(pu.id): pu
-        for pu in db.query(PosUser).filter(PosUser.id.in_(valid)).all()
+        **kiosks,
+        **{str(pu.id): pu for pu in db.query(PosUser).filter(PosUser.id.in_(valid)).all()},
     }
 
 
@@ -1356,11 +1360,13 @@ def _contributors_of(z: ZReport) -> List[DaySummaryContributor]:
     The per-till section is the drill-down unit a bookkeeper needs, because a register's
     figures are what the regulation ties a Z to (docs: shifts-plan §3).
     """
-    from app.services.z_print import branch_code_of
+    from app.services.z_print import branch_code_of, sequence_started_of
 
     common = dict(
         z_report_id=z.id,
         branch_code=branch_code_of(z),
+        machine_sequence_epoch=int(getattr(z, "machine_sequence_epoch", 0) or 0),
+        sequence_started_at=sequence_started_of(z),
         shop_sequence_number=z.shop_sequence_number,
         # A till Z is one till's section like any other; only its number is the till's.
         origin=getattr(z, "origin", None) or "cloud",
@@ -1447,7 +1453,13 @@ def day_includes_note(zs: Sequence[ZReport]) -> Optional[str]:
                 (getattr(z, "per_machine", None) or [{}])[0].get("posNumber") if getattr(z, "per_machine", None) else None
             ) or "?"
             prefix = "Z עצמאי: " if kind == "independent_till" else "Z קופה: "
-            parts.append(f"{prefix}קופה {pos} (Z מס׳ {getattr(z, 'machine_sequence_number', None)})")
+            from app.services.z_print import sequence_started_label
+
+            run = sequence_started_label(z)
+            parts.append(
+                f"{prefix}קופה {pos} (Z מס׳ {getattr(z, 'machine_sequence_number', None)}"
+                + (f", {run}" if run else "") + ")"
+            )
         else:
             if not tills:
                 tills = [s.get("posNumber") for s in getattr(z, "per_machine", None) or [] if isinstance(s, dict)]

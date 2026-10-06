@@ -24,7 +24,9 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.services import dietary
+from app.services import sales_channel
 from app.services.dietary import DIETARY_LABELS_HE
+from app.services.sales_channel import SALES_CHANNEL_LABELS_HE
 
 # ── Sheets ────────────────────────────────────────────────────────────────────
 
@@ -173,6 +175,11 @@ PRODUCT_COLUMNS: Tuple[Column, ...] = (
            "טבעוני מסומן גם כצמחוני; בשרי וחלבי לא יחד. ריק = ללא שינוי; 'ללא' = לנקות.",
            "בשרי, חריף",
            ("סימוני תזונה", "סימון תזונה", "תזונה", "סימונים", "dietary", "dietary tags", "diet")),
+    Column("channel", "ערוץ מכירה", 15, "channel",
+           "היכן הפריט נמכר: " + ", ".join(SALES_CHANNEL_LABELS_HE.values()) + ". "
+           "ריק בפריט חדש = קופות וקיוסק; ריק בפריט קיים = ללא שינוי.",
+           SALES_CHANNEL_LABELS_HE[sales_channel.ALL],
+           ("ערוץ מכירה", "ערוץ", "היכן נמכר", "היכן הפריט נמכר", "נמכר ב", "channel", "sales channel")),
 )
 
 CATEGORY_COLUMNS: Tuple[Column, ...] = (
@@ -493,6 +500,18 @@ def parse_dietary(value: Any) -> Parsed:
     if pair is not None:
         return Parsed(error=f"סימוני תזונה סותרים: {dietary.label(pair[0])} ו{dietary.label(pair[1])}")
     return Parsed(tuple(dietary.clean(codes)))
+
+
+def parse_channel(value: Any) -> Parsed:
+    """A "ערוץ מכירה" cell: a Hebrew label or a code (app/services/sales_channel.py); empty is "no change"."""
+    text = clean_text(value)
+    if not text:
+        return Parsed()
+    code = sales_channel.code_of(text)
+    if code is None:
+        choices = ", ".join(SALES_CHANNEL_LABELS_HE.values())
+        return Parsed(error=f"ערוץ מכירה לא מוכר ('{text}') - אפשר: {choices}")
+    return Parsed(code)
 
 
 def is_marked(value: Any) -> bool:

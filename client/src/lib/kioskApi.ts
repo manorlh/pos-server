@@ -58,6 +58,18 @@ export interface KioskSummary {
   pauseMessage: string | null;
   pausedAt: string | null;
   pausedBy: string | null;
+  /** When the lock lifts by itself; null: by hand only. */
+  pausedUntil?: string | null;
+  pausedMode?: 'manual' | 'time' | 'minutes' | 'next_open' | null;
+  /** The kiosk's effective hours and automatic Z, as the simple "פתיחה אוטומטית" form shows them. */
+  schedule?: {
+    enabled: boolean;
+    days: number[];
+    open: string | null;
+    close: string | null;
+    ranges: number;
+    autoCloseAt: string;
+  } | null;
   flowState: KioskFlowState | null;
   shiftOpen: boolean | null;
   /** Who produces this till's Z: "till" (it does, on request) or "cloud" (the shop Z). */
@@ -72,8 +84,44 @@ export interface KioskSummary {
   lastOrderAt: string | null;
   unprintedBons: number | null;
   pendingOrders: number | null;
+  /** "התראות לקופות" open now (app/services/kiosk_ops.py). */
+  alerts?: KioskOpenAlert[];
+  /** The last "סגירה יחד עם ה-Z הסניפי", within 36 h; null when none. */
+  shopZClose?: KioskShopZClose | null;
+  /** The terminal set for the kiosk beside the one it last reported, and the card lock (SPEC_KIOSK.md §20). */
+  terminalIdentity?: KioskTerminalIdentity | null;
   controllerMachineIds: string[];
   controllers: KioskControllerRef[];
+}
+
+export interface KioskTerminalIdentity {
+  /** The effective expected terminal number; it counts for a kiosk only when `expectedSource` is "machine". */
+  expected: string | null;
+  expectedSource: string | null;
+  reportedNumber: string | null;
+  reportedMerchant: string | null;
+  reportedAt: string | null;
+  /** Card payment locked on the last report; null: not locked. */
+  cardLock: 'mismatch' | 'not_configured' | 'unknown' | null;
+}
+
+export interface KioskOpenAlert {
+  kind: 'printer' | 'terminal' | 'help';
+  key: string;
+  reason: string;
+  text: string;
+  raisedAt: string | null;
+  acknowledgedBy: string | null;
+}
+
+export interface KioskShopZClose {
+  id: string;
+  state: 'pending' | 'delivered' | 'done' | 'failed' | 'expired';
+  source: 'cloud_shop_z' | 'local_shop_z';
+  requestedAt: string | null;
+  finishedAt: string | null;
+  zNumber: number | null;
+  detail: string | null;
 }
 
 export interface KioskCandidate {
@@ -96,6 +144,8 @@ export interface KioskSettings {
   inheritedLayers?: KioskLayer | null;
   effective: KioskConfig;
   configVersion: string;
+  /** The shop layer's kiosk menu version ("עריכת תפריט הקיוסק", SPEC_KIOSK §22); null at other levels. */
+  menuVersion?: string | null;
   updatedAt: string | null;
   updatedBy: string | null;
 }
@@ -114,12 +164,18 @@ export interface KioskEffective {
   media: MediaRef[];
 }
 
-export type KioskCommandAction = 'pause' | 'resume' | 'close_shift' | 'till_z';
+export type KioskCommandAction = 'pause' | 'resume' | 'close_shift' | 'till_z' | 'schedule';
 
 export interface KioskCommandIn {
   action: KioskCommandAction;
   message?: string;
   force?: boolean;
+  /** "נעילה למכירה" (pause): until reopened by hand, HH:MM today, N minutes, or the next opening. */
+  untilMode?: 'manual' | 'time' | 'minutes' | 'next_open';
+  untilTime?: string;
+  minutes?: number;
+  /** "פתיחה אוטומטית" (schedule): written to the kiosk's own level. */
+  schedule?: { enabled: boolean; days: number[]; open: string; close: string | null; autoCloseAt?: string | null };
 }
 
 export interface KioskCommandOut {
@@ -217,9 +273,20 @@ export async function fetchKioskSettings(level: KioskLevel, id: string): Promise
   return data;
 }
 
-export async function saveKioskSettings(level: KioskLevel, id: string, overrides: KioskLayer): Promise<KioskSettings> {
-  const { data } = await api.put<KioskSettings>('/kiosks/settings', { overrides }, { params: { level, id } });
+/**
+ * Saves a level's layer. [menuVersion]: the shop's kiosk menu as loaded — a save that changes the
+ * menu after a kiosk changed it is refused 409 `kiosk_menu_changed` (isKioskMenuChanged).
+ */
+export async function saveKioskSettings(level: KioskLevel, id: string, overrides: KioskLayer, menuVersion?: string | null): Promise<KioskSettings> {
+  const body = menuVersion ? { overrides, menuVersion } : { overrides };
+  const { data } = await api.put<KioskSettings>('/kiosks/settings', body, { params: { level, id } });
   return data;
+}
+
+/** The kiosk menu changed on a kiosk since this was loaded ("התפריט השתנה — טען מחדש"). */
+export function isKioskMenuChanged(err: unknown): boolean {
+  const e = err as { response?: { status?: number; data?: { detail?: unknown } } } | null;
+  return e?.response?.status === 409 && e.response.data?.detail === 'kiosk_menu_changed';
 }
 
 export async function fetchKioskEffective(machineId: string): Promise<KioskEffective> {
@@ -314,6 +381,8 @@ export async function fetchKioskSourceCatalog(machineId: string): Promise<KioskS
       imageUrl: string | null;
       available: boolean;
       onTill: boolean;
+      /** "היכן הפריט נמכר" (lib/productChannel.ts); pos_only is not on the kiosk. */
+      salesChannel?: string;
       description?: string | null;
       dietaryTags?: unknown;
     }>;
@@ -327,7 +396,8 @@ export async function fetchKioskSourceCatalog(machineId: string): Promise<KioskS
     machineName: data.machineName,
     categories: categories.map((c) => ({ id: String(c.id), name: c.name, sortOrder: c.sortOrder ?? 0 })),
     products: (data.products ?? [])
-      .filter((p) => p.onTill !== false)
+      // "קופות בלבד" is left out, as the kiosk itself leaves it out.
+      .filter((p) => p.onTill !== false && p.salesChannel !== 'pos_only')
       .map((p) => ({
         id: String(p.productId),
         name: p.name,

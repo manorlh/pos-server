@@ -5,7 +5,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import { KIOSK_LIMITS, toggleInList, type HoursRange } from '@/lib/kioskConfig';
+import { KIOSK_LIMITS, kioskScheduleIssues, toggleInList, type HoursRange } from '@/lib/kioskConfig';
 import { useKioskField } from './editor-context';
 import { FieldErrors, FieldShell, NumberField, SectionCard, SwitchField, TextField, TimeField } from './fields';
 
@@ -60,9 +60,20 @@ function HoursRanges() {
                 {t('open')}
                 <Input type="time" dir="ltr" className="w-28" value={r.open} disabled={f.disabled} onChange={(e) => patch(i, { open: e.target.value })} />
               </label>
-              <label className="flex items-center gap-2">
-                {t('close')}
-                <Input type="time" dir="ltr" className="w-28" value={r.close} disabled={f.disabled} onChange={(e) => patch(i, { close: e.target.value })} />
+              {r.close !== null ? (
+                <label className="flex items-center gap-2">
+                  {t('close')}
+                  <Input type="time" dir="ltr" className="w-28" value={r.close} disabled={f.disabled} onChange={(e) => patch(i, { close: e.target.value })} />
+                </label>
+              ) : null}
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground" title={t('noCloseHint')}>
+                <input
+                  type="checkbox"
+                  checked={r.close === null}
+                  disabled={f.disabled}
+                  onChange={(e) => patch(i, { close: e.target.checked ? null : '23:00' })}
+                />
+                {t('noClose')}
               </label>
               {r.close && r.open && r.close < r.open ? <span className="text-xs text-muted-foreground">{t('pastMidnight')}</span> : null}
             </div>
@@ -80,6 +91,27 @@ function HoursRanges() {
         </Button>
       </div>
     </FieldShell>
+  );
+}
+
+/** "סגירה ← Z ← פתיחה": a warning when the automatic Z would run while the kiosk is open. */
+function ScheduleWarning() {
+  const ts = useTranslations('kiosks.schedule');
+  const enabled = useKioskField<boolean>('hours.enabled');
+  const ranges = useKioskField<HoursRange[]>('hours.ranges');
+  const autoClose = useKioskField<string>('operations.autoCloseAt');
+  const issues = kioskScheduleIssues(
+    { enabled: !!enabled.value, ranges: Array.isArray(ranges.value) ? ranges.value : [] },
+    typeof autoClose.value === 'string' ? autoClose.value : null,
+  );
+  return (
+    <>
+      {issues.map((i) => (
+        <p key={i.code} className="text-xs text-red-700 dark:text-red-400">
+          {ts(`issue.${i.code}`, { time: i.time })}
+        </p>
+      ))}
+    </>
   );
 }
 
@@ -139,9 +171,12 @@ export function TimersSection() {
 
       <SectionCard
         title={t('opsTitle')}
-        paths={['operations.autoCloseAt', 'operations.pausedTitle', 'operations.pausedBody']}
+        paths={['operations.autoCloseAt', 'operations.closeWithShopZ', 'operations.pausedTitle', 'operations.pausedBody']}
       >
         <TimeField path="operations.autoCloseAt" label={tf('operations.autoCloseAt')} hint={t('autoCloseHint')} clearable />
+        {/* "סגירה יחד עם ה-Z הסניפי": the shop's Z closes the kiosk and makes its own Z. */}
+        <SwitchField path="operations.closeWithShopZ" label={tf('operations.closeWithShopZ')} hint={t('closeWithShopZHint')} />
+        <ScheduleWarning />
         <TextField
           path="operations.pausedTitle"
           label={tf('operations.pausedTitle')}

@@ -175,7 +175,8 @@ class TestUpsellsCompatible:
         })
         rule = menu.db.get(UpsellRule, uuid.UUID(out["id"]))
         assert rule.options is None and rule.product_id == menu.fries.id
-        assert (rule.display, rule.place, rule.skip_if_present, rule.once_per_order) == ("card", "both", True, False)
+        # "both", as stored before the kiosk had a place: every channel it reached then.
+        assert (rule.display, rule.place, rule.skip_if_present, rule.once_per_order) == ("card", "quick,tables,kiosk", True, False)
         assert out["options"] == [{"type": "product", "id": str(menu.fries.id), "name": "fries"}]
         sent = till_rules(menu)["fries?"]
         assert sent["productId"] == str(menu.fries.id)
@@ -306,6 +307,96 @@ class TestUpsellsNew:
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
+
+
+class TestUpsellChannels:
+    """
+    "הגדלת מכירה" — one feature, three channels (docs/SPEC_KIOSK.md §21): where a rule is
+    offered (quick / tables / kiosk), the steps of an order ("transition"), the window's own
+    picture; old rules and old tills unchanged.
+    """
+
+    base = {"action": "add"}
+
+    def rule(self, menu, **body):
+        return create_rule(menu, {"name": "r", "options": [{"type": "product", "id": str(menu.fries.id)}], **body})
+
+    def sent(self, menu):
+        menu_pull = catalog_pull(menu, menu.tills[0]).menu
+        return {u["name"]: u for u in menu_pull["upsells"]}, {u["name"]: u for u in menu_pull["kioskUpsells"]}
+
+    def test_where_keeps_its_meaning_and_the_kiosk_had_quick_and_both(self, menu):
+        trig = {"triggerType": "product", "triggerIds": [str(menu.burger.id)]}
+        for where, places in (("both", ["quick", "tables", "kiosk"]), ("quick", ["quick", "kiosk"]), ("tables", ["tables"])):
+            out = self.rule(menu, name=where, where=where, **trig)
+            assert out["places"] == places and out["where"] == where, where
+        assert M.upsell_places_of("both") == ("quick", "tables") and M.upsell_places_of(None) == ("quick", "tables")
+
+    def test_places_choose_the_channels_and_a_kiosk_only_rule_never_reaches_an_old_till(self, menu):
+        trig = {"triggerType": "product", "triggerIds": [str(menu.burger.id)]}
+        self.rule(menu, name="kiosk", places=["kiosk"], **trig)
+        self.rule(menu, name="till", places=["quick", "tables"], **trig)
+        self.rule(menu, name="quick+kiosk", places=["kiosk", "quick"], **trig)
+        upsells, kiosk = self.sent(menu)
+        assert "kiosk" not in upsells and kiosk["kiosk"]["places"] == ["kiosk"]
+        assert upsells["till"]["places"] == ["quick", "tables"] and upsells["till"]["where"] == "both"
+        assert upsells["quick+kiosk"]["places"] == ["quick", "kiosk"] and upsells["quick+kiosk"]["where"] == "quick"
+        stored = menu.db.get(UpsellRule, uuid.UUID(kiosk["kiosk"]["id"]))
+        assert stored.place == "kiosk"
+        with pytest.raises(ValidationError):
+            UpsellIn.model_validate({"name": "x", **trig, "places": [], "productId": str(menu.fries.id)})
+
+    def test_transition_steps_per_channel(self, menu):
+        out = self.rule(menu, name="start", triggerType="transition", triggerIds=["order_start", "to_cart"], places=["kiosk"], display="card")
+        assert (out["triggerType"], out["triggerIds"], out["display"]) == ("transition", ["order_start", "to_cart"], "popup")
+        # A step on one of the chosen places is enough (ignored where it does not exist).
+        out = self.rule(menu, name="mixed", triggerType="transition", triggerIds=["before_send", "to_cart"], places=["tables", "kiosk"])
+        assert out["triggerIds"] == ["before_send", "to_cart"]
+        for bad in (["to_cart"], ["after_pay"], ["nonsense"], ["to_pay:x"], ["enter_category:not-an-id"], []):
+            with pytest.raises(ValidationError):
+                UpsellIn.model_validate({"name": "x", "triggerType": "transition", "triggerIds": bad, "places": ["quick"],
+                                         "productId": str(menu.fries.id)})
+        with pytest.raises(ValidationError):
+            UpsellIn.model_validate({"name": "x", "triggerType": "transition", "triggerIds": ["to_pay"], "places": ["quick"],
+                                     "action": "upgrade", "productId": str(menu.meal.id)})
+
+    def test_entering_a_category_names_it_and_reaches_its_sub_categories(self, menu):
+        out = self.rule(menu, name="food", triggerType="transition", places=["kiosk", "quick"],
+                        triggerIds=[f"enter_category:{menu.food.id}"])
+        assert out["triggerNames"] == ["Food"]
+        upsells, _kiosk = self.sent(menu)
+        assert set(upsells["food"]["triggerIds"]) == {f"enter_category:{menu.food.id}", f"enter_category:{menu.burgers.id}"}
+        assert upsells["food"]["display"] == "popup"
+        with pytest.raises(Exception):
+            self.rule(menu, name="ghost", triggerType="transition", places=["kiosk"], triggerIds=[f"enter_category:{uuid.uuid4()}"])
+
+    def test_the_special_has_its_own_picture(self, menu):
+        out = self.rule(menu, name="special", triggerType="transition", triggerIds=["order_start"], places=["kiosk"],
+                        imageUrl=" /media/specials/breakfast.png ", prompt="ארוחת בוקר ב-₪1")
+        assert out["imageUrl"] == "/media/specials/breakfast.png"
+        _u, kiosk = self.sent(menu)
+        # A path on this server reaches a device as an address on it.
+        assert kiosk["special"]["imageUrl"].startswith("http") and kiosk["special"]["imageUrl"].endswith("/media/specials/breakfast.png")
+        with pytest.raises(ValidationError):
+            UpsellIn.model_validate({"name": "x", "triggerType": "order", "productId": str(menu.fries.id), "imageUrl": "javascript:alert(1)"})
+
+    def test_the_editor_gets_the_steps_of_each_channel(self, menu):
+        listed_rules = MR.list_upsells(**_ctx(menu))
+        assert listed_rules["steps"]["kiosk"] == ["order_start", "to_catalog", "enter_category", "to_cart", "to_pay"]
+        assert "before_send" in listed_rules["steps"]["tables"] and "before_send" not in listed_rules["steps"]["quick"]
+        assert all("after_pay" not in codes for codes in listed_rules["steps"].values())
+
+    def test_an_old_rule_on_the_till_is_sent_as_before(self, menu):
+        # As stored before the kiosk had a place (place "both"): the till's payload unchanged.
+        rule = UpsellRule(
+            id=uuid.uuid4(), tenant_id=menu.tenant.id, name="legacy", trigger_type="product",
+            trigger_ids=[str(menu.burger.id)], action="add", product_id=menu.cola.id, place="both", display="card",
+        )
+        menu.db.add(rule)
+        menu.db.flush()
+        upsells, kiosk = self.sent(menu)
+        assert "legacy" not in kiosk
+        assert (upsells["legacy"]["where"], upsells["legacy"]["places"], upsells["legacy"]["productId"]) == ("both", ["quick", "tables"], str(menu.cola.id))
 
 
 class TestUpsellStats:

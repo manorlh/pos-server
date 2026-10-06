@@ -1,0 +1,63 @@
+{
+    "jsonrpc": "2.0",
+    "id": "1234567890",
+    "result": {
+        "result": "OK",
+        "commandStatus": "COMPLETED",
+        "transaction": {
+            "transactionStatus": "CAPTURED",
+            "transactionTime": "2024-11-20T17:55:32.968+08:00",
+            "referenceId": "abcdef123456",
+            "terminalId": "0881198",
+            "appVersion": "1.0.0-rc.7",
+            "transactionType": "SALE",
+            "amount": 1000,
+            "totalAmount": 1000,
+            "tipAmount": 0,
+            "currency": 376,
+            "transactionId": "24112017553208811987387",
+            "authorizationNumber": "0792200",
+            "rrn": "957179218   ",
+            "systemTraceNumber": "01001001",
+            "cardName": "ויזה רגיל",
+            "maskedPan": "458008XXXXXX3303",
+            "panSuffix": "3303",
+            "terminalNo": 1,
+            "creditTerms": "REGULAR",
+            "panEntryMode": "EMV",
+            "acquirer": 7,
+            "acquirerName": "קארדקום",
+            "acquirerBusinessNumber": "0010124",
+            "acquirerPhoneNumber": "039999999",
+            "issuer": 2,
+            "issuerName": "כאל",
+            "brand": 2,
+            "brandName": "ויזה",
+            "isClub": false,
+            "isPrepaid": false,
+            "cvvResponse": 0,
+            "cardHolderIdResponse": 0,
+            "cardHolderReceipt": {
+                "fields": [
+                    { "id": "POS_NAME", "key": "שם מסוף", "value": "TESTדנגוט טסט" },
+                    { "id": "UID", "key": "UID", "value": "24112017553208811987387" },
+                    { "id": "ISSUER_AUTH_NUM", "key": "מס אישור", "value": "0792200" },
+                    { "id": "CARD_NUMBER", "key": "מס כרטיס", "value": "XXXXXXXXXXXX3303" },
+                    { "id": "AMOUNT", "key": "סכום", "value": "10.00   ש\"ח" },
+                    { "id": "VERIFIED_BY_PIN", "key": "Verified by PIN" }
+                ],
+                "language": "HEBREW"
+            },
+            "merchantReceipt": {
+                "collectSignature": false,
+                "collectTelephoneNo": false,
+                "fields": [
+                    { "id": "POS_NAME", "key": "שם מסוף", "value": "TESTדנגוט טסט" },
+                    { "id": "CARD_NUMBER", "key": "מס כרטיס", "value": "458008XXXXXX3303" },
+                    { "id": "AMOUNT", "key": "סכום", "value": "10.00   ש\"ח" }
+                ],
+                "language": "HEBREW"
+            }
+        }
+    }
+}

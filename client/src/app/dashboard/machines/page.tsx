@@ -31,6 +31,7 @@ import { he } from 'date-fns/locale';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MachineStatusDot, machineStatus } from '@/components/dashboard/machine-status';
 import { MachinesTable } from '@/components/dashboard/machines/machines-table';
+import { DeviceSearchDialog } from '@/components/dashboard/machines/device-search';
 import { RemoteShiftCloseDialog } from '@/components/dashboard/machines/remote-shift-close';
 import { TransmitNowDialog } from '@/components/dashboard/machines/card-transmission';
 import {
@@ -176,6 +177,8 @@ export default function MachinesPage() {
    */
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  /** "חיפוש מכשיר": the cloud's device search (serial, SIM, IP…), across shops and tenants. */
+  const [deviceSearchOpen, setDeviceSearchOpen] = useState(false);
   /** `''` = every area, `none` = tills in no area, else an area id. */
   const [areaFilter, setAreaFilter] = useState('');
   const [areaTarget, setAreaTarget] = useState<PosMachine | null>(null);
@@ -515,6 +518,8 @@ export default function MachinesPage() {
       searchTerm === '' ||
       m.name.toLowerCase().includes(searchTerm) ||
       m.machineCode.toLowerCase().includes(searchTerm) ||
+      // The serial on the unit's label, too (the cloud's full search: "חיפוש מכשיר").
+      (m.serialNumber ?? '').toLowerCase().includes(searchTerm) ||
       (registerNumberOf(m) !== null &&
         t('registerLabel', { number: registerNumberOf(m)! }).includes(searchTerm)),
   );
@@ -527,6 +532,18 @@ export default function MachinesPage() {
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => setDeviceSearchOpen(true)}>
+            <Search className="h-4 w-4 ms-1" /> {t('deviceSearchButton')}
+          </Button>
+          {deviceSearchOpen ? (
+            <DeviceSearchDialog
+              open
+              onClose={() => setDeviceSearchOpen(false)}
+              shops={shops}
+              companies={companies}
+              superAdmin={authHydrated && me?.role === 'super_admin'}
+            />
+          ) : null}
           {canProduceZ ? (
             <Link
               href={zWizardHref(effective.shopId, effective.machineId)}

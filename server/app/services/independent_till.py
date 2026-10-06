@@ -178,7 +178,11 @@ def check_switch(db: Session, user: User, machine: POSMachine, independent: bool
     * no closed shift waiting for a Z (`independent_switch_unreported_shifts`): each was
       closed expecting a Z of the other kind. One exception, as for `z_mode` (dead-till
       recovery): back into the shop Z with shifts the cloud closed administratively;
-    * no Z under way for it (`independent_switch_z_in_progress`).
+    * no Z under way for it (`independent_switch_z_in_progress`);
+    * nothing it numbered that the cloud does not have yet: no till Z closed with no
+      connection (`till_offline_zs_unsynced`, docs/SPEC_OFFLINE_TILL_Z.md §4.4) and no shop
+      Z it made as a main till (`independent_switch_shop_zs_unsynced`, §8.10) — the switch
+      starts or leaves a run, and a number of the old one must never arrive after it.
     """
     from app.services import till_z
     from app.services.z_builder import Z_MODE_CLOUD
@@ -201,6 +205,16 @@ def check_switch(db: Session, user: User, machine: POSMachine, independent: bool
             f"לא ניתן להעביר את {label} {target}: יש בה משמרת פתוחה. "
             "סגרו את המשמרת והפיקו את ה-Z שלה, ואז נסו שוב.",
         )
+    # Nothing numbered that the cloud does not have (the owner: no Z number ever changes).
+    till_z.refuse_while_producing_offline(db, machine)
+    shop_zs = _unsynced_shop_zs(db, machine)
+    if shop_zs:
+        raise _refuse(
+            "independent_switch_shop_zs_unsynced", machine,
+            f"לא ניתן להעביר את {label} {target}: יש בה {shop_zs} דוחות Z סניפיים שהופקו בה כקופה ראשית "
+            "ועוד לא סונכרנו לענן. חברו אותה לענן והמתינו לסנכרון, ואז נסו שוב.",
+            count=shop_zs,
+        )
     waiting = till_z.unreported_closed_count(db, machine.id)
     recovering = not independent and till_z._has_reconstructed_unreported(db, machine.id)
     if waiting and not recovering:
@@ -211,6 +225,20 @@ def check_switch(db: Session, user: User, machine: POSMachine, independent: bool
             f"הפיקו קודם את {which}, ואז נסו שוב.",
             count=waiting,
         )
+
+
+def _unsynced_shop_zs(db: Session, machine: POSMachine) -> int:
+    """Shop Zs this till made as a main till that the cloud does not have yet (its last report)."""
+    from app.models.shop import Shop
+    from app.services.local_shop_z import REPORTS_KEY
+
+    shop = db.get(Shop, machine.shop_id) if machine.shop_id else None
+    reports = ((shop.settings or {}).get(REPORTS_KEY) if shop is not None else None) or {}
+    report = reports.get(str(machine.id)) if isinstance(reports, dict) else None
+    if not isinstance(report, dict):
+        return 0
+    pending = int(report.get("pending") or 0)
+    return pending if pending > 0 else (1 if report.get("conflict") else 0)
 
 
 def _clear_host_flags(db: Session, machine: POSMachine, now: datetime) -> List[str]:
@@ -256,6 +284,14 @@ def set_independent(db: Session, machine: POSMachine, independent: bool, *, now:
         till_z.set_z_mode(db, machine, Z_MODE_TILL, now=now)
         machine.independent_till = True
         _clear_host_flags(db, machine, now)
+        # The owner: "מעבר בין קופה בסניפי לעצמאי מתחיל את הקופה מ-Z אחד" — a new run of
+        # its own Zs, at 1 (SPEC_INDEPENDENT_TILL §3.1). The last number the device reported
+        # was of the old run: forgotten with it.
+        from app.services.z_sequence import start_new_machine_sequence
+
+        start_new_machine_sequence(db, machine.id, now)
+        if hasattr(machine, "offline_till_z_last_number"):
+            machine.offline_till_z_last_number = None
     else:
         if not is_independent(machine) and machine.z_mode == Z_MODE_CLOUD:
             return False
@@ -273,11 +309,13 @@ def shop_state(db: Session, shop, user: User) -> dict:
     """Every seated till of the shop with its role, the main till, and the local mode."""
     from app.services import main_till as MT
     from app.services import z_runs as ZR
-    from app.services.local_shop_z import local_mode_of_shop, producer_state
+    from app.services.local_shop_z import lan_seen_hint, local_mode_of_shop, producer_state, remote_till_ids
     from app.services.machine_status import is_online
 
     main = MT.main_till_of_shop(db, shop.id)
     tills = [m for m in ZR.shop_tills(db, shop.id) if ZR.is_seated_in(m, shop.id)]
+    remote = remote_till_ids(shop)
+    seen_on_lan = lan_seen_hint(db, shop)
     out = []
     for m in sorted(tills, key=MT.till_order):
         cand = ZR.till_candidates(db, m, shop.id)
@@ -293,6 +331,11 @@ def shop_state(db: Session, shop, user: User) -> dict:
             "awaitingZ": len(cand.closed),
             "mainTill": main is not None and main.id == m.id,
             "online": is_online(m.last_heartbeat_at),
+            "kiosk": bool(getattr(m, "is_kiosk", False)),
+            # "מחובר ברשת המקומית" / "מרוחק (דרך הענן)" — the setting decides (§8.14) …
+            "link": "remote" if str(m.id) in remote else "lan",
+            # … and the main till's view of who it hears on the LAN is a hint (null: unknown).
+            "seenOnLan": None if seen_on_lan is None else str(m.id) in seen_on_lan,
         })
     return {
         "shopId": str(shop.id),
@@ -317,6 +360,7 @@ def apply_shop(
     independent: Sequence[uuid.UUID] = (),
     main_till_id: Any = _MAIN_UNCHANGED,
     force_producer_switch: bool = False,
+    remote: Optional[Sequence[uuid.UUID]] = None,
     now: Optional[datetime] = None,
 ) -> List[POSMachine]:
     """
@@ -369,6 +413,30 @@ def apply_shop(
                 "machineId": main_after,
             },
         )
+    # "מחובר ברשת המקומית / מרוחק (דרך הענן)" (§8.14): only a participant after the save, and
+    # never the main till itself (it is the LAN).
+    remote_after = None
+    if remote is not None:
+        remote_after = {str(i) for i in remote}
+        for machine_id in sorted(remote_after):
+            m = seated.get(machine_id)
+            if m is None:
+                raise IndependentSwitchRefused(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    {"detail": "machine_not_in_shop", "message": "הקופה אינה משויכת לסניף הזה.", "machineId": machine_id},
+                )
+            if machine_id in after_independent:
+                raise IndependentSwitchRefused(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    {"detail": "remote_not_participant", "machineId": machine_id,
+                     "message": f"{till_label(m)} עצמאית — היא לא בזד הסניפי, ולכן אין לה סגירה דרך הענן."},
+                )
+            if machine_id == main_after:
+                raise IndependentSwitchRefused(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    {"detail": "remote_main_till", "machineId": machine_id,
+                     "message": f"{till_label(m)} היא הקופה הראשית (השרת המקומי) — היא לא יכולה להיות מרוחקת."},
+                )
     if main_till_id is not _MAIN_UNCHANGED:
         live = (
             db.query(ZRun.id)
@@ -400,6 +468,10 @@ def apply_shop(
             changed.append(seated[machine_id])
     if main_till_id is not _MAIN_UNCHANGED:
         MT.set_main_till(db, shop, main_till_id, now=now)
+    if remote_after is not None:
+        from app.services.local_shop_z import set_remote_till_ids
+
+        set_remote_till_ids(shop, remote_after)
     db.flush()
     guard.check(force=force_producer_switch, user=user)
     return changed

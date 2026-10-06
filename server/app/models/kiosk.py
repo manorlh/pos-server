@@ -104,6 +104,10 @@ class KioskDevice(Base):
     pause_message = Column(String(300), nullable=True)
     paused_at = Column(DateTime(timezone=True), nullable=True)
     paused_by = Column(String(200), nullable=True)
+    #: "נעילה למכירה" until when (null: until reopened by hand) and how it was asked
+    #: ("manual" | "time" | "minutes" | "next_open") — docs/SPEC_KIOSK.md §15.
+    paused_until = Column(DateTime(timezone=True), nullable=True)
+    paused_mode = Column(String(20), nullable=True)
     #: The tills that may pause / resume / close this kiosk (same company, never itself,
     #: never another kiosk). A list of machine id strings.
     controller_machine_ids = Column(KioskJSON, nullable=False, default=list)
@@ -194,8 +198,11 @@ class KioskCommand(Base):
 
     __tablename__ = "kiosk_commands"
     __table_args__ = (
-        CheckConstraint("action IN ('pause', 'resume', 'close_shift', 'till_z')", name="ck_kiosk_commands_action"),
-        CheckConstraint("source IN ('dashboard', 'till')", name="ck_kiosk_commands_source"),
+        CheckConstraint(
+            "action IN ('pause', 'resume', 'close_shift', 'till_z', 'schedule', 'bon_print', 'bon_handled', 'menu')",
+            name="ck_kiosk_commands_action",
+        ),
+        CheckConstraint("source IN ('dashboard', 'till', 'schedule')", name="ck_kiosk_commands_source"),
         CheckConstraint("status IN ('applied', 'requested', 'refused')", name="ck_kiosk_commands_status"),
         Index("ix_kiosk_commands_kiosk_created", "kiosk_machine_id", "created_at"),
     )

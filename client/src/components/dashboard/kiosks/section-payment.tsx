@@ -5,7 +5,7 @@ import { useTranslations } from 'next-intl';
 import { CreditCard, Banknote, Plus, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { KIOSK_LIMITS, type CustomerFieldMode, type ReceiptPolicy } from '@/lib/kioskConfig';
+import { DETAILS_STEPS, KIOSK_LIMITS, type CustomerFieldMode, type DetailsStep, type ReceiptPolicy } from '@/lib/kioskConfig';
 import { useKioskField } from './editor-context';
 import { FieldShell, NumberInput, SectionCard, SegmentField, SwitchField } from './fields';
 
@@ -128,8 +128,19 @@ export function PaymentSection() {
         />
       </SectionCard>
 
-      <SectionCard title={t('customerTitle')} description={t('customerHint')} paths={['payment.customerName', 'payment.customerPhone']}>
+      <SectionCard
+        title={t('customerTitle')}
+        description={t('customerHint')}
+        paths={['payment.customerName', 'payment.customerPhone', 'payment.tableNumber', 'payment.detailsStep']}
+      >
+        <SegmentField<DetailsStep>
+          path="payment.detailsStep"
+          label={t('detailsStep')}
+          hint={t('detailsStepHint')}
+          options={DETAILS_STEPS.map((v) => ({ value: v, label: t(`detailsStepOption.${v}`) }))}
+        />
         <SegmentField<CustomerFieldMode> path="payment.customerName" label={tf('payment.customerName')} options={fieldOptions} />
+        <SegmentField<CustomerFieldMode> path="payment.tableNumber" label={t('tableNumber')} hint={t('tableNumberHint')} options={fieldOptions} />
         <SegmentField<CustomerFieldMode>
           path="payment.customerPhone"
           label={tf('payment.customerPhone')}

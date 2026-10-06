@@ -415,7 +415,7 @@ def build_snapshot(db: Session, shop: Shop) -> Dict[str, Any]:
         frontier = nxt - visited
 
     menu = menu_service.menu_block(db, virtual) if tid is not None else None
-    return _jsonable({
+    snapshot = {
         "format": SNAPSHOT_FORMAT,
         "products": products,
         "productGates": gates,
@@ -423,15 +423,25 @@ def build_snapshot(db: Session, shop: Shop) -> Dict[str, Any]:
         "referencedCategories": referenced,
         "categoryGates": category_gates,
         "menu": menu,
-    })
+    }
+    # "תפריטים" (docs/SPEC_MENUS.md): the shop's menus, assignments and fallbacks are part of
+    # what is published. Only when there are any, so a shop without menus keeps its fingerprint.
+    from app.services import catalog_menus as catalog_menus_service
+
+    catalog_menus = catalog_menus_service.snapshot_block(db, shop) if tid is not None else None
+    if catalog_menus:
+        snapshot["catalogMenus"] = catalog_menus
+    return _jsonable(snapshot)
 
 
 #: Product fields that are not the menu: what is laid over live per till, and stamps.
 _PRODUCT_LIVE = frozenset({
     "id", "posMachineId", "catalogLevel", "isLocalOverride", "imageUrl", "inStock", "isAvailable",
     "stockQuantity", "inMachineCatalog", "createdAt", "updatedAt",
+    # The deciding lock, laid over live with the levels it comes from (SPEC_AVAILABILITY).
+    "availabilityLock",
 })
-_CATEGORY_LIVE = frozenset({"createdAt", "updatedAt"})
+_CATEGORY_LIVE = frozenset({"createdAt", "updatedAt", "activeLock"})
 
 
 def content_of(snapshot: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -439,7 +449,7 @@ def content_of(snapshot: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     snapshot = snapshot or {}
     menu = dict(snapshot.get("menu") or {})
     menu.pop("updatedAt", None)
-    return {
+    content = {
         "products": {
             k: {f: v for f, v in row.items() if f not in _PRODUCT_LIVE}
             for k, row in (snapshot.get("products") or {}).items()
@@ -454,6 +464,12 @@ def content_of(snapshot: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         },
         "menu": menu,
     }
+    # "תפריטים" — only when the shop has any, so a fingerprint taken before menus existed holds.
+    if snapshot.get("catalogMenus"):
+        from app.services import catalog_menus as catalog_menus_service
+
+        content["catalogMenus"] = catalog_menus_service.content_of(snapshot["catalogMenus"])
+    return content
 
 
 def fingerprint(snapshot: Optional[Dict[str, Any]]) -> str:
@@ -693,13 +709,14 @@ def _products_for_till(
 
         gate = gates.get(key) or {}
         listed = bool(published.get("shopListed", True))
-        resolved = availability.resolve(
+        levels = availability.resolve_levels(
             gate.get("product", True),
             gate.get("company"),
             ovr.is_available if ovr is not None else gate.get("shop"),
             None if mine is None else mine.is_available,
             area=None if area is None else area.is_available,
         )
+        resolved = levels[availability.Level.MACHINE]
         if loc is not None:
             base_in_stock = loc.in_stock
         elif g is not None:
@@ -720,6 +737,11 @@ def _products_for_till(
             row["imageUrl"] = g.image_url
         row["inStock"] = bool(listed and base_in_stock)
         row["isAvailable"] = bool(listed and resolved.available)
+        # The lock that decides, live like the levels it comes from (docs/SPEC_AVAILABILITY.md).
+        row["availabilityLock"] = availability.lock_info(
+            levels,
+            {availability.Level.SHOP: ovr, availability.Level.AREA: area, availability.Level.MACHINE: mine},
+        ) if listed else None
         if loc is not None:
             row["stockQuantity"] = loc.stock_quantity
         elif g is not None:
@@ -802,6 +824,9 @@ def _categories_for_till(
             level(rows, category_availability.AREA),
             level(rows, category_availability.MACHINE),
         )
+        row["activeLock"] = category_availability.lock_info(
+            gates.get(key, published.get("isActive", True)), rows
+        )
         if updated is not None:
             row["updatedAt"] = updated.isoformat()
             stamps[key] = _utc(updated)
@@ -867,6 +892,7 @@ def _dropped(
             row["shopListed"] = False
             row["inStock"] = False
             row["isAvailable"] = False
+            row["availabilityLock"] = None
             row["inMachineCatalog"] = bool(item is not None and item.is_included)
             row["updatedAt"] = stamp
             products.append(row)
@@ -876,6 +902,7 @@ def _dropped(
             continue
         row = dict(published)
         row["isActive"] = False
+        row["activeLock"] = None
         row["updatedAt"] = stamp
         categories.append(row)
     return products, categories
@@ -928,7 +955,7 @@ _PRODUCT_FIELDS = (
 )
 #: Compared only when both snapshots carry them: a publication made before the field
 #: existed has none, and that is not a change the merchant made.
-_PRODUCT_NEW_FIELDS = ("dietaryTags",)
+_PRODUCT_NEW_FIELDS = ("dietaryTags", "salesChannel")
 _CATEGORY_FIELDS = (
     "name", "description", "parentId", "sortOrder", "isActive", "color", "imageUrl", "courseId",
     "ticketMode",
@@ -1223,6 +1250,11 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
             changes = [_change(f, a.get(f), b.get(f)) for f in ("name", "sortOrder") if not _same(a.get(f), b.get(f))]
             if changes:
                 out["menu"].append(_item("changed", key, b.get("name"), changes, detail="course"))
+    # "תפריטים" (docs/SPEC_MENUS.md): menus, their assignments and fallbacks.
+    if old.get("catalogMenus") or new.get("catalogMenus"):
+        from app.services import catalog_menus as catalog_menus_service
+
+        out["menu"].extend(catalog_menus_service.diff(old.get("catalogMenus"), new.get("catalogMenus")))
     return out
 
 

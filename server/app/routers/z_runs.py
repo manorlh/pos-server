@@ -34,6 +34,7 @@ from app.services.shifts import orphan_documents_by_machine, shift_to_out
 from app.services import areas
 from app.services import main_till as MT
 from app.services import z_runs as ZR
+from app.services import z_state
 from app.services.till_z import TillZRefused, z_mode_of
 from fastapi.responses import JSONResponse
 
@@ -189,6 +190,7 @@ def get_z_candidates(
                 is_active=bool(machine.is_active),
                 area_id=machine.area_id,
                 area_name=machine.area_name,
+                data_state=z_state.till_state(db, machine),
             )
         )
     return ZCandidatesOut(
@@ -202,6 +204,47 @@ def get_z_candidates(
         main_till=MT.till_ref(MT.main_till_of_shop(db, shop.id)),
         dashboard_z_blocked=MT.dashboard_z_refusal(db, shop) is not None,
     )
+
+
+def _require_cloud_data_confirmation(db: Session, shop, body: ZRunCreateIn, active_tenant_id) -> None:
+    """
+    `409 {code: cloud_data_confirmation_required, tills}` while a till the run takes shows
+    a warning and `confirmCloudData` is not given. A till that produces its own Z is not
+    taken by the run, and not checked here.
+    """
+    if body.confirm_cloud_data:
+        return
+    own_z = ZR.per_till_ids(db, ZR.shop_tills(db, shop.id), _tenant(db, active_tenant_id), shop)
+    wanted = [m.machine_id for m in body.machines if m.machine_id not in own_z]
+    machines = db.query(POSMachine).filter(POSMachine.id.in_(wanted)).all() if wanted else []
+    flagged = [s for s in z_state.states(db, machines) if s["warnings"]]
+    if flagged:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "cloud_data_confirmation_required",
+                "message": "יש קופות עם משמרות, מסמכים או דוחות Z שלא הגיעו לענן — יש לאשר שהנתונים בענן הם הנתונים הקיימים.",
+                "tills": flagged,
+            },
+        )
+
+
+def _note_cloud_data_confirmation(db: Session, run, shop, body: ZRunCreateIn, user: User, active_tenant_id) -> None:
+    """Who confirmed the cloud's data for this run, when, and the state the tills were in."""
+    from datetime import datetime, timezone
+
+    own_z = ZR.per_till_ids(db, ZR.shop_tills(db, shop.id), _tenant(db, active_tenant_id), shop)
+    wanted = [m.machine_id for m in body.machines if m.machine_id not in own_z]
+    machines = db.query(POSMachine).filter(POSMachine.id.in_(wanted)).all() if wanted else []
+    flagged = [s for s in z_state.states(db, machines) if s["warnings"]]
+    if flagged:
+        run.cloud_data_confirmation = {
+            "by": user.username or user.email or str(user.id),
+            "byUserId": str(user.id),
+            "at": datetime.now(timezone.utc).isoformat(),
+            "text": z_state.CONFIRMATION_TEXT,
+            "tills": flagged,
+        }
 
 
 @router.post(
@@ -238,6 +281,9 @@ def post_z_run(
         if len({m.id for m in found}) != len(set(wanted)):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
         _check_tills(db, current_user, found, active_tenant_id)
+    # The state before a Z from the cloud (docs/SPEC_OFFLINE_TILL_Z.md §4.6.1): a till the
+    # run takes that shows a warning is taken only on the operator's explicit word.
+    _require_cloud_data_confirmation(db, shop, body, active_tenant_id)
     try:
         run = ZR.create_z_run(
             db,
@@ -257,6 +303,8 @@ def post_z_run(
             confirm_open_tills=body.confirm_open_tills,
             force=body.force,
         )
+        if body.confirm_cloud_data:
+            _note_cloud_data_confirmation(db, run, shop, body, current_user, active_tenant_id)
     except TillZRefused as refused:
         # `422 machine_issues_its_own_z` with the till's id beside the detail (§5.4).
         db.rollback()

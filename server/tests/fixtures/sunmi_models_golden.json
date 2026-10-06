@@ -1,0 +1,508 @@
+{
+  "_comment": "SUNMI models (docs/SPEC_SUNMI.md). Shared byte-for-byte by pos-server tests/fixtures and pos-android app/src/test/resources; both tests pin it.",
+  "models": [
+    {
+      "id": "SUNMI_V1",
+      "printer": true,
+      "paperMm": 58,
+      "cutter": false,
+      "drawerPort": false,
+      "scanner": false,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_V2",
+      "printer": true,
+      "paperMm": 58,
+      "cutter": false,
+      "drawerPort": false,
+      "scanner": false,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_V2_PRO",
+      "printer": true,
+      "paperMm": 58,
+      "cutter": false,
+      "drawerPort": false,
+      "scanner": true,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_V2S",
+      "printer": true,
+      "paperMm": 58,
+      "cutter": false,
+      "drawerPort": false,
+      "scanner": false,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_V2S_PLUS",
+      "printer": true,
+      "paperMm": 80,
+      "cutter": false,
+      "drawerPort": false,
+      "scanner": true,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_V3",
+      "printer": true,
+      "paperMm": 58,
+      "cutter": false,
+      "drawerPort": false,
+      "scanner": true,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_P1",
+      "printer": true,
+      "paperMm": 58,
+      "cutter": false,
+      "drawerPort": false,
+      "scanner": false,
+      "paymentHw": true
+    },
+    {
+      "id": "SUNMI_P2",
+      "printer": true,
+      "paperMm": 58,
+      "cutter": false,
+      "drawerPort": false,
+      "scanner": false,
+      "paymentHw": true
+    },
+    {
+      "id": "SUNMI_P3",
+      "printer": true,
+      "paperMm": 58,
+      "cutter": false,
+      "drawerPort": false,
+      "scanner": false,
+      "paymentHw": true
+    },
+    {
+      "id": "SUNMI_L2",
+      "printer": false,
+      "paperMm": null,
+      "cutter": false,
+      "drawerPort": false,
+      "scanner": true,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_M2",
+      "printer": false,
+      "paperMm": null,
+      "cutter": false,
+      "drawerPort": false,
+      "scanner": false,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_T1",
+      "printer": true,
+      "paperMm": 80,
+      "cutter": true,
+      "drawerPort": true,
+      "scanner": false,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_T2",
+      "printer": true,
+      "paperMm": 80,
+      "cutter": true,
+      "drawerPort": true,
+      "scanner": false,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_T2_MINI",
+      "printer": true,
+      "paperMm": 80,
+      "cutter": true,
+      "drawerPort": true,
+      "scanner": false,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_T2S",
+      "printer": true,
+      "paperMm": 80,
+      "cutter": true,
+      "drawerPort": true,
+      "scanner": false,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_T3",
+      "printer": true,
+      "paperMm": 80,
+      "cutter": true,
+      "drawerPort": true,
+      "scanner": false,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_D2_MINI",
+      "printer": true,
+      "paperMm": 58,
+      "cutter": false,
+      "drawerPort": true,
+      "scanner": false,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_D2S",
+      "printer": true,
+      "paperMm": 58,
+      "cutter": false,
+      "drawerPort": true,
+      "scanner": false,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_D2S_PLUS",
+      "printer": true,
+      "paperMm": 80,
+      "cutter": true,
+      "drawerPort": true,
+      "scanner": false,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_D3",
+      "printer": true,
+      "paperMm": 80,
+      "cutter": true,
+      "drawerPort": true,
+      "scanner": false,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_D3_MINI",
+      "printer": true,
+      "paperMm": 58,
+      "cutter": false,
+      "drawerPort": true,
+      "scanner": false,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI_K2",
+      "printer": true,
+      "paperMm": 80,
+      "cutter": true,
+      "drawerPort": false,
+      "scanner": true,
+      "paymentHw": false
+    },
+    {
+      "id": "SUNMI",
+      "printer": true,
+      "paperMm": null,
+      "cutter": false,
+      "drawerPort": false,
+      "scanner": false,
+      "paymentHw": false
+    }
+  ],
+  "detect": [
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "V1-B18",
+      "expected": "SUNMI_V1"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "V1s-G",
+      "expected": "SUNMI_V1"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "V2",
+      "expected": "SUNMI_V2"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "V2_PRO",
+      "expected": "SUNMI_V2_PRO"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "V2 Pro",
+      "expected": "SUNMI_V2_PRO"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "V2s",
+      "expected": "SUNMI_V2S"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "V2s_PLUS",
+      "expected": "SUNMI_V2S_PLUS"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "V2s PLUS",
+      "expected": "SUNMI_V2S_PLUS"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "V3 MIX",
+      "expected": "SUNMI_V3"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "P1_4G",
+      "expected": "SUNMI_P1"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "P2",
+      "expected": "SUNMI_P2"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "P2_PRO",
+      "expected": "SUNMI_P2"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "P2lite",
+      "expected": "SUNMI_P2"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "P3 MIX",
+      "expected": "SUNMI_P3"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "L2",
+      "expected": "SUNMI_L2"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "L2K",
+      "expected": "SUNMI_L2"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "L2s",
+      "expected": "SUNMI_L2"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "L3",
+      "expected": "SUNMI_L2"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "M2",
+      "expected": "SUNMI_M2"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "M2 MAX",
+      "expected": "SUNMI_M2"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "FLEX 3",
+      "expected": "SUNMI_M2"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "T1-G",
+      "expected": "SUNMI_T1"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "T1mini-G",
+      "expected": "SUNMI_T1"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "T2",
+      "expected": "SUNMI_T2"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "T2lite",
+      "expected": "SUNMI_T2"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "T2mini",
+      "expected": "SUNMI_T2_MINI"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "T2s",
+      "expected": "SUNMI_T2S"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "T2s_LITE",
+      "expected": "SUNMI_T2S"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "T3 PRO",
+      "expected": "SUNMI_T3"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "T3 PRO MAX",
+      "expected": "SUNMI_T3"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "D2mini",
+      "expected": "SUNMI_D2_MINI"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "D2s",
+      "expected": "SUNMI_D2S"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "D2s_LITE",
+      "expected": "SUNMI_D2S"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "D2s PLUS",
+      "expected": "SUNMI_D2S_PLUS"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "D2s_COMBO",
+      "expected": "SUNMI_D2S_PLUS"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "D3",
+      "expected": "SUNMI_D3"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "D3 PRO",
+      "expected": "SUNMI_D3"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "D3 MINI",
+      "expected": "SUNMI_D3_MINI"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "K2",
+      "expected": "SUNMI_K2"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "K2_MINI",
+      "expected": "SUNMI_K2"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": "SUNMI",
+      "model": "SUNMI V2_PRO",
+      "expected": "SUNMI_V2_PRO"
+    },
+    {
+      "manufacturer": "sunmi",
+      "brand": null,
+      "model": "X9",
+      "expected": "SUNMI"
+    },
+    {
+      "manufacturer": "SUNMI",
+      "brand": null,
+      "model": "",
+      "expected": "SUNMI"
+    },
+    {
+      "manufacturer": " Sunmi ",
+      "brand": null,
+      "model": null,
+      "expected": "SUNMI"
+    },
+    {
+      "manufacturer": "Feitian",
+      "brand": "SUNMI",
+      "model": "T2s",
+      "expected": "SUNMI_T2S"
+    },
+    {
+      "manufacturer": "LANDI",
+      "brand": "LANDI",
+      "model": "V2",
+      "expected": null
+    },
+    {
+      "manufacturer": "Kozen",
+      "brand": "Kozen",
+      "model": "P18",
+      "expected": null
+    },
+    {
+      "manufacturer": "Feitian",
+      "brand": "Feitian",
+      "model": "F20",
+      "expected": null
+    },
+    {
+      "manufacturer": null,
+      "brand": null,
+      "model": "T2s",
+      "expected": null
+    }
+  ]
+}

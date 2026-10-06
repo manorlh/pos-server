@@ -1267,12 +1267,27 @@ def print_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any
     """The shop's print server as `machine` needs it: who, and where on the LAN."""
     from app.services.independent_till import is_independent
 
+    away_kiosk = False
     if is_independent(machine):
-        # "קופה עצמאית": it never uses the shop's print server; it prints by itself.
-        return None
+        # "קופה עצמאית": it never uses the shop's print server; it prints by itself — except a
+        # self-order kiosk, which may stand away from the shop's LAN (docs/SPEC_KIOSK.md §16.7):
+        # it gets the print server with no LAN address, so the shop's kitchen printers are
+        # tried directly (it may be on the shop's network after all) and else reached through
+        # the cloud relay, printed by the print server.
+        if not getattr(machine, "is_kiosk", False):
+            return None
+        away_kiosk = True
     host = print_host_of_shop(db, machine.shop_id)
     if host is None:
         return None
+    if away_kiosk:
+        return {
+            "machineId": str(host.id),
+            "name": machine_label(host),
+            "isSelf": False,
+            "lanAddress": None,
+            "port": DEFAULT_LAN_PORT,
+        }
     row = db.query(KitchenPrintHost).filter(KitchenPrintHost.machine_id == host.id).first()
     return {
         "machineId": str(host.id),
