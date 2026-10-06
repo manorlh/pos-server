@@ -32,7 +32,8 @@ export async function fetchMainTill(shopId: string): Promise<MainTillState> {
 
 export async function saveMainTill(
   shopId: string,
-  body: { machineId: string | null; zFrom?: string },
+  /** `forceProducerSwitch`: a super admin's switch although the shop Z's producer has not handed over. */
+  body: { machineId: string | null; zFrom?: string; forceProducerSwitch?: boolean },
 ): Promise<MainTillState> {
   const { data } = await api.put<MainTillState>(`/shops/${shopId}/main-till`, body);
   return data;

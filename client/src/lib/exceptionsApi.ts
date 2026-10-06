@@ -36,6 +36,19 @@ export const EXCEPTION_TYPES = [
   'z_transmission_failed',
   // A remote Z close forced "even mid-sale", with who forced it and what was parked (§9).
   'forced_z_close',
+  // A Z closed offline that the cloud could not take as printed — held for support,
+  // never renumbered (§4.5). Supposed to be impossible.
+  'offline_z_conflict',
+  // Support produced a dead till's Z from the cloud (§4.6): who, why, the basis, the gaps.
+  'support_z_produced',
+  // Support ordered a reset of a till's data from the cloud — the only way (§4.7).
+  'till_reset',
+  // A super admin moved the shop Z's production before its producer handed over
+  // ("קופה עצמאית בתוך סניף", docs/SPEC_INDEPENDENT_TILL.md §8).
+  'shop_z_producer_forced',
+  // A self-order kiosk offline longer than the rule's minutes in its opening hours; closed
+  // when it comes back (details: kiosk, offlineSince, backAt; value = minutes offline).
+  'kiosk_offline',
 ] as const;
 
 export type ExceptionType = (typeof EXCEPTION_TYPES)[number];
@@ -61,6 +74,8 @@ export interface AuditException {
   shiftNumber?: number | null;
   transactionId?: string | null;
   transactionNumber?: string | null;
+  /** 320 / 330 / 400 / -400: a number names a document only with its type (one series per type). */
+  documentType?: number | null;
   posUserId?: string | null;
   posUserName?: string | null;
   amount?: number | null;

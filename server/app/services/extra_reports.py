@@ -472,7 +472,9 @@ def build_document_sequence_report(
     its number — so this is deliberately NOT the reportable set of the other reports.
     """
     now = datetime.now(timezone.utc)
-    q = db.query(Transaction.machine_id, Transaction.document_type, Transaction.transaction_number).filter(
+    # Per number series, not per type: each type is numbered on its own counter, and an
+    # exempt dealer's refund (-400) shares the 400 series (docs/SPEC_DOCUMENT_PREFIX.md).
+    q = db.query(Transaction.machine_id, Transaction.document_series, Transaction.transaction_number).filter(
         Transaction.tenant_id == tenant_id,
         Transaction.created_at >= window.start,
         Transaction.created_at < window.end,

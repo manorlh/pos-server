@@ -10,12 +10,15 @@ import { join } from 'node:path';
 import {
   buildParticipationBody,
   choiceForTick,
+  conflictNumbersOf,
   effectOf,
   formatTillNumbers,
   initialChoices,
   isKnownRefusal,
   isShopZ,
   mainTillOptions,
+  producerBusyOf,
+  producerViewOf,
   refusalOf,
   roleOf,
   summarySegments,
@@ -201,6 +204,41 @@ describe('the summary', () => {
     assert.deepEqual(summarySegments(one, initialChoices(one), 'm1'), [
       { key: 'shopZOneMain', values: { tills: '1', main: '1' } },
     ]);
+  });
+});
+
+describe("the shop Z's one producer", () => {
+  const msgs = JSON.parse(readFileSync(join(__dirname, '..', 'src', 'messages', 'he.json'), 'utf8')) as {
+    independentTill: { producer: Record<string, string>; conflicts: Record<string, string> };
+  };
+  const fill = (text: string, values: Record<string, string>) =>
+    text.replace(/\{(\w+)\}/g, (_, k: string) => values[k] ?? `{${k}}`);
+
+  it('names the producer: the main till on the LAN, or the cloud', () => {
+    const local = producerViewOf({ kind: 'local', machine: { machineId: 'm1', posNumber: '1', name: 'קופה 1' } });
+    assert.equal(fill(msgs.independentTill.producer[local.key], local.values), 'מפיק ה-Z הסניפי: קופה 1 (רשת מקומית)');
+    const cloud = producerViewOf({ kind: 'cloud', machine: null });
+    assert.equal(fill(msgs.independentTill.producer[cloud.key], cloud.values), 'מפיק ה-Z הסניפי: הענן');
+    assert.equal(producerViewOf({ kind: 'local', machine: null }).key, 'localNoTill');
+    assert.equal(producerViewOf(undefined).key, 'cloud');
+  });
+
+  it("a conflict's numbers: printed and expected", () => {
+    const both = conflictNumbersOf({ zId: 'z', detail: 'offline_z_out_of_sequence', number: 14, expectedNumber: 12 });
+    assert.equal(fill(msgs.independentTill.conflicts[both.key], both.values), 'Z מס׳ 14 (הענן ציפה ל-12)');
+    assert.equal(conflictNumbersOf({ zId: 'z', detail: 'offline_z_number_taken', number: 9 }).key, 'numberOnly');
+    assert.equal(conflictNumbersOf({ zId: 'z', detail: 'not_shop_z_producer' }).key, 'none');
+  });
+
+  it('reads 409 shop_z_producer_busy, flat and nested', () => {
+    const flat = {
+      response: { data: { detail: 'shop_z_producer_busy', message: 'ממתין לקופה 1', canForce: true, reason: 'unsynced_shop_zs' } },
+    };
+    assert.deepEqual(producerBusyOf(flat), { message: 'ממתין לקופה 1', canForce: true, reason: 'unsynced_shop_zs' });
+    const nested = { response: { data: { detail: { code: 'shop_z_producer_busy', message: 'ממתין', canForce: false } } } };
+    assert.deepEqual(producerBusyOf(nested), { message: 'ממתין', canForce: false, reason: null });
+    assert.equal(producerBusyOf({ response: { data: { detail: 'till_in_both_lists' } } }), null);
+    assert.equal(refusalOf(flat)?.message, 'ממתין לקופה 1');
   });
 });
 

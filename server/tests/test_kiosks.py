@@ -389,7 +389,10 @@ def test_merge_through_the_settings_endpoints(w):
     eff = out["effective"]
     assert eff["theme"]["primaryColor"] == "#111111" and eff["theme"]["cornerRadius"] == 30
     assert eff["theme"]["mode"] == "dark"
-    assert eff["attract"] == {"sections": ["hero", "club"], "playlist": [], "videoMuted": False, "showHelp": True}
+    assert {k: v for k, v in eff["attract"].items() if k != "cta"} == {
+        "sections": ["hero", "club"], "playlist": [], "videoMuted": False, "showHelp": True,
+    }
+    assert eff["attract"]["cta"]["position"] == "bottom_full"
     assert out["configVersion"] == C.config_version(eff)
     assert out["updatedBy"] == "admin"
     bundle = R.get_effective(machine_id=w.kiosk.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
@@ -914,3 +917,251 @@ def test_invalid_controllers_are_refused(w):
     convert(w, w.till, controllers=[])
     w.db.expire_all()
     assert w.db.get(KioskDevice, w.kiosk.id).controller_machine_ids == [str(w.other_till.id)]
+
+
+# ── Categories: the side rail and a picture per category ─────────────────────
+
+
+def test_category_layout_defaults_to_the_side_rail_and_is_validated():
+    assert C.default_config()["theme"]["categoryLayout"] == "side"
+    cleaned, errors = C.validate_layer({"theme": {"categoryLayout": "top"}})
+    assert errors == [] and cleaned == {"theme": {"categoryLayout": "top"}}
+    assert C.resolve(cleaned)["theme"]["categoryLayout"] == "top"
+    _c, errors = C.validate_layer({"theme": {"categoryLayout": "left"}})
+    assert paths(errors) == {"theme.categoryLayout": "invalid_value"}
+    # null in a layer inherits (the side rail by default).
+    cleaned, errors = C.validate_layer({"theme": {"categoryLayout": None}})
+    assert errors == [] and C.resolve(cleaned)["theme"]["categoryLayout"] == "side"
+
+
+def test_category_images_are_validated_per_category():
+    good = {"url": "https://cdn.example/burgers.png", "kind": "image", "sha256": SHA, "bytes": 2048}
+    cleaned, errors = C.validate_layer({"catalog": {"categoryImages": {"cat-1": good, "cat-2": {"url": "https://x/d.webp", "kind": "image"}}}})
+    assert errors == []
+    assert cleaned["catalog"]["categoryImages"]["cat-1"] == good
+    for bad, path, code in (
+        ({**good, "kind": "video"}, "catalog.categoryImages.cat-1.kind", "invalid_value"),
+        ({**good, "sha256": "xyz"}, "catalog.categoryImages.cat-1.sha256", "invalid_sha256"),
+        ({**good, "url": "ftp://cdn.example/a.png"}, "catalog.categoryImages.cat-1.url", "invalid_url"),
+        ("https://cdn.example/a.png", "catalog.categoryImages.cat-1", "invalid_media"),
+    ):
+        _c, errors = C.validate_layer({"catalog": {"categoryImages": {"cat-1": bad}}})
+        assert paths(errors).get(path) == code, (bad, [e.to_wire() for e in errors])
+    _c, errors = C.validate_layer({"catalog": {"categoryImages": ["https://cdn.example/a.png"]}})
+    assert paths(errors) == {"catalog.categoryImages": "invalid_type"}
+    _c, errors = C.validate_layer({"catalog": {"categoryImages": {"x" * 200: good}}})
+    assert list(paths(errors).values()) == ["unknown_key"]
+
+
+def test_category_images_merge_per_category_across_levels():
+    company = {"catalog": {"categoryImages": {"c1": {"url": "https://cdn.example/c1.png", "kind": "image"}}}}
+    shop = {"catalog": {"categoryImages": {"c2": {"url": "https://cdn.example/c2.png", "kind": "image"}}}}
+    kiosk = {"catalog": {"categoryImages": {"c1": {"url": "https://cdn.example/c1-kiosk.png", "kind": "image"}}}}
+    images = C.resolve(company, shop, kiosk)["catalog"]["categoryImages"]
+    assert images["c1"]["url"] == "https://cdn.example/c1-kiosk.png"
+    assert images["c2"]["url"] == "https://cdn.example/c2.png"
+
+
+def test_media_manifest_carries_category_images_but_not_hidden_ones():
+    cfg = C.resolve({
+        "catalog": {
+            "categoryImages": {
+                "shown": {"url": "https://cdn.example/shown.png", "kind": "image", "sha256": SHA},
+                "hidden": {"url": "https://cdn.example/hidden.png", "kind": "image"},
+            },
+            "hiddenCategories": ["hidden"],
+        },
+    })
+    media = C.media_manifest(cfg)
+    assert [m["url"] for m in media] == ["https://cdn.example/shown.png"]
+    assert media[0]["sha256"] == SHA
+
+
+# ── "סגנון ממשק" presets, dietary marks, reduce motion ───────────────────────
+
+
+def test_new_keys_have_safe_defaults_and_validate():
+    d = C.default_config()
+    assert d["general"]["showDietary"] is True and d["general"]["reduceMotion"] is False
+    assert d["theme"]["uiStyle"] == "wolt"
+    cleaned, errors = C.validate_layer({
+        "general": {"showDietary": False, "reduceMotion": True},
+        "theme": {"uiStyle": "classic", "typeScale": "xlarge", "typeWeight": "light", "cartStyle": "panel", "animation": "subtle"},
+    })
+    assert errors == []
+    assert cleaned["theme"]["uiStyle"] == "classic"
+    _c, errors = C.validate_layer({
+        "general": {"showDietary": "yes", "reduceMotion": 1},
+        "theme": {"uiStyle": "material", "typeScale": "huge", "typeWeight": "black", "cartStyle": "drawer", "animation": "crazy"},
+    })
+    got = paths(errors)
+    for path in ("theme.uiStyle", "theme.typeScale", "theme.typeWeight", "theme.cartStyle", "theme.animation"):
+        assert got[path] == "invalid_value", path
+    assert got["general.showDietary"] == "invalid_type"
+    assert got["general.reduceMotion"] == "invalid_type"
+
+
+def test_the_default_style_is_the_look_kiosks_had():
+    cfg = C.resolve()
+    before = {
+        "mode": "light", "font": "system", "primaryColor": "#1F6FEB", "accentColor": "#16A34A",
+        "cornerRadius": 20, "cardStyle": "elevated", "buttonShape": "pill", "gridDensity": "comfortable",
+        "imageRatio": "4:3", "categoryStyle": "chips", "showDescriptions": True,
+    }
+    assert {k: cfg["theme"][k] for k in before} == before
+    assert C.validate_config(cfg) == []
+
+
+def test_a_preset_sets_the_theme_and_explicit_settings_win_at_any_level():
+    for style, preset in C.UI_PRESETS.items():
+        cfg = C.resolve({"theme": {"uiStyle": style}})
+        assert {k: cfg["theme"][k] for k in C.PRESET_THEME_KEYS} == preset, style
+        assert C.validate_config(cfg) == [], style
+    # The company sets its brand colour; a shop picks the dark style; the kiosk a radius.
+    company = {"theme": {"primaryColor": "#FF6600"}}
+    shop = {"theme": {"uiStyle": "minimal_dark"}}
+    kiosk = {"theme": {"cornerRadius": 30}}
+    cfg = C.resolve(company, shop, kiosk)
+    assert cfg["theme"]["uiStyle"] == "minimal_dark"
+    assert cfg["theme"]["primaryColor"] == "#FF6600"  # explicit above the style's choice
+    assert cfg["theme"]["cornerRadius"] == 30  # explicit below it
+    assert cfg["theme"]["mode"] == "dark" and cfg["theme"]["typeWeight"] == "light"  # from the style
+    # A kiosk picking another style than its shop: its own style decides.
+    cfg = C.resolve(shop, {"theme": {"uiStyle": "classic"}})
+    assert cfg["theme"]["cartStyle"] == "panel" and cfg["theme"]["buttonShape"] == "square"
+    assert C.style_of(shop, {"theme": {"uiStyle": None}}) == "minimal_dark"
+
+
+def test_settings_answer_the_parents_explicit_layers(w):
+    put(w, "company", w.company.id, {"theme": {"uiStyle": "ios", "cornerRadius": 9}})
+    view = get_settings(w, "shop", w.shop.id)
+    assert view["inheritedLayers"] == {"theme": {"uiStyle": "ios", "cornerRadius": 9}}
+    assert view["inherited"]["theme"]["typeScale"] == "large"  # the ios preset
+    assert view["inherited"]["theme"]["cornerRadius"] == 9  # explicit beats the preset
+
+
+# ── "מצב שאין אינטרנט — תתריע": the kiosk_offline exception ──────────────────
+
+
+def _offline_rows(w):
+    from app.models.audit_exception import AuditException
+
+    return w.db.query(AuditException).filter(AuditException.exception_type == "kiosk_offline").all()
+
+
+def test_kiosk_offline_exception_while_away_and_closed_when_back(w):
+    from app.services import kiosk_offline as O
+
+    convert(w)
+    device = w.db.get(KioskDevice, w.kiosk.id)
+    now = datetime.now(timezone.utc)
+    device.last_kiosk_sync_at = now - timedelta(minutes=3)
+    device.status = {"shiftOpen": True}
+    w.db.flush()
+    cfg = C.resolve()
+    # Three minutes: nothing yet (the rule's default is five).
+    assert O.note_listing(w.db, w.kiosk, device, cfg, now=now) is None
+    # Six minutes, trading: one exception, listed once however often the dashboard polls.
+    device.last_kiosk_sync_at = now - timedelta(minutes=6)
+    w.db.flush()
+    row = O.note_listing(w.db, w.kiosk, device, cfg, now=now)
+    assert row is not None and row.details["backAt"] is None and row.severity == "high"
+    assert O.note_listing(w.db, w.kiosk, device, cfg, now=now + timedelta(seconds=15)) is None
+    assert len(_offline_rows(w)) == 1
+    # Back: its first sync closes it, with the minutes it was away.
+    S.kiosk_sync(w.db, w.kiosk, {"flowState": "attract"}, now=now + timedelta(minutes=4))
+    w.db.flush()
+    rows = _offline_rows(w)
+    assert len(rows) == 1 and rows[0].details["backAt"] and int(rows[0].value) == 10
+
+
+def test_kiosk_offline_respects_hours_trading_and_the_rule(w, monkeypatch):
+    from app.services import kiosk_offline as O
+
+    convert(w)
+    device = w.db.get(KioskDevice, w.kiosk.id)
+    now = datetime(2026, 10, 6, 1, 0, tzinfo=timezone.utc)  # a Tuesday night
+    device.last_kiosk_sync_at = now - timedelta(minutes=30)
+    w.db.flush()
+    # No hours and no open shift reported: not trading, no alert.
+    device.status = {"shiftOpen": False}
+    assert O.note_listing(w.db, w.kiosk, device, C.resolve(), now=now) is None
+    # Hours on, outside them: none either.
+    monkeypatch.setattr(O, "_local", lambda db, machine, at: at)
+    night = C.resolve({"hours": {"enabled": True, "ranges": [{"days": [0, 1, 2, 3, 4, 5, 6], "open": "08:00", "close": "23:00"}]}})
+    assert O.note_listing(w.db, w.kiosk, device, night, now=now) is None
+    # A range past midnight covers it.
+    late = C.resolve({"hours": {"enabled": True, "ranges": [{"days": [1], "open": "18:00", "close": "03:00"}]}})
+    assert O.note_listing(w.db, w.kiosk, device, late, now=now) is not None
+    # The rule switched off: nothing.
+    monkeypatch.setattr(O, "rule_of", lambda db, machine: None)
+    device.last_kiosk_sync_at = now - timedelta(minutes=60)
+    assert O.note_back(w.db, w.kiosk, device, late, device.last_kiosk_sync_at, now=now) is not None  # closes the open one
+    assert O.note_listing(w.db, w.kiosk, device, late, now=now) is None
+
+
+def test_a_gap_nobody_watched_is_recorded_when_the_kiosk_returns(w):
+    from app.services import kiosk_offline as O
+
+    convert(w)
+    device = w.db.get(KioskDevice, w.kiosk.id)
+    now = datetime.now(timezone.utc)
+    device.status = {"shiftOpen": True}
+    w.db.flush()
+    row = O.note_back(w.db, w.kiosk, device, C.resolve(), now - timedelta(minutes=12), now=now)
+    assert row is not None and row.details["backAt"] and int(row.value) == 12
+    # A short blip records nothing.
+    assert O.note_back(w.db, w.kiosk, device, C.resolve(), now - timedelta(minutes=1), now=now) is None
+
+
+def test_the_exception_type_is_a_rule():
+    from app.services import exceptions as E
+
+    assert E.RULES_BY_TYPE["kiosk_offline"].params[0].default == 5
+    assert E.RULES_BY_TYPE["kiosk_offline"].params[0].key == "offlineMinutes"
+
+
+# ── "כפתור מסך הפתיחה": the attract screen's call to action ───────────────────
+
+
+def test_cta_defaults_validate_and_follow_the_style():
+    cta = C.default_config()["attract"]["cta"]
+    assert cta["position"] == "bottom_full" and cta["tapAnywhere"] is True and cta["animation"] == "pulse"
+    for style, preset in C.UI_PRESET_CTA.items():
+        got = C.resolve({"theme": {"uiStyle": style}})["attract"]["cta"]
+        assert {k: got[k] for k in C.PRESET_CTA_KEYS} == preset, style
+    # An explicit choice beats the style's, at any level; the rest still follows the style.
+    company = {"attract": {"cta": {"position": "middle_center", "subtitle": "גע כדי להתחיל"}}}
+    kiosk = {"theme": {"uiStyle": "classic"}}
+    got = C.resolve(company, kiosk)["attract"]["cta"]
+    assert got["position"] == "middle_center" and got["subtitle"] == "גע כדי להתחיל"
+    assert got["size"] == "xl" and got["icon"] == "cart"
+
+
+def test_cta_validation():
+    good = {
+        "size": "custom", "widthPct": 60, "heightDp": 120, "position": "custom", "x": 30, "y": 70,
+        "fillColor": "#112233", "textColor": "#FFFFFF", "fontSize": 30, "fontWeight": "black",
+        "radius": 100, "borderColor": "#000000", "borderWidth": 2, "shadow": False,
+        "icon": "hand", "iconPosition": "start", "animation": "glow", "subtitle": "גע כדי להתחיל",
+        "tapAnywhere": False,
+    }
+    cleaned, errors = C.validate_layer({"attract": {"cta": good}})
+    assert errors == [] and cleaned["attract"]["cta"] == good
+    _c, errors = C.validate_layer({"attract": {"cta": {
+        "size": "huge", "widthPct": 10, "heightDp": 40, "position": "corner", "x": 101, "y": -1,
+        "fillColor": "red", "fontSize": 99, "fontWeight": "thin", "radius": 101, "borderWidth": 9,
+        "icon": "rocket", "iconPosition": "middle", "animation": "spin", "subtitle": "x" * 81,
+        "tapAnywhere": "yes", "bogus": 1,
+    }}})
+    got = paths(errors)
+    expected = {
+        "attract.cta.size": "invalid_value", "attract.cta.widthPct": "out_of_range", "attract.cta.heightDp": "out_of_range",
+        "attract.cta.position": "invalid_value", "attract.cta.x": "out_of_range", "attract.cta.y": "out_of_range",
+        "attract.cta.fillColor": "invalid_color", "attract.cta.fontSize": "out_of_range", "attract.cta.fontWeight": "invalid_value",
+        "attract.cta.radius": "out_of_range", "attract.cta.borderWidth": "out_of_range", "attract.cta.icon": "invalid_value",
+        "attract.cta.iconPosition": "invalid_value", "attract.cta.animation": "invalid_value", "attract.cta.subtitle": "too_long",
+        "attract.cta.tapAnywhere": "invalid_type", "attract.cta.bogus": "unknown_key",
+    }
+    for path, code in expected.items():
+        assert got.get(path) == code, (path, got.get(path))

@@ -93,7 +93,14 @@ export function errorCodeOf(detail: unknown): string | null {
  * Codes whose server text says more than ours (local mode, "חובה לסגור את כל הקופות" —
  * the shop's own rule, in Hebrew): its `message` is shown first when it sends one.
  */
-const SERVER_TEXT_FIRST = new Set(['z_only_from_main_till', 'all_tills_required', 'local_mode_all_tills']);
+const SERVER_TEXT_FIRST = new Set([
+  'z_only_from_main_till',
+  'all_tills_required',
+  'local_mode_all_tills',
+  // The shop Z's one producer is the main till on the LAN (or a switch is waiting on it).
+  'shop_z_producer_local',
+  'shop_z_producer_busy',
+]);
 
 /** Our own words for those of them not in `zErrors` (under `independentTill.zErrors`). */
 const LOCAL_KNOWN = new Set(['all_tills_required', 'local_mode_all_tills']);

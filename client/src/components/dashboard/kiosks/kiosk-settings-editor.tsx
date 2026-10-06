@@ -26,6 +26,8 @@ import {
   getPath,
   jsonEqual,
   pruneOverrides,
+  rebaseInherited,
+  switchUiStyle,
   setPath,
   validateKioskConfig,
   type KioskConfig,
@@ -150,7 +152,14 @@ function EditorBody({
   }, [dirty, dirtyRef]);
 
   const errors = useMemo(() => validateKioskConfig(draft, { kdsAvailable, fonts }), [draft, kdsAvailable, fonts]);
-  const layer = useMemo(() => pruneOverrides(inherited, draft), [inherited, draft]);
+  // What this level inherits once it picks the draft's "סגנון ממשק": a value that only follows
+  // the style is compared, pruned and reset against the style's preset, never saved explicitly.
+  const inheritedLayers = settings.inheritedLayers ?? null;
+  const base = useMemo(
+    () => rebaseInherited(inherited, inheritedLayers, draft.theme.uiStyle),
+    [inherited, inheritedLayers, draft.theme.uiStyle],
+  );
+  const layer = useMemo(() => pruneOverrides(base, draft), [base, draft]);
   const overrideCount = useMemo(() => Object.keys(layer).length, [layer]);
 
   const catalogQuery = useQuery({
@@ -198,7 +207,7 @@ function EditorBody({
   const ctx: KioskEditorValue = {
     level,
     draft,
-    inherited,
+    inherited: base,
     canEdit,
     // POST /kiosks/media takes any kiosk write role: whoever may save this level may upload.
     canUpload: canEdit,
@@ -214,7 +223,21 @@ function EditorBody({
       setDraft((d) => setPath(d, path, value));
       setServerErrors((list) => (list.length ? list.filter((e) => !(e.path === path || e.path.startsWith(`${path}.`))) : list));
     },
-    reset: (path) => setDraft((d) => setPath(d, path, cloneJson(getPath(inherited, path)))),
+    reset: (path) =>
+      setDraft((d) => {
+        // The style itself (or the whole theme) goes back to the parents' style, moving the
+        // values that follow it; anything else back to what the current style inherits.
+        if (path === 'theme.uiStyle' || path === 'theme') {
+          const style = inherited.theme.uiStyle;
+          const moved = switchUiStyle(d, rebaseInherited(inherited, inheritedLayers, d.theme.uiStyle), rebaseInherited(inherited, inheritedLayers, style), style);
+          return path === 'theme' ? setPath(moved, 'theme', cloneJson(rebaseInherited(inherited, inheritedLayers, style).theme)) : moved;
+        }
+        return setPath(d, path, cloneJson(getPath(rebaseInherited(inherited, inheritedLayers, d.theme.uiStyle), path)));
+      }),
+    setUiStyle: (style) =>
+      setDraft((d) =>
+        switchUiStyle(d, rebaseInherited(inherited, inheritedLayers, d.theme.uiStyle), rebaseInherited(inherited, inheritedLayers, style), style),
+      ),
     showScreen: setScreen,
   };
 
@@ -336,6 +359,11 @@ function EditorBody({
                 onScreen={setScreen}
                 brandName={brandName}
                 nowMs={nowMs}
+                onCtaMove={
+                  canEdit
+                    ? (x, y) => setDraft((d) => setPath(setPath(d, 'attract.cta.x', x), 'attract.cta.y', y))
+                    : undefined
+                }
               />
             </div>
           </aside>
@@ -375,6 +403,7 @@ function EditorBody({
             saved={saved}
             draft={draft}
             layer={layer}
+            inheritedLayers={inheritedLayers}
             kiosks={kiosks}
             names={names}
             saving={save.isPending}

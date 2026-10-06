@@ -196,7 +196,9 @@ def build_business_info(
         company_zip=bi_override.get("companyZip") or "",
         company_reg_number=bi_override.get("companyRegNumber"),
         has_branches=bi_override.get("hasBranches", has_branches),
-        branch_id=bi_override.get("branchId") or branch_id,
+        # The shop's own code first: it is mandatory and unique in the company
+        # (app/services/branch_code.py); an override is only for a row with none.
+        branch_id=branch_id or bi_override.get("branchId"),
         # Always the company's: a shop has no business identity of its own, and a
         # `businessInfo` override in settings does not change the dealer type
         # (docs/SPEC_BUSINESS_TYPE.md, open question 7).

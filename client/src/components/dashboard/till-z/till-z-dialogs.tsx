@@ -248,7 +248,11 @@ function ZModeForm({
         ? t('zInProgress')
         : refusal?.code === 'till_open'
           ? t('tillOpen')
-          : errors.forError(save.error);
+          : refusal?.code === 'till_offline_zs_unsynced'
+            ? refusal.reason === 'not_seen'
+              ? t('offlineNotSeen')
+              : t('offlineUnsynced', { count: refusal.pending ?? 1 })
+            : errors.forError(save.error);
 
   return (
     <>

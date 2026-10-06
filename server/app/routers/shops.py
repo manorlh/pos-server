@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.services import licenses
+from app.services import branch_code, licenses
 from app.database import get_db
 from app.models.shop import Shop
 from app.models.company import Company
@@ -444,11 +444,13 @@ def create_shop(
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
+    # "קוד סניף" is mandatory, digits, unique in the company (400 / 409, Hebrew).
+    branch_id = branch_code.check_branch_code(db, company.id, data.branch_id)
     shop = Shop(
         tenant_id=active_tenant_id,
         company_id=data.company_id,
         name=data.name,
-        branch_id=data.branch_id,
+        branch_id=branch_id,
         address=data.address,
         city=data.city,
         is_active=data.is_active,
@@ -544,6 +546,13 @@ def update_shop(
     updates = data.model_dump(exclude_unset=True, by_alias=False)
     # The license fields leave `updates` here: the super admin's only.
     licenses.apply_license(current_user, shop, updates)
+    if "branch_id" in updates:
+        # Never cleared, digits, unique in the company (400 / 409). Saving it is also how
+        # a code the migration assigned is confirmed ("ודאו מול רו״ח").
+        updates["branch_id"] = branch_code.check_branch_code(
+            db, shop.company_id, updates["branch_id"], shop_id=shop.id
+        )
+        shop.branch_id_auto_assigned = False
     profile_changed = bool(_SHOP_PROFILE_FIELDS & set(updates.keys()))
     was_active, old_company_id = shop.is_active, shop.company_id
     for field, value in updates.items():
@@ -582,6 +591,22 @@ def delete_shop(
     # A till with an open shift or shifts awaiting a Z keeps its shop (409).
     for machine in list(shop.machines):
         refuse_leaving_shop_with_shifts(db, machine)
+    # A shop with a Z run is never deleted: its counter would go with it, and a shop made
+    # in its place would number its Zs from 1 again (docs/SPEC_OFFLINE_TILL_Z.md §4.7).
+    from app.models.shop_z_sequence import ShopZSequence
+    from app.models.z_report import ZReport
+
+    if (
+        db.query(ZReport.id).filter(ZReport.shop_id == shop.id).first() is not None
+        or db.query(ShopZSequence.shop_id).filter(ShopZSequence.shop_id == shop.id).first() is not None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "shop_has_z_history",
+                "message": "לסניף יש דוחות Z — לא ניתן למחוק אותו. אפשר להשבית אותו.",
+            },
+        )
     for machine in list(shop.machines):
         set_machine_shop(db, machine, None)
     db.delete(shop)

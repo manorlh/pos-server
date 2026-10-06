@@ -696,6 +696,27 @@ def create_z_run(
     now = now or datetime.now(timezone.utc)
     expire_overdue_runs(db, now=now)
 
+    # Exactly one producer of the shop's Z sequence (docs/SPEC_INDEPENDENT_TILL.md §8.10):
+    # a shop whose Zs a main till makes (local mode), or whose production is still on its way
+    # to or from one, gets no cloud Z — from the dashboard, a till, or any other road.
+    from app.services.local_shop_z import CLOUD, effective_producer
+
+    producer = effective_producer(db, shop, now=now)
+    if producer.kind != CLOUD or producer.configured_kind != CLOUD:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "shop_z_producer_local",
+                **producer.to_json(db),
+                "message": (
+                    "ה-Z הסניפי של הסניף מופק בקופה הראשית ברשת המקומית — לא בענן."
+                    if producer.handover is None
+                    else "הפקת ה-Z הסניפי עוברת עכשיו בין הקופה הראשית לענן ולא הושלמה: "
+                    + producer.handover["message"]
+                ),
+            },
+        )
+
     area = None
     if area_id is not None:
         from app.services.areas import area_in_shop, refuse_archived

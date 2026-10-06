@@ -95,6 +95,8 @@ function useDocumentTypeLabel() {
 
 export default function TransactionsPage() {
   const t = useTranslations('transactions');
+  // Each type has its own number series: a number is shown with its type.
+  const documentTypeLabel = useDocumentTypeLabel();
   const brandLabels = useCardBrandLabels();
   const paymentLabel = usePaymentMethodLabel();
   // `GET /transactions` filters by machineId and shopId. There is no companyId
@@ -285,8 +287,10 @@ export default function TransactionsPage() {
                 >
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="font-mono text-xs">
-                      {/* As the till printed it: `2-57` ("קידומת מסמכים"). */}
+                      {/* As the till printed it: `20000057` ("קידומת מסמכים"), with its type —
+                          each type has its own number series. */}
                       {tx.documentNumber ?? tx.transactionNumber}
+                      <span className="text-muted-foreground ms-2 font-sans">{documentTypeLabel(tx.documentType)}</span>
                       {tx.basketId && (
                         <Badge variant="outline" className="ms-2 font-sans">{t('basket')}</Badge>
                       )}
@@ -343,8 +347,10 @@ export default function TransactionsPage() {
                   <TableRow key={tx.id} className="cursor-pointer" onClick={() => setSelectedId(tx.id)}>
                     <TableCell>{formatDateTime(tx.createdAt)}</TableCell>
                     <TableCell className="font-mono text-xs">
-                      {/* As the till printed it: `2-57` ("קידומת מסמכים"). */}
+                      {/* As the till printed it: `20000057` ("קידומת מסמכים"), with its type —
+                          each type has its own number series. */}
                       {tx.documentNumber ?? tx.transactionNumber}
+                      <span className="text-muted-foreground ms-2 font-sans">{documentTypeLabel(tx.documentType)}</span>
                       {tx.basketId && (
                         <Badge variant="outline" className="ms-2 font-sans">{t('basket')}</Badge>
                       )}
@@ -449,6 +455,7 @@ function TransactionDetailsDialog({
               <div>
                 <Label className="text-xs">{t('txNumber')}</Label>
                 <div className="font-mono">{data.documentNumber ?? data.transactionNumber}</div>
+                <div className="text-muted-foreground text-xs">{documentTypeLabel(data.documentType)}</div>
               </div>
               <div>
                 <Label className="text-xs">{t('createdAt')}</Label>

@@ -98,6 +98,10 @@ class Product(Base):
     # — null inherits the category's. Not a key, like the routes: a deleted course reads
     # as none.
     allergens = Column(JSON, nullable=True)
+    # "סימוני תזונה" (docs/SPEC_PRODUCT_DIETARY.md): what the dish is for the diner —
+    # vegan / vegetarian / dairy / meat / gluten_free / spicy, cleaned and ordered by
+    # app/services/dietary.py. Null: none.
+    dietary_tags = Column(JSON, nullable=True)
     course_id = Column(UUID(as_uuid=True), nullable=True)
     #: At most this many in one order (a promotional item limited to 1); null: no limit.
     max_per_order = Column(Integer, nullable=True)

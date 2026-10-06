@@ -35,7 +35,7 @@ from app.middleware.auth import (
     get_current_user,
 )
 from app.models.shop import Shop
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.services import independent_till as IT
 from app.services import local_shop_z as LZ
 from app.services import printers as K
@@ -54,6 +54,15 @@ class ZParticipationIn(BaseModel):
     independent: List[uuid.UUID] = Field(default_factory=list)
     #: Absent: the main till stays; null: none; a till: it (a participant after the save).
     main_till_id: Optional[uuid.UUID] = Field(None, alias="mainTillId")
+    #: The super admin moves the shop's Z production although its producer may still hold
+    #: shop Zs the cloud does not (docs/SPEC_INDEPENDENT_TILL.md §8.10).
+    force_producer_switch: bool = Field(False, alias="forceProducerSwitch")
+
+
+class ConflictResolveIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    note: Optional[str] = Field(None, max_length=500)
 
 
 def _shop(db: Session, shop_id: uuid.UUID, user: User, tenant_id) -> Shop:
@@ -77,6 +86,67 @@ def get_z_participation(
     shop = _shop(db, shop_id, current_user, active_tenant_id)
     out = IT.shop_state(db, shop, current_user)
     db.commit()  # the built-in parameters, if reading created them
+    return out
+
+
+@router.get("/shops/{shop_id}/shop-z-producer")
+def get_shop_z_producer(
+    shop_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Who produces the shop's Zs, a handover waiting, and the conflicts for support (§8.10–8.11)."""
+    shop = _shop(db, shop_id, current_user, active_tenant_id)
+    out = LZ.producer_state(db, shop)
+    db.commit()
+    return out
+
+
+@router.post("/shops/{shop_id}/shop-z-producer/handover")
+def post_shop_z_producer_handover(
+    shop_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "העבר את הפקת ה-Z עכשיו" — the super admin's alone: the production moves to the
+    configured producer at once, although the main till holding it may still have shop Zs
+    the cloud does not (it died). Recorded; any such Z that turns up later is a conflict.
+    """
+    shop = _shop(db, shop_id, current_user, active_tenant_id)
+    if current_user.role != UserRole.SUPER_ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_admin_only")
+    LZ.handover_now(db, current_user, shop)
+    out = LZ.producer_state(db, shop)
+    db.commit()
+    return out
+
+
+@router.post("/shops/{shop_id}/shop-z-conflicts/{z_id}/resolve")
+def post_resolve_shop_z_conflict(
+    shop_id: uuid.UUID,
+    z_id: uuid.UUID,
+    body: ConflictResolveIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Support settled a shop Z the cloud could not file as printed (the super admin's): it
+    stops blocking the main till, which keeps that Z as printed. Its number is not changed.
+    """
+    shop = _shop(db, shop_id, current_user, active_tenant_id)
+    if current_user.role != UserRole.SUPER_ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_admin_only")
+    try:
+        LZ.resolve_conflict(db, current_user, shop, z_id, note=body.note)
+    except LZ.LocalShopZRefused as refused:
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
+    out = LZ.producer_state(db, shop)
+    db.commit()
     return out
 
 
@@ -151,9 +221,13 @@ def put_z_participation(
     try:
         IT.apply_shop(
             db, current_user, shop,
-            participants=body.participants, independent=body.independent, **kwargs,
+            participants=body.participants, independent=body.independent,
+            force_producer_switch=body.force_producer_switch, **kwargs,
         )
     except IT.IndependentSwitchRefused as refused:
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
+    except LZ.LocalShopZRefused as refused:
         db.rollback()
         return JSONResponse(status_code=refused.status_code, content=refused.body)
     except TillZRefused as refused:

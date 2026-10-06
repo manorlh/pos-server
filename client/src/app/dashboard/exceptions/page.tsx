@@ -86,6 +86,11 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   offline_z_gap: 'bg-amber-200 text-amber-950 dark:bg-amber-900 dark:text-amber-100',
   z_transmission_failed: 'bg-yellow-200 text-yellow-950 dark:bg-yellow-900 dark:text-yellow-100',
   forced_z_close: 'bg-rose-200 text-rose-950 dark:bg-rose-900 dark:text-rose-100',
+  offline_z_conflict: 'bg-red-300 text-red-950 dark:bg-red-800 dark:text-red-50',
+  support_z_produced: 'bg-purple-200 text-purple-950 dark:bg-purple-900 dark:text-purple-100',
+  till_reset: 'bg-purple-200 text-purple-950 dark:bg-purple-900 dark:text-purple-100',
+  shop_z_producer_forced: 'bg-amber-200 text-amber-950 dark:bg-amber-900 dark:text-amber-100',
+  kiosk_offline: 'bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100',
 };
 
 function TypeBadge({ type }: { type: ExceptionType }) {
@@ -577,6 +582,23 @@ function tableCancelLine(
     .join(' · ');
 }
 
+/** A kiosk offline: "קיוסק כניסה · לא מחובר מ-14:02 עד 14:31", or "… · עדיין לא חזר". */
+function kioskOfflineLine(
+  d: Record<string, unknown>,
+  t: ReturnType<typeof useTranslations<'exceptions'>>,
+): string | null {
+  const hhmm = (v: unknown) => {
+    if (typeof v !== 'string' || !v) return null;
+    const at = new Date(v);
+    return Number.isNaN(at.getTime()) ? null : at.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+  };
+  const since = hhmm(d.offlineSince);
+  if (!since) return typeof d.kiosk === 'string' ? d.kiosk : null;
+  const back = hhmm(d.backAt);
+  const span = back ? t('kioskOffline.span', { from: since, to: back }) : t('kioskOffline.notBack', { from: since });
+  return [typeof d.kiosk === 'string' && d.kiosk ? d.kiosk : null, span].filter(Boolean).join(' · ');
+}
+
 function ExceptionRow({
   row,
   who,
@@ -599,7 +621,9 @@ function ExceptionRow({
       ? tableCancelLine(row.details ?? {}, t)
       : row.type === 'oth'
         ? othExceptionLine(row.details ?? {}, (name) => t('tableCancel.approvedBy', { name }))
-        : detailLine(row);
+        : row.type === 'kiosk_offline'
+          ? kioskOfflineLine(row.details ?? {}, t)
+          : detailLine(row);
   const till = [row.machineName, row.posNumber ? t('register', { n: row.posNumber }) : null]
     .filter(Boolean)
     .join(' · ');

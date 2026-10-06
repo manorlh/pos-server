@@ -1119,6 +1119,20 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "והפריט נכנס כרגיל. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
+    # "סימוני תזונה" (docs/SPEC_PRODUCT_DIETARY.md) on the till's own sell screen. The kiosk
+    # shows them by its own settings, whatever this says.
+    BuiltinParameter(
+        key="showDietaryMarks",
+        label="הצג סימוני תזונה בקופה",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: על ריבוע המוצר במסך המכירה ובחלון המנה מוצגים סמלים קטנים של סימוני התזונה "
+            "שהוגדרו בטופס המוצר (טבעוני, צמחוני, חלבי, בשרי, ללא גלוטן, חריף). כבוי (ברירת מחדל) — "
+            "לא מוצגים בקופה. בקיוסק הסימונים מוצגים לפי הגדרות הקיוסק. ניתן לקבוע לפי חברה, סניף, "
+            "נקודת מכירה או קופה."
+        ),
+    ),
     BuiltinParameter(
         key="tableSeats",
         label="סועדים בשולחן",

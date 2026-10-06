@@ -273,7 +273,7 @@ def shop_state(db: Session, shop, user: User) -> dict:
     """Every seated till of the shop with its role, the main till, and the local mode."""
     from app.services import main_till as MT
     from app.services import z_runs as ZR
-    from app.services.local_shop_z import local_mode_of_shop
+    from app.services.local_shop_z import local_mode_of_shop, producer_state
     from app.services.machine_status import is_online
 
     main = MT.main_till_of_shop(db, shop.id)
@@ -300,6 +300,8 @@ def shop_state(db: Session, shop, user: User) -> dict:
         "mainTill": MT.till_ref(main),
         "localMode": local_mode_of_shop(db, shop),
         "canEdit": user.role == UserRole.SUPER_ADMIN,
+        # Who produces the shop's Zs, a handover waiting, conflicts for support (§8.10–8.11).
+        "shopZ": producer_state(db, shop),
     }
 
 
@@ -314,6 +316,7 @@ def apply_shop(
     participants: Sequence[uuid.UUID] = (),
     independent: Sequence[uuid.UUID] = (),
     main_till_id: Any = _MAIN_UNCHANGED,
+    force_producer_switch: bool = False,
     now: Optional[datetime] = None,
 ) -> List[POSMachine]:
     """
@@ -383,6 +386,11 @@ def apply_shop(
     for machine_id in leaving:
         check_switch(db, user, seated[machine_id], True)
 
+    # Exactly one producer of the shop's Z sequence (SPEC_INDEPENDENT_TILL §8.10): pinned
+    # before the save, checked after it — a move the producer cannot hand over is refused.
+    from app.services.local_shop_z import ProducerGuard
+
+    guard = ProducerGuard(db, [shop], now=now)
     changed = []
     for machine_id in joining:
         if set_independent(db, seated[machine_id], False, now=now):
@@ -393,4 +401,5 @@ def apply_shop(
     if main_till_id is not _MAIN_UNCHANGED:
         MT.set_main_till(db, shop, main_till_id, now=now)
     db.flush()
+    guard.check(force=force_producer_switch, user=user)
     return changed

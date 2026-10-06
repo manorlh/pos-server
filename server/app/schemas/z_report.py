@@ -100,16 +100,21 @@ class ZReportOut(BaseModel):
     #: cloud's figures differ from the till's paper (`[{key, till, cloud}]`, null = none).
     built_offline: bool = Field(False, alias="builtOffline")
     uploaded_at: Optional[datetime] = Field(None, alias="uploadedAt")
+    #: The shop's branch code ("קוד סניף") as frozen on the Z (else the shop's now). With the
+    #: till number (`posNumber`, a till Z) it tells apart two Zs of one branch that carry the
+    #: same number (docs/SPEC_INDEPENDENT_TILL.md §11).
+    branch_code: Optional[str] = Field(None, alias="branchCode")
     #: What the Z includes, frozen at build (docs/SPEC_INDEPENDENT_TILL.md §7):
     #: `{kind: shop|area|till|independent_till, label, tills, independentOutside}`; null on
     #: a Z built before it was stored.
     scope: Optional[Dict[str, Any]] = None
-    #: A shop Z produced on the main till and renumbered on upload: the number it printed.
-    renumbered_from: Optional[int] = Field(None, alias="renumberedFrom")
     offline_discrepancies: Optional[List[Dict[str, Any]]] = Field(None, alias="offlineDiscrepancies")
     #: The card batch transmission the till ran before the Z, with the terminal's answer
     #: (`{outcome, batchNumber, statusMessage, transactionCount, amount, byBrand, …}`).
     card_transmission: Optional[Dict[str, Any]] = Field(None, alias="cardTransmission")
+    #: Produced by support from the cloud for a dead till (offline till Z spec §4.6):
+    #: `{by, at, reason, reasonText, note, skippedNumbers}`; null otherwise.
+    produced_by_support: Optional[Dict[str, Any]] = Field(None, alias="producedBySupport")
     #: The till of a till Z, and of a legacy row; null on a cloud Z (it spans tills).
     machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
     #: Legacy rows: the till's own Z blob.

@@ -10,13 +10,14 @@ import type { ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { formatDistanceStrict } from 'date-fns';
 import { he } from 'date-fns/locale';
-import { AlertTriangle, ImageOff, PauseCircle, Printer, Settings2, SlidersHorizontal } from 'lucide-react';
+import { AlertTriangle, ImageOff, PauseCircle, Printer, Settings2, SlidersHorizontal, WifiOff } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/format';
-import { agorotToShekels, kioskConnection, type KioskConnection } from '@/lib/kioskConfig';
+import { useTenantTimeZone } from '@/lib/auth';
+import { agorotToShekels, isoDayInZone, kioskConnection, kioskOffline, type KioskConnection } from '@/lib/kioskConfig';
 import type { KioskPrinterHealth, KioskSummary } from '@/lib/kioskApi';
 
 const DOT: Record<KioskConnection, string> = {
@@ -34,15 +35,40 @@ export function agoText(iso: string | null | undefined, nowMs: number): string |
   return formatDistanceStrict(Math.min(at, nowMs), nowMs, { addSuffix: true, locale: he });
 }
 
+/** "14:32" for today, "05/10 14:32" for an earlier day — in the tenant's zone. */
+export function seenAtText(iso: string | null | undefined, nowMs: number, timeZone: string): string | null {
+  if (!iso) return null;
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return null;
+  const time = at.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', timeZone });
+  if (isoDayInZone(at, timeZone) === isoDayInZone(new Date(nowMs), timeZone)) return time;
+  return `${at.toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit', timeZone })} ${time}`;
+}
+
+/**
+ * Connected, or "לא מחובר · נראה לאחרונה HH:MM" (kioskOffline: unseen for over 2 minutes, never
+ * seen, or not online) — a red badge, so an offline kiosk's numbers never read as live.
+ */
 export function ConnectionBadge({ k, nowMs }: { k: KioskSummary; nowMs: number }) {
   const t = useTranslations('kiosks.connection');
+  const timeZone = useTenantTimeZone();
   const state = kioskConnection(k, nowMs);
-  const last = agoText(k.lastSeenAt ?? k.lastKioskSyncAt, nowMs);
+  if (!kioskOffline(k, nowMs)) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-sm">
+        <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full animate-pulse', DOT.online)} aria-hidden />
+        <span>{t('online')}</span>
+      </span>
+    );
+  }
+  const seen = seenAtText(k.lastSeenAt ?? k.lastKioskSyncAt, nowMs, timeZone);
   return (
-    <span className="inline-flex items-center gap-1.5 text-sm" title={last ? t('lastSeen', { when: last }) : undefined}>
-      <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', DOT[state], state === 'online' && 'animate-pulse')} aria-hidden />
-      <span>{t(state)}</span>
-      {state !== 'online' && last ? <span className="text-xs text-muted-foreground">· {last}</span> : null}
+    <span className="inline-flex flex-wrap items-center gap-1.5 text-sm">
+      <Badge variant="destructive" className="gap-1">
+        <span className={cn('h-2 w-2 shrink-0 rounded-full', DOT[state])} aria-hidden />
+        <WifiOff /> {t('offline')}
+      </Badge>
+      <span className="text-xs text-muted-foreground">{seen ? t('lastSeenAt', { time: seen }) : t('never')}</span>
     </span>
   );
 }
@@ -80,6 +106,11 @@ export function StateBadges({ k }: { k: KioskSummary }) {
       {k.paused ? (
         <Badge className="bg-amber-500 text-white">
           <PauseCircle /> {t('paused')}
+        </Badge>
+      ) : k.flowState === 'no_payment' ? (
+        // The pinpad is not configured or not reachable: the kiosk cannot take payments.
+        <Badge className="bg-amber-500 text-white">
+          <AlertTriangle /> {t('flow.no_payment')}
         </Badge>
       ) : k.flowState ? (
         <Badge variant="secondary">{t.has(`flow.${k.flowState}`) ? t(`flow.${k.flowState}`) : k.flowState}</Badge>

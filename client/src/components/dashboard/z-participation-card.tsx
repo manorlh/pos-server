@@ -25,6 +25,7 @@ import {
   initialChoices,
   isKnownRefusal,
   mainTillOptions,
+  producerBusyOf,
   refusalOf,
   roleOf,
   sortTills,
@@ -32,12 +33,19 @@ import {
   switchBlockOf,
   validateParticipation,
   type ParticipationRefusal,
+  type ProducerBusy,
   type ZChoices,
   type ZParticipationState,
   type ZParticipationTill,
   type ZRole,
 } from '@/lib/zParticipation';
-import { fetchZParticipation, saveZParticipation, zParticipationKey } from '@/lib/zParticipationApi';
+import {
+  fetchZParticipation,
+  saveZParticipation,
+  shopZProducerKey,
+  zParticipationKey,
+} from '@/lib/zParticipationApi';
+import { ShopZForceDialog } from '@/components/dashboard/shop-z-force-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -75,6 +83,7 @@ export function ZParticipationCard({ shopId }: { shopId: string }) {
 function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipationState }) {
   const t = useTranslations('independentTill');
   const tc = useTranslations('common');
+  const tProducer = useTranslations('independentTill.producer');
   const qc = useQueryClient();
   const [choices, setChoices] = useState<ZChoices>(() => initialChoices(data));
   const [mainTillId, setMainTillId] = useState<string>(data.mainTill?.machineId ?? '');
@@ -86,11 +95,22 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
   const mainIssue = issues.find((i) => i.kind === 'main_not_participating');
   const options = mainTillOptions(data.tills, choices);
 
+  // 409 `shop_z_producer_busy`: the shop Z's producer has not handed over; a super admin may force it.
+  const [producerBusy, setProducerBusy] = useState<ProducerBusy | null>(null);
+  const [confirmForce, setConfirmForce] = useState(false);
+
   const save = useMutation({
-    mutationFn: () => saveZParticipation(shopId, body ?? { participants: [], independent: [] }),
+    mutationFn: (force: boolean = false) =>
+      saveZParticipation(shopId, {
+        ...(body ?? { participants: [], independent: [] }),
+        ...(force ? { forceProducerSwitch: true } : {}),
+      }),
     onSuccess: (out) => {
       setRefusal(null);
+      setProducerBusy(null);
+      setConfirmForce(false);
       qc.setQueryData(zParticipationKey(shopId), out);
+      void qc.invalidateQueries({ queryKey: shopZProducerKey(shopId) });
       void qc.invalidateQueries({ queryKey: ['main-till', shopId] });
       void qc.invalidateQueries({ queryKey: ['shop-z-mode', shopId] });
       void qc.invalidateQueries({ queryKey: ['kitchen-printers', shopId] });
@@ -103,6 +123,8 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
     onError: (err: unknown) => {
       const r = refusalOf(err);
       setRefusal(r);
+      setProducerBusy(producerBusyOf(err));
+      setConfirmForce(false);
       if (!r) toast.error(axiosErrorToToastMessage(err, tc('error')));
     },
   });
@@ -228,15 +250,32 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
       {data.localMode ? <p className="text-xs text-muted-foreground">{t('localModeNote')}</p> : null}
 
       {refusal ? (
-        <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-          {refusalText(refusal)}
+        <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+          <p>{refusalText(refusal)}</p>
+          {producerBusy?.canForce ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive"
+              disabled={save.isPending || !body}
+              onClick={() => setConfirmForce(true)}
+            >
+              {tProducer('forceAnyway')}
+            </Button>
+          ) : null}
         </div>
       ) : null}
+      <ShopZForceDialog
+        open={confirmForce}
+        pending={save.isPending}
+        onConfirm={() => save.mutate(true)}
+        onCancel={() => setConfirmForce(false)}
+      />
 
       {data.canEdit ? (
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs text-muted-foreground">{t('cleanBreak')}</p>
-          <Button size="sm" onClick={() => save.mutate()} disabled={!body || issues.length > 0 || save.isPending}>
+          <Button size="sm" onClick={() => save.mutate(false)} disabled={!body || issues.length > 0 || save.isPending}>
             {save.isPending ? t('saving') : t('save')}
           </Button>
         </div>

@@ -511,12 +511,12 @@ def test_a_new_shop_opens_in_training_mode_when_asked(w, monkeypatch):
     monkeypatch.setattr(shops_module, "ensure_default_pos_user", lambda *a, **k: None)
     monkeypatch.setattr(shops_module, "reconcile_shops", lambda *a, **k: set())
     trained = shops_router.create_shop(
-        ShopCreate.model_validate({"name": "חדש", "companyId": str(w.company.id), "trainingMode": True}),
+        ShopCreate.model_validate({"name": "חדש", "companyId": str(w.company.id), "trainingMode": True, "branchId": "801"}),
         current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
     )
     assert trained.training_mode is True and trained.training_started_by == w.admin.id
     plain = shops_router.create_shop(
-        ShopCreate.model_validate({"name": "רגיל", "companyId": str(w.company.id)}),
+        ShopCreate.model_validate({"name": "רגיל", "companyId": str(w.company.id), "branchId": "802"}),
         current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
     )
     assert plain.training_mode is False

@@ -181,6 +181,9 @@ def set_z_mode(db: Session, machine: POSMachine, mode: str, *, now: Optional[dat
     if z_mode_of(machine) == mode:
         return False
     now = _now(now)
+    # Never while the till may hold Zs the cloud has not seen (§4.4): switched, they
+    # would have no run to go into, or their shifts would be taken by another Z.
+    refuse_while_producing_offline(db, machine, now=now)
     lock_machine_z_sequence(db, machine.id)
     expire_overdue(db, now=now)
     if live_z_run_item(db, machine.id) is not None or _pending_query(db, machine.id).first() is not None:
@@ -269,6 +272,9 @@ def produce_till_z(
         return existing, "duplicate"
 
     if z_mode_of(machine) != Z_MODE_TILL:
+        if body.offline is not None:
+            # Printed already: never dropped, never renumbered — a conflict for support.
+            raise _offline_conflict(db, machine, body, "till_z_disabled")
         raise _conflict("till_z_disabled")
 
     if body.offline is not None:
@@ -372,18 +378,28 @@ def _differs(till_value: Any, cloud_value: Any) -> bool:
 def _same_document_number(till: Any, cloud: Any) -> bool:
     """
     A document number on the till's Z against the cloud's. The cloud shows it as printed,
-    `<prefix>-<number>` (docs/SPEC_DOCUMENT_PREFIX.md); a till build from before the
-    prefix sends the bare number. Compared whole when both carry a prefix (or neither),
-    and by the number alone when only one does — that is a build difference, not a gap.
+    the prefix and the number padded to 7 digits (`20000057`, docs/SPEC_DOCUMENT_PREFIX.md);
+    a till build from before the prefix sends the bare number (`57`), and one from the
+    first prefix build `2-57`. Compared whole when both are in the same form, and by the
+    number alone when one carries a prefix and the other does not — that is a build
+    difference, not a gap.
     """
+    from app.services.document_prefix import parse_document_query
+
     if cloud is None:
         return False
     a, b = str(till).strip(), str(cloud).strip()
     if a == b:
         return True
-    if ("-" in a) == ("-" in b):
+    qa, qb = parse_document_query(a), parse_document_query(b)
+    if qa is None or qb is None:
         return False
-    return a.rsplit("-", 1)[-1] == b.rsplit("-", 1)[-1]
+    if qa.prefix is not None and qb.prefix is not None:
+        # `2-57` (the first prefix build) against `20000057`: the same document.
+        return qa.prefix == qb.prefix and qa.number == qb.number
+    if qa.prefix is None and qb.prefix is None:
+        return False
+    return qa.number == qb.number
 
 
 def offline_discrepancies(
@@ -440,15 +456,18 @@ def _produce_offline(db: Session, machine: POSMachine, body: TillZIn, now: datet
     off = body.offline
     number = off.machine_sequence_number
     if db.query(ZReport.id).filter(ZReport.id == off.id).first() is not None:
-        raise _conflict("offline_z_id_conflict", zReportId=str(off.id))
-    # Strictly sequential, always (§4.2): only the exact next number of the till's run
-    # is taken. Anything else is refused with the number expected — the till renumbers a
-    # Z that has not left it — so no jump and no hole ever enters the run.
+        raise _offline_conflict(db, machine, body, "offline_z_id_conflict", zReportId=str(off.id))
+    # Strictly sequential, always (§4.2): only the exact next number of the till's run is
+    # taken. A Z number, once produced and printed, is final ("אין דבר כזה זד שממוספר
+    # מחדש"): anything else is a conflict for support — refused, recorded, and the till
+    # keeps its Z exactly as printed. Supposed to be impossible: the till is the run's
+    # only producer, and the cloud makes no Z for it while it may be producing (§4.4).
     expected = last_machine_z_number(db, machine.id) + 1
     if number != expected:
         holder = machine_z_number_holder(db, machine.id, number)
         extra = {"takenByZReportId": str(holder.id)} if holder is not None else {}
-        raise _conflict(
+        raise _offline_conflict(
+            db, machine, body,
             "offline_z_number_taken" if holder is not None else "offline_z_out_of_sequence",
             zNumber=number,
             expectedNumber=expected,
@@ -460,8 +479,9 @@ def _produce_offline(db: Session, machine: POSMachine, body: TillZIn, now: datet
         .first()
     )
     if taken is not None:
-        raise _conflict(
-            "offline_z_shift_in_another_z", shiftId=str(taken.id), zReportId=str(taken.z_report_id)
+        raise _offline_conflict(
+            db, machine, body,
+            "offline_z_shift_in_another_z", shiftId=str(taken.id), zReportId=str(taken.z_report_id),
         )
     shop_id, included = _included(db, machine, body.model_copy(update={"through_shift_id": off.shift_ids[-1]}))
     if not included:  # pragma: no cover - the check above found none of them taken
@@ -543,6 +563,9 @@ def _produce_offline(db: Session, machine: POSMachine, body: TillZIn, now: datet
         )
     _note_card_transmission(db, machine, z, body)
     _complete_requests(db, machine, z, body.till_z_request_id, now)
+    # One fewer on its way up; the next beat says the till's own count.
+    if machine.offline_till_z_pending:
+        machine.offline_till_z_pending = max(0, int(machine.offline_till_z_pending) - 1)
     db.flush()
     return z, "created"
 
@@ -579,6 +602,129 @@ def _shown(value: Any) -> str:
     if isinstance(value, list):
         return f"{len(value)} משמרות"
     return "—" if value is None else str(value)
+
+
+def _offline_conflict(db: Session, machine: POSMachine, body: TillZIn, detail: str, **extra) -> TillZRefused:
+    """
+    A Z the till closed with no connection that the cloud cannot take as it is (§4.5).
+    Never renumbered, never rewritten: the till keeps it exactly as printed, held for
+    support. Recorded here as an exception (`offline_z_conflict`) with everything the
+    till sent, kept (`keep`) although the Z is refused. Supposed to be impossible.
+    """
+    off = body.offline
+    logger.error(
+        "offline till Z %s (#%s) of machine %s refused: %s %s",
+        off.id if off else None, off.machine_sequence_number if off else None, machine.id, detail, extra,
+    )
+    if off is not None:
+        _record_safely(
+            db, machine,
+            exception_type="offline_z_conflict",
+            key=f"offline_z_conflict:{off.id}",
+            occurred_at=_aware(off.closed_at),
+            details={
+                "conflict": detail,
+                **{k: v for k, v in extra.items()},
+                "zId": str(off.id),
+                "zNumber": off.machine_sequence_number,
+                "closedAt": _aware(off.closed_at).isoformat(),
+                "businessDate": off.business_date.isoformat() if off.business_date else None,
+                "shiftIds": [str(i) for i in off.shift_ids],
+                "firstDocumentNumber": off.first_document_number,
+                "lastDocumentNumber": off.last_document_number,
+                "till": body.till,
+                "report": off.report,
+                "summary": f"Z מס׳ {off.machine_sequence_number} שנסגר ללא חיבור לא נקלט: {detail} — פנו לתמיכה",
+            },
+            pos_user_id=body.created_by_user_id,
+        )
+        machine.offline_till_z_conflict = True
+        if getattr(machine, "support_z", None):
+            # The till came back after support produced its Z (§4.6): noted in that record.
+            from app.services.support_z import note_returned_z
+
+            note_returned_z(db, machine, off.machine_sequence_number, detail)
+    return TillZRefused(status.HTTP_409_CONFLICT, {"detail": detail, **extra}, keep=True)
+
+
+# ── The till may be producing Zs offline (§4.4) ───────────────────────────────
+
+
+def offline_parameter_on(db: Session, machine: POSMachine) -> bool:
+    """`tillZOffline` as it resolves for this till."""
+    from app.services import till_parameters as TP
+
+    try:
+        value = TP.till_parameters_for_machine(db, machine).parameters.get(TP.TILL_Z_OFFLINE_KEY)
+    except Exception:  # noqa: BLE001 - unknown is "may": refused rather than risked
+        return True
+    return value is True or str(value).strip().lower() in ("true", "1", "yes", "on")
+
+
+def may_be_producing_offline(db: Session, machine: POSMachine, *, now: Optional[datetime] = None) -> Optional[dict]:
+    """
+    Why this till may hold, or be making, Zs the cloud has not seen — or None.
+
+    A till in `zMode = till` that said on its last beat it holds Zs closed with no
+    connection not uploaded yet (`offline_till_z_pending`, or one held in a conflict),
+    or one that may close Zs offline (`tillZOffline`) and is not seen now: until it beats
+    again, nobody can say it has not. While so, nothing in the cloud may make, number
+    or take the place of its Z (§4.4).
+    """
+    if z_mode_of(machine) != Z_MODE_TILL:
+        return None
+    # Support produced its Z from the cloud (§4.6) and the till has not been heard since:
+    # it is gone, and what it may have printed is accounted for in support's record.
+    support_at = getattr(machine, "support_z_at", None)
+    if support_at is not None and (
+        machine.last_heartbeat_at is None or _aware(machine.last_heartbeat_at) <= _aware(support_at)
+    ):
+        return None
+    pending = int(getattr(machine, "offline_till_z_pending", None) or 0)
+    if pending > 0 or getattr(machine, "offline_till_z_conflict", False):
+        return {"reason": "pending", "pending": pending, "conflict": bool(machine.offline_till_z_conflict)}
+    if offline_parameter_on(db, machine) and not is_online(machine.last_heartbeat_at, now=_now(now)):
+        last = machine.last_heartbeat_at
+        return {"reason": "not_seen", "lastHeartbeatAt": _aware(last).isoformat() if last else None}
+    return None
+
+
+def refuse_while_producing_offline(db: Session, machine: POSMachine, *, now: Optional[datetime] = None) -> None:
+    """`409 till_offline_zs_unsynced` while [may_be_producing_offline] says so."""
+    why = may_be_producing_offline(db, machine, now=now)
+    if why is None:
+        return
+    name = f"קופה {machine.pos_number}" if machine.pos_number else (machine.name or "הקופה")
+    raise TillZRefused(
+        status.HTTP_409_CONFLICT,
+        {
+            "detail": "till_offline_zs_unsynced",
+            "machineId": str(machine.id),
+            **why,
+            "message": (
+                f"ב{name} יש דוחות Z שנסגרו ללא חיבור וטרם סונכרנו לענן"
+                if why["reason"] == "pending"
+                else f"{name} יכולה לסגור Z ללא חיבור ולא נראתה לאחרונה — ייתכן שיש בה דוחות Z שטרם סונכרנו"
+            ) + ". חברו את הקופה לרשת והמתינו לסנכרון, ואז נסו שוב.",
+        },
+    )
+
+
+def apply_offline_report(machine: POSMachine, block, *, now: Optional[datetime] = None) -> None:
+    """The heartbeat's `offlineTillZ` block: what the till holds that the cloud has not."""
+    if block is None:
+        return
+    if block.pending is not None:
+        machine.offline_till_z_pending = max(0, int(block.pending))
+    if block.conflict is not None:
+        machine.offline_till_z_conflict = bool(block.conflict)
+    if block.last_number is not None:
+        # Never down (§4.7): a number the device printed stays its, whatever a later
+        # report says — support's Z is numbered after it (§4.6).
+        machine.offline_till_z_last_number = max(
+            int(block.last_number), int(getattr(machine, "offline_till_z_last_number", None) or 0)
+        )
+    machine.offline_till_z_reported_at = _now(now)
 
 
 def _record_safely(db: Session, machine: POSMachine, **kwargs) -> None:

@@ -76,6 +76,7 @@ from app.models.shop_product_override import ShopProductOverride
 from app.models.till_parameter import TillParameter, TillParameterValue
 from app.models.user import User, UserRole
 from app.services import category_availability, machine_catalog
+from app.services import dietary
 from app.services import product_availability as availability
 
 logger = logging.getLogger(__name__)
@@ -925,6 +926,9 @@ _PRODUCT_FIELDS = (
     "ticketMode", "ticketEntries", "trackStock", "isOpenPrice", "isWeighed", "unitLabel",
     "noDiscount", "allergens", "courseId", "maxPerOrder", "refillable", "maxRefills",
 )
+#: Compared only when both snapshots carry them: a publication made before the field
+#: existed has none, and that is not a change the merchant made.
+_PRODUCT_NEW_FIELDS = ("dietaryTags",)
 _CATEGORY_FIELDS = (
     "name", "description", "parentId", "sortOrder", "isActive", "color", "imageUrl", "courseId",
     "ticketMode",
@@ -1007,6 +1011,8 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
             return courses.get(value, value) if value else None
         if field_name == "voucherId":
             return bool(value)
+        if field_name == "dietaryTags":
+            return dietary.labels(value)
         return value
 
     def by_name(keys, *maps):
@@ -1038,6 +1044,11 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
             _change(f, shown(f, a.get(f), True), shown(f, b.get(f)))
             for f in _PRODUCT_FIELDS
             if not _same(a.get(f), b.get(f))
+        ]
+        changes += [
+            _change(f, shown(f, a.get(f), True), shown(f, b.get(f)))
+            for f in _PRODUCT_NEW_FIELDS
+            if f in a and f in b and not _same(a.get(f), b.get(f))
         ]
         if changes:
             out["products"].append(_item("changed", key, name, changes))

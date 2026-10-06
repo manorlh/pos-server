@@ -41,6 +41,12 @@ export interface KioskGeneral {
   notesEnabled: boolean;
   quickNotesEnabled: boolean;
   showAllergens: boolean;
+  /** "הצג סימוני תזונה ואלרגנים": the dietary badges and (with showAllergens) the allergens chip. */
+  showDietary: boolean;
+  /** Accessibility: no add-to-cart flight, no bounces, no counting up. */
+  reduceMotion: boolean;
+  /** "צליל התראה כשאין אינטרנט": a sound on the kiosk when it loses the internet. */
+  offlineSound: boolean;
   soldOutMode: SoldOutMode;
 }
 
@@ -50,6 +56,15 @@ export type ButtonShape = 'pill' | 'rounded' | 'square';
 export type GridDensity = 'compact' | 'comfortable' | 'large';
 export type ImageRatio = '1:1' | '4:3' | '16:9';
 export type CategoryStyle = 'chips' | 'tabs' | 'images';
+/** The categories: a rail on the start side (right in RTL), or the strip across the top. */
+export type CategoryLayout = 'side' | 'top';
+/** "סגנון ממשק" — see KIOSK_UI_PRESETS. */
+export type UiStyle = 'ios' | 'wolt' | 'classic' | 'minimal_dark';
+export type TypeScale = 'normal' | 'large' | 'xlarge';
+export type TypeWeight = 'light' | 'regular' | 'bold';
+/** The basket while ordering: the floating bar, or a side panel on a wide screen. */
+export type CartStyle = 'bar' | 'panel';
+export type AnimationLevel = 'subtle' | 'lively';
 
 export interface KioskTheme {
   mode: ThemeMode;
@@ -69,6 +84,12 @@ export interface KioskTheme {
   gridDensity: GridDensity;
   imageRatio: ImageRatio;
   categoryStyle: CategoryStyle;
+  categoryLayout: CategoryLayout;
+  uiStyle: UiStyle;
+  typeScale: TypeScale;
+  typeWeight: TypeWeight;
+  cartStyle: CartStyle;
+  animation: AnimationLevel;
   showDescriptions: boolean;
 }
 
@@ -95,6 +116,12 @@ export const TEXT_KEYS = [
   'closedBody',
   'helpText',
   'upsellTitle',
+  /** The screen shown while the external pinpad is not configured or not reachable. */
+  'noPaymentTitle',
+  'noPaymentBody',
+  /** The screen shown while the kiosk has no internet (card payment unavailable). */
+  'offlineTitle',
+  'offlineBody',
 ] as const;
 export type KioskTextKey = (typeof TEXT_KEYS)[number];
 export type KioskTexts = Partial<Record<KioskTextKey, string>>;
@@ -111,11 +138,82 @@ export interface PlaylistItem {
   durationSec: number;
 }
 
+export type CtaSize = 's' | 'm' | 'l' | 'xl' | 'custom';
+/** Physical places: "right" is the screen's right in every language. */
+export type CtaPosition =
+  | 'top_right'
+  | 'top_center'
+  | 'top_left'
+  | 'middle_right'
+  | 'middle_center'
+  | 'middle_left'
+  | 'bottom_right'
+  | 'bottom_center'
+  | 'bottom_left'
+  | 'bottom_full'
+  | 'custom';
+export type CtaWeight = 'regular' | 'bold' | 'black';
+export type CtaIcon = 'none' | 'cart' | 'arrow' | 'hand' | 'star';
+export type CtaIconPosition = 'start' | 'end';
+export type CtaAnimation = 'none' | 'pulse' | 'glow' | 'bounce';
+
+export const CTA_SIZES: CtaSize[] = ['s', 'm', 'l', 'xl', 'custom'];
+export const CTA_POSITIONS: CtaPosition[] = [
+  'top_right',
+  'top_center',
+  'top_left',
+  'middle_right',
+  'middle_center',
+  'middle_left',
+  'bottom_right',
+  'bottom_center',
+  'bottom_left',
+  'bottom_full',
+  'custom',
+];
+export const CTA_WEIGHTS: CtaWeight[] = ['regular', 'bold', 'black'];
+export const CTA_ICONS: CtaIcon[] = ['none', 'cart', 'arrow', 'hand', 'star'];
+export const CTA_ANIMATIONS: CtaAnimation[] = ['none', 'pulse', 'glow', 'bounce'];
+
+/** "כפתור מסך הפתיחה" — the attract screen's call to action; its label is texts.attractCta. */
+export interface KioskCta {
+  size: CtaSize;
+  /** custom size only: width as a percent of the screen (20–100) × height in dp (56–200). */
+  widthPct: number;
+  heightDp: number;
+  position: CtaPosition;
+  /** custom position only: the button's centre, in percent of the screen (0–100). */
+  x: number;
+  y: number;
+  /** null: the theme's button colour. */
+  fillColor: string | null;
+  /** null: the theme's button text colour. */
+  textColor: string | null;
+  /** sp, 14–64 (fitted to the button: ctaFontSp). */
+  fontSize: number;
+  fontWeight: CtaWeight;
+  /** 0 square … 100 pill (percent of half the height); null: the theme's button shape. */
+  radius: number | null;
+  /** null: the label's colour. */
+  borderColor: string | null;
+  borderWidth: number;
+  shadow: boolean;
+  icon: CtaIcon;
+  iconPosition: CtaIconPosition;
+  /** "none" whenever general.reduceMotion is on (ctaAnimation). */
+  animation: CtaAnimation;
+  /** An optional second, smaller line (≤ 80). */
+  subtitle: string;
+  /** "כל המסך פותח הזמנה": a tap anywhere on the attract screen starts an order. */
+  tapAnywhere: boolean;
+}
+
 export interface KioskAttract {
   sections: AttractSection[];
   playlist: PlaylistItem[];
   videoMuted: boolean;
   showHelp: boolean;
+  cta: KioskCta;
 }
 
 export interface KioskCatalog {
@@ -275,6 +373,13 @@ export const KIOSK_LIMITS = {
   pausedBodyMax: 300,
   mediaUrlMax: 1000,
   messageIdMax: 40,
+  ctaWidthPct: { min: 20, max: 100 },
+  ctaHeightDp: { min: 56, max: 200 },
+  ctaXY: { min: 0, max: 100 },
+  ctaFontSize: { min: 14, max: 64 },
+  ctaRadius: { min: 0, max: 100 },
+  ctaBorderWidth: { min: 0, max: 8 },
+  ctaSubtitleMax: 80,
 } as const;
 
 /** What a kiosk gets when no level sets anything — the server's defaults, key for key. */
@@ -290,6 +395,9 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     notesEnabled: true,
     quickNotesEnabled: true,
     showAllergens: true,
+    showDietary: true,
+    reduceMotion: false,
+    offlineSound: false,
     soldOutMode: 'disable',
   },
   theme: {
@@ -310,6 +418,12 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     gridDensity: 'comfortable',
     imageRatio: '4:3',
     categoryStyle: 'chips',
+    categoryLayout: 'side',
+    uiStyle: 'wolt',
+    typeScale: 'normal',
+    typeWeight: 'bold',
+    cartStyle: 'bar',
+    animation: 'lively',
     showDescriptions: true,
   },
   texts: {},
@@ -319,6 +433,28 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     playlist: [],
     videoMuted: true,
     showHelp: true,
+    // The "wolt" style's button: the look it had before it was configurable.
+    cta: {
+      size: 'l',
+      widthPct: 80,
+      heightDp: 88,
+      position: 'bottom_full',
+      x: 50,
+      y: 85,
+      fillColor: null,
+      textColor: null,
+      fontSize: 24,
+      fontWeight: 'bold',
+      radius: null,
+      borderColor: null,
+      borderWidth: 0,
+      shadow: true,
+      icon: 'none',
+      iconPosition: 'end',
+      animation: 'pulse',
+      subtitle: '',
+      tapAnywhere: true,
+    },
   },
   catalog: {
     categoryOrder: [],
@@ -545,6 +681,248 @@ export function stripNulls(layer: unknown): KioskLayer {
   return out;
 }
 
+/* ------------------------------------------------------- "סגנון ממשק" */
+
+export const UI_STYLES: UiStyle[] = ['ios', 'wolt', 'classic', 'minimal_dark'];
+
+/** The theme keys a preset decides (unless a layer sets them). */
+export const PRESET_THEME_KEYS = [
+  'mode',
+  'font',
+  'primaryColor',
+  'accentColor',
+  'backgroundColor',
+  'surfaceColor',
+  'textColor',
+  'cornerRadius',
+  'cardStyle',
+  'buttonShape',
+  'gridDensity',
+  'imageRatio',
+  'categoryStyle',
+  'categoryLayout',
+  'typeScale',
+  'typeWeight',
+  'cartStyle',
+  'animation',
+  'showDescriptions',
+] as const;
+export type PresetThemeKey = (typeof PRESET_THEME_KEYS)[number];
+export type UiPreset = Pick<KioskTheme, PresetThemeKey>;
+
+/**
+ * The "סגנון ממשק" presets — the server's UI_PRESETS (app/services/kiosk_config.py) key for
+ * key, and the till's KioskUiPresets. "wolt" is the look kiosks had before presets.
+ */
+export const KIOSK_UI_PRESETS: Record<UiStyle, UiPreset> = {
+  ios: {
+    mode: 'light', font: 'system',
+    primaryColor: '#0A84FF', accentColor: '#34C759',
+    backgroundColor: '#F2F2F7', surfaceColor: '#FFFFFF', textColor: null,
+    cornerRadius: 16, cardStyle: 'elevated', buttonShape: 'rounded',
+    gridDensity: 'comfortable', imageRatio: '4:3',
+    categoryStyle: 'tabs', categoryLayout: 'side',
+    typeScale: 'large', typeWeight: 'regular',
+    cartStyle: 'bar', animation: 'subtle', showDescriptions: true,
+  },
+  wolt: {
+    mode: 'light', font: 'system',
+    primaryColor: '#1F6FEB', accentColor: '#16A34A',
+    backgroundColor: null, surfaceColor: null, textColor: null,
+    cornerRadius: 20, cardStyle: 'elevated', buttonShape: 'pill',
+    gridDensity: 'comfortable', imageRatio: '4:3',
+    categoryStyle: 'chips', categoryLayout: 'side',
+    typeScale: 'normal', typeWeight: 'bold',
+    cartStyle: 'bar', animation: 'lively', showDescriptions: true,
+  },
+  classic: {
+    mode: 'light', font: 'heebo',
+    primaryColor: '#E11D48', accentColor: '#F59E0B',
+    backgroundColor: '#FFFFFF', surfaceColor: '#FFFFFF', textColor: '#000000',
+    cornerRadius: 6, cardStyle: 'outlined', buttonShape: 'square',
+    gridDensity: 'large', imageRatio: '1:1',
+    categoryStyle: 'images', categoryLayout: 'side',
+    typeScale: 'xlarge', typeWeight: 'bold',
+    cartStyle: 'panel', animation: 'subtle', showDescriptions: false,
+  },
+  minimal_dark: {
+    mode: 'dark', font: 'assistant',
+    primaryColor: '#C9A227', accentColor: '#C9A227',
+    backgroundColor: '#0B0B0D', surfaceColor: '#16161A', textColor: '#F5F5F4',
+    cornerRadius: 8, cardStyle: 'flat', buttonShape: 'rounded',
+    gridDensity: 'comfortable', imageRatio: '4:3',
+    categoryStyle: 'tabs', categoryLayout: 'side',
+    typeScale: 'normal', typeWeight: 'light',
+    cartStyle: 'bar', animation: 'subtle', showDescriptions: true,
+  },
+};
+
+/** The attract button keys a style decides (unless a layer sets them). */
+export const PRESET_CTA_KEYS = [
+  'size',
+  'position',
+  'fontSize',
+  'fontWeight',
+  'shadow',
+  'icon',
+  'iconPosition',
+  'animation',
+  'borderColor',
+  'borderWidth',
+] as const;
+export type PresetCtaKey = (typeof PRESET_CTA_KEYS)[number];
+export type UiPresetCta = Pick<KioskCta, PresetCtaKey>;
+
+/** Each style's attract button — the server's UI_PRESET_CTA and the till's KioskCta.PRESETS. */
+export const KIOSK_UI_PRESET_CTA: Record<UiStyle, UiPresetCta> = {
+  ios: {
+    size: 'l', position: 'bottom_full', fontSize: 22, fontWeight: 'bold',
+    shadow: false, icon: 'none', iconPosition: 'end', animation: 'none',
+    borderColor: null, borderWidth: 0,
+  },
+  wolt: {
+    size: 'l', position: 'bottom_full', fontSize: 24, fontWeight: 'bold',
+    shadow: true, icon: 'none', iconPosition: 'end', animation: 'pulse',
+    borderColor: null, borderWidth: 0,
+  },
+  classic: {
+    size: 'xl', position: 'bottom_full', fontSize: 34, fontWeight: 'black',
+    shadow: true, icon: 'cart', iconPosition: 'start', animation: 'bounce',
+    borderColor: null, borderWidth: 0,
+  },
+  minimal_dark: {
+    size: 'm', position: 'bottom_center', fontSize: 22, fontWeight: 'regular',
+    shadow: false, icon: 'arrow', iconPosition: 'end', animation: 'glow',
+    borderColor: '#C9A227', borderWidth: 1,
+  },
+};
+
+/** Where a style decides values: the theme's keys, and the attract button's. */
+const PRESET_SECTIONS: Array<{
+  path: 'theme' | 'attract.cta';
+  keys: readonly string[];
+  table: Record<UiStyle, Record<string, unknown>>;
+  defaults: Record<string, unknown>;
+}> = [
+  {
+    path: 'theme',
+    keys: PRESET_THEME_KEYS,
+    table: KIOSK_UI_PRESETS as unknown as Record<UiStyle, Record<string, unknown>>,
+    defaults: KIOSK_DEFAULTS.theme as unknown as Record<string, unknown>,
+  },
+  {
+    path: 'attract.cta',
+    keys: PRESET_CTA_KEYS,
+    table: KIOSK_UI_PRESET_CTA as unknown as Record<UiStyle, Record<string, unknown>>,
+    defaults: KIOSK_DEFAULTS.attract.cta as unknown as Record<string, unknown>,
+  },
+];
+
+function isUiStyle(v: unknown): v is UiStyle {
+  return typeof v === 'string' && (UI_STYLES as string[]).includes(v);
+}
+
+/** The style the layers pick: the last that sets `theme.uiStyle`, else the default (wolt). */
+export function styleOf(...layers: Array<KioskLayer | null | undefined>): UiStyle {
+  let style: UiStyle = KIOSK_DEFAULTS.theme.uiStyle;
+  for (const layer of layers) {
+    const picked = getPath(layer, 'theme.uiStyle');
+    if (isUiStyle(picked)) style = picked;
+  }
+  return style;
+}
+
+/** A style's preset as a layer: its theme keys and its attract button (a null leaves the default). */
+export function presetLayer(style: UiStyle): KioskLayer {
+  return {
+    theme: cloneJson(KIOSK_UI_PRESETS[style] ?? KIOSK_UI_PRESETS.wolt),
+    attract: { cta: cloneJson(KIOSK_UI_PRESET_CTA[style] ?? KIOSK_UI_PRESET_CTA.wolt) },
+  };
+}
+
+/**
+ * The server's `repair`: fixes the cross-field rules a parent's later change can break below
+ * it, so what a kiosk receives always validates.
+ */
+export function repairKioskConfig(cfg: KioskConfig, opts: { kdsAvailable?: boolean } = {}): KioskConfig {
+  const out = cloneJson(cfg);
+  const { general, timers, pickup, printing, club, payment, hours } = out;
+  if (general.fulfillmentMode === 'KDS' && !opts.kdsAvailable) general.fulfillmentMode = 'BON';
+  if (timers.warningSec >= timers.inactivitySec) timers.warningSec = Math.max(5, timers.inactivitySec - 1);
+  if (pickup.start >= pickup.max) {
+    pickup.start = KIOSK_DEFAULTS.pickup.start;
+    pickup.max = KIOSK_DEFAULTS.pickup.max;
+  }
+  if (printing.bonMode === 'single' && !printing.bonPrinterId) printing.bonMode = 'routing';
+  if (club.enabled && !/^https?:\/\/\S+$/i.test(club.joinUrl || '')) club.enabled = false;
+  const methods = (payment.methods ?? []).filter((m) => m === 'card');
+  payment.methods = methods.length > 0 ? methods : ['card'];
+  if (payment.tipEnabled && (payment.tipPresets ?? []).length === 0) payment.tipPresets = [...KIOSK_DEFAULTS.payment.tipPresets];
+  if (hours.enabled && (hours.ranges ?? []).length === 0) hours.enabled = false;
+  return out;
+}
+
+/**
+ * What a kiosk gets from stored layers, as the server resolves it: DEFAULTS ⊕ the style's
+ * preset ⊕ the layers (company → shop → kiosk), repaired. Explicit values beat the preset.
+ */
+export function resolveKioskConfig(...layers: Array<KioskLayer | null | undefined>): KioskConfig {
+  return repairKioskConfig(deepMergeKiosk(KIOSK_DEFAULTS, presetLayer(styleOf(...layers)), ...layers));
+}
+
+/**
+ * What a level inherits once it picks `style`: the parents' resolved config, with every
+ * preset key the parents do not set explicitly taken from `style`'s preset instead.
+ * `inheritedLayers` is what the parents set explicitly (`GET /kiosks/settings`); without it
+ * (an older server) a value counts as explicit when it differs from the parents' own preset.
+ * The editor compares against this, prunes against it and resets to it, so a value that
+ * only follows the preset is never saved as an override.
+ */
+export function rebaseInherited(
+  inherited: KioskConfig,
+  inheritedLayers: KioskLayer | null | undefined,
+  style: UiStyle,
+): KioskConfig {
+  const out = cloneJson(inherited);
+  const parentStyle: UiStyle = isUiStyle(inherited.theme.uiStyle) ? inherited.theme.uiStyle : 'wolt';
+  const targetStyle: UiStyle = isUiStyle(style) ? style : 'wolt';
+  for (const section of PRESET_SECTIONS) {
+    const explicit = inheritedLayers ? getPath(inheritedLayers, section.path) : null;
+    const now = getPath(inherited, section.path);
+    const into = getPath(out, section.path);
+    if (!isDict(now) || !isDict(into)) continue;
+    const presetOrDefault = (s: UiStyle, key: string) => section.table[s][key] ?? section.defaults[key];
+    for (const key of section.keys) {
+      const keep = inheritedLayers
+        ? isDict(explicit) && explicit[key] !== undefined && explicit[key] !== null
+        : !jsonEqual(now[key], presetOrDefault(parentStyle, key));
+      if (!keep) into[key] = cloneJson(presetOrDefault(targetStyle, key));
+    }
+  }
+  return out;
+}
+
+/**
+ * Switch the draft to another style: `theme.uiStyle` = `style`, and every preset key that
+ * was following the old base (equal to it) moves to the new base's value. A value chosen
+ * at this level stays.
+ */
+export function switchUiStyle(draft: KioskConfig, oldBase: KioskConfig, newBase: KioskConfig, style: UiStyle): KioskConfig {
+  const out = cloneJson(draft);
+  out.theme.uiStyle = style;
+  for (const section of PRESET_SECTIONS) {
+    const was = getPath(draft, section.path);
+    const oldB = getPath(oldBase, section.path);
+    const newB = getPath(newBase, section.path);
+    const into = getPath(out, section.path);
+    if (!isDict(was) || !isDict(oldB) || !isDict(newB) || !isDict(into)) continue;
+    for (const key of section.keys) {
+      if (jsonEqual(was[key], oldB[key])) into[key] = cloneJson(newB[key]);
+    }
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------- paths */
 
 export function getPath(obj: unknown, path: string): unknown {
@@ -708,6 +1086,9 @@ export function validateKioskConfig(
   }
   checkEnum(e, 'general.skipCart', g.skipCart, ['off', 'direct', 'confirm']);
   checkEnum(e, 'general.soldOutMode', g.soldOutMode, ['disable', 'hide']);
+  for (const key of ['askTableNumber', 'upsellEnabled', 'searchEnabled', 'notesEnabled', 'quickNotesEnabled', 'showAllergens', 'showDietary', 'reduceMotion', 'offlineSound'] as const) {
+    if (typeof g[key] !== 'boolean') e.push({ path: `general.${key}`, code: 'enum' });
+  }
 
   const th = cfg.theme;
   checkEnum(e, 'theme.mode', th.mode, ['light', 'dark']);
@@ -727,6 +1108,13 @@ export function validateKioskConfig(
   checkEnum(e, 'theme.gridDensity', th.gridDensity, ['compact', 'comfortable', 'large']);
   checkEnum(e, 'theme.imageRatio', th.imageRatio, ['1:1', '4:3', '16:9']);
   checkEnum(e, 'theme.categoryStyle', th.categoryStyle, ['chips', 'tabs', 'images']);
+  checkEnum(e, 'theme.categoryLayout', th.categoryLayout, ['side', 'top']);
+  checkEnum(e, 'theme.uiStyle', th.uiStyle, UI_STYLES);
+  checkEnum(e, 'theme.typeScale', th.typeScale, ['normal', 'large', 'xlarge']);
+  checkEnum(e, 'theme.typeWeight', th.typeWeight, ['light', 'regular', 'bold']);
+  checkEnum(e, 'theme.cartStyle', th.cartStyle, ['bar', 'panel']);
+  checkEnum(e, 'theme.animation', th.animation, ['subtle', 'lively']);
+  if (typeof th.showDescriptions !== 'boolean') e.push({ path: 'theme.showDescriptions', code: 'enum' });
 
   for (const [key, value] of Object.entries(cfg.texts ?? {})) {
     if (!(TEXT_KEYS as readonly string[]).includes(key)) {
@@ -750,6 +1138,31 @@ export function validateKioskConfig(
     checkMedia(e, `attract.playlist.${i}.media`, item.media, ['image', 'video'], false);
     checkRange(e, `attract.playlist.${i}.durationSec`, item.durationSec, L.playlistDuration);
   });
+  const cta = a.cta;
+  if (!isDict(cta)) {
+    e.push({ path: 'attract.cta', code: 'enum' });
+  } else {
+    const p = 'attract.cta';
+    checkEnum(e, `${p}.size`, cta.size, CTA_SIZES);
+    checkRange(e, `${p}.widthPct`, cta.widthPct, L.ctaWidthPct);
+    checkRange(e, `${p}.heightDp`, cta.heightDp, L.ctaHeightDp);
+    checkEnum(e, `${p}.position`, cta.position, CTA_POSITIONS);
+    checkRange(e, `${p}.x`, cta.x, L.ctaXY);
+    checkRange(e, `${p}.y`, cta.y, L.ctaXY);
+    for (const key of ['fillColor', 'textColor', 'borderColor'] as const) {
+      if (cta[key] !== null && !isHexColor(cta[key])) e.push({ path: `${p}.${key}`, code: 'color' });
+    }
+    checkRange(e, `${p}.fontSize`, cta.fontSize, L.ctaFontSize);
+    checkEnum(e, `${p}.fontWeight`, cta.fontWeight, CTA_WEIGHTS);
+    if (cta.radius !== null) checkRange(e, `${p}.radius`, cta.radius, L.ctaRadius);
+    checkRange(e, `${p}.borderWidth`, cta.borderWidth, L.ctaBorderWidth);
+    if (typeof cta.shadow !== 'boolean') e.push({ path: `${p}.shadow`, code: 'enum' });
+    checkEnum(e, `${p}.icon`, cta.icon, CTA_ICONS);
+    checkEnum(e, `${p}.iconPosition`, cta.iconPosition, ['start', 'end']);
+    checkEnum(e, `${p}.animation`, cta.animation, CTA_ANIMATIONS);
+    checkLength(e, `${p}.subtitle`, cta.subtitle, L.ctaSubtitleMax);
+    if (typeof cta.tapAnywhere !== 'boolean') e.push({ path: `${p}.tapAnywhere`, code: 'enum' });
+  }
 
   const c = cfg.catalog;
   if (c.featuredProductIds.length > L.featuredMax) {
@@ -1087,9 +1500,301 @@ export function aspectRatioCss(ratio: ImageRatio): string {
   return ratio.replace(':', ' / ');
 }
 
+/* ------------------------------------------- the attract button's layout */
+/*
+ * The till's KioskCtaLayout (domain/KioskCta.kt), number for number: dp, origin top-left,
+ * PHYSICAL left/right (the preview positions it with `left`, never inset-inline-start).
+ */
+
+export const CTA_LAYOUT = {
+  MARGIN: 28,
+  TOP: 150,
+  BOTTOM: 28,
+  BOTTOM_WITH_HINT: 60,
+  MIN_H: 56,
+  MAX_H: 200,
+  MIN_W: 160,
+  CYCLE_MS: 1800,
+  PULSE_MS: 1100,
+} as const;
+
+const CTA_PRESET_SIZES: Record<Exclude<CtaSize, 'custom'>, [number, number]> = {
+  s: [0.4, 64],
+  m: [0.55, 72],
+  l: [0.7, 84],
+  xl: [0.85, 112],
+};
+
+export interface CtaBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+type CtaLayoutIn = Pick<KioskCta, 'size' | 'widthPct' | 'heightDp' | 'position' | 'x' | 'y' | 'tapAnywhere'>;
+
+const clampInt = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
+
+/** The grid row of a position ("top" | "middle" | "bottom"); null for a custom place. */
+export function ctaRow(position: CtaPosition): 'top' | 'middle' | 'bottom' | null {
+  if (position === 'bottom_full') return 'bottom';
+  if (position === 'custom') return null;
+  return position.split('_')[0] as 'top' | 'middle' | 'bottom';
+}
+
+function ctaColumn(position: CtaPosition): string {
+  const i = position.indexOf('_');
+  return i < 0 ? 'center' : position.slice(i + 1);
+}
+
+/** Width × height in dp: the size's, kept on the screen and never below a finger's size. */
+export function ctaSize(cta: CtaLayoutIn, screenW: number, screenH: number): { w: number; h: number } {
+  const L = CTA_LAYOUT;
+  const avail = Math.max(0, screenW - 2 * L.MARGIN);
+  const [share, presetH] = cta.size === 'custom' ? [cta.widthPct / 100, cta.heightDp] : CTA_PRESET_SIZES[cta.size] ?? CTA_PRESET_SIZES.l;
+  const wantW = cta.position === 'bottom_full' ? avail : Math.round(screenW * share);
+  const lo = Math.min(L.MIN_W, avail);
+  const w = clampInt(wantW, lo, Math.max(avail, lo));
+  const maxH = Math.max(L.MIN_H, Math.min(L.MAX_H, Math.round(screenH * 0.3)));
+  const h = clampInt(presetH, L.MIN_H, maxH);
+  return { w, h };
+}
+
+function clampInScreen(v: number, lo: number, hi: number, screen: number, size: number): number {
+  return hi < lo ? Math.max(0, Math.trunc((screen - size) / 2)) : clampInt(v, lo, hi);
+}
+
+/** The button's box on a screen of screenW × screenH dp: its top-left corner and size. */
+export function ctaBox(cta: CtaLayoutIn, screenW: number, screenH: number): CtaBox {
+  const L = CTA_LAYOUT;
+  const { w, h } = ctaSize(cta, screenW, screenH);
+  if (cta.position === 'custom') {
+    const x = clampInScreen(Math.round((screenW * cta.x) / 100 - w / 2), L.MARGIN, screenW - L.MARGIN - w, screenW, w);
+    const y = clampInScreen(Math.round((screenH * cta.y) / 100 - h / 2), L.MARGIN, screenH - L.MARGIN - h, screenH, h);
+    return { x, y, w, h };
+  }
+  const column = cta.position === 'bottom_full' ? 'center' : ctaColumn(cta.position);
+  const x = Math.max(0, column === 'left' ? L.MARGIN : column === 'right' ? screenW - L.MARGIN - w : Math.trunc((screenW - w) / 2));
+  const bottom = screenH - (cta.tapAnywhere ? L.BOTTOM_WITH_HINT : L.BOTTOM) - h;
+  const row = ctaRow(cta.position);
+  const y = Math.max(0, row === 'top' ? Math.min(L.TOP, bottom) : row === 'middle' ? Math.trunc((screenH - h) / 2) : bottom);
+  return { x, y, w, h };
+}
+
+/** The label's size in sp: the configured one, made to fit the button (with its second line). */
+export function ctaFontSp(cta: Pick<KioskCta, 'fontSize' | 'subtitle'>, heightDp: number): number {
+  const share = cta.subtitle.trim() ? 0.34 : 0.45;
+  return Math.min(cta.fontSize, Math.max(14, Math.trunc(heightDp * share)));
+}
+
+export function ctaSubtitleSp(cta: Pick<KioskCta, 'fontSize' | 'subtitle'>, heightDp: number): number {
+  return Math.max(13, Math.round(ctaFontSp(cta, heightDp) * 0.55));
+}
+
+/* The content around the button (KioskCtaLayout.spans / fittingCount on the till). */
+
+/** Between the screen's content and the button (or its hint): nothing comes closer. */
+export const ATTRACT_CONTENT_GAP = 20;
+/** The "גע במסך כדי להתחיל" hint under the button: a 10 dp gap and one line. */
+export const CTA_HINT_GAP = 10;
+export const CTA_HINT_BLOCK = 30;
+
+/** Where the attract content goes: the messages' span, the stack's (bottom-aligned), shared or not. */
+export interface AttractSpans {
+  messagesTop: number;
+  messagesBottom: number;
+  stackTop: number;
+  stackBottom: number;
+  /** One span for both: the messages take what the stack leaves. */
+  shared: boolean;
+  /** The hint shows under the button. */
+  hint: boolean;
+}
+
+/** The hint shows under the button with tap-anywhere on, when there is room for it. */
+export function ctaHintShown(cta: Pick<KioskCta, 'tapAnywhere'>, box: CtaBox, screenH: number): boolean {
+  return cta.tapAnywhere && box.y + box.h + CTA_HINT_BLOCK <= screenH;
+}
+
+/** The row the content arranges itself around: the position's own, or a custom place's by its centre. */
+export function ctaEffectiveRow(cta: Pick<KioskCta, 'position'>, box: CtaBox, screenH: number): 'top' | 'middle' | 'bottom' {
+  const row = ctaRow(cta.position);
+  if (row) return row;
+  const centre = box.y + Math.trunc(box.h / 2);
+  return centre * 3 < screenH ? 'top' : centre * 3 < screenH * 2 ? 'middle' : 'bottom';
+}
+
+/**
+ * Where the attract screen's content goes on a screen `screenH` tall whose header ends at
+ * `headerBottom`, so that nothing is ever under the button or its hint: above a bottom-row
+ * button, below a top-row one, around a middle-row one (messages above, the rest below).
+ */
+export function attractSpans(cta: Pick<KioskCta, 'position' | 'tapAnywhere'>, box: CtaBox, screenH: number, headerBottom: number): AttractSpans {
+  const hint = ctaHintShown(cta, box, screenH);
+  const bottom = Math.max(headerBottom, screenH - CTA_LAYOUT.MARGIN);
+  const above = clampInt(box.y - ATTRACT_CONTENT_GAP, headerBottom, bottom);
+  const below = clampInt(box.y + box.h + (hint ? CTA_HINT_BLOCK : 0) + ATTRACT_CONTENT_GAP, headerBottom, bottom);
+  const row = ctaEffectiveRow(cta, box, screenH);
+  if (row === 'bottom') return { messagesTop: headerBottom, messagesBottom: above, stackTop: headerBottom, stackBottom: above, shared: true, hint };
+  if (row === 'top') return { messagesTop: below, messagesBottom: bottom, stackTop: below, stackBottom: bottom, shared: true, hint };
+  return { messagesTop: headerBottom, messagesBottom: above, stackTop: below, stackBottom: bottom, shared: false, hint };
+}
+
+/**
+ * How many stacked items (title, then the sections in order) fit in `available` with `gap`
+ * between them: the longest prefix that fits, never fewer than `required`. The rest is hidden —
+ * it never slides under the button.
+ */
+export function fittingCount(available: number, heights: number[], gap: number, required: number): number {
+  let used = 0;
+  let count = 0;
+  for (let i = 0; i < heights.length; i++) {
+    const next = used + (i > 0 ? gap : 0) + heights[i];
+    if (next > available && i >= required) break;
+    used = next;
+    count++;
+  }
+  return count;
+}
+
+/** The side order panel (cartStyle = panel) only on a screen this wide (KioskCategoryLayout.PANEL_MIN_SCREEN_DP). */
+export const PANEL_MIN_SCREEN_DP = 900;
+
+export function cartPanelShown(theme: Pick<KioskTheme, 'cartStyle'>, screenWidthDp: number): boolean {
+  return theme.cartStyle === 'panel' && screenWidthDp >= PANEL_MIN_SCREEN_DP;
+}
+
+/** The button's animation: none whenever general.reduceMotion is on. */
+export function ctaAnimation(cta: Pick<KioskCta, 'animation'>, general: Pick<KioskGeneral, 'reduceMotion'>): CtaAnimation {
+  return general.reduceMotion ? 'none' : cta.animation;
+}
+
+/** The corner radius in px: a percent of half the height, or the theme's button shape. */
+export function ctaRadiusPx(cta: Pick<KioskCta, 'radius'>, h: number, theme: Pick<KioskTheme, 'buttonShape' | 'cornerRadius'>): number {
+  if (cta.radius === null || cta.radius === undefined) return Math.min(buttonRadius(theme), Math.round(h / 2));
+  return Math.round(((h / 2) * clampInt(cta.radius, 0, 100)) / 100);
+}
+
+/** The bounce's lift (0…1 of its 14 dp) at t (0…1) of its 1.8 s cycle: a hop, a small one, a rest. */
+export function ctaBounceLift(t: number): number {
+  const ease = (f: number) => 1 - (1 - f) * (1 - f);
+  if (t < 0 || t >= 0.32) return 0;
+  if (t < 0.1) return ease(t / 0.1);
+  if (t < 0.2) return 1 - ease((t - 0.1) / 0.1);
+  if (t < 0.26) return 0.35 * ease((t - 0.2) / 0.06);
+  return 0.35 * (1 - ease((t - 0.26) / 0.06));
+}
+
+/** The text size factor of `theme.typeScale`. */
+export function typeScaleFactor(scale: TypeScale): number {
+  return scale === 'xlarge' ? 1.25 : scale === 'large' ? 1.12 : 1;
+}
+
+export interface TypeWeights {
+  body: number;
+  medium: number;
+  semibold: number;
+  bold: number;
+  extrabold: number;
+  black: number;
+}
+
+/** The font weights of `theme.typeWeight`, from body text up to the heaviest titles. */
+export function typeWeights(weight: TypeWeight): TypeWeights {
+  if (weight === 'light') return { body: 300, medium: 400, semibold: 500, bold: 500, extrabold: 600, black: 700 };
+  if (weight === 'regular') return { body: 400, medium: 500, semibold: 600, bold: 600, extrabold: 700, black: 800 };
+  return { body: 400, medium: 500, semibold: 600, bold: 700, extrabold: 800, black: 900 };
+}
+
+/**
+ * The picture of a category in the rail / strip: the kiosk's own category image, else the
+ * catalog's (the till's) category image, else null (the kiosk draws its initial on the
+ * theme colour).
+ */
+export function categoryRailImage(
+  categoryId: string,
+  catalog: Pick<KioskCatalog, 'categoryImages'>,
+  catalogImageUrls: Record<string, string | null | undefined>,
+): string | null {
+  return catalog.categoryImages?.[categoryId]?.url || catalogImageUrls[categoryId] || null;
+}
+
+export type MessagePlacement = 'inline-center' | 'overlay-center' | 'none';
+
+/**
+ * Where a message shows on a screen. The calm screens (attract, success, paused, closed)
+ * put it as a centred block in the vertical middle; the ordering screens (service, catalog,
+ * cart) as a centred overlay card the customer closes (or that hides itself), at most one
+ * per visit; never over the payment, nor over an open product sheet.
+ */
+export function messagePlacement(screen: string): MessagePlacement {
+  if (screen === 'attract' || screen === 'success' || screen === 'paused' || screen === 'closed') return 'inline-center';
+  if (screen === 'service' || screen === 'catalog' || screen === 'cart') return 'overlay-center';
+  return 'none';
+}
+
+/** How long an overlay message stays before it hides itself. */
+export const MESSAGE_OVERLAY_MS = 8000;
+
+export interface MotionSpec {
+  /** The add-to-cart flight, ms (0 = none). */
+  flyMs: number;
+  /** The count badge's bounce scale (0 = none). */
+  bounce: number;
+  /** The total counting up to its new value, ms (0 = jumps). */
+  countUpMs: number;
+  /** A thumbnail on an arc (lively) rather than a dot. */
+  flyImage: boolean;
+}
+
+/** The add-to-cart motion by `theme.animation`; nothing at all with `general.reduceMotion`. */
+export function motionSpec(
+  theme: Pick<KioskTheme, 'animation'>,
+  general: Pick<KioskGeneral, 'reduceMotion'>,
+): MotionSpec {
+  if (general.reduceMotion) return { flyMs: 0, bounce: 0, countUpMs: 0, flyImage: false };
+  if (theme.animation === 'lively') return { flyMs: 520, bounce: 1.25, countUpMs: 450, flyImage: true };
+  return { flyMs: 380, bounce: 1.1, countUpMs: 300, flyImage: false };
+}
+
+export const DIETARY_TAGS = ['vegan', 'vegetarian', 'dairy', 'meat', 'gluten_free', 'spicy'] as const;
+export type DietaryTag = (typeof DIETARY_TAGS)[number];
+export const DIETARY_EMOJI: Record<DietaryTag, string> = {
+  vegan: '🌱',
+  vegetarian: '🥕',
+  dairy: '🧀',
+  meat: '🥩',
+  gluten_free: '🌾',
+  spicy: '🌶️',
+};
+
+/** A product's dietary tags from the catalog: the known ones, once each, in the fixed order. */
+export function dietaryTagsOf(raw: unknown): DietaryTag[] {
+  if (!Array.isArray(raw)) return [];
+  const set = new Set(raw.filter((x): x is string => typeof x === 'string'));
+  return DIETARY_TAGS.filter((t) => set.has(t));
+}
+
 /* ------------------------------------------------------- status helpers */
 
 export type KioskConnection = 'online' | 'stale' | 'offline' | 'never';
+
+/**
+ * "לא מחובר": the server says it is not online, it was never seen, or it was last seen more
+ * than `thresholdMs` ago (2 minutes). Its numbers are then its last report, not proof of an
+ * idle kiosk.
+ */
+export function kioskOffline(
+  k: { online: boolean; lastSeenAt: string | null },
+  nowMs: number,
+  thresholdMs = 120_000,
+): boolean {
+  if (!k.online || !k.lastSeenAt) return true;
+  const at = Date.parse(k.lastSeenAt);
+  if (Number.isNaN(at)) return true;
+  return nowMs - at > thresholdMs;
+}
 
 /**
  * How fresh a kiosk's numbers are: online (the server says so), stale (offline but its
@@ -1101,7 +1806,7 @@ export function kioskConnection(
   nowMs: number,
   staleWindowMs = 10 * 60 * 1000,
 ): KioskConnection {
-  if (k.online) return 'online';
+  if (!kioskOffline(k, nowMs)) return 'online';
   const last = k.lastKioskSyncAt ?? k.lastSeenAt;
   if (!last) return 'never';
   const at = Date.parse(last);

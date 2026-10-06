@@ -445,7 +445,7 @@ def untransmitted_items(db: Session, machine: POSMachine) -> List[dict]:
             {
                 "transactionId": str(tx.id),
                 "transactionNumber": tx.transaction_number,
-                # As printed, `<prefix>-<number>` (docs/SPEC_DOCUMENT_PREFIX.md).
+                # As printed, `20000057` (docs/SPEC_DOCUMENT_PREFIX.md).
                 "documentNumber": document_number_of(tx),
                 "documentType": tx.document_type,
                 "createdAt": _utc(tx.created_at),

@@ -563,6 +563,7 @@ def _serialize_tx_for_upsert(
         "transaction_number": tx.transaction_number,
         "status": tx.status,
         "document_type": tx.document_type,
+        # (`document_series` — 320 / 330 / 400 — is computed by the database from the type.)
         "document_production_date": tx.document_production_date,
         # Derived from the tender legs, not copied from the till: a document with two
         # tenders must not keep claiming to be a cash sale. Falls back to whatever the
@@ -580,7 +581,7 @@ def _serialize_tx_for_upsert(
         # `machine_code` is the fallback because this system generated it for pairing —
         # it identifies the terminal, just not in the numbering the business uses.
         "pos_number": machine.pos_number or machine.machine_code,
-        # The till's "קידומת מסמכים" as it froze it at issue and printed it (`2-57`).
+        # The till's "קידומת מסמכים" as it froze it at issue and printed it (`20000057`).
         # Copied, never derived: a till build that sends none leaves it null, and the
         # document reads as its `pos_number` (docs/SPEC_DOCUMENT_PREFIX.md).
         "document_prefix": getattr(tx, "document_prefix", None),

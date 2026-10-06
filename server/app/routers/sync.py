@@ -513,6 +513,7 @@ def machine_create_cloud_product(
         is_weighed=data.is_weighed,
         unit_label=data.unit_label,
         no_discount=data.no_discount,
+        dietary_tags=data.dietary_tags or None,
         # Only `ensure_general_item` makes a general item (the request cannot ask).
         is_general=False,
     )
@@ -1758,6 +1759,66 @@ def post_till_z_ack(
     )
     db.commit()
     return {"ok": True, "status": req.status}
+
+
+# ── A reset ordered from the cloud by support (docs/SPEC_OFFLINE_TILL_Z.md §4.7) ──
+
+
+class TillResetResultIn(BaseModel):
+    """What the till did with `pendingReset`: carried it out, or refused and why."""
+
+    model_config = {"populate_by_name": True}
+
+    command_id: str = Field(..., alias="commandId", max_length=64)
+    #: done | refused | failed
+    status: str = Field(..., max_length=16)
+    #: Why it refused or failed: outbox_not_empty | unknown_kind | not_paired | failed.
+    code: Optional[str] = Field(None, max_length=64)
+    message: Optional[str] = Field(None, max_length=500)
+    executed_at: Optional[str] = Field(None, alias="executedAt", max_length=40)
+    transactions_deleted: Optional[int] = Field(None, alias="transactionsDeleted", ge=0)
+    outbox_pending: Optional[int] = Field(None, alias="outboxPending", ge=0)
+    kept_zs: Optional[int] = Field(None, alias="keptZs", ge=0)
+    kept_z_numbers: Optional[List[int]] = Field(None, alias="keptZNumbers", max_length=400)
+    kept_shop_zs: Optional[int] = Field(None, alias="keptShopZs", ge=0)
+    #: {"before": {...}, "after": {...}} — the till's Z run and document series.
+    counters: Optional[Dict[str, Dict[str, Optional[int]]]] = None
+    app_version: Optional[str] = Field(None, alias="appVersion", max_length=64)
+
+
+@router.post("/{machine_id}/till-reset/result")
+def post_till_reset_result(
+    machine_id: str,
+    body: TillResetResultIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    The till's answer to a reset support ordered (§4.7). Idempotent; `404 unknown_command`
+    for a command this till was never given.
+    """
+    from app.services import till_reset
+
+    record = till_reset.apply_result(
+        db,
+        machine,
+        command_id=body.command_id,
+        result_status=body.status,
+        code=body.code,
+        message=body.message,
+        details={
+            "executedAt": body.executed_at,
+            "transactionsDeleted": body.transactions_deleted,
+            "outboxPending": body.outbox_pending,
+            "keptZs": body.kept_zs,
+            "keptZNumbers": body.kept_z_numbers,
+            "keptShopZs": body.kept_shop_zs,
+            "counters": body.counters,
+            "appVersion": body.app_version,
+        },
+    )
+    db.commit()
+    return {"ok": True, "status": record.get("status")}
 
 
 # ── Offline card authorization (Agamento `authorizePendingTransactions`) ──────

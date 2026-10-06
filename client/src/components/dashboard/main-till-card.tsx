@@ -18,8 +18,9 @@ import { Crown } from 'lucide-react';
 import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { fetchMainTill, saveMainTill, type MainTillState } from '@/lib/mainTillApi';
-import { refusalOf } from '@/lib/zParticipation';
-import { zParticipationKey } from '@/lib/zParticipationApi';
+import { producerBusyOf, refusalOf, type ProducerBusy } from '@/lib/zParticipation';
+import { shopZProducerKey, zParticipationKey } from '@/lib/zParticipationApi';
+import { ShopZForceDialog } from '@/components/dashboard/shop-z-force-dialog';
 import type { TillRef } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -60,11 +61,18 @@ function MainTillForm({ shopId, data }: { shopId: string; data: MainTillState })
   const qc = useQueryClient();
   const [machineId, setMachineId] = useState<string>(data.mainTill?.machineId ?? '');
   const [zFrom, setZFrom] = useState<string>(data.zFrom);
+  // 409 `shop_z_producer_busy`: the shop Z's producer has not handed over; a super admin may force it.
+  const [busy, setBusy] = useState<ProducerBusy | null>(null);
+  const [confirmForce, setConfirmForce] = useState(false);
 
   const save = useMutation({
-    mutationFn: () => saveMainTill(shopId, { machineId: machineId || null, zFrom }),
+    mutationFn: (force: boolean) =>
+      saveMainTill(shopId, { machineId: machineId || null, zFrom, ...(force ? { forceProducerSwitch: true } : {}) }),
     onSuccess: (out) => {
+      setBusy(null);
+      setConfirmForce(false);
       qc.setQueryData(['main-till', shopId], out);
+      void qc.invalidateQueries({ queryKey: shopZProducerKey(shopId) });
       void qc.invalidateQueries({ queryKey: ['kitchen-printers', shopId] });
       void qc.invalidateQueries({ queryKey: zParticipationKey(shopId) });
       void qc.invalidateQueries({ queryKey: ['local-shop-z-request', shopId] });
@@ -74,6 +82,11 @@ function MainTillForm({ shopId, data }: { shopId: string; data: MainTillState })
       const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
       // 409 {detail: {code, message}} (e.g. `main_till_independent`): the server's Hebrew text.
       const refusal = refusalOf(err);
+      const producerBusy = producerBusyOf(err);
+      setBusy(producerBusy);
+      setConfirmForce(false);
+      // A switch the producer holds up: said on the card, with the super admin's way past it.
+      if (producerBusy) return;
       toast.error(
         detail === 'z_run_in_progress'
           ? t('runInProgress')
@@ -135,9 +148,32 @@ function MainTillForm({ shopId, data }: { shopId: string; data: MainTillState })
 
       <Roles data={data} tillLabel={tillLabel} />
 
+      {busy ? (
+        <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+          <p>{busy.message ?? tIndependent('errors.shop_z_producer_busy')}</p>
+          {busy.canForce ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive"
+              disabled={save.isPending}
+              onClick={() => setConfirmForce(true)}
+            >
+              {tIndependent('producer.forceAnyway')}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      <ShopZForceDialog
+        open={confirmForce}
+        pending={save.isPending}
+        onConfirm={() => save.mutate(true)}
+        onCancel={() => setConfirmForce(false)}
+      />
+
       {data.canEdit ? (
         <div className="flex justify-end">
-          <Button size="sm" onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
+          <Button size="sm" onClick={() => save.mutate(false)} disabled={!dirty || save.isPending}>
             {save.isPending ? t('saving') : t('save')}
           </Button>
         </div>

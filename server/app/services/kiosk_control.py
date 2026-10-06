@@ -25,6 +25,7 @@ The self-order kiosk: devices, status, orders, commands, controllers and setting
 """
 from __future__ import annotations
 
+import logging
 import types
 import uuid
 from datetime import date, datetime, timezone
@@ -45,6 +46,8 @@ from app.services import kiosk_config as cfgsvc
 from app.services.company_hierarchy import user_covers_company, user_may_use_machine, visible_shop_ids
 from app.services.machine_status import is_online, local_today
 
+logger = logging.getLogger(__name__)
+
 #: Every dashboard role that may see (and, being a machine admin, change) kiosks.
 KIOSK_ROLES = frozenset({
     UserRole.SUPER_ADMIN,
@@ -55,7 +58,7 @@ KIOSK_ROLES = frozenset({
 #: Who sees a customer's phone in full on the orders list.
 FULL_PHONE_ROLES = frozenset({UserRole.SUPER_ADMIN, UserRole.COMPANY_MANAGER})
 
-FLOW_STATES = ("attract", "ordering", "paying", "success", "paused", "closed", "admin")
+FLOW_STATES = ("attract", "ordering", "paying", "success", "paused", "closed", "admin", "setup", "no_payment")
 BON_PRINTER_STATES = ("ok", "warn", "error", "none")
 
 NOT_KIOSK_CONTROLLER = "not_kiosk_controller"
@@ -469,7 +472,22 @@ def list_kiosks(
         .order_by(KioskDevice.name, KioskDevice.machine_id)
         .all()
     )
+    # "מצב שאין אינטרנט — תתריע": a kiosk quiet for too long during its hours gets its exception.
+    _note_offline(db, devices, now=now)
     return summaries(db, devices, now=now)
+
+
+def _note_offline(db: Session, devices: Sequence[KioskDevice], *, now: Optional[datetime] = None) -> None:
+    from app.services import kiosk_offline
+
+    for device in devices:
+        machine = db.get(POSMachine, device.machine_id)
+        if machine is None:
+            continue
+        try:
+            kiosk_offline.note_listing(db, machine, device, cfgsvc.effective_config(db, machine), now=now)
+        except Exception:  # noqa: BLE001 - an alert never fails the listing
+            logger.exception("kiosk offline alert failed for %s", device.machine_id)
 
 
 def candidates(db: Session, user: User, tenant_id, *, shop_id=None, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
@@ -597,7 +615,15 @@ def kiosk_sync(db: Session, machine: POSMachine, raw_status: Any, *, now: Option
             device.status = cleaned
             if cleaned.get("appliedConfigVersion"):
                 device.applied_config_version = cleaned["appliedConfigVersion"]
+        previous_seen = device.last_kiosk_sync_at
         device.last_kiosk_sync_at = now
+        # Back after a gap: its offline exception closed, or recorded (app/services/kiosk_offline.py).
+        try:
+            from app.services import kiosk_offline
+
+            kiosk_offline.note_back(db, machine, device, cfgsvc.effective_config(db, machine), previous_seen, now=now)
+        except Exception:  # noqa: BLE001 - an alert never fails the sync
+            logger.exception("kiosk offline alert failed for %s", machine.id)
         # The machine row is the authority on where the kiosk stands.
         if machine.shop_id is not None and device.shop_id != machine.shop_id:
             device.shop_id = machine.shop_id
@@ -956,6 +982,9 @@ def settings_view(db: Session, scope: SettingsScope) -> Dict[str, Any]:
         "id": str(scope.entity_id),
         "overrides": overrides,
         "inherited": inherited,
+        # What the parent layers set explicitly (no defaults, no preset): the dashboard tells a
+        # value that follows the "סגנון ממשק" from one a parent chose, when the style changes.
+        "inheritedLayers": cfgsvc.explicit_layers(*parents),
         "effective": effective,
         "configVersion": cfgsvc.config_version(effective),
         "updatedAt": _iso(row.updated_at) if row is not None else None,

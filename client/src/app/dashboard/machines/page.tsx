@@ -43,7 +43,22 @@ import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
 import { MachineAreaDialog } from '@/components/dashboard/areas/machine-area-dialog';
 import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
 import { AREA_NONE } from '@/lib/api';
-import { DeviceModelDialog, DeviceModelSelect } from '@/components/dashboard/machines/device-model';
+import { DeviceModelSelect } from '@/components/dashboard/machines/device-model';
+import {
+  DeviceCapabilityList,
+  DeviceProfileDialog,
+  DeviceRolePicker,
+  EMPTY_KIOSK_DRAFT,
+  KioskOptionsFields,
+} from '@/components/dashboard/machines/device-role';
+import {
+  addDeviceMissing,
+  deviceProfileErrorMessage,
+  kioskDraftError,
+  pairingRequestBody,
+  type DeviceRole,
+  type KioskDraft,
+} from '@/lib/deviceProfile';
 
 const MQTT_ONLINE_WINDOW_MS = 300 * 1000;
 
@@ -73,6 +88,12 @@ export default function MachinesPage() {
   const [pairPreAssignLabel, setPairPreAssignLabel] = useState<string | null>(null);
   /** Required before a code is generated: the till learns from it whether it prints. */
   const [pairDeviceModel, setPairDeviceModel] = useState<DeviceModel | ''>('');
+  /**
+   * "סוג מכשיר (תפקיד)", required too: a kiosk is made one as it pairs, with these options
+   * (docs/SPEC_DEVICE_ROLE_MODEL.md) — no convert step afterwards.
+   */
+  const [pairDeviceRole, setPairDeviceRole] = useState<DeviceRole | ''>('');
+  const [pairKiosk, setPairKiosk] = useState<KioskDraft>(EMPTY_KIOSK_DRAFT);
 
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignShopId, setAssignShopId] = useState('');
@@ -181,6 +202,8 @@ export default function MachinesPage() {
     setPairShopId('');
     setPairPreAssignLabel(null);
     setPairDeviceModel('');
+    setPairDeviceRole('');
+    setPairKiosk(EMPTY_KIOSK_DRAFT);
   };
 
   /**
@@ -204,19 +227,31 @@ export default function MachinesPage() {
   };
 
   const generateCode = useMutation({
-    mutationFn: (payload: { companyId?: string; shopId?: string; deviceModel: DeviceModel }) =>
-      api.post('/pairing/generate', {
-        ...(payload.companyId ? { companyId: payload.companyId } : {}),
-        ...(payload.shopId ? { shopId: payload.shopId } : {}),
-        deviceModel: payload.deviceModel,
-      }),
+    mutationFn: (body: Record<string, unknown>) => api.post('/pairing/generate', body),
     onSuccess: (res) => {
       setPairingCode(res.data.code);
       setPairingCodeId(res.data.id);
       setPairingComplete(false);
     },
-    onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
+    // A kiosk without a shop, or a controlling till that is not valid: the server's Hebrew.
+    onError: (err: unknown) =>
+      toast.error(deviceProfileErrorMessage(err) ?? axiosErrorToToastMessage(err, tc('error'))),
   });
+  const pairMissing = addDeviceMissing({
+    role: pairDeviceRole,
+    model: pairDeviceModel,
+    machineCode,
+    companyId: pairCompanyId,
+    shopId: pairShopId,
+  });
+  const pairMissingHint =
+    pairMissing === 'role'
+      ? t('deviceRole.required')
+      : pairMissing === 'model'
+        ? t('deviceModel.required')
+        : pairMissing === 'shop'
+          ? t('deviceRole.kioskNeedsShop')
+          : undefined;
 
   const createFieldSession = useMutation({
     mutationFn: () => api.post<PairingSessionCreateResponse>('/pairing/sessions'),
@@ -734,6 +769,9 @@ export default function MachinesPage() {
               {pairPreAssignLabel ? (
                 <p className="text-sm text-muted-foreground">{t('pairPreAssigned', { target: pairPreAssignLabel })}</p>
               ) : null}
+              {pairDeviceRole === 'kiosk' ? (
+                <p className="text-sm text-muted-foreground">{t('deviceRole.kioskReady')}</p>
+              ) : null}
               {/* A peek, not a reservation: shown only until the device pairs, since the
                   shop's next number moves on the moment this one is taken. */}
               {!pairingComplete &&
@@ -765,6 +803,25 @@ export default function MachinesPage() {
             </div>
           ) : (
             <>
+              {/* "סוג מכשיר (תפקיד)" and "דגם מכשיר": both required (docs/SPEC_DEVICE_ROLE_MODEL.md). */}
+              <div className="space-y-2">
+                <Label>{t('deviceRole.label')}</Label>
+                <DeviceRolePicker value={pairDeviceRole} onChange={setPairDeviceRole} />
+                <p className="text-xs text-muted-foreground">{t('deviceRole.kdsNote')}</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="pair-device-model">{t('deviceModel.label')}</Label>
+                <DeviceModelSelect
+                  id="pair-device-model"
+                  value={pairDeviceModel}
+                  onChange={setPairDeviceModel}
+                />
+                {pairDeviceModel ? (
+                  <DeviceCapabilityList model={pairDeviceModel} kiosk={pairDeviceRole === 'kiosk'} />
+                ) : (
+                  <p className="text-xs text-muted-foreground">{t('deviceModel.hint')}</p>
+                )}
+              </div>
               <div className="space-y-2">
                 <Label>{t('machineCode')}</Label>
                 <Input
@@ -774,18 +831,11 @@ export default function MachinesPage() {
                 />
                 <p className="text-xs text-muted-foreground">{t('machineCodeHint')}</p>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="pair-device-model">{t('deviceModel.label')}</Label>
-                <DeviceModelSelect
-                  id="pair-device-model"
-                  value={pairDeviceModel}
-                  onChange={setPairDeviceModel}
-                />
-                <p className="text-xs text-muted-foreground">{t('deviceModel.hint')}</p>
-              </div>
               <div className="space-y-3 rounded-lg border border-dashed p-3">
                 <div>
-                  <p className="text-sm font-medium">{t('pairAssignOptional')}</p>
+                  <p className="text-sm font-medium">
+                    {pairDeviceRole === 'kiosk' ? t('deviceRole.kioskNeedsShop') : t('pairAssignOptional')}
+                  </p>
                   <p className="text-xs text-muted-foreground mt-1">{t('pairAssignHint')}</p>
                 </div>
                 <div className="space-y-2">
@@ -795,6 +845,8 @@ export default function MachinesPage() {
                     onValueChange={(v) => {
                       setPairCompanyId(v ?? '');
                       setPairShopId('');
+                      // A kiosk's controlling tills are of its own company.
+                      setPairKiosk((k) => ({ ...k, controllerMachineIds: [] }));
                     }}
                     items={entitySelectItems(companies)}
                   >
@@ -840,6 +892,15 @@ export default function MachinesPage() {
                   ) : null}
                 </div>
               </div>
+              {/* A kiosk's name, controlling tills and device lock — made as it pairs. */}
+              {pairDeviceRole === 'kiosk' ? (
+                <KioskOptionsFields
+                  shopId={pairShopId || null}
+                  machineId={null}
+                  value={pairKiosk}
+                  onChange={setPairKiosk}
+                />
+              ) : null}
               <DialogFooter>
                 <Button variant="outline" onClick={() => setPairOpen(false)}>
                   {tc('cancel')}
@@ -859,15 +920,26 @@ export default function MachinesPage() {
                     } else {
                       setPairPreAssignLabel(null);
                     }
-                    if (!pairDeviceModel) return;
-                    generateCode.mutate({
-                      ...(pairCompanyId ? { companyId: pairCompanyId } : {}),
-                      ...(pairShopId ? { shopId: pairShopId } : {}),
-                      deviceModel: pairDeviceModel,
-                    });
+                    if (pairMissing) return;
+                    generateCode.mutate(
+                      pairingRequestBody(
+                        {
+                          role: pairDeviceRole,
+                          model: pairDeviceModel,
+                          machineCode,
+                          companyId: pairCompanyId,
+                          shopId: pairShopId,
+                        },
+                        pairKiosk,
+                      ),
+                    );
                   }}
-                  disabled={!machineCode || !pairDeviceModel || generateCode.isPending}
-                  title={!pairDeviceModel ? t('deviceModel.required') : undefined}
+                  disabled={
+                    !!pairMissing ||
+                    generateCode.isPending ||
+                    (pairDeviceRole === 'kiosk' && !!kioskDraftError(pairKiosk))
+                  }
+                  title={pairMissingHint}
                 >
                   {t('generate')}
                 </Button>
@@ -940,7 +1012,8 @@ export default function MachinesPage() {
         onOpenChange={(open) => (!open ? setSettingsTarget(null) : undefined)}
       />
 
-      <DeviceModelDialog
+      {/* "סוג מכשיר": role and model, changed together over a clean break. */}
+      <DeviceProfileDialog
         machine={deviceModelTarget}
         open={!!deviceModelTarget}
         onOpenChange={(open) => (!open ? setDeviceModelTarget(null) : undefined)}

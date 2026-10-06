@@ -69,6 +69,10 @@ import {
   productExtrasPayload,
   productExtrasProblem,
 } from '@/components/dashboard/products/product-extras-sections';
+import {
+  ProductDescriptionField,
+  ProductDietarySection,
+} from '@/components/dashboard/products/product-dietary-section';
 
 type SkuMode = 'auto' | 'manual';
 
@@ -820,10 +824,9 @@ export default function ProductsPage() {
                   onChange={(e) => setEditing((p) => ({ ...p, stockQuantity: parseInt(e.target.value) }))} />
               </div>
             </div>
-            <div className="space-y-1">
-              <Label>{t('description')}</Label>
-              <Input value={editing.description ?? ''} onChange={(e) => setEditing((p) => ({ ...p, description: e.target.value }))} />
-            </div>
+            {/* "תיאור הפריט" and "סימוני תזונה": shown in the kiosk (docs/SPEC_PRODUCT_DIETARY.md). */}
+            <ProductDescriptionField product={editing} onChange={(patch) => setEditing((p) => ({ ...p, ...patch }))} />
+            <ProductDietarySection product={editing} onChange={(patch) => setEditing((p) => ({ ...p, ...patch }))} />
             {isGlobal ? (
               <ShopScopeSection
                 draft={draft}

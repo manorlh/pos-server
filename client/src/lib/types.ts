@@ -200,7 +200,10 @@ export interface Shop {
   name: string;
   /** Shop #1, #2 … in its company; never reused. */
   shopNumber?: number | null;
+  /** "קוד סניף": mandatory, digits 1–7, unique in the company (lib/branchCode.ts). */
   branchId?: string;
+  /** The code was assigned automatically when it became mandatory: "ודאו מול רו״ח" until saved. */
+  branchIdAutoAssigned?: boolean;
   address?: string;
   city?: string;
   licenseType?: LicenseType;
@@ -484,10 +487,13 @@ export interface ShopProductCatalogCandidate {
 }
 
 /**
- * The hardware a till is: a Nova 55F (built-in printer), a Modo (no printer) or a Nebullar
- * P18 tablet (no printing yet). A P18 is recognised by itself when it pairs.
+ * "דגם מכשיר" — the hardware a till is (pos-server docs/SPEC_DEVICE_ROLE_MODEL.md): a Feitian
+ * F20 / Nova 55F (built-in printer and terminal), a Modo (terminal, no printer), a Kozen
+ * Nebullar P18 tablet, a LANDI and a Feitian tablet (no printer / drawer driver yet), or a
+ * plain Android tablet. Capabilities: lib/deviceProfile.ts. A P18 and a LANDI are
+ * recognised by themselves when they pair.
  */
-export const DEVICE_MODELS = ['N55F', 'MODO', 'P18'] as const;
+export const DEVICE_MODELS = ['N55F', 'MODO', 'P18', 'LANDI', 'FEITIAN_TABLET', 'GENERIC_ANDROID'] as const;
 export type DeviceModel = (typeof DEVICE_MODELS)[number];
 
 export interface PosMachine {
@@ -528,6 +534,19 @@ export interface PosMachine {
    * pinpad on the network. Absent on a server that predates it.
    */
   hasBuiltinTerminal?: boolean;
+  /**
+   * "סוג מכשיר (תפקיד)": `till` or `kiosk` (a self-order kiosk). Null where the server did
+   * not compute it. `kioskEnabled` false: a kiosk switched off, working as a till.
+   */
+  deviceRole?: 'till' | 'kiosk' | null;
+  kioskEnabled?: boolean | null;
+  /** The model chosen on the dashboard, and the one the device named itself at pairing. */
+  deviceModelChosen?: DeviceModel | null;
+  deviceModelReported?: DeviceModel | null;
+  /** A drawer port the till drives itself (no model today). */
+  hasCashDrawerPort?: boolean;
+  /** LANDI / Feitian tablet: built-in printer / drawer support "בקרוב". */
+  deviceDriverPending?: boolean;
   /** "לקוח זמני" on this till alone; the till keeps the earliest end above it too. */
   licenseType?: LicenseType;
   licenseExpiresOn?: string | null;
@@ -684,6 +703,17 @@ export interface PosMachine {
    * shop's Z (`cloud`, the default), or the till itself, numbered per till (`till`).
    */
   zMode?: ZMode;
+  /**
+   * Zs the till closed with no connection and has not uploaded, as it last said (null:
+   * never said), and whether one is held in a conflict for support
+   * (docs/SPEC_OFFLINE_TILL_Z.md §4.4–4.5).
+   */
+  offlineTillZPending?: number | null;
+  offlineTillZConflict?: boolean;
+  /** Support produced this till's Z from the cloud (§4.6): who, when, why, the Z; null otherwise. */
+  supportZ?: Record<string, unknown> | null;
+  /** The last reset of the till's data support ordered from the cloud (§4.7); null otherwise. */
+  tillReset?: Record<string, unknown> | null;
   /**
    * "קופה עצמאית" (always zMode `till`): its own Z, never part of the shop Z, and never
    * leaning on the shop's main till. Absent on a server that predates it.
@@ -895,6 +925,11 @@ export interface Product {
   trackStock?: boolean;
   /** "לא מקבל הנחות": no line, basket or promotion discount at the till. */
   noDiscount?: boolean;
+  /**
+   * "סימוני תזונה" (lib/productDietary.ts): vegan / vegetarian / dairy / meat / gluten_free /
+   * spicy, in that order; [] when none. Shown in the kiosk and, by a till parameter, on the till.
+   */
+  dietaryTags?: string[];
   /**
    * The company's built-in general item ("פריט כללי"), which the till's calculator
    * sells through. Every company has exactly one; it cannot be deleted, and whether it
@@ -1768,12 +1803,14 @@ export interface ZReport {
   /** What this Z includes ("קופה עצמאית בתוך סניף"); null on older Zs. */
   scope?: ZReportScope | null;
   /**
-   * A shop Z produced on the main till with no internet whose number was changed on
-   * upload: the number it was printed with.
+   * The shop's branch code ("קוד סניף") — on every Z, so two Z sequences of one branch
+   * (the shop Z and an independent till's) are told apart with the till number.
    */
-  renumberedFrom?: number | null;
+  branchCode?: string | null;
   /** The card transmission the till ran before the Z. */
   cardTransmission?: ZCardTransmission | null;
+  /** Produced by support from the cloud for a dead till (offline till Z §4.6). */
+  producedBySupport?: { by?: string; at?: string; reasonText?: string; note?: string | null; skippedNumbers?: number[] } | null;
   /** Legacy rows only: the till's own Z blob. */
   payload?: Record<string, unknown> | null;
   /** Legacy rows only. */
@@ -2300,6 +2337,8 @@ export interface DaySummaryContributor {
   offlineDeclinedAmount?: number;
   /** An independent till of its shop ("קופה עצמאית"): its Z is apart from the shop Z. */
   independent?: boolean;
+  /** Its shop's branch code ("קוד סניף"). */
+  branchCode?: string | null;
 }
 
 export interface DaySummaryRow {

@@ -1142,7 +1142,7 @@ def load_shop_transactions_for_machine(
 
     if q:
         needle = q.strip()
-        # `2-57`: number 57 of the till whose prefix is 2 (docs/SPEC_DOCUMENT_PREFIX.md).
+        # `20000057`: number 57 of the till whose prefix is 2 (docs/SPEC_DOCUMENT_PREFIX.md).
         prefixed = prefixed_number_clause(needle) if needle else None
         if prefixed is not None:
             query = query.filter(prefixed)
@@ -1356,8 +1356,11 @@ def _contributors_of(z: ZReport) -> List[DaySummaryContributor]:
     The per-till section is the drill-down unit a bookkeeper needs, because a register's
     figures are what the regulation ties a Z to (docs: shifts-plan §3).
     """
+    from app.services.z_print import branch_code_of
+
     common = dict(
         z_report_id=z.id,
+        branch_code=branch_code_of(z),
         shop_sequence_number=z.shop_sequence_number,
         # A till Z is one till's section like any other; only its number is the till's.
         origin=getattr(z, "origin", None) or "cloud",

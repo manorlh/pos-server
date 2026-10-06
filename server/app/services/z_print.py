@@ -357,13 +357,41 @@ def _till_title(s: dict) -> str:
     return f"{head} · {name}" if name else head
 
 
+#: The document range rows of a Z, per number series (docs/SPEC_DOCUMENT_PREFIX.md).
+DOCUMENT_RANGE_LABELS = {320: "חשבוניות מס קבלה", 330: "חשבוניות זיכוי", 400: "קבלות"}
+
+
+def _document_rows(s: dict) -> List[Dict[str, Any]]:
+    """
+    "מסמכים" as a range per document type — each type is numbered on its own series — from
+    the section's `documentRanges`; a Z built before that has the one range it had.
+    """
+    ranges = s.get("documentRanges") if isinstance(s.get("documentRanges"), list) else []
+    rows: List[Dict[str, Any]] = []
+    for r in ranges:
+        if not isinstance(r, dict):
+            continue
+        first, last = r.get("first"), r.get("last")
+        if not (first or last):
+            continue
+        value = f"{first}–{last}" if first and last and first != last else (last or first)
+        try:
+            label = DOCUMENT_RANGE_LABELS.get(int(r.get("documentType")), "מסמכים")
+        except (TypeError, ValueError):
+            label = "מסמכים"
+        rows.append(row(label, value))
+    if rows:
+        return rows
+    first_doc, last_doc = s.get("firstDocumentNumber"), s.get("lastDocumentNumber")
+    docs = f"{first_doc}–{last_doc}" if first_doc and last_doc and first_doc != last_doc else (last_doc or first_doc)
+    return [row("מסמכים", docs)] if docs else []
+
+
 def _till_section(s: dict) -> dict:
     first, last = s.get("firstShiftSequence"), s.get("lastShiftSequence")
     shifts = _count(s.get("shiftCount"))
     if first is not None and last is not None:
         shifts = f"{shifts} (#{first}–#{last})" if first != last else f"{shifts} (#{first})"
-    first_doc, last_doc = s.get("firstDocumentNumber"), s.get("lastDocumentNumber")
-    docs = f"{first_doc}–{last_doc}" if first_doc and last_doc and first_doc != last_doc else (last_doc or first_doc)
     net = _dec(s.get("netSales"))
     if net is None and _dec(s.get("totalSales")) is not None:
         net = _dec(s.get("totalSales")) - (_dec(s.get("totalRefunds")) or ZERO)
@@ -375,7 +403,7 @@ def _till_section(s: dict) -> dict:
         _till_title(s),
         [
             row("משמרות", shifts),
-            row("מסמכים", docs) if docs else None,
+            *_document_rows(s),
             row("סה״כ נטו", money(net), emphasis=True),
             row("מזומן", money(s.get("totalCash"))),
             row("אשראי", money(s.get("totalCard"))),
@@ -398,6 +426,33 @@ def _business_name(z: ZReport) -> str:
     return header.get("businessName") or header.get("shopName") or (shop.name if shop is not None else None) or DASH
 
 
+def branch_code_of(z: ZReport) -> Optional[str]:
+    """
+    The shop's branch code ("קוד סניף") on the Z: as frozen in its header, else the shop's
+    now (a Z built before the header carried it). In one branch a shop Z and its tills' own
+    Zs are separate runs — the owner: the branch code is on all of them, and the till number
+    tells them apart (docs/SPEC_INDEPENDENT_TILL.md §11).
+    """
+    code = (getattr(z, "header", None) or {}).get("branchId")
+    shop = getattr(z, "shop", None)
+    if not code and shop is not None:
+        code = getattr(shop, "branch_id", None)
+    code = str(code).strip() if code is not None else ""
+    return code or None
+
+
+def till_number_of(z: ZReport) -> Optional[str]:
+    """A till Z's register number, as frozen in its one section (else its till's now)."""
+    if not getattr(z, "is_till_z", False):
+        return None
+    sections = getattr(z, "per_machine", None) or []
+    pos = sections[0].get("posNumber") if sections and isinstance(sections[0], dict) else None
+    machine = getattr(z, "machine", None)
+    if pos in (None, "") and machine is not None:
+        pos = machine.pos_number
+    return str(pos).strip() if pos not in (None, "") else None
+
+
 def _subtitle(z: ZReport, tzinfo) -> List[str]:
     """Who issued it and when: the lines under the title, the same on every part."""
     header = z.header or {}
@@ -414,11 +469,23 @@ def _subtitle(z: ZReport, tzinfo) -> List[str]:
         subtitle.append(f"{reg_label(header.get('dealerType'))} {reg}")
     if shop_name:
         subtitle.append(f"סניף {shop_name}" + (f" #{shop_number}" if shop_number is not None else ""))
+    # The branch code on every Z — shop Z, till Z, independent till Z (§11 of the spec).
+    code = branch_code_of(z)
+    if code:
+        subtitle.append(f"קוד סניף {code}")
     area = header.get("areaName") if z.area_id is not None else None
     if area:
         subtitle.append(f"אזור {area}")
     if z.per_machine is None and z.machine_id is not None and z.machine is not None:
         subtitle.append(f"קופה {z.machine.name}")
+    till = till_number_of(z)
+    if till:
+        # A till Z is told apart from the shop's Z, and from another till's, by its till.
+        independent = (header.get("scope") or {}).get("kind") == "independent_till"
+        subtitle.append(f"קופה {till}" + (" (קופה עצמאית)" if independent else ""))
+    scope = header.get("scope") or {}
+    if scope.get("kind") in ("shop", "area") and scope.get("label"):
+        subtitle.append(str(scope["label"]))
     subtitle.append(f"תאריך עסקים {day(z.business_date)}")
     subtitle.append(f"הופק {stamp(z.closed_at, tzinfo)}")
     return subtitle
@@ -642,13 +709,11 @@ def build_till_document(
         return None
     view = _TillAsZ(s)
     title = _till_title(s)
-    first_doc, last_doc = s.get("firstDocumentNumber"), s.get("lastDocumentNumber")
-    docs = f"{first_doc}–{last_doc}" if first_doc and last_doc and first_doc != last_doc else (last_doc or first_doc)
     shifts = _count(s.get("shiftCount"))
     if _shifts_label(s):
         shifts = f"{shifts} ({_shifts_label(s)})"
     sections: List[dict] = [
-        section("משמרות", [row("משמרות", shifts), row("מסמכים", docs) if docs else None]),
+        section("משמרות", [row("משמרות", shifts), *_document_rows(s)]),
         section("מכירות", _sales_rows(view)),  # type: ignore[arg-type]
         section("מע״מ", _vat_rows(view, (z.header or {}).get("dealerType"))),  # type: ignore[arg-type]
         section("אמצעי תשלום", _payment_rows(view)),  # type: ignore[arg-type]
@@ -695,4 +760,7 @@ def list_item(z: ZReport, tzinfo) -> Dict[str, Any]:
         "machineCount": z.machine_count if z.machine_count is not None else (1 if z.machine_id else None),
         # Its tills, in till-number order, for printing a till's detail on its own.
         "tills": z_tills(z),
+        # Two Zs of one branch with the same number are told apart by the till (§11).
+        "branchCode": branch_code_of(z),
+        "posNumber": till_number_of(z),
     }

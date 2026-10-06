@@ -173,6 +173,12 @@ function LocalShopZBody({ shopId, state }: { shopId: string; state: LocalShopZSt
 
   return (
     <div className="space-y-2">
+      {/* A change of the shop Z's producer waiting on the main till ("העברת הפקת ה-Z ממתינה"). */}
+      {state.handover?.message ? (
+        <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs dark:border-amber-800 dark:bg-amber-950">
+          {state.handover.message}
+        </p>
+      ) : null}
       {req && view ? (
         <div className={cn('space-y-1 rounded-md p-3 text-sm', TONE_BOX[view.tone])}>
           <div className={cn('flex gap-2', view.tone === 'error' ? 'font-medium' : undefined)}>

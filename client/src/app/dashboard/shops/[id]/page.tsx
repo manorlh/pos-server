@@ -32,12 +32,16 @@ import { useAuth } from '@/lib/auth';
 import { formatQuantity } from '@/lib/format';
 import { SalesStats } from '@/components/dashboard/sales-stats';
 import { ShopFormDialog } from '@/components/dashboard/shop-form-dialog';
+import { BranchCodeNotice } from '@/components/dashboard/branch-code-notice';
 import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
 import { ClockSkewChip } from '@/components/dashboard/machine-health';
+import { DeviceModelBadge } from '@/components/dashboard/machines/device-model';
+import { DeviceRoleBadge } from '@/components/dashboard/machines/device-role';
 import { ShopAreasCard } from '@/components/dashboard/areas/shop-areas-card';
 import { ZScopeCard } from '@/components/dashboard/z-scope-card';
 import { ZParticipationCard } from '@/components/dashboard/z-participation-card';
 import { LocalShopZRequestCard } from '@/components/dashboard/local-shop-z-panel';
+import { ShopZProducerCard } from '@/components/dashboard/shop-z-producer-card';
 import { MainTillCard } from '@/components/dashboard/main-till-card';
 import { WorkTypesCard } from '@/components/dashboard/work-types-card';
 import { TrainingBadge, TrainingStripe } from '@/components/dashboard/training-badge';
@@ -187,9 +191,12 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
         </div>
       </div>
 
+      {/* "קוד סניף הוקצה אוטומטית — ודאו מול רו״ח" until the code is saved. */}
+      <BranchCodeNotice shop={shop} canEdit />
+
       <Card>
         <CardContent className="grid grid-cols-2 gap-4 pt-4 sm:grid-cols-4">
-          <Field label={t('branchId')} value={shop.branchId ?? '—'} />
+          <Field label={t('branchId')} value={shop.branchId ? <span className="font-mono">{shop.branchId}</span> : '—'} />
           <Field label={t('city')} value={shop.city ?? '—'} />
           <Field label={t('address')} value={shop.address ?? '—'} />
           <Field label={t('machines')} value={machines.length} />
@@ -261,6 +268,8 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
 
       <ZParticipationCard shopId={shop.id} />
 
+      <ShopZProducerCard shopId={shop.id} />
+
       <LocalShopZRequestCard shopId={shop.id} />
 
       <WorkTypesCard shopId={shop.id} />
@@ -300,12 +309,17 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
                 machines.map((machine) => (
                   <TableRow key={machine.id}>
                     <TableCell className="font-medium">
-                      <Link
-                        href={`/dashboard/machines/${machine.id}`}
-                        className="hover:underline"
-                      >
-                        {machine.name}
-                      </Link>
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <Link
+                          href={`/dashboard/machines/${machine.id}`}
+                          className="hover:underline"
+                        >
+                          {machine.name}
+                        </Link>
+                        {/* "סוג מכשיר": קופה / קיוסק and the model. */}
+                        <DeviceRoleBadge m={machine} showTill />
+                        <DeviceModelBadge m={machine} />
+                      </span>
                     </TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">
                       {machine.machineCode}

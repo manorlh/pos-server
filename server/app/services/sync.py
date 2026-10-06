@@ -46,6 +46,7 @@ from app.models.shop_product_override import ShopProductOverride
 from app.models.shop_category_override import ShopCategoryOverride
 from app.models.machine_catalog_item import MachineCatalogItem
 from app.models.voucher import Voucher
+from app.services import dietary
 from app.services import general_item
 from app.services import item_ticket
 from app.services import machine_catalog
@@ -129,6 +130,8 @@ def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[s
         # The menu layer (docs/SPEC_MENU_MODIFIERS.md): allergen codes, and the course
         # its table lines fire in (null: the category's).
         "allergens": list(getattr(p, "allergens", None) or []),
+        # "סימוני תזונה" (docs/SPEC_PRODUCT_DIETARY.md): codes in the fixed order, [] for none.
+        "dietaryTags": dietary.tags_out(getattr(p, "dietary_tags", None)),
         "courseId": str(p.course_id) if getattr(p, "course_id", None) else None,
         # Order limits and refills (docs/SPEC_MENU_MODIFIERS.md §3.9).
         "maxPerOrder": getattr(p, "max_per_order", None),
@@ -252,6 +255,8 @@ def _serialize_merged_product(
         # What the dish contains and its course, from the global row like the rest of
         # what the product is (docs/SPEC_MENU_MODIFIERS.md).
         "allergens": list(getattr(global_p, "allergens", None) or []),
+        # "סימוני תזונה", from the global row like the allergens.
+        "dietaryTags": dietary.tags_out(getattr(global_p, "dietary_tags", None)),
         "courseId": str(global_p.course_id) if getattr(global_p, "course_id", None) else None,
         "maxPerOrder": getattr(global_p, "max_per_order", None),
         "refillable": bool(getattr(global_p, "refillable", False)),

@@ -120,12 +120,32 @@ RULES: Tuple[RuleSpec, ...] = (
     # or number differ from what the cloud built from the documents on upload
     # ("Z שנסגר ללא חיבור — פער מול הענן", docs/SPEC_OFFLINE_TILL_Z.md §6.1).
     RuleSpec("offline_z_gap", True, (), "high", "z"),
+    # The shop's Z production moved by force by a super admin, although the main till
+    # holding it might still have shop Zs the cloud does not (SPEC_INDEPENDENT_TILL §8.10).
+    # (A shop Z that cannot be filed as printed is an `offline_z_conflict`, like a till Z.)
+    RuleSpec("shop_z_producer_forced", True, (), "high", "z"),
+    # A Z closed at the till with no connection that the cloud could not take as it is —
+    # a number out of sequence or taken, a shift in another Z, a till no longer in its
+    # mode. Never renumbered: the till keeps it as printed, held for support
+    # ("התנגשות — פנו לתמיכה", docs/SPEC_OFFLINE_TILL_Z.md §4.5). Supposed to be impossible.
+    RuleSpec("offline_z_conflict", True, (), "high", "z"),
+    # Support produced a dead till's Z from the cloud ("הפקת Z מהענן ע״י התמיכה",
+    # docs/SPEC_OFFLINE_TILL_Z.md §4.6): who, when, why, the basis, the Z, the numbers the
+    # device printed and never sent, the document counters' gaps, and what came later.
+    RuleSpec("support_z_produced", True, (), "high", "z"),
+    # Support ordered a reset of a till's data from the cloud — the only way there is
+    # ("איפוס נתוני קופה (תמיכה)", docs/SPEC_OFFLINE_TILL_Z.md §4.7): who, when, why, what
+    # the cloud saw before, and what the till did or why it refused.
+    RuleSpec("till_reset", True, (), "high", "z"),
     # A till Z closed although the card batch transmission before it failed — on the
     # cashier's explicit confirmation, or unattended ("שידור אשראי נכשל בסגירת Z", §7.3).
     RuleSpec("z_transmission_failed", True, (), "high", "z"),
     # A remote Z close forced "even mid-sale": who forced it, and the basket the till
     # parked for it ("סגירת Z כפויה", §9; a till event).
     RuleSpec("forced_z_close", True, (), "high", "till_event"),
+    # A self-order kiosk out of touch with the cloud for ≥ X minutes during its opening hours
+    # ("קיוסק לא מחובר"; app/services/kiosk_offline.py records it, and when it came back).
+    RuleSpec("kiosk_offline", True, (ParamSpec("offlineMinutes", 5, 1, 240, integer=True),), "high", "kiosk"),
     # A sale between fromHour and toHour local time (wraps midnight when from > to).
     RuleSpec(
         "after_hours",
@@ -932,12 +952,17 @@ def labels_for(db: Session, rows: Sequence[AuditException]) -> Dict[str, Dict[An
         "shops": {s.id: s.name for s in db.query(Shop).filter(Shop.id.in_(shop_ids))} if shop_ids else {},
         "areas": {a.id: a.name for a in db.query(ShopArea).filter(ShopArea.id.in_(area_ids))} if area_ids else {},
         "machines": {m.id: m for m in db.query(POSMachine).filter(POSMachine.id.in_(machine_ids))} if machine_ids else {},
-        # As printed, `<prefix>-<number>` (docs/SPEC_DOCUMENT_PREFIX.md).
+        # As printed, `20000057` (docs/SPEC_DOCUMENT_PREFIX.md).
         "documents": {
             t.id: document_number_from(t.transaction_number, t.document_prefix, t.pos_number)
             for t in db.query(
                 Transaction.id, Transaction.transaction_number, Transaction.document_prefix, Transaction.pos_number
             ).filter(Transaction.id.in_(tx_ids))
+        } if tx_ids else {},
+        # A number names a document only with its type (one series per type).
+        "documentTypes": {
+            t.id: t.document_type
+            for t in db.query(Transaction.id, Transaction.document_type).filter(Transaction.id.in_(tx_ids))
         } if tx_ids else {},
         "shifts": {
             s.id: s.sequence_number

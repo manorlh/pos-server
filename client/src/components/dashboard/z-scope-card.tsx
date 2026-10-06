@@ -79,6 +79,7 @@ export function ZScopeCard({ shopId }: { shopId: string }) {
     if (r.detail === 'till_open') return t('refused.tillOpen', { till });
     if (r.detail === 'unreported_shifts') return t('refused.awaitingZ', { till, n: r.count ?? 1 });
     if (r.detail === 'z_in_progress') return t('refused.zInProgress', { till });
+    if (r.detail === 'till_offline_zs_unsynced') return t('refused.offlineUnsynced', { till });
     if (r.detail === 'super_admin_only') return t('readOnly');
     return r.detail;
   };

@@ -15,6 +15,7 @@ import {
   type KioskConfig,
   type KioskFont,
   type KioskValidationError,
+  type UiStyle,
 } from '@/lib/kioskConfig';
 import type { KioskLevel, KioskServerError, KioskSourceCatalog } from '@/lib/kioskApi';
 
@@ -23,6 +24,10 @@ export type PreviewScreen = 'attract' | 'service' | 'catalog' | 'product' | 'car
 export interface KioskEditorValue {
   level: KioskLevel;
   draft: KioskConfig;
+  /**
+   * What this level inherits, rebased onto the draft's "סגנון ממשק" (`rebaseInherited`): the
+   * fields compare, prune and reset against it.
+   */
   inherited: KioskConfig;
   canEdit: boolean;
   /** May upload media (`POST /kiosks/media`): any role that may save this level. */
@@ -39,6 +44,8 @@ export interface KioskEditorValue {
   serverErrors: KioskServerError[];
   set: (path: string, value: unknown) => void;
   reset: (path: string) => void;
+  /** Pick a "סגנון ממשק": values that follow the old style move to the new one's. */
+  setUiStyle: (style: UiStyle) => void;
   showScreen: (screen: PreviewScreen) => void;
 }
 

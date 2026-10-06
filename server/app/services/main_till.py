@@ -105,21 +105,29 @@ def dashboard_z_refusal(db: Session, shop: Shop) -> Optional[Dict[str, Any]]:
     shop's Z hostage: the dashboard may then produce it, and the main till's shift waits
     for the next Z like any till that did not close.
     """
-    from app.services.local_shop_z import local_mode_of_shop
+    from app.services.local_shop_z import LOCAL, effective_producer
     from app.services.machine_status import is_online
 
     main = main_till_of_shop(db, shop.id)
-    if main is not None and local_mode_of_shop(db, shop):
+    producer = effective_producer(db, shop)
+    if producer.kind == LOCAL or producer.configured_kind == LOCAL:
         # Local mode (docs/SPEC_INDEPENDENT_TILL.md §8): the main till numbers the shop's Zs
         # on the LAN, with or without the internet — a Z started here while it is offline
         # would take a number it may be printing right now. Never here, whatever `shopZFrom`
-        # says; the dashboard asks the main till instead (`POST /shops/{id}/local-shop-z-request`).
+        # says, and also not while the production is still on its way to or from a main till
+        # (§8.10); the dashboard asks the main till instead (`/local-shop-z-request`).
+        message = (
+            "הסניף עובד ברשת מקומית: ה-Z הסניפי מופק בקופה הראשית בלבד. "
+            "אפשר לבקש ממנה להפיק אותו (\"בקש מהקופה הראשית\")."
+        )
+        if producer.handover is not None:
+            message = "הפקת ה-Z הסניפי עוברת עכשיו בין הקופה הראשית לענן ולא הושלמה: " + producer.handover["message"]
         return {
             "code": ONLY_FROM_MAIN,
             "localMode": True,
             "mainTill": till_ref(main),
-            "message": "הסניף עובד ברשת מקומית: ה-Z הסניפי מופק בקופה הראשית בלבד. "
-                       "אפשר לבקש ממנה להפיק אותו (\"בקש מהקופה הראשית\").",
+            **producer.to_json(db),
+            "message": message,
         }
     if main is None or z_from_of(db, shop) != Z_FROM_MAIN or not is_online(main.last_heartbeat_at):
         return None
@@ -234,6 +242,13 @@ def take_over(db: Session, machine: POSMachine, operator: Optional[str] = None) 
 
     ensure_builtin_parameters(db)
     now = datetime.now(timezone.utc)
+    # The shop's Z producer is pinned as it stands: the tables move now (they cannot wait),
+    # but the Z production moves only once the old main till could hand it over cleanly —
+    # it is offline, so it may still hold shop Zs the cloud does not (SPEC_INDEPENDENT_TILL §8.10).
+    from app.services.local_shop_z import effective_producer, ensure_pin
+
+    shop = db.get(Shop, machine.shop_id)
+    ensure_pin(db, shop, now=now)
     by_key = {p.key: p for p in db.query(TillParameter).filter(TillParameter.key.in_(HOST_KEYS)).all()}
     moved = []
     for key in HOST_KEYS:
@@ -294,4 +309,12 @@ def take_over(db: Session, machine: POSMachine, operator: Optional[str] = None) 
         "shop %s: main till taken over by %s from %s (%s) — %s",
         machine.shop_id, machine.id, old.id if old else None, operator or "?", ", ".join(moved),
     )
-    return {"mainTill": till_ref(machine), "previous": till_ref(old), "moved": moved}
+    producer = effective_producer(db, shop, now=now)
+    return {
+        "mainTill": till_ref(machine),
+        "previous": till_ref(old),
+        "moved": moved,
+        # Waiting: this till serves the tables, but makes no shop Z until the old main till
+        # syncs (or a super admin moves the production on the shop's page).
+        "shopZHandover": producer.to_json(db)["handover"],
+    }

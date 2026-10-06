@@ -435,7 +435,19 @@ def put_print_host(
     """The shop's print server ("שרת הדפסות"): `printHostTill` on that till only; null = none."""
     shop = _shop(db, shop_id, active_tenant_id)
     K.check_edit(db, current_user, shop)
+    # The print server may decide the shop's local mode, and so its Z producer
+    # (docs/SPEC_INDEPENDENT_TILL.md §8.10): refused while the producer cannot hand over.
+    from fastapi.responses import JSONResponse
+
+    from app.services import local_shop_z as LZ
+
+    guard = LZ.ProducerGuard(db, [shop])
     targets = K.set_print_host(db, shop, body.machine_id)
+    try:
+        guard.check(user=current_user)
+    except LZ.LocalShopZRefused as refused:
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
     _config_changed(db, shop, background_tasks, targets)
     return {"printHost": K.print_host_out(db, shop)}
 

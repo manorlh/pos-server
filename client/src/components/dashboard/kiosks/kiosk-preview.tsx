@@ -3,10 +3,11 @@
 /**
  * The live preview: the kiosk's screens in a phone or tablet frame, rendered from the
  * config being edited (not the saved one), on the real catalog of the shop's till when
- * there is one. A small working kiosk: tap the CTA, pick a product, add, pay.
+ * there is one. A small working kiosk: tap the CTA, pick a product, add (with the
+ * add-to-cart motion), pay on the pinpad beside the screen.
  */
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { Smartphone, Tablet } from 'lucide-react';
@@ -16,27 +17,41 @@ import { fetchGroups, fetchProductMenu } from '@/lib/menuApi';
 import {
   aspectRatioCss,
   buttonRadius,
+  cartPanelShown,
+  categoryRailImage,
+  ctaBox,
   fontStack,
   gridColumns,
   kioskCatalogView,
+  messagePlacement,
+  motionSpec,
   resolveThemeColors,
+  typeScaleFactor,
+  typeWeights,
+  type DietaryTag,
   type KioskConfig,
   type KioskFont,
   type KioskTextKey,
+  type MessageScreen,
 } from '@/lib/kioskConfig';
 import type { KioskSourceCatalog } from '@/lib/kioskApi';
 import type { PreviewScreen } from './editor-context';
 import {
+  AttractCta,
   AttractScreen,
   CartScreen,
   CatalogScreen,
   ConfirmSheet,
+  Flyer,
+  MessageOverlay,
   PausedScreen,
   PayScreen,
   PREVIEW_CSS,
   ProductSheet,
   ServiceScreen,
   SuccessScreen,
+  type Flight,
+  type PausedVariant,
   type PCategory,
   type PGroup,
   type PLine,
@@ -46,13 +61,21 @@ import {
 import { useGoogleFonts } from './use-google-fonts';
 
 const SCREENS: PreviewScreen[] = ['attract', 'service', 'catalog', 'product', 'cart', 'pay', 'success', 'paused'];
+const PAUSED_VARIANTS: PausedVariant[] = ['paused', 'closed', 'noPayment', 'offline'];
 
 type Frame = 'phone' | 'tablet';
 
 const FRAME_SIZE: Record<Frame, { w: number; h: number }> = {
   phone: { w: 300, h: 620 },
-  tablet: { w: 420, h: 600 },
+  tablet: { w: 400, h: 600 },
 };
+
+/**
+ * The device each frame stands for, in dp, for the till's width rules: a phone and a PORTRAIT
+ * tablet. The side order panel needs a wide (landscape) screen on the till (900 dp and up), so
+ * both frames show the bar, as the till does on them.
+ */
+const FRAME_DEVICE_DP: Record<Frame, number> = { phone: 360, tablet: 800 };
 
 /** Demo data when there is no till to read a catalog from. */
 function useSampleCatalog(): { categories: { id: string; name: string }[]; products: PProduct[] } {
@@ -63,7 +86,7 @@ function useSampleCatalog(): { categories: { id: string; name: string }[]; produ
       { id: 's-drinks', name: t('cat2') },
       { id: 's-desserts', name: t('cat3') },
     ];
-    const p = (id: string, categoryId: string, price: number, soldOut = false, desc = false): PProduct => ({
+    const p = (id: string, categoryId: string, price: number, tags: DietaryTag[], soldOut = false, desc = false): PProduct => ({
       id,
       name: t(id),
       price,
@@ -71,22 +94,23 @@ function useSampleCatalog(): { categories: { id: string; name: string }[]; produ
       soldOut,
       description: desc ? t(`${id}d`) : null,
       categoryId,
+      dietaryTags: tags,
     });
     return {
       categories,
       products: [
-        p('p1', 's-burgers', 54, false, true),
-        p('p2', 's-burgers', 59, false, true),
-        p('p3', 's-burgers', 49, true, true),
-        p('p4', 's-drinks', 12),
-        p('p5', 's-drinks', 16),
-        p('p6', 's-desserts', 28, false, true),
+        p('p1', 's-burgers', 54, ['meat'], false, true),
+        p('p2', 's-burgers', 59, ['meat', 'spicy'], false, true),
+        p('p3', 's-burgers', 49, ['vegan', 'gluten_free'], true, true),
+        p('p4', 's-drinks', 12, ['vegan', 'gluten_free']),
+        p('p5', 's-drinks', 16, ['vegan'], false, true),
+        p('p6', 's-desserts', 28, ['vegetarian', 'dairy'], false, true),
       ],
     };
   }, [t]);
 }
 
-/** The modifier groups of a real product, for the product sheet; sample ones otherwise. */
+/** The modifier groups and allergens of a real product, for the product sheet; sample ones otherwise. */
 function useProductGroups(productId: string | null, real: boolean): { groups: PGroup[]; allergens: string[] } {
   const ts = useTranslations('kiosks.preview.sample');
   const ta = useTranslations('menu.allergens');
@@ -130,7 +154,7 @@ function useProductGroups(productId: string | null, real: boolean): { groups: PG
             ],
           },
         ],
-        allergens: [],
+        allergens: [ta('gluten'), ta('sesame')],
       };
     }
     const m = menu.data;
@@ -163,6 +187,7 @@ export function KioskPreview({
   onScreen,
   brandName,
   nowMs,
+  onCtaMove,
 }: {
   config: KioskConfig;
   catalog: KioskSourceCatalog | null;
@@ -172,6 +197,8 @@ export function KioskPreview({
   onScreen: (s: PreviewScreen) => void;
   brandName: string;
   nowMs: number;
+  /** Dragging the attract button in a custom place: its new centre, in percent. */
+  onCtaMove?: (x: number, y: number) => void;
 }) {
   const t = useTranslations('kiosks.preview');
   const tb = useTranslations('kiosks.builtin');
@@ -182,7 +209,18 @@ export function KioskPreview({
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [productId, setProductId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const [pausedVariant, setPausedVariant] = useState<'paused' | 'closed'>('paused');
+  const [pausedVariant, setPausedVariant] = useState<PausedVariant>('paused');
+  const [visit, setVisit] = useState(0);
+  const [flights, setFlights] = useState<Flight[]>([]);
+  const [justAdded, setJustAdded] = useState<string | null>(null);
+  const [cartBump, setCartBump] = useState(0);
+  const screenRef = useRef<HTMLDivElement>(null);
+  const cartTargetRef = useRef<HTMLDivElement | null>(null);
+  const setCartTarget = useCallback((el: HTMLDivElement | null) => {
+    cartTargetRef.current = el;
+  }, []);
+  const justAddedTimer = useRef<number | null>(null);
+  const flightSeq = useRef(0);
 
   const font = fonts.find((f) => f.id === config.theme.font);
   useGoogleFonts([font]);
@@ -199,8 +237,9 @@ export function KioskPreview({
               price: p.price,
               imageUrl: p.imageUrl,
               soldOut: !p.available,
-              description: null,
+              description: p.description,
               categoryId: p.categoryId,
+              dietaryTags: p.dietaryTags,
               available: p.available,
             }),
           ),
@@ -217,10 +256,10 @@ export function KioskPreview({
       view.categories.map((row) => ({
         id: row.category.id,
         name: row.category.name,
-        imageUrl: config.catalog.categoryImages[row.category.id]?.url ?? categoryImageUrls[row.category.id] ?? null,
+        imageUrl: categoryRailImage(row.category.id, config.catalog, categoryImageUrls),
         products: row.products.map((x) => ({ ...x.product, soldOut: x.soldOut })),
       })),
-    [view, config.catalog.categoryImages, categoryImageUrls],
+    [view, config.catalog, categoryImageUrls],
   );
   const featured = useMemo(() => view.featured.map((x) => ({ ...x.product, soldOut: x.soldOut })), [view]);
   const allProducts = useMemo(() => categories.flatMap((c) => c.products), [categories]);
@@ -228,7 +267,6 @@ export function KioskPreview({
   const product = allProducts.find((p) => p.id === productId) ?? firstAvailable;
   const { groups, allergens } = useProductGroups(product?.id ?? null, real);
 
-  const shownScreen: PreviewScreen = screen;
   // The cart and pay screens with nothing chosen yet show a sample basket.
   const sampleCart: PLine[] = useMemo(
     () =>
@@ -238,16 +276,32 @@ export function KioskPreview({
         .map((p, i) => ({ key: `sample-${p.id}`, product: p, qty: i === 0 ? 2 : 1, unit: p.price, extras: [] })),
     [allProducts],
   );
-  const effectiveCart = cart.length > 0 ? cart : (shownScreen === 'cart' || shownScreen === 'pay' || shownScreen === 'success') ? sampleCart : cart;
+  const effectiveCart = cart.length > 0 ? cart : screen === 'cart' || screen === 'pay' || screen === 'success' ? sampleCart : cart;
 
+  const wide = frame === 'tablet';
+  const panel = cartPanelShown(config.theme, FRAME_DEVICE_DP[frame]);
+  const side = config.theme.categoryLayout !== 'top';
+  const motion = motionSpec(config.theme, config.general);
   const colors = resolveThemeColors(config.theme);
+  const cols = Math.max(
+    1,
+    gridColumns(config.theme.gridDensity, wide) - (panel ? 1 : 0) - (side && !wide && config.theme.gridDensity === 'compact' ? 1 : 0),
+  );
+
+  const navigate = (s: PreviewScreen) => {
+    setConfirming(false);
+    if (s !== 'product') setProductId(null);
+    setVisit((v) => v + 1);
+    onScreen(s);
+  };
+
   const model: PreviewModel = {
     cfg: config,
     c: colors,
     radius: config.theme.cornerRadius,
     btnRadius: buttonRadius(config.theme),
-    wide: frame === 'tablet',
-    cols: gridColumns(config.theme.gridDensity, frame === 'tablet'),
+    wide,
+    cols,
     ratio: aspectRatioCss(config.theme.imageRatio),
     font: fontStack(config.theme.font, fonts),
     txt: (key: KioskTextKey) => config.texts?.[key] || tb(key),
@@ -258,11 +312,7 @@ export function KioskPreview({
     logoUrl: config.theme.logo?.url ?? null,
     brandName,
     nowMs,
-    go: (s) => {
-      setConfirming(false);
-      if (s !== 'product') setProductId(null);
-      onScreen(s);
-    },
+    go: navigate,
     openProduct: (p) => {
       setProductId(p.id);
       onScreen('product');
@@ -271,21 +321,41 @@ export function KioskPreview({
     setCart,
     service,
     setService,
+    motion,
+    justAddedId: justAdded,
+    cartBump,
+    setCartTarget,
+    panel,
+    screen: { w: FRAME_SIZE[frame].w, h: FRAME_SIZE[frame].h },
+    ctaBox: ctaBox(config.attract.cta, FRAME_SIZE[frame].w, FRAME_SIZE[frame].h),
   };
 
-  const addLine = (line: PLine) => {
-    const next = [...cart, line];
-    setCart(next);
+  const removeFlight = useCallback((id: number) => setFlights((list) => list.filter((f) => f.id !== id)), []);
+
+  const addLine = (line: PLine, from: DOMRect | null) => {
+    setCart((c) => [...c, line]);
+    setCartBump((n) => n + 1);
+    setJustAdded(line.product.id);
+    if (justAddedTimer.current) window.clearTimeout(justAddedTimer.current);
+    justAddedTimer.current = window.setTimeout(() => setJustAdded(null), 900);
+    const box = screenRef.current?.getBoundingClientRect();
+    if (motion.flyMs > 0 && from && box) {
+      flightSeq.current += 1;
+      setFlights((list) => [
+        ...list,
+        {
+          id: flightSeq.current,
+          x: from.left + from.width / 2 - box.left,
+          y: from.top + from.height / 2 - box.top,
+          imageUrl: line.product.imageUrl,
+        },
+      ]);
+    }
+    setProductId(null);
     const mode = config.general.skipCart;
-    if (mode === 'direct') {
-      setProductId(null);
-      onScreen('pay');
-    } else if (mode === 'confirm') {
-      setConfirming(true);
-      setProductId(null);
-      onScreen('catalog');
-    } else {
-      setProductId(null);
+    if (mode === 'direct') onScreen('pay');
+    else {
+      if (mode === 'confirm') setConfirming(true);
       onScreen('catalog');
     }
   };
@@ -293,6 +363,19 @@ export function KioskPreview({
   const size = FRAME_SIZE[frame];
   const bgImage = config.theme.backgroundImage?.url;
   const upsell = allProducts.filter((p) => !p.soldOut && !effectiveCart.some((l) => l.product.id === p.id)).slice(0, 4);
+  // The ordering screens' message: one overlay per visit (the product sheet belongs to the catalog visit).
+  const messageScreen = (screen === 'product' ? 'catalog' : screen) as MessageScreen;
+  const overlay = messagePlacement(messageScreen) === 'overlay-center';
+  const weights = typeWeights(config.theme.typeWeight);
+  const rootVars = {
+    '--k-scale': String(typeScaleFactor(config.theme.typeScale)),
+    '--k-w-body': String(weights.body),
+    '--font-weight-medium': String(weights.medium),
+    '--font-weight-semibold': String(weights.semibold),
+    '--font-weight-bold': String(weights.bold),
+    '--font-weight-extrabold': String(weights.extrabold),
+    '--font-weight-black': String(weights.black),
+  } as CSSProperties;
 
   return (
     <div className="space-y-3">
@@ -323,22 +406,19 @@ export function KioskPreview({
           <button
             key={s}
             type="button"
-            onClick={() => {
-              setConfirming(false);
-              onScreen(s);
-            }}
+            onClick={() => navigate(s)}
             className={cn(
               'rounded-full px-2.5 py-1 text-xs transition-all duration-200',
-              shownScreen === s ? 'bg-foreground text-background shadow-sm' : 'bg-muted text-muted-foreground hover:text-foreground',
+              screen === s ? 'bg-foreground text-background shadow-sm' : 'bg-muted text-muted-foreground hover:text-foreground',
             )}
           >
             {t(`screens.${s}`)}
           </button>
         ))}
       </div>
-      {shownScreen === 'paused' ? (
-        <div className="inline-flex rounded-xl bg-muted p-1 text-xs">
-          {(['paused', 'closed'] as const).map((v) => (
+      {screen === 'paused' ? (
+        <div className="inline-flex flex-wrap rounded-xl bg-muted p-1 text-xs">
+          {PAUSED_VARIANTS.map((v) => (
             <button
               key={v}
               type="button"
@@ -355,7 +435,7 @@ export function KioskPreview({
         <div
           className={cn(
             'relative shrink-0 bg-neutral-900 shadow-2xl ring-1 ring-black/10 transition-all duration-500',
-            frame === 'phone' ? 'rounded-[44px] p-2.5' : 'rounded-[30px] p-3',
+            frame === 'phone' ? 'rounded-[44px] p-2.5' : 'rounded-[28px] p-3',
           )}
           style={{ width: size.w + (frame === 'phone' ? 20 : 24) }}
         >
@@ -363,12 +443,14 @@ export function KioskPreview({
             <div className="absolute left-1/2 top-4 z-40 h-5 w-24 -translate-x-1/2 rounded-full bg-neutral-900" />
           ) : null}
           <div
+            ref={screenRef}
             dir="rtl"
-            className="relative overflow-hidden"
+            className={cn('k-root relative overflow-hidden', config.general.reduceMotion && 'k-reduce')}
             style={{
+              ...rootVars,
               width: size.w,
               height: size.h,
-              borderRadius: frame === 'phone' ? 34 : 20,
+              borderRadius: frame === 'phone' ? 34 : 18,
               background: colors.background,
               color: colors.text,
               fontFamily: model.font,
@@ -380,46 +462,62 @@ export function KioskPreview({
                 <img src={bgImage} alt="" className="absolute inset-0 h-full w-full object-cover" />
                 <div
                   className="absolute inset-0"
-                  style={{ background: shownScreen === 'attract' ? `${colors.background}66` : `${colors.background}D9` }}
+                  style={{ background: screen === 'attract' ? `${colors.background}66` : `${colors.background}D9` }}
                 />
               </>
             ) : null}
             <div className={cn('relative h-full', frame === 'phone' && 'pt-7')}>
-              <div key={shownScreen === 'product' ? 'catalog' : shownScreen} className="h-full animate-in fade-in slide-in-from-bottom-2 duration-300">
-                {shownScreen === 'attract' ? (
+              <div key={screen === 'product' ? 'catalog' : screen} className="h-full animate-in fade-in slide-in-from-bottom-2 duration-300">
+                {screen === 'attract' ? (
                   <AttractScreen m={model} />
-                ) : shownScreen === 'service' ? (
+                ) : screen === 'service' ? (
                   <ServiceScreen m={model} />
-                ) : shownScreen === 'catalog' || shownScreen === 'product' ? (
+                ) : screen === 'catalog' || screen === 'product' ? (
                   <CatalogScreen m={model} activeCategory={activeCategory} onCategory={setActiveCategory} />
-                ) : shownScreen === 'cart' ? (
+                ) : screen === 'cart' ? (
                   <CartScreen m={model} upsell={upsell} />
-                ) : shownScreen === 'pay' ? (
+                ) : screen === 'pay' ? (
                   <PayScreen m={model} />
-                ) : shownScreen === 'success' ? (
+                ) : screen === 'success' ? (
                   <SuccessScreen m={model} />
                 ) : (
                   <PausedScreen m={model} variant={pausedVariant} />
                 )}
               </div>
-              {shownScreen === 'product' && product ? (
+              {screen === 'product' && product ? (
                 <ProductSheet
                   key={`${product.id}-${groups.length}`}
                   m={model}
                   product={product}
                   groups={groups}
                   allergens={allergens}
-                  onClose={() => model.go('catalog')}
+                  onClose={() => navigate('catalog')}
                   onAdd={addLine}
                 />
               ) : null}
-              {confirming && shownScreen === 'catalog' ? (
-                <ConfirmSheet m={model} onMore={() => setConfirming(false)} onPay={() => model.go('pay')} />
+              {screen === 'attract' ? <AttractCta m={model} box={model.ctaBox} screen={model.screen} onMove={onCtaMove} /> : null}
+              {confirming && screen === 'catalog' ? (
+                <ConfirmSheet m={model} onMore={() => setConfirming(false)} onPay={() => navigate('pay')} />
+              ) : null}
+              {overlay ? (
+                <MessageOverlay key={`${messageScreen}-${visit}`} m={model} screen={messageScreen} suppressed={screen === 'product' || confirming} />
               ) : null}
             </div>
+            {flights.map((f) => (
+              <Flyer
+                key={f.id}
+                flight={f}
+                motion={motion}
+                color={colors.button}
+                containerRef={screenRef}
+                targetRef={cartTargetRef}
+                onDone={removeFlight}
+              />
+            ))}
           </div>
         </div>
       </div>
+      {config.theme.cartStyle === 'panel' ? <p className="text-center text-[11px] text-muted-foreground">{t('panelWideOnly')}</p> : null}
       <p className="text-center text-[11px] text-muted-foreground">{real ? t('realCatalog', { name: catalog!.machineName }) : t('sampleNote')}</p>
     </div>
   );

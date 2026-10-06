@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -42,6 +43,9 @@ class MainTillIn(BaseModel):
 
     machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
     z_from: Optional[str] = Field(None, alias="zFrom")
+    #: The super admin moves the shop's Z production although the main till holding it may
+    #: still have shop Zs the cloud does not (docs/SPEC_INDEPENDENT_TILL.md §8.10).
+    force_producer_switch: bool = Field(False, alias="forceProducerSwitch")
 
 
 def _shop(db: Session, shop_id: uuid.UUID, user: User, tenant_id) -> Shop:
@@ -143,6 +147,10 @@ def put_main_till(
             },
         )
     now = datetime.now(timezone.utc)
+    # Exactly one producer of the shop's Z sequence: pinned before, checked after.
+    from app.services import local_shop_z as LZ
+
+    guard = LZ.ProducerGuard(db, [shop], now=now)
 
     main = _parameter(db, MT.MAIN_TILL_KEY)
     db.query(TillParameterValue).filter(
@@ -169,6 +177,15 @@ def put_main_till(
         ))
         z_from.updated_at = now
     db.flush()
+    try:
+        guard.check(force=body.force_producer_switch, user=current_user)
+    except LZ.LocalShopZRefused as refused:
+        db.rollback()
+        return JSONResponse(
+            status_code=refused.status_code,
+            # The card's refusals are `{detail: {code, message}}`.
+            content={"detail": {"code": refused.body.get("detail"), **{k: v for k, v in refused.body.items() if k != "detail"}}},
+        )
     out = _out(db, shop, current_user)
     targets = TP.notify_targets_for_scope(db, "shop", shop.id)
     db.commit()

@@ -28,7 +28,7 @@ import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from fastapi import HTTPException, status
 from sqlalchemy import BigInteger, case, func, or_
@@ -256,6 +256,56 @@ def highest_transaction_number(db: Session, machine_id: uuid.UUID) -> Optional[i
     return max(numbers) if numbers else None
 
 
+def highest_transaction_numbers(db: Session, machine_id: uuid.UUID) -> Dict[str, int]:
+    """
+    The highest numeric document number the cloud holds from this machine **per series**
+    ("320", "330", "400" — -400 is in "400"; docs/SPEC_DOCUMENT_PREFIX.md), for a till
+    that numbers each type on its own counter. A series with no document is absent.
+    """
+    out: Dict[str, int] = {}
+    if db.get_bind().dialect.name == "postgresql":
+        rows = (
+            db.query(Transaction.document_series, func.max(Transaction.transaction_number.cast(BigInteger)))
+            .filter(
+                Transaction.machine_id == machine_id,
+                Transaction.transaction_number.op("~")(f"^[0-9]{{1,{DOCUMENT_NUMBER_MAX_DIGITS}}}$"),
+            )
+            .group_by(Transaction.document_series)
+            .all()
+        )
+        return {str(series): int(value) for series, value in rows if series is not None and value is not None}
+    for series, n in db.query(Transaction.document_series, Transaction.transaction_number).filter(
+        Transaction.machine_id == machine_id
+    ):
+        if series is None or not (n and n.isascii() and n.isdigit() and len(n) <= DOCUMENT_NUMBER_MAX_DIGITS):
+            continue
+        key = str(series)
+        out[key] = max(out.get(key, 0), int(n))
+    return out
+
+
+def with_reported_counters(
+    db: Session, machine_id: uuid.UUID, per_series: Optional[Dict[str, int]], highest: Optional[int]
+) -> tuple:
+    """`(per_series, highest)` raised to the till's last reported counters, never lowered."""
+    from app.models.pos_machine import POSMachine
+
+    machine = db.get(POSMachine, machine_id)
+    reported = getattr(machine, "reported_document_counters", None) if machine is not None else None
+    if not isinstance(reported, dict) or not reported:
+        return per_series, highest
+    merged = dict(per_series or {})
+    for series, value in reported.items():
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            continue
+        if series in ("320", "330", "400") and n > int(merged.get(series) or 0):
+            merged[series] = n
+    top = max(merged.values()) if merged else None
+    return (merged or None), (max(highest or 0, top or 0) or highest)
+
+
 def last_closed_shift(db: Session, machine_id: uuid.UUID) -> LastClosedShift:
     """
     The till's last closed shift, and the highest document number the cloud holds from
@@ -263,6 +313,10 @@ def last_closed_shift(db: Session, machine_id: uuid.UUID) -> LastClosedShift:
     counter onto it, so it never reissues a number the machine already used).
     """
     highest = highest_transaction_number(db, machine_id)
+    per_series = highest_transaction_numbers(db, machine_id) or None
+    # And the counters the till itself last reported (offline till Z §4.6): a replacement
+    # device never reissues a number the old one printed and never sent.
+    per_series, highest = with_reported_counters(db, machine_id, per_series, highest)
     shift = (
         db.query(Shift)
         .filter(Shift.machine_id == machine_id, Shift.status == ShiftStatus.CLOSED)
@@ -270,9 +324,10 @@ def last_closed_shift(db: Session, machine_id: uuid.UUID) -> LastClosedShift:
         .first()
     )
     if shift is None:
-        return LastClosedShift(highest_transaction_number=highest)
+        return LastClosedShift(highest_transaction_number=highest, highest_transaction_numbers=per_series)
     return LastClosedShift(
         highest_transaction_number=highest,
+        highest_transaction_numbers=per_series,
         shift_id=shift.id,
         sequence_number=shift.sequence_number,
         business_date=shift.business_date,
@@ -474,6 +529,11 @@ def note_documents_after_close(
         if z is not None:
             z.late_documents = int(z.late_documents or 0) + late
             z.amended_documents = int(z.amended_documents or 0) + rewritten
+            if late and (z.header or {}).get("producedBySupport"):
+                # The till came back with documents of support's Z (offline till Z §4.6).
+                from app.services.support_z import note_late_documents
+
+                note_late_documents(db, z, shift, late)
         logger.warning(
             "shift %s is in Z %s: %s document(s) arrived or moved in after it, %s rewritten",
             shift.id, shift.z_report_id, late, rewritten,

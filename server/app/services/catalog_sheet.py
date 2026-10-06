@@ -23,6 +23,9 @@ from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from app.services import dietary
+from app.services.dietary import DIETARY_LABELS_HE
+
 # ── Sheets ────────────────────────────────────────────────────────────────────
 
 SHEET_INSTRUCTIONS = "הוראות"
@@ -162,8 +165,14 @@ PRODUCT_COLUMNS: Tuple[Column, ...] = (
            "לא = הפריט מוצג בקופה אבל חסום למכירה. ריק בפריט חדש = כן.", YES,
            ("פעיל", "זמין", "active")),
     Column("description", "תיאור", 40, "text",
-           "טקסט חופשי (לא חובה).", "200 גרם, חסה, עגבנייה",
-           ("תיאור", "הערות", "description")),
+           "טקסט חופשי (לא חובה). מוצג בקיוסק ליד הפריט - עד 300 תווים מומלץ, 1000 לכל היותר.",
+           "200 גרם, חסה, עגבנייה",
+           ("תיאור", "תיאור הפריט", "הערות", "description")),
+    Column("dietary", "סימוני תזונה", 22, "dietary",
+           "מופרדים בפסיק: " + ", ".join(DIETARY_LABELS_HE.values()) + " (או הקודים באנגלית). "
+           "טבעוני מסומן גם כצמחוני; בשרי וחלבי לא יחד. ריק = ללא שינוי; 'ללא' = לנקות.",
+           "בשרי, חריף",
+           ("סימוני תזונה", "סימון תזונה", "תזונה", "סימונים", "dietary", "dietary tags", "diet")),
 )
 
 CATEGORY_COLUMNS: Tuple[Column, ...] = (
@@ -451,6 +460,39 @@ def parse_text(value: Any, title: str, maximum: int) -> Parsed:
     if len(text) > maximum:
         return Parsed(error=f"{title} ארוך מדי (מעל {maximum} תווים)")
     return Parsed(text)
+
+
+#: In "סימוני תזונה": clear the product's tags.
+DIETARY_NONE = "ללא"
+
+
+def parse_dietary(value: Any) -> Parsed:
+    """
+    A "סימוני תזונה" cell: Hebrew labels or codes, separated by commas, in any order. The
+    value is a tuple of codes in the fixed order (app/services/dietary.py); `()` is an
+    explicit clear ("ללא"); empty is "no change".
+    """
+    text = clean_text(value)
+    if not text:
+        return Parsed()
+    parts = [clean_text(p) for p in _LIST_SPLIT.split(text) if clean_text(p)]
+    if [normalize_name(p) for p in parts] in ([normalize_name(DIETARY_NONE)], ["none"]):
+        return Parsed(())
+    codes: List[str] = []
+    unknown: List[str] = []
+    for part in parts:
+        code = dietary.code_of(part)
+        if code is None:
+            unknown.append(part)
+        elif code not in codes:
+            codes.append(code)
+    if unknown:
+        choices = ", ".join(DIETARY_LABELS_HE.values())
+        return Parsed(error=f"סימון תזונה לא מוכר ('{unknown[0]}') - אפשר: {choices}")
+    pair = dietary.conflict_of(codes + ([dietary.VEGETARIAN] if dietary.VEGAN in codes else []))
+    if pair is not None:
+        return Parsed(error=f"סימוני תזונה סותרים: {dietary.label(pair[0])} ו{dietary.label(pair[1])}")
+    return Parsed(tuple(dietary.clean(codes)))
 
 
 def is_marked(value: Any) -> bool:

@@ -23,6 +23,7 @@ import {
 import {
   deepMergeKiosk,
   diffKioskConfigs,
+  resolveKioskConfig,
   isMediaRef,
   type ConfigChange,
   type KioskConfig,
@@ -40,9 +41,11 @@ export function usePathLabel(names: Record<string, string> = {}) {
   return (path: string): string => {
     const parts = path.split('.');
     if (parts[0] === 'messages') return tf('messages');
-    const head = parts.slice(0, 2).join('.');
-    const label = parts.length >= 2 && tf.has(head) ? tf(head) : parts[0];
-    const rest = parts.slice(2).filter((p) => !/^\d+$/.test(p));
+    // The attract button's keys sit one level deeper (attract.cta.<key>).
+    const depth = parts[0] === 'attract' && parts[1] === 'cta' && parts.length >= 3 ? 3 : 2;
+    const head = parts.slice(0, depth).join('.');
+    const label = parts.length >= depth && tf.has(head) ? tf(head) : parts[0];
+    const rest = parts.slice(depth).filter((p) => !/^\d+$/.test(p));
     const suffix = rest.map((p) => names[p] ?? (UUID.test(p) ? '' : p)).filter(Boolean);
     return suffix.length > 0 ? `${label} · ${suffix.join(' · ')}` : label;
   };
@@ -121,6 +124,7 @@ export function ReviewDialog({
   saved,
   draft,
   layer,
+  inheritedLayers,
   kiosks,
   names,
   saving,
@@ -135,6 +139,8 @@ export function ReviewDialog({
   draft: KioskConfig;
   /** The layer that will be saved. */
   layer: KioskLayer;
+  /** What the parent layers set explicitly (GET /kiosks/settings), null on an older server. */
+  inheritedLayers: KioskLayer | null;
   /** Kiosks in scope; the affected ones are picked here. */
   kiosks: KioskSummary[];
   names: Record<string, string>;
@@ -175,8 +181,13 @@ export function ReviewDialog({
     const ms = machineQueries[i]?.data;
     if (!ms) return { kiosk: k, changes: null as ConfigChange[] | null };
     const shopLayer = level === 'company' ? shopQueries[shopIds.indexOf(k.shopId ?? '')]?.data?.overrides : undefined;
+    // Resolved as the server will: defaults, the style's preset, then the layers.
     const next =
-      level === 'shop' ? deepMergeKiosk(draft, ms.overrides) : deepMergeKiosk(draft, shopLayer ?? {}, ms.overrides);
+      level === 'shop'
+        ? inheritedLayers
+          ? resolveKioskConfig(inheritedLayers, layer, ms.overrides)
+          : deepMergeKiosk(draft, ms.overrides)
+        : resolveKioskConfig(layer, shopLayer ?? {}, ms.overrides);
     return { kiosk: k, changes: diffKioskConfigs(ms.effective, next) };
   });
 

@@ -104,6 +104,12 @@ function deviceModel(value: unknown): PosMachine['deviceModel'] {
   return (DEVICE_MODELS as readonly string[]).includes(s ?? '') ? (s as DeviceModel) : null;
 }
 
+/** `till` | `kiosk`; null when the server did not say. */
+function deviceRole(value: unknown): PosMachine['deviceRole'] {
+  const s = nullableString(value)?.toLowerCase();
+  return s === 'till' || s === 'kiosk' ? s : null;
+}
+
 /** Absent (an older server) or anything unknown is the default, `cloud`. */
 function zMode(value: unknown): NonNullable<PosMachine['zMode']> {
   return nullableString(value) === 'till' ? 'till' : 'cloud';
@@ -141,6 +147,14 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     companyNumber: nullableNumber(raw.companyNumber ?? raw.company_number),
     deviceModel: deviceModel(raw.deviceModel ?? raw.device_model),
     hasPrinter: typeof raw.hasPrinter === 'boolean' ? raw.hasPrinter : undefined,
+    hasBuiltinTerminal: typeof raw.hasBuiltinTerminal === 'boolean' ? raw.hasBuiltinTerminal : undefined,
+    // "סוג מכשיר" (docs/SPEC_DEVICE_ROLE_MODEL.md): the role, and the chosen / reported model.
+    deviceRole: deviceRole(raw.deviceRole ?? raw.device_role),
+    kioskEnabled: typeof raw.kioskEnabled === 'boolean' ? raw.kioskEnabled : null,
+    deviceModelChosen: deviceModel(raw.deviceModelChosen ?? raw.device_model_chosen),
+    deviceModelReported: deviceModel(raw.deviceModelReported ?? raw.device_model_reported),
+    hasCashDrawerPort: raw.hasCashDrawerPort === true,
+    deviceDriverPending: raw.deviceDriverPending === true,
     licenseType: (raw.licenseType ?? raw.license_type) === 'temporary' ? 'temporary' : 'permanent',
     licenseExpiresOn: nullableString(raw.licenseExpiresOn ?? raw.license_expires_on),
     mqttClientId: (raw.mqttClientId ?? raw.mqtt_client_id) as string | undefined,

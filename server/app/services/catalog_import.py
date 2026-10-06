@@ -70,6 +70,7 @@ from app.models.shop_area import ShopArea
 from app.models.shop_product_override import ShopProductOverride
 from app.models.user import User
 from app.services import catalog_sheet as S
+from app.services import dietary
 from app.services import item_ticket
 from app.services import printers as K
 from app.services import product_shop_scope as scope_svc
@@ -860,6 +861,7 @@ class _Planner:
         "entries": lambda v: S.parse_int(v, "כרטיס כניסה", 1, S.ENTRIES_MAX, allow_clear=True),
         "active": lambda v: S.parse_bool(v, "פעיל"),
         "description": lambda v: S.parse_text(v, "תיאור", S.DESCRIPTION_MAX),
+        "dietary": S.parse_dietary,
     }
 
     def _product_row(self, raw_row: S.RawRow) -> ProductPlan:
@@ -970,6 +972,7 @@ class _Planner:
             "ticket_mode": None if ticket in (None, S.TICKET_INHERIT) else item_ticket.normalize(ticket),
             "ticket_entries": entries if isinstance(entries, int) else None,
             "is_available": True if values.get("active") is None else bool(values.get("active")),
+            "dietary_tags": list(values.get("dietary") or ()) or None,
         }
         plan.cost = values.get("cost")
         plan.action = "create"
@@ -1022,6 +1025,15 @@ class _Planner:
                 changes.append(Change("entries", "כרטיס כניסה", p.ticket_entries, wanted_entries))
         change("active", "פעיל", "is_available", bool(p.is_available), values.get("active"))
         change("description", "תיאור", "description", p.description, values.get("description"))
+        wanted_tags = values.get("dietary")
+        if wanted_tags is not None:
+            current_tags = dietary.tags_out(p.dietary_tags)
+            if list(wanted_tags) != current_tags:
+                out["dietary_tags"] = list(wanted_tags) or None
+                changes.append(Change(
+                    "dietary", "סימוני תזונה",
+                    ", ".join(dietary.labels(current_tags)), ", ".join(dietary.labels(wanted_tags)),
+                ))
 
         if out.get("is_open_price") is False:
             price = plan.price if plan.price is not None else current_price
@@ -1371,6 +1383,7 @@ def apply_plan(db: Session, plan: Plan, user: User) -> ApplyResult:
             tax_rate=None, voucher_id=None, ticket_mode=v.get("ticket_mode"), ticket_entries=v.get("ticket_entries"),
             track_stock=False, is_open_price=v["is_open_price"], is_weighed=v["is_weighed"],
             unit_label=v.get("unit_label"), no_discount=v["no_discount"], is_general=False,
+            dietary_tags=v.get("dietary_tags"),
         )
         db.add(product)
         # Sold in every active shop of the company: the product form's default rule.
@@ -1546,6 +1559,7 @@ def template_view(ctx: Context, *, with_data: bool, now: Optional[datetime] = No
                 "entries": p.ticket_entries,
                 "active": _yes_no(p.is_available),
                 "description": p.description or "",
+                "dietary": ", ".join(dietary.labels(p.dietary_tags)),
             }
             if note:
                 row["notes"] = {"printers": note}

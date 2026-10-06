@@ -28,6 +28,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { OverShort } from '@/components/dashboard/shifts/shift-parts';
 import { ZBadges } from '@/components/dashboard/z-report/z-badges';
 import { ZScopeLine } from '@/components/dashboard/z-report/z-scope-line';
+import { BranchCode } from '@/components/dashboard/z-report/z-identity';
 import { NumberPill } from '@/components/dashboard/number-pill';
 import { numberedLabel } from '@/lib/orgNumber';
 import { useZNumberLabel } from '@/components/dashboard/z-report/z-number';
@@ -364,7 +365,8 @@ export default function ZReportsPage() {
                 <Link href={`/dashboard/z-reports/${z.id}`} className="block min-w-0 flex-1 space-y-1 p-3 text-sm hover:bg-muted/50">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="font-medium tabular-nums">
-                      {t('zNumber')} {(z.zNumber ?? z.shopSequenceNumber) ?? '—'}
+                      {/* A till Z always names its till: "קופה 6 · Z 3". */}
+                      {z.origin === 'till' ? zNumberLabel(z) : <>{t('zNumber')} {(z.zNumber ?? z.shopSequenceNumber) ?? '—'}</>}
                       <ZBadges z={z} />
                     </span>
                     <span className="font-medium tabular-nums">{formatCurrency(z.totalSales)}</span>
@@ -387,6 +389,7 @@ export default function ZReportsPage() {
                     <span>· {numberedLabel(z.shopNumber, shopName ?? '—')}</span>
                     {z.areaName ? <span>· {z.areaName}</span> : null}
                     {z.legacy && z.machineName ? <span>· {z.machineName}</span> : null}
+                    {z.branchCode ? <span>· <BranchCode code={z.branchCode} /></span> : null}
                   </div>
                   <ZScopeLine z={z} compact />
                   <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 text-xs">
@@ -485,6 +488,7 @@ export default function ZReportsPage() {
                       {(z.legacy || z.origin === 'till') && z.machineName ? (
                         <div className="text-muted-foreground text-xs">{z.machineName}</div>
                       ) : null}
+                      <BranchCode code={z.branchCode} className="block text-muted-foreground text-xs" />
                       {/* What the Z includes ("קופה עצמאית בתוך סניף"), when the server says. */}
                       <ZScopeLine z={z} compact />
                     </TableCell>

@@ -261,6 +261,7 @@ def test_the_card_is_the_super_admins_and_waits_for_a_run(w):
     assert e.value.status_code == 422
     # A run under way: its master was chosen when it started.
     make_main(w, t1)
+    outside_local_mode(w, t2)
     closed_shift(w, t1, 1)
     w.shift(t2, 1, status=ShiftStatus.OPEN)
     assert start(w, t1)["status"] == ZRunStatus.WAITING
@@ -296,6 +297,7 @@ def _table_order(w, *, waiter, waiter_id, tx=None, parts=(), guests=2, number=5)
 def test_one_z_from_the_main_till_with_each_till_and_each_waiter(w):
     t1, t2 = w.tills
     make_main(w, t1)
+    outside_local_mode(w, t2)
     cashier = PosUser(id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=w.shop.id, username="yossi",
                       first_name="יוסי", last_name="כהן", pin_hash="x")
     w.db.add(cashier)

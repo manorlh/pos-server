@@ -199,6 +199,23 @@ def claim_machine_z_number(db: Session, machine_id: uuid.UUID, number: int) -> i
     return before
 
 
+def claim_machine_z_number_after_device(db: Session, machine_id: uuid.UUID, number: int) -> int:
+    """
+    Support's Z of a dead till (docs/SPEC_OFFLINE_TILL_Z.md §4.6): `number` is one past the
+    highest of the cloud's run and the last number the device itself reported. The numbers
+    between are Zs the device printed with no connection and never sent: they stay its,
+    recorded by the caller as such, never reused — never a duplicate paper. Returns the
+    counter as it was; refuses a number at or below it.
+    """
+    row = lock_machine_z_sequence(db, machine_id)
+    before = max(int(row.last_number or 0), _highest_machine_number(db, machine_id))
+    if number <= before:
+        raise ZNumberOutOfSequence(f"Z {number} of machine {machine_id}: at or below {before}")
+    row.last_number = number
+    db.flush()
+    return before
+
+
 def allocate_machine_z_number(db: Session, machine_id: uuid.UUID) -> int:
     """
     The next till Z number of `machine_id`: 1 for its first. The caller is inside the

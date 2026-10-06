@@ -172,8 +172,10 @@ def offline_block(db: Session, machine: POSMachine, shifts: Sequence[Shift]) -> 
         "declined": [
             {
                 "transactionId": str(tx.id),
-                # As printed, `<prefix>-<number>` (docs/SPEC_DOCUMENT_PREFIX.md).
+                # As printed, `20000057` (docs/SPEC_DOCUMENT_PREFIX.md).
                 "documentNumber": document_number_of(tx),
+                # A number names a document only with its type (one series per type).
+                "documentType": tx.document_type,
                 "amount": money(leg.amount),
                 "terminalUid": leg.terminal_uid,
                 "at": _iso(tx.created_at),
@@ -401,6 +403,7 @@ def build_report(
                     matched=leg is not None,
                     transaction_id=tx.id if tx is not None else None,
                     document_number=document_number_of(tx) if tx is not None else None,
+                    document_type=tx.document_type if tx is not None else None,
                     amount=Decimal(leg.amount).quantize(CENT) if leg is not None else None,
                     sold_at=_utc(tx.created_at) if tx is not None else None,
                 )

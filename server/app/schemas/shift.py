@@ -254,6 +254,11 @@ class LastClosedShift(BaseModel):
     #: The highest numeric document number the cloud holds from this machine (a JSON
     #: integer, the till's `Long`); null if none. Sent even when no shift was closed.
     highest_transaction_number: Optional[int] = Field(None, alias="highestTransactionNumber")
+    #: The same per number series — {"320": n, "330": n, "400": n} (-400 is in "400") —
+    #: for a till that numbers each document type on its own counter
+    #: (docs/SPEC_DOCUMENT_PREFIX.md). Null when the machine has no documents. An older
+    #: till reads only `highestTransactionNumber`, the max over every series.
+    highest_transaction_numbers: Optional[Dict[str, int]] = Field(None, alias="highestTransactionNumbers")
 
 
 class ShiftListResponse(BaseModel):

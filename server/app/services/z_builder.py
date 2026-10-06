@@ -382,6 +382,8 @@ def machine_section(machine: POSMachine, shifts: Sequence[Shift], totals: Docume
         "lastShiftSequence": max(seqs) if seqs else None,
         "firstDocumentNumber": totals.first_transaction_number,
         "lastDocumentNumber": totals.last_transaction_number,
+        # Per document type, each on its own number series (docs/SPEC_DOCUMENT_PREFIX.md).
+        "documentRanges": totals.document_ranges,
         "transactionsCount": totals.transactions_count,
         "salesCount": totals.sales_count,
         "creditNotesCount": totals.credit_notes_count,

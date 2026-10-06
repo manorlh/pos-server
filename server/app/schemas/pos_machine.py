@@ -9,7 +9,10 @@ from app.schemas.transmission import HeartbeatTransmission
 
 
 #: The hardware a till is (`app.models.pos_machine.DEVICE_MODELS`).
-DeviceModel = Literal["N55F", "MODO", "P18"]
+DeviceModel = Literal["N55F", "MODO", "P18", "LANDI", "FEITIAN_TABLET", "GENERIC_ANDROID"]
+
+#: "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): a till or a self-order kiosk.
+DeviceRole = Literal["till", "kiosk"]
 
 
 class PairingStatus(str):
@@ -61,6 +64,34 @@ INT64_MAX = 2**63 - 1
 
 #: What each heartbeat string is cut to — the width of the column it lands in.
 HEARTBEAT_STRING_LIMITS = {"app_version": 64, "serial_number": 64, "battery_status": 32}
+
+
+class HeartbeatOfflineTillZ(BaseModel):
+    """
+    The till's Zs closed with no connection that the cloud has not taken yet
+    (docs/SPEC_OFFLINE_TILL_Z.md §4.4): their count, whether one is held in a conflict,
+    and the last number of the till's run as it knows it.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    pending: Optional[int] = Field(None, ge=0, le=100_000)
+    conflict: Optional[bool] = None
+    last_number: Optional[int] = Field(None, alias="lastNumber", ge=0)
+
+
+class HeartbeatLocalShopZ(BaseModel):
+    """
+    The shop Zs a main till made in local mode that the cloud has not taken yet
+    (docs/SPEC_INDEPENDENT_TILL.md §8.10): their count, whether one is held in a conflict,
+    and the last number it made. What a handover of the shop's Z production waits for.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    pending: Optional[int] = Field(None, ge=0, le=100_000)
+    conflict: Optional[bool] = None
+    last_number: Optional[int] = Field(None, alias="lastNumber", ge=0)
 
 
 class MachineHeartbeatBody(BaseModel):
@@ -117,6 +148,15 @@ class MachineHeartbeatBody(BaseModel):
     #: The till's card terminal (Agamento): its number, clearing server, offline mode and
     #: the till's last write into it. Absent or null leaves the stored reading as it was.
     terminal: Optional[HeartbeatTerminal] = None
+    #: Zs closed at the till with no connection, not uploaded yet (§4.4 of the offline
+    #: till Z spec). Absent leaves the stored reading as it was.
+    offline_till_z: Optional[HeartbeatOfflineTillZ] = Field(None, alias="offlineTillZ")
+    #: The till's per-series document counters (`documentSequence.320/.330/.400`), so a
+    #: replacement device starts after them (offline till Z §4.6). Absent: as it was.
+    document_counters: Optional[Dict[str, int]] = Field(None, alias="documentCounters")
+    #: Shop Zs made on this main till in local mode, not in the cloud yet
+    #: (docs/SPEC_INDEPENDENT_TILL.md §8.10). Absent leaves the stored reading as it was.
+    local_shop_z: Optional[HeartbeatLocalShopZ] = Field(None, alias="localShopZ")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -191,6 +231,14 @@ class POSMachineResponse(POSMachineBase):
     company_number: Optional[int] = Field(None, alias="companyNumber")
     #: "cloud" (the shop's Z run builds its Z) or "till" (it produces its own, §5).
     z_mode: str = Field("cloud", alias="zMode")
+    #: Zs closed at the till with no connection not uploaded yet, as it last said; whether
+    #: one is held in a conflict for support (docs/SPEC_OFFLINE_TILL_Z.md §4.4).
+    offline_till_z_pending: Optional[int] = Field(None, alias="offlineTillZPending")
+    offline_till_z_conflict: Optional[bool] = Field(False, alias="offlineTillZConflict")
+    #: Support produced this till's Z from the cloud (offline till Z spec §4.6), or null.
+    support_z: Optional[Dict[str, Any]] = Field(None, alias="supportZ")
+    #: The last reset of the till's data support ordered from the cloud (§4.7), or null.
+    till_reset: Optional[Dict[str, Any]] = Field(None, alias="tillReset")
     #: "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md): its own Z, outside the shop's LAN group.
     independent_till: bool = Field(False, alias="independentTill")
 
@@ -209,12 +257,27 @@ class POSMachineResponse(POSMachineBase):
     mqtt_client_id: Optional[str] = Field(None, alias="mqttClientId")
     pairing_status: ModelPairingStatus = Field(..., alias="pairingStatus")
     device_info: Optional[Dict[str, Any]] = Field(None, alias="deviceInfo")
-    #: "N55F" | "MODO", null = unknown. `hasPrinter` is false for a Modo only.
+    #: One of `DeviceModel`, null = unknown (read as a 55F).
     device_model: Optional[str] = Field(None, alias="deviceModel")
     has_printer: bool = Field(True, alias="hasPrinter")
     #: False for a till with no card terminal of its own (a P18): it charges on a Nayax
     #: pinpad on the network (app/services/payment_terminal.py).
     has_builtin_terminal: bool = Field(True, alias="hasBuiltinTerminal")
+    # ── Role and model (docs/SPEC_DEVICE_ROLE_MODEL.md) ──────────────────────────
+    #: "till" | "kiosk" (a `kiosk_devices` row). Null where it was not computed (a plain
+    #: PUT answer); the machines list and the machine page always carry it.
+    device_role: Optional[str] = Field(None, alias="deviceRole")
+    #: For a kiosk: whether it is on (`enabled`). A disabled kiosk works as a till.
+    kiosk_enabled: Optional[bool] = Field(None, alias="kioskEnabled")
+    #: The model the dashboard chose, and the one the device named itself at pairing (if
+    #: recognised). When they differ from `deviceModel` the machine page warns.
+    device_model_chosen: Optional[str] = Field(None, alias="deviceModelChosen")
+    device_model_reported: Optional[str] = Field(None, alias="deviceModelReported")
+    #: A cash drawer port the till drives itself (none today: drawers open through a
+    #: receipt printer).
+    has_cash_drawer_port: bool = Field(False, alias="hasCashDrawerPort")
+    #: A LANDI / Feitian tablet: built-in printer / drawer support "בקרוב".
+    device_driver_pending: bool = Field(False, alias="deviceDriverPending")
     license_type: str = Field("permanent", alias="licenseType")
     license_expires_on: Optional[date] = Field(None, alias="licenseExpiresOn")
     is_active: bool = Field(..., alias="isActive")

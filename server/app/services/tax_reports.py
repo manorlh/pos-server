@@ -133,6 +133,8 @@ def load_transactions_for_tax_export(
             # queries per document while building the payment and customer records.
             joinedload(Transaction.payments),
             joinedload(Transaction.customer),
+            # The shop's branch code, for a document the till stamped none on.
+            joinedload(Transaction.shop),
         )
         .filter(
             Transaction.tenant_id == tenant_id,
@@ -189,14 +191,54 @@ class BaseDocuments:
     by_line: Dict[str, BaseDocument]
 
 
+def document_branch_id(tx: Transaction) -> Optional[str]:
+    """
+    Field 1231 of a document: the branch code the till stamped on it, else (a document
+    from before branch codes were mandatory, or from a till that had not synced its code
+    yet) its shop's code — so two shops' `10000057` never file alike in a company's export
+    (app/services/branch_code.py).
+    """
+    stamped = (tx.branch_id or "").strip()
+    if stamped:
+        return stamped
+    shop = getattr(tx, "shop", None)
+    code = (getattr(shop, "branch_id", None) or "").strip() if shop is not None else ""
+    return code or None
+
+
+def refuse_shops_without_branch_code(
+    db: Session, rows: List[Transaction], shop: Optional[Shop] = None
+) -> None:
+    """
+    400 when a shop the export covers has no branch code. Every shop has one since the
+    code became mandatory (migration f3a9c2d7e1b4 filled the rest), so this is defensive:
+    a file whose documents cannot be told apart by branch is not written at all.
+    """
+    from app.services.branch_code import shops_without_code
+
+    shop_ids = {tx.shop_id for tx in rows if tx.shop_id is not None}
+    shops = db.query(Shop).filter(Shop.id.in_(shop_ids)).all() if shop_ids else []
+    if shop is not None and all(s.id != shop.id for s in shops):
+        shops.append(shop)
+    missing = shops_without_code(shops)
+    if missing:
+        names = ", ".join(sorted(s.name for s in missing))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"לא ניתן להפיק קובץ: לסניפים הבאים אין קוד סניף — {names}. יש להגדיר קוד סניף בעמוד הסניף.",
+        )
+
+
 def export_document_number(tx: Transaction) -> str:
     """
-    The document number filed in the open format: `<prefix>-<number>`, as the till printed
-    it (docs/SPEC_DOCUMENT_PREFIX.md). C100 field 1204, D110 field 1254 and D120 field 1304
-    are alphanumeric X(20) (`DOCUMENT_NUMBER_WIDTH`), so the prefix is written as text and
-    two tills' #57 file as `1-57` and `2-57`. Every record of a document — its header, its
-    lines, its payments — and every line that names it as a base document (D110 field 1257)
-    takes the number from here, so the file stays consistent.
+    The document number filed in the open format, exactly as the till printed it: the
+    prefix and the number padded to 7 digits, no dash (`20000057`; the owner's "ללא מקף",
+    docs/SPEC_DOCUMENT_PREFIX.md). C100 field 1204, D110 field 1254 and D120 field 1304
+    are alphanumeric X(20) (`DOCUMENT_NUMBER_WIDTH`), so this is written as text; two
+    tills' #57 file as `10000057` and `20000057`. A number is unique together with its
+    type (field 1203): each type has its own series. Every record of a document — its
+    header, its lines, its payments — and every line that names it as a base document
+    (D110 field 1257) takes the number from here, so the file stays consistent.
     """
     return document_number_of(tx)
 
@@ -205,7 +247,7 @@ def _base_of(tx: Transaction) -> BaseDocument:
     return {
         "documentType": tx.document_type or 320,
         "transactionNumber": export_document_number(tx),
-        "branchId": tx.branch_id,
+        "branchId": document_branch_id(tx),
     }
 
 
@@ -422,7 +464,7 @@ def transform_transaction_for_open_format(
     doc_date = tx.document_production_date or tx.created_at
     return {
         "id": str(tx.id),
-        # `<prefix>-<number>` — the header, the lines and the payments all read it here.
+        # `20000057` — the header, the lines and the payments all read it here.
         "transactionNumber": export_document_number(tx),
         "status": status_val,
         "documentType": tx.document_type or 320,
@@ -430,7 +472,7 @@ def transform_transaction_for_open_format(
         "paymentMethod": tx.payment_method,
         "documentDiscount": _decimal_to_float(tx.document_discount),
         "whtDeduction": _decimal_to_float(tx.wht_deduction),
-        "branchId": tx.branch_id,
+        "branchId": document_branch_id(tx),
         "refundOfTransactionId": str(tx.refund_of_transaction_id) if tx.refund_of_transaction_id else None,
         # The original named by `refundOfTransactionId`, even when outside the export.
         "baseDocument": (
@@ -493,6 +535,7 @@ def build_tax_open_format_export(
         start=ctx.start,
         end=ctx.end,
     )
+    refuse_shops_without_branch_code(db, rows, ctx.shop)
     bases = load_base_documents(db, tenant_id, rows)
     tx_dicts = [transform_transaction_for_open_format(tx, ctx.global_tax_rate, bases) for tx in rows]
     result = generate_tax_report(

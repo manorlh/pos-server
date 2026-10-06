@@ -7,7 +7,9 @@
 import { api } from './api';
 import {
   cloneJson,
+  dietaryTagsOf,
   sha256Hex,
+  type DietaryTag,
   type KioskConfig,
   type KioskFont,
   type KioskLayer,
@@ -15,7 +17,18 @@ import {
 } from './kioskConfig';
 
 export type KioskLevel = 'company' | 'shop' | 'machine';
-export type KioskFlowState = 'attract' | 'ordering' | 'paying' | 'success' | 'paused' | 'closed' | 'admin';
+export type KioskFlowState =
+  | 'attract'
+  | 'ordering'
+  | 'paying'
+  | 'success'
+  | 'paused'
+  | 'closed'
+  | 'admin'
+  /** Waiting to be set up on the device. */
+  | 'setup'
+  /** The external pinpad is not configured or not reachable. */
+  | 'no_payment';
 export type KioskPrinterHealth = 'ok' | 'warn' | 'error' | 'none';
 
 export interface KioskControllerRef {
@@ -77,8 +90,10 @@ export interface KioskSettings {
   id: string;
   /** This level's own partial layer. */
   overrides: KioskLayer;
-  /** What this level inherits: the defaults and the parent layers merged. */
+  /** What this level inherits: the defaults, the style's preset and the parent layers merged. */
   inherited: KioskConfig;
+  /** What the parent layers set explicitly (no defaults, no preset); absent on an older server. */
+  inheritedLayers?: KioskLayer | null;
   effective: KioskConfig;
   configVersion: string;
   updatedAt: string | null;
@@ -263,6 +278,9 @@ export interface KioskSourceProduct {
   imageUrl: string | null;
   /** False = locked / sold out at this till. */
   available: boolean;
+  description: string | null;
+  /** vegan | vegetarian | dairy | meat | gluten_free | spicy (unknown ones dropped). */
+  dietaryTags: DietaryTag[];
 }
 
 export interface KioskSourceCategory {
@@ -296,6 +314,8 @@ export async function fetchKioskSourceCatalog(machineId: string): Promise<KioskS
       imageUrl: string | null;
       available: boolean;
       onTill: boolean;
+      description?: string | null;
+      dietaryTags?: unknown;
     }>;
     categories?: KioskSourceCategory[];
   }>(`/machines/${machineId}/catalog`);
@@ -315,6 +335,8 @@ export async function fetchKioskSourceCatalog(machineId: string): Promise<KioskS
         categoryId: p.categoryId ? String(p.categoryId) : null,
         imageUrl: p.imageUrl ?? null,
         available: p.available !== false,
+        description: typeof p.description === 'string' && p.description.trim() ? p.description : null,
+        dietaryTags: dietaryTagsOf(p.dietaryTags),
       })),
   };
 }

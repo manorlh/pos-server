@@ -120,11 +120,40 @@ BUTTON_SHAPES = ("pill", "rounded", "square")
 GRID_DENSITIES = ("compact", "comfortable", "large")
 IMAGE_RATIOS = ("1:1", "4:3", "16:9")
 CATEGORY_STYLES = ("chips", "tabs", "images")
+#: Where the catalog's categories stand: a rail on the start side (right in RTL), scrolled on its
+#: own, or the strip across the top. `categoryStyle` styles the top strip.
+CATEGORY_LAYOUTS = ("side", "top")
+#: "סגנון ממשק": a coherent bundle of layout and shape choices (and a few colours) a business
+#: picks before styling anything itself — see UI_PRESETS. Its values sit between the defaults
+#: and the layers: whatever a layer sets explicitly wins over the preset.
+UI_STYLES = ("ios", "wolt", "classic", "minimal_dark")
+TYPE_SCALES = ("normal", "large", "xlarge")
+TYPE_WEIGHTS = ("light", "regular", "bold")
+#: The basket while ordering: the floating bar, or a side panel on a wide screen.
+CART_STYLES = ("bar", "panel")
+#: How much the screens move (add-to-cart flight, the badge's bounce). `general.reduceMotion`
+#: turns it all off whatever this says.
+ANIMATIONS = ("subtle", "lively")
+#: "כפתור מסך הפתיחה" — the attract screen's call to action (attract.cta).
+CTA_SIZES = ("s", "m", "l", "xl", "custom")
+#: Physical places (the screen is the same whatever the language): a 3×3 grid, the full width
+#: at the bottom, or `custom` at (x, y) — the button's centre in percent of the screen.
+CTA_POSITIONS = (
+    "top_right", "top_center", "top_left",
+    "middle_right", "middle_center", "middle_left",
+    "bottom_right", "bottom_center", "bottom_left",
+    "bottom_full", "custom",
+)
+CTA_WEIGHTS = ("regular", "bold", "black")
+CTA_ICONS = ("none", "cart", "arrow", "hand", "star")
+CTA_ICON_POSITIONS = ("start", "end")
+CTA_ANIMATIONS = ("none", "pulse", "glow", "bounce")
 TEXT_KEYS = (
     "attractTitle", "attractSubtitle", "attractCta", "serviceTitle", "takeAwayLabel", "eatInLabel",
     "catalogTitle", "cartTitle", "checkoutCta", "payTitle", "payInstruction", "successTitle",
     "successBody", "pickupLabel", "customerTitle", "customerExplain", "pausedTitle", "pausedBody",
-    "closedTitle", "closedBody", "helpText", "upsellTitle",
+    "closedTitle", "closedBody", "helpText", "upsellTitle", "noPaymentTitle", "noPaymentBody",
+    "offlineTitle", "offlineBody",
 )
 SCREEN_IMAGE_KEYS = ("service", "catalogHeader", "cart", "pay", "success", "paused")
 ATTRACT_SECTIONS = ("hero", "promos", "categories", "club")
@@ -174,6 +203,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "notesEnabled": True,
         "quickNotesEnabled": True,
         "showAllergens": True,
+        # "הצג סימוני תזונה ואלרגנים": the dietary badges (vegan, dairy…) and the allergens chip.
+        "showDietary": True,
+        # Accessibility: no add-to-cart flight, no bounces, no counting up.
+        "reduceMotion": False,
+        # "מצב שאין אינטרנט": a short sound on the kiosk when it loses the internet (off by default).
+        "offlineSound": False,
         "soldOutMode": "disable",
     },
     "theme": {
@@ -194,6 +229,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "gridDensity": "comfortable",
         "imageRatio": "4:3",
         "categoryStyle": "chips",
+        "categoryLayout": "side",
+        "uiStyle": "wolt",
+        "typeScale": "normal",
+        "typeWeight": "bold",
+        "cartStyle": "bar",
+        "animation": "lively",
         "showDescriptions": True,
     },
     "texts": {},
@@ -203,6 +244,22 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "playlist": [],
         "videoMuted": True,
         "showHelp": True,
+        # The call to action ("הזמינו כאן" — its label is texts.attractCta). The defaults are
+        # the "wolt" style's (UI_PRESET_CTA): the look the button had before it was configurable.
+        "cta": {
+            "size": "l", "widthPct": 80, "heightDp": 88,
+            "position": "bottom_full", "x": 50, "y": 85,
+            "fillColor": None, "textColor": None,
+            "fontSize": 24, "fontWeight": "bold",
+            # 0 square … 100 pill (percent of half the height); null: the theme's button shape.
+            "radius": None,
+            "borderColor": None, "borderWidth": 0, "shadow": True,
+            "icon": "none", "iconPosition": "end",
+            "animation": "pulse",
+            "subtitle": "",
+            # "כל המסך פותח הזמנה": a tap anywhere on the attract screen starts, as well as the button.
+            "tapAnywhere": True,
+        },
     },
     "catalog": {
         "categoryOrder": [],
@@ -244,6 +301,101 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 
 def default_config() -> Dict[str, Any]:
     return copy.deepcopy(DEFAULT_CONFIG)
+
+
+#: "סגנון ממשק" presets (the dashboard's src/lib/kioskConfig.ts KIOSK_UI_PRESETS and the till's
+#: domain/KioskAppConfig.kt KioskUiPresets mirror this table). Each sets the theme's layout and
+#: shape keys — and a few colours where the style is about them — between the defaults and
+#: the layers. "wolt" is the look kiosks had before presets existed.
+UI_PRESETS: Dict[str, Dict[str, Any]] = {
+    "ios": {
+        "mode": "light", "font": "system",
+        "primaryColor": "#0A84FF", "accentColor": "#34C759",
+        "backgroundColor": "#F2F2F7", "surfaceColor": "#FFFFFF", "textColor": None,
+        "cornerRadius": 16, "cardStyle": "elevated", "buttonShape": "rounded",
+        "gridDensity": "comfortable", "imageRatio": "4:3",
+        "categoryStyle": "tabs", "categoryLayout": "side",
+        "typeScale": "large", "typeWeight": "regular",
+        "cartStyle": "bar", "animation": "subtle", "showDescriptions": True,
+    },
+    "wolt": {
+        "mode": "light", "font": "system",
+        "primaryColor": "#1F6FEB", "accentColor": "#16A34A",
+        "backgroundColor": None, "surfaceColor": None, "textColor": None,
+        "cornerRadius": 20, "cardStyle": "elevated", "buttonShape": "pill",
+        "gridDensity": "comfortable", "imageRatio": "4:3",
+        "categoryStyle": "chips", "categoryLayout": "side",
+        "typeScale": "normal", "typeWeight": "bold",
+        "cartStyle": "bar", "animation": "lively", "showDescriptions": True,
+    },
+    "classic": {
+        "mode": "light", "font": "heebo",
+        "primaryColor": "#E11D48", "accentColor": "#F59E0B",
+        "backgroundColor": "#FFFFFF", "surfaceColor": "#FFFFFF", "textColor": "#000000",
+        "cornerRadius": 6, "cardStyle": "outlined", "buttonShape": "square",
+        "gridDensity": "large", "imageRatio": "1:1",
+        "categoryStyle": "images", "categoryLayout": "side",
+        "typeScale": "xlarge", "typeWeight": "bold",
+        "cartStyle": "panel", "animation": "subtle", "showDescriptions": False,
+    },
+    "minimal_dark": {
+        "mode": "dark", "font": "assistant",
+        "primaryColor": "#C9A227", "accentColor": "#C9A227",
+        "backgroundColor": "#0B0B0D", "surfaceColor": "#16161A", "textColor": "#F5F5F4",
+        "cornerRadius": 8, "cardStyle": "flat", "buttonShape": "rounded",
+        "gridDensity": "comfortable", "imageRatio": "4:3",
+        "categoryStyle": "tabs", "categoryLayout": "side",
+        "typeScale": "normal", "typeWeight": "light",
+        "cartStyle": "bar", "animation": "subtle", "showDescriptions": True,
+    },
+}
+
+#: The theme keys a preset decides (unless a layer sets them).
+PRESET_THEME_KEYS = tuple(UI_PRESETS["wolt"].keys())
+
+#: Each style's call to action on the attract screen ("כפתור מסך הפתיחה"): the keys it decides
+#: (the rest are the defaults'). Explicit values in any layer win, as for the theme.
+UI_PRESET_CTA: Dict[str, Dict[str, Any]] = {
+    "ios": {
+        "size": "l", "position": "bottom_full", "fontSize": 22, "fontWeight": "bold",
+        "shadow": False, "icon": "none", "iconPosition": "end", "animation": "none",
+        "borderColor": None, "borderWidth": 0,
+    },
+    "wolt": {
+        "size": "l", "position": "bottom_full", "fontSize": 24, "fontWeight": "bold",
+        "shadow": True, "icon": "none", "iconPosition": "end", "animation": "pulse",
+        "borderColor": None, "borderWidth": 0,
+    },
+    "classic": {
+        "size": "xl", "position": "bottom_full", "fontSize": 34, "fontWeight": "black",
+        "shadow": True, "icon": "cart", "iconPosition": "start", "animation": "bounce",
+        "borderColor": None, "borderWidth": 0,
+    },
+    "minimal_dark": {
+        "size": "m", "position": "bottom_center", "fontSize": 22, "fontWeight": "regular",
+        "shadow": False, "icon": "arrow", "iconPosition": "end", "animation": "glow",
+        "borderColor": "#C9A227", "borderWidth": 1,
+    },
+}
+PRESET_CTA_KEYS = tuple(UI_PRESET_CTA["wolt"].keys())
+
+
+def style_of(*layers: Optional[Dict[str, Any]]) -> str:
+    """The "סגנון ממשק" the layers pick, the last that says; the default style otherwise."""
+    style = DEFAULT_CONFIG["theme"]["uiStyle"]
+    for layer in layers:
+        picked = ((layer or {}).get("theme") or {}).get("uiStyle")
+        if picked in UI_PRESETS:
+            style = picked
+    return style
+
+
+def preset_layer(style: str) -> Dict[str, Any]:
+    """The style's preset as a layer (only its theme keys)."""
+    default = DEFAULT_CONFIG["theme"]["uiStyle"]
+    theme = UI_PRESETS.get(style) or UI_PRESETS[default]
+    cta = UI_PRESET_CTA.get(style) or UI_PRESET_CTA[default]
+    return {"theme": copy.deepcopy(theme), "attract": {"cta": copy.deepcopy(cta)}}
 
 
 # ── Errors ───────────────────────────────────────────────────────────────────
@@ -627,6 +779,9 @@ SCHEMA = Obj({
         "notesEnabled": Bool(),
         "quickNotesEnabled": Bool(),
         "showAllergens": Bool(),
+        "showDietary": Bool(),
+        "reduceMotion": Bool(),
+        "offlineSound": Bool(),
         "soldOutMode": Enum(SOLD_OUT_MODES),
     }),
     "theme": Obj({
@@ -647,6 +802,12 @@ SCHEMA = Obj({
         "gridDensity": Enum(GRID_DENSITIES),
         "imageRatio": Enum(IMAGE_RATIOS),
         "categoryStyle": Enum(CATEGORY_STYLES),
+        "categoryLayout": Enum(CATEGORY_LAYOUTS),
+        "uiStyle": Enum(UI_STYLES),
+        "typeScale": Enum(TYPE_SCALES),
+        "typeWeight": Enum(TYPE_WEIGHTS),
+        "cartStyle": Enum(CART_STYLES),
+        "animation": Enum(ANIMATIONS),
         "showDescriptions": Bool(),
     }),
     "texts": Map(Str(TEXT_MAX), keys=TEXT_KEYS),
@@ -656,6 +817,27 @@ SCHEMA = Obj({
         "playlist": UList(PLAYLIST_ITEM, max_len=PLAYLIST_MAX),
         "videoMuted": Bool(),
         "showHelp": Bool(),
+        "cta": Obj({
+            "size": Enum(CTA_SIZES),
+            "widthPct": Int(20, 100),
+            "heightDp": Int(56, 200),
+            "position": Enum(CTA_POSITIONS),
+            "x": Int(0, 100),
+            "y": Int(0, 100),
+            "fillColor": Color(nullable=True),
+            "textColor": Color(nullable=True),
+            "fontSize": Int(14, 64),
+            "fontWeight": Enum(CTA_WEIGHTS),
+            "radius": Int(0, 100, nullable=True),
+            "borderColor": Color(nullable=True),
+            "borderWidth": Int(0, 8),
+            "shadow": Bool(),
+            "icon": Enum(CTA_ICONS),
+            "iconPosition": Enum(CTA_ICON_POSITIONS),
+            "animation": Enum(CTA_ANIMATIONS),
+            "subtitle": Str(80),
+            "tapAnywhere": Bool(),
+        }),
     }),
     "catalog": Obj({
         "categoryOrder": UList(ID, unique=True),
@@ -753,6 +935,17 @@ def limits() -> Dict[str, Any]:
             "gridDensity": list(GRID_DENSITIES),
             "imageRatio": list(IMAGE_RATIOS),
             "categoryStyle": list(CATEGORY_STYLES),
+            "categoryLayout": list(CATEGORY_LAYOUTS),
+            "uiStyle": list(UI_STYLES),
+            "typeScale": list(TYPE_SCALES),
+            "typeWeight": list(TYPE_WEIGHTS),
+            "cartStyle": list(CART_STYLES),
+            "animation": list(ANIMATIONS),
+            "ctaSize": list(CTA_SIZES),
+            "ctaPosition": list(CTA_POSITIONS),
+            "ctaWeight": list(CTA_WEIGHTS),
+            "ctaIcon": list(CTA_ICONS),
+            "ctaAnimation": list(CTA_ANIMATIONS),
             "attractSections": list(ATTRACT_SECTIONS),
             "messageKinds": list(MESSAGE_KINDS),
             "messageScreens": list(MESSAGE_SCREENS),
@@ -963,9 +1156,18 @@ def repair(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def resolve(*stored_layers: Any) -> Dict[str, Any]:
-    """DEFAULTS ⊕ the stored layers (sanitised), repaired: what a kiosk gets."""
-    cfg = merge(DEFAULT_CONFIG, *[sanitize_stored_layer(layer) for layer in stored_layers])
+    """
+    DEFAULTS ⊕ the style's preset ⊕ the stored layers (sanitised), repaired: what a kiosk
+    gets. A key a layer sets explicitly beats the preset, whatever level set it.
+    """
+    layers = [sanitize_stored_layer(layer) for layer in stored_layers]
+    cfg = merge(DEFAULT_CONFIG, preset_layer(style_of(*layers)), *layers)
     return repair(cfg)
+
+
+def explicit_layers(*stored_layers: Any) -> Dict[str, Any]:
+    """The stored layers merged over nothing: only what they set explicitly (no defaults, no preset)."""
+    return merge({}, *[sanitize_stored_layer(layer) for layer in stored_layers])
 
 
 def config_version(cfg: Dict[str, Any]) -> str:
@@ -985,8 +1187,10 @@ def _media_refs(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     screen_images = _get(cfg, "screenImages") or {}
     refs += [screen_images.get(key) for key in SCREEN_IMAGE_KEYS]
     refs += [item.get("media") for item in (_get(cfg, "attract", "playlist") or []) if isinstance(item, dict)]
+    # A category the kiosk hides needs no picture on its disk.
     category_images = _get(cfg, "catalog", "categoryImages") or {}
-    refs += [category_images[key] for key in sorted(category_images)]
+    hidden = set(_get(cfg, "catalog", "hiddenCategories") or [])
+    refs += [category_images[key] for key in sorted(category_images) if key not in hidden]
     refs += [m.get("image") for m in (_get(cfg, "messages") or []) if isinstance(m, dict)]
     return [r for r in refs if isinstance(r, dict) and r.get("url")]
 

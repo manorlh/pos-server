@@ -74,6 +74,7 @@ import {
 } from '@/components/dashboard/machines/card-transmission';
 import { TerminalSummary } from '@/components/dashboard/machines/card-terminal';
 import { DeviceModelBadge } from '@/components/dashboard/machines/device-model';
+import { DeviceRoleBadge } from '@/components/dashboard/machines/device-role';
 import { canRequestTillZ } from '@/components/dashboard/till-z/till-z-dialogs';
 import { LatestTillZRequest, ZModeBadge } from '@/components/dashboard/till-z/till-z-request';
 import { IndependentTillBadge } from '@/components/dashboard/independent-till-badge';
@@ -337,10 +338,10 @@ function MachineRowMenu({
             <Settings2 aria-hidden /> {t('tillSettings')}
           </DropdownMenuItem>
         ) : null}
-        {/* `PUT /machines/{id}`, the machine admins' — the same set that produces a Z. */}
+        {/* `PUT /machines/{id}/device-profile`, the machine admins' — the same set that produces a Z. */}
         {canProduceZ && actions.onEditDeviceModel ? (
           <DropdownMenuItem onClick={() => actions.onEditDeviceModel?.(m)}>
-            <Cpu aria-hidden /> {t('deviceModel.change')}
+            <Cpu aria-hidden /> {t('deviceRole.change')}
           </DropdownMenuItem>
         ) : null}
         {/* Writes the till's settings layer, so the same role set as the item above. */}
@@ -448,6 +449,10 @@ function MachineRowDetails({
                   ? t('pairingStatusLabels.assigned')
                   : m.pairingStatus}
           </Badge>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-muted-foreground">{t('deviceRole.label')}</span>
+          <span className="text-xs">{m.deviceRole === 'kiosk' ? t('deviceRole.kiosk') : t('deviceRole.till')}</span>
         </div>
         <div className="flex items-center justify-between gap-2">
           <span className="text-muted-foreground">{t('deviceModel.label')}</span>
@@ -891,6 +896,8 @@ export function MachineRow({
             <span className="truncate" dir="ltr">
               {m.machineCode}
             </span>
+            {/* "סוג מכשיר": קופה / קיוסק, then the model. */}
+            <DeviceRoleBadge m={m} showTill />
             <DeviceModelBadge m={m} />
             <IntegrationBadge m={m} />
             {/* Only the exception is marked: most tills are on the shop's cloud Z. */}

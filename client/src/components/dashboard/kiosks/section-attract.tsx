@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ATTRACT_SECTIONS, KIOSK_LIMITS, moveItem, type AttractSection, type PlaylistItem } from '@/lib/kioskConfig';
 import { useKioskEditor, useKioskField } from './editor-context';
+import { CtaSection } from './section-cta';
 import { FieldErrors, FieldShell, MediaThumb, MoveButtons, NumberInput, OrderedPick, SectionCard, SwitchField, useMediaUpload } from './fields';
 
 function Playlist() {
@@ -83,6 +84,7 @@ export function AttractSectionEditor() {
   const tf = useTranslations('kiosks.fields');
   return (
     <div className="space-y-4">
+      <CtaSection />
       <SectionCard title={t('sectionsTitle')} description={t('sectionsHint')} paths={['attract.sections']}>
         <FieldShell path="attract.sections" label={tf('attract.sections')}>
           <OrderedPick<AttractSection> path="attract.sections" all={ATTRACT_SECTIONS} label={(v) => t(`section.${v}`)} />

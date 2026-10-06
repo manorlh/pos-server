@@ -36,7 +36,7 @@ from app.models.shift import Shift
 from app.models.transaction import Transaction
 from app.models.transaction_payment import TransactionPayment
 from app.services.dashboard_stats import SALE_STATUSES
-from app.services.document_prefix import document_number_of
+from app.services.document_prefix import document_number_of, document_series_of
 from app.services.tenders import (
     EXCHANGE_PAYMENT_METHOD,
     UNKNOWN_PAYMENT_METHOD,
@@ -83,8 +83,14 @@ class DocumentTotals:
     total_card_tips: Decimal = ZERO
     vat_declared: Decimal = ZERO
     vat_missing_count: int = 0
+    #: The document range of the main series — 320, else 400 (an exempt dealer), else 330
+    #: — as printed. Each type is numbered on its own counter now (docs/SPEC_DOCUMENT_PREFIX.md),
+    #: so a range over every document would mix series; `document_ranges` has them all.
     first_transaction_number: Optional[str] = None
     last_transaction_number: Optional[str] = None
+    #: Per series, in the order 320, 330, 400: {"documentType", "first", "last", "count"},
+    #: the numbers as printed (`20000057`). A -400 is in the 400 series.
+    document_ranges: List[dict] = field(default_factory=list)
     #: Card legs per (brand, acquirer): [sales count, sales amount, refunds count,
     #: refunds amount] — refunds positive. Tips are not legs, so not in here.
     card_brands: Dict[tuple, list] = field(default_factory=dict)
@@ -215,7 +221,7 @@ def compute_totals(db: Session, shift_ids: Iterable[uuid.UUID]) -> DocumentTotal
 
     # Every document number the register issued in these shifts, a cancelled one too:
     # "the last document number" on a Z is about the register's numbering, not takings.
-    # Ordered by the number, shown as printed — `<prefix>-<number>`
+    # Ordered by the number, shown as printed — `20000057`
     # (docs/SPEC_DOCUMENT_PREFIX.md), so a range is never ambiguous between tills.
     numbered = [d for d in documents if d.transaction_number]
     # Item discounts: on sale documents only (a credit note's lines carry its share of
@@ -295,11 +301,53 @@ def compute_totals(db: Session, shift_ids: Iterable[uuid.UUID]) -> DocumentTotal
         else:
             totals.vat_declared += sign * _dec(doc.vat_amount)
 
-    if numbered:
-        ordered = sorted(numbered, key=lambda d: _number_key(d.transaction_number))
-        totals.first_transaction_number = document_number_of(ordered[0])
-        totals.last_transaction_number = document_number_of(ordered[-1])
+    totals.document_ranges = document_ranges(numbered)
+    main = main_range(totals.document_ranges)
+    if main is not None:
+        totals.first_transaction_number = main["first"]
+        totals.last_transaction_number = main["last"]
     return totals
+
+
+#: Which series' range is the Z's one "document range": the tax invoices, else an exempt
+#: dealer's receipts, else the credit notes. The till computes the same (OfflineTillZ.kt).
+MAIN_SERIES_ORDER = (320, 400, 330)
+
+
+def document_ranges(documents: Iterable[Transaction]) -> List[dict]:
+    """
+    Per number series (320, 330, 400 — -400 in 400), the first and last document number
+    as printed and how many documents: each type is numbered on its own counter
+    (docs/SPEC_DOCUMENT_PREFIX.md), so a range is only meaningful within one series.
+    Ordered by the counter, not by the printed form, so a prefix changed mid-Z does not
+    reorder them.
+    """
+    by_series: Dict[int, List[Transaction]] = {}
+    for d in documents:
+        if not d.transaction_number:
+            continue
+        series = getattr(d, "document_series", None) or document_series_of(
+            d.document_type, d.refund_of_transaction_id
+        )
+        by_series.setdefault(int(series), []).append(d)
+    out: List[dict] = []
+    for series in sorted(by_series):
+        ordered = sorted(by_series[series], key=lambda d: _number_key(d.transaction_number))
+        out.append({
+            "documentType": series,
+            "first": document_number_of(ordered[0]),
+            "last": document_number_of(ordered[-1]),
+            "count": len(ordered),
+        })
+    return out
+
+
+def main_range(ranges: List[dict]) -> Optional[dict]:
+    by_type = {r["documentType"]: r for r in ranges}
+    for series in MAIN_SERIES_ORDER:
+        if series in by_type:
+            return by_type[series]
+    return ranges[0] if ranges else None
 
 
 #: The keys of a till's X compared against the server's, and how to read ours.

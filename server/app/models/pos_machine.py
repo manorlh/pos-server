@@ -47,9 +47,40 @@ PRINTER_STATUSES = ("ok", "no_paper", "overheated", "error", "unavailable", "unk
 DEVICE_MODEL_N55F = "N55F"
 DEVICE_MODEL_MODO = "MODO"
 DEVICE_MODEL_P18 = "P18"
-DEVICE_MODELS = (DEVICE_MODEL_N55F, DEVICE_MODEL_MODO, DEVICE_MODEL_P18)
+# "סוג מכשיר" (docs/SPEC_DEVICE_ROLE_MODEL.md): hardware the till has no printer / drawer
+# driver for yet — a LANDI terminal and a Feitian tablet (their vendors' SDKs are not in
+# the app) — and a plain Android tablet, which has neither by definition. None of the
+# three prints on a head of its own or charges on a terminal of its own; they print on a
+# shop receipt printer and charge on a network pinpad / Z-Credit, like a P18.
+DEVICE_MODEL_LANDI = "LANDI"
+DEVICE_MODEL_FEITIAN_TABLET = "FEITIAN_TABLET"
+DEVICE_MODEL_GENERIC_ANDROID = "GENERIC_ANDROID"
+DEVICE_MODELS = (
+    DEVICE_MODEL_N55F,
+    DEVICE_MODEL_MODO,
+    DEVICE_MODEL_P18,
+    DEVICE_MODEL_LANDI,
+    DEVICE_MODEL_FEITIAN_TABLET,
+    DEVICE_MODEL_GENERIC_ANDROID,
+)
 
-_NO_PRINTER_MODELS = frozenset({DEVICE_MODEL_MODO, DEVICE_MODEL_P18})
+_NO_PRINTER_MODELS = frozenset({
+    DEVICE_MODEL_MODO,
+    DEVICE_MODEL_P18,
+    DEVICE_MODEL_LANDI,
+    DEVICE_MODEL_FEITIAN_TABLET,
+    DEVICE_MODEL_GENERIC_ANDROID,
+})
+
+#: Models whose built-in printer / cash drawer the till cannot drive *yet*: the hardware
+#: has them, the vendor SDK has not been obtained. The dashboard says "בקרוב"; nothing
+#: claims they print.
+_DRIVER_PENDING_MODELS = frozenset({DEVICE_MODEL_LANDI, DEVICE_MODEL_FEITIAN_TABLET})
+
+#: Models with a cash drawer port the till drives itself. None today: the F20 / Nova 55F
+#: has no drawer port (`FtReceiptPrinter.hasCashDrawer` is false), and every drawer in the
+#: field opens through an external receipt printer's RJ-11 port (its `cashDrawer` flag).
+_CASH_DRAWER_PORT_MODELS: frozenset = frozenset()
 
 #: What a till reports as its model (Android's `Build.MODEL`, `device_info["model"]`),
 #: lower-cased, for the hardware it tells apart on its own. The 55F and the Modo are not
@@ -57,6 +88,13 @@ _NO_PRINTER_MODELS = frozenset({DEVICE_MODEL_MODO, DEVICE_MODEL_P18})
 _REPORTED_MODELS = {
     "nebullar p18": DEVICE_MODEL_P18,
     "p18": DEVICE_MODEL_P18,
+}
+
+#: What a till reports as its maker (`Build.MANUFACTURER`, `device_info["manufacturer"]`),
+#: lower-cased, when the maker alone names the model. Not Feitian: the F20 and a Feitian
+#: tablet report the same maker.
+_REPORTED_MANUFACTURERS = {
+    "landi": DEVICE_MODEL_LANDI,
 }
 
 
@@ -69,28 +107,75 @@ def device_has_printer(device_model) -> bool:
 #: Kozen's and the till does not drive it, so a P18 always charges on an external Nayax
 #: pinpad on the network (app/services/payment_terminal.py). A Modo has no printer, but it
 #: does have Agamento.
-_NO_BUILTIN_TERMINAL_MODELS = frozenset({DEVICE_MODEL_P18})
+_NO_BUILTIN_TERMINAL_MODELS = frozenset({
+    DEVICE_MODEL_P18,
+    DEVICE_MODEL_LANDI,
+    DEVICE_MODEL_FEITIAN_TABLET,
+    DEVICE_MODEL_GENERIC_ANDROID,
+})
 
 
 def device_has_builtin_terminal(device_model) -> bool:
     """
     Whether a till of this model charges cards on its own terminal (Agamento on the
-    device): a 55F, a Modo, or a till whose model is unknown. A P18 does not.
+    device): a 55F, a Modo, or a till whose model is unknown. A P18 does not, nor do the
+    LANDI, the Feitian tablet and a generic tablet.
     """
     return device_model not in _NO_BUILTIN_TERMINAL_MODELS
 
 
+def device_has_cash_drawer_port(device_model) -> bool:
+    """Whether a till of this model opens a drawer on a port of its own (none today)."""
+    return device_model in _CASH_DRAWER_PORT_MODELS
+
+
+def device_driver_pending(device_model) -> bool:
+    """A LANDI or a Feitian tablet: built-in printer / drawer support is "בקרוב"."""
+    return device_model in _DRIVER_PENDING_MODELS
+
+
+def device_capabilities(device_model, *, kiosk: bool = False) -> dict:
+    """
+    The capability flags of a model, as the dashboard and the spec's table show them. A
+    kiosk has no built-in terminal whatever the model: it charges on an external pinpad.
+    """
+    return {
+        "builtinPrinter": device_has_printer(device_model),
+        "builtinTerminal": device_has_builtin_terminal(device_model) and not kiosk,
+        "cashDrawerPort": device_has_cash_drawer_port(device_model),
+        "driverPending": device_driver_pending(device_model),
+    }
+
+
+#: Where `POSMachine.is_kiosk` keeps its answer on the instance (not a column).
+_KIOSK_CACHE = "_is_kiosk_cached"
+
+
+def set_kiosk_cache(machine, is_kiosk: "bool | None") -> None:
+    """Tell a machine instance whether it is a kiosk (None: look it up again when asked)."""
+    if isinstance(machine, POSMachine):
+        if is_kiosk is None:
+            machine.__dict__.pop(_KIOSK_CACHE, None)
+        else:
+            machine.__dict__[_KIOSK_CACHE] = bool(is_kiosk)
+
+
+def _normalized(value) -> "str | None":
+    return " ".join(value.split()).lower() if isinstance(value, str) else None
+
+
 def detect_device_model(device_info) -> "str | None":
     """
-    The model a till names itself at pairing (`device_info["model"]`), when it is one we
-    recognise — so a Nebullar P18 is a P18 without anyone choosing it. None otherwise.
+    The model a till names itself at pairing (`device_info["model"]`, else its maker
+    `device_info["manufacturer"]`), when it is one we recognise — so a Nebullar P18 is a
+    P18 without anyone choosing it. None otherwise.
     """
     if not isinstance(device_info, dict):
         return None
-    reported = device_info.get("model")
-    if not isinstance(reported, str):
-        return None
-    return _REPORTED_MODELS.get(" ".join(reported.split()).lower())
+    by_model = _REPORTED_MODELS.get(_normalized(device_info.get("model")) or "")
+    if by_model is not None:
+        return by_model
+    return _REPORTED_MANUFACTURERS.get(_normalized(device_info.get("manufacturer")) or "")
 
 
 class POSMachine(Base):
@@ -136,7 +221,7 @@ class POSMachine(Base):
     #: document copies it verbatim; documents fall back to `machine_code` when null.
     pos_number = Column(String(50), nullable=True)
     #: "קידומת מסמכים" (docs/SPEC_DOCUMENT_PREFIX.md): what this till's document numbers
-    #: are printed and exported under — `2-57`. Digits only, 1–3 characters. Null means
+    #: are printed and exported under — `20000057`. Digits only, 1–3 characters. Null means
     #: the default, the register number (`effective_document_prefix`). Unique among the
     #: tills of its shop / branch (`app.services.document_prefix`), and given up with the
     #: shop like the register number. Every document freezes the prefix it was issued
@@ -145,9 +230,14 @@ class POSMachine(Base):
     mqtt_client_id = Column(String(255), unique=True, nullable=True)
     pairing_status = Column(SQLEnum(PairingStatus, values_callable=lambda x: [e.value for e in x]), nullable=False, default=PairingStatus.UNPAIRED)
     device_info = Column(JSON, nullable=True)
-    #: "N55F" | "MODO" (`DEVICE_MODELS`), chosen on the dashboard; null = unknown, read
-    #: as a 55F. The till learns whether it has a printer from `GET /machines/me`.
+    #: One of `DEVICE_MODELS`, chosen on the dashboard; null = unknown, read as a 55F. The
+    #: till learns whether it has a printer from `GET /machines/me`. At pairing the model
+    #: the device names itself (`detect_device_model`) wins over the chosen one.
     device_model = Column(String(16), nullable=True)
+    #: The model the dashboard chose — on the pairing code, or later on the machine page —
+    #: kept beside `device_model` so the machine page can warn when the hardware said
+    #: otherwise (docs/SPEC_DEVICE_ROLE_MODEL.md §4). Null: never chosen.
+    device_model_chosen = Column(String(16), nullable=True)
     #: "לקוח קבוע / זמני" for this till alone — a till lent for an event in a permanent
     #: shop. The earliest end among the till, its shop, companies and organization wins
     #: (app/services/licenses.py). Set by a super admin only.
@@ -260,6 +350,31 @@ class POSMachine(Base):
     transmission_last_error = Column(String(500), nullable=True)
     transmission_source = Column(String(32), nullable=True)
     transmission_reported_at = Column(DateTime(timezone=True), nullable=True)
+    # ── Zs the till closed with no connection, as its heartbeat says ─────────
+    # (docs/SPEC_OFFLINE_TILL_Z.md §4.4) How many it holds not uploaded yet, and whether
+    # one is held in a conflict. While either says so — or the till may close offline and
+    # is not seen — nothing in the cloud makes, numbers or switches its Z. NULL: never said.
+    offline_till_z_pending = Column(Integer, nullable=True)
+    offline_till_z_conflict = Column(Boolean, nullable=False, default=False, server_default="false")
+    offline_till_z_reported_at = Column(DateTime(timezone=True), nullable=True)
+    #: The last number of its own Z run the till reported (`offlineTillZ.lastNumber`).
+    offline_till_z_last_number = Column(Integer, nullable=True)
+    # ── Support produced this till's Z from the cloud (offline till Z spec §4.6) ──
+    # A till destroyed, lost or permanently broken: its shifts closed and its Z made from
+    # what the cloud holds, by support. `support_z`: who, when, why, the basis, the Z and
+    # the numbers skipped; the till, if it ever comes back, is told and makes nothing for
+    # that period. NULL: never.
+    support_z = Column(JSONB, nullable=True)
+    support_z_at = Column(DateTime(timezone=True), nullable=True)
+    # The till's per-series document counters ({"320": n, "330": n, "400": n}) as its
+    # heartbeat last said — a replacement device starts each series after them.
+    reported_document_counters = Column(JSONB, nullable=True)
+    document_counters_reported_at = Column(DateTime(timezone=True), nullable=True)
+    # ── A reset of the till's data, ordered from the cloud by support (§4.7) ──
+    # The till has no reset of its own: support orders one, the till carries it out under
+    # its guards and reports. The last command — kind, reason, who, when, status
+    # (pending / done / refused / failed / expired) and the till's report. NULL: never.
+    till_reset = Column(JSONB, nullable=True)
     #: The first time this till said anything about transmissions. Card legs of documents
     #: from before it are never "untransmitted": the feature did not exist when they were
     #: sold. Cleared when a replacement device adopts the till, which starts it again.
@@ -334,4 +449,42 @@ class POSMachine(Base):
 
     @property
     def has_builtin_terminal(self) -> bool:
-        return device_has_builtin_terminal(self.device_model)
+        # "מכשירי הסליקה הם חיצוניים" (docs/SPEC_DEVICE_ROLE_MODEL.md): a kiosk charges on an
+        # external pinpad on the network whatever its model, never on a built-in terminal —
+        # so `machines/me`, the payment integration and the pinpad warning all read it so.
+        return device_has_builtin_terminal(self.device_model) and not self.is_kiosk
+
+    @property
+    def is_kiosk(self) -> bool:
+        """
+        Whether this till is a self-order kiosk (a `kiosk_devices` row). Looked up once per
+        instance and kept; `set_kiosk_cache` primes it for a list (one query for all) and
+        corrects it when the role changes. No session: not a kiosk.
+        """
+        cached = self.__dict__.get(_KIOSK_CACHE)
+        if cached is not None:
+            return cached
+        from sqlalchemy.orm import object_session
+
+        found = False
+        session = object_session(self)
+        if session is not None and self.id is not None:
+            from app.models.kiosk import KioskDevice
+
+            with session.no_autoflush:
+                found = session.get(KioskDevice, self.id) is not None
+        self.__dict__[_KIOSK_CACHE] = found
+        return found
+
+    @property
+    def has_cash_drawer_port(self) -> bool:
+        return device_has_cash_drawer_port(self.device_model)
+
+    @property
+    def device_driver_pending(self) -> bool:
+        return device_driver_pending(self.device_model)
+
+    @property
+    def device_model_reported(self) -> "str | None":
+        """The model the device named itself when it paired, if we recognise it."""
+        return detect_device_model(self.device_info)

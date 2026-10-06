@@ -1,6 +1,7 @@
 from typing import List
 import uuid as uuid_mod
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.pairing_code import (
@@ -16,7 +17,7 @@ from app.models.shop import Shop
 from app.models.company import Company
 from app.models.user import User
 from app.middleware.auth import get_current_distributor, get_active_tenant_id, ensure_same_tenant
-from app.services import access
+from app.services import access, device_profile
 from app.services.pairing import (
     AdoptionRefused,
     PairingAssignmentError,
@@ -69,6 +70,15 @@ def generate_pairing_code(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
         ensure_same_tenant(company.tenant_id, active_tenant_id)
 
+    # "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): a kiosk needs a shop and valid
+    # controlling tills — said now, while the dialog is open (400 / 422, Hebrew `message`).
+    try:
+        device_role, kiosk_options = device_profile.check_pairing_request(
+            db, role=body.device_role, shop_id=shop_id, kiosk=body.kiosk,
+        )
+    except device_profile.DeviceProfileRefused as refused:
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
+
     try:
         pairing_code = create_pairing_code(
             db,
@@ -77,6 +87,8 @@ def generate_pairing_code(
             company_id=company_id,
             shop_id=shop_id,
             device_model=body.device_model,
+            device_role=device_role,
+            kiosk_options=kiosk_options,
         )
     except PairingAssignmentError as exc:
         raise HTTPException(

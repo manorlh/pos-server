@@ -5,7 +5,17 @@ from decimal import Decimal
 from datetime import datetime
 
 from app.services.item_ticket import ProductTicketMode
+from app.services import dietary
 from app.schemas.kitchen_printers import KitchenPrintersPatch
+
+#: The product's `description` column (String(1000)); the dashboard recommends 300 for
+#: the kiosk card (docs/SPEC_PRODUCT_DIETARY.md).
+DESCRIPTION_MAX = 1000
+
+
+def _dietary_in(v):
+    """"סימוני תזונה" as sent: None is "not sent"; anything else cleaned or refused."""
+    return None if v is None else dietary.clean(v)
 
 
 class ShopScopeIn(BaseModel):
@@ -152,7 +162,7 @@ class ShopScopeOut(BaseModel):
 
 class ProductBase(BaseModel):
     name: str = Field(..., min_length=1)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=DESCRIPTION_MAX)
     price: Decimal = Field(..., ge=0)
     sku: str = Field(..., min_length=1)
     category_id: uuid.UUID = Field(..., alias="categoryId")
@@ -185,6 +195,8 @@ class ProductBase(BaseModel):
     unit_label: Optional[str] = Field(None, max_length=16, alias="unitLabel")
     # "לא מקבל הנחות": no line discount, no basket-discount share, no promotion at the till.
     no_discount: bool = Field(False, alias="noDiscount")
+    # "סימוני תזונה" (app/services/dietary.py): codes, cleaned and ordered; omitted: none.
+    dietary_tags: Optional[List[str]] = Field(None, alias="dietaryTags")
 
     @field_validator("name", "sku")
     @classmethod
@@ -192,6 +204,11 @@ class ProductBase(BaseModel):
         if isinstance(v, str) and not v.strip():
             raise ValueError("Field cannot be empty")
         return v.strip() if isinstance(v, str) else v
+
+    @field_validator("dietary_tags", mode="before")
+    @classmethod
+    def _dietary(cls, v):
+        return _dietary_in(v)
 
     class Config:
         populate_by_name = True
@@ -236,7 +253,7 @@ class ProductCreate(ProductBase):
 
 class ProductUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=DESCRIPTION_MAX)
     price: Optional[Decimal] = Field(None, ge=0)
     sku: Optional[str] = Field(None, min_length=1)
     category_id: Optional[uuid.UUID] = Field(None, alias="categoryId")
@@ -256,6 +273,8 @@ class ProductUpdate(BaseModel):
     is_weighed: Optional[bool] = Field(None, alias="isWeighed")
     unit_label: Optional[str] = Field(None, max_length=16, alias="unitLabel")
     no_discount: Optional[bool] = Field(None, alias="noDiscount")
+    # "סימוני תזונה": omitted — left as they are; `[]` or null clears.
+    dietary_tags: Optional[List[str]] = Field(None, alias="dietaryTags")
     # Never changes. Echoing the current value (a form sending the product back) is
     # fine; anything else is refused — see app/services/general_item.py.
     is_general: Optional[bool] = Field(None, alias="isGeneral")
@@ -296,6 +315,11 @@ class ProductUpdate(BaseModel):
             raise ValueError("Field cannot be empty")
         return v.strip() if v and isinstance(v, str) else v
 
+    @field_validator("dietary_tags", mode="before")
+    @classmethod
+    def _dietary(cls, v):
+        return _dietary_in(v)
+
     class Config:
         populate_by_name = True
 
@@ -331,6 +355,8 @@ class ProductResponse(BaseModel):
     is_weighed: bool = Field(False, alias="isWeighed")
     unit_label: Optional[str] = Field(None, alias="unitLabel")
     no_discount: bool = Field(False, alias="noDiscount")
+    # "סימוני תזונה", in the fixed order; [] when none.
+    dietary_tags: List[str] = Field(default_factory=list, alias="dietaryTags")
     # The company's built-in "פריט כללי", which the till's calculator sells through.
     is_general: bool = Field(False, alias="isGeneral")
     shop_scope: Optional[ShopScopeOut] = Field(None, alias="shopScope")
@@ -355,6 +381,11 @@ class ProductResponse(BaseModel):
         from app.services.product_alerts import companions_out
 
         return companions_out(v)
+
+    @field_validator("dietary_tags", mode="before")
+    @classmethod
+    def _dietary_out(cls, v):
+        return dietary.tags_out(v)
 
     @field_validator("allergen_alert", mode="before")
     @classmethod

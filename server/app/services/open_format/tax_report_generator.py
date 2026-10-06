@@ -46,9 +46,10 @@ M100_RECORD_LEN = 298
 
 #: מספר מסמך — C100 field 1204, D110 field 1254 (and 1257, the base document's number),
 #: D120 field 1304: alphanumeric, X(20), left-aligned and space-padded (`pad_right`). A
-#: document number is text here, so a till's "קידומת מסמכים" is written into it as
-#: `<prefix>-<number>` (`2-57`, docs/SPEC_DOCUMENT_PREFIX.md): at most 3 + 1 + 16
-#: characters, and a till's counter is nowhere near 16 digits.
+#: till's "קידומת מסמכים" is written into it the way the till prints it, with no dash: the
+#: prefix and the number padded to 7 digits (`20000057`, docs/SPEC_DOCUMENT_PREFIX.md) —
+#: at most 3 + 7 = 10 characters. Unique together with the document type (field 1203):
+#: each type is numbered on its own series.
 DOCUMENT_NUMBER_WIDTH = 20
 
 

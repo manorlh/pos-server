@@ -31,6 +31,9 @@ def check_switch(db: Session, user: User, machine: POSMachine, mode: Optional[st
         return
     if user.role != UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_admin_only")
+    # Up front, so a shop or point of sale switches all or nothing: never while a till may
+    # hold Zs it closed with no connection (docs/SPEC_OFFLINE_TILL_Z.md §4.4).
+    till_z.refuse_while_producing_offline(db, machine)
     if getattr(machine, "independent_till", False):
         # "קופה עצמאית" joins the shop Z only through the shop's card "קופות בזד הסניפי"
         # (app/services/independent_till.py), which also brings it back into the LAN group.

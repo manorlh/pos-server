@@ -319,10 +319,13 @@ def release(db: Session, machine: POSMachine, body: KdsReleaseIn) -> Dict[str, A
 
     now = _now()
     # "קידומת מסמכים" (docs/SPEC_DOCUMENT_PREFIX.md): the card shows the number as the
-    # till prints it, `2-57`, so two tills' #57 are never the same card. A till build from
-    # before the prefix sends the bare number; it gets its till's prefix here.
+    # till prints it, `20000057`, so two tills' #57 are never the same card. A till build
+    # from before the prefix sends the bare counter (7 digits at most); it gets its till's
+    # prefix here. A full number (8+ digits) is already as printed and is kept.
+    from app.services.document_prefix import NUMBER_WIDTH
+
     raw_number = (body.transaction_number or "").strip()
-    if raw_number.isdigit():
+    if raw_number.isdigit() and len(raw_number) <= NUMBER_WIDTH:
         from app.services.document_prefix import effective_prefix, format_document_number
 
         body.transaction_number = format_document_number(effective_prefix(machine), raw_number)[:50]

@@ -2,7 +2,7 @@ import uuid
 import enum
 
 from sqlalchemy import (
-    Boolean, Column, String, ForeignKey, Numeric, Integer, Text,
+    Boolean, Column, Computed, String, ForeignKey, Numeric, Integer, Text,
     Enum as SQLEnum, DateTime, UniqueConstraint, Index, false,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -20,12 +20,28 @@ class TransactionStatus(str, enum.Enum):
     PARTIAL_REFUND = "partial_refund"
 
 
+#: `document_series` as the database computes it from the type — the same rule as
+#: `app.services.document_prefix.document_series_of` (tested to agree).
+DOCUMENT_SERIES_SQL = (
+    "CASE WHEN document_type IN (400, -400) THEN 400 "
+    "WHEN document_type = 330 THEN 330 "
+    "WHEN document_type IS NULL AND refund_of_transaction_id IS NOT NULL THEN 330 "
+    "WHEN document_type IS NULL OR document_type = 320 THEN 320 "
+    "ELSE abs(document_type) END"
+)
+
+
 class Transaction(Base):
     """A POS sale / refund. id is client-generated UUID for idempotent upserts."""
 
     __tablename__ = "transactions"
     __table_args__ = (
-        UniqueConstraint("machine_id", "transaction_number", name="uq_tx_machine_number"),
+        # One number series per document type on each till ("רצף מספרים נפרד לכל מסמך",
+        # docs/SPEC_DOCUMENT_PREFIX.md): a 320 #57 and a 330 #57 of one till are two
+        # documents; a 400 and a -400 share the 400 series (`document_series`).
+        UniqueConstraint(
+            "machine_id", "document_series", "transaction_number", name="uq_tx_machine_series_number"
+        ),
         Index("ix_transactions_machine_created_at", "machine_id", "created_at"),
         Index("ix_transactions_shift", "shift_id"),
         Index("ix_transactions_basket", "basket_id"),
@@ -46,6 +62,11 @@ class Transaction(Base):
     )
 
     document_type = Column(Integer, nullable=True)
+    #: The number series the document was numbered in: 320, 330 or 400 — an exempt
+    #: dealer's refund (-400) is in the 400 series. Computed by the database from the type
+    #: (a generated column: never written, never out of step with `document_type`). A
+    #: number identifies a document of a till only together with this.
+    document_series = Column(Integer, Computed(DOCUMENT_SERIES_SQL, persisted=True), nullable=False)
     document_production_date = Column(DateTime(timezone=True), nullable=True)
     # Kept populated for every document, including split-tender ones, because an
     # older till build and every existing report and export still read it. The
@@ -81,7 +102,7 @@ class Transaction(Base):
     #: only being joinable to it — an audit reads the document.
     pos_number = Column(String(50), nullable=True)
     #: The till's "קידומת מסמכים" this document was issued under, as the till froze it
-    #: at issue and printed it (`2-57`). Never rewritten: a later change of the till's
+    #: at issue and printed it (`20000057`). Never rewritten: a later change of the till's
     #: prefix does not touch documents already issued. Null on documents from before
     #: the prefix (and from a till build that sends none): they read as their
     #: `pos_number` — the register that issued them — see
@@ -189,7 +210,7 @@ class Transaction(Base):
 
     @property
     def document_number(self) -> str:
-        """The number as printed: `<prefix>-<number>` (`2-57`), or the bare number without one."""
+        """The number as printed: the prefix and the number padded to 7 digits (`20000057`), or the bare number without one."""
         from app.services.document_prefix import document_number_of
 
         return document_number_of(self)

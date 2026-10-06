@@ -1,21 +1,29 @@
 """
-"קידומת מסמכים" — every till prints and exports its document numbers under its own prefix.
+"קידומת מסמכים" and "רצף לכל סוג מסמך" — how a till's document numbers are told apart.
 
-Each till numbers its documents with its own counter (320 / 330 / 400 share it), and the
-cloud keeps them unique per machine (`uq_tx_machine_number`). Two tills of one shop can
-therefore both issue #57. The prefix tells them apart wherever a person or an inspector
-reads a number: the till prints `2-57`, the cloud shows and reprints `2-57`, and the tax
-export files `2-57`. docs/SPEC_DOCUMENT_PREFIX.md is the full rule; in short:
+Each till numbers its documents with **one counter per document type** — 320 (חשבונית מס
+קבלה), 330 (חשבונית זיכוי) and 400 (קבלה; an exempt dealer's refund, the internal -400,
+shares the 400 series) — and the cloud keeps them unique per machine, series and number
+(`uq_tx_machine_series_number`). Two tills of one shop can therefore both issue a 320 #57,
+and one till a 320 #57 and a 330 #57. The prefix tells the tills apart and the document
+type tells the series apart, wherever a person or an inspector reads a number.
+docs/SPEC_DOCUMENT_PREFIX.md is the full rule; in short:
 
-* **The rule.** Digits only, 1–3 characters (`PREFIX_RE`). The number is shown as
-  `<prefix>-<number>` (`format_document_number`).
-* **The default.** A till with no prefix of its own uses its register number
+* **The format (owner: "ללא מקף").** The prefix immediately followed by the number padded
+  to 7 digits: prefix 2, document 57 → `20000057`; prefix 101 → `1010000057`. The number
+  is always exactly the last 7 digits, so the form is unambiguous (`format_document_number`).
+  No prefix: the bare number, as before. A number above 9,999,999 cannot be padded to 7:
+  it is written `<prefix>-<number>` — the only form with a dash, so it can never be
+  mistaken for a padded one (`NUMBER_MAX`).
+* **The series (owner: "רצף מספרים נפרד לכל מסמך").** `document_series_of`: 320, 330 or
+  400 (-400 → 400). A number identifies a document only together with its type.
+* **The default prefix.** A till with no prefix of its own uses its register number
   (`pos_machines.pos_number`, "קופה 2" → `2`), so every existing till has a sensible
   prefix with no setup (`effective_prefix`).
-* **Unique.** No two tills in one shop — or in shops of one tenant that file under the
-  same non-empty branch code — may use the same prefix, and a prefix that already
-  appears on another till's documents there is never handed out again
-  (`check_prefix`, `settle_default`).
+* **Unique.** No two tills in one shop — or in shops of one company that file under the
+  same branch code — may use the same prefix, and a prefix that already appears on
+  another till's documents there is never handed out again (`check_prefix`,
+  `settle_default`).
 * **Frozen at issue.** The till stamps every document with the prefix it issued it
   under (`transactions.document_prefix`); a later change of the till's prefix never
   touches it. A document from before the prefix existed has none stored and reads as
@@ -35,15 +43,48 @@ from sqlalchemy.orm import Session
 #: filed inside the open-format document number (X(20), see `tax_report_generator`).
 PREFIX_RE = re.compile(r"^[0-9]{1,3}$")
 PREFIX_MAX_LEN = 3
-#: Between the prefix and the number: `2-57`.
-SEPARATOR = "-"
+#: The number part of a prefixed document number: always exactly this many digits.
+NUMBER_WIDTH = 7
+#: The highest number that fits [NUMBER_WIDTH]. Above it a prefixed number is written with
+#: [OVERFLOW_SEPARATOR] instead — never padded into something another number could be.
+NUMBER_MAX = 10**NUMBER_WIDTH - 1
+#: Only in a number above [NUMBER_MAX]: `2-10000000`.
+OVERFLOW_SEPARATOR = "-"
+#: Kept for readers of the earlier form.
+SEPARATOR = OVERFLOW_SEPARATOR
 
-#: What a person types to find a document: `2-57` (also with an en dash / maqaf and
-#: spaces around it), or `57` alone.
-_QUERY_RE = re.compile(r"^\s*([0-9]{1,3})\s*[-\u2013\u2014\u05BE]\s*([0-9]{1,20})\s*$")
+#: The document series a type is numbered in (`document_series_of`).
+SERIES_INVOICE_RECEIPT = 320
+SERIES_CREDIT_NOTE = 330
+SERIES_RECEIPT = 400
+SERIES = (SERIES_INVOICE_RECEIPT, SERIES_CREDIT_NOTE, SERIES_RECEIPT)
+
+#: What a person types to find a document: the full form (`20000057`, 8–10 digits), a
+#: short number (`57`), or the overflow form `2-10000000` (an en dash / maqaf too).
+_DASHED_RE = re.compile(r"^\s*([0-9]{1,3})\s*[-–—־]\s*([0-9]{1,20})\s*$")
 _NUMBER_RE = re.compile(r"^\s*([0-9]{1,20})\s*$")
 
 INVALID_PREFIX_MESSAGE = "קידומת מסמכים: ספרות בלבד, בין 1 ל-3 תווים (למשל 2 או 12)."
+
+
+def document_series_of(document_type: Any, refund_of_transaction_id: Any = None) -> int:
+    """
+    The series a document is numbered in: 320, 330 or 400. An exempt dealer's refund
+    (-400, "קבלה במינוס") shares the 400 series, so a 400 and a -400 never carry the same
+    number. A document with no type (an old one) is a 330 when it credits an original,
+    else a 320 — the same reading as `tenders.is_refund_document`.
+    """
+    try:
+        t = int(document_type) if document_type is not None else None
+    except (TypeError, ValueError):
+        t = None
+    if t in (400, -400):
+        return SERIES_RECEIPT
+    if t == 330 or (t is None and refund_of_transaction_id is not None):
+        return SERIES_CREDIT_NOTE
+    if t is None or t == 320:
+        return SERIES_INVOICE_RECEIPT
+    return abs(t)
 
 
 def normalize_prefix(value: Any) -> Optional[str]:
@@ -93,17 +134,23 @@ def document_prefix_of(tx: Any) -> Optional[str]:
 
 def format_document_number(prefix: Optional[str], number: Any) -> str:
     """
-    `2-57`; the bare number when there is no prefix. Only a plain counter takes a prefix:
-    a number that is not all digits (a training document's `ה-12`, or one already shown
-    as `2-57`) is returned as it is.
+    The number as printed and exported: the prefix, then the number padded to 7 digits —
+    `20000057`. The bare number when there is no prefix. Only a plain counter takes a
+    prefix: a number that is not all digits (a training document's `ה-12`) is returned as
+    it is. Above 9,999,999: `<prefix>-<number>` (`NUMBER_MAX`), never an ambiguous pad.
     """
-    text = "" if number is None else str(number)
+    text = "" if number is None else str(number).strip()
     p = normalize_prefix(prefix)
-    return f"{p}{SEPARATOR}{text}" if p is not None and text.isdigit() else text
+    if p is None or not text or not (text.isascii() and text.isdigit()):
+        return text
+    value = int(text)
+    if value > NUMBER_MAX:
+        return f"{p}{OVERFLOW_SEPARATOR}{value}"
+    return f"{p}{value:0{NUMBER_WIDTH}d}"
 
 
 def document_number_of(tx: Any) -> str:
-    """A stored document's number as printed and exported: `2-57`."""
+    """A stored document's number as printed and exported: `20000057`."""
     return format_document_number(document_prefix_of(tx), getattr(tx, "transaction_number", None))
 
 
@@ -119,22 +166,33 @@ def document_number_from(number: Any, document_prefix: Any, pos_number: Any) -> 
 
 @dataclass(frozen=True)
 class DocumentQuery:
-    """A document number as a person typed it: `2-57` → ("2", "57"); `57` → (None, "57")."""
+    """
+    A document number as a person typed it. `20000057` → prefix "2", number "57" (the
+    last 7 digits are the number), and `bare` "20000057" too, for a till with no prefix
+    whose counter is that long. `57` → no prefix, number "57". `2-10000000` → "2",
+    "10000000".
+    """
 
     prefix: Optional[str]
     number: str
+    bare: Optional[str] = None
 
 
 def parse_document_query(text: Any) -> Optional[DocumentQuery]:
     if not isinstance(text, str):
         return None
-    m = _QUERY_RE.match(text)
+    m = _DASHED_RE.match(text)
     if m:
-        return DocumentQuery(prefix=m.group(1), number=m.group(2))
+        return DocumentQuery(prefix=m.group(1), number=str(int(m.group(2))))
     m = _NUMBER_RE.match(text)
-    if m:
-        return DocumentQuery(prefix=None, number=m.group(1))
-    return None
+    if not m:
+        return None
+    digits = m.group(1)
+    if NUMBER_WIDTH < len(digits) <= NUMBER_WIDTH + PREFIX_MAX_LEN:
+        return DocumentQuery(
+            prefix=digits[:-NUMBER_WIDTH], number=str(int(digits[-NUMBER_WIDTH:])), bare=digits
+        )
+    return DocumentQuery(prefix=None, number=digits)
 
 
 def prefix_clause(prefix: str):
@@ -149,15 +207,24 @@ def prefix_clause(prefix: str):
 
 def prefixed_number_clause(text: Any):
     """
-    SQL for `2-57`: number 57 issued under prefix 2. None when [text] is not of that
-    shape — the caller keeps its own search (a plain `57`, a substring, an amount).
+    SQL for a full document number (`20000057`, or `2-10000000`): number 57 issued under
+    prefix 2 — of any type, so a 320 and a 330 of that number both answer and the reader
+    picks. A full-length number also matches a document of a till with no prefix whose
+    counter is exactly that. None when [text] is not a full number: the caller keeps its
+    own search (a short `57`, a substring, an amount).
     """
     from app.models.transaction import Transaction
 
     query = parse_document_query(text)
     if query is None or query.prefix is None:
         return None
-    return and_(Transaction.transaction_number == query.number, prefix_clause(query.prefix))
+    prefixed = and_(Transaction.transaction_number == query.number, prefix_clause(query.prefix))
+    if query.bare is None:
+        return prefixed
+    return or_(
+        prefixed,
+        and_(Transaction.transaction_number == query.bare, Transaction.document_prefix.is_(None)),
+    )
 
 
 # ── Uniqueness ─────────────────────────────────────────────────────────────────────
@@ -195,9 +262,10 @@ def _branch_key(shop: Any) -> Optional[str]:
 def scope_shop_ids(db: Session, shop: Any) -> List[uuid.UUID]:
     """
     The shops whose tills must not share a prefix with a till of [shop]: the shop itself,
-    and the other shops of its tenant filed under the same non-empty branch code (their
-    documents carry the same branch in the tax export). An empty branch code joins no one:
-    shops without one are told apart by the export being per shop (see the spec).
+    and the other shops of its company filed under the same branch code (their documents
+    carry the same branch in the company's tax export). Branch codes are mandatory and
+    unique in a company (`app.services.branch_code`), so in practice that is the shop
+    alone; the check stays for a code that came in some other way.
     """
     if shop is None:
         return []
@@ -205,10 +273,10 @@ def scope_shop_ids(db: Session, shop: Any) -> List[uuid.UUID]:
 
     ids = [shop.id]
     key = _branch_key(shop)
-    if key is None or getattr(shop, "tenant_id", None) is None:
+    if key is None or getattr(shop, "company_id", None) is None:
         return ids
     for other in (
-        db.query(Shop).filter(Shop.tenant_id == shop.tenant_id, Shop.id != shop.id).all()
+        db.query(Shop).filter(Shop.company_id == shop.company_id, Shop.id != shop.id).all()
     ):
         if _branch_key(other) == key:
             ids.append(other.id)

@@ -2,7 +2,8 @@
 
 /**
  * "קידומת מסמכים" — every till prints and exports its document numbers under its own
- * prefix, `2-57`, so two tills of a shop never issue the same number
+ * prefix — the prefix, then the number padded to 7 digits, no dash: `20000057` — so two
+ * tills of a shop never issue the same number
  * (docs/SPEC_DOCUMENT_PREFIX.md).
  *
  * The default is the till's register number; a till may be given another (digits, 1–3).
@@ -74,7 +75,8 @@ function DocumentPrefixForm({
   const trimmed = value.trim();
   const invalid = trimmed !== '' && !PREFIX.test(trimmed);
   const unchanged = trimmed === (machine.documentPrefix ?? '');
-  const example = `${trimmed || machine.effectiveDocumentPrefix || machine.posNumber || '2'}-57`;
+  // As the till prints it (owner: "ללא מקף"): the prefix, then 57 padded to 7 digits.
+  const example = `${trimmed || machine.effectiveDocumentPrefix || machine.posNumber || '2'}0000057`;
 
   const save = useMutation({
     mutationFn: () => updateMachineDocumentPrefix(machine.id, trimmed === '' ? null : trimmed),

@@ -58,6 +58,8 @@ class ShopResponse(BaseModel):
     #: Shop 1, 2, 3 in its company; never reused.
     shop_number: Optional[int] = Field(None, alias="shopNumber")
     branch_id: Optional[str] = Field(None, alias="branchId")
+    #: The code was assigned automatically (migration): "ודאו מול רו״ח" until saved.
+    branch_id_auto_assigned: bool = Field(False, alias="branchIdAutoAssigned")
     address: Optional[str]
     city: Optional[str]
     is_active: bool = Field(..., alias="isActive")

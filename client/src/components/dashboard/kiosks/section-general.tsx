@@ -14,6 +14,7 @@ export function GeneralSection() {
   const mode = useKioskField<'BON' | 'KDS'>('general.fulfillmentMode');
   const services = useKioskField<ServiceType[]>('general.serviceTypes');
   const skip = useKioskField<SkipCartMode>('general.skipCart');
+  const dietary = useKioskField<boolean>('general.showDietary');
 
   const card = (value: 'BON' | 'KDS', title: string, desc: string, steps: string | null, soon: boolean) => {
     const active = mode.value === value;
@@ -90,7 +91,10 @@ export function GeneralSection() {
           'general.searchEnabled',
           'general.notesEnabled',
           'general.quickNotesEnabled',
+          'general.showDietary',
           'general.showAllergens',
+          'general.reduceMotion',
+          'general.offlineSound',
           'general.soldOutMode',
         ]}
       >
@@ -98,7 +102,14 @@ export function GeneralSection() {
         <SwitchField path="general.searchEnabled" label={tf('general.searchEnabled')} hint={t('searchHint')} />
         <SwitchField path="general.notesEnabled" label={tf('general.notesEnabled')} hint={t('notesHint')} />
         <SwitchField path="general.quickNotesEnabled" label={tf('general.quickNotesEnabled')} hint={t('quickNotesHint')} />
-        <SwitchField path="general.showAllergens" label={tf('general.showAllergens')} hint={t('allergensHint')} />
+        <SwitchField path="general.showDietary" label={tf('general.showDietary')} hint={t('dietaryHint')} />
+        {dietary.value ? (
+          <div className="border-s-2 ps-4">
+            <SwitchField path="general.showAllergens" label={tf('general.showAllergens')} hint={t('allergensHint')} />
+          </div>
+        ) : null}
+        <SwitchField path="general.reduceMotion" label={tf('general.reduceMotion')} hint={t('reduceMotionHint')} />
+        <SwitchField path="general.offlineSound" label={tf('general.offlineSound')} hint={t('offlineSoundHint')} />
         <SegmentField
           path="general.soldOutMode"
           label={tf('general.soldOutMode')}

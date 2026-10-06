@@ -527,18 +527,18 @@ class TestReleaseRules:
         assert out["noop"] is True and kd.db.query(KitchenOrder).count() == 0
 
     def test_the_card_shows_the_number_as_the_till_printed_it(self, kd):
-        """"קידומת מסמכים" (docs/SPEC_DOCUMENT_PREFIX.md): `2-57` as sent, and an older
-        till's bare number gets its till's prefix."""
+        """"קידומת מסמכים" (docs/SPEC_DOCUMENT_PREFIX.md): `40000058` as sent, and an older
+        till's bare number gets its till's prefix, padded to 7 digits."""
         from app.models.kds import KitchenOrder
 
         kd.waiter.document_prefix = "4"
         kd.db.flush()
-        for ref, number in (("d1", "57"), ("d2", "4-58")):
+        for ref, number in (("d1", "57"), ("d2", "40000058")):
             release(kd, source="quick", ref=ref, paid=True, trigger="payment", displayRef=None,
                     transactionNumber=number, items=[item("l1:0", kd.steak)])
         orders = {o.source_ref: o for o in kd.db.query(KitchenOrder).all()}
-        assert [orders[r].transaction_number for r in ("d1", "d2")] == ["4-57", "4-58"]
-        assert [orders[r].display_ref for r in ("d1", "d2")] == ["4-57", "4-58"]
+        assert [orders[r].transaction_number for r in ("d1", "d2")] == ["40000057", "40000058"]
+        assert [orders[r].display_ref for r in ("d1", "d2")] == ["40000057", "40000058"]
 
     def test_pickup_numbers_count_per_shop(self, kd):
         a = release(kd, source="kiosk", ref="k1", paid=True, trigger="payment", items=[item("l1:0", kd.steak)])

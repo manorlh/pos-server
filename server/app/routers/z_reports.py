@@ -103,6 +103,7 @@ def z_to_out(z: ZReport, cls=ZReportOut, tzinfo=None):
         if z.discounts_total is not None:
             item.gross_sales = Decimal(z.total_sales) + Decimal(z.discounts_total)
     item.between_shift_adjustments = _between_shift_adjustments(z.per_machine)
+    item.produced_by_support = (z.header or {}).get("producedBySupport")
     offline = offline_authorizations.z_totals(z.per_machine)
     if offline is not None:
         item.offline_authorization_count = offline["authorization_count"]
@@ -116,7 +117,12 @@ def z_to_out(z: ZReport, cls=ZReportOut, tzinfo=None):
     item.area_name = (z.header or {}).get("areaName") if z.area_id is not None else None
     # "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md §7): what it includes, as frozen.
     item.scope = (z.header or {}).get("scope")
-    item.renumbered_from = (z.offline_report or {}).get("renumberedFrom") if z.offline_report else None
+    # The branch code on every Z, and the till number on a till Z (§11).
+    from app.services.z_print import branch_code_of, till_number_of
+
+    item.branch_code = branch_code_of(z)
+    if item.pos_number is None:
+        item.pos_number = till_number_of(z)
     if tzinfo is not None and z.closed_at is not None:
         closed = z.closed_at if z.closed_at.tzinfo else z.closed_at.replace(tzinfo=timezone.utc)
         item.production_date = closed.astimezone(tzinfo).date()

@@ -8,7 +8,10 @@ import {
   KIOSK_LIMITS,
   fontStack,
   resolveThemeColors,
+  type AnimationLevel,
   type CardStyle,
+  type CartStyle,
+  type CategoryLayout,
   type CategoryStyle,
   type GridDensity,
   type ButtonShape,
@@ -16,6 +19,8 @@ import {
   type KioskTextKey,
   type ScreenImageKey,
   type ThemeMode,
+  type TypeScale,
+  type TypeWeight,
 } from '@/lib/kioskConfig';
 import { useKioskEditor, useKioskField, type PreviewScreen } from './editor-context';
 import {
@@ -30,6 +35,7 @@ import {
   TextField,
 } from './fields';
 import { useGoogleFonts } from './use-google-fonts';
+import { StylePicker } from './style-picker';
 
 type TextScreen = Exclude<PreviewScreen, 'product'>;
 
@@ -41,7 +47,20 @@ export const TEXT_GROUPS: { screen: TextScreen; keys: KioskTextKey[]; image: Scr
   { screen: 'cart', keys: ['cartTitle', 'checkoutCta', 'customerTitle', 'customerExplain'], image: 'cart' },
   { screen: 'pay', keys: ['payTitle', 'payInstruction'], image: 'pay' },
   { screen: 'success', keys: ['successTitle', 'successBody', 'pickupLabel'], image: 'success' },
-  { screen: 'paused', keys: ['pausedTitle', 'pausedBody', 'closedTitle', 'closedBody'], image: 'paused' },
+  {
+    screen: 'paused',
+    keys: [
+      'pausedTitle',
+      'pausedBody',
+      'closedTitle',
+      'closedBody',
+      'noPaymentTitle',
+      'noPaymentBody',
+      'offlineTitle',
+      'offlineBody',
+    ],
+    image: 'paused',
+  },
 ];
 
 const MULTILINE = new Set<KioskTextKey>([
@@ -52,6 +71,8 @@ const MULTILINE = new Set<KioskTextKey>([
   'successBody',
   'pausedBody',
   'closedBody',
+  'noPaymentBody',
+  'offlineBody',
 ]);
 
 function FontPicker() {
@@ -145,6 +166,10 @@ export function AppearanceSection() {
 
   return (
     <div className="space-y-4">
+      <SectionCard title={t('uiStyleTitle')} description={t('uiStyleCardHint')} paths={['theme.uiStyle']}>
+        <StylePicker />
+      </SectionCard>
+
       <SectionCard title={t('themeTitle')} paths={['theme.mode', 'theme.font']}>
         <SegmentField<ThemeMode>
           path="theme.mode"
@@ -227,6 +252,11 @@ export function AppearanceSection() {
           'theme.gridDensity',
           'theme.imageRatio',
           'theme.categoryStyle',
+          'theme.categoryLayout',
+          'theme.typeScale',
+          'theme.typeWeight',
+          'theme.cartStyle',
+          'theme.animation',
           'theme.showDescriptions',
         ]}
       >
@@ -258,10 +288,39 @@ export function AppearanceSection() {
           label={tf('theme.imageRatio')}
           options={(['1:1', '4:3', '16:9'] as const).map((v) => ({ value: v, label: <span dir="ltr">{v}</span> }))}
         />
+        <SegmentField<CategoryLayout>
+          path="theme.categoryLayout"
+          label={tf('theme.categoryLayout')}
+          hint={t('layoutHint')}
+          options={(['side', 'top'] as const).map((v) => ({ value: v, label: t(`layout.${v}`) }))}
+        />
         <SegmentField<CategoryStyle>
           path="theme.categoryStyle"
           label={tf('theme.categoryStyle')}
+          hint={t('categoryStyleHint')}
           options={(['chips', 'tabs', 'images'] as const).map((v) => ({ value: v, label: t(`category.${v}`) }))}
+        />
+        <SegmentField<TypeScale>
+          path="theme.typeScale"
+          label={tf('theme.typeScale')}
+          options={(['normal', 'large', 'xlarge'] as const).map((v) => ({ value: v, label: t(`typeScale.${v}`) }))}
+        />
+        <SegmentField<TypeWeight>
+          path="theme.typeWeight"
+          label={tf('theme.typeWeight')}
+          options={(['light', 'regular', 'bold'] as const).map((v) => ({ value: v, label: t(`typeWeight.${v}`) }))}
+        />
+        <SegmentField<CartStyle>
+          path="theme.cartStyle"
+          label={tf('theme.cartStyle')}
+          hint={t('cartStyleHint')}
+          options={(['bar', 'panel'] as const).map((v) => ({ value: v, label: t(`cartStyle.${v}`) }))}
+        />
+        <SegmentField<AnimationLevel>
+          path="theme.animation"
+          label={tf('theme.animation')}
+          hint={t('animationHint')}
+          options={(['subtle', 'lively'] as const).map((v) => ({ value: v, label: t(`animation.${v}`) }))}
         />
         <SwitchField path="theme.showDescriptions" label={tf('theme.showDescriptions')} />
       </SectionCard>

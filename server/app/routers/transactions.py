@@ -152,7 +152,7 @@ def _search_filters(query, *, q=None, card_last4=None, item=None, method=None):
             )
         )
     if q and q.strip():
-        # `2-57`: document 57 of the till that issued it under prefix 2
+        # `20000057`: document 57 of the till that issued it under prefix 2
         # (docs/SPEC_DOCUMENT_PREFIX.md). Anything else — `57` too, which may be any
         # till's — stays the substring search on the number or the amount.
         prefixed = prefixed_number_clause(q)
@@ -237,7 +237,7 @@ def get_transaction(
             db,
         )
         row = original.first() if original is not None else None
-        # As printed on the original: "זיכוי למסמך 2-57".
+        # As printed on the original: "זיכוי למסמך 20000057".
         out.refund_of_transaction_number = document_number_from(*row) if row else None
     if tx.basket_id is not None:
         siblings = scope_transactions_by_user(

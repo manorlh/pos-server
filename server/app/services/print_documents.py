@@ -299,7 +299,7 @@ def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
     )
 
     details: List[PrintRow] = [
-        # As the till printed it: `<prefix>-<number>` (docs/SPEC_DOCUMENT_PREFIX.md).
+        # As the till printed it: `20000057` (docs/SPEC_DOCUMENT_PREFIX.md).
         _row("מס׳ מסמך", document_number_of(tx), emphasis=True),
         _row("תאריך הנפקה", _stamp(tx.document_production_date or tx.created_at, zone)),
     ]

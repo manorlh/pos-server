@@ -15,6 +15,7 @@ import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, fetchCompanies } from '@/lib/api';
+import { branchCodeError, branchCodeInput, branchCodeNeedsCheck, normalizeBranchCode } from '@/lib/branchCode';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { buildCompanyTree, companyPathLabel, MAX_TREE_INDENT_DEPTH } from '@/lib/companyTree';
 import { withoutTrainingFields } from '@/lib/trainingMode';
@@ -108,6 +109,9 @@ function ShopForm({
   const [trainingMode, setTrainingMode] = useState(true);
   // "סוג אינטגרציית אשראי" for all the new shop's tills; changed later in its settings.
   const [paymentIntegration, setPaymentIntegration] = useState<PaymentIntegration>('auto');
+  // "קוד סניף": mandatory, digits 1–7 (the server also checks it is unique in the company).
+  const [branchTouched, setBranchTouched] = useState(false);
+  const branchError = branchCodeError(draft.branchId);
 
   const { data: companies = [] } = useQuery<Company[]>({
     queryKey: ['companies'],
@@ -121,6 +125,8 @@ function ShopForm({
       // part back ("לקוח קבוע / זמני"), so it is rebuilt rather than echoed.
       const payload = {
         ...withoutTrainingFields(withoutLicense(s)),
+        // "קוד סניף" is mandatory; saving it is also how an assigned one is confirmed.
+        branchId: normalizeBranchCode(s.branchId),
         ...licensePayload(s, isSuperAdmin),
         ...(s.id ? {} : { trainingMode }),
         // "אוטומטי" stores nothing, so it is not sent.
@@ -189,13 +195,32 @@ function ShopForm({
           </Select>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <Label>{t('branchId')}</Label>
+          <div className="col-span-2 space-y-1">
+            <Label htmlFor="shop-branch-id">
+              {t('branchId')} <span className="text-destructive">*</span>
+            </Label>
             <Input
+              id="shop-branch-id"
               value={draft.branchId ?? ''}
+              inputMode="numeric"
+              dir="ltr"
+              required
+              aria-invalid={branchError !== null && branchTouched}
               placeholder={t('branchIdPlaceholder')}
-              onChange={(e) => setDraft((s) => ({ ...s, branchId: e.target.value }))}
+              onChange={(e) => {
+                setBranchTouched(true);
+                setDraft((s) => ({ ...s, branchId: branchCodeInput(e.target.value) }));
+              }}
             />
+            <p className="text-muted-foreground text-xs">{t('branchIdHint')}</p>
+            {branchError && branchTouched ? (
+              <p className="text-destructive text-xs">
+                {branchError === 'required' ? t('branchIdRequired') : t('branchIdInvalid')}
+              </p>
+            ) : null}
+            {branchCodeNeedsCheck(shop) ? (
+              <p className="text-xs text-amber-700 dark:text-amber-400">{t('branchIdAutoAssigned')}</p>
+            ) : null}
           </div>
           <div className="space-y-1">
             <Label>{t('city')}</Label>
@@ -236,7 +261,10 @@ function ShopForm({
         <Button variant="outline" onClick={() => onOpenChange(false)}>
           {tc('cancel')}
         </Button>
-        <Button onClick={() => save.mutate(draft)} disabled={save.isPending || licenseIncomplete(draft, isSuperAdmin)}>
+        <Button
+          onClick={() => save.mutate(draft)}
+          disabled={save.isPending || licenseIncomplete(draft, isSuperAdmin) || branchError !== null}
+        >
           {save.isPending ? tc('saving') : tc('save')}
         </Button>
       </DialogFooter>

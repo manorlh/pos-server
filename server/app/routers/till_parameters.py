@@ -282,6 +282,35 @@ def list_till_parameter_values(
     return rows
 
 
+def _producer_guard(db: Session, parameter: TillParameter, scope_type: str, scope_id):
+    """
+    A value of a parameter that decides a shop's Z producer (local mode, the main till):
+    the producers of the shops it speaks for, pinned before the change
+    (docs/SPEC_INDEPENDENT_TILL.md §8.10). None for any other parameter.
+    """
+    from app.services import local_shop_z as LZ
+
+    if parameter.key not in LZ.PRODUCER_KEYS:
+        return None
+    return LZ.ProducerGuard(db, LZ.shops_for_scope(db, scope_type, scope_id))
+
+
+def _check_producer(db: Session, guard, user: User):
+    """The 409 to answer (rolled back) when the change would move a producer that is busy."""
+    from fastapi.responses import JSONResponse
+
+    from app.services import local_shop_z as LZ
+
+    if guard is None:
+        return None
+    try:
+        guard.check(user=user)
+    except LZ.LocalShopZRefused as refused:
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
+    return None
+
+
 @router.put(
     "/till-parameters/{parameter_id}/values",
     response_model=TillParameterValueOut,
@@ -307,6 +336,7 @@ def set_till_parameter_value(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"{body.scope_type}_not_found"
         )
+    guard = _producer_guard(db, parameter, body.scope_type, body.scope_id)
 
     row = (
         db.query(TillParameterValue)
@@ -332,6 +362,9 @@ def set_till_parameter_value(
     else:
         row.value = value
         row.updated_at = now
+    refused = _check_producer(db, guard, _admin)
+    if refused is not None:
+        return refused
     db.commit()
     db.refresh(row)
     if parameter.is_active:
@@ -363,10 +396,14 @@ def delete_till_parameter_value(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Value not found")
     scope_type, scope_id = row.scope_type, row.scope_id
+    guard = _producer_guard(db, parameter, scope_type, scope_id)
     db.delete(row)
     # The row that carried the till's newest stamp may be the one going; moving the
     # parameter's own stamp keeps the tills' watermark from going backwards.
     parameter.updated_at = _now()
+    refused = _check_producer(db, guard, _admin)
+    if refused is not None:
+        return refused
     db.commit()
     if parameter.is_active:
         background_tasks.add_task(

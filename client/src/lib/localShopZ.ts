@@ -39,6 +39,10 @@ export interface LocalShopZState {
   /** The shop works over a LAN main till: its shop Z is the main till's alone. */
   localMode: boolean;
   mainTill: LocalShopZTill | null;
+  /** The shop Z's one producer now, and a handover waiting on it (lib/zParticipation.ts). */
+  producer?: { kind: 'cloud' | 'local'; machine: LocalShopZTill | null; since?: string | null } | null;
+  handover?: { reason: string; message?: string | null; pending?: number | null } | null;
+  conflicts?: { zId: string; message?: string | null }[];
 }
 
 /**

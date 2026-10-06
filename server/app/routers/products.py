@@ -463,6 +463,8 @@ def create_product(
         is_weighed=data.is_weighed,
         unit_label=data.unit_label,
         no_discount=data.no_discount,
+        # "סימוני תזונה", already cleaned by the schema (app/services/dietary.py).
+        dietary_tags=data.dietary_tags or None,
         # Only `ensure_general_item` makes a general item (the request cannot ask).
         is_general=False,
     )
@@ -566,6 +568,9 @@ def update_product(
     if "ticket_mode" in updates:
         # "inherit" is stored as NULL.
         updates["ticket_mode"] = item_ticket.normalize(updates["ticket_mode"])
+    if "dietary_tags" in updates:
+        # Cleaned by the schema; none at all is stored as NULL, like the allergens.
+        updates["dietary_tags"] = updates["dietary_tags"] or None
 
     for field, value in updates.items():
         setattr(product, field, value)

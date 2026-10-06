@@ -136,11 +136,13 @@ class TestNumbering:
         assert body["detail"] == "offline_z_number_taken"
         assert body["zNumber"] == 1 and body["expectedNumber"] == 2
         assert body["takenByZReportId"]
+        (row,) = exceptions_of(w, "offline_z_conflict")
+        assert row.details["takenByZReportId"] == body["takenByZReportId"]
         assert w.db.get(Shift, s2.id).z_report_id is None
         assert w.db.query(ZReport).filter(ZReport.machine_id == w.till.id).count() == 1
         assert w.db.get(MachineZSequence, w.till.id).last_number == 1
 
-    def test_a_jump_is_refused_with_the_expected_number_and_writes_nothing(self, w):
+    def test_a_jump_is_a_conflict_that_enters_no_z_into_the_run(self, w):
         s = closed_shift(w, w.till, 1, [dict(total="10.00")])
 
         code, body = upload(w, offline_body(s, 3))
@@ -152,18 +154,37 @@ class TestNumbering:
         seq = w.db.get(MachineZSequence, w.till.id)
         assert seq is None or seq.last_number == 0
 
-    def test_renumbered_by_the_till_it_is_taken(self, w):
+    def test_a_conflict_is_recorded_for_support_with_the_z_as_printed(self, w):
+        """Never renumbered ("אין דבר כזה זד שממוספר מחדש"): kept as printed, recorded, alerted."""
+        s = closed_shift(w, w.till, 1, SALES)
+        zid = uuid.uuid4()
+        payload = offline_body(s, 3, zid=zid, till=TILL_FIGURES, first="11", last="12")
+
+        assert upload(w, payload)[0] == 409
+
+        (row,) = exceptions_of(w, "offline_z_conflict")
+        assert row.severity == "high"
+        assert row.details["zNumber"] == 3 and row.details["expectedNumber"] == 1
+        assert row.details["zId"] == str(zid)
+        assert row.details["conflict"] == "offline_z_out_of_sequence"
+        assert row.details["till"]["totalSales"] == 150.0
+        assert row.details["shiftIds"] == [str(s.id)]
+        assert "פנו לתמיכה" in row.details["summary"]
+        w.db.refresh(w.till)
+        assert w.till.offline_till_z_conflict is True
+        # Sent again unchanged, after support looked: the same refusal, one exception.
+        code, body = upload(w, payload)
+        assert (code, body["zNumber"]) == (409, 3)
+        assert len(exceptions_of(w, "offline_z_conflict")) == 1
+
+    def test_the_cloud_never_takes_another_number_for_the_same_z(self, w):
         s = closed_shift(w, w.till, 1, [dict(total="10.00")])
         payload = offline_body(s, 3)
         assert upload(w, payload)[0] == 409
 
-        # The till renumbers the Z that has not left it, under the same key and id.
-        payload["offline"]["machineSequenceNumber"] = 1
-        code, body = upload(w, payload)
-
-        assert code == 201, body
-        assert body["zReport"]["machineSequenceNumber"] == 1
-        assert w.db.get(MachineZSequence, w.till.id).last_number == 1
+        # Whatever arrives, a Z the till printed as 3 is never filed as 1.
+        assert w.db.query(ZReport).filter(ZReport.machine_id == w.till.id).count() == 0
+        assert w.db.query(ZReport).filter(ZReport.client_request_id == uuid.UUID(payload["clientRequestId"])).first() is None
 
     def test_a_number_below_the_counter_is_refused_even_when_free(self, w):
         created(w, through=closed_shift(w, w.till, 1, [dict(total="10.00")]))
@@ -222,6 +243,119 @@ class TestNumbering:
         assert beat(w)["lastTillZNumber"] == 0
         created(w, through=closed_shift(w, w.till, 1, [dict(total="10.00")]))
         assert beat(w)["lastTillZNumber"] == 1
+
+
+# ── Prevention: nothing in the cloud while the till may be producing (§4.4) ────
+
+
+def beat_with(w, till=None, **offline):
+    from app.schemas.pos_machine import MachineHeartbeatBody
+
+    body = MachineHeartbeatBody.model_validate({"offlineTillZ": offline})
+    return machines_router.post_my_heartbeat(body=body, machine=till or w.till, db=w.db)
+
+
+def put_mode(w, till, mode):
+    from app.schemas.pos_machine import POSMachineUpdate
+
+    return machines_router.update_machine(
+        str(till.id), POSMachineUpdate.model_validate({"zMode": mode}), w.admin, w.tenant.id, w.db
+    )
+
+
+def set_param(w, key, till, value):
+    from app.models.till_parameter import TillParameter, TillParameterValue
+
+    TP.ensure_builtin_parameters(w.db)
+    parameter = w.db.query(TillParameter).filter(TillParameter.key == key).one()
+    w.db.add(TillParameterValue(
+        id=uuid.uuid4(), parameter_id=parameter.id, scope_type="machine", scope_id=till.id, value=value,
+    ))
+    w.db.commit()
+
+
+def refused_body(out):
+    return out.status_code, json.loads(out.body)
+
+
+class TestPrevention:
+    def test_the_heartbeat_says_what_the_till_holds(self, w):
+        beat_with(w, pending=2, conflict=False, lastNumber=7)
+        w.db.refresh(w.till)
+        assert (w.till.offline_till_z_pending, w.till.offline_till_z_conflict) == (2, False)
+        assert w.till.offline_till_z_reported_at is not None
+
+    def test_no_mode_switch_while_the_till_holds_unsynced_zs(self, w):
+        beat_with(w, pending=1)
+
+        code, body = refused_body(put_mode(w, w.till, "cloud"))
+
+        assert (code, body["detail"], body["reason"], body["pending"]) == (409, "till_offline_zs_unsynced", "pending", 1)
+        assert "סונכרנו" in body["message"]
+        w.db.refresh(w.till)
+        assert w.till.z_mode == "till"
+
+    def test_no_mode_switch_while_a_conflict_is_held(self, w):
+        beat_with(w, pending=0, conflict=True)
+        code, body = refused_body(put_mode(w, w.till, "cloud"))
+        assert (code, body["detail"]) == (409, "till_offline_zs_unsynced")
+
+    def test_a_till_that_may_close_offline_and_is_not_seen_may_be_producing(self, w):
+        set_param(w, "tillZOffline", w.till, True)
+        w.till.last_heartbeat_at = w.now - timedelta(hours=3)
+        w.db.commit()
+
+        code, body = refused_body(put_mode(w, w.till, "cloud"))
+
+        assert (code, body["reason"]) == (409, "not_seen")
+
+    def test_without_the_parameter_a_till_not_seen_is_not_producing(self, w):
+        w.till.last_heartbeat_at = w.now - timedelta(hours=3)
+        w.db.commit()
+
+        assert TZ.may_be_producing_offline(w.db, w.till) is None
+        out = put_mode(w, w.till, "cloud")
+        assert getattr(out, "status_code", 200) == 200
+        w.db.refresh(w.till)
+        assert w.till.z_mode == "cloud"
+
+    def test_switching_back_once_synced(self, w):
+        beat_with(w, pending=1)
+        assert refused_body(put_mode(w, w.till, "cloud"))[0] == 409
+        beat_with(w, pending=0, conflict=False)
+        put_mode(w, w.till, "cloud")
+        w.db.refresh(w.till)
+        assert w.till.z_mode == "cloud"
+
+    def test_no_replacement_device_while_the_till_holds_unsynced_zs(self, w):
+        beat_with(w, pending=3)
+        out = machines_router.create_replacement_pairing_code(
+            machine_id=w.till.id, body=None, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+        )
+        code, body = refused_body(out)
+        assert (code, body["detail"]) == (409, "till_offline_zs_unsynced")
+
+    def test_an_accepted_upload_counts_down_what_waits(self, w):
+        beat_with(w, pending=2)
+        s = closed_shift(w, w.till, 1, [dict(total="10.00")])
+        assert upload(w, offline_body(s, 1))[0] == 201
+        w.db.refresh(w.till)
+        assert w.till.offline_till_z_pending == 1
+
+    def test_a_cloud_z_run_never_takes_a_till_z_till(self, w):
+        closed_shift(w, w.till, 1, [dict(total="10.00")])
+        with pytest.raises(TZ.TillZRefused) as refused:
+            ZR.create_z_run(w.db, w.admin, w.tenant, w.shop, [ZR.MachineSelection(machine_id=w.till.id)])
+        assert refused.value.body["detail"] == "machine_issues_its_own_z"
+
+    def test_the_dashboard_asks_the_till_it_never_makes_the_z_itself(self, w):
+        closed_shift(w, w.till, 1, [dict(total="10.00")])
+        machines_router.request_till_z(
+            machine_id=w.till.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+        )
+        # A request for the till to act on; no Z, no number, until the till asks itself.
+        assert w.db.query(ZReport).filter(ZReport.machine_id == w.till.id).count() == 0
+        assert beat(w)["lastTillZNumber"] == 0
 
 
 # ── History (§4.3) ───────────────────────────────────────────────────────────
@@ -334,6 +468,8 @@ class TestGuards:
 
         assert (code, body["detail"]) == (409, "till_z_disabled")
         assert w.db.get(Shift, s.id).z_report_id is None
+        # Printed already: a conflict for support, never dropped quietly.
+        assert len(exceptions_of(w, "offline_z_conflict")) == 1
 
     def test_a_shift_already_in_another_z_is_a_conflict(self, w):
         s = closed_shift(w, w.till, 1, [dict(total="10.00")])
@@ -343,6 +479,7 @@ class TestGuards:
 
         assert (code, body["detail"]) == (409, "offline_z_shift_in_another_z")
         assert body["shiftId"] == str(s.id)
+        assert len(exceptions_of(w, "offline_z_conflict")) == 1
 
     def test_a_shift_not_closed_in_the_cloud_yet_waits(self, w):
         s = w.shift(w.till, 1, status=ShiftStatus.OPEN)
@@ -352,6 +489,8 @@ class TestGuards:
 
         assert (code, body["detail"]) == (409, "shift_not_closed")
         assert "shift_not_closed" in TZ.OFFLINE_RETRY_DETAILS
+        # A wait, not a conflict.
+        assert exceptions_of(w, "offline_z_conflict") == []
 
     def test_an_id_held_by_another_z_is_a_conflict(self, w):
         first = created(w, through=closed_shift(w, w.till, 1, [dict(total="10.00")]))

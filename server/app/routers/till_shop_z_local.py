@@ -10,8 +10,10 @@ POST /sync/{machine_id}/shop-z/local           → a shop Z the main till produc
                                                  tills over the LAN, numbered, printed):
                                                  201 created / 200 duplicate; 409
                                                  `offline_z_out_of_sequence` /
-                                                 `offline_z_number_taken` with `expectedNumber`
-                                                 (renumber and send again),
+                                                 `offline_z_number_taken` /
+                                                 `not_shop_z_producer` — the Z is kept as
+                                                 printed as a conflict for support (never
+                                                 renumbered; `conflictRecorded: true`),
                                                  `shift_not_closed` / `shift_unknown` (wait:
                                                  a till's close has not reached the cloud)
 """
@@ -90,7 +92,12 @@ def till_shop_z_local_upload(
     try:
         z, outcome = LZ.upload(db, machine, body)
     except LZ.LocalShopZRefused as refused:
-        db.rollback()
+        if refused.keep:
+            # A number that cannot be filed as printed: the Z is kept as a conflict for
+            # support (never renumbered) — that record is committed.
+            db.commit()
+        else:
+            db.rollback()
         return JSONResponse(status_code=refused.status_code, content=refused.body)
     out = LZ.upload_out(z, outcome)
     db.commit()

@@ -136,7 +136,10 @@ export type ZModeSwitchRefusal =
   | { code: 'unreported_shifts'; count: number | null }
   | { code: 'z_in_progress' }
   // The owner's rule: the till's shift closed first.
-  | { code: 'till_open' };
+  | { code: 'till_open' }
+  // The till may hold Zs it closed with no connection, not in the cloud yet
+  // (docs/SPEC_OFFLINE_TILL_Z.md §4.4): `pending` of them, or not seen while it may.
+  | { code: 'till_offline_zs_unsynced'; reason: 'pending' | 'not_seen'; pending: number | null };
 
 /**
  * Reads the 409 of `PUT /machines/{id}` `{zMode}`. The count may ride beside `detail`
@@ -163,5 +166,10 @@ export function zModeSwitchRefusal(err: unknown): ZModeSwitchRefusal | null {
   }
   if (code === 'z_in_progress') return { code };
   if (code === 'till_open') return { code };
+  if (code === 'till_offline_zs_unsynced') {
+    const d = data as { reason?: unknown; pending?: unknown };
+    const n = typeof d.pending === 'number' ? d.pending : null;
+    return { code, reason: d.reason === 'not_seen' ? 'not_seen' : 'pending', pending: n };
+  }
   return null;
 }

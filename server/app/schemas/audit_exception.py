@@ -115,6 +115,9 @@ class ExceptionOut(BaseModel):
     shift_number: Optional[int] = Field(None, alias="shiftNumber")
     transaction_id: Optional[uuid.UUID] = Field(None, alias="transactionId")
     transaction_number: Optional[str] = Field(None, alias="transactionNumber")
+    #: The document's type: a number names a document only with it (one series per type,
+    #: docs/SPEC_DOCUMENT_PREFIX.md).
+    document_type: Optional[int] = Field(None, alias="documentType")
     pos_user_id: Optional[str] = Field(None, alias="posUserId")
     pos_user_name: Optional[str] = Field(None, alias="posUserName")
     amount: Optional[float] = None

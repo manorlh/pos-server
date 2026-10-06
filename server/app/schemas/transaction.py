@@ -235,7 +235,7 @@ class TransactionIn(BaseModel):
 
     id: uuid.UUID
     transaction_number: str = Field(..., alias="transactionNumber")
-    #: The till's "קידומת מסמכים" the document was issued under (`2` of `2-57`), frozen
+    #: The till's "קידומת מסמכים" the document was issued under (`2` of `20000057`), frozen
     #: by the till (docs/SPEC_DOCUMENT_PREFIX.md). Optional: an older till sends none.
     #: Trimmed and cut to the column, never a reason to refuse the document.
     document_prefix: Optional[str] = Field(None, alias="documentPrefix")
@@ -488,7 +488,7 @@ class TransactionOut(BaseModel):
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
 
     transaction_number: str = Field(..., alias="transactionNumber")
-    #: As printed: `<prefix>-<number>` (`2-57`) — docs/SPEC_DOCUMENT_PREFIX.md. The prefix
+    #: As printed: the prefix and the number padded to 7 digits (`20000057`) — docs/SPEC_DOCUMENT_PREFIX.md. The prefix
     #: is the one frozen on the document, else (an older document) its register number.
     document_number: Optional[str] = Field(None, alias="documentNumber")
     #: The prefix frozen at issue; null on a document from before the prefix.
@@ -520,7 +520,7 @@ class TransactionOut(BaseModel):
     notes: Optional[str]
 
     refund_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="refundOfTransactionId")
-    #: The original's document number as printed (`2-57`), when the cloud holds it (same
+    #: The original's document number as printed (`20000057`), when the cloud holds it (same
     #: tenant). Filled on the dashboard detail read only.
     refund_of_transaction_number: Optional[str] = Field(None, alias="refundOfTransactionNumber")
     #: A credit note that took its original's credited total past what it collected.
@@ -558,7 +558,7 @@ class BasketDocumentOut(BaseModel):
 
     id: uuid.UUID
     transaction_number: str = Field(..., alias="transactionNumber")
-    #: As printed: `<prefix>-<number>` (`2-57`) — docs/SPEC_DOCUMENT_PREFIX.md. The prefix
+    #: As printed: the prefix and the number padded to 7 digits (`20000057`) — docs/SPEC_DOCUMENT_PREFIX.md. The prefix
     #: is the one frozen on the document, else (an older document) its register number.
     document_number: Optional[str] = Field(None, alias="documentNumber")
     #: The prefix frozen at issue; null on a document from before the prefix.
@@ -587,7 +587,7 @@ class TransactionListItem(BaseModel):
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     transaction_number: str = Field(..., alias="transactionNumber")
-    #: As printed: `<prefix>-<number>` (`2-57`) — docs/SPEC_DOCUMENT_PREFIX.md. The prefix
+    #: As printed: the prefix and the number padded to 7 digits (`20000057`) — docs/SPEC_DOCUMENT_PREFIX.md. The prefix
     #: is the one frozen on the document, else (an older document) its register number.
     document_number: Optional[str] = Field(None, alias="documentNumber")
     #: The prefix frozen at issue; null on a document from before the prefix.

@@ -45,6 +45,7 @@ import {
 import { ZBadges } from '@/components/dashboard/z-report/z-badges';
 import { OfflineZPanel } from '@/components/dashboard/z-report/offline-z-panel';
 import { ZScopeLine } from '@/components/dashboard/z-report/z-scope-line';
+import { BranchCode } from '@/components/dashboard/z-report/z-identity';
 import { OpenTillsRecord } from '@/components/dashboard/z-wizard/open-tills';
 import { ZPrintDocument } from '@/components/dashboard/z-report/z-print-document';
 import { CardBrandSummaryCard } from '@/components/dashboard/z-report/card-brand-summary';
@@ -383,6 +384,8 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
             <p className="text-muted-foreground text-sm">
               <NumberPill n={z.shopNumber} className="me-1" />
               {z.shopName ?? z.business?.shopName ?? '—'} ·{' '}
+              {/* On every Z: two Z sequences of one branch are told apart by the till. */}
+              {z.branchCode ? <><BranchCode code={z.branchCode} /> · </> : null}
               {areaName ? <>{t('areaValue', { area: areaName })} · </> : null}
               {t('businessDateValue', { date: formatDate(z.businessDate) })}
             </p>

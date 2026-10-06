@@ -49,6 +49,8 @@ export interface ZParticipationState {
   localMode: boolean;
   /** The super admin's alone to change. */
   canEdit: boolean;
+  /** Who produces the shop's Z sequence now (also `GET /shops/{id}/shop-z-producer`). */
+  shopZ?: ShopZProducerState | null;
 }
 
 /** `PUT /shops/{id}/z-participation`. `mainTillId` absent = unchanged, null = none. */
@@ -56,6 +58,103 @@ export interface ZParticipationBody {
   participants: string[];
   independent: string[];
   mainTillId?: string | null;
+  /** A super admin's "העבר בכל זאת": switch although the producer has not handed over. */
+  forceProducerSwitch?: boolean;
+}
+
+// ── The shop Z's one producer ("אין דבר כזה זד שממוספר מחדש") ─────────────────
+//
+// A shop's Z sequence has exactly one producer at a time — the cloud, or the main till
+// on the LAN — and a printed Z number is final. A switch waits until the producer has
+// handed over (every shop Z it printed is in the cloud); a Z the cloud cannot take as
+// printed is kept as printed and listed for support, never renumbered.
+
+export interface ShopZProducer {
+  kind: 'cloud' | 'local';
+  machine: ZParticipationTillRef | null;
+  since?: string | null;
+}
+
+export interface ShopZHandover {
+  reason: 'unsynced_shop_zs' | 'producer_offline' | 'cloud_run_live' | string;
+  /** The server's Hebrew. */
+  message?: string | null;
+  pending?: number | null;
+  to?: { kind: 'cloud' | 'local'; machine: ZParticipationTillRef | null } | null;
+}
+
+export interface ShopZConflict {
+  zId: string;
+  number?: number | null;
+  expectedNumber?: number | null;
+  detail: 'offline_z_out_of_sequence' | 'offline_z_number_taken' | 'not_shop_z_producer' | string;
+  takenByZReportId?: string | null;
+  machineId?: string | null;
+  posNumber?: string | null;
+  closedAt?: string | null;
+  firstAt?: string | null;
+  lastAt?: string | null;
+  attempts?: number | null;
+  /** The server's Hebrew. */
+  message?: string | null;
+}
+
+export interface ShopZProducerState {
+  producer: ShopZProducer;
+  handover: ShopZHandover | null;
+  conflicts: ShopZConflict[];
+}
+
+/** "מפיק ה-Z הסניפי: …" — a message key under `independentTill.producer` and its values. */
+export function producerViewOf(p: ShopZProducer | null | undefined): {
+  key: 'local' | 'localNoTill' | 'cloud';
+  values: Record<string, string>;
+} {
+  if (p?.kind === 'local') {
+    const till = p.machine ? formatTillNumbers([p.machine]) : '';
+    return till ? { key: 'local', values: { till } } : { key: 'localNoTill', values: {} };
+  }
+  return { key: 'cloud', values: {} };
+}
+
+/** A conflict's numbers: "Z מס׳ {number} (הענן ציפה ל-{expectedNumber})", or the number alone. */
+export function conflictNumbersOf(c: ShopZConflict): {
+  key: 'numbers' | 'numberOnly' | 'none';
+  values: Record<string, string>;
+} {
+  if (c.number == null) return { key: 'none', values: {} };
+  if (c.expectedNumber == null) return { key: 'numberOnly', values: { number: String(c.number) } };
+  return { key: 'numbers', values: { number: String(c.number), expected: String(c.expectedNumber) } };
+}
+
+/** A switch refused because the shop Z's producer has not handed over yet. */
+export interface ProducerBusy {
+  message: string | null;
+  /** A super admin may switch anyway (`forceProducerSwitch: true`). */
+  canForce: boolean;
+  reason: string | null;
+}
+
+/**
+ * Reads 409 `shop_z_producer_busy` in both shapes: `{detail: "shop_z_producer_busy",
+ * message, canForce, reason}` and `{detail: {code, message, canForce, reason}}`.
+ */
+export function producerBusyOf(err: unknown): ProducerBusy | null {
+  const data = (err as { response?: { data?: unknown } } | null)?.response?.data;
+  if (!data || typeof data !== 'object') return null;
+  const d = data as Record<string, unknown>;
+  const src =
+    d.detail === 'shop_z_producer_busy'
+      ? d
+      : d.detail && typeof d.detail === 'object' && (d.detail as Record<string, unknown>).code === 'shop_z_producer_busy'
+        ? (d.detail as Record<string, unknown>)
+        : null;
+  if (!src) return null;
+  return {
+    message: typeof src.message === 'string' && src.message.trim() ? src.message : null,
+    canForce: src.canForce === true,
+    reason: typeof src.reason === 'string' ? src.reason : null,
+  };
 }
 
 /** The choice for each till, by machine id, as the card edits it. */
@@ -319,6 +418,7 @@ export const KNOWN_REFUSALS = [
   'main_till_not_participating',
   'till_in_both_lists',
   'main_till_independent',
+  'shop_z_producer_busy',
 ] as const;
 
 export type KnownRefusal = (typeof KNOWN_REFUSALS)[number];

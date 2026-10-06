@@ -42,6 +42,19 @@ export function ZBadges({ z }: { z: ZReport }) {
           {t('totalsMismatch')}
         </Badge>
       ) : null}
+      {/* Produced by support from the cloud for a dead till (docs/SPEC_OFFLINE_TILL_Z.md §4.6). */}
+      {z.producedBySupport ? (
+        <Badge
+          variant="destructive"
+          className="ms-2 text-[11px]"
+          title={t('producedBySupportHint', {
+            by: z.producedBySupport.by ?? '—',
+            reason: z.producedBySupport.reasonText ?? '—',
+          })}
+        >
+          {t('producedBySupport')}
+        </Badge>
+      ) : null}
       {/* Closed at the till with no connection to the cloud (docs/SPEC_OFFLINE_TILL_Z.md). */}
       {z.builtOffline ? (
         <Badge

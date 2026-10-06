@@ -71,6 +71,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import { BranchCode, useZIdentityLabel } from '@/components/dashboard/z-report/z-identity';
+import { zTillColumn } from '@/lib/zIdentity';
 
 /** Day row + the expander cell. */
 const COLS = 10;
@@ -244,7 +246,10 @@ function DayRow({ row }: { row: DaySummaryRow }) {
                           </Badge>
                         ) : null}
                       </TableCell>
-                      <TableCell className="text-muted-foreground">{c.shopName ?? '—'}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {c.shopName ?? '—'}
+                        <BranchCode code={c.branchCode} className="block text-xs" />
+                      </TableCell>
                       <TableCell className="text-end tabular-nums">{formatCurrency(c.net)}</TableCell>
                       <TableCell className="text-end tabular-nums">
                         {formatCurrency(c.cashSales)}
@@ -294,6 +299,8 @@ function DayRow({ row }: { row: DaySummaryRow }) {
 export default function DaySummaryPage() {
   const t = useTranslations('daySummary');
   const tc = useTranslations('common');
+  const tExport = useTranslations('independentTill.export');
+  const zIdentity = useZIdentityLabel();
 
   // The scope still applies — it decides what the multi-selects can even offer —
   // but the selection itself is explicit, because "these three branches" is not a
@@ -468,7 +475,7 @@ export default function DaySummaryPage() {
               title={t('title')}
               from={data.window.from}
               to={data.window.to}
-              getSheets={() => ({
+              getSheets={() => [{
                 name: t('title'),
                 columns: [
                   { header: t('table.day'), kind: 'date' },
@@ -489,7 +496,28 @@ export default function DaySummaryPage() {
                   t('table.total'), null, data.totals.net, data.totals.refunds, data.totals.cashSales,
                   data.totals.cardSales, data.totals.vat, data.totals.tips, data.totals.variance,
                 ],
-              })}
+              }, {
+                // Each Z behind the days, with its branch code and till: a branch may run two
+                // Z sequences (the shop Z and an independent till's), told apart by the till.
+                name: tExport('zSheet'),
+                columns: [
+                  { header: t('table.day'), kind: 'date' },
+                  { header: tExport('z') },
+                  { header: tExport('branchCode') },
+                  { header: tExport('till') },
+                  { header: t('drill.shop') },
+                  { header: t('drill.net'), kind: 'money' },
+                  { header: t('drill.cash'), kind: 'money' },
+                  { header: t('drill.card'), kind: 'money' },
+                  { header: t('drill.tips'), kind: 'money' },
+                ],
+                rows: data.days.flatMap((d) =>
+                  d.contributors.map((c) => [
+                    d.dayDate, zIdentity(c), c.branchCode ?? '', zTillColumn(c), c.shopName ?? '',
+                    c.net, c.cashSales, c.cardSales, c.tips,
+                  ]),
+                ),
+              }]}
             />
             <ReportWindowSummary window={data.window} generatedAt={data.generatedAt} />
 

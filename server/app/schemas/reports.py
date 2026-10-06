@@ -242,7 +242,7 @@ class ShopTransactionRow(BaseModel):
     #: till can group a basket's 320 and 330s. Additive and nullable: the shipped till
     #: (Moshi) ignores keys it does not know.
     basket_id: Optional[str] = Field(None, alias="basketId")
-    #: The number as its till printed it, `<prefix>-<number>` (docs/SPEC_DOCUMENT_PREFIX.md).
+    #: The number as its till printed it, `20000057` (docs/SPEC_DOCUMENT_PREFIX.md).
     #: Additive and nullable like `basketId`; a till shows it in place of the bare number.
     document_number: Optional[str] = Field(None, alias="documentNumber")
 
@@ -342,6 +342,9 @@ class DaySummaryContributor(BaseModel):
     closed_at: Optional[datetime] = Field(None, alias="closedAt")
     #: The Z of an independent till ("קופה עצמאית"): under the shop, never in its shop Z.
     independent: bool = False
+    #: The shop's branch code as frozen on the Z (§11 of SPEC_INDEPENDENT_TILL): with
+    #: `posNumber` it tells apart two Zs of one branch that carry the same number.
+    branch_code: Optional[str] = Field(None, alias="branchCode")
     unattended: bool = False
     #: Built by the cloud because the terminal could not close its own day. Shown in the
     #: drill-down so a day whose figures rest on a reconstruction says so on its face.

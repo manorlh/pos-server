@@ -30,6 +30,8 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from app.services.catalog_sheet import (
     CATEGORY_COLUMNS,
     COST_MAX,
+    DIETARY_LABELS_HE,
+    DIETARY_NONE,
     ENTRIES_MAX,
     EXAMPLE_MARK,
     NO,
@@ -251,6 +253,10 @@ def _validations(ws, columns: Sequence[Column], last_row: int, lists: Dict[str, 
             apply(_length_validation(255), key)
         elif key == "description":
             apply(_length_validation(1000), key)
+        elif col.kind == "dietary":
+            apply(_list_validation(lists["dietary"], strict=False, free_text=True,
+                                   prompt="בחרו מהרשימה או כתבו כמה מופרדים בפסיק (למשל: טבעוני, חריף). "
+                                          "'ללא' = לנקות, ריק = ללא שינוי"), key)
 
 
 def _data_sheet(ws, columns: Sequence[Column], examples: Sequence[Dict[str, Any]], rows: Sequence[Dict[str, Any]],
@@ -280,13 +286,14 @@ def _examples(view: TemplateView) -> Tuple[List[Dict[str, Any]], List[Dict[str, 
     products = [
         {"marker": EXAMPLE_MARK, "name": "המבורגר קלאסי", "category": "המבורגרים", "price": 58,
          "cost": 18.5, "open_price": NO, "weighed": NO, "unit": UNIT_PIECE, "no_discount": NO,
-         "active": YES, "description": "200 גרם, חסה, עגבנייה, בצל"},
+         "active": YES, "description": "200 גרם, חסה, עגבנייה, בצל", "dietary": "בשרי"},
         {"marker": EXAMPLE_MARK, "name": "קולה זכוכית", "category": "שתייה", "price": 12,
          "barcode": "7290001234567", "cost": 4.2, "open_price": NO, "weighed": NO, "unit": UNIT_PIECE,
          "no_discount": YES, "printers": drinks, "active": YES},
         {"marker": EXAMPLE_MARK, "name": "סלט חומוס", "category": "מנות עיקריות", "price": 49.9,
          "open_price": NO, "weighed": YES, "unit": UNIT_KG, "no_discount": NO,
-         "ticket": TICKET_LABELS["per_line"], "active": YES, "description": "מחיר לק״ג"},
+         "ticket": TICKET_LABELS["per_line"], "active": YES, "description": "מחיר לק״ג",
+         "dietary": "טבעוני, ללא גלוטן"},
     ]
     return categories, products
 
@@ -300,6 +307,7 @@ def _lists_sheet(wb: Workbook, view: TemplateView) -> Dict[str, str]:
         "yes_no": [YES, NO],
         "units": list(UNIT_CHOICES),
         "tickets": [label for mode, label in TICKET_LABELS.items()],
+        "dietary": list(DIETARY_LABELS_HE.values()) + [DIETARY_NONE],
     }
     refs: Dict[str, str] = {}
     for index, (key, values) in enumerate(columns.items(), start=1):

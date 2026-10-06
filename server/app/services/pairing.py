@@ -96,14 +96,18 @@ def create_pairing_code(
     target_machine_id: Optional[uuid.UUID] = None,
     untransmitted_acknowledged_by: Optional[uuid.UUID] = None,
     device_model: Optional[str] = None,
+    device_role: Optional[str] = None,
+    kiosk_options: Optional[dict] = None,
 ) -> PairingCode:
     """
     Create a new pairing code, optionally with company/shop pre-assignment.
 
     `target_machine_id` makes it a *replacement* code: the device that redeems it adopts
     that existing machine row rather than creating a new one. See `validate_pairing_code`.
-    `device_model` ("N55F" | "MODO" | "P18") is copied onto the machine the code pairs,
-    unless the device names a model of its own (`detect_device_model`).
+    `device_model` (`DEVICE_MODELS`) is copied onto the machine the code pairs, unless the
+    device names a model of its own (`detect_device_model`). `device_role` "kiosk" (with
+    `kiosk_options`, checked by `device_profile.check_pairing_request`) makes the new
+    machine a kiosk as it pairs (docs/SPEC_DEVICE_ROLE_MODEL.md).
     """
     code = generate_pairing_code()
     while db.query(PairingCode).filter(PairingCode.code == code).first():
@@ -127,6 +131,8 @@ def create_pairing_code(
             datetime.now(timezone.utc) if untransmitted_acknowledged_by is not None else None
         ),
         device_model=device_model,
+        device_role=device_role,
+        kiosk_options=kiosk_options,
         expires_at=expires_at,
         is_used=False,
     )
@@ -173,6 +179,8 @@ def validate_pairing_code(
         replacement_model = detect_device_model(device_info) or pairing_code.device_model
         if replacement_model:
             pos_machine.device_model = replacement_model
+        if pairing_code.device_model:
+            pos_machine.device_model_chosen = pairing_code.device_model
     else:
         pos_machine = create_pos_machine(
             db,
@@ -198,6 +206,13 @@ def validate_pairing_code(
         )
         if assigned:
             pos_machine = assigned
+
+    # "סוג מכשיר (תפקיד)": a kiosk code makes the machine a kiosk now, in its shop, so the
+    # till's very first sync opens it as one (docs/SPEC_DEVICE_ROLE_MODEL.md). Never fails
+    # the pairing.
+    from app.services import device_profile
+
+    device_profile.apply_on_pairing(db, pairing_code, pos_machine)
 
     return pos_machine
 
@@ -234,6 +249,9 @@ def create_pos_machine(
         # The hardware's own word wins over a model chosen on the dashboard: a tablet
         # paired with a code generated for a 55F is still a tablet.
         device_model=detect_device_model(device_info) or device_model,
+        # What the dashboard chose, kept so the machine page can say when the hardware
+        # named another model (docs/SPEC_DEVICE_ROLE_MODEL.md §4).
+        device_model_chosen=device_model,
         # The till already puts its serial in `device_info` at pairing time, on both
         # the code path (POST /pairing/validate) and the QR path (POST
         # /pairing/device/register → claim). Lift it into the column so a machine is

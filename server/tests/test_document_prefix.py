@@ -8,7 +8,14 @@
 * Frozen at issue: the till sends the prefix with the document; the cloud stores it and a
   re-push never changes it. A document without one reads as its register number.
 * Everywhere a number is shown: the dashboard reads, the cloud reprint (with "קופה N"),
-  the Z's document range, the till-facing shop list, and the lookup `2-57`.
+  the Z's document range, the till-facing shop list, and the lookup `20000057`.
+* The format (owner: "ללא מקף"): the prefix and the number padded to 7 digits; above
+  9,999,999 `<prefix>-<number>`, never an ambiguous pad.
+* One number series per document type (owner: "רצף מספרים נפרד לכל מסמך"): 320, 330, 400
+  (-400 in 400); unique per machine, series and number; ranges and the highest number
+  per series.
+* Branch codes are mandatory (owner: "חייב שלסניף יהיה קוד"): digits 1–7, unique in the
+  company; the export refuses a shop without one.
 * The tax export files `<prefix>-<number>` in every record of a document, so two tills'
   #57 are two different, consistent documents.
 """
@@ -119,13 +126,30 @@ def _refused(result) -> tuple:
 
 
 class TestRule:
-    def test_the_format(self):
-        assert DP.format_document_number("2", "57") == "2-57"
+    def test_the_format_has_no_dash(self):
+        assert DP.format_document_number("2", "57") == "20000057"
+        assert DP.format_document_number("101", "57") == "1010000057"
+        assert DP.format_document_number("2", "9999999") == "29999999"
         assert DP.format_document_number(None, "57") == "57"
         assert DP.format_document_number(" ", "57") == "57"
         # Only a plain counter takes a prefix: never twice, never on a training number.
-        assert DP.format_document_number("2", "2-57") == "2-57"
         assert DP.format_document_number("2", "ה-12") == "ה-12"
+
+    def test_the_number_is_always_the_last_seven_digits(self):
+        for prefix in ("1", "12", "123"):
+            for number in (1, 57, 1234567, 9999999):
+                text = DP.format_document_number(prefix, str(number))
+                assert text == prefix + f"{number:07d}"
+                q = DP.parse_document_query(text)
+                assert (q.prefix, q.number) == (prefix, str(number))
+
+    def test_above_9999999_is_never_an_ambiguous_pad(self):
+        # Padded to 7, prefix 2 and number 12345678 would read as prefix 21's 2345678.
+        assert DP.format_document_number("2", "12345678") == "2-12345678"
+        assert DP.format_document_number("21", "2345678") == "212345678"
+        assert DP.format_document_number("2", "12345678") != DP.format_document_number("21", "2345678")
+        q = DP.parse_document_query("2-12345678")
+        assert (q.prefix, q.number) == ("2", "12345678")
 
     @pytest.mark.parametrize("value, ok", [
         ("1", True), ("12", True), ("123", True), ("007", True),
@@ -150,16 +174,26 @@ class TestRule:
         assert DP.prefix_from(None, "M-ABC123") is None
 
     @pytest.mark.parametrize("text, expected", [
-        ("2-57", DP.DocumentQuery("2", "57")),
-        (" 2 - 57 ", DP.DocumentQuery("2", "57")),
-        ("2–57", DP.DocumentQuery("2", "57")),
+        ("20000057", DP.DocumentQuery("2", "57", "20000057")),
+        (" 1010000057 ", DP.DocumentQuery("101", "57", "1010000057")),
         ("57", DP.DocumentQuery(None, "57")),
+        ("1234567", DP.DocumentQuery(None, "1234567")),
+        ("2-10000000", DP.DocumentQuery("2", "10000000")),
+        ("2–10000000", DP.DocumentQuery("2", "10000000")),
+        ("12345678901", DP.DocumentQuery(None, "12345678901")),
         ("1234-5", None),
         ("abc", None),
         ("", None),
     ])
-    def test_the_lookup_reads_prefix_dash_number(self, text, expected):
+    def test_the_lookup_reads_the_full_number(self, text, expected):
         assert DP.parse_document_query(text) == expected
+
+    @pytest.mark.parametrize("document_type, refund_of, series", [
+        (320, None, 320), (330, None, 330), (400, None, 400), (-400, "x", 400),
+        (None, None, 320), (None, "x", 330),
+    ])
+    def test_the_series_of_a_type(self, document_type, refund_of, series):
+        assert DP.document_series_of(document_type, refund_of) == series
 
 
 # ── Setting it, and uniqueness ────────────────────────────────────────────────
@@ -313,19 +347,19 @@ class TestIngest:
         tx = _doc(w, till, "57", prefix="2")
         _put(w, till, documentPrefix="12")
         w.db.refresh(tx)
-        assert tx.document_number == "2-57"
+        assert tx.document_number == "20000057"
 
 
 # ── Shown everywhere ─────────────────────────────────────────────────────────
 
 
 class TestDisplay:
-    def test_the_dashboard_reads_show_prefix_dash_number(self, w):
+    def test_the_dashboard_reads_show_the_full_number(self, w):
         tx = _doc(w, w.tills[1], "57", prefix="2")
         old = _doc(w, w.tills[0], "57")  # before the prefix: reads as its register
         for schema in (TransactionOut, TransactionListItem, BasketDocumentOut):
-            assert schema.model_validate(tx).model_dump(by_alias=True)["documentNumber"] == "2-57"
-            assert schema.model_validate(old).model_dump(by_alias=True)["documentNumber"] == f"{w.tills[0].pos_number}-57"
+            assert schema.model_validate(tx).model_dump(by_alias=True)["documentNumber"] == "20000057"
+            assert schema.model_validate(old).model_dump(by_alias=True)["documentNumber"] == f"{w.tills[0].pos_number}0000057"
         assert TransactionOut.model_validate(old).model_dump(by_alias=True)["documentPrefix"] is None
 
     def test_the_cloud_reprint_and_its_credit_reference(self, w):
@@ -337,10 +371,10 @@ class TestDisplay:
             current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
         )
         rows = {r.label: r.value for s in doc.sections for r in s.rows}
-        assert rows["מס׳ מסמך"] == "2-58"
-        assert rows["זיכוי עבור מסמך"] == "2-57"
+        assert rows["מס׳ מסמך"] == "20000058"
+        assert rows["זיכוי עבור מסמך"] == "20000057"
         assert rows["קופה"].startswith(till.pos_number)
-        assert doc.title.endswith("2-58")
+        assert doc.title.endswith("20000058")
 
     def test_the_dashboard_detail_names_the_original_as_printed(self, w):
         from app.routers.transactions import get_transaction
@@ -351,7 +385,7 @@ class TestDisplay:
         out = get_transaction(
             transaction_id=credit.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
         )
-        assert (out.document_number, out.refund_of_transaction_number) == ("2-58", "2-57")
+        assert (out.document_number, out.refund_of_transaction_number) == ("20000058", "20000057")
 
     def test_the_z_range_is_shown_as_printed(self, w):
         till = w.tills[1]
@@ -359,13 +393,43 @@ class TestDisplay:
         for n in ("9", "10", "11"):
             _doc(w, till, n, prefix="2", shift_id=shift.id)
         totals = compute_totals(w.db, [shift.id])
-        assert (totals.first_transaction_number, totals.last_transaction_number) == ("2-9", "2-11")
+        assert (totals.first_transaction_number, totals.last_transaction_number) == ("20000009", "20000011")
+
+    def test_the_z_ranges_are_per_document_type(self, w):
+        till = w.tills[1]
+        shift = w.shift(till, 1)
+        for n in ("1", "2", "3"):
+            _doc(w, till, n, prefix="2", shift_id=shift.id)
+        _doc(w, till, "1", prefix="2", document_type=330, shift_id=shift.id)
+        _doc(w, till, "2", prefix="2", document_type=330, shift_id=shift.id)
+        totals = compute_totals(w.db, [shift.id])
+        assert totals.document_ranges == [
+            {"documentType": 320, "first": "20000001", "last": "20000003", "count": 3},
+            {"documentType": 330, "first": "20000001", "last": "20000002", "count": 2},
+        ]
+        # The one "document range" is the tax invoices', not a mix of the series.
+        assert (totals.first_transaction_number, totals.last_transaction_number) == ("20000001", "20000003")
+        from app.services.z_print import _document_rows
+
+        section = {"documentRanges": totals.document_ranges}
+        assert [(r["label"], r["value"]) for r in _document_rows(section)] == [
+            ("חשבוניות מס קבלה", "20000001–20000003"), ("חשבוניות זיכוי", "20000001–20000002"),
+        ]
+
+    def test_an_exempt_dealers_receipts_and_refunds_are_one_range(self, w):
+        till = w.tills[1]
+        shift = w.shift(till, 1)
+        _doc(w, till, "1", prefix="2", document_type=400, shift_id=shift.id)
+        _doc(w, till, "2", prefix="2", document_type=-400, shift_id=shift.id)
+        totals = compute_totals(w.db, [shift.id])
+        assert totals.document_ranges == [{"documentType": 400, "first": "20000001", "last": "20000002", "count": 2}]
 
     def test_an_older_tills_z_range_is_not_a_discrepancy(self):
-        assert _same_document_number("2-57", "2-57")
-        assert _same_document_number("57", "2-57")  # a till build from before the prefix
-        assert not _same_document_number("2-57", "3-57")
-        assert not _same_document_number("58", "2-57")
+        assert _same_document_number("20000057", "20000057")
+        assert _same_document_number("57", "20000057")  # a till build from before the prefix
+        assert _same_document_number("2-57", "20000057")  # the first prefix build
+        assert not _same_document_number("30000057", "20000057")
+        assert not _same_document_number("58", "20000057")
         assert not _same_document_number("57", None)
 
 
@@ -377,19 +441,30 @@ class TestLookup:
         query = w.db.query(Transaction).filter(Transaction.tenant_id == w.tenant.id)
         return sorted(t.document_number for t in _search_filters(query, q=q).all())
 
-    def test_prefix_dash_number_finds_that_tills_document_only(self, w):
+    def test_the_full_number_finds_that_tills_document_only(self, w):
         one, two = w.tills
         _doc(w, one, "57", prefix=one.pos_number)
         _doc(w, two, "57", prefix=two.pos_number)
         _doc(w, two, "157", prefix=two.pos_number)
-        assert self._search(w, f"{two.pos_number}-57") == [f"{two.pos_number}-57"]
+        full = f"{two.pos_number}0000057"
+        assert self._search(w, full) == [full]
         # The bare number is still the substring search, over every till.
         assert len(self._search(w, "57")) == 3
 
     def test_an_old_document_is_found_by_its_register_number(self, w):
         two = w.tills[1]
         _doc(w, two, "57", prefix=None)
-        assert self._search(w, f"{two.pos_number}-57") == [f"{two.pos_number}-57"]
+        full = f"{two.pos_number}0000057"
+        assert self._search(w, full) == [full]
+
+    def test_a_number_of_two_types_finds_both_for_the_reader_to_pick(self, w):
+        two = w.tills[1]
+        _doc(w, two, "57", prefix="2")
+        _doc(w, two, "57", prefix="2", document_type=330)
+        query = w.db.query(Transaction).filter(Transaction.tenant_id == w.tenant.id)
+        found = _search_filters(query, q="20000057").all()
+        assert sorted(t.document_type for t in found) == [320, 330]
+        assert {TransactionListItem.model_validate(t).document_type for t in found} == {320, 330}
 
 
 # ── The tax export ───────────────────────────────────────────────────────────
@@ -421,7 +496,7 @@ class TestTaxExport:
             BUSINESS, {"year": 2026}, global_tax_rate=18.0,
         )
         c100 = [_number(line) for line in _records(result, "C100")]
-        assert c100 == ["1-57".ljust(20), "2-57".ljust(20), "2-58".ljust(20)]
+        assert c100 == ["10000057".ljust(20), "20000057".ljust(20), "20000058".ljust(20)]
         assert len(set(c100)) == 3
         # Every line and every payment carries its header's number, in the same order.
         assert [_number(line) for line in _records(result, "D110")] == c100
@@ -430,7 +505,7 @@ class TestTaxExport:
         credit_line = _records(result, "D110")[2]
         base_at = NUMBER_AT + DOCUMENT_NUMBER_WIDTH + 4  # after the line number (1255)
         assert credit_line[base_at:base_at + 3] == "320"
-        assert credit_line[base_at + 3:base_at + 23] == "2-57".ljust(20)
+        assert credit_line[base_at + 3:base_at + 23] == "20000057".ljust(20)
 
     def test_an_original_outside_the_export_is_named_the_same_way(self, w):
         two = w.tills[1]
@@ -438,8 +513,8 @@ class TestTaxExport:
         credit = _doc(w, two, "58", prefix="2", document_type=330, refund_of=original.id)
         bases = load_base_documents(w.db, w.tenant.id, [credit])
         tx = transform_transaction_for_open_format(credit, 18.0, bases)
-        assert tx["transactionNumber"] == "2-58"
-        assert tx["baseDocument"]["transactionNumber"] == "2-57"
+        assert tx["transactionNumber"] == "20000058"
+        assert tx["baseDocument"]["transactionNumber"] == "20000057"
 
     def test_documents_from_before_the_prefix_file_under_their_register(self, w):
         one, two = w.tills
@@ -449,8 +524,193 @@ class TestTaxExport:
             BUSINESS, {"year": 2026}, global_tax_rate=18.0,
         )
         assert [_number(line).strip() for line in _records(result, "C100")] == [
-            f"{one.pos_number}-57", f"{two.pos_number}-57",
+            f"{one.pos_number}0000057", f"{two.pos_number}0000057",
         ]
 
     def test_the_longest_number_fits_the_field(self):
+        assert len(DP.format_document_number("999", "9999999")) == 10 <= DOCUMENT_NUMBER_WIDTH
         assert len(DP.format_document_number("999", "9" * 16)) == DOCUMENT_NUMBER_WIDTH
+
+    def test_a_320_and_a_330_of_one_number_are_two_documents_by_type(self, w):
+        two = w.tills[1]
+        rows = [_doc(w, two, "57", prefix="2"), _doc(w, two, "57", prefix="2", document_type=330)]
+        result = generate_tax_report(
+            [transform_transaction_for_open_format(t, 18.0) for t in rows],
+            BUSINESS, {"year": 2026}, global_tax_rate=18.0,
+        )
+        c100 = _records(result, "C100")
+        assert [(line[22:25], _number(line).strip()) for line in c100] == [("320", "20000057"), ("330", "20000057")]
+
+
+# ── One series per document type ─────────────────────────────────────────────
+
+
+class TestSeries:
+    def test_the_database_computes_the_series_from_the_type(self, w):
+        till = w.tills[1]
+        cases = [(320, None), (330, None), (400, None), (-400, None), (None, None)]
+        for n, (document_type, _) in enumerate(cases, start=1):
+            tx = _doc(w, till, str(n), document_type=document_type)
+            assert tx.document_series == DP.document_series_of(document_type, None)
+        credit = _doc(w, till, "99", document_type=None, refund_of=uuid.uuid4())
+        assert credit.document_series == 330
+
+    def test_a_320_and_a_330_may_share_a_number_a_400_and_a_minus_400_may_not(self, w):
+        from sqlalchemy.exc import IntegrityError
+
+        till = w.tills[1]
+        _doc(w, till, "57")
+        _doc(w, till, "57", document_type=330)  # its own series: fine
+        _doc(w, till, "57", document_type=400)
+        with pytest.raises(IntegrityError):
+            _doc(w, till, "57", document_type=-400)  # the 400 series again
+        w.db.rollback()
+
+    def test_the_highest_number_is_per_series(self, w):
+        from app.services.shifts import highest_transaction_number, highest_transaction_numbers, last_closed_shift
+
+        till = w.tills[1]
+        for n in ("5", "12"):
+            _doc(w, till, n)
+        _doc(w, till, "3", document_type=330)
+        _doc(w, till, "7", document_type=400)
+        _doc(w, till, "8", document_type=-400)
+        assert highest_transaction_numbers(w.db, till.id) == {"320": 12, "330": 3, "400": 8}
+        assert highest_transaction_number(w.db, till.id) == 12
+        dumped = last_closed_shift(w.db, till.id).model_dump(by_alias=True)
+        assert dumped["highestTransactionNumbers"] == {"320": 12, "330": 3, "400": 8}
+        assert dumped["highestTransactionNumber"] == 12  # what an older till reads
+
+
+# ── Branch codes ──────────────────────────────────────────────────────────────
+
+
+class TestBranchCodes:
+    @pytest.fixture
+    def shops(self, w, monkeypatch):
+        from app.routers import shops as shops_router
+
+        monkeypatch.setattr(shops_router, "ensure_default_pos_user", lambda *a, **k: None)
+        monkeypatch.setattr(shops_router, "reconcile_shops", lambda *a, **k: set())
+        monkeypatch.setattr(shops_router, "notify_machines_for_shop_settings", lambda *a, **k: None)
+        return shops_router
+
+    def _create(self, w, shops, **body):
+        from app.schemas.shop import ShopCreate
+
+        return shops.create_shop(
+            ShopCreate.model_validate({"name": "חדש", "companyId": str(w.company.id), **body}),
+            current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+        )
+
+    def _update(self, w, shops, shop, **body):
+        from app.schemas.shop import ShopUpdate
+
+        return shops.update_shop(
+            str(shop.id), ShopUpdate.model_validate(body), current_user=w.admin,
+            active_tenant_id=w.tenant.id, db=w.db,
+        )
+
+    def _refused(self, fn, *args, **kwargs):
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as e:
+            fn(*args, **kwargs)
+        return e.value
+
+    def test_a_new_shop_needs_a_code(self, w, shops):
+        e = self._refused(self._create, w, shops)
+        assert e.status_code == 400 and "קוד סניף הוא שדה חובה" in e.detail
+        e = self._refused(self._create, w, shops, branchId="  ")
+        assert e.status_code == 400
+
+    @pytest.mark.parametrize("bad", ["A1", "12345678", "1-2", "١"])
+    def test_digits_one_to_seven(self, w, shops, bad):
+        e = self._refused(self._create, w, shops, branchId=bad)
+        assert e.status_code == 400 and "ספרות בלבד" in e.detail
+
+    def test_unique_in_the_company(self, w, shops):
+        w.shop.branch_id = "5"
+        w.db.commit()
+        e = self._refused(self._create, w, shops, branchId="5")
+        assert e.status_code == 409 and w.shop.name in e.detail
+        assert self._create(w, shops, branchId="1234567").branch_id == "1234567"
+
+    def test_another_company_may_use_the_same_code(self, w, shops):
+        from app.models.company import Company
+        from app.schemas.shop import ShopCreate
+
+        w.shop.branch_id = "5"
+        other = Company(id=uuid.uuid4(), tenant_id=w.tenant.id, name="Other", vat_number="514141414")
+        w.db.add(other)
+        w.db.commit()
+        made = shops.create_shop(
+            ShopCreate.model_validate({"name": "אחר", "companyId": str(other.id), "branchId": "5"}),
+            current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+        )
+        assert made.branch_id == "5"
+
+    def test_an_update_may_change_it_never_clear_it_and_confirms_an_assigned_one(self, w, shops):
+        w.shop.branch_id = "1"
+        w.shop.branch_id_auto_assigned = True
+        w.other_shop.branch_id = "2"
+        w.db.commit()
+        e = self._refused(self._update, w, shops, w.shop, branchId=None)
+        assert e.status_code == 400
+        e = self._refused(self._update, w, shops, w.shop, branchId="2")
+        assert e.status_code == 409
+        out = self._update(w, shops, w.shop, name="מרכז")
+        assert out.branch_id_auto_assigned is True  # not saved: still to check
+        out = self._update(w, shops, w.shop, branchId="1")
+        assert (out.branch_id, out.branch_id_auto_assigned) == ("1", False)
+        from app.schemas.shop import ShopResponse
+
+        assert ShopResponse.model_validate(out).model_dump(by_alias=True)["branchIdAutoAssigned"] is False
+
+    def test_the_shops_own_code_wins_over_a_settings_override(self, w):
+        from app.services.settings_merge import build_business_info
+
+        w.company.settings = {"businessInfo": {"branchId": "999"}}
+        w.shop.branch_id = "3"
+        assert build_business_info(w.company, w.shop).branch_id == "3"
+        w.shop.branch_id = None
+        assert build_business_info(w.company, w.shop).branch_id == "999"
+
+    def test_the_lowest_free_code(self):
+        from app.services.branch_code import lowest_free_code
+
+        assert lowest_free_code([]) == "1"
+        assert lowest_free_code(["1", "2", "4"]) == "3"
+        assert lowest_free_code(["2", None]) == "1"
+
+
+class TestExportBranches:
+    def test_a_shop_without_a_code_stops_the_export(self, w):
+        from fastapi import HTTPException
+
+        from app.services.tax_reports import refuse_shops_without_branch_code
+
+        tx = _doc(w, w.tills[1], "57", prefix="2")
+        w.shop.branch_id = None
+        w.db.flush()
+        with pytest.raises(HTTPException) as e:
+            refuse_shops_without_branch_code(w.db, [tx])
+        assert e.value.status_code == 400 and w.shop.name in e.value.detail
+        w.shop.branch_id = "1"
+        w.db.flush()
+        refuse_shops_without_branch_code(w.db, [tx])  # no error
+        # A shop export covers its shop even with no documents in the window.
+        w.other_shop.branch_id = None
+        with pytest.raises(HTTPException):
+            refuse_shops_without_branch_code(w.db, [], w.other_shop)
+
+    def test_a_document_with_no_branch_files_under_its_shops_code(self, w):
+        from app.services.tax_reports import document_branch_id
+
+        w.shop.branch_id = "7"
+        w.db.flush()
+        old = _doc(w, w.tills[1], "57", prefix="2")  # stamped with none
+        assert document_branch_id(old) == "7"
+        old.branch_id = "3"
+        assert document_branch_id(old) == "3"  # what the till stamped wins
+        assert transform_transaction_for_open_format(old, 18.0)["branchId"] == "3"

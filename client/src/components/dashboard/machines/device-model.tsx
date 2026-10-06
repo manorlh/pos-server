@@ -1,12 +1,15 @@
 'use client';
 
 /**
- * Which hardware a till is: a Nova 55F (built-in printer), a Modo (no printer) or a
- * Nebullar P18 tablet (no printing yet).
+ * "דגם מכשיר" — which hardware a till is: a Feitian F20 / Nova 55F (built-in printer and
+ * terminal), a Modo (terminal only), a Kozen Nebullar P18 tablet, a LANDI or a Feitian
+ * tablet (no printer / drawer driver yet — "בקרוב"), or a plain Android tablet
+ * (pos-server docs/SPEC_DEVICE_ROLE_MODEL.md; capabilities in lib/deviceProfile.ts).
  *
  * Chosen when a terminal is added (the pairing code carries it onto the machine) and
- * editable afterwards; a P18 names itself when it pairs, whatever the code says. The till reads `hasPrinter` from `GET /machines/me`; a till whose
- * model was never recorded is treated as a 55F, which every till before this was.
+ * editable afterwards; a P18 / LANDI names itself when it pairs, whatever the code says
+ * (the machine page then warns). The till reads `hasPrinter` / `hasBuiltinTerminal` from
+ * `GET /machines/me`; a till whose model was never recorded is treated as a 55F.
  */
 
 import { useState } from 'react';
@@ -15,6 +18,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { updateMachineDeviceModel } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { deviceProfileErrorMessage } from '@/lib/deviceProfile';
 import { DEVICE_MODELS, type DeviceModel, type PosMachine } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -109,7 +113,8 @@ function DeviceModelForm({
       toast.success(t('saved'));
       onOpenChange(false);
     },
-    onError: (err) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
+    // A change waits for a clean break (no open shift, nothing unsynced): the server's Hebrew.
+    onError: (err) => toast.error(deviceProfileErrorMessage(err) ?? axiosErrorToToastMessage(err, tc('error'))),
   });
 
   return (
