@@ -19,6 +19,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { dealerTypeOf } from '@/lib/dealerType';
+import { useCanProduceZ } from '@/lib/zAccess';
+import { DocumentPrefixConflictsAlert } from '@/components/dashboard/machines/document-prefix';
+import { OpenFormatSoftwareCard } from '@/components/dashboard/open-format-software-card';
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -37,6 +40,7 @@ export default function TaxReportsPage() {
   const t = useTranslations('taxReports');
   const tc = useTranslations('common');
   const tb = useTranslations('businessType');
+  const canProduceZ = useCanProduceZ();
 
   /**
    * The export's own "scope" select is gone: the endpoint's two modes map exactly
@@ -120,6 +124,12 @@ export default function TaxReportsPage() {
       </div>
 
       <ScopeGate resolution={resolution}>
+        {/*
+          The file is one per business: tills of two branches on one document prefix
+          would put one number in it twice, and the export refuses such a file
+          (docs/SPEC_DOCUMENT_PREFIX.md §5, §9). Listed here before anyone exports.
+        */}
+        <DocumentPrefixConflictsAlert companyId={companyId || null} shopId={shopId || null} canEdit={canProduceZ} />
         <Card>
           <CardHeader>
             <CardTitle>{t('exportSettings')}</CardTitle>
@@ -206,9 +216,13 @@ export default function TaxReportsPage() {
               <AlertCircle className="size-4" />
               {tc('error')}
             </div>
-            <p className="mt-1 text-muted-foreground">{exportError}</p>
+            {/* The server's refusals are several lines (e.g. the duplicate numbers, one per line). */}
+            <p className="mt-1 whitespace-pre-line text-muted-foreground">{exportError}</p>
           </div>
         )}
+
+        {/* A000 1006–1012: what the file says about the software, and what is still a placeholder. */}
+        <OpenFormatSoftwareCard />
 
         {preview && (
           <div className="rounded-lg border bg-muted/30 p-4 text-sm space-y-2">

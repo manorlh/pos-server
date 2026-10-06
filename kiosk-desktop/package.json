@@ -1,8 +1,8 @@
 {
   "name": "r2m-kiosk-desktop",
   "productName": "R2M Kiosk",
-  "version": "0.1.0",
-  "description": "R2M POS self-order kiosk for Windows (Electron): offline, local media, Nayax LAN pinpad, SNBC BTP-880 printer",
+  "version": "0.2.0",
+  "description": "R2M POS for Windows (Electron): one app for every role the cloud gives the device - kiosk, KDS, order status board (till next) - offline, local media, Nayax LAN / SynqPay, SNBC ESC/POS printing, updates from the R2M cloud",
   "private": true,
   "author": "Runner Systems",
   "main": "dist/main/index.js",
@@ -17,7 +17,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "dist": "npm run build && electron-builder --win --x64 --publish never"
+    "dist": "npm run build && electron-builder --win --x64 --publish never",
+    "publish:release": "node scripts/publish-release.mjs"
   },
   "dependencies": {
     "sharp": "^0.35.5"
@@ -77,14 +78,15 @@
           ]
         }
       ],
-      "artifactName": "R2M-Kiosk-${version}-setup.${ext}"
+      "artifactName": "R2M-POS-Windows-${version}-setup.${ext}"
     },
     "nsis": {
       "oneClick": true,
-      "perMachine": true,
+      "perMachine": false,
       "allowElevation": true,
       "runAfterFinish": true,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "R2M POS"
     }
   }
 }

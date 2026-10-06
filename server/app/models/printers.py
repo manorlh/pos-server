@@ -11,8 +11,9 @@ Three tables:
   - `bluetooth`: SPP to `bt_address` (a MAC; may be left empty and picked on the till
     from its paired devices), `bt_name` for display.
   - `cloud`: relayed. Other tills send the job through the cloud to `host_machine_id`,
-    which prints it — on its own printer (`host_connection='till'`) or on a network /
-    Bluetooth printer only it reaches (`host_connection` + the same host/port/MAC fields).
+    which prints it — on its own printer (`host_connection='till'`), on a USB printer on its
+    own port (`'usb'`), or on a network / Bluetooth printer only it reaches (`host_connection`
+    + the same host/port/MAC fields). Its host also takes them over the LAN (docs/SPEC_KIOSK.md §16.9).
   - `till`: the built-in printer of whichever till the ticket comes from.
   - `usb`: a receipt printer on one till's USB port (`machine_id` names the till).
 
@@ -66,7 +67,8 @@ PRINTER_PURPOSES = ("kitchen", "receipt")
 #: The port the shop's print server till listens on for the other tills' jobs.
 DEFAULT_LAN_PORT = 8399
 #: How the host till of a `cloud` printer reaches it.
-PRINTER_HOST_CONNECTIONS = ("till", "network", "bluetooth")
+#: `usb`: a printer on the host till's own USB port (a kiosk's bon on a till's local printer).
+PRINTER_HOST_CONNECTIONS = ("till", "network", "bluetooth", "usb")
 PRINTER_PAPER_WIDTHS = (58, 80)
 ROUTE_TARGET_TYPES = ("category", "product")
 PRINT_JOB_STATUSES = ("pending", "printing", "done", "failed", "expired")
@@ -82,7 +84,7 @@ class KitchenPrinter(Base):
         ),
         CheckConstraint("purpose IN ('kitchen', 'receipt')", name="ck_kitchen_printers_purpose"),
         CheckConstraint(
-            "host_connection IS NULL OR host_connection IN ('till', 'network', 'bluetooth')",
+            "host_connection IS NULL OR host_connection IN ('till', 'network', 'bluetooth', 'usb')",
             name="ck_kitchen_printers_host_connection",
         ),
         CheckConstraint("paper_width IN (58, 80)", name="ck_kitchen_printers_paper_width"),

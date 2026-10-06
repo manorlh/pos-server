@@ -425,6 +425,24 @@ TILL_Z_OFFLINE_KEY = "tillZOffline"
 #: (docs/SPEC_TERMINAL_TIP.md). Read by the till only.
 TERMINAL_TIP_PROMPT_KEY = "terminalTipPrompt"
 
+#: "סגנון מפת שולחנות": how the till draws its tables' floor map. Read by the till only
+#: (pos-android domain/Tables.kt `TablesMapStyle`, which reads these exact options; anything
+#: else is the classic look there).
+TABLES_MAP_STYLE_KEY = "tablesMapStyle"
+TABLES_MAP_STYLE_CLASSIC = "קלאסי — עץ וזהב"
+TABLES_MAP_STYLE_MODERN = "מודרני — נקי"
+TABLES_MAP_STYLE_OPTIONS = (TABLES_MAP_STYLE_CLASSIC, TABLES_MAP_STYLE_MODERN)
+
+#: "הצג כסאות": the chairs round each table on the till's floor map, in both looks — as
+#: many as the table seats (pos-android domain/Tables.kt `TablesConfig.showChairs`; the
+#: till's own "כסאות" toggle on the tables screen overrides it on that device).
+TABLES_SHOW_CHAIRS_KEY = "tablesShowChairs"
+
+#: "גודל שם שולחן": how large each table's name / number is written on the map (the till
+#: reads these exact words — domain/TablePolicy.kt `TableLabelSize`; anything else is normal).
+TABLES_LABEL_SIZE_KEY = "tablesLabelSize"
+TABLES_LABEL_SIZES = ("קטן", "רגיל", "גדול")
+
 #: "גודל ריבוע מוצר": the sizes, smallest first, and "as the size it falls back to".
 TILE_SIZES = ("קטן מאוד", "קטן", "בינוני", "גדול")
 TILE_SIZE_INHERIT = "ברירת מחדל"
@@ -920,6 +938,47 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "הטקסט בתוך השולחן גדל ומתכווץ איתו."
         ),
     ),
+    # "סגנון מפת שולחנות" — read by the till only (pos-android domain/Tables.kt, TablesMapStyle).
+    BuiltinParameter(
+        key=TABLES_MAP_STYLE_KEY,
+        label="סגנון מפת שולחנות",
+        value_type="enum",
+        enum_options=TABLES_MAP_STYLE_OPTIONS,
+        default_value=TABLES_MAP_STYLE_CLASSIC,
+        description=(
+            "איך מסך השולחנות בקופה נראה. «קלאסי — עץ וזהב» (ברירת המחדל): רצפת פרקט עץ, שולחנות "
+            "עם צל וכיסאות עץ, מצב השולחן בטבעת צבעונית ובתווית מתחת לשולחן, והילה זהובה סביב "
+            "שולחן שנבחר. «מודרני — נקי»: רצפה נקייה (אפורה עם רשת עדינה, כהה במצב לילה), שולחנות "
+            "חדים עם קו דק וכיסאות בהירים, והמצב בגוון עדין ובמילה בתוך השולחן. רק המראה משתנה — "
+            "כל הפעולות במסך זהות. רקע שנבחר לאזור (עץ, אריחים, נקי, בהיר, כהה או תמונה) נשמר בשני הסגנונות. "
+            "ניתן לקבוע לחברה, לסניף, לנקודת מכירה או לקופה בודדת."
+        ),
+    ),
+    # "הצג כסאות" — read by the till only (pos-android domain/Tables.kt, TablesConfig.showChairs).
+    BuiltinParameter(
+        key=TABLES_SHOW_CHAIRS_KEY,
+        label="הצג כסאות",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשמופעל (ברירת המחדל): במפת השולחנות בקופה מצוירים כסאות סביב כל שולחן — כמספר "
+            "המקומות שהוגדר לשולחן (\"כסאות\" בעורך השולחנות) — בשני סגנונות המפה. כשכבוי: "
+            "השולחנות בלי כסאות. בקופה אפשר להחליף זמנית מ\"תצוגה\" במסך השולחנות (הקופה זוכרת). "
+            "ניתן לקבוע לחברה, לסניף, לנקודת מכירה או לקופה בודדת."
+        ),
+    ),
+    # "גודל שם שולחן" — read by the till only (pos-android domain/TablePolicy.kt, TableLabelSize).
+    BuiltinParameter(
+        key=TABLES_LABEL_SIZE_KEY,
+        label="גודל שם שולחן במפה",
+        value_type="enum",
+        enum_options=TABLES_LABEL_SIZES,
+        default_value="רגיל",
+        description=(
+            "כמה גדול נכתב שם השולחן (או מספרו, כשאין לו שם) על השולחן במסך השולחנות בקופה. "
+            "שם ארוך נחתך בשלוש נקודות."
+        ),
+    ),
     BuiltinParameter(
         key="tablesWarnMinutes",
         label="ניהול שולחנות — זמן ישיבה: אזהרה (דקות)",
@@ -1030,8 +1089,8 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         ),
     ),
     # "גודל ריבוע מוצר": the product tiles on the till (domain/TileSize.kt, tileSizeFor) —
-    # the quick order's, and on their own when set: a table's order, a tablet's, a tablet's
-    # table. "ברירת מחדל": as the size it falls back to.
+    # the quick order's, and a tablet's when it has none of its own. A table's order has its
+    # own chain (tablet tables → tables → medium, the approved table layout), never this one.
     BuiltinParameter(
         key="productTileSize",
         label="גודל ריבוע מוצר",
@@ -1040,7 +1099,8 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         default_value="בינוני",
         description=(
             "גודל ריבועי המוצרים במסך המכירה (הזמנה מהירה). \"קטן מאוד\" מכניס הכי הרבה מוצרים למסך, "
-            "\"גדול\" מציג את התמונה בגדול. חל גם על שולחנות ועל טאבלט, אלא אם נקבע להם גודל משלהם."
+            "\"גדול\" מציג את התמונה בגדול. חל גם על טאבלט, אלא אם נקבע לו גודל משלו. "
+            "הזמנת שולחן אינה מושפעת ממנו — לה יש \"גודל ריבוע מוצר — שולחנות\"."
         ),
     ),
     # "צבע גופן": the till's text colour on the light theme (ui/theme/Theme.kt, textColorOfParam).
@@ -1061,7 +1121,7 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         value_type="enum",
         enum_options=(TILE_SIZE_INHERIT,) + TILE_SIZES,
         default_value=TILE_SIZE_INHERIT,
-        description="גודל ריבועי המוצרים בתוך הזמנת שולחן. «ברירת מחדל» — כמו בהזמנה המהירה.",
+        description="גודל ריבועי המוצרים בתוך הזמנת שולחן. «ברירת מחדל» — בינוני, העיצוב המאושר של הזמנת השולחן.",
     ),
     BuiltinParameter(
         key="productTileSizeTablet",
@@ -1078,8 +1138,8 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         enum_options=(TILE_SIZE_INHERIT,) + TILE_SIZES,
         default_value=TILE_SIZE_INHERIT,
         description=(
-            "גודל ריבועי המוצרים בתוך הזמנת שולחן בטאבלט. «ברירת מחדל» — כמו ההזמנה המהירה בטאבלט, "
-            "ואם גם היא לא נקבעה — כמו בשולחנות."
+            "גודל ריבועי המוצרים בתוך הזמנת שולחן בטאבלט. «ברירת מחדל» — כמו \"גודל ריבוע מוצר — שולחנות\", "
+            "ואם גם הוא לא נקבע — בינוני."
         ),
     ),
     BuiltinParameter(
@@ -1376,6 +1436,11 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spe
 from app.services.device_identity import CELLULAR_PARAMETER_SPECS as _CELLULAR_SPECS  # noqa: E402
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CELLULAR_SPECS)
+
+# "הדפסת עסקאות שלא הושלמו בדוחות" (docs/SPEC_FAILED_PAYMENTS.md): the till's paper only.
+from app.services.failed_payments import FAILED_PAYMENTS_PARAMETER_SPECS as _FAILED_PAYMENTS_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _FAILED_PAYMENTS_SPECS)
 
 
 def validate_keyed_value(key: str, value: Any) -> Any:

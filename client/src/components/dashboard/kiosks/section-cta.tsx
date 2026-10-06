@@ -10,6 +10,7 @@ import { useTranslations } from 'next-intl';
 import { Hand, Move, RectangleHorizontal } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import {
   CTA_ANIMATIONS,
@@ -159,6 +160,7 @@ export function CtaSection() {
   const textColor = cta.textColor ?? colors.buttonText;
   return (
     <SectionCard title={t('title')} description={t('hint')} paths={[P]}>
+      <VisibleFields />
       <SegmentField<CtaSize>
         path={`${P}.size`}
         label={tf('cta.size')}
@@ -225,7 +227,49 @@ export function CtaSection() {
         options={CTA_ANIMATIONS.map((v) => ({ value: v, label: t(`animations.${v}`) }))}
       />
       <TextField path={`${P}.subtitle`} label={tf('cta.subtitle')} hint={t('subtitleHint')} max={KIOSK_LIMITS.ctaSubtitleMax} />
-      <SwitchField path={`${P}.tapAnywhere`} label={tf('cta.tapAnywhere')} hint={t('tapAnywhereHint')} />
+      <TapAnywhereField />
     </SectionCard>
+  );
+}
+
+/**
+ * "הצג כפתור התחלה": hidden, the whole screen starts an order (tapAnywhere set on and locked), and
+ * "טקסט במקום הכפתור" draws texts.attractTouchHint in its place.
+ */
+function VisibleFields() {
+  const t = useTranslations('kiosks.cta');
+  const tf = useTranslations('kiosks.fields');
+  const visible = useKioskField<boolean>(`${P}.visible`);
+  const tap = useKioskField<boolean>(`${P}.tapAnywhere`);
+  const shown = visible.value !== false;
+  return (
+    <>
+      <FieldShell path={`${P}.visible`} label={tf('cta.visible')} hint={t('visibleHint')} inline>
+        <Switch
+          checked={shown}
+          disabled={visible.disabled}
+          aria-label={tf('cta.visible')}
+          onCheckedChange={(v) => {
+            visible.set(!!v);
+            if (!v && tap.value !== true) tap.set(true);
+          }}
+        />
+      </FieldShell>
+      {!shown ? <SwitchField path={`${P}.touchHint`} label={tf('cta.touchHint')} hint={t('touchHintHint')} /> : null}
+    </>
+  );
+}
+
+/** "כל המסך פותח הזמנה" — always on (greyed out) while the button is hidden. */
+function TapAnywhereField() {
+  const t = useTranslations('kiosks.cta');
+  const tf = useTranslations('kiosks.fields');
+  const tap = useKioskField<boolean>(`${P}.tapAnywhere`);
+  const visible = useKioskField<boolean>(`${P}.visible`);
+  const forced = visible.value === false;
+  return (
+    <FieldShell path={`${P}.tapAnywhere`} label={tf('cta.tapAnywhere')} hint={forced ? t('tapAnywhereForced') : t('tapAnywhereHint')} inline>
+      <Switch checked={forced || !!tap.value} disabled={tap.disabled || forced} aria-label={tf('cta.tapAnywhere')} onCheckedChange={(v) => tap.set(!!v)} />
+    </FieldShell>
   );
 }

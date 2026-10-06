@@ -56,6 +56,9 @@ from app.schemas.prepaid_voucher import (
 from app.services import prepaid_vouchers as PV
 from app.services import prepaid_voucher_reports as PVR
 
+# Display devices are not tills (app/services/display_devices.py).
+from app.middleware.auth import FISCAL_MACHINE_TOKEN
+
 router = APIRouter(tags=["prepaid-vouchers"])
 
 
@@ -370,7 +373,7 @@ def prepaid_voucher_batch_report(
 # ── Till ──────────────────────────────────────────────────────────────────────
 
 
-@router.post("/sync/{machine_id}/prepaid-vouchers/lookup")
+@router.post("/sync/{machine_id}/prepaid-vouchers/lookup", dependencies=FISCAL_MACHINE_TOKEN)
 def lookup_prepaid_voucher(
     machine_id: str,
     body: PrepaidVoucherLookupIn,
@@ -385,7 +388,7 @@ def lookup_prepaid_voucher(
     return PV.lookup(db, machine, body.code)
 
 
-@router.post("/sync/{machine_id}/prepaid-vouchers/redeem")
+@router.post("/sync/{machine_id}/prepaid-vouchers/redeem", dependencies=FISCAL_MACHINE_TOKEN)
 def redeem_prepaid_voucher(
     machine_id: str,
     body: PrepaidVoucherRedeemIn,
@@ -403,7 +406,7 @@ def redeem_prepaid_voucher(
     return out
 
 
-@router.post("/sync/{machine_id}/prepaid-vouchers/redemptions/{redemption_id}/reverse")
+@router.post("/sync/{machine_id}/prepaid-vouchers/redemptions/{redemption_id}/reverse", dependencies=FISCAL_MACHINE_TOKEN)
 def reverse_prepaid_redemption(
     machine_id: str,
     redemption_id: str,
@@ -419,7 +422,7 @@ def reverse_prepaid_redemption(
     return out
 
 
-@router.post("/sync/{machine_id}/prepaid-vouchers/redemptions/{redemption_id}/transaction")
+@router.post("/sync/{machine_id}/prepaid-vouchers/redemptions/{redemption_id}/transaction", dependencies=FISCAL_MACHINE_TOKEN)
 def attach_prepaid_redemption_transaction(
     machine_id: str,
     redemption_id: str,

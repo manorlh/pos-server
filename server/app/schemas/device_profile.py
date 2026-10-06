@@ -1,7 +1,8 @@
 """Request bodies for a device's role and model (docs/SPEC_DEVICE_ROLE_MODEL.md)."""
 from __future__ import annotations
 
-from typing import List, Optional
+import uuid
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -30,6 +31,20 @@ class KioskOptionsIn(BaseModel):
     pinpad_port: Optional[int] = Field(None, alias="pinpadPort")
 
 
+class KdsScreenOptionsIn(BaseModel):
+    """
+    A KDS device's screen when it is added (or a board made a KDS on the machine page): the
+    KDS page's own fields (`KdsDeviceIn`). "station" needs at least one station; the board
+    is always the KDS module's "pickup" screen and takes only `name`.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: Optional[str] = Field(None, max_length=100)
+    screen_role: Literal["station", "expo", "manager"] = Field("expo", alias="screenRole")
+    station_ids: List[uuid.UUID] = Field(default_factory=list, alias="stationIds", max_length=30)
+
+
 class DeviceProfileIn(BaseModel):
     """
     `PUT /machines/{id}/device-profile`: change the role, the model, or both. Omitted (or
@@ -43,3 +58,6 @@ class DeviceProfileIn(BaseModel):
     #: Used when the role becomes "kiosk"; ignored otherwise (an existing kiosk's options
     #: are edited on the kiosks page).
     kiosk: Optional[KioskOptionsIn] = None
+    #: Used when a board becomes a KDS (its screen); ignored otherwise. A till never becomes
+    #: a display device here, nor back (409 `device_role_change_requires_pairing`).
+    kds: Optional[KdsScreenOptionsIn] = None

@@ -68,7 +68,7 @@
 
 1. אישור המסוף ← המסמך נכתב (`completeCardSale`) ← רק אז הבון.
 2. **פעם אחת:** ההזמנה נרשמת "בון התבקש" **לפני** ההכנסה לתור (write-ahead), ומזהי העבודות אחרי. בדיקה חוזרת / retry / הפעלה מחדש → `TRACK` בלבד. אם התהליך נפל בין השניים — `RECOVER`: מחפשים בתור עבודות עם מספר המסמך; אין — לא הודפס כלום (ההכנסה לתור היא נקודת ה-commit) ומכניסים פעם אחת.
-3. **ניתוב:** `routing` — ניתוב המטבח הקיים לפי מוצר/קטגוריה (שורות שלא נותבו מדווחות, לא נבלעות); `single` — כל ההזמנה למדפסת אחת (`KitchenPrintService.enqueueTracked(onlyPrinterId)`). עותקים 1–3. דרך שרת ההדפסות ב-LAN, הענן, failover ורוחב/מרכוז — כמו כל בון.
+3. **ניתוב:** `routing` — ניתוב המטבח הקיים לפי מוצר/קטגוריה (שורות שלא נותבו מדווחות, לא נבלעות); `single` — כל ההזמנה למדפסת אחת (`KitchenPrintService.enqueueTracked(onlyPrinterId)`) — גם המדפסת המקומית של קופה (המובנית / USB / Bluetooth, §16.9). עותקים 1–3. דרך שרת ההדפסות ב-LAN, הענן, failover ורוחב/מרכוז — כמו כל בון.
 4. **ראש הבון:** "הזמנה A-17 · דנה · שולחן 5", פס לקחת/לשבת, מספר המסמך קטן, שם הקיוסק.
 5. **כנות:** `queued` / `sent` ("נשלח למדפסת") / `failed` ("לא הודפס"). `printed` שמור למדפסת שמאשרת נייר — אין כזו היום, ולכן הקיוסק לעולם לא מדווח "הודפס" על "נשלח".
 6. **תשלום נשמר בכשל הדפסה:** מצב `paid_print_failed`, התראה לצוות, הדפסה חוזרת מהניהול — אין חיוב שני.
@@ -675,6 +675,24 @@ Hebrew, Alef, Varela Round, Secular One, Suez One, Frank Ruhl Libre. הקיוס�
 - **ענן:** migration `e9c4a7b2d5f1` (פעולות הבון ב-check של `kiosk_commands`); `kiosk_ops.pending_bon_commands`, `apply_commands_done`, `unprinted_by_kiosk`; `kiosk_control.run_command` — 404 `order_not_found` ("ההזמנה לא נמצאה בקיוסק").
 - בדיקות: `KioskBonCareTest`; `tests/test_kiosk_ops.py` (`test_the_printer_is_fine_but_a_bon_did_not_print_is_said_so`, `test_the_controlling_till_sees_the_unprinted_bon_and_prints_it_now`, `test_a_bon_command_for_an_unknown_order_is_refused`).
 
+### 16.9 בון של קיוסק במדפסת המקומית של קופה (07.10.2026)
+- **הבקשה:** "תוודא שקיוסק תומך בבון מהמדפסת המקומית בקופה" — הבון של הקיוסק יוצא במדפסת שמחוברת פיזית לקופה: ראש ההדפסה המובנה של ה-F20, המדפסת המובנית של SUNMI, או מדפסת USB / Bluetooth שמחוברת לאותה קופה.
+- **איך זה מוגדר מאחורי הקלעים:** מדפסת בונים מסוג `cloud` שהקופה היא המארחת שלה (`host_machine_id`), ו-`host_connection` = `till` (הראש המובנה) / `usb` (חדש — מדפסת על יציאת ה-USB של הקופה המארחת, migration `3b8e6d2f9a14`) / `bluetooth`. הבעלים לא רואה "מדפסת ענן".
+- **בחירה בדשבורד** (הגדרות הקיוסק ← "בונים למטבח" ← "הכל במדפסת אחת" ← "מדפסת בונים"): ברשימה מופיעה כל מדפסת מקומית של כל קופה בסניף בשמה — "המדפסת המובנית — 2 · בר (F20/55F)", "מדפסת USB — 1 · קופה (P18) · ESC/POS 58 מ״מ". הרשימה נבנית בענן (`GET /shops/{id}/till-local-printers`) מפרופיל המכשיר (`device_has_printer` — ראש מובנה; כולל קריאת המדפסת האחרונה מה-heartbeat) ומהמדפסת שהקופה מדפיסה עליה (פרמטר `receiptPrinter` = USB / Bluetooth עם הדגם והכתובת, או מדפסת חשבוניות שמשויכת לאותה קופה). קיוסקים לא מופיעים — קיוסק מדפיס במדפסת שלו. בחירה ראשונה יוצרת את רשומת המדפסת (`POST /shops/{id}/till-local-printers` — או מחזירה את הקיימת ומפעילה אותה מחדש; לעולם לא כפולה), **משויכת לקופה המארחת בלבד** — כדי שקיוסק אחר במצב "לפי ניתוב המטבח" שמדפיס במדפסת ה-USB שלו לא "יאבד" אותה. הקיוסק שבחר בה מקבל אותה בכל זאת: הענן מוסיף לקיוסק את "מדפסת הבונים" שלו (`printing.bonPrinterId`) גם כשהיא משויכת לקופה אחרת (`inScope: false`). במצב "לפי ניתוב המטבח" — ניתוב לפי קטגוריות בעמוד "מדפסות" (שם אפשר לפתוח את המדפסת לכל הקופות).
+- **הדרך (אנדרואיד, `KitchenRouting.routeOf` / `lanTargetOf` / `handOverSteps`, `KitchenPrintService.handOver`):**
+  1. **רשת מקומית קודם:** כל קופה שמארחת מדפסת משלה (`hostsOwnPrinter`) מריצה את שרת ה-LAN (פורט 8399, אותו סוד הדפסה של הסניף) ומדווחת לענן איפה היא מאזינה (`POST /sync/{m}/print-host` — לא רק שרת ההדפסות). הענן מוסיף לכל מדפסת מתארחת, אצל כל קופה אחרת, `hostMachineName`, `hostLanAddress`, `hostLanPort`. הקיוסק (כשהוא על Wi-Fi / Ethernet) שולח את הבון ישר לקופה הזו; אם הקופה המארחת היא שרת ההדפסות — לכתובת של שרת ההדפסות.
+  2. **אחרת — הענן:** הקופה לא עונה ברשת, או שאין כתובת (קיוסק רחוק, קופה שעוד לא דיווחה) ← relay בענן לאותה קופה (`relay_target` = הקופה המארחת), שמדפיסה ומחזירה ack.
+  3. **לעולם לא שניהם:** אותו מזהה עבודה בכל הדרכים. בקשת LAN שנשלחה במלואה והתשובה אבדה (`LanAnswerLost`) — הקופה אולי כבר קיבלה אותה: לא מדפיסים "ישירות", רק הענן ממשיך, והקופה שמקבלת מהענן עבודה שכבר יש לה (מה-LAN) לא מדפיסה שוב — היא קושרת אותה לעותק בענן (`KitchenQueue.relayedAgain`, `KitchenJobDao.tieRelay`) ומחזירה ack לשניהם. הקיוסק לעולם לא מדפיס בעצמו מדפסת של קופה אחרת.
+  4. **הקופה המארחת מדפיסה אצלה:** עבודה שהגיעה ב-LAN (`KitchenRouting.acceptedOnLan` — מדפסת שהיא מארחת, גם לפני שמשכה את ההגדרות) או מהענן נכנסת לתור שלה ומודפסת לפי `hostConnection`: הראש המובנה (`till`), יציאת ה-USB שלה (`usb`, `UsbPrinterTransport`), או Bluetooth.
+- **כלל פשוט לקופה שאינה שרת ההדפסות:** מי שמארחת מדפסת — מאזינה ב-LAN לעבודות של המדפסות שלה בלבד ומדווחת כתובת; כל השאר שולחים אליה ב-LAN אם הכתובת ידועה והם ברשת, אחרת בענן. קופה עצמאית שאינה קיוסק — מחוץ לקבוצת ה-LAN: בלי כתובת, ענן בלבד. קיוסק (גם עצמאי) מקבל את הכתובת, מנסה בקצרה (1.5 שניות) ועובר לענן.
+- **סטטוס בקיוסק (כנות):** "נשלח למדפסת" כל עוד הבון בדרך; "הודפס" כשהקופה המארחת אישרה (ack ב-LAN או בענן); "לא הודפס" כשהקופה לא עונה (דקה בלי הדפסה — `slow`; 5 דקות בענן — `expired`; שרת ה-LAN שתק) או כשהיא מדווחת תקלה במדפסת שלה ("no paper" — במילים שלה, לא "slow"). כשהקופה לא עונה, שורת הבון בניהול הקיוסק אומרת "2 · בר לא עונה (כבויה או לא מחוברת)" (`KioskBon.silentHost` / `hostDownDetail`).
+- **התראה לצוות:** "קיוסק רויאל — בון של הזמנה A-1 לא הודפס — 2 · בר לא עונה (כבויה או לא מחוברת)" (וגם "מדפסת בונים: לא מחוברת — 2 · בר לא עונה…") — `detail.hostTill` מהקיוסק (`KitchenPrintService.silentHostTill`), הנוסח זהה בענן (`kiosk_ops.host_down_text`) וב-LAN (`KioskAlertText.hostDown`).
+- **"הדפס עכשיו" / "סמן כטופל" ממשיכים לעבוד, בלי בון כפול:** בון שנמצא בתור של הקופה המארחת (הגיע ב-LAN) — מודפס שם כשאפשר, לא נשלח שוב. בון שמחכה בענן לקופה שלא לקחה אותו — הקיוסק לוקח אותו בחזרה (`POST /sync/{m}/print-jobs/{id}/cancel`, רק השולח, רק עבודה שאף קופה לא קיבלה) ורק אז שולח מחדש; עבודה שקופה כבר קיבלה — לא מבטלים (אולי תודפס). "סמן כטופל" — ללא שינוי.
+- **קבצים — אנדרואיד:** `hardware/kitchen/KitchenRouting.kt` (`LanTarget`, `HandOverStep`, `lanTargetOf`, `handOverSteps`, `hostsOwnPrinter`, `acceptedOnLan`), `KitchenPrintService.kt` (handOver לפי התוכנית, poll לכל קופה, הרצת שרת LAN ודיווח כתובת לקופה מארחת, `hostTillOf`, `silentHostTill`, `withdrawRelayed`), `KitchenLan.kt` (`LanAnswerLost`), `KitchenQueue.kt` (`relayedAgain`, שגיאת המארח ב-`relayStatus`), `KitchenJobsDb.kt` (`tieRelay`, בלי שינוי סכימה), `data/remote/KitchenPrinterDtos.kt`, `PosApi.kt` (`cancelPrintJob`), `domain/KioskOrders.kt` (`KioskBon.Job.hostTill`, `noAnswer`, `silentHost`, `hostDownDetail`), `domain/KioskAlerts.kt`, `data/repo/KioskBonService.kt`, `data/repo/KioskAlertsRuntime.kt`, `ui/kitchen/PrintersScreen.kt` (שם הקופה המארחת).
+- **קבצים — ענן ודשבורד:** `app/services/printers.py` (`hosted_by_tills`, `kiosk_bon_printer_id`, `cancel_job`, `till_local_printers`, `ensure_till_local_printer`), `app/routers/printers.py`, `app/schemas/kitchen_printers.py` (`TillLocalPrinterIn`, `hostConnection: usb`), `app/models/printers.py`, `app/services/kiosk_ops.py` (`host_down_text`), migration `3b8e6d2f9a14`; `client/src/lib/kioskBonPrinters.ts`, `kitchenPrintersApi.ts`, `components/dashboard/kiosks/section-printing.tsx`, `kitchen-printers/printer-dialog.tsx` (חיבור USB), `he.json`.
+- **בדיקות:** `KioskBonTillPrinterTest` (LAN קודם, ענן כגיבוי, לא "ישירות" למדפסת של קופה אחרת, הקופה מדפיסה בראש / ב-USB שלה, אותו בון ב-LAN ובענן — הדפסה אחת ו-ack לשניהם, סטטוס ושם הקופה בהתראה); `tests/test_kiosk_till_printer.py` (רשימה לפי שם, יצירה/שימוש חוזר, USB / Bluetooth, הדרך בענן עד ack, מדפסת בונים משויכת לקופה אחרת, כתובת LAN לשולחים, ביטול עבודה שאף קופה לא לקחה, נוסח ההתראה); `kioskBonPrinters.test.ts`.
+- **פערים:** קופה מארחת כבויה לגמרי — הבון מחכה בענן 5 דקות ואז "לא הודפס"; אין מעבר אוטומטי למדפסת אחרת (הצוות: "הדפס עכשיו" אחרי שהקופה חזרה, או "סמן כטופל"). בון שהקופה המארחת קיבלה ב-LAN ואז כבתה — יודפס כשתחזור (התור שלה שמור), ו"הדפס עכשיו" לא שולח עותק שני. כתובת LAN מתעדכנת אצל השולחים בסנכרון הבא (אין Ably לכתובת). לא נבדק על מכשירים.
+
 ---
 
 ## 17. "למה הקיוסק לא עובד בלי אינטרנט?" — הקיוסק מוכר בלי אינטרנט, כמו קופה
@@ -1068,3 +1086,77 @@ Hebrew, Alef, Varela Round, Secular One, Suez One, Frank Ruhl Libre. הקיוס�
 - **בדיקות:**
   - `tests/test_kiosks.py`: נשמר לכל הסניף ולכל הקיוסקים, שכבת קיוסק נוקתה, קופאי או בלי מאשר — 403, רישום והודעה; גרסה ישנה — 409, ולידציה, לא קיוסק, ובדשבורד — 409 רק כשהתפריט משתנה.
   - `KioskMenuEditTest`: גרירה, הסתרה, מומלצים ומגבלה, התחלה מההגדרות, טיוטה אחרי הפעלה מחדש והתאמה לקטלוג, תשובות הענן.
+
+---
+
+## 23. "איך תרצו לשלם?" — שובר, מזומן בקופה ותשלום הזמנת קיוסק בקופה (07.10.2026)
+
+בקשת הבעלים: "אם יש יותר מאמצעי תשלום אחד בקיוסק אז אל תעביר ישר לאשראי, תבחר. כמו תשלום עם שובר ואז יקזז יתרה. תשלום מזומן — יצא לו פתק והוא ישלם בקופה. בקופה אם יש הזמנת קיוסק יהיה מעבר לתשלום הזמנה פתוחה בקיוסק."
+
+### 23.1 ההגדרה (`payment.methods`, דשבורד → קיוסק → "תשלום")
+- **אמצעים:** `card` (אשראי במסופון החיצוני, כמו היום), `voucher` (שובר הפקה — `PV:`), `cash_at_till` (מזומן בקופה).
+  - בדשבורד: מתג לכל אמצעי וסדר (חצים) — הסדר הוא סדר האריחים במסך הבחירה (`section-payment-methods.tsx`).
+  - `cash` לבדו עדיין נדחה (`cash_not_supported` — לקיוסק אין חומרת מזומן; הטקסט מפנה ל"מזומן בקופה").
+  - שובר לבדו אינו מספיק: `voucher_needs_method` (ענן ודשבורד); תיקון (`repair`) מוסיף אשראי לפניו, כך שקיוסק תמיד מקבל תצורה תקינה.
+- **"תשלום בקופה":** `cashAtTillExpiryMin` (5–240, ברירת מחדל 30) — הזמנה פתוחה שלא שולמה פגה; `cashAtTillKitchenBeforePay` ("שלח למטבח לפני תשלום", כבוי) — כבוי: הבון יוצא רק כשהקופה גובה.
+- **השלב `payMethod`** נוסף ל-`payment.checkoutSteps` ותמיד אחרון — מיד לפני התשלום (הענן, הדשבורד והאנדרואיד מעבירים אותו לסוף). מופיע כשיש יותר מאמצעי אחד, או כשהאמצעי היחיד אינו אשראי. אמצעי אחד (אשראי) — ישר לתשלום, כמו היום.
+- **טקסטים** (כולם בעריכת הטקסטים, עם ברירת מחדל בעברית): `stepPayMethod`, `payMethodTitle` ("איך תרצו לשלם?"), `payMethodSubtitle`, `payCardLabel/Sub`, `payVoucherLabel/Sub`, `payCashLabel/Sub`, `remainingToPay` ("נותר לתשלום {amount}"), `voucherTitle/Hint/Apply/Offline/Applied/NoMatch/Forfeit`, `cashSlipTitle` ("לתשלום בקופה"), `cashSlipFooter` ("ההזמנה תוכן לאחר התשלום"), `cashSlipPending` ("הזמנה ממתינה לסנכרון"), `cashDoneTitle` ("גשו לקופה לתשלום"), `cashDoneBody` ("מספר {number}").
+
+### 23.2 הקיוסק — מסך הבחירה (`ui/kiosk/KioskPayMethodUi.kt`, `KioskPayMethodModel.kt`)
+- שלב אחרון במסך "עוד רגע תשלום" (אחרי טיפ ופרטים), עם סרגל השלבים. אריחים גדולים עם אייקון בצבעי ה-theme.
+- **אשראי:** ממשיך לתשלום הקיים (`CheckoutViewModel`, המסופון החיצוני). אשראי לא זמין (`KioskPayBlock`) — האריח כבוי עם הסבר.
+- **שובר:**
+  - סריקה בסורק של הקיוסק (`ScanHandler` מעל `KioskScanHost` כל עוד השלב על המסך) או הקלדה במקלדת של הקיוסק (`KioskEntryWindow`, 16 תווים כמו מודפס).
+  - נבדק ומומש בענן מיד, דרך ממשקי הקופה (`/sync/{m}/prepaid-vouchers/lookup|redeem`, `clientRequestId` — ניסיון חוזר לא מממש פעמיים).
+  - נלקח רק מה שבסל ושעוד לא כוסה (`KioskPayRemainder.take`); הערך = המחיר של השורות בסל (`coverByVoucher`, כמו בקופה), לעולם לא הטיפ ולא יותר ממה שנשאר.
+  - "נותר לתשלום ₪X" והבחירה שוב (אשראי / מזומן בקופה / עוד שובר). כמה שוברים מותרים, ו"הסרה" מחזירה שובר.
+  - שובר חד-פעמי שרק חלקו בהזמנה — שואלים את הלקוח לפני ויתור על היתרה.
+  - בלי חיבור: "תשלום בשובר אינו זמין כרגע" — אין מימוש אופליין.
+  - שובר שמכסה הכול (בלי טיפ) — המכירה נסגרת בשובר בלבד, בלי מסופון.
+  - **עם אשראי:** השוברים הם הרגליים הראשונות של אותו מסמך (`presetVouchers` ב-`CheckoutViewModel.start`), והמסופון מחויב ביתרה. בהצלחה — הרגליים מקושרות למסמך (`attach`).
+  - **לעולם לא פעמיים / שחרור:** יציאה מהתשלום (חזרה לסל, איפוס, חוסר פעילות) מחזירה את השוברים (`reverse`). הזמנה שעברה לקופה — השוברים עוברים איתה (ראו 23.4).
+- **מזומן בקופה:**
+  - אישור ("הזמנה ותשלום בקופה · ₪X"), ואז: **אין מסמך מס בקיוסק.** נוצרת הזמנה פתוחה: שורות, הסל לבנייה מחדש בקופה, מספר איסוף (אותו רצף), שם אם נשאל, שוברים שמומשו (ממתינים), טיפ.
+  - פתק במדפסת הקיוסק (`KioskCashSlipRenderer`): שם העסק, "לתשלום בקופה", המספר בגדול, הסכום, הפריטים, שוברים וטיפ, QR של ההזמנה (`KO:<מזהה>`), השעה, "ההזמנה תוכן לאחר התשלום".
+  - מסך סיום "גשו לקופה לתשלום · מספר X" (מעל מסך ההצלחה, בלי שאלת קבלה); חוזר למנוחה בזמן של מסך ההצלחה.
+  - בון למטבח — רק אם "שלח למטבח לפני תשלום" דלוק (מסומן "ממתין לתשלום בקופה"); אחרת הקופה שגובה שולחת.
+  - בלי אשראי זמין, כש"מזומן בקופה" פעיל — הקיוסק ממשיך לקבל הזמנות (לא מסך "התשלום אינו זמין").
+
+### 23.3 הענן (`app/services/kiosk_open_orders.py`, `app/routers/kiosk_open_orders.py`)
+- **טבלה:** `kiosk_orders` הקיימת, עם עמודות חדשות (migration `a4c8e2f6b9d3`, אידמפוטנטית): `pay_at_till`, `open_state` (open → paid | cancelled | expired), `due_agorot`, `voucher_agorot`, `lines`, `cart`, `vouchers`, `expires_at`, `locked_by_*`, `paid_by_*`, `closed_at`, `close_reason`, `closed_by_name`, `kitchen_sent`; `paid_at` הפך ל-nullable. אינדקס `ix_kiosk_orders_shop_open`.
+- **קיוסק:** `POST /sync/{m}/kiosk/open-orders` — upsert לפי `localId`, כל הזמנה נבדקת לבד (`dueAgorot = totalAgorot + tipAgorot − voucherAgorot` באגורות; שובר חייב להיות מימוש של הקיוסק הזה, לא מבוטל ולא בהזמנה אחרת). התשובה: `accepted`, `rejected`, `states`. הזמנה חדשה מעירה את קופות הסניף (Ably `kiosk-order`).
+- **קופה** (כל קופת הסניף, לא קיוסק — 403 `kiosk_cannot_pay_orders`):
+  - `GET /sync/{m}/kiosk/open-orders` — הפתוחות (וסגורות של 2 הדקות האחרונות), אחרי פקיעה עצלה.
+  - `POST …/{ref}/lock` — "בטיפול בקופה X" לאחרות; 409 `kiosk_order_locked` {lockedBy} / `kiosk_order_closed` {state}. נעילה פגה אחרי 10 דק׳ בלי חזרה.
+  - `POST …/{ref}/release`, `POST …/{ref}/paid` {transactionId, transactionNumber} — אידמפוטנטי לאותו מסמך; מסמך אחר — 409. השוברים מקושרים למסמך הקופה.
+  - `POST …/{ref}/cancel` {reason} — סיבה חובה; השוברים חוזרים (`reverse_redemption`).
+  - `ref` = מזהה הענן או ה-localId של הקיוסק (ה-QR בפתק).
+- **פקיעה:** הזמנה פתוחה אחרי `cashAtTillExpiryMin` — `expired` (נרשם בשורה ובלוג), השוברים חוזרים. לעולם לא תחת קופה שמחזיקה אותה. הזמנה שעלתה אחרי זמנה (קיוסק שהיה אופליין) — פגה מיד.
+- **"שולם" גובר:** קופה שגבתה (גם אופליין, בלי נעילה) — מאמינים לה ונרשם (`paid_after_<state>`).
+- **אין מסמך מס עד התשלום** — אין `transactions` להזמנה פתוחה; המסמך היחיד הוא של הקופה שגבתה.
+- **דשבורד:** רשימת ההזמנות של הקיוסק מציגה `payAtTill`, `openState`, `dueAgorot`, `paidBy`, `closeReason`; ספירת "הזמנות היום" וסכומן — רק הזמנות ששולמו.
+
+### 23.4 הקופה (`data/repo/KioskPayAtTill.kt`, `ui/sell/KioskOpenOrdersUi.kt`)
+- **תג** במסך המכירה ושורה בתפריט: "הזמנות קיוסק ממתינות לתשלום (N)" — רק כשיש. רענון כל 10–15 שנ׳, ב-heartbeat ומיד אחרי Ably `kiosk-order`.
+- **רשימה:** מספר, שם, קיוסק, סוג שירות, כמות, סכום לתשלום (ושובר), לפני כמה דקות, "בטיפול בקופה X".
+- **תשלום:** "לתשלום" (או סריקת ה-QR מהפתק בסורק של הקופה — `ScanRouter`, `KioskOpenOrderCode`) → נעילה → הסל של הקיוסק נכנס לסל ומסך התשלום נפתח עליו:
+  - השורות של הקיוסק כפי שהן — לא עורכים את הסל; יציאה מהתשלום מחזירה את ההזמנה לרשימה ומרוקנת את הסל.
+  - סל קיים בקופה — "יש לסיים או להשהות את הסל הנוכחי".
+  - כל אמצעי של הקופה (מזומן, אשראי, פיצול…). השוברים כרגליים חיצוניות (`presetVouchersExternal`: הקופה לא מחזירה אותם ולא מקשרת אותם — הענן מקשר אותם כשההזמנה מסומנת שולמה), הטיפ שנבחר בקיוסק מוגדר מראש.
+  - בהצלחה: מסמך המס של הקופה, `paid` לענן (בתור עד שהענן עונה), ובון למטבח כמו בון הקיוסק (כותרת "הזמנה A-17 · שם", ניתוב / מדפסת אחת והעתקים של הקיוסק) — או KDS להזמנת KDS. אם הבון כבר יצא לפני התשלום — לא שוב. מספר האיסוף נשאר.
+- **ביטול:** "ביטול הזמנה" עם סיבה (מוכנות או טקסט חופשי).
+- **מקרי קצה:**
+  - שתי קופות: הראשונה נועלת, השנייה רואה "בטיפול בקופה X" ולא יכולה לפתוח/לבטל.
+  - קופה בלי ענן: רק הזמנות שכבר יש לה (מטמון), בלי נעילה; ה-`paid` נשלח כשהחיבור חוזר.
+  - **קיוסק בלי ענן:** ההזמנה נמסרת ב-LAN לשרת הסניף (`POST /kiosk/open-orders` — הקופה הראשית / שרת ההדפסות / מארח השולחנות; לא מקיוסק עצמאי). שם היא מוצגת ומשולמת/מבוטלת מקומית; התשובה לקיוסק אומרת מה נעשה בה, והקיוסק מעלה לענן כשהוא חוזר — כבר `paid` עם מסמך הקופה, כך שלא תופיע פתוחה בקופות אחרות. בלי ענן ובלי LAN — ההזמנה נשמרת בקיוסק, הפתק אומר "הזמנה ממתינה לסנכרון", והיא עולה כשיש חיבור.
+
+### 23.5 לא בתחום / פערים
+- **שובר ערך / גיפט קארד** (`issued_vouchers`) — אין במערכת מימוש ויתרה לשוברים האלה (גם לא בקופה), ולכן "שובר" בקיוסק הוא שובר הפקה (`PV:`).
+- **הקיוסק של Windows** (`kiosk-desktop`) ממשיך באשראי בלבד; השלב `payMethod` מסונן שם. גם תצוגת הדשבורד לא מציגה עדיין את מסך הבחירה.
+- המחיר בקופה מחושב מחדש במבצעי הקופה מאותו סל (כמו סל מושהה); בחלון זמן של מבצע שמתחלף, הסכום בקופה עשוי להיות שונה מהפתק.
+
+### 23.6 קבצים ובדיקות
+- **ענן:** `app/services/kiosk_open_orders.py`, `app/routers/kiosk_open_orders.py`, `app/schemas/kiosk_open_orders.py`, `app/models/kiosk.py`, migration `a4c8e2f6b9d3`; שינויים קטנים: `kiosk_config.py` (אמצעים, שלב, טקסטים, ולידציה), `kiosk_control.py` (`order_out`, ספירת היום), `main.py`.
+- **אנדרואיד:** `domain/KioskPayAtTill.kt`, `data/remote/KioskPayAtTillApi.kt`, `data/repo/KioskPayAtTill.kt`, `hardware/printer/KioskCashSlipRenderer.kt`, `ui/kiosk/KioskPayMethodModel.kt`, `ui/kiosk/KioskPayMethodUi.kt`, `ui/sell/KioskOpenOrdersUi.kt`, `res/values*/strings_kiosk_pay.xml`; שינויים קטנים: `KioskAppConfig`, `KioskCheckoutSteps`, `KioskFlow`, `KioskViewModel`, `KioskOrderScreens`, `KioskTipScreen`, `KioskApp`, `CheckoutViewModel`, `SplitTender` (`VoucherUse.external`), `SellViewModel` (סריקת `KO:`), `SellScreen` (תג), `PosNavigation` (תשלום, תפריט), `RealtimeService`, `KioskRepository`.
+- **דשבורד:** `section-payment-methods.tsx`; שינויים: `kioskConfig.ts`, `section-payment.tsx`, `kiosk-preview.tsx`, `he.json`. **Windows:** `KioskApp.tsx` (סינון השלב).
+- **בדיקות:** `tests/test_kiosk_open_orders.py` (מחזור חיים, אין מסמך עד תשלום, נעילה ונעילה שפגה, תשלום אידמפוטנטי ופעמיים, QR, פקיעה ושחרור שוברים, ביטול עם סיבה, שובר חלקי + יתרה, שובר אחר/מבוטל/כפול, LAN שהוחזר כשולם, התצורה); `tests/test_kiosks.py` (ברירות מחדל). `KioskPayAtTillTest` (אמצעים ושלב, זרימה, יתרה באגורות, ערך השובר מהסל, הזמנה פתוחה, פתק, QR, רשימת הקופה, לוח ה-LAN), `KioskCheckoutStepsTest`. `kioskConfig.test.ts` (ולידציה, שלב, יתרה, טקסטים).

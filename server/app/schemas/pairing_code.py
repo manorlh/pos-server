@@ -3,8 +3,8 @@ from typing import Optional, Dict, Any
 import uuid
 from datetime import datetime
 
-from app.schemas.device_profile import KioskOptionsIn
-from app.schemas.pos_machine import DeviceModel, DeviceRole
+from app.schemas.device_profile import KdsScreenOptionsIn, KioskOptionsIn
+from app.schemas.pos_machine import DeviceModel, DevicePlatform, DeviceRole
 
 
 class PairingCodeGenerateRequest(BaseModel):
@@ -18,11 +18,18 @@ class PairingCodeGenerateRequest(BaseModel):
     #: pairs. Optional here so an older dashboard still generates codes; the dashboard
     #: requires it.
     device_model: Optional[DeviceModel] = Field(None, alias="deviceModel")
-    #: "סוג מכשיר (תפקיד)": "till" (the default) or "kiosk". A kiosk needs `shopId`; the
-    #: device that redeems the code is made a kiosk at once (docs/SPEC_DEVICE_ROLE_MODEL.md).
+    #: "סוג מכשיר (תפקיד)": "till" (the default), "kiosk", "kds" or "order_status_board". All
+    #: but a till need `shopId`; the device that redeems the code is made one at once
+    #: (docs/SPEC_DEVICE_ROLE_MODEL.md). A KDS / board is a display device, never a till.
     device_role: Optional[DeviceRole] = Field(None, alias="deviceRole")
     #: The kiosk's name, controlling tills and device lock, for a kiosk code.
     kiosk: Optional[KioskOptionsIn] = None
+    #: "android" (the default) | "windows": a device of the other platform is refused at
+    #: redemption (422 `platform_mismatch`).
+    platform: Optional[DevicePlatform] = None
+    #: A KDS code's screen (`screenRole` station / expo / manager, `stationIds`, `name`); a
+    #: board code's `name`. Ignored for a till / kiosk.
+    kds: Optional[KdsScreenOptionsIn] = None
 
 
 class PairingCodeCreate(BaseModel):
@@ -54,6 +61,7 @@ class PairingCodeResponse(BaseModel):
     pos_machine_id: Optional[uuid.UUID] = Field(None, alias="posMachineId")
     device_model: Optional[str] = Field(None, alias="deviceModel")
     device_role: Optional[str] = Field(None, alias="deviceRole")
+    platform: Optional[str] = None
     expires_at: datetime = Field(..., alias="expiresAt")
     is_used: bool = Field(..., alias="isUsed")
     used_at: Optional[datetime] = Field(None, alias="usedAt")

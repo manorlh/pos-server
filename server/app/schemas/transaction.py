@@ -16,8 +16,12 @@ from app.schemas.stock import StockMovementIn
 META_MAX_CHARS = 16 * 1024
 
 #: What a document's basket discount can be (`basketDiscountKind`): the club button
-#: ("הנחת מועדון", till parameter `clubButtonEnabled`) or the cashier's own.
-BASKET_DISCOUNT_KINDS = ("club", "manual")
+#: ("הנחת מועדון", till parameter `clubButtonEnabled`), the cashier's own, or a table's
+#: policy (app/services/table_policies.py): "הנחת שולחן", a staff meal, a managers' meal.
+BASKET_DISCOUNT_KINDS = ("club", "manual", "table", "staff", "managers")
+
+#: A meal at a staff or managers' table (`mealKind`); anything else is no meal.
+MEAL_KINDS = ("staff", "managers")
 
 
 def cut_text(value, limit: int):
@@ -280,6 +284,13 @@ class TransactionIn(BaseModel):
     basket_discount: Optional[Decimal] = Field(None, alias="basketDiscount")
     basket_discount_percent: Optional[Decimal] = Field(None, alias="basketDiscountPercent", ge=0, le=100)
     basket_discount_kind: Optional[str] = Field(None, alias="basketDiscountKind")
+    #: A meal at a staff or managers' table: `staff` / `managers`, whose meal it was (the
+    #: employee the till picked) and why (a managers' table's reason). Optional; free text
+    #: is cut to the columns, an unknown kind is no meal — never a reason to refuse.
+    meal_kind: Optional[str] = Field(None, alias="mealKind")
+    meal_employee_id: Optional[str] = Field(None, alias="mealEmployeeId")
+    meal_employee_name: Optional[str] = Field(None, alias="mealEmployeeName")
+    meal_reason: Optional[str] = Field(None, alias="mealReason")
     wht_deduction: Optional[Decimal] = Field(None, alias="whtDeduction")
 
     customer_id: Optional[str] = Field(None, alias="customerId")
@@ -349,6 +360,27 @@ class TransactionIn(BaseModel):
         if kind is None:
             return None
         return kind.lower() if kind.lower() in BASKET_DISCOUNT_KINDS else "manual"
+
+    @field_validator("meal_kind", mode="before")
+    @classmethod
+    def _meal_kind(cls, value):
+        kind = cut_text(value, 16)
+        return kind.lower() if kind and kind.lower() in MEAL_KINDS else None
+
+    @field_validator("meal_employee_id", mode="before")
+    @classmethod
+    def _cut_meal_employee_id(cls, value):
+        return cut_text(value, 100)
+
+    @field_validator("meal_employee_name", mode="before")
+    @classmethod
+    def _cut_meal_employee_name(cls, value):
+        return cut_text(value, 200)
+
+    @field_validator("meal_reason", mode="before")
+    @classmethod
+    def _cut_meal_reason(cls, value):
+        return cut_text(value, 300)
 
     @field_validator("customer_name", mode="before")
     @classmethod
@@ -527,10 +559,14 @@ class TransactionOut(BaseModel):
     tip_payment_method: Optional[str] = Field(None, alias="tipPaymentMethod")
     total_discount: Optional[Decimal] = Field(None, alias="totalDiscount")
     document_discount: Optional[Decimal] = Field(None, alias="documentDiscount")
-    #: The basket discount on its own, its rate and its kind (`club` | `manual`).
+    #: The basket discount on its own, its rate and its kind (`club` | `manual` | a table's).
     basket_discount: Optional[Decimal] = Field(None, alias="basketDiscount")
     basket_discount_percent: Optional[Decimal] = Field(None, alias="basketDiscountPercent")
     basket_discount_kind: Optional[str] = Field(None, alias="basketDiscountKind")
+    #: A staff / managers' table meal: its kind, whose meal, why.
+    meal_kind: Optional[str] = Field(None, alias="mealKind")
+    meal_employee_name: Optional[str] = Field(None, alias="mealEmployeeName")
+    meal_reason: Optional[str] = Field(None, alias="mealReason")
     wht_deduction: Optional[Decimal] = Field(None, alias="whtDeduction")
 
     customer_id: Optional[str] = Field(None, alias="customerId")

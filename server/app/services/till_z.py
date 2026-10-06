@@ -902,7 +902,10 @@ def request_for_machine(
 
 
 def shop_till_z_machines(db: Session, shop: Shop) -> List[POSMachine]:
-    """The tills "Z לכל הקופות" asks for their own Z: assigned, active, `zMode = till`."""
+    """
+    The tills "Z לכל הקופות" asks for their own Z: assigned, active, `zMode = till` — never
+    a display device (app/services/display_devices.py), which makes no Z.
+    """
     return (
         db.query(POSMachine)
         .filter(
@@ -910,6 +913,7 @@ def shop_till_z_machines(db: Session, shop: Shop) -> List[POSMachine]:
             POSMachine.is_active.is_(True),
             POSMachine.pairing_status == PairingStatus.ASSIGNED,
             POSMachine.z_mode == Z_MODE_TILL,
+            POSMachine.is_fiscal.is_(True),
         )
         .order_by(POSMachine.pos_number, POSMachine.name)
         .all()

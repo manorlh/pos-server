@@ -39,11 +39,16 @@ import {
   printReceiptDocuments,
 } from '@/components/print/receipt-print-document';
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import { FailedPaymentsTable } from '@/components/dashboard/failed-payments/failed-payments-table';
 
 const PAGE_SIZE = 50;
 
-/** The tender filter: a tender of the document or of any of its legs; split; credit notes. */
-const SEARCH_METHODS = ['cash', 'card', 'voucher', 'split', 'refunds'] as const;
+/**
+ * The tender filter: a tender of the document or of any of its legs; split; credit notes;
+ * and `failed` — the failed payment attempts, which are no documents at all (their own
+ * list, docs/SPEC_FAILED_PAYMENTS.md).
+ */
+const SEARCH_METHODS = ['cash', 'card', 'voucher', 'split', 'refunds', 'failed'] as const;
 type SearchMethod = (typeof SEARCH_METHODS)[number];
 
 /** `value`, once it has stopped changing for `ms` — so typing does not query per key. */
@@ -145,7 +150,7 @@ export default function TransactionsPage() {
     if (searchQ) p.q = searchQ;
     if (searchCard) p.cardLast4 = searchCard;
     if (searchItem) p.item = searchItem;
-    if (method) p.method = method;
+    if (method && method !== 'failed') p.method = method;
     return p;
   }, [machineId, shopId, from, to, page, searchQ, searchCard, searchItem, method]);
 
@@ -153,6 +158,7 @@ export default function TransactionsPage() {
     queryKey: ['transactions', params],
     queryFn: () => api.get('/transactions', { params }).then((r) => r.data),
     placeholderData: (prev) => prev,
+    enabled: method !== 'failed',
   });
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
@@ -243,6 +249,18 @@ export default function TransactionsPage() {
         </div>
       </div>
 
+      {/* "ניסיונות תשלום שנכשלו": no documents — their own list, in the same till / shop / dates. */}
+      {method === 'failed' ? (
+        <FailedPaymentsTable
+          machineId={machineId}
+          shopId={shopId}
+          from={from || undefined}
+          to={to || undefined}
+          cardLast4={searchCard || undefined}
+          onOpenTransaction={setSelectedId}
+        />
+      ) : (
+      <>
       <ReportExportToolbar
         title={t('title')}
         from={from || undefined}
@@ -405,6 +423,8 @@ export default function TransactionsPage() {
             </Button>
           </div>
         </div>
+      )}
+      </>
       )}
       </ScopeGate>
 

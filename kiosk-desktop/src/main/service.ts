@@ -16,10 +16,12 @@ import { OfflineTracker } from '../core/kioskHealth';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
 import { ofShekels } from '../core/money';
 import { bonDoc, receiptDoc, slipDoc, zDoc, type BusinessInfo, type ReceiptLine } from '../core/printDocs';
-import { saleDocumentType, saleTotals, tipOf, unitAgorot, vatRateOf, type SaleLine } from '../core/sale';
+import { saleDocumentType, saleTotals, tipToCharge, unitAgorot, vatRateOf, type SaleLine } from '../core/sale';
 import { autoCloseMayRun, zModeOf } from '../core/tillZ';
 import { attempt as techAttempt, codeMatches, NO_LOCK, type TechLock } from '../core/technician';
 import { pickVariant, type MediaRefIn } from '../core/mediaPlan';
+import { paymentGuard, type Activity } from '../core/updatePolicy';
+import type { UpdateView } from '../shared/roles';
 import { openDb, type Db } from './db/sqlite';
 import { Kv, migrate } from './db/schema';
 import { Api, type FetchFn } from './sync/api';
@@ -31,10 +33,15 @@ import { TillZService } from './fiscal/tillZService';
 import { MediaStore, type Downloader, type VariantMaker } from './media/mediaStore';
 import { PayService } from './payment/payService';
 import { PROVIDERS } from './payment/registry';
+import { mergeLocalKey, PAIRING_TEXT, PairingSession, uploadOutcome, type LocalSynqKey, type PairingUpload } from './payment/synqpay/pairing';
+import type { SynqPayProvider } from './payment/synqpay/provider';
 import type { PaymentProvider, ProviderContext, ProviderFactory } from './payment/provider';
 import { PrintQueue, type PageRenderer } from './printer/printQueue';
 import { DefaultTransport, guessQueue, type PrinterTarget, type Transport } from './printer/transports';
 import { allocatePickup, OrderStore } from './kiosk/orders';
+import { FunnelStore } from './kiosk/funnel';
+import { basketChanges, checkedBasePrice, CLOUD_CHECK_TIMEOUT_MS, overridesLive, overridesOf, type CloudOverrides, type CloudVerdict } from '../core/basketCheck';
+import type { FunnelEvent } from '../core/kioskFunnel';
 import { buildKioskCatalog, catalogMedia, type KProduct } from './kiosk/catalog';
 import type {
   AdminAction,
@@ -47,6 +54,7 @@ import type {
   StartPaymentOut,
   TechnicianAction,
   TechnicianInfo,
+  AdminActionResult,
 } from '../shared/bridge';
 
 export interface PlatformHooks {
@@ -58,6 +66,8 @@ export interface PlatformHooks {
   setZoom?(zoom: number): void;
   checkUpdate?(): Promise<{ available: string | null; status: string }>;
   installUpdate?(): Promise<{ ok: boolean; message?: string }>;
+  /** The updater's state, without asking the network (main/update/updater.ts). */
+  updateStatus?(): UpdateView;
 }
 
 export interface ServiceOptions {
@@ -87,6 +97,8 @@ const LOCAL_SETTINGS = 'local.settings';
 const LOCAL_PAUSE = 'local.pause';
 const TECH_LOCK = 'technician.lock';
 const HELP = 'kiosk.helpRequest';
+/** A SynqPay key paired at this kiosk (sealed), until and after the cloud has it (pairing.ts). */
+const SYNQ_LOCAL_KEY = 'synqpay.localKey';
 
 export class KioskService extends EventEmitter {
   readonly db: Db;
@@ -100,7 +112,11 @@ export class KioskService extends EventEmitter {
   readonly printQueue: PrintQueue;
   readonly tillZ: TillZService;
   readonly orders: OrderStore;
+  /** "ביצועי קיוסקים": the funnel's events waiting for the cloud (kiosk/funnel.ts). */
+  readonly funnel: FunnelStore;
   readonly sync: SyncEngine;
+  /** The cloud's word on the basket a moment ago (core/basketCheck.ts), until the catalog catches up. */
+  private cloudBasket: CloudOverrides | null = null;
   private readonly transport: Transport;
   private readonly log: (m: string) => void;
   private readonly platform: PlatformHooks;
@@ -111,11 +127,21 @@ export class KioskService extends EventEmitter {
   private timers: NodeJS.Timeout[] = [];
   private flow = { flowState: 'attract', screen: 'attract', busy: false, idle: true };
   private lastFlowScreen = 'attract';
+  /** When the kiosk's screen last changed (the updater waits for a quiet kiosk). */
+  private flowChangedAt = Date.now();
+  /** The shell's role is a fiscal one (kiosk / till); a KDS or board screen reports no till facts. */
+  private fiscalRole = true;
   private viewCache: KioskView | null = null;
   private viewDirty = true;
   private payProgress: PayProgress | null = null;
   private adminUntil = 0;
   private adminName: string | null = null;
+  /** The shop manager who opened the admin (their till user id): the authority of a SynqPay pairing. */
+  private adminUserId: string | null = null;
+  private readonly synqPairing = new PairingSession();
+  private synqUploading = false;
+  /** The key last reported refused (a hash): one report per key. */
+  private synqReportedFor: string | null = null;
   private pendingClose: { requestId: string } | null = null;
   private pendingZ: { requestId: string } | null = null;
   private pendingTransmit: { requestId: string } | null = null;
@@ -144,6 +170,7 @@ export class KioskService extends EventEmitter {
     this.transport = opts.transport ?? new DefaultTransport(this.log);
     this.printQueue = new PrintQueue(this.db, this.transport, () => this.localSettings().printer, opts.renderer ?? null, this.log);
     this.orders = new OrderStore(this.db);
+    this.funnel = new FunnelStore(this.kv);
     this.providers = opts.providers ?? PROVIDERS;
     this.tillZ = new TillZService({
       db: this.db,
@@ -250,7 +277,12 @@ export class KioskService extends EventEmitter {
   /* ---------------------------------------------------------------- views */
 
   private settingsMap(): Record<string, unknown> {
-    return this.cloud.settings().settings ?? {};
+    const cloud = this.cloud.settings().settings ?? {};
+    // A SynqPay key paired here that the cloud does not have yet wins over the sync's (pairing.ts).
+    const local = this.localSynqKey();
+    const merged = mergeLocalKey(cloud, local);
+    if (merged.settled && local) this.setLocalSynqKey({ ...local, pending: false });
+    return merged.settings;
   }
 
   private business(): BusinessInfo {
@@ -448,7 +480,7 @@ export class KioskService extends EventEmitter {
         const health = this.printQueue.health();
         return {
           ...(this.opts.deviceInfo.serial ? { serialNumber: this.opts.deviceInfo.serial } : {}),
-          offlineTillZ: { pending: 0, conflict: false, lastNumber, epoch: beat.tillZEpoch },
+          ...(this.fiscalRole ? { offlineTillZ: { pending: 0, conflict: false, lastNumber, epoch: beat.tillZEpoch } } : {}),
           printer: {
             status: health === 'no_paper' ? 'no_paper' : health === 'ok' ? 'ok' : health === 'unknown' ? 'unknown' : health === 'unavailable' ? 'unavailable' : 'error',
             ...(failure ? { message: failure.error, at: new Date(failure.at).toISOString() } : {}),
@@ -485,6 +517,8 @@ export class KioskService extends EventEmitter {
       afterBeat: async () => {
         const id = this.machineId;
         if (id && this.isKiosk()) await this.orders.push(this.api, id);
+        // "ביצועי קיוסקים": the funnel's events, after the orders.
+        if (id && this.isKiosk()) await this.funnel.push(this.api, id).catch(() => false);
       },
       sideRequest: (row: OutboxRow) => this.sideRequest(row),
       onRevoked: () => {
@@ -526,7 +560,65 @@ export class KioskService extends EventEmitter {
       unprintedBons: today.filter((o) => o.bonStatus === 'failed' || o.bonStatus === 'queued').length,
       appVersion: this.opts.appVersion,
       alerts,
+      // "תקינות מכשירים" (pos-server kiosk_health.clean_health): what only the kiosk sees.
+      health: this.healthReport(health),
     };
+  }
+
+  /** `status.health`: the screen, the terminal, the printer, the link to the cloud, what waits to upload. */
+  private healthReport(printer: string): Record<string, unknown> {
+    const iso = (ms: number | null | undefined) => (ms ? new Date(ms).toISOString() : undefined);
+    const terminal = this.pay.monitor;
+    const pendingOrders = this.orders.all().filter((o) => o.paid && o.syncedHash === null).length;
+    const outbox = this.outbox.all();
+    const funnelOldest = this.funnel.oldestAt();
+    const oldest = [outbox[0]?.created_at, funnelOldest].filter((x): x is string => !!x).sort()[0];
+    return {
+      platform: 'windows',
+      screen: this.flow.screen,
+      terminal: {
+        state: terminal.state === 'unconfigured' ? 'not_configured' : terminal.state === 'not_external' ? 'none' : terminal.state,
+        checkedAt: iso(terminal.lastCheckAtMs),
+        address: this.pay.describe().address ?? undefined,
+      },
+      printer: { state: printer === 'paper_low' || printer === 'cover_open' ? 'error' : printer },
+      // No till on the LAN here: the kiosk talks to the cloud only.
+      tillLink: { mode: 'cloud', ok: !this.offlineNow, at: iso(this.sync.status.lastBeatOkAt) },
+      network: { online: !this.offlineNow, since: this.offline.since ? new Date(this.offline.since).toISOString() : undefined },
+      pending: {
+        orders: pendingOrders,
+        documents: outbox.length,
+        events: this.funnel.count(),
+        oldestAt: oldest,
+      },
+    };
+  }
+
+  /** The screens' funnel events (core/kioskFunnel.ts): kept, sent on the next sync. */
+  funnelEvents(events: unknown): void {
+    if (!Array.isArray(events) || !this.isKiosk()) return;
+    this.funnel.add(events.slice(0, 200) as FunnelEvent[]);
+  }
+
+  /**
+   * The cloud's word on the basket before the charge (`POST /sync/{m}/kiosk/basket-check`, ≤ 3 s):
+   * what is no longer sold here and the base prices now. A difference pulls the catalog at once.
+   * No answer (offline, slow): the local catalog decides, as before.
+   */
+  private async cloudBasketCheck(input: StartPaymentIn): Promise<void> {
+    const id = this.machineId;
+    if (!id || this.offlineNow || input.lines.length === 0) return;
+    const cat = this.catalogData();
+    const byId = new Map<string, KProduct>(cat.products.map((p) => [p.id, p]));
+    const lines = input.lines.map((l) => {
+      const p = byId.get(l.productId);
+      return { productId: l.productId, quantity: Math.max(1, Math.trunc(l.qty)), unitPriceAgorot: p ? ofShekels(p.price) : undefined };
+    });
+    const reply = await this.api.post<CloudVerdict>(`sync/${id}/kiosk/basket-check`, { lines }, { timeoutMs: CLOUD_CHECK_TIMEOUT_MS });
+    if (reply.kind !== 'ok' || !reply.body || !Array.isArray(reply.body.lines)) return;
+    const o = overridesOf(reply.body, Date.now());
+    this.cloudBasket = o.gone.size > 0 || o.prices.size > 0 ? o : null;
+    if (!reply.body.ok) void this.sync.pullCatalog(false).then(() => this.dirty()).catch(() => undefined);
   }
 
   private sideRequest(row: OutboxRow): { path: string; body: unknown } | null {
@@ -591,6 +683,7 @@ export class KioskService extends EventEmitter {
       setValue: (k, v) => this.kv.set(`provider.${k}`, v),
       parameter: (k) => this.cloud.parameters()[k],
       log: this.log,
+      onKeyRejected: (detail) => void this.reportSynqKeyRejected(detail),
     };
   }
 
@@ -607,6 +700,106 @@ export class KioskService extends EventEmitter {
       if (provider) break;
     }
     this.pay.setProvider(provider, typeof settings.paymentIntegration === 'string' ? settings.paymentIntegration : null);
+    // A paired key the cloud does not have yet: sent again (on the approving manager's authority).
+    if (this.localSynqKey()?.pending) void this.uploadSynqKey();
+  }
+
+  /* ----------------------------------------------------- SynqPay pairing */
+
+  private localSynqKey(): LocalSynqKey | null {
+    const stored = this.kv.getJson<LocalSynqKey & { sealed?: boolean }>(SYNQ_LOCAL_KEY);
+    if (!stored || typeof stored.apiKey !== 'string') return null;
+    if (!stored.sealed) return stored;
+    try {
+      return { ...stored, apiKey: (this.opts.secretBox ?? PLAIN_BOX).open(stored.apiKey) };
+    } catch {
+      return null;
+    }
+  }
+
+  private setLocalSynqKey(k: LocalSynqKey) {
+    const box = this.opts.secretBox ?? PLAIN_BOX;
+    this.kv.setJson(SYNQ_LOCAL_KEY, { ...k, apiKey: box.seal(k.apiKey), sealed: box !== PLAIN_BOX });
+  }
+
+  private synqProvider(): SynqPayProvider | null {
+    const p = this.pay.current;
+    return p && p.kind === 'synqpay' ? (p as SynqPayProvider) : null;
+  }
+
+  /** For the admin screen: the SynqPay terminal's pairing (null on any other terminal). */
+  private synqpayInfo(): AdminInfo['terminal']['synqpay'] {
+    const p = this.synqProvider();
+    if (!p) return null;
+    const local = this.localSynqKey();
+    const status = this.synqPairing.expireIfDue();
+    return {
+      paired: p.settings.paired,
+      needsPairing: !p.settings.paired || this.pay.monitor.lastError?.startsWith('המסוף דורש צימוד') === true,
+      pendingUpload: local?.pending === true && local.apiKey === p.settings.apiKey,
+      serialNumber: p.settings.serialNumber,
+      pairing: status,
+    };
+  }
+
+  /** "צימוד מסוף SynqPay": `pair` (the first code, or a new one). Never during a payment. */
+  private async synqpayPair(serial: string | null): Promise<AdminActionResult> {
+    const p = this.synqProvider();
+    if (!p) return { ok: false, message: PAIRING_TEXT.notSynqPay };
+    if (this.pay.cardInFlight || this.flow.busy || this.flow.screen === 'pay') return { ok: false, message: PAIRING_TEXT.tillBusy };
+    const status = await this.synqPairing.start(p.pairing(), serial ?? this.synqPairing.status.serial ?? p.settings.serialNumber);
+    return { ok: status.phase === 'awaiting_code', message: status.error ?? undefined, pairing: status };
+  }
+
+  /** The code from the terminal's screen: the key kept here, used at once, sent to the cloud. */
+  private async synqpayCode(otp: string): Promise<AdminActionResult> {
+    const p = this.synqProvider();
+    if (!p) return { ok: false, message: PAIRING_TEXT.notSynqPay };
+    if (this.pay.cardInFlight) return { ok: false, message: PAIRING_TEXT.tillBusy };
+    const { status, apiKey } = await this.synqPairing.code(p.pairing(), otp);
+    if (!apiKey) return { ok: false, message: status.error ?? undefined, pairing: status };
+    this.setLocalSynqKey({ apiKey, pending: true, approver: this.adminUserId, serial: status.serial });
+    this.synqReportedFor = null;
+    this.log(`synqpay: paired with the terminal ${status.serial ?? '?'}; the key is kept here`);
+    // The terminal with its key, now (the provider is rebuilt from the merged settings).
+    this.applyProvider();
+    const upload = await this.uploadSynqKey();
+    if (upload) this.synqPairing.uploaded(upload);
+    await this.pay.monitorTick({ busy: this.flow.busy, screen: this.flow.screen }, true).catch(() => undefined);
+    this.dirty();
+    return { ok: true, pairing: this.synqPairing.status };
+  }
+
+  /** The pending key to the cloud (`POST /sync/{m}/synqpay/pairing`); null when nothing to send. */
+  private async uploadSynqKey(): Promise<PairingUpload | null> {
+    const local = this.localSynqKey();
+    if (!local?.pending || !this.machineId || this.synqUploading) return null;
+    this.synqUploading = true;
+    try {
+      const approver = this.adminOk() ? this.adminUserId : local.approver;
+      const reply = await this.api.post(
+        `sync/${this.machineId}/synqpay/pairing`,
+        { synqpayApiKey: local.apiKey, serialNumber: local.serial },
+        approver ? { headers: { 'X-Pos-User-Id': approver } } : undefined,
+      );
+      const outcome = uploadOutcome(reply);
+      if (outcome === 'uploaded') this.setLocalSynqKey({ ...local, pending: false });
+      this.log(`synqpay: the paired key ${outcome === 'uploaded' ? 'is in the cloud' : `not sent (${outcome})`}`);
+      return outcome;
+    } finally {
+      this.synqUploading = false;
+    }
+  }
+
+  /** The terminal refused the key: told to the cloud once per key. */
+  private async reportSynqKeyRejected(detail: string | null) {
+    const key = this.synqProvider()?.settings.apiKey;
+    if (!key || !this.machineId) return;
+    const hash = createHash('sha256').update(key).digest('hex');
+    if (this.synqReportedFor === hash) return;
+    this.synqReportedFor = hash;
+    const reply = await this.api.post(`sync/${this.machineId}/synqpay/key-rejected`, { detail: detail?.slice(0, 200) ?? null });
+    if (reply.kind !== 'ok') this.synqReportedFor = null;
   }
 
   /** The customer still on the pay screen waiting on this order's unknown outcome. */
@@ -641,10 +834,12 @@ export class KioskService extends EventEmitter {
     const lines: SaleLine[] = [];
     const changes: BasketChange[] = [];
     const tracked = new Set<string>();
+    // What the cloud said a moment ago wins over a catalog that has not caught up yet.
+    const cloud = overridesLive(this.cloudBasket, Date.now());
     for (const l of input.lines) {
       const p = byId.get(l.productId);
-      if (!p || p.soldOut) {
-        changes.push({ kind: 'removed', productId: l.productId, name: p?.name ?? '' });
+      if (!p || p.soldOut || cloud?.gone.has(l.productId)) {
+        changes.push({ kind: 'removed', productId: l.productId, name: p?.name ?? '', key: l.key });
         continue;
       }
       const groups = cat.groups[p.id] ?? [];
@@ -656,8 +851,11 @@ export class KioskService extends EventEmitter {
         })
         .filter((x): x is NonNullable<typeof x> => !!x);
       if (p.trackStock) tracked.add(p.id);
-      lines.push({ key: l.key, productId: p.id, name: p.name, sku: p.sku, basePriceAgorot: ofShekels(p.price), options, notes: l.notes.filter((n) => n.trim()), qty: Math.max(1, Math.trunc(l.qty)) });
+      lines.push({ key: l.key, productId: p.id, name: p.name, sku: p.sku, basePriceAgorot: checkedBasePrice(p.id, ofShekels(p.price), cloud), options, notes: l.notes.filter((n) => n.trim()), qty: Math.max(1, Math.trunc(l.qty)) });
     }
+    // A price that moved since the screen showed it: shown to the customer, never charged as is.
+    const priced = new Map(lines.map((x) => [x.key, { name: x.name, unitAgorot: unitAgorot(x) }] as const));
+    for (const c of basketChanges(input.lines.filter((l) => priced.has(l.key)), priced)) if (c.kind === 'repriced') changes.push(c);
     return { lines, changes, tracked: [...tracked] };
   }
 
@@ -669,13 +867,21 @@ export class KioskService extends EventEmitter {
     if (this.pay.cardInFlight) return { ok: false, reason: 'busy', message: 'תשלום כבר בתהליך' };
     if (this.pay.monitor.state !== 'ready') return { ok: false, reason: 'terminal', message: 'מסופון האשראי לא זמין כרגע. אנא פנו לצוות.' };
     if (this.pay.blocked()) return { ok: false, reason: 'unresolved', message: 'תשלום קודם ממתין לבירור. אנא פנו לצוות.' };
+    // The cloud's word first, when it answers in time (core/basketCheck.ts).
+    await this.cloudBasketCheck(input).catch(() => undefined);
     const { lines, changes, tracked } = this.priceBasket(input);
-    if (changes.length > 0) return { ok: false, reason: 'changed', changes };
+    const nowTotal = saleTotals(lines, this.vatRate()).totalAgorot;
+    if (changes.length > 0) return { ok: false, reason: 'changed', changes, totalAgorot: nowTotal };
+    // The total the customer saw: never a different one charged.
+    const shownTotal = input.expectedTotalAgorot;
+    if (typeof shownTotal === 'number' && Number.isFinite(shownTotal) && Math.round(shownTotal) !== nowTotal) {
+      return { ok: false, reason: 'changed', changes: [], totalAgorot: nowTotal };
+    }
     if (lines.length === 0) return { ok: false, reason: 'empty', message: 'הסל ריק' };
     const cfg = this.config();
     const operator = this.operator();
     const goods = saleTotals(lines, this.vatRate()).totalAgorot;
-    const tip = cfg.payment.tipEnabled ? tipOf(goods, input.tipPct) : 0;
+    const tip = cfg.payment.tipEnabled ? tipToCharge(goods, input.tipPct, input.tipAgorot) : 0;
     const totals = saleTotals(lines, this.vatRate(), tip);
     if (totals.chargeAgorot < 1) return { ok: false, reason: 'empty', message: 'אין מה לחייב' };
     this.ledger.openShift(operator);
@@ -943,10 +1149,29 @@ export class KioskService extends EventEmitter {
     const prev = this.lastFlowScreen;
     this.flow = f;
     this.lastFlowScreen = f.screen;
+    this.flowChangedAt = Date.now();
     // Trading starts again (opening hours, a lock lifted): the next shift opens as the kiosk itself.
     if (f.screen === 'attract' && ['closed', 'paused', 'no_payment'].includes(prev) && this.isKiosk() && !this.tillZ.owed && !this.ledger.currentShift()) {
       this.ledger.openShift(this.operator());
     }
+  }
+
+  /** What the kiosk is doing, for the updater (core/updatePolicy.ts): never under an order or a payment. */
+  activity(): Activity {
+    return {
+      role: this.isKiosk() ? 'kiosk' : null,
+      screen: this.flow.screen,
+      busy: this.flow.busy || this.payProgress?.phase === 'starting' || this.payProgress?.phase === 'charging',
+      idle: this.flow.idle,
+      cardInFlight: this.pay.cardInFlight,
+      cardBlocked: this.pay.blocked(),
+      lastActivityAt: this.flowChangedAt,
+    };
+  }
+
+  /** The shell's role (main/roles/manager.ts): a KDS / board screen reports no till facts. */
+  setFiscalRole(fiscal: boolean) {
+    this.fiscalRole = fiscal;
   }
 
   private tick5() {
@@ -1060,6 +1285,7 @@ export class KioskService extends EventEmitter {
         if (bcrypt.compareSync(pin, u.pinHash)) {
           this.adminUntil = Date.now() + 5 * 60_000;
           this.adminName = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username;
+          this.adminUserId = u.id;
           return { ok: true, name: this.adminName };
         }
       } catch {
@@ -1082,6 +1308,7 @@ export class KioskService extends EventEmitter {
       shift: { open: !!shift, number: shift?.sequence_number ?? null, openedAt: shift?.opened_at ?? null },
       terminal: {
         ...this.pay.describe(),
+        synqpay: this.synqpayInfo(),
         state: this.pay.monitor.state,
         lastOkAt: this.pay.monitor.lastOkAtMs,
         lastError: this.pay.monitor.lastError,
@@ -1113,7 +1340,7 @@ export class KioskService extends EventEmitter {
     };
   }
 
-  async adminAction(a: AdminAction): Promise<{ ok: boolean; message?: string }> {
+  async adminAction(a: AdminAction): Promise<AdminActionResult> {
     if (!this.adminOk()) return { ok: false, message: 'נדרש קוד מנהל' };
     this.adminUntil = Date.now() + 5 * 60_000;
     switch (a.type) {
@@ -1155,6 +1382,15 @@ export class KioskService extends EventEmitter {
       case 'exitKiosk':
         this.platform.quit();
         return { ok: true };
+      case 'synqpayPair':
+        return this.synqpayPair(a.serialNumber?.trim() || null);
+      case 'synqpayCode':
+        return this.synqpayCode(a.otp);
+      case 'synqpayRetryUpload': {
+        const outcome = await this.uploadSynqKey();
+        if (outcome) this.synqPairing.uploaded(outcome);
+        return { ok: outcome === 'uploaded', pairing: this.synqPairing.status };
+      }
     }
   }
 
@@ -1177,7 +1413,11 @@ export class KioskService extends EventEmitter {
     const admin = this.adminInfo();
     const queues = await this.transport.list().catch(() => []);
     const me = this.cloud.machine();
-    const update = this.platform.checkUpdate ? await this.platform.checkUpdate().catch(() => ({ available: null, status: 'failed' })) : { available: null, status: 'not_checked' };
+    // The updater's own state — opening the screen never starts a download ("בדוק עכשיו" does).
+    const u = this.platform.updateStatus?.() ?? null;
+    const update = u
+      ? { current: u.current, available: u.available, status: u.phase, message: u.message, progress: u.progress, lastCheckAt: u.lastCheckAt, autoInstall: u.autoInstall, installWindow: u.installWindow }
+      : { current: this.opts.appVersion, available: null, status: 'not_checked' };
     return {
       machine: this.view().machine,
       deviceRole: me?.deviceRole ?? null,
@@ -1186,7 +1426,7 @@ export class KioskService extends EventEmitter {
       network: { online: !this.offlineNow, lastBeatOkAt: this.sync.status.lastBeatOkAt, serverUrl: this.cloud.credentials()?.serverUrl ?? null, interfaces: this.platform.interfaces() },
       printer: { ...admin.printer, queues: queues.map((q) => `${q.name} (${q.health})`) },
       terminal: admin.terminal,
-      update: { current: this.opts.appVersion, available: update.available, status: update.status },
+      update,
       quickSupport: null,
     };
   }
@@ -1209,11 +1449,15 @@ export class KioskService extends EventEmitter {
       }
       case 'updateCheck': {
         const r = this.platform.checkUpdate ? await this.platform.checkUpdate() : { available: null, status: 'unsupported' };
-        return { ok: true, message: r.available ? `גרסה ${r.available} זמינה` : 'הגרסה עדכנית' };
+        if (r.status === 'offline' || r.status === 'failed') return { ok: false, message: this.platform.updateStatus?.().message ?? 'הבדיקה נכשלה' };
+        return { ok: true, message: r.available ? (r.status === 'ready' ? `גרסה ${r.available} הורדה ונבדקה — מוכנה להתקנה` : `גרסה ${r.available} זמינה`) : 'הגרסה עדכנית' };
       }
-      case 'updateInstall':
-        if (this.flow.busy || this.pay.cardInFlight || this.flow.screen === 'pay' || this.flow.screen === 'success') return { ok: false, message: 'לא בזמן תשלום' };
+      case 'updateInstall': {
+        // Never during an order or a payment (the updater checks the same rule again).
+        const guard = paymentGuard(this.activity());
+        if (guard) return { ok: false, message: guard };
         return this.platform.installUpdate ? this.platform.installUpdate() : { ok: false, message: 'לא נתמך' };
+      }
       case 'quickSupport': {
         const launched = await this.platform.launchQuickSupport();
         return launched ? { ok: true, message: launched } : { ok: false, message: 'TeamViewer QuickSupport לא מותקן במחשב' };

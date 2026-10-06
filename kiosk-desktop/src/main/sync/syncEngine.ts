@@ -467,6 +467,10 @@ export async function pair(
   );
   if (reply.kind === 'offline') return { ok: false, error: `אין חיבור לשרת (${reply.reason})` };
   if (reply.kind === 'refused') {
+    // The cloud's own Hebrew sentence when it gives one (e.g. a Windows code redeemed on Android: platform_mismatch).
+    const said = reply.body && typeof reply.body === 'object' ? (reply.body as { message?: unknown; detail?: unknown }) : null;
+    const message = typeof said?.message === 'string' ? said.message : typeof (said?.detail as { message?: unknown } | undefined)?.message === 'string' ? String((said!.detail as { message: string }).message) : null;
+    if (message) return { ok: false, error: message, status: reply.status };
     if (reply.status === 400 || reply.status === 404) return { ok: false, error: 'קוד הצימוד שגוי או שפג תוקפו', status: reply.status };
     if (reply.status === 409 && reply.detail === 'untransmitted_card_sales') return { ok: false, error: 'בקופה הקודמת יש עסקאות אשראי שלא שודרו — יש לשדר לפני ההחלפה', status: 409 };
     if (reply.status === 409) return { ok: false, error: reply.detail ?? 'הקופה עדיין פתוחה', status: 409 };

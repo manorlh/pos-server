@@ -211,6 +211,8 @@ export function PrinterDialog({
     { value: 'till', label: t('hostConnections.till') },
     { value: 'network', label: t('hostConnections.network') },
     { value: 'bluetooth', label: t('hostConnections.bluetooth') },
+    // A printer on the host till's own USB port (a kiosk's bon on a till's local printer).
+    { value: 'usb', label: t('hostConnections.usb') },
   ];
   const scopeOptions: Option[] = [
     { value: 'shop', label: t('scopeShop') },

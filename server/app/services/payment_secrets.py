@@ -15,6 +15,11 @@ Card-integration secrets (the Z-Credit terminal password) on the settings layers
   (app/services/payment_integration.py).
 * **Layered like the settings:** the most specific layer that has a secret wins, so a
   shop's password reaches all its tills and one till can still have its own.
+* **SynqPay's key comes from the till** (docs/SPEC_SYNQPAY.md §2.2): the till pairs with its
+  terminal and sends the key (`POST /sync/{m}/synqpay/pairing`, a manager's write), stored on
+  the machine's layer with when / which till / whose authority (`store_till_pairing`); a till
+  that sees the terminal refuse its key says so (`mark_rejected`). Typing it in the dashboard
+  stays possible, for the rare manual case.
 """
 from __future__ import annotations
 
@@ -27,7 +32,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy.orm import Session
 
-from app.models.payment_secret import PAYMENT_SECRET_LEVELS, PaymentIntegrationSecret
+from app.models.payment_secret import (
+    ORIGIN_DASHBOARD,
+    ORIGIN_TILL_PAIRING,
+    PAYMENT_SECRET_LEVELS,
+    PaymentIntegrationSecret,
+)
 
 #: Every secret a layer may hold, by its settings key.
 ZCREDIT_PASSWORD = "zcreditPassword"
@@ -202,10 +212,134 @@ def apply_secret_patch(
         row.ciphertext = encrypt(value)
         row.updated_by = _as_uuid(user_id)
         row.updated_at = datetime.now(timezone.utc)
+        _set_origin(row, ORIGIN_DASHBOARD)
         changed = True
     if changed:
         db.flush()
     return changed
+
+
+def _set_origin(
+    row: PaymentIntegrationSecret,
+    origin: str,
+    *,
+    paired_at: Optional[datetime] = None,
+    machine_id: Any = None,
+    pos_user_id: Any = None,
+    user_id: Any = None,
+    serial: Optional[str] = None,
+) -> None:
+    """A new value: where it came from, and no rejection (that was about the old one)."""
+    row.origin = origin
+    row.paired_at = paired_at
+    row.paired_by_machine_id = _as_uuid(machine_id)
+    row.paired_by_pos_user_id = _as_uuid(pos_user_id)
+    row.paired_by_user_id = _as_uuid(user_id)
+    row.terminal_serial = serial
+    row.rejected_at = None
+    row.rejected_by_machine_id = None
+
+
+# ── The SynqPay pairing at the till (docs/SPEC_SYNQPAY.md §2.2) ──────────────
+
+
+def is_synqpay_api_key(value: Any) -> bool:
+    """A key as SynqPay's `authenticate` hands it out: letters and digits ("1234abcd")."""
+    return isinstance(value, str) and bool(_SYNQPAY_API_KEY.match(value.strip()))
+
+
+def store_till_pairing(
+    db: Session,
+    machine: Any,
+    api_key: str,
+    *,
+    serial: Optional[str] = None,
+    pos_user_id: Any = None,
+    user_id: Any = None,
+    now: Optional[datetime] = None,
+) -> PaymentIntegrationSecret:
+    """
+    The key [machine] got by pairing with its SynqPay terminal, on the machine's own layer,
+    encrypted — with when, by which till and on whose authority. Replaces whatever key the
+    machine's layer held (a key typed by hand too). The caller commits.
+    """
+    value = clean_secret(api_key)
+    if value is None or not _SYNQPAY_API_KEY.match(value):
+        raise PaymentSecretError("secret_invalid")
+    entity = _as_uuid(machine.id)
+    row = (
+        db.query(PaymentIntegrationSecret)
+        .filter(
+            PaymentIntegrationSecret.level == "machine",
+            PaymentIntegrationSecret.entity_id == entity,
+            PaymentIntegrationSecret.key == SYNQPAY_API_KEY,
+        )
+        .first()
+    )
+    at = now or datetime.now(timezone.utc)
+    if row is None:
+        row = PaymentIntegrationSecret(
+            id=uuid.uuid4(), level="machine", entity_id=entity, key=SYNQPAY_API_KEY,
+            tenant_id=_as_uuid(getattr(machine, "tenant_id", None)),
+        )
+        db.add(row)
+    row.ciphertext = encrypt(value)
+    row.updated_by = _as_uuid(user_id)
+    row.updated_at = at
+    _set_origin(
+        row, ORIGIN_TILL_PAIRING, paired_at=at, machine_id=machine.id,
+        pos_user_id=pos_user_id, user_id=user_id, serial=serial,
+    )
+    db.flush()
+    return row
+
+
+def mark_rejected(
+    db: Session, layers: Sequence[Tuple[str, Any]], key: str, machine: Any, *, now: Optional[datetime] = None
+) -> Optional[PaymentIntegrationSecret]:
+    """
+    The terminal refused the key [machine] uses (the most specific layer's): marked on that
+    row, once — a later report of the same refusal keeps the first time. None when the
+    machine has no key at all (nothing to mark: it is simply not paired).
+    """
+    hit = merged_secret_sources(layers, secrets_for_layers(db, layers)).get(key)
+    if hit is None:
+        return None
+    row = hit[1]
+    if row.rejected_at is None:
+        # updated_at is the value's own time: a report must not move it. An explicit
+        # "updated_at = updated_at" keeps the column's onupdate out of this UPDATE.
+        row.updated_at = PaymentIntegrationSecret.updated_at
+        row.rejected_at = now or datetime.now(timezone.utc)
+        row.rejected_by_machine_id = _as_uuid(machine.id)
+        db.flush()
+    return row
+
+
+def pairing_status(db: Session, row: Optional[PaymentIntegrationSecret]) -> Dict[str, Any]:
+    """Where a key came from and whether it was refused, for the dashboard. Never the value."""
+    if row is None:
+        return {
+            "origin": None, "pairedAt": None, "pairedByMachineId": None, "pairedByMachineName": None,
+            "terminalSerial": None, "rejectedAt": None, "rejectedByMachineId": None, "rejectedByMachineName": None,
+        }
+    from app.models.pos_machine import POSMachine
+
+    ids = {i for i in (_as_uuid(row.paired_by_machine_id), _as_uuid(row.rejected_by_machine_id)) if i is not None}
+    names: Dict[uuid.UUID, str] = {}
+    if ids:
+        for m in db.query(POSMachine).filter(POSMachine.id.in_(list(ids))).all():
+            names[_as_uuid(m.id)] = m.name
+    return {
+        "origin": row.origin,
+        "pairedAt": row.paired_at,
+        "pairedByMachineId": str(row.paired_by_machine_id) if row.paired_by_machine_id else None,
+        "pairedByMachineName": names.get(_as_uuid(row.paired_by_machine_id)),
+        "terminalSerial": row.terminal_serial,
+        "rejectedAt": row.rejected_at,
+        "rejectedByMachineId": str(row.rejected_by_machine_id) if row.rejected_by_machine_id else None,
+        "rejectedByMachineName": names.get(_as_uuid(row.rejected_by_machine_id)),
+    }
 
 
 def secrets_for_layers(
@@ -259,6 +393,9 @@ def secret_status(
             "own": own_row is not None,
             "updatedAt": own_row.updated_at if own_row is not None else None,
         }
+    # SynqPay's key: paired at a till, or typed; refused by the terminal (SPEC_SYNQPAY.md §2.2).
+    hit = merged.get(SYNQPAY_API_KEY)
+    out[SYNQPAY_API_KEY]["pairing"] = pairing_status(db, hit[1] if hit else None)
     return out
 
 

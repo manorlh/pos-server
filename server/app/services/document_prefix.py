@@ -19,11 +19,19 @@ docs/SPEC_DOCUMENT_PREFIX.md is the full rule; in short:
   400 (-400 → 400). A number identifies a document only together with its type.
 * **The default prefix.** A till with no prefix of its own uses its register number
   (`pos_machines.pos_number`, "קופה 2" → `2`), so every existing till has a sensible
-  prefix with no setup (`effective_prefix`).
-* **Unique.** No two tills in one shop — or in shops of one company that file under the
-  same branch code — may use the same prefix, and a prefix that already appears on
-  another till's documents there is never handed out again (`check_prefix`,
-  `settle_default`).
+  prefix with no setup (`effective_prefix`). When a till draws its register number and
+  that number is already held in the business (branch 2's "קופה 1" while branch 1 has a
+  "קופה 1"), it is given the lowest free prefix of the business instead (`settle_default`),
+  stored as its own — so `effective_prefix` stays a plain reading of the till's row.
+* **Unique in the business (owner, after the Tax Authority's simulator).** The open-format
+  file is one per business — the עוסק, every branch of it — and the simulator refuses a
+  file in which two documents of one type carry one number, whatever their branch codes
+  ("נמצאה יותר מרשומה אחת עם אותו מס אסמכתא"). So no two tills of the business — every
+  shop of the company, and of any company of the tenant filed under the same VAT number —
+  may use the same prefix, and a prefix that already appears on another till's documents
+  there is never handed out again (`business_shop_ids`, `check_prefix`, `settle_default`).
+  Tills that already collide are listed (`prefix_conflicts`) and can be given a free
+  prefix (`assign_free_prefix`) — for their future documents only.
 * **Frozen at issue.** The till stamps every document with the prefix it issued it
   under (`transactions.document_prefix`); a later change of the till's prefix never
   touches it. A document from before the prefix existed has none stored and reads as
@@ -32,7 +40,6 @@ docs/SPEC_DOCUMENT_PREFIX.md is the full rule; in short:
 from __future__ import annotations
 
 import re
-import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -240,47 +247,88 @@ class DocumentPrefixRefused(Exception):
         self.code = code
 
 
-def _branch_key(shop: Any) -> Optional[str]:
-    """The branch code this shop's documents are filed under (field 1231), or None."""
-    if shop is None:
-        return None
-    branch = None
-    company = getattr(shop, "company", None)
-    if company is not None:
-        try:
-            from app.services.settings_merge import build_business_info
-
-            branch = build_business_info(company, shop).branch_id
-        except Exception:  # noqa: BLE001 — a settings quirk must not block a till edit
-            branch = None
-    if not branch:
-        branch = getattr(shop, "branch_id", None)
-    text = normalize_prefix(branch)
-    return text
+#: Why a prefix must be unique in the whole business — said with every refusal.
+WHY_BUSINESS_WIDE = (
+    "לכל קופה בעסק — בכל הסניפים — חייבת להיות קידומת משלה: קובץ המבנה האחיד הוא אחד לכל "
+    "העסק, ושני מסמכים מאותו סוג לא יכולים לשאת בו אותו מספר."
+)
 
 
-def scope_shop_ids(db: Session, shop: Any) -> List[uuid.UUID]:
+def _vat_key(company: Any) -> Optional[str]:
     """
-    The shops whose tills must not share a prefix with a till of [shop]: the shop itself,
-    and the other shops of its company filed under the same branch code (their documents
-    carry the same branch in the company's tax export). Branch codes are mandatory and
-    unique in a company (`app.services.branch_code`), so in practice that is the shop
-    alone; the check stays for a code that came in some other way.
+    The business a company files under: its VAT number (ע"מ / ח"פ) as the export writes
+    it (`build_business_info`: a `businessInfo.vatNumber` setting wins over the column),
+    digits only, 9 wide. None when it has none (or only zeros): such a company is a
+    business of its own.
+    """
+    if company is None:
+        return None
+    vat: Any = None
+    try:
+        from app.services.settings_merge import build_business_info
+
+        vat = build_business_info(company).vat_number
+    except Exception:  # noqa: BLE001 — a settings quirk must not block a till edit
+        vat = getattr(company, "vat_number", None)
+    digits = "".join(c for c in str(vat or "") if c.isascii() and c.isdigit())
+    if not digits.strip("0"):
+        return None
+    return digits.zfill(9)
+
+
+def business_company_ids(db: Session, company: Any) -> List[Any]:
+    """
+    The companies that file one open-format file together with [company]: itself, and any
+    other company of its tenant under the same VAT number (one עוסק set up as two
+    companies in the system). The export runs per company today; a second company under
+    the same number still files with the same Tax Authority file number, so its tills
+    must not repeat this one's numbers either.
+    """
+    if company is None:
+        return []
+    ids = [company.id]
+    key = _vat_key(company)
+    tenant_id = getattr(company, "tenant_id", None)
+    if key is None or tenant_id is None:
+        return ids
+    from app.models.company import Company
+
+    for other in db.query(Company).filter(Company.tenant_id == tenant_id, Company.id != company.id).all():
+        if _vat_key(other) == key:
+            ids.append(other.id)
+    return ids
+
+
+def business_shop_ids(db: Session, shop: Any) -> List[Any]:
+    """
+    The shops whose tills must not share a prefix with a till of [shop]: every shop of
+    the business — all the shops of its company, and of the companies filed under the
+    same VAT number (`business_company_ids`). [shop] itself first.
+
+    It used to be the shop (and shops filed under the same branch code), on the reading
+    that the branch code (field 1231) tells two branches' `10000057` apart. The Tax
+    Authority's simulator does not: in one business's file it refuses two documents of
+    one type with one number, whatever their branch ("נמצאה יותר מרשומה אחת עם אותו מס
+    אסמכתא", C100 field 1204).
     """
     if shop is None:
         return []
+    from app.models.company import Company
     from app.models.shop import Shop
 
     ids = [shop.id]
-    key = _branch_key(shop)
-    if key is None or getattr(shop, "company_id", None) is None:
+    company_id = getattr(shop, "company_id", None)
+    company = db.query(Company).filter(Company.id == company_id).first() if company_id is not None else None
+    if company is None:
         return ids
-    for other in (
-        db.query(Shop).filter(Shop.company_id == shop.company_id, Shop.id != shop.id).all()
-    ):
-        if _branch_key(other) == key:
-            ids.append(other.id)
+    for (sid,) in db.query(Shop.id).filter(Shop.company_id.in_(business_company_ids(db, company))).all():
+        if str(sid) != str(shop.id):
+            ids.append(sid)
     return ids
+
+
+#: The earlier name. The scope is the whole business now (`business_shop_ids`).
+scope_shop_ids = business_shop_ids
 
 
 def _shop_of(db: Session, machine: Any) -> Any:
@@ -301,7 +349,24 @@ def _till_label(machine: Any) -> str:
     return f"{head} ({name})" if name else head
 
 
-def _machine_scope(db: Session, machine: Any, shop_ids: List[uuid.UUID]):
+def _shop_names(db: Session, shop_ids: Iterable[Any]) -> Dict[str, str]:
+    ids = [s for s in shop_ids if s is not None]
+    if not ids:
+        return {}
+    from app.models.shop import Shop
+
+    return {str(sid): name for sid, name in db.query(Shop.id, Shop.name).filter(Shop.id.in_(ids)).all()}
+
+
+def _where(shop_id: Any, home_shop_id: Any, names: Dict[str, str]) -> str:
+    """` בסניף "צפון"` for a holder in another shop than the till's own; nothing in its own."""
+    if shop_id is None or str(shop_id) == str(home_shop_id):
+        return ""
+    name = names.get(str(shop_id))
+    return f' בסניף "{name}"' if name else " בסניף אחר"
+
+
+def _machine_scope(db: Session, machine: Any, shop_ids: List[Any]):
     from app.models.pos_machine import POSMachine
 
     query = db.query(POSMachine).filter(POSMachine.shop_id.in_(shop_ids))
@@ -310,7 +375,7 @@ def _machine_scope(db: Session, machine: Any, shop_ids: List[uuid.UUID]):
     return query
 
 
-def _document_scope(db: Session, machine: Any, shop_ids: List[uuid.UUID], columns: Iterable[Any]):
+def _document_scope(db: Session, machine: Any, shop_ids: List[Any], columns: Iterable[Any]):
     from app.models.transaction import Transaction
 
     query = db.query(*columns).filter(Transaction.shop_id.in_(shop_ids))
@@ -321,35 +386,39 @@ def _document_scope(db: Session, machine: Any, shop_ids: List[uuid.UUID], column
 
 def holder_of(db: Session, machine: Any, prefix: str) -> Optional[str]:
     """
-    Who already holds [prefix] in [machine]'s scope, as a Hebrew phrase, or None if free:
-    another till that issues under it now, or another till's documents issued under it.
+    Who already holds [prefix] in [machine]'s business, as a Hebrew phrase, or None if
+    free: another till that issues under it now, or another till's documents issued under
+    it — in any shop of the business (`business_shop_ids`).
     """
-    shop_ids = scope_shop_ids(db, _shop_of(db, machine))
+    home = getattr(machine, "shop_id", None)
+    shop_ids = business_shop_ids(db, _shop_of(db, machine))
     if not shop_ids:
         return None
+    names = _shop_names(db, shop_ids)
     for other in _machine_scope(db, machine, shop_ids).all():
         if effective_prefix(other) == prefix:
-            return f"ב{_till_label(other)}"
+            return f"ב{_till_label(other)}{_where(other.shop_id, home, names)}"
     from app.models.transaction import Transaction
 
     row = (
-        _document_scope(db, machine, shop_ids, (Transaction.pos_number,))
+        _document_scope(db, machine, shop_ids, (Transaction.pos_number, Transaction.shop_id))
         .filter(prefix_clause(prefix))
         .first()
     )
     if row is not None:
         number = normalize_prefix(row[0])
+        where = _where(row[1], home, names)
         return (
-            f"על מסמכים שהופקו בקופה {number}" if number else "על מסמכים של קופה אחרת"
+            f"על מסמכים שהופקו בקופה {number}{where}" if number else f"על מסמכים של קופה אחרת{where}"
         )
     return None
 
 
 def prefixes_in_use(db: Session, machine: Any) -> Dict[str, str]:
-    """Every prefix held in [machine]'s scope (by a till or by documents), with its holder."""
+    """Every prefix held in [machine]'s business (by a till or by documents), with its holder."""
     from app.models.transaction import Transaction
 
-    shop_ids = scope_shop_ids(db, _shop_of(db, machine))
+    shop_ids = business_shop_ids(db, _shop_of(db, machine))
     used: Dict[str, str] = {}
     if not shop_ids:
         return used
@@ -373,7 +442,7 @@ def check_prefix(db: Session, machine: Any, requested: Any) -> Optional[str]:
     The prefix to store for [machine] (None: back to the default), or DocumentPrefixRefused.
 
     400 for a malformed prefix; 409 when the prefix — or, when clearing, the default it
-    falls back to — is already held in the till's scope.
+    falls back to — is already held anywhere in the till's business.
     """
     prefix = normalize_prefix(requested)
     if prefix is not None and not PREFIX_RE.match(prefix):
@@ -386,20 +455,12 @@ def check_prefix(db: Session, machine: Any, requested: Any) -> Optional[str]:
         if prefix is None:
             detail = (
                 f"ברירת המחדל של הקופה — מספר הקופה {effective} — כבר בשימוש {holder}. "
-                "יש לבחור לקופה קידומת מסמכים אחרת."
+                f"יש לבחור לקופה קידומת מסמכים אחרת. {WHY_BUSINESS_WIDE}"
             )
         else:
-            detail = (
-                f"קידומת המסמכים {effective} כבר בשימוש {holder}. לכל קופה בסניף "
-                "חייבת להיות קידומת משלה, כדי ששתי קופות לא יפיקו אותו מספר מסמך."
-            )
+            detail = f"קידומת המסמכים {effective} כבר בשימוש {holder}. {WHY_BUSINESS_WIDE}"
         raise DocumentPrefixRefused(409, detail, "document_prefix_in_use")
     return prefix
-
-
-#: Where a prefix picked automatically (`settle_default`) starts: above any register
-#: number a shop will realistically reach, so it never becomes another till's default.
-AUTO_PREFIX_START = 101
 
 
 def first_free_prefix(used: Iterable[str], *, start: int = 1) -> Optional[str]:
@@ -410,13 +471,24 @@ def first_free_prefix(used: Iterable[str], *, start: int = 1) -> Optional[str]:
     return None
 
 
+def lowest_free_prefix(db: Session, machine: Any) -> Optional[str]:
+    """The lowest prefix (1–999) no other till of [machine]'s business holds, and no other
+    till's documents there carry. None when all 999 are taken."""
+    return first_free_prefix(prefixes_in_use(db, machine))
+
+
 def settle_default(db: Session, machine: Any) -> Optional[str]:
     """
     After a till drew its register number: if it has no prefix of its own and its
-    default (the register number) is already held in its scope — another till chose it,
-    or it is on another till's documents — give it the lowest free prefix instead, so a
-    new till never silently issues numbers another till already printed. Returns the
+    default (the register number) is already held in its business — another till of any
+    branch uses it, or it is on another till's documents — give it the lowest free prefix
+    of the business instead (branch 2's "קופה 1" next to branch 1's tills 1–3 gets 4), so
+    a new till never silently issues numbers another till already printed. Returns the
     prefix stored, or None when the default stands. Caller commits.
+
+    Lowest free, not "from 101 up" as before: the prefix is printed on every document,
+    and a later till whose register number was taken this way gets the next free one the
+    same way.
     """
     if getattr(machine, "shop_id", None) is None:
         return None
@@ -429,10 +501,306 @@ def settle_default(db: Session, machine: Any) -> Optional[str]:
         db.flush()
     if holder_of(db, machine, default) is None:
         return None
-    # From AUTO_PREFIX_START up, never the next free register number: that one is some
-    # future till's default, and taking it would only move the clash onto that till.
-    used = prefixes_in_use(db, machine)
-    free = first_free_prefix(used, start=AUTO_PREFIX_START) or first_free_prefix(used)
+    free = lowest_free_prefix(db, machine)
     if free is not None:
         machine.document_prefix = free
+    return free
+
+
+# ── Tills that already collide ─────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class _Holding:
+    """One machine's documents under one prefix in one series: how many, the highest."""
+
+    count: int
+    highest: int
+
+
+def _document_holdings(db: Session, shop_ids: List[Any]) -> Dict[tuple, _Holding]:
+    """
+    (machine id, prefix, series) → its documents' count and highest number, for every
+    document of the business with a plain numeric number. One grouped query on Postgres;
+    a scan elsewhere (the tests' SQLite).
+    """
+    from sqlalchemy import BigInteger, func
+
+    from app.models.transaction import Transaction
+
+    out: Dict[tuple, _Holding] = {}
+
+    def add(machine_id: Any, frozen: Any, pos_number: Any, series: Any, count: int, highest: int) -> None:
+        p = prefix_from(frozen, pos_number)
+        if p is None or machine_id is None or series is None:
+            return
+        key = (str(machine_id), p, int(series))
+        was = out.get(key)
+        out[key] = _Holding(
+            count=(was.count if was else 0) + int(count),
+            highest=max(was.highest if was else 0, int(highest)),
+        )
+
+    if not shop_ids:
+        return out
+    if db.get_bind().dialect.name == "postgresql":
+        rows = (
+            db.query(
+                Transaction.machine_id,
+                Transaction.document_prefix,
+                Transaction.pos_number,
+                Transaction.document_series,
+                func.count(),
+                func.max(Transaction.transaction_number.cast(BigInteger)),
+            )
+            .filter(
+                Transaction.shop_id.in_(shop_ids),
+                Transaction.transaction_number.op("~")("^[0-9]{1,18}$"),
+            )
+            .group_by(
+                Transaction.machine_id,
+                Transaction.document_prefix,
+                Transaction.pos_number,
+                Transaction.document_series,
+            )
+            .all()
+        )
+        for machine_id, frozen, pos_number, series, count, highest in rows:
+            add(machine_id, frozen, pos_number, series, count, highest or 0)
+        return out
+    for machine_id, frozen, pos_number, document_type, refund_of, number in db.query(
+        Transaction.machine_id,
+        Transaction.document_prefix,
+        Transaction.pos_number,
+        Transaction.document_type,
+        Transaction.refund_of_transaction_id,
+        Transaction.transaction_number,
+    ).filter(Transaction.shop_id.in_(shop_ids)):
+        text = str(number or "")
+        if not (text.isascii() and text.isdigit() and len(text) <= 18):
+            continue
+        add(machine_id, frozen, pos_number, document_series_of(document_type, refund_of), 1, int(text))
+    return out
+
+
+def _counters(db: Session, machine: Any, holdings: Dict[tuple, _Holding]) -> Dict[int, int]:
+    """Where [machine]'s own counters stand, per series: its highest number in the cloud
+    under any prefix, raised to what the till last reported (it may hold unsent ones)."""
+    mid = str(machine.id)
+    per: Dict[int, int] = {}
+    for (m, _p, series), h in holdings.items():
+        if m == mid:
+            per[series] = max(per.get(series, 0), h.highest)
+    reported = getattr(machine, "reported_document_counters", None)
+    if isinstance(reported, dict):
+        for series, value in reported.items():
+            try:
+                s, n = int(series), int(value)
+            except (TypeError, ValueError):
+                continue
+            per[s] = max(per.get(s, 0), n)
+    return per
+
+
+def conflicts_in_shops(db: Session, shop_ids: List[Any]) -> List[Dict[str, Any]]:
+    """
+    Every active till of the business (`shop_ids`) whose prefix in force collides — the
+    rule of `prefix_conflicts`, as rows for the dashboard.
+    """
+    from app.models.pos_machine import POSMachine
+    from app.models.shop import Shop
+
+    if not shop_ids:
+        return []
+    tills = db.query(POSMachine).filter(POSMachine.shop_id.in_(shop_ids)).all()
+    shops = {str(s.id): s for s in db.query(Shop).filter(Shop.id.in_(shop_ids)).all()}
+    holdings = _document_holdings(db, shop_ids)
+    by_id = {str(t.id): t for t in tills}
+    prefix_of = {str(t.id): effective_prefix(t) for t in tills}
+    doc_counts: Dict[tuple, int] = {}  # (machine id, prefix) → documents under it
+    for (m, p, _s), h in holdings.items():
+        doc_counts[(m, p)] = doc_counts.get((m, p), 0) + h.count
+    # The register a machine's documents name, for one no longer among the business's tills.
+    issuers: Dict[str, Optional[str]] = {}
+    if any(m not in by_id for (m, _p, _s) in holdings):
+        from app.models.transaction import Transaction
+
+        for m, pos in (
+            db.query(Transaction.machine_id, Transaction.pos_number)
+            .filter(Transaction.shop_id.in_(shop_ids))
+            .distinct()
+            .all()
+        ):
+            issuers.setdefault(str(m), normalize_prefix(pos))
+
+    def shop_name(shop_id: Any) -> Optional[str]:
+        s = shops.get(str(shop_id))
+        return s.name if s is not None else None
+
+    used = {p for p in prefix_of.values() if p} | {p for (_m, p, _s) in holdings}
+    out: List[Dict[str, Any]] = []
+    for till in sorted(tills, key=lambda t: (shop_name(t.shop_id) or "", str(t.pos_number or ""), str(t.id))):
+        if not getattr(till, "is_active", True):
+            continue
+        tid = str(till.id)
+        p = prefix_of.get(tid)
+        if p is None:
+            continue
+        holders: List[Dict[str, Any]] = []
+        # 1. Another till of the business issues under the same prefix now. Of a group,
+        # the one with the most documents under it keeps it; the others move.
+        group = [t for t in tills if prefix_of.get(str(t.id)) == p]
+        if len(group) > 1:
+            keeper = sorted(
+                group,
+                key=lambda t: (-doc_counts.get((str(t.id), p), 0), str(getattr(t, "created_at", None) or ""), str(t.id)),
+            )[0]
+            if keeper is not till:
+                for other in group:
+                    if other is till:
+                        continue
+                    holders.append({
+                        "kind": "till",
+                        "machineId": str(other.id),
+                        "posNumber": other.pos_number,
+                        "machineName": other.name,
+                        "shopId": str(other.shop_id) if other.shop_id else None,
+                        "shopName": shop_name(other.shop_id),
+                    })
+        # 2. Another till's documents under this prefix reach past this till's counters:
+        # its next numbers would repeat them.
+        counters = _counters(db, till, holdings)
+        seen = {h["machineId"] for h in holders}
+        for (m, hp, series), h in sorted(holdings.items()):
+            if hp != p or m == tid or m in seen:
+                continue
+            if h.highest > counters.get(series, 0):
+                other = by_id.get(m)
+                holders.append({
+                    "kind": "documents",
+                    "machineId": m,
+                    "posNumber": (other.pos_number if other is not None else None) or issuers.get(m),
+                    "machineName": other.name if other is not None else None,
+                    "shopId": str(other.shop_id) if other is not None and other.shop_id else None,
+                    "shopName": shop_name(other.shop_id) if other is not None else None,
+                    "series": series,
+                    "highest": h.highest,
+                    "ownHighest": counters.get(series, 0),
+                })
+                seen.add(m)
+        if not holders:
+            continue
+        suggested = first_free_prefix(used)
+        if suggested is not None:
+            used.add(suggested)
+        shop = shops.get(str(till.shop_id))
+        out.append({
+            "machineId": tid,
+            "machineName": till.name,
+            "posNumber": till.pos_number,
+            "shopId": str(till.shop_id),
+            "shopName": shop.name if shop is not None else None,
+            "branchId": getattr(shop, "branch_id", None) if shop is not None else None,
+            "prefix": p,
+            "ownPrefix": normalize_prefix(till.document_prefix) is not None,
+            "heldBy": [{**h, "text": _holder_text(h, till.shop_id, shops)} for h in holders],
+            "suggestedPrefix": suggested,
+        })
+    return out
+
+
+def _holder_text(h: Dict[str, Any], home_shop_id: Any, shops: Dict[str, Any]) -> str:
+    names = {k: s.name for k, s in shops.items()}
+    where = _where(h.get("shopId"), home_shop_id, names)
+    number = normalize_prefix(h.get("posNumber"))
+    till = f"קופה {number}" if number else "קופה אחרת"
+    name = normalize_prefix(h.get("machineName"))
+    label = f"{till} ({name})" if name else till
+    if h["kind"] == "till":
+        return f"גם {label}{where} מנפיקה תחת הקידומת הזו"
+    series = h.get("series")
+    kind = {320: "חשבוניות מס קבלה", 330: "חשבוניות זיכוי", 400: "קבלות"}.get(series, f"מסמכים מסוג {series}")
+    return (
+        f"{kind} של {label}{where} תחת הקידומת הזו מגיעות עד מספר {h.get('highest')}, "
+        f"והמונה של הקופה הזו רק ב-{h.get('ownHighest')} — המספרים הבאים שלה יחזרו עליהם"
+    )
+
+
+def prefix_conflicts(db: Session, shop: Any) -> List[Dict[str, Any]]:
+    """
+    The active tills of [shop]'s business whose prefix in force would give a document
+    number another document of the business already has, or will have (docs/
+    SPEC_DOCUMENT_PREFIX.md §5): the dashboard's warning, each with a free prefix to move to.
+
+    A till collides when
+    1. another till of the business issues under the same prefix now — of such a group
+       the till with the most documents under the prefix keeps it and the others are
+       listed (branch 2's "קופה 1" beside branch 1's, both on prefix 1); or
+    2. another till's documents under the prefix reach a higher number, in some document
+       type, than this till's own counter there — so its next numbers would repeat them.
+       A till whose counters are past every such number keeps its prefix.
+
+    Moving a till changes its future documents only; what it already issued keeps the
+    prefix frozen on it (and two documents already issued under one number stay so — the
+    export refuses a file holding both, `tax_reports.refuse_duplicate_document_numbers`).
+    """
+    return conflicts_in_shops(db, business_shop_ids(db, shop))
+
+
+def company_business_shop_ids(db: Session, company: Any) -> List[Any]:
+    """Every shop of [company]'s business (`business_company_ids`)."""
+    if company is None:
+        return []
+    from app.models.shop import Shop
+
+    return [sid for (sid,) in db.query(Shop.id).filter(Shop.company_id.in_(business_company_ids(db, company))).all()]
+
+
+def company_prefix_conflicts(db: Session, company: Any) -> List[Dict[str, Any]]:
+    """`prefix_conflicts` for a company: its business's colliding tills."""
+    return conflicts_in_shops(db, company_business_shop_ids(db, company))
+
+
+def prefix_status(db: Session, machine: Any) -> Dict[str, Any]:
+    """
+    One till's prefix against its business, for the till's page: the prefix in force,
+    whether it is its own or the default, whether it is unique in the business (§5), and
+    when not, who else holds it and the lowest free prefix.
+    """
+    shop = _shop_of(db, machine)
+    shop_ids = business_shop_ids(db, shop)
+    effective = effective_prefix(machine)
+    row = next((r for r in conflicts_in_shops(db, shop_ids) if r["machineId"] == str(machine.id)), None)
+    return {
+        "machineId": str(machine.id),
+        "prefix": effective,
+        "ownPrefix": normalize_prefix(getattr(machine, "document_prefix", None)) is not None,
+        "defaultPrefix": default_prefix(machine),
+        "businessShopCount": len(shop_ids),
+        "uniqueInBusiness": effective is not None and row is None,
+        "heldBy": row["heldBy"] if row else [],
+        "suggestedPrefix": lowest_free_prefix(db, machine) if row else None,
+    }
+
+
+def assign_free_prefix(db: Session, machine: Any) -> Optional[str]:
+    """
+    Give a colliding till the lowest free prefix of its business ("שיוך קידומת פנויה"),
+    for its future documents; what it issued keeps its frozen prefix. A till whose prefix
+    is already unique is left as it is (None). Caller commits; the till learns the new
+    prefix on its next `GET /machines/me`.
+    """
+    if getattr(machine, "shop_id", None) is None:
+        raise DocumentPrefixRefused(
+            409, "לקופה שאינה משויכת לסניף אין קידומת מסמכים.", "machine_not_assigned"
+        )
+    status = prefix_status(db, machine)
+    if status["uniqueInBusiness"]:
+        return None
+    free = lowest_free_prefix(db, machine)
+    if free is None:
+        raise DocumentPrefixRefused(
+            409, "אין קידומת מסמכים פנויה בעסק (1–999).", "no_free_document_prefix"
+        )
+    machine.document_prefix = free
     return free

@@ -218,6 +218,39 @@ def get_pos_machine_from_sync_machine_token(
     return _machine_from_sync_token(payload, machine_id, db)
 
 
+# ── "מכשיר תצוגה אינו קופה" (docs/SPEC_DEVICE_ROLE_MODEL.md §2.2) ──────────────────────
+# A KDS screen / the "מוכן / לא מוכן" board (`pos_machines.is_fiscal` false) sells nothing:
+# every fiscal till endpoint — documents, shifts, Z, transmissions, payments, vouchers,
+# tables, kiosk orders — carries one of these (`dependencies=FISCAL_SYNC_PATH` /
+# `FISCAL_MACHINE_TOKEN`, matching the route's own machine dependency, which FastAPI then
+# resolves once). 403 `{"detail": "device_not_fiscal", "message": <Hebrew>}`.
+# tests/test_display_devices.py walks `app.routes`: a new till write must be classified.
+
+
+def require_fiscal_machine(machine: POSMachine = Depends(get_pos_machine_for_sync_path)) -> POSMachine:
+    """`get_pos_machine_for_sync_path`, refusing a display device (403 `device_not_fiscal`)."""
+    from app.services.display_devices import refuse_unless_fiscal
+
+    refuse_unless_fiscal(machine)
+    return machine
+
+
+def require_fiscal_machine_token(
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+) -> POSMachine:
+    """`get_pos_machine_from_sync_machine_token`, refusing a display device (403 `device_not_fiscal`)."""
+    from app.services.display_devices import refuse_unless_fiscal
+
+    refuse_unless_fiscal(machine)
+    return machine
+
+
+#: For a route whose machine comes from `get_pos_machine_for_sync_path`.
+FISCAL_SYNC_PATH = [Depends(require_fiscal_machine)]
+#: For a route whose machine comes from `get_pos_machine_from_sync_machine_token`.
+FISCAL_MACHINE_TOKEN = [Depends(require_fiscal_machine_token)]
+
+
 def _resolve_user_from_bearer_token(token: str, db: Session) -> User:
     """Shared user resolution for Clerk and legacy username tokens (raises on failure)."""
     clerk_user_id = verify_clerk_token(token)

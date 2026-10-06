@@ -193,7 +193,10 @@ describe('SynqPay provider', () => {
   it('reads the cloud settings as the till does', () => {
     expect(synqpaySettingsOf(lanSettings).settings).toMatchObject({ connection: 'lan', host: '192.168.1.40', protocol: 'tcp', port: 9000 });
     expect(synqpaySettingsOf({ ...lanSettings, synqpayProtocol: 'http', synqpayTls: true }).settings?.port).toBe(8443);
-    expect(synqpaySettingsOf({ synqpayConnection: 'lan' }).missing).toEqual(['synqpayDeviceModel', 'synqpayHost', 'synqpayApiKey']);
+    // No key is never missing: the kiosk pairs with the terminal itself (SPEC_SYNQPAY.md §2.2).
+    expect(synqpaySettingsOf({ synqpayConnection: 'lan' }).missing).toEqual(['synqpayDeviceModel', 'synqpayHost']);
+    expect(synqpaySettingsOf({ ...lanSettings, synqpayApiKey: null }).settings).toMatchObject({ apiKey: '', paired: false });
+    expect(synqpaySettingsOf(lanSettings).settings?.paired).toBe(true);
     expect(synqpaySettingsOf({ ...lanSettings, synqpayConnection: 'usb', synqpayHost: null }).missing).toEqual([]);
     expect(synqpaySettingsOf({ ...lanSettings, synqpayConnection: 'usb_serial', synqpayHost: null }).settings?.connection).toBe('usb');
     expect(synqpaySettingsOf({ ...lanSettings, synqpayConnection: 'builtin' }).missing).toContain('synqpayConnection');

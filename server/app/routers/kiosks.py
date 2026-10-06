@@ -69,6 +69,9 @@ from app.services import kiosk_control as svc
 from app.services import kiosk_menu
 from app.services import kiosk_pickup
 
+# Display devices are not tills (app/services/display_devices.py).
+from app.middleware.auth import FISCAL_SYNC_PATH
+
 till_router = APIRouter(prefix="/sync", tags=["kiosks"])
 router = APIRouter(prefix="/kiosks", tags=["kiosks"])
 
@@ -108,7 +111,7 @@ def kiosk_sync(
     return out
 
 
-@till_router.post("/{machine_id}/kiosk/orders")
+@till_router.post("/{machine_id}/kiosk/orders", dependencies=FISCAL_SYNC_PATH)
 def post_kiosk_orders(
     machine_id: str,
     body: KioskOrdersIn,
@@ -128,7 +131,7 @@ def post_kiosk_orders(
     return out
 
 
-@till_router.post("/{machine_id}/kiosk/pickup-number")
+@till_router.post("/{machine_id}/kiosk/pickup-number", dependencies=FISCAL_SYNC_PATH)
 def post_pickup_number(
     machine_id: str,
     body: PickupNumberIn,
@@ -188,7 +191,7 @@ def put_kiosk_menu(
     return out
 
 
-@till_router.post("/{machine_id}/kiosks/{kiosk_machine_id}/commands", status_code=status.HTTP_201_CREATED)
+@till_router.post("/{machine_id}/kiosks/{kiosk_machine_id}/commands", status_code=status.HTTP_201_CREATED, dependencies=FISCAL_SYNC_PATH)
 def post_till_kiosk_command(
     machine_id: str,
     kiosk_machine_id: str,

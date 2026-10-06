@@ -48,6 +48,7 @@ import { Card, Delta, IOS, InsightsSurface, Muted, SectionHeader, Segmented, Ske
 import { scopeParams } from '@/components/dashboard/insights/scope-params';
 import { InsightFeed } from '@/components/dashboard/insights/insight-feed';
 import { OpenTablesWidget } from '@/components/dashboard/insights/open-tables-widget';
+import { KioskInsightsLinkCard } from '@/components/dashboard/kiosk-insights/link-card';
 import { ForecastSection } from '@/components/dashboard/insights/forecast-section';
 import { TrendsSection } from '@/components/dashboard/insights/trends-section';
 import { HeatmapSection } from '@/components/dashboard/insights/heatmap-section';
@@ -332,6 +333,9 @@ export default function InsightsPage() {
 
       {/* Open tables now (hidden when the scope has no tables) */}
       <OpenTablesWidget scope={scope} auto={auto} />
+
+      {/* "ביצועי קיוסקים" — its own page */}
+      <KioskInsightsLinkCard />
 
       <Section id="forecast" title={t('sections.forecast')} query={forecast}>
         {(data) => <ForecastSection data={data} />}

@@ -29,11 +29,13 @@ import {
   spicyPathError,
   SYNQPAY_CONNECTIONS,
   synqpayDefaultPort,
+  synqpayPairingStatus,
   synqpayWarnings,
+  formatPairingTime,
   validatePaymentIntegration,
   withSendableSecrets,
 } from './paymentIntegration';
-import type { PaymentIntegrationForm, SecretsStatus } from './paymentIntegration';
+import type { PaymentIntegrationForm, SecretStatus, SecretsStatus } from './paymentIntegration';
 
 const noSecrets: SecretsStatus = {
   zcreditPassword: { set: false, source: null, own: false },
@@ -454,12 +456,13 @@ describe('SynqPay', () => {
     assert.ok(synq && synq.selectable && !synq.hidden);
   });
 
-  it('needs model, connection and the API key, and a host only for a connection by address', () => {
+  it('needs model and connection, a host only for a connection by address — never the API key', () => {
     assert.deepEqual(missingRequiredFields('synqpay', { paymentIntegration: 'synqpay' }, null, synqSecrets(false)), [
       'synqpayDeviceModel',
       'synqpayConnection',
-      'synqpayApiKey',
     ]);
+    // The till pairs with the terminal and sends the key up: none stored is still complete.
+    assert.deepEqual(missingRequiredFields('synqpay', lan, null, synqSecrets(false)), []);
     assert.deepEqual(missingRequiredFields('synqpay', { ...lan, synqpayHost: null }, null, synqSecrets(true)), ['synqpayHost']);
     assert.deepEqual(missingRequiredFields('synqpay', lan, null, synqSecrets(true)), []);
     const serial: PaymentIntegrationForm = { ...lan, synqpayConnection: 'usb', synqpayHost: null };
@@ -521,7 +524,75 @@ describe('SynqPay', () => {
     const errors = validatePaymentIntegration({ paymentIntegration: 'synqpay' }, null, synqSecrets(false));
     assert.equal(errors.synqpayDeviceModel, PI_TEXT.synqpayModelRequired);
     assert.equal(errors.synqpayConnection, PI_TEXT.synqpayConnectionRequired);
-    assert.equal(errors.synqpayApiKey, PI_TEXT.required);
+    assert.equal(errors.synqpayApiKey, undefined);
+  });
+
+  it('a till on SynqPay saves without any key — "שדה חובה" is gone', () => {
+    // A till's own form (requireAll), no key on any layer, nothing typed.
+    assert.deepEqual(validatePaymentIntegration(lan, null, synqSecrets(false), { requireAll: true, hasBuiltinTerminal: false }), {});
+    assert.deepEqual(
+      validatePaymentIntegration({ ...lan, synqpayConnection: 'usb', synqpayHost: null }, null, synqSecrets(false), { requireAll: true }),
+      {},
+    );
+    // Even when the context did not load (secrets unknown).
+    assert.deepEqual(validatePaymentIntegration(lan, null, null, { requireAll: true }), {});
+    // A key typed by hand (the advanced, manual case) is still checked as the server does.
+    assert.equal(validatePaymentIntegration({ ...lan, synqpayApiKey: '12 34' }, null, null).synqpayApiKey, PI_TEXT.synqpayKeyInvalid);
+    assert.deepEqual(validatePaymentIntegration({ ...lan, synqpayApiKey: '1234abcd' }, null, null), {});
+  });
+
+  it('the pairing status line: not paired / paired by a till / refused / typed by hand', () => {
+    const fmt = (iso: string) => `[${iso.slice(0, 10)}]`;
+    assert.deepEqual(synqpayPairingStatus(synqSecrets(false).synqpayApiKey, { level: 'machine', format: fmt }), {
+      tone: 'warn',
+      text: 'טרם צומד — יש לבצע צימוד מהקופה',
+      detail: null,
+    });
+    // Above a till with no key: pairing is per till, nothing is wrong.
+    assert.equal(synqpayPairingStatus(synqSecrets(false).synqpayApiKey, { level: 'shop' }).tone, 'muted');
+    // The context did not load: unknown, never "paired".
+    assert.equal(synqpayPairingStatus(undefined, { level: 'machine' }).text, PI_TEXT.synqpayStatusUnknown);
+    const paired: SecretStatus = {
+      set: true,
+      source: 'machine',
+      own: true,
+      updatedAt: '2026-10-07T11:05:00Z',
+      pairing: {
+        origin: 'till_pairing',
+        pairedAt: '2026-10-07T11:05:00Z',
+        pairedByMachineId: 'm1',
+        pairedByMachineName: 'קופה 2',
+        terminalSerial: '244RKR528387',
+        rejectedAt: null,
+      },
+    };
+    assert.deepEqual(synqpayPairingStatus(paired, { level: 'machine', format: fmt }), {
+      tone: 'ok',
+      text: 'צומד ב-[2026-10-07] ע"י קופה 2',
+      detail: 'מסוף 244RKR528387',
+    });
+    const refused: SecretStatus = {
+      ...paired,
+      pairing: { ...paired.pairing, rejectedAt: '2026-10-08T09:00:00Z', rejectedByMachineName: 'קופה 2' },
+    };
+    const line = synqpayPairingStatus(refused, { level: 'machine', format: fmt });
+    assert.equal(line.tone, 'error');
+    assert.equal(line.text, 'המפתח נדחה במסוף ב-[2026-10-08] (דווח ע"י קופה 2) — יש לבצע צימוד מחדש מהקופה');
+    const typed: SecretStatus = { set: true, source: 'shop', own: false, pairing: { origin: 'dashboard' } };
+    assert.deepEqual(synqpayPairingStatus(typed, { level: 'machine', format: fmt }), {
+      tone: 'ok',
+      text: 'מפתח הוזן ידנית ברמת החנות',
+      detail: null,
+    });
+    // An older server: no pairing block — the stored key as before.
+    assert.equal(synqpayPairingStatus({ set: true, source: 'machine', own: true }, { level: 'machine' }).text, 'מפתח API שמור');
+  });
+
+  it('formats the pairing time in the browser time, and refuses a bad one', () => {
+    assert.equal(formatPairingTime(null), null);
+    assert.equal(formatPairingTime('not a date'), null);
+    const local = new Date(2026, 9, 7, 9, 5).toISOString();
+    assert.equal(formatPairingTime(local), '7.10.2026 09:05');
   });
 
   it('documents the ports by protocol and TLS', () => {
@@ -555,12 +626,12 @@ describe('SynqPay', () => {
   });
 
   it('shows the machines list badge', () => {
-    const row = normalizeMachineIntegration({ paymentIntegration: 'synqpay', paymentIntegrationMissing: ['synqpayApiKey'] });
+    const row = normalizeMachineIntegration({ paymentIntegration: 'synqpay', paymentIntegrationMissing: ['synqpayHost'] });
     assert.equal(row.paymentIntegration, 'synqpay');
     const badge = integrationBadge(row);
     assert.ok(badge);
     assert.equal(badge.label, 'SynqPay');
     assert.equal(badge.tone, 'warn');
-    assert.equal(badge.missing, 'חסר: מפתח API');
+    assert.equal(badge.missing, 'חסר: כתובת IP של המסוף');
   });
 });

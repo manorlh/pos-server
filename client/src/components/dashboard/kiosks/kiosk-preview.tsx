@@ -7,7 +7,7 @@
  * add-to-cart motion), pay on the pinpad beside the screen.
  */
 
-import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type Ref } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { Smartphone, Tablet } from 'lucide-react';
@@ -20,6 +20,7 @@ import {
   buttonRadius,
   cartPanelShown,
   categoryRailImage,
+  checkoutStepsNow,
   ctaBox,
   fontStack,
   catalogColumns,
@@ -28,6 +29,10 @@ import {
   addMs,
   motionSpec,
   resolveThemeColors,
+  stepMode,
+  tickerBandPx,
+  transitionSpec,
+  upsellStepModeKey,
   typeScaleFactor,
   typeWeights,
   type DietaryTag,
@@ -54,6 +59,7 @@ import {
   ProductSheet,
   ServiceScreen,
   SuccessScreen,
+  TipScreen,
   type Flight,
   type PausedVariant,
   type PCategory,
@@ -62,9 +68,20 @@ import {
   type PProduct,
   type PreviewModel,
 } from './preview-screens';
+import { DetailsPreview, detailsFields } from './preview-entry';
+import { KioskSwap, screenOrder } from './preview-motion';
+import { PREVIEW_FOOTER_PX, TickerFrame } from './preview-ticker';
 import { useGoogleFonts } from './use-google-fonts';
 
-const SCREENS: PreviewScreen[] = ['attract', 'service', 'catalog', 'product', 'cart', 'pay', 'success', 'paused'];
+/** "הצג" in "הנפשות ומעברים": the transition the preview plays on demand. */
+export type MotionDemo = 'categorySwitch' | 'itemsEnter' | 'screenChange' | 'sheet' | 'addToCart' | 'speed';
+
+/** What the editor can ask of the live preview. */
+export interface KioskPreviewControls {
+  play: (demo: MotionDemo) => void;
+}
+
+const SCREENS: PreviewScreen[] = ['attract', 'service', 'catalog', 'product', 'cart', 'tip', 'details', 'pay', 'success', 'paused'];
 const PAUSED_VARIANTS: PausedVariant[] = ['paused', 'closed', 'noPayment', 'offline'];
 
 type Frame = 'phone' | 'tablet';
@@ -80,6 +97,12 @@ const FRAME_SIZE: Record<Frame, { w: number; h: number }> = {
  * both frames show the bar, as the till does on them.
  */
 const FRAME_DEVICE_DP: Record<Frame, number> = { phone: 360, tablet: 800 };
+
+/** The preview's sample pause ("הפסקה"): ending in half an hour, on a round five minutes — so "נחזור ב-HH:MM" shows. */
+function samplePauseEnd(nowMs: number): string {
+  const step = 5 * 60_000;
+  return new Date(Math.ceil((nowMs + 30 * 60_000) / step) * step).toISOString();
+}
 
 /** Demo data when there is no till to read a catalog from. */
 function useSampleCatalog(): { categories: { id: string; name: string }[]; products: PProduct[] } {
@@ -197,6 +220,7 @@ export function KioskPreview({
   brandName,
   nowMs,
   onCtaMove,
+  controls,
 }: {
   config: KioskConfig;
   catalog: KioskSourceCatalog | null;
@@ -208,6 +232,8 @@ export function KioskPreview({
   nowMs: number;
   /** Dragging the attract button in a custom place: its new centre, in percent. */
   onCtaMove?: (x: number, y: number) => void;
+  /** "הצג" of "הנפשות ומעברים": the editor plays a transition here. */
+  controls?: Ref<KioskPreviewControls>;
 }) {
   const t = useTranslations('kiosks.preview');
   const tb = useTranslations('kiosks.builtin');
@@ -223,6 +249,8 @@ export function KioskPreview({
   const [flights, setFlights] = useState<Flight[]>([]);
   const [justAdded, setJustAdded] = useState<string | null>(null);
   const [cartBump, setCartBump] = useState(0);
+  /** The tip chosen on the preview's tip step (shown on its pay screen). */
+  const [previewTip, setPreviewTip] = useState(0);
   const screenRef = useRef<HTMLDivElement>(null);
   const cartTargetRef = useRef<HTMLDivElement | null>(null);
   const setCartTarget = useCallback((el: HTMLDivElement | null) => {
@@ -231,7 +259,7 @@ export function KioskPreview({
   const justAddedTimer = useRef<number | null>(null);
   const flightSeq = useRef(0);
   // "הגדלת מכירה": the window up, and the rules asked and steps reached in this order.
-  const [upsellWin, setUpsellWin] = useState<{ pick: UpsellPick; then: PreviewScreen | null; added: Record<string, number> } | null>(null);
+  const [upsellWin, setUpsellWin] = useState<{ pick: UpsellPick; then: PreviewScreen | null; added: Record<string, number>; moment?: UpsellMoment } | null>(null);
   const upsellAsked = useRef<string[]>([]);
   const upsellSteps = useRef<string[]>([]);
 
@@ -315,18 +343,29 @@ export function KioskPreview({
         .map((p, i) => ({ key: `sample-${p.id}`, product: p, qty: i === 0 ? 2 : 1, unit: p.price, extras: [] })),
     [allProducts],
   );
-  const effectiveCart = cart.length > 0 ? cart : screen === 'cart' || screen === 'pay' || screen === 'success' ? sampleCart : cart;
+  const effectiveCart =
+    cart.length > 0 ? cart : screen === 'cart' || screen === 'tip' || screen === 'details' || screen === 'pay' || screen === 'success' ? sampleCart : cart;
+  /** The steps between the basket and the payment, as the kiosk asks them now (the tip, the details, in their order). */
+  const checkoutSteps = checkoutStepsNow(config.payment, detailsFields(config, service).length > 0, false)
+    // "איך תרצו לשלם?" (payMethod) has no preview screen yet: the preview goes from the last step to the payment.
+    .filter((s): s is 'tip' | 'details' => s !== 'payMethod');
+  /** Where a step goes on to: the next checkout step, else the payment. */
+  const after = (s: 'cart' | 'tip' | 'details'): PreviewScreen => (s === 'cart' ? checkoutSteps[0] : checkoutSteps[checkoutSteps.indexOf(s) + 1]) ?? 'pay';
+  const before = (s: 'tip' | 'details'): PreviewScreen => checkoutSteps[checkoutSteps.indexOf(s) - 1] ?? 'cart';
 
   const wide = frame === 'tablet';
   const panel = cartPanelShown(config.theme, FRAME_DEVICE_DP[frame]);
   const side = config.theme.categoryLayout !== 'top';
-  const motion = motionSpec(config.theme, config.general);
+  const motion = motionSpec(config.theme, config.general, config.motion);
+  const transitions = transitionSpec(config.motion, config.general);
   const colors = resolveThemeColors(config.theme);
   const cols = catalogColumns(config.theme.gridDensity, wide, panel, side);
 
   /** The window for [moment], if a rule for the kiosk asks one (true: shown). */
   const offerUpsell = (moment: UpsellMoment, then: PreviewScreen | null): boolean => {
     if (!config.general.upsellEnabled || upsellWin || kioskRules.length === 0) return false;
+    // "חובה / רשות / כבוי" for this moment (payment.stepModes.upsell*).
+    if (stepMode(config, upsellStepModeKey(moment)) === 'off') return false;
     const pick = pickKioskUpsell(kioskRules, moment, {
       asked: upsellAsked.current,
       inCart: cart.map((l) => l.product.id),
@@ -337,7 +376,7 @@ export function KioskPreview({
     });
     if (!pick) return false;
     upsellAsked.current = [...upsellAsked.current, pick.rule.id];
-    setUpsellWin({ pick, then, added: {} });
+    setUpsellWin({ pick, then, added: {}, moment });
     return true;
   };
   /** The order reached [code] (each step once in an order). */
@@ -347,11 +386,14 @@ export function KioskPreview({
     return offerUpsell({ kind: 'step', code }, then);
   };
 
-  const navigate = (s: PreviewScreen) => {
+  const navigate = (target: PreviewScreen) => {
     // On the way to payment: a rule for "to_pay" first (the menu's "בכל הזמנה" too).
-    if (s === 'pay' && (screen === 'cart' || screen === 'catalog') && reachStep('to_pay', 'pay')) return;
+    if (target === 'pay' && (screen === 'cart' || screen === 'catalog') && reachStep('to_pay', 'pay')) return;
+    // "לתשלום" from the basket: the checkout steps first (the tip, the details), as on the kiosk.
+    const s = target === 'pay' && (screen === 'cart' || screen === 'catalog') ? after('cart') : target;
     setConfirming(false);
     if (s !== 'product') setProductId(null);
+    if (s === 'cart' || s === 'attract') setPreviewTip(0);
     setVisit((v) => v + 1);
     onScreen(s);
     if (s === 'attract') {
@@ -376,6 +418,12 @@ export function KioskPreview({
     else setUpsellWin({ ...upsellWin, added: { ...upsellWin.added, [p.id]: (upsellWin.added[p.id] ?? 0) + 1 } });
   };
 
+  // "כיתוב רץ" on the attract screen: its start button and the rest are laid out on what the strip leaves.
+  const band = screen === 'attract' ? tickerBandPx(config, 'attract', new Date(nowMs), PREVIEW_FOOTER_PX) : { top: 0, bottom: 0 };
+  const attractH = FRAME_SIZE[frame].h - band.top - band.bottom;
+  const attractBox = ctaBox(config.attract.cta, FRAME_SIZE[frame].w, attractH);
+  /** The start button's box over the whole frame (below a strip at the top). */
+  const ctaOnFrame = band.top > 0 ? { ...attractBox, y: attractBox.y + band.top } : attractBox;
   const model: PreviewModel = {
     cfg: config,
     c: colors,
@@ -411,12 +459,13 @@ export function KioskPreview({
     service,
     setService,
     motion,
+    transitions,
     justAddedId: justAdded,
     cartBump,
     setCartTarget,
     panel,
-    screen: { w: FRAME_SIZE[frame].w, h: FRAME_SIZE[frame].h },
-    ctaBox: ctaBox(config.attract.cta, FRAME_SIZE[frame].w, FRAME_SIZE[frame].h),
+    screen: { w: FRAME_SIZE[frame].w, h: attractH },
+    ctaBox: attractBox,
   };
 
   // A flight that lands bounces the badge then; a reduce-motion fade already did at the tap.
@@ -467,6 +516,58 @@ export function KioskPreview({
       onScreen('catalog');
     }
   };
+
+  /* "הצג": play one transition here, through the screens' own paths (a tap on the rail, a "+"). */
+  const onCatalog = screen === 'catalog' || screen === 'product';
+  const toCatalogThen = (then: () => void) => {
+    if (screen === 'catalog') return then();
+    navigate('catalog');
+    window.setTimeout(then, (screen === 'product' ? 60 : transitions.screenMs) + 160);
+  };
+  const tapNextCategory = () => {
+    const items = Array.from(screenRef.current?.querySelectorAll<HTMLElement>('[data-cat]') ?? []);
+    if (items.length < 2) return;
+    const at = items.findIndex((el) => el.dataset.active !== undefined);
+    items[(at + 1) % items.length].click();
+  };
+  const tapAdd = () => {
+    const root = screenRef.current;
+    const plus = root?.querySelector<HTMLElement>('[data-add="direct"]');
+    if (plus) return plus.click();
+    const card = root?.querySelector<HTMLElement>('[data-product]');
+    const p = allProducts.find((x) => x.id === card?.dataset.product && !x.soldOut);
+    if (card && p) model.quickAdd?.(p, card.getBoundingClientRect());
+  };
+  const nextScreen = (s: PreviewScreen): PreviewScreen => {
+    const service = config.general.serviceTypes.length > 1 && config.general.servicePlacement !== 'attract';
+    if (s === 'attract') return service ? 'service' : 'catalog';
+    if (s === 'service') return 'catalog';
+    if (s === 'catalog' || s === 'product') return 'cart';
+    if (s === 'cart') return after('cart');
+    if (s === 'tip' || s === 'details') return after(s);
+    if (s === 'pay') return 'success';
+    return 'attract';
+  };
+  const play = (demo: MotionDemo) => {
+    if (demo === 'screenChange') return navigate(nextScreen(screen));
+    if (demo === 'sheet') {
+      const open = () => {
+        if (!firstAvailable) return;
+        setProductId(firstAvailable.id);
+        onScreen('product');
+      };
+      if (screen === 'product') {
+        navigate('catalog');
+        window.setTimeout(open, transitions.sheetMs + 200);
+      } else if (onCatalog) open();
+      else toCatalogThen(open);
+      return;
+    }
+    if (demo === 'addToCart') return toCatalogThen(tapAdd);
+    // The category switch, its dishes coming in, the speed: the next category on the rail.
+    toCatalogThen(tapNextCategory);
+  };
+  useImperativeHandle(controls, () => ({ play }));
 
   const size = FRAME_SIZE[frame];
   const bgImage = config.theme.backgroundImage?.url;
@@ -538,6 +639,7 @@ export function KioskPreview({
           ))}
         </div>
       ) : null}
+      {screen === 'paused' && pausedVariant === 'paused' ? <p className="text-xs text-muted-foreground">{t('rest.sampleEnd')}</p> : null}
 
       <div className="flex justify-center">
         <div
@@ -575,23 +677,46 @@ export function KioskPreview({
               </>
             ) : null}
             <div className={cn('relative h-full', frame === 'phone' && 'pt-7')}>
-              <div key={screen === 'product' ? 'catalog' : screen} className="h-full animate-in fade-in slide-in-from-bottom-2 duration-300">
-                {screen === 'attract' ? (
-                  <AttractScreen m={model} />
-                ) : screen === 'service' ? (
-                  <ServiceScreen m={model} />
-                ) : screen === 'catalog' || screen === 'product' ? (
-                  <CatalogScreen m={model} activeCategory={activeCategory} onCategory={setActiveCategory} />
-                ) : screen === 'cart' ? (
-                  <CartScreen m={model} upsell={upsell} />
-                ) : screen === 'pay' ? (
-                  <PayScreen m={model} />
-                ) : screen === 'success' ? (
-                  <SuccessScreen m={model} />
-                ) : (
-                  <PausedScreen m={model} variant={pausedVariant} />
+              {/* "מעבר בין מסכים": the screen swaps with the chosen transition (the product sheet belongs to the catalog). */}
+              <KioskSwap
+                id={screen === 'product' ? 'catalog' : screen}
+                fx={transitions.screenChange}
+                ms={transitions.screenMs}
+                order={screenOrder}
+                className="h-full"
+                slotClassName="h-full"
+                render={(s) => (
+                  // "כיתוב רץ" as the first or last row of the screens without a header bar of their own.
+                  <TickerFrame m={model} screen={s} footerGap={PREVIEW_FOOTER_PX}>{
+                  s === 'attract' ? (
+                    <AttractScreen m={model} />
+                  ) : s === 'service' ? (
+                    <ServiceScreen m={model} />
+                  ) : s === 'catalog' ? (
+                    <CatalogScreen m={model} activeCategory={activeCategory} onCategory={setActiveCategory} />
+                  ) : s === 'cart' ? (
+                    <CartScreen m={model} upsell={upsell} />
+                  ) : s === 'tip' ? (
+                    <TipScreen
+                      m={model}
+                      steps={checkoutSteps}
+                      onDone={(tip) => {
+                        setPreviewTip(tip);
+                        navigate(after('tip'));
+                      }}
+                    />
+                  ) : s === 'details' ? (
+                    <DetailsPreview m={model} onDone={() => navigate(after('details'))} onBack={() => navigate(before('details'))} />
+                  ) : s === 'pay' ? (
+                    <PayScreen m={model} tipAgorot={previewTip} />
+                  ) : s === 'success' ? (
+                    <SuccessScreen m={model} />
+                  ) : (
+                    <PausedScreen m={model} variant={pausedVariant} pause={{ until: samplePauseEnd(nowMs) }} />
+                  )
+                  }</TickerFrame>
                 )}
-              </div>
+              />
               {upsellWin ? (
                 <UpsellWindow
                   m={model}
@@ -604,6 +729,7 @@ export function KioskPreview({
                   onAdd={addFromUpsell}
                   onContinue={closeUpsell}
                   onSkip={closeUpsell}
+                  required={stepMode(config, upsellStepModeKey(upsellWin.moment ?? { kind: 'added' })) === 'required'}
                 />
               ) : null}
               {screen === 'product' && product ? (
@@ -619,12 +745,12 @@ export function KioskPreview({
               ) : null}
               {screen === 'attract' ? (
                 config.general.servicePlacement === 'attract' && config.general.serviceTypes.length > 1 ? (
-                  <AttractServiceButtons m={model} box={model.ctaBox} onPick={(t) => {
+                  <AttractServiceButtons m={model} box={ctaOnFrame} onPick={(t) => {
                     setService(t);
                     navigate('catalog');
                   }} />
                 ) : (
-                  <AttractCta m={model} box={model.ctaBox} screen={model.screen} onMove={onCtaMove} />
+                  <AttractCta m={model} box={ctaOnFrame} screen={{ w: FRAME_SIZE[frame].w, h: FRAME_SIZE[frame].h - band.bottom }} onMove={onCtaMove} />
                 )
               ) : null}
               <div className="pointer-events-none absolute inset-x-0 bottom-0.5 z-20 text-center text-[8px] font-medium tracking-[0.12em]" style={{ color: colors.mutedText, opacity: 0.6 }}>

@@ -133,6 +133,8 @@ class KioskOrder(Base):
         UniqueConstraint("machine_id", "local_id", name="uq_kiosk_orders_machine_local"),
         Index("ix_kiosk_orders_machine_date", "machine_id", "business_date"),
         Index("ix_kiosk_orders_shop_date", "shop_id", "business_date"),
+        # "תשלום בקופה": the shop's orders waiting at the tills.
+        Index("ix_kiosk_orders_shop_open", "shop_id", "open_state"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -155,13 +157,47 @@ class KioskOrder(Base):
     item_count = Column(Integer, nullable=False, default=0)
     total_agorot = Column(BigInteger, nullable=False, default=0)
     tip_agorot = Column(BigInteger, nullable=False, default=0)
-    paid_at = Column(DateTime(timezone=True), nullable=False)
+    #: Null while an order to pay at the till is open (`pay_at_till`).
+    paid_at = Column(DateTime(timezone=True), nullable=True)
     bon_status = Column(String(16), nullable=False)
     bon_detail = Column(String(500), nullable=True)
     receipt_status = Column(String(16), nullable=False)
     status = Column(String(24), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    # ── "תשלום בקופה" (docs/SPEC_KIOSK.md §23, app/services/kiosk_open_orders.py) ──────────
+    # An order the customer chose to pay at the till: the kiosk wrote NO tax document for it.
+    # It waits here, open, for one of the shop's tills — which locks it, takes the money with
+    # its own document, and marks it paid (or cancels it with a reason). `paid_at` stays null
+    # until then. A kiosk-paid order has `pay_at_till` false and `open_state` null.
+    pay_at_till = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: open → paid | cancelled | expired.
+    open_state = Column(String(16), nullable=True)
+    #: What is left for the till to take (the order + its tip − the vouchers already applied).
+    due_agorot = Column(BigInteger, nullable=True)
+    voucher_agorot = Column(BigInteger, nullable=True)
+    #: The order's lines as the tills list and print them: [{name, quantity, totalAgorot, notes}].
+    lines = Column(KioskJSON, nullable=True)
+    #: The kiosk's basket as the till rebuilds it (opaque here: the Android HeldSaleCodec form).
+    cart = Column(KioskJSON, nullable=True)
+    #: Prepaid vouchers redeemed on the kiosk towards this order, pending until it is paid:
+    #: [{redemptionId, serial, amountAgorot, eventName, redeemed: [{productId, tillProductId, name, quantity}]}].
+    vouchers = Column(KioskJSON, nullable=True)
+    #: Not paid by then: expired (from the kiosk's `payment.cashAtTillExpiryMin`).
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    #: "בטיפול בקופה X": the till paying it now (a lock that goes stale on its own).
+    locked_by_machine_id = Column(UUID(as_uuid=True), nullable=True)
+    locked_by_name = Column(String(200), nullable=True)
+    locked_at = Column(DateTime(timezone=True), nullable=True)
+    paid_by_machine_id = Column(UUID(as_uuid=True), nullable=True)
+    paid_by_name = Column(String(200), nullable=True)
+    #: Paid, cancelled or expired: when, why (a cancel's reason; "expired"), by whom.
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+    close_reason = Column(String(300), nullable=True)
+    closed_by_name = Column(String(200), nullable=True)
+    #: "שלח למטבח לפני תשלום": the kiosk already printed its bon — the till must not again.
+    kitchen_sent = Column(Boolean, nullable=False, default=False, server_default="false")
 
 
 class KioskPickupCounter(Base):

@@ -4,13 +4,16 @@
  * customer the same way:
  *
  *  - attract → service type (skipped when only one) → catalog → product → cart (or "דלג על
- *    סל": straight to payment, or a mini confirm) → details (only when something is asked)
+ *    סל": straight to payment, or a mini confirm) → details (only when something is asked: the
+ *    checkout steps — the customer's details and / or the tip, in the configured order)
  *    → payment on the terminal → success → back to the attract screen;
  *  - nothing resets, pauses or closes the kiosk while a payment is on its way or its result
  *    is unknown — the inactivity timer does not even run there;
  *  - a pause, the opening hours and the terminal's state take effect when the kiosk is idle or
  *    once the customer on it is done — never in the middle of a payment.
  */
+
+import { kioskTipAsked } from '@dash-lib/kioskConfig';
 
 export type KioskScreen =
   | 'setup'
@@ -72,7 +75,10 @@ export const idle = (s: KioskFlowState) => !ORDERING.has(s.screen) && s.screen !
 export interface KioskFlowRules {
   services: KioskService[];
   skipCart: KioskSkipCart;
+  /** Name / phone shown, or eat-in with the table asked (never the tip). */
   asksDetails: (service: KioskService | null) => boolean;
+  /** "טיפ לצוות" is asked before the payment (kioskTipAsked): a step of its own on the details screen. */
+  asksTip?: boolean;
   cartEmpty: boolean;
   detailsStep: KioskDetailsStep;
   /** "לקחת / לשבת" is chosen on the attract screen: no service screen to go back to. */
@@ -156,11 +162,15 @@ function afterService(s: KioskFlowState, r: KioskFlowRules): KioskFlowState {
   return { ...s, screen: 'catalog' };
 }
 
+/**
+ * "לתשלום": the details screen first when it has a step now — the details (before the payment, or
+ * set for an earlier step and not given yet; never those asked after the payment) or the tip.
+ */
 function checkout(s: KioskFlowState, r: KioskFlowRules): KioskFlowState {
   if (r.cartEmpty) return s;
   const asks =
     r.asksDetails(s.service) && (r.detailsStep === 'before_pay' ? true : r.detailsStep === 'after_pay' ? false : !s.detailsDone);
-  return asks ? details(s, 'pay') : { ...s, screen: 'pay', cameFrom: s.screen, pay: 'idle' };
+  return asks || r.asksTip ? details(s, 'pay') : { ...s, screen: 'pay', cameFrom: s.screen, pay: 'idle' };
 }
 
 export type KioskBackAction = 'navigate' | 'confirm_leave' | 'cancel_payment' | 'blocked' | 'none';
@@ -216,7 +226,8 @@ export function reduce(s: KioskFlowState, e: KioskEvent, r: KioskFlowRules): Kio
       if (s.screen !== 'details') return s;
       const next = s.detailsNext ?? 'pay';
       if (next === 'success') return { ...s, screen: 'success', detailsDone: true, detailsNext: null };
-      if (next === 'pay') return r.cartEmpty ? s : { ...s, screen: 'pay', pay: 'idle', detailsDone: true, detailsNext: null };
+      // Before the payment with the details asked after it: only the tip was here — they are still to come.
+      if (next === 'pay') return r.cartEmpty ? s : { ...s, screen: 'pay', pay: 'idle', detailsDone: r.detailsStep === 'after_pay' ? s.detailsDone : true, detailsNext: null };
       return { ...s, screen: next, detailsDone: true, detailsNext: null, cameFrom: 'details' };
     }
     case 'back':
@@ -278,7 +289,7 @@ function back(s: KioskFlowState, r: KioskFlowRules): KioskFlowState {
     }
     case 'pay':
       if (holds(s.pay) || s.pay === 'approved') return s;
-      if (r.detailsStep === 'before_pay' && r.asksDetails(s.service)) return { ...s, screen: 'details', pay: 'idle', detailsNext: 'pay' };
+      if ((r.detailsStep === 'before_pay' && r.asksDetails(s.service)) || r.asksTip) return { ...s, screen: 'details', pay: 'idle', detailsNext: 'pay' };
       return { ...s, screen: r.skipCart === 'off' ? 'cart' : 'catalog', pay: 'idle' };
     case 'success':
       return rest(s);
@@ -331,7 +342,17 @@ export function successDone(s: KioskFlowState, successAtMs: number | null, nowMs
 
 export interface FlowConfigIn {
   general: { serviceTypes: string[]; skipCart: string; askTableNumber: boolean; servicePlacement?: string };
-  payment: { customerName: string; customerPhone: string; tipEnabled: boolean; detailsStep?: string; tableNumber?: string };
+  payment: {
+    customerName: string;
+    customerPhone: string;
+    tipEnabled: boolean;
+    tipPresets?: number[];
+    tipOther?: boolean;
+    detailsStep?: string;
+    tableNumber?: string;
+    /** "חובה / רשות / כבוי" per step (kioskConfig.ts stepMode, docs/SPEC_KIOSK_INSIGHTS.md §4). */
+    stepModes?: Partial<Record<string, string>>;
+  };
 }
 
 const DETAILS_STEPS: KioskDetailsStep[] = ['after_service', 'before_cart', 'before_pay', 'after_pay'];
@@ -343,6 +364,8 @@ export function detailsStepOf(cfg: FlowConfigIn): KioskDetailsStep {
 
 export function servicesOf(cfg: FlowConfigIn): KioskService[] {
   const list = (cfg.general.serviceTypes ?? []).filter((s): s is KioskService => s === 'take_away' || s === 'eat_in');
+  // "כבוי" (stepModes.service): never asked — every order is the first type.
+  if (list.length > 1 && cfg.payment.stepModes?.service === 'off') return [list[0]];
   return list.length > 0 ? list : ['take_away'];
 }
 
@@ -351,19 +374,28 @@ export function serviceOnAttract(cfg: FlowConfigIn): boolean {
   return cfg.general.servicePlacement === 'attract' && servicesOf(cfg).length > 1;
 }
 
+const shown = (v: string | undefined) => v === 'optional' || v === 'required';
+
+/** The customer's details are asked for `service`: the name or the phone shown, or eat-in with the table asked. */
+export function detailsAsked(cfg: FlowConfigIn, service: KioskService | null): boolean {
+  return (
+    shown(cfg.payment.customerName) ||
+    shown(cfg.payment.customerPhone) ||
+    (service === 'eat_in' && (cfg.general.askTableNumber || shown(cfg.payment.tableNumber)))
+  );
+}
+
 /** KioskFlowRules.of: what is asked, by the config. */
 export function rulesOf(cfg: FlowConfigIn, cartEmpty: boolean): KioskFlowRules {
-  const shown = (v: string | undefined) => v === 'optional' || v === 'required';
   const step = detailsStepOf(cfg);
   const skip = (['off', 'direct', 'confirm'] as const).includes(cfg.general.skipCart as KioskSkipCart) ? (cfg.general.skipCart as KioskSkipCart) : 'off';
   return {
     services: servicesOf(cfg),
     skipCart: skip,
-    asksDetails: (service) =>
-      shown(cfg.payment.customerName) ||
-      shown(cfg.payment.customerPhone) ||
-      (cfg.payment.tipEnabled && step !== 'after_pay') ||
-      (service === 'eat_in' && (cfg.general.askTableNumber || shown(cfg.payment.tableNumber))),
+    asksDetails: (service) => detailsAsked(cfg, service),
+    asksTip:
+      kioskTipAsked({ tipEnabled: cfg.payment.tipEnabled, tipPresets: cfg.payment.tipPresets ?? [], tipOther: cfg.payment.tipOther ?? true }) &&
+      cfg.payment.stepModes?.tip !== 'off',
     cartEmpty,
     detailsStep: step,
     serviceOnAttract: serviceOnAttract(cfg),

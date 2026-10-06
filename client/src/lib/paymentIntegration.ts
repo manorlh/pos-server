@@ -202,13 +202,15 @@ export const FIELD_LABELS: Record<PaymentFieldKey, string> = {
 /**
  * The fields each integration needs before its first card, in the order the form shows
  * them (the server's REQUIRED_FIELDS). `auto` resolves to one of the others first.
- * SynqPay's host only for a connection by address (`missingRequiredFields`).
+ * SynqPay's host only for a connection by address (`missingRequiredFields`). SynqPay's API
+ * key is not one: the till pairs with its terminal and sends the key up (SPEC_SYNQPAY.md
+ * §2.2) — "not paired yet" is a status line beside the form (`synqpayPairingStatus`).
  */
 export const REQUIRED_FIELDS: Record<Exclude<PaymentIntegration, 'auto'>, readonly PaymentFieldKey[]> = {
   agamento: [],
   nayax_lan: ['nayaxDeviceHost'],
   zcredit: ['zcreditTerminalNumber', 'zcreditPassword', 'zcreditPinpadId', 'zcreditMode'],
-  synqpay: ['synqpayDeviceModel', 'synqpayConnection', 'synqpayHost', 'synqpayApiKey'],
+  synqpay: ['synqpayDeviceModel', 'synqpayConnection', 'synqpayHost'],
   tap_to_pay: [],
 };
 
@@ -289,7 +291,7 @@ export const PI_TEXT = {
   shopCreateHint:
     'חל על כל הקופות בחנות; פרטי החיבור (כתובת/מספר מסוף) מוגדרים בהגדרות החנות או הקופה. אפשר לשנות לכל קופה בנפרד',
   synqpayHint:
-    'מסוף SynqPay חיצוני לקופה (טאבלט / קיוסק) — ברשת או בכבל USB. המפתח מתקבל בצימוד המסוף. קופה שרצה על מסוף SynqPay עצמו גובה בו כמסוף מובנה, בלי הגדרה.',
+    'מסוף SynqPay חיצוני לקופה (טאבלט / קיוסק) — ברשת או בכבל USB. אין צורך להזין מפתח: הקופה מצמדת את עצמה למסוף. קופה שרצה על מסוף SynqPay עצמו גובה בו כמסוף מובנה, בלי הגדרה ובלי צימוד.',
   synqpayIdentityHint:
     'זהות המסוף נבדקת: יש להגדיר "מספר מסוף צפוי" ברמת הקופה עצמה — אחרת, או כשהמסוף המחובר אחר, האשראי ננעל (הקופה ממשיכה לעבוד).',
   synqpayModelPlaceholder: 'בחרו דגם',
@@ -305,7 +307,15 @@ export const PI_TEXT = {
   synqpayUsbInvalid: 'VVVV:PPPP בהקס או COMn, או ריק לזיהוי אוטומטי',
   synqpaySerialHint: 'כפי שמופיע במסוף — לצימוד ולבדיקה שזה המסוף הנכון',
   synqpaySerialInvalid: '4–32 אותיות באנגלית, ספרות או מקף',
-  synqpayKeyHint: 'מתקבל בצימוד (pair / authenticate) — 8 תווים, למשל 1234abcd',
+  synqpayKeyHint: 'רק במקרה חריג — בדרך כלל הקופה מקבלת את המפתח בצימוד ושולחת אותו לכאן. 8 תווים, למשל 1234abcd',
+  synqpayPairingTitle: 'צימוד המסוף',
+  synqpayPairingFromTill: 'הצימוד מתבצע מהקופה',
+  synqpayPairingHowTo:
+    'בקופה: הגדרות ← מסוף אשראי ← "צימוד מסוף SynqPay" (בקיוסק: מסך הטכנאי). המסוף מציג קוד בן 6 ספרות שמוקלד בקופה; המפתח נשמר בקופה ומוצפן כאן. נדרש אישור מנהל.',
+  synqpayPairingPerTill: 'הצימוד מתבצע בכל קופה בנפרד, מהקופה עצמה — המפתח נשמר ברמת הקופה.',
+  synqpayNotPaired: 'טרם צומד — יש לבצע צימוד מהקופה',
+  synqpayStatusUnknown: 'מצב הצימוד לא ידוע (לא ניתן לטעון מהשרת)',
+  synqpayManualToggle: 'הזנת מפתח ידנית',
   synqpayKeyInvalid: 'אותיות באנגלית וספרות בלבד, עד 64 תווים',
   synqpaySerialUndocumented: 'חיבור סריאלי מתועד ב-SynqPay רק לדגם RX5000 — יש לוודא מול SynqPay',
   synqpayHostHintLan: 'כתובת IPv4 או שם מארח, בלי http:// ובלי פורט. מסוף בחיבור IP over USB — הכתובת שהוא מקבל בכבל',
@@ -601,6 +611,22 @@ export interface SecretStatus {
   source?: SettingsLevelName | string | null;
   own?: boolean;
   updatedAt?: string | null;
+  /** SynqPay's key only: where it came from and whether the terminal refused it. */
+  pairing?: SynqpayPairingInfo | null;
+}
+
+/** `secrets.synqpayApiKey.pairing` of GET /payment-integration/context (never the key). */
+export interface SynqpayPairingInfo {
+  /** `till_pairing` (the till paired), `dashboard` (typed by hand), null (older row). */
+  origin?: 'till_pairing' | 'dashboard' | string | null;
+  pairedAt?: string | null;
+  pairedByMachineId?: string | null;
+  pairedByMachineName?: string | null;
+  terminalSerial?: string | null;
+  /** The terminal refused this key (HTTP 401 / NOT_AUTHENTICATED), as a till reported it. */
+  rejectedAt?: string | null;
+  rejectedByMachineId?: string | null;
+  rejectedByMachineName?: string | null;
 }
 export type SecretsStatus = Partial<Record<PaymentSecretKey, SecretStatus>>;
 
@@ -800,6 +826,69 @@ export function synqpayWarnings(
     out.push(PI_TEXT.synqpaySerialUndocumented);
   }
   return out;
+}
+
+// ── SynqPay's pairing (docs/SPEC_SYNQPAY.md §2.2) ─────────────────────────────
+
+export type SynqpayPairingTone = 'ok' | 'warn' | 'error' | 'muted';
+
+export interface SynqpayPairingLine {
+  tone: SynqpayPairingTone;
+  text: string;
+  /** The terminal's serial number it was paired by, when known. */
+  detail: string | null;
+}
+
+/** "7.10.2026 14:05" in the browser's own time; null for nothing or an unreadable time. */
+export function formatPairingTime(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const two = (n: number) => String(n).padStart(2, '0');
+  return `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()} ${two(d.getHours())}:${two(d.getMinutes())}`;
+}
+
+/**
+ * The status line under "הצימוד מתבצע מהקופה": not paired yet / paired on <date> by <till> /
+ * the key refused by the terminal (a till reported HTTP 401 / NOT_AUTHENTICATED) / typed by
+ * hand. [status] is `secrets.synqpayApiKey` of the context; undefined when it did not load.
+ * Above a till, with no key on the way: pairing is per till.
+ */
+export function synqpayPairingStatus(
+  status: SecretStatus | null | undefined,
+  opts: { level?: SettingsLevelName | null; format?: (iso: string) => string | null } = {},
+): SynqpayPairingLine {
+  const format = opts.format ?? formatPairingTime;
+  const when = (iso: string | null | undefined) => (iso ? format(iso) : null);
+  if (!status) return { tone: 'muted', text: PI_TEXT.synqpayStatusUnknown, detail: null };
+  if (!status.set) {
+    return opts.level === 'machine' || !opts.level
+      ? { tone: 'warn', text: PI_TEXT.synqpayNotPaired, detail: null }
+      : { tone: 'muted', text: PI_TEXT.synqpayPairingPerTill, detail: null };
+  }
+  const p = status.pairing ?? null;
+  const serial = p?.terminalSerial ? `מסוף ${p.terminalSerial}` : null;
+  const source = cleanLevel(status.source);
+  const where = !status.own && source ? ` ברמת ${LEVEL_LABELS[source]}` : '';
+  if (p?.rejectedAt) {
+    const at = when(p.rejectedAt);
+    const by = p.rejectedByMachineName ? ` (דווח ע"י ${p.rejectedByMachineName})` : '';
+    return {
+      tone: 'error',
+      text: `המפתח נדחה במסוף${at ? ` ב-${at}` : ''}${by} — יש לבצע צימוד מחדש מהקופה`,
+      detail: serial,
+    };
+  }
+  if (p?.origin === 'till_pairing') {
+    const at = when(p.pairedAt);
+    const by = p.pairedByMachineName ? ` ע"י ${p.pairedByMachineName}` : '';
+    return { tone: 'ok', text: `צומד${at ? ` ב-${at}` : ''}${by}${where}`, detail: serial };
+  }
+  if (p?.origin === 'dashboard') {
+    const at = status.own ? when(status.updatedAt) : null;
+    return { tone: 'ok', text: `מפתח הוזן ידנית${where}${at ? ` (${at})` : ''}`, detail: null };
+  }
+  return { tone: 'ok', text: secretSavedLabel('synqpayApiKey', source, status.own === true), detail: null };
 }
 
 export function hasPaymentIntegrationErrors(errors: PaymentIntegrationErrors): boolean {

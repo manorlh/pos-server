@@ -81,8 +81,12 @@ def role_of(machine: POSMachine) -> str:
 
 
 def lan_members(machines: Iterable[POSMachine]) -> List[POSMachine]:
-    """The tills of the shop's LAN group: every one but the independent tills."""
-    return [m for m in machines if not is_independent(m)]
+    """
+    The tills of the shop's LAN group: every one but the independent tills — and never a
+    display device (a KDS / the "מוכן / לא מוכן" board, app/services/display_devices.py),
+    which is no till: never the main till, the tables host or the print server.
+    """
+    return [m for m in machines if not is_independent(m) and getattr(m, "is_fiscal", True) is not False]
 
 
 def till_label(machine: POSMachine) -> str:

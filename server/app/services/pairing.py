@@ -98,6 +98,8 @@ def create_pairing_code(
     device_model: Optional[str] = None,
     device_role: Optional[str] = None,
     kiosk_options: Optional[dict] = None,
+    platform: Optional[str] = None,
+    kds_options: Optional[dict] = None,
 ) -> PairingCode:
     """
     Create a new pairing code, optionally with company/shop pre-assignment.
@@ -107,7 +109,10 @@ def create_pairing_code(
     `device_model` (`DEVICE_MODELS`) is copied onto the machine the code pairs, unless the
     device names a model of its own (`detect_device_model`). `device_role` "kiosk" (with
     `kiosk_options`, checked by `device_profile.check_pairing_request`) makes the new
-    machine a kiosk as it pairs (docs/SPEC_DEVICE_ROLE_MODEL.md).
+    machine a kiosk as it pairs (docs/SPEC_DEVICE_ROLE_MODEL.md); "kds" /
+    "order_status_board" (with `kds_options`) a display device — not a till
+    (app/services/display_devices.py). `platform` ("android" | "windows") refuses a device
+    of the other platform; None checks nothing.
     """
     code = generate_pairing_code()
     while db.query(PairingCode).filter(PairingCode.code == code).first():
@@ -133,6 +138,8 @@ def create_pairing_code(
         device_model=device_model,
         device_role=device_role,
         kiosk_options=kiosk_options,
+        platform=platform,
+        kds_options=kds_options,
         expires_at=expires_at,
         is_used=False,
     )
@@ -160,6 +167,12 @@ def validate_pairing_code(
     if datetime.now(timezone.utc) > pairing_code.expires_at:
         return None
 
+    # "התקנה לווינדוס או לאנדרואיד": a code for one platform refuses a device of the other —
+    # 422 `platform_mismatch` (`display_devices.PlatformMismatch`) before anything is created.
+    from app.services import display_devices
+
+    device_platform = display_devices.check_platform(pairing_code, device_info)
+
     tenant_id = pairing_code.tenant_id or resolve_tenant_id_for_user(
         db, pairing_code.distributor_id
     )
@@ -186,6 +199,8 @@ def validate_pairing_code(
             pos_machine.device_model = replacement_model
         if pairing_code.device_model:
             pos_machine.device_model_chosen = pairing_code.device_model
+        # The new unit's platform; its role and fiscal status are the row's own.
+        pos_machine.platform = device_platform
         till_replacement.record(db, pos_machine, pairing_code, replaced_before, device_info=device_info)
     else:
         pos_machine = create_pos_machine(
@@ -195,6 +210,10 @@ def validate_pairing_code(
             device_info=device_info,
             machine_name=machine_name,
             device_model=pairing_code.device_model,
+            # "KDS ומסך מוכן / לא מוכן אינם מערכות קופה וחשבונאיות": a display code makes a
+            # non-fiscal machine from the start, so it never draws a register number.
+            is_fiscal=display_devices.is_fiscal_role(pairing_code.device_role),
+            platform=device_platform,
         )
 
     pairing_code.is_used = True
@@ -219,6 +238,9 @@ def validate_pairing_code(
     from app.services import device_profile
 
     device_profile.apply_on_pairing(db, pairing_code, pos_machine)
+    # A KDS / board code: its screen row and `kdsScreen` (never fails the pairing; the
+    # machine is non-fiscal whatever happens there).
+    display_devices.apply_on_pairing(db, pairing_code, pos_machine)
 
     return pos_machine
 
@@ -239,8 +261,16 @@ def create_pos_machine(
     machine_name: Optional[str] = None,
     pairing_session_id: Optional[uuid.UUID] = None,
     device_model: Optional[str] = None,
+    is_fiscal: bool = True,
+    platform: Optional[str] = None,
 ) -> POSMachine:
-    """Create a new POS machine row in PAIRED status (not yet assigned to a shop)."""
+    """
+    Create a new POS machine row in PAIRED status (not yet assigned to a shop).
+    `is_fiscal` False: a display device (app/services/display_devices.py). `platform`
+    defaults to what `device_info` says.
+    """
+    from app.services.display_devices import platform_of_device_info
+
     machine_code = f"MACHINE-{uuid.uuid4().hex[:8].upper()}"
     while db.query(POSMachine).filter(POSMachine.machine_code == machine_code).first():
         machine_code = f"MACHINE-{uuid.uuid4().hex[:8].upper()}"
@@ -273,6 +303,8 @@ def create_pos_machine(
         serial_number=serial_from_device_info(device_info),
         # Where it came from: the vendor SDK, Android's own, or `ro.serialno` (device_identity).
         serial_source=_serial_source(device_info),
+        is_fiscal=bool(is_fiscal),
+        platform=platform or platform_of_device_info(device_info),
     )
     db.add(pos_machine)
     db.flush()
