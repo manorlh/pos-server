@@ -23,6 +23,7 @@ import { toast } from 'sonner';
 import Link from 'next/link';
 import { Monitor, Plus, RefreshCw, Info, Trash2, Smartphone, FilePlus2, Search, Send } from 'lucide-react';
 import { ClockDriftBanner } from '@/components/dashboard/machine-health';
+import { DocumentPrefixConflictsAlert } from '@/components/dashboard/machines/document-prefix';
 import { formatDistanceToNow, format } from 'date-fns';
 import { QRCodeSVG } from 'qrcode.react';
 import type { PairingSessionCreateResponse } from '@/lib/types';
@@ -600,6 +601,12 @@ export default function MachinesPage() {
 
       <ScopeGate resolution={resolution}>
       {!isLoading ? <ClockDriftBanner machines={visibleMachines} /> : null}
+      {/* "קידומות מסמכים כפולות בעסק" (docs/SPEC_DOCUMENT_PREFIX.md §5): the business's one tax file. */}
+      <DocumentPrefixConflictsAlert
+        companyId={effective.companyId}
+        shopId={effective.shopId}
+        canEdit={canProduceZ}
+      />
       {!isLoading ? (
         <TerminalMismatchAlert
           count={terminalMismatchCount}

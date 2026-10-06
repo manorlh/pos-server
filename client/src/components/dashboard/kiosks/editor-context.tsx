@@ -18,6 +18,7 @@ import {
   type UiStyle,
 } from '@/lib/kioskConfig';
 import type { KioskLevel, KioskServerError, KioskSourceCatalog } from '@/lib/kioskApi';
+import type { MotionDemo } from './kiosk-preview';
 
 import type { PreviewScreen } from '@/kiosk-shared/types';
 
@@ -50,6 +51,8 @@ export interface KioskEditorValue {
   /** Pick a "סגנון ממשק": values that follow the old style move to the new one's. */
   setUiStyle: (style: UiStyle) => void;
   showScreen: (screen: PreviewScreen) => void;
+  /** "הצג" of "הנפשות ומעברים": play that transition in the live preview. */
+  playMotion: (demo: MotionDemo) => void;
 }
 
 export const KioskEditorContext = createContext<KioskEditorValue | null>(null);

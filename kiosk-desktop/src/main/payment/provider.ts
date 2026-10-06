@@ -71,6 +71,11 @@ export interface PaymentProvider {
   readonly kind: ProviderKind;
   /** The address or account shown to staff (never a secret). */
   describe(): { kind: ProviderKind; address: string | null };
+  /**
+   * False: set up but unable to charge until staff act (SynqPay not paired yet — SPEC_SYNQPAY.md
+   * §2.2); the kiosk then reads its terminal as "unconfigured". Absent: configured.
+   */
+  readonly configured?: boolean;
   newReference(): string;
   check(timeoutMs?: number): Promise<CheckResult>;
   sale(req: SaleRequest): Promise<SaleResult>;
@@ -93,4 +98,6 @@ export interface ProviderContext {
   /** Till parameters (`pinpadAllowHttp`…). */
   parameter(key: string): unknown;
   log(msg: string): void;
+  /** The terminal refused the kiosk's key (SynqPay HTTP 401 / NOT_AUTHENTICATED): told to the cloud. */
+  onKeyRejected?(detail: string | null): void;
 }

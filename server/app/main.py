@@ -92,6 +92,12 @@ app = FastAPI(
     version="0.2.0",
 )
 
+# "מכשיר תצוגה אינו קופה": `{"detail": "device_not_fiscal", "message": <Hebrew>}` for a fiscal
+# action asked of a KDS / board (app/services/display_devices.py).
+from app.services.display_devices import DeviceNotFiscal, not_fiscal_handler  # noqa: E402
+
+app.add_exception_handler(DeviceNotFiscal, not_fiscal_handler)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -168,6 +174,11 @@ app.include_router(z_participation_router.router, prefix=_prefix)
 app.include_router(till_shop_z_local_router.router, prefix=_prefix)
 app.include_router(exceptions_router.router, prefix=_prefix)
 app.include_router(exceptions_router.till_router, prefix=_prefix)
+# "עסקאות שלא הושלמו" (docs/SPEC_FAILED_PAYMENTS.md): the till's failed payment attempts and the dashboard's list.
+from app.routers import failed_payments as failed_payments_router  # noqa: E402
+
+app.include_router(failed_payments_router.till_router, prefix=_prefix)
+app.include_router(failed_payments_router.router, prefix=_prefix)
 app.include_router(promotions_router.router, prefix=_prefix)
 app.include_router(tables_router.router, prefix=_prefix)
 app.include_router(printers_router.router, prefix=_prefix)
@@ -201,6 +212,10 @@ app.include_router(menu_broadcast_router.router, prefix=_prefix)
 from app.routers import payment_integration as payment_integration_router  # noqa: E402
 
 app.include_router(payment_integration_router.router, prefix=_prefix)
+# "צימוד מסוף SynqPay" from the till: the key it paired, a key the terminal refused (docs/SPEC_SYNQPAY.md §2.2).
+from app.routers import synqpay_pairing as synqpay_pairing_router  # noqa: E402
+
+app.include_router(synqpay_pairing_router.router, prefix=_prefix)
 # "שירות הודעות ו-019" + "מועדון לקוחות" and its public sign-up (docs/SPEC_NOTIFICATIONS_CLUB.md).
 from app.routers import club as club_router, notifications as notifications_router  # noqa: E402
 
@@ -227,13 +242,22 @@ app.include_router(kds_router.router, prefix=_prefix)
 # The customer self-order kiosk (app/routers/kiosks.py): the till's kiosk sync, orders,
 # pickup numbers and controller commands, and the dashboard's kiosks and their config.
 from app.routers import kiosks as kiosks_router  # noqa: E402
+# "ביצועי קיוסקים" / "תקינות מכשירים" (app/routers/kiosk_insights.py, docs/SPEC_KIOSK_INSIGHTS.md):
+# mounted first, so `/kiosks/health` is never read as a kiosk's id.
+from app.routers import kiosk_insights as kiosk_insights_router  # noqa: E402
 
+app.include_router(kiosk_insights_router.till_router, prefix=_prefix)
+app.include_router(kiosk_insights_router.router, prefix=_prefix)
 app.include_router(kiosks_router.till_router, prefix=_prefix)
 app.include_router(kiosks_router.router, prefix=_prefix)
 # A kiosk's alerts on the tills ("התראות לקופות", app/routers/kiosk_alerts.py).
 from app.routers import kiosk_alerts as kiosk_alerts_router  # noqa: E402
 
 app.include_router(kiosk_alerts_router.till_router, prefix=_prefix)
+# "תשלום בקופה": kiosk orders paid at the till (app/routers/kiosk_open_orders.py, SPEC_KIOSK §23).
+from app.routers import kiosk_open_orders as kiosk_open_orders_router  # noqa: E402
+
+app.include_router(kiosk_open_orders_router.till_router, prefix=_prefix)
 # "בדיקות ומידע קיוסק": where a till stands, for the kiosk's technician screen (app/routers/kiosk_technician.py).
 from app.routers import kiosk_technician as kiosk_technician_router  # noqa: E402
 

@@ -42,12 +42,19 @@ class PairingCode(Base):
     #: The hardware the code was generated for ("N55F" | "MODO" | "P18"), copied onto the machine
     #: when a device redeems it. Null leaves the machine's model as it is.
     device_model = Column(String(16), nullable=True)
-    #: "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): "till" | "kiosk", null = till
-    #: (a code from an older dashboard). A kiosk code is pre-assigned to a shop; the device
-    #: that redeems it is made a kiosk at once (`app.services.device_profile`).
-    device_role = Column(String(16), nullable=True)
+    #: "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): "till" | "kiosk" | "kds" |
+    #: "order_status_board", null = till (a code from an older dashboard). A kiosk, KDS or
+    #: board code is pre-assigned to a shop; the device that redeems it is made one at once
+    #: (`app.services.device_profile`, `app.services.display_devices`).
+    device_role = Column(String(32), nullable=True)
     #: The kiosk's options for a kiosk code: `{"name", "controllerMachineIds", "lockDevice"}`.
     kiosk_options = Column(JSON, nullable=True)
+    #: "android" | "windows": the platform the code is for. A device of the other platform
+    #: is refused (422 `platform_mismatch`) before anything is created. Null: no check (a
+    #: code from an older dashboard, a replacement code).
+    platform = Column(String(16), nullable=True)
+    #: A KDS / board code's screen: `{"name", "screenRole", "stationIds"}` (`kds.save_device`).
+    kds_options = Column(JSON, nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     is_used = Column(Boolean, default=False, nullable=False)
     used_at = Column(DateTime(timezone=True), nullable=True)

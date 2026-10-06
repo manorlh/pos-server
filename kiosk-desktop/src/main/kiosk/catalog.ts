@@ -74,6 +74,8 @@ export interface KProduct {
   dietaryTags: Array<(typeof DIETARY)[number]>;
   allergens: string[];
   sku: string | null;
+  /** The product's barcode, for a scan (core/kioskScan.ts: barcode, then SKU, as the till). */
+  barcode?: string | null;
   trackStock: boolean;
   /** A meal (menu.meals): its window opens, never the card's quick "+". */
   meal: boolean;
@@ -144,6 +146,7 @@ export function buildKioskCatalog(
         dietaryTags: DIETARY.filter((t) => tags.has(t)),
         allergens: Array.isArray(p.allergens) ? (p.allergens as string[]).map((a) => ALLERGEN_HE[a] ?? a) : [],
         sku: str(p.sku),
+        barcode: str(p.barcode),
         trackStock: p.trackStock === true,
         meal: mealIds.has(String(p.id)),
       };

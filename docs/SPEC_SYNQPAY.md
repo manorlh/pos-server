@@ -25,6 +25,9 @@
 - **לא נדרש חשבון כדי לקרוא את התיעוד** — הוא ציבורי. כן נדרש: מסוף SynqPay פיזי לצימוד (המפתח נוצר
   על המסוף), ולמעבר בענן (Linq) גם חשבון DMS. **אין לנו מסוף ואין מפתח**, ולכן שום דבר לא נבדק מול
   מכשיר.
+- **אף אחד לא מקליד מפתח** (שאלת הבעלים, 7.10.2026: "אני לא חושב שצריך מפתח API ב-SynqPay"): במצב
+  מובנה (Local Mode) אין מפתח בכלל; במסוף חיצוני **הקופה מצמדת את עצמה** — §2.2. בדשבורד המפתח אינו
+  שדה חובה; הזנה ידנית נשארה רק כאפשרות מתקדמת מקופלת.
 
 ### 1.1 תעבורות (Transports)
 
@@ -158,11 +161,14 @@ Castles / Verifone שמריץ את SynqPay) ופונה לשירות התשלום
 | `synqpayPort` | 1–65535; ברירת מחדל tcp 9000 / tls 9443, http 8000 / tls 8443 | לא |
 | `synqpayTls` | bool (ברירת מחדל false — צריך להתאים ל-`secureConnection` במסוף) | לא |
 | `synqpayUsbDevice` | ריק = זיהוי אוטומטי (מומלץ) · `VVVV:PPPP` (hex) · `COMn` (ווינדוס) — רק כשיש כמה התקנים | לא |
-| `synqpaySerialNumber` | המספר הסידורי של המסוף (לצימוד ולזיהוי מסוף אחר) | לא |
-| `synqpayApiKey` | **סוד** — מוצפן בשרת (`payment_integration_secrets`), write-only, לא חוזר לדפדפן; נשלח רק בסנכרון של קופה שמחייבת ב-SynqPay חיצוני | כן |
+| `synqpaySerialNumber` | המספר הסידורי של המסוף (לצימוד ולזיהוי מסוף אחר). לא הוגדר — הקופה שומרת ברמת הקופה את המספר שהמסוף צומד בו | לא |
+| `synqpayApiKey` | **סוד** — **מתקבל בצימוד מהקופה (§2.2)**, לא מוקלד. מוצפן בשרת (`payment_integration_secrets`) ברמת הקופה, write-only, לא חוזר לדפדפן; נשלח רק בסנכרון של קופה שמחייבת ב-SynqPay חיצוני. הזנה ידנית — אפשרות מתקדמת מקופלת בדשבורד | **לא** |
 | `expectedTerminalNumber` | (קיים) מספר המסוף הצפוי — **ברמת הקופה עצמה**, §2.1 | לנעילה |
 
-- אין מיגרציה: הסוד בטבלת הסודות הקיימת (מפתח חדש), השדות ב-JSON של השכבות, הדגמים ב-`device_model` (String(16)).
+- הסוד בטבלת הסודות הקיימת, השדות ב-JSON של השכבות, הדגמים ב-`device_model` (String(16)). מיגרציה אחת
+  לצימוד (§2.2): `7d3b5e9a2c41` — עמודות מקור ובקרה ב-`payment_integration_secrets`.
+- חובה: דגם, סוג חיבור, וכתובת רק ב-`lan`. **המפתח אינו חובה** (שרת `REQUIRED_FIELDS`, דשבורד
+  `lib/paymentIntegration.ts`): קופה בלי מפתח היא "טרם צומד", לא "חסר שדה".
 - ולידציה בשרת: ערכים מהרשימות, host כמו של Nayax, פורט, `VVVV:PPPP`/`COMn`, מספר סידורי
   `[A-Za-z0-9-]{4,32}`, מפתח `[A-Za-z0-9]{1,64}` (הקופה דורשת 8 hex ב-TCP/USB ומודיעה אם לא).
 - אזהרה בדשבורד (לא חסימה): `usb` מתועד ב-SynqPay רק ל-RX5000.
@@ -180,6 +186,71 @@ Castles / Verifone שמריץ את SynqPay) ופונה לשירות התשלום
 - מסוף מובנה (SynqPay על המכשיר) — כלל המסוף המובנה, כמו F20: נעול רק כשהמסוף מדווח מספר אחר.
 - קיוסק ווינדוס: אותו כלל ב-`SynqPayProvider` (`cardLockOf`) — מכירה לא נשלחת, ובדיקת המסוף נכשלת עם הסיבה.
 
+### 2.2 צימוד מהקופה — אף אחד לא מקליד מפתח
+
+לפי התיעוד ([Pairing](https://docs.synqpay.com/getting-started/pairing/), [pair](https://docs.synqpay.com/api/methods/pair/),
+[authenticate](https://docs.synqpay.com/api/methods/authenticate/)): `pair` (עם המספר הסידורי, בלי מפתח, רק כשהמסוף
+IDLE) מציג במסך המסוף קוד בן 6 ספרות לתוקף 30 שניות; `authenticate` עם הקוד (בלי מפתח) מחזיר מפתח בן 8 תווים;
+מאז כל בקשה נושאת אותו (כותרת `api-key` ב-HTTP/WS, 4 בתים במסגרת TCP/Serial). שגיאות: `pair` — InvalidParams
+(103) = מספר סידורי לא תואם, IllegalState (201) = המסוף לא IDLE, ScreenNotReady (202); `authenticate` —
+InvalidParams (103) = קוד שגוי, IllegalState (201) = אין צימוד פתוח (הזמן עבר). **במצב מובנה (Local Mode) אין
+מפתח ואין צימוד** — הקופה לעולם לא מציגה אותו שם.
+
+**התהליך בקופה** ("צימוד מסוף SynqPay", `hardware/payment/synqpay/SynqPayPairing.kt`, מסך
+`ui/settings/SynqPayPairingSheet.kt`):
+
+1. **אישור מנהל** — כמו פעולות קופה אחרות שדורשות סמכות מנהל (הוספת מדפסת מהקופה, עריכת קטלוג): מנהל סניף
+   מחובר עובר בלי PIN; אחרת `ElevationSheet` עם הסקופ `catalog:write`. השרת בודק שוב (`require_catalog_authority`).
+2. **המספר הסידורי** — מההגדרות (`synqpaySerialNumber`). לא הוגדר: הקופה מנסה `getDeviceInfo` — **בלי מפתח**
+   (התיעוד לא מציין שזה מותר; זו קריאה לקריאה בלבד, וסירוב בה **אינו** "מפתח נדחה"), או עם המפתח הקיים בצימוד
+   חוזר. לא התקבל — הטכנאי מקליד אותו ("מופיע על גב המסוף, על האריזה או בתפריט המסוף").
+3. **`pair`** — "הקוד מופיע עכשיו במסך המסוף — הקלידו אותו": מקלדת 6 ספרות וספירה לאחור של 30 שניות (מתחילה
+   כשהתשובה מגיעה, כך שהקופה לעולם לא מקדימה את המסוף). "שלח קוד חדש" שולח `pair` שוב.
+4. **`authenticate`** — הקוד. קוד שגוי: חלון הקוד נשאר פתוח (אותה ספירה). הזמן עבר (אצלנו — הקוד לא נשלח בכלל;
+   או 201 מהמסוף): "הקוד פג תוקף — לחצו שלח קוד חדש".
+5. **המפתח** — נשמר ב-`PaymentSecretStore` (מוצפן) ו**בשימוש מיד**: `SwitchingEmvDevice` מזהה את המסוף לפי
+   הקישור כולל המפתח, ולכן הפריים הבא (כשהקופה פנויה) בונה את המסוף מחדש עם המפתח. אחר כך בדיקת סטטוס דרך
+   הנתיב הרגיל ("המסוף עונה ומוכן לחיוב").
+6. **לענן** — `POST /api/v1/sync/{machineId}/synqpay/pairing` (טוקן מכונה + סמכות מנהל: `X-Pos-User-Id` של מנהל
+   מחובר או `X-Elevation-Token`). אין רשת: המפתח בשימוש בקופה, מסומן "טרם נשלח לענן", ונשלח שוב **לפני** כל
+   משיכת הגדרות (בשם המנהל שאישר — השרת בודק שוב שהוא מנהל הסניף). עד שהענן מחזיר את אותו מפתח, סנכרון ההגדרות
+   **לא מוחק ולא מחליף** אותו במפתח ישן (`SynqPayPendingKey`).
+
+**שגיאות בעברית** (`SynqPairingText`): יש תשלום או שידור בתהליך בקופה; המסוף עסוק (החזירו למסך הראשי); המספר
+הסידורי אינו של המסוף המחובר; קוד שגוי; הקוד פג תוקף; המסוף לא זמין (בדקו שהוא דולק ומחובר); המסוף לא החזיר מפתח.
+כל שלב עובר **דרך השער של המסוף** (`GatedEmvDevice.whenIdle`) — רק כשאין כרטיס או שידור בתהליך; המפתח והקוד לא
+נכתבים ללוג.
+
+**איפה**: כרטיס "מסוף SynqPay" במסך הטכנאי (מצב המפתח: שמור / לא צומד / נדחה במסוף / טרם נשלח לענן, וכפתור
+"צימוד מסוף SynqPay"); מסך התשלום — באנר "המסוף דורש צימוד" עם הכפתור (רק במסוף SynqPay חיצוני בלי מפתח או
+שמפתחו נדחה); מסך הטכנאי של הקיוסק (`KioskTechnician.kt`). בקיוסק עצמו הלקוח לא רואה צימוד — הקיוסק לא מקבל
+הזמנות עד שהמסוף מצומד (`KioskTerminal.configured` = UNCONFIGURED).
+
+**401 / NOT_AUTHENTICATED בשימוש רגיל**: `SynqPayTerminal` מדווח כל שינוי במצב המפתח (OK / לא צומד / נדחה):
+הבדיקה מחזירה "המסוף דורש צימוד — …" (`TerminalHealth.needsPairing`), מכירה היא "לא חויב" ודאי, שידור — "לא
+בוצע". מפתח שנדחה מדווח לענן **פעם אחת לכל מפתח**: `POST /api/v1/sync/{machineId}/synqpay/key-rejected`
+(טוקן מכונה בלבד). מסוף בלי מפתח — לא נשלחת אליו שום בקשה מלבד `pair`/`authenticate`.
+
+**בענן** (`app/routers/synqpay_pairing.py`, `payment_secrets.store_till_pairing` / `mark_rejected`): המפתח
+נשמר מוצפן (Fernet) **ברמת הקופה** (`level = machine`, `synqpayApiKey`), מחליף מפתח שהוקלד שם ידנית, ומתועד:
+`origin = till_pairing`, `paired_at`, `paired_by_machine_id`, `paired_by_pos_user_id` / `paired_by_user_id`
+(מנהל קופה או חשבון ענן לפי ה-grant), `terminal_serial`. דיווח דחייה מסמן את השורה שהקופה משתמשת בה
+(`rejected_at`, `rejected_by_machine_id`) פעם אחת, בלי להזיז את זמן המפתח; מפתח חדש מנקה. 409 `not_synqpay`
+לקופה שאינה על SynqPay חיצוני (גם מובנה); 422 `secret_invalid` בלי להחזיר את הערך. התשובה לעולם לא מכילה את
+המפתח. מספר סידורי שנשלח נשמר ב-`synqpaySerialNumber` של הקופה רק אם אף שכבה לא מגדירה אחד. הקלדה ידנית
+בדשבורד מסמנת `origin = dashboard` ומנקה את נתוני הצימוד.
+
+**בדשבורד** (`components/payment-integration-section.tsx`): במקום שדה החובה — "צימוד המסוף: הצימוד מתבצע
+מהקופה" עם שורת מצב (`synqpayPairingStatus`, מ-`secrets.synqpayApiKey.pairing` של
+`GET /payment-integration/context`): **טרם צומד** / **צומד ב-<תאריך> ע"י <שם הקופה>** (והמספר הסידורי) /
+**המפתח נדחה במסוף ב-<תאריך> (דווח ע"י <קופה>) — יש לבצע צימוד מחדש מהקופה** / **מפתח הוזן ידנית**. מעל קופה
+(חנות/חברה) בלי מפתח: "הצימוד מתבצע בכל קופה בנפרד". "הזנת מפתח ידנית" — מקופל, write-only כמו קודם.
+
+**קיוסק ווינדוס** (`kiosk-desktop/src/main/payment/synqpay/pairing.ts`, מסך "ניהול הקיוסק" ← "מסופון אשראי"):
+אותו תהליך — הסמכות היא קוד המנהל שפתח את מסך הניהול (מנהל סניף; ה-id שלו נשלח ב-`X-Pos-User-Id`). המפתח נשמר
+בקיוסק (sealed כמו טוקן המכונה), גובר על המפתח מהסנכרון עד שהענן מחזיר אותו, ונשלח שוב בכל החלה של הגדרות.
+מסוף לא מצומד — הקיוסק "לא מוגדר" (לא מקבל הזמנות), ובדיקה/מכירה לא נשלחות אליו.
+
 ## 3. מיפוי לממשק המסוף שלנו
 
 `PaymentTerminal` (אנדרואיד, `hardware/payment/nayax/PaymentTerminal.kt`) דרך `TerminalFrameBridge`
@@ -188,7 +259,7 @@ Castles / Verifone שמריץ את SynqPay) ופונה לשירות התשלום
 
 | אצלנו | SynqPay | הערות |
 |---|---|---|
-| `connect` / `probe` | `getStatus` (+ `getTerminalStatus` כשהמכשיר IDLE, ופעם אחת `getDeviceInfo`) | IDLE+READY → מוכן; SETTLE_NEEDED → "אונליין בלבד"; NO_PARAMS → "לא הוקם"; כל מצב אחר → עסוק; 401/NOT_AUTHENTICATED → "מפתח API נדחה"; אין חיבור → מנותק; מספר סידורי אחר מהמוגדר → שגיאה |
+| `connect` / `probe` | `getStatus` (+ `getTerminalStatus` כשהמכשיר IDLE, ופעם אחת `getDeviceInfo`) | IDLE+READY → מוכן; SETTLE_NEEDED → "אונליין בלבד"; NO_PARAMS → "לא הוקם"; כל מצב אחר → עסוק; 401/NOT_AUTHENTICATED או אין מפתח → "המסוף דורש צימוד" (`needsPairing`, §2.2); אין חיבור → מנותק; מספר סידורי אחר מהמוגדר → שגיאה |
 | `sale` | `startTransaction` SALE | `referenceId` = `<תג התקנה>-<vuid>`; תשלומים → INSTALLMENTS + `noOtherInstallmentPayments = n-1`; טיפ → `amount` בלי טיפ + `tipAmount` |
 | `refund` | `startTransaction` REFUND | זיכוי לא מקושר (אין שדה מקור ב-API) — כרטיס מוצג במסוף |
 | `void` | `getTransaction(TRANS_ID)` → `startTransaction` VOID עם ה-`referenceId` **של המקור** | רק AUTHORIZED/CAPTURED לפני שידור; אחרי — זיכוי |
@@ -197,7 +268,8 @@ Castles / Verifone שמריץ את SynqPay) ופונה לשירות התשלום
 | `transmit` | `settlement(host="SHVA")` | `settledTransactions` → `queriedTransactions` (uid/transactionId/vuid) |
 | `reportX` | `getBatchFileStatus` | מספר העסקאות בלבד (אין סכומים ב-API) |
 | `identity` (חדש, ברירת מחדל null) | `getTerminalStatus` | מספר מסוף + שם — לנעילת האשראי (§2.1) |
-| — (נוסף) | `getDeviceInfo`, `getConfig`, `setConfig`, `getTransaction(LAST_TRANS/TRANS_ID)`, `getSettlement`, `querySettlements`, `deposit`, `uploadLogs`, `reboot`, `restart`, `pair`, `authenticate`, מסכים מותאמים | פונקציות של `SynqPayTerminal` / `SynqPayClient` (משיכת מידע, תחזוקה) |
+| צימוד (§2.2) | `pair`, `authenticate` (+ `getDeviceInfo` בלי מפתח למספר הסידורי) | `SynqPayPairing` דרך `SynqPairingGate` (השער + `SwitchingEmvDevice.onCurrent`) |
+| — (נוסף) | `getDeviceInfo`, `getConfig`, `setConfig`, `getTransaction(LAST_TRANS/TRANS_ID)`, `getSettlement`, `querySettlements`, `deposit`, `uploadLogs`, `reboot`, `restart`, מסכים מותאמים | פונקציות של `SynqPayTerminal` / `SynqPayClient` (משיכת מידע, תחזוקה) |
 
 התשובה מומרת לצורת ה-ashrait שהקופה כבר קוראת (`statusCode`, `uid` = `transactionId` של SynqPay — ה-UID
 שבקבלה, `issuerAuthNum`, `cardNumber` ממוסך, `amount` = `totalAmount`, `creditPayments`,
@@ -277,6 +349,16 @@ Castles / Verifone שמריץ את SynqPay) ופונה לשירות התשלום
   `SynqLinkTransportTest`, `SynqPaySettingsTest` (+ התאמה ב-`CardLockTest`), fixtures ב-`app/src/test/resources/synqpay/`.
 - ווינדוס: `kiosk-desktop/src/main/payment/synqpay/{link,protocol,transport,client,provider,index}.ts`,
   `registry.ts` (שורה), `test/synqpay.{link,protocol,client}.test.ts`, `test/fixtures/synqpay/`.
+- **צימוד מהקופה (§2.2)**: שרת `app/routers/synqpay_pairing.py`, `app/schemas/synqpay_pairing.py`,
+  `services/payment_secrets.py` (`store_till_pairing`, `mark_rejected`, `pairing_status`),
+  `models/payment_secret.py` + מיגרציה `7d3b5e9a2c41_synqpay_pairing_audit.py`, `services/payment_integration.py`
+  (המפתח לא חובה), בדיקות `tests/test_synqpay_pairing.py`; דשבורד `lib/paymentIntegration.ts`
+  (`synqpayPairingStatus`) + test, `components/payment-integration-section.tsx`; אנדרואיד
+  `hardware/payment/synqpay/SynqPayPairing.kt`, `data/repo/SynqPayPairingRepository.kt`,
+  `data/remote/SynqPayPairingDtos.kt` + `PosApi.kt`, `ui/settings/SynqPayPairingSheet.kt` (+ כרטיס הטכנאי, באנר
+  במסך התשלום, `ui/kiosk/KioskTechnician.kt`), `SettingsRepository.kt` (מפתח שטרם נשלח), `SwitchingEmvDevice.onCurrent`,
+  `TerminalHealth.needsPairing`, בדיקות `SynqPayPairingTest`; ווינדוס `payment/synqpay/pairing.ts`, `service.ts`,
+  `renderer/staff/StaffLayer.tsx`, `test/synqpay.pairing.test.ts`.
 
 ## 6. שאלות פתוחות ל-SynqPay
 
@@ -299,6 +381,10 @@ Castles / Verifone שמריץ את SynqPay) ופונה לשירות התשלום
     מה כל דגם מדווח כ-`Build.MODEL`; האם ההמלצה ל-POS מלא היא ה-SDK (AIDL) ולא Local Mode.
 15. **מדפסת**: האם יש דרך להדפיס קבלה של אפליקציה צד-ג' בלי ה-SDK (PAL)? האם יש API למגירת כסף?
 16. רישיון: דף הרישיון "Coming soon" — מה תנאי השימוש ב-API ובפרוטוקול.
+17. **צימוד**: האם `getDeviceInfo` עונה בלי מפתח (לקריאת המספר הסידורי לפני צימוד)? אילו שגיאות בדיוק מחזיר
+    `authenticate` לקוד שפג תוקפו (אנחנו מניחים IllegalState) ולקוד שגוי (InvalidParams) — והאם אפשר לנסות שוב
+    באותם 30 שניות? האם צימוד חדש מבטל מפתח קודם (של אותו לקוח / של לקוחות אחרים)? האם יש מגבלה על מספר הלקוחות
+    המצומדים?
 
 ## 7. סיכונים
 
@@ -317,4 +403,7 @@ Castles / Verifone שמריץ את SynqPay) ופונה לשירות התשלום
   נשאר F20/Agamento כרגיל. אין הדפסת קבלות קופה על המסוף עד ה-SDK.
 - **שובר אשראי**: נתוני הקבלה נשמרים במטא של התשלום (`result.customerReceipt`), כמו Z-Credit; הדפסת שובר
   ממסוף חיצוני בקופה עדיין לא קיימת (במובנה SynqPay מדפיסה בעצמה).
-- **צימוד** (`pair`/`authenticate`) ממומש בפרוטוקול, בלי מסך בקופה — היום המפתח מוקלד בדשבורד.
+- **צימוד** (§2.2) — מהקופה, בלי הקלדת מפתח. **[לא מאומת]**: קריאת המספר הסידורי בלי מפתח, מיפוי שגיאות
+  `authenticate`, והאם צימוד מחדש מבטל את המפתח הקודם (קופה אחרת על אותו מסוף עלולה לקבל "המסוף דורש צימוד"
+  — ואז מצמדים גם אותה). מפתח שנשמר בקופה ולא הגיע לענן נשלח שוב בכל סנכרון; התקנה מחדש לפני כן מאבדת אותו
+  (מצמדים שוב).

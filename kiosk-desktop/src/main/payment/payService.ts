@@ -60,14 +60,18 @@ export class PayService {
   /** The cloud settings changed: pick the provider (never while a frame is out). */
   setProvider(p: PaymentProvider | null, integration: string | null) {
     if (this.inFlight) return;
-    const same = p && this.provider && p.kind === this.provider.kind && p.describe().address === this.provider.describe().address;
+    // A terminal paired since (or no longer) is another provider: its own settings say so.
+    const same =
+      p && this.provider && p.kind === this.provider.kind && p.describe().address === this.provider.describe().address &&
+      (p.configured !== false) === (this.provider.configured !== false);
     if (!same) {
       this.provider = p;
       this.monitor.failures = 0;
       this.monitor.lastCheckAtMs = null;
     }
     this.integration = integration;
-    this.monitor.config = terminalConfigState({ integration, providerConfigured: !!p });
+    // SynqPay not paired yet: no orders until it is (as the Android kiosk's KioskTerminal.configured).
+    this.monitor.config = terminalConfigState({ integration, providerConfigured: !!p && p.configured !== false });
     this.monitor.state = terminalState(this.monitor.config, this.monitor.failures);
     this.emit();
   }

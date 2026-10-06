@@ -50,6 +50,9 @@ from app.models.user import User
 from app.services import demo_menu as DM
 from app.services import training_mode as TM
 
+# Display devices are not tills (app/services/display_devices.py).
+from app.middleware.auth import FISCAL_MACHINE_TOKEN
+
 router = APIRouter(tags=["training-mode"])
 
 
@@ -215,7 +218,7 @@ def get_training_report(
 # ── The till's training documents ─────────────────────────────────────────────
 
 
-@router.post("/sync/{machine_id}/training-documents")
+@router.post("/sync/{machine_id}/training-documents", dependencies=FISCAL_MACHINE_TOKEN)
 def post_training_documents(
     machine_id: str,
     body: TrainingDocumentsIn,

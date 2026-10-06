@@ -75,11 +75,15 @@ def _visible_shops_query(db: Session, user: User, tenant_id):
 
 
 def _visible_machines_query(db: Session, user: User, tenant_id, shop_ids: List[uuid_mod.UUID]):
-    """`GET /machines`'s role rule, limited to active tills standing in `shop_ids`."""
+    """
+    `GET /machines`'s role rule, limited to active tills standing in `shop_ids` — tills only:
+    a display device (a KDS / the board, app/services/display_devices.py) sells nothing.
+    """
     query = db.query(POSMachine).filter(
         POSMachine.tenant_id == tenant_id,
         POSMachine.is_active.is_(True),
         POSMachine.shop_id.in_(shop_ids),
+        POSMachine.is_fiscal.is_(True),
     )
     if user.role == UserRole.DISTRIBUTOR:
         return query.filter(POSMachine.distributor_id == user.id)

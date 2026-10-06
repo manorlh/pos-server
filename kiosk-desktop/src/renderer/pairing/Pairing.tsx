@@ -1,6 +1,7 @@
 /**
  * Pairing, as the Android pairing screen: the server's address and the 8-character code the
- * dashboard shows ("קופות" → צימוד; for a kiosk choose the kiosk role there), and a name.
+ * dashboard shows ("הוספת מכשיר"), and a name. WHAT the device is — kiosk, till, KDS, order status
+ * board — is chosen there, in the cloud, with the code; never here (core/roles.ts).
  */
 
 import { useState } from 'react';
@@ -9,7 +10,7 @@ import { kiosk } from '../bridge';
 export function Pairing() {
   const [serverUrl, setServerUrl] = useState('https://');
   const [code, setCode] = useState('');
-  const [name, setName] = useState('קיוסק Windows');
+  const [name, setName] = useState('מחשב Windows');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const submit = async () => {
@@ -27,8 +28,9 @@ export function Pairing() {
           <div className="text-3xl font-black tracking-tight">
             R2M <span className="font-bold text-blue-600">POS</span>
           </div>
-          <h1 className="mt-2 text-xl font-extrabold">צימוד קיוסק</h1>
-          <p className="text-sm text-neutral-500">הזינו את כתובת השרת ואת קוד הצימוד מהדשבורד.</p>
+          <h1 className="mt-2 text-xl font-extrabold">צימוד מכשיר</h1>
+          <p className="text-sm text-neutral-500">הזינו את כתובת השרת ואת קוד הצימוד מהדשבורד (הוספת מכשיר).</p>
+          <p className="mt-1 text-xs text-neutral-400">סוג המכשיר — קיוסק, קופה, מסך מטבח או מסך מוכן / לא מוכן — נקבע בענן עם הקוד.</p>
         </div>
         <label className="block space-y-1">
           <span className="text-sm font-semibold">כתובת השרת</span>
@@ -39,7 +41,7 @@ export function Pairing() {
           <input dir="ltr" className={`${field} text-center font-mono text-2xl tracking-[0.3em]`} maxLength={8} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="AB12CD34" />
         </label>
         <label className="block space-y-1">
-          <span className="text-sm font-semibold">שם הקיוסק</span>
+          <span className="text-sm font-semibold">שם המכשיר</span>
           <input className={field} value={name} onChange={(e) => setName(e.target.value)} />
         </label>
         {error ? <p className="rounded-xl bg-red-50 p-3 text-sm font-medium text-red-700">{error}</p> : null}

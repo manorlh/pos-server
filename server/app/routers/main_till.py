@@ -146,6 +146,15 @@ def put_main_till(
                 "message": "קופה עצמאית לא יכולה להיות הקופה הראשית של הסניף. בחרו קופה מבין הקופות שבזד הסניפי.",
             },
         )
+    if chosen is not None and getattr(chosen, "is_fiscal", True) is False:
+        # A display device (a KDS / the board) is no till (app/services/display_devices.py).
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "device_not_fiscal",
+                "message": "מסך מטבח או מסך מוכן / לא מוכן אינו קופה, ולכן לא יכול להיות הקופה הראשית של הסניף.",
+            },
+        )
     now = datetime.now(timezone.utc)
     # Exactly one producer of the shop's Z sequence: pinned before, checked after.
     from app.services import local_shop_z as LZ

@@ -413,6 +413,10 @@ class ZoneUpdate(_Camel):
         return cleaned
 
 
+#: What a table is for (app/services/table_policies.py).
+TableKind = Literal["regular", "staff", "managers"]
+
+
 class TableCreate(_Camel):
     zone_id: uuid.UUID = Field(..., alias="zoneId")
     number: int = Field(..., ge=1, le=99_999)
@@ -424,6 +428,11 @@ class TableCreate(_Camel):
     width: float = Field(80, ge=20, le=2000)
     height: float = Field(80, ge=20, le=2000)
     rotation: int = Field(0, ge=0, le=359)
+    #: "סוג שולחן": regular / staff ("שולחן עובדים") / managers ("שולחן מנהלים"), its
+    #: discount % ("הנחת שולחן", 0–100), or a type that decides both.
+    kind: Optional[TableKind] = None
+    discount_percent: Optional[Decimal] = Field(None, alias="discountPercent", ge=0, le=100, decimal_places=2)
+    type_id: Optional[uuid.UUID] = Field(None, alias="typeId")
 
     @field_validator("name", mode="before")
     @classmethod
@@ -442,6 +451,10 @@ class TableUpdate(_Camel):
     width: Optional[float] = Field(None, ge=20, le=2000)
     height: Optional[float] = Field(None, ge=20, le=2000)
     rotation: Optional[int] = Field(None, ge=0, le=359)
+    #: The policy: a kind, a discount (null clears it), a type (null: the table's own).
+    kind: Optional[TableKind] = None
+    discount_percent: Optional[Decimal] = Field(None, alias="discountPercent", ge=0, le=100, decimal_places=2)
+    type_id: Optional[uuid.UUID] = Field(None, alias="typeId")
 
     @field_validator("name", mode="before")
     @classmethod
@@ -456,6 +469,43 @@ class BulkTablesIn(_Camel):
     to_number: int = Field(..., alias="to", ge=1, le=99_999)
     seats: int = Field(4, ge=0, le=99)
     shape: Literal["round", "square", "rect"] = "square"
+    #: Every table added of this type ("סוג שולחן"), when one is named.
+    type_id: Optional[uuid.UUID] = Field(None, alias="typeId")
+
+
+class TableTypeIn(_Camel):
+    """"סוג שולחן": a policy reusable across the shop's tables (app/services/table_policies.py)."""
+
+    shop_id: uuid.UUID = Field(..., alias="shopId")
+    name: str = Field(..., min_length=1, max_length=60)
+    kind: TableKind = "regular"
+    discount_percent: Decimal = Field(Decimal("0"), alias="discountPercent", ge=0, le=100, decimal_places=2)
+    require_approval: Optional[bool] = Field(None, alias="requireApproval")
+    require_reason: Optional[bool] = Field(None, alias="requireReason")
+    staff_mode: Literal["percent", "price_list", "allowance"] = Field("percent", alias="staffMode")
+    staff_allowance: Optional[Decimal] = Field(None, alias="staffAllowance", ge=0, le=100_000, decimal_places=2)
+    sort_order: Optional[int] = Field(None, alias="sortOrder", ge=0, le=10_000)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name(cls, value):
+        return _clean_text(value, 60)
+
+
+class TableTypeUpdate(_Camel):
+    name: Optional[str] = Field(None, min_length=1, max_length=60)
+    kind: Optional[TableKind] = None
+    discount_percent: Optional[Decimal] = Field(None, alias="discountPercent", ge=0, le=100, decimal_places=2)
+    require_approval: Optional[bool] = Field(None, alias="requireApproval")
+    require_reason: Optional[bool] = Field(None, alias="requireReason")
+    staff_mode: Optional[Literal["percent", "price_list", "allowance"]] = Field(None, alias="staffMode")
+    staff_allowance: Optional[Decimal] = Field(None, alias="staffAllowance", ge=0, le=100_000, decimal_places=2)
+    sort_order: Optional[int] = Field(None, alias="sortOrder", ge=0, le=10_000)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name(cls, value):
+        return _clean_text(value, 60)
 
 
 class TablePositionIn(_Camel):

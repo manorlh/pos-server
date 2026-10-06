@@ -2,10 +2,12 @@
 "סוג מכשיר" — a device's role and model, chosen when it is added
 (docs/SPEC_DEVICE_ROLE_MODEL.md).
 
-* **Role.** "till" or "kiosk". A kiosk is what it always was: a till with a
-  `kiosk_devices` row (app/services/kiosk_control.py). There is no role column — the row
-  is the one source of truth, so the kiosks page and the machine page can never disagree.
-  A KDS kitchen screen is *not* a role here: it is still paired from the KDS page.
+* **Role.** "till", "kiosk", "kds" or "order_status_board". A kiosk is what it always
+  was: a till with a `kiosk_devices` row (app/services/kiosk_control.py). A KDS and the
+  "מוכן / לא מוכן" board are display devices — not tills, not accounting systems
+  (`pos_machines.is_fiscal` false, app/services/display_devices.py) — told apart by their
+  `kds_devices` row. There is no role column: the rows are the source of truth, so the
+  kiosks page, the KDS page and the machine page can never disagree.
 * **Adding a device.** The pairing code carries the role, and for a kiosk its options
   (name, controlling tills, device lock). A kiosk code must be pre-assigned to a shop.
   When a device redeems it, the new machine is converted right after it lands in the
@@ -36,12 +38,16 @@ from app.models.kiosk import KioskDevice
 from app.models.pos_machine import PairingStatus, POSMachine, device_has_builtin_terminal, set_kiosk_cache
 from app.models.shop import Shop
 from app.models.user import User
+from app.services import display_devices as DD
 
 logger = logging.getLogger(__name__)
 
 ROLE_TILL = "till"
 ROLE_KIOSK = "kiosk"
-ROLES = (ROLE_TILL, ROLE_KIOSK)
+#: The display devices (app/services/display_devices.py): not tills, not accounting systems.
+ROLE_KDS = DD.ROLE_KDS
+ROLE_ORDER_STATUS_BOARD = DD.ROLE_ORDER_STATUS_BOARD
+ROLES = (ROLE_TILL, ROLE_KIOSK, ROLE_KDS, ROLE_ORDER_STATUS_BOARD)
 
 INVALID_CONTROLLER_MESSAGE = (
     "אחת הקופות השולטות שנבחרו אינה קופה פעילה של אותה חברה (או שהיא קיוסק בעצמה). בחרו שוב."
@@ -94,19 +100,37 @@ def prime_kiosks(db: Session, machines: Iterable[POSMachine]) -> Dict[Any, Kiosk
     kiosks = kiosk_devices_by_machine(db, [m.id for m in machines])
     for m in machines:
         set_kiosk_cache(m, m.id in kiosks)
+    # And their KDS screen rows: a display device's role, a till's legacy screen.
+    DD.prime_kds(db, machines)
     return kiosks
 
 
-def role_of(device: Optional[KioskDevice]) -> str:
-    """The machine's role as the dashboard shows it: a kiosk while it has a kiosk row."""
+def role_of(device: Optional[KioskDevice], machine: Optional[POSMachine] = None) -> str:
+    """
+    The machine's role as the dashboard shows it: a kiosk while it has a kiosk row; a
+    display device's ("kds" / "order_status_board", by its screen row) when `machine` is
+    one; else a till.
+    """
+    if machine is not None and not DD.is_fiscal(machine):
+        return DD.role_of_display(None, machine)
     return ROLE_KIOSK if device is not None else ROLE_TILL
+
+
+def current_role(db: Session, machine: POSMachine) -> str:
+    """The machine's role now (`role_of` with its own rows)."""
+    if not DD.is_fiscal(machine):
+        return DD.role_of_display(db, machine)
+    return role_of(kiosk_device(db, machine.id))
 
 
 def effective_role(db: Optional[Session], machine: POSMachine) -> str:
     """
-    The mode the till opens in (`machines/me`): "kiosk" for an enabled kiosk, else "till" —
-    a disabled kiosk works as a till, exactly as its `kiosk/sync` answers `kiosk: false`.
+    The mode the device opens in (`machines/me`): a display device's role ("kds" /
+    "order_status_board"); "kiosk" for an enabled kiosk; else "till" — a disabled kiosk
+    works as a till, exactly as its `kiosk/sync` answers `kiosk: false`.
     """
+    if not DD.is_fiscal(machine):
+        return DD.role_of_display(db, machine)
     if db is None:
         return ROLE_TILL
     device = kiosk_device(db, machine.id)
@@ -118,8 +142,15 @@ def machine_fields(machine: POSMachine, device: Optional[KioskDevice]) -> Dict[s
     from app.models.pos_machine import detect_device_model, device_driver_pending, device_has_cash_drawer_port
 
     model = getattr(machine, "device_model", None)
+    screen = DD.kds_device_of(None, machine)
     return {
-        "deviceRole": role_of(device),
+        "deviceRole": role_of(device, machine),
+        # "מכשיר תצוגה" (docs/SPEC_DEVICE_ROLE_MODEL.md §2.2): false for a KDS / the board —
+        # not a till; its platform; and its screen (on a fiscal till: a screen paired on the
+        # KDS page before the rule, which the dashboard flags).
+        "fiscal": DD.is_fiscal(machine),
+        "platform": DD.platform_of(machine),
+        "kdsScreen": DD.kds_screen_fields(screen),
         "kioskEnabled": bool(device.enabled) if device is not None else None,
         "deviceModelChosen": getattr(machine, "device_model_chosen", None),
         "deviceModelReported": detect_device_model(getattr(machine, "device_info", None)),
@@ -142,14 +173,19 @@ def check_pairing_request(
     role: Optional[str],
     shop_id: Optional[uuid.UUID],
     kiosk: Any = None,
+    kds: Any = None,
 ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
     """
-    The role and kiosk options a pairing code stores, checked now so the operator hears
+    The role and its options a pairing code stores, checked now so the operator hears
     of a mistake while the dialog is open. A kiosk needs a shop (400 `kiosk_requires_shop`)
-    and valid controlling tills (422 `invalid_controller`).
+    and valid controlling tills (422 `invalid_controller`); its options are the kiosk's. A
+    KDS / board needs a shop too, and a station screen its stations
+    (`display_devices.check_pairing_request`); its options are the screen's.
     """
     from app.services import kiosk_control
 
+    if role in DD.NON_FISCAL_ROLES:
+        return role, DD.check_pairing_request(db, role=role, shop_id=shop_id, kds=kds)
     if role != ROLE_KIOSK:
         return role, None
     if shop_id is None:
@@ -355,11 +391,21 @@ def check_model_change(db: Session, machine: POSMachine, new_model: Optional[str
 
 
 def check_role_switch(db: Session, machine: POSMachine, role: str) -> None:
-    """Refuse a change of role unless the rules allow it now. The same role passes."""
+    """
+    Refuse a change of role unless the rules allow it now. The same role passes. A till
+    or kiosk never becomes a display device, nor back (409
+    `device_role_change_requires_pairing`): remove it and add it again with a new code. A
+    KDS and the board may trade places (both display devices).
+    """
     from app.services.main_till import main_till_of_shop
 
-    if role == role_of(kiosk_device(db, machine.id)):
+    current = current_role(db, machine)
+    if role == current:
         return
+    if DD.is_fiscal_role(role) != DD.is_fiscal_role(current):
+        raise DD.role_change_refusal(machine, current, role)
+    if role in DD.NON_FISCAL_ROLES:
+        return  # a screen's role: nothing fiscal on it to wait for
     label = _label(machine)
     if role == ROLE_KIOSK:
         prefix = f"לא ניתן להפוך את {label} לקיוסק"
@@ -398,15 +444,21 @@ class RoleChange:
         self.pinpad = pinpad
 
 
-def change_role(db: Session, user: User, machine: POSMachine, role: str, kiosk: Any = None) -> RoleChange:
+def change_role(
+    db: Session, user: User, machine: POSMachine, role: str, kiosk: Any = None, kds: Any = None,
+) -> RoleChange:
     """
     Make the machine a kiosk (the kiosks page's conversion, with its controllers, device
     lock and — "מסופון חיצוני ברשת" — its pinpad address) or a regular till again (its
-    orders and audit stay; the pinpad settings stay too). The caller ran
+    orders and audit stay; the pinpad settings stay too); or a display device the KDS or
+    the board (its screen row, `display_devices.change_display_role`). The caller ran
     `check_role_switch` and commits.
     """
     from app.services import kiosk_control
 
+    if role in DD.NON_FISCAL_ROLES:
+        DD.change_display_role(db, machine, role, kds)
+        return RoleChange()
     device = kiosk_device(db, machine.id)
     if role == ROLE_KIOSK and device is None:
         lock = bool(getattr(kiosk, "lock_device", False))

@@ -3,6 +3,7 @@
 
 /* The shared screens live with the dashboard: Tailwind scans them for their classes too. */
 @source '../../../client/src/components/dashboard/kiosks/preview-screens.tsx';
+@source '../../../client/src/components/dashboard/kiosks/preview-entry.tsx';
 @source '../../../client/src/kiosk-shared';
 
 html,

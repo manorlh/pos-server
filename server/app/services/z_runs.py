@@ -103,11 +103,16 @@ def tills_not_closed(db: Session, machines: Sequence[POSMachine]) -> List[dict]:
 
 
 def is_seated_in(machine: POSMachine, shop_id: uuid.UUID) -> bool:
-    """An active till assigned to this shop right now — one that can be asked to close."""
+    """
+    An active till assigned to this shop right now — one that can be asked to close. Never
+    a display device (a KDS / the "מוכן / לא מוכן" board, app/services/display_devices.py):
+    not a till, so not a participant of any shop Z.
+    """
     return (
         bool(machine.is_active)
         and machine.pairing_status == PairingStatus.ASSIGNED
         and str(machine.shop_id) == str(shop_id)
+        and getattr(machine, "is_fiscal", True) is not False
     )
 
 
@@ -126,6 +131,9 @@ def shop_tills(db: Session, shop_id: uuid.UUID) -> List[POSMachine]:
             POSMachine.shop_id == shop_id,
             POSMachine.is_active.is_(True),
             POSMachine.pairing_status == PairingStatus.ASSIGNED,
+            # A display device is no till (app/services/display_devices.py). One that was a
+            # till once still comes in below while shifts of it wait for a Z.
+            POSMachine.is_fiscal.is_(True),
         )
         .all()
     )

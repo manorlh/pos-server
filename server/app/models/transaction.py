@@ -118,6 +118,13 @@ class Transaction(Base):
     basket_discount = Column(Numeric(12, 2), nullable=True)
     basket_discount_percent = Column(Numeric(6, 2), nullable=True)
     basket_discount_kind = Column(String(16), nullable=True)
+    #: A meal at a staff or managers' table (app/services/table_policies.py): `staff` /
+    #: `managers`, whose meal it was (a staff table's employee, as the till named them),
+    #: and why (a managers' table's reason). The approving manager is `approved_by_*`.
+    meal_kind = Column(String(16), nullable=True)
+    meal_employee_id = Column(String(100), nullable=True)
+    meal_employee_name = Column(String(200), nullable=True)
+    meal_reason = Column(String(300), nullable=True)
     wht_deduction = Column(Numeric(12, 2), nullable=True)
 
     # Free text as sent by the till — a cloud customer UUID on a current build, but

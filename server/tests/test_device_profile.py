@@ -194,12 +194,17 @@ class TestCatalog:
     def test_a_landi_names_itself_by_its_maker(self, info, expected):
         assert detect_device_model(info) == expected
 
-    def test_the_requests_accept_the_new_models_and_two_roles(self):
+    def test_the_requests_accept_the_new_models_and_four_roles(self):
         body = PairingCodeGenerateRequest(deviceModel="GENERIC_ANDROID", deviceRole="kiosk")
         assert (body.device_model, body.device_role) == ("GENERIC_ANDROID", "kiosk")
         assert POSMachineUpdate(deviceModel="LANDI").device_model == "LANDI"
+        # The display devices (tests/test_display_devices.py), with a platform.
+        for role in ("kds", "order_status_board"):
+            assert PairingCodeGenerateRequest(deviceRole=role, platform="windows").device_role == role
         with pytest.raises(ValidationError):
-            PairingCodeGenerateRequest(deviceRole="kds")  # a kitchen screen is paired on the KDS page
+            PairingCodeGenerateRequest(deviceRole="printer")
+        with pytest.raises(ValidationError):
+            PairingCodeGenerateRequest(platform="ios")
         with pytest.raises(ValidationError):
             DeviceProfileIn(deviceModel="X9")
 
@@ -445,6 +450,77 @@ class TestChangingTheRole:
     def test_the_same_role_is_no_change(self, w):
         w.shift(w.till, 1, status=ShiftStatus.OPEN)
         assert _profile(w, w.till, deviceRole="till")["deviceRole"] == "till"
+
+
+class TestDisplayDeviceRoles:
+    """
+    "KDS ומסך מוכן / לא מוכן אינם מערכות קופה וחשבונאיות" (tests/test_display_devices.py
+    for the rest): the machine page never turns a till into a display device, nor back.
+    """
+
+    def _display(self, w, machine, kds_role="expo"):
+        from app.models.kds import KdsDevice
+
+        machine.is_fiscal = False
+        machine.pos_number = None
+        w.db.add(KdsDevice(
+            id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=w.shop.id, machine_id=machine.id,
+            name="מסך", role=kds_role, station_ids=[], is_active=True,
+        ))
+        w.db.commit()
+        return machine
+
+    @pytest.mark.parametrize("role", ["kds", "order_status_board"])
+    def test_a_till_never_becomes_a_display_device(self, w, role):
+        status_code, body = _refusal(_profile(w, w.till, deviceRole=role))
+        assert (status_code, body["detail"]) == (409, "device_role_change_requires_pairing")
+        assert "קוד צימוד חדש" in body["message"] and "אינם קופה" in body["message"]
+        assert w.till.is_fiscal is True and w.till.pos_number == "1"
+
+    def test_a_kiosk_neither(self, w):
+        kiosk_control.convert(w.db, w.admin, w.till)
+        status_code, body = _refusal(_profile(w, w.till, deviceRole="kds"))
+        assert (status_code, body["detail"], body["currentRole"]) == (409, "device_role_change_requires_pairing", "kiosk")
+
+    @pytest.mark.parametrize("role", ["till", "kiosk"])
+    def test_a_display_device_never_becomes_a_till_or_kiosk(self, w, role):
+        self._display(w, w.till)
+        status_code, body = _refusal(_profile(w, w.till, deviceRole=role))
+        assert (status_code, body["detail"]) == (409, "device_role_change_requires_pairing")
+        assert (body["currentRole"], body["requestedRole"]) == ("kds", role)
+        assert w.till.is_fiscal is False and w.db.get(KioskDevice, w.till.id) is None
+
+    def test_a_kds_and_the_board_trade_places(self, w):
+        from app.models.kds import KdsDevice
+
+        self._display(w, w.till)
+        out = _profile(w, w.till, deviceRole="order_status_board")
+        assert (out["deviceRole"], out["fiscal"]) == ("order_status_board", False)
+        assert w.db.query(KdsDevice).filter(KdsDevice.machine_id == w.till.id).one().role == "pickup"
+        out = _profile(w, w.till, deviceRole="kds", kds={"screenRole": "manager"})
+        assert out["deviceRole"] == "kds"
+        assert w.db.query(KdsDevice).filter(KdsDevice.machine_id == w.till.id).one().role == "manager"
+
+    def test_the_kiosks_page_cannot_convert_one_either(self, w):
+        self._display(w, w.till)
+        with pytest.raises(HTTPException) as exc:
+            kiosk_control.convert(w.db, w.admin, w.till)
+        assert (exc.value.status_code, exc.value.detail) == (409, "device_not_fiscal")
+
+    def test_machines_me_and_the_list_say_what_it_is(self, w):
+        self._display(w, w.till, kds_role="pickup")
+        w.other.device_info = {"platform": "windows"}
+        me = machines_router.get_my_machine(machine=w.till)
+        assert (me["deviceRole"], me["fiscal"], me["platform"], me["posNumber"]) == (
+            "order_status_board", False, "android", None,
+        )
+        other = machines_router.get_my_machine(machine=w.other)
+        assert (other["deviceRole"], other["fiscal"], other["platform"]) == ("till", True, "windows")
+        rows = {r["id"]: r for r in machines_router._enrich_machines_batch([w.till, w.other], w.db)}
+        board = POSMachineResponse.model_validate(rows[w.till.id]).model_dump(by_alias=True)
+        assert (board["deviceRole"], board["fiscal"], board["kdsScreen"]["role"]) == ("order_status_board", False, "pickup")
+        till = POSMachineResponse.model_validate(rows[w.other.id]).model_dump(by_alias=True)
+        assert (till["deviceRole"], till["fiscal"], till["platform"], till["kdsScreen"]) == ("till", True, "windows", None)
 
 
 class TestKioskChargesOnAnExternalPinpad:

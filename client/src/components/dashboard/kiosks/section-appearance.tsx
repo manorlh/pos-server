@@ -41,10 +41,72 @@ type TextScreen = Exclude<PreviewScreen, 'product'>;
 
 /** The texts each screen shows, and its header image (the attract screen has the playlist). */
 export const TEXT_GROUPS: { screen: TextScreen; keys: KioskTextKey[]; image: ScreenImageKey | null }[] = [
-  { screen: 'attract', keys: ['attractTitle', 'attractSubtitle', 'attractCta', 'helpText'], image: null },
-  { screen: 'service', keys: ['serviceTitle', 'takeAwayLabel', 'eatInLabel'], image: 'service' },
-  { screen: 'catalog', keys: ['catalogTitle', 'upsellTitle'], image: 'catalogHeader' },
-  { screen: 'cart', keys: ['cartTitle', 'checkoutCta', 'customerTitle', 'customerExplain'], image: 'cart' },
+  { screen: 'attract', keys: ['attractTitle', 'attractSubtitle', 'attractCta', 'attractTouchHint', 'helpText'], image: null },
+  {
+    screen: 'service',
+    keys: ['serviceCaption', 'serviceTitle', 'serviceSubtitle', 'takeAwayLabel', 'takeAwaySub', 'eatInLabel', 'eatInSub', 'serviceContinue', 'serviceHint'],
+    image: 'service',
+  },
+  // "scan…": the short centred notes after a barcode scan (the kiosk's scanner, on every ordering screen).
+  // The search and the dish's note are typed in the kiosk's window (its keyboard's words: "פרטים").
+  {
+    screen: 'catalog',
+    keys: ['catalogTitle', 'upsellTitle', 'scanNotFound', 'scanVoucherAtTill', 'searchTitle', 'searchHint', 'noteTitle', 'noteHint', 'noteSave'],
+    image: 'catalogHeader',
+  },
+  // "ההזמנה שלי": the review before the payment.
+  { screen: 'cart', keys: ['cartTitle', 'reviewHint', 'reviewItems', 'reviewItemsOne', 'reviewSubtotal', 'reviewTotal', 'addMoreCta', 'checkoutCta'], image: 'cart' },
+  // "רוצים להוסיף טיפ לצוות?" and the step bar of the steps before the payment.
+  {
+    screen: 'tip',
+    keys: [
+      'tipCaption',
+      'stepReview',
+      'stepTip',
+      'stepDetails',
+      'stepPay',
+      'tipTitle',
+      'tipSubtitle',
+      'tipOtherLabel',
+      'tipOtherHint',
+      'tipOtherError',
+      'tipOrderTotal',
+      'tipLine',
+      'tipTotal',
+      'tipContinue',
+      'tipSkip',
+    ],
+    image: null,
+  },
+  // The details page and its window ("איך לקרוא לכם?", the phone, the table), and the kiosk's keyboard.
+  {
+    screen: 'details',
+    keys: [
+      'customerTitle',
+      'customerExplain',
+      'detailsCaption',
+      'nameTitle',
+      'nameSubtitle',
+      'nameLabel',
+      'nameHint',
+      'nameConfirm',
+      'nameSkip',
+      'phoneTitle',
+      'phoneHint',
+      'tableTitle',
+      'entryContinue',
+      'entrySkip',
+      'fieldRequired',
+      'phoneInvalid',
+      'kbToEnglish',
+      'kbToHebrew',
+      'kbNumbers',
+      'kbLettersHe',
+      'kbLettersEn',
+      'kbSpace',
+    ],
+    image: null,
+  },
   { screen: 'pay', keys: ['payTitle', 'payInstruction'], image: 'pay' },
   { screen: 'success', keys: ['successTitle', 'successBody', 'pickupLabel'], image: 'success' },
   {

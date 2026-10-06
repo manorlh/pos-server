@@ -1026,6 +1026,34 @@ def _branch_sort_key(code: str):
     return (0, int(code), code) if code.isdigit() else (1, 0, code)
 
 
+def filed_document_key(transaction: Dict[str, Any]) -> Tuple[int, str]:
+    """
+    (C100 field 1203, field 1204) of a document as the file writes them: the filed type
+    (`open_format_document_type`: a -400 is filed as a 400, a document linked to an
+    original as a 330) and the number, as the X(20) field holds it.
+    """
+    stored_type = transaction.get("documentType")
+    is_refund = bool(transaction.get("refundOfTransactionId")) or stored_type in (330, RECEIPT_REFUND_DOCUMENT_TYPE)
+    doc_type, _sign = open_format_document_type(stored_type, is_refund)
+    number = charset_text(str(transaction.get("transactionNumber") or "")).strip()[:DOCUMENT_NUMBER_WIDTH]
+    return doc_type, number
+
+
+def duplicate_document_numbers(transactions: List[Dict[str, Any]]) -> Dict[Tuple[int, str], List[Dict[str, Any]]]:
+    """
+    The (type, number) pairs more than one document of the file would carry, each with its
+    documents in file order. The file is one per business — every branch — and the Tax
+    Authority's simulator refuses two C100 records of one type with one number whatever
+    their branch code (field 1231): "נמצאה יותר מרשומה אחת עם אותו מס אסמכתא" (on 1204).
+    Empty for a sound file. `tax_reports.refuse_duplicate_document_numbers` refuses the
+    export on any; the validator of the test data checks the same rule.
+    """
+    seen: Dict[Tuple[int, str], List[Dict[str, Any]]] = {}
+    for transaction in transactions:
+        seen.setdefault(filed_document_key(transaction), []).append(transaction)
+    return {key: docs for key, docs in seen.items() if len(docs) > 1}
+
+
 def generate_tax_report(
     transactions: List[Dict[str, Any]],
     business_info: BusinessInfoDict,

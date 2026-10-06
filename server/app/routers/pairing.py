@@ -17,7 +17,7 @@ from app.models.shop import Shop
 from app.models.company import Company
 from app.models.user import User
 from app.middleware.auth import get_current_distributor, get_active_tenant_id, ensure_same_tenant
-from app.services import access, device_profile
+from app.services import access, device_profile, display_devices
 from app.services.pairing import (
     AdoptionRefused,
     PairingAssignmentError,
@@ -71,13 +71,15 @@ def generate_pairing_code(
         ensure_same_tenant(company.tenant_id, active_tenant_id)
 
     # "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): a kiosk needs a shop and valid
-    # controlling tills — said now, while the dialog is open (400 / 422, Hebrew `message`).
+    # controlling tills; a KDS / board a shop and its screen — said now, while the dialog is
+    # open (400 / 422, Hebrew `message`).
     try:
-        device_role, kiosk_options = device_profile.check_pairing_request(
-            db, role=body.device_role, shop_id=shop_id, kiosk=body.kiosk,
+        device_role, options = device_profile.check_pairing_request(
+            db, role=body.device_role, shop_id=shop_id, kiosk=body.kiosk, kds=body.kds,
         )
     except device_profile.DeviceProfileRefused as refused:
         return JSONResponse(status_code=refused.status_code, content=refused.body)
+    kiosk_options, kds_options = display_devices.pairing_options(device_role, options)
 
     try:
         pairing_code = create_pairing_code(
@@ -89,6 +91,9 @@ def generate_pairing_code(
             device_model=body.device_model,
             device_role=device_role,
             kiosk_options=kiosk_options,
+            # "Android / Windows": the device that redeems it must be one (422 otherwise).
+            platform=body.platform or display_devices.PLATFORM_ANDROID,
+            kds_options=kds_options,
         )
     except PairingAssignmentError as exc:
         raise HTTPException(
@@ -116,6 +121,11 @@ def validate_pairing(
         # card sales it never transmitted (docs/SHIFTS_API.md §4.9). The code stays unused.
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except display_devices.PlatformMismatch as exc:
+        # A Windows code on an Android device, or the other way round: nothing was created
+        # and the code stays unused (docs/SPEC_DEVICE_ROLE_MODEL.md §2.3).
+        db.rollback()
+        return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=exc.body)
 
     if not machine:
         raise HTTPException(

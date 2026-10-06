@@ -593,6 +593,11 @@ def _serialize_tx_for_upsert(
         "basket_discount": getattr(tx, "basket_discount", None),
         "basket_discount_percent": getattr(tx, "basket_discount_percent", None),
         "basket_discount_kind": getattr(tx, "basket_discount_kind", None),
+        # A staff / managers' table meal: its kind, whose meal, why (app/services/table_policies.py).
+        "meal_kind": getattr(tx, "meal_kind", None),
+        "meal_employee_id": getattr(tx, "meal_employee_id", None),
+        "meal_employee_name": getattr(tx, "meal_employee_name", None),
+        "meal_reason": getattr(tx, "meal_reason", None),
         "wht_deduction": tx.wht_deduction,
         "customer_id": tx.customer_id,
         "customer_ref_id": customer_ref_id,

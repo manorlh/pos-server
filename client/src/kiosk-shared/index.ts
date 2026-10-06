@@ -8,4 +8,10 @@
  */
 
 export * from '../components/dashboard/kiosks/preview-screens';
+export * from '../components/dashboard/kiosks/preview-motion';
+// "כיתוב רץ": the scrolling strip (the menu and the basket place it; TickerFrame the other screens).
+export * from '../components/dashboard/kiosks/preview-ticker';
+// The kiosk's keyboard and its entry window (the name, the phone, the table, a tip amount, a note);
+// its model is `lib/kioskKeys` (pure, like `lib/kioskConfig`).
+export * from '../components/dashboard/kiosks/preview-entry';
 export * from './types';

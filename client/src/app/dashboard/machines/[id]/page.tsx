@@ -41,7 +41,11 @@ import {
   DeviceRoleBadge,
   KioskPinpadWarning,
 } from '@/components/dashboard/machines/device-role';
-import { DocumentPrefixDialog, DocumentPrefixValue } from '@/components/dashboard/machines/document-prefix';
+import {
+  DocumentPrefixBusinessStatus,
+  DocumentPrefixDialog,
+  DocumentPrefixValue,
+} from '@/components/dashboard/machines/document-prefix';
 import { LicenseBadge, useIsSuperAdmin } from '@/components/dashboard/license-fields';
 import { TrainingBadge, TrainingStripe } from '@/components/dashboard/training-badge';
 import { LicenseDialog } from '@/components/dashboard/tenant-license-dialog';
@@ -344,6 +348,13 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
               </span>
             }
           />
+          {/* Unique in the whole business (every branch): the tax file is one per business. */}
+          {machine.shopId && !removed ? (
+            <Field
+              label={tMachines('documentPrefix.businessLabel')}
+              value={<DocumentPrefixBusinessStatus machineId={machine.id} canEdit={canProduceZ} />}
+            />
+          ) : null}
           {/* "סוג מכשיר (תפקיד)": קופה / קיוסק (docs/SPEC_DEVICE_ROLE_MODEL.md). */}
           <Field
             label={tMachines('deviceRole.label')}

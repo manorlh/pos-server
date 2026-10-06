@@ -50,6 +50,7 @@ import { AsPrintedBadge, ZScopeLine } from '@/components/dashboard/z-report/z-sc
 import { BranchCode, ZRun } from '@/components/dashboard/z-report/z-identity';
 import { OpenTillsRecord } from '@/components/dashboard/z-wizard/open-tills';
 import { ZPrintDocument } from '@/components/dashboard/z-report/z-print-document';
+import { FailedPaymentsSection } from '@/components/dashboard/failed-payments/failed-payments-section';
 import { CardBrandSummaryCard } from '@/components/dashboard/z-report/card-brand-summary';
 import { WaiterSummaryCard } from '@/components/dashboard/z-report/waiter-summary';
 import {
@@ -184,7 +185,18 @@ function SalesRows({ x, dealerType }: { x: SalesFigures; dealerType?: string | n
   );
 }
 
-function TillCard({ s, shifts, dealerType }: { s: ZReportMachineSection; shifts: Shift[]; dealerType?: string | null }) {
+function TillCard({
+  s,
+  shifts,
+  dealerType,
+  zId,
+}: {
+  s: ZReportMachineSection;
+  shifts: Shift[];
+  dealerType?: string | null;
+  /** The Z, for this till's "עסקאות שלא הושלמו" (docs/SPEC_FAILED_PAYMENTS.md). */
+  zId?: string;
+}) {
   const t = useTranslations('zReports');
   const heading = useTillHeading()(s);
   // A local shop Z's "late documents" part of a till: its label, not a second "קופה N".
@@ -278,6 +290,10 @@ function TillCard({ s, shifts, dealerType }: { s: ZReportMachineSection; shifts:
             <OfflineNotice figures={offline} />
             <OfflineDeclinedList declined={s.offline?.declined ?? []} />
           </div>
+        ) : null}
+        {/* This till's failed payment attempts and cancelled sales — information only. */}
+        {zId && s.machineId && !lateTitle ? (
+          <FailedPaymentsSection query={{ zReportId: zId, machineId: s.machineId }} bare />
         ) : null}
       </CardContent>
       {shifts.length > 0 ? (
@@ -534,7 +550,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
           <div className="space-y-3">
             <h2 className="text-lg font-semibold">{t('tillsTitle')}</h2>
             {z.perMachine.map((s) => (
-              <TillCard key={sectionKeyOf(s)} s={s} shifts={sectionShifts(s)} dealerType={z.business?.dealerType} />
+              <TillCard key={sectionKeyOf(s)} s={s} shifts={sectionShifts(s)} dealerType={z.business?.dealerType} zId={z.id} />
             ))}
           </div>
         ) : z.shifts.length > 0 ? (

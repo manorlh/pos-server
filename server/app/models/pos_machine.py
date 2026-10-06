@@ -267,7 +267,7 @@ class POSMachine(Base):
     #: "קידומת מסמכים" (docs/SPEC_DOCUMENT_PREFIX.md): what this till's document numbers
     #: are printed and exported under — `20000057`. Digits only, 1–3 characters. Null means
     #: the default, the register number (`effective_document_prefix`). Unique among the
-    #: tills of its shop / branch (`app.services.document_prefix`), and given up with the
+    #: tills of its whole business — every branch (`app.services.document_prefix`) — and given up with the
     #: shop like the register number. Every document freezes the prefix it was issued
     #: with (`transactions.document_prefix`), so a change here never rewrites history.
     document_prefix = Column(String(3), nullable=True)
@@ -488,6 +488,18 @@ class POSMachine(Base):
     # tables off unless set at its own level. Changed only through
     # `app.services.independent_till.set_independent` (super admin, over a clean break).
     independent_till = Column(Boolean, nullable=False, default=False, server_default="false")
+    # ── "מכשיר תצוגה" (docs/SPEC_DEVICE_ROLE_MODEL.md §2.2) ─────────────────────
+    #: False for a display device — a KDS kitchen screen or the "מוכן / לא מוכן" board,
+    #: added as one on the dashboard. The owner: such a device is NOT a till and not an
+    #: accounting system — no register number, no document prefix, no shifts, no Z, no
+    #: cash, no payments, no documents; never a shop Z participant, the main till or a host
+    #: (app/services/display_devices.py). Enforced on every fiscal till endpoint
+    #: (`require_fiscal_machine`, 403 `device_not_fiscal`). Set at pairing only — a change
+    #: between a till and a display device is a new pairing.
+    is_fiscal = Column(Boolean, nullable=False, default=True, server_default="true", index=True)
+    #: "android" | "windows": what the device runs, from `device_info.platform` at pairing.
+    #: Null: a device paired before the column — Android.
+    platform = Column(String(16), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

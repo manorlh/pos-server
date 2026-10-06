@@ -47,7 +47,8 @@ import {
 } from '@/lib/kioskApi';
 import { KioskEditorContext, useServerErrorText, type KioskEditorValue, type PreviewScreen } from './editor-context';
 import { OptionSelect } from './fields';
-import { KioskPreview } from './kiosk-preview';
+import { KioskPreview, type KioskPreviewControls } from './kiosk-preview';
+import { MotionSection } from './section-motion';
 import { ReviewDialog } from './review-dialog';
 import { AppearanceSection } from './section-appearance';
 import { AttractSectionEditor } from './section-attract';
@@ -55,6 +56,7 @@ import { CatalogSection } from './section-catalog';
 import { ClubSection, PickupSection } from './section-club-pickup';
 import { GeneralSection } from './section-general';
 import { MessagesSection, SuccessMessageCard } from './section-messages';
+import { TickerSection } from './section-ticker';
 import { PaymentSection } from './section-payment';
 import { PrintingSection } from './section-printing';
 import { TimersSection } from './section-timers';
@@ -73,15 +75,19 @@ type SectionKey =
   | 'timers'
   | 'alerts'
   | 'club'
-  | 'pickup';
+  | 'pickup'
+  | 'motion';
 
 const SECTIONS: { key: SectionKey; screen: PreviewScreen; paths: string[] }[] = [
   { key: 'general', screen: 'service', paths: ['general'] },
   { key: 'appearance', screen: 'catalog', paths: ['theme', 'texts', 'screenImages'] },
+  // "הנפשות ומעברים": one choice per transition, each with "הצג" in the preview.
+  { key: 'motion', screen: 'catalog', paths: ['motion'] },
   { key: 'attract', screen: 'attract', paths: ['attract'] },
   { key: 'catalog', screen: 'catalog', paths: ['catalog'] },
   { key: 'upsell', screen: 'catalog', paths: ['upsell'] },
-  { key: 'messages', screen: 'attract', paths: ['messages', 'success'] },
+  // "הודעות" also holds "כיתוב רץ" (ticker).
+  { key: 'messages', screen: 'attract', paths: ['messages', 'success', 'ticker'] },
   { key: 'payment', screen: 'pay', paths: ['payment'] },
   { key: 'printing', screen: 'success', paths: ['printing'] },
   { key: 'timers', screen: 'paused', paths: ['timers', 'hours', 'operations'] },
@@ -147,6 +153,7 @@ function EditorBody({
   const [serverErrors, setServerErrors] = useState<KioskServerError[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [showPreview, setShowPreview] = useState(true);
+  const previewControls = useRef<KioskPreviewControls>(null);
 
   const dirty = !jsonEqual(draft, saved);
   useEffect(() => {
@@ -254,6 +261,10 @@ function EditorBody({
         switchUiStyle(d, rebaseInherited(inherited, inheritedLayers, d.theme.uiStyle), rebaseInherited(inherited, inheritedLayers, style), style),
       ),
     showScreen: setScreen,
+    playMotion: (demo) => {
+      setShowPreview(true);
+      previewControls.current?.play(demo);
+    },
   };
 
   const pickSection = (key: SectionKey) => {
@@ -345,6 +356,8 @@ function EditorBody({
               <GeneralSection />
             ) : section === 'appearance' ? (
               <AppearanceSection />
+            ) : section === 'motion' ? (
+              <MotionSection />
             ) : section === 'attract' ? (
               <AttractSectionEditor />
             ) : section === 'catalog' ? (
@@ -354,6 +367,7 @@ function EditorBody({
             ) : section === 'messages' ? (
               <div className="space-y-4">
                 <MessagesSection nowMs={nowMs} />
+                <TickerSection nowMs={nowMs} />
                 <SuccessMessageCard />
               </div>
             ) : section === 'payment' ? (
@@ -381,6 +395,7 @@ function EditorBody({
                 onScreen={setScreen}
                 brandName={brandName}
                 nowMs={nowMs}
+                controls={previewControls}
                 onCtaMove={
                   canEdit
                     ? (x, y) => setDraft((d) => setPath(setPath(d, 'attract.cta.x', x), 'attract.cta.y', y))

@@ -99,6 +99,12 @@ def validate(body: Dict[str, Any]) -> Dict[str, Optional[str]]:
         raise SoftwareSettingsError(
             "registrationNumber", "מספר תעודת הרישום של התוכנה: עד 8 ספרות (שדה 1006 בקובץ הוא 9(8))."
         )
+    if reg is not None and not reg.strip("0"):
+        # The simulator answers a zeroed 1006 "ערך השדה לא ולידי / השדה מאופס": zeros are
+        # what the file writes while nothing is configured, never a configured value.
+        raise SoftwareSettingsError(
+            "registrationNumber", "מספר תעודת הרישום של התוכנה לא יכול להיות אפסים — יש להזין את המספר שרשות המסים הנפיקה."
+        )
     out["registrationNumber"] = reg
     drive = _text(body.get("outputDrive"))
     if drive is not None and not _DRIVE_RE.match(drive):
@@ -114,13 +120,17 @@ def stored(db: Session) -> Dict[str, Optional[str]]:
 
 
 def derived_version(db: Session) -> Optional[str]:
-    """The newest active till release's version, build suffix cut ("0.1.207+abc…" → "0.1.207")."""
+    """
+    The newest active till release's version, build suffix cut ("0.1.207+abc…" → "0.1.207").
+    Android releases only: the till app is the registered software; a Windows app build
+    (its own a.b.c numbering) never becomes the file's version.
+    """
     from app.models.app_release import AppRelease
 
     try:
         row = (
             db.query(AppRelease.version_name)
-            .filter(AppRelease.is_active.is_(True))
+            .filter(AppRelease.is_active.is_(True), AppRelease.platform == "android")
             .order_by(AppRelease.version_code.desc(), AppRelease.created_at.desc())
             .first()
         )

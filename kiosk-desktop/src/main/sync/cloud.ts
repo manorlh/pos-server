@@ -32,7 +32,11 @@ export interface MachineMe {
   tenantId?: string | null;
   shopId?: string | null;
   pairingStatus?: string | null;
-  deviceRole?: 'till' | 'kiosk' | null;
+  /** till | kiosk | kds | order_status_board (core/roles.ts reads it leniently). */
+  deviceRole?: string | null;
+  /** false for a screen (KDS, order status board): never a till, never a document. */
+  fiscal?: boolean | null;
+  platform?: string | null;
   hasBuiltinTerminal?: boolean | null;
   [key: string]: unknown;
 }

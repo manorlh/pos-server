@@ -136,6 +136,15 @@ def _shekels(agorot: Any) -> Optional[str]:
 # ── The alert's line ─────────────────────────────────────────────────────────
 
 
+def host_down_text(detail: Dict[str, Any]) -> str:
+    """
+    " — קופה 2 לא עונה (כבויה או לא מחוברת)": the bon waits on a till's own printer and that
+    till did not take it (docs/SPEC_KIOSK.md §16.9) — the staff know which till to look at.
+    """
+    host = _str(detail.get("hostTill"), 60)
+    return f" — {host} לא עונה (כבויה או לא מחוברת)" if host else ""
+
+
 def alert_text(kiosk_name: str, kind: str, reason: str, detail: Dict[str, Any], fallback: Optional[str] = None) -> str:
     """"קיוסק רויאל — מדפסת: אין נייר" — the line every till shows, composed here, once."""
     name = (kiosk_name or "קיוסק").strip()
@@ -144,8 +153,8 @@ def alert_text(kiosk_name: str, kind: str, reason: str, detail: Dict[str, Any], 
         orders = _str(detail.get("orders"), 120)
         count = detail.get("count") if isinstance(detail.get("count"), int) else None
         if count is not None and count > 1:
-            return f"{name} — {count} בונים לא הודפסו" + (f" ({orders})" if orders else "")
-        return f"{name} — בון של הזמנה {orders or '—'} לא הודפס"[:300]
+            return (f"{name} — {count} בונים לא הודפסו" + (f" ({orders})" if orders else "") + host_down_text(detail))[:300]
+        return (f"{name} — בון של הזמנה {orders or '—'} לא הודפס" + host_down_text(detail))[:300]
     if kind == "printer":
         label = PRINTER_REASONS.get(reason)
         if label is None:
@@ -157,7 +166,7 @@ def alert_text(kiosk_name: str, kind: str, reason: str, detail: Dict[str, Any], 
         head = f"{which} {printer}" if printer and which == "מדפסת" else which
         if printer and which != "מדפסת":
             head = f"{which} ({printer})"
-        return f"{name} — {head}: {label}"[:300]
+        return (f"{name} — {head}: {label}" + host_down_text(detail))[:300]
     if kind == "terminal" and reason == "no_internet_sim":
         # "אין אינטרנט ברשת פרטנר (סים 1). לעבור לנתונים של סים 2 (סלקום)?" (device_identity).
         from app.services.device_identity import sim_prompt_text
@@ -551,6 +560,13 @@ def offline_alerts_for_till(db: Session, till: POSMachine, *, now: Optional[date
             "acknowledgedBy": None,
             "audience": route_of(cfg, "terminal")["audience"],
         })
+    # The cloud's other alerts on the same routes ("KDS לא מחובר", app/services/kiosk_health.py).
+    try:
+        from app.services.kiosk_health import cloud_alerts_for_till
+
+        out.extend(cloud_alerts_for_till(db, till, now=now))
+    except Exception:  # noqa: BLE001 - an alert never fails the till's fetch
+        logger.exception("kiosk cloud alerts failed for till %s", till.id)
     return out
 
 

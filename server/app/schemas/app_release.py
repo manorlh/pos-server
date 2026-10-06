@@ -12,6 +12,22 @@ NOTES_MAX = 4000
 AppReleaseLevel = Literal["tenant", "company", "shop", "area", "machine"]
 #: The same set as `APP_UPDATE_STATUSES` (app/models/app_release.py).
 AppUpdateStatus = Literal["downloading", "downloaded", "installing", "installed", "failed", "declined"]
+#: The same set as `APP_RELEASE_PLATFORMS`.
+AppPlatform = Literal["android", "windows"]
+
+
+class InstallWindow(BaseModel):
+    """"HH:MM"–"HH:MM", device-local time; may cross midnight (22:00–05:00)."""
+
+    start: str
+    end: str
+
+
+class InstallWindowIn(BaseModel):
+    """Both or neither (checked by the router: `422 install_window_invalid`)."""
+
+    start: Optional[str] = None
+    end: Optional[str] = None
 
 
 def _clean_notes(value):
@@ -32,6 +48,7 @@ class AppReleaseOut(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: uuid.UUID
+    platform: str = "android"
     version_code: int = Field(..., alias="versionCode")
     version_name: str = Field(..., alias="versionName")
     sha256: str
@@ -58,11 +75,31 @@ class AppReleaseUpdate(BaseModel):
 
 
 class AppReleaseAssignmentIn(BaseModel):
+    """
+    `POST /app-releases/{id}/assignments`. `rolloutPercent` 1..100 (`422
+    rollout_percent_invalid`), `allowDowngrade` Windows only (`422
+    downgrade_not_supported_on_android`), `installWindow` both ends "HH:MM" or null
+    (`422 install_window_invalid`).
+    """
+
     model_config = ConfigDict(populate_by_name=True)
 
     level: AppReleaseLevel
     target_id: uuid.UUID = Field(..., alias="targetId")
     auto_install: bool = Field(False, alias="autoInstall")
+    rollout_percent: int = Field(100, alias="rolloutPercent")
+    allow_downgrade: bool = Field(False, alias="allowDowngrade")
+    install_window: Optional[InstallWindowIn] = Field(None, alias="installWindow")
+
+
+class AppReleaseAssignmentPatch(BaseModel):
+    """`PATCH /app-release-assignments/{id}`: any of these; `installWindow: null` clears it."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    rollout_percent: Optional[int] = Field(None, alias="rolloutPercent")
+    auto_install: Optional[bool] = Field(None, alias="autoInstall")
+    install_window: Optional[InstallWindowIn] = Field(None, alias="installWindow")
 
 
 class AppReleaseAssignmentOut(BaseModel):
@@ -71,6 +108,8 @@ class AppReleaseAssignmentOut(BaseModel):
     id: uuid.UUID
     release_id: uuid.UUID = Field(..., alias="releaseId")
     version_name: Optional[str] = Field(None, alias="versionName")
+    #: The release's platform: the assignment reaches only devices of that platform.
+    platform: str = "android"
     level: str
     target_id: uuid.UUID = Field(..., alias="targetId")
     #: The target's name; null when it no longer exists.
@@ -79,9 +118,13 @@ class AppReleaseAssignmentOut(BaseModel):
     target_context: Optional[str] = Field(None, alias="targetContext")
     tenant_id: uuid.UUID = Field(..., alias="tenantId")
     auto_install: bool = Field(..., alias="autoInstall")
+    rollout_percent: int = Field(100, alias="rolloutPercent")
+    allow_downgrade: bool = Field(False, alias="allowDowngrade")
+    install_window: Optional[InstallWindow] = Field(None, alias="installWindow")
     created_at: Optional[datetime] = Field(None, alias="createdAt")
     cancelled_at: Optional[datetime] = Field(None, alias="cancelledAt")
-    #: Active tills the assignment reaches (whether or not a more specific one wins there).
+    #: Active devices of the release's platform the assignment reaches (whether or not a
+    #: more specific one wins there, and before the rollout stage is applied).
     machine_count: int = Field(0, alias="machineCount")
 
 
@@ -93,6 +136,10 @@ class RolloutRow(BaseModel):
     machine_id: uuid.UUID = Field(..., alias="machineId")
     machine_name: str = Field(..., alias="machineName")
     pos_number: Optional[str] = Field(None, alias="posNumber")
+    #: "android" | "windows" — `app_updates.machine_platform` (the device's pairing info).
+    platform: str = "android"
+    #: "till" | "kiosk" — `device_profile.effective_role`.
+    device_role: Optional[str] = Field(None, alias="deviceRole")
     company_id: Optional[uuid.UUID] = Field(None, alias="companyId")
     company_name: Optional[str] = Field(None, alias="companyName")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
@@ -111,6 +158,14 @@ class RolloutRow(BaseModel):
     auto_install: Optional[bool] = Field(None, alias="autoInstall")
     #: The till already runs the target (its `appVersion` is the release's versionName).
     up_to_date: bool = Field(False, alias="upToDate")
+    #: A target is assigned and the device does not run it.
+    behind: bool = False
+    #: The newest active release of the device's platform (by versionCode), whether or not
+    #: it is assigned to it.
+    newest_version: Optional[str] = Field(None, alias="newestVersion")
+    newest_version_code: Optional[int] = Field(None, alias="newestVersionCode")
+    #: There is a newest release and the device does not run it.
+    behind_newest: bool = Field(False, alias="behindNewest")
     #: The till's last report about the target release; null = it has said nothing yet.
     status: Optional[str] = None
     status_message: Optional[str] = Field(None, alias="statusMessage")
@@ -121,7 +176,12 @@ class RolloutRow(BaseModel):
 
 
 class AppUpdateOffer(BaseModel):
-    """`GET /sync/{machine_id}/app-update`. Every key always present; nulls when nothing is offered."""
+    """
+    `GET /sync/{machine_id}/app-update`. Every key always present; nulls when nothing is
+    offered. The first eight keys are the Android till's original contract; `platform`,
+    `allowDowngrade`, `rolloutPercent` and `installWindow` were added for the Windows app
+    (Moshi on the till ignores keys it does not know).
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -133,6 +193,15 @@ class AppUpdateOffer(BaseModel):
     size_bytes: Optional[int] = Field(None, alias="sizeBytes")
     notes: Optional[str] = None
     auto_install: bool = Field(False, alias="autoInstall")
+    #: The offered release's platform, or the one asked for when nothing is offered.
+    platform: str = "android"
+    #: The offer is a rollback to a lower versionCode the device should accept (Windows).
+    allow_downgrade: bool = Field(False, alias="allowDowngrade")
+    #: The assignment's stage (the device is in it, or it would not be offered); null when
+    #: nothing is offered.
+    rollout_percent: Optional[int] = Field(None, alias="rolloutPercent")
+    #: Auto-install only inside this device-local window; null = any time.
+    install_window: Optional[InstallWindow] = Field(None, alias="installWindow")
 
 
 class AppUpdateStatusIn(BaseModel):

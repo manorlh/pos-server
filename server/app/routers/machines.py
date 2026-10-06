@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from app.services import licenses
 from app.services import access
 from app.services import device_profile
+from app.services import display_devices
 from app.services import device_identity
 from app.services import document_prefix
 from app.services import support_z, till_reset
@@ -453,6 +454,56 @@ def list_unassigned_machines(
     return query.all()
 
 
+@router.get("/document-prefix-conflicts")
+def list_document_prefix_conflicts(
+    company_id: Optional[str] = Query(None, alias="companyId"),
+    shop_id: Optional[str] = Query(None, alias="shopId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "קידומות מסמכים כפולות בעסק" (docs/SPEC_DOCUMENT_PREFIX.md §5): the active tills of the
+    business — every shop of the company (`companyId`), or of the shop's company
+    (`shopId`), and of companies under the same VAT number — whose prefix in force would
+    repeat another document's number in the business's one open-format file. Each row
+    names who else holds the prefix and the free prefix it would get
+    (`POST /machines/{id}/document-prefix/assign-free`). A shop's own staff see their
+    shop's tills only.
+    """
+    from app.models.company import Company
+    from app.routers.companies import _check_company_access
+
+    if shop_id:
+        try:
+            sid = uuid_mod.UUID(str(shop_id))
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid shopId")
+        shop = db.query(Shop).filter(Shop.id == sid).first()
+        if not shop:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
+        ensure_same_tenant(shop.tenant_id, active_tenant_id)
+        _check_shop_access(current_user, shop, db)
+        shop_ids = document_prefix.business_shop_ids(db, shop)
+    elif company_id:
+        try:
+            cid = uuid_mod.UUID(str(company_id))
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid companyId")
+        company = db.query(Company).filter(Company.id == cid).first()
+        if not company:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+        ensure_same_tenant(company.tenant_id, active_tenant_id)
+        _check_company_access(current_user, company, db)
+        shop_ids = document_prefix.company_business_shop_ids(db, company)
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="companyId or shopId is required")
+    rows = document_prefix.conflicts_in_shops(db, shop_ids)
+    if current_user.role in SHOP_SCOPED_ROLES:
+        rows = [r for r in rows if r["shopId"] == str(current_user.shop_id)]
+    return {"conflicts": rows, "businessShopCount": len(shop_ids)}
+
+
 @router.get("/me/ably-auth")
 def get_my_ably_auth(
     machine: POSMachine = Depends(get_pos_machine_from_machine_token),
@@ -511,11 +562,17 @@ def get_my_machine(
         # leaves the built-in printer without a drawer; a receipt printer's stays.
         "hasCashDrawerPort": machine.has_cash_drawer_port,
         # "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): the mode the till opens in —
-        # "kiosk" for an enabled kiosk, else "till". Read right after pairing, so a device
-        # added as a kiosk asks `kiosk/sync` at once rather than on its 2-minute poll.
+        # "kiosk" for an enabled kiosk, else "till"; "kds" / "order_status_board" for a
+        # display device. Read right after pairing, so a device added as a kiosk asks
+        # `kiosk/sync` at once rather than on its 2-minute poll.
         "deviceRole": device_profile.effective_role(
             db if isinstance(db, Session) else object_session(machine), machine
         ),
+        # False for a display device (a KDS / the "מוכן / לא מוכן" board): not a till — no
+        # sales, shifts, Z or payments; every fiscal endpoint answers it 403 `device_not_fiscal`.
+        "fiscal": display_devices.is_fiscal(machine),
+        # "android" | "windows" (docs/SPEC_DEVICE_ROLE_MODEL.md §2.3).
+        "platform": display_devices.platform_of(machine),
         # "לקוח זמני": the license end this till keeps (app/services/licenses.py).
         # Called directly (a test), `db` is its Depends default: the machine's own session.
         "license": licenses.effective_license(
@@ -769,6 +826,14 @@ def update_machine(
     # Who produces its Z (§5.1): first, so a refused switch changes nothing else either.
     # An explicit null is no change.
     z_mode = update_data.pop("z_mode", None)
+    # A display device (a KDS / the board, app/services/display_devices.py) makes no Z and
+    # issues no documents: no Z mode to switch, no document prefix (409 `device_not_fiscal`).
+    if not display_devices.is_fiscal(machine) and (
+        (z_mode is not None and z_mode != till_z.z_mode_of(machine))
+        or (update_data.get("document_prefix") or "").strip()
+    ):
+        db.rollback()
+        return display_devices.not_fiscal_response(machine)
     if z_mode is not None:
         try:
             # The owner's rules: the super admin alone, the till's shift closed first.
@@ -852,6 +917,58 @@ def update_machine(
     if area_changed:
         areas.notify_tills([machine])
     return machine
+
+
+@router.get("/{machine_id}/document-prefix")
+def get_machine_document_prefix(
+    machine_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The till's "קידומת מסמכים" against its business (docs/SPEC_DOCUMENT_PREFIX.md §5):
+    `prefix` in force, `ownPrefix` (else the register number), `uniqueInBusiness`, and when
+    not, `heldBy` (who else, in Hebrew `text`) and `suggestedPrefix`.
+    """
+    machine = _machine_for_read(db, machine_id, current_user, active_tenant_id)
+    return document_prefix.prefix_status(db, machine)
+
+
+@router.post("/{machine_id}/document-prefix/assign-free")
+def assign_free_document_prefix(
+    machine_id: str,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "שיוך קידומת פנויה": give a till whose prefix collides in its business the lowest free
+    prefix of the business. Its future documents only — what it issued keeps the prefix
+    frozen on it; the till learns the new one on its next `GET /machines/me`. A till whose
+    prefix is already unique is left alone (`changed: false`). The same roles as
+    `PUT /machines/{id}`.
+    """
+    machine = machine_for_shift_admin(db, machine_id, current_user, active_tenant_id)
+    refused_display = display_devices.not_fiscal_response(machine)  # no documents, no prefix
+    if refused_display is not None:
+        return refused_display
+    try:
+        assigned = document_prefix.assign_free_prefix(db, machine)
+    except document_prefix.DocumentPrefixRefused as refused:
+        db.rollback()
+        return JSONResponse(
+            status_code=refused.status_code,
+            content={"detail": refused.detail, "code": refused.code},
+        )
+    db.commit()
+    db.refresh(machine)
+    return {
+        "changed": assigned is not None,
+        "documentPrefix": machine.document_prefix,
+        "effectiveDocumentPrefix": machine.effective_document_prefix,
+        "status": document_prefix.prefix_status(db, machine),
+    }
 
 
 def _machine_has_history(db: Session, machine_id: str) -> bool:
@@ -1083,6 +1200,9 @@ def request_till_z(
     `GET /till-z-requests/{id}`.
     """
     machine = machine_for_shift_admin(db, machine_id, current_user, active_tenant_id)
+    refused_display = display_devices.not_fiscal_response(machine)  # a display device makes no Z
+    if refused_display is not None:
+        return refused_display
     try:
         req, _created = till_z.request_for_machine(
             db, current_user, machine, force=bool(body.force) if body is not None else False
@@ -1129,6 +1249,9 @@ def request_transmit(
     `GET /transmit-requests/{id}`.
     """
     machine = machine_for_shift_admin(db, machine_id, current_user, active_tenant_id)
+    refused_display = display_devices.not_fiscal_response(machine)  # no card payments on a display device
+    if refused_display is not None:
+        return refused_display
     req, created = transmit_requests.request_transmit(db, current_user, machine)
     db.commit()
     db.refresh(req)
@@ -1500,12 +1623,14 @@ def update_device_profile(
             device_profile.check_model_change(db, machine, body.device_model)
             device_profile.change_model(machine, body.device_model)
         if body.device_role is not None:
-            current_role = device_profile.role_of(device_profile.kiosk_device(db, machine.id))
+            # A display device's too ("kds" / "order_status_board"): a till never becomes one,
+            # nor back — 409 `device_role_change_requires_pairing` (app/services/display_devices.py).
+            current_role = device_profile.current_role(db, machine)
             if body.device_role != current_role:
                 kiosk_control.check_machine_scope(db, current_user, machine, active_tenant_id)
                 device_profile.check_role_switch(db, machine, body.device_role)
                 changed = device_profile.change_role(
-                    db, current_user, machine, body.device_role, body.kiosk
+                    db, current_user, machine, body.device_role, body.kiosk, body.kds
                 )
         db.commit()
     except device_profile.DeviceProfileRefused as refused:

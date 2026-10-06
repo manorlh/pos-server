@@ -25,6 +25,7 @@ from app.schemas.z_report import (
 )
 from app.services.areas import filter_on_column, parse_area_filter
 from app.services import card_brands, offline_authorizations, z_print
+from app.services.failed_payments import with_print_sections as _with_failed_payments
 from app.services.shift_totals import compute_totals
 from app.services.z_waiters import waiter_breakdown
 from app.services.reports import _load_zoneinfo, resolve_report_timezone
@@ -401,7 +402,9 @@ def get_z_print_documents(
                 "id": str(z.id),
                 "number": z.z_number,
                 "shopId": str(z.shop_id) if z.shop_id else None,
-                "document": z_print.build_print_document(z, tzinfo, printed_at=printed_at),
+                "document": _with_failed_payments(
+                    db, z, z_print.build_print_document(z, tzinfo, printed_at=printed_at), tzinfo
+                ),
             }
             for z in rows
         ],
@@ -423,7 +426,8 @@ def get_z_print_document(
     if not z:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Z-report not found")
     tzinfo = _load_zoneinfo(resolve_report_timezone(db, active_tenant_id, None))
-    return z_print.build_print_document(z, tzinfo)
+    # With "עסקאות שלא הושלמו" (informational, docs/SPEC_FAILED_PAYMENTS.md), as the till prints it.
+    return _with_failed_payments(db, z, z_print.build_print_document(z, tzinfo), tzinfo)
 
 
 def _with_derived_sales(section: dict) -> dict:

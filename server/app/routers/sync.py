@@ -13,14 +13,15 @@ PUT  /sync/{machine_id}/categories/{id}/availability
 DELETE /sync/{machine_id}/products/{id}, /categories/{id}
                                                → refused (409): deactivate instead
 GET  /sync/{machine_id}/app-update             → the app release offered to this till
-GET  /sync/{machine_id}/app-update/{id}/apk    → its APK
+                                                 (?platform=windows for the Windows app)
+GET  /sync/{machine_id}/app-update/{id}/apk    → its APK / Windows installer (alias …/file)
 POST /sync/{machine_id}/app-update/status      → how taking it is going
 """
 import logging
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
@@ -131,6 +132,7 @@ from app.schemas.offline_authorization import OfflineAuthorizationIn
 from app.services import offline_authorizations
 from app.models.z_report import ZReport
 from app.services import z_print
+from app.services import failed_payments
 from app.services.reports import _load_zoneinfo, resolve_report_timezone
 from app.schemas.till_parameter import TillParametersSyncResponse
 from app.services.till_parameters import till_parameters_for_machine
@@ -142,6 +144,9 @@ from app.services import till_z
 from app.routers.z_reports import z_detail_out
 
 logger = logging.getLogger(__name__)
+# Display devices are not tills (app/services/display_devices.py).
+from app.middleware.auth import FISCAL_MACHINE_TOKEN, FISCAL_SYNC_PATH
+
 router = APIRouter(prefix="/sync", tags=["sync"])
 
 
@@ -1105,7 +1110,7 @@ class PaymentTerminalIn(BaseModel):
     path: Optional[str] = Field(None, max_length=200)
 
 
-@router.put("/{machine_id}/payment-terminal")
+@router.put("/{machine_id}/payment-terminal", dependencies=FISCAL_SYNC_PATH)
 def machine_set_payment_terminal(
     machine_id: str,
     body: PaymentTerminalIn,
@@ -1284,6 +1289,7 @@ def machine_set_category_availability(
     "/{machine_id}/transactions",
     response_model=TransactionsBatchResponse,
     status_code=status.HTTP_200_OK,
+    dependencies=FISCAL_SYNC_PATH,
 )
 def post_transactions(
     machine_id: str,
@@ -1394,7 +1400,7 @@ def post_transactions(
 # closed shifts (`app/routers/z_runs.py`). Contract: docs/SHIFTS_API.md §1.
 
 
-@router.post("/{machine_id}/shifts", response_model=ShiftOut, response_model_by_alias=True)
+@router.post("/{machine_id}/shifts", response_model=ShiftOut, response_model_by_alias=True, dependencies=FISCAL_MACHINE_TOKEN)
 def post_shift_open(
     machine_id: str,
     data: ShiftOpenIn,
@@ -1439,6 +1445,7 @@ def get_last_closed_shift(
     "/{machine_id}/shifts/{shift_id}/close",
     status_code=status.HTTP_200_OK,
     responses={409: {"model": ShiftMissingResponse}, 200: {"model": ShiftCloseResponse}},
+    dependencies=FISCAL_MACHINE_TOKEN,
 )
 def post_shift_close(
     machine_id: str,
@@ -1541,6 +1548,7 @@ def post_shift_close(
     "/{machine_id}/shift-close/ack",
     response_model=ShiftCloseAckResponse,
     response_model_by_alias=True,
+    dependencies=FISCAL_MACHINE_TOKEN,
 )
 def post_shift_close_ack(
     machine_id: str,
@@ -1565,7 +1573,7 @@ def post_shift_close_ack(
 # ── Card transmission (docs/SHIFTS_API.md §4) ─────────────────────────────────
 
 
-@router.post("/{machine_id}/transmissions", status_code=status.HTTP_201_CREATED)
+@router.post("/{machine_id}/transmissions", status_code=status.HTTP_201_CREATED, dependencies=FISCAL_MACHINE_TOKEN)
 def post_transmission_report(
     machine_id: str,
     body: TransmissionReportIn,
@@ -1672,13 +1680,14 @@ def get_own_shop_z_print_document(
         doc = z_print.build_till_document(z, till, tzinfo)
         if doc is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="till_not_in_z")
-        return doc
+        # "עסקאות שלא הושלמו" / "מכירות שבוטלו" of that till (informational, docs/SPEC_FAILED_PAYMENTS.md).
+        return failed_payments.with_print_sections(db, z, doc, tzinfo, machine_id=till)
     if isinstance(part, str) and part == "summary":
         return z_print.build_summary_document(z, tzinfo)
-    return z_print.build_print_document(z, tzinfo)
+    return failed_payments.with_print_sections(db, z, z_print.build_print_document(z, tzinfo), tzinfo)
 
 
-@router.post("/{machine_id}/transmit/ack")
+@router.post("/{machine_id}/transmit/ack", dependencies=FISCAL_MACHINE_TOKEN)
 def post_transmit_ack(
     machine_id: str,
     body: TransmitAckIn,
@@ -1710,7 +1719,7 @@ def _till_z_refusal(db: Session, refused: "till_z.TillZRefused") -> JSONResponse
     return JSONResponse(status_code=refused.status_code, content=refused.body)
 
 
-@router.post("/{machine_id}/till-z", status_code=status.HTTP_201_CREATED)
+@router.post("/{machine_id}/till-z", status_code=status.HTTP_201_CREATED, dependencies=FISCAL_MACHINE_TOKEN)
 def post_till_z(
     machine_id: str,
     body: TillZIn,
@@ -1801,7 +1810,7 @@ def get_till_z_history(
     }
 
 
-@router.post("/{machine_id}/till-z/ack")
+@router.post("/{machine_id}/till-z/ack", dependencies=FISCAL_MACHINE_TOKEN)
 def post_till_z_ack(
     machine_id: str,
     body: TillZAckIn,
@@ -1884,7 +1893,7 @@ def post_till_reset_result(
 # ── Offline card authorization (Agamento `authorizePendingTransactions`) ──────
 
 
-@router.post("/{machine_id}/offline-authorizations", status_code=status.HTTP_201_CREATED)
+@router.post("/{machine_id}/offline-authorizations", status_code=status.HTTP_201_CREATED, dependencies=FISCAL_MACHINE_TOKEN)
 def post_offline_authorization(
     machine_id: str,
     body: OfflineAuthorizationIn,
@@ -2272,19 +2281,29 @@ def get_app_update(
     version_name: Optional[str] = Query(None, alias="versionName"),
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
+    # Annotated, so a direct call (the tests) that leaves it out gets a plain None.
+    platform: Annotated[Optional[str], Query()] = None,
 ):
     """
-    The release assigned to this till, if it should take it. Asked on every sync with
-    the version the till runs. Resolved till → area → shop → company → tenant, newest at
-    a level (app/services/app_updates.py); `available` only when that release is not
-    what the till runs and not a lower versionCode. Every key is always present.
+    The release assigned to this device, if it should take it. Asked on every sync with
+    the version the device runs. `platform` "android" (absent — the Android till's call)
+    or "windows" (the Windows app); `422 invalid_platform` otherwise. Only releases of
+    that platform count. Resolved device → area → shop → company → tenant, newest at a
+    level, rollout stage applied (app/services/app_updates.py); `available` only when
+    that release is not what the device runs and not a lower versionCode — unless the
+    assignment allows a (Windows) rollback (`allowDowngrade`). Every key is always present.
     """
-    resolved = app_updates.resolved_for_machine(db, machine)
+    try:
+        platform = app_updates.normalize_platform(platform)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_platform")
+    resolved = app_updates.resolved_for_machine(db, machine, platform=platform)
     if resolved is None:
-        return AppUpdateOffer(available=False)
+        return AppUpdateOffer(available=False, platform=platform)
     assignment, release = resolved
-    if not app_updates.offer_for(release, version_code, version_name):
-        return AppUpdateOffer(available=False)
+    allow_downgrade = app_updates.allows_downgrade(assignment, release)
+    if not app_updates.offer_for(release, version_code, version_name, allow_downgrade=allow_downgrade):
+        return AppUpdateOffer(available=False, platform=platform)
     return AppUpdateOffer(
         available=True,
         release_id=str(release.id),
@@ -2294,10 +2313,22 @@ def get_app_update(
         size_bytes=release.size_bytes,
         notes=release.notes,
         auto_install=bool(assignment.auto_install),
+        platform=app_updates.release_platform(release),
+        allow_downgrade=allow_downgrade,
+        rollout_percent=assignment.rollout_percent if assignment.rollout_percent is not None else 100,
+        install_window=app_updates.install_window_of(assignment),
     )
 
 
+#: Per platform: the download's media type and file name.
+_RELEASE_DOWNLOAD = {
+    "android": ("application/vnd.android.package-archive", "app-{version}.apk"),
+    "windows": ("application/vnd.microsoft.portable-executable", "R2M-POS-Windows-{version}-setup.exe"),
+}
+
+
 @router.get("/{machine_id}/app-update/{release_id}/apk")
+@router.get("/{machine_id}/app-update/{release_id}/file")
 def get_app_update_apk(
     machine_id: str,
     release_id: uuid.UUID,
@@ -2305,20 +2336,27 @@ def get_app_update_apk(
     db: Session = Depends(get_db),
 ):
     """
-    The APK of the release this till resolves to now — `404` for any other release, so
-    a till can only ever fetch what it was sent. Streamed from disk.
+    The file of the release this device resolves to now — the APK, or the Windows
+    installer (`/apk` and its alias `/file` serve both). The release is looked up by id
+    and the device resolved among releases of THAT release's platform: `404` unless it is
+    the resolved one, so a device can only ever fetch what it was sent. Streamed from disk.
     """
-    resolved = app_updates.resolved_for_machine(db, machine)
+    release = db.query(AppRelease).filter(AppRelease.id == release_id).first()
+    if release is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App release not found")
+    platform = app_updates.release_platform(release)
+    resolved = app_updates.resolved_for_machine(db, machine, platform=platform)
     if resolved is None or resolved[1].id != release_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App release not found")
     release = resolved[1]
     if not os.path.isfile(release.file_path):
         logger.error("app release %s: file missing at %s", release.id, release.file_path)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App release file missing")
+    media_type, filename = _RELEASE_DOWNLOAD.get(platform, _RELEASE_DOWNLOAD["android"])
     return FileResponse(
         release.file_path,
-        media_type="application/vnd.android.package-archive",
-        filename=f"app-{release.version_name}.apk",
+        media_type=media_type,
+        filename=filename.format(version=release.version_name),
     )
 
 

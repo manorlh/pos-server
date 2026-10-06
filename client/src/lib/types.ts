@@ -2800,9 +2800,20 @@ export type AppUpdateStatus =
   | 'failed'
   | 'declined';
 
-/** One uploaded APK. Global — every tenant's tills run the same app. */
+/** Which app a release is: the Android till APK or the Windows app's installer. */
+export type AppPlatform = 'android' | 'windows';
+
+/** Auto-install only between these device-local times ("HH:MM"; may cross midnight). */
+export interface AppInstallWindow {
+  start: string;
+  end: string;
+}
+
+/** One uploaded APK or Windows installer. Global — every tenant's devices run the same app. */
 export interface AppRelease {
   id: string;
+  /** Absent on an older server: Android. */
+  platform?: AppPlatform;
   versionCode: number;
   versionName: string;
   sha256: string;
@@ -2819,6 +2830,8 @@ export interface AppReleaseAssignment {
   id: string;
   releaseId: string;
   versionName?: string | null;
+  /** The release's platform: the assignment reaches only devices of that platform. */
+  platform?: AppPlatform;
   level: AppReleaseLevel;
   targetId: string;
   /** The target's name; null when it no longer exists. */
@@ -2827,9 +2840,14 @@ export interface AppReleaseAssignment {
   targetContext?: string | null;
   tenantId: string;
   autoInstall: boolean;
+  /** Staged rollout: the share (1..100) of the target's devices it covers. */
+  rolloutPercent?: number;
+  /** Rollback allowed (Windows only). */
+  allowDowngrade?: boolean;
+  installWindow?: AppInstallWindow | null;
   createdAt?: string | null;
   cancelledAt?: string | null;
-  /** Active tills it reaches (whether or not something more specific wins there). */
+  /** Active devices of its platform it reaches (whether or not something more specific wins there). */
   machineCount: number;
 }
 
@@ -2838,6 +2856,9 @@ export interface AppReleaseRolloutRow {
   machineId: string;
   machineName: string;
   posNumber?: string | null;
+  platform?: AppPlatform;
+  /** "till" | "kiosk". */
+  deviceRole?: string | null;
   companyId?: string | null;
   companyName?: string | null;
   shopId?: string | null;
@@ -2855,6 +2876,12 @@ export interface AppReleaseRolloutRow {
   autoInstall?: boolean | null;
   /** The till already runs the target. */
   upToDate: boolean;
+  /** A target is assigned and the device does not run it. */
+  behind?: boolean;
+  /** The newest active release of the device's platform. */
+  newestVersion?: string | null;
+  newestVersionCode?: number | null;
+  behindNewest?: boolean;
   /** The till's last report about the target; null = it has said nothing yet. */
   status?: AppUpdateStatus | null;
   statusMessage?: string | null;

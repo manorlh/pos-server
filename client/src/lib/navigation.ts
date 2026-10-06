@@ -73,6 +73,8 @@ import {
   MonitorPlay,
   MessageSquareText,
   HeartHandshake,
+  HeartPulse,
+  TabletSmartphone,
 } from 'lucide-react';
 
 /** Which gate an entry hangs on. `undefined` = visible to anyone signed in. */
@@ -115,6 +117,9 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: '/dashboard/compare', labelKey: 'compareBoard', icon: BarChart3 },
       // What to look at and do: dead items, weak hours, the menu matrix, forecast, outliers.
       { href: '/dashboard/insights', labelKey: 'insights', icon: Lightbulb },
+      // "ביצועי קיוסקים": the kiosks' funnel, where customers leave, time to order, upsell
+      // and payments. Its own exact href, so it — not "insights" — lights up on its route.
+      { href: '/dashboard/insights/kiosks', labelKey: 'kioskInsights', icon: TabletSmartphone },
       // A message every targeted till must acknowledge; the machine-admin roles, which
       // are exactly the settings-write set.
       { href: '/dashboard/till-messages', labelKey: 'tillMessages', icon: Megaphone, gate: 'settingsWrite' },
@@ -242,6 +247,9 @@ export const NAV_SECTIONS: NavSection[] = [
       // Customer self-order kiosks: tills turned into kiosks, their status, remote control,
       // and their look and behaviour per company / shop / kiosk — the machine-admin roles.
       { href: '/dashboard/kiosks', labelKey: 'kiosks', icon: MonitorSmartphone, gate: 'settingsWrite' },
+      // "תקינות מכשירים": each kiosk's parts (app, terminal, printer, till link, KDS, media,
+      // uploads) live, and its open alerts — the same roles as the kiosks page.
+      { href: '/dashboard/kiosks/health', labelKey: 'deviceHealth', icon: HeartPulse, gate: 'settingsWrite' },
       // "נוכחות עובדים": who is on shift, the attendance report, corrections and job titles.
       // Every role but the cashier reads (the server scopes it); managers correct.
       { href: '/dashboard/attendance', labelKey: 'attendance', icon: CalendarClock },

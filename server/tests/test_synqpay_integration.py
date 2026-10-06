@@ -3,8 +3,9 @@
 (USB / LAN) and its parameters as managed settings, the API key write-only and encrypted.
 
 * Validation of every field, as the dashboard and the till read them.
-* What a till on an external SynqPay terminal still lacks: model, connection, API key, and the
-  host only on the network (lan) — USB finds its device itself. A till running ON a SynqPay
+* What a till on an external SynqPay terminal still lacks: model, connection, and the
+  host only on the network (lan) — USB finds its device itself. No API key: the till pairs with
+  the terminal itself (test_synqpay_pairing.py). A till running ON a SynqPay
   terminal charges on it as its built-in terminal: no settings.
 * The API key: never in a layer's JSON, encrypted, only to a till on SynqPay, redacted from logs.
 """
@@ -96,20 +97,20 @@ def test_every_synqpay_key_is_managed_and_resettable():
 # ── What a till on SynqPay still lacks ───────────────────────────────────────
 
 
-def test_lan_needs_model_connection_host_and_key():
+def test_lan_needs_model_connection_and_host_never_a_key():
     res = PI.resolve([("machine", {"paymentIntegration": "synqpay"})], True)
     # No connection chosen: the host cannot be asked for yet.
-    assert res.missing == ["synqpayDeviceModel", "synqpayConnection", "synqpayApiKey"]
+    assert res.missing == ["synqpayDeviceModel", "synqpayConnection"]
     lan = {"paymentIntegration": "synqpay", "synqpayDeviceModel": "dx8000", "synqpayConnection": "lan"}
     res = PI.resolve([("machine", lan)], True)
-    assert res.missing == ["synqpayHost", "synqpayApiKey"]
-    res = PI.resolve([("machine", {**lan, "synqpayHost": "192.168.1.40"})], True, secrets_set=["synqpayApiKey"])
+    assert res.missing == ["synqpayHost"]
+    res = PI.resolve([("machine", {**lan, "synqpayHost": "192.168.1.40"})], True)
     assert res.missing == []
 
 
 def test_usb_needs_no_host():
     usb = {"paymentIntegration": "synqpay", "synqpayDeviceModel": "rx5000", "synqpayConnection": "usb"}
-    assert PI.resolve([("machine", usb)], True, secrets_set=["synqpayApiKey"]).missing == []
+    assert PI.resolve([("machine", usb)], True).missing == []
     assert PI.SYNQPAY_CONNECTIONS == ("lan", "usb")
 
 
@@ -256,7 +257,7 @@ def test_the_context_lists_synqpay_and_its_key_status(w):
     assert ctx["secrets"]["synqpayApiKey"]["set"] is True and ctx["secrets"]["synqpayApiKey"]["own"] is True
     assert ctx["resolved"]["integration"] == "synqpay"
     assert ctx["resolved"]["missing"] == ["synqpayDeviceModel", "synqpayHost"]
-    assert ctx["requiredFields"]["synqpay"] == ["synqpayDeviceModel", "synqpayConnection", "synqpayHost", "synqpayApiKey"]
+    assert ctx["requiredFields"]["synqpay"] == ["synqpayDeviceModel", "synqpayConnection", "synqpayHost"]
     assert API_KEY not in str(ctx)
 
 

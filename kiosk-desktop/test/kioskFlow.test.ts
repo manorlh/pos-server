@@ -100,5 +100,72 @@ describe('the kiosk flow (a port of the till’s KioskFlow.kt)', () => {
     expect(r.services).toEqual(['take_away', 'eat_in']);
     expect(r.detailsStep).toBe('before_pay');
     expect(r.asksDetails('take_away')).toBe(true);
+    expect(r.asksTip).toBe(false);
+  });
+});
+
+describe('"טיפ לצוות" — a checkout step of its own (the till’s KioskFlow asksTip)', () => {
+  const cfg = (payment: Record<string, unknown>, general: Record<string, unknown> = {}) =>
+    ({ ...KIOSK_DEFAULTS, general: { ...KIOSK_DEFAULTS.general, ...general }, payment: { ...KIOSK_DEFAULTS.payment, ...payment } }) as never;
+  const toPay = (r: KioskFlowRules) => run(r, { type: 'start' }, { type: 'chooseService', service: 'take_away' }, { type: 'openCart' }, { type: 'checkout' });
+
+  it('the tip is not a detail: no name, no phone, the tip on → only the tip is asked', () => {
+    const r = rulesOf(cfg({ customerName: 'off', customerPhone: 'off', tipEnabled: true }, { askTableNumber: true }), false);
+    expect(r.asksDetails('take_away')).toBe(false);
+    expect(r.asksDetails('eat_in')).toBe(true); // the table
+    expect(r.asksTip).toBe(true);
+    // Nothing to choose: no presets and no "סכום אחר".
+    expect(rulesOf(cfg({ tipEnabled: true, tipPresets: [], tipOther: false }), false).asksTip).toBe(false);
+    expect(rulesOf(cfg({ tipEnabled: true, tipPresets: [], tipOther: true }), false).asksTip).toBe(true);
+  });
+
+  it('tip off and nothing asked: the basket goes straight to payment, and back to the basket', () => {
+    const r = rules({ asksTip: false });
+    const pay = toPay(r);
+    expect(pay).toMatchObject({ screen: 'pay', pay: 'idle' });
+    expect(reduce(pay, { type: 'back' }, r).screen).toBe('cart');
+  });
+
+  it('tip on, no details: checkout → the details screen (the tip) → pay; back from pay → the tip again', () => {
+    const r = rules({ asksTip: true });
+    const tip = toPay(r);
+    expect(tip).toMatchObject({ screen: 'details', detailsNext: 'pay', cameFrom: 'cart' });
+    const pay = reduce(tip, { type: 'detailsDone' }, r);
+    expect(pay).toMatchObject({ screen: 'pay', pay: 'idle' });
+    expect(reduce(pay, { type: 'back' }, r)).toMatchObject({ screen: 'details', detailsNext: 'pay' });
+    expect(reduce(tip, { type: 'back' }, r).screen).toBe('cart');
+    // "דלג על סל" (direct): the first item goes to the tip, back from it is the menu.
+    const direct = rules({ asksTip: true, skipCart: 'direct' });
+    const fromItem = run(direct, { type: 'start' }, { type: 'chooseService', service: 'take_away' }, { type: 'itemAdded' });
+    expect(fromItem).toMatchObject({ screen: 'details', detailsNext: 'pay' });
+    expect(reduce(fromItem, { type: 'back' }, direct).screen).toBe('catalog');
+  });
+
+  it('details before the cart already given: the checkout asks only the tip', () => {
+    const r = rules({ asksTip: true, asksDetails: () => true, detailsStep: 'before_cart' });
+    const cartDetails = run(r, { type: 'start' }, { type: 'chooseService', service: 'take_away' }, { type: 'openCart' });
+    expect(cartDetails).toMatchObject({ screen: 'details', detailsNext: 'cart' });
+    const cart = reduce(cartDetails, { type: 'detailsDone' }, r);
+    expect(cart).toMatchObject({ screen: 'cart', detailsDone: true });
+    const tip = reduce(cart, { type: 'checkout' }, r);
+    expect(tip).toMatchObject({ screen: 'details', detailsNext: 'pay', detailsDone: true });
+    const pay = reduce(tip, { type: 'detailsDone' }, r);
+    expect(pay.screen).toBe('pay');
+    expect(reduce(pay, { type: 'back' }, r).screen).toBe('details');
+    // Without the tip the same order goes straight to payment, and back to the basket.
+    const noTip = rules({ asksDetails: () => true, detailsStep: 'before_cart' });
+    expect(reduce({ ...cart }, { type: 'checkout' }, noTip).screen).toBe('pay');
+    expect(reduce({ ...pay }, { type: 'back' }, noTip).screen).toBe('cart');
+  });
+
+  it('details after the payment: the tip before it, only the details after it', () => {
+    const r = rules({ asksTip: true, asksDetails: () => true, detailsStep: 'after_pay' });
+    const tip = toPay(r);
+    expect(tip).toMatchObject({ screen: 'details', detailsNext: 'pay' });
+    const pay = reduce(tip, { type: 'detailsDone' }, r);
+    expect(pay.screen).toBe('pay');
+    const paid = [{ type: 'paymentStarted' }, { type: 'paymentCharging' }, { type: 'paymentApproved' }].reduce<KioskFlowState>((s, e) => reduce(s, e as KioskEvent, r), pay);
+    expect(paid).toMatchObject({ screen: 'details', pay: 'approved', detailsNext: 'success' });
+    expect(reduce(paid, { type: 'detailsDone' }, r)).toMatchObject({ screen: 'success', pay: 'approved' });
   });
 });

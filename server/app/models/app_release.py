@@ -26,27 +26,43 @@ APP_RELEASE_LEVELS = ("tenant", "company", "shop", "area", "machine")
 #: What a till reports while it takes a release (`POST /sync/{id}/app-update/status`).
 APP_UPDATE_STATUSES = ("downloading", "downloaded", "installing", "installed", "failed", "declined")
 
+#: Which app a release is: the Android till APK, or the Windows app's installer (.exe).
+APP_RELEASE_PLATFORMS = ("android", "windows")
+
 
 class AppRelease(Base):
     """
-    One build of the till app (an Android APK) a super admin uploaded ("עדכון קופות").
+    One build of the app a super admin uploaded ("עדכוני גרסה"): the Android till's APK
+    (`platform` "android", every release before there were two) or the Windows app's
+    NSIS installer (`platform` "windows").
 
-    Global, not per tenant: every tenant's tills run the same app. Who gets it is decided
-    by its assignments (`AppReleaseAssignment`). The file itself lives on local disk under
-    `settings.app_releases_dir`; `sha256` and `size_bytes` are computed server-side on
-    upload, and the till verifies the hash before installing.
+    Global, not per tenant: every tenant's devices run the same app. Who gets it is decided
+    by its assignments (`AppReleaseAssignment`); a device only ever resolves releases of its
+    own platform. The file itself lives on local disk under `settings.app_releases_dir`
+    (`{id}.apk` / `{id}.exe`); `sha256` and `size_bytes` are computed server-side on
+    upload, and the device verifies the hash before installing.
 
     Retired (`is_active` false), never deleted: a till's status rows keep pointing at it,
     and a retired release is simply not offered to anyone any more.
     """
 
     __tablename__ = "app_releases"
+    __table_args__ = (
+        CheckConstraint("platform IN ('android', 'windows')", name="ck_app_releases_platform"),
+        # A version name is unique within its platform (Windows 0.2.0 and Android 0.2.0 may both exist).
+        UniqueConstraint("platform", "version_name", name="uq_app_releases_platform_version_name"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    #: Android `versionCode`. A till is never offered a lower one than it runs.
+    #: "android" | "windows" (`APP_RELEASE_PLATFORMS`).
+    platform = Column(String(16), nullable=False, default="android", server_default="android", index=True)
+    #: Android `versionCode`; for Windows derived from the name ("a.b.c" → a·10⁶ + b·10³ + c).
+    #: A device is never offered a lower one than it runs, unless the assignment allows a
+    #: (Windows-only) rollback.
     version_code = Column(Integer, nullable=False)
-    #: Android `versionName`, the till's own name for the build; unique across releases.
-    version_name = Column(String(64), nullable=False, unique=True)
+    #: The app's own name for the build (Android `versionName`, Windows "a.b.c");
+    #: unique per platform.
+    version_name = Column(String(64), nullable=False)
     #: Lowercase hex SHA-256 of the file.
     sha256 = Column(String(64), nullable=False)
     size_bytes = Column(BigInteger, nullable=False)
@@ -74,6 +90,9 @@ class AppReleaseAssignment(Base):
         ),
         # Resolution reads every live assignment on one till's five levels at once.
         Index("ix_app_release_assignments_target", "level", "target_id"),
+        CheckConstraint(
+            "rollout_percent BETWEEN 1 AND 100", name="ck_app_release_assignments_rollout_percent"
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -85,6 +104,20 @@ class AppReleaseAssignment(Base):
     #: The till installs without asking once it is idle (no open sale, no open shift
     #: screen); otherwise it offers the update and a person decides.
     auto_install = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: Staged rollout: the share of the target's devices (1..100) this assignment covers —
+    #: a fixed hash of (assignment, machine) decides (`app_updates.in_rollout_stage`), so
+    #: raising it keeps every device already in. A device outside the stage resolves on as
+    #: if the assignment were not there.
+    rollout_percent = Column(Integer, nullable=False, default=100, server_default="100")
+    #: Rollback (Windows only): the device may be offered this release although it runs a
+    #: higher versionCode. Refused for Android, which cannot install a lower versionCode
+    #: without uninstalling (= losing its data).
+    allow_downgrade = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: "HH:MM" device-local time, both or neither: an auto-install runs only inside this
+    #: window (it may cross midnight, 22:00–05:00). The Windows app honours it; the Android
+    #: till ignores it today.
+    install_window_start = Column(String(5), nullable=True)
+    install_window_end = Column(String(5), nullable=True)
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     cancelled_at = Column(DateTime(timezone=True), nullable=True)

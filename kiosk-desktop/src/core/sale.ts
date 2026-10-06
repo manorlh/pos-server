@@ -80,6 +80,19 @@ export function tipOf(goodsAgorot: number, pct: number | null): number {
   return Math.trunc((goodsAgorot * pct + 50) / 100);
 }
 
+/** "סכום אחר" at most ₪999 (the dashboard's TIP_OTHER_MAX_SHEKELS). */
+export const TIP_OTHER_MAX_AGOROT = 99_900;
+
+/**
+ * The tip to charge: "סכום אחר" when it is a whole-shekel amount above zero, not more than the
+ * goods and ₪999; else the preset's percent (tipOf).
+ */
+export function tipToCharge(goodsAgorot: number, pct: number | null, otherAgorot: number | null | undefined): number {
+  const other = otherAgorot ?? 0;
+  if (Number.isInteger(other) && other > 0 && other % 100 === 0 && other <= goodsAgorot && other <= TIP_OTHER_MAX_AGOROT) return other;
+  return tipOf(goodsAgorot, pct);
+}
+
 /** The sale document type by the dealer type: an exempt dealer issues 400 receipts. */
 export function saleDocumentType(dealerType: string | null | undefined): 320 | 400 {
   return dealerType === 'exempt' ? 400 : 320;

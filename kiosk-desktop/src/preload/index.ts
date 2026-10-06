@@ -1,11 +1,12 @@
 /**
  * The only door between the screens and the local service: a typed bridge (shared/bridge.ts) on
- * `window.kiosk`, and for the hidden print window `window.kioskPrint`. Nothing else of Node or
- * Electron reaches the page.
+ * `window.kiosk`, the shell's (shared/roles.ts: role, updates, KDS, board) on `window.r2m`, and for
+ * the hidden print window `window.kioskPrint`. Nothing else of Node or Electron reaches the page.
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
 import type { KioskBridge, KioskEvents } from '../shared/bridge';
+import type { ShellBridge, ShellEvents } from '../shared/roles';
 
 const channels: Record<keyof KioskEvents, string> = { view: 'kiosk:view', pay: 'kiosk:pay', toast: 'kiosk:toast' };
 
@@ -13,6 +14,7 @@ const api: KioskBridge = {
   bootstrap: () => ipcRenderer.invoke('kiosk:bootstrap'),
   pair: (input) => ipcRenderer.invoke('kiosk:pair', input),
   reportFlow: (input) => ipcRenderer.send('kiosk:reportFlow', input),
+  funnel: (events) => ipcRenderer.send('kiosk:funnel', events),
   startPayment: (input) => ipcRenderer.invoke('kiosk:startPayment', input),
   cancelPayment: () => ipcRenderer.invoke('kiosk:cancelPayment'),
   receiptChoice: (orderId, print) => ipcRenderer.invoke('kiosk:receiptChoice', orderId, print),
@@ -32,6 +34,24 @@ const api: KioskBridge = {
 };
 
 contextBridge.exposeInMainWorld('kiosk', api);
+
+/** The shell (shared/roles.ts): the device's role, the update status, the KDS and board screens. */
+const shellChannels: Record<keyof ShellEvents, string> = { view: 'shell:view', board: 'shell:board', kds: 'shell:kds' };
+const shellApi: ShellBridge = {
+  view: () => ipcRenderer.invoke('shell:view'),
+  board: () => ipcRenderer.invoke('shell:board'),
+  kds: () => ipcRenderer.invoke('shell:kds'),
+  kdsAction: (a) => ipcRenderer.invoke('shell:kdsAction', a),
+  activity: () => ipcRenderer.send('shell:activity'),
+  on: (event, fn) => {
+    const channel = shellChannels[event];
+    const listener = (_e: unknown, payload: unknown) => (fn as (p: unknown) => void)(payload);
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
+};
+
+contextBridge.exposeInMainWorld('r2m', shellApi);
 
 contextBridge.exposeInMainWorld('kioskPrint', {
   onRender: (fn: (req: { id: number; doc: unknown; widthDots: number }) => void) => ipcRenderer.on('print:render', (_e, req) => fn(req)),

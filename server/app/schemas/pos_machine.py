@@ -22,8 +22,13 @@ DeviceModel = Literal[
     "SYNQPAY_S1P2", "SYNQPAY_S1U2_M4", "SYNQPAY_VERIFONE", "SYNQPAY",
 ]
 
-#: "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): a till or a self-order kiosk.
-DeviceRole = Literal["till", "kiosk"]
+#: "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): a till, a self-order kiosk, a KDS
+#: kitchen screen or the "מוכן / לא מוכן" board. The last two are display devices: not tills
+#: and not accounting systems (app/services/display_devices.py).
+DeviceRole = Literal["till", "kiosk", "kds", "order_status_board"]
+
+#: What the device runs (app/services/display_devices.py `PLATFORMS`).
+DevicePlatform = Literal["android", "windows"]
 
 
 class PairingStatus(str):
@@ -294,6 +299,20 @@ class POSMachineResponse(POSMachineBase):
     device_role: Optional[str] = Field(None, alias="deviceRole")
     #: For a kiosk: whether it is on (`enabled`). A disabled kiosk works as a till.
     kiosk_enabled: Optional[bool] = Field(None, alias="kioskEnabled")
+    #: False for a display device (a KDS / the "מוכן / לא מוכן" board): not a till, not an
+    #: accounting system (docs/SPEC_DEVICE_ROLE_MODEL.md §2.2). From the row on a plain PUT.
+    is_fiscal: bool = Field(True, alias="fiscal")
+    #: "android" | "windows" (null on a plain PUT answer of a machine paired before the column).
+    platform: Optional[str] = None
+    #: Its KDS screen (`role`, `name`, `isActive`, `shopId`), or null. On a fiscal till: a
+    #: screen paired on the KDS page before display devices existed — flagged.
+    kds_screen: Optional[Dict[str, Any]] = Field(None, alias="kdsScreen")
+
+    @field_validator("is_fiscal", mode="before")
+    @classmethod
+    def _unset_is_fiscal(cls, value):
+        # A row not flushed yet has no column default applied: a till.
+        return value is not False
     #: The model the dashboard chose, and the one the device named itself at pairing (if
     #: recognised). When they differ from `deviceModel` the machine page warns.
     device_model_chosen: Optional[str] = Field(None, alias="deviceModelChosen")

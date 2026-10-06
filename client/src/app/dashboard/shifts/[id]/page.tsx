@@ -29,6 +29,7 @@ import {
   OfflineNotice,
   offlineOf,
 } from '@/components/dashboard/z-report/offline-summary';
+import { FailedPaymentsSection } from '@/components/dashboard/failed-payments/failed-payments-section';
 import {
   CountedCash,
   Fact,
@@ -326,6 +327,9 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
           <OfflineDeclinedList declined={shift.offline?.declined ?? []} />
         </div>
       ) : null}
+
+      {/* "עסקאות שלא הושלמו" / "מכירות שבוטלו": information only, not in the totals above. */}
+      <FailedPaymentsSection query={{ shiftId: shift.id }} />
 
       {shift.totalsMismatch && till ? (
         <Card>
