@@ -132,6 +132,16 @@ def put_main_till(
     tills = K.shop_machines(db, shop.id)
     if body.machine_id is not None and str(body.machine_id) not in {str(m.id) for m in tills}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="machine_not_in_shop")
+    chosen = next((m for m in tills if body.machine_id is not None and str(m.id) == str(body.machine_id)), None)
+    if chosen is not None and getattr(chosen, "independent_till", False):
+        # "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md): outside the shop's LAN group.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "main_till_independent",
+                "message": "קופה עצמאית לא יכולה להיות הקופה הראשית של הסניף. בחרו קופה מבין הקופות שבזד הסניפי.",
+            },
+        )
     now = datetime.now(timezone.utc)
 
     main = _parameter(db, MT.MAIN_TILL_KEY)

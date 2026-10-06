@@ -76,6 +76,16 @@ def make_main(w, till):
     set_param(w, MT.MAIN_TILL_KEY, "machine", till.id, True)
 
 
+def outside_local_mode(w, other):
+    """
+    Another till prints for the shop and the tables are not on the LAN: the main till is no
+    LAN host, so the shop is not in local mode — where the dashboard and `shopZFrom` keep
+    the rules below (in local mode the main till alone makes the shop Z,
+    docs/SPEC_INDEPENDENT_TILL.md §8; tests/test_independent_till.py).
+    """
+    set_param(w, "printHostTill", "machine", other.id, True)
+
+
 def closed_shift(w, till, seq, *docs):
     shift = w.shift(till, seq, status=ShiftStatus.OPEN)
     made = list(docs) or [lambda s: w.doc(till, s, "10.00")]
@@ -168,6 +178,7 @@ def test_only_the_main_till_runs_the_shop_z(w):
 def test_every_till_when_the_shop_says_so(w):
     t1, t2 = w.tills
     make_main(w, t1)
+    outside_local_mode(w, t2)
     set_param(w, MT.SHOP_Z_FROM_KEY, "shop", w.shop.id, MT.Z_FROM_ANY)
     assert R.till_shop_z_status(str(t2.id), machine=t2, db=w.db)["zScope"] == "shop"
     assert MT.dashboard_z_refusal(w.db, w.shop) is None
@@ -186,6 +197,7 @@ def test_the_dashboard_is_refused_the_shop_z_of_a_main_till_shop(w):
     closed_shift(w, t1, 1)
     closed_shift(w, t2, 1)
     make_main(w, t1)
+    outside_local_mode(w, t2)
     _heard(t1, 5)
     with pytest.raises(HTTPException) as e:
         dashboard_run(w, t1, t2)
@@ -209,6 +221,7 @@ def test_the_dashboard_is_refused_the_shop_z_of_a_main_till_shop(w):
 def test_a_main_till_the_cloud_lost_does_not_hold_the_z(w):
     t1, t2 = w.tills
     make_main(w, t1)
+    outside_local_mode(w, t2)
     _heard(t1, 5)
     assert MT.dashboard_z_refusal(w.db, w.shop) is not None
     # Down for a while (crashed, off, will not start): the dashboard may produce the Z.

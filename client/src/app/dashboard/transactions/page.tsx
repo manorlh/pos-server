@@ -258,7 +258,7 @@ export default function TransactionsPage() {
             { header: t('amount'), kind: 'money' },
           ],
           rows: (data?.items ?? []).map((tx) => [
-            tx.createdAt, tx.transactionNumber,
+            tx.createdAt, tx.documentNumber ?? tx.transactionNumber,
             findBySameId(scope.machines, tx.machineId)?.name ?? tx.machineId.slice(0, 8),
             tx.cashierId ?? null, tx.paymentMethod ? paymentLabel(tx.paymentMethod) : null,
             t(`statusLabels.${tx.status}`), tx.totalAmount,
@@ -285,7 +285,8 @@ export default function TransactionsPage() {
                 >
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="font-mono text-xs">
-                      {tx.transactionNumber}
+                      {/* As the till printed it: `2-57` ("קידומת מסמכים"). */}
+                      {tx.documentNumber ?? tx.transactionNumber}
                       {tx.basketId && (
                         <Badge variant="outline" className="ms-2 font-sans">{t('basket')}</Badge>
                       )}
@@ -342,7 +343,8 @@ export default function TransactionsPage() {
                   <TableRow key={tx.id} className="cursor-pointer" onClick={() => setSelectedId(tx.id)}>
                     <TableCell>{formatDateTime(tx.createdAt)}</TableCell>
                     <TableCell className="font-mono text-xs">
-                      {tx.transactionNumber}
+                      {/* As the till printed it: `2-57` ("קידומת מסמכים"). */}
+                      {tx.documentNumber ?? tx.transactionNumber}
                       {tx.basketId && (
                         <Badge variant="outline" className="ms-2 font-sans">{t('basket')}</Badge>
                       )}
@@ -446,7 +448,7 @@ function TransactionDetailsDialog({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs">{t('txNumber')}</Label>
-                <div className="font-mono">{data.transactionNumber}</div>
+                <div className="font-mono">{data.documentNumber ?? data.transactionNumber}</div>
               </div>
               <div>
                 <Label className="text-xs">{t('createdAt')}</Label>
@@ -495,7 +497,7 @@ function TransactionDetailsDialog({
                   >
                     <span>
                       {documentTypeLabel(doc.documentType)}{' '}
-                      <span className="font-mono text-xs">{doc.transactionNumber}</span>
+                      <span className="font-mono text-xs">{doc.documentNumber ?? doc.transactionNumber}</span>
                     </span>
                     <span className="font-medium tabular-nums">{formatCurrency(doc.totalAmount)}</span>
                   </button>
@@ -602,7 +604,7 @@ function TransactionPrintActions({ tx }: { tx: Transaction }) {
         .then((r) => r.data);
       if (pdf) toast.info(t('pdfHint'));
       const name = kind === 'invoice' ? 'invoice' : 'card-slip';
-      await printReceiptDocuments(printDocumentsOf(body), `${name}-${tx.transactionNumber}`);
+      await printReceiptDocuments(printDocumentsOf(body), `${name}-${tx.documentNumber ?? tx.transactionNumber}`);
     } catch (err) {
       toast.error(axiosErrorToToastMessage(err, t('failed')));
     } finally {

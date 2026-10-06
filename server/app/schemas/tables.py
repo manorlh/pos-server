@@ -285,8 +285,13 @@ SKETCH_KINDS = (
     # Drawn with the editor's tools: a line, a polyline (a wall of several segments),
     # a freehand stroke, a rectangle (outline or filled).
     "line", "polyline", "freehand", "rect",
+    # The business's logo, placed on the floor: its own picture (`src`), else the business's.
+    "logo",
 )
-SKETCH_BACKGROUNDS = ("wood", "tiles", "light", "dark", "image")
+#: `clean` — the flat, neutral floor (the default when nothing is chosen).
+SKETCH_BACKGROUNDS = ("clean", "wood", "tiles", "light", "dark", "image")
+SketchBackground = Literal["clean", "wood", "tiles", "light", "dark", "image"]
+SKETCH_SRC_MAX = 1000
 SKETCH_ELEMENTS_MAX = 600
 SKETCH_POINTS_MAX = 4000
 
@@ -298,7 +303,7 @@ class SketchElementIn(_Camel):
     kind: Literal[
         "wall", "bar", "door", "kitchen", "window", "restroom", "plant", "column", "label", "counter",
         "stairs", "cashier", "host", "exit", "stage", "sofa",
-        "line", "polyline", "freehand", "rect",
+        "line", "polyline", "freehand", "rect", "logo",
     ]
     x: float = Field(..., ge=-100, le=5100)
     y: float = Field(..., ge=-100, le=5100)
@@ -316,11 +321,27 @@ class SketchElementIn(_Camel):
     color: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
     stroke: Optional[float] = Field(None, ge=0.5, le=60)
     filled: Optional[bool] = None
+    #: A logo's own picture (an uploaded image's URL); none — the business's logo.
+    src: Optional[str] = Field(None, max_length=SKETCH_SRC_MAX)
 
     @field_validator("text", mode="before")
     @classmethod
     def _text(cls, value):
         return _clean_text(value, 60)
+
+    @field_validator("src", mode="before")
+    @classmethod
+    def _src(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("src is a URL")
+        value = value.strip()
+        if not value:
+            return None
+        if not (value.startswith("https://") or value.startswith("http://") or value.startswith("/")):
+            raise ValueError("src is an http(s) URL")
+        return value
 
     @field_validator("points")
     @classmethod
@@ -345,7 +366,7 @@ class SketchIn(_Camel):
     template: Optional[str] = Field(None, max_length=40)
     #: The floor under it all: wood planks (the default), tiles, plain light or dark, or
     #: the zone's uploaded image. Drawn by the till itself — no picture to download.
-    background: Optional[Literal["wood", "tiles", "light", "dark", "image"]] = None
+    background: Optional[SketchBackground] = None
     elements: List[SketchElementIn] = Field(default_factory=list, max_length=SKETCH_ELEMENTS_MAX)
 
 
@@ -462,7 +483,7 @@ class TillZoneIn(_Camel):
     name: Optional[str] = Field(None, max_length=100)
     layout: Optional[Literal["map", "grid"]] = None
     #: The floor under the map — merged into the zone's sketch; its drawn shapes are kept.
-    background: Optional[Literal["wood", "tiles", "light", "dark", "image"]] = None
+    background: Optional[SketchBackground] = None
     #: The whole floor plan drawn on the till's map designer — the dashboard's own shape
     #: and rules (`SketchIn`); sent as null it clears the plan. Not sent: left as it is.
     sketch: Optional[SketchIn] = None

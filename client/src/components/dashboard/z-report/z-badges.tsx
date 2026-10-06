@@ -5,6 +5,7 @@ import type { ZReport } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { formatDateTime } from '@/lib/format';
 import { zTransmissionFailed } from '@/lib/offlineZ';
+import { isShopZ } from '@/lib/zParticipation';
 
 /**
  * What kind of Z this is, on its face: produced by the till itself (and whether nobody
@@ -14,6 +15,7 @@ import { zTransmissionFailed } from '@/lib/offlineZ';
  */
 export function ZBadges({ z }: { z: ZReport }) {
   const t = useTranslations('zReports');
+  const ti = useTranslations('independentTill.zReport');
   const late = z.lateDocuments ?? 0;
   const fromTill = z.origin === 'till';
   return (
@@ -21,6 +23,12 @@ export function ZBadges({ z }: { z: ZReport }) {
       {fromTill ? (
         <Badge variant="secondary" className="ms-2 text-[11px]" title={t('originTillHint')}>
           {t('originTill')}
+        </Badge>
+      ) : null}
+      {/* "קופה עצמאית בתוך סניף": a Z of a till that is not part of the shop Z. */}
+      {z.scope?.kind === 'independent_till' ? (
+        <Badge variant="secondary" className="ms-2 text-[11px]" title={ti('independentBadgeHint')}>
+          {ti('independentBadge')}
         </Badge>
       ) : null}
       {/* On a till Z, unattended means the till produced it for a dashboard request. */}
@@ -39,7 +47,12 @@ export function ZBadges({ z }: { z: ZReport }) {
         <Badge
           variant="outline"
           className="ms-2 text-[11px] border-amber-500 text-amber-700 dark:text-amber-300"
-          title={t('builtOfflineHint', { at: formatDateTime(z.uploadedAt) })}
+          title={
+            // A shop Z produced on the main till has no till of its own to name.
+            isShopZ(z)
+              ? ti('builtOfflineShopHint', { at: formatDateTime(z.uploadedAt) })
+              : t('builtOfflineHint', { at: formatDateTime(z.uploadedAt) })
+          }
         >
           {t('builtOffline')}
         </Badge>

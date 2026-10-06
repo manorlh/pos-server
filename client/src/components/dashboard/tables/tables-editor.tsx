@@ -274,6 +274,7 @@ export function TablesEditor({ shopId }: { shopId: string }) {
               onSaved={invalidate}
               onError={fail}
               onDirtyChange={setMapDirty}
+              logoUrl={data?.logoUrl ?? null}
             />
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(88px,1fr))] gap-2">

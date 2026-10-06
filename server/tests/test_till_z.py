@@ -471,7 +471,11 @@ class TestTheSameBuilderAsACloudZ:
         assert {k: v for k, v in ours.items() if k not in IDENTITY_KEYS} == {
             k: v for k, v in theirs.items() if k not in IDENTITY_KEYS
         }
-        assert till_z.header == {**cloud_z.header, "capturedAt": till_z.header["capturedAt"]}
+        # The same header, but for when it was captured and what it says it includes
+        # (`scope`: one till's Z, or the shop's — docs/SPEC_INDEPENDENT_TILL.md §7).
+        assert till_z.header == {
+            **cloud_z.header, "capturedAt": till_z.header["capturedAt"], "scope": till_z.header["scope"],
+        }
         assert till_z.total_sales == Decimal("375.00")
 
     def test_the_response_is_the_z_detail_with_one_section(self, w):

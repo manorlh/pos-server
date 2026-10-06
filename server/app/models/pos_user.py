@@ -52,6 +52,12 @@ class PosUser(Base):
 
     is_active = Column(Boolean, nullable=False, default=True)
 
+    #: The employee's job title ("מלצר", "ברמן"…; app/models/attendance.py `EmployeeRole`),
+    #: for attendance and phase 2's tip weights. Never a permission — that is `role`.
+    employee_role_id = Column(
+        UUID(as_uuid=True), ForeignKey("employee_roles.id", ondelete="SET NULL"), nullable=True
+    )
+
     #: Wrong PINs typed at an *elevation* prompt, and the lockout they earn.
     #:
     #: Only the cloud-checked path counts here. The till's own sign-in verifies the same

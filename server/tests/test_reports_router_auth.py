@@ -104,6 +104,9 @@ def test_shop_transactions_response_matches_the_shipped_till_contract() -> None:
         "createdAt",
         # Added with mixed baskets; nullable, and unknown to (so ignored by) older tills.
         "basketId",
+        # "קידומת מסמכים" (docs/SPEC_DOCUMENT_PREFIX.md): the number as printed, `2-57`.
+        # Nullable and additive the same way.
+        "documentNumber",
     }
 
 

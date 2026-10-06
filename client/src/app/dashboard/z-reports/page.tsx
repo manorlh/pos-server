@@ -27,6 +27,7 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { OverShort } from '@/components/dashboard/shifts/shift-parts';
 import { ZBadges } from '@/components/dashboard/z-report/z-badges';
+import { ZScopeLine } from '@/components/dashboard/z-report/z-scope-line';
 import { NumberPill } from '@/components/dashboard/number-pill';
 import { numberedLabel } from '@/lib/orgNumber';
 import { useZNumberLabel } from '@/components/dashboard/z-report/z-number';
@@ -387,6 +388,7 @@ export default function ZReportsPage() {
                     {z.areaName ? <span>· {z.areaName}</span> : null}
                     {z.legacy && z.machineName ? <span>· {z.machineName}</span> : null}
                   </div>
+                  <ZScopeLine z={z} compact />
                   <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 text-xs">
                     <span>{t('cash')} {formatCurrency(z.totalCashSales)}</span>
                     <span>{t('card')} {formatCurrency(z.totalCardSales)}</span>
@@ -483,6 +485,8 @@ export default function ZReportsPage() {
                       {(z.legacy || z.origin === 'till') && z.machineName ? (
                         <div className="text-muted-foreground text-xs">{z.machineName}</div>
                       ) : null}
+                      {/* What the Z includes ("קופה עצמאית בתוך סניף"), when the server says. */}
+                      <ZScopeLine z={z} compact />
                     </TableCell>
                     <TableCell className="text-sm">
                       <AreaName name={z.areaName} />

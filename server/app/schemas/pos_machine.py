@@ -46,6 +46,10 @@ class POSMachineUpdate(BaseModel):
     #: Who produces this till's Z (docs/SHIFTS_API.md §5.1). A switch is refused while
     #: the till has shifts waiting for a Z of the old mode (409); the same value is a no-op.
     z_mode: Optional[Literal["cloud", "till"]] = Field(None, alias="zMode")
+    #: "קידומת מסמכים" (docs/SPEC_DOCUMENT_PREFIX.md): digits, 1–3. An explicit null or ""
+    #: goes back to the default (the register number); omitted leaves it as it is. The
+    #: format and the uniqueness in the shop are checked by the route (400 / 409, Hebrew).
+    document_prefix: Optional[str] = Field(None, alias="documentPrefix", max_length=10)
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -178,11 +182,22 @@ class POSMachineResponse(POSMachineBase):
     #: The register number in its shop — "קופה 2". Null when the machine has no shop.
     #: Text, because documents copy it verbatim; it is always a plain integer when set.
     pos_number: Optional[str] = Field(None, alias="posNumber")
+    #: "קידומת מסמכים": the till's own (null = the default), and the one it issues under
+    #: now — its own, else the register number (docs/SPEC_DOCUMENT_PREFIX.md).
+    document_prefix: Optional[str] = Field(None, alias="documentPrefix")
+    effective_document_prefix: Optional[str] = Field(None, alias="effectiveDocumentPrefix")
     #: Its shop's number in its company, and that company's in the tenant; null without a shop.
     shop_number: Optional[int] = Field(None, alias="shopNumber")
     company_number: Optional[int] = Field(None, alias="companyNumber")
     #: "cloud" (the shop's Z run builds its Z) or "till" (it produces its own, §5).
     z_mode: str = Field("cloud", alias="zMode")
+    #: "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md): its own Z, outside the shop's LAN group.
+    independent_till: bool = Field(False, alias="independentTill")
+
+    @field_validator("independent_till", mode="before")
+    @classmethod
+    def _independent_default(cls, value):
+        return bool(value)
 
     @field_validator("z_mode", mode="before")
     @classmethod

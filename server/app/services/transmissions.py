@@ -40,6 +40,7 @@ from app.models.card_transmission import (
 from app.models.pos_machine import POSMachine
 from app.models.shift import Shift
 from app.models.transaction import Transaction, TransactionStatus
+from app.services.document_prefix import document_number_of
 from app.models.transaction_payment import TransactionPayment
 from app.schemas.transmission import HeartbeatTransmission, TransmissionReportIn
 
@@ -444,6 +445,8 @@ def untransmitted_items(db: Session, machine: POSMachine) -> List[dict]:
             {
                 "transactionId": str(tx.id),
                 "transactionNumber": tx.transaction_number,
+                # As printed, `<prefix>-<number>` (docs/SPEC_DOCUMENT_PREFIX.md).
+                "documentNumber": document_number_of(tx),
                 "documentType": tx.document_type,
                 "createdAt": _utc(tx.created_at),
                 "shiftId": str(tx.shift_id) if tx.shift_id else None,

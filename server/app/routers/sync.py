@@ -1709,6 +1709,37 @@ def post_till_z(
     )
 
 
+@router.get("/{machine_id}/till-zs")
+def get_till_z_history(
+    machine_id: str,
+    days: int = Query(till_z.TILL_Z_HISTORY_DAYS, ge=1, le=400),
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    This till's own Zs of the last `days` days (default 31), oldest first, and always its
+    newest — each as the `POST till-z` answer reads, so the till keeps and reprints it —
+    with `lastTillZNumber`. What a new or reset till pulls before it may ever close a Z
+    with no connection (docs/SPEC_OFFLINE_TILL_Z.md §4.3).
+    """
+    from app.services.z_sequence import last_machine_z_number
+
+    zs = till_z.till_z_history(db, machine, days=days)
+    return {
+        "lastTillZNumber": last_machine_z_number(db, machine.id),
+        "serverTime": datetime.now(timezone.utc).isoformat(),
+        "items": [
+            {
+                "status": "history",
+                "zReport": z_detail_out(db, z).model_dump(by_alias=True, mode="json"),
+                "shiftIds": [str(i) for i in till_z.z_shift_ids(db, z)],
+                "totalsMismatch": bool(z.totals_mismatch),
+            }
+            for z in zs
+        ],
+    }
+
+
 @router.post("/{machine_id}/till-z/ack")
 def post_till_z_ack(
     machine_id: str,

@@ -997,6 +997,18 @@ export async function updateMachineDeviceModel(
   return normalizePosMachine(data as Record<string, unknown>);
 }
 
+/**
+ * "קידומת מסמכים" of one till (docs/SPEC_DOCUMENT_PREFIX.md): digits, 1–3; null goes back
+ * to the default, the register number. The server answers 400 / 409 with a Hebrew detail.
+ */
+export async function updateMachineDocumentPrefix(
+  machineId: string,
+  documentPrefix: string | null,
+): Promise<PosMachine> {
+  const { data } = await api.put(`/machines/${machineId}`, { documentPrefix });
+  return normalizePosMachine(data as Record<string, unknown>);
+}
+
 /** "לקוח קבוע / זמני" on this till alone — the super admin's. */
 export async function updateMachineLicense(
   machineId: string,

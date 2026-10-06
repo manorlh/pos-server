@@ -35,6 +35,7 @@ from app.models.pos_machine import POSMachine
 from app.models.shift import Shift
 from app.models.shop import Shop
 from app.models.transaction import Transaction
+from app.services.document_prefix import document_number_of
 from app.models.transaction_payment import TransactionPayment
 from app.schemas.offline_authorization import (
     OfflineAuthorizationIn,
@@ -171,7 +172,8 @@ def offline_block(db: Session, machine: POSMachine, shifts: Sequence[Shift]) -> 
         "declined": [
             {
                 "transactionId": str(tx.id),
-                "documentNumber": tx.transaction_number,
+                # As printed, `<prefix>-<number>` (docs/SPEC_DOCUMENT_PREFIX.md).
+                "documentNumber": document_number_of(tx),
                 "amount": money(leg.amount),
                 "terminalUid": leg.terminal_uid,
                 "at": _iso(tx.created_at),
@@ -398,7 +400,7 @@ def build_report(
                     terminal_uid=item.terminal_uid,
                     matched=leg is not None,
                     transaction_id=tx.id if tx is not None else None,
-                    document_number=tx.transaction_number if tx is not None else None,
+                    document_number=document_number_of(tx) if tx is not None else None,
                     amount=Decimal(leg.amount).quantize(CENT) if leg is not None else None,
                     sold_at=_utc(tx.created_at) if tx is not None else None,
                 )

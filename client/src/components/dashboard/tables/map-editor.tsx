@@ -21,7 +21,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Brush, Copy, Grid3x3, Maximize2, MousePointer2, PenTool, Redo2, RotateCcw, RotateCw, Save, Trash2, Undo2 } from 'lucide-react';
+import { Brush, Copy, Grid3x3, ImageUp, Maximize2, MousePointer2, PenTool, Redo2, RotateCcw, RotateCw, Save, Trash2, Undo2 } from 'lucide-react';
+import { uploadProductImage } from '@/lib/api';
 import {
   createTable,
   saveTablePositions,
@@ -47,6 +48,7 @@ import {
   SKETCH_STYLE,
   SKETCH_TEMPLATES,
   CHAIR_LOOK,
+  CLEAN,
   chairLayout,
   TABLE_LOOK,
   templateSketch,
@@ -82,6 +84,7 @@ export function MapEditor({
   onSaved,
   onError,
   onDirtyChange,
+  logoUrl = null,
 }: {
   zone: TableZone;
   tables: DiningTable[];
@@ -89,6 +92,8 @@ export function MapEditor({
   onSaved: () => void;
   onError: (err: unknown) => void;
   onDirtyChange?: (dirty: boolean) => void;
+  /** The business's logo: what a "logo" shape shows when it has no picture of its own. */
+  logoUrl?: string | null;
 }) {
   const t = useTranslations('tables');
   const cw = zone.canvasWidth;
@@ -631,7 +636,15 @@ export function MapEditor({
                   </Button>
                 </>
               ) : null}
-              {element.kind !== 'wall' && element.kind !== 'window' && element.kind !== 'plant' && element.kind !== 'column' && element.kind !== 'counter' && !isDrawn(element.kind) ? (
+              {element.kind === 'logo' ? (
+                <LogoSource
+                  element={element}
+                  hasBusinessLogo={!!logoUrl}
+                  onSrc={(src) => patchElement({ src })}
+                  onError={onError}
+                />
+              ) : null}
+              {element.kind !== 'wall' && element.kind !== 'window' && element.kind !== 'plant' && element.kind !== 'column' && element.kind !== 'counter' && element.kind !== 'logo' && !isDrawn(element.kind) ? (
                 <div className="space-y-1">
                   <Label className="text-xs">{t('sketch.text')}</Label>
                   <Input
@@ -749,7 +762,9 @@ export function MapEditor({
                     ? PLAIN.light
                     : background === 'dark'
                       ? PLAIN.dark
-                      : 'url(#floor-wood)'
+                      : background === 'wood'
+                        ? 'url(#floor-wood)'
+                        : 'url(#floor-clean)'
               }
             />
           )}
@@ -760,6 +775,7 @@ export function MapEditor({
                 key={el.id}
                 el={el}
                 perPx={perPx}
+                logoUrl={logoUrl}
                 selected={mode === 'sketch' && el.id === selectedEl}
                 onDown={(e) => (mode === 'draw' ? draw.onElementDown(e, el) : startElement(e, el))}
                 onResize={mode === 'sketch' ? (e) => startElement(e, el, true) : undefined}
@@ -770,7 +786,7 @@ export function MapEditor({
                 tools={draw}
                 elements={sketch.elements}
                 perPx={perPx}
-                renderShape={(el) => <SketchShape el={el} perPx={perPx} />}
+                renderShape={(el) => <SketchShape el={el} perPx={perPx} logoUrl={logoUrl} />}
               />
             ) : null}
           </g>
@@ -910,6 +926,12 @@ function NumberField({
 /** A small sample of a floor for the chooser. */
 function floorSwatch(bg: SketchBackground, image: string | null): React.CSSProperties {
   switch (bg) {
+    case 'clean':
+      return {
+        background: CLEAN.fill,
+        backgroundImage: `linear-gradient(${CLEAN.grid} 1px, transparent 1px), linear-gradient(90deg, ${CLEAN.grid} 1px, transparent 1px)`,
+        backgroundSize: '10px 10px',
+      };
     case 'wood':
       return {
         background: `repeating-linear-gradient(90deg, ${WOOD.tones[0]} 0 6px, ${WOOD.tones[1]} 6px 7px, ${WOOD.tones[2]} 7px 13px, ${WOOD.seam} 13px 14px)`,
@@ -971,6 +993,10 @@ export function FloorDefs() {
             </g>
           );
         })}
+      </pattern>
+      <pattern id="floor-clean" patternUnits="userSpaceOnUse" width={CLEAN.step} height={CLEAN.step}>
+        <rect width={CLEAN.step} height={CLEAN.step} fill={CLEAN.fill} />
+        <path d={`M ${CLEAN.step} 0 L 0 0 0 ${CLEAN.step}`} fill="none" stroke={CLEAN.grid} strokeWidth={1} />
       </pattern>
       <pattern id="floor-tiles" patternUnits="userSpaceOnUse" width={TILE.size} height={TILE.size}>
         <rect width={TILE.size} height={TILE.size} fill={TILE.fill} />
@@ -1035,9 +1061,12 @@ export function SketchShape({
   selected = false,
   onDown,
   onResize,
+  logoUrl = null,
 }: {
   el: SketchElement;
   perPx: number;
+  /** The business's logo, for a "logo" shape with no picture of its own. */
+  logoUrl?: string | null;
   selected?: boolean;
   onDown?: (e: React.PointerEvent) => void;
   onResize?: (e: React.PointerEvent) => void;
@@ -1098,7 +1127,9 @@ export function SketchShape({
   return (
     <g>
       <g transform={`rotate(${el.rotation} ${cx} ${cy})`} onPointerDown={onDown} style={{ cursor: onDown ? 'move' : undefined }}>
-        {el.kind === 'counter' ? (
+        {el.kind === 'logo' ? (
+          <LogoShape el={el} perPx={perPx} selected={selected} src={el.src ?? logoUrl} />
+        ) : el.kind === 'counter' ? (
           <CounterShape el={el} perPx={perPx} selected={selected} />
         ) : el.kind === 'plant' ? (
           <PlantShape el={el} />
@@ -1205,6 +1236,100 @@ function FixtureSymbol({ kind, cx, cy, size, color, transform }: { kind: SketchK
         />
       ) : null}
     </g>
+  );
+}
+
+/**
+ * The business's logo on the floor: its picture fitted whole in the box (the till draws
+ * the same); with no picture, a dashed box saying where it goes.
+ */
+function LogoShape({ el, perPx, selected, src }: { el: SketchElement; perPx: number; selected: boolean; src: string | null }) {
+  const t = useTranslations('tables');
+  if (!src) {
+    return (
+      <g>
+        <rect
+          x={el.x} y={el.y} width={el.w} height={el.h} rx={6 * perPx}
+          fill="#ffffff" fillOpacity={0.6}
+          stroke={selected ? '#2563eb' : SKETCH_STYLE.logo.stroke}
+          strokeWidth={(selected ? 3 : 1.5) * perPx}
+          strokeDasharray={`${8 * perPx} ${6 * perPx}`}
+        />
+        <text
+          x={el.x + el.w / 2} y={el.y + el.h / 2}
+          textAnchor="middle" dominantBaseline="central"
+          fontSize={Math.max(10 * perPx, Math.min(el.h * 0.3, el.w * 0.18))}
+          fill={SKETCH_STYLE.logo.text}
+        >
+          {t('sketch.kind.logo')}
+        </text>
+      </g>
+    );
+  }
+  return (
+    <g>
+      <image href={src} x={el.x} y={el.y} width={el.w} height={el.h} preserveAspectRatio="xMidYMid meet" />
+      {selected ? (
+        <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="none" stroke="#2563eb" strokeWidth={1.5 * perPx} strokeDasharray={`${6 * perPx} ${4 * perPx}`} />
+      ) : (
+        // An invisible box over it, so the whole logo picks up the pointer.
+        <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="transparent" />
+      )}
+    </g>
+  );
+}
+
+/** A logo's picture: the business's own (the default), or an image uploaded for this spot. */
+function LogoSource({
+  element,
+  hasBusinessLogo,
+  onSrc,
+  onError,
+}: {
+  element: SketchElement;
+  hasBusinessLogo: boolean;
+  onSrc: (src: string | null) => void;
+  onError: (err: unknown) => void;
+}) {
+  const t = useTranslations('tables');
+  const [uploading, setUploading] = useState(false);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-xs text-muted-foreground">
+        {element.src ? t('sketch.logoOwn') : hasBusinessLogo ? t('sketch.logoBusiness') : t('sketch.logoNone')}
+      </span>
+      <label className="inline-flex">
+        <input
+          type="file"
+          accept="image/*"
+          className="hidden"
+          disabled={uploading}
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (!file) return;
+            setUploading(true);
+            try {
+              const result = await uploadProductImage(file, 'products', { keepBackground: true });
+              onSrc(result.url);
+            } catch (err) {
+              onError(err);
+            } finally {
+              setUploading(false);
+            }
+          }}
+        />
+        <span className="inline-flex h-8 cursor-pointer items-center rounded-md border px-3 text-sm hover:bg-accent">
+          <ImageUp className="h-4 w-4 me-1" />
+          {t('sketch.logoUpload')}
+        </span>
+      </label>
+      {element.src ? (
+        <Button size="sm" variant="ghost" onClick={() => onSrc(null)}>
+          {t('sketch.logoUseBusiness')}
+        </Button>
+      ) : null}
+    </div>
   );
 }
 

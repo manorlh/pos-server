@@ -235,6 +235,10 @@ class TransactionIn(BaseModel):
 
     id: uuid.UUID
     transaction_number: str = Field(..., alias="transactionNumber")
+    #: The till's "קידומת מסמכים" the document was issued under (`2` of `2-57`), frozen
+    #: by the till (docs/SPEC_DOCUMENT_PREFIX.md). Optional: an older till sends none.
+    #: Trimmed and cut to the column, never a reason to refuse the document.
+    document_prefix: Optional[str] = Field(None, alias="documentPrefix")
     status: Literal["pending", "completed", "cancelled", "refunded", "partial_refund"] = "completed"
 
     document_type: Optional[int] = Field(None, alias="documentType")
@@ -263,6 +267,9 @@ class TransactionIn(BaseModel):
     wht_deduction: Optional[Decimal] = Field(None, alias="whtDeduction")
 
     customer_id: Optional[str] = Field(None, alias="customerId")
+    #: The club membership the till looked up for this sale (docs/SPEC_NOTIFICATIONS_CLUB.md
+    #: §26). Optional; linked server-side only when it belongs to the till's club.
+    club_membership_id: Optional[uuid.UUID] = Field(None, alias="clubMembershipId")
     cashier_id: Optional[str] = Field(None, alias="cashierId")
     branch_id: Optional[str] = Field(None, alias="branchId")
     notes: Optional[str] = None
@@ -331,6 +338,11 @@ class TransactionIn(BaseModel):
     @classmethod
     def _cut_name(cls, value):
         return cut_text(value, 255)
+
+    @field_validator("document_prefix", mode="before")
+    @classmethod
+    def _cut_prefix(cls, value):
+        return cut_text(value, 10)
 
     @field_validator("customer_phone", mode="before")
     @classmethod
@@ -476,6 +488,12 @@ class TransactionOut(BaseModel):
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
 
     transaction_number: str = Field(..., alias="transactionNumber")
+    #: As printed: `<prefix>-<number>` (`2-57`) — docs/SPEC_DOCUMENT_PREFIX.md. The prefix
+    #: is the one frozen on the document, else (an older document) its register number.
+    document_number: Optional[str] = Field(None, alias="documentNumber")
+    #: The prefix frozen at issue; null on a document from before the prefix.
+    document_prefix: Optional[str] = Field(None, alias="documentPrefix")
+    pos_number: Optional[str] = Field(None, alias="posNumber")
     status: str
 
     document_type: Optional[int] = Field(None, alias="documentType")
@@ -502,8 +520,8 @@ class TransactionOut(BaseModel):
     notes: Optional[str]
 
     refund_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="refundOfTransactionId")
-    #: The original's document number, when the cloud holds it (same tenant). Filled on
-    #: the dashboard detail read only.
+    #: The original's document number as printed (`2-57`), when the cloud holds it (same
+    #: tenant). Filled on the dashboard detail read only.
     refund_of_transaction_number: Optional[str] = Field(None, alias="refundOfTransactionNumber")
     #: A credit note that took its original's credited total past what it collected.
     over_credited: Optional[bool] = Field(False, alias="overCredited")
@@ -540,6 +558,12 @@ class BasketDocumentOut(BaseModel):
 
     id: uuid.UUID
     transaction_number: str = Field(..., alias="transactionNumber")
+    #: As printed: `<prefix>-<number>` (`2-57`) — docs/SPEC_DOCUMENT_PREFIX.md. The prefix
+    #: is the one frozen on the document, else (an older document) its register number.
+    document_number: Optional[str] = Field(None, alias="documentNumber")
+    #: The prefix frozen at issue; null on a document from before the prefix.
+    document_prefix: Optional[str] = Field(None, alias="documentPrefix")
+    pos_number: Optional[str] = Field(None, alias="posNumber")
     document_type: Optional[int] = Field(None, alias="documentType")
     status: str
     total_amount: Decimal = Field(..., alias="totalAmount")
@@ -563,6 +587,12 @@ class TransactionListItem(BaseModel):
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     transaction_number: str = Field(..., alias="transactionNumber")
+    #: As printed: `<prefix>-<number>` (`2-57`) — docs/SPEC_DOCUMENT_PREFIX.md. The prefix
+    #: is the one frozen on the document, else (an older document) its register number.
+    document_number: Optional[str] = Field(None, alias="documentNumber")
+    #: The prefix frozen at issue; null on a document from before the prefix.
+    document_prefix: Optional[str] = Field(None, alias="documentPrefix")
+    pos_number: Optional[str] = Field(None, alias="posNumber")
     status: str
     document_type: Optional[int] = Field(None, alias="documentType")
     payment_method: Optional[str] = Field(None, alias="paymentMethod")

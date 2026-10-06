@@ -35,6 +35,7 @@ import {
   MachineShiftSummary,
 } from '@/components/dashboard/machines/machine-row';
 import { DeviceModelDialog } from '@/components/dashboard/machines/device-model';
+import { DocumentPrefixDialog, DocumentPrefixValue } from '@/components/dashboard/machines/document-prefix';
 import { LicenseBadge, useIsSuperAdmin } from '@/components/dashboard/license-fields';
 import { TrainingBadge, TrainingStripe } from '@/components/dashboard/training-badge';
 import { LicenseDialog } from '@/components/dashboard/tenant-license-dialog';
@@ -47,6 +48,7 @@ import {
 } from '@/components/dashboard/machines/card-transmission';
 import { MachineAreaDialog } from '@/components/dashboard/areas/machine-area-dialog';
 import { RequestTillZButton, ZModeField } from '@/components/dashboard/till-z/till-z-dialogs';
+import { IndependentTillBadge } from '@/components/dashboard/independent-till-badge';
 import { LatestTillZRequest } from '@/components/dashboard/till-z/till-z-request';
 import { ZBadges } from '@/components/dashboard/z-report/z-badges';
 import { useZNumberLabel } from '@/components/dashboard/z-report/z-number';
@@ -114,6 +116,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
   const [closeShiftOpen, setCloseShiftOpen] = useState(false);
   const [areaOpen, setAreaOpen] = useState(false);
   const [deviceModelOpen, setDeviceModelOpen] = useState(false);
+  const [documentPrefixOpen, setDocumentPrefixOpen] = useState(false);
   const tAreas = useTranslations('areas');
   const tLicense = useTranslations('license');
   const isSuperAdmin = useIsSuperAdmin();
@@ -300,6 +303,28 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
             />
           ) : null}
           <Field label={t('machineCode')} value={<span className="font-mono">{machine.machineCode}</span>} />
+          {/* "קידומת מסמכים": every document number of this till is printed `<prefix>-<number>`. */}
+          <Field
+            label={tMachines('documentPrefix.label')}
+            value={
+              <span className="inline-flex items-center gap-1">
+                <DocumentPrefixValue machine={machine} />
+                {/* PUT /machines/{id} is the machine admins' — the same set that produces a Z. */}
+                {canProduceZ && !removed && machine.shopId ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0"
+                    onClick={() => setDocumentPrefixOpen(true)}
+                    aria-label={tMachines('documentPrefix.editTitle')}
+                    title={tMachines('documentPrefix.editTitle')}
+                  >
+                    <Pencil className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
+                ) : null}
+              </span>
+            }
+          />
           <Field
             label={tMachines('deviceModel.label')}
             value={
@@ -354,11 +379,14 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           <Field
             label={tTillZ('mode.label')}
             value={
-              <ZModeField
-                machine={machine}
-                // The owner's rule: the super admin alone switches a till's Z mode.
-                canEdit={isSuperAdmin && !removed && machine.pairingStatus === 'assigned'}
-              />
+              <span className="inline-flex flex-wrap items-center gap-1">
+                <ZModeField
+                  machine={machine}
+                  // The owner's rule: the super admin alone switches a till's Z mode.
+                  canEdit={isSuperAdmin && !removed && machine.pairingStatus === 'assigned'}
+                />
+                <IndependentTillBadge machine={machine} />
+              </span>
             }
           />
           <Field
@@ -693,7 +721,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
                 (transactions.data?.items ?? []).map((tx) => (
                   <TableRow key={tx.id}>
                     <TableCell>{formatDateTime(tx.createdAt)}</TableCell>
-                    <TableCell className="font-mono text-xs">{tx.transactionNumber}</TableCell>
+                    <TableCell className="font-mono text-xs">{tx.documentNumber ?? tx.transactionNumber}</TableCell>
                     <TableCell>
                       <Badge variant="outline">{tTx(`statusLabels.${tx.status}`)}</Badge>
                     </TableCell>
@@ -710,6 +738,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
 
       <MachineAreaDialog machine={machine} open={areaOpen} onOpenChange={setAreaOpen} />
       <DeviceModelDialog machine={machine} open={deviceModelOpen} onOpenChange={setDeviceModelOpen} />
+      <DocumentPrefixDialog machine={machine} open={documentPrefixOpen} onOpenChange={setDocumentPrefixOpen} />
       <LicenseDialog
         title={tLicense('machineTitle', { name: machine.name })}
         initial={machine}

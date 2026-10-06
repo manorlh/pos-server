@@ -53,6 +53,8 @@ SKETCH_KINDS = (
     # exit, a stage, a sofa.
     "stairs", "cashier", "host", "exit", "stage", "sofa",
     "line", "polyline", "freehand", "rect",
+    # The business's logo (its own picture, or src).
+    "logo",
 )
 TABLE_ORDER_SOURCES = ("synced", "local")
 

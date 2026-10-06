@@ -177,21 +177,25 @@ def machine_z_number_holder(db: Session, machine_id: uuid.UUID, number: int) -> 
     )
 
 
+class ZNumberOutOfSequence(Exception):
+    """A number that is not the exact next one of the till's run."""
+
+
 def claim_machine_z_number(db: Session, machine_id: uuid.UUID, number: int) -> int:
     """
     Take `number` — numbered by the till for a Z it closed with no connection — into the
     till's run (docs/SPEC_OFFLINE_TILL_Z.md §4.2), and return the counter as it was.
 
-    The caller holds the counter lock and has checked that no Z of the till holds the
-    number. The counter only ever rises: the exact next number moves it by one, a jump
-    moves it to the number (the gap is the caller's to report), and a number below it —
-    a hole nobody filled — leaves it where it is.
+    Strictly the next number, or nothing: a jump or a hole would put a gap in the run,
+    so anything but `last + 1` raises `ZNumberOutOfSequence` (the caller has already
+    refused it with the expected number; this is the backstop under the lock).
     """
     row = lock_machine_z_sequence(db, machine_id)
-    before = int(row.last_number or 0)
-    if number > before:
-        row.last_number = number
-        db.flush()
+    before = max(int(row.last_number or 0), _highest_machine_number(db, machine_id))
+    if number != before + 1:
+        raise ZNumberOutOfSequence(f"Z {number} of machine {machine_id}: expected {before + 1}")
+    row.last_number = number
+    db.flush()
     return before
 
 
@@ -202,7 +206,54 @@ def allocate_machine_z_number(db: Session, machine_id: uuid.UUID) -> int:
     a retried `clientRequestId` with the Z it has — a retry never draws a number.
     """
     row = lock_machine_z_sequence(db, machine_id)
-    assigned = int(row.last_number or 0) + 1
+    # Never below a number on file: a counter behind the run would issue a number twice.
+    assigned = max(int(row.last_number or 0), _highest_machine_number(db, machine_id)) + 1
     row.last_number = assigned
     db.flush()
     return assigned
+
+
+# ── A shop Z produced on the main till (docs/SPEC_INDEPENDENT_TILL.md §8) ──────
+#
+# The same contract as a till Z closed with no connection (`claim_machine_z_number`,
+# docs/SPEC_OFFLINE_TILL_Z.md §4): the main till numbers the shop's next Z itself — one
+# after the last it knows — and the cloud takes exactly the next number or nothing. A
+# jump or a number already used is refused with the expected number, and the main till
+# renumbers its still-pending Z to it: the shop's run never has a gap.
+
+
+def last_shop_z_number(db: Session, shop_id: uuid.UUID) -> int:
+    """The shop's last Z number (0 if none): its counter, else the highest on file. No lock."""
+    row = db.query(ShopZSequence.next_value).filter(ShopZSequence.shop_id == shop_id).first()
+    by_counter = int(row[0]) - 1 if row and row[0] else 0
+    highest = (
+        db.query(ZReport.shop_sequence_number)
+        .filter(ZReport.shop_id == shop_id, ZReport.shop_sequence_number.isnot(None))
+        .order_by(ZReport.shop_sequence_number.desc())
+        .first()
+    )
+    on_file = int(highest[0]) if highest and highest[0] else 0
+    return max(by_counter, on_file)
+
+
+def claim_shop_z_number(db: Session, shop_id: uuid.UUID, number: int) -> int:
+    """
+    Take `number` — numbered by the main till — into the shop's run, and return the last
+    number before it. Strictly the next one: anything else raises `ZNumberOutOfSequence`
+    (the caller has already refused it with the expected number; this is the backstop
+    under the lock).
+    """
+    ensure_shop_z_sequence(db, shop_id)
+    row = (
+        db.query(ShopZSequence)
+        .filter(ShopZSequence.shop_id == shop_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    before = last_shop_z_number(db, shop_id)
+    if number != before + 1:
+        raise ZNumberOutOfSequence(f"shop Z {number} of shop {shop_id}: expected {before + 1}")
+    row.next_value = number + 1
+    db.flush()
+    return before

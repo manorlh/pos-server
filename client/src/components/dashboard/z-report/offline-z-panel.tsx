@@ -12,9 +12,11 @@ import { AlertTriangle, CloudOff, CreditCard } from 'lucide-react';
 import type { ZReportDetail } from '@/lib/types';
 import { formatCurrency, formatDateTime } from '@/lib/format';
 import { discrepancyValue, sortedDiscrepancies, zTransmissionFailed } from '@/lib/offlineZ';
+import { isShopZ } from '@/lib/zParticipation';
 
 export function OfflineZPanel({ z }: { z: ZReportDetail }) {
   const t = useTranslations('zReports');
+  const ti = useTranslations('independentTill.zReport');
   const gaps = sortedDiscrepancies(z.offlineDiscrepancies);
   const closedAt = typeof z.offlineReport?.closedAt === 'string' ? z.offlineReport.closedAt : z.closedAt;
   const card = z.cardTransmission;
@@ -26,7 +28,10 @@ export function OfflineZPanel({ z }: { z: ZReportDetail }) {
         <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950">
           <div className="flex gap-2 font-medium">
             <CloudOff className="h-4 w-4 shrink-0 mt-0.5" aria-hidden />
-            {t('builtOfflineNotice', { closedAt: formatDateTime(closedAt), uploadedAt: formatDateTime(z.uploadedAt) })}
+            {/* A shop Z produced on the main till is numbered by the shop, not by a till. */}
+            {isShopZ(z)
+              ? ti('builtOfflineShopNotice', { closedAt: formatDateTime(closedAt), uploadedAt: formatDateTime(z.uploadedAt) })
+              : t('builtOfflineNotice', { closedAt: formatDateTime(closedAt), uploadedAt: formatDateTime(z.uploadedAt) })}
           </div>
           {gaps.length > 0 ? (
             <>

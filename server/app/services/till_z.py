@@ -65,6 +65,7 @@ from app.services.z_builder import (
 from app.services.z_runs import Z_RUN_TTL_HOURS, _initiator
 from app.services.z_sequence import (
     claim_machine_z_number,
+    last_machine_z_number,
     lock_machine_z_sequence,
     machine_z_number_holder,
 )
@@ -368,6 +369,23 @@ def _differs(till_value: Any, cloud_value: Any) -> bool:
     return abs(ours - theirs) > _CENT
 
 
+def _same_document_number(till: Any, cloud: Any) -> bool:
+    """
+    A document number on the till's Z against the cloud's. The cloud shows it as printed,
+    `<prefix>-<number>` (docs/SPEC_DOCUMENT_PREFIX.md); a till build from before the
+    prefix sends the bare number. Compared whole when both carry a prefix (or neither),
+    and by the number alone when only one does — that is a build difference, not a gap.
+    """
+    if cloud is None:
+        return False
+    a, b = str(till).strip(), str(cloud).strip()
+    if a == b:
+        return True
+    if ("-" in a) == ("-" in b):
+        return False
+    return a.rsplit("-", 1)[-1] == b.rsplit("-", 1)[-1]
+
+
 def offline_discrepancies(
     *,
     number: int,
@@ -397,7 +415,7 @@ def offline_discrepancies(
         out.append({"key": "shiftIds", "till": till_ids, "cloud": cloud_ids})
     for key, value in (("firstDocumentNumber", till_first_document), ("lastDocumentNumber", till_last_document)):
         cloud = section.get(key)
-        if value is not None and str(value) != (None if cloud is None else str(cloud)):
+        if value is not None and not _same_document_number(value, cloud):
             out.append({"key": key, "till": value, "cloud": cloud})
     for till_key, section_key in OFFLINE_COMPARED:
         if not till_totals or till_key not in till_totals or till_totals[till_key] is None:
@@ -423,15 +441,18 @@ def _produce_offline(db: Session, machine: POSMachine, body: TillZIn, now: datet
     number = off.machine_sequence_number
     if db.query(ZReport.id).filter(ZReport.id == off.id).first() is not None:
         raise _conflict("offline_z_id_conflict", zReportId=str(off.id))
-    holder = machine_z_number_holder(db, machine.id, number)
-    if holder is not None:
-        from app.services.z_sequence import last_machine_z_number
-
+    # Strictly sequential, always (§4.2): only the exact next number of the till's run
+    # is taken. Anything else is refused with the number expected — the till renumbers a
+    # Z that has not left it — so no jump and no hole ever enters the run.
+    expected = last_machine_z_number(db, machine.id) + 1
+    if number != expected:
+        holder = machine_z_number_holder(db, machine.id, number)
+        extra = {"takenByZReportId": str(holder.id)} if holder is not None else {}
         raise _conflict(
-            "offline_z_number_taken",
+            "offline_z_number_taken" if holder is not None else "offline_z_out_of_sequence",
             zNumber=number,
-            takenByZReportId=str(holder.id),
-            nextNumber=last_machine_z_number(db, machine.id) + 1,
+            expectedNumber=expected,
+            **extra,
         )
     taken = (
         db.query(Shift)
@@ -524,6 +545,33 @@ def _produce_offline(db: Session, machine: POSMachine, body: TillZIn, now: datet
     _complete_requests(db, machine, z, body.till_z_request_id, now)
     db.flush()
     return z, "created"
+
+
+#: How far back a till keeps its own Zs, and so what it pulls when it has none (§4.3).
+TILL_Z_HISTORY_DAYS = 31
+TILL_Z_HISTORY_MAX = 200
+
+
+def till_z_history(
+    db: Session, machine: POSMachine, *, days: int = TILL_Z_HISTORY_DAYS, now: Optional[datetime] = None
+) -> List[ZReport]:
+    """
+    This till's own Zs of the last `days` days, oldest first — and always its newest,
+    however old — for a new or reset till to hold the run it continues offline
+    (docs/SPEC_OFFLINE_TILL_Z.md §4.3).
+    """
+    now = _now(now)
+    base = db.query(ZReport).filter(ZReport.machine_id == machine.id, ZReport.origin == ZOrigin.TILL)
+    rows = (
+        base.filter(ZReport.closed_at >= now - timedelta(days=days))
+        .order_by(ZReport.machine_sequence_number.desc())
+        .limit(TILL_Z_HISTORY_MAX)
+        .all()
+    )
+    newest = base.order_by(ZReport.machine_sequence_number.desc()).first()
+    if newest is not None and all(z.id != newest.id for z in rows):
+        rows.append(newest)
+    return sorted(rows, key=lambda z: z.machine_sequence_number or 0)
 
 
 def _shown(value: Any) -> str:

@@ -132,6 +132,8 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     tenantId: (raw.tenantId ?? raw.tenant_id) as string | undefined,
     shopId: (raw.shopId ?? raw.shop_id) as string | undefined,
     posNumber: nullableString(raw.posNumber ?? raw.pos_number),
+    documentPrefix: nullableString(raw.documentPrefix ?? raw.document_prefix),
+    effectiveDocumentPrefix: nullableString(raw.effectiveDocumentPrefix ?? raw.effective_document_prefix),
     areaId: nullableString(raw.areaId ?? raw.area_id),
     areaName: nullableString(raw.areaName ?? raw.area_name),
     pairingStatus,
@@ -199,6 +201,8 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     // "סוג אינטגרציית אשראי" and the fields it still lacks (the machines list's badge).
     ...normalizeMachineIntegration(raw),
     zMode: zMode(raw.zMode ?? raw.z_mode),
+    // "קופה עצמאית": absent (an older server) reads as not independent.
+    independentTill: (raw.independentTill ?? raw.independent_till) === true,
     createdAt: String(raw.createdAt ?? raw.created_at ?? ''),
     updatedAt: String(raw.updatedAt ?? raw.updated_at ?? ''),
   };

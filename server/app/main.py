@@ -63,6 +63,8 @@ from app.routers import (
     till_shop_z as till_shop_z_router,
     main_till as main_till_router,
     z_mode as z_mode_router,
+    z_participation as z_participation_router,
+    till_shop_z_local as till_shop_z_local_router,
     exceptions as exceptions_router,
     promotions as promotions_router,
     tables as tables_router,
@@ -155,6 +157,8 @@ app.include_router(prepaid_vouchers_router.router, prefix=_prefix)
 app.include_router(till_shop_z_router.router, prefix=_prefix)
 app.include_router(main_till_router.router, prefix=_prefix)
 app.include_router(z_mode_router.router, prefix=_prefix)
+app.include_router(z_participation_router.router, prefix=_prefix)
+app.include_router(till_shop_z_local_router.router, prefix=_prefix)
 app.include_router(exceptions_router.router, prefix=_prefix)
 app.include_router(exceptions_router.till_router, prefix=_prefix)
 app.include_router(promotions_router.router, prefix=_prefix)
@@ -176,6 +180,12 @@ app.include_router(training_mode_router.router, prefix=_prefix)
 # release, and the dashboard's who-is-signed-in-where.
 app.include_router(user_sessions_router.till_router, prefix=_prefix)
 app.include_router(user_sessions_router.router, prefix=_prefix)
+# "נוכחות עובדים" (docs/SPEC_ATTENDANCE.md): the till's clock-in/out/break actions and the
+# dashboard's live board, report and corrections — separate from the sign-in above.
+from app.routers import attendance as attendance_router  # noqa: E402
+
+app.include_router(attendance_router.till_router, prefix=_prefix)
+app.include_router(attendance_router.router, prefix=_prefix)
 # "סקירת שינויים לפני שידור לקופות" (docs/SPEC_MENU_BROADCAST_REVIEW.md).
 from app.routers import menu_broadcast as menu_broadcast_router  # noqa: E402
 
@@ -184,6 +194,35 @@ app.include_router(menu_broadcast_router.router, prefix=_prefix)
 from app.routers import payment_integration as payment_integration_router  # noqa: E402
 
 app.include_router(payment_integration_router.router, prefix=_prefix)
+# "שירות הודעות ו-019" + "מועדון לקוחות" and its public sign-up (docs/SPEC_NOTIFICATIONS_CLUB.md).
+from app.routers import club as club_router, notifications as notifications_router  # noqa: E402
+
+app.include_router(notifications_router.router, prefix=_prefix)
+app.include_router(notifications_router.till_router, prefix=_prefix)
+app.include_router(club_router.router, prefix=_prefix)
+app.include_router(club_router.till_router, prefix=_prefix)
+app.include_router(club_router.public_router, prefix=_prefix)
+
+
+@app.on_event("startup")
+def start_notifications_worker():
+    """The SMS queue worker (lease-safe across processes); NOTIFICATIONS_WORKER_ENABLED=false stops it."""
+    if not settings.notifications_worker_enabled:
+        return
+    from app.database import SessionLocal
+    from app.services.notifications.worker import start_background_worker
+
+    start_background_worker(SessionLocal)
+# KDS and "תצורת עבודה לעמדה" (docs/SPEC_KDS.md): releases, screens, the workflow card.
+from app.routers import kds as kds_router  # noqa: E402
+
+app.include_router(kds_router.router, prefix=_prefix)
+# The customer self-order kiosk (app/routers/kiosks.py): the till's kiosk sync, orders,
+# pickup numbers and controller commands, and the dashboard's kiosks and their config.
+from app.routers import kiosks as kiosks_router  # noqa: E402
+
+app.include_router(kiosks_router.till_router, prefix=_prefix)
+app.include_router(kiosks_router.router, prefix=_prefix)
 
 
 @app.on_event("startup")

@@ -44,6 +44,13 @@ class RecordCounts(TypedDict):
 B110_RECORD_LEN = 376
 M100_RECORD_LEN = 298
 
+#: מספר מסמך — C100 field 1204, D110 field 1254 (and 1257, the base document's number),
+#: D120 field 1304: alphanumeric, X(20), left-aligned and space-padded (`pad_right`). A
+#: document number is text here, so a till's "קידומת מסמכים" is written into it as
+#: `<prefix>-<number>` (`2-57`, docs/SPEC_DOCUMENT_PREFIX.md): at most 3 + 1 + 16
+#: characters, and a till's counter is nowhere near 16 digits.
+DOCUMENT_NUMBER_WIDTH = 20
+
 
 def pad_right(value: str, length: int, pad_char: str = " ") -> str:
     s = value or ""
@@ -397,7 +404,7 @@ def build_c100_record(
     record += pad_left(str(record_number), 9, "0")
     record += pad_left(vat, 9, "0")
     record += pad_left(str(doc_type_val), 3, "0")
-    record += pad_right(transaction.get("transactionNumber") or "", 20)
+    record += pad_right(transaction.get("transactionNumber") or "", DOCUMENT_NUMBER_WIDTH)
     record += doc_date_str
     record += format_time(doc_production_date)
     record += f1207 + f1208 + f1209 + f1210 + f1211 + f1212 + f1213 + f1214 + f1215
@@ -424,7 +431,7 @@ def build_d110_record(
     line_discount = item.get("lineDiscount") or item.get("discount") or 0
     doc_type_val = doc_type if doc_type is not None else transaction.get("documentType")
     base_dt = pad_left(re.sub(r"\D", "", str(base_doc_type or ""))[:3], 3, "0")
-    base_num = pad_right(base_doc_number or "", 20)
+    base_num = pad_right(base_doc_number or "", DOCUMENT_NUMBER_WIDTH)
     rate_pct = global_tax_rate if global_tax_rate is not None else 18.0
     vat_four = pad_left(str(round(rate_pct * 100)), 4, "0")
     doc_production_date = _parse_dt(
@@ -445,7 +452,7 @@ def build_d110_record(
     record += pad_left(str(record_number), 9, "0")
     record += pad_left(vat, 9, "0")
     record += pad_left(str(doc_type_val), 3, "0")
-    record += pad_right(transaction.get("transactionNumber") or "", 20)
+    record += pad_right(transaction.get("transactionNumber") or "", DOCUMENT_NUMBER_WIDTH)
     record += pad_left(str(line_number), 4, "0")
     record += base_dt + base_num + tt
     record += pad_right(product.get("sku") or "", 20)
@@ -520,7 +527,7 @@ def build_d120_record(
     record += pad_left(str(record_number), 9, "0")
     record += pad_left(vat, 9, "0")
     record += pad_left(str(doc_type_val), 3, "0")
-    record += pad_right(transaction.get("transactionNumber") or "", 20)
+    record += pad_right(transaction.get("transactionNumber") or "", DOCUMENT_NUMBER_WIDTH)
     record += pad_left(str(line_number), 4, "0")
     record += str(payment_type)
     record += pad_left("0", 10, "0")

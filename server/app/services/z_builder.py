@@ -79,6 +79,76 @@ EMPTY_Z = "empty_z"
 EMPTY_Z_MESSAGE = "אין תנועות — לא ניתן לסגור Z על 0"
 
 
+def numbers_label(numbers: Sequence[Optional[str]]) -> str:
+    """Register numbers for a sentence: "1–5", "1, 3, 6", or as they are when not numbers."""
+    shown = [str(n).strip() for n in numbers if n is not None and str(n).strip()]
+    if not shown:
+        return ""
+    if all(n.isdigit() for n in shown):
+        ints = sorted({int(n) for n in shown})
+        runs: List[str] = []
+        start = prev = ints[0]
+        for n in ints[1:] + [None]:  # type: ignore[list-item]
+            if n is not None and n == prev + 1:
+                prev = n
+                continue
+            runs.append(f"{start}–{prev}" if prev - start >= 2 else ", ".join(str(i) for i in range(start, prev + 1)))
+            if n is not None:
+                start = prev = n
+        return ", ".join(runs)
+    return ", ".join(shown)
+
+
+def _till_ref(machine: POSMachine) -> dict:
+    return {"machineId": str(machine.id), "posNumber": machine.pos_number, "name": machine.name}
+
+
+def z_scope(
+    db: Session, shop_id: uuid.UUID, machines: Sequence[POSMachine], till_z: bool, area_id=None
+) -> dict:
+    """
+    What a Z includes, frozen on its header as `scope` (docs/SPEC_INDEPENDENT_TILL.md §7):
+    `{kind, label, tills, independentOutside}`. A shop Z names its tills and the shop's
+    independent tills it does not cover — by design, not left out — so the paper and the
+    dashboard say plainly what is in it; a till Z says it is one till's.
+    """
+    from app.services.independent_till import is_independent
+
+    tills = [_till_ref(m) for m in machines]
+    if till_z:
+        machine = machines[0]
+        label = machine.pos_number or machine.name or ""
+        if is_independent(machine):
+            return {
+                "kind": "independent_till",
+                "label": f"Z של קופה {label} בלבד — קופה עצמאית, לא חלק מה-Z הסניפי",
+                "tills": tills,
+                "independentOutside": [],
+            }
+        return {"kind": "till", "label": f"Z של קופה {label} בלבד (Z לכל קופה)", "tills": tills, "independentOutside": []}
+    outside = (
+        db.query(POSMachine)
+        .filter(
+            POSMachine.shop_id == shop_id,
+            POSMachine.is_active.is_(True),
+            POSMachine.independent_till.is_(True),
+        )
+        .all()
+    )
+    outside = sorted((m for m in outside if m.id not in {x.id for x in machines}), key=lambda m: (m.pos_number or "", m.name or ""))
+    label = f"Z סניפי — כולל קופות {numbers_label([m.pos_number for m in machines])}"
+    if area_id is not None:
+        label = f"Z לנקודת מכירה — כולל קופות {numbers_label([m.pos_number for m in machines])}"
+    if outside:
+        label += f" · לא כולל קופות עצמאיות: {numbers_label([m.pos_number for m in outside])} (Z נפרד לכל אחת)"
+    return {
+        "kind": "area" if area_id is not None else "shop",
+        "label": label,
+        "tills": tills,
+        "independentOutside": [_till_ref(m) for m in outside],
+    }
+
+
 def figures_show_activity(totals: DocumentTotals, between_shifts=ZERO) -> bool:
     """
     Whether a Z over these figures has anything to report.
@@ -372,6 +442,7 @@ def build_z(
     z_id: Optional[uuid.UUID] = None,
     machine_sequence_number: Optional[int] = None,
     allow_empty: bool = False,
+    shop_sequence_number: Optional[int] = None,
 ) -> ZReport:
     """
     Build and write one Z over `selections` — (till, through shift id) pairs of one shop.
@@ -399,6 +470,13 @@ def build_z(
     printed it, the caller has already claimed the number (`claim_machine_z_number`) — and
     `allow_empty`: the paper exists, so a set the cloud finds empty is a discrepancy for
     the caller to record, not a refusal.
+
+    A shop Z produced on the main till (docs/SPEC_INDEPENDENT_TILL.md §8) comes the same
+    way with its `z_id` and `shop_sequence_number`, the caller having claimed the number
+    (`claim_shop_z_number`).
+
+    Every Z freezes what it includes on its header (`scope`, `z_scope`): a shop Z names
+    its tills and the shop's independent tills it does not include; a till Z says whose.
 
     `open_tills_left_out` (`app.services.z_runs.open_tills_left_out`): the tills the
     operator confirmed producing this shop Z without, and who confirmed it. Frozen into
@@ -522,7 +600,7 @@ def build_z(
             now=now,
         ),
         # One run or the other, never both: a till Z is not a number in the shop's run.
-        shop_sequence_number=None if till_z else allocate_shop_z_number(db, shop_id),
+        shop_sequence_number=None if till_z else (shop_sequence_number or allocate_shop_z_number(db, shop_id)),
         machine_sequence_number=(
             (machine_sequence_number or allocate_machine_z_number(db, per_machine[0][0].id)) if till_z else None
         ),
@@ -537,6 +615,8 @@ def build_z(
         z.header = {**z.header, "promotionDiscountsTotal": _money(overall.promotion_discounts_total)}
         # Per waiter ("פירוט לפי מלצר"): the same documents, by whose table or sale they were.
         z.header = {**z.header, "byWaiter": waiter_breakdown(db, [s.id for s in all_shifts], shop_id)}
+        # What this Z includes, in words (docs/SPEC_INDEPENDENT_TILL.md §7).
+        z.header = {**z.header, "scope": z_scope(db, shop_id, [m for m, _s in per_machine], till_z, area_id)}
     db.add(z)
     db.flush()
     for shift in all_shifts:

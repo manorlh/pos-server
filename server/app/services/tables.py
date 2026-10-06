@@ -618,14 +618,17 @@ def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
     agrees on one — else the shop's main till ("קופה ראשית", app/services/main_till.py),
     else the shop's print server, else the shop's only till, else none.
     """
+    from app.services.independent_till import lan_members
     from app.services.main_till import main_till_of_shop
     from app.services.printers import print_host_of_shop, shop_machines
     from app.services.till_parameters import till_parameters_for_machine
 
     if shop_id is None:
         return None
+    # An independent till ("קופה עצמאית") is outside the shop's LAN group: never its host.
+    members = lan_members(shop_machines(db, shop_id))
     hosts = [
-        m for m in shop_machines(db, shop_id)
+        m for m in members
         if till_parameters_for_machine(db, m).parameters.get(TABLES_HOST_KEY) is True
     ]
     if not hosts:
@@ -635,8 +638,7 @@ def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
         # A shop with one till: it holds the tables, there being no other. Without this a
         # one-till shop in the LAN mode had no host at all, and its till — the main one by
         # any reading — said the main till was out of reach and refused every table.
-        tills = shop_machines(db, shop_id)
-        return tills[0] if len(tills) == 1 else None
+        return members[0] if len(members) == 1 else None
 
     def order(m: POSMachine):
         number = (m.pos_number or "").strip()
@@ -648,8 +650,12 @@ def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
 def lan_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any]]:
     """The tables host as `machine` needs it: who, and where on the LAN it last said it listens."""
     from app.models.printers import DEFAULT_LAN_PORT, KitchenPrintHost
+    from app.services.independent_till import is_independent
     from app.services.printers import machine_label
 
+    if is_independent(machine):
+        # "קופה עצמאית": it never uses the shop's tables host.
+        return None
     host = tables_host_of_shop(db, machine.shop_id)
     if host is None:
         return None
@@ -1734,7 +1740,42 @@ def layout(db: Session, shop: Shop) -> dict:
         row = zone_out(z)
         row["areaName"] = area_names.get(z.area_id) if z.area_id else None
         zone_rows.append(row)
-    return {"shopId": str(shop.id), "zones": zone_rows, "tables": [table_out(t) for t in tables]}
+    return {
+        "shopId": str(shop.id),
+        "zones": zone_rows,
+        "tables": [table_out(t) for t in tables],
+        # What a "logo" shape of the map shows when it has no picture of its own.
+        "logoUrl": business_logo_url(db, shop),
+    }
+
+
+def business_logo_url(db: Session, shop: Shop) -> Optional[str]:
+    """
+    The business's logo, as the shop's tills print it: the till parameter "לוגו בקבלה"
+    (`receiptLogoUrl`, the shop's own or its company's), else the branding's receipt logo,
+    else its logo. None when the business has none.
+    """
+    from app.models.company import Company
+    from app.models.tenant import Tenant
+    from app.services.settings_merge import merge_settings
+    from app.services.till_parameters import resolve_for_shop
+
+    try:
+        param = resolve_for_shop(db, shop).get("receiptLogoUrl")
+    except Exception:  # noqa: BLE001 - a logo is never worth failing the layout
+        param = None
+    if isinstance(param, str) and param.strip():
+        return param.strip()
+    company = db.get(Company, shop.company_id) if shop.company_id else None
+    if company is None:
+        return None
+    tenant = db.get(Tenant, company.tenant_id) if getattr(company, "tenant_id", None) else None
+    merged = merge_settings(company, shop, tenant)
+    for key in ("brandReceiptLogoUrl", "brandLogoUrl"):
+        value = merged.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def create_zone(db: Session, shop: Shop, body) -> TableZone:
@@ -1780,6 +1821,8 @@ def sketch_json(sketch: Any) -> Optional[dict]:
             out["stroke"] = e.stroke
         if e.filled is not None:
             out["filled"] = e.filled
+        if e.kind == "logo" and getattr(e, "src", None):
+            out["src"] = e.src
         return out
 
     return {

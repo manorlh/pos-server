@@ -527,7 +527,7 @@ export function UntransmittedSales({ m }: { m: PosMachine }) {
     ];
     const rows = items.map((i) => [
       i.createdAt,
-      i.transactionNumber,
+      i.documentNumber ?? i.transactionNumber,
       i.amount,
       i.approvalNumber ?? '',
       i.terminalTransactionId ?? '',
@@ -584,7 +584,7 @@ export function UntransmittedSales({ m }: { m: PosMachine }) {
             items.map((i) => (
               <TableRow key={i.legId}>
                 <TableCell className="text-xs">{formatDateTime(i.createdAt)}</TableCell>
-                <TableCell className="text-xs tabular-nums">{i.transactionNumber}</TableCell>
+                <TableCell className="text-xs tabular-nums">{i.documentNumber ?? i.transactionNumber}</TableCell>
                 <TableCell className="text-end tabular-nums">{formatCurrency(i.amount)}</TableCell>
                 <TableCell className="text-xs tabular-nums" dir="ltr">
                   {i.approvalNumber ?? '—'}

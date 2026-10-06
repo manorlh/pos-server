@@ -59,6 +59,7 @@ export function ZScopeCard({ shopId }: { shopId: string }) {
       qc.setQueryData(['shop-z-mode', shopId], out);
       void qc.invalidateQueries({ queryKey: ['machines'] });
       void qc.invalidateQueries({ queryKey: ['z-candidates'] });
+      void qc.invalidateQueries({ queryKey: ['z-participation', shopId] });
       toast.success(t('saved'));
     },
     onError: (err: unknown) => {

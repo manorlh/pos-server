@@ -79,8 +79,35 @@ from app.models.product_cost import ProductCost
 from app.models.report_event import ReportEvent, ReportEventMachine
 from app.models.training import DemoMenuItem, TrainingAuditLog, TrainingDocument
 from app.models.pos_user_session import PosUserSession
+# "נוכחות עובדים" (docs/SPEC_ATTENDANCE.md) — separate from PosUserSession on purpose.
+from app.models.attendance import AttendanceAdjustment, AttendanceBreak, AttendanceShift, EmployeeRole
 from app.models.menu_broadcast import CatalogPublication, ShopWorkTypes
 from app.models.payment_secret import PaymentIntegrationSecret
+# The self-order kiosk (app/services/kiosk_control.py) — not the device lock `kioskMode`.
+from app.models.kiosk import (
+    KioskCommand,
+    KioskDevice,
+    KioskOrder,
+    KioskPickupAllocation,
+    KioskPickupCounter,
+    KioskSettings,
+)
+# "שירות הודעות ו-019" + "מועדון לקוחות" (docs/SPEC_NOTIFICATIONS_CLUB.md).
+from app.models.outbox import OutboxEvent
+from app.models.notifications import (
+    Campaign, CampaignRecipient, DeliveryEvent, Notification, NotificationAttempt,
+    NotificationProviderConfig, NotificationTemplate,
+)
+from app.models.club import (
+    ClubAuditEvent, ClubBenefitGrant, ClubConsentEvent, ClubCustomer, ClubDocumentVersion,
+    ClubLandingPage, ClubMembership, ClubOtpChallenge, ClubPointsLedger, ClubProgram,
+    ClubRedemptionReservation, ClubSaleLink, ClubSourceToken, ClubSuppression,
+)
+# KDS and "תצורת עבודה לעמדה" (docs/SPEC_KDS.md).
+from app.models.kds import (
+    FulfillmentGroup, KdsDevice, KdsRouteOverride, KdsShopState, KdsStationSetting, KitchenAction,
+    KitchenChange, KitchenDispatch, KitchenOrder, KitchenTask,
+)
 
 __all__ = [
     "User", "UserRole",
@@ -139,6 +166,14 @@ __all__ = [
     "ReportEvent", "ReportEventMachine",
     "TrainingDocument", "TrainingAuditLog", "DemoMenuItem",
     "PosUserSession",
+    "EmployeeRole", "AttendanceShift", "AttendanceBreak", "AttendanceAdjustment",
     "CatalogPublication", "ShopWorkTypes",
     "PaymentIntegrationSecret",
+    "OutboxEvent",
+    "Campaign", "CampaignRecipient", "DeliveryEvent", "Notification", "NotificationAttempt",
+    "NotificationProviderConfig", "NotificationTemplate",
+    "ClubAuditEvent", "ClubBenefitGrant", "ClubConsentEvent", "ClubCustomer", "ClubDocumentVersion",
+    "ClubLandingPage", "ClubMembership", "ClubOtpChallenge", "ClubPointsLedger", "ClubProgram",
+    "ClubRedemptionReservation", "ClubSaleLink", "ClubSourceToken", "ClubSuppression",
+    "KioskSettings", "KioskDevice", "KioskOrder", "KioskPickupCounter", "KioskPickupAllocation", "KioskCommand",
 ]

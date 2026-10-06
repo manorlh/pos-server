@@ -1242,13 +1242,15 @@ def print_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
     register number, so every till agrees on one. None marked: the shop's main till
     ("קופה ראשית", app/services/main_till.py), else none — off by default.
     """
+    from app.services.independent_till import lan_members
     from app.services.main_till import main_till_of_shop
     from app.services.till_parameters import till_parameters_for_machine
 
     if shop_id is None:
         return None
+    # An independent till ("קופה עצמאית") is outside the shop's LAN group: never its server.
     hosts = [
-        m for m in shop_machines(db, shop_id)
+        m for m in lan_members(shop_machines(db, shop_id))
         if till_parameters_for_machine(db, m).parameters.get(PRINT_HOST_KEY) is True
     ]
     if not hosts:
@@ -1263,6 +1265,11 @@ def print_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
 
 def print_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any]]:
     """The shop's print server as `machine` needs it: who, and where on the LAN."""
+    from app.services.independent_till import is_independent
+
+    if is_independent(machine):
+        # "קופה עצמאית": it never uses the shop's print server; it prints by itself.
+        return None
     host = print_host_of_shop(db, machine.shop_id)
     if host is None:
         return None

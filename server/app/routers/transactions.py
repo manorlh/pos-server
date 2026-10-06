@@ -14,6 +14,7 @@ from app.models.transaction_item import TransactionItem
 from app.models.transaction_payment import TransactionPayment
 from app.models.user import User
 from app.services import print_documents
+from app.services.document_prefix import document_number_from, prefixed_number_clause
 from app.services.offline_authorizations import outcomes_by_transaction
 from app.services.scoping import scope_transactions_by_user
 from app.schemas.print_document import PrintDocumentListOut, PrintDocumentOut
@@ -151,6 +152,12 @@ def _search_filters(query, *, q=None, card_last4=None, item=None, method=None):
             )
         )
     if q and q.strip():
+        # `2-57`: document 57 of the till that issued it under prefix 2
+        # (docs/SPEC_DOCUMENT_PREFIX.md). Anything else — `57` too, which may be any
+        # till's — stays the substring search on the number or the amount.
+        prefixed = prefixed_number_clause(q)
+        if prefixed is not None:
+            return query.filter(prefixed)
         pattern = _like(q.strip())
         query = query.filter(
             or_(
@@ -220,7 +227,9 @@ def get_transaction(
     # each is resolved here, inside the reader's tenant and scope.
     if tx.refund_of_transaction_id is not None:
         original = scope_transactions_by_user(
-            db.query(Transaction.transaction_number).filter(
+            db.query(
+                Transaction.transaction_number, Transaction.document_prefix, Transaction.pos_number
+            ).filter(
                 Transaction.id == tx.refund_of_transaction_id,
                 Transaction.tenant_id == active_tenant_id,
             ),
@@ -228,7 +237,8 @@ def get_transaction(
             db,
         )
         row = original.first() if original is not None else None
-        out.refund_of_transaction_number = row[0] if row else None
+        # As printed on the original: "זיכוי למסמך 2-57".
+        out.refund_of_transaction_number = document_number_from(*row) if row else None
     if tx.basket_id is not None:
         siblings = scope_transactions_by_user(
             db.query(Transaction).filter(

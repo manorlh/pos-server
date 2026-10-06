@@ -15,6 +15,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     UniqueConstraint,
+    CheckConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
@@ -99,6 +100,11 @@ class POSMachine(Base):
         # NULLs compare distinct, so any number of shopless or unnumbered machines
         # coexist, while two tills in one shop can never both be "register 2".
         UniqueConstraint("shop_id", "pos_number", name="uq_pos_machines_shop_pos_number"),
+        # "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md): an independent till makes its own Z,
+        # never the shop's — so a till can never be both in the shop Z and independent.
+        CheckConstraint(
+            "NOT independent_till OR z_mode = 'till'", name="ck_pos_machines_independent_till_mode"
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -129,6 +135,13 @@ class POSMachine(Base):
     #: is no shop. Stored as text because `transactions.pos_number` is text and a
     #: document copies it verbatim; documents fall back to `machine_code` when null.
     pos_number = Column(String(50), nullable=True)
+    #: "קידומת מסמכים" (docs/SPEC_DOCUMENT_PREFIX.md): what this till's document numbers
+    #: are printed and exported under — `2-57`. Digits only, 1–3 characters. Null means
+    #: the default, the register number (`effective_document_prefix`). Unique among the
+    #: tills of its shop / branch (`app.services.document_prefix`), and given up with the
+    #: shop like the register number. Every document freezes the prefix it was issued
+    #: with (`transactions.document_prefix`), so a change here never rewrites history.
+    document_prefix = Column(String(3), nullable=True)
     mqtt_client_id = Column(String(255), unique=True, nullable=True)
     pairing_status = Column(SQLEnum(PairingStatus, values_callable=lambda x: [e.value for e in x]), nullable=False, default=PairingStatus.UNPAIRED)
     device_info = Column(JSON, nullable=True)
@@ -287,6 +300,13 @@ class POSMachine(Base):
     # cloud Z ever takes its shifts. Changed only through `app.services.till_z.set_z_mode`,
     # which refuses a switch while shifts are waiting for a Z of the old mode.
     z_mode = Column(String(8), nullable=False, default="cloud", server_default="cloud")
+    # ── "קופה עצמאית בתוך סניף" (docs/SPEC_INDEPENDENT_TILL.md) ─────────────────
+    # A till of the shop that is not part of the shop: its own Z (`z_mode` "till", by the
+    # check above), never listed or waited for by the shop Z, and outside the shop's LAN
+    # group — never the main till, tables host or print server, never using them; its
+    # tables off unless set at its own level. Changed only through
+    # `app.services.independent_till.set_independent` (super admin, over a clean break).
+    independent_till = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
@@ -300,6 +320,13 @@ class POSMachine(Base):
     def area_name(self):
         """The current area's name, for responses built straight from the row."""
         return self.area.name if self.area is not None else None
+
+    @property
+    def effective_document_prefix(self):
+        """The prefix this till issues documents under now: its own, else its register number."""
+        from app.services.document_prefix import effective_prefix
+
+        return effective_prefix(self)
 
     @property
     def has_printer(self) -> bool:

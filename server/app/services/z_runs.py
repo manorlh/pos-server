@@ -231,9 +231,10 @@ def expire_overdue_runs(db: Session, *, now: Optional[datetime] = None) -> int:
                 item.error_message = "The till did not close its shift in time"
                 item.failed_at = now
                 changed += 1
-        if getattr(run, "strict_cloud_check", False):
+        if getattr(run, "strict_cloud_check", False) or _all_tills_required(db, run):
             # A shop Z from the master till never goes without a till the operator did not
             # defer: built now only if every till still checks out, else expired whole.
+            # Nor does any shop Z in local mode (docs/SPEC_INDEPENDENT_TILL.md §8).
             db.flush()
             expired_any = any(i.status == ZRunItemStatus.EXPIRED for i in run.items)
             if not expired_any and finalise_if_ready(db, run, now=now):
@@ -490,7 +491,12 @@ def open_tills_rule(db: Session, tenant: Optional[Tenant], shop: Shop) -> Option
     if z_scope_of(tenant) != Z_SCOPE_SHOP:
         return None
     from app.services import till_parameters as TP
+    from app.services.local_shop_z import local_mode_of_shop
 
+    if local_mode_of_shop(db, shop):
+        # Local mode (a main till on the LAN, docs/SPEC_INDEPENDENT_TILL.md §8): every
+        # participating till is in the shop Z — never left out on a confirmation.
+        return "block"
     value = TP.resolve_for_shop(db, shop).get(TP.SHOP_Z_OPEN_TILLS_KEY)
     if value is None:
         return None
@@ -1210,6 +1216,29 @@ def proceed_without(
     _require_waiting(run)
     strict = bool(getattr(run, "strict_cloud_check", False))
     excluded = set(exclude_machine_ids)
+    required = _all_tills_required(db, run) if excluded else None
+    if required:
+        # "חובה לסגור את כל הקופות" (and always in local mode, docs/SPEC_INDEPENDENT_TILL.md §8):
+        # neither "סגור" nor the dashboard's proceed leaves a till behind — its sales would
+        # slip into the next Z.
+        leaving = [
+            str(i.machine_id) for i in run.items
+            if i.machine_id in excluded and i.status not in (ZRunItemStatus.EXCLUDED, ZRunItemStatus.READY)
+        ]
+        if leaving:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "local_mode_all_tills" if required == "local" else "all_tills_required",
+                    "machineIds": leaving,
+                    "message": (
+                        "במצב רשת מקומית ה-Z הסניפי כולל את כל הקופות — אי אפשר להפיק אותו בלי קופה. סגרו אותה ונסו שוב."
+                        if required == "local" else
+                        "בסניף מוגדר \"חובה לסגור את כל הקופות\": אי אפשר להפיק את ה-Z בלי קופה. סגרו אותה ונסו שוב."
+                    ),
+                },
+            )
     for item in list(run.items):
         if item.machine_id not in excluded or item.status == ZRunItemStatus.EXCLUDED:
             continue
@@ -1238,6 +1267,36 @@ def proceed_without(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="nothing_to_report")
     finalise_if_ready(db, run, now=now)
     return run
+
+
+def _all_tills_required(db: Session, run: ZRun) -> Optional[str]:
+    """
+    Whether this run's shop Z must include every till it covers — "local" (the shop is in
+    local mode) or "block" (its `shopZOpenTills` is "חובה לסגור את כל הקופות"); None when a
+    till may be left for the next Z. Then neither `proceed` nor the expiry builds without one.
+    """
+    if _local_mode_run(db, run):
+        return "local"
+    try:
+        shop = db.get(Shop, run.shop_id)
+        tenant = db.get(Tenant, run.tenant_id) if run.tenant_id else None
+        return "block" if shop is not None and open_tills_rule(db, tenant, shop) == "block" else None
+    except Exception:  # noqa: BLE001 - a rule read must never break an expiry sweep
+        logger.exception("open-tills rule of shop %s unreadable", run.shop_id)
+        return None
+
+
+def _local_mode_run(db: Session, run: ZRun) -> bool:
+    """A run of a shop in local mode (app/services/local_shop_z.py)."""
+    from app.services.local_shop_z import local_mode_of_shop
+
+    if run.area_id is not None:
+        return False
+    try:
+        return local_mode_of_shop(db, db.get(Shop, run.shop_id))
+    except Exception:  # noqa: BLE001 - a rule read must never break an expiry sweep
+        logger.exception("local mode of shop %s unreadable", run.shop_id)
+        return False
 
 
 def cancel_run(db: Session, run: ZRun) -> ZRun:

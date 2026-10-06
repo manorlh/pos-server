@@ -145,6 +145,7 @@ function OfflineDeclined({ count, amount }: { count?: number; amount?: number })
 function DayRow({ row }: { row: DaySummaryRow }) {
   const t = useTranslations('daySummary');
   const tz = useTranslations('zReports');
+  const ti = useTranslations('independentTill.daySummary');
   // A till Z has no shop number: it reads "קופה 2 · Z 12", never "#null".
   const zNumberLabel = useZNumberLabel();
   const [open, setOpen] = useState(false);
@@ -156,7 +157,13 @@ function DayRow({ row }: { row: DaySummaryRow }) {
         <TableCell className="w-8">
           <Chevron className="text-muted-foreground h-4 w-4" aria-hidden />
         </TableCell>
-        <TableCell className="font-medium">{row.dayDate}</TableCell>
+        <TableCell className="font-medium">
+          {row.dayDate}
+          {/* What the day's Zs include: the shop Z's tills, and each independent till's own Z. */}
+          {row.includesNote ? (
+            <div className="text-muted-foreground max-w-md text-xs font-normal whitespace-normal">{row.includesNote}</div>
+          ) : null}
+        </TableCell>
         <TableCell className="text-end tabular-nums">
           {row.machineCount}
           {/* Several Zs in a day (a Z per till, or a second run) are ordinary, so the
@@ -222,6 +229,11 @@ function DayRow({ row }: { row: DaySummaryRow }) {
                       </TableCell>
                       <TableCell className="font-medium">
                         {c.machineName ?? c.machineId}
+                        {c.independent ? (
+                          <Badge variant="secondary" className="ms-2 text-xs" title={ti('independentHint')}>
+                            {ti('independent')}
+                          </Badge>
+                        ) : null}
                         {c.reconstructed ? (
                           <Badge variant="outline" className="ms-2 text-xs">
                             {t('drill.reconstructed')}

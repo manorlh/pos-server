@@ -1,0 +1,426 @@
+'use client';
+
+/**
+ * The live preview: the kiosk's screens in a phone or tablet frame, rendered from the
+ * config being edited (not the saved one), on the real catalog of the shop's till when
+ * there is one. A small working kiosk: tap the CTA, pick a product, add, pay.
+ */
+
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useTranslations } from 'next-intl';
+import { Smartphone, Tablet } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { formatCurrency } from '@/lib/format';
+import { fetchGroups, fetchProductMenu } from '@/lib/menuApi';
+import {
+  aspectRatioCss,
+  buttonRadius,
+  fontStack,
+  gridColumns,
+  kioskCatalogView,
+  resolveThemeColors,
+  type KioskConfig,
+  type KioskFont,
+  type KioskTextKey,
+} from '@/lib/kioskConfig';
+import type { KioskSourceCatalog } from '@/lib/kioskApi';
+import type { PreviewScreen } from './editor-context';
+import {
+  AttractScreen,
+  CartScreen,
+  CatalogScreen,
+  ConfirmSheet,
+  PausedScreen,
+  PayScreen,
+  PREVIEW_CSS,
+  ProductSheet,
+  ServiceScreen,
+  SuccessScreen,
+  type PCategory,
+  type PGroup,
+  type PLine,
+  type PProduct,
+  type PreviewModel,
+} from './preview-screens';
+import { useGoogleFonts } from './use-google-fonts';
+
+const SCREENS: PreviewScreen[] = ['attract', 'service', 'catalog', 'product', 'cart', 'pay', 'success', 'paused'];
+
+type Frame = 'phone' | 'tablet';
+
+const FRAME_SIZE: Record<Frame, { w: number; h: number }> = {
+  phone: { w: 300, h: 620 },
+  tablet: { w: 420, h: 600 },
+};
+
+/** Demo data when there is no till to read a catalog from. */
+function useSampleCatalog(): { categories: { id: string; name: string }[]; products: PProduct[] } {
+  const t = useTranslations('kiosks.preview.sample');
+  return useMemo(() => {
+    const categories = [
+      { id: 's-burgers', name: t('cat1') },
+      { id: 's-drinks', name: t('cat2') },
+      { id: 's-desserts', name: t('cat3') },
+    ];
+    const p = (id: string, categoryId: string, price: number, soldOut = false, desc = false): PProduct => ({
+      id,
+      name: t(id),
+      price,
+      imageUrl: null,
+      soldOut,
+      description: desc ? t(`${id}d`) : null,
+      categoryId,
+    });
+    return {
+      categories,
+      products: [
+        p('p1', 's-burgers', 54, false, true),
+        p('p2', 's-burgers', 59, false, true),
+        p('p3', 's-burgers', 49, true, true),
+        p('p4', 's-drinks', 12),
+        p('p5', 's-drinks', 16),
+        p('p6', 's-desserts', 28, false, true),
+      ],
+    };
+  }, [t]);
+}
+
+/** The modifier groups of a real product, for the product sheet; sample ones otherwise. */
+function useProductGroups(productId: string | null, real: boolean): { groups: PGroup[]; allergens: string[] } {
+  const ts = useTranslations('kiosks.preview.sample');
+  const ta = useTranslations('menu.allergens');
+  const menu = useQuery({
+    queryKey: ['kiosk-preview-menu', productId],
+    queryFn: () => fetchProductMenu(productId as string),
+    enabled: real && !!productId,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const groups = useQuery({
+    queryKey: ['kiosk-preview-groups'],
+    queryFn: fetchGroups,
+    enabled: real && !!productId,
+    retry: false,
+    staleTime: 60_000,
+  });
+  return useMemo(() => {
+    if (!real) {
+      return {
+        groups: [
+          {
+            id: 'g-size',
+            name: ts('groupSize'),
+            min: 1,
+            max: 1,
+            options: [
+              { id: 'o-reg', name: ts('optRegular'), price: 0 },
+              { id: 'o-large', name: ts('optLarge'), price: 8 },
+            ],
+          },
+          {
+            id: 'g-extras',
+            name: ts('groupExtras'),
+            min: 0,
+            max: 3,
+            options: [
+              { id: 'o-cheese', name: ts('optCheese'), price: 5 },
+              { id: 'o-onion', name: ts('optOnion'), price: 4 },
+              { id: 'o-egg', name: ts('optEgg'), price: 6 },
+            ],
+          },
+        ],
+        allergens: [],
+      };
+    }
+    const m = menu.data;
+    const all = groups.data?.items ?? [];
+    if (!m) return { groups: [], allergens: [] };
+    const ids = m.links.mode === 'groups' ? m.links.groupIds : m.links.mode === 'inherit' ? m.links.inheritedGroupIds : [];
+    const out: PGroup[] = [];
+    for (const id of ids) {
+      const g = all.find((x) => x.id === id && x.isActive);
+      if (!g) continue;
+      out.push({
+        id: g.id,
+        name: g.name,
+        min: g.minSelect,
+        max: g.kind === 'choice' && g.maxSelect === null ? 1 : g.maxSelect,
+        options: g.options.filter((o) => o.isActive).map((o) => ({ id: o.id, name: o.name, price: o.price })),
+      });
+    }
+    const allergens = (m.allergens ?? []).map((a) => (ta.has(a) ? ta(a) : a));
+    return { groups: out, allergens };
+  }, [real, menu.data, groups.data, ts, ta]);
+}
+
+export function KioskPreview({
+  config,
+  catalog,
+  categoryImageUrls,
+  fonts,
+  screen,
+  onScreen,
+  brandName,
+  nowMs,
+}: {
+  config: KioskConfig;
+  catalog: KioskSourceCatalog | null;
+  categoryImageUrls: Record<string, string>;
+  fonts: KioskFont[];
+  screen: PreviewScreen;
+  onScreen: (s: PreviewScreen) => void;
+  brandName: string;
+  nowMs: number;
+}) {
+  const t = useTranslations('kiosks.preview');
+  const tb = useTranslations('kiosks.builtin');
+  const sample = useSampleCatalog();
+  const [frame, setFrame] = useState<Frame>('phone');
+  const [cart, setCart] = useState<PLine[]>([]);
+  const [service, setService] = useState<'take_away' | 'eat_in'>('take_away');
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [productId, setProductId] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [pausedVariant, setPausedVariant] = useState<'paused' | 'closed'>('paused');
+
+  const font = fonts.find((f) => f.id === config.theme.font);
+  useGoogleFonts([font]);
+
+  const real = !!catalog && catalog.products.length > 0;
+  const view = useMemo(() => {
+    const source = real
+      ? {
+          categories: catalog!.categories,
+          products: catalog!.products.map(
+            (p): PProduct & { available: boolean } => ({
+              id: p.id,
+              name: p.name,
+              price: p.price,
+              imageUrl: p.imageUrl,
+              soldOut: !p.available,
+              description: null,
+              categoryId: p.categoryId,
+              available: p.available,
+            }),
+          ),
+        }
+      : {
+          categories: sample.categories,
+          products: sample.products.map((p) => ({ ...p, available: !p.soldOut })),
+        };
+    return kioskCatalogView(source.categories, source.products, config);
+  }, [real, catalog, sample, config]);
+
+  const categories: PCategory[] = useMemo(
+    () =>
+      view.categories.map((row) => ({
+        id: row.category.id,
+        name: row.category.name,
+        imageUrl: config.catalog.categoryImages[row.category.id]?.url ?? categoryImageUrls[row.category.id] ?? null,
+        products: row.products.map((x) => ({ ...x.product, soldOut: x.soldOut })),
+      })),
+    [view, config.catalog.categoryImages, categoryImageUrls],
+  );
+  const featured = useMemo(() => view.featured.map((x) => ({ ...x.product, soldOut: x.soldOut })), [view]);
+  const allProducts = useMemo(() => categories.flatMap((c) => c.products), [categories]);
+  const firstAvailable = allProducts.find((p) => !p.soldOut) ?? allProducts[0] ?? null;
+  const product = allProducts.find((p) => p.id === productId) ?? firstAvailable;
+  const { groups, allergens } = useProductGroups(product?.id ?? null, real);
+
+  const shownScreen: PreviewScreen = screen;
+  // The cart and pay screens with nothing chosen yet show a sample basket.
+  const sampleCart: PLine[] = useMemo(
+    () =>
+      allProducts
+        .filter((p) => !p.soldOut)
+        .slice(0, 2)
+        .map((p, i) => ({ key: `sample-${p.id}`, product: p, qty: i === 0 ? 2 : 1, unit: p.price, extras: [] })),
+    [allProducts],
+  );
+  const effectiveCart = cart.length > 0 ? cart : (shownScreen === 'cart' || shownScreen === 'pay' || shownScreen === 'success') ? sampleCart : cart;
+
+  const colors = resolveThemeColors(config.theme);
+  const model: PreviewModel = {
+    cfg: config,
+    c: colors,
+    radius: config.theme.cornerRadius,
+    btnRadius: buttonRadius(config.theme),
+    wide: frame === 'tablet',
+    cols: gridColumns(config.theme.gridDensity, frame === 'tablet'),
+    ratio: aspectRatioCss(config.theme.imageRatio),
+    font: fontStack(config.theme.font, fonts),
+    txt: (key: KioskTextKey) => config.texts?.[key] || tb(key),
+    t: (key, values) => t(key, values),
+    money: (n) => formatCurrency(n),
+    categories,
+    featured,
+    logoUrl: config.theme.logo?.url ?? null,
+    brandName,
+    nowMs,
+    go: (s) => {
+      setConfirming(false);
+      if (s !== 'product') setProductId(null);
+      onScreen(s);
+    },
+    openProduct: (p) => {
+      setProductId(p.id);
+      onScreen('product');
+    },
+    cart: effectiveCart,
+    setCart,
+    service,
+    setService,
+  };
+
+  const addLine = (line: PLine) => {
+    const next = [...cart, line];
+    setCart(next);
+    const mode = config.general.skipCart;
+    if (mode === 'direct') {
+      setProductId(null);
+      onScreen('pay');
+    } else if (mode === 'confirm') {
+      setConfirming(true);
+      setProductId(null);
+      onScreen('catalog');
+    } else {
+      setProductId(null);
+      onScreen('catalog');
+    }
+  };
+
+  const size = FRAME_SIZE[frame];
+  const bgImage = config.theme.backgroundImage?.url;
+  const upsell = allProducts.filter((p) => !p.soldOut && !effectiveCart.some((l) => l.product.id === p.id)).slice(0, 4);
+
+  return (
+    <div className="space-y-3">
+      <style>{PREVIEW_CSS}</style>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-semibold">{t('title')}</span>
+        <div className="inline-flex rounded-xl bg-muted p-1">
+          {(['phone', 'tablet'] as const).map((f) => (
+            <button
+              key={f}
+              type="button"
+              aria-pressed={frame === f}
+              onClick={() => setFrame(f)}
+              className={cn(
+                'flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs transition-all duration-200',
+                frame === f ? 'bg-background font-medium shadow-sm' : 'text-muted-foreground',
+              )}
+            >
+              {f === 'phone' ? <Smartphone className="h-3.5 w-3.5" /> : <Tablet className="h-3.5 w-3.5" />}
+              {t(f)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-1">
+        {SCREENS.map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => {
+              setConfirming(false);
+              onScreen(s);
+            }}
+            className={cn(
+              'rounded-full px-2.5 py-1 text-xs transition-all duration-200',
+              shownScreen === s ? 'bg-foreground text-background shadow-sm' : 'bg-muted text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {t(`screens.${s}`)}
+          </button>
+        ))}
+      </div>
+      {shownScreen === 'paused' ? (
+        <div className="inline-flex rounded-xl bg-muted p-1 text-xs">
+          {(['paused', 'closed'] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setPausedVariant(v)}
+              className={cn('rounded-lg px-2.5 py-1 transition-all', pausedVariant === v ? 'bg-background font-medium shadow-sm' : 'text-muted-foreground')}
+            >
+              {t(`pausedVariant.${v}`)}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="flex justify-center">
+        <div
+          className={cn(
+            'relative shrink-0 bg-neutral-900 shadow-2xl ring-1 ring-black/10 transition-all duration-500',
+            frame === 'phone' ? 'rounded-[44px] p-2.5' : 'rounded-[30px] p-3',
+          )}
+          style={{ width: size.w + (frame === 'phone' ? 20 : 24) }}
+        >
+          {frame === 'phone' ? (
+            <div className="absolute left-1/2 top-4 z-40 h-5 w-24 -translate-x-1/2 rounded-full bg-neutral-900" />
+          ) : null}
+          <div
+            dir="rtl"
+            className="relative overflow-hidden"
+            style={{
+              width: size.w,
+              height: size.h,
+              borderRadius: frame === 'phone' ? 34 : 20,
+              background: colors.background,
+              color: colors.text,
+              fontFamily: model.font,
+            }}
+          >
+            {bgImage ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={bgImage} alt="" className="absolute inset-0 h-full w-full object-cover" />
+                <div
+                  className="absolute inset-0"
+                  style={{ background: shownScreen === 'attract' ? `${colors.background}66` : `${colors.background}D9` }}
+                />
+              </>
+            ) : null}
+            <div className={cn('relative h-full', frame === 'phone' && 'pt-7')}>
+              <div key={shownScreen === 'product' ? 'catalog' : shownScreen} className="h-full animate-in fade-in slide-in-from-bottom-2 duration-300">
+                {shownScreen === 'attract' ? (
+                  <AttractScreen m={model} />
+                ) : shownScreen === 'service' ? (
+                  <ServiceScreen m={model} />
+                ) : shownScreen === 'catalog' || shownScreen === 'product' ? (
+                  <CatalogScreen m={model} activeCategory={activeCategory} onCategory={setActiveCategory} />
+                ) : shownScreen === 'cart' ? (
+                  <CartScreen m={model} upsell={upsell} />
+                ) : shownScreen === 'pay' ? (
+                  <PayScreen m={model} />
+                ) : shownScreen === 'success' ? (
+                  <SuccessScreen m={model} />
+                ) : (
+                  <PausedScreen m={model} variant={pausedVariant} />
+                )}
+              </div>
+              {shownScreen === 'product' && product ? (
+                <ProductSheet
+                  key={`${product.id}-${groups.length}`}
+                  m={model}
+                  product={product}
+                  groups={groups}
+                  allergens={allergens}
+                  onClose={() => model.go('catalog')}
+                  onAdd={addLine}
+                />
+              ) : null}
+              {confirming && shownScreen === 'catalog' ? (
+                <ConfirmSheet m={model} onMore={() => setConfirming(false)} onPay={() => model.go('pay')} />
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+      <p className="text-center text-[11px] text-muted-foreground">{real ? t('realCatalog', { name: catalog!.machineName }) : t('sampleNote')}</p>
+    </div>
+  );
+}

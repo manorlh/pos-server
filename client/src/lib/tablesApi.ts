@@ -46,6 +46,8 @@ export interface TablesLayout {
   shopId: string;
   zones: TableZone[];
   tables: DiningTable[];
+  /** The business's logo — what a "logo" shape of a map shows when it has no picture of its own. */
+  logoUrl?: string | null;
 }
 
 export interface TableOrderSummary {

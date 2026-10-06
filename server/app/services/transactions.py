@@ -17,7 +17,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pydantic import ValidationError
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
@@ -580,6 +580,10 @@ def _serialize_tx_for_upsert(
         # `machine_code` is the fallback because this system generated it for pairing —
         # it identifies the terminal, just not in the numbering the business uses.
         "pos_number": machine.pos_number or machine.machine_code,
+        # The till's "קידומת מסמכים" as it froze it at issue and printed it (`2-57`).
+        # Copied, never derived: a till build that sends none leaves it null, and the
+        # document reads as its `pos_number` (docs/SPEC_DOCUMENT_PREFIX.md).
+        "document_prefix": getattr(tx, "document_prefix", None),
         "tip_amount": tx.tip_amount or 0,
         "tip_payment_method": tx.tip_payment_method,
         "total_discount": tx.total_discount,
@@ -855,6 +859,11 @@ def upsert_transactions(
                 for k in row.keys()
                 if k not in ("id", "tenant_id", "machine_id", "server_received_at")
             }
+            # The prefix is frozen at issue (docs/SPEC_DOCUMENT_PREFIX.md): a re-push never
+            # changes one already stored, it can only fill one that is missing.
+            update_cols["document_prefix"] = func.coalesce(
+                Transaction.document_prefix, stmt.excluded.document_prefix
+            )
             stmt = stmt.on_conflict_do_update(index_elements=[Transaction.id], set_=update_cols)
             db.execute(stmt)
 
@@ -901,6 +910,12 @@ def upsert_transactions(
                 ])
             # The promotions ("מבצעים") the till applied, replaced like the items.
             replace_document_promotions(db, tx.id, tx.promotions)
+            # The club member the sale was made for (docs/SPEC_NOTIFICATIONS_CLUB.md §26);
+            # never a reason to refuse the document.
+            if getattr(tx, "club_membership_id", None):
+                from app.services.club.sale_link import link_sale
+
+                link_sale(db, machine, tx.id, tx.club_membership_id)
             # The lines taken apart for the menu reports — modifiers, and a meal's
             # components with its money allocated — rebuilt like the items.
             _menu.replace_item_parts(db, tx.id, [

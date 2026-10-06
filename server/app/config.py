@@ -25,7 +25,20 @@ class Settings(BaseSettings):
     # app/services/payment_secrets.py): a Fernet key or a passphrase. Empty = derived
     # from jwt_secret_key; set it in production before rotating that key.
     payment_secrets_key: str = ""
-    
+
+    # Notifications / 019 SMS (docs/SPEC_NOTIFICATIONS_CLUB.md). Live sending is its own
+    # explicit switch, OFF by default: with it off no request ever goes to 019's live
+    # endpoint, whatever a provider config says (mock and 019's /api/test only).
+    notifications_live_sending_enabled: bool = False
+    # The background queue worker in the API process (lease-safe across processes).
+    notifications_worker_enabled: bool = True
+    # Dev only: a super admin may read the mock provider's in-process inbox (to finish
+    # an OTP sign-up locally). Never on in production.
+    notifications_mock_inbox: bool = False
+    # Base URL of the public club sign-up page (QR codes point to <base>/<token>).
+    # Empty = <pairing_mobile_app_base_url>/join.
+    club_join_base_url: str = ""
+
     # Ably realtime notify (per-machine channel + token auth from GET /machines/me/ably-auth)
     ably_api_key: str = ""
     

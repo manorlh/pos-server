@@ -31,6 +31,17 @@ def check_switch(db: Session, user: User, machine: POSMachine, mode: Optional[st
         return
     if user.role != UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_admin_only")
+    if getattr(machine, "independent_till", False):
+        # "קופה עצמאית" joins the shop Z only through the shop's card "קופות בזד הסניפי"
+        # (app/services/independent_till.py), which also brings it back into the LAN group.
+        raise TillZRefused(
+            status.HTTP_409_CONFLICT,
+            {
+                "detail": "independent_till",
+                "machineId": str(machine.id),
+                "message": "הקופה מוגדרת כקופה עצמאית — מצרפים אותה ל-Z הסניפי בכרטיס \"קופות בזד הסניפי\" בדף הסניף.",
+            },
+        )
     open_shift = (
         db.query(Shift)
         .filter(Shift.machine_id == machine.id, Shift.status == ShiftStatus.OPEN)

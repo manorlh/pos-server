@@ -46,6 +46,7 @@ from app.models.shift import Shift, ShiftStatus
 from app.models.shop import Shop
 from app.models.shop_area import ShopArea
 from app.models.transaction import Transaction, TransactionStatus
+from app.services.document_prefix import document_number_from
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,10 @@ RULES: Tuple[RuleSpec, ...] = (
     # sign in at this one ("עובד מחובר בקופה אחת בלבד"; app/services/user_sessions.py
     # records it as a till event).
     RuleSpec("user_session_release", True, (), "medium", "till_event"),
+    # "שינוי נוכחות ידני" (spec §28): a manager's correction or close of an employee's
+    # attendance, or a clock-out a manager approved over open tables
+    # (app/services/attendance.py records it, with the old and the new times).
+    RuleSpec("attendance_manual", True, (), "medium", "attendance"),
     # From the first line to payment, ≥ X minutes.
     RuleSpec("long_order", True, (ParamSpec("minutes", 10, 1, 24 * 60, integer=True),), "low", "till_event"),
     # A tip above X% of what the sale collected.
@@ -927,9 +932,12 @@ def labels_for(db: Session, rows: Sequence[AuditException]) -> Dict[str, Dict[An
         "shops": {s.id: s.name for s in db.query(Shop).filter(Shop.id.in_(shop_ids))} if shop_ids else {},
         "areas": {a.id: a.name for a in db.query(ShopArea).filter(ShopArea.id.in_(area_ids))} if area_ids else {},
         "machines": {m.id: m for m in db.query(POSMachine).filter(POSMachine.id.in_(machine_ids))} if machine_ids else {},
+        # As printed, `<prefix>-<number>` (docs/SPEC_DOCUMENT_PREFIX.md).
         "documents": {
-            t.id: t.transaction_number
-            for t in db.query(Transaction.id, Transaction.transaction_number).filter(Transaction.id.in_(tx_ids))
+            t.id: document_number_from(t.transaction_number, t.document_prefix, t.pos_number)
+            for t in db.query(
+                Transaction.id, Transaction.transaction_number, Transaction.document_prefix, Transaction.pos_number
+            ).filter(Transaction.id.in_(tx_ids))
         } if tx_ids else {},
         "shifts": {
             s.id: s.sequence_number

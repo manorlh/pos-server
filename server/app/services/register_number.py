@@ -164,13 +164,24 @@ def set_machine_shop(db: Session, machine: POSMachine, shop_id: ShopId) -> Optio
     The till's area goes with its old shop for the same reason: an area is one shop's,
     so a till that leaves the shop leaves the area (`area.shop_id == machine.shop_id`).
     Its past shifts keep their stamped area.
+
+    So does its "קידומת מסמכים" (docs/SPEC_DOCUMENT_PREFIX.md): one chosen in the old shop
+    is given up, and the till starts from the new shop's default — its new register
+    number, or the lowest free prefix when that number is already held there
+    (`document_prefix.settle_default`). Its documents keep the prefix frozen on them.
     """
     if not _same_shop(machine.shop_id, shop_id):
         machine.shop_id = shop_id
         machine.pos_number = None
+        if getattr(machine, "document_prefix", None) is not None:
+            machine.document_prefix = None
         if getattr(machine, "area_id", None) is not None:
             from app.services.areas import set_machine_area
 
             set_machine_area(machine, None)
-    return assign_register_number(db, machine)
+    number = assign_register_number(db, machine)
+    from app.services.document_prefix import settle_default
+
+    settle_default(db, machine)
+    return number
 

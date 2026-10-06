@@ -76,6 +76,7 @@ import { TerminalSummary } from '@/components/dashboard/machines/card-terminal';
 import { DeviceModelBadge } from '@/components/dashboard/machines/device-model';
 import { canRequestTillZ } from '@/components/dashboard/till-z/till-z-dialogs';
 import { LatestTillZRequest, ZModeBadge } from '@/components/dashboard/till-z/till-z-request';
+import { IndependentTillBadge } from '@/components/dashboard/independent-till-badge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -513,7 +514,10 @@ function MachineRowDetails({
       <div className="space-y-1.5 rounded-md border bg-muted/30 px-3 py-2 text-sm">
         <div className="flex items-center justify-between gap-2">
           <span className="text-muted-foreground">{tZ('mode.label')}</span>
-          <ZModeBadge mode={zModeOf(m)} />
+          <span className="flex items-center gap-1">
+            <IndependentTillBadge machine={m} />
+            <ZModeBadge mode={zModeOf(m)} />
+          </span>
         </div>
         <p className="text-xs text-muted-foreground">
           {zModeOf(m) === 'till' ? tZ('mode.tillHint') : tZ('mode.cloudHint')}
@@ -890,7 +894,9 @@ export function MachineRow({
             <DeviceModelBadge m={m} />
             <IntegrationBadge m={m} />
             {/* Only the exception is marked: most tills are on the shop's cloud Z. */}
-            {zModeOf(m) === 'till' ? (
+            {m.independentTill ? (
+              <IndependentTillBadge machine={m} className="h-4 px-1 text-[10px]" />
+            ) : zModeOf(m) === 'till' ? (
               <ZModeBadge mode="till" className="h-4 shrink-0 px-1 text-[10px]" />
             ) : null}
             {m.areaName ? <span className="truncate">· {m.areaName}</span> : null}

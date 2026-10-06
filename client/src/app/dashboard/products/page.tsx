@@ -63,6 +63,12 @@ import { Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight, Lock, FileSpr
 import { useAuth } from '@/lib/auth';
 import { ProductPrintersSection } from '@/components/dashboard/kitchen-printers/product-printers-section';
 import { ProductMenuSection } from '@/components/dashboard/menu/menu-sections';
+import {
+  ProductAlertsSection,
+  ProductCompanionsSection,
+  productExtrasPayload,
+  productExtrasProblem,
+} from '@/components/dashboard/products/product-extras-sections';
 
 type SkuMode = 'auto' | 'manual';
 
@@ -339,7 +345,8 @@ export default function ProductsPage() {
       isNew && shopScope
         ? shopPricesFromDraft(newShopPrices, (preview.data?.shops ?? []).map((s) => s.id))
         : undefined;
-    save.mutate({ product: editing, mode: skuMode, shopScope, shopPrices });
+    // "הודעות לעובד" / "פריטים נלווים": trimmed, priced only when set.
+    save.mutate({ product: productExtrasPayload(editing), mode: skuMode, shopScope, shopPrices });
   };
 
   return (
@@ -849,6 +856,9 @@ export default function ProductsPage() {
             {isGlobal && !isNew && editing.id ? (
               <ProductAvailabilitySection productId={editing.id} />
             ) : null}
+            {/* "הודעות לעובד" and "פריטים נלווים": fields of the product, saved with the form. */}
+            <ProductAlertsSection product={editing} onChange={(patch) => setEditing((p) => ({ ...p, ...patch }))} />
+            <ProductCompanionsSection product={editing} onChange={(patch) => setEditing((p) => ({ ...p, ...patch }))} />
             {/* Kitchen / bar printers ("מדפסות בונים"): by the category, chosen printers, or none. */}
             {!isNew && editing.id ? <ProductPrintersSection productId={editing.id} /> : null}
             {/* "תוספות, הערות ואלרגנים" and "ארוחה" (docs/SPEC_MENU_MODIFIERS.md §12). */}
@@ -863,7 +873,8 @@ export default function ProductsPage() {
                 scopeLoading ||
                 // Per-shop prices are matched to the preview's shops; wait for it.
                 (isNew && Object.values(newShopPrices).some((v) => v.trim() !== '') && preview.isFetching) ||
-                (isNew && skuMode === 'manual' && !editing.sku?.trim())
+                (isNew && skuMode === 'manual' && !editing.sku?.trim()) ||
+                !!productExtrasProblem(editing)
               }
             >
               {save.isPending ? tc('saving') : tc('save')}

@@ -30,6 +30,7 @@ from app.models.transaction_payment import TransactionPayment
 from app.schemas.print_document import PrintDocumentOut, PrintRow, PrintSection
 from app.services.reports import resolve_report_timezone
 from app.services.dealer_types import reg_label
+from app.services.document_prefix import document_number_from, document_number_of
 from app.services.tenders import (
     CREDIT_NOTE_DOCUMENT_TYPE,
     RECEIPT_DOCUMENT_TYPES,
@@ -298,7 +299,8 @@ def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
     )
 
     details: List[PrintRow] = [
-        _row("מס׳ מסמך", tx.transaction_number, emphasis=True),
+        # As the till printed it: `<prefix>-<number>` (docs/SPEC_DOCUMENT_PREFIX.md).
+        _row("מס׳ מסמך", document_number_of(tx), emphasis=True),
         _row("תאריך הנפקה", _stamp(tx.document_production_date or tx.created_at, zone)),
     ]
     register = _register(tx)
@@ -309,7 +311,7 @@ def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
         details.append(_row("קופאי/ת", cashier))
     if tx.refund_of_transaction_id is not None:
         original = (
-            db.query(Transaction.transaction_number)
+            db.query(Transaction.transaction_number, Transaction.document_prefix, Transaction.pos_number)
             .filter(
                 Transaction.id == tx.refund_of_transaction_id,
                 Transaction.tenant_id == tx.tenant_id,
@@ -317,7 +319,7 @@ def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
             .first()
         )
         if original is not None:
-            details.append(_row("זיכוי עבור מסמך", original[0]))
+            details.append(_row("זיכוי עבור מסמך", document_number_from(*original)))
     if tx.status in _STATUS_LABELS:
         details.append(_row("סטטוס", _STATUS_LABELS[tx.status], emphasis=True))
     customer_name = tx.customer_name or (tx.customer.name if tx.customer is not None else None)
@@ -411,7 +413,7 @@ def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
         sections.append(PrintSection(title="אמצעי תשלום", rows=payments))
 
     return PrintDocumentOut(
-        title=f"{document_title(title_type)} {tx.transaction_number}",
+        title=f"{document_title(title_type)} {document_number_of(tx)}",
         copy_mark=COPY_MARK,
         business_name=business,
         subtitle=subtitle,
@@ -495,7 +497,7 @@ def _card_slip(
     acquirer_tx = _text(_result_of(meta).get("transactionId"))
     if acquirer_tx:
         rows.append(_row("מס׳ עסקה", acquirer_tx))
-    rows.append(_row("מסמך", f"{document_title(tx.document_type)} {tx.transaction_number}"))
+    rows.append(_row("מסמך", f"{document_title(tx.document_type)} {document_number_of(tx)}"))
     if of > 1:
         rows.append(_row("תשלום", f"{position} מתוך {of}"))
 

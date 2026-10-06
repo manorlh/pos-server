@@ -18,6 +18,8 @@ import { Crown } from 'lucide-react';
 import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { fetchMainTill, saveMainTill, type MainTillState } from '@/lib/mainTillApi';
+import { refusalOf } from '@/lib/zParticipation';
+import { zParticipationKey } from '@/lib/zParticipationApi';
 import type { TillRef } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -54,6 +56,7 @@ export function MainTillCard({ shopId }: { shopId: string }) {
 function MainTillForm({ shopId, data }: { shopId: string; data: MainTillState }) {
   const t = useTranslations('mainTill');
   const tc = useTranslations('common');
+  const tIndependent = useTranslations('independentTill');
   const qc = useQueryClient();
   const [machineId, setMachineId] = useState<string>(data.mainTill?.machineId ?? '');
   const [zFrom, setZFrom] = useState<string>(data.zFrom);
@@ -63,11 +66,22 @@ function MainTillForm({ shopId, data }: { shopId: string; data: MainTillState })
     onSuccess: (out) => {
       qc.setQueryData(['main-till', shopId], out);
       void qc.invalidateQueries({ queryKey: ['kitchen-printers', shopId] });
+      void qc.invalidateQueries({ queryKey: zParticipationKey(shopId) });
+      void qc.invalidateQueries({ queryKey: ['local-shop-z-request', shopId] });
       toast.success(t('saved'));
     },
     onError: (err: unknown) => {
       const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
-      toast.error(detail === 'z_run_in_progress' ? t('runInProgress') : axiosErrorToToastMessage(err, tc('error')));
+      // 409 {detail: {code, message}} (e.g. `main_till_independent`): the server's Hebrew text.
+      const refusal = refusalOf(err);
+      toast.error(
+        detail === 'z_run_in_progress'
+          ? t('runInProgress')
+          : refusal?.message ??
+              (refusal?.code === 'main_till_independent'
+                ? tIndependent('errors.main_till_independent')
+                : axiosErrorToToastMessage(err, tc('error'))),
+      );
     },
   });
 

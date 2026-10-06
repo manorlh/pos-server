@@ -134,32 +134,76 @@ class TestNumbering:
 
         assert code == 409
         assert body["detail"] == "offline_z_number_taken"
-        assert body["zNumber"] == 1 and body["nextNumber"] == 2
+        assert body["zNumber"] == 1 and body["expectedNumber"] == 2
+        assert body["takenByZReportId"]
         assert w.db.get(Shift, s2.id).z_report_id is None
         assert w.db.query(ZReport).filter(ZReport.machine_id == w.till.id).count() == 1
         assert w.db.get(MachineZSequence, w.till.id).last_number == 1
 
-    def test_a_jump_is_accepted_and_reported(self, w):
+    def test_a_jump_is_refused_with_the_expected_number_and_writes_nothing(self, w):
         s = closed_shift(w, w.till, 1, [dict(total="10.00")])
 
         code, body = upload(w, offline_body(s, 3))
 
+        assert code == 409
+        assert body == {"detail": "offline_z_out_of_sequence", "zNumber": 3, "expectedNumber": 1}
+        assert w.db.query(ZReport).filter(ZReport.machine_id == w.till.id).count() == 0
+        assert w.db.get(Shift, s.id).z_report_id is None
+        seq = w.db.get(MachineZSequence, w.till.id)
+        assert seq is None or seq.last_number == 0
+
+    def test_renumbered_by_the_till_it_is_taken(self, w):
+        s = closed_shift(w, w.till, 1, [dict(total="10.00")])
+        payload = offline_body(s, 3)
+        assert upload(w, payload)[0] == 409
+
+        # The till renumbers the Z that has not left it, under the same key and id.
+        payload["offline"]["machineSequenceNumber"] = 1
+        code, body = upload(w, payload)
+
         assert code == 201, body
-        assert w.db.get(MachineZSequence, w.till.id).last_number == 3
-        z = w.db.query(ZReport).filter(ZReport.machine_id == w.till.id).one()
-        assert {"key": "machineSequenceNumber", "till": 3, "cloud": 1} in z.offline_discrepancies
-        (row,) = exceptions_of(w, "offline_z_gap")
-        assert row.details["zNumber"] == 3
+        assert body["zReport"]["machineSequenceNumber"] == 1
+        assert w.db.get(MachineZSequence, w.till.id).last_number == 1
 
-    def test_a_hole_below_the_counter_is_filled_and_the_counter_stays(self, w):
-        s1 = closed_shift(w, w.till, 1, [dict(total="10.00")])
-        assert upload(w, offline_body(s1, 3))[0] == 201
-        s2 = closed_shift(w, w.till, 2, [dict(total="10.00")])
+    def test_a_number_below_the_counter_is_refused_even_when_free(self, w):
+        created(w, through=closed_shift(w, w.till, 1, [dict(total="10.00")]))
+        created(w, through=closed_shift(w, w.till, 2, [dict(total="10.00")]))
+        # A hole in the run from before strict numbering (or a lost row) is never filled
+        # out of order: the next Z is always last + 1.
+        w.db.query(ZReport).filter(ZReport.machine_sequence_number == 1).one().machine_sequence_number = None
+        w.db.commit()
+        s3 = closed_shift(w, w.till, 3, [dict(total="10.00")])
 
-        code, _ = upload(w, offline_body(s2, 2))
+        code, body = upload(w, offline_body(s3, 1))
 
-        assert code == 201
-        assert w.db.get(MachineZSequence, w.till.id).last_number == 3
+        assert (code, body["detail"], body["expectedNumber"]) == (409, "offline_z_out_of_sequence", 3)
+
+    def test_the_run_has_no_gap_after_online_and_offline_zs(self, w):
+        created(w, through=closed_shift(w, w.till, 1, [dict(total="10.00")]))
+        assert upload(w, offline_body(closed_shift(w, w.till, 2, [dict(total="10.00")]), 2))[0] == 201
+        assert upload(w, offline_body(closed_shift(w, w.till, 3, [dict(total="10.00")]), 3))[0] == 201
+        created(w, through=closed_shift(w, w.till, 4, [dict(total="10.00")]))
+
+        numbers = [z.machine_sequence_number for z in
+                   w.db.query(ZReport).filter(ZReport.machine_id == w.till.id).order_by(ZReport.machine_sequence_number)]
+        assert numbers == [1, 2, 3, 4]
+
+    def test_the_claim_backstop_refuses_anything_but_the_next(self, w):
+        from app.services.z_sequence import ZNumberOutOfSequence, claim_machine_z_number
+
+        with pytest.raises(ZNumberOutOfSequence):
+            claim_machine_z_number(w.db, w.till.id, 2)
+        assert claim_machine_z_number(w.db, w.till.id, 1) == 0
+
+    def test_a_reupload_after_later_zs_is_still_the_same_z(self, w):
+        s = closed_shift(w, w.till, 1, [dict(total="10.00")])
+        payload = offline_body(s, 1)
+        assert upload(w, payload)[0] == 201
+        created(w, through=closed_shift(w, w.till, 2, [dict(total="10.00")]))
+
+        code, body = upload(w, payload)
+
+        assert (code, body["status"], body["zReport"]["machineSequenceNumber"]) == (200, "duplicate", 1)
 
     def test_a_reupload_is_the_same_z(self, w):
         s = closed_shift(w, w.till, 1, SALES)
@@ -178,6 +222,50 @@ class TestNumbering:
         assert beat(w)["lastTillZNumber"] == 0
         created(w, through=closed_shift(w, w.till, 1, [dict(total="10.00")]))
         assert beat(w)["lastTillZNumber"] == 1
+
+
+# ── History (§4.3) ───────────────────────────────────────────────────────────
+
+
+def history(w, days=31):
+    return sync_router.get_till_z_history(machine_id=str(w.till.id), days=days, machine=w.till, db=w.db)
+
+
+class TestHistory:
+    def test_a_new_till_gets_its_last_month_with_the_last_number(self, w):
+        for seq in (1, 2, 3):
+            created(w, through=closed_shift(w, w.till, seq, [dict(total="10.00")]))
+        # The first one is two months old.
+        first = w.db.query(ZReport).filter(ZReport.machine_sequence_number == 1).one()
+        first.closed_at = first.closed_at - timedelta(days=60)
+        w.db.commit()
+
+        out = history(w)
+
+        assert out["lastTillZNumber"] == 3
+        assert [i["zReport"]["machineSequenceNumber"] for i in out["items"]] == [2, 3]
+        item = out["items"][-1]
+        assert item["status"] == "history" and item["shiftIds"]
+        assert item["zReport"]["perMachine"][0]["totalSales"] is not None
+
+    def test_the_newest_comes_however_old(self, w):
+        created(w, through=closed_shift(w, w.till, 1, [dict(total="10.00")]))
+        z = w.db.query(ZReport).filter(ZReport.machine_id == w.till.id).one()
+        z.closed_at = z.closed_at - timedelta(days=90)
+        w.db.commit()
+
+        out = history(w)
+
+        assert [i["zReport"]["machineSequenceNumber"] for i in out["items"]] == [1]
+
+    def test_only_this_tills_own_zs(self, w):
+        other = w.tills[1]
+        other.z_mode = "till"
+        created(w, other, through=closed_shift(w, other, 1, [dict(total="10.00")]))
+
+        out = history(w)
+
+        assert out == {**out, "lastTillZNumber": 0, "items": []}
 
 
 # ── Figures ──────────────────────────────────────────────────────────────────

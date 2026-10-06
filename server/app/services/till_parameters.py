@@ -197,7 +197,10 @@ PRINTERS_PAGE_KEYS = (
 
 def managed_on(key: str) -> Optional[str]:
     """The dashboard tab that edits this parameter instead of the parameters page."""
-    return "printers" if key in PRINTERS_PAGE_KEYS else None
+    if key in PRINTERS_PAGE_KEYS:
+        return "printers"
+    # "תצורת עבודה לעמדה" (app/services/kds_workflow.py): the dashboard's workflow card.
+    return "workflow" if key in _WORKFLOW_KEYS else None
 
 #: String parameters whose value is an image URL. The dashboard edits them with an
 #: image picker (upload through `POST /images/branding?kind=<kind>`, preview, clear)
@@ -374,7 +377,14 @@ def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedPar
         for kind, ident in chain.scopes()
     ]
     values = db.query(TillParameterValue).filter(or_(*on_chain)).all() if on_chain else []
-    return resolve_till_parameters(parameters, values, chain)
+    resolved = resolve_till_parameters(parameters, values, chain)
+    if getattr(machine, "independent_till", False):
+        # "קופה עצמאית" (app/services/independent_till.py): never a host of the shop's LAN
+        # group, and tables only when set at its own level.
+        from app.services.independent_till import apply_to_resolved
+
+        resolved = apply_to_resolved(machine, parameters, values, resolved)
+    return resolved
 
 
 def resolve_for_shop(db: Session, shop: Shop) -> Dict[str, Any]:
@@ -449,7 +459,9 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             f"«{SHOP_Z_OPEN_TILLS_BLOCK}» — ה-Z נדחה עד שכל הקופות נסגרות או נכללות בו. "
             f"«{SHOP_Z_OPEN_TILLS_CONFIRM}» — ה-Z מופק רק אחרי שהעובד מאשר את רשימת "
             "הקופות שנשארות בחוץ, והאישור (מי ואילו קופות) נרשם על ה-Z. "
-            "חל רק על Z ברמת סניף; Z לפי קופה אינו מושפע."
+            "חל רק על Z ברמת סניף; Z לפי קופה אינו מושפע. "
+            f"בסניף שעובד ברשת מקומית (קופה ראשית) — תמיד «{SHOP_Z_OPEN_TILLS_BLOCK}»: הקופה הראשית סוגרת "
+            "את כל הקופות ברשת, ואף קופה לא נשארת בחוץ (קופה עצמאית אינה חלק מה-Z הסניפי בכלל)."
         ),
     ),
     # Read by the till (docs/SPEC_OFFLINE_TILL_Z.md); honoured only in `zMode = till`.
@@ -989,6 +1001,18 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "\"גדול\" מציג את התמונה בגדול. חל גם על שולחנות ועל טאבלט, אלא אם נקבע להם גודל משלהם."
         ),
     ),
+    # "צבע גופן": the till's text colour on the light theme (ui/theme/Theme.kt, textColorOfParam).
+    BuiltinParameter(
+        key="textColor",
+        label="צבע גופן",
+        value_type="enum",
+        enum_options=("ברירת מחדל", "שחור", "אפור כהה", "כחול כהה", "ירוק כהה", "חום כהה", "סגול כהה"),
+        default_value="ברירת מחדל",
+        description=(
+            "צבע הטקסט במסכי הקופה בערכת הצבע הבהירה. בערכה הכהה הקופה שומרת על הצבע שלה, "
+            "כדי שהטקסט ייקרא. «ברירת מחדל» — הצבע הרגיל של המערכת."
+        ),
+    ),
     BuiltinParameter(
         key="productTileSizeTables",
         label="גודל ריבוע מוצר — שולחנות",
@@ -1152,6 +1176,53 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "קופה פעילה מדווחת כל דקה."
         ),
     ),
+    # "נוכחות עובדים" (app/services/attendance.py, docs/SPEC_ATTENDANCE.md) — read by the
+    # till and the cloud. All four default to today's behaviour: nothing changes until set.
+    BuiltinParameter(
+        key="attendanceEnabled",
+        label="נוכחות עובדים (שעון נוכחות)",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: אחרי הקשת קוד העובד הקופה מציגה את מצב הנוכחות שלו (\"לא במשמרת\" / \"במשמרת מ־17:02\" / "
+            "\"בהפסקה\") ומציעה \"התחל משמרת\", ובתפריט מופיע \"נוכחות\": התחל משמרת, יציאה להפסקה, חזרה "
+            "מהפסקה, סיום משמרת ובקשת תיקון נוכחות. הנוכחות נפרדת מההתחברות לקופה: החלפת עובד, התנתקות, "
+            "נעילה בחוסר שימוש או מעבר לקופה אחרת לא מסיימים משמרת — רק \"סיום משמרת\" או סגירה של מנהל. "
+            "עובד גם בלי אינטרנט (נשמר בקופה ונשלח כשהחיבור חוזר). בדשבורד: \"עובדים במשמרת\", דוח נוכחות "
+            "ותיקוני נוכחות. כבוי (ברירת מחדל) — אין שינוי בקופה."
+        ),
+    ),
+    BuiltinParameter(
+        key="requireClockInBeforeLogin",
+        label="נוכחות — חובה להתחיל משמרת לפני מכירה",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל (יחד עם \"נוכחות עובדים\"): עובד שהקיש קוד ואינו במשמרת לא יכול למכור עד שיתחיל "
+            "משמרת — הקופה מציעה \"התחל משמרת\" מיד במסך הכניסה, או יציאה. כבוי — אפשר להמשיך בלי משמרת."
+        ),
+    ),
+    BuiltinParameter(
+        key="preventClockOutWithOpenTables",
+        label="נוכחות — חסימת סיום משמרת עם שולחנות פתוחים",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "מופעל (ברירת מחדל): מלצר שיש לו שולחנות פתוחים רואה \"לא ניתן לסיים משמרת\" עם רשימת "
+            "השולחנות והסכומים, ויכול להעביר אותם לעובד אחר או לסיים באישור מנהל (נרשם בחריגות). "
+            "חל גם על סגירת משמרת ע״י מנהל בדשבורד. כבוי — מוצגת אזהרה ואפשר לסיים."
+        ),
+    ),
+    BuiltinParameter(
+        key="requireManagerForClockOut",
+        label="נוכחות — סיום משמרת באישור מנהל",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: \"סיום משמרת\" דורש קוד מנהל (נבדק בקופה, עובד גם בלי אינטרנט); מנהל שמסיים "
+            "את המשמרת של עצמו מאשר בעצמו. המאשר נשמר עם המשמרת. כבוי (ברירת מחדל) — העובד מסיים לבד."
+        ),
+    ),
     # OTH ("על חשבון הבית") and the club button ("מועדון לקוחות") on the order screens —
     # read by the till; the documents carry them to the cloud (exception "oth", the
     # discounts in the promotions report). All off by default: nothing changes until set.
@@ -1219,6 +1290,14 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         ),
     ),
 )
+
+
+# "תצורת עבודה לעמדה" and KDS (docs/SPEC_KDS.md): defined with their rules in
+# app/services/kds_workflow.py, registered here like the others.
+from app.services.kds_workflow import WORKFLOW_KEYS as _WORKFLOW_KEYS  # noqa: E402
+from app.services.kds_workflow import WORKFLOW_PARAMETER_SPECS as _WORKFLOW_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _WORKFLOW_SPECS)
 
 
 def ensure_builtin_parameters(db: Session) -> List[str]:

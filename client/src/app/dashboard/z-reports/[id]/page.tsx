@@ -44,6 +44,7 @@ import {
 } from '@/components/dashboard/shifts/shift-parts';
 import { ZBadges } from '@/components/dashboard/z-report/z-badges';
 import { OfflineZPanel } from '@/components/dashboard/z-report/offline-z-panel';
+import { ZScopeLine } from '@/components/dashboard/z-report/z-scope-line';
 import { OpenTillsRecord } from '@/components/dashboard/z-wizard/open-tills';
 import { ZPrintDocument } from '@/components/dashboard/z-report/z-print-document';
 import { CardBrandSummaryCard } from '@/components/dashboard/z-report/card-brand-summary';
@@ -386,6 +387,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
               {t('businessDateValue', { date: formatDate(z.businessDate) })}
             </p>
             <ZProducedBy z={z} className="text-muted-foreground text-xs" />
+            <ZScopeLine z={z} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <ZPrintViewToggle value={view} onChange={setView} />

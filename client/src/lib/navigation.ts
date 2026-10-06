@@ -22,6 +22,7 @@ import {
   BookOpenCheck,
   Boxes,
   Calculator,
+  CalendarClock,
   ChefHat,
   ClipboardList,
   Building2,
@@ -43,6 +44,7 @@ import {
   ListOrdered,
   Megaphone,
   Monitor,
+  MonitorSmartphone,
   Package,
   Package2,
   Palette,
@@ -66,6 +68,10 @@ import {
   UtensilsCrossed,
   Wallet,
   WifiOff,
+  Workflow,
+  MonitorPlay,
+  MessageSquareText,
+  HeartHandshake,
 } from 'lucide-react';
 
 /** Which gate an entry hangs on. `undefined` = visible to anyone signed in. */
@@ -111,6 +117,9 @@ export const NAV_SECTIONS: NavSection[] = [
       // A message every targeted till must acknowledge; the machine-admin roles, which
       // are exactly the settings-write set.
       { href: '/dashboard/till-messages', labelKey: 'tillMessages', icon: Megaphone, gate: 'settingsWrite' },
+      // "הודעות": the SMS log (a shop manager reads their shop's), templates and the 019
+      // account (company managers and up — the page hides what the role cannot use).
+      { href: '/dashboard/notifications', labelKey: 'notifications', icon: MessageSquareText, gate: 'settingsWrite' },
     ],
   },
   {
@@ -227,6 +236,12 @@ export const NAV_SECTIONS: NavSection[] = [
       // The floor: zones and tables (map or grid), open tables now, the tables report and
       // cancellation reasons — the shop's managers.
       { href: '/dashboard/tables', labelKey: 'tables', icon: UtensilsCrossed, gate: 'settingsWrite' },
+      // Customer self-order kiosks: tills turned into kiosks, their status, remote control,
+      // and their look and behaviour per company / shop / kiosk — the machine-admin roles.
+      { href: '/dashboard/kiosks', labelKey: 'kiosks', icon: MonitorSmartphone, gate: 'settingsWrite' },
+      // "נוכחות עובדים": who is on shift, the attendance report, corrections and job titles.
+      // Every role but the cashier reads (the server scopes it); managers correct.
+      { href: '/dashboard/attendance', labelKey: 'attendance', icon: CalendarClock },
     ],
   },
   {
@@ -241,6 +256,9 @@ export const NAV_SECTIONS: NavSection[] = [
         gate: 'canManagePosUsers',
       },
       { href: '/dashboard/branding', labelKey: 'branding', icon: Palette, gate: 'branding' },
+      // "מועדון לקוחות": one club per company — the server's CLUB_ADMIN_ROLES, which are
+      // exactly the `branding` gate's super-admin / distributor / company-manager set.
+      { href: '/dashboard/club', labelKey: 'club', icon: HeartHandshake, gate: 'branding' },
       // Account mapping for the accounting export; same roles as the export itself.
       {
         href: '/dashboard/accounting-settings',
@@ -269,6 +287,9 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: Printer,
         gate: 'settingsWrite',
       },
+      // "תצורת עבודה" (direct sale / order process, targets) per level, and the KDS screens.
+      { href: '/dashboard/workflow', labelKey: 'workflowMode', icon: Workflow, gate: 'settingsWrite' },
+      { href: '/dashboard/kds', labelKey: 'kds', icon: MonitorPlay, gate: 'settingsWrite' },
       // Global definitions every tenant's tills read; only a super admin sets them.
       {
         href: '/dashboard/till-parameters',

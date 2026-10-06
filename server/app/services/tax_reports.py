@@ -21,6 +21,7 @@ from app.services.open_format.tax_report_generator import (
     build_open_format_zip,
     generate_tax_report,
 )
+from app.services.document_prefix import document_number_of
 from app.services.settings_merge import build_business_info, merge_all_settings_layers
 from app.services.tenders import RECEIPT_DOCUMENT_TYPES, is_refund_document
 
@@ -188,10 +189,22 @@ class BaseDocuments:
     by_line: Dict[str, BaseDocument]
 
 
+def export_document_number(tx: Transaction) -> str:
+    """
+    The document number filed in the open format: `<prefix>-<number>`, as the till printed
+    it (docs/SPEC_DOCUMENT_PREFIX.md). C100 field 1204, D110 field 1254 and D120 field 1304
+    are alphanumeric X(20) (`DOCUMENT_NUMBER_WIDTH`), so the prefix is written as text and
+    two tills' #57 file as `1-57` and `2-57`. Every record of a document — its header, its
+    lines, its payments — and every line that names it as a base document (D110 field 1257)
+    takes the number from here, so the file stays consistent.
+    """
+    return document_number_of(tx)
+
+
 def _base_of(tx: Transaction) -> BaseDocument:
     return {
         "documentType": tx.document_type or 320,
-        "transactionNumber": tx.transaction_number,
+        "transactionNumber": export_document_number(tx),
         "branchId": tx.branch_id,
     }
 
@@ -409,7 +422,8 @@ def transform_transaction_for_open_format(
     doc_date = tx.document_production_date or tx.created_at
     return {
         "id": str(tx.id),
-        "transactionNumber": tx.transaction_number,
+        # `<prefix>-<number>` — the header, the lines and the payments all read it here.
+        "transactionNumber": export_document_number(tx),
         "status": status_val,
         "documentType": tx.document_type or 320,
         "documentProductionDate": doc_date.isoformat() if doc_date else None,

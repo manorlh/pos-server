@@ -80,6 +80,13 @@ class Transaction(Base):
     #: Stamped by the server from the machine, so the document carries it rather than
     #: only being joinable to it — an audit reads the document.
     pos_number = Column(String(50), nullable=True)
+    #: The till's "קידומת מסמכים" this document was issued under, as the till froze it
+    #: at issue and printed it (`2-57`). Never rewritten: a later change of the till's
+    #: prefix does not touch documents already issued. Null on documents from before
+    #: the prefix (and from a till build that sends none): they read as their
+    #: `pos_number` — the register that issued them — see
+    #: `app.services.document_prefix.document_prefix_of` and docs/SPEC_DOCUMENT_PREFIX.md.
+    document_prefix = Column(String(10), nullable=True)
     tip_amount = Column(Numeric(12, 2), nullable=False, server_default="0")
     tip_payment_method = Column(String(10), nullable=True)
     total_discount = Column(Numeric(12, 2), nullable=True)
@@ -179,6 +186,14 @@ class Transaction(Base):
         order_by="TransactionPayment.sequence",
     )
     customer = relationship("Customer", foreign_keys=[customer_ref_id])
+
+    @property
+    def document_number(self) -> str:
+        """The number as printed: `<prefix>-<number>` (`2-57`), or the bare number without one."""
+        from app.services.document_prefix import document_number_of
+
+        return document_number_of(self)
+
     # View only, and unscoped: the link is not a foreign key (see above), so a reader
     # that follows it must check the tenant itself.
     refund_of = relationship(

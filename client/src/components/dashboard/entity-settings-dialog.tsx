@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -55,6 +56,7 @@ export function EntityPosSettingsDialog({
 }) {
   const tc = useTranslations('common');
   const tps = useTranslations('posSettings');
+  const twf = useTranslations('kds.workflow');
   const [value, setValue] = useState<PosSettingsFormState>({});
   const [inherited, setInherited] = useState<PosSettingsV1 | undefined>();
   const [loading, setLoading] = useState(false);
@@ -201,6 +203,15 @@ export function EntityPosSettingsDialog({
           settingsLevel={level}
           entityId={entityId}
         />
+        {/* "תצורת עבודה" (direct sale / order process, KDS) has its own card, at this level. */}
+        {level !== 'tenant' && entityId ? (
+          <Link
+            href={`/dashboard/workflow?scopeType=${level}&scopeId=${encodeURIComponent(entityId)}`}
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            {twf('openWorkflow')} ←
+          </Link>
+        ) : null}
         {!payment.valid && !loading ? (
           <p role="alert" className="text-sm text-destructive">
             {PI_TEXT.formInvalid}

@@ -556,9 +556,11 @@ class TestOpenFormat:
         # Only the credit notes are exported: their originals are 40 days older.
         records, _ = _export(w, [_get(w, credit_first), _get(w, credit_second), _get(w, catalogue)])
 
+        # Named as printed, `<prefix>-<number>` (docs/SPEC_DOCUMENT_PREFIX.md): these were
+        # pushed without a prefix, so they read as their register, the till's number.
         assert [_d110_base(r) for r in records["D110"]] == [
-            ("320", first["transactionNumber"]),
-            ("320", second["transactionNumber"]),
+            ("320", f"{till.pos_number}-{first['transactionNumber']}"),
+            ("320", f"{till.pos_number}-{second['transactionNumber']}"),
             ("000", ""),
         ]
 
@@ -572,7 +574,7 @@ class TestOpenFormat:
 
         records, _ = _export(w, [_get(w, credit)])
 
-        assert _d110_base(records["D110"][0]) == ("320", original["transactionNumber"])
+        assert _d110_base(records["D110"][0]) == ("320", f"{till.pos_number}-{original['transactionNumber']}")
 
     def test_another_tenants_original_is_never_named(self, w):
         till = w.tills[0]
@@ -675,7 +677,8 @@ class TestTheDashboard:
 
         assert out.basket_id == basket
         assert [(d.id, d.document_type) for d in out.basket_documents] == [(uuid.UUID(sale["id"]), 320)]
-        assert out.refund_of_transaction_number == original["transactionNumber"]
+        # As printed on the original (docs/SPEC_DOCUMENT_PREFIX.md).
+        assert out.refund_of_transaction_number == f"{till.pos_number}-{original['transactionNumber']}"
         assert out.items[0].refund_of_item_id == uuid.UUID(original["items"][0]["id"])
         body = out.model_dump(by_alias=True, mode="json")
         assert body["basketDocuments"][0]["transactionNumber"] == sale["transactionNumber"]

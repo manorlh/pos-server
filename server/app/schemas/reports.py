@@ -242,6 +242,9 @@ class ShopTransactionRow(BaseModel):
     #: till can group a basket's 320 and 330s. Additive and nullable: the shipped till
     #: (Moshi) ignores keys it does not know.
     basket_id: Optional[str] = Field(None, alias="basketId")
+    #: The number as its till printed it, `<prefix>-<number>` (docs/SPEC_DOCUMENT_PREFIX.md).
+    #: Additive and nullable like `basketId`; a till shows it in place of the bare number.
+    document_number: Optional[str] = Field(None, alias="documentNumber")
 
 
 class ShopTransactionsResponse(BaseModel):
@@ -337,6 +340,8 @@ class DaySummaryContributor(BaseModel):
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     shop_name: Optional[str] = Field(None, alias="shopName")
     closed_at: Optional[datetime] = Field(None, alias="closedAt")
+    #: The Z of an independent till ("קופה עצמאית"): under the shop, never in its shop Z.
+    independent: bool = False
     unattended: bool = False
     #: Built by the cloud because the terminal could not close its own day. Shown in the
     #: drill-down so a day whose figures rest on a reconstruction says so on its face.
@@ -368,6 +373,9 @@ class DaySummaryRow(BaseModel):
     z_report_count: int = Field(0, alias="zReportCount")
     totals: DaySummaryTotals
     contributors: List[DaySummaryContributor] = Field(default_factory=list)
+    #: What the day's figures include, in words (docs/SPEC_INDEPENDENT_TILL.md §7): the
+    #: shop Zs with their tills, and each independent till's own Z — all under the shop.
+    includes_note: Optional[str] = Field(None, alias="includesNote")
 
 
 class DaySummaryReportResponse(BaseModel):

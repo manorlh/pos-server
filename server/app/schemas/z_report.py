@@ -100,6 +100,12 @@ class ZReportOut(BaseModel):
     #: cloud's figures differ from the till's paper (`[{key, till, cloud}]`, null = none).
     built_offline: bool = Field(False, alias="builtOffline")
     uploaded_at: Optional[datetime] = Field(None, alias="uploadedAt")
+    #: What the Z includes, frozen at build (docs/SPEC_INDEPENDENT_TILL.md §7):
+    #: `{kind: shop|area|till|independent_till, label, tills, independentOutside}`; null on
+    #: a Z built before it was stored.
+    scope: Optional[Dict[str, Any]] = None
+    #: A shop Z produced on the main till and renumbered on upload: the number it printed.
+    renumbered_from: Optional[int] = Field(None, alias="renumberedFrom")
     offline_discrepancies: Optional[List[Dict[str, Any]]] = Field(None, alias="offlineDiscrepancies")
     #: The card batch transmission the till ran before the Z, with the terminal's answer
     #: (`{outcome, batchNumber, statusMessage, transactionCount, amount, byBrand, …}`).

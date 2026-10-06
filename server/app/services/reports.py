@@ -52,6 +52,7 @@ from app.models.shop import Shop
 from app.models.shop_area import ShopArea
 from app.models.tenant import Tenant
 from app.models.transaction import Transaction
+from app.services.document_prefix import document_number_from, prefixed_number_clause
 from app.models.transaction_item import TransactionItem
 from app.models.transaction_payment import TransactionPayment
 from app.models.z_report import ZReport
@@ -1108,6 +1109,8 @@ def load_shop_transactions_for_machine(
             Transaction.cashier_id,
             Transaction.created_at,
             Transaction.basket_id,
+            Transaction.document_prefix,
+            Transaction.pos_number,
             POSMachine.name.label("machine_name"),
         )
         .join(POSMachine, POSMachine.id == Transaction.machine_id)
@@ -1139,6 +1142,11 @@ def load_shop_transactions_for_machine(
 
     if q:
         needle = q.strip()
+        # `2-57`: number 57 of the till whose prefix is 2 (docs/SPEC_DOCUMENT_PREFIX.md).
+        prefixed = prefixed_number_clause(needle) if needle else None
+        if prefixed is not None:
+            query = query.filter(prefixed)
+            needle = ""
         if needle:
             like = f"%{needle}%"
             # Mirrors the till's local history search (`matchesHistoryQuery`):
@@ -1180,6 +1188,7 @@ def load_shop_transactions_for_machine(
                 machine_name=r.machine_name,
                 created_at=r.created_at.isoformat() if r.created_at else None,
                 basket_id=str(r.basket_id) if r.basket_id else None,
+                document_number=document_number_from(r.transaction_number, r.document_prefix, r.pos_number),
             )
         )
     return out, truncated
@@ -1414,6 +1423,36 @@ def _contributors_of(z: ZReport) -> List[DaySummaryContributor]:
     return out
 
 
+def day_includes_note(zs: Sequence[ZReport]) -> Optional[str]:
+    """
+    What a day's figures include, in words (docs/SPEC_INDEPENDENT_TILL.md §7): each shop Z
+    with its tills, and each till's own Z — an independent till's said to be one. None for
+    no Z. Pure over the Zs' frozen `scope` (older Zs: by their origin).
+    """
+    from app.services.z_builder import numbers_label
+
+    parts: List[str] = []
+    def _origin(r) -> str:
+        return getattr(r, "origin", None) or "cloud"
+
+    for z in sorted(zs, key=lambda r: (_origin(r) == "till", getattr(r, "shop_sequence_number", None) or 0)):
+        scope = (getattr(z, "header", None) or {}).get("scope") or {}
+        kind = scope.get("kind")
+        tills = [t.get("posNumber") for t in scope.get("tills") or [] if isinstance(t, dict)]
+        if kind == "independent_till" or kind == "till" or (kind is None and _origin(z) == "till"):
+            pos = (tills[0] if tills else None) or (
+                (getattr(z, "per_machine", None) or [{}])[0].get("posNumber") if getattr(z, "per_machine", None) else None
+            ) or "?"
+            prefix = "Z עצמאי: " if kind == "independent_till" else "Z קופה: "
+            parts.append(f"{prefix}קופה {pos} (Z מס׳ {getattr(z, 'machine_sequence_number', None)})")
+        else:
+            if not tills:
+                tills = [s.get("posNumber") for s in getattr(z, "per_machine", None) or [] if isinstance(s, dict)]
+            shown = numbers_label(tills)
+            parts.append(f"Z סניפי מס׳ {getattr(z, 'shop_sequence_number', None)}" + (f" (קופות {shown})" if shown else ""))
+    return ("כולל: " + " · ".join(parts)) if parts else None
+
+
 def build_day_summary_report(
     db: Session,
     current_user: User,
@@ -1497,6 +1536,7 @@ def build_day_summary_report(
     per_day: Dict[date, _Accumulator] = {}
     contributors: Dict[date, List[DaySummaryContributor]] = {}
     machines_seen: Dict[date, set] = {}
+    zs_of_day: Dict[date, List[ZReport]] = {}
     overall = _Accumulator()
 
     for z in rows:
@@ -1504,7 +1544,10 @@ def build_day_summary_report(
         acc = per_day.setdefault(day, _Accumulator())
         acc.add(z)
         overall.add(z)
+        zs_of_day.setdefault(day, []).append(z)
+        independent = ((getattr(z, "header", None) or {}).get("scope") or {}).get("kind") == "independent_till"
         for contributor in _contributors_of(z):
+            contributor.independent = independent
             machines_seen.setdefault(day, set()).add(contributor.machine_id)
             contributors.setdefault(day, []).append(contributor)
 
@@ -1515,6 +1558,7 @@ def build_day_summary_report(
             z_report_count=len({c.z_report_id for c in contributors.get(day, ())}),
             totals=acc.to_totals(),
             contributors=contributors.get(day, []),
+            includes_note=day_includes_note(zs_of_day.get(day, [])),
         )
         for day, acc in sorted(per_day.items(), reverse=True)
     ]

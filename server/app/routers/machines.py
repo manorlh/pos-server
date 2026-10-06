@@ -10,6 +10,7 @@ from sqlalchemy import or_, and_
 from sqlalchemy.exc import IntegrityError
 from app.services import licenses
 from app.services import access
+from app.services import document_prefix
 from app.database import get_db
 from app.schemas.pos_machine import POSMachineUpdate, POSMachineResponse, MachineHeartbeatBody
 from app.models.pos_machine import POSMachine, PairingStatus
@@ -180,6 +181,9 @@ def _enrich_machine_status(
         "areaId": machine.area_id,
         "areaName": machine.area_name,
         "posNumber": machine.pos_number,
+        # "קידומת מסמכים" (docs/SPEC_DOCUMENT_PREFIX.md): its own, and the one in force.
+        "documentPrefix": machine.document_prefix,
+        "effectiveDocumentPrefix": machine.effective_document_prefix,
         # The till's shop and company by number: "חברה #N · סניף #M · קופה #K".
         "shopNumber": machine.shop.shop_number if machine.shop is not None else None,
         "companyNumber": (
@@ -188,6 +192,8 @@ def _enrich_machine_status(
             else None
         ),
         "zMode": till_z.z_mode_of(machine),
+        # "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md).
+        "independentTill": bool(getattr(machine, "independent_till", False)),
         "distributorId": machine.distributor_id,
         "mqttClientId": machine.mqtt_client_id,
         "pairingStatus": machine.pairing_status,
@@ -453,6 +459,9 @@ def get_my_machine(
         # register number, and the names of its shop and that shop's company.
         "machineName": machine.name,
         "posNumber": machine.pos_number,
+        # "קידומת מסמכים" in force (docs/SPEC_DOCUMENT_PREFIX.md): the till freezes it on
+        # every document it issues and prints `<prefix>-<number>`. Null: none (no shop).
+        "documentPrefix": machine.effective_document_prefix,
         "shopName": shop.name if shop is not None else None,
         "companyName": company.name if company is not None else None,
         # By number as well, for "חברה #N · סניף #M · קופה #K"; null without a shop.
@@ -556,6 +565,11 @@ def post_my_heartbeat(
     pending_transmit = transmit_requests.take_pending(db, machine)
     # The pull half of "produce your Z" (§5.3), for a till in `zMode = till`.
     pending_till_z = till_z.take_pending(db, machine)
+    # Local mode: the dashboard asked the shop's main till for the shop Z
+    # (docs/SPEC_INDEPENDENT_TILL.md §8) — to the main till only.
+    from app.services.local_shop_z import take_pending_for_main
+
+    pending_shop_z = take_pending_for_main(db, machine)
     through = z_reported_through_sequence(db, machine.id)
     recent = recent_shift_zs(db, machine.id)
     # A shop Z is about (the master till's "סגירת Z סניפי" is open, or a run is waiting):
@@ -575,6 +589,9 @@ def post_my_heartbeat(
         "license": licenses.effective_license(db, machine),
         # Who produces this till's Z (§5.1), on every beat: the till takes its mode from here.
         "zMode": till_z.z_mode_of(machine),
+        # "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md): its own Z, never in the shop Z, and
+        # outside the shop's LAN group (no main till, tables host or print server for it).
+        "independentTill": bool(getattr(machine, "independent_till", False)),
         # The last number of the till's own Z run (0: none yet), so a till in `zMode =
         # till` can number a Z it closes with no connection (docs/SPEC_OFFLINE_TILL_Z.md §4).
         "lastTillZNumber": last_machine_z_number(db, machine.id),
@@ -589,6 +606,8 @@ def post_my_heartbeat(
         response["pendingTransmit"] = pending_transmit
     if pending_till_z is not None:
         response["pendingTillZ"] = pending_till_z
+    if pending_shop_z is not None:
+        response["pendingShopZ"] = pending_shop_z
     return response
 
 
@@ -648,6 +667,10 @@ def update_machine(
             return JSONResponse(status_code=refused.status_code, content=refused.body)
     # "לקוח קבוע / זמני" for this till: the super admin's only; leaves `update_data`.
     licenses.apply_license(current_user, machine, update_data)
+    # "קידומת מסמכים": set after the shop below (a move gives the old one up), checked
+    # against the till's shop — never through the plain setattr loop.
+    prefix_sent = "document_prefix" in update_data
+    prefix_requested = update_data.pop("document_prefix", None)
 
     # Leaving its shop, or being retired, with shifts that belong to it: refused (409).
     leaving = "shop_id" in update_data and str(update_data["shop_id"]) != str(machine.shop_id)
@@ -695,6 +718,18 @@ def update_machine(
         # A retired till stands in no area: an area counts and closes active tills only,
         # and an archived area must not be left holding one that is later reactivated.
         areas.set_machine_area(machine, None)
+
+    if prefix_sent:
+        # 400 for a malformed prefix, 409 when another till of the shop / branch holds it
+        # (or its documents carry it). Documents already issued keep theirs.
+        try:
+            machine.document_prefix = document_prefix.check_prefix(db, machine, prefix_requested)
+        except document_prefix.DocumentPrefixRefused as refused:
+            db.rollback()
+            return JSONResponse(
+                status_code=refused.status_code,
+                content={"detail": refused.detail, "code": refused.code},
+            )
 
     for field, value in update_data.items():
         setattr(machine, field, value)

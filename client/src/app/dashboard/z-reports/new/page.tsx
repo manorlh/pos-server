@@ -67,6 +67,7 @@ import {
   type OpenTillsHold,
 } from '@/components/dashboard/z-wizard/open-tills';
 import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
+import { LocalShopZWizardNotice } from '@/components/dashboard/local-shop-z-panel';
 import { useTillHeading } from '@/components/dashboard/shifts/shift-parts';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -543,15 +544,18 @@ function ProduceZ() {
                           />
                         ) : null}
                         {!onlyTill && q.data.dashboardZBlocked ? (
-                          <Card className="border-amber-500/50">
-                            <CardContent className="py-3 text-sm">
-                              {t('onlyFromMainTill', {
-                                till: q.data.mainTill?.posNumber
-                                  ? t('mainTillNumber', { n: q.data.mainTill.posNumber })
-                                  : (q.data.mainTill?.name ?? ''),
-                              })}
-                            </CardContent>
-                          </Card>
+                          // In local mode: "בקש מהקופה הראשית" instead of starting a run.
+                          <LocalShopZWizardNotice shopId={q.data.shopId}>
+                            <Card className="border-amber-500/50">
+                              <CardContent className="py-3 text-sm">
+                                {t('onlyFromMainTill', {
+                                  till: q.data.mainTill?.posNumber
+                                    ? t('mainTillNumber', { n: q.data.mainTill.posNumber })
+                                    : (q.data.mainTill?.name ?? ''),
+                                })}
+                              </CardContent>
+                            </Card>
+                          </LocalShopZWizardNotice>
                         ) : null}
                         {!onlyTill && q.data.zScope === 'shop' && q.data.openTillsRule && !q.data.dashboardZBlocked ? (
                           <OpenTillsNotice

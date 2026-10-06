@@ -25,6 +25,8 @@ export const EXCEPTION_TYPES = [
   'reprint',
   // An employee signed in at another till, released by a manager to sign in here.
   'user_session_release',
+  // "שינוי נוכחות ידני": a manager's correction or close of an employee's attendance.
+  'attendance_manual',
   // A line given free at the till ("OTH — על חשבון הבית"), at its list price.
   'oth',
   // A till Z closed with no connection whose figures differ from the cloud's

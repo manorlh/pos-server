@@ -114,6 +114,9 @@ def z_to_out(z: ZReport, cls=ZReportOut, tzinfo=None):
     item.shop_number = z.shop.shop_number if z.shop else None
     # The frozen name, never the area's name today: a Z keeps what it was filed as.
     item.area_name = (z.header or {}).get("areaName") if z.area_id is not None else None
+    # "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md §7): what it includes, as frozen.
+    item.scope = (z.header or {}).get("scope")
+    item.renumbered_from = (z.offline_report or {}).get("renumberedFrom") if z.offline_report else None
     if tzinfo is not None and z.closed_at is not None:
         closed = z.closed_at if z.closed_at.tzinfo else z.closed_at.replace(tzinfo=timezone.utc)
         item.production_date = closed.astimezone(tzinfo).date()

@@ -36,6 +36,7 @@ from app.models.shift import Shift
 from app.models.transaction import Transaction
 from app.models.transaction_payment import TransactionPayment
 from app.services.dashboard_stats import SALE_STATUSES
+from app.services.document_prefix import document_number_of
 from app.services.tenders import (
     EXCHANGE_PAYMENT_METHOD,
     UNKNOWN_PAYMENT_METHOD,
@@ -214,7 +215,9 @@ def compute_totals(db: Session, shift_ids: Iterable[uuid.UUID]) -> DocumentTotal
 
     # Every document number the register issued in these shifts, a cancelled one too:
     # "the last document number" on a Z is about the register's numbering, not takings.
-    numbers: List[str] = [d.transaction_number for d in documents if d.transaction_number]
+    # Ordered by the number, shown as printed — `<prefix>-<number>`
+    # (docs/SPEC_DOCUMENT_PREFIX.md), so a range is never ambiguous between tills.
+    numbered = [d for d in documents if d.transaction_number]
     # Item discounts: on sale documents only (a credit note's lines carry its share of
     # the original's discounts, which is not a discount given now).
     sale_ids = [
@@ -292,10 +295,10 @@ def compute_totals(db: Session, shift_ids: Iterable[uuid.UUID]) -> DocumentTotal
         else:
             totals.vat_declared += sign * _dec(doc.vat_amount)
 
-    if numbers:
-        ordered = sorted(numbers, key=_number_key)
-        totals.first_transaction_number = ordered[0]
-        totals.last_transaction_number = ordered[-1]
+    if numbered:
+        ordered = sorted(numbered, key=lambda d: _number_key(d.transaction_number))
+        totals.first_transaction_number = document_number_of(ordered[0])
+        totals.last_transaction_number = document_number_of(ordered[-1])
     return totals
 
 

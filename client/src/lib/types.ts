@@ -504,6 +504,12 @@ export interface PosMachine {
    */
   posNumber?: string | null;
   /**
+   * "קידומת מסמכים" (docs/SPEC_DOCUMENT_PREFIX.md): the till's own prefix (null = the
+   * default, its register number), and the one its documents are issued under now.
+   */
+  documentPrefix?: string | null;
+  effectiveDocumentPrefix?: string | null;
+  /**
    * The area of its shop the till is in now (bar, terrace …), or null when unassigned.
    * Current membership only — history (shifts, Zs, reports) carries its own stamp.
    */
@@ -678,6 +684,11 @@ export interface PosMachine {
    * shop's Z (`cloud`, the default), or the till itself, numbered per till (`till`).
    */
   zMode?: ZMode;
+  /**
+   * "קופה עצמאית" (always zMode `till`): its own Z, never part of the shop Z, and never
+   * leaning on the shop's main till. Absent on a server that predates it.
+   */
+  independentTill?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -769,6 +780,11 @@ export interface CardTransmissionList {
 export interface UntransmittedCardSale {
   transactionId: string;
   transactionNumber: string;
+  /**
+   * The number as its till printed it: `<prefix>-<number>` ("קידומת מסמכים",
+   * docs/SPEC_DOCUMENT_PREFIX.md). Show this; `transactionNumber` is the bare counter.
+   */
+  documentNumber?: string | null;
   documentType?: number | null;
   createdAt: string;
   shiftId?: string | null;
@@ -891,6 +907,13 @@ export interface Product {
    * list itself comes from `GET /products/{id}/shops`.
    */
   shopScope?: ShopScope | null;
+  /** "הודעות לעובד": shown on the till when the product is added (lib/productExtras.ts). */
+  alerts?: import('./productExtras').ProductAlert[];
+  /** "הצג אזהרת אלרגנים": one more alert, from the product's allergens. */
+  allergenAlert?: boolean;
+  allergenAlertRequireAck?: boolean;
+  /** "פריטים נלווים": added by the till with the product, as lines of their own. */
+  companions?: import('./productExtras').ProductCompanion[];
   createdAt: string;
   updatedAt: string;
 }
@@ -1238,6 +1261,11 @@ export interface TransactionPayment {
 export interface BasketDocument {
   id: string;
   transactionNumber: string;
+  /**
+   * The number as its till printed it: `<prefix>-<number>` ("קידומת מסמכים",
+   * docs/SPEC_DOCUMENT_PREFIX.md). Show this; `transactionNumber` is the bare counter.
+   */
+  documentNumber?: string | null;
   documentType?: number | null;
   status: TransactionStatus;
   totalAmount: number;
@@ -1252,6 +1280,13 @@ export interface Transaction {
   shopId?: string;
   shiftId?: string;
   transactionNumber: string;
+  /**
+   * The number as its till printed it: `<prefix>-<number>` ("קידומת מסמכים",
+   * docs/SPEC_DOCUMENT_PREFIX.md). Show this; `transactionNumber` is the bare counter.
+   */
+  documentNumber?: string | null;
+  /** The prefix frozen on the document at issue; null on one from before the prefix. */
+  documentPrefix?: string | null;
   status: TransactionStatus;
   documentType?: number;
   documentProductionDate?: string;
@@ -1267,7 +1302,7 @@ export interface Transaction {
   branchId?: string;
   notes?: string;
   refundOfTransactionId?: string;
-  /** The original's document number (detail read only). */
+  /** The original's document number as printed, `2-57` (detail read only). */
   refundOfTransactionNumber?: string | null;
   nayaxMeta?: Record<string, unknown> | null;
   /** The till basket this document was committed in; shared by its sibling documents. */
@@ -1730,12 +1765,31 @@ export interface ZReport {
   uploadedAt?: string | null;
   /** Where the cloud's figures differ from the offline Z's paper; null/empty = none. */
   offlineDiscrepancies?: ZOfflineDiscrepancy[] | null;
+  /** What this Z includes ("קופה עצמאית בתוך סניף"); null on older Zs. */
+  scope?: ZReportScope | null;
+  /**
+   * A shop Z produced on the main till with no internet whose number was changed on
+   * upload: the number it was printed with.
+   */
+  renumberedFrom?: number | null;
   /** The card transmission the till ran before the Z. */
   cardTransmission?: ZCardTransmission | null;
   /** Legacy rows only: the till's own Z blob. */
   payload?: Record<string, unknown> | null;
   /** Legacy rows only. */
   reconstructionBasis?: Record<string, unknown> | null;
+}
+
+/**
+ * What a Z includes: the shop, an area, one till, or an independent till of the shop.
+ * `label` is the server's Hebrew sentence; `independentOutside` are the shop's independent
+ * tills a shop Z leaves out.
+ */
+export interface ZReportScope {
+  kind: 'shop' | 'area' | 'till' | 'independent_till';
+  label?: string | null;
+  tills?: TillRef[];
+  independentOutside?: TillRef[];
 }
 
 /** One register's section of a Z (§3.6) — what the regulation ties a Z to. */
@@ -2244,11 +2298,15 @@ export interface DaySummaryContributor {
   discrepancy: number | null;
   offlineDeclinedCount?: number;
   offlineDeclinedAmount?: number;
+  /** An independent till of its shop ("קופה עצמאית"): its Z is apart from the shop Z. */
+  independent?: boolean;
 }
 
 export interface DaySummaryRow {
   /** The Zs' business date (the field keeps its old name on the wire). */
   dayDate: string;
+  /** What the day's Zs include, in Hebrew ("Z סניפי מס׳ 12 (קופות 1–5) · Z עצמאי: …"); null = nothing to add. */
+  includesNote?: string | null;
   /** Distinct tills across the day's Zs' per-till sections, not Z reports. */
   machineCount: number;
   zReportCount: number;

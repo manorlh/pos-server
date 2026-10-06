@@ -81,6 +81,7 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   table_cancelled: 'bg-red-200 text-red-950 dark:bg-red-900 dark:text-red-100',
   reprint: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
   user_session_release: 'bg-cyan-100 text-cyan-900 dark:bg-cyan-950 dark:text-cyan-200',
+  attendance_manual: 'bg-indigo-200 text-indigo-950 dark:bg-indigo-900 dark:text-indigo-100',
   oth: 'bg-pink-100 text-pink-900 dark:bg-pink-950 dark:text-pink-200',
   offline_z_gap: 'bg-amber-200 text-amber-950 dark:bg-amber-900 dark:text-amber-100',
   z_transmission_failed: 'bg-yellow-200 text-yellow-950 dark:bg-yellow-900 dark:text-yellow-100',
