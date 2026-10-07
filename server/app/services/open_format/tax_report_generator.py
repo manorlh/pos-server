@@ -546,11 +546,18 @@ def document_rate_percent(transaction: Dict[str, Any], global_tax_rate: Optional
 
 
 def _line_discount_cents(item: Dict[str, Any]) -> int:
-    """The line's own discount, gross: the cashier's (`discount`) and the promotions' share."""
+    """
+    The line's own discount, gross: the cashier's (`discount`), the promotions' share and
+    the discount vouchers' share (a discount on the document, never a tender).
+    """
     own = item.get("discount")
     if own in (None, 0, 0.0, ""):
         own = item.get("lineDiscount")
-    return abs(_cents(own)) + abs(_cents(item.get("promotionDiscount")))
+    return (
+        abs(_cents(own))
+        + abs(_cents(item.get("promotionDiscount")))
+        + abs(_cents(item.get("voucherDiscount")))
+    )
 
 
 def allocate_cents(target: int, weights: List[int]) -> List[int]:

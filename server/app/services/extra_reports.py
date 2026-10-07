@@ -407,7 +407,7 @@ def build_department_report(
                 func.sum(case((
                     is_refund.is_(False),
                     # The line's own discount and its promotions' share ("מבצעים").
-                    func.coalesce(TransactionItem.discount, 0) + func.coalesce(TransactionItem.promotion_discount, 0),
+                    func.coalesce(TransactionItem.discount, 0) + func.coalesce(TransactionItem.promotion_discount, 0) + func.coalesce(TransactionItem.voucher_discount, 0),
                 ), else_=0)), 0
             ).label("discounts"),
             # A credit-note line's total_price is already net of its discount.

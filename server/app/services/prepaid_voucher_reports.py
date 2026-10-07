@@ -9,9 +9,17 @@ Prepaid voucher ("שוברי הפקה") reports: one batch, over its whole life.
 * **Redemptions** — by hour of day, by day, by shop, by till and by employee: how many
   redemptions, how many vouchers, how many units.
 
+* **Usage** — a discount voucher's batch (docs/SPEC_VOUCHER_PRODUCTION.md §7): uses issued
+  (vouchers × uses per voucher), used, remaining on live vouchers, void on cancelled ones,
+  and the total benefit given (₪, what the sale documents took off); also how many uses
+  were flagged by the cloud's re-check and how many are held by open sales right now.
+  issued = used + remaining + void. A goods batch: its units the same way (no ₪ figure —
+  the goods were paid outside the till).
+
 A **reversed** redemption (its payment was abandoned at the till and the goods went back
 on the voucher) counts nowhere: it did not happen. Hours and days are the tenant's
-local time (`resolve_report_timezone`).
+local time (`resolve_report_timezone`). For a discount batch a redemption is one use
+confirmed with its sale: its "units" are its uses, and its `amount` the ₪ it took off.
 """
 from __future__ import annotations
 
@@ -22,7 +30,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.pos_machine import POSMachine
-from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherRedemption
+from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherRedemption, PrepaidVoucherReservation
 from app.models.shop import Shop
 from app.models.user import User
 from app.services import prepaid_vouchers as PV
@@ -40,20 +48,69 @@ def _units(rows) -> int:
 
 
 class _Bucket:
-    __slots__ = ("redemptions", "units", "vouchers")
+    __slots__ = ("redemptions", "units", "vouchers", "agorot")
 
     def __init__(self) -> None:
         self.redemptions = 0
         self.units = 0
         self.vouchers: set = set()
+        self.agorot = 0
 
     def add(self, r: PrepaidVoucherRedemption) -> None:
         self.redemptions += 1
-        self.units += _units(r.items)
+        # A discount voucher's use counts its uses; goods count their units.
+        self.units += int(r.uses) if r.uses else _units(r.items)
+        self.agorot += int(r.discount_amount or 0)
         self.vouchers.add(str(r.voucher_id))
 
-    def out(self) -> Dict[str, int]:
-        return {"redemptions": self.redemptions, "vouchers": len(self.vouchers), "units": self.units}
+    def out(self, money: bool = False) -> Dict[str, Any]:
+        out: Dict[str, Any] = {"redemptions": self.redemptions, "vouchers": len(self.vouchers), "units": self.units}
+        if money:
+            # A discount batch: the ₪ its uses took off.
+            out["amount"] = round(self.agorot / 100, 2)
+        return out
+
+
+def _usage(db: Session, batch, stats: Dict[str, int], products, redemptions) -> Dict[str, Any]:
+    """Issued / used / remaining / void, and the ₪ given — see the module docstring."""
+    if not PV.is_discount(batch):
+        return {
+            "unit": "units",
+            "issued": sum(p["issued"] for p in products),
+            "used": sum(p["taken"] for p in products),
+            "remaining": sum(p["outstanding"] for p in products),
+            "void": sum(p["void"] + p["forfeited"] for p in products),
+            "benefit": None,
+            "flagged": 0,
+            "held": 0,
+        }
+    per = int(batch.uses_per_voucher or 1)
+    remaining = void = 0
+    for status_, left in db.query(PrepaidVoucher.status, PrepaidVoucher.uses_left).filter(
+        PrepaidVoucher.batch_id == batch.id
+    ):
+        if status_ == "cancelled":
+            void += int(left or 0)
+        else:
+            remaining += int(left or 0)
+    now = datetime.now(timezone.utc)
+    held = sum(
+        int(r.uses or 1)
+        for r in db.query(PrepaidVoucherReservation).filter(
+            PrepaidVoucherReservation.batch_id == batch.id, PrepaidVoucherReservation.status == "held"
+        )
+        if _utc(r.expires_at) and _utc(r.expires_at) > now
+    )
+    return {
+        "unit": "uses",
+        "issued": per * int(stats.get("total", 0)),
+        "used": sum(int(r.uses or 0) for r in redemptions),
+        "remaining": remaining,
+        "void": void,
+        "benefit": round(sum(int(r.discount_amount or 0) for r in redemptions) / 100, 2),
+        "flagged": sum(1 for r in redemptions if r.flags),
+        "held": held,
+    }
 
 
 def batch_report(db: Session, user: User, tenant_id, batch_id, tz: Optional[str] = None) -> Dict[str, Any]:
@@ -61,6 +118,7 @@ def batch_report(db: Session, user: User, tenant_id, batch_id, tz: Optional[str]
     tz_name = resolve_report_timezone(db, tenant_id, tz)
     zone = _load_zoneinfo(tz_name)
 
+    money = PV.is_discount(batch)
     stats = PV._stats(db, [batch.id]).get(str(batch.id)) or {
         "total": 0, "active": 0, "partiallyUsed": 0, "used": 0, "cancelled": 0,
     }
@@ -158,21 +216,23 @@ def batch_report(db: Session, user: User, tenant_id, batch_id, tz: Optional[str]
     )
 
     def ranked(buckets: Dict[str, _Bucket], label) -> List[Dict[str, Any]]:
-        rows = [{"key": k or None, **label(k), **b.out()} for k, b in buckets.items()]
+        rows = [{"key": k or None, **label(k), **b.out(money)} for k, b in buckets.items()]
         return sorted(rows, key=lambda x: (-x["units"], -x["redemptions"], str(x.get("name") or "")))
 
     return {
         "batchId": str(batch.id),
         "timezone": tz_name,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "kind": batch.kind or "items",
+        "usage": _usage(db, batch, stats, products, redemptions),
         "vouchers": stats,
         "products": products,
-        "totals": total.out(),
-        "byHour": [{"hour": h, **by_hour[h].out()} for h in range(24) if h in by_hour],
+        "totals": total.out(money),
+        "byHour": [{"hour": h, **by_hour[h].out(money)} for h in range(24) if h in by_hour],
         "byDay": [
             {
                 "date": d,
-                **by_day[d].out(),
+                **by_day[d].out(money),
                 "products": [
                     {"productId": pid, "name": names.get(pid), "quantity": day_products[d].get(pid, 0)}
                     for pid in order

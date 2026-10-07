@@ -354,6 +354,19 @@ def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
                 lines.append(
                     _row(f"הנחת מבצע: {promo.promotion_name or ''}".strip(), money(-_dec(promo.discount_amount)))
                 )
+        # Each discount voucher, as the till printed it: "שובר #12 — פסטיבל הקיץ".
+        from app.models.prepaid_voucher import TransactionVoucherDiscount
+
+        for v in (
+            db.query(TransactionVoucherDiscount)
+            .filter(TransactionVoucherDiscount.transaction_id == tx.id)
+            .all()
+        ):
+            if _dec(v.discount_amount) > 0:
+                label = f"שובר #{v.serial}" if v.serial else "שובר"
+                if v.batch_name:
+                    label += f" — {v.batch_name}"
+                lines.append(_row(label, money(-_dec(v.discount_amount))))
         # The club button's basket discount ("הנחת מועדון 10%"), as the till printed it.
         if getattr(tx, "basket_discount_kind", None) == "club" and _dec(tx.basket_discount) > 0:
             rate = f" {_dec(tx.basket_discount_percent).normalize():f}%" if tx.basket_discount_percent is not None else ""

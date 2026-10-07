@@ -179,6 +179,10 @@ def _sales_rows(z: ZReport) -> List[Optional[dict]]:
         promotion_discounts = _dec((z.header or {}).get("promotionDiscountsTotal"))
         if promotion_discounts:
             rows.append(row("הנחות מבצעים (כלולות)", credit(promotion_discounts)))
+        # Discount vouchers ("שוברי הנחה") likewise — a discount, never a tender.
+        voucher_discounts = _dec((z.header or {}).get("voucherDiscountsTotal"))
+        if voucher_discounts:
+            rows.append(row("הנחות שוברים (כלולות)", credit(voucher_discounts)))
     else:
         rows.append(row("מכירות", money(sales)))
     rows.append(row("זיכויים", credit(refunds)))
@@ -754,6 +758,7 @@ class _TillAsZ:
         self.header = {
             "lineDiscountsTotal": s.get("lineDiscountsTotal"),
             "promotionDiscountsTotal": s.get("promotionDiscountsTotal"),
+            "voucherDiscountsTotal": s.get("voucherDiscountsTotal"),
         }
         self.total_sales = _dec(s.get("totalSales"))
         self.total_refunds = _dec(s.get("totalRefunds"))

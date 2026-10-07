@@ -449,6 +449,8 @@ def detect_transaction(
     # Promotions ("מבצעים") are inside `document_discount` but are no one's decision at
     # the till: what is left without them is the discount the cashier gave.
     promotion_sum = sum((abs(_money(getattr(it, "promotion_discount", None))) for it in items), Decimal("0"))
+    # Nor are discount vouchers ("שוברי הנחה"): the customer's voucher, checked by the cloud.
+    promotion_sum += sum((abs(_money(getattr(it, "voucher_discount", None))) for it in items), Decimal("0"))
     # Nor are the OTH lines (reported as "oth"), nor the club button's fixed rate ("הנחת
     # מועדון", till parameter `clubButtonEnabled`) — the shop's own policy, in its report.
     oth_sum = sum((abs(_money(it.discount)) for it in oth_items), Decimal("0"))

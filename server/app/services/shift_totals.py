@@ -78,6 +78,10 @@ class DocumentTotals:
     #: already inside `discounts_total` (the till puts it in `document_discount`), so
     #: reported beside it, never subtracted again.
     promotion_discounts_total: Decimal = ZERO
+    #: Σ what discount vouchers ("שוברי הנחה", docs/SPEC_VOUCHER_PRODUCTION.md §7) took
+    #: off the sale lines: a discount like the promotions, inside `discounts_total`,
+    #: reported beside it — never a tender.
+    voucher_discounts_total: Decimal = ZERO
     payment_breakdown: Dict[str, Decimal] = field(default_factory=dict)
     total_tips: Decimal = ZERO
     total_cash_tips: Decimal = ZERO
@@ -159,7 +163,8 @@ class DocumentTotals:
     _COUNTS = ("transactions_count", "sales_count", "credit_notes_count", "non_sale_count", "vat_missing_count")
     _MONEY = (
         "total_sales", "total_refunds", "discounts_total", "line_discounts_total",
-        "promotion_discounts_total", "total_tips", "total_cash_tips", "total_card_tips", "vat_declared",
+        "promotion_discounts_total", "voucher_discounts_total", "total_tips", "total_cash_tips",
+        "total_card_tips", "vat_declared",
     )
 
     def delta_json(self) -> Dict[str, object]:
@@ -359,6 +364,12 @@ def _totals_of(db: Session, documents: List[Transaction]) -> DocumentTotals:
             .scalar()
         )
         totals.promotion_discounts_total = _dec(promotion_sum)
+        voucher_sum = (
+            db.query(_func.coalesce(_func.sum(_func.abs(TransactionItem.voucher_discount)), 0))
+            .filter(TransactionItem.transaction_id.in_(sale_ids))
+            .scalar()
+        )
+        totals.voucher_discounts_total = _dec(voucher_sum)
     for doc in counted:
         totals.transactions_count += 1
         refund = is_refund_document(

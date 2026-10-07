@@ -51,6 +51,23 @@ export interface DiscountsReport {
   };
   /** The basket discounts by kind: the club's and the cashiers' own. */
   basketByKind: (ClubFigures & { kind: 'club' | 'manual' })[];
+  /**
+   * Discount vouchers ("שוברי הנחה", docs/SPEC_VOUCHER_PRODUCTION.md §7): a discount on the
+   * document, never a tender. Absent from a server that predates them.
+   */
+  vouchers?: {
+    totals: VoucherFigures;
+    byBatch: (VoucherFigures & { batchId: string | null; name: string | null })[];
+    byTill: (VoucherFigures & TillLabel)[];
+    byDay: (VoucherFigures & { date: string })[];
+  };
+}
+
+export interface VoucherFigures extends ClubFigures {
+  /** Uses taken (a voucher may give several in one sale). */
+  uses: number;
+  /** Sales they were on. */
+  documents: number;
 }
 
 export async function fetchDiscountsReport(params: ReportWindowParams): Promise<DiscountsReport> {

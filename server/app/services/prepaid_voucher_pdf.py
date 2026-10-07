@@ -21,6 +21,10 @@ Text is part of the image — fine for printing, not for copy-paste.
 Production in groups (docs/SPEC_VOUCHER_PRODUCTION.md): [render_groups_zip] makes a PDF
 per group, each opening with a cover sheet for the envelope (customer, order, group n of
 N, serials, count, goods, validity), plus the run's CSV manifest ([manifest_csv]).
+
+A discount voucher (docs/SPEC_VOUCHER_PRODUCTION.md §7) prints what it gives instead of
+goods — "₪30 הנחה על כל ההזמנה", "20% הנחה על קפה" (prepaid_voucher_rules.benefit_text,
+the dashboard's words too) — and its uses instead of "one-time / in parts".
 """
 from __future__ import annotations
 
@@ -38,6 +42,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherBatch
 from app.services import barcode128, local_media
+from app.services import prepaid_voucher_rules as RULES
 from app.services.prepaid_vouchers import format_code, qr_payload
 
 DPI = 300
@@ -222,6 +227,10 @@ class Labels:
     cover_total: str = "סה״כ בקבוצה: {items}"
     cover_made: str = "הופק: {date}"
     cover_handover: str = "נמסר ל: ____________   חתימה: ____________"
+    # Discount vouchers (docs/SPEC_VOUCHER_PRODUCTION.md §7).
+    uses_one: str = "שימוש אחד"
+    uses_many: str = "{n} שימושים"
+    cover_vouchers: str = "{n} שוברי הנחה"
 
 
 @dataclass(frozen=True)
@@ -263,6 +272,24 @@ def validity_text(batch: PrepaidVoucherBatch, zone=None, labels: Labels = Labels
     if since:
         return labels.valid_from.format(since=since)
     return None
+
+
+def terms_line(batch: PrepaidVoucherBatch, labels: Labels = Labels()) -> str:
+    """The small print: goods "מימוש חד-פעמי" / "ניתן לממש בחלקים"; a discount its uses."""
+    if RULES.batch_benefit_text(batch):
+        uses = int(getattr(batch, "uses_per_voucher", 1) or 1)
+        return labels.uses_one if uses == 1 else labels.uses_many.format(n=uses)
+    return labels.split_allowed if batch.split_allowed else labels.one_time
+
+
+def cover_contents(batch: PrepaidVoucherBatch, count: int, labels: Labels = Labels()) -> Tuple[str, str]:
+    """A cover sheet's "בכל שובר" and "סה״כ בקבוצה": goods, or a discount voucher's benefit."""
+    benefit = RULES.batch_benefit_text(batch)
+    if benefit:
+        return benefit, labels.cover_vouchers.format(n=count)
+    per = " + ".join(f"{int(i.quantity)}× {i.product_name}" for i in batch.items)
+    total = ", ".join(f"{int(i.quantity) * count}× {i.product_name}" for i in batch.items)
+    return per, total
 
 
 def under_barcode_lines(voucher: PrepaidVoucher, opts: PrintOptions, labels: Labels = Labels()) -> List[str]:
@@ -401,7 +428,13 @@ def _draw_card(
         line(t, title_font, center=center)
     y += _px(0.6 * s)
 
-    items = list(batch.items)
+    # A discount voucher says what it gives ("₪30 הנחה על כל ההזמנה") instead of goods.
+    benefit = RULES.batch_benefit_text(batch)
+    if benefit:
+        bf = _font(_px(3.3 * s), bold=True)
+        for t in _wrap(d, benefit, bf, text_w, 3):
+            line(t, bf, center=center)
+    items = [] if benefit else list(batch.items)
     n = len(items)
     item_size = 3.1 * s * (max(0.55, (4 / n) ** 0.5) if n > 4 else 1)
     item_font = _font(_px(item_size))
@@ -430,7 +463,7 @@ def _draw_card(
     small = _font(_px(2.1 * s))
     if opts.validity:
         line(_visual(opts.validity), _font(_px(2.3 * s), bold=True), center=center)
-    line(_visual(labels.split_allowed if batch.split_allowed else labels.one_time), small, center=center)
+    line(_visual(terms_line(batch, labels)), small, center=center)
 
     if cut_lines:
         _cut_lines(d, W, H)
@@ -472,8 +505,7 @@ def cover_lines(
     made: Optional[str] = None,
 ) -> List[Tuple[str, str]]:
     """The cover sheet, top to bottom, as (style, text): style is title / big / line / small."""
-    per = " + ".join(f"{int(i.quantity)}× {i.product_name}" for i in batch.items)
-    total = ", ".join(f"{int(i.quantity) * info.count}× {i.product_name}" for i in batch.items)
+    per, total = cover_contents(batch, info.count, labels)
     out: List[Tuple[str, str]] = [
         ("title", batch.event_name or batch.name),
         ("big", labels.cover_group.format(g=info.group, n=info.groups)),
@@ -693,9 +725,13 @@ def manifest_csv(batch: PrepaidVoucherBatch, vouchers: Sequence[PrepaidVoucher])
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\r\n")
     w.writerow(["מס׳ שובר", "קבוצה", "קוד", "קוד מודפס", "תוכן הברקוד", "סטטוס", "נותר", "לקוח", "הזמנה", "הערה"])
+    discount = bool(RULES.batch_benefit_text(batch))
+    uses = int(getattr(batch, "uses_per_voucher", 1) or 1)
     for v in sorted(vouchers, key=lambda v: v.serial):
         rem = v.remaining or {}
         left = "; ".join(f"{int(rem.get(pid, 0))}× {names[pid]}" for pid in order)
+        if discount:
+            left = f"{int(getattr(v, 'uses_left', 0) or 0)}/{uses} שימושים"
         w.writerow([
             v.serial,
             v.group_no if getattr(v, "group_no", None) is not None else "",

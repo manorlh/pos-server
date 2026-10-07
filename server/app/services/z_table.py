@@ -321,6 +321,7 @@ def z_row(z: ZReport, z_type: str, out_item) -> Dict[str, Any]:
     vat = _dec(z.vat_total)
     line_discounts = header.get("lineDiscountsTotal")
     promo_discounts = header.get("promotionDiscountsTotal")
+    voucher_discounts = header.get("voucherDiscountsTotal")
     return {
         "id": str(z.id),
         "zNumber": z.z_number,
@@ -358,6 +359,7 @@ def z_row(z: ZReport, z_type: str, out_item) -> Dict[str, Any]:
         "discountsTotal": _money(z.discounts_total),
         "lineDiscountsTotal": _money(line_discounts),
         "promotionDiscountsTotal": _money(promo_discounts),
+        "voucherDiscountsTotal": _money(voucher_discounts),
         "totalSales": _money(z.total_sales),
         "totalRefunds": _money(z.total_refunds),
         "netSales": _money(net),

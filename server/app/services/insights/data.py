@@ -264,7 +264,7 @@ def load_product_sums(
     is_refund = tx.c.is_refund
     qty = TransactionItem.quantity
     total = TransactionItem.total_price
-    line_discount = func.coalesce(TransactionItem.discount, 0) + func.coalesce(TransactionItem.promotion_discount, 0)
+    line_discount = func.coalesce(TransactionItem.discount, 0) + func.coalesce(TransactionItem.promotion_discount, 0) + func.coalesce(TransactionItem.voucher_discount, 0)
     key = _product_key_expr()
     name_key = case((key.is_(None), TransactionItem.product_name), else_=None)
 

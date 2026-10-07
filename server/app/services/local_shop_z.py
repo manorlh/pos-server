@@ -1180,7 +1180,7 @@ def apply_printed(z: ZReport, body: LocalShopZIn, producer: POSMachine) -> None:
         z.business_date = body.business_date
     z.totals_mismatch = False
     header = dict(z.header or {})
-    for key in ("lineDiscountsTotal", "promotionDiscountsTotal", "byWaiter"):
+    for key in ("lineDiscountsTotal", "promotionDiscountsTotal", "voucherDiscountsTotal", "byWaiter"):
         header.pop(key, None)
     header["asPrinted"] = {"producedBy": _ref(producer), "note": "נשמר כפי שהודפס בקופה הראשית"}
     z.header = header

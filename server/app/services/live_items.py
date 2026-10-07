@@ -145,7 +145,7 @@ def build_live_items(
     qty = TransactionItem.quantity
     line_total = TransactionItem.total_price
     # The line's own discount and its promotions' share ("מבצעים").
-    line_discount = func.coalesce(TransactionItem.discount, 0) + func.coalesce(TransactionItem.promotion_discount, 0)
+    line_discount = func.coalesce(TransactionItem.discount, 0) + func.coalesce(TransactionItem.promotion_discount, 0) + func.coalesce(TransactionItem.voucher_discount, 0)
 
     grouped = (
         db.query(

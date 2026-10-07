@@ -94,7 +94,67 @@ class _ItemForParts:
         self.total_price = item.total_price
         self.discount = item.discount
         self.promotion_discount = item.promotion_discount
+        self.voucher_discount = getattr(item, "voucher_discount", None)
         self.details = details
+
+
+def _voucher_discounts(db: Session, issuer, tx, refund_of) -> List[str]:
+    """
+    Store the document's discount vouchers (replacing a re-push's) and, on a sale, confirm
+    each one's reservation. Returns the warnings of what could not be linked.
+    """
+    from decimal import Decimal as _D
+
+    from app.models.prepaid_voucher import TransactionVoucherDiscount
+    from app.services import prepaid_vouchers as _PV
+    from app.services.tenders import is_refund_document
+
+    entries = list(getattr(tx, "voucher_discounts", None) or [])
+    db.query(TransactionVoucherDiscount).filter(
+        TransactionVoucherDiscount.transaction_id == tx.id
+    ).delete(synchronize_session=False)
+    if not entries:
+        return []
+    rows = []
+    for e in entries:
+        amount = _D(str(e.amount or 0)).copy_abs().quantize(_D("0.01"))
+        rows.append(
+            TransactionVoucherDiscount(
+                id=uuid.uuid4(),
+                transaction_id=tx.id,
+                reservation_id=_promotion_uuid(e.reservation_id),
+                voucher_id=_promotion_uuid(e.voucher_id),
+                batch_id=_promotion_uuid(e.batch_id),
+                serial=e.serial,
+                batch_name=e.batch_name,
+                kind=e.kind,
+                uses=int(e.uses or 1),
+                discount_amount=amount,
+                lines=e.lines,
+            )
+        )
+    db.bulk_save_objects(rows)
+    # `...` is "the link as sent" (see the refund-of-another-tenant rule above).
+    link = tx.refund_of_transaction_id if refund_of is ... else refund_of
+    if is_refund_document(document_type=tx.document_type, refund_of_transaction_id=link):
+        # A credit note credits what was paid; a voucher's use is not given back by it.
+        return []
+    if tx.status in ("pending", "cancelled"):
+        # Not a sale (yet): a card still waiting, or declined. Its re-push as completed
+        # confirms; a declined one never does — the till releases the voucher.
+        return []
+    warnings: List[str] = []
+    for n, e in enumerate(entries):
+        if e.reservation_id and _promotion_uuid(e.reservation_id) is None:
+            warnings.append(f"voucherDiscounts[{n}].reservationId: unreadable, not confirmed")
+    readable = [e for e in entries if _promotion_uuid(e.reservation_id) is not None]
+    try:
+        with db.begin_nested():
+            warnings += _PV.confirm_from_document(db, issuer, str(tx.id), readable, tx.items)
+    except Exception:  # noqa: BLE001 — the document stands; the next push confirms again
+        logger.exception("document %s: its voucher reservations were not confirmed", tx.id)
+        warnings.append("voucherDiscounts: not confirmed now (error); confirmed on the next push")
+    return warnings
 
 
 def _safe_item_product_id(
@@ -1092,6 +1152,8 @@ def upsert_transactions(
                         ),
                         promotion_discount=it.promotion_discount,
                         promotion_id=_promotion_uuid(it.promotion_id),
+                        # Discount vouchers' share (docs/SPEC_VOUCHER_PRODUCTION.md §7).
+                        voucher_discount=getattr(it, "voucher_discount", None),
                         # What the dish was ordered with (docs/SPEC_MENU_MODIFIERS.md).
                         details=_menu.clean_details(it.details),
                         upsell_rule_id=_promotion_uuid(it.upsell_rule_id),
@@ -1110,6 +1172,10 @@ def upsert_transactions(
                 ])
             # The promotions ("מבצעים") the till applied, replaced like the items.
             replace_document_promotions(db, tx.id, tx.promotions)
+            # The discount vouchers, replaced like the promotions; a sale confirms their
+            # reservations — the outbox path of reserve → confirm, which never fails the
+            # document (docs/SPEC_VOUCHER_PRODUCTION.md §7).
+            link_warnings.extend(_voucher_discounts(db, issuer, tx, refund_of))
             # The club member the sale was made for (docs/SPEC_NOTIFICATIONS_CLUB.md §26);
             # never a reason to refuse the document.
             if getattr(tx, "club_membership_id", None):

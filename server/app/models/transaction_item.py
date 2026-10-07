@@ -50,6 +50,11 @@ class TransactionItem(Base):
     promotion_discount = Column(Numeric(12, 2), nullable=True)
     #: The promotion that took it (the largest share, when several did). Not a key.
     promotion_id = Column(UUID(as_uuid=True), nullable=True)
+    #: The line's share of what discount vouchers ("שוברי הנחה", prepaid vouchers of a
+    #: discount kind) took off, as an amount — like `promotion_discount`, inside the
+    #: document's `document_discount`, never in `total_price`, never a tender. The
+    #: vouchers themselves: `transaction_voucher_discounts`. Null: none.
+    voucher_discount = Column(Numeric(12, 2), nullable=True)
     #: What the dish was ordered with, as the till sent it (docs/SPEC_MENU_MODIFIERS.md
     #: §3.8): modifiers, notes, allergies, seat, course, a meal's components. Taken apart
     #: for the reports into `transaction_item_parts`. Null: a plain line.
