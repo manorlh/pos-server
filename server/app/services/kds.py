@@ -39,6 +39,7 @@ The rules, in one place:
 from __future__ import annotations
 
 import secrets
+import types
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -63,6 +64,7 @@ from app.models.pos_machine import POSMachine
 from app.models.printers import KitchenStation
 from app.models.shop import Shop
 from app.schemas.kds import KdsActionIn, KdsItemIn, KdsReleaseIn
+from app.services import kds_display as DISPLAY
 from app.services import kds_workflow as WF
 from app.services.areas import as_utc
 from app.services.kds_routing import load_context, route
@@ -194,8 +196,12 @@ def _station_names(db: Session, tenant_id: Any) -> Dict[str, str]:
     return {str(i): n for i, n in rows}
 
 
-def device_out(db: Session, device: KdsDevice, names: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+def device_out(
+    db: Session, device: KdsDevice, names: Optional[Dict[str, str]] = None, shop: Optional[Shop] = None,
+) -> Dict[str, Any]:
     names = names if names is not None else _station_names(db, device.tenant_id)
+    if shop is None or str(shop.id) != str(device.shop_id):
+        shop = db.query(Shop).filter(Shop.id == device.shop_id).first()
     return {
         "id": str(device.id),
         "machineId": str(device.machine_id) if device.machine_id else None,
@@ -205,27 +211,44 @@ def device_out(db: Session, device: KdsDevice, names: Optional[Dict[str, str]] =
         "stations": [{"id": s, "name": names.get(s, "?")} for s in (device.station_ids or []) if s in names],
         "isActive": bool(device.is_active),
         "lastSeenAt": _iso(device.last_seen_at),
-        # The board's look (a pickup screen; docs/SPEC_KDS.md §13) — null: the defaults.
-        "display": display_out(getattr(device, "display", None)),
+        # How the screen looks (docs/SPEC_KDS.md §13.4.3, §14): its own look, else the shop's
+        # default for its kind — null: the built-in defaults (today's look).
+        "display": DISPLAY.effective(device, shop),
+        # Whether that look is the screen's own (else the shop's default / the built-in one).
+        "displayOwn": DISPLAY.own_display(device) is not None,
+        # The screen's orders (any role): these points of sale / machines; both empty = the whole shop.
+        "scope": scope_out(getattr(device, "scope", None)),
     }
+
+
+def scope_out(raw: Any) -> Dict[str, List[str]]:
+    """A stored `kds_devices.scope`, cleaned (both lists empty = the whole shop)."""
+    r = raw if isinstance(raw, dict) else {}
+
+    def ids(key: str) -> List[str]:
+        v = r.get(key)
+        return [str(x) for x in v if isinstance(x, str) and x] if isinstance(v, list) else []
+
+    return {"areaIds": ids("areaIds"), "machineIds": ids("machineIds")}
+
+
+def in_scope(order: KitchenOrder, scope: Dict[str, Any]) -> bool:
+    """
+    Whether a screen of this scope shows the order (§15): no scope = the whole shop; otherwise
+    the order was released at one of its points of sale or by one of its tills / kiosks.
+    """
+    areas = {str(a) for a in (scope.get("areaIds") or [])}
+    machines = {str(m) for m in (scope.get("machineIds") or [])}
+    if not areas and not machines:
+        return True
+    return (order.area_id is not None and str(order.area_id) in areas) or (
+        order.machine_id is not None and str(order.machine_id) in machines
+    )
 
 
 def display_out(raw: Any) -> Optional[Dict[str, Any]]:
     """A stored `kds_devices.display`, cleaned for the screens (None when nothing is set)."""
-    if not isinstance(raw, dict):
-        return None
-    theme = raw.get("theme") if raw.get("theme") in ("dark", "light", "contrast", "brand") else "dark"
-    accent = raw.get("accent")
-    accent = accent.lower() if isinstance(accent, str) and len(accent) == 7 and accent.startswith("#") else None
-    title = raw.get("title")
-    title = " ".join(str(title).split())[:60] or None if title else None
-    return {
-        "theme": theme,
-        "accent": accent,
-        "sound": raw.get("sound") is not False,
-        "showPreparing": raw.get("showPreparing") is not False,
-        "title": title,
-    }
+    return DISPLAY.display_out(raw)
 
 
 def device_view(db: Session, machine: POSMachine) -> Dict[str, Any]:
@@ -1406,15 +1429,23 @@ def board(db: Session, machine: POSMachine, since: Optional[int] = None) -> Dict
     base = {
         "serverTime": _iso(now),
         "version": state.version,
-        "device": device_out(db, device),
+        "device": device_out(db, device, shop=shop),
         "shopName": shop.name if shop else None,
     }
     if since is not None and since == state.version:
         return {"syncType": "unchanged", **base}
     if device.role == "pickup":
-        return {"syncType": "full", **base, "pickup": pickup_board(db, device.shop_id)}
+        scope = scope_out(getattr(device, "scope", None))
+        pickup = pickup_board(
+            db, device.shop_id,
+            ready_minutes=DISPLAY.ready_minutes(base["device"]["display"]),
+            area_ids=scope["areaIds"], machine_ids=scope["machineIds"],
+        )
+        return {"syncType": "full", **base, "pickup": pickup}
 
-    orders = _open_orders(db, device.shop_id, now)
+    # A screen of its own points of sale / tills and kiosks (§15): only their orders.
+    scope = scope_out(getattr(device, "scope", None))
+    orders = [o for o in _open_orders(db, device.shop_id, now) if in_scope(o, scope)]
     tasks, changes, groups, dispatches = _bundle(db, orders)
     mine = set(device.station_ids or [])
     out_orders = []
@@ -1451,12 +1482,25 @@ def board(db: Session, machine: POSMachine, since: Optional[int] = None) -> Dict
     return {"syncType": "full", **base, "orders": out_orders, "stationSettings": settings}
 
 
-def pickup_board(db: Session, shop_id: Any) -> Dict[str, Any]:
+def pickup_board(
+    db: Session,
+    shop_id: Any,
+    ready_minutes: Optional[int] = None,
+    area_ids: Sequence[str] = (),
+    machine_ids: Sequence[str] = (),
+) -> Dict[str, Any]:
     """
     The pickup screen (§4, §11): numbers in preparation and ready — nothing else. No
     name, no phone, no note. Tables are served, not picked up: not listed.
+
+    A board of its own (§14, §15) may keep a ready number only `ready_minutes` (else: until
+    handed over, or PICKUP_READY_TTL without handover tracking), and may list only the orders of
+    some points of sale (`area_ids`) and / or tills and kiosks (`machine_ids`) — either matches.
     """
     now = _now()
+    areas = {str(a) for a in area_ids}
+    machines = {str(m) for m in machine_ids}
+    ready_ttl = timedelta(minutes=ready_minutes) if ready_minutes else None
     orders = (
         db.query(KitchenOrder)
         .filter(
@@ -1474,11 +1518,15 @@ def pickup_board(db: Session, shop_id: Any) -> Dict[str, Any]:
         number = order.pickup_number if order.pickup_number is not None else order.display_ref
         if number is None:
             continue
+        if not in_scope(order, {"areaIds": areas, "machineIds": machines}):
+            continue
         group = _group(db, order)
         config = order.config_snapshot or {}
         if group.state == "ready_for_pickup":
             ready_at = as_utc(group.ready_at) or now
             if not config.get("trackHandover", True) and now - ready_at > PICKUP_READY_TTL:
+                continue
+            if ready_ttl is not None and now - ready_at > ready_ttl:
                 continue
             ready.append({"number": str(number), "since": _iso(ready_at)})
         elif group.state == "waiting":
@@ -1530,13 +1578,159 @@ def order_states(db: Session, machine: POSMachine, source: str, refs: Sequence[s
     return {"orders": out}
 
 
+# ── "הזמנות להכנה" on a till (a shop with a board and no KDS — §15) ─────────────────
+
+#: A handed-over order stays in the till's list this long, for "החזר".
+READY_LIST_RECENT = timedelta(minutes=30)
+
+
+def _ready_till(db: Session, machine: POSMachine) -> None:
+    """A till of a shop (never a kiosk or a display device): "מוכן" / "נמסר" / "החזר" from its list."""
+    if machine.shop_id is None:
+        raise _refuse("machine_has_no_shop", status.HTTP_422_UNPROCESSABLE_ENTITY)
+    if getattr(machine, "is_fiscal", True) is False or is_kiosk_device(db, machine):
+        raise _refuse("not_a_till", status.HTTP_403_FORBIDDEN)
+
+
+def ready_orders(db: Session, machine: POSMachine) -> Dict[str, Any]:
+    """
+    `GET /sync/{m}/kds/ready-orders`: the shop's orders in preparation (ORDER_PROCESS) — waiting,
+    ready, and handed over in the last half hour — for the till's "הזמנות להכנה". The same
+    orders the board and the Expo see; the till marks them through `ready_action`.
+    """
+    _ready_till(db, machine)
+    now = _now()
+    orders = (
+        db.query(KitchenOrder)
+        .filter(
+            KitchenOrder.shop_id == machine.shop_id,
+            KitchenOrder.tenant_id == machine.tenant_id,
+            KitchenOrder.workflow_mode == WF.ORDER_PROCESS,
+            KitchenOrder.status.in_(("open", "ready", "handed_over")),
+        )
+        .all()
+    )
+    tasks, _, groups, _ = _bundle(db, orders)
+    out = []
+    for order in orders:
+        if (as_utc(order.created_at) or now) < now - BOARD_WINDOW:
+            continue
+        group = groups.get(order.id) or _group(db, order)
+        handed = as_utc(order.handed_over_at)
+        if group.state == "handed_over" and (handed is None or now - handed > READY_LIST_RECENT):
+            continue
+        if group.state == "cancelled":
+            continue
+        live = [t for t in tasks.get(order.id, []) if t.release_state == "released" and active_qty(t) > ZERO]
+        out.append({
+            "orderId": str(order.id),
+            "source": order.source,
+            "sourceRef": order.source_ref,
+            "displayRef": order.display_ref,
+            "pickupNumber": order.pickup_number,
+            "tableRef": order.table_ref,
+            "serviceType": order.service_type,
+            "pickupName": order.pickup_name,
+            "groupState": group.state,
+            "status": order.status,
+            "trackHandover": (order.config_snapshot or {}).get("trackHandover", True) is not False,
+            "firstReleasedAt": _iso(order.first_released_at or order.created_at),
+            "readyAt": _iso(group.ready_at),
+            "handedOverAt": _iso(order.handed_over_at),
+            "machineId": str(order.machine_id) if order.machine_id else None,
+            "areaId": str(order.area_id) if order.area_id else None,
+            "items": [
+                {"name": t.name, "qty": _num(active_qty(t)), "ready": t.prep_state == "ready"} for t in live
+            ],
+        })
+    rank = {"waiting": 0, "ready_for_pickup": 1, "handed_over": 2}
+    out.sort(key=lambda o: (rank.get(o["groupState"], 3), o["firstReleasedAt"] or ""))
+    screens = (
+        db.query(KdsDevice)
+        .filter(KdsDevice.shop_id == machine.shop_id, KdsDevice.is_active.is_(True))
+        .all()
+    )
+    return {
+        "serverTime": _iso(now),
+        "orders": out,
+        # Whether a kitchen screen marks orders ready here anyway (the till's list is then a backup).
+        "hasKds": any(d.role in ("station", "expo", "manager") for d in screens),
+        "hasBoard": any(d.role == "pickup" for d in screens),
+    }
+
+
+def ready_action(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
+    """
+    `POST /sync/{m}/kds/ready-actions` (KdsReadyActionIn): the till's "מוכן" / "נמסר" / "החזר" — the
+    KDS's own transitions (`_set_ready`, handover, undo_pickup: the same state, outbox events and
+    board), idempotent by `id`. "מוכן" marks every released item ready (the till has no stations).
+    """
+    _ready_till(db, machine)
+    stored = db.query(KitchenAction).filter(KitchenAction.id == body.id).first()
+    if stored is not None:
+        if stored.tenant_id != machine.tenant_id:
+            raise _refuse("action_id_taken")
+        return {**(stored.result or {}), "replayed": True}
+    order = db.query(KitchenOrder).filter(KitchenOrder.id == body.order_id).first()
+    if order is None or order.shop_id != machine.shop_id or order.tenant_id != machine.tenant_id:
+        raise _refuse("order_not_found", status.HTTP_404_NOT_FOUND)
+    now = _now()
+    actor = body.actor_name or machine.name
+    if body.type == "ready":
+        outcome, result = _till_ready(db, order, now, actor)
+    else:
+        # The KDS's own handover / undo, as a kitchen manager of this shop would do it.
+        acting = types.SimpleNamespace(
+            id=None, tenant_id=machine.tenant_id, shop_id=machine.shop_id, role="manager", station_ids=[], name=actor,
+        )
+        action = KdsActionIn(
+            id=body.id, type="handover" if body.type == "handover" else "undo_pickup", orderId=order.id,
+            actorName=actor,
+        )
+        outcome, result = _apply(db, acting, action, now)
+    db.add(KitchenAction(
+        id=body.id, tenant_id=machine.tenant_id, shop_id=machine.shop_id, machine_id=machine.id, device_id=None,
+        type=f"till_{body.type}", target_id=str(order.id), actor_name=body.actor_name, reason=None,
+        occurred_at=body.occurred_at or now, outcome=outcome, result=result, created_at=now,
+    ))
+    if outcome == "applied":
+        bump(db, machine.shop_id, machine.tenant_id)
+    db.flush()
+    return result
+
+
+def _till_ready(db: Session, order: KitchenOrder, now: datetime, actor: str) -> Tuple[str, Dict[str, Any]]:
+    rules = _order_rules(order)
+    if not rules["readyEvent"]:
+        return _out("rejected", reason="not_order_process")
+    group = _group(db, order)
+    if group.state == "ready_for_pickup":
+        return _out("noop", order=_order_brief(db, order))
+    if group.state in ("handed_over", "cancelled"):
+        return _out("rejected", reason=f"group_{group.state}")
+    tasks = _tasks(db, order.id)
+    for task in tasks:
+        if task.release_state != "released" or remaining_qty(task) <= ZERO:
+            continue
+        task.prepared_qty = active_qty(task)
+        task.prep_state = "ready"
+        task.started_at = task.started_at or now
+        task.ready_at = now
+        task.version += 1
+    _recompute(db, order, group, tasks, rules, now, actor)
+    if group.state == "waiting":
+        _set_ready(db, order, group, now, actor)
+    order.version += 1
+    return _out("applied", order=_order_brief(db, order))
+
+
 # ── Dashboard: devices, stations, overview ──────────────────────────────────────
 
 
 def shop_overview(db: Session, shop: Shop) -> Dict[str, Any]:
     from app.models.kds import KdsRouteOverride
     from app.services import display_devices
-    from app.services.printers import shop_machines, station_printers_in_shop, stations_of
+    from app.services.printers import shop_areas, shop_machines, station_printers_in_shop, stations_of
 
     names = {str(s.id): s.name for s in stations_of(db, shop.tenant_id)}
     devices = db.query(KdsDevice).filter(KdsDevice.shop_id == shop.id).all()
@@ -1564,7 +1758,7 @@ def shop_overview(db: Session, shop: Shop) -> Dict[str, Any]:
             }
             for sid, name in names.items()
         ],
-        "devices": [device_out(db, d, names) for d in devices],
+        "devices": [device_out(db, d, names, shop=shop) for d in devices],
         # `fiscal` false: a display device (app/services/display_devices.py); a till chosen
         # here for the first time becomes one (`save_device`), the dialog warns.
         "machines": [
@@ -1573,9 +1767,16 @@ def shop_overview(db: Session, shop: Shop) -> Dict[str, Any]:
                 "fiscal": getattr(m, "is_fiscal", True) is not False,
                 # "android" | "windows" | "web" — a browser screen (`/kds`, `/board`) is marked on the page.
                 "platform": display_devices.platform_of(m),
+                # A screen's scope lists the tills and kiosks (and their points of sale).
+                "kiosk": is_kiosk_device(db, m),
+                "areaId": str(m.area_id) if getattr(m, "area_id", None) else None,
             }
             for m in shop_machines(db, shop.id)
         ],
+        # The shop's points of sale (a screen's scope, §15).
+        "areas": [{"id": str(a.id), "name": a.name} for a in shop_areas(db, shop.id)],
+        # The shop's default look per kind (§14): a screen without its own look shows it.
+        "displayDefaults": DISPLAY.shop_defaults(shop),
         "overrides": [
             {
                 "id": str(o.id), "targetType": o.target_type, "targetId": str(o.target_id),
@@ -1655,19 +1856,53 @@ def save_device(db: Session, shop: Shop, machine_id: Any, body) -> KdsDevice:
     device.station_ids = station_ids if body.role == "station" else []
     device.is_active = body.is_active
     display = getattr(body, "display", None)
-    if display is not None:
-        device.display = {
-            "theme": display.theme,
-            "accent": display.accent.lower() if display.accent else None,
-            "sound": display.sound,
-            "showPreparing": display.show_preparing,
-            "title": " ".join(display.title.split()) or None if display.title else None,
-        }
+    if getattr(body, "display_inherit", False):
+        # Back to the shop's default for its kind (or the built-in look).
+        device.display = None
+    elif display is not None:
+        device.display = DISPLAY.display_in(display)
+    scope = getattr(body, "scope", None)
+    if scope is not None:
+        device.scope = _scope_in(db, shop, scope)
     _set_screen_flag(db, machine.id, bool(body.is_active))
     bump(db, shop.id, shop.tenant_id)
     db.flush()
     display_devices.forget(machine)
     return device
+
+
+def _scope_in(db: Session, shop: Shop, scope) -> Optional[Dict[str, List[str]]]:
+    """A screen's scope (any role), checked against the shop: its points of sale and its machines."""
+    from app.services.printers import shop_areas, shop_machines
+
+    areas = {str(a.id) for a in shop_areas(db, shop.id)}
+    machines = {str(m.id) for m in shop_machines(db, shop.id)}
+    area_ids = list(dict.fromkeys(str(a) for a in scope.area_ids))
+    machine_ids = list(dict.fromkeys(str(m) for m in scope.machine_ids))
+    if any(a not in areas for a in area_ids):
+        raise _refuse("area_not_in_shop", status.HTTP_422_UNPROCESSABLE_ENTITY)
+    if any(m not in machines for m in machine_ids):
+        raise _refuse("machine_not_in_shop", status.HTTP_422_UNPROCESSABLE_ENTITY)
+    if not area_ids and not machine_ids:
+        return None
+    return {"areaIds": area_ids, "machineIds": machine_ids}
+
+
+def set_display_defaults(db: Session, shop: Shop, body) -> Dict[str, Optional[Dict[str, Any]]]:
+    """
+    `PUT /kds/shops/{shop}/display-defaults`: the shop's default look per kind ("kds", "board") —
+    a key absent stays, null removes it. Every screen of the shop that has no look of its own
+    shows it within seconds (the shop's version moves).
+    """
+    values: Dict[str, Optional[Dict[str, Any]]] = {}
+    for kind in ("kds", "board"):
+        if kind in body.model_fields_set:
+            value = getattr(body, kind)
+            values[kind] = DISPLAY.display_in(value) if value is not None else None
+    out = DISPLAY.set_shop_defaults(shop, values)
+    bump(db, shop.id, shop.tenant_id)
+    db.flush()
+    return out
 
 
 def delete_device(db: Session, shop: Shop, machine_id: Any) -> None:

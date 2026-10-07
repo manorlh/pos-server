@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 TEXT_MAX = 200
 ITEMS_MAX = 300
@@ -122,15 +122,86 @@ class KdsActionIn(_Body):
     occurred_at: Optional[datetime] = Field(None, alias="occurredAt")
 
 
+_SoundTone = Literal["chime", "bell", "knock", "beep", "off"]
+
+
+class KdsFieldsIn(_Body):
+    """What a kitchen ticket shows (all on = today's ticket)."""
+
+    table: bool = True
+    name: bool = True
+    waiter: bool = True
+    guests: bool = True
+    course: bool = True
+    notes: bool = True
+    allergens: bool = True
+    modifiers: bool = True
+
+
+class KdsSoundsIn(_Body):
+    """A sound per event on a kitchen screen ("off" = silent)."""
+
+    new: _SoundTone = "chime"
+    change: _SoundTone = "knock"
+    late: _SoundTone = "off"
+
+
+class KdsMediaIn(_Body):
+    """A picture / video of the board's media panel — a kiosk MediaRef (`POST /kiosks/media`)."""
+
+    url: str = Field(max_length=1000, pattern=r"^https?://\S+$")
+    kind: Literal["image", "video"] = "image"
+    sha256: Optional[str] = Field(None, pattern=r"^[0-9a-fA-F]{64}$")
+    size: Optional[int] = Field(None, alias="bytes", ge=0)
+    duration_sec: int = Field(8, alias="durationSec", ge=3, le=300)
+
+
 class KdsDisplayIn(_Body):
-    """The "מסך מוכן / לא מוכן" board's look (docs/SPEC_KDS.md §13)."""
+    """
+    How a screen looks (docs/SPEC_KDS.md §13.4.3, §14; app/services/kds_display.py). Version 1 was
+    the board's five keys; every new key defaults to today's look.
+    """
 
     theme: Literal["dark", "light", "contrast", "brand"] = "dark"
-    #: "#rrggbb" for the ready column and the announcement; None = the theme's own.
+    #: "#rrggbb": the board's ready column / the kitchen's accent; None = the theme's own.
     accent: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
     sound: bool = True
     show_preparing: bool = Field(True, alias="showPreparing")
     title: Optional[str] = Field(None, max_length=60)
+    # The board ("מסך מוכן / לא מוכן").
+    board_layout: Literal["columns", "spotlight", "grid", "split", "ticker"] = Field("columns", alias="boardLayout")
+    #: A ready number leaves the board after this many minutes; None = as the cloud keeps it.
+    ready_minutes: Optional[int] = Field(None, alias="readyMinutes", ge=1, le=240)
+    media: List[KdsMediaIn] = Field(default_factory=list, max_length=12)
+    promo_text: Optional[str] = Field(None, alias="promoText", max_length=140)
+    # The kitchen screen.
+    layout: Literal["tickets", "columns", "rail", "list", "big"] = "tickets"
+    columns_by: Literal["station", "course"] = Field("station", alias="columnsBy")
+    density: Literal["compact", "normal", "large"] = "normal"
+    font_scale: float = Field(1.0, alias="fontScale", ge=0.8, le=1.6)
+    age_colors: bool = Field(True, alias="ageColors")
+    #: The screen's own age thresholds (both or neither); None = the stations' settings.
+    warn_minutes: Optional[int] = Field(None, alias="warnMinutes", ge=1, le=240)
+    late_minutes: Optional[int] = Field(None, alias="lateMinutes", ge=1, le=480)
+    show: KdsFieldsIn = Field(default_factory=KdsFieldsIn, alias="fields")
+    sounds: KdsSoundsIn = Field(default_factory=KdsSoundsIn)
+    clock: bool = True
+    counts: bool = True
+
+    @model_validator(mode="after")
+    def _thresholds_together(self) -> "KdsDisplayIn":
+        if (self.warn_minutes is None) != (self.late_minutes is None):
+            raise ValueError("warnMinutes and lateMinutes are set together")
+        if self.warn_minutes is not None and self.late_minutes is not None and self.late_minutes <= self.warn_minutes:
+            raise ValueError("lateMinutes must be after warnMinutes")
+        return self
+
+
+class KdsScopeIn(_Body):
+    """Which orders a screen shows (a kitchen screen on top of its stations, the board): those of these points of sale or these machines (none = all)."""
+
+    area_ids: List[uuid.UUID] = Field(default_factory=list, alias="areaIds", max_length=50)
+    machine_ids: List[uuid.UUID] = Field(default_factory=list, alias="machineIds", max_length=100)
 
 
 class KdsDeviceIn(_Body):
@@ -138,8 +209,32 @@ class KdsDeviceIn(_Body):
     role: Literal["station", "expo", "pickup", "manager"] = "station"
     station_ids: List[uuid.UUID] = Field(default_factory=list, alias="stationIds", max_length=30)
     is_active: bool = Field(True, alias="isActive")
-    #: The board's look; absent (an older dashboard, a pairing) keeps what the screen has.
+    #: The screen's look; absent (an older dashboard, a pairing) keeps what the screen has.
     display: Optional[KdsDisplayIn] = None
+    #: True: the screen drops its own look and follows the shop's default (`display` is ignored).
+    display_inherit: bool = Field(False, alias="displayInherit")
+    #: The screen's orders (points of sale / tills and kiosks); absent keeps, empty = the whole shop.
+    scope: Optional[KdsScopeIn] = None
+
+
+class KdsReadyActionIn(_Body):
+    """
+    `POST /sync/{m}/kds/ready-actions` — "הזמנות להכנה" on a till (a shop with a board and no
+    KDS): the order is ready, handed over, or back one step. Idempotent by `id`, like a screen's.
+    """
+
+    id: str = Field(min_length=8, max_length=64)
+    type: Literal["ready", "handover", "undo"]
+    order_id: uuid.UUID = Field(alias="orderId")
+    actor_name: Optional[str] = Field(None, alias="actorName", max_length=TEXT_MAX)
+    occurred_at: Optional[datetime] = Field(None, alias="occurredAt")
+
+
+class KdsDisplayDefaultsIn(_Body):
+    """`PUT /kds/shops/{shop}/display-defaults`: a key absent stays, null removes the default."""
+
+    kds: Optional[KdsDisplayIn] = None
+    board: Optional[KdsDisplayIn] = None
 
 
 class KdsStationSettingIn(_Body):

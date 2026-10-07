@@ -88,6 +88,11 @@ class KdsDevice(Base):
     #: The board's look — `{theme, accent, sound, showPreparing, title}` (a pickup screen; null =
     #: the defaults). Sent with the screen in `kds/board` (docs/SPEC_KDS.md §13).
     display = Column(JSON, nullable=True)
+    #: The screen's orders (any role — a kitchen screen on top of its stations, the pickup board):
+    #: `{areaIds, machineIds}` — only orders released at those points of sale (`kds_orders.area_id`)
+    #: or by those tills / kiosks (`kds_orders.machine_id`); null or both empty = the whole shop
+    #: (docs/SPEC_KDS.md §15).
+    scope = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
