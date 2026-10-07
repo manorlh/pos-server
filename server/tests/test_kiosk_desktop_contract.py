@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import json
 import pathlib
+from typing import get_args
 
 import pytest
+from pydantic import ValidationError
 
 from app.schemas.kiosk import KioskOrderIn, KioskOrdersIn
 from app.schemas.shift import ShiftCloseIn, ShiftOpenIn
@@ -90,6 +92,32 @@ def test_the_kiosk_orders_validate():
     orders = [KioskOrderIn.model_validate(o) for o in body.orders]
     assert orders[0].pickup_label == "A-17"
     assert orders[0].transaction_number == "40000057"
+
+
+def _literal_values(field: str) -> set:
+    return set(get_args(KioskOrderIn.model_fields[field].annotation))
+
+
+def test_the_kiosk_orders_cover_every_state_the_server_takes():
+    """
+    Every receipt / bon state and order status, each one validated by the server: the Windows
+    kiosk once sent receipt "none" / "queued", which this schema refuses, and those orders were
+    sent again on every sync, forever (PARITY.md gap 4). The Android kiosk sends the same values
+    (domain/KioskOrders.kt KioskReceiptStatus / KioskBonStatus).
+    """
+    orders = [KioskOrderIn.model_validate(o) for o in load("kiosk_orders")["orders"]]
+    assert {o.receipt_status for o in orders} == _literal_values("receipt_status")
+    assert {o.bon_status for o in orders} == _literal_values("bon_status")
+    assert {o.status for o in orders} == _literal_values("status")
+    assert {o.fulfillment_mode for o in orders} == {"BON", "KDS"}
+    assert {o.service_type for o in orders} == {"take_away", "eat_in"}
+
+
+def test_a_refused_receipt_value_is_still_refused():
+    """The kiosk maps the old values itself; the server's vocabulary does not widen for them."""
+    raw = dict(load("kiosk_orders")["orders"][0], receiptStatus="none")
+    with pytest.raises(ValidationError):
+        KioskOrderIn.model_validate(raw)
 
 
 def test_the_kds_release_is_the_kitchen_engines_and_idempotent_by_the_document():

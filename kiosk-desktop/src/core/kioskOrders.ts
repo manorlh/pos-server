@@ -95,6 +95,35 @@ export function bonStatusOf(input: { requested: boolean; noPrinter: boolean; job
   return 'queued';
 }
 
+/* ---------------------------------------------------------------- receipt */
+
+/**
+ * The customer's receipt as the cloud takes it (pos-android domain/KioskOrders.kt
+ * KioskReceiptStatus; pos-server schemas/kiosk.py KioskOrderIn.receiptStatus): "pending" until
+ * the "ask" question is answered, "skipped" when none was printed by policy or for a recovered
+ * sale (staff re-print), "printed" / "declined" / "failed".
+ */
+export type ReceiptStatus = 'pending' | 'printed' | 'declined' | 'failed' | 'skipped';
+
+const RECEIPT_STATUSES: readonly ReceiptStatus[] = ['pending', 'printed', 'declined', 'failed', 'skipped'];
+
+/** The receipt right after the money, by the policy (KioskViewModel.onApproved). */
+export function receiptAfterApproval(policy: 'always' | 'ask' | 'never', recovered: boolean): ReceiptStatus {
+  if (recovered) return 'skipped';
+  return policy === 'always' ? 'printed' : policy === 'ask' ? 'pending' : 'skipped';
+}
+
+/**
+ * Any stored value as one the cloud takes. Orders written by earlier versions said "none" (no receipt:
+ * a "never" policy, an unanswered "ask", a recovered sale) or "queued"; the cloud refused both,
+ * so those orders were sent again on every sync, forever.
+ */
+export function receiptStatusOf(v: unknown): ReceiptStatus {
+  if (v === 'none') return 'skipped';
+  if (v === 'queued') return 'pending';
+  return RECEIPT_STATUSES.includes(v as ReceiptStatus) ? (v as ReceiptStatus) : 'pending';
+}
+
 /* ------------------------------------------------------------ the order */
 
 export interface KioskOrder {
@@ -121,7 +150,7 @@ export interface KioskOrder {
   bonJobIds: string[];
   bonStatus: BonStatus;
   bonDetail: string | null;
-  receiptStatus: 'none' | 'printed' | 'declined' | 'failed' | 'queued';
+  receiptStatus: ReceiptStatus;
   recovered: boolean;
   syncedHash: string | null;
 }
@@ -147,7 +176,7 @@ export function orderWire(o: KioskOrder): Record<string, unknown> {
     paidAt: o.paidAt,
     bonStatus: o.bonStatus,
     bonDetail: o.bonDetail,
-    receiptStatus: o.receiptStatus,
+    receiptStatus: receiptStatusOf(o.receiptStatus),
     status: o.bonStatus === 'failed' ? 'paid_print_failed' : o.recovered ? 'recovered' : 'paid',
   };
 }

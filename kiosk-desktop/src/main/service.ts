@@ -11,7 +11,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import bcrypt from 'bcryptjs';
 import { resolveKioskConfig } from '@dash-lib/kioskConfig';
-import { localDate, kioskOperator, closerName, bonStep, type KioskOrder, type PickupRules } from '../core/kioskOrders';
+import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, type KioskOrder, type PickupRules } from '../core/kioskOrders';
 import { OfflineTracker } from '../core/kioskHealth';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
 import { ofShekels } from '../core/money';
@@ -996,7 +996,7 @@ export class KioskService extends EventEmitter {
       bonJobIds: [],
       bonStatus: 'none',
       bonDetail: null,
-      receiptStatus: 'none',
+      receiptStatus: 'pending',
       recovered: false,
       syncedHash: null,
     };
@@ -1080,7 +1080,7 @@ export class KioskService extends EventEmitter {
     }
     if (recovered) {
       // Settled after the fact (a restart in between): no paper now — the customer is gone; staff re-print.
-      this.orders.update(orderId, (o) => ({ ...o, receiptStatus: 'none', bonDetail: 'שוחזר — הדפסה חוזרת מהניהול' }));
+      this.orders.update(orderId, (o) => ({ ...o, receiptStatus: receiptAfterApproval(policy, true), bonDetail: 'שוחזר — הדפסה חוזרת מהניהול' }));
       void this.sync.flush();
       if (this.machineId) void this.orders.push(this.api, this.machineId);
       this.dirty();
@@ -1093,7 +1093,7 @@ export class KioskService extends EventEmitter {
       this.printQueue.enqueue('slip', orderId, slipDoc({ businessName: this.business().companyName, pickupLabel: pickup.label, service: order.serviceType, itemCount: order.itemCount, totalAgorot: order.totalAgorot + order.tipAgorot }));
     }
     if (policy === 'always') this.printReceipt(orderId, false);
-    this.orders.update(orderId, (o) => ({ ...o, receiptStatus: policy === 'always' ? 'printed' : 'none' }));
+    this.orders.update(orderId, (o) => ({ ...o, receiptStatus: receiptAfterApproval(policy, false) }));
     void me;
     void this.sync.flush();
     if (this.machineId) void this.orders.push(this.api, this.machineId);

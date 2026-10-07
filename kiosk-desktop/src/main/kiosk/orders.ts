@@ -9,7 +9,7 @@
  *  - pushed to the cloud in chunks of 50 whenever what the cloud has differs.
  */
 
-import { localDate, nextPickup, offlinePickupLabel, orderHash, orderNeedsSync, orderWire, pickupLabel, SHOP_PICKUP_TIMEOUT_MS, type KioskOrder, type PickupRules } from '../../core/kioskOrders';
+import { localDate, nextPickup, offlinePickupLabel, orderHash, orderNeedsSync, orderWire, pickupLabel, receiptStatusOf, SHOP_PICKUP_TIMEOUT_MS, type KioskOrder, type PickupRules } from '../../core/kioskOrders';
 import type { Db } from '../db/sqlite';
 import type { Kv } from '../db/schema';
 import type { Api } from '../sync/api';
@@ -17,16 +17,22 @@ import type { Api } from '../sync/api';
 const KEEP = 1000;
 const KEEP_MS = 7 * 86_400_000;
 
+/** A stored row as the order it is now: an older row's receipt value made one the cloud takes. */
+function readOrder(json: string): KioskOrder {
+  const o = JSON.parse(json) as KioskOrder;
+  return { ...o, receiptStatus: receiptStatusOf(o.receiptStatus) };
+}
+
 export class OrderStore {
   constructor(private readonly db: Db) {}
 
   all(): KioskOrder[] {
-    return this.db.all<{ json: string }>('SELECT json FROM kiosk_orders ORDER BY created_at').map((r) => JSON.parse(r.json) as KioskOrder);
+    return this.db.all<{ json: string }>('SELECT json FROM kiosk_orders ORDER BY created_at').map((r) => readOrder(r.json));
   }
 
   get(localId: string): KioskOrder | null {
     const r = this.db.get<{ json: string }>('SELECT json FROM kiosk_orders WHERE local_id = ?', localId);
-    return r ? (JSON.parse(r.json) as KioskOrder) : null;
+    return r ? readOrder(r.json) : null;
   }
 
   put(o: KioskOrder): KioskOrder {
