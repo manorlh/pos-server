@@ -4,7 +4,8 @@
  * "הנפשות ומעברים": one picker per transition of the kiosk (the category switch, its dishes
  * coming in, the screens, the windows, the add-to-cart) and the speed — each inherited like every
  * kiosk setting (company → shop → kiosk, the style's preset underneath) and each with "הצג",
- * which plays it in the live preview.
+ * which plays it in the live preview — and "אפקטים" (`motion.effects`): the device decides, every
+ * effect, or the cheaper variant of each (the preview draws the chosen one; "auto" the full look).
  */
 
 import { useTranslations } from 'next-intl';
@@ -14,6 +15,7 @@ import {
   ADD_TO_CART_FX,
   CATEGORY_SWITCH_FX,
   ITEMS_ENTER_FX,
+  MOTION_EFFECTS,
   MOTION_SPEEDS,
   SCREEN_CHANGE_FX,
   SHEET_FX,
@@ -23,7 +25,7 @@ import { useKioskEditor, useKioskField } from './editor-context';
 import { FieldShell, SectionCard, Segmented } from './fields';
 import type { MotionDemo } from './kiosk-preview';
 
-type MotionKey = keyof KioskMotionSettings;
+type MotionKey = Exclude<keyof KioskMotionSettings, 'effects'>;
 
 const PICKERS: { key: MotionKey; options: readonly string[] }[] = [
   { key: 'categorySwitch', options: CATEGORY_SWITCH_FX },
@@ -60,6 +62,26 @@ function MotionPicker({ name, options }: { name: MotionKey; options: readonly st
   );
 }
 
+/** "אפקטים": אוטומטי (by the device's strength) · מלא · קל — no "הצג": it is how much is drawn, not a motion. */
+function EffectsPicker() {
+  const t = useTranslations('kiosks.motion');
+  const tf = useTranslations('kiosks.fields');
+  const path = 'motion.effects';
+  const f = useKioskField<string>(path);
+  const label = tf(path);
+  return (
+    <FieldShell path={path} label={label} hint={t('effectsHint')}>
+      <Segmented<string>
+        value={f.value}
+        options={MOTION_EFFECTS.map((v) => ({ value: v, label: t(`effectsOption.${v}`) }))}
+        onChange={f.set}
+        disabled={f.disabled}
+        ariaLabel={label}
+      />
+    </FieldShell>
+  );
+}
+
 export function MotionSection() {
   const t = useTranslations('kiosks.motion');
   const ed = useKioskEditor();
@@ -73,6 +95,7 @@ export function MotionSection() {
       {PICKERS.map((p) => (
         <MotionPicker key={p.key} name={p.key} options={p.options} />
       ))}
+      <EffectsPicker />
       <p className="text-xs text-muted-foreground">{t('perfNote')}</p>
     </SectionCard>
   );

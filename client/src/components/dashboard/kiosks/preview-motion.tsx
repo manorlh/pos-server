@@ -16,6 +16,11 @@
 import { memo, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import {
+  EASE_ENTER,
+  EASE_EXIT,
+  EASE_POP_RISE,
+  EASE_POP_SETTLE,
+  EASE_STRIP,
   STAGGER_MAX_CARDS,
   staggerDelayMs,
   swapSide,
@@ -141,13 +146,15 @@ export function sheetEnter(t: TransitionSpec): { panel: string; scrim: string; s
  * The CSS behind it (in PREVIEW_CSS). `--k-side`: +1 the new content comes from the physical
  * right, -1 from the left. Enter animations fill backwards only: once done nothing stays on the
  * element (no layer, no transform under the press feedback). The leaving slot sits under the
- * incoming one (`isolation` keeps its z-index inside the swap).
+ * incoming one (`isolation` keeps its z-index inside the swap). The curves are the till's
+ * KioskEase (lib/kioskConfig.ts EASE_*): arrivals decelerate, departures accelerate, a push moves
+ * both screens on one curve as a strip; the durations come from transitionSpec (`--k-ms`).
  */
 export const MOTION_CSS = `
-.k-anim { animation-duration: var(--k-ms, 450ms); animation-timing-function: cubic-bezier(.05,.7,.1,1); animation-fill-mode: backwards; }
+.k-anim { animation-duration: var(--k-ms, 220ms); animation-timing-function: ${EASE_ENTER}; animation-fill-mode: backwards; }
 .k-swap { isolation: isolate; }
 .k-leave { position: absolute; top: 0; left: 0; right: 0; pointer-events: none; z-index: -1; }
-.k-leave.k-anim { animation-fill-mode: forwards; animation-timing-function: cubic-bezier(.3,0,.8,.15); }
+.k-leave.k-anim { animation-fill-mode: forwards; animation-timing-function: ${EASE_EXIT}; }
 @keyframes kSlideIn { from { opacity: 0; transform: translate3d(calc(var(--k-side) * 22%), 0, 0); } to { opacity: 1; transform: none; } }
 @keyframes kSlideOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translate3d(calc(var(--k-side) * -10%), 0, 0); } }
 @keyframes kPushIn { from { transform: translate3d(calc(var(--k-side) * 100%), 0, 0); } to { transform: none; } }
@@ -160,16 +167,17 @@ export const MOTION_CSS = `
 @keyframes kZoomOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(1.06); } }
 .k-slide-in { animation-name: kSlideIn; } .k-slide-out { animation-name: kSlideOut; }
 .k-push-in { animation-name: kPushIn; } .k-push-out { animation-name: kPushOut; }
+.k-anim.k-push-in, .k-leave.k-anim.k-push-out { animation-timing-function: ${EASE_STRIP}; }
 .k-fade-in { animation-name: kFadeIn; } .k-fade-out { animation-name: kFadeOut; }
 .k-fade_scale-in { animation-name: kFadeScaleIn; } .k-fade_scale-out { animation-name: kFadeScaleOut; }
 .k-zoom-in { animation-name: kZoomIn; } .k-zoom-out { animation-name: kZoomOut; }
-@keyframes kItemPop { 0% { opacity: 0; transform: scale(.85); animation-timing-function: cubic-bezier(.22,1,.36,1); } 60% { opacity: 1; transform: scale(1.03); animation-timing-function: cubic-bezier(.45,0,.55,1); } 100% { opacity: 1; transform: none; } }
+@keyframes kItemPop { 0% { opacity: 0; transform: scale(.85); animation-timing-function: ${EASE_POP_RISE}; } 60% { opacity: 1; transform: scale(1.03); animation-timing-function: ${EASE_POP_SETTLE}; } 100% { opacity: 1; transform: none; } }
 @keyframes kItemRise { from { opacity: 0; transform: translate3d(0, 24px, 0); } to { opacity: 1; transform: none; } }
 @keyframes kItemFlip { from { opacity: 0; transform: perspective(700px) rotateX(-75deg); } to { opacity: 1; transform: none; } }
-.k-item { animation-duration: var(--k-item-ms, 380ms); animation-delay: var(--k-delay, 0ms); animation-fill-mode: backwards; }
+.k-item { animation-duration: var(--k-item-ms, 260ms); animation-delay: var(--k-delay, 0ms); animation-fill-mode: backwards; }
 .k-item-pop, .k-item-cascade { animation-name: kItemPop; }
-.k-item-rise { animation-name: kItemRise; animation-timing-function: cubic-bezier(.05,.7,.1,1); }
-.k-item-flip { animation-name: kItemFlip; animation-timing-function: cubic-bezier(.05,.7,.1,1); transform-origin: 50% 0; }
+.k-item-rise { animation-name: kItemRise; animation-timing-function: ${EASE_ENTER}; }
+.k-item-flip { animation-name: kItemFlip; animation-timing-function: ${EASE_ENTER}; transform-origin: 50% 0; }
 @keyframes kSheetUp { from { opacity: 0; transform: translate3d(0, 45%, 0); } to { opacity: 1; transform: none; } }
 @keyframes kSheetScale { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
 .k-sheet-slide_up { animation-name: kSheetUp; }
@@ -177,8 +185,8 @@ export const MOTION_CSS = `
 .k-sheet-fade { animation-name: kFadeIn; }
 @keyframes kBarBounceA { 0% { transform: scale(1); } 35% { transform: scale(1.05); } 70% { transform: scale(.985); } 100% { transform: scale(1); } }
 @keyframes kBarBounceB { 0% { transform: scale(1); } 35% { transform: scale(1.05); } 70% { transform: scale(.985); } 100% { transform: scale(1); } }
-.kiosk-bar-bounce-a { animation: kBarBounceA 480ms cubic-bezier(.22,1,.36,1); }
-.kiosk-bar-bounce-b { animation: kBarBounceB 480ms cubic-bezier(.22,1,.36,1); }
+.kiosk-bar-bounce-a { animation: kBarBounceA 480ms ${EASE_POP_RISE}; }
+.kiosk-bar-bounce-b { animation: kBarBounceB 480ms ${EASE_POP_RISE}; }
 .k-reduce .k-leave { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .k-anim, .k-item, .kiosk-bar-bounce-a, .kiosk-bar-bounce-b { animation: none !important; }

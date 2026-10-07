@@ -65,6 +65,9 @@ function demoCheckout(): Record<string, unknown> {
   const one = q.get('service');
   if (one === 'take_away' || one === 'eat_in') general.serviceTypes = [one];
   if (Object.keys(general).length > 0) out.general = general;
+  // `&effects=auto|full|light`: "אפקטים" (motion.effects) — the light profile's cheaper variants.
+  const effects = q.get('effects');
+  if (effects === 'auto' || effects === 'full' || effects === 'light') out.motion = { effects };
   // `&cta=hidden`: no start button, the whole screen starts (`&hint=0`: not even the line in its place).
   if (q.get('cta') === 'hidden') out.attract = { cta: { visible: false, tapAnywhere: true, touchHint: q.get('hint') !== '0' } };
   const ticker = q.get('ticker');

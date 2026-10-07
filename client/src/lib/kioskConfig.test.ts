@@ -113,6 +113,7 @@ import {
   SCREEN_CHANGE_FX,
   SHEET_FX,
   ADD_TO_CART_FX,
+  MOTION_EFFECTS,
   MOTION_SPEEDS,
   MOTION_SPEED_FACTOR,
   NO_TRANSITIONS,
@@ -1075,10 +1076,10 @@ describe('"הוסף לסל" — the add-to-cart pop-and-fly (the till\'s KioskMo
     assert.equal(kioskAddPath(false, false, true), 'sheet');
     assert.equal(kioskAddPath(true, false, false), 'none');
   });
-  it('pops by the card, flies an arc to the cart, lands small and faded, about 700 ms (under a second)', () => {
+  it('pops by the card, flies an arc to the cart, lands small and faded, about 560 ms (under a second)', () => {
     for (const animation of ['lively', 'subtle'] as const) {
       const m = motionSpec({ animation }, { reduceMotion: false });
-      assert.ok(m.popMs >= 170 && m.popMs <= 220 && m.flyMs >= 440 && m.flyMs <= 520, animation);
+      assert.ok(m.popMs >= 140 && m.popMs <= 170 && m.flyMs >= 370 && m.flyMs <= 410, animation);
       assert.ok(m.popScale >= 1.3 && m.popScale <= 1.5, animation);
       assert.ok(addMs(m) < ADD_MAX_MS);
       const start = addFrame(m, 0, from, to);
@@ -1364,11 +1365,12 @@ describe('"יצאתי לנוח… תכף אשוב": the closed screen (the till\
 
 describe('"הנפשות ומעברים" — the transitions (the server kiosk_config.py UI_PRESET_MOTION, the till KioskTransitions)', () => {
   it('the defaults are the wolt style, and every style animates the category and pops its dishes in', () => {
-    assert.deepEqual(KIOSK_DEFAULTS.motion, KIOSK_UI_PRESET_MOTION.wolt);
+    // The style's keys, and "אפקטים" (the device's, not a style's): auto.
+    assert.deepEqual(KIOSK_DEFAULTS.motion, { ...KIOSK_UI_PRESET_MOTION.wolt, effects: 'auto' });
     assert.deepEqual([...PRESET_MOTION_KEYS], ['categorySwitch', 'itemsEnter', 'screenChange', 'sheet', 'addToCart', 'speed']);
     for (const style of UI_STYLES) {
       const c = resolveKioskConfig({ theme: { uiStyle: style } });
-      assert.deepEqual(c.motion, KIOSK_UI_PRESET_MOTION[style], style);
+      assert.deepEqual(c.motion, { ...KIOSK_UI_PRESET_MOTION[style], effects: 'auto' }, style);
       assert.deepEqual(validateKioskConfig(c), [], style);
       const t = transitionSpec(c.motion, c.general);
       assert.notEqual(t.categorySwitch, 'none', style);
@@ -1383,7 +1385,7 @@ describe('"הנפשות ומעברים" — the transitions (the server kiosk_co
     const shop = { theme: { uiStyle: 'minimal_dark' }, motion: { itemsEnter: 'flip' } };
     const kiosk = { motion: { categorySwitch: 'push' } };
     assert.deepEqual(resolveKioskConfig(company, shop, kiosk).motion, {
-      categorySwitch: 'push', itemsEnter: 'flip', screenChange: 'fade', sheet: 'fade', addToCart: 'fly', speed: 'fast',
+      categorySwitch: 'push', itemsEnter: 'flip', screenChange: 'fade', sheet: 'fade', addToCart: 'fly', speed: 'fast', effects: 'auto',
     });
     // The editor: rebased on the level's style, reset goes back to it, a draft following it saves nothing.
     const parents = { motion: { speed: 'fast' } };
@@ -1403,17 +1405,19 @@ describe('"הנפשות ומעברים" — the transitions (the server kiosk_co
     const ok = cfg({ motion: { categorySwitch: 'fade_scale', itemsEnter: 'rise', screenChange: 'zoom', sheet: 'slide_up', addToCart: 'bounce', speed: 'relaxed' } });
     assert.deepEqual(validateKioskConfig(ok), []);
     for (const fx of CATEGORY_SWITCH_FX) assert.deepEqual(validateKioskConfig(cfg({ motion: { categorySwitch: fx } })), [], fx);
-    const bad = cfg({ motion: { categorySwitch: 'spin', itemsEnter: 'explode', screenChange: 'push', sheet: 'zoom', addToCart: 'teleport', speed: 'warp' } });
+    const bad = cfg({ motion: { categorySwitch: 'spin', itemsEnter: 'explode', screenChange: 'push', sheet: 'zoom', addToCart: 'teleport', speed: 'warp', effects: 'turbo' } });
     assert.deepEqual(
       validateKioskConfig(bad).map((e) => `${e.path}:${e.code}`),
-      PRESET_MOTION_KEYS.map((k) => `motion.${k}:enum`),
+      [...PRESET_MOTION_KEYS, 'effects'].map((k) => `motion.${k}:enum`),
     );
+    for (const fx of MOTION_EFFECTS) assert.deepEqual(validateKioskConfig(cfg({ motion: { effects: fx } })), [], fx);
     // The server's vocabularies, word for word.
     assert.deepEqual(ITEMS_ENTER_FX, ['pop', 'cascade', 'rise', 'flip', 'none']);
     assert.deepEqual(SCREEN_CHANGE_FX, ['slide', 'fade', 'zoom', 'none']);
     assert.deepEqual(SHEET_FX, ['slide_up', 'scale', 'fade', 'none']);
     assert.deepEqual(ADD_TO_CART_FX, ['fly', 'bounce', 'none']);
     assert.deepEqual(MOTION_SPEEDS, ['fast', 'normal', 'relaxed']);
+    assert.deepEqual(MOTION_EFFECTS, ['auto', 'full', 'light']);
   });
 
   it('reduceMotion turns every transition off', () => {
@@ -1427,10 +1431,10 @@ describe('"הנפשות ומעברים" — the transitions (the server kiosk_co
 
   it('scales every duration by the speed; unknown values fall back to the defaults', () => {
     const at = (speed: string) => transitionSpec({ ...KIOSK_DEFAULTS.motion, speed: speed as never }, { reduceMotion: false });
-    assert.deepEqual(MOTION_SPEED_FACTOR, { fast: 0.7, normal: 1, relaxed: 1.4 });
+    assert.deepEqual(MOTION_SPEED_FACTOR, { fast: 0.75, normal: 1, relaxed: 1.35 });
     assert.equal(at('normal').categoryMs, TRANSITION_BASE_MS.categorySwitch.slide);
-    assert.equal(at('fast').categoryMs, Math.round(TRANSITION_BASE_MS.categorySwitch.slide * 0.7));
-    assert.equal(at('relaxed').screenMs, Math.round(TRANSITION_BASE_MS.screenChange.slide * 1.4));
+    assert.equal(at('fast').categoryMs, Math.round(TRANSITION_BASE_MS.categorySwitch.slide * 0.75));
+    assert.equal(at('relaxed').screenMs, Math.round(TRANSITION_BASE_MS.screenChange.slide * 1.35));
     assert.ok(at('fast').itemMs < at('normal').itemMs && at('normal').itemMs < at('relaxed').itemMs);
     assert.deepEqual(at('warp'), at('normal'));
     const t = transitionSpec({ categorySwitch: 'spin' as never, itemsEnter: 'none', sheet: 'none' }, { reduceMotion: false });
@@ -1463,20 +1467,20 @@ describe('"הנפשות ומעברים" — the transitions (the server kiosk_co
     assert.equal(staggerDelayMs(cascade, STAGGER_MAX_CARDS - 1), STAGGER_CAP_MS);
   });
 
-  it('the owner pace (07.10.2026): slow enough to see — normal ~450-500 ms, cards ~380 ms 70 ms apart, a grid within ~1 s', () => {
+  it('the owner pace (07.10.2026, "המעברים עוברים מאוד לאט"): snappy — a screen 220 ms, cards 260 ms 32 ms apart, a grid under half a second', () => {
     const t = transitionSpec(KIOSK_DEFAULTS.motion, { reduceMotion: false });
     assert.deepEqual(
       [t.screenMs, t.categoryMs, t.itemMs, t.staggerMs, t.staggerCapMs, t.sheetMs],
-      [480, 450, 380, 70, STAGGER_CAP_MS, 400],
+      [220, 240, 260, 32, STAGGER_CAP_MS, 220],
     );
-    assert.equal(STAGGER_CAP_MS, 600);
-    assert.ok(gridEnterMs(t) <= 1000, String(gridEnterMs(t)));
-    assert.equal(addMs(motionSpec({ animation: 'lively' }, { reduceMotion: false }, KIOSK_DEFAULTS.motion)), 700);
-    // Fast is about the first timing; relaxed 1.4 times normal, the add still under a second.
+    assert.equal(STAGGER_CAP_MS, 200);
+    assert.ok(gridEnterMs(t) < 500, String(gridEnterMs(t)));
+    assert.equal(addMs(motionSpec({ animation: 'lively' }, { reduceMotion: false }, KIOSK_DEFAULTS.motion)), 560);
+    // Fast three quarters of normal; relaxed a third longer, the add still under a second.
     const fast = transitionSpec({ ...KIOSK_DEFAULTS.motion, speed: 'fast' }, { reduceMotion: false });
-    assert.ok(fast.categoryMs <= 320 && fast.itemMs <= 280);
+    assert.deepEqual([fast.categoryMs, fast.itemMs], [180, 195]);
     const relaxed = transitionSpec({ ...KIOSK_DEFAULTS.motion, speed: 'relaxed' }, { reduceMotion: false });
-    assert.equal(relaxed.screenMs, Math.round(480 * 1.4));
+    assert.equal(relaxed.screenMs, Math.round(220 * 1.35));
     assert.ok(addMs(motionSpec({ animation: 'lively' }, { reduceMotion: false }, { addToCart: 'fly', speed: 'relaxed' })) < ADD_MAX_MS);
   });
 
@@ -2004,7 +2008,7 @@ describe('"טכנולוגי" — the tech style (the server UI_PRESETS["tech"], 
       [c.attract.cta.size, c.attract.cta.icon, c.attract.cta.animation, c.attract.cta.shadow, c.attract.cta.borderWidth],
       ['l', 'arrow', 'none', false, 0],
     );
-    assert.deepEqual(c.motion, { categorySwitch: 'fade', itemsEnter: 'cascade', screenChange: 'fade', sheet: 'scale', addToCart: 'fly', speed: 'normal' });
+    assert.deepEqual(c.motion, { categorySwitch: 'fade', itemsEnter: 'cascade', screenChange: 'fade', sheet: 'scale', addToCart: 'fly', speed: 'normal', effects: 'auto' });
     // The brand colour stays the business's: the style follows it.
     assert.equal(resolveTech({ theme: { uiStyle: 'tech' } }, { theme: { primaryColor: '#3B82F6' } }).theme.primaryColor, '#3B82F6');
   });
@@ -2136,5 +2140,161 @@ describe('"לוגו במסך התשלום" (payment.waitLogo, the server kiosk_c
     const bad = validateKioskConfig(cfgWith({ media: { ...ref, kind: 'video' }, style: 'glow' })).map((e) => e.path);
     assert.ok(bad.some((p) => p.startsWith('payment.waitLogo.media')), String(bad));
     assert.ok(bad.includes('payment.waitLogo.style'), String(bad));
+  });
+});
+
+import {
+  ADD_LIVELY as GOLD_ADD_LIVELY,
+  ADD_MAX_MS as GOLD_ADD_MAX_MS,
+  ADD_SUBTLE as GOLD_ADD_SUBTLE,
+  EASE_ENTER as GOLD_EASE_ENTER,
+  EASE_EXIT as GOLD_EASE_EXIT,
+  EASE_POP_RISE as GOLD_EASE_POP_RISE,
+  EASE_POP_SETTLE as GOLD_EASE_POP_SETTLE,
+  EASE_STRIP as GOLD_EASE_STRIP,
+  FRAME_MIN,
+  FRAME_P90_BUDGETS,
+  FRAME_SLOW_FACTOR,
+  FRAME_SLOW_SHARE,
+  MOTION_EFFECTS as GOLD_EFFECTS,
+  MOTION_SPEED_FACTOR as GOLD_SPEED,
+  STAGGER_CAP_MS as GOLD_STAGGER_CAP_MS,
+  STAGGER_MAX_CARDS as GOLD_STAGGER_MAX_CARDS,
+  TRANSITION_BASE_MS as GOLD_BASE,
+  frameVerdict,
+  gridEnterMs as goldGridEnterMs,
+  kioskChrome as goldChrome,
+  kioskRenderProfile,
+  lightenMotion,
+  motionSpec as goldMotionSpec,
+  profileMotion,
+  resolveKioskConfig as goldResolve,
+  resolveThemeColors as goldColors,
+  transitionSpec as goldTransitionSpec,
+  type KioskMotionSettings,
+} from './kioskConfig';
+
+/**
+ * The shared golden of the kiosk's motion — server/tests/fixtures/kiosk_motion_timings.json, the
+ * till's KioskTransitions / KioskMotion / KioskEase / KioskPerf numbers (pos-android
+ * perf/kiosk-render). This side's table, curves and resolved specs must be exactly it.
+ */
+describe('"הנפשות ומעברים" — the shared motion golden (kiosk_motion_timings.json, the till\'s table)', () => {
+  const gold = JSON.parse(readFileSync(join(process.cwd(), '..', 'server', 'tests', 'fixtures', 'kiosk_motion_timings.json'), 'utf8'));
+  const bezier = (c: number[]) => `cubic-bezier(${c.map((n) => String(n).replace(/^0\./, '.')).join(',')})`;
+
+  it('the table: each effect at normal speed, the speeds, the cascade', () => {
+    assert.deepEqual(GOLD_SPEED, gold.speedFactor);
+    assert.deepEqual(GOLD_BASE.screenChange, gold.screenChange);
+    assert.deepEqual(GOLD_BASE.categorySwitch, gold.categorySwitch);
+    assert.deepEqual(GOLD_BASE.itemsEnter, gold.itemsEnter);
+    assert.deepEqual(GOLD_BASE.stagger, gold.stagger);
+    assert.deepEqual(GOLD_BASE.sheet, gold.sheet);
+    assert.equal(GOLD_STAGGER_CAP_MS, gold.staggerCapMs);
+    assert.equal(GOLD_STAGGER_MAX_CARDS, gold.staggerMaxCards);
+  });
+
+  it('the add: the pop-and-fly ~560 ms, the count-up 360, the bounce-only and the reduce-motion fade', () => {
+    const pick = (m: typeof GOLD_ADD_LIVELY) => ({ popMs: m.popMs, popScale: m.popScale, flyMs: m.flyMs, arcDp: m.arcDp, bounce: m.bounce, countUpMs: m.countUpMs });
+    assert.deepEqual(pick(GOLD_ADD_LIVELY), gold.add.lively);
+    assert.deepEqual(pick(GOLD_ADD_SUBTLE), gold.add.subtle);
+    assert.equal(GOLD_ADD_LIVELY.popMs + GOLD_ADD_LIVELY.flyMs, 560);
+    assert.equal(GOLD_ADD_MAX_MS, gold.add.maxMs);
+    const on = { reduceMotion: false };
+    assert.equal(goldMotionSpec({ animation: 'lively' }, on, { addToCart: 'bounce' }).bounce, gold.add.bounceOnly.lively);
+    assert.equal(goldMotionSpec({ animation: 'subtle' }, on, { addToCart: 'bounce' }).bounce, gold.add.bounceOnly.subtle);
+    assert.equal(goldMotionSpec({ animation: 'lively' }, { reduceMotion: true }).fadeMs, gold.add.reduceMotionFadeMs);
+  });
+
+  it('the curves: arrivals, departures, the push as one strip, the pop — and the CSS plays exactly them', () => {
+    assert.equal(GOLD_EASE_ENTER, bezier(gold.curves.arrive));
+    assert.equal(GOLD_EASE_EXIT, bezier(gold.curves.leave));
+    assert.equal(GOLD_EASE_STRIP, bezier(gold.curves.strip));
+    assert.equal(GOLD_EASE_POP_RISE, bezier(gold.curves.popRise));
+    assert.equal(GOLD_EASE_POP_SETTLE, bezier(gold.curves.popSettle));
+    const css = readFileSync(join(process.cwd(), 'src', 'components', 'dashboard', 'kiosks', 'preview-motion.tsx'), 'utf8');
+    // No other curve, and no old time, left in the transitions' CSS.
+    const curves = new Set(css.match(/cubic-bezier\([^)]*\)/g) ?? []);
+    for (const c of curves) assert.fail(`a literal curve in MOTION_CSS: ${c}`);
+    assert.ok(css.includes('.k-anim { animation-duration: var(--k-ms, 220ms); animation-timing-function: ${EASE_ENTER};'));
+    assert.ok(css.includes('.k-leave.k-anim { animation-fill-mode: forwards; animation-timing-function: ${EASE_EXIT}; }'));
+    assert.ok(css.includes('.k-anim.k-push-in, .k-leave.k-anim.k-push-out { animation-timing-function: ${EASE_STRIP}; }'));
+  });
+
+  it('every example resolves to the golden times — full and light, every speed', () => {
+    for (const ex of gold.examples as Array<{ motion: KioskMotionSettings; light?: boolean; animation: 'lively' | 'subtle'; transitions: Record<string, number>; add: Record<string, number> }>) {
+      const played = profileMotion(ex.motion, ex.light ? 'light' : 'full');
+      const t = goldTransitionSpec(played, { reduceMotion: false });
+      const got = { categoryMs: t.categoryMs, itemMs: t.itemMs, staggerMs: t.staggerMs, staggerCapMs: t.staggerCapMs, screenMs: t.screenMs, sheetMs: t.sheetMs, gridEnterMs: goldGridEnterMs(t) };
+      assert.deepEqual(got, ex.transitions, JSON.stringify(ex.motion));
+      const m = goldMotionSpec({ animation: ex.animation }, { reduceMotion: false }, played);
+      assert.deepEqual({ popMs: m.popMs, flyMs: m.flyMs, countUpMs: m.countUpMs }, ex.add, JSON.stringify(ex.motion));
+    }
+  });
+});
+
+describe('"אפקטים" — motion.effects: auto / full / light (the till\'s KioskPerf)', () => {
+  const gold = JSON.parse(readFileSync(join(process.cwd(), '..', 'server', 'tests', 'fixtures', 'kiosk_motion_timings.json'), 'utf8'));
+
+  it('the vocabulary, its default (auto: the device decides) and no style choosing it', () => {
+    assert.deepEqual(GOLD_EFFECTS, gold.effects);
+    assert.equal(goldResolve().motion.effects, 'auto');
+    for (const style of ['ios', 'wolt', 'classic', 'minimal_dark', 'tech'] as const) {
+      assert.equal(goldResolve({ theme: { uiStyle: style } }).motion.effects, 'auto', style);
+    }
+    assert.equal(goldResolve({ motion: { effects: 'light' } }, { theme: { uiStyle: 'classic' } }).motion.effects, 'light');
+  });
+
+  it('light: fades at the fast pace, no cascade ("none" stays none), the add keeps its kind', () => {
+    const wolt = goldResolve().motion;
+    const light = lightenMotion(wolt);
+    assert.deepEqual(
+      { categorySwitch: light.categorySwitch, itemsEnter: light.itemsEnter, screenChange: light.screenChange, sheet: light.sheet, speed: light.speed },
+      gold.light,
+    );
+    assert.equal(light.addToCart, wolt.addToCart);
+    assert.equal(light.effects, 'auto');
+    const none = lightenMotion({ ...wolt, categorySwitch: 'none', screenChange: 'none', sheet: 'none' });
+    assert.deepEqual([none.categorySwitch, none.screenChange, none.sheet], ['none', 'none', 'none']);
+    assert.equal(profileMotion(wolt, 'full'), wolt);
+  });
+
+  it('the profile: the config first; auto — light when the device asks for less motion or measured slow', () => {
+    assert.equal(kioskRenderProfile('full', { reducedMotion: true, slow: true }), 'full');
+    assert.equal(kioskRenderProfile('light'), 'light');
+    assert.equal(kioskRenderProfile('auto'), 'full');
+    assert.equal(kioskRenderProfile(undefined), 'full');
+    assert.equal(kioskRenderProfile('auto', { reducedMotion: true }), 'light');
+    assert.equal(kioskRenderProfile('auto', { slow: true }), 'light');
+    assert.equal(kioskRenderProfile('auto', { slow: false }), 'full');
+    assert.equal(kioskRenderProfile('auto', { slow: null }), 'full');
+  });
+
+  it('the slow-frame probe judges as the till does: enough frames, a quarter late or the slowest tenth at two budgets', () => {
+    assert.deepEqual([FRAME_MIN, FRAME_SLOW_FACTOR, FRAME_SLOW_SHARE, FRAME_P90_BUDGETS], [
+      gold.frameProbe.minFrames, gold.frameProbe.slowFactor, gold.frameProbe.slowShare, gold.frameProbe.p90Budgets,
+    ]);
+    const steady = Array.from({ length: 160 }, () => 16.7);
+    assert.equal(frameVerdict(steady).slow, false);
+    assert.equal(frameVerdict(steady.slice(0, 100).map(() => 40)).slow, false, 'too few frames judge nothing');
+    // A quarter over 1.25 budgets (≈20.8 ms at 60 Hz).
+    const jank = steady.map((d, i) => (i % 4 === 0 ? 25 : d));
+    assert.equal(frameVerdict(jank).slow, true);
+    assert.ok(Math.abs(frameVerdict(jank).slowShare - 0.25) < 1e-9);
+    // The slowest tenth at two budgets and more.
+    const tail = steady.map((d, i) => (i % 8 === 0 ? 34 : d));
+    assert.equal(frameVerdict(tail).p90Ms, 34);
+    assert.equal(frameVerdict(tail).slow, true);
+    assert.equal(frameVerdict(steady.map((d) => d / 2), 120).slow, false, 'a 120 Hz screen at its own budget');
+    assert.deepEqual(frameVerdict([]), { frames: 0, p50Ms: 0, p90Ms: 0, slowShare: 0, budgetMs: 1000 / 60, slow: false });
+  });
+
+  it('light draws none of the tech style\'s glow and scan line; the look stays', () => {
+    const c = goldResolve({ theme: { uiStyle: 'tech' } });
+    const full = goldChrome(c.theme, goldColors(c.theme), c.general, 'full');
+    const light = goldChrome(c.theme, goldColors(c.theme), c.general, 'light');
+    assert.ok(full.addGlowMs > 0 && full.scanMs > 0);
+    assert.deepEqual([light.addGlowMs, light.scanMs], [0, 0]);
+    assert.deepEqual({ ...light, addGlowMs: full.addGlowMs, scanMs: full.scanMs }, full);
   });
 });

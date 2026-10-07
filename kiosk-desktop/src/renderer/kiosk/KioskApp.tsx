@@ -24,6 +24,7 @@ import {
   kioskOpenAt,
   messagePlacement,
   motionSpec,
+  profileMotion,
   resolveThemeColors,
   transitionSpec,
   stepMode,
@@ -81,6 +82,7 @@ import {
   ReachSheets,
   ReachToggle,
   REACH_STRIP_PX,
+  useKioskRenderProfile,
 } from '@kiosk-shared/index';
 import { configuredText, kioskTextOf, webTextOverride } from '@dash-lib/kioskTexts';
 import { localDateTimeOf, promotionsOf } from '@dash-lib/kioskMoney';
@@ -491,9 +493,12 @@ export function KioskApp({ view }: { view: KioskView }) {
   const wide = size.w >= 600;
   const panel = cartPanelShown(cfg.theme, size.w);
   const side = cfg.theme.categoryLayout !== 'top';
-  const motion = motionSpec(cfg.theme, cfg.general, cfg.motion);
-  // "הנפשות ומעברים": the dashboard's choices, all off with reduce motion.
-  const transitions = transitionSpec(cfg.motion, cfg.general);
+  // "אפקטים": the config's profile, or this device's (prefers-reduced-motion, a slow first-frames probe).
+  const profile = useKioskRenderProfile(cfg.motion.effects);
+  const played = profileMotion(cfg.motion, profile);
+  const motion = motionSpec(cfg.theme, cfg.general, played);
+  // "הנפשות ומעברים": the dashboard's choices (the light profile's cheaper ones), all off with reduce motion.
+  const transitions = transitionSpec(played, cfg.general);
   const colors = resolveThemeColors(cfg.theme);
   // "גודל מוצרים" (layout.productSize) moves the density's columns.
   const cols = productColumns(catalogColumns(cfg.theme.gridDensity, wide, panel, side), layoutOf(cfg).productSize, size.w);
@@ -614,6 +619,7 @@ export function KioskApp({ view }: { view: KioskView }) {
     panel,
     screen: band.top + band.bottom > 0 ? attractSize : size,
     ctaBox: attractBox,
+    light: profile === 'light',
     live,
   };
   live.noteField = (value, onChange) => <NoteField m={m} value={value} onOpen={() => setEntry(noteEntry(m, value, onChange))} />;

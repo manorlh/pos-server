@@ -24,6 +24,7 @@ import hashlib
 import json
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException, Response
@@ -1078,7 +1079,7 @@ def test_the_tech_style_is_one_pick_its_theme_cta_and_motion():
     assert cfg["attract"]["cta"]["icon"] == "arrow" and cfg["attract"]["cta"]["position"] == "bottom_center"
     assert cfg["motion"] == {
         "categorySwitch": "fade", "itemsEnter": "cascade", "screenChange": "fade", "sheet": "scale",
-        "addToCart": "fly", "speed": "normal",
+        "addToCart": "fly", "speed": "normal", "effects": "auto",
     }
     assert C.preset_layer("tech")["theme"] == C.UI_PRESETS["tech"]
     # The brand colour stays configurable on top of the style.
@@ -1633,12 +1634,14 @@ def test_motion_defaults_follow_the_style_and_animate_in_every_style():
     d = C.default_config()
     assert d["motion"] == {
         "categorySwitch": "slide", "itemsEnter": "cascade", "screenChange": "slide",
-        "sheet": "scale", "addToCart": "fly", "speed": "normal",
+        "sheet": "scale", "addToCart": "fly", "speed": "normal", "effects": "auto",
     }
-    assert C.UI_PRESET_MOTION["wolt"] == d["motion"] and C.PRESET_MOTION_KEYS == MOTION_KEYS
+    # "אפקטים" is the device's (auto), never a style's: the presets decide the six transition keys.
+    assert {**C.UI_PRESET_MOTION["wolt"], "effects": "auto"} == d["motion"] and C.PRESET_MOTION_KEYS == MOTION_KEYS
     for style, preset in C.UI_PRESET_MOTION.items():
+        assert "effects" not in preset, style
         cfg = C.resolve({"theme": {"uiStyle": style}})
-        assert cfg["motion"] == preset, style
+        assert cfg["motion"] == {**preset, "effects": "auto"}, style
         assert C.validate_config(cfg) == [], style
         # The owner's request, in every style: the category's grid moves and its dishes pop in.
         assert preset["categorySwitch"] != "none" and preset["itemsEnter"] in ("pop", "cascade"), style
@@ -1658,6 +1661,7 @@ def test_motion_is_layered_company_shop_kiosk_and_explicit_beats_the_style():
         "itemsEnter": "flip",  # the shop's
         "screenChange": "fade", "sheet": "fade", "addToCart": "fly",  # the minimal_dark style's
         "speed": "fast",  # the company's, above the style's "relaxed"
+        "effects": "auto",  # the default: the device decides
     }
     assert C.explicit_layers(company, shop, kiosk)["motion"] == {"speed": "fast", "itemsEnter": "flip", "categorySwitch": "push"}
     # null inherits; an empty section overrides nothing.
@@ -1677,11 +1681,13 @@ def test_motion_validation():
         assert C.validate_layer({"motion": {"categorySwitch": fx}})[1] == [], fx
     _c, errors = C.validate_layer({"motion": {
         "categorySwitch": "spin", "itemsEnter": "explode", "screenChange": "push", "sheet": "zoom",
-        "addToCart": "teleport", "speed": "warp", "wobble": True,
+        "addToCart": "teleport", "speed": "warp", "effects": "turbo", "wobble": True,
     }})
     got = paths(errors)
-    for key in MOTION_KEYS:
+    for key in MOTION_KEYS + ("effects",):
         assert got[f"motion.{key}"] == "invalid_value", key
+    for effects in ("auto", "full", "light"):
+        assert C.validate_layer({"motion": {"effects": effects}}) == ({"motion": {"effects": effects}}, []), effects
     assert got["motion.wobble"] == "unknown_key"
     _c, errors = C.validate_layer({"motion": "lively"})
     assert paths(errors)["motion"] == "invalid_type"
@@ -1692,6 +1698,7 @@ def test_motion_validation():
     assert enums["motionSheet"] == ["slide_up", "scale", "fade", "none"]
     assert enums["motionAddToCart"] == ["fly", "bounce", "none"]
     assert enums["motionSpeed"] == ["fast", "normal", "relaxed"]
+    assert enums["motionEffects"] == ["auto", "full", "light"]
 
 
 def test_motion_is_saved_and_reaches_the_kiosk(w):
@@ -1701,7 +1708,7 @@ def test_motion_is_saved_and_reaches_the_kiosk(w):
     out = sync(w, w.kiosk)
     assert out["config"]["motion"] == {
         "categorySwitch": "push", "itemsEnter": "rise", "screenChange": "fade",
-        "sheet": "scale", "addToCart": "fly", "speed": "relaxed",
+        "sheet": "scale", "addToCart": "fly", "speed": "relaxed", "effects": "auto",
     }
     assert out["configVersion"] == C.config_version(out["config"])
     view = get_settings(w, "machine", w.kiosk.id)
@@ -1711,10 +1718,38 @@ def test_motion_is_saved_and_reaches_the_kiosk(w):
     before = out["configVersion"]
     put(w, "machine", w.kiosk.id, {"theme": {"uiStyle": "classic"}, "motion": {"itemsEnter": "flip"}})
     assert sync(w, w.kiosk)["configVersion"] != before
+    # "אפקטים: קל" for this kiosk reaches it (a new config version), the rest inherited.
+    before = sync(w, w.kiosk)["configVersion"]
+    put(w, "machine", w.kiosk.id, {"theme": {"uiStyle": "classic"}, "motion": {"itemsEnter": "flip", "effects": "light"}})
+    out = sync(w, w.kiosk)
+    assert out["config"]["motion"]["effects"] == "light" and out["configVersion"] != before
     # Refused with the contract's 422 shape.
     err = refused(put, w, "machine", w.kiosk.id, {"motion": {"sheet": "spin"}})
     assert err.status_code == 422
     assert {"path": "motion.sheet", "code": "invalid_value"}.items() <= err.detail["errors"][0].items()
+
+
+def test_the_shared_motion_golden_speaks_the_configs_vocabulary():
+    """tests/fixtures/kiosk_motion_timings.json — the one motion table of the till (KioskTransitions,
+    KioskMotion, KioskEase, KioskPerf), the dashboard and the web kiosks (kioskConfig.ts) — names
+    exactly the config's effects and every one of them, and its examples are valid motion configs."""
+    gold = json.loads((Path(__file__).parent / "fixtures" / "kiosk_motion_timings.json").read_text(encoding="utf-8"))
+    assert tuple(gold["screenChange"]) == C.MOTION_SCREEN_CHANGE
+    assert tuple(gold["categorySwitch"]) == C.MOTION_CATEGORY_SWITCH
+    assert tuple(gold["itemsEnter"]) == C.MOTION_ITEMS_ENTER
+    assert tuple(gold["stagger"]) == C.MOTION_ITEMS_ENTER
+    assert tuple(gold["sheet"]) == C.MOTION_SHEET
+    assert tuple(gold["speedFactor"]) == C.MOTION_SPEEDS
+    assert tuple(gold["effects"]) == C.MOTION_EFFECTS
+    for table in ("screenChange", "categorySwitch", "itemsEnter", "stagger", "sheet"):
+        assert gold[table]["none"] == 0 and all(v > 0 for k, v in gold[table].items() if k != "none"), table
+    # Snappy (the owner, 07.10.2026): a screen at most 220 ms, a window 260, the last card by 200 ms.
+    assert max(gold["screenChange"].values()) <= 220 and max(gold["sheet"].values()) <= 260 and gold["staggerCapMs"] == 200
+    assert gold["add"]["lively"]["popMs"] + gold["add"]["lively"]["flyMs"] == 560 and gold["add"]["lively"]["countUpMs"] == 360
+    assert gold["light"] == {"categorySwitch": "fade", "itemsEnter": "none", "screenChange": "fade", "sheet": "fade", "speed": "fast"}
+    for ex in gold["examples"]:
+        assert C.validate_layer({"motion": ex["motion"]})[1] == [], ex["motion"]
+        assert ex["animation"] in C.ANIMATIONS
 
 
 # ── "ללא סוג שירות" and "לוגו במסך התשלום" (the owner, 07.10.2026) ─────────────

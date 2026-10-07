@@ -332,6 +332,11 @@ export interface PreviewModel {
   mealOptions?: (p: PProduct) => PProduct[];
   /** "נגיש" (layout.reach / reachToggle): this customer's ♿, kept by the screens' owner (reset at rest). */
   reach?: { toggled: boolean; toggle: () => void };
+  /**
+   * "אפקטים" (`motion.effects`): the kiosk draws the light profile — no shadows, no cascade, fades at
+   * the fast pace (the roots pass profileMotion's transitions), no tech glow or scan line. Absent: full.
+   */
+  light?: boolean;
   /** The real kiosk: the basket with its promotions (absent: the lines' own sum, as the preview). */
   pricing?: CartPricing | null;
   /** The real kiosk: the meal's window for a product that is a meal, else null. */
@@ -372,13 +377,15 @@ const STYLE_COLORS: Record<KioskMessage['style'], { bg: string; fg: string }> = 
 /* ---------------------------------------------------- the style's chrome */
 
 const CHROME_CACHE = new WeakMap<KioskConfig, KioskChrome>();
+const CHROME_CACHE_LIGHT = new WeakMap<KioskConfig, KioskChrome>();
 
 /** The style's chrome (lib/kioskConfig kioskChrome): the backdrop, the outline, the status line, the press… */
-export function chromeOf(m: Pick<PreviewModel, 'cfg' | 'c'>): KioskChrome {
-  let ch = CHROME_CACHE.get(m.cfg);
+export function chromeOf(m: Pick<PreviewModel, 'cfg' | 'c' | 'light'>): KioskChrome {
+  const cache = m.light ? CHROME_CACHE_LIGHT : CHROME_CACHE;
+  let ch = cache.get(m.cfg);
   if (!ch) {
-    ch = kioskChrome(m.cfg.theme, m.c, m.cfg.general);
-    CHROME_CACHE.set(m.cfg, ch);
+    ch = kioskChrome(m.cfg.theme, m.c, m.cfg.general, m.light ? 'light' : 'full');
+    cache.set(m.cfg, ch);
   }
   return ch;
 }
@@ -392,12 +399,14 @@ export function statusLinePx(m: Pick<PreviewModel, 'cfg' | 'c'>): number {
  * What the kiosk's root takes from the chrome: tabular figures for every price and count, and the
  * press (`.k-press`: every button sinks to `--k-press` while held — PREVIEW_CSS).
  */
-export function chromeRoot(m: Pick<PreviewModel, 'cfg' | 'c'>): { className: string; style: CSSProperties } {
+export function chromeRoot(m: Pick<PreviewModel, 'cfg' | 'c' | 'light'>): { className: string; style: CSSProperties } {
   const ch = chromeOf(m);
   const style: CSSProperties = {};
   if (ch.tabularFigures) style.fontVariantNumeric = 'tabular-nums';
   if (ch.pressScale !== null) (style as Record<string, string>)['--k-press'] = String(ch.pressScale);
-  return { className: ch.pressScale !== null ? 'k-press' : '', style };
+  // "אפקטים" light: `.k-light` drops every shadow and blur (PREVIEW_CSS).
+  const className = [ch.pressScale !== null ? 'k-press' : '', m.light ? 'k-light' : ''].filter(Boolean).join(' ');
+  return { className, style };
 }
 
 /**
@@ -510,6 +519,8 @@ export function cardStyle(m: PreviewModel): CSSProperties {
       return { background: dark ? '#FFFFFF0D' : '#0000000A', borderRadius: m.radius };
     default:
       if (outline) return { background: m.c.surface, border: `1px solid ${outline}`, borderRadius: m.radius };
+      // The light profile ("אפקטים"): a hairline edge instead of the shadow (the till's KioskEffects.shadows).
+      if (m.light) return { background: m.c.surface, border: `1px solid ${m.c.border}`, borderRadius: m.radius };
       return {
         background: m.c.surface,
         borderRadius: m.radius,
@@ -2403,7 +2414,7 @@ export function Flyer({
     <div
       ref={ref}
       aria-hidden
-      className="pointer-events-none absolute z-50 flex flex-col overflow-hidden"
+      className="k-fly pointer-events-none absolute z-50 flex flex-col overflow-hidden"
       style={{ left: flight.x - w / 2, top: flight.y - h / 2, width: w, height: h, borderRadius: Math.round(18 * dp), background: surface, color: text, opacity: 0, willChange: 'transform, opacity' }}
     >
       <div className="w-full shrink-0 overflow-hidden" style={{ height: w, background: '#00000010' }}>
@@ -3337,5 +3348,8 @@ ${MOTION_CSS}
 @keyframes kAddGlow { 0% { opacity: 0; } 30% { opacity: 1; } 100% { opacity: 0; } }
 .k-add-glow { position: absolute; inset: -1px; pointer-events: none; opacity: 0; box-shadow: 0 0 0 1px var(--k-glow), 0 0 16px 1px var(--k-glow); animation: kAddGlow var(--k-glow-ms, 150ms) ease-out; }
 .k-reduce .k-scan, .k-reduce .k-add-glow { display: none; }
+.k-light [class*="shadow"], .k-light .k-fly { box-shadow: none !important; }
+.k-light [class*="backdrop-blur"] { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+.k-light .blur-2xl, .k-light .blur-3xl, .k-light .k-scan, .k-light .k-add-glow { display: none; }
 @media (prefers-reduced-motion: reduce) { .k-scan, .k-add-glow { display: none; } }
 `;

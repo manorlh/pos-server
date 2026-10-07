@@ -21,3 +21,5 @@ export * from './types';
 export * from './layouts';
 // "איך תרצו לשלם?" (docs/SPEC_KIOSK.md §23): the method step and "גשו לקופה לתשלום" (the browser kiosk uses them).
 export * from './pay-method';
+// "אפקטים" (`motion.effects`): the web kiosks' render profile — the config's, or the device's (auto).
+export * from './render-profile';
