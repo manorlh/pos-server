@@ -199,6 +199,11 @@ from app.routers import remote_credits as remote_credits_router  # noqa: E402
 
 app.include_router(remote_credits_router.till_router, prefix=_prefix)
 app.include_router(remote_credits_router.router, prefix=_prefix)
+# "זיכוי באשראי מהענן (Z-Credit)" (docs/SPEC_REMOTE_CREDIT.md §11): the cloud refunds the card,
+# a till issues the credit note.
+from app.routers import cloud_card_refunds as cloud_card_refunds_router  # noqa: E402
+
+app.include_router(cloud_card_refunds_router.router, prefix=_prefix)
 app.include_router(promotions_router.router, prefix=_prefix)
 app.include_router(tables_router.router, prefix=_prefix)
 app.include_router(printers_router.router, prefix=_prefix)

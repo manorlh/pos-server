@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     # from jwt_secret_key; set it in production before rotating that key.
     payment_secrets_key: str = ""
 
+    # "זיכוי באשראי מהענן (Z-Credit)" (docs/SPEC_REMOTE_CREDIT.md §11): the cloud refunds a
+    # Z-Credit card sale through Z-Credit's web API, and a till issues the credit note
+    # (remote-credit mode `card_refunded`). OFF by default: with it off the dashboard shows
+    # the option disabled and no request ever goes to Z-Credit. Turn it on only once the
+    # tills that will issue those credit notes run a version that knows the mode.
+    zcredit_cloud_refunds_enabled: bool = False
+
     # Notifications / 019 SMS (docs/SPEC_NOTIFICATIONS_CLUB.md). Live sending is its own
     # explicit switch, OFF by default: with it off no request ever goes to 019's live
     # endpoint, whatever a provider config says (mock and 019's /api/test only).

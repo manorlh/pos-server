@@ -6,7 +6,11 @@
  * No React and no `@/` imports: compiled and run by `npm test` on its own.
  */
 
-export type RemoteCreditMode = 'no_money' | 'prepared';
+/**
+ * `card_refunded` ("זוכה באשראי מהענן", §11) is never picked here: a cloud card refund
+ * (lib/cloudCardRefund.ts) creates it, and it cannot be cancelled — only sent to another till.
+ */
+export type RemoteCreditMode = 'no_money' | 'prepared' | 'card_refunded';
 
 export type RemoteCreditStatus =
   | 'queued'
@@ -17,7 +21,13 @@ export type RemoteCreditStatus =
   | 'cancelled'
   | 'expired';
 
+/** The modes the dialog offers. */
 export const REMOTE_CREDIT_MODES: readonly RemoteCreditMode[] = ['no_money', 'prepared'];
+
+/** A request the dashboard may cancel while pending: not a card the cloud already refunded. */
+export function isCancellableRemoteCredit(req: { status: RemoteCreditStatus; mode: RemoteCreditMode }): boolean {
+  return PENDING_REMOTE_CREDIT.has(req.status) && req.mode !== 'card_refunded';
+}
 
 /** The statuses a till still has to act on; the dialog polls while one of these. */
 export const PENDING_REMOTE_CREDIT: ReadonlySet<RemoteCreditStatus> = new Set<RemoteCreditStatus>([
@@ -69,6 +79,8 @@ export interface RemoteCreditRequest {
   shopName?: string | null;
   online: boolean;
   mode: RemoteCreditMode;
+  /** Mode `card_refunded`: the cloud card refund whose credit note this is. */
+  cardRefundId?: string | null;
   fullCredit: boolean;
   lines: RemoteCreditLine[];
   amount: string;
