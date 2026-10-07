@@ -88,6 +88,12 @@ UNKNOWN_PAYMENT_METHOD = "other"
 # (rule 4 above). OpenFormat payment type 6, "תלוש החלפה".
 EXCHANGE_PAYMENT_METHOD = "exchange"
 
+# "ללא החזר כספי — עסקה שלא בוצעה" (docs/SPEC_REMOTE_CREDIT.md): the tender split's own
+# bucket for a credit leg that moved no money (`TransactionPayment.no_money_movement`) and
+# does not cancel a sale of its own shift — never cash, card or the drawer. The legs keep
+# their real method; only the X/Z split (`shift_totals.compute_totals`) files them here.
+NO_MONEY_BUCKET = "no_money"
+
 # Rounding slack allowed when checking that the legs sum to the document.
 #
 # Per leg, not flat: amounts are Numeric(12,2) here and integer agorot on the till,

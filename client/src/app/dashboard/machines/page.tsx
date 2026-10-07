@@ -23,7 +23,9 @@ import { toast } from 'sonner';
 import Link from 'next/link';
 import { Monitor, Plus, RefreshCw, Info, Trash2, Smartphone, FilePlus2, Search, Send } from 'lucide-react';
 import { ClockDriftBanner } from '@/components/dashboard/machine-health';
-import { formatDistanceToNow, format } from 'date-fns';
+import { DocumentPrefixConflictsAlert } from '@/components/dashboard/machines/document-prefix';
+import { formatDistanceToNow } from 'date-fns';
+import { formatDateTime } from '@/lib/format';
 import { QRCodeSVG } from 'qrcode.react';
 import type { PairingSessionCreateResponse } from '@/lib/types';
 import { useRoleAccess } from '@/lib/accessApi';
@@ -47,17 +49,28 @@ import { AREA_NONE } from '@/lib/api';
 import { DeviceModelSelect } from '@/components/dashboard/machines/device-model';
 import {
   DeviceCapabilityList,
+  DevicePlatformPicker,
   DeviceProfileDialog,
   DeviceRolePicker,
   EMPTY_KIOSK_DRAFT,
+  KdsScreenFields,
   KioskOptionsFields,
 } from '@/components/dashboard/machines/device-role';
+import { WebKioskLink } from '@/components/dashboard/machines/web-kiosk-link';
+import { WebScreenLink } from '@/components/dashboard/machines/web-screen-link';
 import {
+  EMPTY_KDS_SCREEN,
   addDeviceMissing,
   deviceProfileErrorMessage,
+  isFiscalRole,
   kioskDraftError,
+  modelNeeded,
   pairingRequestBody,
+  platformsFor,
+  roleNeedsShop,
+  type DevicePlatform,
   type DeviceRole,
+  type KdsScreenDraft,
   type KioskDraft,
 } from '@/lib/deviceProfile';
 
@@ -95,6 +108,12 @@ export default function MachinesPage() {
    */
   const [pairDeviceRole, setPairDeviceRole] = useState<DeviceRole | ''>('');
   const [pairKiosk, setPairKiosk] = useState<KioskDraft>(EMPTY_KIOSK_DRAFT);
+  /** Android unless chosen: a Windows install cannot redeem an Android code, nor back. */
+  const [pairPlatform, setPairPlatform] = useState<DevicePlatform>('android');
+  /** A KDS's screen (kind, stations) / the board's name: made as it pairs. */
+  const [pairKds, setPairKds] = useState<KdsScreenDraft>(EMPTY_KDS_SCREEN);
+  /** "מסך — לא קופה": a KDS or the board gets no register number, no sales, no Z. */
+  const pairIsDisplay = pairDeviceRole !== '' && !isFiscalRole(pairDeviceRole);
 
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignShopId, setAssignShopId] = useState('');
@@ -207,6 +226,8 @@ export default function MachinesPage() {
     setPairDeviceModel('');
     setPairDeviceRole('');
     setPairKiosk(EMPTY_KIOSK_DRAFT);
+    setPairPlatform('android');
+    setPairKds(EMPTY_KDS_SCREEN);
   };
 
   /**
@@ -240,21 +261,28 @@ export default function MachinesPage() {
     onError: (err: unknown) =>
       toast.error(deviceProfileErrorMessage(err) ?? axiosErrorToToastMessage(err, tc('error'))),
   });
-  const pairMissing = addDeviceMissing({
+  const pairDraft = {
     role: pairDeviceRole,
     model: pairDeviceModel,
     machineCode,
     companyId: pairCompanyId,
     shopId: pairShopId,
-  });
+    platform: pairPlatform,
+    kds: pairKds,
+  };
+  const pairMissing = addDeviceMissing(pairDraft);
   const pairMissingHint =
     pairMissing === 'role'
       ? t('deviceRole.required')
       : pairMissing === 'model'
         ? t('deviceModel.required')
         : pairMissing === 'shop'
-          ? t('deviceRole.kioskNeedsShop')
-          : undefined;
+          ? pairIsDisplay
+            ? t('deviceRole.displayNeedsShop')
+            : t('deviceRole.kioskNeedsShop')
+          : pairMissing === 'stations'
+            ? t('deviceRole.stationsRequired')
+            : undefined;
 
   const createFieldSession = useMutation({
     mutationFn: () => api.post<PairingSessionCreateResponse>('/pairing/sessions'),
@@ -600,6 +628,12 @@ export default function MachinesPage() {
 
       <ScopeGate resolution={resolution}>
       {!isLoading ? <ClockDriftBanner machines={visibleMachines} /> : null}
+      {/* "קידומות מסמכים כפולות בעסק" (docs/SPEC_DOCUMENT_PREFIX.md §5): the business's one tax file. */}
+      <DocumentPrefixConflictsAlert
+        companyId={effective.companyId}
+        shopId={effective.shopId}
+        canEdit={canProduceZ}
+      />
       {!isLoading ? (
         <TerminalMismatchAlert
           count={terminalMismatchCount}
@@ -764,7 +798,7 @@ export default function MachinesPage() {
           if (!open) resetPairDialog();
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-h-[92dvh] max-w-md overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t('pairTitle')}</DialogTitle>
           </DialogHeader>
@@ -781,6 +815,12 @@ export default function MachinesPage() {
                   <p className="text-4xl font-mono font-bold tracking-widest text-primary">{pairingCode}</p>
                   <p className="text-xs text-muted-foreground">{t('pairExpiry')}</p>
                   <p className="text-sm text-muted-foreground animate-pulse">{t('pairWaiting')}</p>
+                  {/* "דפדפן (Web)": the kiosk's link and QR with the code (docs/SPEC_KIOSK.md §27). */}
+                  {pairDeviceRole === 'kiosk' && pairPlatform === 'web' ? <WebKioskLink code={pairingCode} /> : null}
+                  {/* The browser KDS / board: `/kds`, `/board` with the code (docs/SPEC_KDS.md §13). */}
+                  {(pairDeviceRole === 'kds' || pairDeviceRole === 'order_status_board') && pairPlatform === 'web' ? (
+                    <WebScreenLink code={pairingCode} role={pairDeviceRole} />
+                  ) : null}
                 </>
               )}
               {pairPreAssignLabel ? (
@@ -789,9 +829,13 @@ export default function MachinesPage() {
               {pairDeviceRole === 'kiosk' ? (
                 <p className="text-sm text-muted-foreground">{t('deviceRole.kioskReady')}</p>
               ) : null}
+              {pairIsDisplay ? (
+                <p className="text-sm text-muted-foreground">{t('deviceRole.displayReady')}</p>
+              ) : null}
               {/* A peek, not a reservation: shown only until the device pairs, since the
-                  shop's next number moves on the moment this one is taken. */}
+                  shop's next number moves on the moment this one is taken. A screen gets none. */}
               {!pairingComplete &&
+              !pairIsDisplay &&
               pairShopId &&
               pairNextRegister &&
               sameId(pairNextRegister.shopId, pairShopId) ? (
@@ -823,22 +867,46 @@ export default function MachinesPage() {
               {/* "סוג מכשיר (תפקיד)" and "דגם מכשיר": both required (docs/SPEC_DEVICE_ROLE_MODEL.md). */}
               <div className="space-y-2">
                 <Label>{t('deviceRole.label')}</Label>
-                <DeviceRolePicker value={pairDeviceRole} onChange={setPairDeviceRole} />
-                <p className="text-xs text-muted-foreground">{t('deviceRole.kdsNote')}</p>
+                <DeviceRolePicker
+                  value={pairDeviceRole}
+                  onChange={(role) => {
+                    setPairDeviceRole(role);
+                    // The browser runs a kiosk, a KDS or a board — never a till.
+                    if (!platformsFor(role).includes(pairPlatform)) setPairPlatform('android');
+                  }}
+                />
+                {pairIsDisplay ? (
+                  <p className="rounded-md bg-sky-50 p-2 text-xs text-sky-900 dark:bg-sky-950/40 dark:text-sky-200">
+                    {t('deviceRole.kdsNote')}
+                  </p>
+                ) : null}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="pair-device-model">{t('deviceModel.label')}</Label>
-                <DeviceModelSelect
-                  id="pair-device-model"
-                  value={pairDeviceModel}
-                  onChange={setPairDeviceModel}
-                />
-                {pairDeviceModel ? (
-                  <DeviceCapabilityList model={pairDeviceModel} kiosk={pairDeviceRole === 'kiosk'} />
-                ) : (
-                  <p className="text-xs text-muted-foreground">{t('deviceModel.hint')}</p>
-                )}
+                <Label>{t('deviceRole.platform')}</Label>
+                <DevicePlatformPicker value={pairPlatform} onChange={setPairPlatform} role={pairDeviceRole} />
+                <p className="text-xs text-muted-foreground">{t('deviceRole.platformHint')}</p>
               </div>
+              {modelNeeded({ platform: pairPlatform }) ? (
+                <div className="space-y-2">
+                  <Label htmlFor="pair-device-model">{t('deviceModel.label')}</Label>
+                  <DeviceModelSelect
+                    id="pair-device-model"
+                    value={pairDeviceModel}
+                    onChange={setPairDeviceModel}
+                  />
+                  {pairDeviceModel && !pairIsDisplay ? (
+                    <DeviceCapabilityList model={pairDeviceModel} kiosk={pairDeviceRole === 'kiosk'} />
+                  ) : !pairDeviceModel ? (
+                    <p className="text-xs text-muted-foreground">{t('deviceModel.hint')}</p>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">{pairPlatform === 'web'
+                    ? pairDeviceRole === 'kds' || pairDeviceRole === 'order_status_board'
+                      ? t('deviceRole.webScreenNoModel')
+                      : t('deviceRole.webNoModel')
+                    : t('deviceRole.windowsNoModel')}</p>
+              )}
               <div className="space-y-2">
                 <Label>{t('machineCode')}</Label>
                 <Input
@@ -851,7 +919,11 @@ export default function MachinesPage() {
               <div className="space-y-3 rounded-lg border border-dashed p-3">
                 <div>
                   <p className="text-sm font-medium">
-                    {pairDeviceRole === 'kiosk' ? t('deviceRole.kioskNeedsShop') : t('pairAssignOptional')}
+                    {pairDeviceRole === 'kiosk'
+                      ? t('deviceRole.kioskNeedsShop')
+                      : roleNeedsShop(pairDeviceRole)
+                        ? t('deviceRole.displayNeedsShop')
+                        : t('pairAssignOptional')}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">{t('pairAssignHint')}</p>
                 </div>
@@ -899,6 +971,7 @@ export default function MachinesPage() {
                     </SelectContent>
                   </Select>
                   {pairShopId &&
+                  !pairIsDisplay &&
                   pairNextRegister &&
                   sameId(pairNextRegister.shopId, pairShopId) ? (
                     <p className="text-xs text-muted-foreground">
@@ -916,6 +989,15 @@ export default function MachinesPage() {
                   machineId={null}
                   value={pairKiosk}
                   onChange={setPairKiosk}
+                />
+              ) : null}
+              {/* A KDS's screen (kind, stations) or the board's name — made as it pairs. */}
+              {pairDeviceRole === 'kds' || pairDeviceRole === 'order_status_board' ? (
+                <KdsScreenFields
+                  shopId={pairShopId || null}
+                  role={pairDeviceRole}
+                  value={pairKds}
+                  onChange={setPairKds}
                 />
               ) : null}
               <DialogFooter>
@@ -938,18 +1020,7 @@ export default function MachinesPage() {
                       setPairPreAssignLabel(null);
                     }
                     if (pairMissing) return;
-                    generateCode.mutate(
-                      pairingRequestBody(
-                        {
-                          role: pairDeviceRole,
-                          model: pairDeviceModel,
-                          machineCode,
-                          companyId: pairCompanyId,
-                          shopId: pairShopId,
-                        },
-                        pairKiosk,
-                      ),
-                    );
+                    generateCode.mutate(pairingRequestBody(pairDraft, pairKiosk));
                   }}
                   disabled={
                     !!pairMissing ||
@@ -1196,7 +1267,7 @@ export default function MachinesPage() {
               </div>
               <p className="text-sm font-medium">
                 {t('fieldInstall.sessionTtl', {
-                  expiresAt: format(new Date(fieldSession.expiresAt), 'HH:mm dd/MM/yyyy'),
+                  expiresAt: formatDateTime(fieldSession.expiresAt),
                   hours: fieldSession.sessionExpireHours,
                 })}
               </p>

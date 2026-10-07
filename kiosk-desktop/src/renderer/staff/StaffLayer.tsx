@@ -13,9 +13,11 @@
 import { useEffect, useState } from 'react';
 import { Delete, X } from 'lucide-react';
 import { cardStyle, type PreviewModel } from '@kiosk-shared/index';
-import type { AdminInfo, KioskView, TechnicianInfo } from '../../shared/bridge';
+import type { AdminInfo, KioskView, SynqpayAdminInfo, SynqpayPairingView, TechnicianInfo } from '../../shared/bridge';
+import { TERMINAL_CHECK_BYPASS_WARNING } from '../../core/terminalCheckBypass';
 import { kiosk } from '../bridge';
 import { t } from '../i18n';
+import { updateLine } from '../roles/updateText';
 
 export function StaffLayer({ m, view, open, onClose }: { m: PreviewModel; view: KioskView; open: 'none' | 'admin' | 'technician'; onClose: () => void }) {
   const [unlocked, setUnlocked] = useState(false);
@@ -197,9 +199,11 @@ function AdminScreen({ m, onClose }: { m: PreviewModel; onClose: () => void }) {
           מצב: {info.terminal.state} · תשובה תקינה אחרונה: {time(info.terminal.lastOkAt)}
         </div>
         {info.terminal.lastError ? <div className="text-xs text-red-600">{info.terminal.lastError}</div> : null}
+        {info.terminal.numberCheckBypass ? <div className="text-xs font-semibold text-amber-700">{TERMINAL_CHECK_BYPASS_WARNING}</div> : null}
         <Btn m={m} onClick={() => act({ type: 'checkTerminal' })}>
           בדיקת חיבור
         </Btn>
+        {info.terminal.synqpay ? <SynqpayPairing m={m} info={info.terminal.synqpay} onDone={refresh} /> : null}
         {info.terminal.unresolved.map((u) => (
           <div key={u.reference} className="space-y-1 rounded-lg bg-amber-50 p-2 text-xs text-amber-900">
             <div className="font-bold">
@@ -277,6 +281,156 @@ function AdminScreen({ m, onClose }: { m: PreviewModel; onClose: () => void }) {
   );
 }
 
+/**
+ * "צימוד מסוף SynqPay" (pos-server docs/SPEC_SYNQPAY.md §2.2) — in the manager's admin, so the
+ * manager's PIN is the pairing's authority: the kiosk asks the terminal for a code, the code shown
+ * on the terminal is typed here, and the key is kept on the kiosk and sent to the cloud. Nobody
+ * types an API key.
+ */
+function SynqpayPairing({ m, info, onDone }: { m: PreviewModel; info: SynqpayAdminInfo; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [pairing, setPairing] = useState<SynqpayPairingView | null>(null);
+  const [serial, setSerial] = useState('');
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const phase = pairing?.phase ?? 'idle';
+  useEffect(() => {
+    if (phase !== 'awaiting_code') return;
+    const id = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(id);
+  }, [phase]);
+  const left = pairing ? Math.max(0, Math.ceil((pairing.expiresAtMs - now) / 1000)) : 0;
+  const expired = phase === 'expired' || (phase === 'awaiting_code' && left === 0);
+  const run = async (a: Parameters<typeof kiosk.adminAction>[0]) => {
+    setBusy(true);
+    const r = await kiosk.adminAction(a).catch((e: unknown) => ({ ok: false, message: String(e), pairing: undefined }));
+    setBusy(false);
+    if (r.pairing) setPairing(r.pairing);
+    setNote(r.message ?? null);
+    if (r.pairing?.phase === 'awaiting_code') setCode('');
+    if (r.pairing?.phase === 'paired') onDone();
+    return r;
+  };
+  const sendCode = () => run({ type: 'synqpayPair', serialNumber: serial.trim() || null });
+  const status = !info.paired
+    ? 'טרם צומד — המסוף דורש צימוד'
+    : info.needsPairing
+      ? 'המפתח נדחה במסוף — המסוף דורש צימוד'
+      : info.pendingUpload
+        ? 'צומד · המפתח עוד לא נשלח לענן'
+        : 'צומד';
+  const error = note ?? pairing?.error ?? null;
+  return (
+    <div className="mt-2 space-y-1.5 rounded-lg border p-2" style={{ borderColor: m.c.border }}>
+      <div className={info.needsPairing ? 'font-bold text-red-600' : 'font-semibold'}>מסוף SynqPay: {status}</div>
+      {info.serialNumber ? (
+        <div className="text-xs" dir="ltr">
+          S/N {info.serialNumber}
+        </div>
+      ) : null}
+      {!open ? (
+        <Btn
+          m={m}
+          danger={info.needsPairing}
+          onClick={() => {
+            setOpen(true);
+            setPairing(null);
+            setNote(null);
+            void sendCode();
+          }}
+        >
+          צימוד מסוף SynqPay
+        </Btn>
+      ) : (
+        <div className="space-y-2">
+          {busy ? <div className="text-xs">…</div> : null}
+          {phase === 'need_serial' ? (
+            <div className="space-y-1">
+              <div className="text-xs">המספר הסידורי של המסוף (על גב המסוף, על האריזה או בתפריט המסוף)</div>
+              <div className="flex gap-2">
+                <input
+                  value={serial}
+                  onChange={(e) => setSerial(e.target.value.replace(/[^A-Za-z0-9-]/g, '').slice(0, 32))}
+                  dir="ltr"
+                  className="min-w-0 flex-1 rounded border px-2 py-1 text-xs"
+                  style={{ borderColor: m.c.border, background: m.c.surface }}
+                />
+                <Btn m={m} onClick={() => void sendCode()}>
+                  שלח קוד
+                </Btn>
+              </div>
+            </div>
+          ) : null}
+          {phase === 'awaiting_code' || phase === 'expired' ? (
+            <div className="space-y-1.5">
+              <div className="text-sm font-extrabold">הקוד מופיע עכשיו במסך המסוף — הקלידו אותו</div>
+              <div className={left <= 5 ? 'text-xs font-bold text-red-600' : 'text-xs'}>
+                {expired ? 'הקוד פג תוקף — לחצו "שלח קוד חדש"' : `הקוד בתוקף עוד ${left} שניות`}
+              </div>
+              <div className="flex justify-center gap-1.5" dir="ltr">
+                {Array.from({ length: 6 }, (_, i) => (
+                  <span key={i} className="flex h-9 w-8 items-center justify-center rounded border text-lg font-bold" style={{ borderColor: m.c.border }}>
+                    {code[i] ?? ''}
+                  </span>
+                ))}
+              </div>
+              <div className="mx-auto grid max-w-[220px] grid-cols-3 gap-1.5" dir="ltr">
+                {['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'].map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    disabled={busy || expired || (k === 'ok' && code.length !== 6)}
+                    onClick={() => {
+                      if (k === 'del') setCode((c) => c.slice(0, -1));
+                      else if (k === 'ok') void run({ type: 'synqpayCode', otp: code });
+                      else setCode((c) => (c.length < 6 ? c + k : c));
+                    }}
+                    className="flex h-10 items-center justify-center text-base font-bold disabled:opacity-40"
+                    style={k === 'ok' ? { background: m.c.button, color: m.c.buttonText, borderRadius: 8 } : { background: '#0000000D', borderRadius: 8 }}
+                  >
+                    {k === 'del' ? <Delete className="h-4 w-4" /> : k === 'ok' ? 'אישור' : k}
+                  </button>
+                ))}
+              </div>
+              <Btn m={m} onClick={() => void sendCode()}>
+                שלח קוד חדש
+              </Btn>
+            </div>
+          ) : null}
+          {phase === 'failed' ? (
+            <Btn m={m} onClick={() => void sendCode()}>
+              נסו שוב
+            </Btn>
+          ) : null}
+          {phase === 'paired' ? (
+            <div className="space-y-1">
+              <div className="font-bold text-green-700">המסוף צומד — המפתח נשמר בקיוסק ונמצא בשימוש</div>
+              <div className="text-xs">
+                {pairing?.upload === 'uploaded'
+                  ? 'המפתח נשמר גם בענן (מוצפן)'
+                  : pairing?.upload === 'needs_approval'
+                    ? 'נדרש אישור מנהל כדי לשמור את המפתח בענן'
+                    : 'המפתח עוד לא נשלח לענן — יישלח אוטומטית בסנכרון הבא'}
+              </div>
+              {pairing?.upload !== 'uploaded' ? (
+                <Btn m={m} onClick={() => void run({ type: 'synqpayRetryUpload' })}>
+                  שליחה חוזרת לענן
+                </Btn>
+              ) : null}
+            </div>
+          ) : null}
+          {error ? <div className="text-xs font-semibold text-red-600">{error}</div> : null}
+          <button type="button" className="text-xs underline" style={{ color: m.c.mutedText }} onClick={() => setOpen(false)}>
+            סגירה
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TechnicianScreen({ m, onClose }: { m: PreviewModel; onClose: () => void }) {
   const [info, setInfo] = useState<TechnicianInfo | null>(null);
   const [note, show] = useNote();
@@ -340,15 +494,25 @@ function TechnicianScreen({ m, onClose }: { m: PreviewModel; onClose: () => void
             <div dir="ltr" className="text-end text-xs">
               {info.terminal.address}
             </div>
+            {info.terminal.numberCheckBypass ? <div className="text-xs font-semibold text-amber-700">{TERMINAL_CHECK_BYPASS_WARNING}</div> : null}
             <Btn m={m} onClick={() => act({ type: 'pinpadCheck' })}>
               בדיקת מסופון
             </Btn>
           </Panel>
           <Panel m={m} title="עדכונים">
-            <div>גרסה: {info.update.current} · {info.update.available ? `זמינה ${info.update.available}` : info.update.status}</div>
+            <div>
+              גרסה: {info.update.current} · {updateLine(info.update)}
+            </div>
+            <div className="text-xs">
+              {info.update.autoInstall
+                ? info.update.installWindow
+                  ? `התקנה אוטומטית בחלון ${info.update.installWindow.start}–${info.update.installWindow.end}, כשאין הזמנה`
+                  : 'התקנה אוטומטית כשהקיוסק פנוי'
+                : 'התקנה ידנית ("התקן עכשיו"); לעולם לא בזמן תשלום'}
+            </div>
             <div className="flex gap-2">
               <Btn m={m} onClick={() => act({ type: 'updateCheck' })}>
-                בדיקת עדכונים
+                בדוק עכשיו
               </Btn>
               <Btn m={m} onClick={() => act({ type: 'updateInstall' })}>
                 התקן עכשיו

@@ -25,6 +25,7 @@ import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { normalizeTerminalFields } from '@/lib/posMachine';
 import { registerNumberOf } from '@/lib/registerNumber';
+import { checkBypassView, tillStillBypassing } from '@/lib/terminalCheckBypass';
 import type {
   PosMachine,
   TerminalForceMachine,
@@ -58,7 +59,18 @@ type TerminalFields = Pick<
   | 'forceTerminalNumberSource'
   | 'terminalStatus'
 > &
-  Partial<Pick<PosMachine, 'cardLock' | 'expectedTerminalNumberSource'>>;
+  Partial<
+    Pick<
+      PosMachine,
+      | 'cardLock'
+      | 'expectedTerminalNumberSource'
+      | 'terminalNumberCheckBypass'
+      | 'terminalNumberCheckBypassSource'
+      | 'terminalNumberCheckBypassChange'
+      | 'terminalNumberCheckBypassReported'
+      | 'cardLockBypassed'
+    >
+  >;
 
 const STATUS_CLASS: Record<TerminalStatus, string> = {
   match: 'bg-green-600/15 text-green-700 dark:text-green-400',
@@ -179,12 +191,49 @@ export function TerminalSummary({ m }: { m: TerminalFields }) {
         // "תנעל את האשראי, לא את הקופה": card payment only is locked on the till (SPEC_KIOSK.md §20).
         <p className="text-xs font-semibold text-destructive">{t(`cardLock.${m.cardLock}`)}</p>
       ) : null}
+      <TerminalCheckBypassNote m={m} />
       <LastWrite m={m} />
       <p className="text-xs text-muted-foreground">
         {m.terminalReportedAt
           ? t('reportedAsOf', { when: ago(m.terminalReportedAt) })
           : t('neverReported')}
       </p>
+    </div>
+  );
+}
+
+/**
+ * "בדיקת מספר מסוף מושבתת" (docs/SPEC_KIOSK.md §20.1): the till parameter "עקיפת בדיקת מספר מסוף"
+ * is on for this till — the level it comes from, who set it and when, the lock it lifts now, and
+ * whether the till itself has applied it yet. Nothing while it is off (unless the till still is).
+ */
+export function TerminalCheckBypassNote({ m }: { m: TerminalFields }) {
+  const t = useTranslations('cardTerminal');
+  const view = checkBypassView(m);
+  if (!view) {
+    return tillStillBypassing(m) ? (
+      <p className="text-xs text-amber-700 dark:text-amber-400">{t('checkBypass.tillStill')}</p>
+    ) : null;
+  }
+  return (
+    <div className="space-y-0.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-800 dark:text-amber-300">
+      <p className="flex items-center gap-1 font-semibold">
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        {t('checkBypass.title')}
+      </p>
+      <p>{t('checkBypass.warning')}</p>
+      {view.level ? (
+        <p>
+          {view.level === 'default'
+            ? t('checkBypass.fromDefault')
+            : t('checkBypass.from', { level: t(`level.${view.level}`) })}
+          {view.by ? ` · ${t('checkBypass.by', { who: view.by, when: view.at ? ago(view.at) : '' })}` : null}
+        </p>
+      ) : null}
+      {view.lifted ? (
+        <p>{t('checkBypass.lifted', { reason: t(`checkBypass.reason.${view.lifted}`) })}</p>
+      ) : null}
+      {view.till === 'pending' ? <p>{t('checkBypass.tillPending')}</p> : null}
     </div>
   );
 }

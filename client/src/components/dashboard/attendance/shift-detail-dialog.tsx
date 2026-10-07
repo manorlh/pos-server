@@ -18,6 +18,7 @@ import { formatDateTime } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DateTimePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -163,14 +164,14 @@ export function ShiftDetailDialog({
                     />
                     <div className="space-y-1">
                       <Label className="text-xs">{fix === 'break' ? t('detail.breakFrom') : t('detail.newTime')}</Label>
-                      <Input type="datetime-local" dir="ltr" value={time}
+                      <DateTimePicker dir="ltr" value={time}
                         onChange={(e) => setTime(e.target.value)}
                         placeholder={isoToLocalInput(fix === 'clock_out' ? s.clockOutAt : s.clockInAt)} />
                     </div>
                     {fix === 'break' ? (
                       <div className="space-y-1">
                         <Label className="text-xs">{t('detail.breakTo')}</Label>
-                        <Input type="datetime-local" dir="ltr" value={end} onChange={(e) => setEnd(e.target.value)} />
+                        <DateTimePicker dir="ltr" value={end} onChange={(e) => setEnd(e.target.value)} />
                       </div>
                     ) : null}
                   </div>

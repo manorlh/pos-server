@@ -15,6 +15,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Copy, Pause, Pencil, Play, Plus, Search, Trash2 } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { formatDate } from '@/lib/format';
 import {
   deletePromotion,
   duplicatePromotion,
@@ -48,7 +49,7 @@ function useWhenText() {
   return (p: Promotion): string => {
     const parts: string[] = [];
     if (p.validFrom || p.validTo) {
-      parts.push(t('dates', { from: p.validFrom ?? '…', to: p.validTo ?? '…' }));
+      parts.push(t('dates', { from: p.validFrom ? formatDate(p.validFrom) : '…', to: p.validTo ? formatDate(p.validTo) : '…' }));
     }
     if (p.weekdays?.length) parts.push(p.weekdays.map((d) => td(String(d))).join(' '));
     if (p.startTime && p.endTime) parts.push(t('hours', { from: p.startTime, to: p.endTime }));

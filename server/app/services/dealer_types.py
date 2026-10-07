@@ -204,7 +204,7 @@ def year_turnover(db: Session, company: Company, year: int) -> Decimal:
     signed = case((refund_condition(), -amount), else_=amount)
     q = db.query(func.coalesce(func.sum(signed), 0)).filter(
         Transaction.shop_id.in_(shop_ids),
-        Transaction.status.in_(SALE_STATUSES),
+        Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
         Transaction.created_at >= start,
         Transaction.created_at < end,
     )

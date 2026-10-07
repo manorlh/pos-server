@@ -130,13 +130,18 @@ class TestIngest:
         assert leg.nayax_meta["terminalTip"]["agorot"] == 1_200
         assert leg.nayax_meta["chargedAmount"] == 11_200
 
-    def test_a_leg_that_carried_the_tip_would_be_refused(self, w):
+    def test_a_leg_that_carried_the_tip_lands_with_a_tender_note(self, w):
+        """Never refused since 2026-10-07 (every document lands); stored as sent, with a note."""
+        from app.models.transaction import Transaction
+
         till = w.tills[0]
         shift = open_shift(w, till)
-        _tx, result = push(w, till, shift, total="100.00", tip="12.00", tip_method="card", leg="112.00",
-                           meta=terminal_meta("U-2", 10_000, 1_200))
-        assert result.status == "rejected"
-        assert "Tips are not tender legs" in (result.reason or "")
+        tx, result = push(w, till, shift, total="100.00", tip="12.00", tip_method="card", leg="112.00",
+                          meta=terminal_meta("U-2", 10_000, 1_200))
+        assert result.status == "accepted"
+        assert any("Tips are not tender legs" in x for x in result.warnings or [])
+        stored = w.db.get(Transaction, tx.id)
+        assert "tenders_do_not_reconcile" in [n["code"] for n in stored.ingest_notes or []]
 
 
 class TestFigures:

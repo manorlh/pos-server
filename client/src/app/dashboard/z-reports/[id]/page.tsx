@@ -50,6 +50,7 @@ import { AsPrintedBadge, ZScopeLine } from '@/components/dashboard/z-report/z-sc
 import { BranchCode, ZRun } from '@/components/dashboard/z-report/z-identity';
 import { OpenTillsRecord } from '@/components/dashboard/z-wizard/open-tills';
 import { ZPrintDocument } from '@/components/dashboard/z-report/z-print-document';
+import { FailedPaymentsSection } from '@/components/dashboard/failed-payments/failed-payments-section';
 import { CardBrandSummaryCard } from '@/components/dashboard/z-report/card-brand-summary';
 import { WaiterSummaryCard } from '@/components/dashboard/z-report/waiter-summary';
 import {
@@ -65,6 +66,8 @@ import {
   offlineOfZ,
 } from '@/components/dashboard/z-report/offline-summary';
 import { useZTitle, ZProducedBy, zNumberSourceOf } from '@/components/dashboard/z-report/z-number';
+import { useZExportSheets } from '@/components/dashboard/z-report/z-export-sheets';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -184,7 +187,18 @@ function SalesRows({ x, dealerType }: { x: SalesFigures; dealerType?: string | n
   );
 }
 
-function TillCard({ s, shifts, dealerType }: { s: ZReportMachineSection; shifts: Shift[]; dealerType?: string | null }) {
+function TillCard({
+  s,
+  shifts,
+  dealerType,
+  zId,
+}: {
+  s: ZReportMachineSection;
+  shifts: Shift[];
+  dealerType?: string | null;
+  /** The Z, for this till's "עסקאות שלא הושלמו" (docs/SPEC_FAILED_PAYMENTS.md). */
+  zId?: string;
+}) {
   const t = useTranslations('zReports');
   const heading = useTillHeading()(s);
   // A local shop Z's "late documents" part of a till: its label, not a second "קופה N".
@@ -279,6 +293,10 @@ function TillCard({ s, shifts, dealerType }: { s: ZReportMachineSection; shifts:
             <OfflineDeclinedList declined={s.offline?.declined ?? []} />
           </div>
         ) : null}
+        {/* This till's failed payment attempts and cancelled sales — information only. */}
+        {zId && s.machineId && !lateTitle ? (
+          <FailedPaymentsSection query={{ zReportId: zId, machineId: s.machineId }} bare />
+        ) : null}
       </CardContent>
       {shifts.length > 0 ? (
         <CardContent className="border-t p-0">
@@ -319,6 +337,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
   const { id } = use(params);
   const t = useTranslations('zReports');
   const zTitle = useZTitle();
+  const zSheets = useZExportSheets();
   usePageScope({ maxLevel: 'machine', silent: true });
   // Stamped when the print dialog opens, so the paper says when it was printed.
   const [printedAt, setPrintedAt] = useState(() => new Date().toISOString());
@@ -401,6 +420,15 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
             <ZScopeLine z={z} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {/* Excel only: the Z prints its own fiscal document (A4 or the till's paper) below. */}
+            <ReportExportToolbar
+              title={zTitle(zNumberSourceOf(z))}
+              from={z.businessDate}
+              to={z.businessDate}
+              scopeLabel={[z.shopName ?? z.business?.shopName, areaName].filter(Boolean).join(' · ')}
+              getSheets={() => zSheets(z)}
+              className="[&>button:not(:first-child)]:hidden"
+            />
             <ZPrintViewToggle value={view} onChange={setView} />
             <Button size="sm" onClick={() => print()} disabled={printDisabled}>
               <Printer className="h-4 w-4 me-1" aria-hidden />
@@ -534,7 +562,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
           <div className="space-y-3">
             <h2 className="text-lg font-semibold">{t('tillsTitle')}</h2>
             {z.perMachine.map((s) => (
-              <TillCard key={sectionKeyOf(s)} s={s} shifts={sectionShifts(s)} dealerType={z.business?.dealerType} />
+              <TillCard key={sectionKeyOf(s)} s={s} shifts={sectionShifts(s)} dealerType={z.business?.dealerType} zId={z.id} />
             ))}
           </div>
         ) : z.shifts.length > 0 ? (

@@ -36,6 +36,7 @@ import { usePageScope } from '@/lib/scope';
 import { useAuth } from '@/lib/auth';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { cn } from '@/lib/utils';
+import { formatDateTime } from '@/lib/format';
 import {
   commitCatalogImport,
   createCatalogShareLink,
@@ -76,13 +77,7 @@ type Download = 'blank' | 'current' | 'csv';
 const FILTERS: RowFilter[] = ['all', 'create', 'update', 'warning', 'error', 'unchanged'];
 
 function formatExpiry(iso: string): string {
-  return new Intl.DateTimeFormat('he-IL', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(iso));
+  return formatDateTime(iso);
 }
 
 /** A count on the preview, iOS-widget style: a coloured label over a large figure. */

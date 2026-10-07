@@ -364,7 +364,7 @@ def build_scoped_transaction_query(
         Transaction.created_at >= window.start,
         Transaction.created_at < window.end,
         # The one filter no report may omit. See module docstring.
-        Transaction.status.in_(SALE_STATUSES),
+        Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
     )
     hour_pred = hour_window_predicate(window)
     if hour_pred is not None:
@@ -1123,7 +1123,7 @@ def load_shop_transactions_for_machine(
             Transaction.created_at >= since,
             # Same status gate as every other report: a cashier hunting for a sale
             # must not be shown the cancelled shell of a declined card tap.
-            Transaction.status.in_(SALE_STATUSES),
+            Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
         )
     )
     # Belt and braces on top of the shop filter. Shop ids are UUIDs and so unique in

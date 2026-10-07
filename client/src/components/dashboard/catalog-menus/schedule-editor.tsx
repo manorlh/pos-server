@@ -20,7 +20,7 @@ import {
   scheduleSummary,
   type MenuSchedule,
 } from '@/lib/menuSchedule';
-import { Input } from '@/components/ui/input';
+import { DatePicker, TimeInput } from '@/components/ui/date-picker';
 import { IosCard, IosChip, IosFootnote, IosRow, IosSwitch, IosTag } from '@/components/dashboard/menu/ios';
 import { cn } from '@/lib/utils';
 
@@ -120,21 +120,21 @@ export function ScheduleEditor({
                       const bad = !isValidTime(r.start) || !isValidTime(r.end);
                       return (
                         <li key={i} className="flex flex-wrap items-center gap-2">
-                          <Input
-                            type="time"
+                          <TimeInput
                             value={r.start}
                             disabled={disabled}
                             onChange={(e) => setRange(i, { start: e.target.value })}
                             className={cn('h-8 w-28', bad && !isValidTime(r.start) && 'border-[#FF3B30]')}
+                            aria-invalid={bad && !isValidTime(r.start)}
                             aria-label={t('from')}
                           />
                           <span className="text-[#8E8E93]">–</span>
-                          <Input
-                            type="time"
+                          <TimeInput
                             value={r.end}
                             disabled={disabled}
                             onChange={(e) => setRange(i, { end: e.target.value })}
                             className={cn('h-8 w-28', bad && !isValidTime(r.end) && 'border-[#FF3B30]')}
+                            aria-invalid={bad && !isValidTime(r.end)}
                             aria-label={t('to')}
                           />
                           {isWholeDayRange(r) ? <IosTag tone="green">{t('wholeDay')}</IosTag> : null}
@@ -165,8 +165,7 @@ export function ScheduleEditor({
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex items-center gap-1.5 text-[13px]">
                 <span>{t('validFrom')}</span>
-                <Input
-                  type="date"
+                <DatePicker
                   value={value.validFrom}
                   disabled={disabled}
                   onChange={(e) => set({ validFrom: e.target.value })}
@@ -175,8 +174,7 @@ export function ScheduleEditor({
               </label>
               <label className="flex items-center gap-1.5 text-[13px]">
                 <span>{t('validTo')}</span>
-                <Input
-                  type="date"
+                <DatePicker
                   value={value.validTo}
                   disabled={disabled}
                   onChange={(e) => set({ validTo: e.target.value })}

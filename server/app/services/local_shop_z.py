@@ -581,8 +581,51 @@ def link_shifts(db: Session, z: ZReport) -> Dict[str, List[str]]:
                     z.period_start = opened
             elif str(shift.z_report_id) != str(z.id):
                 awaited.setdefault(f"inAnotherZ:{key}", []).append(sid)
+                continue
+            carry_unnamed(db, z, part, shift)
     db.flush()
     return awaited
+
+
+UNNAMED_KEY = "unnamedDocuments"
+
+
+def carry_unnamed(db: Session, z: ZReport, part: dict, shift: Shift) -> int:
+    """
+    Documents in a shift this local shop Z took that the part's manifest does not name: the
+    paper never had them, so the Z does not count them — on their own they would be in no Z.
+    Carried into the till's next Z like any document that arrived after a Z (late documents,
+    §4.6.3) and counted on the Z (`offline_report.unnamedDocuments`, shown by `verify`). A part
+    with no manifest (an older till) names nothing, so nothing can be told — left as it is.
+    """
+    from app.models.transaction import Transaction
+    from app.services import late_documents
+
+    manifest = part.get("manifest")
+    if not isinstance(manifest, dict) or not manifest.get("digest"):
+        return 0
+    named = {str(i).lower() for i in manifest.get("documentIds") or []}
+    unnamed = [
+        row[0] for row in db.query(Transaction.id).filter(Transaction.shift_id == shift.id).all()
+        if str(row[0]).lower() not in named
+    ]
+    if not unnamed:
+        return 0
+    # Counted late first, as an arrival after the Z would be; `carry` then moves them out.
+    shift.late_documents = int(shift.late_documents or 0) + len(unnamed)
+    z.late_documents = int(z.late_documents or 0) + len(unnamed)
+    moved = late_documents.carry(db, shift, z, doc_ids=unnamed)
+    if moved:
+        report = dict(z.offline_report or {})
+        counts = dict(report.get(UNNAMED_KEY) or {})
+        counts[part_key(part)] = int(counts.get(part_key(part)) or 0) + moved
+        report[UNNAMED_KEY] = counts
+        z.offline_report = report
+        logger.warning(
+            "local shop Z %s (#%s): %s document(s) of shift %s not in the manifest — carried into the next Z",
+            z.id, z.shop_sequence_number, moved, shift.id,
+        )
+    return moved
 
 
 def _pending_ids(shop: Shop) -> List[str]:
@@ -708,6 +751,10 @@ def verify(db: Session, z: ZReport, *, now: Optional[datetime] = None) -> dict:
     previous = report.get("verification") or {}
     before = {str(t.get("key") or t.get("machineId")): t for t in previous.get("tills") or [] if isinstance(t, dict)}
     awaited = link_shifts(db, z)
+    # Documents the manifests did not name, found as the shifts were linked (`carry_unnamed`).
+    unnamed = dict((z.offline_report or {}).get(UNNAMED_KEY) or {})
+    if unnamed:
+        report[UNNAMED_KEY] = unnamed
     sections = {part_key(s): s for s in (z.per_machine or []) if isinstance(s, dict)}
     tills: List[dict] = []
     found: List[dict] = []
@@ -727,6 +774,8 @@ def verify(db: Session, z: ZReport, *, now: Optional[datetime] = None) -> dict:
         entry: Dict[str, Any] = {
             "key": key, "machineId": mid, "posNumber": machine.pos_number if machine is not None else None,
             **({"late": True, "label": part.get("label")} if late else {}),
+            # Documents of its shifts the manifest did not name: carried into the next Z.
+            **({"unnamedCarried": int(unnamed[key])} if unnamed.get(key) else {}),
         }
         old = before.get(key) or {}
         if old.get("state") == SUPPORT_CLOSED:
@@ -821,9 +870,12 @@ def verify(db: Session, z: ZReport, *, now: Optional[datetime] = None) -> dict:
         message = "אומת מול מסמכי הענן — כל המסמכים הגיעו והחישוב זהה"
         if UNVERIFIED in states:
             message = " · ".join([message] + [str(t.get("message")) for t in tills if t.get("state") == UNVERIFIED])
+    if unnamed:
+        message = f"{message} · {sum(int(v) for v in unnamed.values())} מסמכים שהמניפסט לא כלל הועברו ל-Z הבא של הקופה"
     verification = {
         "state": state,
         "message": message,
+        "unnamedDocuments": unnamed or None,
         "checkedAt": now.isoformat(),
         "tills": tills,
         "discrepancies": found or None,

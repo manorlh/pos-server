@@ -23,10 +23,12 @@ import {
   type AttendanceAdjustment,
 } from '@/lib/attendance';
 import { formatDateTime } from '@/lib/format';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DateTimePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -88,6 +90,40 @@ export function Corrections() {
           </div>
         </CardContent>
       </Card>
+      {/* Every correction the filters match (the endpoint is not paged), times as date cells. */}
+      <ReportExportToolbar
+        title={t('tabs.corrections')}
+        disabled={rows.length === 0}
+        getSheets={() => ({
+          name: t('tabs.corrections'),
+          columns: [
+            { header: t('col.employee') },
+            { header: t('col.shop') },
+            { header: t('corrections.export.kind'), width: 16 },
+            { header: t('corrections.export.field'), width: 12 },
+            { header: t('corrections.status'), width: 14 },
+            { header: t('corrections.export.before'), kind: 'datetime' },
+            { header: t('corrections.export.after'), kind: 'datetime' },
+            { header: t('corrections.export.endTime'), kind: 'datetime' },
+            { header: t('corrections.export.reason'), width: 30 },
+            { header: t('corrections.export.source'), width: 12 },
+            { header: t('corrections.export.requestedBy') },
+            { header: t('corrections.export.requestedAt'), kind: 'datetime' },
+            { header: t('corrections.export.decidedBy') },
+            { header: t('corrections.export.decidedAt'), kind: 'datetime' },
+            { header: t('corrections.note'), width: 30 },
+          ],
+          rows: rows.map((a) => {
+            const times = adjustmentTimes(a);
+            return [
+              a.posUserName, a.shopName, t(`kind.${a.kind}`), a.field ? t(`field.${a.field}`) : null,
+              t(`adjStatus.${a.status}`), times.before, times.after,
+              a.requestedEndTime ? (a.approvedEndTime ?? a.requestedEndTime) : null, a.reason,
+              t(`source.${a.source}`), a.requestedByName, a.requestedAt, a.decidedByName, a.decidedAt, a.decisionNote,
+            ];
+          }),
+        })}
+      />
 
       {query.isLoading ? (
         <Skeleton className="h-40" />
@@ -210,12 +246,12 @@ function DecisionForm({ adj, edit, onClose }: { adj: AttendanceAdjustment; edit:
           <>
             <div className="space-y-1">
               <Label className="text-xs">{t('corrections.approvedTime')}</Label>
-              <Input type="datetime-local" dir="ltr" value={time} onChange={(e) => setTime(e.target.value)} />
+              <DateTimePicker dir="ltr" value={time} onChange={(e) => setTime(e.target.value)} />
             </div>
             {adj.requestedEndTime || adj.kind === 'break' ? (
               <div className="space-y-1">
                 <Label className="text-xs">{t('corrections.approvedEndTime')}</Label>
-                <Input type="datetime-local" dir="ltr" value={end} onChange={(e) => setEnd(e.target.value)} />
+                <DateTimePicker dir="ltr" value={end} onChange={(e) => setEnd(e.target.value)} />
               </div>
             ) : null}
           </>
@@ -297,11 +333,11 @@ function MissingShiftDialog({ open, scope, onClose }: { open: boolean; scope: At
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs">{t('col.in')}</Label>
-                <Input type="datetime-local" dir="ltr" value={start} onChange={(e) => setStart(e.target.value)} />
+                <DateTimePicker dir="ltr" value={start} onChange={(e) => setStart(e.target.value)} />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">{t('col.out')}</Label>
-                <Input type="datetime-local" dir="ltr" value={end} onChange={(e) => setEnd(e.target.value)} />
+                <DateTimePicker dir="ltr" value={end} onChange={(e) => setEnd(e.target.value)} />
               </div>
             </div>
             <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t('detail.reason')} />

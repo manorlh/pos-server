@@ -166,6 +166,26 @@ def publish_till_z_notify(
     publish_notify(tenant_id, machine_id, "till-z", body)
 
 
+def publish_remote_credit_notify(
+    tenant_id: str,
+    machine_id: str,
+    request_id: str,
+    initiated_by: str,
+    cancelled: bool = False,
+) -> None:
+    """
+    "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): a credit request for this till was made
+    (or cancelled). A wake-up only: the till pulls `GET /sync/{m}/remote-credits`, and the
+    heartbeat's `pendingRemoteCredits` hands the same to a till that missed this.
+    """
+    body = _notify_base()
+    body["requestId"] = request_id
+    body["initiatedBy"] = initiated_by
+    if cancelled:
+        body["cancelled"] = True
+    publish_notify(tenant_id, machine_id, "remote-credit", body)
+
+
 def publish_transactions_synced(tenant_id: str, machine_id: str, count: int) -> None:
     body = _notify_base()
     body["count"] = count

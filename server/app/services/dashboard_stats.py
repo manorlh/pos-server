@@ -79,7 +79,7 @@ def compute_sales_summary(
     # counted a 330 with no original (a return picked from the catalogue) as a sale.
     sale_q = base.filter(
         sale_condition(),
-        Transaction.status.in_(SALE_STATUSES),
+        Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
     )
 
     sale_agg = sale_q.with_entities(
@@ -105,7 +105,7 @@ def compute_sales_summary(
 
     # Counted statuses only, as the sales are: a declined card refund is a `cancelled`
     # credit note that handed nothing back.
-    refund_q = base.filter(refund_condition(), Transaction.status.in_(SALE_STATUSES))
+    refund_q = base.filter(refund_condition(), Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False))
     refund_agg = refund_q.with_entities(
         func.coalesce(func.sum(Transaction.total_amount), 0).label("amount"),
         func.count(Transaction.id).label("count"),
@@ -208,9 +208,9 @@ def compute_breakdown(
 
     sale_cond = and_(
         sale_condition(),
-        Transaction.status.in_(SALE_STATUSES),
+        Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
     )
-    refund_cond = and_(refund_condition(), Transaction.status.in_(SALE_STATUSES))
+    refund_cond = and_(refund_condition(), Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False))
 
     gross_expr = func.coalesce(
         func.sum(case((sale_cond, Transaction.total_amount), else_=0)), 0

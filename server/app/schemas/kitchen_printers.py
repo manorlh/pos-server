@@ -64,7 +64,9 @@ class PrinterIn(BaseModel):
     bt_address: Optional[str] = Field(None, alias="btAddress")
     bt_name: Optional[str] = Field(None, alias="btName")
     host_machine_id: Optional[uuid.UUID] = Field(None, alias="hostMachineId")
-    host_connection: Optional[Literal["till", "network", "bluetooth"]] = Field(None, alias="hostConnection")
+    #: cloud: how the host till reaches it — its own head (`till`), its own USB port (`usb`),
+    #: or a network / Bluetooth printer only it reaches.
+    host_connection: Optional[Literal["till", "network", "bluetooth", "usb"]] = Field(None, alias="hostConnection")
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
     machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
     paper_width: Literal[58, 80] = Field(80, alias="paperWidth")
@@ -276,6 +278,19 @@ class ProductNoTicketIn(BaseModel):
     no_ticket: bool = Field(alias="noTicket")
 
 
+class TillLocalPrinterIn(BaseModel):
+    """
+    "המדפסת המקומית של קופה" (docs/SPEC_KIOSK.md §16.9): a till's own printer picked by name in
+    the kiosk's printing settings — its built-in head (`till`), or the USB / Bluetooth printer
+    attached to it. The cloud makes (or reuses) the hosted printer entry behind it.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    machine_id: uuid.UUID = Field(alias="machineId")
+    connection: Literal["till", "usb", "bluetooth"] = "till"
+
+
 class PrintHostIn(BaseModel):
     """The shop's print server, picked on the dashboard: a till of the shop, or null for none."""
 
@@ -325,6 +340,7 @@ __all__ = [
     "TicketLineIn",
     "PrintJobIn",
     "PrintJobAckIn",
+    "TillLocalPrinterIn",
     "CategoryRoutesIn",
     "ProductRouteIn",
     "KitchenPrintersPatch",

@@ -25,6 +25,7 @@ from app.schemas.z_report import (
 )
 from app.services.areas import filter_on_column, parse_area_filter
 from app.services import card_brands, offline_authorizations, z_print
+from app.services.failed_payments import with_print_sections as _with_failed_payments
 from app.services.shift_totals import compute_totals
 from app.services.z_waiters import waiter_breakdown
 from app.services.reports import _load_zoneinfo, resolve_report_timezone
@@ -179,6 +180,12 @@ def list_z_reports(
     origin: Optional[str] = Query(
         None, pattern="^(cloud|till)$", description="`till`: the tills' own Zs (§5); `cloud`: Z runs'."
     ),
+    z_types: Optional[List[str]] = Query(
+        None,
+        alias="zTypes",
+        description="shop (Z סניפי) | independent (Z עצמאי) | till (Z לכל קופה) | kiosk | legacy — "
+        "any of them, repeated or comma-separated (docs/SPEC_REPORTS.md §4).",
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200, alias="pageSize"),
     current_user: User = Depends(get_current_user),
@@ -220,6 +227,9 @@ def list_z_reports(
     query = filter_on_column(query, ZReport.area_id, area_filter)
     if isinstance(origin, str):  # (a direct call leaves the Query default in place)
         query = query.filter(ZReport.origin == origin)
+    from app.services import z_table
+
+    query = z_table.filter_z_types(query, z_table.parse_z_types(z_types))
 
     # A direct call (the tests) leaves the Query defaults in place: read them as unset.
     if not isinstance(date_basis, str):
@@ -276,11 +286,16 @@ def list_z_reports(
         .limit(page_size)
         .all()
     )
+    items = [z_to_out(r, tzinfo=tzinfo) for r in rows]
+    # "סוג Z" on every row: one lookup of the page's kiosks, not one per Z.
+    kiosks = z_table.kiosk_machine_ids(db, {r.machine_id for r in rows if r.machine_id is not None})
+    for item, r in zip(items, rows):
+        item.z_type = z_table.z_type_of(r, kiosks)
     return ZReportListResponse(
         page=page,
         page_size=page_size,
         total=total,
-        items=[z_to_out(r, tzinfo=tzinfo) for r in rows],
+        items=items,
         window=window,
     )
 
@@ -401,7 +416,9 @@ def get_z_print_documents(
                 "id": str(z.id),
                 "number": z.z_number,
                 "shopId": str(z.shop_id) if z.shop_id else None,
-                "document": z_print.build_print_document(z, tzinfo, printed_at=printed_at),
+                "document": _with_failed_payments(
+                    db, z, z_print.build_print_document(z, tzinfo, printed_at=printed_at), tzinfo
+                ),
             }
             for z in rows
         ],
@@ -423,7 +440,8 @@ def get_z_print_document(
     if not z:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Z-report not found")
     tzinfo = _load_zoneinfo(resolve_report_timezone(db, active_tenant_id, None))
-    return z_print.build_print_document(z, tzinfo)
+    # With "עסקאות שלא הושלמו" (informational, docs/SPEC_FAILED_PAYMENTS.md), as the till prints it.
+    return _with_failed_payments(db, z, z_print.build_print_document(z, tzinfo), tzinfo)
 
 
 def _with_derived_sales(section: dict) -> dict:
@@ -478,6 +496,9 @@ def z_detail_out(db: Session, z: ZReport) -> ZReportDetailOut:
     body a till gets back for its own Z (docs/SHIFTS_API.md §5.2), so both print one thing.
     """
     out = z_to_out(z, ZReportDetailOut)
+    from app.services import z_table
+
+    out.z_type = z_table.z_type_of(z, z_table.kiosk_machine_ids(db, [z.machine_id] if z.machine_id else []))
     out.per_machine = [_with_derived_sales(section) for section in (z.per_machine or [])]
     shifts = (
         db.query(Shift)

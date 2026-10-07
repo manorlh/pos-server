@@ -8,10 +8,9 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { format } from 'date-fns';
-import { he } from 'date-fns/locale';
 import { EyeOff } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { formatDateTime, isoDate } from '@/lib/format';
 import { apiErrorCode, apiUserMessage } from '@/lib/notificationsApi';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -28,11 +27,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 
 export const NC = 'notificationsClub';
 
-/** dd/MM/yy HH:mm, or '' for nothing / an unreadable value. */
+/** dd/MM/yyyy HH:mm, or '' for nothing / an unreadable value. */
 export function formatWhen(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : format(d, 'dd/MM/yy HH:mm', { locale: he });
+  return isoDate(iso) ? formatDateTime(iso) : '';
 }
 
 /** The server's `userMessage`, else our text for its code, else a generic error. */

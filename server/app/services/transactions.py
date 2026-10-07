@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import uuid
 from decimal import Decimal, ROUND_HALF_UP
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pydantic import ValidationError
@@ -37,7 +37,11 @@ from app.schemas.transaction import (
     TransactionUpsertResult,
     UnidentifiedDocument,
 )
-from app.services.approvals import ApprovalRejected, verify_document_approvers
+from app.services.approvals import (  # noqa: F401 - the strict check stays importable from here
+    ApprovalRejected,
+    resolve_document_approver_claim,
+    verify_document_approvers,
+)
 from app.services.transmissions import leg_terminal_uid, mark_legs_on_ingest
 from app.services import card_brands
 from app.services.shifts import (
@@ -46,6 +50,7 @@ from app.services.shifts import (
     precheck_document_shifts,
     resolve_shift_for_document,
 )
+from app.services import document_filing as filing
 from app.services.stock import apply_movement
 from app.services.promotions import replace_document_promotions
 from app.services import menu as _menu
@@ -55,10 +60,18 @@ from app.services.tenders import (
     UNKNOWN_PAYMENT_METHOD,
     derive_payment_method,
     expected_tender_total,
+    is_credit_document_type,
     reconciliation_error,
 )
 
 logger = logging.getLogger(__name__)
+
+#: Codes of the quiet notes a document may get at ingest (`transactions.ingest_notes`).
+TENDERS_DO_NOT_RECONCILE = "tenders_do_not_reconcile"
+REFUND_OF_OTHER_TENANT = "refund_of_other_tenant"
+ISSUED_BEFORE_PAIRING = "issued_before_pairing"
+#: Clock slack before "issued before this till was paired" is noted.
+PAIRING_SKEW = timedelta(minutes=10)
 
 
 def _promotion_uuid(value) -> Optional[uuid.UUID]:
@@ -447,11 +460,11 @@ def drop_unreadable_references(raw: dict) -> Tuple[dict, List[str]]:
     movement whose `productId` cannot be read is dropped the same way: without a product
     there is nothing to move, and on-hand is not a fiscal record.
 
-    Only these links. A document whose money, dates or own id cannot be read is still
-    refused, and so is an unreadable `shiftId` (it decides which X the money is in),
-    `refundOfTransactionId` (it decides whether the money is a sale or a refund) or
-    `approvedByUserId` (stripping a claim of approval would pass a false one off as an
-    ordinary document).
+    Only these links, and an unreadable approver id (informational since 2026-10-07). A
+    document whose money, dates or own id cannot be read is still refused, and so is an
+    unreadable `shiftId` (it decides which X the money is in) or `refundOfTransactionId`
+    (it decides whether the money is a sale or a refund) — each such refusal is recorded
+    in `document_refusals` and shown in the dashboard.
     """
     warnings: List[str] = []
     doc = dict(raw)
@@ -460,6 +473,12 @@ def drop_unreadable_references(raw: dict) -> Tuple[dict, List[str]]:
     if _unreadable_uuid(doc.get("basketId")):
         warnings.append(f"basketId: unreadable {_raw(doc['basketId'])}, stored without the link")
         doc["basketId"] = None
+    # An approver is informational (docs/SHIFTS_API.md §1.2b, 2026-10-07): an unreadable id
+    # never refuses the document; the value as sent stays in the warning.
+    for field in ("approvedByUserId", "approvedByPosUserId"):
+        if _unreadable_uuid(doc.get(field)):
+            warnings.append(f"{field}: unreadable {_raw(doc[field])}, stored without the approver")
+            doc[field] = None
     for key, field in _DROPPABLE_REFERENCES:
         entries = doc.get(key)
         if not isinstance(entries, list):
@@ -541,6 +560,11 @@ def _serialize_tx_for_upsert(
     customer_ref_id: Optional[uuid.UUID] = None,
     approved_by_user_id: Optional[uuid.UUID] = None,
     approved_by_pos_user_id: Optional[uuid.UUID] = None,
+    claimed_approver_user_id: Optional[uuid.UUID] = None,
+    claimed_approver_pos_user_id: Optional[uuid.UUID] = None,
+    ingest_notes: Optional[List[dict]] = None,
+    refund_of_transaction_id: Any = ...,
+    filing_fields: Optional[Dict[str, Any]] = None,
 ) -> Dict:
     """
     Flatten one incoming document into the row the upsert writes.
@@ -548,13 +572,19 @@ def _serialize_tx_for_upsert(
     `payment_method`, `customer_ref_id` and `approved_by_user_id` are the values the
     *server* decides rather than copies: the first is derived from the tender legs,
     the second is the till's `customer_id` after it has been checked against this
-    tenant's customers, and the third is the till's claimed approver after
-    `app.services.approvals` has verified they could have approved this. All three
-    default to the pre-existing behaviour — the till's own `payment_method`, no
-    customer link, no approver — so a caller that passes none still produces the row
-    this function produced before any of them existed.
+    tenant's customers, and the third is the till's claimed approver linked when they
+    are a person of this business (`app.services.approvals.resolve_document_approver_claim`;
+    the claim itself is kept as sent in `claimed_approver_*`). All default to the
+    pre-existing behaviour — the till's own `payment_method`, no customer link, no
+    approver — so a caller that passes none still produces the row this function
+    produced before any of them existed. `refund_of_transaction_id` overrides the
+    document's own link only when passed (a link to another tenant's document dropped).
+    `machine` is the machine that *issued* the document (`document_filing.issuing_machine`);
+    `filing_fields` adds where and how it was filed (`claimed_shift_id`, `pushed_by_machine_id`,
+    `number_conflict_of`, `duplicate_copy`) when the caller decided them.
     """
     return {
+        **(filing_fields or {}),
         "id": tx.id,
         "tenant_id": machine.tenant_id,
         "machine_id": machine.id,
@@ -593,13 +623,20 @@ def _serialize_tx_for_upsert(
         "basket_discount": getattr(tx, "basket_discount", None),
         "basket_discount_percent": getattr(tx, "basket_discount_percent", None),
         "basket_discount_kind": getattr(tx, "basket_discount_kind", None),
+        # A staff / managers' table meal: its kind, whose meal, why (app/services/table_policies.py).
+        "meal_kind": getattr(tx, "meal_kind", None),
+        "meal_employee_id": getattr(tx, "meal_employee_id", None),
+        "meal_employee_name": getattr(tx, "meal_employee_name", None),
+        "meal_reason": getattr(tx, "meal_reason", None),
         "wht_deduction": tx.wht_deduction,
         "customer_id": tx.customer_id,
         "customer_ref_id": customer_ref_id,
         "cashier_id": tx.cashier_id,
         "branch_id": tx.branch_id,
         "notes": tx.notes,
-        "refund_of_transaction_id": tx.refund_of_transaction_id,
+        "refund_of_transaction_id": (
+            tx.refund_of_transaction_id if refund_of_transaction_id is ... else refund_of_transaction_id
+        ),
         "nayax_meta": tx.nayax_meta,
         # getattr: a caller may hand in a document built before these fields existed.
         "basket_id": getattr(tx, "basket_id", None),
@@ -608,6 +645,16 @@ def _serialize_tx_for_upsert(
         "customer_address": getattr(tx, "customer_address", None),
         "approved_by_user_id": approved_by_user_id,
         "approved_by_pos_user_id": approved_by_pos_user_id,
+        # The approver exactly as sent, and the quiet notes of ingest (docs/SHIFTS_API.md §1.2b).
+        "claimed_approver_user_id": claimed_approver_user_id,
+        "claimed_approver_pos_user_id": claimed_approver_pos_user_id,
+        "ingest_notes": list(ingest_notes) if ingest_notes else None,
+        # "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the request a credit answers, and
+        # "no money moved" when any of its legs says so.
+        "remote_credit_request_id": getattr(tx, "remote_credit_request_id", None),
+        "no_money_movement": any(
+            bool(getattr(leg, "no_money_movement", False)) for leg in (getattr(tx, "payments", None) or [])
+        ),
         "created_at": tx.created_at,
         "updated_at": tx.updated_at,
     }
@@ -648,20 +695,38 @@ def upsert_transactions(
     """
     Idempotently upsert a batch of transactions and their items.
 
+    **Every document the till issued lands** — the owner's rule (2026-10-07): "כל מסמך
+    שבוצע במכשירים חייב לעלות לענן ולהיות חלק מהזד והאיקס/משמרת". Nothing about a
+    document's *content* refuses it any more: tender legs that do not add up, a refund
+    link to another tenant's document and an approver nobody here knows are each stored
+    as sent with a quiet note in `ingest_notes` (shown in the document's detail). Only what
+    is not a document at all is still refused — a payload the model cannot read (the
+    router's `validate_documents`) or a write the database refuses — and every refusal is
+    recorded in `document_refusals` ("מסמך שנדחה בענן") by the router.
+
     For each tx:
-      - Reject the document outright if its `payments` array does not reconcile.
-      - Reject it outright if it claims an approver who could not have approved it.
-      - Resolve its shift by id (never adopting another open shift; see
-        `app.services.shifts`). A batch naming a shift the cloud cannot accept yet
-        raises `ShiftConflict` before anything is written.
+      - Note (never reject) a `payments` array that does not reconcile.
+      - Keep the claimed approver as sent; link it when it is a person of this business.
+      - File it under the till that issued it, in a shift (`app.services.document_filing`,
+        docs/SHIFTS_API.md §1.2c-bis): the shift it names; one it names that the cloud
+        has not seen, created open when nothing else of the till is open; else the
+        till's shift covering its issue time; else the till's "documents waiting for a
+        shift", which its next Z takes. Never adopting another open shift, and never a
+        409 for the batch: a document that cannot open its shift waits for it.
+      - A number the till already used for another document is stored too, flagged
+        (`number_conflict_of`; a duplicate copy is counted once — §1.2d).
+      - A correction to a document a Z already counted is carried into the till's next
+        Z as an adjustment (`app.services.z_adjustments`).
       - INSERT ... ON CONFLICT (id) DO UPDATE SET ... — `status` reports 'accepted' for new rows
         and 'duplicate' for rows that already existed at the same updated_at.
       - Replace items atomically: DELETE existing items by transaction_id, then INSERT the new list.
       - Replace tender legs the same way, synthesising one from `paymentMethod` when the
         till sent no array.
 
-    **Why an unbalanced `payments` array is rejected rather than stored with a flag.**
-    A document whose tenders do not sum to its total cannot be audited: it is either
+    **History — why an unbalanced `payments` array used to be rejected** (superseded by
+    the rule above: the document is now stored with the note `tenders_do_not_reconcile`,
+    and the OpenFormat export must read that note). A document whose tenders do not sum
+    to its total cannot be audited: it is either
     money the shop took and cannot account for, or an amount it never took. Stored, it
     goes straight into the next OpenFormat filing, where the payment records (D120)
     would no longer add up to the document record (C100) — and a validator that
@@ -685,9 +750,11 @@ def upsert_transactions(
     if not transactions:
         return results
 
-    # Before anything is written: a batch that names a shift the cloud cannot accept
-    # yet is refused whole, and the till retries it after the close of the open shift.
-    precheck_document_shifts(db, machine, [tx.shift_id for tx in transactions])
+    # Shifts the batch names that the cloud has not seen and whose documents cannot open
+    # them — another shift of the till is open, or several are unknown at once: those
+    # documents wait for their shift (`document_filing`, rule 2). The rest of the batch is
+    # never held up by them (it used to be a 409 for the whole batch).
+    must_wait, open_shift_id = precheck_document_shifts(db, machine, [tx.shift_id for tx in transactions])
 
     # Closed shifts a written document lands in (or leaves) → new documents among them.
     touched_closed: Dict[uuid.UUID, int] = {}
@@ -698,6 +765,12 @@ def upsert_transactions(
     # Per closed shift, the documents this push wrote into it new or moved in — those a Z
     # that already took the shift did not count, carried into the next Z (§4.6.3).
     written_into: Dict[uuid.UUID, List[uuid.UUID]] = {}
+    # The machines the documents were filed under: this till, and a till this device was
+    # before it was re-paired as a new machine (`document_filing`, rule 1).
+    issuers: Dict[Any, POSMachine] = {machine.id: machine}
+    issuer_of: Dict[Any, POSMachine] = {}
+    # Corrections to documents already in a Z: (issuer, document id, Z id, shift id, before).
+    corrections: List[tuple] = []
 
     # Pre-load existing rows in one query so we can classify accepted vs duplicate.
     incoming_ids = [tx.id for tx in transactions]
@@ -714,68 +787,104 @@ def upsert_transactions(
         savepoint = db.begin_nested()
         # Links the document sent that name nothing here (answered as `warnings`).
         link_warnings: List[str] = []
+        pending_correction = None
         try:
             previous = existing_map.get(tx.id)
-            if previous is not None and str(previous.machine_id) != str(machine.id):
-                # The cloud already holds this document for another till — the same
-                # physical till before it was re-paired as a new machine. It is left
-                # exactly as it is: rewriting it would move another till's document, or
-                # recompute another till's X. Reported as a duplicate — it *is* on the
-                # cloud — so the till clears it rather than retrying forever.
-                logger.warning(
-                    "Document %s pushed by machine %s is held by machine %s; left untouched",
-                    tx.id, machine.id, previous.machine_id,
-                )
-                savepoint.rollback()
-                results.append(TransactionUpsertResult(
-                    id=tx.id,
-                    status="duplicate",
-                    reason="held_by_another_machine",
-                    server_received_at=datetime.now(timezone.utc),
-                ))
-                continue
+            # Rule 1: the machine that issued it — this till, or the till this device was
+            # before it was re-paired as a new machine (docs/SHIFTS_API.md §1.2c-bis).
+            issuer, _issued_why = filing.issuing_machine(
+                db, machine, shift_id=tx.shift_id, created_at=tx.created_at
+            )
+            moving_machine = False
+            if previous is not None and str(previous.machine_id) != str(issuer.id):
+                previous_z = None
+                if previous.shift_id is not None:
+                    found_z = db.query(Shift.z_report_id).filter(Shift.id == previous.shift_id).first()
+                    previous_z = found_z[0] if found_z is not None else None
+                if str(previous.machine_id) == str(machine.id) and issuer is not machine and previous_z is None:
+                    # Stored under this till before the cloud knew which till issued it
+                    # (no link yet): re-filed under the issuer now. One a Z of this till
+                    # already counted stays where it was counted.
+                    moving_machine = True
+                else:
+                    # The cloud already holds this document for another till — the same
+                    # physical till before it was re-paired as a new machine. It is left
+                    # exactly as it is: rewriting it would move another till's document, or
+                    # recompute another till's X. Reported as a duplicate — it *is* on the
+                    # cloud — so the till clears it rather than retrying forever.
+                    logger.warning(
+                        "Document %s pushed by machine %s is held by machine %s; left untouched",
+                        tx.id, machine.id, previous.machine_id,
+                    )
+                    savepoint.rollback()
+                    results.append(TransactionUpsertResult(
+                        id=tx.id,
+                        status="duplicate",
+                        reason="held_by_another_machine",
+                        server_received_at=datetime.now(timezone.utc),
+                    ))
+                    continue
+            issuers.setdefault(issuer.id, issuer)
+            issuer_of[tx.id] = issuer
 
-            # Before anything is written, so a rejected document leaves no trace at
-            # all — not even an auto-opened shift.
+            # Nothing about the document's content refuses it (the owner's rule, see the
+            # docstring): each of these is stored as sent with a quiet note.
+            ingest_notes: List[dict] = []
             tender_problem = _tender_rejection_reason(tx)
             if tender_problem is not None:
-                logger.warning("Rejecting transaction %s: %s", tx.id, tender_problem)
-                results.append(TransactionUpsertResult(
-                    id=tx.id,
-                    status="rejected",
-                    reason=tender_problem,
-                ))
-                continue
+                logger.warning("Storing transaction %s with a tender note: %s", tx.id, tender_problem)
+                ingest_notes.append({
+                    "code": TENDERS_DO_NOT_RECONCILE,
+                    "text": "אמצעי התשלום במסמך אינם מסתכמים לסכום המסמך — נשמר כפי שנשלח מהקופה",
+                    "detail": tender_problem,
+                })
+                link_warnings.append(f"{tender_problem} — stored as sent")
 
-            # Also before anything is written, and for the same reason the tender
-            # check is: a document whose claim of approval is false must leave no
-            # trace, least of all a stored copy of itself with the claim quietly
-            # stripped out. Stripping would turn a lie into a plausible ordinary
-            # document, which is the one outcome worse than rejecting.
-            if _refund_of_other_tenant(db, tx.refund_of_transaction_id, machine.tenant_id):
+            # A refund link to another tenant's document: never resolved across tenants
+            # (every read is tenant-scoped), so it is dropped — unless the link is what makes
+            # the document a credit (no credit type), then kept as sent: dropping it would
+            # turn a refund into a sale. Either way the document is stored, with a note.
+            refund_of = ...
+            if _refund_of_other_tenant(db, tx.refund_of_transaction_id, issuer.tenant_id):
+                keep = not is_credit_document_type(tx.document_type)
                 logger.warning(
-                    "Rejecting transaction %s: refundOfTransactionId %s is another tenant's",
-                    tx.id, tx.refund_of_transaction_id,
+                    "Storing transaction %s: refundOfTransactionId %s is another tenant's (%s)",
+                    tx.id, tx.refund_of_transaction_id, "kept" if keep else "dropped",
                 )
-                results.append(TransactionUpsertResult(
-                    id=tx.id,
-                    status="rejected",
-                    reason="refundOfTransactionId: names a document of another tenant",
-                ))
-                continue
+                if not keep:
+                    refund_of = None
+                ingest_notes.append({
+                    "code": REFUND_OF_OTHER_TENANT,
+                    "text": "המסמך מזכה מסמך של עסק אחר — "
+                    + ("הקישור נשמר כפי שנשלח (הוא שהופך את המסמך לזיכוי)" if keep else "הקישור לא נשמר")
+                    + " והמסמך נקלט",
+                })
+                link_warnings.append(
+                    "refundOfTransactionId: names a document of another tenant, stored "
+                    + ("as sent (it is what makes the document a credit)" if keep else "without the link")
+                )
 
-            try:
-                approved_by_user_id, approved_by_pos_user_id = verify_document_approvers(
-                    db, machine, tx
-                )
-            except ApprovalRejected as bad_claim:
-                logger.warning("Rejecting transaction %s: %s", tx.id, bad_claim)
-                results.append(TransactionUpsertResult(
-                    id=tx.id,
-                    status="rejected",
-                    reason=str(bad_claim),
-                ))
-                continue
+            # The approver: kept as sent, linked when they are of the issuing till's
+            # business, never a reason to refuse or hold the document.
+            claim = resolve_document_approver_claim(db, issuer, tx)
+            ingest_notes.extend(claim.notes)
+            if issuer is not machine:
+                # Issued by the till this device was before it was re-paired (the F20,
+                # 2026-10-05): filed under that till, said so.
+                ingest_notes.append(filing.filed_under_note(issuer, machine))
+            else:
+                # Issued before this till was paired, with no till it can be traced to (no
+                # re-pair link): kept under the till that sent it, and said so.
+                machine_since = getattr(machine, "created_at", None)
+                if (
+                    isinstance(machine_since, datetime)
+                    and isinstance(tx.created_at, datetime)
+                    and _as_utc(tx.created_at) < _as_utc(machine_since) - PAIRING_SKEW
+                ):
+                    ingest_notes.append({
+                        "code": ISSUED_BEFORE_PAIRING,
+                        "text": "המסמך הונפק לפני שהקופה שויכה לעסק הזה (המכשיר שויך מחדש) — נקלט תחת הקופה ששלחה אותו",
+                    })
 
             legs = _normalized_payment_legs(tx)
 
@@ -788,16 +897,34 @@ def upsert_transactions(
             else:
                 business_date_value = tx.created_at.date() if tx.created_at else None
 
-            shift = resolve_shift_for_document(
-                db,
-                machine,
-                shift_id=tx.shift_id,
-                business_date=business_date_value,
-                opened_at=tx.created_at,
-            )
+            # Rule 2: the shift (docs/SHIFTS_API.md §1.2c-bis, `document_filing`).
+            named: Optional[Shift] = None
+            wait_reason: Optional[str] = None
+            other_till_shift = False
+            if tx.shift_id is not None:
+                found = db.query(Shift).filter(Shift.id == tx.shift_id).first()
+                if found is not None and str(found.machine_id) == str(issuer.id):
+                    named = found
+                elif found is None and issuer is machine and tx.shift_id not in must_wait:
+                    # The sale beat its shift's open event: the shift is created from it.
+                    named = resolve_shift_for_document(
+                        db, machine, shift_id=tx.shift_id,
+                        business_date=business_date_value, opened_at=tx.created_at,
+                    )
+                elif found is None:
+                    # Not openable from here (another shift of the till is open, several
+                    # are unknown, or it is the previous till's): the document waits.
+                    wait_reason = (
+                        "predecessor_unknown_shift" if issuer is not machine
+                        else ("unknown_shift_while_open" if open_shift_id is not None else "unknown_shifts")
+                    )
+                else:
+                    other_till_shift = True
+                    logger.warning(
+                        "machine %s pushed document %s naming shift %s of machine %s; filed by time",
+                        machine.id, tx.id, tx.shift_id, found.machine_id,
+                    )
 
-            # `shift` is always this till's own (None for no id, or another till's id).
-            target_shift_id = shift.id if shift is not None else None
             held = None  # (machine_id, z_report_id) of the shift the document is in now
             if previous is not None and previous.shift_id is not None:
                 held = (
@@ -805,19 +932,44 @@ def upsert_transactions(
                     .filter(Shift.id == previous.shift_id)
                     .first()
                 )
-            held_by_other_till = held is not None and str(held[0]) != str(machine.id)
-            if shift is None and previous is not None:
-                # A re-push that names no shift never detaches a document from the one
-                # it is already in — unless that is another till's shift (it could land
-                # there before that was refused) not yet in a Z: then it becomes the
-                # orphan it should have been.
-                target_shift_id = previous.shift_id
-                if held_by_other_till and held[1] is None:
-                    target_shift_id = None
+            held_by_other_till = held is not None and str(held[0]) != str(issuer.id)
+            filed_how: Optional[str] = None
+            if named is not None:
+                target_shift_id = named.id
             elif (
+                wait_reason is None
+                and previous is not None
+                and previous.shift_id is not None
+                and held is not None
+                and not held_by_other_till
+            ):
+                # A re-push that names no shift (or one it cannot be filed in) never
+                # detaches a document from the issuing till's shift it is already in.
+                target_shift_id = previous.shift_id
+            elif previous is not None and held is not None and held[1] is not None and not moving_machine:
+                # In another till's shift a Z already took (possible before that was
+                # refused): counted there; moving it would change a filed Z.
+                target_shift_id = previous.shift_id
+            else:
+                # No shift, another till's, or one that cannot be opened from here: the
+                # issuing till's shift covering the issue time, else its waiting bucket.
+                covering = filing.covering_shift(db, issuer.id, tx.created_at) if wait_reason is None else None
+                if covering is not None:
+                    target_shift_id = covering.id
+                    filed_how = "covering"
+                else:
+                    bucket = filing.waiting_shift(
+                        db, issuer, business_date=business_date_value, issued_at=tx.created_at,
+                        reason=wait_reason or "no_covering_shift",
+                    )
+                    target_shift_id = bucket.id
+                    filed_how = "waiting"
+
+            if (
                 previous is not None
                 and previous.shift_id is not None
                 and previous.shift_id != target_shift_id
+                and not moving_machine
             ):
                 # A re-push naming a different shift moves the document — that is how a
                 # close's `staleIds` get fixed — except out of a shift already in a Z:
@@ -828,6 +980,7 @@ def upsert_transactions(
                         tx.id, previous.shift_id, held[1], target_shift_id,
                     )
                     target_shift_id = previous.shift_id
+                    filed_how = None
                 else:
                     # A late document the cloud carried out of a support Z's shift stays in
                     # its carry shift, bound for the till's next Z (offline till Z §4.6.3).
@@ -835,45 +988,77 @@ def upsert_transactions(
 
                     if is_carry_shift(db, previous.shift_id):
                         target_shift_id = previous.shift_id
+                        filed_how = None
+
+            ingest_notes.extend(_filing_notes(filed_how, wait_reason, other_till_shift, open_shift_id))
+            if filed_how == "waiting":
+                link_warnings.append(
+                    f"shiftId {tx.shift_id or 'absent'}: {wait_reason or 'no_covering_shift'} — stored with the "
+                    "till's documents waiting for a shift (counted in its next Z; moved into its shift when it arrives)"
+                )
 
             # Before the row is rewritten: would this push change what the document
             # contributes to its shift's figures? Only asked for a closed shift, where a
             # Z may already hold the old figures (see `note_documents_after_close`).
             rewrites_fiscal = False
-            if (
-                previous is not None
-                and target_shift_id is not None
-                and previous.shift_id == target_shift_id
-                and db.query(Shift.id)
-                .filter(Shift.id == target_shift_id, Shift.status == ShiftStatus.CLOSED)
-                .first()
-                is not None
-            ):
-                rewrites_fiscal = _stored_fiscal_key(db, previous) != _incoming_fiscal_key(tx, legs)
+            target_z = None
+            if previous is not None and target_shift_id is not None and previous.shift_id == target_shift_id:
+                closed_row = (
+                    db.query(Shift.z_report_id)
+                    .filter(Shift.id == target_shift_id, Shift.status == ShiftStatus.CLOSED)
+                    .first()
+                )
+                if closed_row is not None:
+                    rewrites_fiscal = _stored_fiscal_key(db, previous) != _incoming_fiscal_key(tx, legs)
+                    target_z = closed_row[0]
+            if rewrites_fiscal and target_z is not None:
+                # A correction to a document a Z already counted: its old contribution,
+                # read before the row and its legs are rewritten — the till's next Z
+                # carries the difference as an adjustment (docs/SHIFTS_API.md §1.2).
+                from app.services.shift_totals import document_totals
+
+                pending_correction = (issuer, tx.id, target_z, target_shift_id, document_totals(db, previous))
+
+            # Rule 3: "same number, different id" — stored too, flagged (§1.2d).
+            number_conflict_of, duplicate_copy = _numbering(
+                db, issuer, tx, legs, previous, refund_of, moving_machine, ingest_notes, link_warnings,
+            )
 
             row = _serialize_tx_for_upsert(
                 tx,
-                machine,
+                issuer,
                 target_shift_id,
                 payment_method=derive_payment_method(
                     [leg.method for leg in legs], fallback=tx.payment_method
                 ),
                 customer_ref_id=_resolve_customer_ref_id(
-                    db, tx.customer_id, machine.tenant_id
+                    db, tx.customer_id, issuer.tenant_id
                 ),
-                approved_by_user_id=approved_by_user_id,
-                approved_by_pos_user_id=approved_by_pos_user_id,
+                approved_by_user_id=claim.user_id,
+                approved_by_pos_user_id=claim.pos_user_id,
+                claimed_approver_user_id=claim.claimed_user_id,
+                claimed_approver_pos_user_id=claim.claimed_pos_user_id,
+                ingest_notes=ingest_notes,
+                refund_of_transaction_id=refund_of,
+                filing_fields={
+                    "claimed_shift_id": tx.shift_id,
+                    "pushed_by_machine_id": machine.id if issuer is not machine else None,
+                    "number_conflict_of": number_conflict_of,
+                    "duplicate_copy": duplicate_copy,
+                },
             )
             stmt = pg_insert(Transaction).values(**row)
-            update_cols = {
-                k: stmt.excluded[k]
-                for k in row.keys()
-                if k not in ("id", "tenant_id", "machine_id", "server_received_at")
-            }
+            # Re-filed under the issuing till: its machine and tenant are rewritten too.
+            frozen = ("id", "server_received_at") if moving_machine else ("id", "tenant_id", "machine_id", "server_received_at")
+            update_cols = {k: stmt.excluded[k] for k in row.keys() if k not in frozen}
             # The prefix is frozen at issue (docs/SPEC_DOCUMENT_PREFIX.md): a re-push never
             # changes one already stored, it can only fill one that is missing.
             update_cols["document_prefix"] = func.coalesce(
                 Transaction.document_prefix, stmt.excluded.document_prefix
+            )
+            # The shift the till named: the latest it named, never wiped by a push naming none.
+            update_cols["claimed_shift_id"] = func.coalesce(
+                stmt.excluded.claimed_shift_id, Transaction.claimed_shift_id
             )
             stmt = stmt.on_conflict_do_update(index_elements=[Transaction.id], set_=update_cols)
             db.execute(stmt)
@@ -888,7 +1073,7 @@ def upsert_transactions(
                         id=it.id,
                         transaction_id=tx.id,
                         product_id=_kept_link(
-                            _safe_item_product_id(db, it.product_id, machine.tenant_id), it.product_id,
+                            _safe_item_product_id(db, it.product_id, issuer.tenant_id), it.product_id,
                             f"items[{i}].productId", link_warnings,
                         ),
                         product_name=it.product_name,
@@ -902,7 +1087,7 @@ def upsert_transactions(
                         line_discount=it.line_discount,
                         notes=it.notes,
                         refund_of_item_id=_refund_item_link(
-                            db, it.refund_of_item_id, machine.tenant_id,
+                            db, it.refund_of_item_id, issuer.tenant_id,
                             f"items[{i}].refundOfItemId", link_warnings,
                         ),
                         promotion_discount=it.promotion_discount,
@@ -930,7 +1115,7 @@ def upsert_transactions(
             if getattr(tx, "club_membership_id", None):
                 from app.services.club.sale_link import link_sale
 
-                link_sale(db, machine, tx.id, tx.club_membership_id)
+                link_sale(db, issuer, tx.id, tx.club_membership_id)
             # The lines taken apart for the menu reports — modifiers, and a meal's
             # components with its money allocated — rebuilt like the items.
             _menu.replace_item_parts(db, tx.id, [
@@ -965,6 +1150,8 @@ def upsert_transactions(
                     # מותג / חברת סליקה / מנפיק: the till's reading when it sent one,
                     # else the server reads the reply (an older till sends none).
                     **_leg_card_brand(leg),
+                    # "ללא החזר כספי" (docs/SPEC_REMOTE_CREDIT.md): no money moved on it.
+                    no_money_movement=bool(getattr(leg, "no_money_movement", False)),
                 )
                 for leg in legs
             ])
@@ -972,7 +1159,7 @@ def upsert_transactions(
             # re-push that just replaced the legs) marks it again from the kept uids.
             mark_legs_on_ingest(
                 db,
-                machine,
+                issuer,
                 [(leg.id, leg_terminal_uid(leg.method, leg.nayax_meta)) for leg in legs],
             )
 
@@ -983,17 +1170,17 @@ def upsert_transactions(
                 db.bulk_save_objects([
                     IssuedVoucher(
                         id=iv.id,
-                        tenant_id=machine.tenant_id,
-                        shop_id=machine.shop_id,
-                        machine_id=machine.id,
+                        tenant_id=issuer.tenant_id,
+                        shop_id=issuer.shop_id,
+                        machine_id=issuer.id,
                         transaction_id=tx.id,
                         transaction_item_id=iv.transaction_item_id,
                         voucher_id=_kept_link(
-                            _safe_voucher_id(db, iv.voucher_id, machine.tenant_id), iv.voucher_id,
+                            _safe_voucher_id(db, iv.voucher_id, issuer.tenant_id), iv.voucher_id,
                             f"issuedVouchers[{i}].voucherId", link_warnings,
                         ),
                         product_id=_kept_link(
-                            _safe_issued_product_id(db, iv.product_id, machine.tenant_id), iv.product_id,
+                            _safe_issued_product_id(db, iv.product_id, issuer.tenant_id), iv.product_id,
                             f"issuedVouchers[{i}].productId", link_warnings,
                         ),
                         product_name=iv.product_name,
@@ -1009,11 +1196,11 @@ def upsert_transactions(
                     for i, iv in enumerate(tx.issued_vouchers)
                 ])
 
-            if tx.stock_movements and machine.shop_id and machine.tenant_id:
+            if tx.stock_movements and issuer.shop_id and issuer.tenant_id:
                 for i, sm in enumerate(tx.stock_movements):
                     if sm.product_id is None:
                         continue  # nothing named, nothing to move (as before)
-                    if _safe_item_product_id(db, sm.product_id, machine.tenant_id) is None:
+                    if _safe_item_product_id(db, sm.product_id, issuer.tenant_id) is None:
                         # Unknown here, or another tenant's: nothing of ours to move.
                         link_warnings.append(
                             f"stockMovements[{i}].productId: unknown {_raw(str(sm.product_id))}, "
@@ -1024,15 +1211,15 @@ def upsert_transactions(
                     apply_movement(
                         db,
                         movement_id=sm.id,
-                        tenant_id=machine.tenant_id,
-                        shop_id=machine.shop_id,
+                        tenant_id=issuer.tenant_id,
+                        shop_id=issuer.shop_id,
                         product_id=sm.product_id,
                         delta=sm.delta,
                         reason=reason,
                         occurred_at=sm.occurred_at,
                         transaction_id=tx.id,
                         transaction_item_id=sm.transaction_item_id,
-                        machine_id=machine.id,
+                        machine_id=issuer.id,
                         note=sm.note,
                     )
 
@@ -1042,6 +1229,8 @@ def upsert_transactions(
                 and _as_utc(previous.updated_at) >= _as_utc(tx.updated_at)
             )
             savepoint.commit()
+            if pending_correction is not None:
+                corrections.append(pending_correction)
             # The row is written even when the push is a "duplicate" (same updated_at),
             # so a move between shifts happens either way — and the shift it left needs
             # its X recomputed as much as the one it joined.
@@ -1089,20 +1278,139 @@ def upsert_transactions(
     written = [
         r.id for r in results if r.status != "rejected" and r.reason != "held_by_another_machine"
     ]
-    if written:
+    # Per issuing till (this one, or the till this device was before a re-pair).
+    written_by_issuer: Dict[Any, List[uuid.UUID]] = {}
+    for doc_id in written:
+        written_by_issuer.setdefault(issuer_of.get(doc_id, machine).id, []).append(doc_id)
+    for issuer_id, ids in written_by_issuer.items():
+        issuer = issuers.get(issuer_id, machine)
         savepoint = db.begin_nested()
         try:
-            settle_credited_originals(db, machine.tenant_id, written)
+            settle_credited_originals(db, issuer.tenant_id, ids)
             savepoint.commit()
         except Exception:
             _rollback_savepoint(savepoint)
-            logger.exception("Could not settle credited originals for %s", written)
+            logger.exception("Could not settle credited originals for %s", ids)
+        # "זיכוי מרחוק": a credit that names its request completes it (docs/SPEC_REMOTE_CREDIT.md).
+        savepoint = db.begin_nested()
+        try:
+            from app.services import remote_credits
+
+            remote_credits.on_documents(db, issuer, ids)
+            savepoint.commit()
+        except Exception:
+            _rollback_savepoint(savepoint)
+            logger.exception("Could not link remote credit requests for %s", ids)
 
     # A document for a shift that is already closed: recompute or flag (see shifts).
     note_documents_after_close(
-        db, touched_closed, machine_id=machine.id, moved_in=moved_in, amended=amended, written=written_into
+        db, touched_closed, machine_id=machine.id, moved_in=moved_in, amended=amended, written=written_into,
+        machine_ids={m for m in issuers},
     )
+    # Corrections to documents a Z already counted: the difference waits for the till's
+    # next Z, which carries it as an adjustment (never a silent counter-only bump).
+    if corrections:
+        from app.services import z_adjustments
+
+        for issuer, doc_id, z_id, shift_id, before in corrections:
+            savepoint = db.begin_nested()
+            try:
+                z_adjustments.record(db, issuer, doc_id, z_id, shift_id, before)
+                savepoint.commit()
+            except Exception:
+                _rollback_savepoint(savepoint)
+                logger.exception("Could not record the correction of document %s (in Z %s)", doc_id, z_id)
     return results
+
+
+def _filing_notes(
+    filed_how: Optional[str], wait_reason: Optional[str], other_till_shift: bool, open_shift_id: Any,
+) -> List[dict]:
+    """The quiet notes saying where rule 2 filed the document (`document_filing`)."""
+    if filed_how == "covering":
+        return [{
+            "code": filing.FILED_BY_TIME,
+            "text": ("המסמך נשא משמרת של קופה אחרת" if other_till_shift else "המסמך נשלח בלי משמרת")
+            + " — נקלט במשמרת של הקופה שמכסה את מועד הפקתו",
+        }]
+    if filed_how == "waiting":
+        reason = wait_reason or "no_covering_shift"
+        note = {
+            "code": filing.WAITING_FOR_SHIFT,
+            "text": filing.WAIT_REASONS[reason]
+            + " — המסמך נשמר ב\"מסמכים שהמתינו למשמרת\" של הקופה ונכלל ב-Z הבא שלה",
+            "reason": reason,
+        }
+        if reason == "unknown_shift_while_open" and open_shift_id is not None:
+            note["openShiftId"] = str(open_shift_id)
+        return [note]
+    return []
+
+
+#: How far apart two copies of one document may have been stamped (they are the same moment).
+SAME_DOCUMENT_SLACK = timedelta(seconds=1)
+
+
+def _same_document(db: Session, holder: Transaction, tx: TransactionIn, legs: List[TransactionPaymentIn]) -> bool:
+    """
+    Whether `tx` is the document `holder` already is, under another id: the same issue
+    moment and the same fiscal content (number, type, money, tenders, refund link). A
+    number reissued for another sale — however alike — has another moment.
+    """
+    if holder.created_at is None or tx.created_at is None:
+        return False
+    if abs(_as_utc(holder.created_at) - _as_utc(tx.created_at)) > SAME_DOCUMENT_SLACK:
+        return False
+    return _stored_fiscal_key(db, holder) == _incoming_fiscal_key(tx, legs)
+
+
+def _numbering(
+    db: Session,
+    issuer: POSMachine,
+    tx: TransactionIn,
+    legs: List[TransactionPaymentIn],
+    previous: Optional[Transaction],
+    refund_of: Any,
+    moving_machine: bool,
+    notes: List[dict],
+    warnings: List[str],
+) -> Tuple[Optional[uuid.UUID], bool]:
+    """
+    (`number_conflict_of`, `duplicate_copy`) for the document (docs/SHIFTS_API.md §1.2d):
+    looked up when it is new, moves, changes its number or series, or is a conflict already;
+    else what is stored stays. A conflict adds its note and warning.
+    """
+    from app.services.document_prefix import document_series_of
+
+    series = document_series_of(
+        tx.document_type, tx.refund_of_transaction_id if refund_of is ... else refund_of
+    )
+    conflict_of = getattr(previous, "number_conflict_of", None) if previous is not None else None
+    duplicate = bool(getattr(previous, "duplicate_copy", False)) if previous is not None else False
+    stored_series = getattr(previous, "document_series", None) if previous is not None else None
+    if not (
+        previous is None
+        or moving_machine
+        or conflict_of is not None
+        or (previous.transaction_number or "") != (tx.transaction_number or "")
+        or (stored_series is not None and int(stored_series) != int(series))
+    ):
+        return conflict_of, duplicate
+    holder = filing.numbering_holder(db, issuer.id, series, tx.transaction_number, tx.id)
+    if holder is None:
+        return None, False
+    duplicate = _same_document(db, holder, tx, legs)
+    notes.append(filing.numbering_note(holder, duplicate))
+    warnings.append(
+        f"transactionNumber {tx.transaction_number}: already held by document {holder.id} — "
+        + ("a duplicate copy, stored and counted once" if duplicate
+           else "another document with the same number, stored and counted")
+    )
+    logger.warning(
+        "Document %s of machine %s reuses number %s (series %s) held by %s (duplicate copy: %s)",
+        tx.id, issuer.id, tx.transaction_number, series, holder.id, duplicate,
+    )
+    return holder.id, duplicate
 
 
 # ── A credit note settles its original ───────────────────────────────────────
@@ -1203,7 +1511,7 @@ def settle_credited_originals(
                 ),
                 Transaction.id != original.id,
                 Transaction.tenant_id == tenant_id,
-                Transaction.status.in_(SALE_STATUSES),
+                Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
             )
             .populate_existing()
             .all()

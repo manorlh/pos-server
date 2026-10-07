@@ -15,11 +15,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
-import { formatCurrency } from '@/lib/format';
+import { formatCurrency, formatShortDateTime, formatTime } from '@/lib/format';
 import { useTenantTimeZone } from '@/lib/auth';
 import { agorotToShekels, isoDayInZone, kioskConnection, kioskOffline, type KioskConnection } from '@/lib/kioskConfig';
 import type { KioskPrinterHealth, KioskSummary } from '@/lib/kioskApi';
 import { KioskAlertsBadge } from './kiosk-ops-notes';
+import { KioskZBadge } from './kiosk-z-actions';
 
 const DOT: Record<KioskConnection, string> = {
   online: 'bg-emerald-500',
@@ -41,9 +42,8 @@ export function seenAtText(iso: string | null | undefined, nowMs: number, timeZo
   if (!iso) return null;
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return null;
-  const time = at.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', timeZone });
-  if (isoDayInZone(at, timeZone) === isoDayInZone(new Date(nowMs), timeZone)) return time;
-  return `${at.toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit', timeZone })} ${time}`;
+  if (isoDayInZone(at, timeZone) === isoDayInZone(new Date(nowMs), timeZone)) return formatTime(at, { timeZone });
+  return formatShortDateTime(at, timeZone);
 }
 
 /**
@@ -251,7 +251,10 @@ export function KioskList({
           >
             <div className="flex items-start justify-between gap-2">
               {name(k)}
-              <ModeBadge k={k} />
+              <span className="flex flex-wrap justify-end gap-1">
+                <ModeBadge k={k} />
+                <KioskZBadge k={k} />
+              </span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <ConnectionBadge k={k} nowMs={nowMs} />
@@ -330,7 +333,11 @@ export function KioskList({
                   <MediaCell k={k} />
                 </TableCell>
                 <TableCell>
-                  <ModeBadge k={k} />
+                  {/* Fulfilment (BON / KDS) and the Z mode ("Z סניפי" / "Z עצמאי", kiosk-z-actions.tsx). */}
+                  <span className="flex flex-wrap gap-1">
+                    <ModeBadge k={k} />
+                    <KioskZBadge k={k} />
+                  </span>
                 </TableCell>
                 <TableCell>{actions(k)}</TableCell>
               </TableRow>

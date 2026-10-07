@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { fetchAllPages } from '@/lib/fetchAllPages';
 import { usePageScope } from '@/lib/scope';
 import { ScopeIgnoredNote } from '@/components/dashboard/scope-gate';
 import { Voucher, PaginatedResponse } from '@/lib/types';
@@ -86,7 +87,8 @@ export default function VouchersPage() {
       <ReportExportToolbar
         title={t('title')}
         disabled={vouchers.length === 0}
-        getSheets={() => ({
+        // Every voucher, past the 200 the list loads (the endpoint's largest page).
+        getSheets={async () => ({
           name: t('title'),
           columns: [
             { header: t('name'), width: 26 },
@@ -94,7 +96,12 @@ export default function VouchersPage() {
             { header: t('valueMode'), width: 16 },
             { header: tc('status'), width: 10 },
           ],
-          rows: vouchers.map((v) => [
+          rows: (
+            await fetchAllPages<Voucher>(
+              (page, pageSize) => api.get('/vouchers', { params: { page, pageSize } }).then((r) => r.data),
+              { pageSize: 200 },
+            )
+          ).map((v) => [
             v.name, v.title ?? v.name, t(`valueMode_${v.valueDisplayMode}`), v.isActive ? tc('active') : tc('inactive'),
           ]),
         })}

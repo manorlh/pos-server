@@ -15,6 +15,7 @@ import {
   type KioskLayer,
   type MediaRef,
 } from './kioskConfig';
+import type { KioskJob, KioskZKind } from './kioskZ';
 
 export type KioskLevel = 'company' | 'shop' | 'machine';
 export type KioskFlowState =
@@ -74,6 +75,17 @@ export interface KioskSummary {
   shiftOpen: boolean | null;
   /** Who produces this till's Z: "till" (it does, on request) or "cloud" (the shop Z). */
   zMode: 'till' | 'cloud' | null;
+  /**
+   * Its Z mode per device (pos-server app/services/kiosk_z.py): `shop` ("Z סניפי" — offered
+   * "סגירת משמרת"), `independent` ("Z עצמאי") or `own` ("Z לכל קופה") — offered "הפקת Z".
+   */
+  zKind?: KioskZKind | null;
+  zKindLabel?: string | null;
+  independentTill?: boolean | null;
+  zAction?: 'close_shift' | 'till_z' | null;
+  /** The last "סגירת משמרת" asked of it (36 h), and the last "הפקת Z". */
+  shiftClose?: KioskJob | null;
+  tillZRequest?: KioskJob | null;
   /** The machine's heartbeat receipt-printer status. */
   printerStatus: string | null;
   bonPrinter: KioskPrinterHealth | null;
@@ -103,6 +115,13 @@ export interface KioskTerminalIdentity {
   reportedAt: string | null;
   /** Card payment locked on the last report; null: not locked. */
   cardLock: 'mismatch' | 'not_configured' | 'unknown' | null;
+  /**
+   * "עקיפת בדיקת מספר מסוף" on for the kiosk (docs/SPEC_KIOSK.md §20.1): no card lock, and the
+   * warning; the level it comes from; what the kiosk itself last reported. Absent: an older server.
+   */
+  numberCheckBypass?: boolean;
+  numberCheckBypassSource?: string | null;
+  numberCheckBypassReported?: boolean | null;
 }
 
 export interface KioskOpenAlert {

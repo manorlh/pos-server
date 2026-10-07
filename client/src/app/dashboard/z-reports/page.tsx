@@ -33,7 +33,7 @@ import { NumberPill } from '@/components/dashboard/number-pill';
 import { numberedLabel } from '@/lib/orgNumber';
 import { useZNumberLabel } from '@/components/dashboard/z-report/z-number';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
+import { DatePicker, DateTimePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
@@ -44,6 +44,10 @@ import { ChevronLeft, ChevronRight, FileDown, FilePlus2, ListOrdered, Printer } 
 import { ZPrintViewToggle, type ZPrintView } from '@/components/dashboard/z-report/z-print-view-toggle';
 import { ZA4Batch, useZSequencePrint } from '@/components/dashboard/z-report/z-sequence-print';
 import { ZRangePrintDialog } from '@/components/dashboard/z-report/z-range-print-dialog';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import { usePaymentMethodLabel } from '@/components/dashboard/shifts/shift-parts';
+import { Z_TYPES, fetchZTable, type ZType } from '@/lib/reportCenterApi';
+import { zTableSheets } from '@/lib/reportSheets';
 
 const PAGE_SIZE = 50;
 const ORIGIN_ANY = '__any__';
@@ -105,6 +109,15 @@ export default function ZReportsPage() {
   const sequence = useZSequencePrint();
   /** `''` = both, `cloud` = the shop's Zs, `till` = Zs the tills produced themselves. */
   const [origin, setOrigin] = useState<'' | 'cloud' | 'till'>('');
+  /** "סוג Z" (docs/SPEC_REPORTS.md §4): none ticked = every type. */
+  const [zTypes, setZTypes] = useState<ZType[]>([]);
+  const tz = useTranslations('reportCenter');
+  const tzc = useTranslations('reportCenter.cols');
+  const paymentLabel = usePaymentMethodLabel();
+  const toggleZType = (type: ZType) => {
+    setZTypes((prev) => (prev.includes(type) ? prev.filter((x) => x !== type) : [...prev, type]));
+    setPage(1);
+  };
 
   /*
    * `?zReportId=` used to open a dialog here; the Z now has its own page. Old links
@@ -142,8 +155,9 @@ export default function ZReportsPage() {
     if (area) p.areaId = area;
     if (dateBasis !== 'business') p.dateBasis = dateBasis;
     if (origin) p.origin = origin;
+    if (zTypes.length) p.zTypes = zTypes;
     return p;
-  }, [machineId, shopId, from, to, closedFrom, closedTo, area, dateBasis, origin, page]);
+  }, [machineId, shopId, from, to, closedFrom, closedTo, area, dateBasis, origin, zTypes, page]);
   const originItems = [
     { value: ORIGIN_ANY, label: t('originAll') },
     { value: 'cloud', label: t('originCloudOption') },
@@ -224,20 +238,20 @@ export default function ZReportsPage() {
             <Label className="text-xs">
               {dateBasis === 'production' ? t('filterFromProduction') : t('filterFrom')}
             </Label>
-            <Input
-              type="date"
+            <DatePicker
               value={from}
               onChange={(e) => { setFrom(e.target.value); resetPage(); }}
+              range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); resetPage(); } }}
             />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">
               {dateBasis === 'production' ? t('filterToProduction') : t('filterTo')}
             </Label>
-            <Input
-              type="date"
+            <DatePicker
               value={to}
               onChange={(e) => { setTo(e.target.value); resetPage(); }}
+              range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); resetPage(); } }}
             />
           </div>
           <AreaFilterSelect
@@ -268,6 +282,30 @@ export default function ZReportsPage() {
             </Select>
           </div>
         </div>
+        {/* "סוג Z": the shop's Z, an independent till's, a per-till Z, a kiosk's. None = all. */}
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label={tz('zTypeFilter')}>
+          <span className="text-muted-foreground text-xs">{tz('zTypeFilter')}</span>
+          <Button
+            size="sm"
+            variant={zTypes.length === 0 ? 'default' : 'outline'}
+            className="rounded-full"
+            onClick={() => { setZTypes([]); resetPage(); }}
+          >
+            {tz('zTypeAll')}
+          </Button>
+          {Z_TYPES.map((type) => (
+            <Button
+              key={type}
+              size="sm"
+              variant={zTypes.includes(type) ? 'default' : 'outline'}
+              className="rounded-full"
+              aria-pressed={zTypes.includes(type)}
+              onClick={() => toggleZType(type)}
+            >
+              {tz(`zType.${type}`)}
+            </Button>
+          ))}
+        </div>
         <p className="text-muted-foreground text-xs">
           {dateBasis === 'production'
             ? t('productionDateFilterHint', { tz: data?.window?.timezone ?? '—' })
@@ -281,16 +319,14 @@ export default function ZReportsPage() {
         <div className="grid gap-3 md:grid-cols-2">
           <div className="space-y-1">
             <Label className="text-xs">{t('filterClosedFrom')}</Label>
-            <Input
-              type="datetime-local"
+            <DateTimePicker
               value={closedFrom}
               onChange={(e) => { setClosedFrom(e.target.value); resetPage(); }}
             />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">{t('filterClosedTo')}</Label>
-            <Input
-              type="datetime-local"
+            <DateTimePicker
               value={closedTo}
               onChange={(e) => { setClosedTo(e.target.value); resetPage(); }}
             />
@@ -336,6 +372,20 @@ export default function ZReportsPage() {
           <ListOrdered className="h-4 w-4 me-1" aria-hidden />
           {tp('printRange')}
         </Button>
+        {/* "טבלת זדים מרוכזת": every Z the filters match (not this page) and each one's tills. */}
+        <ReportExportToolbar
+          className="ms-auto"
+          excelOnly
+          title={tz('zTableTitle')}
+          from={from || undefined}
+          to={to || undefined}
+          disabled={!data || data.total === 0}
+          getSheets={async () => {
+            // The list's own filters without its page: the table is every Z they match.
+            const table = await fetchZTable({ ...params, page: undefined, pageSize: undefined });
+            return zTableSheets(table, tzc, paymentLabel);
+          }}
+        />
       </div>
 
       {isError ? (

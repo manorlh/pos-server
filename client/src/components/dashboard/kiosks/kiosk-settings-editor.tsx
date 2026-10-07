@@ -31,7 +31,9 @@ import {
   setPath,
   validateKioskConfig,
   type KioskConfig,
+  type UiStyle,
 } from '@/lib/kioskConfig';
+import { rebaseLayout, switchLayoutTemplate, type LayoutTemplate } from '@/lib/kioskLayout';
 import {
   fetchCategoryImageUrls,
   fetchKioskDefaults,
@@ -47,7 +49,8 @@ import {
 } from '@/lib/kioskApi';
 import { KioskEditorContext, useServerErrorText, type KioskEditorValue, type PreviewScreen } from './editor-context';
 import { OptionSelect } from './fields';
-import { KioskPreview } from './kiosk-preview';
+import { KioskPreview, type KioskPreviewControls } from './kiosk-preview';
+import { MotionSection } from './section-motion';
 import { ReviewDialog } from './review-dialog';
 import { AppearanceSection } from './section-appearance';
 import { AttractSectionEditor } from './section-attract';
@@ -55,15 +58,18 @@ import { CatalogSection } from './section-catalog';
 import { ClubSection, PickupSection } from './section-club-pickup';
 import { GeneralSection } from './section-general';
 import { MessagesSection, SuccessMessageCard } from './section-messages';
+import { TickerSection } from './section-ticker';
 import { PaymentSection } from './section-payment';
 import { PrintingSection } from './section-printing';
 import { TimersSection } from './section-timers';
 import { AlertsSection } from './section-alerts';
 import { UpsellSection } from './section-upsell';
+import { PreviewTextHighlight, TextsSection } from './section-texts';
 
 type SectionKey =
   | 'general'
   | 'appearance'
+  | 'texts'
   | 'attract'
   | 'catalog'
   | 'upsell'
@@ -73,15 +79,22 @@ type SectionKey =
   | 'timers'
   | 'alerts'
   | 'club'
-  | 'pickup';
+  | 'pickup'
+  | 'motion';
 
 const SECTIONS: { key: SectionKey; screen: PreviewScreen; paths: string[] }[] = [
   { key: 'general', screen: 'service', paths: ['general'] },
-  { key: 'appearance', screen: 'catalog', paths: ['theme', 'texts', 'screenImages'] },
+  // "מראה" also holds "מבנה הקיוסק" (layout) beside the style, and the category icons.
+  { key: 'appearance', screen: 'catalog', paths: ['theme', 'layout', 'screenImages'] },
+  // "טקסטים": every customer text, per screen and language (section-texts.tsx).
+  { key: 'texts', screen: 'attract', paths: ['texts', 'textsByLang'] },
+  // "הנפשות ומעברים": one choice per transition, each with "הצג" in the preview.
+  { key: 'motion', screen: 'catalog', paths: ['motion'] },
   { key: 'attract', screen: 'attract', paths: ['attract'] },
   { key: 'catalog', screen: 'catalog', paths: ['catalog'] },
   { key: 'upsell', screen: 'catalog', paths: ['upsell'] },
-  { key: 'messages', screen: 'attract', paths: ['messages', 'success'] },
+  // "הודעות" also holds "כיתוב רץ" (ticker).
+  { key: 'messages', screen: 'attract', paths: ['messages', 'success', 'ticker'] },
   { key: 'payment', screen: 'pay', paths: ['payment'] },
   { key: 'printing', screen: 'success', paths: ['printing'] },
   { key: 'timers', screen: 'paused', paths: ['timers', 'hours', 'operations'] },
@@ -147,6 +160,9 @@ function EditorBody({
   const [serverErrors, setServerErrors] = useState<KioskServerError[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [showPreview, setShowPreview] = useState(true);
+  const previewControls = useRef<KioskPreviewControls>(null);
+  const [previewLang, setPreviewLang] = useState<string>(() => saved.general.languages?.[0] ?? 'he');
+  const [highlightText, setHighlightText] = useState<string | null>(null);
 
   const dirty = !jsonEqual(draft, saved);
   useEffect(() => {
@@ -163,9 +179,14 @@ function EditorBody({
   // What this level inherits once it picks the draft's "סגנון ממשק": a value that only follows
   // the style is compared, pruned and reset against the style's preset, never saved explicitly.
   const inheritedLayers = settings.inheritedLayers ?? null;
+  // …and its "מבנה" (layout.template) the same way: a key that only follows the template is
+  // compared against the template's value (lib/kioskLayout.ts rebaseLayout).
+  const baseOf = (style: UiStyle, template: LayoutTemplate): KioskConfig =>
+    rebaseLayout(rebaseInherited(inherited, inheritedLayers, style), inheritedLayers, template, KIOSK_DEFAULTS);
+  const draftTemplate = draft.layout?.template ?? 'standard';
   const base = useMemo(
-    () => rebaseInherited(inherited, inheritedLayers, draft.theme.uiStyle),
-    [inherited, inheritedLayers, draft.theme.uiStyle],
+    () => rebaseLayout(rebaseInherited(inherited, inheritedLayers, draft.theme.uiStyle), inheritedLayers, draftTemplate, KIOSK_DEFAULTS),
+    [inherited, inheritedLayers, draft.theme.uiStyle, draftTemplate],
   );
   const layer = useMemo(() => pruneOverrides(base, draft), [base, draft]);
   const overrideCount = useMemo(() => Object.keys(layer).length, [layer]);
@@ -242,18 +263,38 @@ function EditorBody({
       setDraft((d) => {
         // The style itself (or the whole theme) goes back to the parents' style, moving the
         // values that follow it; anything else back to what the current style inherits.
+        const tpl = d.layout?.template ?? 'standard';
         if (path === 'theme.uiStyle' || path === 'theme') {
           const style = inherited.theme.uiStyle;
-          const moved = switchUiStyle(d, rebaseInherited(inherited, inheritedLayers, d.theme.uiStyle), rebaseInherited(inherited, inheritedLayers, style), style);
-          return path === 'theme' ? setPath(moved, 'theme', cloneJson(rebaseInherited(inherited, inheritedLayers, style).theme)) : moved;
+          const moved = switchUiStyle(d, baseOf(d.theme.uiStyle, tpl), baseOf(style, tpl), style);
+          return path === 'theme' ? setPath(moved, 'theme', cloneJson(baseOf(style, tpl).theme)) : moved;
         }
-        return setPath(d, path, cloneJson(getPath(rebaseInherited(inherited, inheritedLayers, d.theme.uiStyle), path)));
+        // The template (or the whole layout) goes back to the parents' template, moving the keys that follow it.
+        if (path === 'layout.template' || path === 'layout') {
+          const parent = inherited.layout?.template ?? 'standard';
+          const moved = switchLayoutTemplate(d, baseOf(d.theme.uiStyle, tpl), baseOf(d.theme.uiStyle, parent), parent);
+          return path === 'layout' ? setPath(moved, 'layout', cloneJson(baseOf(d.theme.uiStyle, parent).layout)) : moved;
+        }
+        return setPath(d, path, cloneJson(getPath(baseOf(d.theme.uiStyle, tpl), path)));
       }),
     setUiStyle: (style) =>
-      setDraft((d) =>
-        switchUiStyle(d, rebaseInherited(inherited, inheritedLayers, d.theme.uiStyle), rebaseInherited(inherited, inheritedLayers, style), style),
-      ),
+      setDraft((d) => {
+        const tpl = d.layout?.template ?? 'standard';
+        return switchUiStyle(d, baseOf(d.theme.uiStyle, tpl), baseOf(style, tpl), style);
+      }),
+    setLayoutTemplate: (template) =>
+      setDraft((d) => {
+        const tpl = d.layout?.template ?? 'standard';
+        return switchLayoutTemplate(d, baseOf(d.theme.uiStyle, tpl), baseOf(d.theme.uiStyle, template), template);
+      }),
+    previewLang,
+    setPreviewLang,
+    setHighlightText,
     showScreen: setScreen,
+    playMotion: (demo) => {
+      setShowPreview(true);
+      previewControls.current?.play(demo);
+    },
   };
 
   const pickSection = (key: SectionKey) => {
@@ -345,6 +386,10 @@ function EditorBody({
               <GeneralSection />
             ) : section === 'appearance' ? (
               <AppearanceSection />
+            ) : section === 'texts' ? (
+              <TextsSection />
+            ) : section === 'motion' ? (
+              <MotionSection />
             ) : section === 'attract' ? (
               <AttractSectionEditor />
             ) : section === 'catalog' ? (
@@ -354,6 +399,7 @@ function EditorBody({
             ) : section === 'messages' ? (
               <div className="space-y-4">
                 <MessagesSection nowMs={nowMs} />
+                <TickerSection nowMs={nowMs} />
                 <SuccessMessageCard />
               </div>
             ) : section === 'payment' ? (
@@ -372,8 +418,10 @@ function EditorBody({
           </div>
           <aside className={cn('lg:sticky lg:top-16', !showPreview && 'hidden lg:block')}>
             <div className="rounded-3xl border bg-gradient-to-b from-muted/60 to-background p-4">
+              <PreviewTextHighlight textKey={section === 'texts' ? highlightText : null} lang={previewLang}>
               <KioskPreview
                 config={draft}
+                previewLang={section === 'texts' ? previewLang : (draft.general.languages?.[0] ?? 'he')}
                 catalog={catalogQuery.data ?? null}
                 categoryImageUrls={imagesQuery.data ?? {}}
                 fonts={fonts}
@@ -381,12 +429,14 @@ function EditorBody({
                 onScreen={setScreen}
                 brandName={brandName}
                 nowMs={nowMs}
+                controls={previewControls}
                 onCtaMove={
                   canEdit
                     ? (x, y) => setDraft((d) => setPath(setPath(d, 'attract.cta.x', x), 'attract.cta.y', y))
                     : undefined
                 }
               />
+              </PreviewTextHighlight>
             </div>
           </aside>
         </div>

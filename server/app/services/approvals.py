@@ -1,6 +1,13 @@
 """
 Checking a claimed approver against the document that names them.
 
+**Since 2026-10-07 the document path does not check at all** — the owner's rule: "כרגע
+אין הרשאות, כולם יכולים לעשות הכל. כל מסמך שבוצע במכשירים חייב לעלות לענן". Ingest uses
+`resolve_document_approver_claim`: the claim is stored exactly as sent, linked to the
+person when they are of the till's business, and an unknown one gets a quiet note — never
+a refusal. The strict checks below (and their rationale) are kept for whoever needs the
+strict answer; `upsert_transactions` no longer calls them.
+
 A till uploads a document and may say "this one was approved by user X". The claim
 arrives over a machine token, so it is a claim and nothing more — the same device
 that could be running a modified build is the device making it. Recording it as
@@ -32,6 +39,7 @@ person's standing permissions, which is the durable fact.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import FrozenSet, Optional, Tuple
 
@@ -204,6 +212,89 @@ def verify_document_pos_approver(
         raise ApprovalRejected("approver_not_permitted_at_machine")
 
     return pos_user.id
+
+
+#: The quiet note a document gets when its approver is not a person of the till's business.
+APPROVER_NOT_KNOWN = "approver_not_known"
+APPROVER_NOT_KNOWN_TEXT = "המאשר שנשלח מהקופה אינו משתמש מוכר בעסק — נשמר כפי שנשלח, לידיעה בלבד"
+APPROVER_BOTH = "approver_both"
+APPROVER_BOTH_TEXT = "הקופה שלחה גם משתמש ענן וגם משתמש קופה כמאשרים — שניהם נשמרו כפי שנשלחו"
+
+
+@dataclass(frozen=True)
+class ApproverClaim:
+    """
+    What to store for a document's approver — never a reason to refuse it.
+
+    `user_id` / `pos_user_id` link the person when they are one of this till's business
+    (the foreign keys the dashboard names them through); `claimed_*` are the ids exactly as
+    the till sent them, always; `notes` are the quiet ingest notes (`{"code", "text"}`).
+    """
+
+    user_id: Optional[uuid.UUID] = None
+    pos_user_id: Optional[uuid.UUID] = None
+    claimed_user_id: Optional[uuid.UUID] = None
+    claimed_pos_user_id: Optional[uuid.UUID] = None
+    notes: Tuple[dict, ...] = ()
+
+
+def _pos_user_of_tenant(db: Session, pos_user: PosUser, tenant_id) -> bool:
+    if tenant_id is None:
+        return False
+    owner = pos_user.tenant_id
+    if owner is None:
+        row = db.query(Shop.tenant_id).filter(Shop.id == pos_user.shop_id).first()
+        owner = row[0] if row else None
+    return owner is not None and str(owner) == str(tenant_id)
+
+
+def resolve_document_approver_claim(db: Session, machine: POSMachine, tx) -> ApproverClaim:
+    """
+    The approver to store for `tx` under the owner's rule (2026-10-07): "כרגע אין הרשאות,
+    כולם יכולים לעשות הכל. כל מסמך שבוצע במכשירים חייב לעלות לענן".
+
+    No approval check may block or delay a document. The claim is kept exactly as sent
+    (`claimed_*`), and linked to the person (`user_id` / `pos_user_id`) when the id names
+    someone of the till's business — active or not, whatever their role or shop: the
+    document records who approved it then, and permissions are not in force. An id that
+    names nobody of this business (unknown, or another tenant's — one answer for both, so
+    the note does not confirm which accounts exist) is kept unlinked with one quiet note.
+
+    The F20 case this was written for: a document issued while the till was paired to one
+    business and approved by that business's till manager, reaching the cloud only after
+    the till was re-paired to another business — refused hourly as
+    `approver_unknown_or_inactive` although the approval was genuine when it was given.
+
+    `verify_document_approvers` stays for code that wants the strict answer; nothing on
+    the document path calls it any more.
+    """
+    claimed_user = getattr(tx, "approved_by_user_id", None)
+    claimed_pos = getattr(tx, "approved_by_pos_user_id", None)
+    if claimed_user is None and claimed_pos is None:
+        return ApproverClaim()
+
+    notes = []
+    user_id = None
+    if claimed_user is not None:
+        user = db.query(User).filter(User.id == claimed_user).first()
+        if user is not None and _user_in_tenant(db, user, machine):
+            user_id = user.id
+    pos_user_id = None
+    if claimed_pos is not None:
+        pos_user = db.query(PosUser).filter(PosUser.id == claimed_pos).first()
+        if pos_user is not None and _pos_user_of_tenant(db, pos_user, getattr(machine, "tenant_id", None)):
+            pos_user_id = pos_user.id
+    if (claimed_user is not None and user_id is None) or (claimed_pos is not None and pos_user_id is None):
+        notes.append({"code": APPROVER_NOT_KNOWN, "text": APPROVER_NOT_KNOWN_TEXT})
+    if claimed_user is not None and claimed_pos is not None:
+        notes.append({"code": APPROVER_BOTH, "text": APPROVER_BOTH_TEXT})
+    return ApproverClaim(
+        user_id=user_id,
+        pos_user_id=pos_user_id,
+        claimed_user_id=claimed_user,
+        claimed_pos_user_id=claimed_pos,
+        notes=tuple(notes),
+    )
 
 
 def verify_document_approvers(

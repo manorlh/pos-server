@@ -12,6 +12,7 @@ from __future__ import annotations
 import uuid
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     ForeignKey,
@@ -116,6 +117,11 @@ class CardTransmissionItem(Base):
     #: Denormalised from the transmission: legs are matched per till, by uid.
     machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id"), nullable=False)
     terminal_uid = Column(String(64), nullable=False)
+    #: Not named by the terminal: a sale the till assumed went in this batch because the
+    #: terminal confirmed it without listing its sales (`assumedTerminalTransactionIds`,
+    #: or the cloud's own reading of an older till's report — `transmissions.assume_unnamed`).
+    #: Its leg counts as transmitted, shown as not verified.
+    assumed = Column(Boolean, nullable=False, default=False, server_default="false")
 
     transmission = relationship("CardTransmission", back_populates="items")
 

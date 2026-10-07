@@ -192,6 +192,11 @@ def set_z_mode(db: Session, machine: POSMachine, mode: str, *, now: Optional[dat
     if count and not (mode == Z_MODE_CLOUD and _has_reconstructed_unreported(db, machine.id)):
         raise TillZRefused(status.HTTP_409_CONFLICT, {"detail": "unreported_shifts", "count": count})
     logger.info("machine %s z_mode %s -> %s", machine.id, machine.z_mode, mode)
+    # Kept over time: a document goes to the Z kind its till was in when it was issued,
+    # whatever the till switched to since (`document_filing.mode_at`).
+    machine.z_mode_history = list(getattr(machine, "z_mode_history", None) or []) + [
+        {"at": now.isoformat(), "from": z_mode_of(machine), "to": mode}
+    ]
     machine.z_mode = mode
     return True
 
@@ -244,7 +249,11 @@ def _included(db: Session, machine: POSMachine, body: TillZIn) -> Tuple[Optional
     not_closed = next((s for s in included if s.status != ShiftStatus.CLOSED), None)
     if not_closed is not None:
         raise _conflict("shift_not_closed", shiftId=str(not_closed.id))
-    return shop_id, included
+    # A till Z takes only what was issued under the till's own Z (`document_filing.taken_by`):
+    # late or waiting documents of a shop-Z period go to the shop's next Z.
+    from app.services.document_filing import taken_by
+
+    return shop_id, [s for s in included if taken_by(s, Z_MODE_TILL)]
 
 
 def produce_till_z(
@@ -521,12 +530,18 @@ def _produce_offline(db: Session, machine: POSMachine, body: TillZIn, now: datet
             z_id=off.id,
             machine_sequence_number=number,
             allow_empty=True,
-            # Its paper never had the cloud's carried late documents (§4.6.3).
-            leave_late_carry=True,
+            # The cloud's carried late documents and the documents waiting for a shift are
+            # in it too, each in its own section (§4.6.3): a till that always closes with no
+            # connection would otherwise never have them in any Z. Its paper did not have
+            # them, so the comparison below is with its own shifts only.
         )
     except ZBuildRefused as refused:
         logger.warning("offline till Z %s of machine %s refused: %s", off.id, machine.id, refused.code)
         raise _conflict(refused.code)
+    from app.services.document_filing import is_cloud_built
+
+    own = [s for s in included if not is_cloud_built(s)]
+    added = [s for s in included if is_cloud_built(s)]
     z.built_offline = True
     z.uploaded_at = now
     z.offline_report = {
@@ -540,13 +555,27 @@ def _produce_offline(db: Session, machine: POSMachine, body: TillZIn, now: datet
         "till": body.till,
     }
     section = (z.per_machine or [{}])[0]
+    if added or section.get("adjustments"):
+        # What the cloud added to the till's paper (§4.6.3): compared without it, and said.
+        from app.services.shift_totals import compute_totals as _totals
+        from app.services.z_builder import machine_section
+
+        z.offline_report = {
+            **z.offline_report,
+            "cloudAdded": {
+                "shiftIds": [str(s.id) for s in added],
+                "documents": sum(int(s.transactions_count or 0) for s in added),
+                "adjustments": (section.get("adjustments") or {}).get("count", 0),
+            },
+        }
+        section = machine_section(machine, own, _totals(db, [s.id for s in own]))
     found = offline_discrepancies(
         number=number,
         counter_before=counter_before,
         till_totals=body.till,
         till_report=off.report,
         till_shift_ids=off.shift_ids,
-        cloud_shift_ids=[s.id for s in included],
+        cloud_shift_ids=[s.id for s in own],
         till_first_document=off.first_document_number,
         till_last_document=off.last_document_number,
         section=section,
@@ -902,7 +931,10 @@ def request_for_machine(
 
 
 def shop_till_z_machines(db: Session, shop: Shop) -> List[POSMachine]:
-    """The tills "Z לכל הקופות" asks for their own Z: assigned, active, `zMode = till`."""
+    """
+    The tills "Z לכל הקופות" asks for their own Z: assigned, active, `zMode = till` — never
+    a display device (app/services/display_devices.py), which makes no Z.
+    """
     return (
         db.query(POSMachine)
         .filter(
@@ -910,6 +942,7 @@ def shop_till_z_machines(db: Session, shop: Shop) -> List[POSMachine]:
             POSMachine.is_active.is_(True),
             POSMachine.pairing_status == PairingStatus.ASSIGNED,
             POSMachine.z_mode == Z_MODE_TILL,
+            POSMachine.is_fiscal.is_(True),
         )
         .order_by(POSMachine.pos_number, POSMachine.name)
         .all()

@@ -85,6 +85,9 @@ class KdsDevice(Base):
     station_ids = Column(JSON, nullable=False, default=list)
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     last_seen_at = Column(DateTime(timezone=True), nullable=True)
+    #: The board's look — `{theme, accent, sound, showPreparing, title}` (a pickup screen; null =
+    #: the defaults). Sent with the screen in `kds/board` (docs/SPEC_KDS.md §13).
+    display = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

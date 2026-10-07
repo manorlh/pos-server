@@ -61,6 +61,9 @@ function kioskPublic(): Plugin {
     },
     closeBundle() {
       if (existsSync(src)) cpSync(src, path.join(here, 'dist/renderer/kiosk'), { recursive: true });
+      // The bridge's tray icon (main/bridge/electron.ts reads dist/renderer/tray.png).
+      const icon = path.join(here, 'build', 'icon.png');
+      if (existsSync(icon)) cpSync(icon, path.join(here, 'dist/renderer/tray.png'));
     },
   };
 }
@@ -92,6 +95,8 @@ export default defineConfig(({ mode }) => ({
       input: {
         index: path.join(here, 'src/renderer/index.html'),
         print: path.join(here, 'src/renderer/print.html'),
+        // "גשר לדפדפן": the bridge's tray window (main/bridge/electron.ts).
+        bridge: path.join(here, 'src/renderer/bridge.html'),
       },
     },
   },

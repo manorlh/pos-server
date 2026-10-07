@@ -377,8 +377,12 @@ export class SynqPayClient {
 
   /* ------------------------------------------------- data and maintenance */
 
-  async deviceInfo(): Promise<Record<string, unknown> | null> {
-    const r = await this.call('getDeviceInfo', SYNQ_TIMEOUTS.probe, (id) => requests.getDeviceInfo(id));
+  /**
+   * getDeviceInfo. `unauthenticated`: without the key — SynqPay documents only pair / authenticate
+   * as key-free, so a terminal may refuse it; the pairing tries it once for the serial number.
+   */
+  async deviceInfo(unauthenticated = false): Promise<Record<string, unknown> | null> {
+    const r = await this.call('getDeviceInfo', SYNQ_TIMEOUTS.probe, (id) => requests.getDeviceInfo(id), unauthenticated);
     return r.result && typeof r.result === 'object' ? (r.result as Record<string, unknown>) : null;
   }
 
@@ -402,10 +406,13 @@ export class SynqPayClient {
 
   /** Pairing, step 2: the new API key, or null when refused. Never logged. */
   async authenticate(otp: string): Promise<string | null> {
-    const r = await this.call('authenticate', SYNQ_TIMEOUTS.probe, (id) => requests.authenticate(otp, id), true);
+    const r = await this.authenticateReply(otp);
     const key = (r.result as { apiKey?: unknown } | null)?.apiKey;
     return typeof key === 'string' ? key : null;
   }
+
+  /** Pairing, step 2, the whole reply: `result.apiKey`, or 103 (a wrong code) / 201 (the code ran out). */
+  authenticateReply = (otp: string) => this.call('authenticate', SYNQ_TIMEOUTS.probe, (id) => requests.authenticate(otp, id), true);
 
   close() {
     this.transport.close();

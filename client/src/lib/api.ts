@@ -28,6 +28,8 @@ import type {
   ShopSettingsResponse,
   MachineSettingsResponse,
   AreaSettingsResponse,
+  AppInstallWindow,
+  AppPlatform,
   AppRelease,
   AppReleaseAssignment,
   AppReleaseLevel,
@@ -579,6 +581,11 @@ export type ZReportListParams = {
   areaId?: string;
   /** `till` = Zs the tills produced themselves; `cloud` = the shop's Zs. */
   origin?: 'cloud' | 'till';
+  /**
+   * "סוג Z" (docs/SPEC_REPORTS.md §4), any of: `shop` (Z סניפי), `independent` (Z עצמאי),
+   * `till` (Z לכל קופה), `kiosk`, `legacy`. Repeatable, like `machineIds`.
+   */
+  zTypes?: string[];
   page?: number;
   pageSize?: number;
 };
@@ -1093,24 +1100,31 @@ export async function deleteTillParameterValue(id: string, valueId: string): Pro
 
 // ── Till app releases ("עדכון קופות", super admin) ──────────────────────────
 
-/** Every release, newest first. */
-export async function fetchAppReleases(): Promise<AppRelease[]> {
-  const { data } = await api.get<AppRelease[]>('/app-releases');
+/** Every release (of one platform when given), newest first. */
+export async function fetchAppReleases(platform?: AppPlatform): Promise<AppRelease[]> {
+  const { data } = await api.get<AppRelease[]>('/app-releases', {
+    params: platform ? { platform } : undefined,
+  });
   return Array.isArray(data) ? data : [];
 }
 
 /**
- * Upload one APK. The server reads versionName / versionCode from the APK itself; the
- * typed values are only needed when it cannot (`422 apk_version_required`), and must
- * match when given (`422 apk_version_mismatch`).
+ * Upload one release. Android (default): an APK — the server reads versionName /
+ * versionCode from it; the typed values are only needed when it cannot (`422
+ * apk_version_required`), and must match when given (`422 apk_version_mismatch`).
+ * Windows: the installer (.exe, `422 invalid_installer`) — versionName typed or taken
+ * from the file name (`422 windows_version_required`), versionCode computed.
+ * Kiosk web (`kiosk_web`): the bundle zip — version, versionCode and bridgeApi come from its
+ * manifest.json (`422 invalid_bundle`, `422 bundle_version_mismatch`); no version fields.
  */
 export async function uploadAppRelease(
   file: File,
-  fields: { versionName?: string; versionCode?: number; notes?: string },
+  fields: { versionName?: string; versionCode?: number; notes?: string; platform?: AppPlatform },
   onProgress?: (fraction: number) => void,
 ): Promise<AppRelease> {
   const form = new FormData();
   form.append('file', file);
+  if (fields.platform) form.append('platform', fields.platform);
   if (fields.versionName) form.append('versionName', fields.versionName);
   if (fields.versionCode !== undefined) form.append('versionCode', String(fields.versionCode));
   if (fields.notes) form.append('notes', fields.notes);
@@ -1143,12 +1157,31 @@ export async function fetchAppReleaseAssignments(
   return Array.isArray(data) ? data : [];
 }
 
-/** `404 <level>_not_found`, `409 app_release_retired`. */
+/**
+ * `404 <level>_not_found`, `409 app_release_retired`, `422 rollout_percent_invalid`,
+ * `422 install_window_invalid`, `422 downgrade_not_supported_on_android`.
+ */
 export async function createAppReleaseAssignment(
   releaseId: string,
-  body: { level: AppReleaseLevel; targetId: string; autoInstall: boolean },
+  body: {
+    level: AppReleaseLevel;
+    targetId: string;
+    autoInstall: boolean;
+    rolloutPercent?: number;
+    allowDowngrade?: boolean;
+    installWindow?: AppInstallWindow | null;
+  },
 ): Promise<AppReleaseAssignment> {
   const { data } = await api.post<AppReleaseAssignment>(`/app-releases/${releaseId}/assignments`, body);
+  return data;
+}
+
+/** Widen / narrow the stage, auto-install, install window (`null` clears it). */
+export async function updateAppReleaseAssignment(
+  assignmentId: string,
+  body: { rolloutPercent?: number; autoInstall?: boolean; installWindow?: AppInstallWindow | null },
+): Promise<AppReleaseAssignment> {
+  const { data } = await api.patch<AppReleaseAssignment>(`/app-release-assignments/${assignmentId}`, body);
   return data;
 }
 
@@ -1160,11 +1193,13 @@ export async function cancelAppReleaseAssignment(assignmentId: string): Promise<
 export async function fetchAppReleaseRollout(params: {
   companyId?: string;
   shopId?: string;
+  platform?: AppPlatform;
 }): Promise<AppReleaseRolloutRow[]> {
   const { data } = await api.get<AppReleaseRolloutRow[]>('/app-releases/rollout', {
     params: {
       ...(params.companyId ? { companyId: params.companyId } : {}),
       ...(params.shopId ? { shopId: params.shopId } : {}),
+      ...(params.platform ? { platform: params.platform } : {}),
     },
   });
   return Array.isArray(data) ? data : [];

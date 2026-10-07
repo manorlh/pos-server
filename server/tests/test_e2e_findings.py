@@ -245,7 +245,6 @@ class TestOneBadDocumentDoesNotJamTheBatch:
     @pytest.mark.parametrize("field,value", [
         ("shiftId", "shift-7"),
         ("refundOfTransactionId", "sale-3"),
-        ("approvedByUserId", "manager"),
         ("totalAmount", "lots"),
         ("createdAt", "yesterday"),
     ])
@@ -253,6 +252,16 @@ class TestOneBadDocumentDoesNotJamTheBatch:
         (_i, result), = validate_documents([_doc(**{field: value})])[1]
 
         assert result.status == "rejected" and result.reason.startswith(f"{field}: ")
+
+    @pytest.mark.parametrize("field", ["approvedByUserId", "approvedByPosUserId"])
+    def test_an_unreadable_approver_never_refuses_the_document(self, w, field):
+        """An approver is informational since 2026-10-07 (docs/SHIFTS_API.md §1.2b)."""
+        valid, refused, _unidentified = validate_documents([_doc(**{field: "manager"})])
+
+        assert refused == []
+        (_i, tx, warnings), = valid
+        assert getattr(tx, "approved_by_user_id") is None and getattr(tx, "approved_by_pos_user_id") is None
+        assert warnings == [f"{field}: unreadable 'manager', stored without the approver"]
 
     def test_a_valid_document_carries_no_warnings(self, w):
         till = w.tills[0]
@@ -304,15 +313,20 @@ class TestOneBadDocumentDoesNotJamTheBatch:
         assert body["unidentified"] is None
         assert body["results"][0]["id"] == doc["id"]
 
-    def test_a_shift_conflict_still_refuses_the_whole_batch(self, w):
+    def test_an_unknown_shift_no_longer_refuses_the_batch(self, w):
+        """
+        It used to be a 409 for the whole batch (`another_shift_open`). Since 2026-10-07 the
+        readable document waits for its shift (docs/SHIFTS_API.md §1.2c-bis) and only the
+        unreadable one is refused.
+        """
         till = w.tills[0]
         w.shift(till, 1, status=ShiftStatus.OPEN)
         w.db.commit()
 
         response = _push(w, till, [_doc(uuid.uuid4()), _doc(uuid.uuid4(), totalAmount="x")])
 
-        assert response.status_code == 409
-        assert w.db.query(Transaction).count() == 0
+        assert [r.status for r in response.results] == ["accepted", "rejected"]
+        assert w.db.query(Transaction).count() == 1
 
     def test_only_the_envelope_is_validated_by_the_route(self):
         assert inspect.signature(sync_router.post_transactions).parameters["body"].annotation is (

@@ -9,6 +9,7 @@
  * board.
  */
 import { api } from './api';
+import type { BoardDisplay } from './kdsScreenTypes';
 import type { WorkflowLevelView, WorkflowScopeType, WorkflowValues } from './workflowMode';
 
 // ── Workflow configuration ──────────────────────────────────────────────────────
@@ -63,12 +64,21 @@ export interface KdsDevice {
   stations: { id: string; name: string }[];
   isActive: boolean;
   lastSeenAt: string | null;
+  /** The board's look (a pickup screen; null = the defaults — docs/SPEC_KDS.md §13). */
+  display?: BoardDisplay | null;
 }
 
 export interface KdsShopMachine {
   id: string;
   name: string;
   posNumber: string | null;
+  /**
+   * False for a display device (pos-server app/services/display_devices.py). A till chosen
+   * as a screen for the first time becomes one: no longer a till (the dialog warns).
+   */
+  fiscal?: boolean;
+  /** "web": a browser screen (`/kds`, `/board` on this site). */
+  platform?: 'android' | 'windows' | 'web' | null;
 }
 
 export interface KdsRouteOverride {
@@ -99,6 +109,8 @@ export interface KdsDeviceInput {
   role: KdsRole;
   stationIds: string[];
   isActive: boolean;
+  /** A pickup screen's look; omitted keeps what the screen has. */
+  display?: BoardDisplay;
 }
 
 export interface KdsStationInput {

@@ -54,6 +54,11 @@ from app.models.app_release import AppRelease, AppReleaseAssignment, AppReleaseM
 from app.models.accounting import AccountingExportBatch, AccountingExportItem, AccountingSettings
 from app.models.till_message import TillMessage, TillMessageReceipt
 from app.models.audit_exception import AuditException, ExceptionRuleValue, TillEvent
+# "עסקאות שלא הושלמו" (docs/SPEC_FAILED_PAYMENTS.md) — informational, never a fiscal total.
+from app.models.failed_payment import FailedPaymentAttempt
+# "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the dashboard asks a till to issue a credit.
+from app.models.remote_credit import RemoteCreditEvent, RemoteCreditRequest
+from app.models.document_refusal import DocumentRefusal
 from app.models.prepaid_voucher import (
     PrepaidVoucher,
     PrepaidVoucherBatch,
@@ -62,7 +67,7 @@ from app.models.prepaid_voucher import (
     PrepaidVoucherRedemption,
 )
 from app.models.promotion import Promotion, TransactionPromotion
-from app.models.tables import DiningTable, TableCancelReason, TableEvent, TableOrder, TableReservation, TableZone
+from app.models.tables import DiningTable, TableCancelReason, TableEvent, TableOrder, TableReservation, TableType, TableZone
 from app.models.platform_setting import PlatformSetting
 from app.models.printers import KitchenPrinter, KitchenPrinterRoute, KitchenPrintJob
 from app.models.menu import (
@@ -106,6 +111,12 @@ from app.models.kiosk import (
 )
 # The kiosk's alerts to the tills and its close with the shop Z (docs/SPEC_KIOSK.md §16).
 from app.models.kiosk_ops import KioskAlert, KioskCloseRequest
+# "ביצועי קיוסקים": the kiosk's anonymous funnel (docs/SPEC_KIOSK_INSIGHTS.md).
+from app.models.kiosk_insights import KioskEvent, KioskSession
+# "סוללה חלשה": a device's low-battery alerts and their history (docs/SPEC_KIOSK_INSIGHTS.md §6).
+from app.models.device_battery import DeviceBatteryAlert
+# The Android kiosk's web renderer status (kiosk web bundles, platform "kiosk_web").
+from app.models.kiosk_web import KioskWebDeviceStatus
 # "שירות הודעות ו-019" + "מועדון לקוחות" (docs/SPEC_NOTIFICATIONS_CLUB.md).
 from app.models.outbox import OutboxEvent
 from app.models.notifications import (
@@ -172,10 +183,11 @@ __all__ = [
     "AccountingSettings", "AccountingExportBatch", "AccountingExportItem",
     "TillMessage", "TillMessageReceipt",
     "AuditException", "ExceptionRuleValue", "TillEvent",
+    "FailedPaymentAttempt",
     "PrepaidVoucherBatch", "PrepaidVoucherBatchItem", "PrepaidVoucher", "PrepaidVoucherRedemption",
     "PrepaidVoucherEvent",
     "Promotion", "TransactionPromotion",
-    "TableZone", "DiningTable", "TableOrder", "TableEvent", "TableCancelReason", "TableReservation", "PlatformSetting",
+    "TableZone", "DiningTable", "TableOrder", "TableEvent", "TableCancelReason", "TableReservation", "TableType", "PlatformSetting",
     "KitchenPrinter", "KitchenPrinterRoute", "KitchenPrintJob",
     "ModifierGroup", "ModifierOption", "ModifierLink", "PrepNotePreset", "MealSlot", "MealSlotOption",
     "UpsellRule", "UpsellStat", "MenuCourse", "MenuSyncState", "TransactionItemPart",
@@ -194,4 +206,7 @@ __all__ = [
     "ClubLandingPage", "ClubMembership", "ClubOtpChallenge", "ClubPointsLedger", "ClubProgram",
     "ClubRedemptionReservation", "ClubSaleLink", "ClubSourceToken", "ClubSuppression",
     "KioskSettings", "KioskDevice", "KioskOrder", "KioskPickupCounter", "KioskPickupAllocation", "KioskCommand",
+    "KioskSession", "KioskEvent", "DeviceBatteryAlert", "KioskWebDeviceStatus",
+    "RemoteCreditRequest", "RemoteCreditEvent",
+    "DocumentRefusal",
 ]

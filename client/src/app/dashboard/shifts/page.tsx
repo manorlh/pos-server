@@ -23,6 +23,7 @@ import { AREA_NONE, fetchShifts, type ShiftListParams } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope, useScopeQuery } from '@/lib/scope';
 import { findBySameId } from '@/lib/entityLookup';
+import { fetchAllPages } from '@/lib/fetchAllPages';
 import { formatCurrency, formatDate, formatDateTimeInZone } from '@/lib/format';
 import { useTenantTimeZone } from '@/lib/auth';
 import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
@@ -37,7 +38,7 @@ import {
   useShiftLabel,
 } from '@/components/dashboard/shifts/shift-parts';
 import { Button, buttonVariants } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -221,22 +222,22 @@ export default function ShiftsPage() {
             </div>
             <div className="space-y-1">
               <Label className="text-xs">{t('filter.from')}</Label>
-              <Input
-                type="date"
+              <DatePicker
                 value={from}
                 max={to || undefined}
                 aria-invalid={rangeInvalid || undefined}
                 onChange={(e) => setFilters({ from: e.target.value })}
+                range={{ from, to, onSelect: (r) => setFilters({ from: r.from, to: r.to }) }}
               />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">{t('filter.to')}</Label>
-              <Input
-                type="date"
+              <DatePicker
                 value={to}
                 min={from || undefined}
                 aria-invalid={rangeInvalid || undefined}
                 onChange={(e) => setFilters({ to: e.target.value })}
+                range={{ from, to, onSelect: (r) => setFilters({ from: r.from, to: r.to }) }}
               />
             </div>
             <AreaFilterSelect
@@ -265,7 +266,8 @@ export default function ShiftsPage() {
             title={t('title')}
             from={from || undefined}
             to={to || undefined}
-            getSheets={() => ({
+            // Every shift of these filters, not just this page (the list's largest page is 200).
+            getSheets={async () => ({
               name: t('title'),
               columns: [
                 { header: t('col.shift'), width: 14 },
@@ -280,7 +282,9 @@ export default function ShiftsPage() {
                 { header: t('col.counted'), kind: 'money' },
                 { header: t('col.overShort'), kind: 'money' },
               ],
-              rows: data.items.map((s) => [
+              rows: (
+                await fetchAllPages((p, pageSize) => fetchShifts({ ...params, page: p, pageSize }), { pageSize: 200 })
+              ).map((s) => [
                 shiftLabel(s), s.businessDate,
                 s.machineName ?? findBySameId(scope.machines, s.machineId)?.name ?? null,
                 s.areaName ?? null, s.openedAt, s.status === 'open' ? null : (s.closedAt ?? null),

@@ -1,29 +1,58 @@
 /**
- * R2M Kiosk for Windows — the Electron shell around the local service (service.ts):
+ * R2M POS for Windows — the Electron shell. One app for every role the cloud gives this device
+ * (kiosk, KDS, order status board; till and customer display come next — main/roles/types.ts):
  *
- *  - one full-screen kiosk window (no frame, no menu, no shortcuts out), started at login;
+ *  - one full-screen window (no frame, no menu, no shortcuts out), started at login;
+ *  - the local service layer (service.ts: pairing, auth, sync, media, printing, payment, logs,
+ *    technician tools) and the updater (update/updater.ts), shared by every role;
+ *  - the role manager (roles/manager.ts): which role, and its module (KDS / board feeds);
  *  - the screens and every media file served from disk through the `kiosk://` protocol
  *    (`kiosk://app/…` the bundle, `kiosk://media/<sha256>.<ext>` the media, with byte ranges for
  *    video) — the renderer never touches the network;
  *  - a hidden print window that draws receipts and bons on a canvas (Chromium's Hebrew shaping),
  *    handed back as pixels for the ESC/POS raster;
- *  - IPC: shared/bridge.ts.
+ *  - IPC: shared/bridge.ts (the kiosk, `window.kiosk`) and shared/roles.ts (the shell, `window.r2m`).
  */
 
 import { app, BrowserWindow, ipcMain, net as enet, powerSaveBlocker, protocol, safeStorage, screen, shell } from 'electron';
-import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { KioskService } from './service';
 import type { PageRenderer } from './printer/printQueue';
-import { checkForUpdate, installUpdate } from './update/updater';
+import { UpdateManager } from './update/updater';
+import { RoleManager } from './roles/manager';
+import { APP_ID, DATA_DIR_NAME, SHELL_NAME } from './shell/identity';
+import { BRIDGE_MARKER, shellModeOf } from './shell/mode';
+import { startBridgeMode, type BridgeModeHandle } from './bridge/electron';
 import { QUICKSUPPORT_PATHS } from '../core/technician';
+import { parseWindow } from '../core/updatePolicy';
 import type { PrintDoc } from '../core/printDocs';
+import type { KdsActionInput } from '../shared/roles';
 
 const isDev = process.argv.includes('--dev');
 const windowedArg = process.argv.includes('--windowed') || isDev;
 let windowed = windowedArg;
+
+// The data folder is pinned (shell/identity.ts): the paired machine, its counters and Zs live there.
+app.setPath('userData', path.join(app.getPath('appData'), DATA_DIR_NAME));
+app.setAppUserModelId(APP_ID);
+
+/** "גשר לדפדפן" (shell/mode.ts): a tray program for a browser kiosk / KDS / board on this PC. */
+const shellMode = shellModeOf({
+  argv: process.argv,
+  markerExists: existsSync(path.join(app.getPath('userData'), BRIDGE_MARKER)),
+  config: (() => {
+    try {
+      return JSON.parse(readFileSync(path.join(app.getPath('userData'), 'kiosk.json'), 'utf8')) as { mode?: unknown };
+    } catch {
+      return null;
+    }
+  })(),
+});
+let bridgeMode: BridgeModeHandle | null = null;
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'kiosk', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } },
@@ -82,6 +111,8 @@ function fileResponse(file: string, request: Request, cache: string): Response {
 }
 
 let service: KioskService | null = null;
+let updater: UpdateManager | null = null;
+let roles: RoleManager | null = null;
 let main: BrowserWindow | null = null;
 let printer: BrowserWindow | null = null;
 let printerReady: Promise<void> | null = null;
@@ -93,10 +124,11 @@ function appVersion(): string {
 }
 
 /**
- * The installation's own file (optional): %APPDATA%R2M Kioskkiosk.json —
- * { "updateFeedUrl": "https://…/kiosk/", "windowed": false }.
+ * The installation's own file (optional): %APPDATA%\R2M Kiosk\kiosk.json —
+ * { "windowed": false, "updateWindow": "02:00-05:00", "updateCheckMinutes": 15 }.
+ * `updateWindow` is used when the cloud's assignment gives no install window.
  */
-function installConfig(): { updateFeedUrl?: string; windowed?: boolean } {
+function installConfig(): { windowed?: boolean; updateWindow?: string; updateCheckMinutes?: number; bridgePort?: unknown; bridgeOrigins?: unknown } {
   try {
     return JSON.parse(readFileSync(path.join(app.getPath('userData'), 'kiosk.json'), 'utf8'));
   } catch {
@@ -164,6 +196,7 @@ function createMain() {
     frame: windowed,
     autoHideMenuBar: true,
     backgroundColor: '#000000',
+    title: SHELL_NAME,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
@@ -206,6 +239,8 @@ function bridge(svc: KioskService) {
   ipcMain.handle('kiosk:bootstrap', () => svc.view());
   ipcMain.handle('kiosk:pair', (_e, input) => svc.pair(input));
   ipcMain.on('kiosk:reportFlow', (_e, input) => svc.reportFlow(input));
+  ipcMain.on('kiosk:funnel', (_e, events) => svc.funnelEvents(events));
+  ipcMain.handle('kiosk:battery', (_e, reading) => svc.battery(reading));
   ipcMain.handle('kiosk:startPayment', (_e, input) => svc.startPayment(input));
   ipcMain.handle('kiosk:cancelPayment', () => svc.cancelPayment());
   ipcMain.handle('kiosk:receiptChoice', (_e, orderId: string, print: boolean) => svc.receiptChoice(orderId, print));
@@ -216,6 +251,23 @@ function bridge(svc: KioskService) {
   ipcMain.handle('kiosk:technicianUnlock', (_e, code: string) => svc.technicianUnlock(code));
   ipcMain.handle('kiosk:technicianInfo', () => svc.technicianInfo());
   ipcMain.handle('kiosk:technicianAction', (_e, a) => svc.technicianAction(a));
+  // The shell (shared/roles.ts): the role, the update status, the KDS and board screens.
+  ipcMain.handle('shell:view', () => roles?.view());
+  ipcMain.handle('shell:board', () => roles?.boardView());
+  ipcMain.handle('shell:kds', () => roles?.kdsView());
+  ipcMain.handle('shell:kdsAction', (_e, a: KdsActionInput) => roles?.kdsAction(a) ?? { ok: false });
+  ipcMain.on('shell:activity', () => roles?.touch());
+  // "הפעלה כגשר לדפדפן" on the pairing screen (an unpaired device only): the marker, then a restart in bridge mode.
+  ipcMain.handle('shell:becomeBridge', () => {
+    if (svc.paired) return { ok: false, message: 'המכשיר מצומד — אי אפשר להפוך אותו לגשר' };
+    mkdirSync(app.getPath('userData'), { recursive: true });
+    writeFileSync(path.join(app.getPath('userData'), BRIDGE_MARKER), 'bridge');
+    setTimeout(() => {
+      app.relaunch();
+      app.exit(0);
+    }, 200);
+    return { ok: true };
+  });
   ipcMain.on('print:result', (_e, r: { id: number; width?: number; height?: number; rgba?: Uint8Array; error?: string }) => {
     const w = printWaiters.get(r.id);
     if (!w) return;
@@ -225,23 +277,79 @@ function bridge(svc: KioskService) {
   });
 }
 
+/** `kiosk://media/<file>`: the kiosk's media (the app), or the linked kiosk's receipt logo (the bridge). */
+let mediaFile: (name: string) => string | null = (name) => service?.media.resolveFile(name) ?? null;
+
+function registerKioskProtocol() {
+  protocol.handle('kiosk', (request) => {
+    const url = new URL(request.url);
+    if (url.host === 'media') {
+      const file = mediaFile(decodeURIComponent(url.pathname.slice(1)));
+      if (!file) return new Response('not found', { status: 404 });
+      return fileResponse(file, request, 'public, max-age=31536000, immutable');
+    }
+    if (url.host === 'app') {
+      const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
+      const file = path.normalize(path.join(rendererDir(), rel));
+      if (!file.startsWith(rendererDir()) || !existsSync(file)) return new Response('not found', { status: 404 });
+      return fileResponse(file, request, 'no-cache');
+    }
+    return new Response('not found', { status: 404 });
+  });
+}
+
+function deviceInfoOf(model: string): Record<string, string> {
+  return {
+    model,
+    manufacturer: os.hostname(),
+    platform: 'windows',
+    serial: KioskService.deviceSerial(`${os.hostname()}|${os.userInfo().username}|${os.cpus()[0]?.model ?? ''}`),
+    firmware_build: `${os.type()} ${os.release()}`,
+  };
+}
+
+function secretBoxOf() {
+  return safeStorage.isEncryptionAvailable()
+    ? { seal: (s: string) => safeStorage.encryptString(s).toString('base64'), open: (s: string) => safeStorage.decryptString(Buffer.from(s, 'base64')) }
+    : undefined;
+}
+
 void app.whenReady().then(async () => {
   const install = installConfig();
+  if (shellMode === 'bridge') {
+    // "גשר לדפדפן": no kiosk window — the tray, the local API, the hidden print window when printing.
+    registerKioskProtocol();
+    ipcMain.on('print:result', (_e, r: { id: number; width?: number; height?: number; rgba?: Uint8Array; error?: string }) => {
+      const w = printWaiters.get(r.id);
+      if (!w) return;
+      printWaiters.delete(r.id);
+      if (r.error || !r.rgba || !r.width || !r.height) w({ error: r.error ?? 'empty page' });
+      else w({ width: r.width, height: r.height, rgba: new Uint8Array(r.rgba) });
+    });
+    bridgeMode = await startBridgeMode({
+      appVersion: appVersion(),
+      userData: app.getPath('userData'),
+      rendererDir: rendererDir(),
+      preload: path.join(__dirname, '..', 'preload', 'index.js'),
+      renderPage,
+      deviceInfo: deviceInfoOf('Windows bridge'),
+      secretBox: secretBoxOf(),
+      install,
+      isDev,
+      setMediaResolver: (fn) => {
+        mediaFile = fn;
+      },
+      log: (m) => console.log(m),
+    });
+    return;
+  }
   windowed = windowedArg || install.windowed === true;
   const dataDir = path.join(app.getPath('userData'), 'data');
   service = new KioskService({
     dataDir,
     appVersion: appVersion(),
-    deviceInfo: {
-      model: 'Windows kiosk',
-      manufacturer: os.hostname(),
-      platform: 'windows',
-      serial: KioskService.deviceSerial(`${os.hostname()}|${os.userInfo().username}|${os.cpus()[0]?.model ?? ''}`),
-      firmware_build: `${os.type()} ${os.release()}`,
-    },
-    secretBox: safeStorage.isEncryptionAvailable()
-      ? { seal: (s) => safeStorage.encryptString(s).toString('base64'), open: (s) => safeStorage.decryptString(Buffer.from(s, 'base64')) }
-      : undefined,
+    deviceInfo: deviceInfoOf('Windows kiosk'),
+    secretBox: secretBoxOf(),
     renderer: renderPage,
     platform: {
       quit: () => app.quit(),
@@ -255,36 +363,57 @@ void app.whenReady().then(async () => {
         return err ? null : exe;
       },
       setZoom: (z) => main?.webContents.setZoomFactor(z),
-      checkUpdate: () => checkForUpdate(service!, app.getPath('temp'), install.updateFeedUrl),
-      installUpdate: () => installUpdate(service!, app.getPath('temp'), () => app.quit(), install.updateFeedUrl),
+      checkUpdate: () => updater!.checkNow(),
+      installUpdate: () => updater!.installNow(),
+      updateStatus: () => updater!.view(),
     },
     log: (m) => console.log(`[kiosk] ${m}`),
   });
-
-  protocol.handle('kiosk', (request) => {
-    const url = new URL(request.url);
-    if (url.host === 'media') {
-      const file = service?.media.resolveFile(decodeURIComponent(url.pathname.slice(1)));
-      if (!file) return new Response('not found', { status: 404 });
-      return fileResponse(file, request, 'public, max-age=31536000, immutable');
-    }
-    if (url.host === 'app') {
-      const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
-      const file = path.normalize(path.join(rendererDir(), rel));
-      if (!file.startsWith(rendererDir()) || !existsSync(file)) return new Response('not found', { status: 404 });
-      return fileResponse(file, request, 'no-cache');
-    }
-    return new Response('not found', { status: 404 });
+  const svc = service;
+  updater = new UpdateManager({
+    api: svc.api,
+    kv: svc.kv,
+    machineId: () => svc.machineId,
+    token: () => svc.cloud.credentials()?.accessToken ?? null,
+    currentVersion: appVersion(),
+    dir: path.join(app.getPath('userData'), 'updates'),
+    activity: () => roles?.activity() ?? svc.activity(),
+    localWindow: parseWindow(install.updateWindow),
+    checkEveryMs: Math.max(5, Number(install.updateCheckMinutes) || 15) * 60_000,
+    runInstaller: (file, args) => {
+      if (!existsSync(file)) throw new Error('קובץ ההתקנה חסר');
+      spawn(file, args, { detached: true, stdio: 'ignore', windowsHide: true }).on('error', (e) => console.log(`[update] installer: ${e.message}`)).unref();
+    },
+    quit: () => app.quit(),
+    log: (m) => console.log(`[update] ${m}`),
   });
+  roles = new RoleManager(svc, () => updater!.view(), (m) => console.log(`[shell] ${m}`));
+  updater.onChange(() => roles?.emitView());
+  const sendShell = (channel: string, payload: unknown) => {
+    if (main && !main.isDestroyed()) main.webContents.send(channel, payload);
+  };
+  roles.on('view', (v) => sendShell('shell:view', v));
+  roles.on('board', (v) => sendShell('shell:board', v));
+  roles.on('kds', (v) => sendShell('shell:kds', v));
+
+  registerKioskProtocol();
 
   bridge(service);
   powerSaveBlocker.start('prevent-display-sleep');
   if (!isDev && app.isPackaged) app.setLoginItemSettings({ openAtLogin: true, path: process.execPath });
   createMain();
   await service.start();
+  roles.start();
+  // Development builds check only on "בדוק עכשיו"; an installed app on its own timer too.
+  if (app.isPackaged && !isDev) updater.start();
+  else void updater.confirmInstalled();
 });
 
 app.on('second-instance', () => {
+  if (bridgeMode) {
+    bridgeMode.show();
+    return;
+  }
   if (main) {
     if (main.isMinimized()) main.restore();
     main.focus();
@@ -292,6 +421,10 @@ app.on('second-instance', () => {
 });
 
 app.on('window-all-closed', () => {
+  // The bridge lives in the tray: its window is hidden, never the end of the app.
+  if (shellMode === 'bridge') return;
+  updater?.stop();
+  roles?.stop();
   service?.stop();
   app.quit();
 });

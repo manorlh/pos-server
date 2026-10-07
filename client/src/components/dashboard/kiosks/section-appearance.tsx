@@ -32,19 +32,81 @@ import {
   SegmentField,
   Segmented,
   SwitchField,
-  TextField,
 } from './fields';
 import { useGoogleFonts } from './use-google-fonts';
 import { StylePicker } from './style-picker';
+import { LayoutSection } from './section-layout';
 
 type TextScreen = Exclude<PreviewScreen, 'product'>;
 
 /** The texts each screen shows, and its header image (the attract screen has the playlist). */
 export const TEXT_GROUPS: { screen: TextScreen; keys: KioskTextKey[]; image: ScreenImageKey | null }[] = [
-  { screen: 'attract', keys: ['attractTitle', 'attractSubtitle', 'attractCta', 'helpText'], image: null },
-  { screen: 'service', keys: ['serviceTitle', 'takeAwayLabel', 'eatInLabel'], image: 'service' },
-  { screen: 'catalog', keys: ['catalogTitle', 'upsellTitle'], image: 'catalogHeader' },
-  { screen: 'cart', keys: ['cartTitle', 'checkoutCta', 'customerTitle', 'customerExplain'], image: 'cart' },
+  { screen: 'attract', keys: ['attractTitle', 'attractSubtitle', 'attractCta', 'attractTouchHint', 'helpText'], image: null },
+  {
+    screen: 'service',
+    keys: ['serviceCaption', 'serviceTitle', 'serviceSubtitle', 'takeAwayLabel', 'takeAwaySub', 'eatInLabel', 'eatInSub', 'serviceContinue', 'serviceHint'],
+    image: 'service',
+  },
+  // "scan…": the short centred notes after a barcode scan (the kiosk's scanner, on every ordering screen).
+  // The search and the dish's note are typed in the kiosk's window (its keyboard's words: "פרטים").
+  {
+    screen: 'catalog',
+    keys: ['catalogTitle', 'upsellTitle', 'scanNotFound', 'scanVoucherAtTill', 'searchTitle', 'searchHint', 'noteTitle', 'noteHint', 'noteSave'],
+    image: 'catalogHeader',
+  },
+  // "ההזמנה שלי": the review before the payment.
+  { screen: 'cart', keys: ['cartTitle', 'reviewHint', 'reviewItems', 'reviewItemsOne', 'reviewSubtotal', 'reviewTotal', 'addMoreCta', 'checkoutCta'], image: 'cart' },
+  // "רוצים להוסיף טיפ לצוות?" and the step bar of the steps before the payment.
+  {
+    screen: 'tip',
+    keys: [
+      'tipCaption',
+      'stepReview',
+      'stepTip',
+      'stepDetails',
+      'stepPay',
+      'tipTitle',
+      'tipSubtitle',
+      'tipOtherLabel',
+      'tipOtherHint',
+      'tipOtherError',
+      'tipOrderTotal',
+      'tipLine',
+      'tipTotal',
+      'tipContinue',
+      'tipSkip',
+    ],
+    image: null,
+  },
+  // The details page and its window ("איך לקרוא לכם?", the phone, the table), and the kiosk's keyboard.
+  {
+    screen: 'details',
+    keys: [
+      'customerTitle',
+      'customerExplain',
+      'detailsCaption',
+      'nameTitle',
+      'nameSubtitle',
+      'nameLabel',
+      'nameHint',
+      'nameConfirm',
+      'nameSkip',
+      'phoneTitle',
+      'phoneHint',
+      'tableTitle',
+      'entryContinue',
+      'entrySkip',
+      'fieldRequired',
+      'phoneInvalid',
+      'kbToEnglish',
+      'kbToHebrew',
+      'kbNumbers',
+      'kbLettersHe',
+      'kbLettersEn',
+      'kbSpace',
+    ],
+    image: null,
+  },
   { screen: 'pay', keys: ['payTitle', 'payInstruction'], image: 'pay' },
   { screen: 'success', keys: ['successTitle', 'successBody', 'pickupLabel'], image: 'success' },
   {
@@ -62,18 +124,6 @@ export const TEXT_GROUPS: { screen: TextScreen; keys: KioskTextKey[]; image: Scr
     image: 'paused',
   },
 ];
-
-const MULTILINE = new Set<KioskTextKey>([
-  'attractSubtitle',
-  'helpText',
-  'customerExplain',
-  'payInstruction',
-  'successBody',
-  'pausedBody',
-  'closedBody',
-  'noPaymentBody',
-  'offlineBody',
-]);
 
 function FontPicker() {
   const t = useTranslations('kiosks.appearance');
@@ -116,41 +166,31 @@ function FontPicker() {
   );
 }
 
-function TextsByScreen() {
+/**
+ * The header image of each screen. The texts moved to their own section, "טקסטים" (section-texts.tsx:
+ * every text, per screen and language); TEXT_GROUPS stays the flat `texts` keys by screen.
+ */
+function ScreenImages() {
   const t = useTranslations('kiosks.appearance');
   const tf = useTranslations('kiosks.fields');
-  const tb = useTranslations('kiosks.builtin');
   const ed = useKioskEditor();
-  const [screen, setScreen] = useState<TextScreen>('attract');
-  const group = TEXT_GROUPS.find((g) => g.screen === screen) ?? TEXT_GROUPS[0];
+  const withImage = TEXT_GROUPS.filter((g) => g.image !== null);
+  const [screen, setScreen] = useState<TextScreen>(withImage[0]?.screen ?? 'service');
+  const group = withImage.find((g) => g.screen === screen) ?? withImage[0];
   return (
-    <SectionCard
-      title={t('textsTitle')}
-      description={t('textsHint')}
-      paths={['texts', 'screenImages']}
-    >
+    <SectionCard title={t('screenImagesTitle')} description={t('screenImagesHint')} paths={['screenImages']}>
       <Segmented<TextScreen>
         value={screen}
-        ariaLabel={t('textsTitle')}
-        options={TEXT_GROUPS.map((g) => ({ value: g.screen, label: t(`screens.${g.screen}`) }))}
+        ariaLabel={t('screenImagesTitle')}
+        options={withImage.map((g) => ({ value: g.screen, label: t(`screens.${g.screen}`) }))}
         onChange={(s) => {
           setScreen(s);
           ed.showScreen(s);
         }}
       />
       <div key={screen} className="space-y-4 animate-in fade-in duration-300">
-        {group.keys.map((key) => (
-          <TextField
-            key={key}
-            path={`texts.${key}`}
-            label={tf(`texts.${key}`)}
-            max={KIOSK_LIMITS.textMax}
-            placeholder={tb(key)}
-            multiline={MULTILINE.has(key)}
-          />
-        ))}
-        {group.image ? (
-          <MediaField path={`screenImages.${group.image}`} label={tf(`screenImages.${group.image}`)} hint={t('screenImagesHint')} />
+        {group?.image ? (
+          <MediaField path={`screenImages.${group.image}`} label={tf(`screenImages.${group.image}`)} />
         ) : null}
       </div>
     </SectionCard>
@@ -169,6 +209,9 @@ export function AppearanceSection() {
       <SectionCard title={t('uiStyleTitle')} description={t('uiStyleCardHint')} paths={['theme.uiStyle']}>
         <StylePicker />
       </SectionCard>
+
+      {/* "מבנה הקיוסק" beside the style: the template, the accessibility mode, "מתקדם", the category icons. */}
+      <LayoutSection />
 
       <SectionCard title={t('themeTitle')} paths={['theme.mode', 'theme.font']}>
         <SegmentField<ThemeMode>
@@ -325,7 +368,7 @@ export function AppearanceSection() {
         <SwitchField path="theme.showDescriptions" label={tf('theme.showDescriptions')} />
       </SectionCard>
 
-      <TextsByScreen />
+      <ScreenImages />
     </div>
   );
 }

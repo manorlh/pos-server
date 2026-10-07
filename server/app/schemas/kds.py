@@ -122,11 +122,24 @@ class KdsActionIn(_Body):
     occurred_at: Optional[datetime] = Field(None, alias="occurredAt")
 
 
+class KdsDisplayIn(_Body):
+    """The "מסך מוכן / לא מוכן" board's look (docs/SPEC_KDS.md §13)."""
+
+    theme: Literal["dark", "light", "contrast", "brand"] = "dark"
+    #: "#rrggbb" for the ready column and the announcement; None = the theme's own.
+    accent: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+    sound: bool = True
+    show_preparing: bool = Field(True, alias="showPreparing")
+    title: Optional[str] = Field(None, max_length=60)
+
+
 class KdsDeviceIn(_Body):
     name: Optional[str] = Field(None, max_length=100)
     role: Literal["station", "expo", "pickup", "manager"] = "station"
     station_ids: List[uuid.UUID] = Field(default_factory=list, alias="stationIds", max_length=30)
     is_active: bool = Field(True, alias="isActive")
+    #: The board's look; absent (an older dashboard, a pairing) keeps what the screen has.
+    display: Optional[KdsDisplayIn] = None
 
 
 class KdsStationSettingIn(_Body):

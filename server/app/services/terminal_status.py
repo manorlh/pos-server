@@ -121,12 +121,23 @@ def card_lock_of(
     return None
 
 
-def card_lock_status(machine: "POSMachine", settings: "TerminalSettings") -> Optional[str]:
+def card_lock_unbypassed(machine: "POSMachine", settings: "TerminalSettings") -> Optional[str]:
+    """The lock the terminal-number check puts on, as if "עקיפת בדיקת מספר מסוף" were off."""
     integration = getattr(settings.integration, "integration", None)
     return card_lock_of(
         integration, settings.expected, settings.expected_source, settings.force,
         machine.terminal_number, machine.terminal_reported_at,
     )
+
+
+def card_lock_status(machine: "POSMachine", settings: "TerminalSettings") -> Optional[str]:
+    """
+    The till's card lock — none while "עקיפת בדיקת מספר מסוף" (`terminalNumberCheckBypass`) is
+    on for it (docs/SPEC_KIOSK.md §20.1): the till does not lock, so neither does the cloud's view.
+    """
+    if getattr(settings, "number_check_bypass", False):
+        return None
+    return card_lock_unbypassed(machine, settings)
 
 
 @dataclass
@@ -146,6 +157,11 @@ class TerminalSettings:
     pinpad_port: Optional[str] = None
     #: "סוג אינטגרציית אשראי" as resolved for this till (app/services/payment_integration.py).
     integration: Optional[Any] = None
+    #: "עקיפת בדיקת מספר מסוף" in effect for this till (app/services/terminal_check_bypass.py),
+    #: the level it comes from, and who set that level's value and when (null: unrecorded).
+    number_check_bypass: bool = False
+    number_check_bypass_source: Optional[str] = None
+    number_check_bypass_change: Optional[Dict[str, Any]] = None
 
 
 def _by_id(db: Session, model, ids: Iterable[Any]) -> Dict[Any, Any]:
@@ -177,6 +193,10 @@ def terminal_settings_for(db: Session, machines: List["POSMachine"]) -> Dict[Any
         + [("area", a) for a in areas]
         + [("machine", m.id) for m in machines],
     )
+    # "עקיפת בדיקת מספר מסוף" per till: three queries for the whole list.
+    from app.services import terminal_check_bypass
+
+    bypasses = terminal_check_bypass.bypass_for_machines(db, machines)
     out: Dict[Any, TerminalSettings] = {}
     for m in machines:
         shop = shops.get(m.shop_id)
@@ -210,7 +230,12 @@ def terminal_settings_for(db: Session, machines: List["POSMachine"]) -> Dict[Any
         )
         expected = merged.get("expectedTerminalNumber")
         port = merged.get("nayaxDevicePort")
+        bypass = bypasses.get(m.id) or terminal_check_bypass.Bypass()
         out[m.id] = TerminalSettings(
+            number_check_bypass=bypass.on,
+            number_check_bypass_source=bypass.source if bypass.on else None,
+            # Who turned it on (only looked up for the few tills it is on for).
+            number_check_bypass_change=terminal_check_bypass.change_of(db, m, bypass) if bypass.on else None,
             expected=expected if isinstance(expected, str) and expected.strip() else None,
             expected_source=sources.get("expectedTerminalNumber"),
             force=merged.get("forceTerminalNumber") is True,
@@ -244,6 +269,9 @@ def machine_terminal_fields(machine: "POSMachine", settings: TerminalSettings) -
         # payment on what it last reported, and where its expected number comes from.
         "expectedTerminalNumberSource": settings.expected_source,
         "cardLock": card_lock_status(machine, settings),
+        # "עקיפת בדיקת מספר מסוף" (docs/SPEC_KIOSK.md §20.1): on for this till, from which level,
+        # by whom; what the till reports it applies; and the lock it lifts now.
+        **_bypass_fields(machine, settings),
         # The network pinpad (app/services/payment_terminal.py): whether this till charges
         # on one, where, and whether it still has no address, which the machines page
         # flags ("נדרשת כתובת IP למסופון") until someone types it at the till or here.
@@ -256,6 +284,21 @@ def machine_terminal_fields(machine: "POSMachine", settings: TerminalSettings) -
         # it still lacks (the machines page's badge, "חסר: מספר מסוף").
         **_integration_fields(settings),
     }
+
+
+def _bypass_fields(machine: "POSMachine", settings: TerminalSettings) -> Dict[str, Any]:
+    from app.services import terminal_check_bypass
+
+    bypass = terminal_check_bypass.Bypass(
+        bool(getattr(settings, "number_check_bypass", False)),
+        getattr(settings, "number_check_bypass_source", None),
+    )
+    return terminal_check_bypass.machine_fields(
+        machine,
+        bypass,
+        card_lock_unbypassed(machine, settings) if bypass.on else None,
+        getattr(settings, "number_check_bypass_change", None),
+    )
 
 
 def _integration_fields(settings: TerminalSettings) -> Dict[str, Any]:

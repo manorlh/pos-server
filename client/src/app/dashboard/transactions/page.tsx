@@ -19,6 +19,7 @@ import {
 } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -39,12 +40,30 @@ import {
   printReceiptDocuments,
 } from '@/components/print/receipt-print-document';
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import { FailedPaymentsTable } from '@/components/dashboard/failed-payments/failed-payments-table';
+import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
+import { fetchTransactionsExport } from '@/lib/reportCenterApi';
+import { transactionsSheet } from '@/lib/reportSheets';
+import { numberedLabel } from '@/lib/orgNumber';
+import {
+  RemoteCreditBadges,
+  RemoteCreditButton,
+  RemoteCreditSection,
+} from '@/components/dashboard/remote-credit/remote-credit-actions';
 
 const PAGE_SIZE = 50;
 
-/** The tender filter: a tender of the document or of any of its legs; split; credit notes. */
-const SEARCH_METHODS = ['cash', 'card', 'voucher', 'split', 'refunds'] as const;
+/**
+ * The tender filter: a tender of the document or of any of its legs; split; credit notes;
+ * and `failed` — the failed payment attempts, which are no documents at all (their own
+ * list, docs/SPEC_FAILED_PAYMENTS.md).
+ */
+const SEARCH_METHODS = ['cash', 'card', 'voucher', 'split', 'refunds', 'failed'] as const;
 type SearchMethod = (typeof SEARCH_METHODS)[number];
+
+/** The document types a search can narrow to (docs/SPEC_REPORTS.md §1); -400: an exempt dealer's refund. */
+const SEARCH_DOCUMENT_TYPES = [320, 330, 400, -400] as const;
+const SEARCH_STATUSES: TransactionStatus[] = ['completed', 'refunded', 'partial_refund', 'cancelled', 'pending'];
 
 /** `value`, once it has stopped changing for `ms` — so typing does not query per key. */
 function useDebounced<T>(value: T, ms = 300): T {
@@ -117,11 +136,31 @@ export default function TransactionsPage() {
   const [cardLast4, setCardLast4] = useState('');
   const [item, setItem] = useState('');
   const [method, setMethod] = useState<SearchMethod | ''>('');
+  // "חיפוש לפי קופה" and the rest (docs/SPEC_REPORTS.md §1): several tills, document types,
+  // employees, statuses, an amount range and a document number — all filtered by the server.
+  const [tillIds, setTillIds] = useState<string[]>([]);
+  const [docTypes, setDocTypes] = useState<string[]>([]);
+  const [cashierIds, setCashierIds] = useState<string[]>([]);
+  const [statuses, setStatuses] = useState<string[]>([]);
+  const [amountMin, setAmountMin] = useState('');
+  const [amountMax, setAmountMax] = useState('');
+  const [docNumber, setDocNumber] = useState('');
   const searchQ = useDebounced(q.trim());
   const searchItem = useDebounced(item.trim());
+  const searchDocNumber = useDebounced(docNumber.trim());
+  const searchAmountMin = useDebounced(amountMin.trim());
+  const searchAmountMax = useDebounced(amountMax.trim());
   const searchCard = cardLast4.length === 4 ? cardLast4 : '';
-  const searching = !!(q || cardLast4 || item || method);
-  const clearSearch = () => { setQ(''); setCardLast4(''); setItem(''); setMethod(''); setPage(1); };
+  const searching = !!(
+    q || cardLast4 || item || method || tillIds.length || docTypes.length || cashierIds.length ||
+    statuses.length || amountMin || amountMax || docNumber
+  );
+  const clearSearch = () => {
+    setQ(''); setCardLast4(''); setItem(''); setMethod('');
+    setTillIds([]); setDocTypes([]); setCashierIds([]); setStatuses([]);
+    setAmountMin(''); setAmountMax(''); setDocNumber('');
+    setPage(1);
+  };
   // `?tx=<id>` opens that document — the link from another page (e.g. exceptions).
   const searchParams = useSearchParams();
   const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get('tx'));
@@ -136,8 +175,9 @@ export default function TransactionsPage() {
     setPage(1);
   }
 
-  const params = useMemo(() => {
-    const p: Record<string, string | number> = { page, pageSize: PAGE_SIZE };
+  // The filters without the page: what the list and its export (every row, not the page) share.
+  const filterParams = useMemo(() => {
+    const p: Record<string, string | number | string[]> = {};
     if (machineId) p.machineId = machineId;
     if (shopId) p.shopId = shopId;
     if (from) p.from = from;
@@ -145,15 +185,65 @@ export default function TransactionsPage() {
     if (searchQ) p.q = searchQ;
     if (searchCard) p.cardLast4 = searchCard;
     if (searchItem) p.item = searchItem;
-    if (method) p.method = method;
+    if (method && method !== 'failed') p.method = method;
+    if (tillIds.length && !machineId) p.machineIds = tillIds;
+    if (docTypes.length) p.documentTypes = docTypes;
+    if (cashierIds.length) p.cashierIds = cashierIds;
+    if (statuses.length) p.statuses = statuses;
+    if (searchAmountMin && Number.isFinite(Number(searchAmountMin))) p.amountMin = searchAmountMin;
+    if (searchAmountMax && Number.isFinite(Number(searchAmountMax))) p.amountMax = searchAmountMax;
+    if (searchDocNumber) p.documentNumber = searchDocNumber;
     return p;
-  }, [machineId, shopId, from, to, page, searchQ, searchCard, searchItem, method]);
+  }, [
+    machineId, shopId, from, to, searchQ, searchCard, searchItem, method, tillIds, docTypes, cashierIds,
+    statuses, searchAmountMin, searchAmountMax, searchDocNumber,
+  ]);
+  const params = useMemo(() => ({ ...filterParams, page, pageSize: PAGE_SIZE }), [filterParams, page]);
 
   const { data, isLoading, isFetching } = useQuery<TransactionListResponse>({
     queryKey: ['transactions', params],
-    queryFn: () => api.get('/transactions', { params }).then((r) => r.data),
+    // Lists go as `machineIds=a&machineIds=b`: FastAPI ignores axios' default `machineIds[]=`.
+    queryFn: () => api.get('/transactions', { params, paramsSerializer: { indexes: null } }).then((r) => r.data),
     placeholderData: (prev) => prev,
+    enabled: method !== 'failed',
   });
+
+  // The tills to pick from: the scope's shop's, else every till the reader sees.
+  const tillOptions = useMemo(
+    () =>
+      scope.machines
+        .filter((m) => !shopId || m.shopId === shopId)
+        .map((m) => ({
+          id: m.id,
+          label: m.posNumber ? `${t('tillPrefix')} ${m.posNumber} · ${m.name}` : m.name,
+          hint: shopId ? null : (() => {
+            const shop = findBySameId(scope.shops, m.shopId);
+            return shop ? numberedLabel(shop.shopNumber, shop.name) : null;
+          })(),
+        })),
+    [scope.machines, scope.shops, shopId, t],
+  );
+  // The employees who issued documents in the window (the cashier report's rows).
+  const { data: cashierReport } = useQuery<{ rows: { cashierId: string | null; cashierName: string | null }[] }>({
+    queryKey: ['transactions-cashiers', shopId, machineId, from, to],
+    queryFn: () =>
+      api
+        .get('/reports/cashiers', {
+          params: { ...(shopId ? { shopId } : {}), ...(machineId ? { machineId } : {}), ...(from ? { from } : {}), ...(to ? { to } : {}) },
+        })
+        .then((r) => r.data),
+    staleTime: 60_000,
+  });
+  const cashierOptions = useMemo(
+    () =>
+      (cashierReport?.rows ?? [])
+        .filter((r) => r.cashierId)
+        .map((r) => ({ id: r.cashierId as string, label: r.cashierName ?? (r.cashierId as string) })),
+    [cashierReport],
+  );
+  const typeOptions = SEARCH_DOCUMENT_TYPES.map((n) => ({ id: String(n), label: documentTypeLabel(n) }));
+  const statusOptions = SEARCH_STATUSES.map((s) => ({ id: s, label: t(`statusLabels.${s}`) }));
+  const tc = useTranslations('reportCenter.cols');
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
 
@@ -168,18 +258,18 @@ export default function TransactionsPage() {
       <div className="rounded-lg border bg-card p-4 grid gap-3 md:grid-cols-2 lg:max-w-lg print:hidden">
         <div className="space-y-1">
           <Label className="text-xs">{t('filterFrom')}</Label>
-          <Input
-            type="date"
+          <DatePicker
             value={from}
             onChange={(e) => { setFrom(e.target.value); setPage(1); }}
+            range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); setPage(1); } }}
           />
         </div>
         <div className="space-y-1">
           <Label className="text-xs">{t('filterTo')}</Label>
-          <Input
-            type="date"
+          <DatePicker
             value={to}
             onChange={(e) => { setTo(e.target.value); setPage(1); }}
+            range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); setPage(1); } }}
           />
         </div>
       </div>
@@ -214,6 +304,77 @@ export default function TransactionsPage() {
             />
           </div>
         </div>
+        {/* By till (several at once), document type, employee, status, amount and number. */}
+        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+          {machineId ? null : (
+            <EntityMultiSelect
+              label={t('filterTills')}
+              options={tillOptions}
+              selected={tillIds}
+              onChange={(next) => { setTillIds(next); setPage(1); }}
+              allLabel={t('filterAllTills')}
+              clearLabel={t('filterClear')}
+              emptyLabel={t('filterNoTills')}
+            />
+          )}
+          <EntityMultiSelect
+            label={t('filterDocumentTypes')}
+            options={typeOptions}
+            selected={docTypes}
+            onChange={(next) => { setDocTypes(next); setPage(1); }}
+            allLabel={t('filterAllTypes')}
+            clearLabel={t('filterClear')}
+            emptyLabel={t('filterAllTypes')}
+          />
+          <EntityMultiSelect
+            label={t('filterEmployees')}
+            options={cashierOptions}
+            selected={cashierIds}
+            onChange={(next) => { setCashierIds(next); setPage(1); }}
+            allLabel={t('filterAllEmployees')}
+            clearLabel={t('filterClear')}
+            emptyLabel={t('filterNoEmployees')}
+          />
+          <EntityMultiSelect
+            label={t('filterStatuses')}
+            options={statusOptions}
+            selected={statuses}
+            onChange={(next) => { setStatuses(next); setPage(1); }}
+            allLabel={t('filterAllStatuses')}
+            clearLabel={t('filterClear')}
+            emptyLabel={t('filterAllStatuses')}
+          />
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="space-y-1">
+            <Label className="text-xs">{t('filterDocumentNumber')}</Label>
+            <Input
+              value={docNumber}
+              inputMode="numeric"
+              dir="ltr"
+              placeholder="20000057"
+              onChange={(e) => { setDocNumber(e.target.value.replace(/[^\d-]/g, '').slice(0, 20)); setPage(1); }}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">{t('filterAmountMin')}</Label>
+            <Input
+              value={amountMin}
+              inputMode="decimal"
+              dir="ltr"
+              onChange={(e) => { setAmountMin(e.target.value.replace(/[^\d.-]/g, '')); setPage(1); }}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">{t('filterAmountMax')}</Label>
+            <Input
+              value={amountMax}
+              inputMode="decimal"
+              dir="ltr"
+              onChange={(e) => { setAmountMax(e.target.value.replace(/[^\d.-]/g, '')); setPage(1); }}
+            />
+          </div>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-muted-foreground text-xs">{t('searchMethod')}</span>
           <Button
@@ -243,29 +404,32 @@ export default function TransactionsPage() {
         </div>
       </div>
 
+      {/* "ניסיונות תשלום שנכשלו": no documents — their own list, in the same till / shop / dates. */}
+      {method === 'failed' ? (
+        <FailedPaymentsTable
+          machineId={machineId}
+          shopId={shopId}
+          from={from || undefined}
+          to={to || undefined}
+          cardLast4={searchCard || undefined}
+          onOpenTransaction={setSelectedId}
+        />
+      ) : (
+      <>
       <ReportExportToolbar
         title={t('title')}
         from={from || undefined}
         to={to || undefined}
         disabled={!data || data.items.length === 0}
-        getSheets={() => ({
-          name: t('title'),
-          columns: [
-            { header: t('createdAt'), kind: 'datetime' },
-            { header: t('txNumber'), width: 14 },
-            { header: t('machine') },
-            { header: t('cashier'), width: 14 },
-            { header: t('payment'), width: 12 },
-            { header: t('status'), width: 12 },
-            { header: t('amount'), kind: 'money' },
-          ],
-          rows: (data?.items ?? []).map((tx) => [
-            tx.createdAt, tx.documentNumber ?? tx.transactionNumber,
-            findBySameId(scope.machines, tx.machineId)?.name ?? tx.machineId.slice(0, 8),
-            tx.cashierId ?? null, tx.paymentMethod ? paymentLabel(tx.paymentMethod) : null,
-            t(`statusLabels.${tx.status}`), tx.totalAmount,
-          ]),
-        })}
+        // Every document the filters match — the server's export, not the page on screen.
+        getSheets={async () => {
+          const all = await fetchTransactionsExport(filterParams);
+          return transactionsSheet(all.items, tc, t('title'), {
+            documentType: documentTypeLabel,
+            status: (s) => t(`statusLabels.${s}`),
+            method: paymentLabel,
+          });
+        }}
       />
       {/* A phone gets one card per document; the eight-column table from md up. */}
       <ul className="divide-y rounded-lg border bg-card md:hidden print:hidden">
@@ -304,6 +468,7 @@ export default function TransactionsPage() {
                     {tx.cardBrands?.length ? <span>· {tx.cardBrands.map(brandLabels.brand).join(', ')}</span> : null}
                     <Badge variant={statusVariant(tx.status)}>{t(`statusLabels.${tx.status}`)}</Badge>
                     <OfflineOutcomeBadge outcome={tx.offlineOutcome} />
+                    <RemoteCreditBadges tx={tx} />
                   </div>
                 </button>
               </li>
@@ -364,14 +529,19 @@ export default function TransactionsPage() {
                         {t(`statusLabels.${tx.status}`)}
                       </Badge>
                       <OfflineOutcomeBadge outcome={tx.offlineOutcome} />
+                      <RemoteCreditBadges tx={tx} />
                     </TableCell>
                     <TableCell className="text-end font-medium">
                       {formatCurrency(tx.totalAmount)}
                     </TableCell>
                     <TableCell>
-                      <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setSelectedId(tx.id); }}>
-                        {t('viewDetails')}
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setSelectedId(tx.id); }}>
+                          {t('viewDetails')}
+                        </Button>
+                        {/* "צור זיכוי" (docs/SPEC_REMOTE_CREDIT.md): owners and managers, sales only. */}
+                        <RemoteCreditButton tx={tx} size="sm" variant="ghost" stopPropagation onOpenDocument={setSelectedId} />
+                      </div>
                     </TableCell>
                   </TableRow>
                 );
@@ -405,6 +575,8 @@ export default function TransactionsPage() {
             </Button>
           </div>
         </div>
+      )}
+      </>
       )}
       </ScopeGate>
 
@@ -490,7 +662,27 @@ function TransactionDetailsDialog({
                   </div>
                 </div>
               )}
+              {(data.claimedApproverPosUserId || data.claimedApproverUserId) && (
+                <div className="col-span-2">
+                  <Label className="text-xs">{t('claimedApprover')}</Label>
+                  <div className="font-mono text-xs">
+                    {[data.claimedApproverPosUserId, data.claimedApproverUserId].filter(Boolean).join(' · ')}
+                  </div>
+                </div>
+              )}
             </div>
+
+            {/* Quiet notes of ingest (docs/SHIFTS_API.md §1.2b): informational, never an alarm. */}
+            {(data.ingestNotes ?? []).length > 0 && (
+              <div className="rounded border border-dashed p-3 space-y-1">
+                <Label className="text-xs text-muted-foreground">{t('ingestNotes')}</Label>
+                <ul className="text-muted-foreground space-y-1 text-xs">
+                  {(data.ingestNotes ?? []).map((note) => (
+                    <li key={note.code}>{note.text}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {(data.basketDocuments ?? []).length > 0 && (
               <div className="rounded border p-3 space-y-2">
@@ -569,12 +761,16 @@ function TransactionDetailsDialog({
                             .join(' · ')}
                         </span>
                       ) : null}
+                      {leg.noMoneyMovement ? <RemoteCreditBadges tx={{ noMoneyMovement: true }} /> : null}
                     </span>
                     <span className="tabular-nums">{formatCurrency(leg.amount)}</span>
                   </div>
                 ))}
               </div>
             )}
+
+            {/* "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): create one, follow it, or where this credit came from. */}
+            <RemoteCreditSection tx={data} onOpenDocument={onSelect} />
 
             <TransactionPrintActions tx={data} />
           </div>

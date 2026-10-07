@@ -27,6 +27,8 @@ export const INIT = Uint8Array.of(ESC, 0x40);
 export const CUT = Uint8Array.of(GS, 0x56, 0x42, 0x00);
 /** `ESC B 3 2`: the buzzer (kitchen printers that ask for it; never on receipts). */
 export const BEEP = Uint8Array.of(ESC, 0x42, 0x03, 0x02);
+/** `ESC p 0 25 250`: the cash drawer's kick on pin 2 (50 ms on, 500 ms off). */
+export const DRAWER_KICK = Uint8Array.of(ESC, 0x70, 0x00, 0x19, 0xfa);
 
 export function feed(lines: number): Uint8Array {
   return Uint8Array.of(ESC, 0x64, Math.max(0, Math.min(255, Math.trunc(lines))));

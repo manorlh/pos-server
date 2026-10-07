@@ -186,3 +186,140 @@ Payload של `ReadyForPickup` (מינימלי): `orderId, groupId, shopId, sourc
 - §36.8 פעולה offline לא מחיה ביטול; "הוכן לפני ביטול" נרשם.
 - §36.21 התאמת מדפסת גיבוי.
 - החלטה §8: שינוי עמדה לא משנה הזמנות ישנות; DIRECT_SALE לא מבקש הכנה ולא שולח SMS; קיוסק נפתח אוטומטית אחרי תשלום; PRINTER+KDS לא מכפיל; שינוי סוג שירות לא משנה מצב; לקוח קיוסק חדש לא מוחק משימות קודמות.
+
+## 13. KDS ומסך מוכן / לא מוכן בדפדפן — `/kds`, `/board` באתר הדשבורד (07.10.2026)
+
+**הבעלים:** "בעצם בדפדפן זה יכול להיות … KDS, קיוסק, מסך מוכן לא מוכן" — "תבנה".
+
+מסך מטבח ומסך "מוכן / לא מוכן" שרצים בדפדפן, מאתר הדשבורד עצמו — טלוויזיה, מחשב קטן, טאבלט Android / Windows, iPad —
+בלי APK ובלי מתקין. **אותם מסכים** של R2M POS for Windows (קוד משותף, 13.4), **אותו מנוע** (פיד, תור פעולות, תצוגות) ואותם
+endpoints של הענן. כמו בכל מכונה: **מכשיר תצוגה — לא קופה** (`is_fiscal = false`, `SPEC_DEVICE_ROLE_MODEL.md` §2.2).
+
+### 13.1 הכתובות והדפדפנים
+- **מסך מטבח:** `https://<הדשבורד>/kds` (תחנה / Expo / מנהל מטבח). **מסך מוכן / לא מוכן:** `https://<הדשבורד>/board`.
+  פרודקשן: `https://pos-cloud-app.vercel.app/kds`, `…/board`. ציבוריות — בלי כניסת Clerk (`middleware.ts`), לא מאונדקסות; המכשיר
+  מזדהה רק בטוקן המכונה שלו. ה-API הוא של הדשבורד (`NEXT_PUBLIC_API_URL`) — בצימוד מקלידים רק קוד.
+- **דפדפנים נתמכים:** Chrome / Edge (Windows, Android, ChromeOS, macOS, Google TV / Android TV), Safari ב-iPadOS / iOS 16.4 ומעלה,
+  Samsung Internet. Firefox עובד בלי התקנה כאפליקציה ובלי Wake Lock. דפדפנים מובנים ישנים של טלוויזיות (webOS / Tizen ישנים) לא נבדקו —
+  עדיף מקל / מחשב קטן עם Chrome (13.7).
+- **המסך עוקב אחרי הענן:** מכשיר שמוגדר בענן כמסך איסוף (`kds_devices.role = pickup`) מציג את הלוח גם כשנפתח ב-`/kds`, וכל תפקיד
+  אחר — את מסך המטבח. שינוי בעמוד מסכי המטבח (Expo ↔ איסוף, עמדות) מגיע תוך שניות, בלי צימוד מחדש.
+
+### 13.2 התקנה כאפליקציה (PWA)
+- **manifest לכל מסך:** `/kds.webmanifest` ("R2M KDS") ו-`/board.webmanifest` ("R2M Board") — `display: fullscreen`, `start_url` ו-`scope`
+  של המסך, אייקוני R2M. הדף מפנה אליו את קישור ה-manifest (`app/manifest.ts` של הדשבורד מקושר בכל דף).
+- **service worker לכל מסך:** סקריפט אחד, `/screens-sw.js`, נרשם פעמיים — `?screen=kds` ב-scope `/kds`, `?screen=board` ב-scope `/board`.
+  הדף (רשת קודם, 4 שנ׳, אחרת העותק האחרון) וקוד האפליקציה נשמרים — טעינה מחדש או נפילת רשת קצרה לא משאירות מסך ריק. ה-API לא
+  נשמר ב-worker: המסך שומר בעצמו את הלוח האחרון (13.5). תחת `next dev` נרשם רק עם `?sw=1`.
+- Chrome / Edge: "התקנת האפליקציה"; iPad: שיתוף ← "הוסף למסך הבית".
+- **מסך:** מסך מלא בנגיעה הראשונה (איפה שהדפדפן מרשה), המסך לא נכבה (Screen Wake Lock — נלקח שוב כשהלשונית חוזרת), בלי
+  תפריט הקשר ובלי זום; בקשת אחסון קבוע מהדפדפן.
+
+### 13.3 צימוד
+- **דשבורד:** מכשירים ← הוספת מכשיר ← סוג: **מסך מטבח (KDS)** או **מסך מוכן / לא מוכן** ← פלטפורמה **"דפדפן (Web)"** (חדש לשני
+  התפקידים; בלי בחירת דגם). אחרי "צור קוד": הקוד, **קישור** `…/kds#pair=<קוד>` / `…/board#pair=<קוד>`, **QR** לסריקה במצלמת המכשיר,
+  העתקה / פתיחה, ומה עובד במסך בדפדפן (`web-screen-link.tsx`). הקוד ב-fragment (`#`) — לא מגיע לשום שרת; המסך מצמד בו מיד
+  ומוחק אותו משורת הכתובת. בלי הקישור: פותחים את הכתובת ומקלידים את הקוד.
+- **בענן:** קוד `web` מותר עכשיו לקיוסק, ל-KDS וללוח — **רק קופה נדחית**: `422 web_platform_not_a_till` (במקום
+  `web_platform_kiosk_only`; `display_devices.WEB_ROLES`). הדפדפן שולח `device_info.platform = "web"`, `client = r2m-web-kds` /
+  `r2m-web-board`, הדפדפן, מערכת ההפעלה, הדגם, המסך, האם מותקן. המכונה נוצרת **כמכשיר תצוגה** — `platform = web`, `is_fiscal = false`,
+  בלי מספר קופה ובלי קידומת — עם שורת `kds_devices` (לוח ← `pickup`; KDS ← סוג המסך והעמדות מהקוד) ו-`kdsScreen`, בדיוק כמו Android /
+  Windows. קוד של פלטפורמה אחרת מסרב לדפדפן, וקוד web מסרב למכשיר אחר — `422 platform_mismatch`, לפני שנוצר משהו.
+- **בדפדפן:** טוקן המכונה ב-IndexedDB — מסד לכל מסך (`r2m-kds`, `r2m-board`) — עם עותק ב-localStorage (`r2m.kds.credentials`,
+  `r2m.board.credentials`); כל גישה ב-try/catch, ואם הדפדפן חוסם אחסון — זיכרון עד סגירת הלשונית. 401 "revoked" ← חזרה לצימוד.
+- **קוד של מסך אחר:** קוד לוח שהוקלד ב-`/kds` (או קוד קיוסק) — הפרטים עוברים לדף הנכון (`/board`, `/k`) והוא נפתח שם (`handoff`).
+
+### 13.4 אותם מסכים, אותו מנוע
+- **הקוד המשותף** (הדשבורד נפרס בלי kiosk-desktop, ולכן הקוד עבר לדשבורד ו-Windows מייבא ממנו):
+  - מסכים — `client/src/kiosk-shared/roles/`: `kds/KdsScreen.tsx`, `kds/KdsCard.tsx`, `kds/parts.tsx`, `board/OrderStatusBoard.tsx`,
+    `audio.ts` (צליל), `bridge.ts` (`RoleScreenBridge` — מה שהמסכים קוראים מהמארח);
+  - לוגיקה — `client/src/lib/`: `kdsBoard.ts` (כפתורים, טיימרים, overlay), `pickupBoard.ts` (עמודות, מראה), `kdsScreenTypes.ts`,
+    `kdsScreenEngine.ts` (הפיד, תור הפעולות, התצוגות — `KdsFeed`, `KdsModule`, `BoardModule`), `kdsScreenDemo.ts`;
+  - kiosk-desktop: הקבצים הקודמים (`core/kdsBoard.ts`, `core/pickupBoard.ts`, `main/roles/{feed,kds,board}.ts`,
+    `renderer/roles/kds/*`, `renderer/roles/board/OrderStatusBoard.tsx`, טיפוסי ה-KDS ב-`shared/roles.ts`) הפכו ל-re-export / עטיפה
+    שמחברת את `window.r2m` ופינת הטכנאי. אין שינוי התנהגות ב-Windows (מלבד מראה הלוח, 13.4.3).
+- **השירות בדפדפן** (`client/src/lib/screenWebService.ts`): צימוד; הפיד כל 3 שנ׳ (`GET /sync/{m}/kds/board?since=`); heartbeat כל 30 שנ׳
+  (המכשיר "מחובר" בדשבורד, גרסה `web-kds-1.0.0` / `web-board-1.0.0`); `machines/me` ו-`parameters` (קוד טכנאי) בהתחלה וכל 15 דק׳.
+- **13.4.1 KDS:** הזמנות בזמן אמת; התחל / מוכן / בטל מוכן / הכול מוכן / ראיתי / מוכן לאיסוף (עם סיבה לפני שכל התחנות סיימו) / נמסר /
+  החזר / דחוף; תחנה רואה רק את שלה (+ "גם ב:"), Expo ומנהל מטבח — הכול ו"נמסרו לאחרונה"; טיימרים בצבע ובמילים (בזמן / מתעכב /
+  באיחור, לפי הגדרות העמדה, בשעון הענן); הזמנה חדשה זוהרת ומצלצלת, ביטול / שינוי מצלצל אחרת; עמודות לפי הרוחב (5 ב-1920, 3 בטאבלט).
+- **13.4.2 לוח:** עמודות "בהכנה" ו"מוכן לאיסוף", מספרים גדולים (vmin — קריא מרחוק), מספר שהפך למוכן מהבהב, מוכרז על כל המסך
+  ומצלצל. מספרים בלבד — בלי שמות, טלפונים או הערות.
+- **13.4.3 מראה הלוח (חדש):** בעמוד מסכי המטבח ← עריכת מסך איסוף ← **"מראה המסך"**: ערכת צבעים (כהה / בהיר / ניגודיות גבוהה /
+  מותג), צבע "מוכן" (`#rrggbb`; הטקסט עליו שחור / לבן לפי הניגודיות), כותרת (ריק — שם הסניף), "להציג גם בהכנה" (כבוי — רק מוכנים, ברוחב
+  מלא), צליל. נשמר ב-`kds_devices.display` (migration `e7d1b4a9c3f6`, אידמפוטנטי; `KdsDeviceIn.display` — שמירה בלי השדה משאירה את
+  הקיים), נשלח עם המסך (`device.display`) ב-`kds/board` ומוצג תוך שניות — בדפדפן **וגם בלוח של Windows**. "תצוגה מקדימה" פותח
+  `/board?demo=1` במראה הזה.
+
+### 13.5 בלי חיבור
+- **הלוח האחרון** נשמר בדפדפן ומוצג מיד גם אחרי טעינה מחדש בלי רשת. אחרי 12 שנ׳ בלי תשובה: "אין חיבור · מוצג המידע האחרון (שעה)"
+  (KDS) / "אין חיבור — מוצג המידע האחרון (עודכן …)" (לוח). החיבור חוזר לבד (הסקר ממשיך), ומיד כשהדפדפן מדווח `online` או כשהלשונית חוזרת.
+- **פעולות KDS** (כמו Windows ו-Android, §9): נשלחות מיד ומוצגות כבוצעו; בלי תשובה או בשגיאת שרת — נשמרות **בתור מסודר** (שורד טעינה
+  מחדש) ונשלחות **לפי הסדר, עם אותם מזהים** כשהחיבור חוזר. פעולה שהמתינה נשלחת בלי `expectedVersion` — כללי ה-offline של הענן, לא
+  מחייה ביטול. סירוב — יורד מהתור ומוצג בעברית ("#41 · מוכן: …"). הכותרת: "N פעולות ממתינות לשליחה", ופריט שממתין מסומן "ממתין".
+
+### 13.6 צליל
+- דפדפנים לא מרשים לדף להשמיע צליל לפני נגיעה בו. עד אז מוצג בכותרת **"הקישו על המסך להפעלת צליל"**; נגיעה אחת (או מקש) מפעילה
+  צליל, מסך מלא ו-Wake Lock. צליל לא נצבר בזמן ההשתקה (אין "פרץ" בנגיעה). הקול נוצר בדף (Web Audio) — בלי קובץ ובלי רשת.
+- בלי נגיעה: אפליקציה מותקנת ב-Chrome / Edge למחשב לרוב מורשית מההתחלה; דפדפן שנפתח בגשר של R2M (`--autoplay-policy=no-user-gesture-required`)
+  — תמיד. בלוח אפשר לכבות את הצליל (13.4.3).
+
+### 13.7 טיפים — טלוויזיה וטאבלט
+- **טלוויזיה (לוח, או KDS לצפייה):** מקל / מחשב קטן עם Chrome (Google TV, Chromecast with Google TV, Windows mini PC) עדיף על הדפדפן
+  המובנה. לכבות בטלוויזיה שינה, שומר מסך ו"חיסכון בחשמל"; HDMI-CEC כבוי אם המקל מכבה את המסך. ב-1920×1080 ה-KDS בחמש עמודות;
+  הלוח בגדלי vmin — מתאים לכל גודל. לנגיעה הראשונה (צליל, מסך מלא): עכבר / שלט, או הגשר.
+- **טאבלט מטבח:** התקנה כאפליקציה; Android — הצמדת אפליקציה (App pinning), זמן כיבוי מסך מקסימלי, התראות כבויות; iPad — Guided Access
+  ונעילה אוטומטית "אף פעם"; מטען קבוע; לרוחב (3 עמודות ב-1280).
+- **Windows:** הגשר של R2M (פתיחה בהפעלה, 13.8), או `msedge --kiosk https://<הדשבורד>/kds --edge-kiosk-type=fullscreen` במשתמש ייעודי.
+- **ניהול המסך:** שש נגיעות בפינה השמאלית העליונה + קוד טכנאי (1995, או הפרמטר `technicianCode`): המסך והסניף, חיבור, דיווח אחרון,
+  פעולות ממתינות, אחסון, גרסה; התקנה כאפליקציה, מסך מלא, טעינה מחדש, **ניתוק** (הדפדפן שוכח; המכונה נשארת בענן).
+- **הדגמה:** `/kds?demo=1` (`&kds=expo|manager`, `&offline=1`, `&empty=1`) ו-`/board?demo=1` (`&theme=dark|light|contrast|brand`,
+  `&accent=%23rrggbb`, `&prep=0`, `&title=…`, `&offline=1`) — הענן מדומה בזיכרון, המסכים האמיתיים. לעולם לא רשת.
+
+### 13.8 מה הגשר מוסיף (R2M POS for Windows במצב גשר — `SPEC_KIOSK.md` §28)
+- **פתיחה בהפעלה:** אחרי הפעלת Windows הגשר פותח את `/kds` / `/board` ב-Chrome / Edge במצב קיוסק, בפרופיל משלו, ופותח שוב אם נסגר.
+- **צליל בלי נגיעה** (הדגל `--autoplay-policy=no-user-gesture-required`).
+- **הדפסה מקומית** (ESC/POS) למסך מטבח: כשהגשר מצומד והמדפסת שלו מוכנה, בכל כרטיס מופיע **"הדפס"** — הכרטיס כבון
+  (`POST /print {kind: 'bon', doc}`; `lib/screenBridge.ts` `kdsBonDoc`: הכותרת והשם, מקור וסוג שירות, העמדה של המסך בפס השחור, הפריטים
+  החיים עם תוספות / "בלי" / הערה / אלרגיה / מקום / סבב, הערת ההזמנה, המלצר, השעה והמסך). הלוח לא מבקש מהגשר דבר.
+- **הצימוד** — כמו בקיוסק (`components/screen-web/screen-bridge.tsx`, `lib/kioskBridge.ts` עם `role: 'kds'` / `'order_status_board'`):
+  הדף מחפש גשר ב-Windows (או כשכבר צומד / נפתח ע"י הגשר); גשר שפתח את הדף מעביר קוד חד-פעמי בכתובת (`#bridge=`) ומצמד בלי שאלה;
+  אחרת "נמצא גשר Windows במחשב" מבקש את 6 הספרות שבחלון הגשר ("לא עכשיו" — 12 שעות). הצימוד נשמר במסד של המסך
+  (`r2m.bridge.kds` / `r2m.bridge.order_status_board`), והמכונה של המסך מקושרת לגשר (`/link` — הגשר לוקח ממנה את קוד הטכנאי).
+- **בניהול המסך:** "גשר Windows" — מצב, צימוד בקוד, המדפסת, פתיחה בהפעלה, הדפסת בדיקה (KDS), **יציאה ממצב קיוסק** (בקוד הטכנאי שפתח
+  את המסך), ביטול הצימוד.
+- בדפדפן לבד אין מדפסת ואין פתיחה אוטומטית — המסכים עובדים כרגיל.
+
+### 13.9 בדשבורד
+- **הוספת מכשיר:** "דפדפן (Web)" מוצע לקיוסק, ל-KDS וללוח (לא לקופה); בחירת תפקיד שהדפדפן לא מריץ מחזירה ל-Android. אחרי "צור קוד" —
+  קישור ו-QR (13.3).
+- **עמוד המכשיר:** תג "דפדפן (Web)", ההערה "מסך — לא קופה", והערה **"מסך מטבח בדפדפן"** (`web-screen-note.tsx`): הכתובת שבה הוא נפתח,
+  הדפדפן / המערכת / המכשיר / המסך / מותקן (מ-`device_info`), ואיך מצמדים מחדש (קוד חדש).
+- **עמוד מסכי המטבח:** ליד מסך שרץ בדפדפן — תג "דפדפן" וקישור "פתיחה" (`GET /kds/shops/{shop}` מחזיר `machines[].platform`); סוג המסך
+  והעמדות — כרגיל (`PUT /kds/shops/{shop}/devices/{machine}`) ומגיעים למסך תוך שניות; "מראה המסך" למסך איסוף (13.4.3).
+
+### 13.10 פערים
+- אין הדפסה מהדפדפן לבד (13.8). אין דחיפת realtime — סקר כל 3 שנ׳ כמו כל המסכים (§10).
+- מסך האיסוף של Android עדיין לא קורא את `display` (נשאר כהה).
+- Safari מוחק אחסון של אתר שלא נפתח 7 ימים כשהוא לא מותקן — להתקין למסך הבית.
+- טבלת "עדכוני גרסה" מציגה מכונת web כ-Android (קוסמטי, כמו בקיוסק); מסך בדפדפן מתעדכן עם פריסת הדשבורד.
+- בפרודקשן `CORS_ORIGINS` של ה-API חייב לכלול את כתובת הדשבורד (כבר נדרש לדשבורד ולקיוסק).
+
+### 13.11 קבצים ובדיקות
+- **דשבורד (client):** `src/app/kds/`, `src/app/board/` (דף, metadata, viewport), `src/components/screen-web/` (`web-screen.tsx`,
+  `screen-shell.ts`, `screen-staff.tsx`, `screen-bridge.tsx`), `src/kiosk-shared/roles/`, `src/lib/{screenWebService,screenBridge,
+  kdsScreenEngine,kdsBoard,pickupBoard,kdsScreenTypes,kdsScreenDemo}.ts`, `public/screens-sw.js`, `public/kds.webmanifest`, `public/board.webmanifest`,
+  `components/dashboard/machines/web-screen-link.tsx`, `web-screen-note.tsx`, `components/dashboard/kds/board-look-fields.tsx`;
+  שינויים קטנים: `middleware.ts`, `next.config.ts`, `service-worker-registration.tsx`, `kiosk-web/web-pairing.tsx` (טקסטים),
+  `lib/kioskWebStore.ts` (מסד ומפתחות לכל אפליקציה), `lib/deviceProfile.ts` (`WEB_ROLES`, `webPathOf`, `webScreenLink`), `lib/kdsApi.ts`,
+  `app/dashboard/machines/page.tsx`, `machines/[id]/page.tsx`, `kds/devices-section.tsx`, `machines/device-role.tsx`, `messages/he.json`,
+  `package.json` (קובץ הבדיקה).
+- **ענן:** `app/services/display_devices.py` (`WEB_ROLES`, `web_platform_not_a_till`), `app/routers/pairing.py`, `app/models/kds.py`
+  (`display`), `app/schemas/kds.py` (`KdsDisplayIn`), `app/services/kds.py` (`display_out`, `machines[].platform`),
+  `alembic/versions/e7d1b4a9c3f6_kds_device_display.py`.
+- **kiosk-desktop:** re-exports / עטיפות (13.4).
+- **בדיקות:** `server/tests/test_web_screens.py` (קודי web, צימוד דפדפן כמכשיר תצוגה, platform_mismatch, נקודות הקצה של KDS עונות,
+  החשבונאיות מסרבות, פעולה מתחנה בדפדפן ומספר בלוח, מראה הלוח), `tests/test_kiosk_web.py` (עודכן); `client/src/lib/screenWebService.test.ts`
+  (צימוד והעברה, אחסון לכל מסך, טעינה מחדש בלי רשת, ה-bridge, תור offline לפי הסדר ושורד טעינה, סירוב, טוקן מבוטל, heartbeat, מראה,
+  service worker), `deviceProfile.test.ts`; `kiosk-desktop` — כל הבדיקות הקיימות (`kdsBoard`, `kdsModule`, `roles`) רצות על הקוד המשותף.
+  צילומי מסך: `client/public/kds-web-shots/`.

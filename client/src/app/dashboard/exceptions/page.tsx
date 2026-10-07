@@ -19,8 +19,9 @@ import { toast } from 'sonner';
 import { Check, ExternalLink, RefreshCw, RotateCcw, ShieldAlert, X } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
-import { formatCurrency, formatDateTime } from '@/lib/format';
+import { formatCurrency, formatDateTime, formatTime } from '@/lib/format';
 import { daysBackIso, todayIso } from '@/lib/reportWindow';
+import { fetchAllPages } from '@/lib/fetchAllPages';
 import {
   EXCEPTION_TYPES,
   fetchExceptionSummary,
@@ -53,7 +54,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -265,11 +266,11 @@ export default function ExceptionsPage() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <div className="space-y-1">
               <Label className="text-xs">{t('from')}</Label>
-              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+              <DatePicker value={from} onChange={(e) => setFrom(e.target.value)} range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }} />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">{t('to')}</Label>
-              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+              <DatePicker value={to} onChange={(e) => setTo(e.target.value)} range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }} />
             </div>
             <FilterSelect
               label={t('type')}
@@ -332,7 +333,8 @@ export default function ExceptionsPage() {
           from={from}
           to={to}
           disabled={!items.length}
-          getSheets={() => ({
+          // Every exception of these filters, not just this page (the list's largest page is 500).
+          getSheets={async () => ({
             name: t('title'),
             columns: [
               { header: t('col.time'), kind: 'datetime' },
@@ -347,7 +349,9 @@ export default function ExceptionsPage() {
               { header: t('col.value'), kind: 'number' },
               { header: t('col.note') },
             ],
-            rows: items.map((r) => [
+            rows: (
+              await fetchAllPages((p, pageSize) => fetchExceptions(filters!, p, pageSize), { pageSize: 500 })
+            ).map((r) => [
               r.occurredAt,
               typeLabel(r.type),
               t(`status.${r.status}`),
@@ -594,7 +598,7 @@ function kioskOfflineLine(
   const hhmm = (v: unknown) => {
     if (typeof v !== 'string' || !v) return null;
     const at = new Date(v);
-    return Number.isNaN(at.getTime()) ? null : at.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+    return Number.isNaN(at.getTime()) ? null : formatTime(at);
   };
   const since = hhmm(d.offlineSince);
   if (!since) return typeof d.kiosk === 'string' ? d.kiosk : null;

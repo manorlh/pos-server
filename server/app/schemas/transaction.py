@@ -16,8 +16,12 @@ from app.schemas.stock import StockMovementIn
 META_MAX_CHARS = 16 * 1024
 
 #: What a document's basket discount can be (`basketDiscountKind`): the club button
-#: ("הנחת מועדון", till parameter `clubButtonEnabled`) or the cashier's own.
-BASKET_DISCOUNT_KINDS = ("club", "manual")
+#: ("הנחת מועדון", till parameter `clubButtonEnabled`), the cashier's own, or a table's
+#: policy (app/services/table_policies.py): "הנחת שולחן", a staff meal, a managers' meal.
+BASKET_DISCOUNT_KINDS = ("club", "manual", "table", "staff", "managers")
+
+#: A meal at a staff or managers' table (`mealKind`); anything else is no meal.
+MEAL_KINDS = ("staff", "managers")
 
 
 def cut_text(value, limit: int):
@@ -137,6 +141,9 @@ class TransactionPaymentIn(BaseModel):
     card_brand: Optional[str] = Field(None, alias="cardBrand", max_length=32)
     card_acquirer: Optional[str] = Field(None, alias="cardAcquirer", max_length=32)
     card_issuer: Optional[str] = Field(None, alias="cardIssuer", max_length=32)
+    #: "ללא החזר כספי — עסקה שלא בוצעה" (docs/SPEC_REMOTE_CREDIT.md): a credit's leg for a
+    #: sale that never really happened — the original's method, no money moved.
+    no_money_movement: Optional[bool] = Field(None, alias="noMoneyMovement")
 
     class Config:
         populate_by_name = True
@@ -280,6 +287,13 @@ class TransactionIn(BaseModel):
     basket_discount: Optional[Decimal] = Field(None, alias="basketDiscount")
     basket_discount_percent: Optional[Decimal] = Field(None, alias="basketDiscountPercent", ge=0, le=100)
     basket_discount_kind: Optional[str] = Field(None, alias="basketDiscountKind")
+    #: A meal at a staff or managers' table: `staff` / `managers`, whose meal it was (the
+    #: employee the till picked) and why (a managers' table's reason). Optional; free text
+    #: is cut to the columns, an unknown kind is no meal — never a reason to refuse.
+    meal_kind: Optional[str] = Field(None, alias="mealKind")
+    meal_employee_id: Optional[str] = Field(None, alias="mealEmployeeId")
+    meal_employee_name: Optional[str] = Field(None, alias="mealEmployeeName")
+    meal_reason: Optional[str] = Field(None, alias="mealReason")
     wht_deduction: Optional[Decimal] = Field(None, alias="whtDeduction")
 
     customer_id: Optional[str] = Field(None, alias="customerId")
@@ -291,6 +305,8 @@ class TransactionIn(BaseModel):
     notes: Optional[str] = None
 
     refund_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="refundOfTransactionId")
+    #: "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the dashboard request this credit answers.
+    remote_credit_request_id: Optional[uuid.UUID] = Field(None, alias="remoteCreditRequestId")
     nayax_meta: Optional[dict] = Field(None, alias="nayaxMeta")
 
     #: The till basket this document was committed in: the documents of one basket that
@@ -349,6 +365,27 @@ class TransactionIn(BaseModel):
         if kind is None:
             return None
         return kind.lower() if kind.lower() in BASKET_DISCOUNT_KINDS else "manual"
+
+    @field_validator("meal_kind", mode="before")
+    @classmethod
+    def _meal_kind(cls, value):
+        kind = cut_text(value, 16)
+        return kind.lower() if kind and kind.lower() in MEAL_KINDS else None
+
+    @field_validator("meal_employee_id", mode="before")
+    @classmethod
+    def _cut_meal_employee_id(cls, value):
+        return cut_text(value, 100)
+
+    @field_validator("meal_employee_name", mode="before")
+    @classmethod
+    def _cut_meal_employee_name(cls, value):
+        return cut_text(value, 200)
+
+    @field_validator("meal_reason", mode="before")
+    @classmethod
+    def _cut_meal_reason(cls, value):
+        return cut_text(value, 300)
 
     @field_validator("customer_name", mode="before")
     @classmethod
@@ -470,6 +507,8 @@ class TransactionPaymentOut(BaseModel):
     card_brand: Optional[str] = Field(None, alias="cardBrand")
     card_acquirer: Optional[str] = Field(None, alias="cardAcquirer")
     card_issuer: Optional[str] = Field(None, alias="cardIssuer")
+    #: "ללא החזר כספי" (docs/SPEC_REMOTE_CREDIT.md): no money moved on this leg.
+    no_money_movement: bool = Field(False, alias="noMoneyMovement")
 
     class Config:
         from_attributes = True
@@ -527,10 +566,14 @@ class TransactionOut(BaseModel):
     tip_payment_method: Optional[str] = Field(None, alias="tipPaymentMethod")
     total_discount: Optional[Decimal] = Field(None, alias="totalDiscount")
     document_discount: Optional[Decimal] = Field(None, alias="documentDiscount")
-    #: The basket discount on its own, its rate and its kind (`club` | `manual`).
+    #: The basket discount on its own, its rate and its kind (`club` | `manual` | a table's).
     basket_discount: Optional[Decimal] = Field(None, alias="basketDiscount")
     basket_discount_percent: Optional[Decimal] = Field(None, alias="basketDiscountPercent")
     basket_discount_kind: Optional[str] = Field(None, alias="basketDiscountKind")
+    #: A staff / managers' table meal: its kind, whose meal, why.
+    meal_kind: Optional[str] = Field(None, alias="mealKind")
+    meal_employee_name: Optional[str] = Field(None, alias="mealEmployeeName")
+    meal_reason: Optional[str] = Field(None, alias="mealReason")
     wht_deduction: Optional[Decimal] = Field(None, alias="whtDeduction")
 
     customer_id: Optional[str] = Field(None, alias="customerId")
@@ -545,14 +588,24 @@ class TransactionOut(BaseModel):
     refund_of_transaction_number: Optional[str] = Field(None, alias="refundOfTransactionNumber")
     #: A credit note that took its original's credited total past what it collected.
     over_credited: Optional[bool] = Field(False, alias="overCredited")
+    #: "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the request this credit answered, and
+    #: whether it moved no money ("ללא החזר כספי — עסקה שלא בוצעה").
+    remote_credit_request_id: Optional[uuid.UUID] = Field(None, alias="remoteCreditRequestId")
+    no_money_movement: Optional[bool] = Field(False, alias="noMoneyMovement")
     nayax_meta: Optional[dict] = Field(None, alias="nayaxMeta")
     basket_id: Optional[uuid.UUID] = Field(None, alias="basketId")
     customer_name: Optional[str] = Field(None, alias="customerName")
     customer_phone: Optional[str] = Field(None, alias="customerPhone")
     customer_address: Optional[str] = Field(None, alias="customerAddress")
-    #: Verified at ingest, so what comes back out is a name the server stood behind.
+    #: The approver linked when they are a person of this business (informational since
+    #: 2026-10-07 — never a reason to refuse a document; docs/SHIFTS_API.md §1.2b).
     approved_by_user_id: Optional[uuid.UUID] = Field(None, alias="approvedByUserId")
     approved_by_pos_user_id: Optional[uuid.UUID] = Field(None, alias="approvedByPosUserId")
+    #: The approver exactly as the till sent it, even when it names nobody known here.
+    claimed_approver_user_id: Optional[uuid.UUID] = Field(None, alias="claimedApproverUserId")
+    claimed_approver_pos_user_id: Optional[uuid.UUID] = Field(None, alias="claimedApproverPosUserId")
+    #: Quiet notes of ingest (`[{"code", "text", "detail"?}]`) — shown in the detail, never an alarm.
+    ingest_notes: Optional[List[dict]] = Field(None, alias="ingestNotes")
 
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
@@ -621,6 +674,9 @@ class TransactionListItem(BaseModel):
     cashier_id: Optional[str] = Field(None, alias="cashierId")
     refund_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="refundOfTransactionId")
     basket_id: Optional[uuid.UUID] = Field(None, alias="basketId")
+    #: "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): see `TransactionOut`.
+    remote_credit_request_id: Optional[uuid.UUID] = Field(None, alias="remoteCreditRequestId")
+    no_money_movement: Optional[bool] = Field(False, alias="noMoneyMovement")
     created_at: datetime = Field(..., alias="createdAt")
     server_received_at: datetime = Field(..., alias="serverReceivedAt")
     #: `declined` / `approved` when an offline authorization run of its till answered one

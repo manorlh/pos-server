@@ -2,6 +2,7 @@
 
 > מקור: מפרט הבעלים §10 "אשראי" ו-"Offline וחזרה" (קריטריון קבלה 6: "תוצאת אשראי לא ידועה גוררת בירור עסקה, לא חיוב חדש אוטומטי").
 > קוד בקופה: `hardware/payment/CardRecovery.kt` (סיווג, בירור לפי vuid, הרשומה השמורה), `data/repo/CardAttemptRecovery.kt` (בירור אחרי מוות תהליך, אחסון), `CheckoutViewModel.chargeCard` / `payoutCard` (הזרימה במסך התשלום), `ui/checkout/CardRecoveryUi.kt` (המסך).
+> ניסיון שהוכרע "לא חויב" (נדחה, בוטל, אין תשובה, תקלת מסוף, אשראי נעול) נרשם ומדווח כ"עסקה שלא הושלמה" — [SPEC_FAILED_PAYMENTS.md](SPEC_FAILED_PAYMENTS.md).
 
 ## 1. הבעיה
 

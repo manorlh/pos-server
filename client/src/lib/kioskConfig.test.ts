@@ -8,6 +8,22 @@ import { enterCategory, pickKioskUpsell, rulePlaces, upsellActiveAt, upsellTrigg
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import {
+  attractTapAnywhere,
+  CHECKOUT_STEPS,
+  PAYMENT_METHODS,
+  kioskAsksPayMethod,
+  kioskPayMethods,
+  kioskRemainderAgorot,
+  TIP_OTHER_MAX_SHEKELS,
+  checkoutBar,
+  checkoutStepOrder,
+  checkoutStepsNow,
+  kioskServiceLook,
+  kioskTipAsked,
+  tipOtherAgorot,
+  tipPercentAgorot,
+} from './kioskConfig';
 
 import {
   FONT_CATALOG,
@@ -82,8 +98,33 @@ import {
   CTA_HINT_BLOCK,
   ATTRACT_CONTENT_GAP,
   ctaSubtitleSp,
+  contrastRatio,
+  kioskNextOpening,
+  kioskRestLook,
+  kioskRestText,
+  mixHex,
+  REST_DARK_INK,
+  REST_LARGE_TEXT_CONTRAST,
+  KIOSK_UI_PRESET_MOTION,
+  PRESET_MOTION_KEYS,
+  CATEGORY_SWITCH_FX,
+  ITEMS_ENTER_FX,
+  SCREEN_CHANGE_FX,
+  SHEET_FX,
+  ADD_TO_CART_FX,
+  MOTION_SPEEDS,
+  MOTION_SPEED_FACTOR,
+  NO_TRANSITIONS,
+  STAGGER_CAP_MS,
+  STAGGER_MAX_CARDS,
+  TRANSITION_BASE_MS,
+  gridEnterMs,
+  staggerDelayMs,
+  swapSide,
+  transitionSpec,
   type KioskConfig,
   type KioskCta,
+  type KioskRestTextKey,
   type MediaRef,
 } from './kioskConfig';
 
@@ -514,7 +555,11 @@ describe('"סגנון ממשק" presets', () => {
     assert.equal(styleOf(shop, { theme: { uiStyle: 'classic' } }), 'classic');
     assert.equal(styleOf(shop, { theme: { uiStyle: null } }), 'minimal_dark');
     assert.equal(styleOf({ theme: { uiStyle: 'material' } }), 'wolt');
-    assert.deepEqual(presetLayer('ios'), { theme: KIOSK_UI_PRESETS.ios, attract: { cta: KIOSK_UI_PRESET_CTA.ios } });
+    assert.deepEqual(presetLayer('ios'), {
+      theme: KIOSK_UI_PRESETS.ios,
+      attract: { cta: KIOSK_UI_PRESET_CTA.ios },
+      motion: KIOSK_UI_PRESET_MOTION.ios,
+    });
   });
 
   it('repairs what a parent change broke below it, like the server', () => {
@@ -1029,10 +1074,10 @@ describe('"הוסף לסל" — the add-to-cart pop-and-fly (the till\'s KioskMo
     assert.equal(kioskAddPath(false, false, true), 'sheet');
     assert.equal(kioskAddPath(true, false, false), 'none');
   });
-  it('pops by the card, flies an arc to the cart, lands small and faded, under 700 ms', () => {
+  it('pops by the card, flies an arc to the cart, lands small and faded, about 700 ms (under a second)', () => {
     for (const animation of ['lively', 'subtle'] as const) {
       const m = motionSpec({ animation }, { reduceMotion: false });
-      assert.ok(m.popMs >= 150 && m.popMs <= 200 && m.flyMs >= 350 && m.flyMs <= 450, animation);
+      assert.ok(m.popMs >= 170 && m.popMs <= 220 && m.flyMs >= 440 && m.flyMs <= 520, animation);
       assert.ok(m.popScale >= 1.3 && m.popScale <= 1.5, animation);
       assert.ok(addMs(m) < ADD_MAX_MS);
       const start = addFrame(m, 0, from, to);
@@ -1224,5 +1269,669 @@ describe('"התראות לקופות" and "סגירה יחד עם ה-Z הסני�
     assert.equal(typeof he.kiosks.fields.operations.closeWithShopZ, 'string');
     assert.equal(typeof he.kiosks.timers.closeWithShopZHint, 'string');
     assert.equal(typeof he.kiosks.validation.server.unknown_till, 'string');
+  });
+});
+
+describe('"יצאתי לנוח… תכף אשוב": the closed screen (the till\'s KioskRestTextTest)', () => {
+  const he = JSON.parse(readFileSync(join(process.cwd(), 'src', 'messages', 'he.json'), 'utf8'));
+  const builtin = he.kiosks.builtin as Record<string, string>;
+  const txtOf = (texts: Record<string, string> = {}) => (key: KioskRestTextKey) => texts[key] || builtin[key];
+  // Wednesday 7 October 2026, 13:50, local time.
+  const now = new Date(2026, 9, 7, 13, 50);
+  const noHours = { enabled: false, ranges: [] };
+  const local = (d: number, h: number, m: number) => new Date(2026, 9, d, h, m).toISOString();
+
+  it('the built-in words: a break, back soon; outside the hours their own subtitle', () => {
+    assert.equal(builtin.pausedTitle, 'יצאתי לנוח…');
+    assert.equal(builtin.pausedBody, 'תכף אשוב');
+    assert.equal(builtin.closedTitle, 'יצאתי לנוח…');
+    assert.equal(builtin.closedBody, 'הקיוסק יחזור לפעול בשעות הפעילות.');
+    const p = kioskRestText('paused', { hours: noHours }, {}, txtOf(), now);
+    assert.deepEqual([p.title, p.subtitle, p.backAt, p.backClock, p.backInDays], ['יצאתי לנוח…', 'תכף אשוב', null, null, null]);
+    for (const key of ['backAt', 'backTomorrow', 'backOn', 'orderAtTill']) assert.equal(typeof he.kiosks.preview.rest[key], 'string', key);
+  });
+  it("the manager's pause message takes the subtitle's place", () => {
+    const p = kioskRestText('paused', { hours: noHours }, { message: '  הפסקת צהריים  ' }, txtOf(), now);
+    assert.equal(p.title, 'יצאתי לנוח…');
+    assert.equal(p.subtitle, 'הפסקת צהריים');
+    assert.equal(kioskRestText('paused', { hours: noHours }, { message: '   ' }, txtOf(), now).subtitle, 'תכף אשוב');
+  });
+  it('a pause with an end: back today, tomorrow or on its day; an end already past lifts it', () => {
+    const today = kioskRestText('paused', { hours: noHours }, { until: local(7, 14, 30) }, txtOf(), now);
+    assert.deepEqual([today.backClock, today.backInDays], ['14:30', 0]);
+    const tomorrow = kioskRestText('paused', { hours: noHours }, { until: local(8, 7, 0) }, txtOf(), now);
+    assert.deepEqual([tomorrow.backClock, tomorrow.backInDays], ['07:00', 1]);
+    const friday = kioskRestText('paused', { hours: noHours }, { until: local(9, 9, 5) }, txtOf(), now);
+    assert.deepEqual([friday.backClock, friday.backInDays, friday.backWeekday], ['09:05', 2, 5]);
+    const both = kioskRestText('paused', { hours: noHours }, { message: 'חוזרים מיד', until: local(7, 14, 10) }, txtOf(), now);
+    assert.deepEqual([both.subtitle, both.backClock], ['חוזרים מיד', '14:10']);
+    const old = kioskRestText('paused', { hours: noHours }, { message: 'ישן', until: local(7, 13, 49) }, txtOf(), now);
+    assert.deepEqual([old.subtitle, old.backAt], ['תכף אשוב', null]);
+  });
+  it('configured texts win over the built-in ones; operations first; the message over them all', () => {
+    const texts = { pausedTitle: 'סגור לרגע', pausedBody: 'נשוב בקרוב', closedTitle: 'לילה טוב', closedBody: 'נפתח מחר' };
+    const p = kioskRestText('paused', { hours: noHours }, {}, txtOf(texts), now);
+    assert.deepEqual([p.title, p.subtitle], ['סגור לרגע', 'נשוב בקרוב']);
+    const ops = { pausedTitle: 'הפסקה', pausedBody: 'עוד רגע' };
+    const o = kioskRestText('paused', { operations: ops, hours: noHours }, {}, txtOf(texts), now);
+    assert.deepEqual([o.title, o.subtitle], ['הפסקה', 'עוד רגע']);
+    assert.equal(kioskRestText('paused', { operations: ops, hours: noHours }, { message: 'מנקים את המכונה' }, txtOf(texts), now).subtitle, 'מנקים את המכונה');
+    const c = kioskRestText('closed', { hours: noHours }, {}, txtOf(texts), now);
+    assert.deepEqual([c.title, c.subtitle], ['לילה טוב', 'נפתח מחר']);
+  });
+  it('outside the hours: the next opening; a pause never uses the hours', () => {
+    const hours = { enabled: true, ranges: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '07:00', close: '13:00' }] };
+    const c = kioskRestText('closed', { hours }, {}, txtOf(), now);
+    assert.deepEqual([c.title, c.subtitle, c.backClock, c.backInDays], ['יצאתי לנוח…', 'הקיוסק יחזור לפעול בשעות הפעילות.', '07:00', 1]);
+    const early = kioskRestText('closed', { hours }, {}, txtOf(), new Date(2026, 9, 7, 5, 30));
+    assert.deepEqual([early.backClock, early.backInDays], ['07:00', 0]);
+    assert.equal(kioskRestText('closed', { hours: noHours }, {}, txtOf(), now).backAt, null);
+    assert.equal(kioskRestText('paused', { hours }, {}, txtOf(), now).backAt, null);
+    assert.equal(kioskNextOpening({ enabled: true, ranges: [{ days: [5], open: '18:00', close: '02:00' }] }, now)?.getDate(), 9);
+  });
+  it("each UI style's colours, with words that read on them (the till's numbers)", () => {
+    const look = (style: keyof typeof KIOSK_UI_PRESETS, patch: Record<string, unknown> = {}) => {
+      const c = resolveKioskConfig({ theme: { uiStyle: style, ...patch } });
+      return kioskRestLook(c.theme, resolveThemeColors(c.theme));
+    };
+    const ios = look('ios');
+    assert.deepEqual([ios.from, ios.to, ios.diagonal, ios.ink], ['#2390FF', '#075CB3', false, '#FFFFFF']);
+    const wolt = look('wolt');
+    assert.deepEqual([wolt.from, wolt.to, wolt.diagonal, wolt.spots, wolt.ink], ['#1F6FEB', '#16707F', true, true, '#FFFFFF']);
+    const classic = look('classic');
+    assert.deepEqual([classic.from, classic.to, classic.ink], ['#E11D48', '#E11D48', '#FFFFFF']);
+    const dark = look('minimal_dark');
+    assert.deepEqual([dark.from, dark.glow, dark.title, dark.ink], ['#0B0B0D', '#C9A227', '#C9A227', '#F5F5F4']);
+    const yellow = look('classic', { primaryColor: '#FACC15' });
+    assert.equal(yellow.ink, REST_DARK_INK);
+    for (const l of [ios, wolt, classic, yellow]) {
+      assert.ok(contrastRatio(l.ink, l.from) >= REST_LARGE_TEXT_CONTRAST);
+      assert.ok(contrastRatio(l.ink, l.to) >= REST_LARGE_TEXT_CONTRAST);
+    }
+    assert.equal(mixHex('#000000', '#FFFFFF', 0.5), '#808080');
+  });
+});
+
+describe('"הנפשות ומעברים" — the transitions (the server kiosk_config.py UI_PRESET_MOTION, the till KioskTransitions)', () => {
+  it('the defaults are the wolt style, and every style animates the category and pops its dishes in', () => {
+    assert.deepEqual(KIOSK_DEFAULTS.motion, KIOSK_UI_PRESET_MOTION.wolt);
+    assert.deepEqual([...PRESET_MOTION_KEYS], ['categorySwitch', 'itemsEnter', 'screenChange', 'sheet', 'addToCart', 'speed']);
+    for (const style of UI_STYLES) {
+      const c = resolveKioskConfig({ theme: { uiStyle: style } });
+      assert.deepEqual(c.motion, KIOSK_UI_PRESET_MOTION[style], style);
+      assert.deepEqual(validateKioskConfig(c), [], style);
+      const t = transitionSpec(c.motion, c.general);
+      assert.notEqual(t.categorySwitch, 'none', style);
+      assert.ok(t.categoryMs > 0 && t.itemMs > 0 && t.screenMs > 0 && t.sheetMs > 0, style);
+      assert.ok(t.itemsEnter === 'pop' || t.itemsEnter === 'cascade', style);
+      assert.equal(t.addToCart, 'fly', style);
+    }
+  });
+
+  it('layers company → shop → kiosk, explicit beating the style; a style switch moves only what followed it', () => {
+    const company = { motion: { speed: 'fast' } };
+    const shop = { theme: { uiStyle: 'minimal_dark' }, motion: { itemsEnter: 'flip' } };
+    const kiosk = { motion: { categorySwitch: 'push' } };
+    assert.deepEqual(resolveKioskConfig(company, shop, kiosk).motion, {
+      categorySwitch: 'push', itemsEnter: 'flip', screenChange: 'fade', sheet: 'fade', addToCart: 'fly', speed: 'fast',
+    });
+    // The editor: rebased on the level's style, reset goes back to it, a draft following it saves nothing.
+    const parents = { motion: { speed: 'fast' } };
+    const inherited = resolveKioskConfig(parents);
+    const base = rebaseInherited(inherited, parents, 'classic');
+    assert.equal(base.motion.categorySwitch, 'push'); // the classic style's
+    assert.equal(base.motion.speed, 'fast'); // explicit in a parent: kept
+    const draft = deepMergeKiosk(inherited, { motion: { sheet: 'fade' } });
+    const next = switchUiStyle(draft, rebaseInherited(inherited, parents, draft.theme.uiStyle), base, 'classic');
+    assert.equal(next.motion.sheet, 'fade'); // chosen here: stays
+    assert.equal(next.motion.itemsEnter, 'pop'); // followed the style: moves
+    assert.deepEqual(pruneOverrides(base, next), { theme: { uiStyle: 'classic' }, motion: { sheet: 'fade' } });
+    assert.deepEqual(resolveKioskConfig(parents, pruneOverrides(base, next)), next);
+  });
+
+  it('validates every choice', () => {
+    const ok = cfg({ motion: { categorySwitch: 'fade_scale', itemsEnter: 'rise', screenChange: 'zoom', sheet: 'slide_up', addToCart: 'bounce', speed: 'relaxed' } });
+    assert.deepEqual(validateKioskConfig(ok), []);
+    for (const fx of CATEGORY_SWITCH_FX) assert.deepEqual(validateKioskConfig(cfg({ motion: { categorySwitch: fx } })), [], fx);
+    const bad = cfg({ motion: { categorySwitch: 'spin', itemsEnter: 'explode', screenChange: 'push', sheet: 'zoom', addToCart: 'teleport', speed: 'warp' } });
+    assert.deepEqual(
+      validateKioskConfig(bad).map((e) => `${e.path}:${e.code}`),
+      PRESET_MOTION_KEYS.map((k) => `motion.${k}:enum`),
+    );
+    // The server's vocabularies, word for word.
+    assert.deepEqual(ITEMS_ENTER_FX, ['pop', 'cascade', 'rise', 'flip', 'none']);
+    assert.deepEqual(SCREEN_CHANGE_FX, ['slide', 'fade', 'zoom', 'none']);
+    assert.deepEqual(SHEET_FX, ['slide_up', 'scale', 'fade', 'none']);
+    assert.deepEqual(ADD_TO_CART_FX, ['fly', 'bounce', 'none']);
+    assert.deepEqual(MOTION_SPEEDS, ['fast', 'normal', 'relaxed']);
+  });
+
+  it('reduceMotion turns every transition off', () => {
+    for (const style of UI_STYLES) {
+      const c = resolveKioskConfig({ theme: { uiStyle: style }, general: { reduceMotion: true } });
+      assert.deepEqual(transitionSpec(c.motion, c.general), NO_TRANSITIONS, style);
+      assert.equal(gridEnterMs(transitionSpec(c.motion, c.general)), 0);
+      assert.equal(motionSpec(c.theme, c.general, c.motion).flyMs, 0);
+    }
+  });
+
+  it('scales every duration by the speed; unknown values fall back to the defaults', () => {
+    const at = (speed: string) => transitionSpec({ ...KIOSK_DEFAULTS.motion, speed: speed as never }, { reduceMotion: false });
+    assert.deepEqual(MOTION_SPEED_FACTOR, { fast: 0.7, normal: 1, relaxed: 1.4 });
+    assert.equal(at('normal').categoryMs, TRANSITION_BASE_MS.categorySwitch.slide);
+    assert.equal(at('fast').categoryMs, Math.round(TRANSITION_BASE_MS.categorySwitch.slide * 0.7));
+    assert.equal(at('relaxed').screenMs, Math.round(TRANSITION_BASE_MS.screenChange.slide * 1.4));
+    assert.ok(at('fast').itemMs < at('normal').itemMs && at('normal').itemMs < at('relaxed').itemMs);
+    assert.deepEqual(at('warp'), at('normal'));
+    const t = transitionSpec({ categorySwitch: 'spin' as never, itemsEnter: 'none', sheet: 'none' }, { reduceMotion: false });
+    assert.equal(t.categorySwitch, KIOSK_DEFAULTS.motion.categorySwitch);
+    assert.deepEqual([t.itemsEnter, t.itemMs, t.staggerMs, t.sheet, t.sheetMs], ['none', 0, 0, 'none', 0]);
+    assert.equal(transitionSpec(undefined, { reduceMotion: false }).itemsEnter, KIOSK_DEFAULTS.motion.itemsEnter);
+  });
+
+  it('staggers only the first cards, the last one by the cap, at every speed', () => {
+    for (const speed of MOTION_SPEEDS) {
+      for (const fx of ITEMS_ENTER_FX) {
+        const t = transitionSpec({ itemsEnter: fx, speed }, { reduceMotion: false });
+        assert.equal(staggerDelayMs(t, 0), 0);
+        let last = 0;
+        for (let i = 0; i < 60; i++) {
+          const d = staggerDelayMs(t, i);
+          assert.ok(d >= last && d <= t.staggerCapMs, `${fx} ${speed} ${i}`);
+          last = d;
+        }
+        // Past a screenful the cards come with the last staggered one.
+        assert.equal(staggerDelayMs(t, 200), staggerDelayMs(t, STAGGER_MAX_CARDS - 1));
+        if (fx === 'none') assert.equal(gridEnterMs(t), 0);
+        else assert.equal(gridEnterMs(t), staggerDelayMs(t, STAGGER_MAX_CARDS - 1) + t.itemMs);
+      }
+    }
+    // "pop" lands the whole grid at once (barely staggered); "cascade" runs card after card.
+    const pop = transitionSpec({ itemsEnter: 'pop' }, { reduceMotion: false });
+    const cascade = transitionSpec({ itemsEnter: 'cascade' }, { reduceMotion: false });
+    assert.ok(staggerDelayMs(pop, 8) < staggerDelayMs(cascade, 8));
+    assert.equal(staggerDelayMs(cascade, STAGGER_MAX_CARDS - 1), STAGGER_CAP_MS);
+  });
+
+  it('the owner pace (07.10.2026): slow enough to see — normal ~450-500 ms, cards ~380 ms 70 ms apart, a grid within ~1 s', () => {
+    const t = transitionSpec(KIOSK_DEFAULTS.motion, { reduceMotion: false });
+    assert.deepEqual(
+      [t.screenMs, t.categoryMs, t.itemMs, t.staggerMs, t.staggerCapMs, t.sheetMs],
+      [480, 450, 380, 70, STAGGER_CAP_MS, 400],
+    );
+    assert.equal(STAGGER_CAP_MS, 600);
+    assert.ok(gridEnterMs(t) <= 1000, String(gridEnterMs(t)));
+    assert.equal(addMs(motionSpec({ animation: 'lively' }, { reduceMotion: false }, KIOSK_DEFAULTS.motion)), 700);
+    // Fast is about the first timing; relaxed 1.4 times normal, the add still under a second.
+    const fast = transitionSpec({ ...KIOSK_DEFAULTS.motion, speed: 'fast' }, { reduceMotion: false });
+    assert.ok(fast.categoryMs <= 320 && fast.itemMs <= 280);
+    const relaxed = transitionSpec({ ...KIOSK_DEFAULTS.motion, speed: 'relaxed' }, { reduceMotion: false });
+    assert.equal(relaxed.screenMs, Math.round(480 * 1.4));
+    assert.ok(addMs(motionSpec({ animation: 'lively' }, { reduceMotion: false }, { addToCart: 'fly', speed: 'relaxed' })) < ADD_MAX_MS);
+  });
+
+  it('moves the way the customer reads: forward from the left in Hebrew, from the right in English', () => {
+    assert.equal(swapSide(true, true), -1);
+    assert.equal(swapSide(false, true), 1);
+    assert.equal(swapSide(true, false), 1);
+    assert.equal(swapSide(false, false), -1);
+  });
+
+  it('the add to cart: fly, the basket button bounce, or nothing; the speed never takes it past a second', () => {
+    const theme = { animation: 'lively' as const };
+    const on = { reduceMotion: false };
+    const fly = motionSpec(theme, on, { addToCart: 'fly', speed: 'normal' });
+    assert.deepEqual(fly, motionSpec(theme, on));
+    const relaxed = motionSpec(theme, on, { addToCart: 'fly', speed: 'relaxed' });
+    assert.ok(addMs(relaxed) > addMs(fly) && addMs(relaxed) < ADD_MAX_MS);
+    assert.ok(addMs(motionSpec(theme, on, { addToCart: 'fly', speed: 'fast' })) < addMs(fly));
+    const bounce = motionSpec(theme, on, { addToCart: 'bounce' });
+    assert.equal(addMs(bounce), 0);
+    assert.ok(bounce.bounce > fly.bounce && bounce.countUpMs > 0);
+    const none = motionSpec(theme, on, { addToCart: 'none' });
+    assert.deepEqual([addMs(none), none.bounce, none.countUpMs], [0, 0, 0]);
+    // "ללא" stays nothing with reduce motion; the others are the short fade.
+    assert.equal(addMs(motionSpec(theme, { reduceMotion: true }, { addToCart: 'none' })), 0);
+    assert.equal(motionSpec(theme, { reduceMotion: true }, { addToCart: 'bounce' }).fadeMs, 280);
+  });
+});
+
+describe('"טיפ לצוות" and the steps before the payment (the till\'s KioskCheckoutSteps)', () => {
+  const pay = (over: Partial<typeof KIOSK_DEFAULTS.payment> = {}) => ({ ...KIOSK_DEFAULTS.payment, tipEnabled: true, ...over });
+  it('defaults: the tip, then the details; a setting may swap them, and is valid', () => {
+    // "איך תרצו לשלם?" (payMethod) is always the last, right before the payment.
+    assert.deepEqual(KIOSK_DEFAULTS.payment.checkoutSteps, ['tip', 'details', 'payMethod']);
+    assert.equal(KIOSK_DEFAULTS.payment.tipOther, true);
+    assert.deepEqual(checkoutStepOrder(undefined), CHECKOUT_STEPS);
+    assert.deepEqual(checkoutStepOrder(['details']), ['details', 'tip', 'payMethod']);
+    assert.deepEqual(checkoutStepOrder(['details', 'tip', 'tip', 'nope']), ['details', 'tip', 'payMethod']);
+    assert.deepEqual(validateKioskConfig(resolveKioskConfig({ payment: { checkoutSteps: ['details', 'tip'] } })), []);
+    const bad = validateKioskConfig(resolveKioskConfig({ payment: { checkoutSteps: ['tip', 'review'] } as never }));
+    assert.ok(bad.some((e) => e.path === 'payment.checkoutSteps' && e.code === 'enum'));
+    const twice = validateKioskConfig(resolveKioskConfig({ payment: { checkoutSteps: ['tip', 'tip'] } }));
+    assert.ok(twice.some((e) => e.path === 'payment.checkoutSteps' && e.code === 'duplicate'));
+    // "לאכול כאן או לקחת?": pick then "להמשך" by default, or straight on.
+    assert.equal(KIOSK_DEFAULTS.general.serviceSelect, 'confirm');
+    assert.deepEqual(validateKioskConfig(resolveKioskConfig({ general: { serviceSelect: 'instant' } })), []);
+    assert.ok(validateKioskConfig(resolveKioskConfig({ general: { serviceSelect: 'double' } } as never)).some((e) => e.path === 'general.serviceSelect'));
+  });
+  it('the steps of an order: the tip when on, the details when asked before the payment', () => {
+    assert.deepEqual(checkoutStepsNow(pay(), true, false), ['tip', 'details']);
+    assert.deepEqual(checkoutStepsNow(pay({ checkoutSteps: ['details', 'tip'] }), true, false), ['details', 'tip']);
+    // The tip off: only the details; nothing asked: no step at all.
+    assert.deepEqual(checkoutStepsNow(pay({ tipEnabled: false }), true, false), ['details']);
+    assert.deepEqual(checkoutStepsNow(pay({ tipEnabled: false }), false, false), []);
+    assert.equal(kioskTipAsked(pay({ tipPresets: [], tipOther: false })), false);
+    assert.equal(kioskTipAsked(pay({ tipPresets: [], tipOther: true })), true);
+    // Details asked before the basket (and given) or after the payment: only the tip here.
+    assert.deepEqual(checkoutStepsNow(pay({ detailsStep: 'before_cart' }), true, true), ['tip']);
+    assert.deepEqual(checkoutStepsNow(pay({ detailsStep: 'before_cart' }), true, false), ['tip', 'details']);
+    assert.deepEqual(checkoutStepsNow(pay({ detailsStep: 'after_pay' }), true, false), ['tip']);
+  });
+  it('the step bar: the review done, the current step, the payment last', () => {
+    const bar = checkoutBar(['tip', 'details'], 'tip');
+    assert.deepEqual(bar.map((b) => [b.key, b.textKey, b.state]), [
+      ['review', 'stepReview', 'done'],
+      ['tip', 'stepTip', 'current'],
+      ['details', 'stepDetails', 'next'],
+      ['pay', 'stepPay', 'next'],
+    ]);
+    assert.deepEqual(checkoutBar(['details', 'tip'], 'tip').map((b) => b.state), ['done', 'done', 'current', 'next']);
+    for (const b of bar) assert.ok((TEXT_KEYS as readonly string[]).includes(b.textKey));
+    const he = JSON.parse(readFileSync(join(process.cwd(), 'src', 'messages', 'he.json'), 'utf8'));
+    const builtin = he.kiosks.builtin as Record<string, string>;
+    assert.deepEqual([builtin.stepReview, builtin.stepTip, builtin.stepPay], ['ההזמנה שלכם', 'טיפ לצוות', 'תשלום']);
+    for (const k of ['tipCaption', 'tipTitle', 'tipSubtitle', 'tipOtherLabel', 'tipOtherHint', 'tipOrderTotal', 'tipLine', 'tipTotal', 'tipContinue', 'tipSkip', 'stepDetails']) {
+      assert.ok(builtin[k], k);
+      assert.ok(he.kiosks.fields.texts[k], `kiosks.fields.texts.${k}`);
+    }
+    // "דינמיות מלאה": every screen text is editable — each has its built-in words and its editor label.
+    assert.deepEqual(TEXT_KEYS.filter((k) => !builtin[k] || !he.kiosks.fields.texts[k]), []);
+    assert.equal(builtin.serviceTitle, 'לאכול כאן או לקחת?');
+  });
+  it('the amounts: a percent of the total to the agora, half up; "סכום אחר" in whole shekels up to the total', () => {
+    assert.deepEqual([5, 10, 15].map((p) => tipPercentAgorot(12800, p)), [640, 1280, 1920]);
+    assert.equal(tipPercentAgorot(1234, 12), 148); // 148.08
+    assert.equal(tipPercentAgorot(1250, 10), 125);
+    assert.equal(tipPercentAgorot(1245, 10), 125); // 124.5 → 125
+    assert.equal(tipPercentAgorot(1244, 10), 124);
+    assert.equal(tipPercentAgorot(12800, null), 0);
+    assert.equal(tipOtherAgorot('20', 12800), 2000);
+    assert.equal(tipOtherAgorot('0', 12800), null);
+    assert.equal(tipOtherAgorot('', 12800), null);
+    assert.equal(tipOtherAgorot('129', 12800), null); // more than the order
+    assert.equal(tipOtherAgorot(String(TIP_OTHER_MAX_SHEKELS + 1), 10_000_000), null);
+  });
+  it("each UI style's service choices, the words reading on them (the till's numbers)", () => {
+    const look = (style: keyof typeof KIOSK_UI_PRESETS, patch: Record<string, unknown> = {}) => {
+      const c = resolveKioskConfig({ theme: { uiStyle: style, ...patch } });
+      return kioskServiceLook(c.theme, resolveThemeColors(c.theme));
+    };
+    assert.deepEqual(look('ios'), { from: '#E2F0FF', to: '#E2F0FF', diagonal: false, ink: '#111827', badge: '#0A84FF', icon: '#FFFFFF', border: null });
+    assert.deepEqual(look('wolt'), { from: '#1F6FEB', to: '#16707F', diagonal: true, ink: '#FFFFFF', badge: '#FFFFFF33', icon: '#FFFFFF', border: null });
+    assert.deepEqual(look('classic'), { from: '#E11D48', to: '#E11D48', diagonal: false, ink: '#FFFFFF', badge: '#FFFFFF33', icon: '#FFFFFF', border: null });
+    assert.deepEqual(look('minimal_dark'), { from: '#16161A', to: '#16161A', diagonal: false, ink: '#F5F5F4', badge: '#C9A2272E', icon: '#C9A227', border: '#C9A227' });
+    const yellow = look('classic', { primaryColor: '#FACC15' });
+    assert.equal(yellow.ink, REST_DARK_INK);
+    for (const l of [look('ios'), look('wolt'), look('classic'), look('minimal_dark'), yellow]) {
+      assert.ok(contrastRatio(l.ink, l.from) >= REST_LARGE_TEXT_CONTRAST && contrastRatio(l.ink, l.to) >= REST_LARGE_TEXT_CONTRAST);
+    }
+  });
+});
+
+import {
+  KIOSK_LIMITS,
+  TICKER_SCREENS,
+  TICKER_SPEED_PX,
+  TICKER_STATIC_MS,
+  nextTickerItemId,
+  textDirection,
+  tickerAt,
+  tickerColors,
+  tickerCopies,
+  tickerDirection,
+  tickerItemLive,
+  tickerLoopMs,
+  tickerScreenOf,
+  tickerStaticIndex,
+  tickerTextsNow,
+  tickerWindowOpen,
+  tickerBandPx,
+  type KioskTicker,
+  type KioskTickerItem,
+} from './kioskConfig';
+
+describe('"כיתוב רץ" (config ticker — the server kiosk_config.py, the till domain/KioskTicker.kt)', () => {
+  const item = (over: Partial<KioskTickerItem> = {}): KioskTickerItem => ({
+    id: 't1',
+    text: 'מבצע צהריים',
+    enabled: true,
+    from: null,
+    to: null,
+    days: [0, 1, 2, 3, 4, 5, 6],
+    startsAt: null,
+    endsAt: null,
+    ...over,
+  });
+  const ticker = (over: Partial<KioskTicker> = {}): KioskTicker => ({ ...KIOSK_DEFAULTS.ticker, enabled: true, items: [item()], ...over });
+  const errorsOf = (t: Partial<KioskTicker>) =>
+    validateKioskConfig({ ...KIOSK_DEFAULTS, ticker: { ...KIOSK_DEFAULTS.ticker, ...t } }).filter((x) => x.path.startsWith('ticker'));
+  // A local date: 2026-10-07 is a Wednesday (3).
+  const at = (hh: number, mm = 0, day = 7) => new Date(2026, 9, day, hh, mm);
+
+  it('defaults: off, on the menu and the basket, under the header, slow, the theme colours, medium, no pause — and valid', () => {
+    assert.deepEqual(KIOSK_DEFAULTS.ticker, {
+      enabled: false,
+      items: [],
+      screens: ['catalog', 'cart'],
+      position: 'top',
+      speed: 'slow',
+      backgroundColor: null,
+      textColor: null,
+      size: 'm',
+      pauseOnTouch: false,
+    });
+    assert.deepEqual(validateKioskConfig(KIOSK_DEFAULTS), []);
+    assert.deepEqual(resolveKioskConfig().ticker, KIOSK_DEFAULTS.ticker);
+    assert.deepEqual([...TICKER_SCREENS], ['attract', 'service', 'catalog', 'cart', 'details', 'pay', 'success']);
+    assert.ok(TICKER_SPEED_PX.slow < TICKER_SPEED_PX.normal && TICKER_SPEED_PX.normal < TICKER_SPEED_PX.fast);
+  });
+
+  it('layers merge the section key by key, the texts replace whole', () => {
+    const cfg = resolveKioskConfig(
+      { ticker: { enabled: true, items: [item({ id: 'a' }), item({ id: 'b' })], backgroundColor: '#000000' } },
+      { ticker: { speed: 'normal', items: [item({ id: 's' })] } },
+      { ticker: { position: 'bottom', backgroundColor: null } },
+    );
+    assert.equal(cfg.ticker.enabled, true);
+    assert.equal(cfg.ticker.speed, 'normal');
+    assert.equal(cfg.ticker.position, 'bottom');
+    assert.equal(cfg.ticker.backgroundColor, '#000000');
+    assert.deepEqual(cfg.ticker.items.map((x) => x.id), ['s']);
+    assert.deepEqual(cfg.ticker.screens, ['catalog', 'cart']);
+  });
+
+  it('validation: the look, the screens, the texts, their hours, days and dates', () => {
+    assert.deepEqual(errorsOf({ enabled: true, items: [item(), item({ id: 't2', from: '22:00', to: '02:00', days: [5] })] }), []);
+    const bad = errorsOf({
+      screens: ['catalog', 'paused' as never],
+      position: 'middle' as never,
+      speed: 'warp' as never,
+      size: 'xl' as never,
+      backgroundColor: 'red',
+      textColor: '#12345',
+      pauseOnTouch: 1 as never,
+      items: [
+        item({ id: 'bad id!' }),
+        item({ id: 't2', text: 'x'.repeat(201) }),
+        item({ id: 't2' }),
+        item({ id: 't4', from: '25:00', to: '7:5' }),
+        item({ id: 't5', from: '08:00', to: '08:00' }),
+        item({ id: 't6', days: [] }),
+        item({ id: 't7', days: [7] }),
+        item({ id: 't8', startsAt: 'tomorrow' }),
+        item({ id: 't9', startsAt: '2026-10-06T10:00:00Z', endsAt: '2026-10-06T09:00:00Z' }),
+      ],
+    });
+    const got = Object.fromEntries(bad.map((x) => [x.path, x.code]));
+    assert.equal(got['ticker.screens'], 'enum');
+    assert.equal(got['ticker.position'], 'enum');
+    assert.equal(got['ticker.speed'], 'enum');
+    assert.equal(got['ticker.size'], 'enum');
+    assert.equal(got['ticker.backgroundColor'], 'color');
+    assert.equal(got['ticker.textColor'], 'color');
+    assert.equal(got['ticker.pauseOnTouch'], 'enum');
+    assert.equal(got['ticker.items.0.id'], 'messageId');
+    assert.equal(got['ticker.items.1.text'], 'tooLong');
+    assert.equal(got['ticker.items.2.id'], 'duplicate');
+    assert.equal(got['ticker.items.3.from'], 'time');
+    assert.equal(got['ticker.items.3.to'], 'time');
+    assert.equal(got['ticker.items.4.to'], 'sameTimes');
+    assert.equal(got['ticker.items.5.days'], 'atLeastOne');
+    assert.equal(got['ticker.items.6.days'], 'enum');
+    assert.equal(got['ticker.items.7.startsAt'], 'date');
+    assert.equal(got['ticker.items.8.endsAt'], 'endsBeforeStarts');
+    const many = Array.from({ length: KIOSK_LIMITS.tickerItemsMax + 1 }, (_, i) => item({ id: `t${i}` }));
+    assert.equal(errorsOf({ items: many })[0]?.code, 'tooMany');
+    // An older server's config (no ticker at all) is not an error.
+    const { ticker: _omit, ...older } = KIOSK_DEFAULTS;
+    void _omit;
+    assert.deepEqual(validateKioskConfig(older as KioskConfig), []);
+  });
+
+  it('a text by its hours and days: all day, from, until, past midnight', () => {
+    const all = item();
+    assert.equal(tickerWindowOpen(all, 3, 0), true);
+    assert.equal(tickerWindowOpen({ ...all, days: [5, 6] }, 3, 600), false);
+    const lunch = { from: '12:00', to: '15:00', days: [0, 1, 2, 3, 4] };
+    assert.equal(tickerWindowOpen(lunch, 3, 11 * 60 + 59), false);
+    assert.equal(tickerWindowOpen(lunch, 3, 12 * 60), true);
+    assert.equal(tickerWindowOpen(lunch, 3, 15 * 60), false); // the end is not included
+    assert.equal(tickerWindowOpen(lunch, 5, 13 * 60), false); // Friday is not one of its days
+    assert.equal(tickerWindowOpen({ from: '18:00', to: null, days: [3] }, 3, 23 * 60 + 59), true);
+    assert.equal(tickerWindowOpen({ from: '18:00', to: null, days: [3] }, 3, 17 * 60), false);
+    assert.equal(tickerWindowOpen({ from: null, to: '10:00', days: [3] }, 3, 9 * 60), true);
+    assert.equal(tickerWindowOpen({ from: null, to: '10:00', days: [3] }, 3, 10 * 60), false);
+    // Thursday night 22:00 → 02:00: Thursday late, and Friday's small hours (they are Thursday's).
+    const late = { from: '22:00', to: '02:00', days: [4] };
+    assert.equal(tickerWindowOpen(late, 4, 23 * 60), true);
+    assert.equal(tickerWindowOpen(late, 5, 60), true);
+    assert.equal(tickerWindowOpen(late, 5, 2 * 60), false);
+    assert.equal(tickerWindowOpen(late, 4, 60), false); // Thursday's own small hours are Wednesday's
+    assert.equal(tickerWindowOpen(late, 5, 23 * 60), false);
+    // No days given counts as every day.
+    assert.equal(tickerWindowOpen({ from: null, to: null, days: [] }, 2, 0), true);
+  });
+
+  it('a text live now: on, not blank, within its dates and its hours', () => {
+    const now = at(13);
+    assert.equal(tickerItemLive(item(), now), true);
+    assert.equal(tickerItemLive(item({ enabled: false }), now), false);
+    assert.equal(tickerItemLive(item({ text: '   ' }), now), false);
+    assert.equal(tickerItemLive(item({ startsAt: at(14).toISOString() }), now), false);
+    assert.equal(tickerItemLive(item({ endsAt: at(13).toISOString() }), now), false);
+    assert.equal(tickerItemLive(item({ startsAt: at(12).toISOString(), endsAt: at(14).toISOString() }), now), true);
+    assert.equal(tickerItemLive(item({ from: '12:00', to: '15:00', days: [3] }), now), true);
+    assert.equal(tickerItemLive(item({ from: '12:00', to: '15:00', days: [3] }), at(16)), false);
+  });
+
+  it('the screens: only the chosen ones, the tip as "details", and only at its position', () => {
+    const tk = ticker({ items: [item({ text: ' א ' }), item({ id: 't2', text: 'ב', enabled: false }), item({ id: 't3', text: 'ג', from: '20:00' })] });
+    assert.deepEqual(tickerTextsNow(tk, 'catalog', at(13)), ['א']);
+    assert.deepEqual(tickerTextsNow(tk, 'catalog', at(21)), ['א', 'ג']);
+    assert.deepEqual(tickerTextsNow(tk, 'product', at(13)), ['א']);
+    assert.deepEqual(tickerTextsNow(tk, 'cart', at(13)), ['א']);
+    assert.deepEqual(tickerTextsNow(tk, 'pay', at(13)), []);
+    assert.deepEqual(tickerTextsNow({ ...tk, enabled: false }, 'catalog', at(13)), []);
+    assert.deepEqual(tickerTextsNow(undefined, 'catalog', at(13)), []);
+    assert.deepEqual(tickerTextsNow({ ...tk, screens: ['details'] }, 'tip', at(13)), ['א']);
+    assert.equal(tickerScreenOf('tip'), 'details');
+    assert.equal(tickerScreenOf('confirm'), 'cart');
+    assert.equal(tickerScreenOf('paused'), null);
+    assert.equal(tickerScreenOf('closed'), null);
+    assert.equal(tickerAt(tk, 'catalog', 'top'), true);
+    assert.equal(tickerAt(tk, 'catalog', 'bottom'), false);
+    assert.equal(tickerAt({ ...tk, position: 'bottom' }, 'cart', 'bottom'), true);
+    assert.equal(tickerAt(tk, 'attract', 'top'), false);
+  });
+
+  it('it moves the way it reads, and loops seamlessly at its speed', () => {
+    assert.equal(textDirection('מבצע 1+1'), 'rtl');
+    assert.equal(textDirection('  2 for 1 '), 'ltr');
+    assert.equal(textDirection('١٢ خصم'), 'rtl');
+    assert.equal(textDirection('123 — 456'), null);
+    assert.equal(tickerDirection(['123', 'Happy hour', 'שעה שמחה'], 'rtl'), 'ltr');
+    assert.equal(tickerDirection(['₪ 5'], 'rtl'), 'rtl');
+    assert.equal(tickerDirection([], 'ltr'), 'ltr');
+    assert.equal(tickerCopies(1080, 400), 4); // 3 to fill 1080, one to spare
+    assert.equal(tickerCopies(1080, 2000), 2);
+    assert.equal(tickerCopies(0, 0), 2);
+    assert.equal(tickerLoopMs(450, 'slow'), 10_000);
+    assert.equal(tickerLoopMs(750, 'normal'), 10_000);
+    assert.equal(tickerLoopMs(10, 'fast'), 1000); // never under a second
+  });
+
+  it('reduce motion: one text at a time, the next every few seconds', () => {
+    assert.equal(tickerStaticIndex(3, 0), 0);
+    assert.equal(tickerStaticIndex(3, TICKER_STATIC_MS - 1), 0);
+    assert.equal(tickerStaticIndex(3, TICKER_STATIC_MS), 1);
+    assert.equal(tickerStaticIndex(3, 3 * TICKER_STATIC_MS), 0);
+    assert.equal(tickerStaticIndex(0, 99_999), 0);
+  });
+
+  it('colours: the theme button by default, custom ones as given (readable text on a custom background)', () => {
+    const c = resolveThemeColors(KIOSK_DEFAULTS.theme);
+    assert.deepEqual(tickerColors(KIOSK_DEFAULTS.ticker, c), { bg: c.button, fg: c.buttonText });
+    assert.deepEqual(tickerColors({ backgroundColor: '#FFD60A', textColor: null }, c), { bg: '#FFD60A', fg: '#111111' });
+    assert.deepEqual(tickerColors({ backgroundColor: '#111111', textColor: '#FFD60A' }, c), { bg: '#111111', fg: '#FFD60A' });
+    assert.deepEqual(tickerColors({ backgroundColor: null, textColor: '#00FF00' }, c), { bg: c.button, fg: '#00FF00' });
+  });
+
+  it('a new text gets a free id', () => {
+    assert.equal(nextTickerItemId([]), 't1');
+    assert.equal(nextTickerItemId([{ id: 't2' }]), 't3');
+    assert.equal(nextTickerItemId([{ id: 't1' }, { id: 't3' }]), 't4');
+  });
+
+  it('the room the strip takes on the attract screen (the hosts lay its start button out on the rest)', () => {
+    const theme = KIOSK_DEFAULTS.theme;
+    const on = ticker({ screens: ['attract'] });
+    assert.deepEqual(tickerBandPx({ ticker: on, theme }, 'attract', at(13)), { top: 32, bottom: 0 });
+    assert.deepEqual(tickerBandPx({ ticker: { ...on, position: 'bottom', size: 'l' }, theme }, 'attract', at(13), 18), { top: 0, bottom: 58 });
+    assert.deepEqual(tickerBandPx({ ticker: on, theme: { ...theme, typeScale: 'xlarge' } }, 'attract', at(13)).top, 32 * 1.25);
+    // Not on that screen, off, no text right now, or an older config: no room.
+    assert.deepEqual(tickerBandPx({ ticker: on, theme }, 'catalog', at(13)), { top: 0, bottom: 0 });
+    assert.deepEqual(tickerBandPx({ ticker: { ...on, enabled: false }, theme }, 'attract', at(13)), { top: 0, bottom: 0 });
+    assert.deepEqual(tickerBandPx({ ticker: { ...on, items: [item({ from: '20:00' })] }, theme }, 'attract', at(13)), { top: 0, bottom: 0 });
+    assert.deepEqual(tickerBandPx({ ticker: undefined, theme }, 'attract', at(13)), { top: 0, bottom: 0 });
+  });
+});
+
+describe('"אפשר לבטל גם כפתור ברוכים הבאים": the attract button hidden, the whole screen starts', () => {
+  it('visible by default; hidden needs "כל המסך פותח הזמנה", and the touch line is a text', () => {
+    assert.equal(KIOSK_DEFAULTS.attract.cta.visible, true);
+    assert.equal(KIOSK_DEFAULTS.attract.cta.touchHint, true);
+    assert.deepEqual(validateKioskConfig(resolveKioskConfig({ attract: { cta: { visible: false } } })), []);
+    const off = validateKioskConfig(resolveKioskConfig({ attract: { cta: { visible: false, tapAnywhere: false } } }));
+    assert.ok(off.some((e) => e.path === 'attract.cta.tapAnywhere' && e.code === 'tapAnywhereRequired'));
+    assert.equal(attractTapAnywhere({ tapAnywhere: false, visible: false }), true);
+    assert.equal(attractTapAnywhere({ tapAnywhere: false, visible: true }), false);
+    assert.ok((TEXT_KEYS as readonly string[]).includes('attractTouchHint'));
+  });
+});
+
+describe('"איך תרצו לשלם?" — card, voucher, cash at the till (docs/SPEC_KIOSK.md §23)', () => {
+  const codes = (c: KioskConfig) => validateKioskConfig(c).map((e) => `${e.path}:${e.code}`);
+  it('the methods: card, voucher and cash at the till; a voucher never alone; bare cash refused', () => {
+    assert.deepEqual(PAYMENT_METHODS, ['card', 'voucher', 'cash_at_till']);
+    assert.deepEqual(KIOSK_DEFAULTS.payment.methods, ['card']);
+    assert.equal(KIOSK_DEFAULTS.payment.cashAtTillExpiryMin, 30);
+    assert.equal(KIOSK_DEFAULTS.payment.cashAtTillKitchenBeforePay, false);
+    assert.deepEqual(validateKioskConfig(resolveKioskConfig({ payment: { methods: ['card', 'voucher', 'cash_at_till'] } })), []);
+    assert.deepEqual(validateKioskConfig(resolveKioskConfig({ payment: { methods: ['cash_at_till'] } })), []);
+    assert.ok(codes(cfg({ payment: { methods: ['voucher'] } })).includes('payment.methods:voucher_needs_method'));
+    assert.ok(codes(cfg({ payment: { methods: ['card', 'cash'] } })).includes('payment.methods:cash_not_supported'));
+    assert.ok(codes(cfg({ payment: { methods: ['card', 'bitcoin'] } })).includes('payment.methods:enum'));
+    assert.ok(codes(cfg({ payment: { methods: ['card', 'card'] } })).includes('payment.methods:duplicate'));
+    assert.ok(codes(cfg({ payment: { methods: [] } })).includes('payment.methods:atLeastOne'));
+    assert.ok(codes(cfg({ payment: { cashAtTillExpiryMin: 2 } })).includes('payment.cashAtTillExpiryMin:range'));
+    assert.ok(codes(cfg({ payment: { cashAtTillExpiryMin: 241 } })).includes('payment.cashAtTillExpiryMin:range'));
+    assert.deepEqual(validateKioskConfig(resolveKioskConfig({ payment: { cashAtTillExpiryMin: 45, cashAtTillKitchenBeforePay: true } })), []);
+    // What a kiosk takes (the cloud's repair, the till's parseList): a voucher gets the card beside it.
+    assert.deepEqual(kioskPayMethods(['voucher']), ['card', 'voucher']);
+    assert.deepEqual(kioskPayMethods(['cash_at_till', 'cash', 'voucher', 'cash_at_till']), ['cash_at_till', 'voucher']);
+    assert.deepEqual(kioskPayMethods(undefined), ['card']);
+    assert.deepEqual(resolveKioskConfig({ payment: { methods: ['voucher'] } }).payment.methods, ['card', 'voucher']);
+  });
+  it('the choice: asked with more than one method (or cash at the till alone), always the last step', () => {
+    assert.equal(kioskAsksPayMethod(['card']), false);
+    assert.equal(kioskAsksPayMethod(['card', 'voucher']), true);
+    assert.equal(kioskAsksPayMethod(['cash_at_till']), true);
+    const pay = { ...KIOSK_DEFAULTS.payment, tipEnabled: true, methods: ['card', 'cash_at_till'] };
+    assert.deepEqual(checkoutStepsNow(pay, true, false), ['tip', 'details', 'payMethod']);
+    assert.deepEqual(checkoutStepsNow({ ...pay, tipEnabled: false }, false, false), ['payMethod']);
+    assert.deepEqual(checkoutStepsNow({ ...pay, checkoutSteps: ['payMethod', 'details', 'tip'] }, true, false), ['details', 'tip', 'payMethod']);
+    assert.deepEqual(resolveKioskConfig({ payment: { checkoutSteps: ['payMethod', 'details'] } }).payment.checkoutSteps, ['details', 'payMethod']);
+    const bar = checkoutBar(['details', 'payMethod'], 'payMethod');
+    assert.deepEqual(bar.map((b) => [b.key, b.textKey, b.state]), [
+      ['review', 'stepReview', 'done'],
+      ['details', 'stepDetails', 'done'],
+      ['payMethod', 'stepPayMethod', 'current'],
+      ['pay', 'stepPay', 'next'],
+    ]);
+  });
+  it('the remainder after the vouchers, in agorot', () => {
+    assert.equal(kioskRemainderAgorot(6250, 500, [2500]), 4250);
+    assert.equal(kioskRemainderAgorot(6250, 0, [2500, 3750]), 0);
+    assert.equal(kioskRemainderAgorot(1000, 0, [5000]), 0);
+    assert.equal(kioskRemainderAgorot(1000, 0, [-100]), 1000);
+  });
+  it('every new text is editable, with built-in Hebrew words', () => {
+    const he = JSON.parse(readFileSync(join(process.cwd(), 'src', 'messages', 'he.json'), 'utf8'));
+    for (const k of ['stepPayMethod', 'payMethodTitle', 'payCashLabel', 'remainingToPay', 'voucherOffline', 'cashSlipTitle', 'cashSlipFooter', 'cashSlipPending', 'cashDoneTitle', 'cashDoneBody']) {
+      assert.ok((TEXT_KEYS as readonly string[]).includes(k), k);
+      assert.ok(he.kiosks.builtin[k], k);
+      assert.ok(he.kiosks.fields.texts[k], k);
+    }
+    assert.equal(he.kiosks.builtin.payMethodTitle, 'איך תרצו לשלם?');
+    assert.equal(he.kiosks.builtin.cashSlipTitle, 'לתשלום בקופה');
+    assert.equal(he.kiosks.builtin.cashSlipFooter, 'ההזמנה תוכן לאחר התשלום');
+  });
+});
+
+import { STEP_MODE_DEFAULTS, STEP_MODE_KEYS, stepMode, stepDefaultService, validateKioskConfig as validateForSteps } from './kioskConfig';
+
+describe('"חובה / רשות / כבוי" per step (payment.stepModes — the server kiosk_config.step_mode, the till KioskStepModes.kt)', () => {
+  const cfg = (general: Record<string, unknown> = {}, payment: Record<string, unknown> = {}) => ({
+    general: { ...KIOSK_DEFAULTS.general, ...general },
+    payment: { ...KIOSK_DEFAULTS.payment, ...payment },
+  });
+  it('the defaults, as the server sends them', () => {
+    assert.deepEqual(KIOSK_DEFAULTS.payment.stepModes, {
+      service: 'required', tip: 'optional', payMethod: 'required', upsellItem: 'optional', upsellSteps: 'optional', upsellCheckout: 'optional',
+    });
+    assert.deepEqual(STEP_MODE_KEYS, Object.keys(STEP_MODE_DEFAULTS));
+  });
+  it("each step's own switch comes first", () => {
+    assert.equal(stepMode(cfg(), 'service'), 'required');
+    assert.equal(stepMode(cfg(), 'tip'), 'off'); // tips off by default
+    assert.equal(stepMode(cfg(), 'payMethod'), 'off'); // the card alone
+    assert.equal(stepMode(cfg({ serviceTypes: ['take_away'] }), 'service'), 'off');
+    const on = cfg({}, { tipEnabled: true, methods: ['card', 'cash_at_till'], stepModes: { tip: 'required', payMethod: 'optional' } });
+    assert.equal(stepMode(on, 'tip'), 'required');
+    assert.equal(stepMode(on, 'payMethod'), 'optional');
+    assert.equal(stepMode(cfg({ upsellEnabled: false }), 'upsellItem'), 'off');
+    assert.equal(stepMode(cfg({}, { stepModes: { upsellCheckout: 'required' } }), 'upsellCheckout'), 'required');
+    assert.equal(stepMode(cfg({}, { customerPhone: 'required' }), 'customerPhone'), 'required');
+    // A layer from before the field: the defaults.
+    assert.equal(stepMode({ general: {}, payment: { tipEnabled: true, tipPresets: [10] } }, 'tip'), 'optional');
+  });
+  it('a step set off is never asked before the payment', () => {
+    const pay = { ...KIOSK_DEFAULTS.payment, tipEnabled: true, methods: ['card', 'cash_at_till'] };
+    assert.deepEqual(checkoutStepsNow(pay, false, false), ['tip', 'payMethod']);
+    assert.deepEqual(checkoutStepsNow({ ...pay, stepModes: { tip: 'off' } }, false, false), ['payMethod']);
+    assert.deepEqual(checkoutStepsNow({ ...pay, stepModes: { payMethod: 'off' } }, false, false), ['tip']);
+  });
+  it('validated like the server', () => {
+    const good = { ...KIOSK_DEFAULTS, payment: { ...KIOSK_DEFAULTS.payment, stepModes: { service: 'optional' as const } } };
+    assert.equal(validateForSteps(good).filter((e) => e.path.startsWith('payment.stepModes')).length, 0);
+    const bad = { ...KIOSK_DEFAULTS, payment: { ...KIOSK_DEFAULTS.payment, stepModes: { tip: 'sometimes', soon: 'off' } as never } };
+    const paths = validateForSteps(bad).map((e) => e.path);
+    assert.ok(paths.includes('payment.stepModes.tip') && paths.includes('payment.stepModes.soon'));
+  });
+  it('the default service when the step is passed', () => {
+    assert.equal(stepDefaultService(['eat_in', 'take_away']), 'eat_in');
+    assert.equal(stepDefaultService([]), 'take_away');
+  });
+});
+
+describe('"מנוע תצוגה בקיוסק אנדרואיד" — general.renderer (the server kiosk_config.py RENDERERS)', () => {
+  it('defaults to the built-in screens and takes native or web only', () => {
+    assert.equal(KIOSK_DEFAULTS.general.renderer, 'native');
+    const codes = (renderer: unknown) =>
+      validateKioskConfig(setPath(cloneJson(KIOSK_DEFAULTS), 'general.renderer', renderer)).map((e) => `${e.path}:${e.code}`);
+    assert.deepEqual(codes('web'), []);
+    assert.deepEqual(codes('native'), []);
+    assert.deepEqual(codes('html'), ['general.renderer:enum']);
   });
 });

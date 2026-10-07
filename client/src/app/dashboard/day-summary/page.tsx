@@ -45,7 +45,7 @@ import {
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
-import { formatCurrency, formatQuantity } from '@/lib/format';
+import { formatCurrency, formatDate, formatQuantity } from '@/lib/format';
 import { daysBackIso, todayIso } from '@/lib/reportWindow';
 import type { DaySummaryReport, DaySummaryRow, DaySummaryTotals } from '@/lib/types';
 import { EntityMultiSelect, type MultiSelectOption } from '@/components/dashboard/entity-multi-select';
@@ -58,7 +58,7 @@ import { useZNumberLabel } from '@/components/dashboard/z-report/z-number';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -161,7 +161,7 @@ function DayRow({ row }: { row: DaySummaryRow }) {
           <Chevron className="text-muted-foreground h-4 w-4" aria-hidden />
         </TableCell>
         <TableCell className="font-medium">
-          {row.dayDate}
+          {formatDate(row.dayDate)}
           {/* What the day's Zs include: the shop Z's tills, and each independent till's own Z. */}
           {row.includesNote ? (
             <div className="text-muted-foreground max-w-md text-xs font-normal whitespace-normal">{row.includesNote}</div>
@@ -397,22 +397,22 @@ export default function DaySummaryPage() {
           <CardContent className="grid gap-4 pt-6 md:grid-cols-2 xl:grid-cols-5">
             <div className="space-y-1.5">
               <Label htmlFor="day-summary-from">{t('filters.from')}</Label>
-              <Input
+              <DatePicker
                 id="day-summary-from"
-                type="date"
                 value={from}
                 max={to}
                 onChange={(e) => setFrom(e.target.value)}
+                range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
               />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="day-summary-to">{t('filters.to')}</Label>
-              <Input
+              <DatePicker
                 id="day-summary-to"
-                type="date"
                 value={to}
                 min={from}
                 onChange={(e) => setTo(e.target.value)}
+                range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
               />
             </div>
             <EntityMultiSelect

@@ -205,6 +205,26 @@ def device_out(db: Session, device: KdsDevice, names: Optional[Dict[str, str]] =
         "stations": [{"id": s, "name": names.get(s, "?")} for s in (device.station_ids or []) if s in names],
         "isActive": bool(device.is_active),
         "lastSeenAt": _iso(device.last_seen_at),
+        # The board's look (a pickup screen; docs/SPEC_KDS.md §13) — null: the defaults.
+        "display": display_out(getattr(device, "display", None)),
+    }
+
+
+def display_out(raw: Any) -> Optional[Dict[str, Any]]:
+    """A stored `kds_devices.display`, cleaned for the screens (None when nothing is set)."""
+    if not isinstance(raw, dict):
+        return None
+    theme = raw.get("theme") if raw.get("theme") in ("dark", "light", "contrast", "brand") else "dark"
+    accent = raw.get("accent")
+    accent = accent.lower() if isinstance(accent, str) and len(accent) == 7 and accent.startswith("#") else None
+    title = raw.get("title")
+    title = " ".join(str(title).split())[:60] or None if title else None
+    return {
+        "theme": theme,
+        "accent": accent,
+        "sound": raw.get("sound") is not False,
+        "showPreparing": raw.get("showPreparing") is not False,
+        "title": title,
     }
 
 
@@ -1515,6 +1535,7 @@ def order_states(db: Session, machine: POSMachine, source: str, refs: Sequence[s
 
 def shop_overview(db: Session, shop: Shop) -> Dict[str, Any]:
     from app.models.kds import KdsRouteOverride
+    from app.services import display_devices
     from app.services.printers import shop_machines, station_printers_in_shop, stations_of
 
     names = {str(s.id): s.name for s in stations_of(db, shop.tenant_id)}
@@ -1544,8 +1565,15 @@ def shop_overview(db: Session, shop: Shop) -> Dict[str, Any]:
             for sid, name in names.items()
         ],
         "devices": [device_out(db, d, names) for d in devices],
+        # `fiscal` false: a display device (app/services/display_devices.py); a till chosen
+        # here for the first time becomes one (`save_device`), the dialog warns.
         "machines": [
-            {"id": str(m.id), "name": m.name, "posNumber": m.pos_number}
+            {
+                "id": str(m.id), "name": m.name, "posNumber": m.pos_number,
+                "fiscal": getattr(m, "is_fiscal", True) is not False,
+                # "android" | "windows" | "web" — a browser screen (`/kds`, `/board`) is marked on the page.
+                "platform": display_devices.platform_of(m),
+            }
             for m in shop_machines(db, shop.id)
         ],
         "overrides": [
@@ -1597,6 +1625,15 @@ def _set_screen_flag(db: Session, machine_id: Any, on: bool) -> None:
 
 
 def save_device(db: Session, shop: Shop, machine_id: Any, body) -> KdsDevice:
+    """
+    A machine of the shop as a KDS screen (or the pickup board). "מסך מטבח אינו קופה"
+    (docs/SPEC_DEVICE_ROLE_MODEL.md §2.2): a till assigned here for the first time becomes
+    a display device — over a clean break only (`display_devices.make_screen`, 409
+    `{code, message}` otherwise). A till that showed a screen before that rule (it has a
+    row already) is only edited: it stays a till, and the dashboard flags it.
+    """
+    from app.services import display_devices
+
     machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
     if machine is None or machine.shop_id != shop.id:
         raise _refuse("machine_not_in_shop", status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -1609,6 +1646,7 @@ def save_device(db: Session, shop: Shop, machine_id: Any, body) -> KdsDevice:
         raise _refuse("station_device_needs_a_station", status.HTTP_422_UNPROCESSABLE_ENTITY)
     device = db.query(KdsDevice).filter(KdsDevice.machine_id == machine.id).first()
     if device is None:
+        display_devices.make_screen(db, machine)
         device = KdsDevice(id=uuid.uuid4(), tenant_id=shop.tenant_id, shop_id=shop.id, machine_id=machine.id)
         db.add(device)
     device.shop_id = shop.id
@@ -1616,9 +1654,19 @@ def save_device(db: Session, shop: Shop, machine_id: Any, body) -> KdsDevice:
     device.role = body.role
     device.station_ids = station_ids if body.role == "station" else []
     device.is_active = body.is_active
+    display = getattr(body, "display", None)
+    if display is not None:
+        device.display = {
+            "theme": display.theme,
+            "accent": display.accent.lower() if display.accent else None,
+            "sound": display.sound,
+            "showPreparing": display.show_preparing,
+            "title": " ".join(display.title.split()) or None if display.title else None,
+        }
     _set_screen_flag(db, machine.id, bool(body.is_active))
     bump(db, shop.id, shop.tenant_id)
     db.flush()
+    display_devices.forget(machine)
     return device
 
 
@@ -1626,6 +1674,8 @@ def delete_device(db: Session, shop: Shop, machine_id: Any) -> None:
     device = db.query(KdsDevice).filter(KdsDevice.machine_id == machine_id, KdsDevice.shop_id == shop.id).first()
     if device is None:
         raise _refuse("device_not_found", status.HTTP_404_NOT_FOUND)
+    # A display device stays one (it is never a till again without a new pairing); it is
+    # left without a screen, which the machines page shows.
     db.delete(device)
     _set_screen_flag(db, machine_id, False)
     bump(db, shop.id, shop.tenant_id)

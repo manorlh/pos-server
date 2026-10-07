@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, fetchShopStock, postGoodsReceipt, postStockAdjustment, postStocktake } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { fetchAllPages } from '@/lib/fetchAllPages';
 import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import type { Product, ProductListResponse, StockLevel } from '@/lib/types';
@@ -193,21 +194,30 @@ export default function ShopStockPage() {
       <ReportExportToolbar
         title={t('title')}
         disabled={displayRows.length === 0}
-        getSheets={() => ({
-          name: t('title'),
-          columns: [
-            { header: t('product'), width: 30 },
-            { header: t('sku'), width: 14 },
-            { header: t('onHand'), kind: 'number' },
-            { header: t('reorderMin'), kind: 'number' },
-            { header: t('lowStock'), width: 10 },
-          ],
-          rows: displayRows.map((row) => [
-            row.productName ?? null, row.sku ?? null, row.quantity, row.reorderMin ?? null,
-            isLow(row) ? t('lowStock') : null,
-          ]),
-          totals: [null, null, displayRows.reduce((sum, r) => sum + Number(r.quantity || 0), 0), null, null],
-        })}
+        // The shop's levels come whole; the tracked products with no level yet are read from
+        // every page of the catalog (the screen merges only the first 200 products).
+        getSheets={async () => {
+          const products = await fetchAllPages<Product>(
+            (page, pageSize) => api.get('/products', { params: { page, pageSize } }).then((r) => r.data),
+            { pageSize: PRODUCTS_PAGE_SIZE },
+          );
+          const all = mergeStockRows(levels, products.filter((p) => p.trackStock));
+          return {
+            name: t('title'),
+            columns: [
+              { header: t('product'), width: 30 },
+              { header: t('sku'), width: 14 },
+              { header: t('onHand'), kind: 'number' },
+              { header: t('reorderMin'), kind: 'number' },
+              { header: t('lowStock'), width: 10 },
+            ],
+            rows: all.map((row) => [
+              row.productName ?? null, row.sku ?? null, row.quantity, row.reorderMin ?? null,
+              isLow(row) ? t('lowStock') : null,
+            ]),
+            totals: [null, null, all.reduce((sum, r) => sum + Number(r.quantity || 0), 0), null, null],
+          };
+        }}
       />
       <div className="rounded-lg border bg-card overflow-hidden">
         <Table>

@@ -2,12 +2,92 @@
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { CreditCard, Banknote, Plus, X } from 'lucide-react';
+import { Plus, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { DETAILS_STEPS, KIOSK_LIMITS, type CustomerFieldMode, type DetailsStep, type ReceiptPolicy } from '@/lib/kioskConfig';
+import { Switch } from '@/components/ui/switch';
+import {
+  DETAILS_STEPS,
+  KIOSK_LIMITS,
+  checkoutStepOrder,
+  moveItem,
+  type CheckoutStep,
+  type CustomerFieldMode,
+  type DetailsStep,
+  type ReceiptPolicy,
+} from '@/lib/kioskConfig';
 import { useKioskField } from './editor-context';
-import { FieldShell, NumberInput, SectionCard, SegmentField, SwitchField } from './fields';
+import { FieldShell, MoveButtons, NumberInput, SectionCard, SegmentField, SwitchField } from './fields';
+import { CashAtTillFields, PayMethodStepRow, PaymentMethodsField } from './section-payment-methods';
+import { StepModesCard } from './section-step-modes';
+
+/** "סכום אחר": only while the tip is on. */
+function TipOther() {
+  const t = useTranslations('kiosks.payment');
+  const tf = useTranslations('kiosks.fields');
+  const enabled = useKioskField<boolean>('payment.tipEnabled');
+  if (!enabled.value) return null;
+  return <SwitchField path="payment.tipOther" label={tf('payment.tipOther')} hint={t('tipOtherHint')} />;
+}
+
+/**
+ * "סדר השלבים לפני התשלום": the order review first, then the tip and the customer's details in the
+ * order chosen here (payment.checkoutSteps), then the payment. The tip is switched here
+ * (payment.tipEnabled); the details follow the customer fields below — asked before the payment
+ * or not.
+ */
+function CheckoutStepsOrder() {
+  const t = useTranslations('kiosks.payment');
+  const tf = useTranslations('kiosks.fields');
+  const f = useKioskField<CheckoutStep[]>('payment.checkoutSteps');
+  const tip = useKioskField<boolean>('payment.tipEnabled');
+  const name = useKioskField<CustomerFieldMode>('payment.customerName');
+  const phone = useKioskField<CustomerFieldMode>('payment.customerPhone');
+  const table = useKioskField<CustomerFieldMode>('payment.tableNumber');
+  const askTable = useKioskField<boolean>('general.askTableNumber');
+  const when = useKioskField<DetailsStep>('payment.detailsStep');
+  // "איך תרצו לשלם?" is always last (its own row below): the tip and the details move here.
+  const order = checkoutStepOrder(f.value).filter((s) => s !== 'payMethod');
+  const detailsOn = name.value !== 'off' || phone.value !== 'off' || (table.value ?? 'off') !== 'off' || !!askTable.value;
+  const detailsHere = detailsOn && when.value === 'before_pay';
+  const fixed = (n: number, label: string) => (
+    <li className="flex items-center justify-between gap-2 bg-muted/40 px-3 py-2 text-sm">
+      <span className="flex items-center gap-2">
+        <span className="w-4 text-xs text-muted-foreground tabular-nums">{n}</span>
+        {label}
+      </span>
+      <Badge variant="outline">{t('stepFixed')}</Badge>
+    </li>
+  );
+  return (
+    <FieldShell path="payment.checkoutSteps" label={tf('payment.checkoutSteps')} hint={t('stepsHint')}>
+      <ol className="divide-y overflow-hidden rounded-xl border">
+        {fixed(1, t('stepReview'))}
+        {order.map((s, i) => (
+          <li key={s} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="w-4 text-xs text-muted-foreground tabular-nums">{i + 2}</span>
+              <span className="truncate">{s === 'tip' ? t('stepTip') : t('stepDetails')}</span>
+            </span>
+            <span className="flex shrink-0 items-center gap-2">
+              {s === 'tip' ? (
+                <Switch checked={!!tip.value} disabled={tip.disabled} onCheckedChange={(v) => tip.set(!!v)} aria-label={t('stepTip')} />
+              ) : (
+                <span className="flex flex-col items-end gap-0.5">
+                  <Badge variant={detailsHere ? 'default' : 'outline'}>{detailsHere ? t('stepOn') : t('stepOff')}</Badge>
+                  <span className="text-[11px] text-muted-foreground">{detailsOn && !detailsHere ? t('stepDetailsElsewhere') : t('stepDetailsHint')}</span>
+                </span>
+              )}
+              <MoveButtons index={i} count={order.length} disabled={f.disabled} onMove={(d) => f.set(moveItem(order, i, d))} />
+            </span>
+          </li>
+        ))}
+        <PayMethodStepRow n={order.length + 2} />
+        {fixed(order.length + 3, t('stepPay'))}
+      </ol>
+    </FieldShell>
+  );
+}
 
 function TipPresets() {
   const t = useTranslations('kiosks.payment');
@@ -99,26 +179,25 @@ export function PaymentSection() {
   return (
     <div className="space-y-4">
       <SectionCard title={t('methodsTitle')} paths={['payment.methods']}>
-        <FieldShell path="payment.methods" label={tf('payment.methods')}>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <div className="flex items-center gap-3 rounded-xl border border-primary bg-primary/5 p-3">
-              <CreditCard className="h-5 w-5 text-primary" />
-              <span className="flex-1 text-sm font-medium">{t('card')}</span>
-              <Badge>{t('on')}</Badge>
-            </div>
-            <div className="flex items-center gap-3 rounded-xl border p-3 opacity-60">
-              <Banknote className="h-5 w-5" />
-              <span className="flex-1 text-sm">{t('cash')}</span>
-              <Badge variant="outline">{t('cashSoon')}</Badge>
-            </div>
-          </div>
-        </FieldShell>
+        <PaymentMethodsField />
       </SectionCard>
 
-      <SectionCard title={t('tipTitle')} paths={['payment.tipEnabled', 'payment.tipPresets']}>
+      <SectionCard title={t('cashAtTillTitle')} paths={['payment.cashAtTillExpiryMin', 'payment.cashAtTillKitchenBeforePay']}>
+        <CashAtTillFields />
+      </SectionCard>
+
+      <SectionCard title={t('tipTitle')} paths={['payment.tipEnabled', 'payment.tipPresets', 'payment.tipOther']}>
         <SwitchField path="payment.tipEnabled" label={tf('payment.tipEnabled')} hint={t('tipHint')} />
         <TipPresets />
+        <TipOther />
       </SectionCard>
+
+      <SectionCard title={t('stepsTitle')} paths={['payment.checkoutSteps']}>
+        <CheckoutStepsOrder />
+      </SectionCard>
+
+      {/* "חובה / רשות / כבוי" per step (docs/SPEC_KIOSK_INSIGHTS.md §4). */}
+      <StepModesCard />
 
       <SectionCard title={t('receiptTitle')} paths={['payment.receiptPolicy']}>
         <SegmentField<ReceiptPolicy>

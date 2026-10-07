@@ -265,7 +265,7 @@ def load_z_facts(
         .filter(
             Shift.z_report_id == z.id,
             Transaction.machine_id == Shift.machine_id,
-            Transaction.status.in_(SALE_STATUSES),
+            Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
         )
         .all()
     )

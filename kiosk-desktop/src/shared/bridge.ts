@@ -4,6 +4,8 @@
  */
 
 import type { KCategory, KGroup, KProduct } from '../main/kiosk/catalog';
+import type { FunnelEvent } from '../core/kioskFunnel';
+import type { BatteryAlertView } from '../core/batteryAlerts';
 
 export type KioskPhase = 'unpaired' | 'waiting' | 'kiosk';
 
@@ -61,6 +63,8 @@ export interface OrderLineIn {
   qty: number;
   options: Array<{ groupId: string; optionId: string }>;
   notes: string[];
+  /** The unit price (with its options, agorot) the screen showed: the pre-payment check compares it (core/basketCheck.ts). */
+  unitAgorot?: number;
 }
 
 export interface StartPaymentIn {
@@ -70,13 +74,21 @@ export interface StartPaymentIn {
   customerPhone: string | null;
   tableRef: string | null;
   tipPct: number | null;
+  /** "סכום אחר": the customer's own tip in agorot (whole shekels, up to the order's total); wins over tipPct. */
+  tipAgorot: number | null;
+  /** The goods' total the customer saw (agorot): never charged if it moved (core/basketCheck.ts). */
+  expectedTotalAgorot?: number;
 }
 
-export type BasketChange = { kind: 'removed'; productId: string; name: string } | { kind: 'repriced'; productId: string; name: string; from: number; to: number };
+/** `key`: the basket line; `from` / `to`: its unit price, agorot (core/basketCheck.ts). */
+export type BasketChange =
+  | { kind: 'removed'; productId: string; name: string; key?: string }
+  | { kind: 'repriced'; productId: string; name: string; key?: string; from: number; to: number };
 
 export type StartPaymentOut =
   | { ok: true; orderId: string; amountAgorot: number }
-  | { ok: false; reason: 'changed'; changes: BasketChange[] }
+  /** `totalAgorot`: the goods' total now — shown to the customer, who confirms before anything is charged. */
+  | { ok: false; reason: 'changed'; changes: BasketChange[]; totalAgorot?: number }
   | { ok: false; reason: 'terminal' | 'unresolved' | 'busy' | 'empty' | 'no_shift' | 'error'; message: string };
 
 export type PayPhase = 'starting' | 'charging' | 'approved' | 'declined' | 'unknown';
@@ -94,10 +106,42 @@ export interface PayProgress {
   receipt?: 'ask' | 'printing' | 'printed' | 'declined' | 'none' | 'failed';
 }
 
+/** "צימוד מסוף SynqPay" (pos-server docs/SPEC_SYNQPAY.md §2.2): where the pairing stands. */
+export interface SynqpayPairingView {
+  phase: 'idle' | 'need_serial' | 'awaiting_code' | 'expired' | 'paired' | 'failed';
+  serial: string | null;
+  /** awaiting_code: when the code on the terminal runs out (epoch ms). */
+  expiresAtMs: number;
+  error: string | null;
+  upload: 'uploaded' | 'needs_approval' | 'offline' | 'refused' | null;
+}
+
+/** The kiosk's SynqPay terminal and its key (never the key itself). */
+export interface SynqpayAdminInfo {
+  paired: boolean;
+  /** No key, or the terminal refused it: "המסוף דורש צימוד". */
+  needsPairing: boolean;
+  /** Paired here, not in the cloud yet. */
+  pendingUpload: boolean;
+  serialNumber: string | null;
+  pairing: SynqpayPairingView;
+}
+
 export interface AdminInfo {
   operator: { id: string; name: string } | null;
   shift: { open: boolean; number: number | null; openedAt: string | null };
-  terminal: { kind: string | null; address: string | null; state: string; lastOkAt: number | null; lastError: string | null; unresolved: Array<{ reference: string; amountAgorot: number; startedAt: string; note: string | null }> };
+  terminal: {
+    kind: string | null;
+    address: string | null;
+    state: string;
+    lastOkAt: number | null;
+    lastError: string | null;
+    unresolved: Array<{ reference: string; amountAgorot: number; startedAt: string; note: string | null }>;
+    /** Only on an external SynqPay terminal. */
+    synqpay?: SynqpayAdminInfo | null;
+    /** "עקיפת בדיקת מספר מסוף" is on for this kiosk: the card lock's number check is off. */
+    numberCheckBypass?: boolean;
+  };
   printer: { target: string; health: string; lastError: string | null; queues: string[] };
   sync: { lastBeatOkAt: number | null; lastKioskSyncAt: number | null; lastError: string | null; outbox: number; configVersion: string | null };
   media: { files: number; bytes: number; missing: number };
@@ -116,7 +160,17 @@ export interface TechnicianInfo {
   network: { online: boolean; lastBeatOkAt: number | null; serverUrl: string | null; interfaces: Array<{ name: string; address: string }> };
   printer: AdminInfo['printer'];
   terminal: AdminInfo['terminal'];
-  update: { current: string; available: string | null; status: string };
+  /** The updater (main/update/updater.ts); `status` is its phase (shared/roles.ts UpdatePhase). */
+  update: {
+    current: string;
+    available: string | null;
+    status: string;
+    message?: string | null;
+    progress?: number | null;
+    lastCheckAt?: number | null;
+    autoInstall?: boolean;
+    installWindow?: { start: string; end: string } | null;
+  };
   quickSupport: string | null;
 }
 
@@ -131,6 +185,10 @@ export interface KioskBridge {
   bootstrap(): Promise<KioskView>;
   pair(input: { serverUrl: string; code: string; machineName: string }): Promise<{ ok: true } | { ok: false; error: string }>;
   reportFlow(input: { flowState: string; screen: string; busy: boolean; idle: boolean }): void;
+  /** "ביצועי קיוסקים": the funnel's events (core/kioskFunnel.ts), kept and sent to the cloud by the service. */
+  funnel?(events: FunnelEvent[]): void;
+  /** "סוללה חלשה": the battery as the screen reads it → what to show and whether to sound the alarm (core/batteryAlerts.ts). */
+  battery?(reading: { percent: number | null; charging: boolean }): Promise<BatteryAlertView>;
   startPayment(input: StartPaymentIn): Promise<StartPaymentOut>;
   cancelPayment(): Promise<void>;
   receiptChoice(orderId: string, print: boolean): Promise<void>;
@@ -138,7 +196,7 @@ export interface KioskBridge {
   helpRequest(): Promise<void>;
   adminUnlock(pin: string): Promise<{ ok: true; name: string } | { ok: false; error: string }>;
   adminInfo(): Promise<AdminInfo>;
-  adminAction(action: AdminAction): Promise<{ ok: boolean; message?: string }>;
+  adminAction(action: AdminAction): Promise<AdminActionResult>;
   technicianUnlock(code: string): Promise<{ outcome: 'granted' | 'wrong' | 'locked_out' | 'locked'; triesLeft: number; lockedForMs: number }>;
   technicianInfo(): Promise<TechnicianInfo>;
   technicianAction(action: TechnicianAction): Promise<{ ok: boolean; message?: string }>;
@@ -155,7 +213,20 @@ export type AdminAction =
   | { type: 'recheckPayment'; reference: string }
   | { type: 'markNotApproved'; reference: string }
   | { type: 'retryPrints' }
-  | { type: 'exitKiosk' };
+  | { type: 'exitKiosk' }
+  /** "צימוד מסוף SynqPay": `pair` (the first code, or "שלח קוד חדש"); the serial when the kiosk cannot tell it. */
+  | { type: 'synqpayPair'; serialNumber?: string | null }
+  /** The 6 digits from the terminal's screen. */
+  | { type: 'synqpayCode'; otp: string }
+  /** The paired key to the cloud again. */
+  | { type: 'synqpayRetryUpload' };
+
+export interface AdminActionResult {
+  ok: boolean;
+  message?: string;
+  /** SynqPay's pairing actions: where it stands now. */
+  pairing?: SynqpayPairingView;
+}
 
 export type TechnicianAction =
   | { type: 'printerTest' }

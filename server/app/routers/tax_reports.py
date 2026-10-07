@@ -18,6 +18,8 @@ from app.routers.shops import _check_shop_access
 from app.schemas.tax_report import TaxOpenFormatPreviewResponse
 from app.services.tax_reports import (
     build_tax_open_format_export,
+    count_duplicate_copies,
+    flagged_documents,
     resolve_export_context,
 )
 
@@ -123,6 +125,10 @@ def preview_tax_open_format(
         software=software.get_settings(db)["effective"],
         # The A000 software fields still written as placeholders (not configured).
         placeholders=software.placeholders(db),
+        flagged_documents=flagged_documents(tx_dicts),
+        excluded_duplicate_copies=count_duplicate_copies(
+            db, active_tenant_id, company_id=cid, shop_id=sid, start=ctx.start, end=ctx.end,
+        ),
     )
 
 

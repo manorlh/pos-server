@@ -19,6 +19,10 @@ document exists. Three rules follow, and each one is easy to lose:
 
 A replacement for a dead till is the *same register*. `adopt_machine` hands the new
 device the existing row, so the number survives without being copied anywhere.
+
+A display device — a KDS screen or the "מוכן / לא מוכן" board — is not a register at all
+(`pos_machines.is_fiscal` false, app/services/display_devices.py): it never draws a
+number, nor a document prefix, in any shop.
 """
 from __future__ import annotations
 
@@ -135,10 +139,10 @@ def assign_register_number(db: Session, machine: POSMachine) -> Optional[str]:
     is only sound because `set_machine_shop` clears the number whenever the shop
     changes — a number that is present always belongs to the current shop.
 
-    A machine with no shop has no number. Must be called inside the transaction that
-    persists the machine; the caller commits.
+    A machine with no shop has no number, nor has a display device (not a till). Must be
+    called inside the transaction that persists the machine; the caller commits.
     """
-    if machine.shop_id is None:
+    if machine.shop_id is None or getattr(machine, "is_fiscal", True) is False:
         machine.pos_number = None
         return None
     if machine.pos_number is not None:
@@ -180,6 +184,10 @@ def set_machine_shop(db: Session, machine: POSMachine, shop_id: ShopId) -> Optio
 
             set_machine_area(machine, None)
     number = assign_register_number(db, machine)
+    if getattr(machine, "is_fiscal", True) is False:
+        # A display device issues no documents: no prefix either.
+        machine.document_prefix = None
+        return number
     from app.services.document_prefix import settle_default
 
     settle_default(db, machine)

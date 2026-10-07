@@ -164,10 +164,10 @@ def w(monkeypatch):
 
 
 def _doc(w, till, number, *, when, total="11.80", document_type=320, refund_of=None, cashier_id=None,
-         payment=("cash", None, None, None)):
+         payment=("cash", None, None, None), prefix=None):
     t = Transaction(
         id=uuid.uuid4(), tenant_id=till.tenant_id, machine_id=till.id, shop_id=till.shop_id,
-        transaction_number=number, document_prefix=None, pos_number="1",
+        transaction_number=number, document_prefix=prefix, pos_number="1",
         status=TransactionStatus.COMPLETED, document_type=document_type, payment_method=payment[0],
         total_amount=D(total), document_discount=D("0"), net_amount=(D(total) / D("1.18")).quantize(D("0.01")),
         vat_amount=D(total) - (D(total) / D("1.18")).quantize(D("0.01")), vat_rate=D("0.18"),
@@ -201,21 +201,24 @@ class TestBranches:
     def test_a_company_with_two_shops_has_branches(self, w):
         noon = datetime(2026, 9, 27, 9, 0, tzinfo=UTC)
         _doc(w, w.tills[0], "1", when=noon)
-        _doc(w, w.other_till, "1", when=noon)  # the same printed number in the other shop
+        # The other shop's till under its own prefix (unique in the business,
+        # docs/SPEC_DOCUMENT_PREFIX.md §5): the same counter, another document number.
+        _doc(w, w.other_till, "1", when=noon, prefix="3")
         result, ctx = _export(w)
         assert a000(result.ini_content[0])["1034"] == "1"
         assert ctx.business_info["hasBranches"] is True
         heads = [c100(line) for line in records(result, "C100")]
-        # (type, number) repeats across branches, never within one.
-        assert len({(h["1203"], h["1204"]) for h in heads}) == 1
-        assert len({(h["1203"], h["1204"], h["1231"]) for h in heads}) == 2
+        # (type, number) is unique in the whole file — branch codes do not tell two
+        # documents apart (the simulator: "נמצאה יותר מרשומה אחת עם אותו מס אסמכתא").
+        assert len({(h["1203"], h["1204"]) for h in heads}) == 2
+        assert {h["1231"].strip() for h in heads} == {"1", "2"}
         assert all(d110(line)["1270"] for line in records(result, "D110"))
         assert all(d120(line)["1320"] for line in records(result, "D120"))
 
     def test_with_branches_there_is_a_cash_account_per_branch(self, w):
         noon = datetime(2026, 9, 27, 9, 0, tzinfo=UTC)
         _doc(w, w.tills[0], "1", when=noon, total="118.00")
-        _doc(w, w.other_till, "1", when=noon, total="59.00")
+        _doc(w, w.other_till, "1", when=noon, total="59.00", prefix="3")
         result, _ = _export(w)
         accounts = [b110(line) for line in records(result, "B110")]
         assert [a["1421"] for a in accounts] == ["1", "2"]
@@ -588,6 +591,8 @@ class TestSoftwareSettings:
         "body, field",
         [
             ({"registrationNumber": "515396687"}, "registrationNumber"),  # 9 digits: 1006 is 9(8)
+            # Zeros are the placeholder; the simulator: "ערך השדה לא ולידי / השדה מאופס".
+            ({"registrationNumber": "00000000"}, "registrationNumber"),
             ({"manufacturerVatNumber": "515396688"}, "manufacturerVatNumber"),  # bad check digit
             ({"softwareName": "x" * 21}, "softwareName"),
             ({"outputDrive": "C:\\files"}, "outputDrive"),
@@ -667,7 +672,7 @@ class TestBaseBranch:
     def test_the_export_fills_it_on_every_line(self, w):
         noon = datetime(2026, 9, 27, 9, 0, tzinfo=UTC)
         sale = _doc(w, w.tills[0], "1", when=noon)
-        _doc(w, w.other_till, "1", when=noon)
+        _doc(w, w.other_till, "1", when=noon, prefix="3")
         _doc(w, w.tills[0], "1", when=noon + timedelta(minutes=5), document_type=330, refund_of=sale.id)
         result, _ = _export(w)
         assert a000(result.ini_content[0])["1034"] == "1"

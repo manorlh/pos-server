@@ -6,9 +6,11 @@
  */
 
 import { brandOf, vuidOf } from '../../../core/nayax';
+import { checkBypassOn, TERMINAL_CHECK_BYPASS_KEY } from '../../../core/terminalCheckBypass';
 import type { PinStore } from '../pinpadHttp';
 import type { ApprovedCard, PaymentProvider, ProviderContext, ProviderFactory, Resolution, SaleResult, TransmitResult } from '../provider';
 import { SynqPayClient, type TxAnswer } from './client';
+import { PAIRING_TEXT, type PairingTerminal } from './pairing';
 import { eventHebrew, last4Of, paymentsOf } from './protocol';
 import { HttpTransport, LinkTransport, serialChannel, tcpChannel, type SynqTransport } from './transport';
 
@@ -29,7 +31,10 @@ export interface SynqPaySettings {
   /** "VVVV:PPPP" or "COMn"; null = the only USB serial port. */
   usbDevice: string | null;
   serialNumber: string | null;
+  /** The pairing's key; '' when there is none yet (not paired — SPEC_SYNQPAY.md §2.2). */
   apiKey: string;
+  /** The kiosk holds a key: without one nothing but pair / authenticate is sent. */
+  paired: boolean;
   /**
    * The terminal number this kiosk must charge on (`expectedTerminalNumber`, which the cloud sends
    * an external terminal only from the machine's own layer). Null: not set — card locked.
@@ -49,7 +54,10 @@ export function defaultPort(protocol: 'tcp' | 'http', tls: boolean): number {
   return protocol === 'http' ? (tls ? 8443 : 8000) : tls ? 9443 : 9000;
 }
 
-/** The settings, or the keys missing (in the dashboard's order) — as synqpaySettingsOf on the till. */
+/**
+ * The settings, or the keys missing (in the dashboard's order) — as synqpaySettingsOf on the till.
+ * No key is not a missing field: the kiosk pairs with the terminal itself (`paired` false until then).
+ */
 export function synqpaySettingsOf(s: Record<string, unknown>): { settings: SynqPaySettings | null; missing: string[] } {
   const model = text(s.synqpayDeviceModel)?.toLowerCase().replace(/-/g, '_') ?? null;
   const connection = text(s.synqpayConnection)?.toLowerCase().replace(/-/g, '_') ?? null;
@@ -60,7 +68,7 @@ export function synqpaySettingsOf(s: Record<string, unknown>): { settings: SynqP
   if (!model || !MODELS.includes(model)) missing.push('synqpayDeviceModel');
   if (!conn) missing.push('synqpayConnection');
   if (conn === 'lan' && !(host && /^[a-z0-9.-]+$/.test(host))) missing.push('synqpayHost');
-  if (!apiKey || !/^[A-Za-z0-9]{1,64}$/.test(apiKey)) missing.push('synqpayApiKey');
+  const key = apiKey && /^[A-Za-z0-9]{1,64}$/.test(apiKey) ? apiKey : '';
   if (missing.length) return { settings: null, missing };
   const protocol = text(s.synqpayProtocol)?.toLowerCase() === 'http' ? 'http' : 'tcp';
   const tls = s.synqpayTls === true || text(s.synqpayTls)?.toLowerCase() === 'true';
@@ -76,7 +84,8 @@ export function synqpaySettingsOf(s: Record<string, unknown>): { settings: SynqP
       tls,
       usbDevice: text(s.synqpayUsbDevice)?.toUpperCase() ?? null,
       serialNumber: text(s.synqpaySerialNumber),
-      apiKey: apiKey!,
+      apiKey: key,
+      paired: key !== '',
       expectedTerminal: expectedTerminalOf(s),
     },
     missing: [],
@@ -213,6 +222,24 @@ export class SynqPayProvider implements PaymentProvider {
     return { kind: this.kind, address: describeSettings(this.settings) };
   }
 
+  /** Set up but not paired: it cannot charge until it is (PayService reads it as "unconfigured"). */
+  get configured(): boolean {
+    return this.settings.paired;
+  }
+
+  /** The pairing's way to this terminal (pairing.ts): pair / authenticate need no key. */
+  pairing(): PairingTerminal {
+    return {
+      pair: (serial) => this.client.pair(serial),
+      authenticateReply: (otp) => this.client.authenticateReply(otp),
+      serialWithoutKey: async () => {
+        const info = await this.client.deviceInfo(!this.settings.paired).catch(() => null);
+        const serial = info && typeof info.serialNumber === 'string' ? info.serialNumber.trim() : null;
+        return serial || null;
+      },
+    };
+  }
+
   newReference(): string {
     return vuidOf(this.ctx.machineId, this.ctx.nextSequence('vuid'));
   }
@@ -228,21 +255,41 @@ export class SynqPayProvider implements PaymentProvider {
     }
   }
 
-  /** The card lock now (SPEC_SYNQPAY.md §2.1): read off the terminal, never trusted on first use. */
+  /** Said once per provider: the bypass is on (core/terminalCheckBypass.ts). */
+  private bypassLogged = false;
+
+  /**
+   * The card lock now (SPEC_SYNQPAY.md §2.1): read off the terminal, never trusted on first use.
+   * "עקיפת בדיקת מספר מסוף" on for this kiosk (SPEC_KIOSK.md §20.1): never locked, nothing read for it.
+   */
   async cardLock(): Promise<CardLock | null> {
+    if (checkBypassOn(this.ctx.parameter(TERMINAL_CHECK_BYPASS_KEY))) {
+      if (!this.bypassLogged) this.ctx.log('synqpay: terminal number check bypassed (terminalNumberCheckBypass) — card not locked');
+      this.bypassLogged = true;
+      return null;
+    }
+    this.bypassLogged = false;
     const lock = cardLockOf(this.settings.expectedTerminal, this.settings.expectedTerminal ? await this.reportedTerminal() : null);
     if (lock) this.ctx.log(`synqpay: card locked (${lock.reason}, expected ${lock.expected ?? '-'}, connected ${lock.actual ?? '-'})`);
     return lock;
   }
 
   async check(): Promise<{ ok: boolean; detail: string | null }> {
+    if (!this.settings.paired) return { ok: false, detail: PAIRING_TEXT.notPaired };
     const p = await this.client.probe();
+    if (p.health === 'unauthorized') {
+      // The terminal refused the key: a pairing to do, and the cloud told (once per key).
+      this.ctx.onKeyRejected?.(p.detail);
+      return { ok: false, detail: `המסוף דורש צימוד — ${p.detail ?? 'מפתח ה-API נדחה במסוף'}` };
+    }
     if (p.health !== 'ready' && p.health !== 'online_only') return { ok: false, detail: p.detail };
     const lock = await this.cardLock();
     return lock ? { ok: false, detail: cardLockText(lock) } : { ok: true, detail: p.detail };
   }
 
   async sale(req: { amountAgorot: number; reference: string; payments: number; onProgress?: (m: string) => void }): Promise<SaleResult> {
+    // Not paired: nothing is sent (SPEC_SYNQPAY.md §2.2).
+    if (!this.settings.paired) return { answer: 'DECLINED', message: PAIRING_TEXT.notPaired, raw: null, statusCode: null };
     // Never a card on a terminal that is not the one set for this kiosk: nothing is sent.
     const lock = await this.cardLock();
     if (lock) return { answer: 'DECLINED', message: cardLockText(lock), raw: null, statusCode: null };

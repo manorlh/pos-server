@@ -36,7 +36,7 @@ from sqlalchemy.orm import Session
 from app.models.pos_machine import POSMachine
 from app.models.shift import Shift, ShiftStatus
 from app.models.transaction import Transaction
-from app.models.z_report import ZReport
+from app.models.z_report import ZOrigin, ZReport
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +191,9 @@ def carry(
             closed_by="מסמכים מאוחרים",
             reconstruction_basis={
                 "kind": KIND,
+                # The Z kind these documents were issued under — the source Z's: only a Z of
+                # that kind takes them (`document_filing.taken_by`), whatever the till is now.
+                "zMode": "till" if getattr(source, "origin", None) == ZOrigin.TILL else "cloud",
                 "sourceZReportId": str(source.id),
                 "sourceZNumber": number,
                 "source": kind,
@@ -310,13 +313,16 @@ def lan_part(db: Session, machine: POSMachine) -> Optional[Dict[str, Any]]:
     next shop Z (docs/SPEC_INDEPENDENT_TILL.md §8): the section and the manifest (§8.12),
     built from the cloud's documents — the same computation the cloud verifies with.
     """
+    from app.services import document_filing
     from app.services.support_z import lan_section_of_shifts
 
+    # And the till's "documents waiting for a shift" (`document_filing`): in local mode the
+    # main till's shop Z is the till's next Z, so it takes them the same way.
     shifts = [
         s for s in db.query(Shift).filter(
             Shift.machine_id == machine.id, Shift.z_report_id.is_(None), Shift.status == ShiftStatus.CLOSED,
         ).all()
-        if is_carry(s)
+        if is_carry(s) or document_filing.is_waiting(s)
     ]
     if not shifts:
         return None
@@ -324,8 +330,10 @@ def lan_part(db: Session, machine: POSMachine) -> Optional[Dict[str, Any]]:
     if part is None:
         return None
     part["late"] = True
-    part["lateDocuments"] = [section_of(s) for s in shifts]
-    part["label"] = section_of(shifts[0])["label"]
+    part["lateDocuments"] = [
+        document_filing.section_of(s) if document_filing.is_waiting(s) else section_of(s) for s in shifts
+    ]
+    part["label"] = part["lateDocuments"][0]["label"]
     try:
         from app.services import shop_z_manifest as MF
 

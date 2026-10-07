@@ -18,6 +18,8 @@ import {
   type UiStyle,
 } from '@/lib/kioskConfig';
 import type { KioskLevel, KioskServerError, KioskSourceCatalog } from '@/lib/kioskApi';
+import type { LayoutTemplate } from '@/lib/kioskLayout';
+import type { MotionDemo } from './kiosk-preview';
 
 import type { PreviewScreen } from '@/kiosk-shared/types';
 
@@ -49,7 +51,16 @@ export interface KioskEditorValue {
   reset: (path: string) => void;
   /** Pick a "סגנון ממשק": values that follow the old style move to the new one's. */
   setUiStyle: (style: UiStyle) => void;
+  /** Pick a "מבנה" (layout.template): values that follow the old template move to the new one's. */
+  setLayoutTemplate: (template: LayoutTemplate) => void;
+  /** The live preview's language (the texts editor's tab). */
+  previewLang: string;
+  setPreviewLang: (lang: string) => void;
+  /** The text the live preview marks (the texts editor's focused field), or null. */
+  setHighlightText: (key: string | null) => void;
   showScreen: (screen: PreviewScreen) => void;
+  /** "הצג" of "הנפשות ומעברים": play that transition in the live preview. */
+  playMotion: (demo: MotionDemo) => void;
 }
 
 export const KioskEditorContext = createContext<KioskEditorValue | null>(null);

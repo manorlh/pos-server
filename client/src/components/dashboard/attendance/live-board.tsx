@@ -19,6 +19,7 @@ import { Monitor, RefreshCw, UtensilsCrossed } from 'lucide-react';
 import { fetchLive } from '@/lib/attendanceApi';
 import { cardAlerts, cardStatus, formatHours, liveSeconds, type AttendanceShift } from '@/lib/attendance';
 import { useAuth } from '@/lib/auth';
+import { formatTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -37,8 +38,7 @@ const STATUS_TONE: Record<'working' | 'on_break' | 'pending', string> = {
 
 function timeOf(iso: string | null | undefined): string {
   if (!iso) return '—';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+  return formatTime(iso);
 }
 
 export function LiveBoard() {

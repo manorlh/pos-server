@@ -19,7 +19,7 @@
 import { useId, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, ChevronDown, Info } from 'lucide-react';
-import { formatCurrency, formatDate, formatDateTime, moneyValue } from '@/lib/format';
+import { formatCurrency, formatDate, formatDateTime, formatTime as formatClock, isoDate, moneyValue } from '@/lib/format';
 import type { PosMachine, Shift, ZCandidateMachine, ZCandidates } from '@/lib/types';
 import { MachineStatusDot } from '@/components/dashboard/machine-status';
 import { CountedCash, ShiftBadges, useShiftLabel, useTillHeading } from '@/components/dashboard/shifts/shift-parts';
@@ -119,11 +119,10 @@ export function selectionSummary(c: ZCandidates, sels: Record<string, TillSelect
 
 /** "14:05", or the full date and time when it is not the day `sameDayAs` fell on. */
 function formatTime(iso: string, sameDayAs?: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const ref = new Date(sameDayAs ?? iso);
-  if (d.toDateString() !== ref.toDateString()) return formatDateTime(iso);
-  return d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+  const day = isoDate(iso);
+  if (!day) return '—';
+  if (day !== isoDate(sameDayAs ?? iso)) return formatDateTime(iso);
+  return formatClock(iso);
 }
 
 function ShiftLine({ shift, included }: { shift: Shift; included: boolean }) {

@@ -11,8 +11,6 @@
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { format } from 'date-fns';
-import { he } from 'date-fns/locale';
 import { Ban, FileDown, RefreshCw } from 'lucide-react';
 import {
   cancelPrepaidGroup,
@@ -23,6 +21,9 @@ import {
 } from '@/lib/prepaidVouchersApi';
 import { serialRange } from '@/lib/prepaidVoucherGroups';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { formatDateTime, isoDate } from '@/lib/format';
+import type { ExcelSheet } from '@/lib/excelExport';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -31,9 +32,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 const NUM = 'text-end tabular-nums';
 
 function when(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : format(d, 'dd/MM/yy HH:mm', { locale: he });
+  return isoDate(iso) ? formatDateTime(iso) : '';
 }
 
 function EventLine({ e }: { e: PrepaidBatchEvent }) {
@@ -99,9 +98,67 @@ export function PrepaidBatchGroupsView({
     rows.reduce((s, r) => s + r[k], 0);
   const pct = (part: number, whole: number) => (whole ? `${Math.round((part / whole) * 100)}%` : '—');
   const cancelled = batch.status === 'cancelled';
+  const eventRows = events.data ?? [];
+
+  /** The groups with their totals, and the audit trail (all of it: the endpoint is not paged). */
+  const exportSheets = (): ExcelSheet[] => {
+    // Redemption as a percent number (12.5 → 12.5%), blank where nothing could be redeemed.
+    const ratio = (part: number, whole: number) => (whole ? Math.round((part / whole) * 10000) / 100 : null);
+    const sheets: ExcelSheet[] = [];
+    if (rows.length > 0) {
+      sheets.push({
+        name: t('title'),
+        columns: [
+          { header: t('col.group'), kind: 'number' },
+          { header: t('col.serials'), width: 14 },
+          { header: t('col.total'), kind: 'number' },
+          { header: t('col.active'), kind: 'number' },
+          { header: t('col.partiallyUsed'), kind: 'number' },
+          { header: t('col.used'), kind: 'number' },
+          { header: t('col.cancelled'), kind: 'number' },
+          { header: t('col.redeemed'), kind: 'percent' },
+        ],
+        rows: rows.map((r) => [
+          r.group ?? t('noGroup'), serialRange(r.fromSerial, r.toSerial), r.total, r.active, r.partiallyUsed, r.used,
+          r.cancelled, ratio(r.redeemed, r.total - r.cancelled),
+        ]),
+        totals: [
+          t('totals'), null, sum('total'), sum('active'), sum('partiallyUsed'), sum('used'), sum('cancelled'),
+          ratio(sum('redeemed'), sum('total') - sum('cancelled')),
+        ],
+      });
+    }
+    if (eventRows.length > 0) {
+      sheets.push({
+        name: te('title'),
+        columns: [
+          { header: te('col.when'), kind: 'datetime' },
+          { header: te('col.action'), width: 34 },
+          { header: t('col.group'), kind: 'number' },
+          { header: te('col.serial'), kind: 'number' },
+          { header: te('col.count'), kind: 'number' },
+          { header: te('col.user') },
+          { header: te('col.reason'), width: 30 },
+        ],
+        rows: eventRows.map((e) => {
+          const serial = e.details?.serial;
+          return [
+            e.createdAt, te(`action.${e.action}`, { count: e.count ?? 0, group: e.group ?? '' }), e.group,
+            typeof serial === 'number' ? serial : null, e.count, e.userName, e.reason,
+          ];
+        }),
+      });
+    }
+    return sheets;
+  };
 
   return (
     <div className="space-y-4">
+      <ReportExportToolbar
+        title={`${t('title')} · ${batch.name}`}
+        disabled={rows.length === 0 && eventRows.length === 0}
+        getSheets={exportSheets}
+      />
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <CardTitle className="text-base">{t('title')}</CardTitle>

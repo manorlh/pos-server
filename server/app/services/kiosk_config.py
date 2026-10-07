@@ -43,6 +43,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy.orm import Session
 
+from app.services import kiosk_layout as layouts
+
 # ── The KDS hook ──────────────────────────────────────────────────────────────
 
 
@@ -114,7 +116,9 @@ FULFILLMENT_MODES = ("BON", "KDS")
 ALERT_TILLS = ("main", "all", "selected")
 #: …and who on them: everyone signed in, or only a manager signed in.
 ALERT_AUDIENCES = ("everyone", "managers")
-ALERT_KINDS = ("printer", "terminal", "help")
+#: "battery": a device's low battery (app/services/battery_alerts.py) — any device of the shop,
+#: routed with the same settings.
+ALERT_KINDS = ("printer", "terminal", "help", "battery")
 ALERT_MACHINES_MAX = 50
 #: A help request clears by itself after this many minutes (staff said "בדרך" or not).
 HELP_CLEAR_MIN = 1
@@ -123,6 +127,9 @@ SERVICE_TYPES = ("take_away", "eat_in")
 LANGUAGES = ("he", "en", "ar", "ru")
 SKIP_CART = ("off", "direct", "confirm")
 SOLD_OUT_MODES = ("disable", "hide")
+#: "מנוע תצוגה בקיוסק אנדרואיד": the APK's built-in screens, or the web screens bundle
+#: (app releases of platform "kiosk_web", updated from the cloud without an APK install).
+RENDERERS = ("native", "web")
 THEME_MODES = ("light", "dark")
 CARD_STYLES = ("elevated", "outlined", "flat")
 BUTTON_SHAPES = ("pill", "rounded", "square")
@@ -157,26 +164,93 @@ CTA_WEIGHTS = ("regular", "bold", "black")
 CTA_ICONS = ("none", "cart", "arrow", "hand", "star")
 CTA_ICON_POSITIONS = ("start", "end")
 CTA_ANIMATIONS = ("none", "pulse", "glow", "bounce")
+#: "הנפשות ומעברים" (config `motion`): one choice per transition — the dishes' grid when the
+#: category changes, its cards coming in, the screens, the windows, the add-to-cart — and a speed
+#: that scales them all. Each style's preset chooses (UI_PRESET_MOTION); `general.reduceMotion`
+#: turns them all off on the kiosk.
+MOTION_CATEGORY_SWITCH = ("slide", "fade", "fade_scale", "push", "none")
+MOTION_ITEMS_ENTER = ("pop", "cascade", "rise", "flip", "none")
+MOTION_SCREEN_CHANGE = ("slide", "fade", "zoom", "none")
+MOTION_SHEET = ("slide_up", "scale", "fade", "none")
+MOTION_ADD_TO_CART = ("fly", "bounce", "none")
+MOTION_SPEEDS = ("fast", "normal", "relaxed")
+#: "כיתוב רץ" (config `ticker`): a slim strip whose texts scroll without end on the chosen screens,
+#: under the header ("top") or above the basket / action bar ("bottom"). The dashboard's
+#: src/lib/kioskConfig.ts TICKER_* and the till's domain/KioskTicker.kt mirror this.
+TICKER_SCREENS = ("attract", "service", "catalog", "cart", "details", "pay", "success")
+TICKER_POSITIONS = ("top", "bottom")
+TICKER_SPEEDS = ("slow", "normal", "fast")
+TICKER_SIZES = ("s", "m", "l")
+TICKER_ITEMS_MAX = 20
+TICKER_TEXT_MAX = 200
 TEXT_KEYS = (
     "attractTitle", "attractSubtitle", "attractCta", "serviceTitle", "takeAwayLabel", "eatInLabel",
     "catalogTitle", "cartTitle", "checkoutCta", "payTitle", "payInstruction", "successTitle",
     "successBody", "pickupLabel", "customerTitle", "customerExplain", "pausedTitle", "pausedBody",
     "closedTitle", "closedBody", "helpText", "upsellTitle", "noPaymentTitle", "noPaymentBody",
     "offlineTitle", "offlineBody",
+    # "רוצים להוסיף טיפ לצוות?": the tip step before the payment and its step bar.
+    "tipCaption", "tipTitle", "tipSubtitle", "tipOtherLabel", "tipOtherHint", "tipOrderTotal", "tipLine",
+    "tipTotal", "tipContinue", "tipSkip", "stepReview", "stepTip", "stepDetails", "stepPay", "tipOtherError",
+    # "לאכול כאן או לקחת?": the service window.
+    "serviceCaption", "serviceSubtitle", "takeAwaySub", "eatInSub", "serviceContinue", "serviceHint",
+    # "איך לקרוא לכם?": the details window (name, phone, table).
+    "detailsCaption", "nameTitle", "nameSubtitle", "nameLabel", "nameHint", "nameConfirm", "nameSkip",
+    "phoneTitle", "phoneHint", "tableTitle", "entryContinue", "entrySkip", "fieldRequired", "phoneInvalid",
+    # The kiosk's own keyboard.
+    "kbSpace", "kbToEnglish", "kbToHebrew", "kbNumbers", "kbLettersHe", "kbLettersEn",
+    # "ההזמנה שלי": the review before the payment ({n}: the number of items).
+    "reviewHint", "reviewItems", "reviewItemsOne", "reviewSubtotal", "reviewTotal", "addMoreCta",
+    # The search and the dish's note, typed in the same window.
+    "searchTitle", "searchHint", "noteTitle", "noteHint", "noteSave",
+    # The attract screen with its button hidden: the line in its place.
+    "attractTouchHint",
+    # Barcode scans on the kiosk: "המוצר לא נמצא", and a prepaid voucher scanned (sent to the counter).
+    "scanNotFound", "scanVoucherAtTill",
+    # "איך תרצו לשלם?" (docs/SPEC_KIOSK.md §23): the method choice, the voucher, paying at the
+    # till — its slip and its screen. {amount}: ₪ amount; {number}: the pickup number.
+    "stepPayMethod", "payMethodTitle", "payMethodSubtitle", "payCardLabel", "payCardSub",
+    "payVoucherLabel", "payVoucherSub", "payCashLabel", "payCashSub", "remainingToPay",
+    "voucherTitle", "voucherHint", "voucherApply", "voucherOffline", "voucherApplied", "voucherNoMatch",
+    "voucherForfeit", "cashSlipTitle", "cashSlipFooter", "cashSlipPending", "cashDoneTitle", "cashDoneBody",
 )
 SCREEN_IMAGE_KEYS = ("service", "catalogHeader", "cart", "pay", "success", "paused")
-ATTRACT_SECTIONS = ("hero", "promos", "categories", "club")
+#: "welcome" ("ברוכים הבאים", attract.welcome): its place among the blocks; a list without it shows
+#: the block first, as before.
+ATTRACT_SECTIONS = ("hero", "promos", "categories", "club", "welcome")
 MESSAGE_KINDS = ("banner", "notice", "closed")
 MESSAGE_SCREENS = ("attract", "service", "catalog", "cart", "pay", "success", "paused")
 MESSAGE_STYLES = ("info", "promo", "warning", "success")
-PAYMENT_METHODS = ("card",)
+#: "card" on the external pinpad; "voucher" — a prepaid voucher redeemed online, the rest by
+#: another method; "cash_at_till" — no document on the kiosk: a slip, and the till takes the
+#: money (§23). Bare "cash" is refused (`cash_not_supported`): a kiosk has no cash hardware.
+PAYMENT_METHODS = ("card", "voucher", "cash_at_till")
+#: The methods that can pay what a voucher leaves: a voucher alone is never enough.
+REMAINDER_METHODS = ("card", "cash_at_till")
+CASH_AT_TILL_EXPIRY_MIN = (5, 240)
 RECEIPT_POLICIES = ("always", "ask", "never")
 CUSTOMER_FIELD_MODES = ("off", "optional", "required")
 #: "לקחת / לשבת": after "הזמינו כאן" (the current flow) or as two big buttons on the attract screen.
 SERVICE_PLACEMENTS = ("after_start", "attract")
+#: "לאכול כאן או לקחת?": a tap picks and "להמשך" goes on (default), or a tap goes on at once.
+SERVICE_SELECTS = ("confirm", "instant")
 #: When the kiosk asks the customer's name / phone / table: after the service choice, before
 #: the cart, before payment (the current flow), or after payment.
 DETAILS_STEPS = ("after_service", "before_cart", "before_pay", "after_pay")
+#: "סדר השלבים לפני התשלום": the steps between the basket's review and the payment — the tip and
+#: the customer's details (the name / phone window). Only their order: each is on by its own
+#: settings (`tipEnabled`; the customer fields with `detailsStep` before_pay). "payMethod" — "איך
+#: תרצו לשלם?", shown when more than one payment method is on — is always the last, right before
+#: the payment (`repair` and the clients put it there).
+CHECKOUT_STEPS = ("tip", "details", "payMethod")
+#: "חובה / רשות / כבוי" per step (docs/SPEC_KIOSK_INSIGHTS.md §4) — the customer fields'
+#: modes (CUSTOMER_FIELD_MODES: `customerName`, `customerPhone`, `tableNumber`) extended to the
+#: other steps of the order: the service choice, the tip, "איך תרצו לשלם?" and the upsell
+#: windows at each moment (after an item is added, at a step before the basket, before payment).
+#: required — shown, and the customer must answer; optional — shown, may be passed with the
+#: default answer; off — never shown (the default answer is taken). Each still needs its own
+#: switch on (`tipEnabled`, `upsellEnabled`, more than one service / payment method).
+STEP_MODE_KEYS = ("service", "tip", "payMethod", "upsellItem", "upsellSteps", "upsellCheckout")
 #: "הגדלת מכירה" on the kiosk: the rules are the menu's (`upsell_rules`, place "kiosk" —
 #: docs/SPEC_KIOSK.md §21); the kiosk keeps only its cap, the windows in one order.
 UPSELL_MAX_SHOWN = 5
@@ -222,6 +296,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "upsellEnabled": True,
         # "לקחת / לשבת": after "הזמינו כאן" (default), or two big buttons on the attract screen.
         "servicePlacement": "after_start",
+        # "לאכול כאן או לקחת?": a tap picks and "להמשך" goes on (default), or a tap goes on at once.
+        "serviceSelect": "confirm",
         "searchEnabled": False,
         "notesEnabled": True,
         "quickNotesEnabled": True,
@@ -239,6 +315,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # "הודעה ללקוח כשאין אינטרנט": a quiet line to the customer while offline; off.
         "offlineNotice": False,
         "soldOutMode": "disable",
+        # "מנוע תצוגה בקיוסק אנדרואיד": the Android kiosk's built-in screens ("native", default)
+        # or the web screens bundle ("web"); admin, payments and printing stay native, and the
+        # kiosk falls back to the built-in screens by itself if the web ones fail.
+        "renderer": "native",
     },
     "theme": {
         "mode": "light",
@@ -288,7 +368,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "subtitle": "",
             # "כל המסך פותח הזמנה": a tap anywhere on the attract screen starts, as well as the button.
             "tapAnywhere": True,
+            # The button is drawn; hidden, the whole screen starts (tapAnywhere must be on), with a
+            # small line in its place (texts.attractTouchHint) unless `touchHint` is off.
+            "visible": True,
+            "touchHint": True,
         },
+        # "ברוכים הבאים": the title block as it always was (kiosk_layout.WELCOME_DEFAULTS).
+        "welcome": copy.deepcopy(layouts.WELCOME_DEFAULTS),
     },
     "catalog": {
         "categoryOrder": [],
@@ -299,6 +385,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "featuredProductIds": [],
         # "הצג כל מחלקה בנפרד": one category at a time, chosen from the rail (else one long list).
         "oneCategory": True,
+        # A category's icon from the built-in set, by category id; none — suggested by its name.
+        "categoryIconIds": {},
     },
     "messages": [],
     "hours": {
@@ -318,11 +406,37 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # When name / phone / table are asked: after_service | before_cart | before_pay | after_pay.
         "detailsStep": "before_pay",
         "minOrderAgorot": 0,
+        # "סכום אחר": a tip of the customer's own, in shekels, besides the presets.
+        "tipOther": True,
+        # The basket's review → these, in this order → the payment (each on by its own settings).
+        "checkoutSteps": ["tip", "details", "payMethod"],
+        # "חובה / רשות / כבוי" for the steps that are not a customer field (STEP_MODE_KEYS).
+        "stepModes": {
+            "service": "required", "tip": "optional", "payMethod": "required",
+            "upsellItem": "optional", "upsellSteps": "optional", "upsellCheckout": "optional",
+        },
+        # "תשלום בקופה" (§23): an open order not paid at a till within this many minutes expires.
+        "cashAtTillExpiryMin": 30,
+        # "שלח למטבח לפני תשלום": the kiosk prints the bon of an order to pay at the till at once
+        # (off: the till sends it when it takes the money).
+        "cashAtTillKitchenBeforePay": False,
     },
     # "הגדלת מכירה": the menu's rules for the kiosk (§21); at most `maxShown` windows in one order.
     "upsell": {"maxShown": 2},
     # "הודעת סיום": shown on the success screen for `timers.successSec`.
     "success": {"message": "", "image": None},
+    # "הנפשות ומעברים": the "wolt" style's (UI_PRESET_MOTION) — the category slides in and its
+    # dishes pop in one after another; the add-to-cart is the pop-and-fly.
+    "motion": {
+        "categorySwitch": "slide", "itemsEnter": "cascade", "screenChange": "slide",
+        "sheet": "scale", "addToCart": "fly", "speed": "normal",
+    },
+    # "כיתוב רץ": off; once on, on the menu and the basket, under the header, slowly (readable),
+    # in the theme's button colours (null), medium text; a finger on it does not stop it.
+    "ticker": {
+        "enabled": False, "items": [], "screens": ["catalog", "cart"], "position": "top",
+        "speed": "slow", "backgroundColor": None, "textColor": None, "size": "m", "pauseOnTouch": False,
+    },
     "printing": {
         "bonMode": "routing",
         "bonPrinterId": None,
@@ -348,7 +462,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "printer": {"tills": "main", "machineIds": [], "audience": "everyone"},
         "terminal": {"tills": "main", "machineIds": [], "audience": "everyone"},
         "help": {"tills": "main", "machineIds": [], "audience": "everyone", "clearAfterMin": 10},
+        # "סוללה חלשה" of any device of the shop (a handheld, a tablet, a kiosk with a battery).
+        "battery": {"tills": "main", "machineIds": [], "audience": "everyone"},
     },
+    # "מבנה הקיוסק" (kiosk_layout.py): standard — the layout of today.
+    "layout": copy.deepcopy(layouts.LAYOUT_DEFAULTS),
+    # Every customer text in the other languages (`textsByLang[lang][key]`); the first language is `texts`.
+    "textsByLang": {},
 }
 
 
@@ -432,6 +552,20 @@ UI_PRESET_CTA: Dict[str, Dict[str, Any]] = {
 }
 PRESET_CTA_KEYS = tuple(UI_PRESET_CTA["wolt"].keys())
 
+#: Each style's transitions ("הנפשות ומעברים"; the dashboard's KIOSK_UI_PRESET_MOTION and the
+#: till's KioskMotionConfig.PRESETS). In every style the category's grid moves and its dishes pop
+#: in; the add-to-cart stays the pop-and-fly (docs/SPEC_KIOSK.md §18). Explicit values win.
+UI_PRESET_MOTION: Dict[str, Dict[str, Any]] = {
+    "ios": {"categorySwitch": "slide", "itemsEnter": "pop", "screenChange": "slide", "sheet": "slide_up", "addToCart": "fly", "speed": "normal"},
+    "wolt": {"categorySwitch": "slide", "itemsEnter": "cascade", "screenChange": "slide", "sheet": "scale", "addToCart": "fly", "speed": "normal"},
+    "classic": {"categorySwitch": "push", "itemsEnter": "pop", "screenChange": "fade", "sheet": "scale", "addToCart": "fly", "speed": "normal"},
+    "minimal_dark": {
+        "categorySwitch": "fade_scale", "itemsEnter": "cascade", "screenChange": "fade", "sheet": "fade",
+        "addToCart": "fly", "speed": "normal",
+    },
+}
+PRESET_MOTION_KEYS = tuple(UI_PRESET_MOTION["wolt"].keys())
+
 
 def style_of(*layers: Optional[Dict[str, Any]]) -> str:
     """The "סגנון ממשק" the layers pick, the last that says; the default style otherwise."""
@@ -444,11 +578,12 @@ def style_of(*layers: Optional[Dict[str, Any]]) -> str:
 
 
 def preset_layer(style: str) -> Dict[str, Any]:
-    """The style's preset as a layer (only its theme keys)."""
+    """The style's preset as a layer: its theme keys, its attract button and its transitions."""
     default = DEFAULT_CONFIG["theme"]["uiStyle"]
     theme = UI_PRESETS.get(style) or UI_PRESETS[default]
     cta = UI_PRESET_CTA.get(style) or UI_PRESET_CTA[default]
-    return {"theme": copy.deepcopy(theme), "attract": {"cta": copy.deepcopy(cta)}}
+    motion = UI_PRESET_MOTION.get(style) or UI_PRESET_MOTION[default]
+    return {"theme": copy.deepcopy(theme), "attract": {"cta": copy.deepcopy(cta)}, "motion": copy.deepcopy(motion)}
 
 
 # ── Errors ───────────────────────────────────────────────────────────────────
@@ -770,7 +905,11 @@ class Map(Node):
                 if not layer:
                     out[key] = None
                 continue  # in a layer: inherit
-            cleaned = self.value.check(raw, _join(path, key), errors)
+            # A map of maps (`textsByLang`): in a layer the inner one is partial too.
+            if layer and self.value.merges:
+                cleaned = self.value.check_layer(raw, _join(path, key), errors)
+            else:
+                cleaned = self.value.check(raw, _join(path, key), errors)
             if cleaned is not _INVALID:
                 out[key] = cleaned
         if not layer and len(errors) > before:
@@ -819,6 +958,26 @@ MESSAGE = Obj(
     merges=False,
 )
 
+#: One text of "כיתוב רץ": its hours of the day (`to` before `from` runs past midnight, as the
+#: opening hours), its days and, as a message, its dates — all optional.
+TICKER_ITEM = Obj(
+    {
+        "id": Str(40, min_len=1, pattern=_MESSAGE_ID, pattern_message="1-40 characters of A-Z a-z 0-9 _ -"),
+        "text": Str(TICKER_TEXT_MAX),
+        "enabled": Bool(),
+        "from": HHMM(nullable=True),
+        "to": HHMM(nullable=True),
+        "days": UList(Int(0, 6), min_len=1, max_len=7, unique=True),
+        "startsAt": IsoDateTime(),
+        "endsAt": IsoDateTime(),
+    },
+    fill={
+        "enabled": True, "from": None, "to": None, "days": [0, 1, 2, 3, 4, 5, 6],
+        "startsAt": None, "endsAt": None,
+    },
+    merges=False,
+)
+
 PLAYLIST_ITEM = Obj(
     {"media": Media(("image", "video")), "durationSec": Int(2, 120)},
     fill={"durationSec": 8},
@@ -844,6 +1003,7 @@ SCHEMA = Obj({
         "skipCart": Enum(SKIP_CART),
         "upsellEnabled": Bool(),
         "servicePlacement": Enum(SERVICE_PLACEMENTS),
+        "serviceSelect": Enum(SERVICE_SELECTS),
         "searchEnabled": Bool(),
         "notesEnabled": Bool(),
         "quickNotesEnabled": Bool(),
@@ -854,6 +1014,7 @@ SCHEMA = Obj({
         "blockWhenOffline": Bool(),
         "offlineNotice": Bool(),
         "soldOutMode": Enum(SOLD_OUT_MODES),
+        "renderer": Enum(RENDERERS),
     }),
     "theme": Obj({
         "mode": Enum(THEME_MODES),
@@ -881,7 +1042,10 @@ SCHEMA = Obj({
         "animation": Enum(ANIMATIONS),
         "showDescriptions": Bool(),
     }),
-    "texts": Map(Str(TEXT_MAX), keys=TEXT_KEYS),
+    # The first language's texts: the keys of before, and every text of the registry (kiosk_layout.py).
+    "texts": Map(Str(TEXT_MAX), keys=TEXT_KEYS + tuple(k for k in layouts.text_keys() if k not in TEXT_KEYS)),
+    # The other languages: `textsByLang[lang][key]` (its own `max` and placeholders: _texts_cross_field).
+    "textsByLang": Map(Map(Str(TEXT_MAX, nullable=True), keys=layouts.text_keys() or ("_",)), keys=layouts.TEXT_LANGUAGES),
     "screenImages": Map(Media(("image",), nullable=True), keys=SCREEN_IMAGE_KEYS),
     "attract": Obj({
         "sections": UList(Enum(ATTRACT_SECTIONS), max_len=len(ATTRACT_SECTIONS), unique=True),
@@ -908,6 +1072,21 @@ SCHEMA = Obj({
             "animation": Enum(CTA_ANIMATIONS),
             "subtitle": Str(80),
             "tapAnywhere": Bool(),
+            "visible": Bool(),
+            "touchHint": Bool(),
+        }),
+        # "ברוכים הבאים" (kiosk_layout.WELCOME_DEFAULTS).
+        "welcome": Obj({
+            "enabled": Bool(),
+            "position": Enum(layouts.WELCOME_POSITIONS),
+            "align": Enum(layouts.WELCOME_ALIGNS),
+            "size": Enum(layouts.WELCOME_SIZES),
+            "weight": Enum(layouts.WELCOME_WEIGHTS),
+            "titleColor": Color(nullable=True),
+            "subtitleColor": Color(nullable=True),
+            "backdrop": Enum(layouts.WELCOME_BACKDROPS),
+            "showSubtitle": Bool(),
+            "maxWidthPct": Int(*layouts.WELCOME_WIDTH_PCT),
         }),
     }),
     "catalog": Obj({
@@ -918,6 +1097,7 @@ SCHEMA = Obj({
         "categoryImages": Map(Media(("image",))),
         "featuredProductIds": UList(ID, max_len=FEATURED_MAX, unique=True),
         "oneCategory": Bool(),
+        "categoryIconIds": Map(Enum(layouts.category_icon_ids() or ("dine",))),
     }),
     "messages": UList(MESSAGE, max_len=MESSAGES_MAX),
     "hours": Obj({
@@ -935,6 +1115,11 @@ SCHEMA = Obj({
         "tableNumber": Enum(CUSTOMER_FIELD_MODES),
         "detailsStep": Enum(DETAILS_STEPS),
         "minOrderAgorot": Int(0, MIN_ORDER_MAX),
+        "tipOther": Bool(),
+        "checkoutSteps": UList(Enum(CHECKOUT_STEPS), max_len=len(CHECKOUT_STEPS), unique=True),
+        "stepModes": Obj({key: Enum(CUSTOMER_FIELD_MODES) for key in STEP_MODE_KEYS}),
+        "cashAtTillExpiryMin": Int(*CASH_AT_TILL_EXPIRY_MIN),
+        "cashAtTillKitchenBeforePay": Bool(),
     }),
     "upsell": Obj({
         "maxShown": Int(1, UPSELL_MAX_SHOWN),
@@ -942,6 +1127,26 @@ SCHEMA = Obj({
     "success": Obj({
         "message": Str(SUCCESS_MESSAGE_MAX),
         "image": Media(("image",), nullable=True),
+    }),
+    "motion": Obj({
+        "categorySwitch": Enum(MOTION_CATEGORY_SWITCH),
+        "itemsEnter": Enum(MOTION_ITEMS_ENTER),
+        "screenChange": Enum(MOTION_SCREEN_CHANGE),
+        "sheet": Enum(MOTION_SHEET),
+        "addToCart": Enum(MOTION_ADD_TO_CART),
+        "speed": Enum(MOTION_SPEEDS),
+    }),
+    "ticker": Obj({
+        "enabled": Bool(),
+        # A list replaces whole, as `messages` (a level sets all of its texts, or inherits them).
+        "items": UList(TICKER_ITEM, max_len=TICKER_ITEMS_MAX),
+        "screens": UList(Enum(TICKER_SCREENS), max_len=len(TICKER_SCREENS), unique=True),
+        "position": Enum(TICKER_POSITIONS),
+        "speed": Enum(TICKER_SPEEDS),
+        "backgroundColor": Color(nullable=True),
+        "textColor": Color(nullable=True),
+        "size": Enum(TICKER_SIZES),
+        "pauseOnTouch": Bool(),
     }),
     "printing": Obj({
         "bonMode": Enum(BON_MODES),
@@ -980,6 +1185,30 @@ SCHEMA = Obj({
         "printer": ALERT_ROUTE,
         "terminal": ALERT_ROUTE,
         "help": Obj({**ALERT_ROUTE_FIELDS, "clearAfterMin": Int(HELP_CLEAR_MIN, HELP_CLEAR_MAX)}),
+        "battery": ALERT_ROUTE,
+    }),
+    # "מבנה הקיוסק" (kiosk_layout.py): where things sit and how the order goes.
+    "layout": Obj({
+        "template": Enum(layouts.LAYOUT_TEMPLATE_IDS),
+        "catalog": Enum(layouts.LAYOUT_CATALOGS, nullable=True),
+        "categoryIcons": Enum(layouts.LAYOUT_CATEGORY_ICONS, nullable=True),
+        "railSize": Enum(layouts.LAYOUT_RAIL_SIZES),
+        "landingColumns": Int(min(layouts.LAYOUT_LANDING_COLUMNS), max(layouts.LAYOUT_LANDING_COLUMNS)),
+        "landingShowCounts": Bool(),
+        "hero": Enum(layouts.LAYOUT_HEROES),
+        "magazineFeed": Bool(),
+        "card": Enum(layouts.LAYOUT_CARDS, nullable=True),
+        "flow": Enum(layouts.LAYOUT_FLOWS),
+        "itemView": Enum(layouts.LAYOUT_ITEM_VIEWS),
+        "quickAdd": Enum(layouts.LAYOUT_QUICK_ADDS),
+        "mealView": Enum(layouts.LAYOUT_MEAL_VIEWS),
+        "mealUpsell": Enum(layouts.LAYOUT_MEAL_UPSELLS),
+        "basket": Enum(layouts.LAYOUT_BASKETS, nullable=True),
+        "service": Enum(layouts.LAYOUT_SERVICES),
+        "name": Enum(layouts.LAYOUT_NAMES),
+        "nameAvatars": UList(Str(layouts.NAME_AVATAR_MAX, min_len=1), max_len=layouts.NAME_AVATARS_MAX, unique=True),
+        "reach": Enum(layouts.LAYOUT_REACHES),
+        "reachToggle": Bool(),
     }),
 })
 
@@ -1020,6 +1249,11 @@ def limits() -> Dict[str, Any]:
             "helpClearAfterMin": {"min": HELP_CLEAR_MIN, "max": HELP_CLEAR_MAX},
         },
         "club": {"titleMax": MESSAGE_TITLE_MAX, "bodyMax": MESSAGE_BODY_MAX},
+        "ticker": {
+            "itemsMax": TICKER_ITEMS_MAX, "textMax": TICKER_TEXT_MAX,
+            "screens": list(TICKER_SCREENS), "positions": list(TICKER_POSITIONS),
+            "speeds": list(TICKER_SPEEDS), "sizes": list(TICKER_SIZES),
+        },
         "media": {"urlMax": URL_MAX, "kinds": list(MEDIA_KINDS)},
         "enums": {
             "fulfillmentMode": list(FULFILLMENT_MODES),
@@ -1027,6 +1261,7 @@ def limits() -> Dict[str, Any]:
             "languages": list(LANGUAGES),
             "skipCart": list(SKIP_CART),
             "soldOutMode": list(SOLD_OUT_MODES),
+            "renderer": list(RENDERERS),
             "themeMode": list(THEME_MODES),
             "cardStyle": list(CARD_STYLES),
             "buttonShape": list(BUTTON_SHAPES),
@@ -1054,10 +1289,33 @@ def limits() -> Dict[str, Any]:
             "bonMode": list(BON_MODES),
             "pickupScope": list(PICKUP_SCOPES),
             "servicePlacement": list(SERVICE_PLACEMENTS),
+            "serviceSelect": list(SERVICE_SELECTS),
             "detailsStep": list(DETAILS_STEPS),
+            "checkoutSteps": list(CHECKOUT_STEPS),
+            "stepModes": list(STEP_MODE_KEYS),
+            "motionCategorySwitch": list(MOTION_CATEGORY_SWITCH),
+            "motionItemsEnter": list(MOTION_ITEMS_ENTER),
+            "motionScreenChange": list(MOTION_SCREEN_CHANGE),
+            "motionSheet": list(MOTION_SHEET),
+            "motionAddToCart": list(MOTION_ADD_TO_CART),
+            "motionSpeed": list(MOTION_SPEEDS),
             "fonts": [f.id for f in FONT_CATALOG],
         },
         "textKeys": list(TEXT_KEYS),
+        # "מבנה הקיוסק": the vocabulary, the templates, which ones the clients draw, "ברוכים הבאים".
+        "layout": {
+            "vocabulary": {k: list(v) for k, v in layouts.LAYOUT_VOCABULARY.items()},
+            "templates": layouts.LAYOUT_TEMPLATES,
+            "ready": list(layouts.LAYOUT_TEMPLATES_READY),
+            "nameAvatarsMax": layouts.NAME_AVATARS_MAX,
+            "welcome": {
+                "positions": list(layouts.WELCOME_POSITIONS), "aligns": list(layouts.WELCOME_ALIGNS),
+                "sizes": list(layouts.WELCOME_SIZES), "weights": list(layouts.WELCOME_WEIGHTS),
+                "backdrops": list(layouts.WELCOME_BACKDROPS), "maxWidthPct": list(layouts.WELCOME_WIDTH_PCT),
+            },
+        },
+        "categoryIconIds": list(layouts.category_icon_ids()),
+        "textRegistryKeys": list(layouts.text_keys()),
         "screenImageKeys": list(SCREEN_IMAGE_KEYS),
     }
 
@@ -1078,6 +1336,10 @@ def _cross_field(cfg: Dict[str, Any], errors: List[Issue]) -> None:
     if _get(cfg, "general", "fulfillmentMode") == "KDS" and not kds_available():
         errors.append(Issue("general.fulfillmentMode", "kds_not_available", "kds_not_available"))
 
+    # The attract button hidden: only the whole screen can start an order.
+    if _get(cfg, "attract", "cta", "visible") is False and _get(cfg, "attract", "cta", "tapAnywhere") is not True:
+        errors.append(Issue("attract.cta.tapAnywhere", "required_when_hidden", "a hidden button needs the whole screen to start an order"))
+
     methods = _get(cfg, "payment", "methods")
     if isinstance(methods, list):
         for i, method in enumerate(methods):
@@ -1087,6 +1349,9 @@ def _cross_field(cfg: Dict[str, Any], errors: List[Issue]) -> None:
                 errors.append(Issue(
                     _index("payment.methods", i), "invalid_value", f"must be one of: {', '.join(PAYMENT_METHODS)}"
                 ))
+        # A voucher pays what it covers; the rest needs card or the till (§23).
+        if "voucher" in methods and not any(m in REMAINDER_METHODS for m in methods):
+            errors.append(Issue("payment.methods", "voucher_needs_method", "voucher needs card or cash_at_till too"))
 
     if _get(cfg, "payment", "tipEnabled") is True and _get(cfg, "payment", "tipPresets") == []:
         errors.append(Issue("payment.tipPresets", "too_few", "at least one preset when tips are on"))
@@ -1143,6 +1408,57 @@ def _cross_field(cfg: Dict[str, Any], errors: List[Issue]) -> None:
     for kind in ALERT_KINDS:
         if _get(cfg, "alerts", kind, "tills") == "selected" and not _get(cfg, "alerts", kind, "machineIds"):
             errors.append(Issue(f"alerts.{kind}.machineIds", "too_few", "choose at least one till"))
+
+    _ticker_cross_field(cfg, errors)
+    _texts_cross_field(cfg, errors)
+
+
+def _texts_cross_field(cfg: Dict[str, Any], errors: List[Issue]) -> None:
+    """`textsByLang`: each text within its own `max` (the registry's) and only its own placeholders."""
+    by_lang = _get(cfg, "textsByLang")
+    if not isinstance(by_lang, dict):
+        return
+    registry = layouts.text_registry()
+    for lang, texts in by_lang.items():
+        if not isinstance(texts, dict):
+            continue
+        for key, value in texts.items():
+            definition = registry.get(key)
+            if definition is None or not isinstance(value, str):
+                continue
+            path = f"textsByLang.{lang}.{key}"
+            limit = int(definition.get("max") or TEXT_MAX)
+            if len(value) > limit:
+                errors.append(Issue(path, "too_long", f"at most {limit} characters"))
+            unknown = [p for p in layouts.placeholders_in(value) if p not in (definition.get("placeholders") or [])]
+            if unknown:
+                errors.append(Issue(path, "unknown_placeholder", f"unknown placeholder {{{unknown[0]}}}"))
+
+
+def _ticker_cross_field(cfg: Dict[str, Any], errors: List[Issue]) -> None:
+    """"כיתוב רץ": one id per text, an hour window that is not empty, dates in order."""
+    items = _get(cfg, "ticker", "items")
+    if not isinstance(items, list):
+        return
+    seen = set()
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        path = _index("ticker.items", i)
+        tid = item.get("id")
+        if tid in seen:
+            errors.append(Issue(path + ".id", "duplicate", "duplicate ticker text id"))
+        seen.add(tid)
+        if item.get("from") is not None and item.get("from") == item.get("to"):
+            errors.append(Issue(path + ".to", "must_differ", "must differ from from"))
+        starts, ends = _parse_dt(item.get("startsAt")), _parse_dt(item.get("endsAt"))
+        if starts is not None and ends is not None:
+            try:
+                later = ends > starts
+            except TypeError:  # one naive, one aware
+                later = ends.replace(tzinfo=None) > starts.replace(tzinfo=None)
+            if not later:
+                errors.append(Issue(path + ".endsAt", "must_be_after", "must be after startsAt"))
 
 
 def _parse_dt(value: Any) -> Optional[datetime]:
@@ -1224,7 +1540,11 @@ def _merge_node(node: Node, base: Any, layer: Any) -> Any:
         for key, value in layer.items():
             if value is None:
                 continue
-            out[key] = copy.deepcopy(value)
+            # A map of maps (`textsByLang`): each language merges key by key, as the dashboard's.
+            if node.value.merges and isinstance(base.get(key), dict) and isinstance(value, dict):
+                out[key] = _merge_node(node.value, base[key], value)
+            else:
+                out[key] = copy.deepcopy(value)
         return out
     return copy.deepcopy(layer)
 
@@ -1246,6 +1566,31 @@ def sanitize_stored_layer(overrides: Any) -> Dict[str, Any]:
     return cleaned
 
 
+def step_mode(cfg: Dict[str, Any], key: str) -> str:
+    """
+    A step's effective mode ("חובה / רשות / כבוי", STEP_MODE_KEYS or a customer field): its own
+    switch first — one service type, tips off, one payment method, upsell off — then its mode.
+    The kiosks apply the same rule (KioskStepModes.kt, kioskConfig.ts `stepMode`).
+    """
+    general, payment = cfg.get("general") or {}, cfg.get("payment") or {}
+    if key in ("customerName", "customerPhone", "tableNumber"):
+        mode = payment.get(key)
+        return mode if mode in CUSTOMER_FIELD_MODES else "off"
+    mode = (payment.get("stepModes") or {}).get(key)
+    mode = mode if mode in CUSTOMER_FIELD_MODES else DEFAULT_CONFIG["payment"]["stepModes"].get(key, "optional")
+    if key == "service" and len(general.get("serviceTypes") or []) <= 1:
+        return "off"
+    if key == "tip" and not (payment.get("tipEnabled") and (payment.get("tipPresets") or payment.get("tipOther", True))):
+        return "off"
+    if key == "payMethod":
+        methods = payment.get("methods") or ["card"]
+        if len(methods) <= 1 and methods[0] == "card":
+            return "off"
+    if key.startswith("upsell") and general.get("upsellEnabled") is False:
+        return "off"
+    return mode
+
+
 def repair(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """
     Fix the cross-field rules a parent layer's later change can break below it, so what a
@@ -1264,7 +1609,12 @@ def repair(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if club.get("enabled") and not _http_url_ok(club.get("joinUrl") or ""):
         club["enabled"] = False
     methods = [m for m in payment.get("methods") or [] if m in PAYMENT_METHODS]
-    payment["methods"] = methods or ["card"]
+    if not any(m in REMAINDER_METHODS for m in methods):
+        methods = ["card"] + methods
+    payment["methods"] = methods
+    # "איך תרצו לשלם?" is always the last step, right before the payment.
+    steps = [s for s in payment.get("checkoutSteps") or [] if s in CHECKOUT_STEPS and s != "payMethod"]
+    payment["checkoutSteps"] = steps + ["payMethod"]
     if payment.get("tipEnabled") and not payment.get("tipPresets"):
         payment["tipPresets"] = list(DEFAULT_CONFIG["payment"]["tipPresets"])
     if cfg["hours"].get("enabled") and not cfg["hours"].get("ranges"):
@@ -1273,16 +1623,24 @@ def repair(cfg: Dict[str, Any]) -> Dict[str, Any]:
         route = (cfg.get("alerts") or {}).get(kind)
         if isinstance(route, dict) and route.get("tills") == "selected" and not route.get("machineIds"):
             route["tills"] = "main"
+    # "מבנה הקיוסק": its cross-field rules, and theme.categoryLayout / cartStyle for an older kiosk.
+    layouts.repair_layout(cfg)
     return cfg
 
 
 def resolve(*stored_layers: Any) -> Dict[str, Any]:
     """
-    DEFAULTS ⊕ the style's preset ⊕ the stored layers (sanitised), repaired: what a kiosk
-    gets. A key a layer sets explicitly beats the preset, whatever level set it.
+    DEFAULTS ⊕ the style's preset ⊕ the layout's template (kiosk_layout.py) ⊕ the stored layers
+    (sanitised), repaired: what a kiosk gets. A key a layer sets explicitly beats the preset and the
+    template, whatever level set it.
     """
     layers = [sanitize_stored_layer(layer) for layer in stored_layers]
-    cfg = merge(DEFAULT_CONFIG, preset_layer(style_of(*layers)), *layers)
+    cfg = merge(
+        DEFAULT_CONFIG,
+        preset_layer(style_of(*layers)),
+        layouts.layout_template_layer(layouts.template_of(*layers)),
+        *layers,
+    )
     return repair(cfg)
 
 

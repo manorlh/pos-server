@@ -42,6 +42,7 @@ import { useAuth } from '@/lib/auth';
 import { fetchAppReleaseRollout, fetchLiveItems, fetchMachines, fetchOverview } from '@/lib/api';
 import { fetchHourlyReport } from '@/lib/salesReportsApi';
 import { usePageScope, useScopeQuery } from '@/lib/scope';
+import { formatTime } from '@/lib/format';
 import {
   buildOverviewTree,
   filterOverviewTree,
@@ -436,7 +437,7 @@ export default function DashboardPage() {
           ? t('updating')
           : updatedAt
             ? t('updatedAt', {
-                time: new Date(updatedAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }),
+                time: formatTime(updatedAt),
               })
             : null}
       </span>

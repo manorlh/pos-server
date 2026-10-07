@@ -13,6 +13,13 @@ taken. This module holds the cloud's side of that:
   that carried its sale (the till was offline) is marked when it lands, from the uids kept
   with each report. A re-pushed document is re-marked the same way, so replacing its legs
   never loses a mark.
+* **Unnamed batches** (`assume_unnamed`): a terminal that confirms a batch without listing
+  its sales (no `queriedTransactions` — seen on the F20 with Pelecard) leaves the till to
+  assume its pending sales went in it. The till sends those uids
+  (`assumedTerminalTransactionIds`); for a till from before the field the cloud reads the
+  batch as the till does. Either way the items are kept `assumed` and the legs marked —
+  transmitted, not verified — instead of staying "untransmitted" on the cloud for ever
+  while the till says nothing waits (docs/SPEC_REPORTS.md §7).
 * **Our records** (`untransmitted_*`): card legs after the till's tracking start in no
   successful batch — the recovery list, and the second opinion beside the till's own count.
 * **The till's reading** (`apply_heartbeat_block`): its pending count as it last said.
@@ -192,6 +199,8 @@ class ReportOutcome:
     transmission: CardTransmission
     created: bool
     legs_marked: int
+    #: Of the items kept, how many the terminal never named (see `assume_unnamed`).
+    legs_assumed: int = 0
 
 
 def _fill(row: CardTransmission, body: TransmissionReportIn) -> None:
@@ -210,17 +219,84 @@ def _fill(row: CardTransmission, body: TransmissionReportIn) -> None:
     row.error = body.error
 
 
-def _replace_items(db: Session, row: CardTransmission, machine: POSMachine, ids: Sequence[str]) -> None:
+def _replace_items(
+    db: Session,
+    row: CardTransmission,
+    machine: POSMachine,
+    ids: Sequence[str],
+    assumed: Sequence[str] = (),
+) -> None:
     db.query(CardTransmissionItem).filter(
         CardTransmissionItem.transmission_id == row.id
     ).delete(synchronize_session=False)
+    named = list(dict.fromkeys(ids))
+    named_set = set(named)
     db.add_all(
         CardTransmissionItem(
-            id=uuid.uuid4(), transmission_id=row.id, machine_id=machine.id, terminal_uid=uid
+            id=uuid.uuid4(), transmission_id=row.id, machine_id=machine.id, terminal_uid=uid, assumed=False
         )
-        for uid in ids
+        for uid in named
+    )
+    db.add_all(
+        CardTransmissionItem(
+            id=uuid.uuid4(), transmission_id=row.id, machine_id=machine.id, terminal_uid=uid, assumed=True
+        )
+        for uid in dict.fromkeys(assumed)
+        if uid not in named_set
     )
     db.flush()
+
+
+def assume_unnamed(
+    db: Session, machine: POSMachine, row: CardTransmission, named: Sequence[str]
+) -> List[str]:
+    """
+    The uids a successful batch is taken to have carried when the terminal named none of
+    this till's pending card sales — the till's own rule (`claimLegs`, Transmission.kt):
+    nothing of ours matched and the batch was not empty (`transactionCount` unknown or
+    above zero) → every card leg still pending that was taken before the attempt started.
+
+    Pending here: this till's card legs with a terminal uid, in no batch yet, of a
+    transmittable document, taken at or after the till's tracking start. Empty when the
+    batch named one of them, when it was empty, or when it did not succeed.
+    """
+    if row.status != TransmissionStatus.SUCCESS:
+        return []
+    if row.transaction_count is not None and row.transaction_count <= 0:
+        return []
+    started = _utc(row.started_at)
+    query = (
+        db.query(TransactionPayment.terminal_uid)
+        .join(Transaction, Transaction.id == TransactionPayment.transaction_id)
+        .filter(
+            Transaction.machine_id == machine.id,
+            TransactionPayment.method == CARD_METHOD,
+            TransactionPayment.terminal_uid.isnot(None),
+            TransactionPayment.transmission_id.is_(None),
+            Transaction.status.in_(TRANSMITTABLE_STATUSES),
+        )
+    )
+    if started is not None:
+        query = query.filter(Transaction.created_at <= started)
+    tracking = _utc(machine.transmission_tracking_started_at)
+    if tracking is not None:
+        query = query.filter(Transaction.created_at >= tracking)
+    pending = [uid for (uid,) in query.order_by(Transaction.created_at.asc()).all() if uid]
+    named_set = set(named)
+    if any(uid in named_set for uid in pending):
+        return []
+    return list(dict.fromkeys(pending))
+
+
+def _assumed_for(db: Session, machine: POSMachine, row: CardTransmission, body: TransmissionReportIn) -> List[str]:
+    """The till's assumed uids when it sent them (its word); else the cloud's reading."""
+    if row.status != TransmissionStatus.SUCCESS:
+        return []
+    named = set(body.terminal_transaction_ids)
+    sent = getattr(body, "assumed_terminal_transaction_ids", None)
+    if sent is not None:
+        return [uid for uid in sent if uid not in named]
+    return assume_unnamed(db, machine, row, body.terminal_transaction_ids)
 
 
 def _card_legs_query(db: Session, machine_id):
@@ -281,9 +357,10 @@ def record_report(
         if not upgrade:
             return ReportOutcome(existing, False, 0)
         _fill(existing, body)
-        _replace_items(db, existing, machine, body.terminal_transaction_ids)
-        marked = mark_legs(db, machine, existing, body.terminal_transaction_ids)
-        return ReportOutcome(existing, False, marked)
+        assumed = _assumed_for(db, machine, existing, body)
+        _replace_items(db, existing, machine, body.terminal_transaction_ids, assumed)
+        marked = mark_legs(db, machine, existing, [*body.terminal_transaction_ids, *assumed])
+        return ReportOutcome(existing, False, marked, len(assumed))
 
     row = CardTransmission(
         id=body.id,
@@ -295,9 +372,38 @@ def record_report(
     _fill(row, body)
     db.add(row)
     db.flush()
-    _replace_items(db, row, machine, body.terminal_transaction_ids)
-    marked = mark_legs(db, machine, row, body.terminal_transaction_ids)
-    return ReportOutcome(row, True, marked)
+    assumed = _assumed_for(db, machine, row, body)
+    _replace_items(db, row, machine, body.terminal_transaction_ids, assumed)
+    marked = mark_legs(db, machine, row, [*body.terminal_transaction_ids, *assumed])
+    return ReportOutcome(row, True, marked, len(assumed))
+
+
+def backfill_unnamed(db: Session, machine_ids: Optional[Sequence[uuid.UUID]] = None) -> Dict[str, int]:
+    """
+    Read the successful batches stored before the cloud knew about unnamed batches the
+    way `assume_unnamed` reads a new one: a success that named no sale and kept no item.
+    Oldest first, so an earlier batch claims the earlier sales. Idempotent: a batch with
+    items is left alone. Returns {"batches": n, "legs": m}.
+    """
+    query = db.query(CardTransmission).filter(
+        CardTransmission.status == TransmissionStatus.SUCCESS,
+        CardTransmission.terminal_transaction_count == 0,
+        ~CardTransmission.items.any(),
+    )
+    if machine_ids:
+        query = query.filter(CardTransmission.machine_id.in_(list(machine_ids)))
+    batches = legs = 0
+    for row in query.order_by(CardTransmission.started_at.asc()).all():
+        machine = db.query(POSMachine).filter(POSMachine.id == row.machine_id).first()
+        if machine is None:
+            continue
+        assumed = assume_unnamed(db, machine, row, [])
+        if not assumed:
+            continue
+        _replace_items(db, row, machine, [], assumed)
+        legs += mark_legs(db, machine, row, assumed)
+        batches += 1
+    return {"batches": batches, "legs": legs}
 
 
 def mark_legs_on_ingest(db: Session, machine: POSMachine, legs: Iterable[Tuple[uuid.UUID, Optional[str]]]) -> int:
@@ -631,11 +737,34 @@ def legs_matched(db: Session, transmission_ids: Sequence[uuid.UUID]) -> Dict[uui
     return {r[0]: int(r[1]) for r in rows}
 
 
+def assumed_counts(db: Session, transmission_ids: Sequence[uuid.UUID]) -> Dict[uuid.UUID, int]:
+    """Per transmission: how many of its items the terminal never named (`assumed`)."""
+    if not transmission_ids:
+        return {}
+    rows = (
+        db.query(CardTransmissionItem.transmission_id, func.count(CardTransmissionItem.id))
+        .filter(
+            CardTransmissionItem.transmission_id.in_(list(transmission_ids)),
+            CardTransmissionItem.assumed.is_(True),
+        )
+        .group_by(CardTransmissionItem.transmission_id)
+        .all()
+    )
+    return {r[0]: int(r[1]) for r in rows}
+
+
 def transmission_to_out(
-    db: Session, row: CardTransmission, *, matched: Optional[int] = None, detail: bool = False
+    db: Session,
+    row: CardTransmission,
+    *,
+    matched: Optional[int] = None,
+    detail: bool = False,
+    assumed: Optional[int] = None,
 ) -> dict:
     if matched is None:
         matched = legs_matched(db, [row.id]).get(row.id, 0)
+    if assumed is None:
+        assumed = assumed_counts(db, [row.id]).get(row.id, 0)
     out = {
         "id": str(row.id),
         "machineId": str(row.machine_id),
@@ -653,6 +782,8 @@ def transmission_to_out(
         "error": row.error,
         "terminalTransactionCount": row.terminal_transaction_count or 0,
         "legsMatched": matched,
+        # Sales the batch carried that the terminal never named: transmitted, not verified.
+        "assumedTransactionCount": assumed,
     }
     if detail:
         out["terminalTransactionIds"] = [
@@ -676,9 +807,12 @@ def list_for_machine(db: Session, machine: POSMachine, *, limit: int, offset: in
         .all()
     )
     matched = legs_matched(db, [r.id for r in rows])
+    assumed = assumed_counts(db, [r.id for r in rows])
     return {
         "total": total,
-        "items": [transmission_to_out(db, r, matched=matched.get(r.id, 0)) for r in rows],
+        "items": [
+            transmission_to_out(db, r, matched=matched.get(r.id, 0), assumed=assumed.get(r.id, 0)) for r in rows
+        ],
     }
 
 

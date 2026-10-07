@@ -24,6 +24,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
 import { RefreshCw } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { formatShortDate } from '@/lib/format';
 import {
   agorot,
   fetchAbc,
@@ -44,10 +45,12 @@ import {
 import { cn } from '@/lib/utils';
 import { ALL_COMPANIES, EMPTY_ORG_SCOPE, type OrgScope } from '@/components/dashboard/org-scope-cascade';
 import { ScopePicker } from '@/components/dashboard/live/scope-picker';
-import { Card, Delta, IOS, InsightsSurface, Muted, SectionHeader, Segmented, SkeletonCard, Switch, Widget, dayMonth } from '@/components/dashboard/insights/ios';
+import { Card, Delta, IOS, InsightsSurface, Muted, SectionHeader, Segmented, SkeletonCard, Switch, Widget } from '@/components/dashboard/insights/ios';
+import { DatePicker } from '@/components/ui/date-picker';
 import { scopeParams } from '@/components/dashboard/insights/scope-params';
 import { InsightFeed } from '@/components/dashboard/insights/insight-feed';
 import { OpenTablesWidget } from '@/components/dashboard/insights/open-tables-widget';
+import { KioskInsightsLinkCard } from '@/components/dashboard/kiosk-insights/link-card';
 import { ForecastSection } from '@/components/dashboard/insights/forecast-section';
 import { TrendsSection } from '@/components/dashboard/insights/trends-section';
 import { HeatmapSection } from '@/components/dashboard/insights/heatmap-section';
@@ -58,6 +61,8 @@ import { StockSection } from '@/components/dashboard/insights/stock-section';
 import { BasketsSection } from '@/components/dashboard/insights/baskets-section';
 import { CashiersSection } from '@/components/dashboard/insights/cashiers-section';
 import { CustomersSection, TablesPeriodSection } from '@/components/dashboard/insights/tables-section';
+import { useInsightsExport } from '@/components/dashboard/insights/export-sheets';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 
 const AUTO_REFRESH_MS = 5 * 60_000;
 const COST_EDITORS = new Set(['super_admin', 'distributor', 'company_manager']);
@@ -140,6 +145,8 @@ export default function InsightsPage() {
   const abc = useQuery({ queryKey: ['insights-abc', params], queryFn: () => fetchAbc(params), ...common });
   const slowParams = { ...params, deadDays: Number(deadDays) };
   const slow = useQuery({ queryKey: ['insights-slow', slowParams], queryFn: () => fetchSlowProducts(slowParams), ...common });
+  // Excel: every section the page shows, through these same queries, all rows.
+  const insightsExport = useInsightsExport(scope);
   const stock = useQuery({
     queryKey: ['insights-stock', params],
     queryFn: () => fetchStockRisk(params),
@@ -194,7 +201,7 @@ export default function InsightsPage() {
         <div className="min-w-0">
           <p className="truncate text-[13px] font-semibold uppercase tracking-wide text-[#8E8E93]">
             {period
-              ? t('periodLine', { from: dayMonth(period.from), to: dayMonth(period.to), prevFrom: dayMonth(period.prevFrom), prevTo: dayMonth(period.prevTo) })
+              ? t('periodLine', { from: formatShortDate(period.from), to: formatShortDate(period.to), prevFrom: formatShortDate(period.prevFrom), prevTo: formatShortDate(period.prevTo) })
               : t('loading')}
           </p>
           <h1 className="text-[34px] font-bold leading-tight tracking-tight">{t('title')}</h1>
@@ -208,6 +215,17 @@ export default function InsightsPage() {
           <RefreshCw className={cn('h-[18px] w-[18px]', fetching && 'animate-spin')} />
         </button>
       </div>
+
+      {/* Excel · Print · PDF */}
+      <ReportExportToolbar
+        title={t('title')}
+        from={period?.from}
+        to={period?.to}
+        scopeLabel={insightsExport.scopeLabel}
+        getSheets={() => insightsExport.getSheets({ params, menuParams, slowParams })}
+        disabled={feed.isPending}
+        className="mt-3 px-1"
+      />
 
       {/* Period */}
       <div className="mt-4 overflow-x-auto px-1 pb-1">
@@ -228,25 +246,25 @@ export default function InsightsPage() {
         <Card className="mt-3 divide-y divide-[#3C3C4349] p-0 dark:divide-[#54545899]">
           <label className="flex items-center justify-between gap-3 px-4 py-2.5">
             <span className="text-[17px]">{t('range.from')}</span>
-            <input
-              type="date"
+            <DatePicker
               value={customFrom}
               max={customTo}
               onChange={(e) => setCustomFrom(e.target.value)}
+              range={{ from: customFrom, to: customTo, onSelect: (r) => { setCustomFrom(r.from); setCustomTo(r.to); } }}
               dir="ltr"
-              className="rounded-lg bg-[#7676801F] px-2 py-1 text-[15px] text-[#007AFF] outline-none"
+              className="w-40 shrink-0 text-[15px] text-[#007AFF]"
             />
           </label>
           <label className="flex items-center justify-between gap-3 px-4 py-2.5">
             <span className="text-[17px]">{t('range.to')}</span>
-            <input
-              type="date"
+            <DatePicker
               value={customTo}
               min={customFrom}
               max={isoDaysAgo(0)}
               onChange={(e) => setCustomTo(e.target.value)}
+              range={{ from: customFrom, to: customTo, onSelect: (r) => { setCustomFrom(r.from); setCustomTo(r.to); } }}
               dir="ltr"
-              className="rounded-lg bg-[#7676801F] px-2 py-1 text-[15px] text-[#007AFF] outline-none"
+              className="w-40 shrink-0 text-[15px] text-[#007AFF]"
             />
           </label>
         </Card>
@@ -332,6 +350,9 @@ export default function InsightsPage() {
 
       {/* Open tables now (hidden when the scope has no tables) */}
       <OpenTablesWidget scope={scope} auto={auto} />
+
+      {/* "ביצועי קיוסקים" — its own page */}
+      <KioskInsightsLinkCard />
 
       <Section id="forecast" title={t('sections.forecast')} query={forecast}>
         {(data) => <ForecastSection data={data} />}

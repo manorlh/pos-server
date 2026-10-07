@@ -57,6 +57,46 @@ SKETCH_KINDS = (
     "logo",
 )
 TABLE_ORDER_SOURCES = ("synced", "local")
+#: What a table is for (app/services/table_policies.py): an ordinary table, the staff's
+#: ("שולחן עובדים" — staff meals) or the managers' ("שולחן מנהלים" — manager meals).
+TABLE_KINDS = ("regular", "staff", "managers")
+#: How a staff table prices the meal: a discount % (the one applied today), a price list,
+#: or free up to an allowance per employee — the last two stored for the design only.
+STAFF_MEAL_MODES = ("percent", "price_list", "allowance")
+
+
+class TableType(Base):
+    """
+    A table type ("סוג שולחן"): a policy reusable across the shop's tables — "עובדים",
+    "מנהלים", "VIP -10%". A table that names one takes its kind and discount from it; a
+    table with none uses its own (`dining_tables.kind` / `discount_percent`).
+    """
+
+    __tablename__ = "table_types"
+    __table_args__ = (
+        Index("ix_table_types_shop", "shop_id"),
+        CheckConstraint("kind IN ('regular', 'staff', 'managers')", name="ck_table_types_kind"),
+        CheckConstraint("discount_percent >= 0 AND discount_percent <= 100", name="ck_table_types_discount"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(60), nullable=False)
+    kind = Column(String(12), nullable=False, default="regular", server_default="regular")
+    #: The basket discount the table's orders get (0–100; 100 = "הוצאת מנהלים").
+    discount_percent = Column(Numeric(5, 2), nullable=False, default=0, server_default="0")
+    #: A manager's PIN when the table is opened (always for a managers' table).
+    require_approval = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: A reason typed when the table is opened (a managers' table, by default).
+    require_reason = Column(Boolean, nullable=False, default=False, server_default="false")
+    staff_mode = Column(String(12), nullable=False, default="percent", server_default="percent")
+    #: "allowance": free up to this much (₪) per employee — stored, not applied yet.
+    staff_allowance = Column(Numeric(12, 2), nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0, server_default="0")
+    archived_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
 
 class TableZone(Base):
@@ -117,6 +157,11 @@ class DiningTable(Base):
     width = Column(Float, nullable=False, default=80, server_default="80")
     height = Column(Float, nullable=False, default=80, server_default="80")
     rotation = Column(Integer, nullable=False, default=0, server_default="0")
+    #: Its policy (app/services/table_policies.py): a type ("סוג שולחן") when it names
+    #: one, else its own kind and discount — "שולחן עובדים", "שולחן מנהלים", "הנחת שולחן".
+    kind = Column(String(12), nullable=False, default="regular", server_default="regular")
+    discount_percent = Column(Numeric(5, 2), nullable=True)
+    type_id = Column(UUID(as_uuid=True), ForeignKey("table_types.id", ondelete="SET NULL"), nullable=True)
     #: "לניקוי": since when the table waits to be cleared — set when its order is paid,
     #: cleared when someone marks it clean or a new order opens on it.
     cleaning_since = Column(DateTime(timezone=True), nullable=True)

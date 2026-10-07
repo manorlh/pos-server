@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { CalendarClock, Lock, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { TimeInput } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
@@ -99,7 +100,7 @@ export function KioskLockControls({
         ))}
       </div>
       {mode === 'time' ? (
-        <Input type="time" dir="ltr" className="w-32" value={untilTime} onChange={(e) => setUntilTime(e.target.value)} />
+        <TimeInput dir="ltr" className="w-32" value={untilTime} onChange={(e) => setUntilTime(e.target.value)} />
       ) : null}
       {mode === 'minutes' ? (
         <div className="flex items-center gap-2 text-sm">
@@ -186,20 +187,19 @@ export function KioskScheduleControls({
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <label className="flex items-center gap-2">
               {t('open')}
-              <Input type="time" dir="ltr" className="w-28" value={form.open} disabled={!canWrite} onChange={(e) => setForm({ ...form, open: e.target.value })} />
+              <TimeInput dir="ltr" className="w-28" value={form.open} disabled={!canWrite} onChange={(e) => setForm({ ...form, open: e.target.value })} />
             </label>
             <label className="flex items-center gap-2">
               <Switch checked={withClose} disabled={!canWrite} onCheckedChange={setWithClose} />
               {t('withClose')}
             </label>
             {withClose ? (
-              <Input type="time" dir="ltr" className="w-28" value={effective.close ?? ''} disabled={!canWrite} onChange={(e) => setForm({ ...form, close: e.target.value })} />
+              <TimeInput dir="ltr" className="w-28" value={effective.close ?? ''} disabled={!canWrite} onChange={(e) => setForm({ ...form, close: e.target.value })} />
             ) : null}
           </div>
           <label className="flex flex-wrap items-center gap-2 text-sm">
             {t('autoZ')}
-            <Input
-              type="time"
+            <TimeInput
               dir="ltr"
               className="w-28"
               value={form.autoCloseAt ?? autoZ ?? ''}

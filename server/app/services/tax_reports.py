@@ -178,6 +178,11 @@ def load_transactions_for_tax_export(
             # The window's local days as UTC instants (documents are stamped in UTC).
             Transaction.created_at >= _as_utc(start),
             Transaction.created_at <= _as_utc(end),
+            # A duplicate copy — the same document stored a second time under another id
+            # (docs/SHIFTS_API.md §1.2d) — is in the file once, as the document holding the
+            # number. A conflicting document with other content is a document of its own
+            # and stays: the file is then refused for its duplicate number, naming both.
+            Transaction.duplicate_copy.is_(False),
         )
         .order_by(Transaction.created_at.asc())
     )
@@ -233,8 +238,9 @@ def document_branch_id(tx: Transaction) -> Optional[str]:
     """
     Field 1231 of a document: the branch code the till stamped on it, else (a document
     from before branch codes were mandatory, or from a till that had not synced its code
-    yet) its shop's code — so two shops' `10000057` never file alike in a company's export
-    (app/services/branch_code.py).
+    yet) its shop's code (app/services/branch_code.py). It does not tell two documents of
+    one type and number apart — the number itself must be unique in the business's file
+    (`refuse_duplicate_document_numbers`, docs/SPEC_DOCUMENT_PREFIX.md §5).
     """
     stamped = (tx.branch_id or "").strip()
     if stamped:
@@ -265,6 +271,77 @@ def refuse_shops_without_branch_code(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"לא ניתן להפיק קובץ: לסניפים הבאים אין קוד סניף — {names}. יש להגדיר קוד סניף בעמוד הסניף.",
         )
+
+
+#: How many duplicate numbers the refusal names (the rest are counted).
+DUPLICATES_LISTED = 12
+
+
+def refuse_duplicate_document_numbers(
+    db: Session, rows: List[Transaction], tx_dicts: List[Dict[str, Any]]
+) -> None:
+    """
+    409 when two documents of the file would carry one type and one number (C100 1203 +
+    1204). The file is one per business, every branch of it, and the Tax Authority's
+    simulator refuses it — "נמצאה יותר מרשומה אחת עם אותו מס אסמכתא" — whatever the
+    branch codes (1231) say. It happens when tills of two branches issued under one
+    document prefix (docs/SPEC_DOCUMENT_PREFIX.md §5): the documents are issued and their
+    numbers printed, so nothing here renumbers them; the file is refused, naming them, and
+    the tills are to be given unique prefixes for what they issue next.
+
+    `detail` is `{code, message, duplicates}`; `message` is the Hebrew text the dashboard
+    shows, `duplicates` the pairs with the till and shop of each document.
+    """
+    from app.services.open_format.tax_report_generator import duplicate_document_numbers
+
+    duplicates = duplicate_document_numbers(tx_dicts)
+    if not duplicates:
+        return
+    by_id = {str(tx.id): tx for tx in rows}
+    shop_ids = {tx.shop_id for tx in rows if tx.shop_id is not None}
+    shop_names = (
+        {str(sid): name for sid, name in db.query(Shop.id, Shop.name).filter(Shop.id.in_(shop_ids)).all()}
+        if shop_ids
+        else {}
+    )
+    listed = []
+    for (doc_type, number), docs in sorted(duplicates.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+        holders = []
+        for d in docs:
+            tx = by_id.get(str(d.get("id")))
+            holders.append({
+                "transactionId": str(d.get("id")),
+                "posNumber": getattr(tx, "pos_number", None),
+                "shopName": shop_names.get(str(getattr(tx, "shop_id", None))),
+                "branchId": d.get("branchId"),
+            })
+        listed.append({"documentType": doc_type, "documentNumber": number, "documents": holders})
+
+    def where(h: Dict[str, Any]) -> str:
+        shop = h.get("shopName") or (f"סניף {h['branchId']}" if h.get("branchId") else "סניף לא ידוע")
+        till = f"קופה {h['posNumber']}" if h.get("posNumber") else "קופה לא ידועה"
+        return f"{shop} — {till}"
+
+    lines = [
+        f"{d['documentType']} מס׳ {d['documentNumber']}: " + "; ".join(where(h) for h in d["documents"])
+        for d in listed[:DUPLICATES_LISTED]
+    ]
+    more = len(listed) - DUPLICATES_LISTED
+    if more > 0:
+        lines.append(f"ועוד {more} מספרים כפולים.")
+    message = (
+        f"לא ניתן להפיק את הקובץ: {len(listed)} מספרי מסמך מופיעים בו יותר מפעם אחת עם אותו סוג מסמך. "
+        "קובץ המבנה האחיד הוא אחד לכל העסק — כל הסניפים — ומספר מסמך חייב להיות ייחודי בו לכל סוג מסמך, "
+        "גם כשקוד הסניף שונה; סימולטור רשות המסים דוחה קובץ כזה (\"נמצאה יותר מרשומה אחת עם אותו מס אסמכתא\").\n"
+        + "\n".join(lines)
+        + "\nהסיבה: קופות בסניפים שונים הנפיקו תחת אותה קידומת מסמכים. יש לתת לכל קופה קידומת ייחודית בעסק "
+        "(עמוד הקופות ← \"קידומות מסמכים כפולות בעסק\"). זה משפיע רק על מסמכים חדשים — מסמכים שכבר הופקו "
+        "נשארים עם המספר שהודפס עליהם."
+    )
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"code": "duplicate_document_numbers", "message": message, "duplicates": listed},
+    )
 
 
 def export_document_number(tx: Transaction) -> str:
@@ -611,12 +688,59 @@ def transform_transaction_for_open_format(
         # own payment-type code. See `resolve_payment_legs` for how the amounts are
         # apportioned and why.
         "payments": _payments_for_open_format(tx),
+        # What ingest noted about the document (docs/SHIFTS_API.md §1.2): the generator reads
+        # `tenders_do_not_reconcile` to keep its payment records consistent (`resolve_payment_legs`).
+        "ingestNotes": [
+            n.get("code") for n in (getattr(tx, "ingest_notes", None) or []) if isinstance(n, dict) and n.get("code")
+        ],
         # A kiosk's documents carry its own operator ("kiosk:<machine>"): field 1233 gets its
         # short code; a till user's, their user name (`_cashier_name`).
         "cashier": {"name": _cashier_name(tx, user_names)},
         "customer": _customer_for_open_format(tx),
         "cart": _build_cart_from_items(tx, global_tax_rate, bases),
     }
+
+
+def flagged_documents(tx_dicts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    The documents of the file whose payment records (D120) were not the till's tenders as
+    sent: their tenders did not add up to the document (`tenders_do_not_reconcile`), so the
+    records were apportioned to the document's total (`resolve_payment_legs`). Listed with
+    the export — the file itself keeps the format the Tax Authority requires.
+    """
+    from app.services.open_format.tax_report_generator import TENDERS_DO_NOT_RECONCILE, payment_records_flagged
+
+    out = []
+    for t in tx_dicts:
+        if TENDERS_DO_NOT_RECONCILE in (t.get("ingestNotes") or ()) and payment_records_flagged(t):
+            out.append({
+                "transactionId": t.get("id"),
+                "documentNumber": t.get("transactionNumber"),
+                "documentType": t.get("documentType"),
+                "code": TENDERS_DO_NOT_RECONCILE,
+                "text": "אמצעי התשלום מהקופה לא הסתכמו לסכום המסמך — רשומות התשלום (D120) חולקו לסכום המסמך",
+            })
+    return out
+
+
+def count_duplicate_copies(
+    db: Session, tenant_id: uuid.UUID, *, company_id: Optional[uuid.UUID], shop_id: Optional[uuid.UUID],
+    start: datetime, end: datetime,
+) -> int:
+    """Duplicate copies in the export's window — left out of the file (counted once, §1.2d)."""
+    query = db.query(Transaction.id).filter(
+        Transaction.tenant_id == tenant_id,
+        Transaction.created_at >= _as_utc(start),
+        Transaction.created_at <= _as_utc(end),
+        Transaction.duplicate_copy.is_(True),
+    )
+    if shop_id is not None:
+        query = query.filter(Transaction.shop_id == shop_id)
+    elif company_id is not None:
+        query = query.filter(
+            Transaction.shop_id.in_(db.query(Shop.id).filter(Shop.company_id == company_id, Shop.tenant_id == tenant_id))
+        )
+    return query.count()
 
 
 def resolve_export_context(
@@ -660,8 +784,8 @@ def company_has_branches(db: Session, company: Company, *, explicit: Any = None,
     A000 field 1034 ("1 - בעסק יש סניפים/ענפים"; הבהרה 3): the business has branches when
     its company has more than one shop, or the export's documents carry more than one
     branch code — whichever shop the export is for. A `businessInfo.hasBranches: true`
-    setting still turns it on; nothing turns it off for a business with several shops,
-    or two shops' `10000001` would file as the same document.
+    setting still turns it on; nothing turns it off for a business with several shops
+    (the branch fields 1231/1270/1274/1320 and a B110 per branch go with it).
     """
     shops = db.query(Shop.branch_id).filter(Shop.company_id == company.id).all()
     known = {(row[0] or "").strip() for row in shops} | {(c or "").strip() for c in codes}
@@ -693,6 +817,9 @@ def build_tax_open_format_export(
     tx_dicts = [
         transform_transaction_for_open_format(tx, ctx.global_tax_rate, bases, user_names) for tx in rows
     ]
+    # Before anything is written: a file with one (type, number) twice is refused by the
+    # Tax Authority, so it is not produced at all (docs/SPEC_DOCUMENT_PREFIX.md §9).
+    refuse_duplicate_document_numbers(db, rows, tx_dicts)
     business_info = dict(ctx.business_info)
     business_info["hasBranches"] = company_has_branches(
         db, ctx.company, explicit=business_info.get("hasBranches"), codes=[t["branchId"] for t in tx_dicts]

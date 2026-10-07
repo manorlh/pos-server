@@ -3,7 +3,7 @@ import enum
 
 from sqlalchemy import (
     Boolean, Column, Computed, String, ForeignKey, Numeric, Integer, Text,
-    Enum as SQLEnum, DateTime, UniqueConstraint, Index, false,
+    Enum as SQLEnum, DateTime, UniqueConstraint, Index, false, text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -39,9 +39,18 @@ class Transaction(Base):
         # One number series per document type on each till ("רצף מספרים נפרד לכל מסמך",
         # docs/SPEC_DOCUMENT_PREFIX.md): a 320 #57 and a 330 #57 of one till are two
         # documents; a 400 and a -400 share the 400 series (`document_series`).
-        UniqueConstraint(
-            "machine_id", "document_series", "transaction_number", name="uq_tx_machine_series_number"
+        # Unique among the documents that *hold* their number: a second document with a
+        # number already held is stored too — every document lands — as a numbering
+        # conflict (`number_conflict_of`, docs/SHIFTS_API.md §1.2d), outside this index.
+        Index(
+            "uq_tx_machine_series_number_primary",
+            "machine_id", "document_series", "transaction_number",
+            unique=True,
+            postgresql_where=text("number_conflict_of IS NULL"),
+            sqlite_where=text("number_conflict_of IS NULL"),
         ),
+        Index("ix_transactions_claimed_shift", "claimed_shift_id"),
+        Index("ix_transactions_number_conflict_of", "number_conflict_of"),
         Index("ix_transactions_machine_created_at", "machine_id", "created_at"),
         Index("ix_transactions_shift", "shift_id"),
         Index("ix_transactions_basket", "basket_id"),
@@ -118,6 +127,13 @@ class Transaction(Base):
     basket_discount = Column(Numeric(12, 2), nullable=True)
     basket_discount_percent = Column(Numeric(6, 2), nullable=True)
     basket_discount_kind = Column(String(16), nullable=True)
+    #: A meal at a staff or managers' table (app/services/table_policies.py): `staff` /
+    #: `managers`, whose meal it was (a staff table's employee, as the till named them),
+    #: and why (a managers' table's reason). The approving manager is `approved_by_*`.
+    meal_kind = Column(String(16), nullable=True)
+    meal_employee_id = Column(String(100), nullable=True)
+    meal_employee_name = Column(String(200), nullable=True)
+    meal_reason = Column(String(300), nullable=True)
     wht_deduction = Column(Numeric(12, 2), nullable=True)
 
     # Free text as sent by the till — a cloud customer UUID on a current build, but
@@ -151,6 +167,14 @@ class Transaction(Base):
     #: never refused — but flagged, so the over-refund can be found and explained.
     #: Written server-side only (`app.services.transactions.settle_credited_originals`).
     over_credited = Column(Boolean, nullable=False, default=False, server_default=false())
+    #: "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the dashboard request this credit answered,
+    #: as the till sent it. Null on every other document. Not a foreign key, like the link
+    #: above: a document is never refused over it.
+    remote_credit_request_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    #: A credit for a sale that never really happened ("ללא החזר כספי — עסקה שלא בוצעה"):
+    #: its tender mirrors the original's but no money moved — true when any of its legs
+    #: says so (`TransactionPayment.no_money_movement`). Written server-side on ingest.
+    no_money_movement = Column(Boolean, nullable=False, default=False, server_default=false())
     nayax_meta = Column(JSONB, nullable=True)
 
     #: The till basket this document was committed in (docs/SHIFTS_API.md §1.2a). One
@@ -177,6 +201,35 @@ class Transaction(Base):
     #: roster) rather than a cloud account. At most one of the two is set. Verified at
     #: ingest like `approved_by_user_id` (`app.services.approvals`).
     approved_by_pos_user_id = Column(UUID(as_uuid=True), ForeignKey("pos_users.id"), nullable=True)
+    #: The approver exactly as the till sent it (`approvedByUserId` / `approvedByPosUserId`),
+    #: kept even when it names nobody this business knows — then `approved_by_*` above stay
+    #: null (they link only a person of this tenant) and `ingest_notes` says so. Informational
+    #: only: an approval claim never refuses or holds a document (docs/SHIFTS_API.md §1.2b).
+    #: Not foreign keys, on purpose: an id the cloud does not hold must still be stored.
+    claimed_approver_user_id = Column(UUID(as_uuid=True), nullable=True)
+    claimed_approver_pos_user_id = Column(UUID(as_uuid=True), nullable=True)
+    #: Quiet notes written at ingest about what the document carried — an approver this
+    #: business does not know, tender legs that do not add up, a refund link to another
+    #: tenant's document — as `[{"code": …, "text": …}]`. Shown in the document's detail;
+    #: never a reason to refuse, hold or leave the document out of its shift, X or Z.
+    ingest_notes = Column(JSONB, nullable=True)
+    #: The shift id exactly as the till sent it (`shiftId`), kept even when the document is
+    #: filed elsewhere (another till's shift, a shift the cloud has not seen yet). Not a
+    #: foreign key. A document waiting for its shift is moved into it when that shift
+    #: reaches the cloud (app/services/document_filing.py, docs/SHIFTS_API.md §1.2c-bis).
+    claimed_shift_id = Column(UUID(as_uuid=True), nullable=True)
+    #: The machine whose token delivered the document, when it is not the machine that
+    #: issued it: a device re-paired as a new machine delivers what it issued as the
+    #: previous one, and the document is filed under that previous machine (the issuer).
+    pushed_by_machine_id = Column(UUID(as_uuid=True), nullable=True)
+    #: "Same number, different id": the document that already holds this number on this
+    #: till and series. Null for the holder (and every ordinary document). Both are kept.
+    number_conflict_of = Column(UUID(as_uuid=True), nullable=True)
+    #: A numbering conflict whose fiscal content is the holder's own (the same sale stored
+    #: twice under two ids): left out of every total — X, Z, reports, the open-format
+    #: export — so it is counted once. A conflict with other content is a sale of its own
+    #: and counts (docs/SHIFTS_API.md §1.2d).
+    duplicate_copy = Column(Boolean, nullable=False, default=False, server_default=false())
 
     # Timestamps from POS
     created_at = Column(DateTime(timezone=True), nullable=False)

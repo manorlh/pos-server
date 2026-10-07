@@ -35,12 +35,15 @@ import {
 } from 'recharts';
 import { fetchCashierSalesReport, fetchLiveItems, fetchOverview } from '@/lib/api';
 import { fetchCardBrandsReport, fetchHourlyReport, type CardBrandsReport } from '@/lib/salesReportsApi';
-import { formatCurrency } from '@/lib/format';
+import { HEBREW_WEEKDAYS, formatCurrency, formatShortDate, zonedParts } from '@/lib/format';
+import { DatePicker } from '@/components/ui/date-picker';
 import type { CashierSalesReport, LiveItemsReport, OverviewReport, OverviewSales } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { ALL_COMPANIES, EMPTY_ORG_SCOPE, type OrgScope } from '@/components/dashboard/org-scope-cascade';
-import { ScopePicker } from '@/components/dashboard/live/scope-picker';
+import { ScopePicker, useOrgScopeLabel } from '@/components/dashboard/live/scope-picker';
 import { OpenTablesWidget } from '@/components/dashboard/insights/open-tables-widget';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import type { ExcelSheet } from '@/lib/excelExport';
 
 const AUTO_REFRESH_MS = 60_000;
 
@@ -104,11 +107,9 @@ function daysFor(mode: Mode, customA: string, customB: string): [string, string]
   return [customA, customB];
 }
 
-const WEEKDAYS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
-
 function dayLabel(day: string): string {
-  const d = new Date(`${day}T12:00:00`);
-  return `${WEEKDAYS[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`;
+  const p = zonedParts(day);
+  return p ? `${HEBREW_WEEKDAYS[p.weekday]} ${formatShortDate(day)}` : formatShortDate(day);
 }
 
 function change(a: number, b: number): number | null {
@@ -572,6 +573,137 @@ export default function CompareBoardPage() {
   const money = (n: number) => formatCurrency(n);
   const count = (n: number) => n.toLocaleString('he-IL');
 
+  // Excel: every table of the board, day A against day B. The items are read again at the
+  // report's largest limit — the board fetches 200 and shows 15.
+  const scopeName = useOrgScopeLabel(scope);
+  const labelA = dayLabel(dayA);
+  const labelB = dayLabel(dayB);
+  const getSheets = async (): Promise<ExcelSheet[]> => {
+    const [allA, allB] = await Promise.all([
+      fetchLiveItems({ ...narrowParams(dayA), limit: 1000 }),
+      fetchLiveItems({ ...narrowParams(dayB), limit: 1000 }),
+    ]);
+    const key = (r: { productId?: string | null; name?: string | null }) => r.productId ?? r.name ?? '';
+    const itemMap = new Map<string, { name: string; sku: string | null; qtyA: number; qtyB: number; netA: number; netB: number }>();
+    for (const r of allA.rows) itemMap.set(key(r), { name: r.name ?? '—', sku: r.sku ?? null, qtyA: r.qty, qtyB: 0, netA: r.net, netB: 0 });
+    for (const r of allB.rows) {
+      const m = itemMap.get(key(r)) ?? { name: r.name ?? '—', sku: r.sku ?? null, qtyA: 0, qtyB: 0, netA: 0, netB: 0 };
+      m.qtyB = r.qty;
+      m.netB = r.net;
+      itemMap.set(key(r), m);
+    }
+    const allItems = [...itemMap.values()].sort((x, y) => y.netA - x.netA || y.netB - x.netB);
+    const sum = <T,>(list: T[], pick: (x: T) => number) => list.reduce((n, x) => n + pick(x), 0);
+    const day = (d: string, s: OverviewSales, it: { qty: number; perSale: number; perUnit: number }) => [
+      d, s.salesToday, s.documentsToday, s.salesCount, s.refundsCount, avgTicket(s), s.gross, s.discounts, s.refunds,
+      s.cash, s.card, s.other, s.tips, it.qty, it.perSale, it.perUnit,
+    ];
+    return [
+      {
+        name: 'סיכום',
+        columns: [
+          { header: 'יום', kind: 'date' },
+          { header: 'מכירות נטו', kind: 'money' },
+          { header: 'מסמכים', kind: 'number' },
+          { header: 'מכירות', kind: 'number' },
+          { header: 'זיכויים', kind: 'number' },
+          { header: 'ממוצע לעסקה', kind: 'money' },
+          { header: 'מכירות ברוטו', kind: 'money' },
+          { header: 'הנחות', kind: 'money' },
+          { header: 'החזרות', kind: 'money' },
+          { header: 'מזומן', kind: 'money' },
+          { header: 'אשראי', kind: 'money' },
+          { header: 'אחר', kind: 'money' },
+          { header: 'טיפ', kind: 'money' },
+          { header: 'סך הפריטים שנמכרו', kind: 'number' },
+          { header: 'ממוצע פריטים למכירה', kind: 'number' },
+          { header: 'מחיר ממוצע ליחידה', kind: 'money' },
+        ],
+        rows: [day(dayA, viewA.total, itemsA), day(dayB, viewB.total, itemsB)],
+      },
+      {
+        name: 'פילוח לפי שעות',
+        columns: [
+          { header: 'שעה', width: 8 },
+          { header: `נטו ${labelA}`, kind: 'money' },
+          { header: `נטו ${labelB}`, kind: 'money' },
+          { header: 'שינוי', kind: 'percent' },
+          { header: `מסמכים ${labelA}`, kind: 'number' },
+          { header: `מסמכים ${labelB}`, kind: 'number' },
+          { header: `סל ממוצע ${labelA}`, kind: 'money' },
+        ],
+        rows: hourRows.map((r) => [
+          `${String(r.hour).padStart(2, '0')}:00`, r.netA, r.netB, change(r.netA, r.netB), r.docsA, r.docsB, r.avgA,
+        ]),
+        totals: [
+          'סה״כ', sum(hourRows, (r) => r.netA), sum(hourRows, (r) => r.netB),
+          change(sum(hourRows, (r) => r.netA), sum(hourRows, (r) => r.netB)),
+          sum(hourRows, (r) => r.docsA), sum(hourRows, (r) => r.docsB), null,
+        ],
+      },
+      {
+        name: 'מוכרנים',
+        columns: [
+          { header: 'מוכרן', width: 18 },
+          { header: `נטו ${labelA}`, kind: 'money' },
+          { header: `נטו ${labelB}`, kind: 'money' },
+          { header: 'שינוי', kind: 'percent' },
+          { header: `מסמכים ${labelA}`, kind: 'number' },
+          { header: `ממוצע ${labelA}`, kind: 'money' },
+        ],
+        rows: sellers.map((s) => [s.name, s.netA, s.netB, change(s.netA, s.netB), s.docsA, s.avgA]),
+        totals: [
+          'סה״כ', sum(sellers, (s) => s.netA), sum(sellers, (s) => s.netB),
+          change(sum(sellers, (s) => s.netA), sum(sellers, (s) => s.netB)), sum(sellers, (s) => s.docsA), null,
+        ],
+      },
+      {
+        name: `פילוח — ${viewA.level || viewB.level || 'לפי היקף'}`,
+        columns: [
+          { header: viewA.level || viewB.level || 'היקף', width: 22 },
+          { header: `נטו ${labelA}`, kind: 'money' },
+          { header: `נטו ${labelB}`, kind: 'money' },
+          { header: 'שינוי', kind: 'percent' },
+          { header: `מסמכים ${labelA}`, kind: 'number' },
+          { header: `מסמכים ${labelB}`, kind: 'number' },
+        ],
+        rows: rows.map((r) => [r.name, r.a, r.b, change(r.a, r.b), r.docsA, r.docsB]),
+        totals: [
+          'סה״כ', sum(rows, (r) => r.a), sum(rows, (r) => r.b), change(sum(rows, (r) => r.a), sum(rows, (r) => r.b)),
+          sum(rows, (r) => r.docsA), sum(rows, (r) => r.docsB),
+        ],
+      },
+      {
+        name: 'פריטים',
+        columns: [
+          { header: 'פריט', width: 26 },
+          { header: 'מק״ט', width: 12 },
+          { header: `יח׳ ${labelA}`, kind: 'number' },
+          { header: `יח׳ ${labelB}`, kind: 'number' },
+          { header: `נטו ${labelA}`, kind: 'money' },
+          { header: `נטו ${labelB}`, kind: 'money' },
+          { header: 'שינוי', kind: 'percent' },
+        ],
+        rows: allItems.map((i) => [i.name, i.sku, i.qtyA, i.qtyB, i.netA, i.netB, change(i.netA, i.netB)]),
+        // The days' own totals: every item, even past the report's row limit.
+        totals: ['סה״כ', null, allA.totals.qty, allB.totals.qty, allA.totals.net, allB.totals.net, change(allA.totals.net, allB.totals.net)],
+      },
+      {
+        name: `אמצעי תשלום ${labelA}`,
+        columns: [
+          { header: 'אמצעי תשלום', width: 18 },
+          { header: 'סכום', kind: 'money' },
+          { header: 'חלק', kind: 'percent' },
+        ],
+        rows: [
+          ...pie.map((s) => [s.name, s.value, (s.value / (pieTotal || 1)) * 100]),
+          ...(viewA.total.tips ? [['טיפ', viewA.total.tips, null]] : []),
+        ],
+        totals: ['סה״כ', pieTotal, pieTotal ? 100 : null],
+      },
+    ];
+  };
+
   return (
     <div
       className="-mx-2 rounded-[28px] bg-[#F2F2F7] px-3 pb-6 pt-4 text-black antialiased dark:bg-black dark:text-white sm:mx-0 sm:px-5"
@@ -585,14 +717,22 @@ export default function CompareBoardPage() {
           </p>
           <h1 className="text-[34px] font-bold leading-tight tracking-tight">לוח בקרה</h1>
         </div>
-        <button
-          type="button"
-          onClick={refetchAll}
-          aria-label="רענון"
-          className="mb-1 flex h-10 w-10 items-center justify-center rounded-full bg-white text-[#007AFF] shadow-sm active:opacity-60 dark:bg-[#1C1C1E]"
-        >
-          <RefreshCw className={cn('h-[18px] w-[18px]', fetching && 'animate-spin')} />
-        </button>
+        <div className="mb-1 flex shrink-0 items-center gap-2">
+          <ReportExportToolbar
+            title={`לוח בקרה — ${labelA} מול ${labelB}`}
+            scopeLabel={scopeName}
+            disabled={loading}
+            getSheets={getSheets}
+          />
+          <button
+            type="button"
+            onClick={refetchAll}
+            aria-label="רענון"
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-[#007AFF] shadow-sm active:opacity-60 dark:bg-[#1C1C1E]"
+          >
+            <RefreshCw className={cn('h-[18px] w-[18px]', fetching && 'animate-spin')} />
+          </button>
+        </div>
       </div>
 
       {/* Compare */}
@@ -603,13 +743,13 @@ export default function CompareBoardPage() {
         <Card className="mt-3 divide-y divide-[#3C3C4349] p-0 dark:divide-[#54545899]">
           <label className="flex items-center justify-between gap-3 px-4 py-2.5">
             <span className="flex items-center gap-2 text-[17px]"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: COLOR_A }} />יום</span>
-            <input type="date" value={customA} onChange={(e) => setCustomA(e.target.value)} dir="ltr"
-              className="rounded-lg bg-[#7676801F] px-2 py-1 text-[15px] text-[#007AFF] outline-none" />
+            <DatePicker value={customA} onChange={(e) => setCustomA(e.target.value)} dir="ltr"
+              className="w-40 shrink-0 text-[15px] text-[#007AFF]" />
           </label>
           <label className="flex items-center justify-between gap-3 px-4 py-2.5">
             <span className="flex items-center gap-2 text-[17px]"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: COLOR_B }} />מול יום</span>
-            <input type="date" value={customB} onChange={(e) => setCustomB(e.target.value)} dir="ltr"
-              className="rounded-lg bg-[#7676801F] px-2 py-1 text-[15px] text-[#FF9500] outline-none" />
+            <DatePicker value={customB} onChange={(e) => setCustomB(e.target.value)} dir="ltr"
+              className="w-40 shrink-0 text-[15px] text-[#FF9500]" />
           </label>
         </Card>
       ) : null}

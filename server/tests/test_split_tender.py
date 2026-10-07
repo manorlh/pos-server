@@ -197,20 +197,29 @@ def _machine() -> MagicMock:
     return m
 
 
-def test_unbalanced_document_is_rejected_and_nothing_is_written() -> None:
+def test_unbalanced_document_lands_with_a_note() -> None:
+    """
+    Since 2026-10-07 every document a till issued lands ("כל מסמך שבוצע במכשירים חייב
+    לעלות לענן"): legs that do not add up are stored as sent, with a quiet ingest note
+    and a warning to the till — never a refusal.
+    """
     db = MagicMock()
     db.query.return_value.filter.return_value.all.return_value = []
+    db.query.return_value.filter.return_value.first.return_value = MagicMock()
     tx = _tx(payments=[_leg("cash", "50.00", 1), _leg("card", "40.00", 2)])
 
-    results = T.upsert_transactions(db, _machine(), [tx])
+    with patch.object(T, "_serialize_tx_for_upsert", wraps=T._serialize_tx_for_upsert) as serialize:
+        results = T.upsert_transactions(db, _machine(), [tx])
 
-    assert [r.status for r in results] == ["rejected"]
-    assert "reconcile" in (results[0].reason or "")
-    # The check runs before the trading day is resolved, so a rejected document does
-    # not even leave an auto-opened day behind.
-    db.execute.assert_not_called()
-    db.add.assert_not_called()
-    db.bulk_save_objects.assert_not_called()
+    assert [r.status for r in results] == ["accepted"]
+    assert any("reconcile" in w for w in results[0].warnings or [])
+    notes = serialize.call_args.kwargs["ingest_notes"]
+    # (No shift on this bare document: it is also filed in the till's documents waiting
+    # for a shift — docs/SHIFTS_API.md §1.2c-bis — with a note of its own.)
+    assert [n["code"] for n in notes if n["code"] != "waiting_for_shift"] == [T.TENDERS_DO_NOT_RECONCILE]
+    # The legs are stored exactly as sent.
+    saved = [r for call in db.bulk_save_objects.call_args_list for r in call.args[0] if hasattr(r, "method")]
+    assert sorted(str(r.amount) for r in saved) == ["40.00", "50.00"]
 
 
 def test_stored_leg_methods_are_canonicalised() -> None:
@@ -235,7 +244,10 @@ def test_one_bad_document_does_not_take_the_batch_down() -> None:
     bad = _tx(payments=[_leg("cash", "1.00")])
 
     results = T.upsert_transactions(db, _machine(), [bad, good])
-    assert [r.status for r in results] == ["rejected", "accepted"]
+    # Neither is refused any more (2026-10-07); the unbalanced one carries its note.
+    assert [r.status for r in results] == ["accepted", "accepted"]
+    assert any("reconcile" in w for w in results[0].warnings or [])
+    assert not any("reconcile" in w for w in results[1].warnings or [])
 
 
 # ── The reports read the legs, not the document's tender ─────────────────────

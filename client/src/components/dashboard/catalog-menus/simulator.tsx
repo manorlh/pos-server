@@ -26,7 +26,7 @@ import {
 } from '@/lib/menuSchedule';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
+import { DatePicker, TimeInput } from '@/components/ui/date-picker';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { IosCard, IosChip, IosFootnote, IosSectionHeader, IosSegmented, IosTag } from '@/components/dashboard/menu/ios';
@@ -108,10 +108,10 @@ export function Simulator({
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[14px]">
           <span className="w-20 shrink-0 text-[#6D6D72]">{t('time')}</span>
-          <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="h-8 w-28" aria-label={t('time')} />
+          <TimeInput value={time} onChange={(e) => setTime(e.target.value)} className="h-8 w-28" aria-label={t('time')} />
           <label className="flex items-center gap-1.5 text-[13px] text-[#6D6D72]">
             {t('exactDate')}
-            <Input type="date" value={exactDate} onChange={(e) => setExactDate(e.target.value)} className="h-8 w-40" />
+            <DatePicker value={exactDate} onChange={(e) => setExactDate(e.target.value)} className="h-8 w-40" />
           </label>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[14px]">

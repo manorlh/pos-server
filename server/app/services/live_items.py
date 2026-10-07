@@ -74,7 +74,7 @@ def _open_shift_query(
     if not shift_ids:
         return None, 0
     query = query.filter(
-        Transaction.status.in_(SALE_STATUSES),
+        Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
         Transaction.shift_id.in_(shift_ids),
     )
     if shop_id is not None:

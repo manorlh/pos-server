@@ -13,6 +13,7 @@ import { ArrowDown, ArrowUp, ImagePlus, Loader2, RotateCcw, Trash2, Upload } fro
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { TimeInput } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
@@ -377,8 +378,7 @@ export function TimeField({ path, label, hint, clearable = false }: { path: stri
   return (
     <FieldShell path={path} label={label} hint={hint}>
       <div className="flex items-center gap-2">
-        <Input
-          type="time"
+        <TimeInput
           dir="ltr"
           className="w-32"
           value={f.value ?? ''}

@@ -159,7 +159,7 @@ export default function EventsPage() {
                     <StatusChip status={e.status} />
                   </div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-[14px]">
-                    <span>{t('tills', { count: e.machineIds.length })}</span>
+                    <span>{t('tillsCount', { count: e.machineIds.length })}</span>
                     {e.producerName ? <span className="text-[#8E8E93]">{t('producer', { name: e.producerName })}</span> : null}
                   </div>
                   <div className="text-[13px] text-[#8E8E93]">

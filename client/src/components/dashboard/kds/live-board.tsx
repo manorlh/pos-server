@@ -11,7 +11,7 @@
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { CircleAlert, Timer } from 'lucide-react';
-import { formatQuantity } from '@/lib/format';
+import { formatQuantity, formatTime, toDate } from '@/lib/format';
 import { getKdsBoard, type KdsOrder, type KdsStation, type KdsTask } from '@/lib/kdsApi';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -30,10 +30,7 @@ function minutesBetween(from: string | null, to: string): number | null {
 }
 
 function timeOf(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? ''
-    : d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return toDate(iso) ? formatTime(iso, { seconds: true }) : '';
 }
 
 function unrouted(task: KdsTask): boolean {

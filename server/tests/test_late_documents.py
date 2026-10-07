@@ -265,7 +265,13 @@ class TestAfterAnOrdinaryZ:
         assert w.db.get(Shift, carry.id).z_report_id == z2.id and z2.total_sales == Decimal("3.00")
         all_documents_in_exactly_one_z(w, [till])
 
-    def test_a_z_the_till_built_with_no_connection_leaves_them_for_the_next_cloud_built_z(self, w):
+    def test_a_z_the_till_built_with_no_connection_takes_them_in_their_own_section(self, w):
+        """
+        Gap 4 (2026-10-07): the offline till Z used to leave the carry shift for "the next Z
+        the cloud builds" — a till that always closes with no connection never had them in
+        any Z. Now its Z takes them, in their own section, and is compared with its paper
+        on its own shifts only (no discrepancy for what the cloud added).
+        """
         from test_offline_till_z import offline_body, upload
 
         created(w, through=closed_shift(w, w.till, 1, [dict(total="10.00")]))
@@ -273,14 +279,13 @@ class TestAfterAnOrdinaryZ:
         late_doc(w, w.till, w.db.query(Shift).filter(Shift.z_report_id == z1.id).one(), "4.00")
         carry = carry_shift(w, w.till)
 
-        # Z 2 closed with no connection: its paper never had them — they are not in it.
         s2 = closed_shift(w, w.till, 2, [dict(total="5.00")])
         code, _body = upload(w, offline_body(s2, 2))
         assert code == 201
         z2 = w.db.query(ZReport).filter(ZReport.machine_sequence_number == 2).one()
-        assert w.db.get(Shift, carry.id).z_report_id is None and "lateFromEarlier" not in (z2.header or {})
-
-        # The next Z the cloud builds takes them.
-        out = created(w, through=closed_shift(w, w.till, 3, [dict(total="1.00")]))
-        assert w.db.get(Shift, carry.id).z_report_id == uuid.UUID(out["zReport"]["id"])
+        assert w.db.get(Shift, carry.id).z_report_id == z2.id
+        assert [s["shiftId"] for s in z2.header["lateFromEarlier"]] == [str(carry.id)]
+        assert z2.total_sales == Decimal("9.00")
+        assert z2.offline_report["cloudAdded"]["shiftIds"] == [str(carry.id)]
+        assert not any(d["key"] in ("shiftIds", "transactionsCount", "totalSales") for d in z2.offline_discrepancies or [])
         all_documents_in_exactly_one_z(w, [w.till])

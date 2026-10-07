@@ -518,31 +518,54 @@ def build_z(
     # Per shift, not per till: a till's shifts belong to the shop it worked them in
     # (`shifts.shop_id`). A till since moved away, or retired, still has its shifts of
     # this shop taken here — and never its shifts of another shop.
+    from app.services.document_filing import shop_leftovers, taken_by
+
     for machine, through_id in selections:
         taken = included_shifts(db, machine.id, through_id, shop_id=shop_id, lock=True)
+        # Documents go to the Z kind their till was in when they were issued
+        # (`document_filing`): a till Z never takes what was issued under the shop Z.
+        taken = [s for s in taken if taken_by(s, Z_MODE_TILL if till_z else Z_MODE_CLOUD)]
         if leave_late_carry:
-            # A Z the till built itself (with no connection) never had the cloud's carried
-            # late documents on its paper: they wait for the next Z the cloud builds (§4.6.3).
-            from app.services.late_documents import is_carry
+            # Kept for a caller that asks for it; no Z path does any more: a Z the till
+            # closed with no connection takes the cloud's carried late documents and the
+            # documents waiting for a shift too — in their own sections — or a till that
+            # always closes offline would never have them in any Z (§4.6.3).
+            from app.services.document_filing import is_cloud_built
 
-            taken = [s for s in taken if not is_carry(s)]
+            taken = [s for s in taken if not is_cloud_built(s)]
         per_machine.append((machine, taken))
+    if not till_z:
+        # And what tills of this shop issued under the shop Z before they went their own
+        # way (late documents, documents waiting for a shift): this shop Z is their Z.
+        per_machine += shop_leftovers(db, shop_id, exclude=[m.id for m, _t in selections], lock=True)
 
     all_shifts = [s for _m, shifts in per_machine for s in shifts]
     claimed = [s for s in all_shifts if s.z_report_id is not None]
     if claimed:
         raise ZBuildRefused("shift_already_in_z", "A shift in this run is already in a Z.")
 
-    # 3. Totals from documents: the whole set, and each till on its own.
+    # 3. Totals from documents: the whole set, and each till on its own — with the
+    #    corrections to documents an earlier Z counted carried in as adjustments
+    #    (`z_adjustments`: each correction in exactly one Z).
+    from app.services import z_adjustments
+
+    corrections = {machine.id: z_adjustments.pending(machine, shop_id) for machine, _s in per_machine}
     overall = compute_totals(db, [s.id for s in all_shifts])
+    for entries in corrections.values():
+        overall.add(z_adjustments.delta_of(entries))
     # No Z on nothing ("אל תאפשר לסגור Z על 0"): refused here, before a number is drawn.
     between = z_cash_summary([shifts for _m, shifts in per_machine])["between_shifts"]
     if not allow_empty and not figures_show_activity(overall, between):
         raise ZBuildRefused(EMPTY_Z, EMPTY_Z_MESSAGE)
-    sections = [
-        machine_section(machine, shifts, compute_totals(db, [s.id for s in shifts]))
-        for machine, shifts in per_machine
-    ]
+    sections = []
+    for machine, shifts in per_machine:
+        entries = corrections.get(machine.id) or []
+        section_totals = compute_totals(db, [s.id for s in shifts]).add(z_adjustments.delta_of(entries))
+        section = machine_section(machine, shifts, section_totals)
+        if entries:
+            section["adjustments"] = z_adjustments.section_block(entries)
+        sections.append(section)
+    taken_corrections = [e for machine, _s in per_machine for e in z_adjustments.take(machine, shop_id)]
     # Card transmission, frozen with the section at build time. Informational: nothing
     # here waits for, or is refused by, a transmission (docs/SHIFTS_API.md §4.11).
     for section, (machine, shifts) in zip(sections, per_machine):
@@ -651,6 +674,12 @@ def build_z(
     from app.services import late_documents
 
     late_documents.note_on_z(db, z, all_shifts)
+    # Documents that waited for a shift, in this Z: their own section (`document_filing`).
+    from app.services.document_filing import note_on_z as note_waiting_on_z
+
+    note_waiting_on_z(z, all_shifts)
+    # Corrections to documents an earlier Z counted: their own section (`z_adjustments`).
+    z_adjustments.note_on_z(db, z, taken_corrections)
     db.add(z)
     db.flush()
     for shift in all_shifts:

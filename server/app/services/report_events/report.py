@@ -142,7 +142,7 @@ def load_docs(db: Session, event: ReportEvent, machine_ids: Sequence[uuid.UUID])
         .filter(
             Transaction.machine_id.in_(list(machine_ids)),
             Transaction.tenant_id == event.tenant_id,
-            Transaction.status.in_(SALE_STATUSES),
+            Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
             Transaction.created_at >= utc(event.starts_at),
             Transaction.created_at < utc(event.ends_at),
         )
@@ -347,7 +347,7 @@ def _baseline_avg_ticket(db: Session, event: ReportEvent) -> Optional[float]:
         .filter(
             Transaction.shop_id == event.shop_id,
             Transaction.tenant_id == event.tenant_id,
-            Transaction.status.in_(SALE_STATUSES),
+            Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
             sale_condition(),
             Transaction.created_at >= start - timedelta(days=BASELINE_DAYS),
             Transaction.created_at < start,

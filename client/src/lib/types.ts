@@ -540,6 +540,14 @@ export interface ShopProductCatalogCandidate {
 export const DEVICE_MODELS = DEVICE_MODEL_IDS;
 export type DeviceModel = (typeof DEVICE_MODELS)[number];
 
+/** Who set "עקיפת בדיקת מספר מסוף" for the level a till takes it from, and when (lib/terminalCheckBypass.ts). */
+export interface TerminalCheckBypassChange {
+  userEmail: string | null;
+  userRole: string | null;
+  scopeType: string | null;
+  at: string | null;
+}
+
 export interface PosMachine {
   id: string;
   name: string;
@@ -579,11 +587,24 @@ export interface PosMachine {
    */
   hasBuiltinTerminal?: boolean;
   /**
-   * "סוג מכשיר (תפקיד)": `till` or `kiosk` (a self-order kiosk). Null where the server did
-   * not compute it. `kioskEnabled` false: a kiosk switched off, working as a till.
+   * "סוג מכשיר (תפקיד)": `till`, `kiosk` (a self-order kiosk), `kds` (a kitchen screen) or
+   * `order_status_board` (the "מוכן / לא מוכן" board). Null where the server did not compute
+   * it. `kioskEnabled` false: a kiosk switched off, working as a till.
    */
-  deviceRole?: 'till' | 'kiosk' | null;
+  deviceRole?: 'till' | 'kiosk' | 'kds' | 'order_status_board' | null;
   kioskEnabled?: boolean | null;
+  /**
+   * False for a display device (a KDS / the board): not a till, not an accounting system —
+   * no sales, shifts, Z, payments or register number. Absent on an older server: a till.
+   */
+  fiscal?: boolean;
+  /** "android" | "windows" | "web" (the browser kiosk, docs/SPEC_KIOSK.md §27) — what the device runs. */
+  platform?: 'android' | 'windows' | 'web' | null;
+  /**
+   * Its KDS screen, or null. On a fiscal till: a screen paired on the KDS page before
+   * display devices existed (flagged "מסך מטבח על קופה").
+   */
+  kdsScreen?: { role: 'station' | 'expo' | 'pickup' | 'manager'; name: string; isActive: boolean; shopId: string | null } | null;
   /** The model chosen on the dashboard, and the one the device named itself at pairing. */
   deviceModelChosen?: DeviceModel | null;
   deviceModelReported?: DeviceModel | null;
@@ -733,6 +754,16 @@ export interface PosMachine {
    * the expected number on the till itself and a matching report; null = not locked.
    */
   cardLock?: 'mismatch' | 'not_configured' | 'unknown' | null;
+  /**
+   * "עקיפת בדיקת מספר מסוף" (docs/SPEC_KIOSK.md §20.1): the till parameter is on for this till
+   * (then `cardLock` is null), the level it comes from, who set that level and when, what the
+   * till itself last reported it applies (null: never said), and the lock it lifts now.
+   */
+  terminalNumberCheckBypass?: boolean;
+  terminalNumberCheckBypassSource?: string | null;
+  terminalNumberCheckBypassChange?: TerminalCheckBypassChange | null;
+  terminalNumberCheckBypassReported?: boolean | null;
+  cardLockBypassed?: 'mismatch' | 'not_configured' | 'unknown' | null;
   /** The merged `nayaxEnabled`: the till charges on a Nayax pinpad on the network. */
   pinpadEnabled?: boolean;
   /** The merged pinpad address (`nayaxDeviceHost`, `nayaxDevicePort`); null = not set. */
@@ -1236,6 +1267,10 @@ export interface TaxOpenFormatPreview {
   };
   globalTaxRate: number;
   dateRange: { year?: number; from?: string; to?: string };
+  /** Documents whose payment records were apportioned (their tenders did not add up). */
+  flaggedDocuments?: { transactionId: string; documentNumber: string | null; code: string; text: string }[];
+  /** Duplicate copies left out of the file (each document once). */
+  excludedDuplicateCopies?: number;
 }
 
 export type ValueDisplayMode = 'product_price' | 'fixed' | 'none';
@@ -1299,6 +1334,10 @@ export interface PairingCode {
   isUsed: boolean;
   usedAt?: string;
   createdAt: string;
+  /** "till" | "kiosk" | "kds" | "order_status_board"; null = till (an older code). */
+  deviceRole?: string | null;
+  /** "android" | "windows" | "web"; null = no check (an older code, a replacement code). */
+  platform?: 'android' | 'windows' | 'web' | null;
 }
 
 export interface SyncLog {
@@ -1354,6 +1393,8 @@ export interface TransactionPayment {
   cardBrand?: string | null;
   cardAcquirer?: string | null;
   cardIssuer?: string | null;
+  /** "ללא החזר כספי" (docs/SPEC_REMOTE_CREDIT.md): no money moved on this leg. */
+  noMoneyMovement?: boolean;
 }
 
 /** Another document of the same mixed basket (same `basketId`). */
@@ -1424,6 +1465,26 @@ export interface Transaction {
   offlineOutcome?: OfflineOutcome | null;
   /** List rows: the brands (מותג) of its card legs. */
   cardBrands?: string[];
+  /**
+   * "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the dashboard request this credit answered,
+   * and whether it moved no money ("ללא החזר כספי — עסקה שלא בוצעה").
+   */
+  remoteCreditRequestId?: string | null;
+  noMoneyMovement?: boolean;
+  /** The approver linked when they are of this business (informational, never a refusal). */
+  approvedByUserId?: string | null;
+  approvedByPosUserId?: string | null;
+  /** The approver exactly as the till sent it (docs/SHIFTS_API.md §1.2b). */
+  claimedApproverUserId?: string | null;
+  claimedApproverPosUserId?: string | null;
+  /** Quiet notes written at ingest — shown in the detail, never an alarm. */
+  ingestNotes?: IngestNote[] | null;
+}
+
+export interface IngestNote {
+  code: string;
+  text: string;
+  detail?: string;
 }
 
 export type OfflineOutcome = 'approved' | 'declined';
@@ -1881,6 +1942,8 @@ export interface ZReport {
   offlineDiscrepancies?: ZOfflineDiscrepancy[] | null;
   /** What this Z includes ("קופה עצמאית בתוך סניף"); null on older Zs. */
   scope?: ZReportScope | null;
+  /** "סוג Z": shop | independent | till | kiosk | legacy (docs/SPEC_REPORTS.md §4). */
+  zType?: 'shop' | 'independent' | 'till' | 'kiosk' | 'legacy' | null;
   /**
    * The shop's branch code ("קוד סניף") — on every Z, so two Z sequences of one branch
    * (the shop Z and an independent till's) are told apart with the till number.
@@ -2800,9 +2863,23 @@ export type AppUpdateStatus =
   | 'failed'
   | 'declined';
 
-/** One uploaded APK. Global — every tenant's tills run the same app. */
+/**
+ * Which app a release is: the Android till APK, the Windows app's installer, or a kiosk web
+ * bundle (`kiosk_web`: a zip of the kiosk's screens the Android kiosk shows in a WebView).
+ */
+export type AppPlatform = 'android' | 'windows' | 'kiosk_web';
+
+/** Auto-install only between these device-local times ("HH:MM"; may cross midnight). */
+export interface AppInstallWindow {
+  start: string;
+  end: string;
+}
+
+/** One uploaded APK or Windows installer. Global — every tenant's devices run the same app. */
 export interface AppRelease {
   id: string;
+  /** Absent on an older server: Android. */
+  platform?: AppPlatform;
   versionCode: number;
   versionName: string;
   sha256: string;
@@ -2813,12 +2890,16 @@ export interface AppRelease {
   createdAt?: string | null;
   /** Live (not cancelled) assignments. */
   assignmentCount: number;
+  /** Kiosk web bundles: the bridge API the bundle needs from the kiosk's APK; null otherwise. */
+  bridgeApi?: number | null;
 }
 
 export interface AppReleaseAssignment {
   id: string;
   releaseId: string;
   versionName?: string | null;
+  /** The release's platform: the assignment reaches only devices of that platform. */
+  platform?: AppPlatform;
   level: AppReleaseLevel;
   targetId: string;
   /** The target's name; null when it no longer exists. */
@@ -2827,9 +2908,14 @@ export interface AppReleaseAssignment {
   targetContext?: string | null;
   tenantId: string;
   autoInstall: boolean;
+  /** Staged rollout: the share (1..100) of the target's devices it covers. */
+  rolloutPercent?: number;
+  /** Rollback allowed (Windows and kiosk web bundles only). */
+  allowDowngrade?: boolean;
+  installWindow?: AppInstallWindow | null;
   createdAt?: string | null;
   cancelledAt?: string | null;
-  /** Active tills it reaches (whether or not something more specific wins there). */
+  /** Active devices of its platform it reaches (whether or not something more specific wins there). */
   machineCount: number;
 }
 
@@ -2838,6 +2924,9 @@ export interface AppReleaseRolloutRow {
   machineId: string;
   machineName: string;
   posNumber?: string | null;
+  platform?: AppPlatform;
+  /** "till" | "kiosk". */
+  deviceRole?: string | null;
   companyId?: string | null;
   companyName?: string | null;
   shopId?: string | null;
@@ -2855,10 +2944,37 @@ export interface AppReleaseRolloutRow {
   autoInstall?: boolean | null;
   /** The till already runs the target. */
   upToDate: boolean;
+  /** A target is assigned and the device does not run it. */
+  behind?: boolean;
+  /** The newest active release of the device's platform. */
+  newestVersion?: string | null;
+  newestVersionCode?: number | null;
+  behindNewest?: boolean;
   /** The till's last report about the target; null = it has said nothing yet. */
   status?: AppUpdateStatus | null;
   statusMessage?: string | null;
   statusAt?: string | null;
+  // Kiosk web rows only (`platform` "kiosk_web"; null on the others) — the kiosk's last
+  // kiosk-web status. On these rows `currentVersion` is its active bundle (not the APK).
+  /** What the kiosk shows now. */
+  renderer?: 'native' | 'web' | null;
+  /** What its config asks (`general.renderer`). */
+  rendererConfigured?: 'native' | 'web' | null;
+  /** Why it shows the built-in screens: ready_timeout | render_gone | js_errors | no_bundle | bridge_api | load_error … */
+  fallbackReason?: string | null;
+  /** Downloaded, waiting for the kiosk to be idle. */
+  pendingVersion?: string | null;
+  /** "bundled" (inside the APK) | "downloaded". */
+  bundleSource?: string | null;
+  webStatusAt?: string | null;
+  webStatusMessage?: string | null;
+  // "עדכון שקט" (lib/deviceManagement.ts), from the device's heartbeat; null: not said yet.
+  deviceOwner?: boolean | null;
+  silentUpdate?: boolean | null;
+  /** device_owner | self_update | urovo | pax — silent; tap — someone confirms on screen. */
+  updatePath?: string | null;
+  kioskLock?: string | null;
+  deviceManagementReportedAt?: string | null;
 }
 
 // ── Live sales by item (`GET /reports/live-items`) ────────────────────────────

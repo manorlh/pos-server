@@ -19,7 +19,7 @@ import { isoToLocalInput, localInputToIso, type AttendanceShift } from '@/lib/at
 import { formatCurrency } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
+import { DateTimePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 
 export type ClosableShift = Pick<AttendanceShift, 'id' | 'posUserName'>;
@@ -83,7 +83,7 @@ export function CloseShiftDialog({
           <p className="text-muted-foreground text-sm">{t('close.hint')}</p>
           <div className="space-y-1">
             <Label className="text-xs">{t('close.at')}</Label>
-            <Input type="datetime-local" value={at} onChange={(e) => setAt(e.target.value)} dir="ltr" />
+            <DateTimePicker value={at} onChange={(e) => setAt(e.target.value)} dir="ltr" />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">{t('close.reason')}</Label>

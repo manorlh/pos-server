@@ -24,6 +24,12 @@ from sqlalchemy.sql import func
 from app.database import Base
 from app.models.sunmi import SUNMI_MODEL_IDS, SUNMI_MODELS, detect_sunmi, sunmi_model
 from app.models.synqpay_devices import SYNQPAY_DEVICE_MODEL_IDS, detect_synqpay
+from app.models.vendor_devices import (
+    VENDOR_DEVICE_MODEL_IDS,
+    detect_vendor_device,
+    machine_has_builtin_terminal,
+    vendor_device_model,
+)
 
 
 class PairingStatus(str, enum.Enum):
@@ -69,6 +75,9 @@ DEVICE_MODELS = (
     # SynqPay terminals the till runs on (docs/SPEC_SYNQPAY.md §1.5, app/models/synqpay_devices.py):
     # a terminal of their own, like the F20.
     *SYNQPAY_DEVICE_MODEL_IDS,
+    # PAX A77 / Urovo i9100 (Android 8.1, app/models/vendor_devices.py): Agamento / TC as their
+    # terminal, like the F20; their printer through the vendor's API.
+    *VENDOR_DEVICE_MODEL_IDS,
 )
 
 _NO_PRINTER_MODELS = frozenset({
@@ -156,7 +165,10 @@ def device_paper_width_mm(device_model) -> "int | None":
 
 
 def device_has_builtin_scanner(device_model) -> bool:
-    """A scan head of its own (SUNMI V2 PRO, V2s PLUS, V3, L2, K2) — not the camera."""
+    """A scan head of its own (SUNMI V2 PRO, V2s PLUS, V3, L2, K2; Urovo i9100) — not the camera."""
+    vendor = vendor_device_model(device_model)
+    if vendor is not None:
+        return vendor.scanner
     sunmi = sunmi_model(device_model)
     return bool(sunmi and sunmi.scanner)
 
@@ -216,6 +228,10 @@ def detect_device_model(device_info) -> "str | None":
     sunmi = detect_sunmi(device_info)
     if sunmi is not None:
         return sunmi
+    # A PAX A77 / Urovo i9100 by its maker (or brand) and model (app/models/vendor_devices.py).
+    vendor = detect_vendor_device(device_info)
+    if vendor is not None:
+        return vendor
     by_model = _REPORTED_MODELS.get(_normalized(device_info.get("model")) or "")
     if by_model is not None:
         return by_model
@@ -267,7 +283,7 @@ class POSMachine(Base):
     #: "קידומת מסמכים" (docs/SPEC_DOCUMENT_PREFIX.md): what this till's document numbers
     #: are printed and exported under — `20000057`. Digits only, 1–3 characters. Null means
     #: the default, the register number (`effective_document_prefix`). Unique among the
-    #: tills of its shop / branch (`app.services.document_prefix`), and given up with the
+    #: tills of its whole business — every branch (`app.services.document_prefix`) — and given up with the
     #: shop like the register number. Every document freezes the prefix it was issued
     #: with (`transactions.document_prefix`), so a change here never rewrites history.
     document_prefix = Column(String(3), nullable=True)
@@ -327,6 +343,17 @@ class POSMachine(Base):
     #: The address the last heartbeat came from, as the cloud saw it; the device's own LAN one.
     last_ip = Column(String(64), nullable=True, index=True)
     lan_ip = Column(String(64), nullable=True, index=True)
+
+    # ── Device owner and silent updates (app/services/device_management.py) ──
+    #: The heartbeat's `deviceManagement` block as last sent, cleaned: whether the app is the
+    #: device owner, which path its updates take (device_owner / self_update / urovo / pax —
+    #: silent; tap — someone confirms on screen), how its kiosk lock holds, and a technician's
+    #: release of the device owner. Null: the till has said nothing (an older build).
+    device_management = Column(JSONB, nullable=True)
+    device_management_reported_at = Column(DateTime(timezone=True), nullable=True)
+    #: The dashboard's "הפעל מחדש" for a device-owner till, while it waits and as it ended:
+    #: {id, status, requestedAt, requestedBy, updatedAt, reason}. Handed over on the heartbeat.
+    reboot_request = Column(JSONB, nullable=True)
 
     # NULL means the device could not read the battery, which is NOT 0. Never
     # coerce one into the other — "unknown charge" and "about to die" call for
@@ -441,6 +468,21 @@ class POSMachine(Base):
     # next Z says it ("המכשיר הוחלף בתאריך …"). NULL: never replaced / already said.
     replacements = Column(JSONB, nullable=True)
     replacement_note_pending = Column(JSONB, nullable=True)
+    # ── Re-paired as a new machine (docs/SHIFTS_API.md §1.2c-bis) ──────────────
+    #: The machine this same device was before it redeemed an ordinary pairing code as a
+    #: new machine (matched by its serial at pairing). What the device still delivers that
+    #: it issued as that machine is filed under it — its tenant, shop and shift.
+    predecessor_machine_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    #: What the predecessor still owed when the device was re-paired: its open shift, the
+    #: documents it last reported unsent, its counters (app/services/document_filing.py).
+    repair_handover = Column(JSONB, nullable=True)
+    #: Corrections to documents already in a Z (a re-push with other fiscal content),
+    #: waiting for this till's next Z, which carries each as an adjustment (§1.2-amended).
+    pending_z_adjustments = Column(JSONB, nullable=True)
+    #: Every change of `z_mode` (who produces the till's Z), oldest first: `[{at, from, to}]`.
+    #: A document goes to the Z kind its till was in when it was issued — a later switch
+    #: never moves it (`document_filing.mode_at`). NULL: never switched since this was kept.
+    z_mode_history = Column(JSONB, nullable=True)
     #: The first time this till said anything about transmissions. Card legs of documents
     #: from before it are never "untransmitted": the feature did not exist when they were
     #: sold. Cleared when a replacement device adopts the till, which starts it again.
@@ -474,6 +516,9 @@ class POSMachine(Base):
     #: Agamento names them. Kept once seen: a reply that omits them does not clear them.
     terminal_merchant_name = Column(String(120), nullable=True)
     terminal_supplier_number = Column(String(30), nullable=True)
+    #: "עקיפת בדיקת מספר מסוף" as the till applies it, from its heartbeat
+    #: (`terminalNumberCheckBypass`, app/services/terminal_check_bypass.py). Null: never said.
+    terminal_number_check_bypass_reported = Column(Boolean, nullable=True)
     # ── Who produces this till's Z (docs/SHIFTS_API.md §5.1) ──────────────────
     # "cloud": the shop's Z run builds it, numbered in the shop's run — the default, and
     # every till's behaviour before this column existed. "till": the till asks for its
@@ -488,6 +533,18 @@ class POSMachine(Base):
     # tables off unless set at its own level. Changed only through
     # `app.services.independent_till.set_independent` (super admin, over a clean break).
     independent_till = Column(Boolean, nullable=False, default=False, server_default="false")
+    # ── "מכשיר תצוגה" (docs/SPEC_DEVICE_ROLE_MODEL.md §2.2) ─────────────────────
+    #: False for a display device — a KDS kitchen screen or the "מוכן / לא מוכן" board,
+    #: added as one on the dashboard. The owner: such a device is NOT a till and not an
+    #: accounting system — no register number, no document prefix, no shifts, no Z, no
+    #: cash, no payments, no documents; never a shop Z participant, the main till or a host
+    #: (app/services/display_devices.py). Enforced on every fiscal till endpoint
+    #: (`require_fiscal_machine`, 403 `device_not_fiscal`). Set at pairing only — a change
+    #: between a till and a display device is a new pairing.
+    is_fiscal = Column(Boolean, nullable=False, default=True, server_default="true", index=True)
+    #: "android" | "windows": what the device runs, from `device_info.platform` at pairing.
+    #: Null: a device paired before the column — Android.
+    platform = Column(String(16), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
@@ -518,6 +575,11 @@ class POSMachine(Base):
         # "מכשירי הסליקה הם חיצוניים" (docs/SPEC_DEVICE_ROLE_MODEL.md): a kiosk charges on an
         # external pinpad on the network whatever its model, never on a built-in terminal —
         # so `machines/me`, the payment integration and the pinpad warning all read it so.
+        # A PAX A77 / Urovo i9100 has Agamento's terminal only if the till found Agamento on it
+        # when it paired (app/models/vendor_devices.py), as an F20 does.
+        vendor = machine_has_builtin_terminal(self.device_model, self.device_info)
+        if vendor is not None:
+            return vendor and not self.is_kiosk
         return device_has_builtin_terminal(self.device_model) and not self.is_kiosk
 
     @property

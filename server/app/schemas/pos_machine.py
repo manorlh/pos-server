@@ -20,10 +20,18 @@ DeviceModel = Literal[
     # SynqPay terminals (`app.models.synqpay_devices.SYNQPAY_DEVICE_MODEL_IDS`, docs/SPEC_SYNQPAY.md).
     "SYNQPAY_DX8000", "SYNQPAY_DX6000", "SYNQPAY_EX8000", "SYNQPAY_RX5000",
     "SYNQPAY_S1P2", "SYNQPAY_S1U2_M4", "SYNQPAY_VERIFONE", "SYNQPAY",
+    # PAX A77 / Urovo i9100 (`app.models.vendor_devices.VENDOR_DEVICE_MODEL_IDS`): Agamento / TC.
+    "PAX_A77", "UROVO_I9100",
 ]
 
-#: "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): a till or a self-order kiosk.
-DeviceRole = Literal["till", "kiosk"]
+#: "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): a till, a self-order kiosk, a KDS
+#: kitchen screen or the "מוכן / לא מוכן" board. The last two are display devices: not tills
+#: and not accounting systems (app/services/display_devices.py).
+DeviceRole = Literal["till", "kiosk", "kds", "order_status_board"]
+
+#: What the device runs (app/services/display_devices.py `PLATFORMS`). "web": the browser kiosk
+#: the dashboard app serves at `/k` (a kiosk only — docs/SPEC_KIOSK.md §27).
+DevicePlatform = Literal["android", "windows", "web"]
 
 
 class PairingStatus(str):
@@ -147,6 +155,9 @@ class MachineHeartbeatBody(BaseModel):
     #: The SIMs, the data path and the LAN address (pos-android CellularDtos.kt), cleaned field
     #: by field in `device_identity.clean_cellular` — never a 422.
     cellular: Optional[Dict[str, Any]] = None
+    #: Device owner and silent updates (pos-android system/DeviceManagement.kt), cleaned key by
+    #: key in `device_management.clean_block` — never a 422.
+    device_management: Optional[Dict[str, Any]] = Field(None, alias="deviceManagement")
     # No ge/le bound here deliberately: an out-of-range reading is clamped in the
     # service, not rejected. See MachineHeartbeatBody's docstring.
     battery_percent: Optional[int] = Field(None, alias="batteryPercent")
@@ -171,6 +182,9 @@ class MachineHeartbeatBody(BaseModel):
     #: The till's card terminal (Agamento): its number, clearing server, offline mode and
     #: the till's last write into it. Absent or null leaves the stored reading as it was.
     terminal: Optional[HeartbeatTerminal] = None
+    #: "עקיפת בדיקת מספר מסוף" as the till applies it now (app/services/terminal_check_bypass.py).
+    #: Absent (an older build) leaves the stored reading as it was.
+    terminal_number_check_bypass: Optional[bool] = Field(None, alias="terminalNumberCheckBypass")
     #: Zs closed at the till with no connection, not uploaded yet (§4.4 of the offline
     #: till Z spec). Absent leaves the stored reading as it was.
     offline_till_z: Optional[HeartbeatOfflineTillZ] = Field(None, alias="offlineTillZ")
@@ -294,6 +308,20 @@ class POSMachineResponse(POSMachineBase):
     device_role: Optional[str] = Field(None, alias="deviceRole")
     #: For a kiosk: whether it is on (`enabled`). A disabled kiosk works as a till.
     kiosk_enabled: Optional[bool] = Field(None, alias="kioskEnabled")
+    #: False for a display device (a KDS / the "מוכן / לא מוכן" board): not a till, not an
+    #: accounting system (docs/SPEC_DEVICE_ROLE_MODEL.md §2.2). From the row on a plain PUT.
+    is_fiscal: bool = Field(True, alias="fiscal")
+    #: "android" | "windows" (null on a plain PUT answer of a machine paired before the column).
+    platform: Optional[str] = None
+    #: Its KDS screen (`role`, `name`, `isActive`, `shopId`), or null. On a fiscal till: a
+    #: screen paired on the KDS page before display devices existed — flagged.
+    kds_screen: Optional[Dict[str, Any]] = Field(None, alias="kdsScreen")
+
+    @field_validator("is_fiscal", mode="before")
+    @classmethod
+    def _unset_is_fiscal(cls, value):
+        # A row not flushed yet has no column default applied: a till.
+        return value is not False
     #: The model the dashboard chose, and the one the device named itself at pairing (if
     #: recognised). When they differ from `deviceModel` the machine page warns.
     device_model_chosen: Optional[str] = Field(None, alias="deviceModelChosen")
@@ -324,6 +352,12 @@ class POSMachineResponse(POSMachineBase):
     cellular_reported_at: Optional[datetime] = Field(None, alias="cellularReportedAt")
     last_ip: Optional[str] = Field(None, alias="lastIp")
     lan_ip: Optional[str] = Field(None, alias="lanIp")
+    #: "עדכון שקט" (app/services/device_management.py): the heartbeat's `deviceManagement` block
+    #: as last sent (device owner, update path, kiosk lock, a technician's release), when, and
+    #: the dashboard's "הפעל מחדש" request as it stands.
+    device_management: Optional[Dict[str, Any]] = Field(None, alias="deviceManagement")
+    device_management_reported_at: Optional[datetime] = Field(None, alias="deviceManagementReportedAt")
+    reboot_request: Optional[Dict[str, Any]] = Field(None, alias="rebootRequest")
     # Null means "the device could not read it", never "flat". The dashboard must
     # render it as unknown rather than as 0%.
     battery_percent: Optional[int] = Field(None, alias="batteryPercent")
@@ -407,6 +441,15 @@ class POSMachineResponse(POSMachineBase):
     #: The till's card lock on its last report (docs/SPEC_KIOSK.md §20): "mismatch" |
     #: "not_configured" | "unknown"; null = card payment not locked.
     card_lock: Optional[str] = Field(None, alias="cardLock")
+    #: "עקיפת בדיקת מספר מסוף" (docs/SPEC_KIOSK.md §20.1, app/services/terminal_check_bypass.py):
+    #: on for this till (then `cardLock` is null), the level it comes from, who set it and when
+    #: ({userEmail, userRole, at, scopeType…}), what the till itself reported it applies (null:
+    #: never said), and the lock the check would have put on now.
+    terminal_number_check_bypass: Optional[bool] = Field(None, alias="terminalNumberCheckBypass")
+    terminal_number_check_bypass_source: Optional[str] = Field(None, alias="terminalNumberCheckBypassSource")
+    terminal_number_check_bypass_change: Optional[Dict[str, Any]] = Field(None, alias="terminalNumberCheckBypassChange")
+    terminal_number_check_bypass_reported: Optional[bool] = Field(None, alias="terminalNumberCheckBypassReported")
+    card_lock_bypassed: Optional[str] = Field(None, alias="cardLockBypassed")
     # ── The network pinpad (app/services/payment_terminal.py) ───────────────────
     #: The merged `nayaxEnabled`, and the merged address (`nayaxDeviceHost`, `nayaxDevicePort`).
     pinpad_enabled: Optional[bool] = Field(None, alias="pinpadEnabled")

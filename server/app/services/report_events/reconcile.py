@@ -173,7 +173,7 @@ def reconcile_z(
                 db.query(Transaction).filter(
                     Transaction.shift_id.in_([_uuid(i) for i in shift_ids]),
                     Transaction.machine_id == machines[mid].id,
-                    Transaction.status.in_(SALE_STATUSES),
+                    Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
                     or_(Transaction.created_at < starts, Transaction.created_at >= ends),
                 ),
             )
@@ -260,7 +260,7 @@ def _legs_between(db: Session, machine: POSMachine, after: Optional[datetime], u
         .filter(
             Transaction.machine_id == machine.id,
             TransactionPayment.method == "card",
-            Transaction.status.in_(SALE_STATUSES),
+            Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
             Transaction.created_at <= until,
         )
     )

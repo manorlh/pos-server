@@ -36,6 +36,7 @@ import {
 import { useOrgScopeLabel } from '@/components/dashboard/live/scope-picker';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DatePicker, TimeInput } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -554,11 +555,11 @@ function PromotionForm({
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label htmlFor="pr-from">{t('validFrom')}</Label>
-                <Input id="pr-from" type="date" value={draft.validFrom} onChange={(e) => set({ validFrom: e.target.value })} />
+                <DatePicker id="pr-from" value={draft.validFrom} onChange={(e) => set({ validFrom: e.target.value })} />
               </div>
               <div className="space-y-1">
                 <Label htmlFor="pr-to">{t('validTo')}</Label>
-                <Input id="pr-to" type="date" value={draft.validTo} onChange={(e) => set({ validTo: e.target.value })} />
+                <DatePicker id="pr-to" value={draft.validTo} onChange={(e) => set({ validTo: e.target.value })} />
               </div>
             </div>
             <div className="space-y-1.5">
@@ -589,11 +590,11 @@ function PromotionForm({
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label htmlFor="pr-start">{t('startTime')}</Label>
-                <Input id="pr-start" type="time" value={draft.startTime} onChange={(e) => set({ startTime: e.target.value })} />
+                <TimeInput id="pr-start" value={draft.startTime} onChange={(e) => set({ startTime: e.target.value })} />
               </div>
               <div className="space-y-1">
                 <Label htmlFor="pr-end">{t('endTime')}</Label>
-                <Input id="pr-end" type="time" value={draft.endTime} onChange={(e) => set({ endTime: e.target.value })} />
+                <TimeInput id="pr-end" value={draft.endTime} onChange={(e) => set({ endTime: e.target.value })} />
               </div>
             </div>
             <p className="text-xs text-muted-foreground">{t('hoursHint')}</p>

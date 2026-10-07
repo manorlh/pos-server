@@ -3,8 +3,9 @@
 (docs/SPEC_DOCUMENT_PREFIX.md).
 
 * The rule: digits, 1–3; shown as `<prefix>-<number>`. The default is the register number.
-* Unique among the tills of a shop (and of shops filed under the same branch code), and
-  never again once another till's documents carry it. A Hebrew 409 otherwise.
+* Unique among the tills of the whole business — every shop of the company, whatever its
+  branch code — and never again once another till's documents carry it. A Hebrew 409
+  otherwise. (More in test_document_prefix_business.py.)
 * Frozen at issue: the till sends the prefix with the document; the cloud stores it and a
   re-push never changes it. A document without one reads as its register number.
 * Everywhere a number is shown: the dashboard reads, the cloud reprint (with "קופה N"),
@@ -271,24 +272,21 @@ class TestSetting:
         _put(w, one, documentPrefix="60")
         assert POSMachineResponse.model_validate(_put(w, one, documentPrefix="50")).document_prefix == "50"
 
-    def test_another_shop_is_another_series(self, w):
-        status = _put(w, w.other_till, documentPrefix=w.tills[1].pos_number)
-        assert not isinstance(status, JSONResponse)
-
-    def test_shops_filed_under_one_branch_code_share_the_rule(self, w):
-        w.shop.branch_id = "001"
-        w.other_shop.branch_id = "001"
+    def test_another_shop_of_the_business_is_the_same_series(self, w):
+        # The open-format file is one per business: branch codes do not tell two
+        # branches' `20000057` apart (the Tax Authority's simulator refuses the pair).
+        w.shop.branch_id = "1"
+        w.other_shop.branch_id = "2"
         w.db.commit()
-        status, _ = _refused(_put(w, w.other_till, documentPrefix=w.tills[1].pos_number))
-        assert status == 409
-        w.other_shop.branch_id = "002"
-        w.db.commit()
-        assert not isinstance(_put(w, w.other_till, documentPrefix=w.tills[1].pos_number), JSONResponse)
+        status, body = _refused(_put(w, w.other_till, documentPrefix=w.tills[1].pos_number))
+        assert status == 409 and body["code"] == "document_prefix_in_use"
+        assert w.shop.name in body["detail"] and "בכל הסניפים" in body["detail"]
+        assert w.other_till.document_prefix is None
 
     def test_a_new_till_whose_register_number_is_held_gets_a_free_prefix(self, w):
         one, two = w.tills
-        _put(w, one, documentPrefix="3")
-        # A third till drawing register number 3 would print 3-1, 3-2… like till 1 does now.
+        # A third till of the shop draws register number 3 — the default the other shop's
+        # till 3 issues under: it would print 30000001… like that till does now.
         from app.models.pos_machine import PairingStatus, POSMachine
 
         three = POSMachine(
@@ -298,8 +296,10 @@ class TestSetting:
         )
         w.db.add(three)
         w.db.flush()
-        assert DP.settle_default(w.db, three) == str(DP.AUTO_PREFIX_START)
-        assert three.effective_document_prefix == str(DP.AUTO_PREFIX_START)
+        # The lowest prefix free in the business: 1 and 2 are tills 1–2's, 3 the other
+        # shop's till's.
+        assert DP.settle_default(w.db, three) == "4"
+        assert three.effective_document_prefix == "4"
         # A till whose default is free keeps it.
         assert DP.settle_default(w.db, two) is None and two.document_prefix is None
 

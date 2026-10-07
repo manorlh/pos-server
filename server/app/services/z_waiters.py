@@ -130,7 +130,8 @@ def waiter_breakdown(db: Session, shift_ids: Iterable[uuid.UUID], shop_id: Any) 
             .filter(Transaction.shift_id.in_(ids), Transaction.machine_id == Shift.machine_id)
             .all()
         )
-        if d.status in SALE_STATUSES
+        # A duplicate copy is counted once, by the document holding its number (SHIFTS_API §1.2d).
+        if d.status in SALE_STATUSES and not getattr(d, "duplicate_copy", False)
     ]
     if not documents:
         return []

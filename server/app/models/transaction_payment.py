@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, String, ForeignKey, Numeric, Integer, Index,
+    Boolean, Column, String, ForeignKey, Numeric, Integer, Index,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -85,5 +85,11 @@ class TransactionPayment(Base):
     card_acquirer = Column(String(16), nullable=True)
     #: מנפיק (the reply's `manpik`): as the acquirer, plus foreign.
     card_issuer = Column(String(16), nullable=True)
+
+    #: "ללא החזר כספי — עסקה שלא בוצעה" (docs/SPEC_REMOTE_CREDIT.md): a leg of a credit for a
+    #: sale that never really happened. Its method mirrors the original's, but no money
+    #: moved: no refund reaches the terminal, nothing leaves the drawer, and the
+    #: reconciliation must not expect either.
+    no_money_movement = Column(Boolean, nullable=False, default=False, server_default="false")
 
     transaction = relationship("Transaction", back_populates="payments")

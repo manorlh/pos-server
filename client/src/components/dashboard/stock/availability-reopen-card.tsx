@@ -30,6 +30,7 @@ import {
 } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
+import { formatDateTime } from '@/lib/format';
 import {
   AUTO_REOPEN_MODES,
   autoReopenPatch,
@@ -277,8 +278,7 @@ function ReopenLog({ shopId }: { shopId: string }) {
     queryFn: () =>
       api.get('/availability/reopens', { params: { shopId, limit: 20 } }).then((r) => r.data),
   });
-  const when = (iso: string) =>
-    new Date(iso).toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' });
+  const when = (iso: string) => formatDateTime(iso);
 
   return (
     <div className="space-y-2 border-t pt-3">

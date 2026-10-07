@@ -11,6 +11,19 @@
  * node test does not call.
  */
 
+import {
+  KIOSK_LAYOUT_DEFAULTS,
+  KIOSK_WELCOME_DEFAULTS,
+  layoutTemplateLayer,
+  repairLayout,
+  templateOf,
+  validateLayout,
+  type KioskLayout,
+  type KioskWelcome,
+} from './kioskLayout';
+import { validateKioskTexts, isKioskTextKey, type KioskTextsByLang } from './kioskTexts';
+import { validateCategoryIconIds } from './kioskIcons';
+
 /* ------------------------------------------------------------------ types */
 
 export type MediaKind = 'image' | 'video' | 'font';
@@ -29,6 +42,9 @@ export type ServiceType = 'take_away' | 'eat_in';
 export type KioskLanguage = 'he' | 'en' | 'ar' | 'ru';
 export type SkipCartMode = 'off' | 'direct' | 'confirm';
 export type SoldOutMode = 'disable' | 'hide';
+/** The Android kiosk's screens: the APK's built-in ones, or the web screens bundle (updated from the cloud). */
+export type KioskRenderer = 'native' | 'web';
+export const KIOSK_RENDERERS: readonly KioskRenderer[] = ['native', 'web'];
 
 export interface KioskGeneral {
   fulfillmentMode: FulfillmentMode;
@@ -52,14 +68,40 @@ export interface KioskGeneral {
   /** "הודעה ללקוח כשאין אינטרנט": a quiet line to the customer while offline and still selling; off. */
   offlineNotice: boolean;
   soldOutMode: SoldOutMode;
+  /**
+   * "מנוע תצוגה בקיוסק אנדרואיד": the built-in screens ("native", default) or the web screens
+   * bundle ("web") — admin, payments and printing stay native; the kiosk falls back by itself.
+   */
+  renderer: KioskRenderer;
   /** "לקחת / לשבת": after "הזמינו כאן" (default) or two big buttons on the attract screen. */
   servicePlacement: ServicePlacement;
+  /** "לאכול כאן או לקחת?": a tap picks and "להמשך" goes on (default), or a tap goes on at once. */
+  serviceSelect: ServiceSelect;
 }
 
 export type ServicePlacement = 'after_start' | 'attract';
 export const SERVICE_PLACEMENTS: ServicePlacement[] = ['after_start', 'attract'];
+export type ServiceSelect = 'confirm' | 'instant';
+export const SERVICE_SELECTS: ServiceSelect[] = ['confirm', 'instant'];
 export type DetailsStep = 'after_service' | 'before_cart' | 'before_pay' | 'after_pay';
 export const DETAILS_STEPS: DetailsStep[] = ['after_service', 'before_cart', 'before_pay', 'after_pay'];
+/**
+ * "סדר השלבים לפני התשלום": the steps between the basket's review and the payment — the tip and
+ * the customer's details (the name / phone window, when `detailsStep` is before_pay). Only their
+ * order: each is on by its own settings (`tipEnabled`; the customer fields).
+ */
+export type CheckoutStep = 'tip' | 'details' | 'payMethod';
+/** "payMethod" ("איך תרצו לשלם?") is always the last, right before the payment (checkoutStepOrder). */
+export const CHECKOUT_STEPS: CheckoutStep[] = ['tip', 'details', 'payMethod'];
+/**
+ * "איך תרצו לשלם?" (docs/SPEC_KIOSK.md §23): the card on the external pinpad; a prepaid voucher
+ * (redeemed online, the rest by another method); cash at the till (no document on the kiosk — a
+ * slip, and a till takes the money). Bare "cash" is refused (`cash_not_supported`).
+ */
+export type PaymentMethod = 'card' | 'voucher' | 'cash_at_till';
+export const PAYMENT_METHODS: PaymentMethod[] = ['card', 'voucher', 'cash_at_till'];
+/** What can pay what a voucher leaves: a voucher is never the only method. */
+export const REMAINDER_METHODS: PaymentMethod[] = ['card', 'cash_at_till'];
 /**
  * "הגדלת מכירה" on the kiosk: the rules are the menu's (place "kiosk", lib/kioskUpsell.ts,
  * docs/SPEC_KIOSK.md §21); the kiosk keeps only its cap — the windows in one order.
@@ -151,6 +193,92 @@ export const TEXT_KEYS = [
   /** The screen shown while the kiosk has no internet (card payment unavailable). */
   'offlineTitle',
   'offlineBody',
+  /** "רוצים להוסיף טיפ לצוות?" — the tip step before the payment, and its step bar. */
+  'tipCaption',
+  'tipTitle',
+  'tipSubtitle',
+  'tipOtherLabel',
+  'tipOtherHint',
+  'tipOrderTotal',
+  'tipLine',
+  'tipTotal',
+  'tipContinue',
+  'tipSkip',
+  'stepReview',
+  'stepTip',
+  'stepDetails',
+  'stepPay',
+  'tipOtherError',
+  /** "לאכול כאן או לקחת?" — the service window (serviceTitle, takeAwayLabel, eatInLabel above). */
+  'serviceCaption',
+  'serviceSubtitle',
+  'takeAwaySub',
+  'eatInSub',
+  'serviceContinue',
+  'serviceHint',
+  /** "איך לקרוא לכם?" — the details window (the name, the phone, the table). */
+  'detailsCaption',
+  'nameTitle',
+  'nameSubtitle',
+  'nameLabel',
+  'nameHint',
+  'nameConfirm',
+  'nameSkip',
+  'phoneTitle',
+  'phoneHint',
+  'tableTitle',
+  'entryContinue',
+  'entrySkip',
+  'fieldRequired',
+  'phoneInvalid',
+  /** The kiosk's own keyboard. */
+  'kbSpace',
+  'kbToEnglish',
+  'kbToHebrew',
+  'kbNumbers',
+  'kbLettersHe',
+  'kbLettersEn',
+  /** "ההזמנה שלי" — the review before the payment ({n}: the number of items). */
+  'reviewHint',
+  'reviewItems',
+  'reviewItemsOne',
+  'reviewSubtotal',
+  'reviewTotal',
+  'addMoreCta',
+  /** The search and the dish's note, typed in the same window. */
+  'searchTitle',
+  'searchHint',
+  'noteTitle',
+  'noteHint',
+  'noteSave',
+  /** Barcode scans on the kiosk: "המוצר לא נמצא", and a prepaid voucher scanned (sent to the counter). */
+  'scanNotFound',
+  'scanVoucherAtTill',
+  /** "איך תרצו לשלם?": the method choice, the voucher, paying at the till — its slip and its screen ({amount}, {number}). */
+  'stepPayMethod',
+  'payMethodTitle',
+  'payMethodSubtitle',
+  'payCardLabel',
+  'payCardSub',
+  'payVoucherLabel',
+  'payVoucherSub',
+  'payCashLabel',
+  'payCashSub',
+  'remainingToPay',
+  'voucherTitle',
+  'voucherHint',
+  'voucherApply',
+  'voucherOffline',
+  'voucherApplied',
+  'voucherNoMatch',
+  'voucherForfeit',
+  'cashSlipTitle',
+  'cashSlipFooter',
+  'cashSlipPending',
+  'cashDoneTitle',
+  'cashDoneBody',
+  /** The attract screen with its button hidden: the line in its place. */
+  'attractTouchHint',
 ] as const;
 export type KioskTextKey = (typeof TEXT_KEYS)[number];
 export type KioskTexts = Partial<Record<KioskTextKey, string>>;
@@ -159,7 +287,8 @@ export const SCREEN_IMAGE_KEYS = ['service', 'catalogHeader', 'cart', 'pay', 'su
 export type ScreenImageKey = (typeof SCREEN_IMAGE_KEYS)[number];
 export type KioskScreenImages = Partial<Record<ScreenImageKey, MediaRef | null>>;
 
-export const ATTRACT_SECTIONS = ['hero', 'promos', 'categories', 'club'] as const;
+/** `welcome` ("ברוכים הבאים"): its place among the blocks; a list without it shows it first, as before. */
+export const ATTRACT_SECTIONS = ['hero', 'promos', 'categories', 'club', 'welcome'] as const;
 export type AttractSection = (typeof ATTRACT_SECTIONS)[number];
 
 export interface PlaylistItem {
@@ -235,6 +364,15 @@ export interface KioskCta {
   subtitle: string;
   /** "כל המסך פותח הזמנה": a tap anywhere on the attract screen starts an order. */
   tapAnywhere: boolean;
+  /** The button is drawn (default). Hidden, the whole screen starts an order (`tapAnywhere` must be on). */
+  visible: boolean;
+  /** Hidden button only: a small line in its place (texts.attractTouchHint, "געו במסך כדי להזמין"). */
+  touchHint: boolean;
+}
+
+/** A tap anywhere starts an order: when set, and always when the button is hidden. */
+export function attractTapAnywhere(cta: Pick<KioskCta, 'tapAnywhere' | 'visible'>): boolean {
+  return cta.tapAnywhere || cta.visible === false;
 }
 
 export interface KioskAttract {
@@ -243,6 +381,8 @@ export interface KioskAttract {
   videoMuted: boolean;
   showHelp: boolean;
   cta: KioskCta;
+  /** "ברוכים הבאים": where and how the title block shows (kioskLayout.ts; its place in `sections` is `welcome`). */
+  welcome: KioskWelcome;
 }
 
 export interface KioskCatalog {
@@ -254,6 +394,8 @@ export interface KioskCatalog {
   featuredProductIds: string[];
   /** "הצג כל מחלקה בנפרד": one category at a time, chosen from the rail. */
   oneCategory: boolean;
+  /** A category's icon from the built-in set (kioskIcons.ts), by category id; none — suggested by its name. */
+  categoryIconIds: Record<string, string>;
 }
 
 export type MessageKind = 'banner' | 'notice' | 'closed';
@@ -305,7 +447,38 @@ export interface KioskPayment {
   tableNumber: CustomerFieldMode;
   /** When name / phone / table are asked. */
   detailsStep: DetailsStep;
+  /** "סכום אחר": the customer may give a tip of their own, in shekels, besides the presets. */
+  tipOther: boolean;
+  /** The order of the steps between the basket and the payment (CHECKOUT_STEPS; checkoutStepOrder). */
+  checkoutSteps: CheckoutStep[];
+  /** "תשלום בקופה": an open order not paid at a till within this many minutes expires (5–240). */
+  cashAtTillExpiryMin: number;
+  /** "שלח למטבח לפני תשלום": the bon of an order to pay at the till prints at once (off: once paid). */
+  cashAtTillKitchenBeforePay: boolean;
+  /**
+   * "חובה / רשות / כבוי" for the steps that are not a customer field (STEP_MODE_KEYS; `stepMode`
+   * gives the effective one). Optional on the wire: a server before it sends none — the defaults.
+   */
+  stepModes?: Partial<Record<StepModeKey, CustomerFieldMode>>;
 }
+
+/**
+ * "חובה / רשות / כבוי" per step (pos-server docs/SPEC_KIOSK_INSIGHTS.md §4): the customer fields'
+ * modes extended to the service choice, the tip, "איך תרצו לשלם?" and the upsell windows at each
+ * moment (after an item is added, at a step before the basket, before the payment). required — shown,
+ * the customer must answer; optional — shown, may be passed with the default answer; off — never
+ * shown. The server's kiosk_config.STEP_MODE_KEYS / step_mode and the till's KioskStepModes.kt.
+ */
+export type StepModeKey = 'service' | 'tip' | 'payMethod' | 'upsellItem' | 'upsellSteps' | 'upsellCheckout';
+export const STEP_MODE_KEYS: StepModeKey[] = ['service', 'tip', 'payMethod', 'upsellItem', 'upsellSteps', 'upsellCheckout'];
+export const STEP_MODE_DEFAULTS: Record<StepModeKey, CustomerFieldMode> = {
+  service: 'required',
+  tip: 'optional',
+  payMethod: 'required',
+  upsellItem: 'optional',
+  upsellSteps: 'optional',
+  upsellCheckout: 'optional',
+};
 
 export type BonMode = 'routing' | 'single';
 
@@ -363,11 +536,93 @@ export interface KioskAlerts {
   printer: KioskAlertRoute;
   terminal: KioskAlertRoute;
   help: KioskAlertRoute & { clearAfterMin: number };
+  /** "סוללה חלשה" of any device of the shop (pos-server app/services/battery_alerts.py); absent from an older server. */
+  battery?: KioskAlertRoute;
 }
-export const ALERT_KINDS = ['printer', 'terminal', 'help'] as const;
+export const ALERT_KINDS = ['printer', 'terminal', 'help', 'battery'] as const;
 export type KioskAlertKind = (typeof ALERT_KINDS)[number];
 export const ALERT_TILLS: KioskAlertTills[] = ['main', 'all', 'selected'];
 export const ALERT_AUDIENCES: KioskAlertAudience[] = ['everyone', 'managers'];
+
+/**
+ * "הנפשות ומעברים" (config `motion`): one choice per transition, each style's preset choosing
+ * (KIOSK_UI_PRESET_MOTION); `general.reduceMotion` turns all of them off (transitionSpec).
+ * The server's MOTION_* (app/services/kiosk_config.py) and the till's KioskMotionConfig.
+ */
+export type CategorySwitchFx = 'slide' | 'fade' | 'fade_scale' | 'push' | 'none';
+export type ItemsEnterFx = 'pop' | 'cascade' | 'rise' | 'flip' | 'none';
+export type ScreenChangeFx = 'slide' | 'fade' | 'zoom' | 'none';
+export type SheetFx = 'slide_up' | 'scale' | 'fade' | 'none';
+export type AddToCartFx = 'fly' | 'bounce' | 'none';
+export type MotionSpeed = 'fast' | 'normal' | 'relaxed';
+export const CATEGORY_SWITCH_FX: CategorySwitchFx[] = ['slide', 'fade', 'fade_scale', 'push', 'none'];
+export const ITEMS_ENTER_FX: ItemsEnterFx[] = ['pop', 'cascade', 'rise', 'flip', 'none'];
+export const SCREEN_CHANGE_FX: ScreenChangeFx[] = ['slide', 'fade', 'zoom', 'none'];
+export const SHEET_FX: SheetFx[] = ['slide_up', 'scale', 'fade', 'none'];
+export const ADD_TO_CART_FX: AddToCartFx[] = ['fly', 'bounce', 'none'];
+export const MOTION_SPEEDS: MotionSpeed[] = ['fast', 'normal', 'relaxed'];
+
+export interface KioskMotionSettings {
+  /** The dishes' grid when the customer picks another category (one category at a time). */
+  categorySwitch: CategorySwitchFx;
+  /** The cards of the category coming in. */
+  itemsEnter: ItemsEnterFx;
+  /** attract → service → catalog → basket → details → pay → done. */
+  screenChange: ScreenChangeFx;
+  /** The dish's window, the upsell window and the other dialogs. */
+  sheet: SheetFx;
+  /** "fly": the pop-and-fly into the basket; "bounce": only the basket button bounces. */
+  addToCart: AddToCartFx;
+  /** Scales every duration above (fast 0.7, normal 1, relaxed 1.35). */
+  speed: MotionSpeed;
+}
+
+/**
+ * "כיתוב רץ" (config `ticker`): a slim strip whose texts scroll without end, on the chosen
+ * screens — under the header or above the basket / action bar. The server's TICKER_* and
+ * KIOSK ticker schema (app/services/kiosk_config.py) and the till's domain/KioskTicker.kt.
+ */
+export const TICKER_SCREENS = ['attract', 'service', 'catalog', 'cart', 'details', 'pay', 'success'] as const;
+export type TickerScreen = (typeof TICKER_SCREENS)[number];
+export type TickerPosition = 'top' | 'bottom';
+export const TICKER_POSITIONS: TickerPosition[] = ['top', 'bottom'];
+export type TickerSpeed = 'slow' | 'normal' | 'fast';
+export const TICKER_SPEEDS: TickerSpeed[] = ['slow', 'normal', 'fast'];
+export type TickerSize = 's' | 'm' | 'l';
+export const TICKER_SIZES: TickerSize[] = ['s', 'm', 'l'];
+
+export interface KioskTickerItem {
+  /** 1–40 of A-Z a-z 0-9 _ - ("t1", "t2", …). */
+  id: string;
+  text: string;
+  enabled: boolean;
+  /** "HH:MM": shown from this time of day; null — from midnight. A `to` before it runs past midnight. */
+  from: string | null;
+  /** "HH:MM": shown until this time of day; null — until midnight. */
+  to: string | null;
+  /** The days it shows (0 = Sunday … 6 = Saturday); a window past midnight belongs to the day it starts. */
+  days: number[];
+  /** ISO date-times, as a message's: shown from / until (null: no limit). */
+  startsAt: string | null;
+  endsAt: string | null;
+}
+
+export interface KioskTicker {
+  enabled: boolean;
+  /** The texts, in order, separated by a bullet on the strip. */
+  items: KioskTickerItem[];
+  screens: TickerScreen[];
+  /** "top": under the screen's header; "bottom": above its basket / action bar. */
+  position: TickerPosition;
+  /** TICKER_SPEED_PX; slow by default, so it reads. */
+  speed: TickerSpeed;
+  /** null: the theme's (the button colour, its text colour on it). */
+  backgroundColor: string | null;
+  textColor: string | null;
+  size: TickerSize;
+  /** A finger on the strip holds it still until it lifts. */
+  pauseOnTouch: boolean;
+}
 
 export interface KioskConfig {
   general: KioskGeneral;
@@ -387,6 +642,16 @@ export interface KioskConfig {
   alerts: KioskAlerts;
   upsell: KioskUpsell;
   success: KioskSuccess;
+  motion: KioskMotionSettings;
+  /** "כיתוב רץ". */
+  ticker: KioskTicker;
+  /** "מבנה הקיוסק" (kioskLayout.ts): where things sit and how the order goes; standard = today. */
+  layout: KioskLayout;
+  /**
+   * Every customer text in the other languages (kioskTexts.ts): `textsByLang[lang][key]`; the
+   * kiosk's first language keeps using the flat `texts` (an older kiosk reads only those).
+   */
+  textsByLang: KioskTextsByLang;
 }
 
 export type KioskSectionKey = keyof KioskConfig;
@@ -442,6 +707,8 @@ export const KIOSK_LIMITS = {
   ctaSubtitleMax: 80,
   alertMachinesMax: 50,
   helpClearAfterMin: { min: 1, max: 120 },
+  tickerItemsMax: 20,
+  tickerTextMax: 200,
 } as const;
 
 /** What a kiosk gets when no level sets anything — the server's defaults, key for key. */
@@ -463,7 +730,9 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     blockWhenOffline: false,
     offlineNotice: false,
     soldOutMode: 'disable',
+    renderer: 'native',
     servicePlacement: 'after_start',
+    serviceSelect: 'confirm',
   },
   theme: {
     mode: 'light',
@@ -519,7 +788,11 @@ export const KIOSK_DEFAULTS: KioskConfig = {
       animation: 'pulse',
       subtitle: '',
       tapAnywhere: true,
+      visible: true,
+      touchHint: true,
     },
+    // "ברוכים הבאים": the block of today (bottom, start, l, black, on its scrim).
+    welcome: { ...KIOSK_WELCOME_DEFAULTS },
   },
   catalog: {
     categoryOrder: [],
@@ -529,6 +802,7 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     categoryImages: {},
     featuredProductIds: [],
     oneCategory: true,
+    categoryIconIds: {},
   },
   messages: [],
   hours: {
@@ -545,6 +819,11 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     minOrderAgorot: 0,
     tableNumber: 'off',
     detailsStep: 'before_pay',
+    tipOther: true,
+    checkoutSteps: ['tip', 'details', 'payMethod'],
+    cashAtTillExpiryMin: 30,
+    cashAtTillKitchenBeforePay: false,
+    stepModes: { ...STEP_MODE_DEFAULTS },
   },
   printing: {
     bonMode: 'routing',
@@ -562,12 +841,31 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     printer: { tills: 'main', machineIds: [], audience: 'everyone' },
     terminal: { tills: 'main', machineIds: [], audience: 'everyone' },
     help: { tills: 'main', machineIds: [], audience: 'everyone', clearAfterMin: 10 },
+    battery: { tills: 'main', machineIds: [], audience: 'everyone' },
   },
   upsell: { maxShown: 2 },
   success: { message: '', image: null },
+  // The "wolt" style's (KIOSK_UI_PRESET_MOTION): the category slides in, its dishes pop in one after another.
+  motion: { categorySwitch: 'slide', itemsEnter: 'cascade', screenChange: 'slide', sheet: 'scale', addToCart: 'fly', speed: 'normal' },
+  // "כיתוב רץ": off; once on, on the menu and the basket, under the header, slowly.
+  ticker: {
+    enabled: false,
+    items: [],
+    screens: ['catalog', 'cart'],
+    position: 'top',
+    speed: 'slow',
+    backgroundColor: null,
+    textColor: null,
+    size: 'm',
+    pauseOnTouch: false,
+  },
+  // "מבנה הקיוסק": standard — the layout of today (kioskLayout.ts).
+  layout: { ...KIOSK_LAYOUT_DEFAULTS, nameAvatars: [] },
+  // Every customer text in the other languages; the first language is `texts`.
+  textsByLang: {},
 };
 
-const GF = 'https://raw.githubusercontent.com/google/fonts/main/ofl';
+const GF ='https://raw.githubusercontent.com/google/fonts/main/ofl';
 
 /** The curated fonts (contract §1.2); the server returns the same list from GET /kiosks/defaults. */
 export const FONT_CATALOG: KioskFont[] = [
@@ -888,9 +1186,25 @@ export const KIOSK_UI_PRESET_CTA: Record<UiStyle, UiPresetCta> = {
   },
 };
 
-/** Where a style decides values: the theme's keys, and the attract button's. */
+/** The "הנפשות ומעברים" keys a style decides (unless a layer sets them): all of them. */
+export const PRESET_MOTION_KEYS = ['categorySwitch', 'itemsEnter', 'screenChange', 'sheet', 'addToCart', 'speed'] as const;
+
+/**
+ * Each style's transitions — the server's UI_PRESET_MOTION and the till's KioskMotionConfig.PRESETS.
+ * In every style the category's grid moves and its dishes pop in (the owner's request); the
+ * add-to-cart stays the pop-and-fly everywhere (docs/SPEC_KIOSK.md §18), at normal speed (the owner: slow
+ * enough to see the motion).
+ */
+export const KIOSK_UI_PRESET_MOTION: Record<UiStyle, KioskMotionSettings> = {
+  ios: { categorySwitch: 'slide', itemsEnter: 'pop', screenChange: 'slide', sheet: 'slide_up', addToCart: 'fly', speed: 'normal' },
+  wolt: { categorySwitch: 'slide', itemsEnter: 'cascade', screenChange: 'slide', sheet: 'scale', addToCart: 'fly', speed: 'normal' },
+  classic: { categorySwitch: 'push', itemsEnter: 'pop', screenChange: 'fade', sheet: 'scale', addToCart: 'fly', speed: 'normal' },
+  minimal_dark: { categorySwitch: 'fade_scale', itemsEnter: 'cascade', screenChange: 'fade', sheet: 'fade', addToCart: 'fly', speed: 'normal' },
+};
+
+/** Where a style decides values: the theme's keys, the attract button's and the transitions. */
 const PRESET_SECTIONS: Array<{
-  path: 'theme' | 'attract.cta';
+  path: 'theme' | 'attract.cta' | 'motion';
   keys: readonly string[];
   table: Record<UiStyle, Record<string, unknown>>;
   defaults: Record<string, unknown>;
@@ -906,6 +1220,12 @@ const PRESET_SECTIONS: Array<{
     keys: PRESET_CTA_KEYS,
     table: KIOSK_UI_PRESET_CTA as unknown as Record<UiStyle, Record<string, unknown>>,
     defaults: KIOSK_DEFAULTS.attract.cta as unknown as Record<string, unknown>,
+  },
+  {
+    path: 'motion',
+    keys: PRESET_MOTION_KEYS,
+    table: KIOSK_UI_PRESET_MOTION as unknown as Record<UiStyle, Record<string, unknown>>,
+    defaults: KIOSK_DEFAULTS.motion as unknown as Record<string, unknown>,
   },
 ];
 
@@ -923,11 +1243,12 @@ export function styleOf(...layers: Array<KioskLayer | null | undefined>): UiStyl
   return style;
 }
 
-/** A style's preset as a layer: its theme keys and its attract button (a null leaves the default). */
+/** A style's preset as a layer: its theme keys, its attract button and its transitions (a null leaves the default). */
 export function presetLayer(style: UiStyle): KioskLayer {
   return {
     theme: cloneJson(KIOSK_UI_PRESETS[style] ?? KIOSK_UI_PRESETS.wolt),
     attract: { cta: cloneJson(KIOSK_UI_PRESET_CTA[style] ?? KIOSK_UI_PRESET_CTA.wolt) },
+    motion: cloneJson(KIOSK_UI_PRESET_MOTION[style] ?? KIOSK_UI_PRESET_MOTION.wolt),
   };
 }
 
@@ -946,8 +1267,9 @@ export function repairKioskConfig(cfg: KioskConfig, opts: { kdsAvailable?: boole
   }
   if (printing.bonMode === 'single' && !printing.bonPrinterId) printing.bonMode = 'routing';
   if (club.enabled && !/^https?:\/\/\S+$/i.test(club.joinUrl || '')) club.enabled = false;
-  const methods = (payment.methods ?? []).filter((m) => m === 'card');
-  payment.methods = methods.length > 0 ? methods : ['card'];
+  payment.methods = kioskPayMethods(payment.methods);
+  // "איך תרצו לשלם?" is always the last step, right before the payment.
+  payment.checkoutSteps = [...(payment.checkoutSteps ?? []).filter((st) => st !== 'payMethod'), 'payMethod'];
   if (payment.tipEnabled && (payment.tipPresets ?? []).length === 0) payment.tipPresets = [...KIOSK_DEFAULTS.payment.tipPresets];
   if (hours.enabled && (hours.ranges ?? []).length === 0) hours.enabled = false;
   // "התראות לקופות": a chosen list left empty by a parent's change goes to the main till.
@@ -955,16 +1277,19 @@ export function repairKioskConfig(cfg: KioskConfig, opts: { kdsAvailable?: boole
     const route = out.alerts?.[kind];
     if (route && route.tills === 'selected' && (route.machineIds ?? []).length === 0) route.tills = 'main';
   }
+  // "מבנה הקיוסק": its cross-field rules, and theme.categoryLayout / cartStyle for an older kiosk.
+  if (out.layout) repairLayout(out);
   return out;
 }
 
 /**
  * What a kiosk gets from stored layers, as the server resolves it: DEFAULTS ⊕ the style's
- * preset ⊕ the layers (company → shop → kiosk), repaired. Explicit values beat the preset.
+ * preset ⊕ the layout's template (kioskLayout.ts) ⊕ the layers (company → shop → kiosk),
+ * repaired. Explicit values beat the preset and the template.
  */
 export function resolveKioskConfig(...layers: Array<KioskLayer | null | undefined>): KioskConfig {
   const current = layers.map(withoutRetired);
-  return repairKioskConfig(deepMergeKiosk(KIOSK_DEFAULTS, presetLayer(styleOf(...current)), ...current));
+  return repairKioskConfig(deepMergeKiosk(KIOSK_DEFAULTS, presetLayer(styleOf(...current)), layoutTemplateLayer(templateOf(...current)), ...current));
 }
 
 /**
@@ -1183,7 +1508,9 @@ export function validateKioskConfig(
   }
   checkEnum(e, 'general.skipCart', g.skipCart, ['off', 'direct', 'confirm']);
   checkEnum(e, 'general.soldOutMode', g.soldOutMode, ['disable', 'hide']);
+  checkEnum(e, 'general.renderer', g.renderer, KIOSK_RENDERERS);
   checkEnum(e, 'general.servicePlacement', g.servicePlacement, SERVICE_PLACEMENTS);
+  checkEnum(e, 'general.serviceSelect', g.serviceSelect, SERVICE_SELECTS);
   for (const key of ['askTableNumber', 'upsellEnabled', 'searchEnabled', 'notesEnabled', 'quickNotesEnabled', 'showAllergens', 'showDietary', 'reduceMotion', 'offlineSound', 'blockWhenOffline', 'offlineNotice'] as const) {
     if (typeof g[key] !== 'boolean') e.push({ path: `general.${key}`, code: 'enum' });
   }
@@ -1215,7 +1542,8 @@ export function validateKioskConfig(
   if (typeof th.showDescriptions !== 'boolean') e.push({ path: 'theme.showDescriptions', code: 'enum' });
 
   for (const [key, value] of Object.entries(cfg.texts ?? {})) {
-    if (!(TEXT_KEYS as readonly string[]).includes(key)) {
+    // Any text of the registry (kioskTexts.ts) may be set for the first language too.
+    if (!(TEXT_KEYS as readonly string[]).includes(key) && !isKioskTextKey(key)) {
       e.push({ path: `texts.${key}`, code: 'unknownTextKey', params: { key } });
     } else if (value !== null && value !== undefined) {
       checkLength(e, `texts.${key}`, value, L.textMax);
@@ -1260,6 +1588,10 @@ export function validateKioskConfig(
     checkEnum(e, `${p}.animation`, cta.animation, CTA_ANIMATIONS);
     checkLength(e, `${p}.subtitle`, cta.subtitle, L.ctaSubtitleMax);
     if (typeof cta.tapAnywhere !== 'boolean') e.push({ path: `${p}.tapAnywhere`, code: 'enum' });
+    if (typeof cta.visible !== 'boolean') e.push({ path: `${p}.visible`, code: 'enum' });
+    if (typeof cta.touchHint !== 'boolean') e.push({ path: `${p}.touchHint`, code: 'enum' });
+    // A hidden button: only the whole screen can start an order.
+    if (cta.visible === false && cta.tapAnywhere !== true) e.push({ path: `${p}.tapAnywhere`, code: 'tapAnywhereRequired' });
   }
 
   const c = cfg.catalog;
@@ -1271,6 +1603,8 @@ export function validateKioskConfig(
   for (const [catId, ref] of Object.entries(c.categoryImages ?? {})) {
     checkMedia(e, `catalog.categoryImages.${catId}`, ref, ['image'], false);
   }
+  // A category's icon from the built-in set (kioskIcons.ts).
+  e.push(...validateCategoryIconIds(c.categoryIconIds));
 
   if (cfg.messages.length > L.messagesMax) e.push({ path: 'messages', code: 'tooMany', params: { max: L.messagesMax } });
   const ids = new Set<string>();
@@ -1317,7 +1651,14 @@ export function validateKioskConfig(
   const pay = cfg.payment;
   if (pay.methods.length === 0) e.push({ path: 'payment.methods', code: 'atLeastOne' });
   if (pay.methods.includes('cash')) e.push({ path: 'payment.methods', code: 'cash_not_supported' });
-  else if (pay.methods.some((m) => m !== 'card')) e.push({ path: 'payment.methods', code: 'enum' });
+  else if (pay.methods.some((m) => !(PAYMENT_METHODS as readonly string[]).includes(m))) e.push({ path: 'payment.methods', code: 'enum' });
+  else if (!uniq(pay.methods)) e.push({ path: 'payment.methods', code: 'duplicate' });
+  else if (pay.methods.includes('voucher') && !pay.methods.some((m) => (REMAINDER_METHODS as readonly string[]).includes(m))) {
+    e.push({ path: 'payment.methods', code: 'voucher_needs_method' });
+  }
+  if (pay.cashAtTillExpiryMin !== undefined && (!isInt(pay.cashAtTillExpiryMin) || pay.cashAtTillExpiryMin < 5 || pay.cashAtTillExpiryMin > 240)) {
+    e.push({ path: 'payment.cashAtTillExpiryMin', code: 'range', params: { min: 5, max: 240 } });
+  }
   if (pay.tipPresets.length > L.tipPresetsMax) {
     e.push({ path: 'payment.tipPresets', code: 'tooMany', params: { max: L.tipPresetsMax } });
   }
@@ -1332,6 +1673,19 @@ export function validateKioskConfig(
   if (!isInt(pay.minOrderAgorot) || pay.minOrderAgorot < 0) e.push({ path: 'payment.minOrderAgorot', code: 'nonNegative' });
   checkEnum(e, 'payment.tableNumber', pay.tableNumber, ['off', 'optional', 'required']);
   checkEnum(e, 'payment.detailsStep', pay.detailsStep, DETAILS_STEPS);
+  if (!Array.isArray(pay.checkoutSteps) || pay.checkoutSteps.some((s) => !(CHECKOUT_STEPS as readonly string[]).includes(s))) {
+    e.push({ path: 'payment.checkoutSteps', code: 'enum' });
+  } else if (!uniq(pay.checkoutSteps)) e.push({ path: 'payment.checkoutSteps', code: 'duplicate' });
+  // "חובה / רשות / כבוי" per step (STEP_MODE_KEYS), as the server's schema checks it.
+  if (pay.stepModes !== undefined) {
+    if (!isDict(pay.stepModes)) e.push({ path: 'payment.stepModes', code: 'enum' });
+    else {
+      for (const [key, mode] of Object.entries(pay.stepModes)) {
+        if (!(STEP_MODE_KEYS as readonly string[]).includes(key)) e.push({ path: `payment.stepModes.${key}`, code: 'enum' });
+        else checkEnum(e, `payment.stepModes.${key}`, mode, ['off', 'optional', 'required']);
+      }
+    }
+  }
 
   // "הגדלת מכירה": the kiosk's cap (the rules are the menu's).
   const up = cfg.upsell;
@@ -1393,6 +1747,27 @@ export function validateKioskConfig(
     if (route.tills === 'selected' && ids.length === 0) e.push({ path: `${p}.machineIds`, code: 'atLeastOne' });
   }
   if (cfg.alerts?.help) checkRange(e, 'alerts.help.clearAfterMin', cfg.alerts.help.clearAfterMin, L.helpClearAfterMin);
+
+  // "הנפשות ומעברים": one known choice per transition.
+  const mo = cfg.motion;
+  if (mo !== undefined) {
+    if (!isDict(mo)) e.push({ path: 'motion', code: 'enum' });
+    else {
+      checkEnum(e, 'motion.categorySwitch', mo.categorySwitch, CATEGORY_SWITCH_FX);
+      checkEnum(e, 'motion.itemsEnter', mo.itemsEnter, ITEMS_ENTER_FX);
+      checkEnum(e, 'motion.screenChange', mo.screenChange, SCREEN_CHANGE_FX);
+      checkEnum(e, 'motion.sheet', mo.sheet, SHEET_FX);
+      checkEnum(e, 'motion.addToCart', mo.addToCart, ADD_TO_CART_FX);
+      checkEnum(e, 'motion.speed', mo.speed, MOTION_SPEEDS);
+    }
+  }
+
+  // "כיתוב רץ": its texts, their days and hours, the screens and the look.
+  if (cfg.ticker !== undefined) validateTicker(e, cfg.ticker);
+
+  // "מבנה הקיוסק" and "ברוכים הבאים" (kioskLayout.ts); every text in every language (kioskTexts.ts).
+  e.push(...validateLayout(cfg));
+  e.push(...validateKioskTexts(cfg));
 
   return e;
 }
@@ -1613,6 +1988,196 @@ export function buttonRadius(theme: Pick<KioskTheme, 'buttonShape' | 'cornerRadi
   if (theme.buttonShape === 'pill') return 999;
   if (theme.buttonShape === 'square') return 4;
   return Math.max(6, Math.round(theme.cornerRadius * 0.6));
+}
+
+/* ------------------------------------------ the steps before the payment */
+// The till's domain/KioskCheckoutSteps.kt and KioskServiceLook.kt, the same rules and numbers.
+
+/**
+ * The configured order of the checkout steps: the known ones as given (each once), then the missing
+ * ones in the default order — "איך תרצו לשלם?" (payMethod) always last, right before the payment.
+ */
+export function checkoutStepOrder(steps: readonly unknown[] | null | undefined): CheckoutStep[] {
+  const out: CheckoutStep[] = [];
+  for (const s of Array.isArray(steps) ? steps : []) {
+    if ((CHECKOUT_STEPS as readonly unknown[]).includes(s) && !out.includes(s as CheckoutStep)) out.push(s as CheckoutStep);
+  }
+  for (const s of CHECKOUT_STEPS) if (!out.includes(s)) out.push(s);
+  return [...out.filter((s) => s !== 'payMethod'), 'payMethod'];
+}
+
+/**
+ * `payment.methods` as a kiosk takes it (the till's KioskPayMethod.parseList, the cloud's repair):
+ * the known ones in order, each once; a voucher never alone (the card beside it); none → the card.
+ */
+export function kioskPayMethods(methods: readonly unknown[] | null | undefined): PaymentMethod[] {
+  const out: PaymentMethod[] = [];
+  for (const m of Array.isArray(methods) ? methods : []) {
+    if ((PAYMENT_METHODS as readonly unknown[]).includes(m) && !out.includes(m as PaymentMethod)) out.push(m as PaymentMethod);
+  }
+  return out.some((m) => (REMAINDER_METHODS as readonly string[]).includes(m)) ? out : ['card', ...out];
+}
+
+/** "איך תרצו לשלם?" is asked: more than one method — or the only one is not the card (cash at the till alone). */
+export function kioskAsksPayMethod(methods: readonly unknown[] | null | undefined): boolean {
+  const m = kioskPayMethods(methods);
+  return m.length > 1 || m[0] !== 'card';
+}
+
+/** Left to pay after the vouchers, in agorot: the order and its tip less them, never below zero. */
+export function kioskRemainderAgorot(goodsAgorot: number, tipAgorot: number, voucherAgorot: readonly number[]): number {
+  const vouchers = voucherAgorot.reduce((sum, v) => sum + Math.max(0, Math.trunc(v)), 0);
+  return Math.max(0, Math.trunc(goodsAgorot) + Math.trunc(tipAgorot) - vouchers);
+}
+
+/** The tip is asked before the payment: on, with something to choose (a preset, or "סכום אחר"). */
+export function kioskTipAsked(payment: Pick<KioskPayment, 'tipEnabled' | 'tipPresets' | 'tipOther'>): boolean {
+  return !!payment.tipEnabled && ((payment.tipPresets?.length ?? 0) > 0 || payment.tipOther !== false);
+}
+
+export interface StepModeConfigIn {
+  general: Partial<Pick<KioskGeneral, 'serviceTypes' | 'upsellEnabled'>>;
+  payment: Partial<Pick<KioskPayment, 'tipEnabled' | 'tipPresets' | 'tipOther' | 'methods' | 'stepModes' | 'customerName' | 'customerPhone' | 'tableNumber'>>;
+}
+
+/**
+ * A step's effective "חובה / רשות / כבוי": its own switch first — one service type, tips off, the
+ * card alone, upsell off → off — then its mode (`payment.stepModes`, or the customer field's own).
+ * The server's kiosk_config.step_mode and the till's KioskStepModes.of, the same rule.
+ */
+export function stepMode(cfg: StepModeConfigIn, key: StepModeKey | 'customerName' | 'customerPhone' | 'tableNumber'): CustomerFieldMode {
+  const pay = cfg.payment ?? {};
+  const valid = (m: unknown): m is CustomerFieldMode => m === 'off' || m === 'optional' || m === 'required';
+  if (key === 'customerName' || key === 'customerPhone' || key === 'tableNumber') {
+    const m = pay[key];
+    return valid(m) ? m : 'off';
+  }
+  const own = pay.stepModes?.[key];
+  const mode = valid(own) ? own : STEP_MODE_DEFAULTS[key];
+  if (key === 'service' && (cfg.general?.serviceTypes?.length ?? 2) <= 1) return 'off';
+  if (key === 'tip' && !kioskTipAsked({ tipEnabled: !!pay.tipEnabled, tipPresets: pay.tipPresets ?? [], tipOther: pay.tipOther !== false })) return 'off';
+  if (key === 'payMethod' && !kioskAsksPayMethod(pay.methods)) return 'off';
+  if (key.startsWith('upsell') && cfg.general?.upsellEnabled === false) return 'off';
+  return mode;
+}
+
+/** The step's default answer when it is passed ("optional") or off: the first service type, no tip, the first method that pays. */
+export function stepDefaultService(serviceTypes: readonly string[] | null | undefined): 'take_away' | 'eat_in' {
+  const first = (serviceTypes ?? [])[0];
+  return first === 'eat_in' ? 'eat_in' : 'take_away';
+}
+
+/**
+ * The step mode an upsell window answers to, by its moment: an item just added → upsellItem; the
+ * way to payment ("to_pay", the menu's "בכל הזמנה") → upsellCheckout; any other step → upsellSteps.
+ */
+export function upsellStepModeKey(moment: { kind: string; code?: string }): StepModeKey {
+  if (moment.kind === 'step') return moment.code === 'to_pay' ? 'upsellCheckout' : 'upsellSteps';
+  return 'upsellItem';
+}
+
+/**
+ * The steps between the basket and the payment for this order, in the configured order: the tip
+ * when it is asked; the details when they are asked (`detailsAsked`) before the payment — or, set
+ * for an earlier step, not given yet (`detailsDone`). Details asked after the payment never come here.
+ */
+export function checkoutStepsNow(
+  payment: Pick<KioskPayment, 'tipEnabled' | 'tipPresets' | 'tipOther' | 'detailsStep' | 'checkoutSteps'> & { methods?: readonly string[]; stepModes?: KioskPayment['stepModes'] },
+  detailsAsked: boolean,
+  detailsDone: boolean,
+): CheckoutStep[] {
+  const details = detailsAsked && (payment.detailsStep === 'before_pay' || (payment.detailsStep !== 'after_pay' && !detailsDone));
+  // "חובה / רשות / כבוי": a step set off is never asked (stepMode).
+  const tip = kioskTipAsked(payment) && payment.stepModes?.tip !== 'off';
+  const method = kioskAsksPayMethod(payment.methods) && payment.stepModes?.payMethod !== 'off';
+  return checkoutStepOrder(payment.checkoutSteps).filter((s) => (s === 'tip' ? tip : s === 'details' ? details : method));
+}
+
+export type CheckoutBarKey = 'review' | CheckoutStep | 'pay';
+export interface CheckoutBarItem {
+  key: CheckoutBarKey;
+  /** Its words: texts.stepReview / stepTip / stepDetails / stepPay. */
+  textKey: KioskTextKey;
+  state: 'done' | 'current' | 'next';
+}
+
+const CHECKOUT_BAR_TEXT: Record<CheckoutBarKey, KioskTextKey> = {
+  review: 'stepReview', tip: 'stepTip', details: 'stepDetails', payMethod: 'stepPayMethod', pay: 'stepPay',
+};
+
+/** The step bar ("ההזמנה שלכם ✓ · טיפ לצוות · תשלום"): the review done, this order's steps, the payment. */
+export function checkoutBar(steps: readonly CheckoutStep[], current: CheckoutStep): CheckoutBarItem[] {
+  const at = steps.indexOf(current);
+  return [
+    { key: 'review', textKey: CHECKOUT_BAR_TEXT.review, state: 'done' },
+    ...steps.map((s, i): CheckoutBarItem => ({ key: s, textKey: CHECKOUT_BAR_TEXT[s], state: i < at ? 'done' : i === at ? 'current' : 'next' })),
+    { key: 'pay', textKey: CHECKOUT_BAR_TEXT.pay, state: 'next' },
+  ];
+}
+
+/** A preset's tip on the order's total: the percent, rounded to the agora, half up (the till's KioskCustomer.tipOf). */
+export function tipPercentAgorot(goodsAgorot: number, percent: number | null | undefined): number {
+  if (!percent || percent <= 0 || !(goodsAgorot > 0)) return 0;
+  return Math.floor((goodsAgorot * percent + 50) / 100);
+}
+
+/** "סכום אחר": at most this many shekels (and never more than the order). */
+export const TIP_OTHER_MAX_SHEKELS = 999;
+
+/** "סכום אחר" as typed on the digits pad: whole shekels, 1 … the order's total; null when it is not one. */
+export function tipOtherAgorot(typed: string, goodsAgorot: number): number | null {
+  const s = typed.trim();
+  if (!/^\d{1,4}$/.test(s)) return null;
+  const shekels = Number(s);
+  if (shekels < 1 || shekels > TIP_OTHER_MAX_SHEKELS || shekels * 100 > goodsAgorot) return null;
+  return shekels * 100;
+}
+
+export interface KioskServiceLook {
+  /** The fill from the top (wolt: the top-left corner) to the bottom; equal for a flat one. */
+  from: string;
+  to: string;
+  diagonal: boolean;
+  /** The label. */
+  ink: string;
+  /** The round badge behind the icon ("#RRGGBBAA" where translucent). */
+  badge: string;
+  icon: string;
+  /** minimal_dark: a ring in the brand colour. */
+  border: string | null;
+}
+
+/**
+ * "איך תרצו לקבל את ההזמנה?": the two choices' colours by UI style (the till's KioskServiceLook):
+ * ios a soft tint with the icon on a brand badge; wolt the brand-to-accent sweep; classic a flat
+ * bold fill; minimal_dark its own surface ringed in the brand colour. The words always read (3:1).
+ */
+export function kioskServiceLook(
+  theme: Pick<KioskTheme, 'uiStyle' | 'primaryColor' | 'accentColor'>,
+  colors: Pick<ResolvedThemeColors, 'surface' | 'text'>,
+): KioskServiceLook {
+  const p = mixHex(theme.primaryColor, theme.primaryColor, 0);
+  const surface = mixHex(colors.surface, colors.surface, 0);
+  const text = mixHex(colors.text, colors.text, 0);
+  const inkOn = (from: string, to: string) =>
+    Math.min(contrastRatio('#FFFFFF', from), contrastRatio('#FFFFFF', to)) >= REST_LARGE_TEXT_CONTRAST ? '#FFFFFF' : REST_DARK_INK;
+  const alpha = (hex: string, a: number) => hex + a.toString(16).padStart(2, '0').toUpperCase();
+  const filled = (from: string, to: string, diagonal: boolean): KioskServiceLook => {
+    const ink = inkOn(from, to);
+    return { from, to, diagonal, ink, badge: alpha(ink, 0x33), icon: ink, border: null };
+  };
+  switch (theme.uiStyle) {
+    case 'ios': {
+      const tint = mixHex(surface, p, 0.12);
+      return { from: tint, to: tint, diagonal: false, ink: text, badge: p, icon: inkOn(p, p), border: null };
+    }
+    case 'classic':
+      return filled(p, p, false);
+    case 'minimal_dark':
+      return { from: surface, to: surface, diagonal: false, ink: text, badge: alpha(p, 0x2e), icon: contrastRatio(p, surface) >= REST_LARGE_TEXT_CONTRAST ? p : text, border: p };
+    default:
+      return filled(p, mixHex(mixHex(p, theme.accentColor, 0.5), '#000000', 0.18), true);
+  }
 }
 
 /** Grid columns for a density, on a phone-width or a tablet-width kiosk. */
@@ -1894,8 +2459,11 @@ export interface MotionSpec {
   countUpMs: number;
 }
 
-/** The add never takes longer (the till's KioskMotion.ADD_MAX_MS). */
-export const ADD_MAX_MS = 700;
+/**
+ * The add never takes longer (the till's KioskMotion.ADD_MAX_MS): ~700 ms at normal speed (the
+ * owner, 07.10.2026: slow enough to see), under a second at "relaxed".
+ */
+export const ADD_MAX_MS = 1000;
 export const ADD_POP_LIFT_DP = 18;
 export const ADD_END_SCALE = 0.25;
 export const ADD_END_ALPHA = 0.15;
@@ -1905,14 +2473,149 @@ const ADD_FADE_FROM = 0.55;
  * The add-to-cart motion by `theme.animation` (the till's KioskMotion, docs/SPEC_KIOSK.md §18):
  * the same pop-and-fly in every UI style — the style sets only how big the pop and how high the
  * arc; `general.reduceMotion` turns it into a short fade, with no bounce and no counting.
+ * `motion.addToCart` ("הוספה לסל"): "fly" as above, "bounce" only the basket button, "none"
+ * nothing; `motion.speed` scales it (the flight still under ADD_MAX_MS).
  */
 export function motionSpec(
   theme: Pick<KioskTheme, 'animation'>,
   general: Pick<KioskGeneral, 'reduceMotion'>,
+  motion?: Partial<Pick<KioskMotionSettings, 'addToCart' | 'speed'>> | null,
 ): MotionSpec {
+  const add = pickFx(motion?.addToCart, ADD_TO_CART_FX, 'fly');
+  // "ללא": the basket just changes (with reduce motion too).
+  if (add === 'none') return { popMs: 0, popScale: 1, flyMs: 0, arcDp: 0, fadeMs: 0, bounce: 0, countUpMs: 0 };
   if (general.reduceMotion) return { popMs: 0, popScale: 1, flyMs: 0, arcDp: 0, fadeMs: 280, bounce: 0, countUpMs: 0 };
-  if (theme.animation === 'lively') return { popMs: 190, popScale: 1.45, flyMs: 430, arcDp: 170, fadeMs: 0, bounce: 1.25, countUpMs: 380 };
-  return { popMs: 170, popScale: 1.3, flyMs: 380, arcDp: 110, fadeMs: 0, bounce: 1.12, countUpMs: 260 };
+  const lively = theme.animation === 'lively';
+  const base: MotionSpec = lively
+    ? { popMs: 200, popScale: 1.45, flyMs: 500, arcDp: 170, fadeMs: 0, bounce: 1.25, countUpMs: 450 }
+    : { popMs: 180, popScale: 1.3, flyMs: 460, arcDp: 110, fadeMs: 0, bounce: 1.12, countUpMs: 360 };
+  const k = speedFactor(motion?.speed);
+  // "קפיצה": no copy flies, the basket button bounces (harder) and the total counts up.
+  const countUpMs = Math.round(base.countUpMs * k);
+  if (add === 'bounce') return { popMs: 0, popScale: 1, flyMs: 0, arcDp: 0, fadeMs: 0, bounce: lively ? 1.4 : 1.28, countUpMs };
+  // The flight keeps under ADD_MAX_MS whatever the speed.
+  const f = Math.min(k, (ADD_MAX_MS - 20) / (base.popMs + base.flyMs));
+  return { ...base, popMs: Math.round(base.popMs * f), flyMs: Math.round(base.flyMs * f), countUpMs };
+}
+
+/* ------------------------------------------------- "הנפשות ומעברים" */
+
+/**
+ * "מהירות": every transition's duration times this. Normal is slow enough to see the motion (the
+ * owner, 07.10.2026: "צריך פחות מהיר שיוכלו לראות שזה מונפש"); fast is about the first, quicker
+ * timing; relaxed 1.4× normal.
+ */
+export const MOTION_SPEED_FACTOR: Record<MotionSpeed, number> = { fast: 0.7, normal: 1, relaxed: 1.4 };
+/** The cascade at normal speed: the last visible card starts at most this long after the first (× the speed). */
+export const STAGGER_CAP_MS = 600;
+/** Only the first cards (about a screenful) are staggered; the rest come with the last of them. */
+export const STAGGER_MAX_CARDS = 12;
+
+function speedFactor(speed: unknown): number {
+  return typeof speed === 'string' && speed in MOTION_SPEED_FACTOR ? MOTION_SPEED_FACTOR[speed as MotionSpeed] : 1;
+}
+
+/**
+ * Each transition's own duration at normal speed (ms), the till's KioskTransitions key for key:
+ * a screen ~480, a category ~450, each card's pop ~380 with ~70 between cards (a grid within ~1 s),
+ * a window ~400.
+ */
+export const TRANSITION_BASE_MS = {
+  categorySwitch: { slide: 450, fade: 380, fade_scale: 420, push: 480, none: 0 },
+  itemsEnter: { pop: 380, cascade: 380, rise: 400, flip: 440, none: 0 },
+  /** The gap between one card's start and the next one's. */
+  stagger: { pop: 25, cascade: 70, rise: 50, flip: 60, none: 0 },
+  screenChange: { slide: 480, fade: 420, zoom: 460, none: 0 },
+  sheet: { slide_up: 420, scale: 400, fade: 360, none: 0 },
+} as const;
+
+/**
+ * The curves (CSS; the till's KioskEase): enter decelerates (Material's emphasized decelerate),
+ * a leaving screen accelerates away — never linear.
+ */
+export const EASE_ENTER = 'cubic-bezier(.05,.7,.1,1)';
+export const EASE_EXIT = 'cubic-bezier(.3,0,.8,.15)';
+
+/** The transitions as the screens play them: each effect and its duration (ms, speed applied). */
+export interface TransitionSpec {
+  categorySwitch: CategorySwitchFx;
+  categoryMs: number;
+  itemsEnter: ItemsEnterFx;
+  itemMs: number;
+  staggerMs: number;
+  /** The last staggered card starts no later than this. */
+  staggerCapMs: number;
+  screenChange: ScreenChangeFx;
+  screenMs: number;
+  sheet: SheetFx;
+  sheetMs: number;
+  /** The add's kind as played (reduce motion: "none" — motionSpec then gives the short fade). */
+  addToCart: AddToCartFx;
+}
+
+export const NO_TRANSITIONS: TransitionSpec = {
+  categorySwitch: 'none', categoryMs: 0, itemsEnter: 'none', itemMs: 0, staggerMs: 0, staggerCapMs: 0,
+  screenChange: 'none', screenMs: 0, sheet: 'none', sheetMs: 0, addToCart: 'none',
+};
+
+function pickFx<T extends string>(v: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
+}
+
+/**
+ * "הנפשות ומעברים" resolved: `general.reduceMotion` turns every transition off; otherwise each
+ * configured effect with its duration times the speed. A missing or unknown value is the default
+ * style's. The till's KioskTransitions.of.
+ */
+export function transitionSpec(
+  motion: Partial<KioskMotionSettings> | null | undefined,
+  general: Pick<KioskGeneral, 'reduceMotion'>,
+): TransitionSpec {
+  if (general.reduceMotion) return { ...NO_TRANSITIONS };
+  const d = KIOSK_DEFAULTS.motion;
+  const k = speedFactor(motion?.speed);
+  const ms = (n: number) => Math.round(n * k);
+  const categorySwitch = pickFx(motion?.categorySwitch, CATEGORY_SWITCH_FX, d.categorySwitch);
+  const itemsEnter = pickFx(motion?.itemsEnter, ITEMS_ENTER_FX, d.itemsEnter);
+  const screenChange = pickFx(motion?.screenChange, SCREEN_CHANGE_FX, d.screenChange);
+  const sheet = pickFx(motion?.sheet, SHEET_FX, d.sheet);
+  const B = TRANSITION_BASE_MS;
+  return {
+    categorySwitch,
+    categoryMs: ms(B.categorySwitch[categorySwitch]),
+    itemsEnter,
+    itemMs: ms(B.itemsEnter[itemsEnter]),
+    staggerMs: ms(B.stagger[itemsEnter]),
+    staggerCapMs: itemsEnter === 'none' ? 0 : ms(STAGGER_CAP_MS),
+    screenChange,
+    screenMs: ms(B.screenChange[screenChange]),
+    sheet,
+    sheetMs: ms(B.sheet[sheet]),
+    addToCart: pickFx(motion?.addToCart, ADD_TO_CART_FX, d.addToCart),
+  };
+}
+
+/**
+ * When the card at `index` (reading order) starts entering: one stagger step after the previous,
+ * the last within `staggerCapMs`; past STAGGER_MAX_CARDS (off screen) with the last one.
+ */
+export function staggerDelayMs(spec: Pick<TransitionSpec, 'staggerMs' | 'itemsEnter' | 'staggerCapMs'>, index: number): number {
+  if (spec.itemsEnter === 'none' || spec.staggerMs <= 0 || index <= 0) return 0;
+  return Math.min(Math.min(index, STAGGER_MAX_CARDS - 1) * spec.staggerMs, spec.staggerCapMs);
+}
+
+/** The whole entrance of a grid (the last card's delay and its own time). */
+export function gridEnterMs(spec: Pick<TransitionSpec, 'staggerMs' | 'itemsEnter' | 'itemMs' | 'staggerCapMs'>): number {
+  return spec.itemsEnter === 'none' ? 0 : staggerDelayMs(spec, STAGGER_MAX_CARDS - 1) + spec.itemMs;
+}
+
+/**
+ * The side a new grid or screen comes from: +1 from the physical right, -1 from the left. Forward
+ * (a later category on the rail / strip, the next screen) moves the way the customer reads —
+ * from the left in Hebrew, from the right in English — backward the other way.
+ */
+export function swapSide(forward: boolean, rtl: boolean): 1 | -1 {
+  return forward !== rtl ? 1 : -1;
 }
 
 /** The whole add: pop and flight, or the fade. */
@@ -2140,4 +2843,369 @@ export function scheduleFormAutoClose(f: KioskScheduleForm, current: string | nu
   if (f.autoCloseAt !== null && f.autoCloseAt !== undefined) return f.autoCloseAt;
   if (f.enabled && f.close) return f.close;
   return current ?? null;
+}
+
+/**
+ * The next automatic opening strictly after `now`, in local time; null with no hours (the
+ * till's KioskSchedule.nextOpening).
+ */
+export function kioskNextOpening(hours: Pick<KioskHours, 'enabled' | 'ranges'>, now: Date): Date | null {
+  if (!hours.enabled) return null;
+  const ranges = (hours.ranges ?? []).filter((r) => hhmmMinutes(r.open) !== null);
+  if (ranges.length === 0) return null;
+  for (let offset = 0; offset <= 7; offset++) {
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
+    let best: Date | null = null;
+    for (const r of ranges) {
+      if (!r.days.includes(day.getDay())) continue;
+      const m = hhmmMinutes(r.open)!;
+      const at = new Date(day.getFullYear(), day.getMonth(), day.getDate(), Math.floor(m / 60), m % 60);
+      if (at.getTime() > now.getTime() && (best === null || at.getTime() < best.getTime())) best = at;
+    }
+    if (best) return best;
+  }
+  return null;
+}
+
+/* ------------------------------------------------ "יצאתי לנוח… תכף אשוב" */
+/*
+ * The kiosk's closed screen (the owner, 2026-10-07: like the till's closed-shift screen, in
+ * colour, centred) — the till's domain/KioskRestText.kt, rule for rule: one screen for a pause
+ * and outside the hours alike. The title: the configured one (a pause: operations.pausedTitle,
+ * then texts.pausedTitle; outside the hours: texts.closedTitle), else "יצאתי לנוח…". The
+ * subtitle: the message whoever paused it typed, else the configured body, else "תכף אשוב" —
+ * or, outside the hours, their own "הקיוסק יחזור לפעול בשעות הפעילות.". When it is back: a
+ * pause's end while still ahead; outside the hours, their next opening.
+ */
+
+export type KioskRestReason = 'paused' | 'closed';
+export type KioskRestTextKey = 'pausedTitle' | 'pausedBody' | 'closedTitle' | 'closedBody';
+
+export interface KioskRestWords {
+  title: string;
+  subtitle: string;
+  /** When the kiosk takes orders again; null when nobody knows (a pause by hand). */
+  backAt: Date | null;
+  /** "HH:MM" of `backAt`, local time. */
+  backClock: string | null;
+  /** Calendar days from today to `backAt`: 0 today, 1 tomorrow. */
+  backInDays: number | null;
+  /** `backAt`'s weekday, 0 = Sunday. */
+  backWeekday: number | null;
+}
+
+function cleanText(v: string | null | undefined): string | null {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return s ? s : null;
+}
+
+/**
+ * The closed screen's words. `txt`: a screen text — the configured one, else the built-in
+ * (PreviewModel.txt, the kiosk's txtOf). `pause`: the cloud's pause as the kiosk has it — its
+ * message and end, only while it holds (an end already past lifts it).
+ */
+export function kioskRestText(
+  reason: KioskRestReason,
+  cfg: { operations?: Partial<Pick<KioskOperations, 'pausedTitle' | 'pausedBody'>> | null; hours: Pick<KioskHours, 'enabled' | 'ranges'> },
+  pause: { message?: string | null; until?: string | null },
+  txt: (key: KioskRestTextKey) => string,
+  now: Date,
+): KioskRestWords {
+  const word = (key: KioskRestTextKey) => cleanText(txt(key)) ?? '';
+  let title: string;
+  let subtitle: string;
+  let backAt: Date | null;
+  if (reason === 'paused') {
+    const untilMs = pause.until ? Date.parse(pause.until) : NaN;
+    const lifted = Number.isFinite(untilMs) && untilMs <= now.getTime();
+    title = cleanText(cfg.operations?.pausedTitle) ?? word('pausedTitle');
+    subtitle = (lifted ? null : cleanText(pause.message)) ?? cleanText(cfg.operations?.pausedBody) ?? word('pausedBody');
+    backAt = Number.isFinite(untilMs) && !lifted ? new Date(untilMs) : null;
+  } else {
+    title = word('closedTitle');
+    subtitle = word('closedBody');
+    backAt = kioskNextOpening(cfg.hours, now);
+  }
+  if (!backAt) return { title, subtitle, backAt: null, backClock: null, backInDays: null, backWeekday: null };
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const thatDay = new Date(backAt.getFullYear(), backAt.getMonth(), backAt.getDate());
+  return {
+    title,
+    subtitle,
+    backAt,
+    backClock: `${String(backAt.getHours()).padStart(2, '0')}:${String(backAt.getMinutes()).padStart(2, '0')}`,
+    backInDays: Math.round((thatDay.getTime() - today.getTime()) / 86_400_000),
+    backWeekday: backAt.getDay(),
+  };
+}
+
+/** "#RRGGBB" from `a` towards `b` by `t`, channel by channel. */
+export function mixHex(a: string, b: string, t: number): string {
+  const ch = (h: string, i: number) => (isHexColor(h) ? parseInt(h.slice(i, i + 2), 16) : 0);
+  return (
+    '#' +
+    [1, 3, 5]
+      .map((i) => Math.min(255, Math.max(0, Math.round(ch(a, i) + (ch(b, i) - ch(a, i)) * t))).toString(16).padStart(2, '0'))
+      .join('')
+      .toUpperCase()
+  );
+}
+
+/** WCAG contrast ratio of two "#RRGGBB" colours (1…21). */
+export function contrastRatio(a: string, b: string): number {
+  const la = luminance(a);
+  const lb = luminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+/** WCAG's large-text minimum: the closed screen's title, subtitle and clock are all large. */
+export const REST_LARGE_TEXT_CONTRAST = 3;
+export const REST_DARK_INK = '#111111';
+
+export interface KioskRestLook {
+  /** The fill from the top (wolt: the top-left corner) to the bottom; equal for a flat one. */
+  from: string;
+  to: string;
+  /** 135°, top-left to bottom-right (wolt), rather than top to bottom. */
+  diagonal: boolean;
+  /** minimal_dark: the brand colour glowing behind the cup. */
+  glow: string | null;
+  /** The words and the cup: white where it reads as large text on the whole fill, else near-black. */
+  ink: string;
+  /** The title: the ink, or minimal_dark's brand colour where that reads. */
+  title: string;
+  /** wolt's two soft spots of light and shade, as on its hero. */
+  spots: boolean;
+}
+
+/**
+ * The closed screen's colours by UI style, as its attract screen colours it (the till's
+ * KioskRestLook, the same numbers): ios a soft fall of the brand colour; wolt the
+ * brand-to-accent sweep of its hero; classic a flat bold fill; minimal_dark its near-black with
+ * the brand colour glowing, the title in it.
+ */
+export function kioskRestLook(
+  theme: Pick<KioskTheme, 'uiStyle' | 'primaryColor' | 'accentColor'>,
+  colors: Pick<ResolvedThemeColors, 'background' | 'text'>,
+): KioskRestLook {
+  const p = mixHex(theme.primaryColor, theme.primaryColor, 0);
+  const fill = (from: string, to: string, diagonal: boolean, spots: boolean): KioskRestLook => {
+    const white = Math.min(contrastRatio('#FFFFFF', from), contrastRatio('#FFFFFF', to)) >= REST_LARGE_TEXT_CONTRAST;
+    const ink = white ? '#FFFFFF' : REST_DARK_INK;
+    return { from, to, diagonal, glow: null, ink, title: ink, spots };
+  };
+  switch (theme.uiStyle) {
+    case 'ios':
+      return fill(mixHex(p, '#FFFFFF', 0.1), mixHex(p, '#000000', 0.3), false, false);
+    case 'classic':
+      return fill(p, p, false, false);
+    case 'minimal_dark': {
+      const bg = mixHex(colors.background, colors.background, 0);
+      const text = mixHex(colors.text, colors.text, 0);
+      return { from: bg, to: bg, diagonal: false, glow: p, ink: text, title: contrastRatio(p, bg) >= REST_LARGE_TEXT_CONTRAST ? p : text, spots: false };
+    }
+    default:
+      return fill(p, mixHex(mixHex(p, theme.accentColor, 0.5), '#000000', 0.18), true, true);
+  }
+}
+
+/* -------------------------------------------------------------- "כיתוב רץ" */
+
+const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+
+/** The scroll speeds, in px (dp) per second — the till's KioskTickerSpeed. Slow, the default, reads easily. */
+export const TICKER_SPEED_PX: Record<TickerSpeed, number> = { slow: 45, normal: 75, fast: 120 };
+
+/** Reduce motion: the strip stands still and shows one text at a time, each this long. */
+export const TICKER_STATIC_MS = 5000;
+
+/** The web screens' strip per size: its text and its height, in px (the till's are KioskTickerSize). */
+export const TICKER_SIZE_PX: Record<TickerSize, { font: number; height: number }> = {
+  s: { font: 12, height: 26 },
+  m: { font: 14, height: 32 },
+  l: { font: 17, height: 40 },
+};
+
+function validateTicker(e: KioskValidationError[], tk: unknown): void {
+  if (!isDict(tk)) {
+    e.push({ path: 'ticker', code: 'enum' });
+    return;
+  }
+  const L = KIOSK_LIMITS;
+  for (const key of ['enabled', 'pauseOnTouch'] as const) {
+    if (typeof tk[key] !== 'boolean') e.push({ path: `ticker.${key}`, code: 'enum' });
+  }
+  const screens = tk.screens;
+  if (!Array.isArray(screens) || !uniq(screens) || screens.some((s) => !(TICKER_SCREENS as readonly unknown[]).includes(s))) {
+    e.push({ path: 'ticker.screens', code: 'enum' });
+  }
+  checkEnum(e, 'ticker.position', tk.position, TICKER_POSITIONS);
+  checkEnum(e, 'ticker.speed', tk.speed, TICKER_SPEEDS);
+  checkEnum(e, 'ticker.size', tk.size, TICKER_SIZES);
+  for (const key of ['backgroundColor', 'textColor'] as const) {
+    if (tk[key] !== null && !isHexColor(tk[key])) e.push({ path: `ticker.${key}`, code: 'color' });
+  }
+  const items = Array.isArray(tk.items) ? (tk.items as unknown[]) : null;
+  if (!items) {
+    e.push({ path: 'ticker.items', code: 'enum' });
+    return;
+  }
+  if (items.length > L.tickerItemsMax) e.push({ path: 'ticker.items', code: 'tooMany', params: { max: L.tickerItemsMax } });
+  const ids = new Set<string>();
+  items.forEach((raw, i) => {
+    const p = `ticker.items.${i}`;
+    if (!isDict(raw)) {
+      e.push({ path: p, code: 'enum' });
+      return;
+    }
+    const it = raw as Partial<KioskTickerItem>;
+    if (typeof it.id !== 'string' || !MSG_ID.test(it.id)) e.push({ path: `${p}.id`, code: 'messageId' });
+    else if (ids.has(it.id)) e.push({ path: `${p}.id`, code: 'duplicate' });
+    if (typeof it.id === 'string') ids.add(it.id);
+    checkLength(e, `${p}.text`, it.text, L.tickerTextMax);
+    if (typeof it.enabled !== 'boolean') e.push({ path: `${p}.enabled`, code: 'enum' });
+    if (it.from !== null && !isHhMm(it.from)) e.push({ path: `${p}.from`, code: 'time' });
+    if (it.to !== null && !isHhMm(it.to)) e.push({ path: `${p}.to`, code: 'time' });
+    if (isHhMm(it.from) && it.from === it.to) e.push({ path: `${p}.to`, code: 'sameTimes' });
+    const days = it.days;
+    if (!Array.isArray(days) || days.length === 0) e.push({ path: `${p}.days`, code: 'atLeastOne' });
+    else if (!uniq(days) || days.some((d) => !isInt(d) || d < 0 || d > 6)) e.push({ path: `${p}.days`, code: 'enum' });
+    const starts = it.startsAt ? Date.parse(it.startsAt) : null;
+    const ends = it.endsAt ? Date.parse(it.endsAt) : null;
+    if (it.startsAt && Number.isNaN(starts)) e.push({ path: `${p}.startsAt`, code: 'date' });
+    if (it.endsAt && Number.isNaN(ends)) e.push({ path: `${p}.endsAt`, code: 'date' });
+    if (starts !== null && ends !== null && !Number.isNaN(starts) && !Number.isNaN(ends) && ends <= starts) {
+      e.push({ path: `${p}.endsAt`, code: 'endsBeforeStarts' });
+    }
+  });
+}
+
+/**
+ * Whether a text's hours hold on `day` (0 = Sunday) at `minute` of the day: no hours — all day;
+ * only `from` — until midnight; only `to` — from midnight; a `to` before `from` runs past
+ * midnight, its small hours belonging to the day it started (as the opening hours). No days
+ * given counts as every day.
+ */
+export function tickerWindowOpen(item: Pick<KioskTickerItem, 'from' | 'to' | 'days'>, day: number, minute: number): boolean {
+  const days = Array.isArray(item.days) && item.days.length > 0 ? item.days : ALL_DAYS;
+  const from = hhmmMinutes(item.from);
+  const to = hhmmMinutes(item.to);
+  if (from !== null && to !== null && from > to) {
+    return (days.includes(day) && minute >= from) || (days.includes((day + 6) % 7) && minute < to);
+  }
+  if (!days.includes(day)) return false;
+  if (from !== null && to !== null && from === to) return true;
+  return (from === null || minute >= from) && (to === null || minute < to);
+}
+
+/** A text's turn at `now`, in the kiosk's own time: on, not blank, within its dates, its days and its hours. */
+export function tickerItemLive(item: KioskTickerItem, now: Date): boolean {
+  if (!item || item.enabled === false || typeof item.text !== 'string' || item.text.trim() === '') return false;
+  const ms = now.getTime();
+  if (item.startsAt && Date.parse(item.startsAt) > ms) return false;
+  if (item.endsAt && Date.parse(item.endsAt) <= ms) return false;
+  return tickerWindowOpen(item, now.getDay(), now.getHours() * 60 + now.getMinutes());
+}
+
+/** The ticker's screen for a kiosk screen: the tip is a "details" step, the product sheet the menu's; null where it never runs. */
+export function tickerScreenOf(screen: string): TickerScreen | null {
+  if (screen === 'tip') return 'details';
+  if (screen === 'product') return 'catalog';
+  if (screen === 'confirm') return 'cart';
+  return (TICKER_SCREENS as readonly string[]).includes(screen) ? (screen as TickerScreen) : null;
+}
+
+/** Whether the strip runs on `screen` (whatever its texts are right now). */
+export function tickerOnScreen(ticker: KioskTicker | null | undefined, screen: string): boolean {
+  const s = tickerScreenOf(screen);
+  return !!ticker && ticker.enabled === true && !!s && Array.isArray(ticker.screens) && ticker.screens.includes(s);
+}
+
+/** Whether the strip runs on `screen` at `position`. */
+export function tickerAt(ticker: KioskTicker | null | undefined, screen: string, position: TickerPosition): boolean {
+  return tickerOnScreen(ticker, screen) && (ticker?.position ?? 'top') === position;
+}
+
+/** The texts the strip runs on `screen` at `now`, in order (trimmed); none when it is off or not on that screen. */
+export function tickerTextsNow(ticker: KioskTicker | null | undefined, screen: string, now: Date): string[] {
+  if (!ticker || !tickerOnScreen(ticker, screen)) return [];
+  return (ticker.items ?? []).filter((it) => tickerItemLive(it, now)).map((it) => it.text.trim());
+}
+
+const RTL_LETTER = /[֐-׿؀-ۿ܀-ࣿיִ-﷿ﹰ-﻿]/;
+const LTR_LETTER = /[A-Za-zÀ-ɏͰ-ϿЀ-ӿ]/;
+
+/** A text's direction by its first strong letter: Hebrew / Arabic "rtl", Latin / Greek / Cyrillic "ltr"; null with none. */
+export function textDirection(text: string): 'rtl' | 'ltr' | null {
+  for (const ch of text) {
+    if (RTL_LETTER.test(ch)) return 'rtl';
+    if (LTR_LETTER.test(ch)) return 'ltr';
+  }
+  return null;
+}
+
+/**
+ * The strip's direction: its first text's with a letter, else the kiosk's. It moves the way it
+ * reads: a Hebrew strip comes in from the left and moves right; an English one the other way.
+ */
+export function tickerDirection(texts: readonly string[], fallback: 'rtl' | 'ltr'): 'rtl' | 'ltr' {
+  for (const t of texts) {
+    const d = textDirection(t);
+    if (d) return d;
+  }
+  return fallback;
+}
+
+/** Copies of one loop (every text and its bullet) that fill the strip with one to spare, so the wrap never shows. */
+export function tickerCopies(stripPx: number, loopPx: number): number {
+  if (!(loopPx > 0) || !(stripPx > 0)) return 2;
+  return Math.max(2, Math.ceil(stripPx / loopPx) + 1);
+}
+
+/** One loop's time at `speed`: its width at the speed's px per second (at least a second). */
+export function tickerLoopMs(loopPx: number, speed: TickerSpeed): number {
+  const pps = TICKER_SPEED_PX[speed] ?? TICKER_SPEED_PX.slow;
+  return Math.max(1000, Math.round((Math.max(0, loopPx) / pps) * 1000));
+}
+
+/** Reduce motion: which text stands `elapsedMs` after the strip appeared (each for TICKER_STATIC_MS). */
+export function tickerStaticIndex(count: number, elapsedMs: number): number {
+  if (count <= 0) return 0;
+  return Math.floor(Math.max(0, elapsedMs) / TICKER_STATIC_MS) % count;
+}
+
+/** The strip's colours: the configured ones, else the theme's button and its text (a custom background gets readable text). */
+export function tickerColors(
+  ticker: Pick<KioskTicker, 'backgroundColor' | 'textColor'>,
+  c: Pick<ResolvedThemeColors, 'button' | 'buttonText'>,
+): { bg: string; fg: string } {
+  const bg = isHexColor(ticker.backgroundColor) ? ticker.backgroundColor : c.button;
+  const fg = isHexColor(ticker.textColor) ? ticker.textColor : isHexColor(ticker.backgroundColor) ? contrastText(ticker.backgroundColor) : c.buttonText;
+  return { bg, fg };
+}
+
+/** A ticker text id not taken yet ("t1", "t2", …). */
+export function nextTickerItemId(items: ReadonlyArray<{ id: string }>): string {
+  const taken = new Set(items.map((x) => x.id));
+  let n = items.length + 1;
+  while (taken.has(`t${n}`)) n++;
+  return `t${n}`;
+}
+
+/**
+ * The room the strip takes on a web screen at `now`, in px: its height (× the theme's type
+ * scale) at its edge, and `gapBelow` under a bottom one; nothing when it does not run there now.
+ * The hosts lay the full-bleed attract screen out on what is left (its start button, its hint),
+ * as the till's attract screen does in its own box.
+ */
+export function tickerBandPx(
+  cfg: { ticker?: KioskTicker | null; theme: Pick<KioskTheme, 'typeScale'> },
+  screen: string,
+  now: Date,
+  gapBelow = 0,
+): { top: number; bottom: number } {
+  const t = cfg.ticker;
+  if (!t || tickerTextsNow(t, screen, now).length === 0) return { top: 0, bottom: 0 };
+  const h = (TICKER_SIZE_PX[t.size] ?? TICKER_SIZE_PX.m).height * typeScaleFactor(cfg.theme.typeScale);
+  return t.position === 'bottom' ? { top: 0, bottom: h + gapBelow } : { top: h, bottom: 0 };
 }

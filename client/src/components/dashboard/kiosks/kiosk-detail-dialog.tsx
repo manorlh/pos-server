@@ -1,17 +1,17 @@
 'use client';
 
 /**
- * One kiosk, remotely: pause (with a message) / resume, close its shift, its Z (when it
- * makes its own), its name / on-off / controlling tills, today's orders and the recent
- * commands. Bon states are shown as reported: "sent" is never shown as "printed".
+ * One kiosk, remotely: pause (with a message) / resume, its shift or its Z by its Z mode
+ * ("סגירת משמרת" in the shop Z, "הפקת Z" with its own — kiosk-z-actions.tsx), its name /
+ * on-off / controlling tills, today's orders and the recent commands. Bon states are shown
+ * as reported: "sent" is never shown as "printed".
  */
 
 import { useMemo, useState } from 'react';
-import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
-import { FilePlus2, Loader2, LogOut, Settings2, Undo2 } from 'lucide-react';
+import { Loader2, Settings2, Undo2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -19,12 +19,10 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
-import { ForceCloseOption } from '@/components/dashboard/z-wizard/force-close-option';
 import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
 import { cn } from '@/lib/utils';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { formatCurrency, formatDateTime } from '@/lib/format';
-import { zWizardHref } from '@/lib/zAccess';
+import { formatCurrency, formatDateTime, formatTime } from '@/lib/format';
 import { useTenantTimeZone } from '@/lib/auth';
 import { agorotToShekels, isoDayInZone, kioskConnection } from '@/lib/kioskConfig';
 import {
@@ -43,6 +41,7 @@ import { agoText, ConnectionBadge, ModeBadge, StateBadges } from './kiosk-list';
 import { controllerOptions } from './convert-dialog';
 import { KioskLockControls, KioskScheduleControls } from './kiosk-lock-schedule';
 import { KioskOpsNotes, KioskTerminalIdentityNote } from './kiosk-ops-notes';
+import { KioskZActions, KioskZBadge, KioskZModeSwitch } from './kiosk-z-actions';
 
 const BON_TONE: Record<KioskBonStatus, string> = {
   printed: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200',
@@ -54,9 +53,7 @@ const BON_TONE: Record<KioskBonStatus, string> = {
 
 function timeIn(iso: string | null | undefined, timeZone: string): string {
   if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', timeZone });
+  return formatTime(iso, { timeZone });
 }
 
 function DetailsForm({
@@ -163,7 +160,6 @@ export function KioskDetailDialog({
   const zErrors = useZErrorText();
   const qc = useQueryClient();
   const timeZone = useTenantTimeZone();
-  const [force, setForce] = useState(false);
 
   const machineId = kiosk?.machineId ?? '';
   const today = isoDayInZone(new Date(nowMs), timeZone);
@@ -191,7 +187,6 @@ export function KioskDetailDialog({
     onSuccess: (res: KioskCommandOut) => {
       if (res.status === 'refused') toast.error(res.detail || tcmd('status.refused'));
       else toast.success(res.status === 'applied' ? t('applied') : t('sent'));
-      setForce(false);
       void qc.invalidateQueries({ queryKey: ['kiosks'] });
       void qc.invalidateQueries({ queryKey: ['kiosk-commands', machineId] });
     },
@@ -222,7 +217,7 @@ export function KioskDetailDialog({
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle className="flex flex-wrap items-center gap-2">
-            {kiosk.name} <ModeBadge k={kiosk} />
+            {kiosk.name} <ModeBadge k={kiosk} /> <KioskZBadge k={kiosk} />
           </DialogTitle>
           <DialogDescription>
             {[kiosk.shopName, kiosk.machineName !== kiosk.name ? kiosk.machineName : null].filter(Boolean).join(' · ')}
@@ -262,51 +257,12 @@ export function KioskDetailDialog({
           <KioskLockControls kiosk={kiosk} canWrite={canWrite} busy={busy} send={(body) => command.mutate(body)} />
           <KioskScheduleControls kiosk={kiosk} canWrite={canWrite} busy={busy} send={(body) => command.mutate(body)} />
 
-          {canWrite ? (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2 rounded-xl border p-3">
-                <div className="text-sm font-medium">{t('closeShift')}</div>
-                <p className="text-xs text-muted-foreground">{kiosk.shiftOpen === false ? t('noOpenShift') : t('closeShiftHint')}</p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy || kiosk.shiftOpen === false}
-                  onClick={() => {
-                    if (window.confirm(t('closeShiftConfirm'))) command.mutate({ action: 'close_shift' });
-                  }}
-                >
-                  <LogOut /> {t('closeShift')}
-                </Button>
-              </div>
-              <div className="space-y-2 rounded-xl border p-3">
-                <div className="text-sm font-medium">{t('tillZ')}</div>
-                {kiosk.zMode === 'till' ? (
-                  <>
-                    <p className="text-xs text-muted-foreground">{t('tillZHint')}</p>
-                    <ForceCloseOption checked={force} onChange={setForce} disabled={busy} />
-                    <Button
-                      size="sm"
-                      disabled={busy}
-                      onClick={() => {
-                        if (window.confirm(t('tillZConfirm'))) command.mutate({ action: 'till_z', force });
-                      }}
-                    >
-                      <FilePlus2 /> {t('tillZ')}
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-xs text-muted-foreground">{t('zShop')}</p>
-                    {kiosk.shopId ? (
-                      <Link href={zWizardHref(kiosk.shopId)} className="text-xs text-primary underline">
-                        {t('zShopLink')}
-                      </Link>
-                    ) : null}
-                  </>
-                )}
-              </div>
-            </div>
-          ) : null}
+          {/* The shift / Z by the kiosk's Z mode — "סגירת משמרת" in the shop Z, "הפקת Z" with its
+              own, never both — and its own "Z עצמאי" switch (kiosk-z-actions.tsx). */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <KioskZActions kiosk={kiosk} canWrite={canWrite} busy={busy} send={(body) => command.mutate(body)} />
+            <KioskZModeSwitch kiosk={kiosk} />
+          </div>
         </section>
 
         <DetailsForm key={`${kiosk.machineId}:${kiosk.name}:${kiosk.enabled}:${(kiosk.controllerMachineIds ?? []).join(',')}`} kiosk={kiosk} options={options} canWrite={canWrite} />

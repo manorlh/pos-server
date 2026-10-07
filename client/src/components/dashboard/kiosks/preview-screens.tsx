@@ -24,6 +24,7 @@ import {
   ChevronRight,
   CircleHelp,
   CreditCard,
+  Heart,
   Languages,
   Minus,
   Plus,
@@ -49,22 +50,42 @@ import {
   ctaSubtitleSp,
   fittingCount,
   CTA_HINT_GAP,
+  kioskRestLook,
+  kioskRestText,
   pickupLabel,
   addFrame,
   addMs,
+  attractTapAnywhere,
+  checkoutBar,
+  kioskServiceLook,
+  stepDefaultService,
+  stepMode,
+  TIP_OTHER_MAX_SHEKELS,
+  tipOtherAgorot,
+  tipPercentAgorot,
   type AddPath,
+  type CheckoutStep,
   type CtaBox,
   type DietaryTag,
   type KioskConfig,
   type KioskCta,
   type KioskMessage,
+  type KioskRestReason,
   type KioskTextKey,
   type MediaRef,
   type MessageScreen,
   type MotionSpec,
   type ResolvedThemeColors,
+  type TransitionSpec,
+  typeScaleFactor,
 } from '@/lib/kioskConfig';
 import type { LivePayPhase, PreviewScreen } from '@/kiosk-shared/types';
+import { attractStackOrder, welcomeOf, welcomeTopHeight, WelcomeBlock } from '@/kiosk-shared/layouts/welcome';
+import { CategoryVisual } from '@/kiosk-shared/layouts/icons';
+import { layoutOf, reachLow } from '@/lib/kioskLayout';
+import { KioskSwap, MOTION_CSS, itemEnter, sheetEnter } from './preview-motion';
+import { EntryHeader, EntryWindow } from './preview-entry';
+import { PREVIEW_FOOTER_PX, TickerSlot } from './preview-ticker';
 
 /* ----------------------------------------------------------------- model */
 
@@ -157,6 +178,26 @@ export interface KioskLive {
   detailsScreen?: boolean;
   /** "עזרה" on the attract screen calls the staff (a help request to the tills). */
   help?: () => void;
+  /** "רוצים להוסיף טיפ לצוות?" — the real tip step (TipScreen); the preview keeps its own. */
+  tip?: KioskLiveTip;
+}
+
+/** A tip chosen: a preset's percent, or "סכום אחר" in agorot (one of them, or neither: no tip). */
+export interface KioskTipChoice {
+  pct: number | null;
+  agorot: number | null;
+}
+
+export interface KioskLiveTip {
+  /** This order's steps between the basket and the payment, in order (checkoutStepsNow). */
+  steps: CheckoutStep[];
+  /** What the tip is on (the order's total), in agorot. */
+  goodsAgorot: number;
+  value: KioskTipChoice;
+  onChange: (v: KioskTipChoice) => void;
+  /** The main button (the tip as chosen), and "המשך ללא טיפ" (no tip). */
+  onContinue: () => void;
+  onSkip: () => void;
 }
 
 export type Translate = (key: string, values?: Record<string, string | number>) => string;
@@ -189,6 +230,8 @@ export interface PreviewModel {
   service: 'take_away' | 'eat_in';
   setService: (s: 'take_away' | 'eat_in') => void;
   motion: MotionSpec;
+  /** "הנפשות ומעברים": the transitions as played (transitionSpec — all off with reduce motion). */
+  transitions: TransitionSpec;
   /** The product just added (its + shows a ✓ for a moment). */
   justAddedId: string | null;
   /** Grows on every add: re-keys the count badge so it bounces. */
@@ -206,6 +249,15 @@ export interface PreviewModel {
   ctaBox: CtaBox;
   /** Set by the real kiosk only (see KioskLive). */
   live?: KioskLive;
+  /**
+   * Any customer text of the registry (lib/kioskTexts.ts) in the screen's language, as the business
+   * set it or its default — the layouts' words (kiosk-shared/layouts). Absent: the Hebrew defaults.
+   */
+  kt?: (key: string, values?: Record<string, string | number>) => string;
+  /** "רוצים להפוך לארוחה?" (layout.mealUpsell): the meals a dish can become (none: the question is not asked). */
+  mealOptions?: (p: PProduct) => PProduct[];
+  /** "נגיש" (layout.reach / reachToggle): this customer's ♿, kept by the screens' owner (reset at rest). */
+  reach?: { toggled: boolean; toggle: () => void };
 }
 
 /* --------------------------------------------------------------- helpers */
@@ -250,7 +302,7 @@ export function cardStyle(m: PreviewModel): CSSProperties {
   }
 }
 
-function buttonStyle(m: PreviewModel, variant: 'primary' | 'soft' = 'primary'): CSSProperties {
+export function buttonStyle(m: PreviewModel, variant: 'primary' | 'soft' = 'primary'): CSSProperties {
   if (variant === 'soft') {
     return { background: `${m.c.button}1A`, color: m.c.button, borderRadius: m.btnRadius };
   }
@@ -288,7 +340,7 @@ function MediaView({ media, className, style, muted = true, loop = true, onEnded
   return <Img src={media.url} className={className} style={style} />;
 }
 
-function ProductImage({ m, p, className, style }: { m: PreviewModel; p: PProduct; className?: string; style?: CSSProperties }) {
+export function ProductImage({ m, p, className, style }: { m: PreviewModel; p: PProduct; className?: string; style?: CSSProperties }) {
   if (p.imageUrl) {
     return <Img src={p.imageUrl} className={className} style={{ objectFit: 'cover', ...style }} />;
   }
@@ -303,7 +355,7 @@ function ProductImage({ m, p, className, style }: { m: PreviewModel; p: PProduct
 }
 
 /** A category's picture, or its initial on the theme colour. */
-function CategoryImage({ m, cat, size, radius }: { m: PreviewModel; cat: PCategory; size: number; radius: number }) {
+export function CategoryImage({ m, cat, size, radius }: { m: PreviewModel; cat: PCategory; size: number; radius: number }) {
   const box: CSSProperties = { width: size, height: size, borderRadius: radius };
   if (cat.imageUrl) return <Img src={cat.imageUrl} className="shrink-0 object-cover" style={box} />;
   return (
@@ -410,13 +462,14 @@ export function MessageOverlay({ m, screen, suppressed }: { m: PreviewModel; scr
   const product = msg.kind === 'banner' && msg.productId ? m.categories.flatMap((c) => c.products).find((p) => p.id === msg.productId) : undefined;
   return (
     <div
-      className="absolute inset-0 z-40 flex items-center justify-center bg-black/45 p-6 animate-in fade-in duration-200"
+      className={cn('absolute inset-0 z-40 flex items-center justify-center bg-black/45 p-6', sheetEnter(m.transitions).scrim)}
+      style={sheetEnter(m.transitions).style}
       onClick={() => setOpen(false)}
       role="presentation"
     >
       <div
-        className="relative w-full max-w-[85%] overflow-hidden text-center shadow-2xl animate-in zoom-in-95 duration-300"
-        style={{ ...cardStyle(m), background: m.c.surface, color: m.c.text }}
+        className={cn('relative w-full max-w-[85%] overflow-hidden text-center shadow-2xl', sheetEnter(m.transitions).panel)}
+        style={{ ...cardStyle(m), ...sheetEnter(m.transitions).style, background: m.c.surface, color: m.c.text }}
       >
         <button
           type="button"
@@ -454,7 +507,7 @@ export function MessageOverlay({ m, screen, suppressed }: { m: PreviewModel; scr
   );
 }
 
-function BigButton({ m, children, onClick, variant = 'primary', className = '', disabledLook = false }: {
+export function BigButton({ m, children, onClick, variant = 'primary', className = '', disabledLook = false }: {
   m: PreviewModel;
   children: ReactNode;
   onClick?: (e: MouseEvent<HTMLButtonElement>) => void;
@@ -474,7 +527,7 @@ function BigButton({ m, children, onClick, variant = 'primary', className = '', 
   );
 }
 
-function Stepper({ m, value, onChange, small = false }: { m: PreviewModel; value: number; onChange: (n: number) => void; small?: boolean }) {
+export function Stepper({ m, value, onChange, small = false }: { m: PreviewModel; value: number; onChange: (n: number) => void; small?: boolean }) {
   const size = small ? 26 : 34;
   const btn: CSSProperties = { width: size, height: size, borderRadius: 999, background: `${m.c.button}1A`, color: m.c.button };
   return (
@@ -491,7 +544,7 @@ function Stepper({ m, value, onChange, small = false }: { m: PreviewModel; value
 }
 
 /** A money amount that counts up to its new value (instantly with no motion). */
-function CountUp({ value, ms, format }: { value: number; ms: number; format: (n: number) => string }) {
+export function CountUp({ value, ms, format }: { value: number; ms: number; format: (n: number) => string }) {
   const [shown, setShown] = useState(value);
   const shownRef = useRef(value);
   useEffect(() => {
@@ -512,11 +565,13 @@ function CountUp({ value, ms, format }: { value: number; ms: number; format: (n:
   return <>{format(ms > 0 ? Math.round(shown * 100) / 100 : value)}</>;
 }
 
-/** The scrolling body of a screen, with an optional sticky bottom area. */
-function ScreenBody({ children, footer, m }: { children: ReactNode; footer?: ReactNode; m: PreviewModel }) {
+/** The scrolling body of a screen, with an optional sticky bottom area ("כיתוב רץ": `top` over the body, `bottom` above that area). */
+function ScreenBody({ children, footer, m, top, bottom }: { children: ReactNode; footer?: ReactNode; m: PreviewModel; top?: ReactNode; bottom?: ReactNode }) {
   return (
     <div className="flex h-full flex-col">
+      {top}
       <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none]">{children}</div>
+      {bottom}
       {footer ? (
         <div className="shrink-0 p-3" style={{ background: `linear-gradient(to top, ${m.c.background}, ${m.c.background}00)` }}>
           {footer}
@@ -527,7 +582,7 @@ function ScreenBody({ children, footer, m }: { children: ReactNode; footer?: Rea
 }
 
 /** Small emoji chips of a product's dietary marks (gluten-free also in words). */
-function DietaryChips({ m, tags }: { m: PreviewModel; tags: DietaryTag[] }) {
+export function DietaryChips({ m, tags }: { m: PreviewModel; tags: DietaryTag[] }) {
   if (!m.cfg.general.showDietary || tags.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-0.5">
@@ -594,9 +649,19 @@ function PlaylistHero({ m, fill = false }: { m: PreviewModel; fill?: boolean }) 
   );
 }
 
+/**
+ * "לשאול לקחת או לשבת": two service types. With one, the customer never sees the choice nor its
+ * word (every order is that one — the bon and the receipt still say it).
+ */
+export function serviceAsked(m: Pick<PreviewModel, 'cfg'>): boolean {
+  // "כבוי" (payment.stepModes.service): never asked — every order is the first type.
+  return m.cfg.general.serviceTypes.length > 1 && stepMode(m.cfg, 'service') !== 'off';
+}
+
 /** Where the attract screen starts an order (the service screen, or straight to the menu). */
 export function attractNext(m: PreviewModel): void {
-  m.go(m.cfg.general.serviceTypes.length > 1 ? 'service' : 'catalog');
+  if (!serviceAsked(m)) m.setService(stepDefaultService(m.cfg.general.serviceTypes));
+  m.go(serviceAsked(m) ? 'service' : 'catalog');
 }
 
 const CTA_WEIGHT_CSS: Record<KioskCta['fontWeight'], number> = { regular: 400, bold: 700, black: 900 };
@@ -656,6 +721,30 @@ export function AttractCta({
     const pct = (v: number) => Math.max(0, Math.min(100, Math.round(v * 100)));
     onMove(pct((e.clientX - parent.left) / parent.width), pct((e.clientY - parent.top) / parent.height));
   };
+
+  // "הצג כפתור התחלה" off: no button — the whole screen starts the order (attractTapAnywhere);
+  // with "טקסט במקום הכפתור" a soft line in its place ("געו במסך כדי להזמין"), never the old hint too.
+  if (cta.visible === false) {
+    if (cta.touchHint === false) return null;
+    return (
+      <div aria-hidden className="pointer-events-none absolute z-20 flex items-center justify-center" style={{ left: box.x, top: box.y, width: box.w, height: box.h }}>
+        <span
+          className="kiosk-pulse max-w-full truncate px-5 py-2.5 text-center font-semibold"
+          style={{
+            fontSize: Math.max(14, Math.round(fontSp * 0.8)),
+            color: '#FFFFFF',
+            background: 'rgba(0,0,0,0.38)',
+            border: '1px solid rgba(255,255,255,0.35)',
+            borderRadius: 999,
+            backdropFilter: 'blur(6px)',
+            textShadow: '0 1px 2px rgba(0,0,0,0.35)',
+          }}
+        >
+          {m.txt('attractTouchHint')}
+        </span>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -868,26 +957,27 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
   const next = () => attractNext(m);
   // The phone frame's notch, a 16 px margin and the 44 px logo: where the header ends.
   const notch = m.wide ? 0 : 28;
-  const headerBottom = notch + 16 + 44 + 8;
+  // "ברוכים הבאים" (attract.welcome, kiosk-shared/layouts/welcome.tsx): under the header it takes its room from the content.
+  const welcome = welcomeOf(m);
+  const welcomeTop = welcomeTopHeight(m, typeScaleFactor(cfg.theme.typeScale));
+  const headerBottom = notch + 16 + 44 + 8 + welcomeTop;
   // Nothing of the content under the button or its hint — the till's KioskCtaLayout.spans,
   // in the frame's coordinates (the button's); this screen starts below the phone's notch.
   const spans = attractSpans(cta, m.ctaBox, m.screen.h, headerBottom);
   const local = (frameY: number) => frameY - notch;
+  const middle = welcome.enabled && welcome.position === 'middle';
+  const promoList = sections.includes('promos') && messages.length > 0 ? <CenteredMessages m={m} list={messages} /> : null;
   const promos =
-    sections.includes('promos') && messages.length > 0 ? <CenteredMessages m={m} list={messages} /> : null;
+    middle || promoList ? (
+      <div className="flex w-full flex-col items-stretch gap-3">
+        {middle ? <WelcomeBlock m={m} /> : null}
+        {promoList}
+      </div>
+    ) : null;
 
-  const items: Array<{ key: string; node: ReactNode }> = [
-    {
-      key: 'title',
-      node: (
-        <div>
-          <h2 className="text-2xl font-extrabold leading-tight text-white">{m.txt('attractTitle')}</h2>
-          <p className="mt-1 text-sm text-white/90">{m.txt('attractSubtitle')}</p>
-        </div>
-      ),
-    },
-  ];
-  for (const s of sections) {
+  const items: Array<{ key: string; node: ReactNode }> = [];
+  for (const s of attractStackOrder(m)) {
+    if (s === 'welcome') items.push({ key: 'title', node: <WelcomeBlock m={m} /> });
     if (s === 'categories' && m.categories.length > 0) {
       items.push({
         key: s,
@@ -905,7 +995,12 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
                 }}
               >
                 <div className="mx-auto flex justify-center">
-                  <CategoryImage m={m} cat={cat} size={56} radius={Math.max(10, m.radius - 4)} />
+                  {layoutOf(cfg).categoryIcons ? (
+                    // The layout's category icons ("מבנה הקיוסק"), else today's picture or initial.
+                    <CategoryVisual m={m} cat={cat} mode={layoutOf(cfg).categoryIcons} size={56} />
+                  ) : (
+                    <CategoryImage m={m} cat={cat} size={56} radius={Math.max(10, m.radius - 4)} />
+                  )}
                 </div>
                 <div className="mt-1 truncate kt-11 font-medium">{cat.name}</div>
               </button>
@@ -939,7 +1034,7 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
   }
 
   return (
-    <div className={cn('relative h-full overflow-hidden', cta.tapAnywhere && 'cursor-pointer')} onClick={cta.tapAnywhere ? next : undefined}>
+    <div className={cn('relative h-full overflow-hidden', attractTapAnywhere(cta) && 'cursor-pointer')} onClick={attractTapAnywhere(cta) ? next : undefined}>
       {/* The hero fills the screen behind everything, as on the till; a veil keeps the text readable. */}
       {sections.includes('hero') ? <PlaylistHero m={m} fill /> : null}
       <div
@@ -978,6 +1073,7 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
           ) : null}
         </div>
       </div>
+      {welcomeTop > 0 ? <WelcomeBlock m={m} className="absolute inset-x-4" style={{ top: 16 + 44 + 8 }} /> : null}
       {!spans.shared ? (
         <div className="absolute inset-x-4 flex items-center justify-center overflow-hidden" style={{ top: local(spans.messagesTop), height: Math.max(0, spans.messagesBottom - spans.messagesTop) }}>
           {promos}
@@ -988,7 +1084,7 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
         bottom={local(spans.stackBottom)}
         messages={spans.shared ? promos : null}
         items={items}
-        measureKey={[m.txt('attractTitle'), m.txt('attractSubtitle'), m.categories.length, cfg.club.title, cfg.club.body, m.screen.w, cfg.theme.typeScale, cfg.theme.font].join('|')}
+        measureKey={[m.txt('attractTitle'), m.txt('attractSubtitle'), m.categories.length, cfg.club.title, cfg.club.body, m.screen.w, cfg.theme.typeScale, cfg.theme.font, JSON.stringify(welcome)].join('|')}
       />
     </div>
   );
@@ -997,7 +1093,7 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
 /* ---------------------------------------------------------------- service */
 
 /** The real kiosk's back button at a header's start (the till's KioskHeader); nothing in the preview. */
-function LiveBack({ m, size = 36 }: { m: PreviewModel; size?: number }) {
+export function LiveBack({ m, size = 36 }: { m: PreviewModel; size?: number }) {
   const back = m.live?.back;
   if (!back) return null;
   return (
@@ -1013,56 +1109,140 @@ function LiveBack({ m, size = 36 }: { m: PreviewModel; size?: number }) {
   );
 }
 
+/** A small pop on a choice (none with reduce motion). */
+function popChoice(el: HTMLElement, m: PreviewModel) {
+  if (m.cfg.general.reduceMotion || typeof el.animate !== 'function') return;
+  el.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.05)' }, { transform: 'scale(1)' }], { duration: 260, easing: 'cubic-bezier(.3,1.5,.5,1)' });
+}
+
+/** A kiosk window's head: the business at the start (right in Hebrew), the caption at the end. */
+function CardHeader({ m, caption, start }: { m: PreviewModel; caption: string; start?: ReactNode }) {
+  // The entry window's head: the business at the start, the caption at the end.
+  return <EntryHeader m={m} caption={caption} start={start} compact={m.screen.h < 720} />;
+}
+
+/**
+ * "לאכול כאן או לקחת?" (the owner's design, as the Android kiosk): a card in the middle of the
+ * screen — the caption and the business, the question, the two choices side by side (each ~40% of
+ * the screen, at most 360 px), the one chosen painted in the UI style's colours (kioskServiceLook),
+ * then "להמשך". `general.serviceSelect` = instant: a tap goes on at once (no button).
+ */
 export function ServiceScreen({ m }: { m: PreviewModel }) {
   const { cfg } = m;
   const types = cfg.general.serviceTypes;
+  const instant = cfg.general.serviceSelect === 'instant';
+  const [picked, setPicked] = useState<'take_away' | 'eat_in' | null>(null);
+  const look = kioskServiceLook(cfg.theme, m.c);
+  const narrow = m.screen.w < 600;
+  const tile = Math.min(360, Math.round(m.screen.w * 0.4));
+  const gap = narrow ? 10 : 16;
+  const pad = narrow ? 14 : 24;
+  const badge = Math.round(tile * 0.34);
+  const choose = (type: 'take_away' | 'eat_in') => {
+    m.setService(type);
+    m.go('catalog');
+  };
+  const fill = (on: boolean): CSSProperties =>
+    on
+      ? {
+          background: look.from === look.to ? look.from : `linear-gradient(${look.diagonal ? '135deg' : '180deg'}, ${look.from}, ${look.to})`,
+          color: look.ink,
+          border: `2px solid ${look.border ?? 'transparent'}`,
+          boxShadow: `0 10px 24px ${m.c.primary}33`,
+        }
+      : { background: m.c.surface, color: m.c.text, border: `1.5px solid ${m.c.border}` };
   return (
-    <ScreenBody m={m}>
-      <div className="space-y-4 p-4">
-        {m.live?.back ? (
-          <div className="flex items-center">
-            <LiveBack m={m} />
+    <div className="flex h-full flex-col">
+      {m.live?.back ? (
+        <div className="flex shrink-0 items-center px-4 pt-4">
+          <LiveBack m={m} />
+        </div>
+      ) : null}
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto p-3 [scrollbar-width:none]">
+        <div className="w-full overflow-hidden" style={{ ...cardStyle(m), background: m.c.surface, maxWidth: tile * 2 + gap + pad * 2, borderRadius: Math.max(16, m.radius) }}>
+          <CardHeader m={m} caption={m.txt('serviceCaption')} />
+          <div className="flex flex-col gap-4" style={{ padding: pad }}>
+            <ScreenImage m={m} k="service" height={110} />
+            <div className="space-y-1 text-center">
+              <h2 className="text-2xl font-extrabold leading-tight">{m.txt('serviceTitle')}</h2>
+              <p className="kt-13" style={{ color: m.c.mutedText }}>
+                {m.txt('serviceSubtitle')}
+              </p>
+            </div>
+            {types.length < 2 ? (
+              <p className="rounded-xl px-3 py-2 text-center text-xs" style={{ background: `${m.c.accent}1F`, color: m.c.text }}>
+                {m.t('skippedService')}
+              </p>
+            ) : null}
+            <div className={`grid ${types.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`} style={{ gap }}>
+              {types.map((type) => {
+                const on = !instant && picked === type;
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    aria-pressed={instant ? undefined : on}
+                    onClick={(e) => {
+                      if (instant) return choose(type);
+                      popChoice(e.currentTarget, m);
+                      setPicked(type);
+                      m.setService(type);
+                    }}
+                    className="flex flex-col items-center justify-center gap-2 text-center transition-colors duration-200 active:scale-95"
+                    style={{ ...fill(on), minHeight: Math.round(tile * 0.85), padding: narrow ? 10 : 18, borderRadius: Math.max(14, m.radius) }}
+                  >
+                    <span
+                      className="flex items-center justify-center transition-colors duration-200"
+                      style={{ width: badge, height: badge, borderRadius: Math.round(badge * 0.3), background: on ? look.badge : `${m.c.primary}1F`, color: on ? look.icon : m.c.primary }}
+                    >
+                      {type === 'take_away' ? (
+                        <ShoppingBag style={{ width: badge * 0.5, height: badge * 0.5 }} />
+                      ) : (
+                        <UtensilsCrossed style={{ width: badge * 0.5, height: badge * 0.5 }} />
+                      )}
+                    </span>
+                    <span className="font-extrabold leading-tight" style={{ fontSize: `calc(${Math.max(15, Math.min(26, Math.round(tile * 0.1)))}px * var(--k-scale, 1))` }}>
+                      {type === 'take_away' ? m.txt('takeAwayLabel') : m.txt('eatInLabel')}
+                    </span>
+                    <span className="kt-13 leading-snug" style={{ color: on ? look.ink : m.c.mutedText, opacity: on ? 0.85 : 1 }}>
+                      {type === 'take_away' ? m.txt('takeAwaySub') : m.txt('eatInSub')}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {!instant ? (
+              <div className="space-y-2">
+                <BigButton m={m} disabledLook={!picked} onClick={() => (picked ? choose(picked) : undefined)}>
+                  <span>{m.txt('serviceContinue')}</span>
+                  <ArrowLeft className="h-5 w-5" />
+                </BigButton>
+                <p className="text-center kt-13" style={{ color: m.c.mutedText, visibility: picked ? 'hidden' : undefined }}>
+                  {m.txt('serviceHint')}
+                </p>
+              </div>
+            ) : null}
+            {/* "רשות" (payment.stepModes.service): passed with the first service type. */}
+            {stepMode(cfg, 'service') === 'optional' ? (
+              <button
+                type="button"
+                onClick={() => choose(stepDefaultService(types))}
+                className="mx-auto px-4 py-1.5 kt-15 font-semibold underline-offset-4 hover:underline"
+                style={{ color: m.c.mutedText }}
+              >
+                {m.t('stepSkip')}
+              </button>
+            ) : null}
           </div>
-        ) : null}
-        <ScreenImage m={m} k="service" height={110} />
-        <h2 className="pt-2 text-center text-xl font-extrabold">{m.txt('serviceTitle')}</h2>
-        {types.length < 2 ? (
-          <p className="rounded-xl px-3 py-2 text-center text-xs" style={{ background: `${m.c.accent}1F`, color: m.c.text }}>
-            {m.t('skippedService')}
-          </p>
-        ) : null}
-        <div className={m.wide ? 'grid grid-cols-2 gap-3' : 'space-y-3'}>
-          {types.map((type) => (
-            <button
-              key={type}
-              type="button"
-              onClick={() => {
-                m.setService(type);
-                m.go('catalog');
-              }}
-              className="flex w-full flex-col items-center gap-3 p-6 transition-transform duration-150 active:scale-[0.98]"
-              style={{ ...cardStyle(m), outline: m.service === type ? `2px solid ${m.c.button}` : undefined }}
-            >
-              <span className="flex h-16 w-16 items-center justify-center rounded-full" style={{ background: `${m.c.button}1A`, color: m.c.button }}>
-                {type === 'take_away' ? <ShoppingBag className="h-8 w-8" /> : <UtensilsCrossed className="h-8 w-8" />}
-              </span>
-              <span className="text-lg font-bold">{type === 'take_away' ? m.txt('takeAwayLabel') : m.txt('eatInLabel')}</span>
-              {type === 'eat_in' && cfg.general.askTableNumber ? (
-                <span className="text-xs" style={{ color: m.c.mutedText }}>
-                  {m.t('askTable')}
-                </span>
-              ) : null}
-            </button>
-          ))}
         </div>
       </div>
-    </ScreenBody>
+    </div>
   );
 }
 
 /* ---------------------------------------------------------------- catalog */
 
-function ProductCard({ m, p }: { m: PreviewModel; p: PProduct }) {
+export function ProductCard({ m, p }: { m: PreviewModel; p: PProduct }) {
   const showDesc = m.cfg.theme.showDescriptions && p.description;
   const large = m.cfg.theme.gridDensity === 'large';
   const added = m.justAddedId === p.id;
@@ -1080,6 +1260,7 @@ function ProductCard({ m, p }: { m: PreviewModel; p: PProduct }) {
           <span className="absolute start-2 top-2 rounded-full bg-black/70 px-2 py-0.5 kt-10 font-bold text-white">{m.t('soldOut')}</span>
         ) : (
           <span
+            data-add={p.addPath === 'direct' ? 'direct' : 'sheet'}
             className="absolute bottom-2 end-2 flex h-7 w-7 items-center justify-center shadow-md transition-all duration-200 group-hover:scale-110"
             style={{ ...buttonStyle(m), borderRadius: 999, background: added ? m.c.accent : m.c.button }}
             onClick={(e) => {
@@ -1119,7 +1300,7 @@ function CategoryStrip({ m, active, onPick }: { m: PreviewModel; active: string 
         {m.categories.map((cat) => {
           const on = cat.id === active;
           return (
-            <button key={cat.id} type="button" onClick={() => onPick(cat.id)} className="w-16 shrink-0 text-center">
+            <button key={cat.id} type="button" data-cat={cat.id} data-active={on || undefined} onClick={() => onPick(cat.id)} className="w-16 shrink-0 text-center">
               <div
                 className="mx-auto flex w-fit justify-center transition-all duration-200"
                 style={{ borderRadius: Math.max(10, m.radius * 0.7), outline: on ? `2px solid ${m.c.button}` : 'none', outlineOffset: 2 }}
@@ -1144,6 +1325,8 @@ function CategoryStrip({ m, active, onPick }: { m: PreviewModel; active: string 
             <button
               key={cat.id}
               type="button"
+              data-cat={cat.id}
+              data-active={on || undefined}
               onClick={() => onPick(cat.id)}
               className="shrink-0 border-b-2 pb-2 pt-1 kt-13 font-semibold transition-colors duration-200"
               style={{ borderColor: on ? m.c.button : 'transparent', color: on ? m.c.button : m.c.mutedText }}
@@ -1163,6 +1346,8 @@ function CategoryStrip({ m, active, onPick }: { m: PreviewModel; active: string 
           <button
             key={cat.id}
             type="button"
+            data-cat={cat.id}
+            data-active={on || undefined}
             onClick={() => onPick(cat.id)}
             className="shrink-0 px-3.5 py-1.5 kt-13 font-semibold transition-all duration-200"
             style={
@@ -1208,6 +1393,7 @@ function CategoryRail({
             key={cat.id}
             type="button"
             data-cat={cat.id}
+            data-active={on || undefined}
             onClick={() => onPick(cat.id)}
             className="relative mx-1 flex flex-col items-center gap-1 px-1 py-1.5 text-center transition-all duration-200"
             style={itemStyle}
@@ -1236,7 +1422,7 @@ function CategoryRail({
 }
 
 /** The element the add-to-cart flight lands on, registered through a callback ref. */
-function CartTarget({
+export function CartTarget({
   register,
   className,
   style,
@@ -1258,30 +1444,34 @@ export function CartBar({ m }: { m: PreviewModel }) {
   const count = cartCount(m.cart);
   if (count === 0) return null;
   const bounce = m.motion.bounce > 0;
+  // The basket button bounces as the dish lands (or at the tap, "קפיצת כפתור הסל"); the class alternates to replay it.
+  const barBounce = m.transitions.addToCart !== 'none' && bounce && m.cartBump > 0 ? (m.cartBump % 2 ? 'kiosk-bar-bounce-a' : 'kiosk-bar-bounce-b') : '';
   return (
-    <BigButton
-      m={m}
-      onClick={() => m.go(m.cfg.general.skipCart === 'off' ? 'cart' : 'pay')}
-      className="justify-between shadow-lg animate-in slide-in-from-bottom-4 duration-300"
-    >
-      <CartTarget
-        register={m.setCartTarget}
-        key={m.cartBump}
-        className={`flex h-6 min-w-6 items-center justify-center rounded-full bg-white/25 px-1.5 text-xs tabular-nums ${bounce ? 'kiosk-bounce' : ''}`}
-        style={{ ['--k-bounce' as string]: String(m.motion.bounce || 1) } as CSSProperties}
+    <div className={barBounce}>
+      <BigButton
+        m={m}
+        onClick={() => m.go(m.cfg.general.skipCart === 'off' ? 'cart' : 'pay')}
+        className="justify-between shadow-lg animate-in slide-in-from-bottom-4 duration-300"
       >
-        {count}
-      </CartTarget>
-      <span>{m.cfg.general.skipCart === 'off' ? m.t('viewCart') : m.txt('checkoutCta')}</span>
-      <span className="tabular-nums">
-        <CountUp value={cartTotal(m.cart)} ms={m.motion.countUpMs} format={m.money} />
-      </span>
-    </BigButton>
+        <CartTarget
+          register={m.setCartTarget}
+          key={m.cartBump}
+          className={`flex h-6 min-w-6 items-center justify-center rounded-full bg-white/25 px-1.5 text-xs tabular-nums ${bounce ? 'kiosk-bounce' : ''}`}
+          style={{ ['--k-bounce' as string]: String(m.motion.bounce || 1) } as CSSProperties}
+        >
+          {count}
+        </CartTarget>
+        <span>{m.cfg.general.skipCart === 'off' ? m.t('viewCart') : m.txt('checkoutCta')}</span>
+        <span className="tabular-nums">
+          <CountUp value={cartTotal(m.cart)} ms={m.motion.countUpMs} format={m.money} />
+        </span>
+      </BigButton>
+    </div>
   );
 }
 
 /** The side order panel (cartStyle = panel, wide frame) on the end side. */
-function CartPanel({ m }: { m: PreviewModel }) {
+export function CartPanel({ m }: { m: PreviewModel }) {
   const count = cartCount(m.cart);
   const bounce = m.motion.bounce > 0;
   return (
@@ -1359,7 +1549,7 @@ function FeaturedRow({ m }: { m: PreviewModel }) {
   );
 }
 
-function CatalogHeader({ m, children }: { m: PreviewModel; children?: ReactNode }) {
+export function CatalogHeader({ m, children }: { m: PreviewModel; children?: ReactNode }) {
   const header = m.cfg.screenImages?.catalogHeader;
   return (
     <div className="z-10 shrink-0 space-y-2 pb-1 pt-3 backdrop-blur-md" style={{ background: `${m.c.background}E6` }}>
@@ -1367,9 +1557,11 @@ function CatalogHeader({ m, children }: { m: PreviewModel; children?: ReactNode 
         <LiveBack m={m} size={32} />
         <Logo m={m} size={30} />
         <h2 className="flex-1 truncate text-lg font-extrabold">{m.txt('catalogTitle')}</h2>
-        <span className="px-2 py-0.5 kt-11 font-semibold" style={buttonStyle(m, 'soft')}>
-          {m.service === 'take_away' ? m.txt('takeAwayLabel') : m.txt('eatInLabel')}
-        </span>
+        {serviceAsked(m) ? (
+          <span className="px-2 py-0.5 kt-11 font-semibold" style={buttonStyle(m, 'soft')}>
+            {m.service === 'take_away' ? m.txt('takeAwayLabel') : m.txt('eatInLabel')}
+          </span>
+        ) : null}
         {m.live?.startOver ? (
           <button type="button" onClick={m.live.startOver} className="px-2.5 py-1 kt-11 font-semibold" style={{ ...cardStyle(m), borderRadius: 999 }}>
             {m.t('startOver')}
@@ -1387,17 +1579,53 @@ function CatalogHeader({ m, children }: { m: PreviewModel; children?: ReactNode 
         </div>
       ) : null}
       {children}
+      {/* "כיתוב רץ" under the header. */}
+      <TickerSlot m={m} screen="catalog" position="top" />
     </div>
   );
 }
 
-function ProductGrid({ m, products }: { m: PreviewModel; products: PProduct[] }) {
+/**
+ * The dishes' grid. `enter`: its cards come in ("כניסת הפריטים") as it mounts — a new category,
+ * the menu screen opening; each card in a wrapper so its own press feedback is never overridden.
+ */
+function ProductGrid({ m, products, enter = false }: { m: PreviewModel; products: PProduct[]; enter?: boolean }) {
   return (
     <div className="grid gap-2.5" style={{ gridTemplateColumns: `repeat(${m.cols}, minmax(0, 1fr))` }}>
-      {products.map((p) => (
-        <ProductCard key={p.id} m={m} p={p} />
-      ))}
+      {products.map((p, i) => {
+        const e = itemEnter(m.transitions, i, enter);
+        return (
+          <div key={p.id} data-product={p.id} className={cn('flex', e.className)} style={e.style}>
+            <ProductCard m={m} p={p} />
+          </div>
+        );
+      })}
     </div>
+  );
+}
+
+/**
+ * "הצג כל מחלקה בנפרד": the chosen category's section, changing with "מעבר בין קטגוריות" (a later
+ * category on the rail / strip comes from the end side in reading order) and its dishes coming in.
+ */
+function CategorySwap({ m, current }: { m: PreviewModel; current: string | null }) {
+  return (
+    <KioskSwap
+      id={current ?? ''}
+      fx={m.transitions.categorySwitch}
+      ms={m.transitions.categoryMs}
+      order={(id) => m.categories.findIndex((c) => c.id === id)}
+      className="overflow-x-clip [overflow-clip-margin:12px]"
+      render={(id) => {
+        const cat = m.categories.find((c) => c.id === id);
+        return cat ? (
+          <section data-section={cat.id} className="space-y-2">
+            <h3 className="text-sm font-extrabold">{cat.name}</h3>
+            <ProductGrid m={m} products={cat.products} enter />
+          </section>
+        ) : null;
+      }}
+    />
   );
 }
 
@@ -1442,7 +1670,7 @@ function SideCatalog({ m }: { m: PreviewModel }) {
     const scroller = scrollerRef.current;
     const section = scroller?.querySelector<HTMLElement>(`[data-section="${CSS.escape(id)}"]`);
     if (scroller && section) {
-      scroller.scrollTo({ top: section.offsetTop - 4, behavior: m.motion.flyMs > 0 ? 'smooth' : 'auto' });
+      scroller.scrollTo({ top: section.offsetTop - 4, behavior: m.cfg.general.reduceMotion ? 'auto' : 'smooth' });
     }
   };
 
@@ -1454,12 +1682,16 @@ function SideCatalog({ m }: { m: PreviewModel }) {
         <div className="flex min-w-0 flex-1 flex-col">
           <div ref={scrollerRef} onScroll={one ? undefined : onScroll} className="relative min-h-0 flex-1 space-y-5 overflow-y-auto px-3 pb-4 pt-2 [scrollbar-width:none]">
             {one ? null : <FeaturedRow m={m} />}
-            {(one ? m.categories.filter((c) => c.id === current) : m.categories).map((cat) => (
-              <section key={cat.id} data-section={cat.id} className={cn('space-y-2', one && 'animate-in fade-in duration-300')}>
-                <h3 className="text-sm font-extrabold">{cat.name}</h3>
-                <ProductGrid m={m} products={cat.products} />
-              </section>
-            ))}
+            {one ? (
+              <CategorySwap m={m} current={current} />
+            ) : (
+              m.categories.map((cat, i) => (
+                <section key={cat.id} data-section={cat.id} className="space-y-2">
+                  <h3 className="text-sm font-extrabold">{cat.name}</h3>
+                  <ProductGrid m={m} products={cat.products} enter={i === 0} />
+                </section>
+              ))
+            )}
             {m.categories.length === 0 ? (
               <p className="py-10 text-center text-sm" style={{ color: m.c.mutedText }}>
                 {m.t('empty')}
@@ -1474,6 +1706,8 @@ function SideCatalog({ m }: { m: PreviewModel }) {
         </div>
         {m.panel ? <CartPanel m={m} /> : null}
       </div>
+      {/* "כיתוב רץ" at the bottom: its own row across the screen, under the basket bar (as on the till, where the bar floats above it). */}
+      <TickerSlot m={m} screen="catalog" position="bottom" gapBelow={m.live ? 0 : PREVIEW_FOOTER_PX} />
     </div>
   );
 }
@@ -1496,7 +1730,7 @@ function TopCatalog({ m, activeCategory, onCategory }: { m: PreviewModel; active
       return;
     }
     const section = scroller.querySelector<HTMLElement>(`[data-section="${CSS.escape(id)}"]`);
-    if (section) scroller.scrollTo({ top: section.offsetTop - 4, behavior: m.motion.flyMs > 0 ? 'smooth' : 'auto' });
+    if (section) scroller.scrollTo({ top: section.offsetTop - 4, behavior: m.cfg.general.reduceMotion ? 'auto' : 'smooth' });
   };
   const onScroll = () => {
     const scroller = scrollerRef.current;
@@ -1516,17 +1750,14 @@ function TopCatalog({ m, activeCategory, onCategory }: { m: PreviewModel; active
         <div ref={scrollerRef} onScroll={one ? undefined : onScroll} className="relative min-h-0 flex-1 space-y-4 overflow-y-auto px-3 pb-4 pt-1 [scrollbar-width:none]">
           {one ? null : <FeaturedRow m={m} />}
           {!one && m.categories.length > 0 ? (
-            m.categories.map((cat) => (
+            m.categories.map((cat, i) => (
               <section key={cat.id} data-section={cat.id} className="space-y-2">
                 <h3 className="text-sm font-extrabold">{cat.name}</h3>
-                <ProductGrid m={m} products={cat.products} />
+                <ProductGrid m={m} products={cat.products} enter={i === 0} />
               </section>
             ))
           ) : current ? (
-            <section key={current.id} className="space-y-2 animate-in fade-in duration-300">
-              <h3 className="text-sm font-extrabold">{current.name}</h3>
-              <ProductGrid m={m} products={current.products} />
-            </section>
+            <CategorySwap m={m} current={current.id} />
           ) : (
             <p className="py-10 text-center text-sm" style={{ color: m.c.mutedText }}>
               {m.t('empty')}
@@ -1538,6 +1769,7 @@ function TopCatalog({ m, activeCategory, onCategory }: { m: PreviewModel; active
             <CartBar m={m} />
           </div>
         ) : null}
+        <TickerSlot m={m} screen="catalog" position="bottom" gapBelow={m.live ? 0 : PREVIEW_FOOTER_PX} />
       </div>
       {m.panel ? <CartPanel m={m} /> : null}
     </div>
@@ -1562,6 +1794,7 @@ export function ProductSheet({
   onClose,
   onAdd,
   quickNotes,
+  variant = 'sheet',
 }: {
   m: PreviewModel;
   product: PProduct;
@@ -1572,8 +1805,11 @@ export function ProductSheet({
   onAdd: (line: PLine, from: DOMRect | null) => void;
   /** The menu's quick notes for this product (the real kiosk); the preview shows samples. */
   quickNotes?: string[];
+  /** layout.itemView (kiosk-shared/layouts): the centred window of today, a smaller one, or the whole screen. */
+  variant?: 'sheet' | 'modal' | 'full';
 }) {
   const { cfg } = m;
+  const full = variant === 'full';
   const [picked, setPicked] = useState<Record<string, string[]>>(() =>
     Object.fromEntries(groups.map((g) => [g.id, g.min > 0 && g.options[0] ? [g.options[0].id] : []])),
   );
@@ -1607,17 +1843,41 @@ export function ProductSheet({
   };
 
   return (
-    <div className="absolute inset-0 z-30 flex flex-col items-center justify-center p-3">
-      <button type="button" aria-label={m.t('close')} className="absolute inset-0 bg-black/40 animate-in fade-in duration-200" onClick={onClose} />
+    <div className={cn('absolute inset-0 z-30 flex flex-col items-center justify-center', !full && 'p-3')}>
+      <button
+        type="button"
+        aria-label={m.t('close')}
+        className={cn('absolute inset-0 bg-black/40', sheetEnter(m.transitions).scrim)}
+        style={sheetEnter(m.transitions).style}
+        onClick={onClose}
+      />
       <div
-        className="relative flex max-h-[90%] w-full max-w-[420px] flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-300"
-        style={{ background: m.c.surface, color: m.c.text, borderRadius: Math.max(16, m.radius) }}
+        className={cn(
+          'relative flex w-full flex-col overflow-hidden',
+          full ? 'h-full' : variant === 'modal' ? 'max-h-[86%] max-w-[360px]' : 'max-h-[90%] max-w-[420px]',
+          sheetEnter(m.transitions).panel,
+        )}
+        style={{ ...sheetEnter(m.transitions).style, background: m.c.surface, color: m.c.text, borderRadius: full ? 0 : Math.max(16, m.radius) }}
       >
-        <div className="absolute inset-x-0 top-2 z-10 mx-auto h-1.5 w-10 rounded-full bg-white/80 shadow" />
+        {full ? (
+          <button
+            type="button"
+            aria-label={m.t('close')}
+            onClick={onClose}
+            className="absolute end-3 top-3 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-black/45 text-white"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        ) : (
+          <div className="absolute inset-x-0 top-2 z-10 mx-auto h-1.5 w-10 rounded-full bg-white/80 shadow" />
+        )}
         <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none]">
-          <div ref={pictureRef} className="w-full" style={{ aspectRatio: m.ratio }}>
-            <ProductImage m={m} p={picture} className="h-full w-full" />
-          </div>
+          {/* In the accessible mode the dish shows in the display half (kiosk-shared/layouts/reach.tsx). */}
+          {reachLow(m.cfg, m.reach?.toggled ?? false) ? null : (
+            <div ref={pictureRef} className="w-full" style={{ aspectRatio: m.ratio }}>
+              <ProductImage m={m} p={picture} className="h-full w-full" />
+            </div>
+          )}
           <div className="space-y-4 p-4">
             <div>
               <h3 className="text-xl font-extrabold leading-tight">{product.name}</h3>
@@ -1716,7 +1976,7 @@ export function ProductSheet({
                 m.live.noteField(note, setNote)
               ) : (
                 <div className="px-3 py-2.5 text-xs" style={{ border: `1px solid ${m.c.border}`, borderRadius: Math.min(m.radius, 14), color: m.c.mutedText }}>
-                  {m.t('notePlaceholder')}
+                  {m.txt('noteHint')}
                 </div>
               )
             ) : null}
@@ -1758,10 +2018,10 @@ export function ProductSheet({
 export function ConfirmSheet({ m, onMore, onPay }: { m: PreviewModel; onMore: () => void; onPay: () => void }) {
   return (
     <div className="absolute inset-0 z-30 flex flex-col items-center justify-center p-3">
-      <div className="absolute inset-0 bg-black/40 animate-in fade-in duration-200" />
+      <div className={cn('absolute inset-0 bg-black/40', sheetEnter(m.transitions).scrim)} style={sheetEnter(m.transitions).style} />
       <div
-        className="relative w-full max-w-[420px] space-y-3 p-4 animate-in fade-in zoom-in-95 duration-300"
-        style={{ background: m.c.surface, color: m.c.text, borderRadius: Math.max(16, m.radius) }}
+        className={cn('relative w-full max-w-[420px] space-y-3 p-4', sheetEnter(m.transitions).panel)}
+        style={{ ...sheetEnter(m.transitions).style, background: m.c.surface, color: m.c.text, borderRadius: Math.max(16, m.radius) }}
       >
         <div className="flex items-center gap-2">
           <span className="flex h-8 w-8 items-center justify-center rounded-full" style={{ background: m.c.accent, color: '#fff' }}>
@@ -1891,6 +2151,7 @@ export function UpsellWindow({
   onAdd,
   onContinue,
   onSkip,
+  required = false,
 }: {
   m: PreviewModel;
   title: string;
@@ -1902,6 +2163,8 @@ export function UpsellWindow({
   onAdd: (p: PProduct, from: DOMRect | null) => void;
   onContinue: () => void;
   onSkip: () => void;
+  /** "חובה" (payment.stepModes.upsell*): answered with "הוסף" / "לא תודה" only — a tap outside does not close it. */
+  required?: boolean;
 }) {
   const picture = (p: PProduct, own: string | null, className: string) =>
     own || p.imageUrl ? (
@@ -1918,10 +2181,16 @@ export function UpsellWindow({
   const anyAdded = Object.keys(added).length > 0;
   return (
     <div className="absolute inset-0 z-30 flex flex-col items-center justify-center p-3">
-      <button type="button" aria-label={m.t('close')} className="absolute inset-0 bg-black/40 animate-in fade-in duration-200" onClick={onSkip} />
+      <button
+        type="button"
+        aria-label={m.t('close')}
+        className={cn('absolute inset-0 bg-black/40', sheetEnter(m.transitions).scrim)}
+        style={sheetEnter(m.transitions).style}
+        onClick={required ? undefined : onSkip}
+      />
       <div
-        className="relative flex max-h-[90%] w-full max-w-[420px] flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-300"
-        style={{ background: m.c.surface, color: m.c.text, borderRadius: Math.max(16, m.radius) }}
+        className={cn('relative flex max-h-[90%] w-full max-w-[420px] flex-col overflow-hidden', sheetEnter(m.transitions).panel)}
+        style={{ ...sheetEnter(m.transitions).style, background: m.c.surface, color: m.c.text, borderRadius: Math.max(16, m.radius) }}
       >
         <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none]">
           {single ? (
@@ -2012,27 +2281,22 @@ export function UpsellWindow({
 
 /* ------------------------------------------------------------------- cart */
 
+/**
+ * "ההזמנה שלי" — the review before the payment: the dishes with their options and notes, the
+ * quantities editable, how many and for where, the total, "לתשלום". The customer's details and
+ * the tip are asked after it (their own steps).
+ */
 export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] }) {
   const { cfg } = m;
   const total = cartTotal(m.cart);
+  const count = cartCount(m.cart);
   const min = cfg.payment.minOrderAgorot / 100;
   const below = min > 0 && total < min;
-  const askName = cfg.payment.customerName !== 'off';
-  const askPhone = cfg.payment.customerPhone !== 'off';
-  const field = (label: string, required: boolean, ltr = false) => (
-    <div className="flex items-center justify-between px-3 py-2.5 text-sm" style={{ border: `1px solid ${m.c.border}`, borderRadius: Math.min(m.radius, 14) }}>
-      <span style={{ color: m.c.mutedText }}>
-        {label}
-        {required ? <span style={{ color: '#DC2626' }}> *</span> : null}
-      </span>
-      <span dir={ltr ? 'ltr' : undefined} className="text-xs" style={{ color: m.c.mutedText }}>
-        {ltr ? '05X-XXXXXXX' : ''}
-      </span>
-    </div>
-  );
   return (
     <ScreenBody
       m={m}
+      top={<TickerSlot m={m} screen="cart" position="top" />}
+      bottom={<TickerSlot m={m} screen="cart" position="bottom" />}
       footer={
         <div className="space-y-1.5">
           {below ? (
@@ -2051,11 +2315,29 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
         <ScreenImage m={m} k="cart" height={80} />
         <div className="flex items-center justify-between gap-2">
           <LiveBack m={m} />
-          <h2 className="flex-1 text-xl font-extrabold">{m.txt('cartTitle')}</h2>
-          <button type="button" className="px-3 py-1 text-xs font-semibold" style={buttonStyle(m, 'soft')} onClick={() => m.go('catalog')}>
-            {m.t('addMore')}
+          <div className="min-w-0 flex-1">
+            <h2 className="text-xl font-extrabold">{m.txt('cartTitle')}</h2>
+            <p className="kt-11" style={{ color: m.c.mutedText }}>
+              {m.txt('reviewHint')}
+            </p>
+          </div>
+          <button type="button" className="shrink-0 px-3 py-1.5 text-xs font-semibold" style={buttonStyle(m, 'soft')} onClick={() => m.go('catalog')}>
+            {m.txt('addMoreCta')}
           </button>
         </div>
+        {count > 0 ? (
+          <div className="flex flex-wrap items-center gap-1.5 kt-11 font-semibold">
+            <span className="rounded-full px-2.5 py-1" style={{ background: `${m.c.primary}14`, color: m.c.text }}>
+              {count === 1 ? m.txt('reviewItemsOne') : m.txt('reviewItems').replace('{n}', String(count))}
+            </span>
+            {serviceAsked(m) ? (
+              <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1" style={{ background: `${m.c.primary}14`, color: m.c.text }}>
+                {m.service === 'eat_in' ? <UtensilsCrossed className="h-3.5 w-3.5" /> : <ShoppingBag className="h-3.5 w-3.5" />}
+                {m.service === 'eat_in' ? m.txt('eatInLabel') : m.txt('takeAwayLabel')}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         <div className="divide-y overflow-hidden" style={{ ...cardStyle(m) }}>
           {m.cart.map((l) => (
             <div key={l.key} className="flex items-center gap-3 p-3" style={{ borderColor: m.c.border }}>
@@ -2087,6 +2369,20 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
             </p>
           ) : null}
         </div>
+        {m.cart.length > 0 ? (
+          <div className="space-y-1.5 p-3" style={{ background: `${m.c.primary}0D`, borderRadius: Math.min(Math.max(m.radius, 8), 16) }}>
+            <div className="flex items-center justify-between kt-13" style={{ color: m.c.mutedText }}>
+              <span>{m.txt('reviewSubtotal')}</span>
+              <span className="tabular-nums">{m.money(total)}</span>
+            </div>
+            <div className="flex items-center justify-between border-t pt-1.5 text-base font-extrabold" style={{ borderColor: m.c.border }}>
+              <span>{m.txt('reviewTotal')}</span>
+              <span className="tabular-nums" style={{ color: m.c.primary }}>
+                {m.money(total)}
+              </span>
+            </div>
+          </div>
+        ) : null}
         {cfg.general.upsellEnabled && upsell.length > 0 ? (
           <section className="space-y-2">
             <h3 className="text-sm font-extrabold">{m.txt('upsellTitle')}</h3>
@@ -2099,19 +2395,198 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
             </div>
           </section>
         ) : null}
-        {!m.live?.detailsScreen && (askName || askPhone || (m.service === 'eat_in' && cfg.general.askTableNumber)) ? (
-          <section className="space-y-2">
-            <h3 className="text-sm font-extrabold">{m.txt('customerTitle')}</h3>
-            <p className="kt-11 leading-snug" style={{ color: m.c.mutedText }}>
-              {m.txt('customerExplain')}
-            </p>
-            {askName ? field(m.t('name'), cfg.payment.customerName === 'required') : null}
-            {askPhone ? field(m.t('phone'), cfg.payment.customerPhone === 'required', true) : null}
-            {m.service === 'eat_in' && cfg.general.askTableNumber ? field(m.t('table'), true) : null}
-          </section>
-        ) : null}
       </div>
     </ScreenBody>
+  );
+}
+
+/* -------------------------------------------------------------------- tip */
+
+/** "ההזמנה שלכם ✓ · טיפ לצוות · תשלום": the steps before the payment, this one in the brand colour. */
+function CheckoutBarRow({ m, steps, current }: { m: PreviewModel; steps: CheckoutStep[]; current: CheckoutStep }) {
+  const items = checkoutBar(steps, current);
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 kt-11">
+      {items.map((it, i) => (
+        <span key={it.key} className="inline-flex items-center gap-2">
+          {i > 0 ? <span aria-hidden className="h-1 w-1 rounded-full" style={{ background: `${m.c.mutedText}99` }} /> : null}
+          <span
+            className={it.state === 'current' ? 'font-extrabold' : 'font-medium'}
+            style={{ color: it.state === 'current' ? m.c.primary : m.c.mutedText }}
+            aria-current={it.state === 'current' ? 'step' : undefined}
+          >
+            {it.state === 'done' ? '✓ ' : ''}
+            {m.txt(it.textKey)}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * "רוצים להוסיף טיפ לצוות?" — the tip step before the payment (the owner's design, as the Android
+ * kiosk): a card in the middle of the screen in the kiosk's own colours — the caption and the
+ * business, the step bar, a heart, the presets as big tiles with their amounts (and "סכום אחר",
+ * whole shekels on the kiosk's digits pad), the order / tip / total updating live, the main button
+ * with the amount and "המשך ללא טיפ". Nothing is chosen at first — never an automatic tip.
+ * The real kiosk drives it through `m.live.tip`; the preview keeps its own choice.
+ */
+export function TipScreen({ m, steps: previewSteps, onDone }: { m: PreviewModel; steps?: CheckoutStep[]; onDone?: (tipAgorot: number) => void }) {
+  const { cfg } = m;
+  const live = m.live?.tip;
+  const [own, setOwn] = useState<{ pct: number | null; agorot: number | null }>({ pct: null, agorot: null });
+  const [other, setOther] = useState(false);
+  const value = live ? live.value : own;
+  const setValue = live ? live.onChange : setOwn;
+  const steps = live ? live.steps : previewSteps && previewSteps.includes('tip') ? previewSteps : ['tip' as const];
+  const goods = live ? live.goodsAgorot : Math.round(cartTotal(m.cart) * 100);
+  const tip = value.agorot !== null ? value.agorot : tipPercentAgorot(goods, value.pct);
+  const total = goods + tip;
+  /** The payment comes next (else the details): the main button says so. */
+  const toPay = steps.indexOf('tip') >= steps.length - 1;
+  const presets = cfg.payment.tipPresets;
+  const tiles = presets.length + (cfg.payment.tipOther !== false ? 1 : 0);
+  const radius = Math.min(Math.max(m.radius, 10), 20);
+  const money = (agorot: number) => m.money(agorot / 100);
+  // "חובה" (payment.stepModes.tip): a tip, or "בלי טיפ", before going on.
+  const mustChoose = stepMode(cfg, 'tip') === 'required' && value.pct === null && value.agorot === null;
+  const go = () => (mustChoose ? undefined : live ? live.onContinue() : onDone?.(tip));
+  const skip = () => {
+    if (live) return live.onSkip();
+    setOwn({ pct: null, agorot: null });
+    onDone?.(0);
+  };
+  const tileStyle = (on: boolean): CSSProperties => ({
+    background: on ? `${m.c.primary}14` : m.c.surface,
+    border: `${on ? 2 : 1.5}px solid ${on ? m.c.primary : m.c.border}`,
+    color: on ? m.c.primary : m.c.text,
+    borderRadius: radius,
+  });
+  return (
+    <div className="relative flex h-full flex-col">
+      <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto p-3 [scrollbar-width:none]">
+        <div className="my-auto w-full max-w-[640px] overflow-hidden" style={{ ...cardStyle(m), background: m.c.surface, borderRadius: Math.max(16, m.radius) }}>
+          <CardHeader m={m} caption={m.txt('tipCaption')} start={<LiveBack m={m} size={32} />} />
+          <div className="flex flex-col gap-4 p-4">
+            <CheckoutBarRow m={m} steps={steps} current="tip" />
+            <div className="flex flex-col items-center gap-2 text-center">
+              <span className="flex h-12 w-12 items-center justify-center" style={{ background: `${m.c.primary}1F`, color: m.c.primary, borderRadius: 14 }}>
+                <Heart className="h-6 w-6" />
+              </span>
+              <h2 className="text-2xl font-extrabold leading-tight">{m.txt('tipTitle')}</h2>
+              <p className="kt-13" style={{ color: m.c.mutedText }}>
+                {m.txt('tipSubtitle')}
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2.5">
+              {presets.map((p, i) => {
+                const on = value.agorot === null && value.pct === p;
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={(e) => {
+                      popChoice(e.currentTarget, m);
+                      setValue(on ? { pct: null, agorot: null } : { pct: p, agorot: null });
+                    }}
+                    className={`flex flex-col items-center justify-center gap-0.5 px-2 py-3 transition-colors duration-150 active:scale-95 ${tiles % 2 === 1 && i === tiles - 1 ? 'col-span-2' : ''}`}
+                    style={tileStyle(on)}
+                  >
+                    <span dir="ltr" className="text-2xl font-extrabold tabular-nums">
+                      {p}%
+                    </span>
+                    <span className="kt-13 tabular-nums" style={{ color: on ? m.c.primary : m.c.mutedText }}>
+                      {money(tipPercentAgorot(goods, p))}
+                    </span>
+                  </button>
+                );
+              })}
+              {cfg.payment.tipOther !== false ? (
+                <button
+                  type="button"
+                  aria-pressed={value.agorot !== null}
+                  onClick={(e) => {
+                    popChoice(e.currentTarget, m);
+                    setOther(true);
+                  }}
+                  className={`flex flex-col items-center justify-center gap-0.5 px-2 py-3 transition-colors duration-150 active:scale-95 ${tiles % 2 === 1 ? 'col-span-2' : ''}`}
+                  style={tileStyle(value.agorot !== null)}
+                >
+                  <span className="text-lg font-bold">{m.txt('tipOtherLabel')}</span>
+                  <span className="kt-13 tabular-nums" style={{ color: value.agorot !== null ? m.c.primary : m.c.mutedText }}>
+                    {value.agorot !== null ? money(value.agorot) : m.txt('tipOtherHint')}
+                  </span>
+                </button>
+              ) : null}
+            </div>
+            <div className="space-y-2 p-3.5" style={{ background: `${m.c.primary}0D`, borderRadius: radius }}>
+              <div className="flex items-center justify-between kt-13">
+                <span style={{ color: m.c.mutedText }}>{m.txt('tipOrderTotal')}</span>
+                <span className="font-semibold tabular-nums">{money(goods)}</span>
+              </div>
+              <div className="flex items-center justify-between kt-13">
+                <span style={{ color: m.c.mutedText }}>{m.txt('tipLine')}</span>
+                <span className="font-semibold tabular-nums">{money(tip)}</span>
+              </div>
+              <div className="flex items-center justify-between border-t pt-2" style={{ borderColor: m.c.border }}>
+                <span className="text-base font-bold">{m.txt('tipTotal')}</span>
+                <span className="text-xl font-extrabold tabular-nums" style={{ color: m.c.primary }}>
+                  {money(total)}
+                </span>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <BigButton m={m} onClick={go} disabledLook={mustChoose}>
+                <span>{toPay ? m.txt('tipContinue') : m.txt('entryContinue')}</span>
+                <span className="tabular-nums">· {money(total)}</span>
+                <ArrowLeft className="h-5 w-5" />
+              </BigButton>
+              {mustChoose ? (
+                <p className="text-center kt-13" style={{ color: m.c.mutedText }}>
+                  {m.t('tipChooseHint')}
+                </p>
+              ) : null}
+              <button
+                type="button"
+                onClick={skip}
+                className="flex w-full items-center justify-center px-4 py-3 kt-15 font-semibold transition-transform duration-150 active:scale-[0.98]"
+                style={{ border: `1.5px solid ${m.c.border}`, color: m.c.text, borderRadius: m.btnRadius }}
+              >
+                {m.txt('tipSkip')}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      {other ? (
+        <EntryWindow
+          m={m}
+          caption={m.txt('tipCaption')}
+          steps={[
+            {
+              key: 'tipOther',
+              icon: 'tip',
+              title: m.txt('tipOtherLabel'),
+              subtitle: m.txt('tipOtherHint'),
+              hint: '0',
+              initial: value.agorot !== null ? String(Math.round(value.agorot / 100)) : '',
+              max: String(TIP_OTHER_MAX_SHEKELS).length,
+              digits: true,
+              suffix: '₪',
+              check: (v) => (tipOtherAgorot(v, goods) === null ? m.txt('tipOtherError') : null),
+              commit: (v) => {
+                const agorot = tipOtherAgorot(v, goods);
+                if (agorot !== null) setValue({ pct: null, agorot });
+              },
+            },
+          ]}
+          onFinish={() => setOther(false)}
+          onClose={() => setOther(false)}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -2248,11 +2723,9 @@ function LivePay({ m, live }: { m: PreviewModel; live: NonNullable<KioskLive['pa
   );
 }
 
-export function PayScreen({ m }: { m: PreviewModel }) {
-  const { cfg } = m;
-  const [tip, setTip] = useState<number | null>(null);
+/** `tipAgorot`: the preview's tip chosen on its tip step (the tip itself is asked there, before). */
+export function PayScreen({ m, tipAgorot = 0 }: { m: PreviewModel; tipAgorot?: number }) {
   const base = cartTotal(m.cart);
-  const tipAmount = tip ? Math.round(base * tip) / 100 : 0;
   if (m.live?.pay) return <LivePay m={m} live={m.live.pay} />;
   return (
     <ScreenBody m={m}>
@@ -2260,31 +2733,8 @@ export function PayScreen({ m }: { m: PreviewModel }) {
         <ScreenImage m={m} k="pay" height={80} />
         <h2 className="text-xl font-extrabold">{m.txt('payTitle')}</h2>
         <div className="text-4xl font-black tabular-nums" style={{ color: m.c.text }}>
-          {m.money(base + tipAmount)}
+          {m.money(base + tipAgorot / 100)}
         </div>
-        {cfg.payment.tipEnabled ? (
-          <div className="w-full space-y-1.5">
-            <div className="text-xs font-semibold" style={{ color: m.c.mutedText }}>
-              {m.t('tip')}
-            </div>
-            <div className="flex flex-wrap justify-center gap-1.5">
-              {[null, ...cfg.payment.tipPresets].map((p) => {
-                const on = tip === p;
-                return (
-                  <button
-                    key={p ?? 'none'}
-                    type="button"
-                    onClick={() => setTip(p)}
-                    className="min-w-14 px-3 py-2 text-sm font-bold transition-all duration-150"
-                    style={on ? buttonStyle(m) : { ...cardStyle(m), borderRadius: m.btnRadius }}
-                  >
-                    {p === null ? m.t('noTip') : `${p}%`}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/kiosk/card_terminals.png" alt="" className="w-full max-w-[300px] animate-in fade-in duration-500" style={{ aspectRatio: '900 / 480' }} />
         <p className="text-base font-bold">{m.txt('payInstruction')}</p>
@@ -2330,9 +2780,6 @@ export function SuccessScreen({ m }: { m: PreviewModel }) {
         {cfg.success.image ? <MediaView media={cfg.success.image} className="aspect-video w-full max-w-[260px] object-cover" style={{ borderRadius: m.radius }} /> : null}
         {cfg.success.message.trim() ? <p className="text-base font-semibold">{cfg.success.message}</p> : null}
         <div className="flex flex-wrap justify-center gap-1.5 kt-11">
-          <span className="rounded-full px-2.5 py-1" style={{ background: `${m.c.accent}1F` }}>
-            {m.t('bonSent')}
-          </span>
           {cfg.printing.pickupSlip ? (
             <span className="rounded-full px-2.5 py-1" style={{ background: `${m.c.accent}1F` }}>
               {m.t('pickupSlip')}
@@ -2381,63 +2828,138 @@ export function SuccessScreen({ m }: { m: PreviewModel }) {
 
 export type PausedVariant = 'paused' | 'closed' | 'noPayment' | 'offline';
 
-export function PausedScreen({ m, variant }: { m: PreviewModel; variant: PausedVariant }) {
-  const { cfg } = m;
-  const title =
-    variant === 'paused'
-      ? cfg.operations.pausedTitle || m.txt('pausedTitle')
-      : variant === 'closed'
-        ? m.txt('closedTitle')
-        : variant === 'offline'
-          ? m.txt('offlineTitle')
-          : m.txt('noPaymentTitle');
-  const body =
-    variant === 'paused'
-      ? cfg.operations.pausedBody || m.txt('pausedBody')
-      : variant === 'closed'
-        ? m.txt('closedBody')
-        : variant === 'offline'
-          ? m.txt('offlineBody')
-          : m.txt('noPaymentBody');
+/** The cloud's pause as the kiosk has it: whoever paused it typed `message`; it ends at `until` (ISO). */
+export interface RestPause {
+  message?: string | null;
+  until?: string | null;
+}
+
+/**
+ * The kiosk's rest screens: closed — paused or outside the hours, "יצאתי לנוח…" (ClosedScreen) —
+ * and the till's own "no payment" / "no internet". `pause`: the real kiosk's pause (the
+ * preview passes a sample).
+ */
+export function PausedScreen({ m, variant, pause }: { m: PreviewModel; variant: PausedVariant; pause?: RestPause }) {
+  if (variant === 'paused' || variant === 'closed') return <ClosedScreen m={m} reason={variant} pause={variant === 'paused' ? (pause ?? {}) : {}} />;
+  const title = variant === 'offline' ? m.txt('offlineTitle') : m.txt('noPaymentTitle');
+  const body = variant === 'offline' ? m.txt('offlineBody') : m.txt('noPaymentBody');
   // The till's own "no payment" / "no internet" screens carry no business messages.
-  const own = variant === 'noPayment' || variant === 'offline';
-  const messages = own ? [] : messagesFor(cfg, 'paused', ['closed', 'notice', 'banner'], m.nowMs);
-  const image = cfg.screenImages?.paused;
   return (
     <ScreenBody m={m}>
       <div className="flex min-h-full flex-col items-center justify-center gap-4 p-6 text-center">
         {variant === 'noPayment' ? (
           <PinpadScene m={m} muted />
-        ) : variant === 'offline' ? (
+        ) : (
           <span className="flex h-20 w-20 items-center justify-center rounded-full" style={{ background: '#FEF3C7', color: '#B45309' }}>
             <WifiOff className="h-10 w-10" />
           </span>
-        ) : image ? (
-          <div className="w-full overflow-hidden" style={{ borderRadius: m.radius, height: 120 }}>
-            <Img src={image.url} className="h-full w-full object-cover" />
-          </div>
-        ) : (
-          <Logo m={m} size={64} />
         )}
         <h2 className="text-2xl font-extrabold">{title}</h2>
         <p className="text-sm" style={{ color: m.c.mutedText }}>
           {body}
         </p>
-        {variant === 'closed' && cfg.hours.enabled ? (
-          <div className="w-full space-y-1 p-3 text-xs" style={cardStyle(m)}>
-            {cfg.hours.ranges.map((r, i) => (
-              <div key={i} className="flex justify-between gap-2">
-                <span>{r.days.map((d) => m.t(`day${d}`)).join(' ')}</span>
-                <span dir="ltr" className="tabular-nums">
-                  {r.open}–{r.close}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        <CenteredMessages m={m} list={messages} />
       </div>
     </ScreenBody>
+  );
+}
+
+/* ----------------------------------------------------------------- closed */
+
+/** lucide's "coffee" cup and handle (24-unit grid); the steam is drawn apart, to rise. */
+const CUP_PATH = 'M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1';
+
+/** The cup on a breathing disc of frosted glass, a soft ring leaving it, three wisps of steam rising in turn. */
+function RestCup({ tint }: { tint: string }) {
+  return (
+    <div className="relative flex h-36 w-36 items-center justify-center">
+      <span aria-hidden className="kiosk-rest-ring absolute h-28 w-28 rounded-full" style={{ background: tint, opacity: 0 }} />
+      <span className="kiosk-rest-breathe flex h-28 w-28 items-center justify-center rounded-full" style={{ background: `${tint}24` }}>
+        <svg viewBox="0 0 24 24" className="h-16 w-16" fill="none" stroke={tint} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d={CUP_PATH} />
+          {[6, 10, 14].map((x, i) => (
+            <path key={x} d={`M${x} 2.4v2.2`} className="kiosk-steam" style={{ opacity: 0.9, animationDelay: `${-0.8 * i}s` }} />
+          ))}
+        </svg>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * "יצאתי לנוח… תכף אשוב" — the closed screen, for a pause and outside the hours alike (the
+ * till's KioskClosedScreen, the words by kioskRestText, the colours by kioskRestLook): edge to
+ * edge in the kiosk's colour, everything centred — the logo or the business's name, the cup,
+ * the big title, the subtitle, when it is back and "אפשר להזמין בקופה". Still with reduce motion.
+ */
+function ClosedScreen({ m, reason, pause }: { m: PreviewModel; reason: KioskRestReason; pause: RestPause }) {
+  const { cfg } = m;
+  const words = kioskRestText(reason, cfg, pause, m.txt, new Date(m.nowMs));
+  const look = kioskRestLook(cfg.theme, m.c);
+  const messages = messagesFor(cfg, 'paused', ['closed', 'notice', 'banner'], m.nowMs);
+  const image = cfg.screenImages?.paused;
+  const fill = look.from === look.to ? look.from : `linear-gradient(${look.diagonal ? '135deg' : '180deg'}, ${look.from}, ${look.to})`;
+  const ink = look.ink;
+  const clock = words.backClock;
+  const back =
+    clock === null || words.backInDays === null
+      ? null
+      : words.backInDays <= 0
+        ? m.t('rest.backAt', { time: clock })
+        : words.backInDays === 1
+          ? m.t('rest.backTomorrow', { time: clock })
+          : m.t('rest.backOn', { day: m.t(`day${words.backWeekday ?? 0}`), time: clock });
+  return (
+    <div className="relative h-full overflow-hidden" style={{ background: fill, color: ink }}>
+      {/* The screen's own picture ("paused"), when given: under the colour, never instead of it. */}
+      {image ? (
+        <>
+          <Img src={image.url} className="absolute inset-0 h-full w-full object-cover" />
+          <div aria-hidden className="absolute inset-0" style={{ background: fill, opacity: 0.82 }} />
+        </>
+      ) : null}
+      {look.spots ? (
+        <>
+          <div aria-hidden className="pointer-events-none absolute -left-16 -top-16 h-72 w-72 rounded-full bg-white/15 blur-3xl" />
+          <div aria-hidden className="pointer-events-none absolute -bottom-20 -right-16 h-80 w-80 rounded-full bg-black/10 blur-3xl" />
+        </>
+      ) : null}
+      {look.glow ? (
+        <div aria-hidden className="pointer-events-none absolute inset-0" style={{ background: `radial-gradient(circle at 50% 42%, ${look.glow}47 0%, ${look.glow}00 60%)` }} />
+      ) : null}
+      <div className="relative flex h-full flex-col items-center overflow-y-auto px-6 py-8 text-center [scrollbar-width:none]">
+        <div className="my-auto flex w-full max-w-[560px] flex-col items-center">
+          {m.logoUrl ? (
+            <div className="mb-6 flex h-16 w-40 items-center justify-center rounded-2xl p-2" style={{ background: 'rgba(255,255,255,0.92)' }}>
+              <Img src={m.logoUrl} className="max-h-full max-w-full object-contain" />
+            </div>
+          ) : m.brandName.trim() ? (
+            <div className="mb-5 text-base font-bold" style={{ opacity: 0.85 }}>
+              {m.brandName}
+            </div>
+          ) : null}
+          <RestCup tint={look.glow ? look.title : ink} />
+          <h2 className="mt-5 text-4xl font-extrabold leading-tight" style={{ color: look.title }}>
+            {words.title}
+          </h2>
+          <p className="mt-2 text-xl font-semibold" style={{ opacity: 0.92 }}>
+            {words.subtitle}
+          </p>
+          {back ? (
+            <div className="mt-5 rounded-full px-5 py-2 text-base font-bold tabular-nums" style={{ background: `${ink}24` }}>
+              {back}
+            </div>
+          ) : null}
+          <p className="mt-4 text-sm" style={{ opacity: 0.78 }}>
+            {m.t('rest.orderAtTill')}
+          </p>
+          {messages.length > 0 ? (
+            <div className="mt-5 w-full">
+              <CenteredMessages m={m} list={messages} />
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -2447,6 +2969,7 @@ export function PausedScreen({ m, variant }: { m: PreviewModel; variant: PausedV
  */
 export const PREVIEW_CSS = `
 ${CTA_BOUNCE_KEYFRAMES}
+${MOTION_CSS}
 @keyframes kioskCtaPulse { from { transform: scale(1); } to { transform: scale(1.04); } }
 @keyframes kioskCtaGlow { 0% { transform: scale(1, 1); opacity: 0.55; } 100% { transform: scale(1.10, 1.45); opacity: 0; } }
 .kiosk-cta-pulse { animation: kioskCtaPulse 1100ms ease-in-out infinite alternate; }
@@ -2470,6 +2993,12 @@ ${CTA_BOUNCE_KEYFRAMES}
 .kiosk-pop { animation: kioskPop 0.5s cubic-bezier(.2,.9,.3,1.2) both; }
 .kiosk-nudge { animation: kioskNudge 1.4s ease-in-out infinite; }
 .kiosk-bounce { animation: kioskBounce 0.45s cubic-bezier(.3,1.6,.5,1) both; }
+@keyframes kioskRestBreathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+@keyframes kioskRestRing { 0% { transform: scale(1); opacity: 0.16; } 100% { transform: scale(1.32); opacity: 0; } }
+@keyframes kioskSteam { 0% { transform: translateY(0.6px); opacity: 0; } 50% { opacity: 0.9; } 100% { transform: translateY(-1.6px); opacity: 0; } }
+.kiosk-rest-breathe { animation: kioskRestBreathe 5.2s ease-in-out infinite; }
+.kiosk-rest-ring { animation: kioskRestRing 3.2s linear infinite; }
+.kiosk-steam { animation: kioskSteam 2.4s linear infinite; }
 .k-reduce *, .k-reduce *::before, .k-reduce *::after { animation: none !important; transition: none !important; }
-@media (prefers-reduced-motion: reduce) { .kiosk-card, .kiosk-ring, .kiosk-pulse, .kiosk-pop, .kiosk-nudge, .kiosk-bounce { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .kiosk-card, .kiosk-ring, .kiosk-pulse, .kiosk-pop, .kiosk-nudge, .kiosk-bounce, .kiosk-rest-breathe, .kiosk-rest-ring, .kiosk-steam { animation: none; } }
 `;

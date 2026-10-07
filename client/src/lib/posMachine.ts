@@ -1,5 +1,6 @@
 import { DEVICE_MODELS, type DeviceModel, type PosMachine } from '@/lib/types';
 import { normalizeMachineIntegration } from '@/lib/paymentIntegration';
+import { normalizeCheckBypass } from '@/lib/terminalCheckBypass';
 
 const BATTERY_STATUSES = ['charging', 'discharging', 'full', 'not_charging', 'unknown'] as const;
 const PRINTER_STATUSES = ['ok', 'no_paper', 'overheated', 'error', 'unavailable', 'unknown'] as const;
@@ -84,6 +85,8 @@ export function normalizeTerminalFields(raw: Record<string, unknown>) {
     terminalStatus: terminalStatus(raw.terminalStatus),
     expectedTerminalNumberSource: nullableString(raw.expectedTerminalNumberSource),
     cardLock: (['mismatch', 'not_configured', 'unknown'] as const).find((v) => v === raw.cardLock) ?? null,
+    // "עקיפת בדיקת מספר מסוף" (docs/SPEC_KIOSK.md §20.1).
+    ...normalizeCheckBypass(raw),
     // The network pinpad (app/services/payment_terminal.py): dropped here before, so the
     // "נדרשת כתובת IP למסופון" alert never showed.
     pinpadEnabled: raw.pinpadEnabled === true,
@@ -110,6 +113,15 @@ function deviceModel(value: unknown): PosMachine['deviceModel'] {
 function deviceRole(value: unknown): PosMachine['deviceRole'] {
   const s = nullableString(value)?.toLowerCase();
   return s === 'till' || s === 'kiosk' ? s : null;
+}
+
+/** What the device runs, as the server says (else what it said at pairing); null when unknown. */
+function platformOf(value: unknown, deviceInfo: unknown): PosMachine['platform'] {
+  const said = (v: unknown) => {
+    const s = nullableString(v)?.toLowerCase();
+    return s === 'android' || s === 'windows' || s === 'web' ? s : null;
+  };
+  return said(value) ?? (deviceInfo && typeof deviceInfo === 'object' ? said((deviceInfo as { platform?: unknown }).platform) : null);
 }
 
 /** Absent (an older server) or anything unknown is the default, `cloud`. */
@@ -152,6 +164,8 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     hasBuiltinTerminal: typeof raw.hasBuiltinTerminal === 'boolean' ? raw.hasBuiltinTerminal : undefined,
     // "סוג מכשיר" (docs/SPEC_DEVICE_ROLE_MODEL.md): the role, and the chosen / reported model.
     deviceRole: deviceRole(raw.deviceRole ?? raw.device_role),
+    // Android / Windows / the browser kiosk ("web") — the platform badge.
+    platform: platformOf(raw.platform, raw.deviceInfo ?? raw.device_info),
     kioskEnabled: typeof raw.kioskEnabled === 'boolean' ? raw.kioskEnabled : null,
     deviceModelChosen: deviceModel(raw.deviceModelChosen ?? raw.device_model_chosen),
     deviceModelReported: deviceModel(raw.deviceModelReported ?? raw.device_model_reported),

@@ -7,12 +7,14 @@
  */
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
+import { Pencil } from 'lucide-react';
 import {
   addMs,
   aspectRatioCss,
   buttonRadius,
   cartPanelShown,
   categoryRailImage,
+  checkoutStepsNow,
   ctaBox,
   fontStack,
   catalogColumns,
@@ -22,6 +24,9 @@ import {
   messagePlacement,
   motionSpec,
   resolveThemeColors,
+  transitionSpec,
+  stepMode,
+  tickerBandPx,
   typeScaleFactor,
   typeWeights,
   type KioskConfig,
@@ -33,17 +38,20 @@ import {
   AttractScreen,
   AttractServiceButtons,
   CartScreen,
-  CatalogScreen,
   ConfirmSheet,
+  EntryWindow,
   Flyer,
+  KioskSwap,
   MessageOverlay,
   PausedScreen,
   PayScreen,
   PREVIEW_CSS,
-  ProductSheet,
   ServiceScreen,
   SuccessScreen,
+  TickerFrame,
   cardStyle,
+  cartTotal,
+  screenOrder,
   type Flight,
   type KioskLive,
   type PCategory,
@@ -51,10 +59,19 @@ import {
   type PProduct,
   type PreviewModel,
   type PreviewScreen,
+  GuidedFrame,
+  LayoutCatalog,
+  LayoutProductSheet,
+  ReachFrame,
+  ReachSheets,
+  ReachToggle,
+  REACH_STRIP_PX,
 } from '@kiosk-shared/index';
+import { configuredText, kioskTextOf, webTextOverride } from '@dash-lib/kioskTexts';
 import {
   backAction,
   busy as flowBusy,
+  detailsAsked,
   idle as flowIdle,
   idleCheck,
   INITIAL_FLOW,
@@ -72,12 +89,17 @@ import { inTechnicianZone, mayOpen as technicianMayOpen, TapSequence } from '../
 import type { KioskView, PayProgress } from '../../shared/bridge';
 import { kiosk } from '../bridge';
 import { formatMoney, t, txtOf } from '../i18n';
-import { DetailsScreen, type DetailsValue } from './Details';
+import { DetailsScreen, NO_DETAILS, tipOfDetails, type DetailsValue } from './Details';
+import { newKioskFunnel, useFunnelObserve } from './useKioskFunnel';
+import { BatteryAlerts } from './BatteryAlerts';
 import { Dialog } from './Dialog';
-import { Keyboard } from './Keyboard';
+import { noteEntry, type EntryRequest } from './EntryWindow';
 import { StaffLayer } from '../staff/StaffLayer';
+import { useKioskScanner } from './kioskScanner';
 
-const NO_DETAILS: DetailsValue = { name: '', phone: '', table: '', tipPct: null };
+/** The strip "POWERED BY R2M POS" takes at the bottom (CSS px). */
+const FOOTER_PX = 18;
+
 /** The admin's corner (CSS px from the physical top-right). */
 const ADMIN_ZONE = 48;
 
@@ -101,7 +123,15 @@ export function KioskApp({ view }: { view: KioskView }) {
   const [cart, setCart] = useState<PLine[]>([]);
   const cartRef = useRef(cart);
   cartRef.current = cart;
-  const dispatch = useCallback((event: KioskEvent) => dispatchFlow({ event, cartEmpty: cartRef.current.length === 0 }), []);
+  // "ביצועי קיוסקים": the session's funnel (core/kioskFunnel.ts); every flow event noted.
+  const [funnel] = useState(newKioskFunnel);
+  const dispatch = useCallback(
+    (event: KioskEvent) => {
+      funnel.noteEvent(event.type);
+      dispatchFlow({ event, cartEmpty: cartRef.current.length === 0 });
+    },
+    [funnel],
+  );
   const flowRef = useRef(flow);
   flowRef.current = flow;
 
@@ -121,6 +151,19 @@ export function KioskApp({ view }: { view: KioskView }) {
   const [justAdded, setJustAdded] = useState<string | null>(null);
   const [cartBump, setCartBump] = useState(0);
   const [staffOpen, setStaffOpen] = useState<'none' | 'admin' | 'technician'>('none');
+  /** The entry window drawn over everything (the product sheet's note). */
+  const [entry, setEntry] = useState<EntryRequest | null>(null);
+  /** "נגיש": this customer's ♿ (layout.reachToggle), back as configured at rest. */
+  const [reachToggled, setReachToggled] = useState(false);
+  /** The checkout's step on the details screen (tip / details), for the funnel. */
+  const [detailsSub, setDetailsSub] = useState<string | null>(null);
+  // Back from the payment to the details screen: its steps open on the last one.
+  const [seenScreen, setSeenScreen] = useState(flow.screen);
+  const [detailsFromPay, setDetailsFromPay] = useState(false);
+  if (seenScreen !== flow.screen) {
+    setSeenScreen(flow.screen);
+    setDetailsFromPay(flow.screen === 'details' && seenScreen === 'pay');
+  }
   const pendingService = useRef<'take_away' | 'eat_in' | null>(null);
   const screenRef = useRef<HTMLDivElement>(null);
   const cartTargetRef = useRef<HTMLDivElement | null>(null);
@@ -190,6 +233,8 @@ export function KioskApp({ view }: { view: KioskView }) {
     setSuccessAt(null);
     setLeaveAsk(false);
     setChanges(null);
+    setEntry(null);
+    setReachToggled(false);
   }, [resting]);
 
   useEffect(() => setVisit((v) => v + 1), [flow.screen]);
@@ -199,24 +244,49 @@ export function KioskApp({ view }: { view: KioskView }) {
   const startPayment = useCallback(async () => {
     dispatch({ type: 'paymentStarted' });
     setPayBlocked(null);
+    const shownAgorot = Math.round(cartTotal(cartRef.current) * 100);
+    funnel.noteTip(tipOfDetails(details, shownAgorot));
     const r = await kiosk.startPayment({
-      lines: cartRef.current.map((l) => ({ key: l.key, productId: l.product.id, qty: l.qty, options: (l.options ?? []).map((o) => ({ groupId: o.groupId, optionId: o.optionId })), notes: l.note ? [l.note] : [] })),
+      // The unit prices and the total the customer saw: never charged if they moved (core/basketCheck.ts).
+      expectedTotalAgorot: shownAgorot,
+      lines: cartRef.current.map((l) => ({ key: l.key, productId: l.product.id, qty: l.qty, unitAgorot: Math.round(l.unit * 100), options: (l.options ?? []).map((o) => ({ groupId: o.groupId, optionId: o.optionId })), notes: l.note ? [l.note] : [] })),
       service: flowRef.current.service ?? 'take_away',
       customerName: details.name.trim() || null,
       customerPhone: details.phone.trim() || null,
       tableRef: details.table.trim() || null,
-      tipPct: details.tipPct,
+      // The tip asked on its own step: a preset's percent, or "סכום אחר" (whole shekels, in agorot).
+      tipPct: details.tipAgorot === null ? details.tipPct : null,
+      tipAgorot: details.tipAgorot,
     });
     if (r.ok) return;
+    funnel.payRefused(r.reason);
     dispatch({ type: 'paymentDeclined' });
     if (r.reason === 'changed') {
-      const removed = new Set(r.changes.filter((c) => c.kind === 'removed').map((c) => c.productId));
-      setCart((c) => c.filter((l) => !removed.has(l.product.id)));
-      setChanges(r.changes.map((c) => (c.kind === 'removed' ? t('basketRemoved', { name: c.name }) : t('basketRepriced', { name: c.name }))));
+      const removed = new Set(r.changes.filter((c) => c.kind === 'removed').map((c) => c.key ?? c.productId));
+      const repriced = new Map(r.changes.flatMap((c) => (c.kind === 'repriced' ? [[c.key ?? c.productId, c.to] as const] : [])));
+      setCart((c) =>
+        c
+          .filter((l) => !removed.has(l.key) && !removed.has(l.product.id))
+          .map((l) => {
+            const to = repriced.get(l.key) ?? repriced.get(l.product.id);
+            return to === undefined ? l : { ...l, unit: to / 100 };
+          }),
+      );
+      funnel.basketCheck({
+        removed: removed.size,
+        repriced: repriced.size,
+        fromAgorot: shownAgorot,
+        toAgorot: r.totalAgorot ?? shownAgorot,
+        source: 'cloud',
+      });
+      const lines = r.changes.map((c) => (c.kind === 'removed' ? t('basketRemoved', { name: c.name }) : t('basketRepriced', { name: c.name })));
+      // The new total, to confirm before anything is charged.
+      if (typeof r.totalAgorot === 'number' && r.totalAgorot !== shownAgorot) lines.push(t('basketNewTotal', { total: formatMoney(r.totalAgorot / 100) }));
+      setChanges(lines.length > 0 ? lines : [t('basketNewTotal', { total: formatMoney((r.totalAgorot ?? shownAgorot) / 100) })]);
       return;
     }
     setPayBlocked(r.message);
-  }, [details, dispatch]);
+  }, [details, dispatch, funnel]);
 
   // Into the pay screen: the charge starts at once (as on the till).
   useEffect(() => {
@@ -245,6 +315,15 @@ export function KioskApp({ view }: { view: KioskView }) {
   }, []);
   const timers = { inactivitySec: cfg.timers.inactivitySec, warningSec: cfg.timers.warningSec, successSec: cfg.timers.successSec };
   const idleState = idleCheck(flow, lastTouch, nowMs, timers);
+  useFunnelObserve(funnel, {
+    screen: flow.screen,
+    sub: flow.screen === 'details' ? detailsSub : null,
+    pay: flow.pay,
+    service: flow.service,
+    basketAgorot: Math.round(cartTotal(cart) * 100),
+    items: cart.reduce((n, l) => n + l.qty, 0),
+    idleWarn: idleState.kind !== 'none',
+  });
   useEffect(() => {
     if (idleState.kind === 'reset') dispatch({ type: 'reset' });
   }, [idleState.kind, dispatch]);
@@ -257,14 +336,19 @@ export function KioskApp({ view }: { view: KioskView }) {
   const wide = size.w >= 600;
   const panel = cartPanelShown(cfg.theme, size.w);
   const side = cfg.theme.categoryLayout !== 'top';
-  const motion = motionSpec(cfg.theme, cfg.general);
+  const motion = motionSpec(cfg.theme, cfg.general, cfg.motion);
+  // "הנפשות ומעברים": the dashboard's choices, all off with reduce motion.
+  const transitions = transitionSpec(cfg.motion, cfg.general);
   const colors = resolveThemeColors(cfg.theme);
   const cols = catalogColumns(cfg.theme.gridDensity, wide, panel, side);
   const rules = rulesOf(cfgIn, cart.length === 0);
   const back = () => {
     const a = backAction(flow, rules);
     if (a === 'confirm_leave') setLeaveAsk(true);
-    else if (a === 'cancel_payment') void kiosk.cancelPayment();
+    else if (a === 'cancel_payment') {
+      funnel.noteCancelPayment();
+      void kiosk.cancelPayment();
+    }
     else if (a === 'navigate') dispatch({ type: 'back' });
   };
 
@@ -285,6 +369,7 @@ export function KioskApp({ view }: { view: KioskView }) {
     startOver: flow.screen === 'catalog' ? () => (cart.length > 0 ? setLeaveAsk(true) : dispatch({ type: 'reset' })) : undefined,
     detailsScreen: true,
     help: () => {
+      funnel.help();
       void kiosk.helpRequest();
       setToast(t('helpSent'));
     },
@@ -296,7 +381,10 @@ export function KioskApp({ view }: { view: KioskView }) {
             amount: amount / 100,
             canCancel: mayCancelPayment(flow) && !!pay?.canCancel,
             cancelling: !!pay?.cancelling,
-            onCancel: () => void kiosk.cancelPayment(),
+            onCancel: () => {
+              funnel.noteCancelPayment();
+              void kiosk.cancelPayment();
+            },
             onRetry: () => dispatch({ type: 'retryPayment' }),
             onBack: () => {
               setPayBlocked(null);
@@ -317,6 +405,12 @@ export function KioskApp({ view }: { view: KioskView }) {
         : undefined,
   };
 
+  // "כיתוב רץ" on the attract screen: its start button and the rest are laid out on what the strip leaves.
+  const band = flow.screen === 'attract' ? tickerBandPx(cfg, 'attract', new Date(nowMs), FOOTER_PX) : { top: 0, bottom: 0 };
+  const attractSize = { w: size.w, h: size.h - band.top - band.bottom };
+  const attractBox = ctaBox(cfg.attract.cta, attractSize.w, attractSize.h);
+  /** The start button's box over the whole window (below a strip at the top). */
+  const ctaOnScreen = band.top > 0 ? { ...attractBox, y: attractBox.y + band.top } : attractBox;
   const m: PreviewModel = {
     cfg,
     c: colors,
@@ -326,8 +420,13 @@ export function KioskApp({ view }: { view: KioskView }) {
     cols,
     ratio: aspectRatioCss(cfg.theme.imageRatio),
     font: fontStack(cfg.theme.font),
-    txt: (key: KioskTextKey) => txtOf(cfg.texts, key),
-    t,
+    // Every customer text through the registry (lib/kioskTexts.ts): the business's, else the built-in one.
+    txt: (key: KioskTextKey) => configuredText(cfg, 'he', key) ?? txtOf(undefined, key),
+    t: (key, values) => webTextOverride(cfg, 'he', key, values) ?? t(key, values),
+    kt: (key, values) => kioskTextOf(cfg, 'he', key, values),
+    // "רוצים להפוך לארוחה?": the meals the till's upsells offer for a dish.
+    mealOptions: (p) => mealsFor(view, p.id, allProducts),
+    reach: { toggled: reachToggled, toggle: () => setReachToggled((v) => !v) },
     money: formatMoney,
     categories,
     featured,
@@ -337,6 +436,7 @@ export function KioskApp({ view }: { view: KioskView }) {
     go,
     openProduct: (p) => {
       if (p.soldOut) return;
+      funnel.itemOpen(p.id);
       setProductId(p.id);
     },
     cart,
@@ -346,15 +446,25 @@ export function KioskApp({ view }: { view: KioskView }) {
       pendingService.current = s;
     },
     motion,
+    transitions,
     justAddedId: justAdded,
     cartBump,
     setCartTarget,
     panel,
-    screen: size,
-    ctaBox: ctaBox(cfg.attract.cta, size.w, size.h),
+    screen: band.top + band.bottom > 0 ? attractSize : size,
+    ctaBox: attractBox,
     live,
   };
-  live.noteField = (value, onChange) => <NoteField m={m} value={value} onChange={onChange} />;
+  live.noteField = (value, onChange) => <NoteField m={m} value={value} onOpen={() => setEntry(noteEntry(m, value, onChange))} />;
+  // The details screen: at the checkout, this order's steps before the payment (the tip, the
+  // details, in the configured order); asked at another step, the details alone.
+  const atCheckout = flow.screen === 'details' && (flow.detailsNext === 'pay' || flow.detailsNext === null) && flow.pay !== 'approved';
+  // "איך תרצו לשלם?" (payMethod, SPEC_KIOSK §23) is the Android kiosk's for now: this kiosk charges the card.
+  const nowSteps = atCheckout
+    ? checkoutStepsNow(cfg.payment, detailsAsked(cfgIn, flow.service), flow.detailsDone).filter((s) => s !== 'payMethod')
+    : [];
+  const detailsSteps = nowSteps.length > 0 ? nowSteps : (['details'] as const).slice();
+  const goodsAgorot = Math.round(cartTotal(cart) * 100);
 
   // As the preview (and the till): a flight that lands bounces the badge then; a reduce-motion fade already did at the tap.
   const removeFlight = useCallback((flight: Flight) => {
@@ -369,6 +479,10 @@ export function KioskApp({ view }: { view: KioskView }) {
       return i >= 0 ? c.map((l, j) => (j === i ? { ...l, qty: l.qty + line.qty } : l)) : [...c, line];
     });
     setJustAdded(line.product.id);
+    // From the basket's offers: an upsell taken.
+    const fromUpsell = flowRef.current.screen === 'cart' && upsellRef.current.some((u) => u.id === line.product.id);
+    funnel.itemAdd(line.product.id, line.qty, fromUpsell, Math.round(line.unit * 100));
+    if (fromUpsell) funnel.upsell('accepted', 'steps', null, line.product.id);
     if (justAddedTimer.current) window.clearTimeout(justAddedTimer.current);
     justAddedTimer.current = window.setTimeout(() => setJustAdded(null), 900);
     const box = screenRef.current?.getBoundingClientRect();
@@ -392,7 +506,39 @@ export function KioskApp({ view }: { view: KioskView }) {
     addLine({ key: `${p.id}-plain`, product: p, qty: 1, unit: p.price, extras: [], options: [] }, from, plain);
   };
 
-  const upsell = useMemo(() => upsellFor(view, cfg, cart, allProducts), [view, cfg, cart, allProducts]);
+  // Barcode scans (a USB HID scanner), 1D and 2D, no button first — the Android kiosk's rules (kioskScanner.tsx).
+  const scanNote = useKioskScanner({
+    m,
+    screen: flow.screen,
+    busy: flowBusy(flow),
+    staff: staffOpen !== 'none',
+    sheetOpen: !!product || leaveAsk || !!changes,
+    shown: allProducts,
+    codes: view.catalog.products,
+    screenRef,
+    add: (p, from) => m.quickAdd?.(p, from),
+    choose: (p) => {
+      // The sheet opens over the menu.
+      if (flowRef.current.screen !== 'catalog') dispatch({ type: 'backToCatalog' });
+      setProductId(p.id);
+    },
+    start: () => dispatch({ type: 'start' }),
+    touch: () => setLastTouch(Date.now()),
+  });
+
+  // "חובה / רשות / כבוי" (payment.stepModes.upsellSteps): the basket's offers are that moment's.
+  const upsellOn = stepMode(cfg, 'upsellSteps') !== 'off';
+  const upsell = useMemo(() => (upsellOn ? upsellFor(view, cfg, cart, allProducts) : []), [upsellOn, view, cfg, cart, allProducts]);
+  const upsellRef = useRef(upsell);
+  upsellRef.current = upsell;
+  const upsellShown = useRef<string | null>(null);
+  useEffect(() => {
+    if (flow.screen !== 'cart' || upsell.length === 0) return;
+    const key = `${funnel.session}:${visit}`;
+    if (upsellShown.current === key) return;
+    upsellShown.current = key;
+    funnel.upsell('shown', 'steps', null, upsell[0].id);
+  }, [flow.screen, upsell, funnel, visit]);
 
   /* ------------------------------------------------------------ the screen */
 
@@ -458,38 +604,72 @@ export function KioskApp({ view }: { view: KioskView }) {
           <div className="absolute inset-0" style={{ background: screen === 'attract' ? `${colors.background}66` : `${colors.background}D9` }} />
         </>
       ) : null}
-      <div className="relative h-full">
-        <div key={screen === 'confirm' ? 'catalog' : screen} className="h-full animate-in fade-in slide-in-from-bottom-2 duration-300">
-          {screen === 'attract' ? (
-            <AttractScreen m={m} />
-          ) : screen === 'service' ? (
-            <ServiceScreen m={m} />
-          ) : screen === 'catalog' || screen === 'confirm' ? (
-            <CatalogScreen m={m} activeCategory={activeCategory} onCategory={setActiveCategory} />
-          ) : screen === 'cart' ? (
-            <CartScreen m={m} upsell={upsell} />
-          ) : screen === 'details' ? (
-            <DetailsScreen
-              m={m}
-              value={details}
-              onChange={setDetails}
-              onDone={() => dispatch({ type: 'detailsDone' })}
-              onBack={flow.pay === 'approved' ? null : back}
-              service={flow.service}
-              afterPay={flow.pay === 'approved'}
-            />
-          ) : screen === 'pay' ? (
-            <PayScreen m={m} />
-          ) : screen === 'success' ? (
-            <SuccessScreen m={m} />
-          ) : screen === 'setup' ? (
-            <RestNote m={m} title={t('setupTitle')} body={t('setupBody')} />
-          ) : (
-            <PausedScreen m={m} variant={screen === 'closed' ? 'closed' : screen === 'no_payment' ? 'noPayment' : 'paused'} />
+      {/* The ordering screens end above "POWERED BY R2M POS", so their bottom buttons never sit under it. */}
+      <div className="relative h-full" style={resting ? undefined : { paddingBottom: FOOTER_PX + (cfg.layout?.reachToggle ? REACH_STRIP_PX : 0) }}>
+        {/* "נגיש" (layout.reach): the screens in the bottom half under a display (kiosk-shared/layouts). */}
+        <ReachFrame m={m} screen={screen === 'confirm' ? 'catalog' : screen} dish={product} category={activeCategory}>
+        {/* "מעבר בין מסכים": the dashboard's transition; the leaving screen is frozen and takes no taps. */}
+        <KioskSwap
+          id={screen === 'confirm' ? 'catalog' : screen}
+          fx={transitions.screenChange}
+          ms={transitions.screenMs}
+          order={screenOrder}
+          className="h-full"
+          slotClassName="h-full"
+          render={(s) => (
+            // "כיתוב רץ" as the first or last row of the screens without a header bar of their own
+            // (on the full-bleed attract screen, a bottom strip stays above "POWERED BY R2M POS").
+            <TickerFrame m={m} screen={s} footerGap={s === 'attract' ? FOOTER_PX : 0}>{
+            s === 'attract' ? (
+              <AttractScreen m={m} />
+            ) : s === 'service' ? (
+              <GuidedFrame m={m} screen={s}>
+                <ServiceScreen m={m} />
+              </GuidedFrame>
+            ) : s === 'catalog' ? (
+              // "מבנה הקיוסק": the layout's menu screen (today's for standard).
+              <GuidedFrame m={m} screen={s}>
+                <LayoutCatalog m={m} activeCategory={activeCategory} onCategory={setActiveCategory} />
+              </GuidedFrame>
+            ) : s === 'cart' ? (
+              <GuidedFrame m={m} screen={s}>
+                <CartScreen m={m} upsell={upsell} />
+              </GuidedFrame>
+            ) : s === 'details' ? (
+              <DetailsScreen
+                m={m}
+                value={details}
+                onChange={setDetails}
+                steps={detailsSteps}
+                startAtEnd={detailsFromPay}
+                goodsAgorot={goodsAgorot}
+                onDone={() => dispatch({ type: 'detailsDone' })}
+                onBack={flow.pay === 'approved' ? null : back}
+                service={flow.service}
+                afterPay={flow.pay === 'approved'}
+                onStep={setDetailsSub}
+              />
+            ) : s === 'pay' ? (
+              <PayScreen m={m} />
+            ) : s === 'success' ? (
+              <SuccessScreen m={m} />
+            ) : s === 'setup' ? (
+              <RestNote m={m} title={t('setupTitle')} body={t('setupBody')} />
+            ) : (
+              // "יצאתי לנוח… תכף אשוב" (paused / closed): the pause's own message and end, as the cloud sent them.
+              <PausedScreen
+                m={m}
+                variant={s === 'closed' ? 'closed' : s === 'no_payment' ? 'noPayment' : 'paused'}
+                pause={{ message: view.state.pausedMessage, until: view.state.pausedUntil }}
+              />
+            )
+            }</TickerFrame>
           )}
-        </div>
+        />
+        </ReachFrame>
         {screen === 'catalog' && product ? (
-          <ProductSheet
+          <ReachSheets m={m}>
+          <LayoutProductSheet
             key={product.id}
             m={m}
             product={product}
@@ -499,12 +679,14 @@ export function KioskApp({ view }: { view: KioskView }) {
             onClose={() => setProductId(null)}
             onAdd={addLine}
           />
+          </ReachSheets>
         ) : null}
+        <ReachToggle m={m} bottom={resting ? FOOTER_PX + 6 : 8} />
         {screen === 'attract' ? (
           onAttractService ? (
-            <AttractServiceButtons m={m} box={m.ctaBox} onPick={(s) => dispatch({ type: 'startWith', service: s })} />
+            <AttractServiceButtons m={m} box={ctaOnScreen} onPick={(s) => dispatch({ type: 'startWith', service: s })} />
           ) : (
-            <AttractCta m={m} box={m.ctaBox} screen={m.screen} />
+            <AttractCta m={m} box={ctaOnScreen} screen={{ w: size.w, h: size.h - band.bottom }} />
           )
         ) : null}
         {screen === 'confirm' ? <ConfirmSheet m={m} onMore={() => dispatch({ type: 'backToCatalog' })} onPay={() => dispatch({ type: 'checkout' })} /> : null}
@@ -516,6 +698,10 @@ export function KioskApp({ view }: { view: KioskView }) {
       <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0.5 z-10 text-center text-[10px] font-medium tracking-[0.12em]" style={{ color: colors.mutedText, opacity: 0.55 }}>
         {t('poweredBy')}
       </div>
+      {/* The product sheet's note: typed in the kiosk's window, over the sheet. */}
+      {entry && screen === 'catalog' && product ? (
+        <EntryWindow m={m} caption={entry.caption} steps={entry.steps} onFinish={() => setEntry(null)} onClose={() => setEntry(null)} />
+      ) : null}
       {idleState.kind === 'warn' ? (
         <Dialog
           m={m}
@@ -556,6 +742,9 @@ export function KioskApp({ view }: { view: KioskView }) {
         />
       ) : null}
       {toast ? <Toast m={m} text={toast} onDone={() => setToast(null)} /> : null}
+      {/* "סוללה חלשה": the strip and the alarm — never over a payment (BatteryAlerts.tsx). */}
+      <BatteryAlerts busy={flowBusy(flow) || flow.screen === 'pay'} />
+      {scanNote}
       <StaffLayer m={m} view={view} open={staffOpen} onClose={() => setStaffOpen('none')} />
     </div>
   );
@@ -608,27 +797,19 @@ function upsellFor(view: KioskView, cfg: KioskConfig, cart: PLine[], all: PProdu
     .slice(0, 4);
 }
 
-function NoteField({ m, value, onChange }: { m: PreviewModel; value: string; onChange: (v: string) => void }) {
-  const [open, setOpen] = useState(false);
+/** The dish's free note: looks like a field, shows the note; a tap opens the kiosk's window ("הערות למנה"). */
+function NoteField({ m, value, onOpen }: { m: PreviewModel; value: string; onOpen: () => void }) {
   return (
-    <div className="space-y-2">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="block w-full px-3 py-2.5 text-start text-sm"
-        style={{ border: `1px solid ${open ? m.c.button : m.c.border}`, borderRadius: Math.min(m.radius, 14), color: value ? m.c.text : m.c.mutedText }}
-      >
-        {value || t('notePlaceholder')}
-      </button>
-      {open ? (
-        <KeyboardLazy m={m} onKey={(k) => onChange(k === 'Backspace' ? value.slice(0, -1) : value.length >= 80 ? value : value + k)} />
-      ) : null}
-    </div>
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex w-full items-center gap-2 px-3 py-2.5 text-start text-sm"
+      style={{ border: `1px solid ${m.c.border}`, borderRadius: Math.min(m.radius, 14), color: value ? m.c.text : m.c.mutedText, background: m.c.surface }}
+    >
+      <span className="min-w-0 flex-1 truncate">{value || m.txt('noteHint')}</span>
+      <Pencil className="h-4 w-4 shrink-0" style={{ color: m.c.primary }} />
+    </button>
   );
-}
-
-function KeyboardLazy({ m, onKey }: { m: PreviewModel; onKey: (k: string) => void }) {
-  return <Keyboard m={m} mode="text" onKey={onKey} />;
 }
 
 function RestNote({ m, title, body }: { m: PreviewModel; title: string; body: string }) {
@@ -655,4 +836,14 @@ function Toast({ m, text, onDone }: { m: PreviewModel; text: string; onDone: () 
       </div>
     </div>
   );
+}
+
+/** "רוצים להפוך לארוחה?": the meals the till's upsells offer for a dish (an offered product that is a meal), up to three. */
+function mealsFor(view: KioskView, productId: string, all: PProduct[]): PProduct[] {
+  const meals = new Set(view.catalog.products.filter((p) => p.meal).map((p) => p.id));
+  const ids = view.catalog.upsells.filter((u) => u.triggerType === 'product' && u.triggerIds.includes(productId)).flatMap((u) => u.productIds).filter((id) => meals.has(id));
+  return Array.from(new Set(ids))
+    .map((id) => all.find((p) => p.id === id && !p.soldOut))
+    .filter((p): p is PProduct => !!p)
+    .slice(0, 3);
 }

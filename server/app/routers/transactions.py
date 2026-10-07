@@ -1,6 +1,7 @@
 """Dashboard read endpoints for transactions (Clerk-user JWT)."""
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Literal, Optional, Union
+from decimal import Decimal
+from typing import List, Literal, Optional, Union
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -29,9 +30,98 @@ from app.schemas.transaction import (
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
 
+#: The most documents one export takes; more is refused with a message, never cut short.
+EXPORT_MAX_ROWS = 50_000
+
+
+def _given(value):
+    """A filter as given — None for a `Query(...)` default left in place by a direct call."""
+    return None if value is None or type(value).__module__.startswith("fastapi") else value
+
+
+def _filtered_query(
+    db: Session,
+    current_user: User,
+    active_tenant_id,
+    *,
+    machine_id=None,
+    machine_ids=None,
+    shop_id=None,
+    basket_id=None,
+    from_date=None,
+    to_date=None,
+    q=None,
+    card_last4=None,
+    item=None,
+    method=None,
+    document_types=None,
+    cashier_ids=None,
+    statuses=None,
+    amount_min=None,
+    amount_max=None,
+    document_number=None,
+):
+    """
+    The transaction search, one definition for the list and its export (docs/SPEC_REPORTS.md
+    §1): the reader's tenant and scope, then every filter given — tills (`machineIds`, any
+    of them), shop, dates (with no date and no basket: the last 30 days), the free search,
+    card last four, a product, the tender, document types, employees (`cashierIds`),
+    statuses, an amount range and a document number. None when the role sees nothing.
+    """
+    query = db.query(Transaction).filter(Transaction.tenant_id == active_tenant_id)
+    query = scope_transactions_by_user(query, current_user, db)
+    if query is None:
+        return None
+
+    tills = list(_given(machine_ids) or [])
+    if _given(machine_id):
+        tills.append(machine_id)
+    if tills:
+        query = query.filter(Transaction.machine_id.in_(tills))
+    if _given(shop_id):
+        query = query.filter(Transaction.shop_id == shop_id)
+    if _given(basket_id):
+        query = query.filter(Transaction.basket_id == basket_id)
+    query = _search_filters(query, q=q, card_last4=card_last4, item=item, method=method)
+
+    types = [t for t in (_given(document_types) or []) if isinstance(t, int)]
+    if types:
+        query = query.filter(Transaction.document_type.in_(types))
+    cashiers = [c.strip() for c in (_given(cashier_ids) or []) if isinstance(c, str) and c.strip()]
+    if cashiers:
+        query = query.filter(Transaction.cashier_id.in_(cashiers))
+    wanted_statuses = [s.strip() for s in (_given(statuses) or []) if isinstance(s, str) and s.strip()]
+    if wanted_statuses:
+        query = query.filter(Transaction.status.in_(wanted_statuses))
+    if _given(amount_min) is not None:
+        query = query.filter(Transaction.total_amount >= amount_min)
+    if _given(amount_max) is not None:
+        query = query.filter(Transaction.total_amount <= amount_max)
+    number = _given(document_number)
+    if isinstance(number, str) and number.strip():
+        prefixed = prefixed_number_clause(number.strip())
+        query = query.filter(
+            prefixed
+            if prefixed is not None
+            else Transaction.transaction_number.ilike(_like(number.strip()), escape="\\")
+        )
+
+    from_date, to_date = _given(from_date), _given(to_date)
+    # A basket is shown whole, whenever it was committed: no default window for it.
+    if from_date is None and to_date is None and not _given(basket_id):
+        from_date = (datetime.now(timezone.utc) - timedelta(days=30)).date()
+
+    if from_date is not None:
+        query = query.filter(Transaction.created_at >= datetime.combine(from_date, time.min, tzinfo=timezone.utc))
+    if to_date is not None:
+        query = query.filter(Transaction.created_at < datetime.combine(to_date + timedelta(days=1), time.min, tzinfo=timezone.utc))
+    return query
+
+
 @router.get("", response_model=TransactionListResponse)
 def list_transactions(
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    machine_ids: Optional[List[uuid.UUID]] = Query(None, alias="machineIds", description="Tills — any of them"),
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     basket_id: Optional[uuid.UUID] = Query(None, alias="basketId"),
     from_date: Optional[date] = Query(None, alias="from"),
@@ -42,31 +132,25 @@ def list_transactions(
     card_last4: Optional[str] = Query(None, alias="cardLast4", pattern=r"^\d{4}$"),
     item: Optional[str] = Query(None, max_length=80, description="A product name on any line"),
     method: Optional[Literal["cash", "card", "voucher", "split", "refunds"]] = Query(None),
+    document_types: Optional[List[int]] = Query(None, alias="documentTypes", description="320, 330, 400, -400 …"),
+    cashier_ids: Optional[List[str]] = Query(None, alias="cashierIds", description="Employees (the till user's id)"),
+    statuses: Optional[List[str]] = Query(None, description="completed, refunded, partial_refund, cancelled, pending"),
+    amount_min: Optional[Decimal] = Query(None, alias="amountMin"),
+    amount_max: Optional[Decimal] = Query(None, alias="amountMax"),
+    document_number: Optional[str] = Query(None, alias="documentNumber", max_length=40),
     current_user: User = Depends(get_current_user),
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    query = db.query(Transaction).filter(Transaction.tenant_id == active_tenant_id)
-    query = scope_transactions_by_user(query, current_user, db)
+    query = _filtered_query(
+        db, current_user, active_tenant_id,
+        machine_id=machine_id, machine_ids=machine_ids, shop_id=shop_id, basket_id=basket_id,
+        from_date=from_date, to_date=to_date, q=q, card_last4=card_last4, item=item, method=method,
+        document_types=document_types, cashier_ids=cashier_ids, statuses=statuses,
+        amount_min=amount_min, amount_max=amount_max, document_number=document_number,
+    )
     if query is None:
         return TransactionListResponse(page=page, page_size=page_size, total=0, items=[])
-
-    if machine_id:
-        query = query.filter(Transaction.machine_id == machine_id)
-    if shop_id:
-        query = query.filter(Transaction.shop_id == shop_id)
-    if basket_id:
-        query = query.filter(Transaction.basket_id == basket_id)
-    query = _search_filters(query, q=q, card_last4=card_last4, item=item, method=method)
-
-    # A basket is shown whole, whenever it was committed: no default window for it.
-    if from_date is None and to_date is None and basket_id is None:
-        from_date = (datetime.now(timezone.utc) - timedelta(days=30)).date()
-
-    if from_date is not None:
-        query = query.filter(Transaction.created_at >= datetime.combine(from_date, time.min, tzinfo=timezone.utc))
-    if to_date is not None:
-        query = query.filter(Transaction.created_at < datetime.combine(to_date + timedelta(days=1), time.min, tzinfo=timezone.utc))
 
     total = query.count()
     rows = (
@@ -90,6 +174,55 @@ def list_transactions(
         total=total,
         items=items,
     )
+
+
+@router.get("/export")
+def export_transactions(
+    machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    machine_ids: Optional[List[uuid.UUID]] = Query(None, alias="machineIds"),
+    shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
+    basket_id: Optional[uuid.UUID] = Query(None, alias="basketId"),
+    from_date: Optional[date] = Query(None, alias="from"),
+    to_date: Optional[date] = Query(None, alias="to"),
+    q: Optional[str] = Query(None, max_length=60),
+    card_last4: Optional[str] = Query(None, alias="cardLast4", pattern=r"^\d{4}$"),
+    item: Optional[str] = Query(None, max_length=80),
+    method: Optional[Literal["cash", "card", "voucher", "split", "refunds"]] = Query(None),
+    document_types: Optional[List[int]] = Query(None, alias="documentTypes"),
+    cashier_ids: Optional[List[str]] = Query(None, alias="cashierIds"),
+    statuses: Optional[List[str]] = Query(None),
+    amount_min: Optional[Decimal] = Query(None, alias="amountMin"),
+    amount_max: Optional[Decimal] = Query(None, alias="amountMax"),
+    document_number: Optional[str] = Query(None, alias="documentNumber", max_length=40),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Every document the same filters match — not a page — as flat rows for the Excel export
+    (docs/SPEC_REPORTS.md §2): number, type, status, shop, till, employee, the money
+    (total, discount, net, VAT, tip), the tender split, card brands and last four digits,
+    the shift and its Z. Over EXPORT_MAX_ROWS is a 400 with a message, never a cut list.
+    """
+    from app.services.transactions_export import export_rows
+
+    query = _filtered_query(
+        db, current_user, active_tenant_id,
+        machine_id=machine_id, machine_ids=machine_ids, shop_id=shop_id, basket_id=basket_id,
+        from_date=from_date, to_date=to_date, q=q, card_last4=card_last4, item=item, method=method,
+        document_types=document_types, cashier_ids=cashier_ids, statuses=statuses,
+        amount_min=amount_min, amount_max=amount_max, document_number=document_number,
+    )
+    if query is None:
+        return {"total": 0, "items": []}
+    total = query.count()
+    if total > EXPORT_MAX_ROWS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"יותר מ-{EXPORT_MAX_ROWS:,} מסמכים ({total:,}) — צמצמו את טווח התאריכים או את הסינון",
+        )
+    rows = query.order_by(Transaction.created_at.desc(), Transaction.id.asc()).all()
+    return {"total": total, "items": export_rows(db, rows)}
 
 
 def _like(text: str) -> str:

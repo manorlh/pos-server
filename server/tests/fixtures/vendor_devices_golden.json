@@ -1,0 +1,44 @@
+{
+  "_comment": "Android POS terminals whose card terminal is Nayax Agamento (TweezerComm), as on the F20, and whose printer needs the vendor's own API: PAX A77 (NeptuneLite IPrinter, SDK from the owner) and Urovo i9100 (android.device.PrinterManager in the ROM). pos-server app/models/vendor_devices.py and pos-android hardware/vendor/VendorDevices.kt (device flavour). Shared byte-for-byte by pos-server tests/fixtures and pos-android app/src/test/resources; both tests pin it.",
+  "models": [
+    {
+      "id": "PAX_A77",
+      "makers": ["PAX"],
+      "prefixes": ["A77"],
+      "printer": true,
+      "paperMm": 58,
+      "cutter": false,
+      "drawerPort": false,
+      "scanner": false,
+      "builtinTerminal": true,
+      "printSdk": "neptunelite"
+    },
+    {
+      "id": "UROVO_I9100",
+      "makers": ["UROVO", "UBX"],
+      "prefixes": ["I9100"],
+      "printer": true,
+      "paperMm": 58,
+      "cutter": false,
+      "drawerPort": false,
+      "scanner": true,
+      "builtinTerminal": true,
+      "printSdk": "urovo_printermanager"
+    }
+  ],
+  "detect": [
+    {"manufacturer": "PAX", "brand": "PAX", "model": "A77", "agamento": "true", "expected": "PAX_A77", "builtinTerminal": true},
+    {"manufacturer": "PAX", "brand": "PAX", "model": "A77", "agamento": null, "expected": "PAX_A77", "builtinTerminal": false},
+    {"manufacturer": " pax ", "brand": null, "model": "PAX A77", "agamento": "true", "expected": "PAX_A77", "builtinTerminal": true},
+    {"manufacturer": null, "brand": "PAX", "model": "a77", "agamento": "true", "expected": "PAX_A77", "builtinTerminal": true},
+    {"manufacturer": "PAX", "brand": "PAX", "model": "A920", "agamento": "true", "expected": null, "builtinTerminal": null},
+    {"manufacturer": "UROVO", "brand": "UROVO", "model": "i9100", "agamento": "true", "expected": "UROVO_I9100", "builtinTerminal": true},
+    {"manufacturer": "UBX", "brand": "UBX", "model": "i9100", "agamento": "true", "expected": "UROVO_I9100", "builtinTerminal": true},
+    {"manufacturer": "Urovo", "brand": null, "model": "UROVO I9100", "agamento": null, "expected": "UROVO_I9100", "builtinTerminal": false},
+    {"manufacturer": "UROVO", "brand": "UROVO", "model": "DT40", "agamento": "true", "expected": null, "builtinTerminal": null},
+    {"manufacturer": "Feitian", "brand": "Feitian", "model": "F20", "agamento": "true", "expected": null, "builtinTerminal": null},
+    {"manufacturer": "SUNMI", "brand": "SUNMI", "model": "T2", "agamento": null, "expected": null, "builtinTerminal": null},
+    {"manufacturer": "Kozen", "brand": "Kozen", "model": "A77", "agamento": null, "expected": null, "builtinTerminal": null},
+    {"manufacturer": null, "brand": null, "model": null, "agamento": null, "expected": null, "builtinTerminal": null}
+  ]
+}

@@ -3,7 +3,7 @@
 import { useTranslations } from 'next-intl';
 import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { TimeInput } from '@/components/ui/date-picker';
 import { cn } from '@/lib/utils';
 import { KIOSK_LIMITS, kioskScheduleIssues, toggleInList, type HoursRange } from '@/lib/kioskConfig';
 import { useKioskField } from './editor-context';
@@ -58,12 +58,12 @@ function HoursRanges() {
             <div className="flex flex-wrap items-center gap-3 text-sm">
               <label className="flex items-center gap-2">
                 {t('open')}
-                <Input type="time" dir="ltr" className="w-28" value={r.open} disabled={f.disabled} onChange={(e) => patch(i, { open: e.target.value })} />
+                <TimeInput dir="ltr" className="w-28" value={r.open} disabled={f.disabled} onChange={(e) => patch(i, { open: e.target.value })} />
               </label>
               {r.close !== null ? (
                 <label className="flex items-center gap-2">
                   {t('close')}
-                  <Input type="time" dir="ltr" className="w-28" value={r.close} disabled={f.disabled} onChange={(e) => patch(i, { close: e.target.value })} />
+                  <TimeInput dir="ltr" className="w-28" value={r.close} disabled={f.disabled} onChange={(e) => patch(i, { close: e.target.value })} />
                 </label>
               ) : null}
               <label className="flex items-center gap-1.5 text-xs text-muted-foreground" title={t('noCloseHint')}>

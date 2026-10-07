@@ -28,12 +28,13 @@ import { cn } from '@/lib/utils';
 import { useTenantTimeZone } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { businessToday } from '@/lib/format';
+import { DatePicker, TimeInput } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
 function todayIso(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return businessToday();
 }
 
 function initialValues(event: ReportEvent | null): EventFormValues {
@@ -200,9 +201,9 @@ function EventForm({
         <fieldset className="grid gap-1.5 rounded-xl border p-3">
           <legend className="px-1 text-sm font-medium">{t('start')}</legend>
           <div className="grid grid-cols-[1fr_auto] gap-2">
-            <Input type="date" dir="ltr" aria-label={t('startDate')} value={values.startDate}
+            <DatePicker dir="ltr" aria-label={t('startDate')} value={values.startDate}
               aria-invalid={show('startRequired')} onChange={(e) => set('startDate', e.target.value)} />
-            <Input type="time" dir="ltr" step={300} aria-label={t('startTime')} className="w-28" value={values.startTime}
+            <TimeInput dir="ltr" step={300} aria-label={t('startTime')} className="w-28" value={values.startTime}
               aria-invalid={show('startRequired')} onChange={(e) => set('startTime', e.target.value)} />
           </div>
           {show('startRequired') ? <p className="text-destructive text-xs">{t('errors.startRequired')}</p> : null}
@@ -210,9 +211,9 @@ function EventForm({
         <fieldset className="grid gap-1.5 rounded-xl border p-3">
           <legend className="px-1 text-sm font-medium">{t('end')}</legend>
           <div className="grid grid-cols-[1fr_auto] gap-2">
-            <Input type="date" dir="ltr" aria-label={t('endDate')} value={values.endDate} min={values.startDate || undefined}
+            <DatePicker dir="ltr" aria-label={t('endDate')} value={values.endDate} min={values.startDate || undefined}
               aria-invalid={show('endRequired')} onChange={(e) => set('endDate', e.target.value)} />
-            <Input type="time" dir="ltr" step={300} aria-label={t('endTime')} className="w-28" value={values.endTime}
+            <TimeInput dir="ltr" step={300} aria-label={t('endTime')} className="w-28" value={values.endTime}
               aria-invalid={show('endRequired')} onChange={(e) => set('endTime', e.target.value)} />
           </div>
           {show('endRequired') ? <p className="text-destructive text-xs">{t('errors.endRequired')}</p> : null}

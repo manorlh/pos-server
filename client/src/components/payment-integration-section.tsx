@@ -43,6 +43,7 @@ import {
   formEffectiveIntegration,
   formSynqpayConnection,
   synqpayDefaultPort,
+  synqpayPairingStatus,
   synqpayWarnings,
   hasPaymentIntegrationErrors,
   inheritedLabel,
@@ -61,6 +62,7 @@ import {
   type PaymentSecretKey,
   type SecretStatus,
   type SettingsLevelName,
+  type SynqpayPairingTone,
 } from '@/lib/paymentIntegration';
 import {
   fetchPaymentIntegrationContext,
@@ -555,17 +557,14 @@ export function PaymentIntegrationSection({
             ? textField('synqpayUsbDevice', { placeholder: 'auto', hint: PI_TEXT.synqpayUsbHint, mono: true, maxLength: 9 })
             : null}
           {textField('synqpaySerialNumber', { hint: PI_TEXT.synqpaySerialHint, mono: true, maxLength: 32 })}
-          <div className="space-y-1">
-            <SecretField
-              secretKey="synqpayApiKey"
-              label={fieldLabel('synqpayApiKey')}
-              value={value.synqpayApiKey}
-              status={context?.secrets?.synqpayApiKey}
-              error={fieldError('synqpayApiKey')}
-              onChange={(next) => set({ synqpayApiKey: next })}
-            />
-            <p className={HINT}>{PI_TEXT.synqpayKeyHint}</p>
-          </div>
+          <SynqpayPairing
+            level={settingsLevel ?? null}
+            status={context?.secrets?.synqpayApiKey}
+            value={value.synqpayApiKey}
+            label={fieldLabel('synqpayApiKey')}
+            error={fieldError('synqpayApiKey')}
+            onChange={(next) => set({ synqpayApiKey: next })}
+          />
           <p className={WARN}>{PI_TEXT.synqpayIdentityHint}</p>
           {synqpayWarnings(value, inh).map((warning) => (
             <p key={warning} className={WARN}>
@@ -772,6 +771,79 @@ function SecretField({
         </div>
       ) : null}
       {error}
+    </div>
+  );
+}
+
+const PAIRING_TONE: Record<SynqpayPairingTone, string> = {
+  ok: 'text-xs font-medium text-emerald-700 dark:text-emerald-400',
+  warn: WARN,
+  error: 'text-xs font-medium text-destructive',
+  muted: HINT,
+};
+
+/**
+ * SynqPay's key: nobody types it. The till pairs with its terminal (a code on the terminal's
+ * screen, typed at the till) and sends the key here; this shows where that stands — not paired
+ * yet, paired on <date> by <till>, or refused by the terminal. Typing a key by hand stays
+ * possible under "הזנת מפתח ידנית", collapsed, write-only as before.
+ */
+function SynqpayPairing({
+  level,
+  status,
+  value,
+  label,
+  error,
+  onChange,
+}: {
+  level: SettingsLevelName | null;
+  status: SecretStatus | undefined;
+  value: string | null | undefined;
+  label: ReactNode;
+  error: ReactNode;
+  onChange: (next: string | undefined) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  // Kept open while it holds something typed, or an error.
+  const forced = isTypedSecret(value) || !!error;
+  const shown = open || forced;
+  const line = synqpayPairingStatus(status, { level });
+  return (
+    <div className="space-y-2 rounded-md bg-muted/40 px-3 py-2">
+      <p className="text-sm font-medium">
+        {PI_TEXT.synqpayPairingTitle}: {PI_TEXT.synqpayPairingFromTill}
+      </p>
+      <p role="status" className={PAIRING_TONE[line.tone]}>
+        {line.text}
+        {line.detail ? (
+          <span className="ms-1 text-muted-foreground" dir="ltr">
+            ({line.detail})
+          </span>
+        ) : null}
+      </p>
+      <p className={HINT}>{PI_TEXT.synqpayPairingHowTo}</p>
+      <button
+        type="button"
+        className="text-xs font-medium text-muted-foreground enabled:hover:underline"
+        aria-expanded={shown}
+        disabled={forced}
+        onClick={() => setOpen((o) => !o)}
+      >
+        {shown ? '▾' : '◂'} {PI_TEXT.synqpayManualToggle}
+      </button>
+      {shown ? (
+        <div className="space-y-1">
+          <SecretField
+            secretKey="synqpayApiKey"
+            label={label}
+            value={value}
+            status={status}
+            error={error}
+            onChange={onChange}
+          />
+          <p className={HINT}>{PI_TEXT.synqpayKeyHint}</p>
+        </div>
+      ) : null}
     </div>
   );
 }

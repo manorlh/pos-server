@@ -21,7 +21,7 @@
 import { useEffect, useRef } from 'react';
 import { useTranslations } from 'next-intl';
 import { CalendarClock, Clock, Info } from 'lucide-react';
-import { formatHour } from '@/lib/format';
+import { formatDate, formatHour } from '@/lib/format';
 import {
   HOUR_OPTIONS_FROM,
   HOUR_OPTIONS_TO,
@@ -36,7 +36,7 @@ import {
   type HourWindow,
 } from '@/lib/reportWindow';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
@@ -159,7 +159,7 @@ export function ReportFilters({
     if (days === 1) {
       return {
         tone: 'muted' as const,
-        text: t('semanticSingleDay', { band, date: value.from }),
+        text: t('semanticSingleDay', { band, date: formatDate(value.from) }),
       };
     }
     const parts = [
@@ -186,11 +186,11 @@ export function ReportFilters({
       <div className="grid gap-3 md:grid-cols-2 lg:max-w-lg">
         <div className="space-y-1">
           <Label className="text-xs">{t('from')}</Label>
-          <Input type="date" value={value.from} onChange={(e) => set({ from: e.target.value })} />
+          <DatePicker value={value.from} onChange={(e) => set({ from: e.target.value })} range={{ from: value.from, to: value.to, onSelect: (r) => set(r) }} />
         </div>
         <div className="space-y-1">
           <Label className="text-xs">{t('to')}</Label>
-          <Input type="date" value={value.to} onChange={(e) => set({ to: e.target.value })} />
+          <DatePicker value={value.to} onChange={(e) => set({ to: e.target.value })} range={{ from: value.from, to: value.to, onSelect: (r) => set(r) }} />
         </div>
       </div>
 

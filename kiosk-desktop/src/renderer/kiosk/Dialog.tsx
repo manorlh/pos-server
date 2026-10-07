@@ -4,7 +4,7 @@
  */
 
 import type { ReactNode } from 'react';
-import { cardStyle, type PreviewModel } from '@kiosk-shared/index';
+import { cardStyle, sheetEnter, type PreviewModel } from '@kiosk-shared/index';
 
 export function Dialog({
   m,
@@ -21,9 +21,11 @@ export function Dialog({
   secondary?: { label: string; onClick: () => void };
   children?: ReactNode;
 }) {
+  // "חלונות" of "הנפשות ומעברים", as the shared screens' windows.
+  const sheet = sheetEnter(m.transitions);
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50 p-6 animate-in fade-in duration-200">
-      <div className="w-full max-w-[420px] space-y-3 p-5 text-center shadow-2xl animate-in zoom-in-95 duration-200" style={{ ...cardStyle(m), background: m.c.surface, color: m.c.text }}>
+    <div className={`absolute inset-0 z-50 flex items-center justify-center bg-black/50 p-6 ${sheet.scrim}`} style={sheet.style}>
+      <div className={`w-full max-w-[420px] space-y-3 p-5 text-center shadow-2xl ${sheet.panel}`} style={{ ...cardStyle(m), ...sheet.style, background: m.c.surface, color: m.c.text }}>
         <div className="text-xl font-extrabold">{title}</div>
         {body ? (
           <div className="whitespace-pre-line text-sm" style={{ color: m.c.mutedText }}>

@@ -15,8 +15,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { format } from 'date-fns';
-import { he } from 'date-fns/locale';
 import {
   ArrowRight,
   Ban,
@@ -55,6 +53,7 @@ import {
 import { groupPlan, groupSizeOf, serialRange, type GroupMode } from '@/lib/prepaidVoucherGroups';
 import { PrepaidBatchGroupsView } from '@/components/dashboard/prepaid-vouchers/batch-groups';
 import { cn } from '@/lib/utils';
+import { formatDate, formatDateTime, isoDate } from '@/lib/format';
 import {
   PAGE_PRESETS,
   VoucherPreview,
@@ -71,6 +70,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
@@ -80,15 +80,11 @@ const PAGE_SIZE = 100;
 const LAYOUT_KEY = 'prepaidVouchers.layout';
 
 function day(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : format(d, 'dd/MM/yyyy', { locale: he });
+  return isoDate(iso) ? formatDate(iso) : '';
 }
 
 function time(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : format(d, 'dd/MM/yy HH:mm', { locale: he });
+  return isoDate(iso) ? formatDateTime(iso) : '';
 }
 
 /** `yyyy-mm-dd` from a date input → the start / end of that day, local time, as ISO. */
@@ -462,11 +458,11 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <Label htmlFor="pv-from">{t('validFrom')}</Label>
-              <Input id="pv-from" type="date" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} />
+              <DatePicker id="pv-from" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} />
             </div>
             <div className="space-y-1">
               <Label htmlFor="pv-until">{t('validUntil')}</Label>
-              <Input id="pv-until" type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
+              <DatePicker id="pv-until" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
             </div>
           </div>
 

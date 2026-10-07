@@ -29,8 +29,10 @@ import {
 import { numberedLabel } from '@/lib/orgNumber';
 import { registerNumberOf } from '@/lib/registerNumber';
 import { findBySameId, sameId } from '@/lib/entityLookup';
+import { formatShortDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { FilterBox, boardSurface, type FilterOption } from './board-ui';
 
@@ -41,8 +43,7 @@ export function useDayNames(today: string) {
   const t = useTranslations('controlBoard');
   const weekdays = t.raw('weekdays') as string[];
   const short = (day: string) => {
-    const [, m, d] = day.split('-').map(Number);
-    return t('dayLabel', { weekday: weekdays[weekdayOf(day)] ?? '', date: `${d}/${m}` });
+    return t('dayLabel', { weekday: weekdays[weekdayOf(day)] ?? '', date: formatShortDate(day) });
   };
   const relative = (day: string) =>
     day === today ? t('today') : day === shiftIsoDay(today, -1) ? t('yesterday') : short(day);
@@ -218,7 +219,7 @@ export function ScopeBoxes({ className, ...props }: ScopeFilterProps & { classNa
   );
 }
 
-/** A date field that opens the system's date picker as it appears. */
+/** A date field (the Hebrew calendar) that takes focus as it appears. */
 function DayInput({
   label,
   max,
@@ -232,35 +233,34 @@ function DayInput({
   onPick: (day: string) => void;
   onCancel: () => void;
 }) {
-  const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.focus();
-    try {
-      el.showPicker?.();
-    } catch {
-      // No picker without a fresh tap on some browsers: the field itself is there.
-    }
-  }, []);
+  // Focus moving from the field into its calendar (a portal) stays inside; leaving both cancels.
+  const leaving = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(leaving.current), []);
   return (
-    <input
-      ref={ref}
-      type="date"
-      aria-label={label}
-      max={max}
-      defaultValue={initial}
-      dir="ltr"
-      onChange={(e) => {
-        // Typing a year digit by digit passes through 0002, 0020…: only a real year counts.
-        if (e.target.value >= '2000-01-01' && e.target.value <= max) onPick(e.target.value);
+    <div
+      className="min-w-0"
+      onFocus={() => window.clearTimeout(leaving.current)}
+      onBlur={() => {
+        leaving.current = window.setTimeout(onCancel, 0);
       }}
-      onBlur={onCancel}
       onKeyDown={(e) => {
         if (e.key === 'Escape') onCancel();
       }}
-      className="h-11 min-w-0 rounded-xl border border-cb-blue bg-cb-card px-3 text-sm text-cb-ink outline-none ring-2 ring-cb-blue/30"
-    />
+    >
+      <DatePicker
+        autoFocus
+        defaultOpen
+        aria-label={label}
+        max={max}
+        value={initial}
+        dir="ltr"
+        onChange={(e) => {
+          // Typing a year digit by digit passes through 0002, 0020…: only a real year counts.
+          if (e.target.value >= '2000-01-01' && e.target.value <= max) onPick(e.target.value);
+        }}
+        className="h-11 rounded-lg bg-cb-card text-sm text-cb-ink ring-2 ring-cb-blue/30"
+      />
+    </div>
   );
 }
 

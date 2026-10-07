@@ -12,7 +12,7 @@ import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
-import { formatCurrency, formatQuantity } from '@/lib/format';
+import { formatCurrency, formatDate, formatQuantity } from '@/lib/format';
 import { WHOLE_DAY, daysBackIso, hourQueryParams, todayIso } from '@/lib/reportWindow';
 import {
   fetchPromotionsReport,
@@ -123,7 +123,7 @@ export default function PromotionsReportPage() {
         key: r.machineId ?? `m${i}`,
         label: [r.shopName, r.name, r.posNumber ? t('register', { n: r.posNumber }) : null].filter(Boolean).join(' · ') || unknown,
       })),
-      byDay: data.byDay.map((r) => ({ ...r, key: r.date, label: r.date })),
+      byDay: data.byDay.map((r) => ({ ...r, key: r.date, label: formatDate(r.date) })),
     };
   }, [data, t, tt]);
 

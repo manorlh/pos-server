@@ -61,6 +61,7 @@ import {
   type SketchTemplate,
   uniqueElements,
 } from '@/lib/tableSketch';
+import { policyBadge } from '@/lib/tablePolicy';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -855,6 +856,13 @@ export function MapEditor({
                       // Moved, not saved yet: a small blue dot in the corner.
                       <circle cx={p.x + p.width * 0.85} cy={p.y + p.height * 0.15} r={4 * perPx} fill="#3b82f6" />
                     ) : null}
+                    <PolicyBadge
+                      badge={policyBadge(tb.policy)}
+                      kindLabel={(k) => t(`policy.badge.${k}`)}
+                      cx={cx}
+                      top={p.y}
+                      fs={fs}
+                    />
                     <text
                       x={cx}
                       y={tb.name && p.height > fs * 2.2 ? cy - fs * 0.25 : cy}
@@ -893,6 +901,38 @@ export function MapEditor({
         </svg>
       </div>
     </div>
+  );
+}
+
+/**
+ * "סוג שולחן" on the table: עובדים / מנהלים / -10% — a small pill over its top edge, as
+ * the till's map shows it (lib/tablePolicy.ts, policyBadge).
+ */
+function PolicyBadge({
+  badge,
+  kindLabel,
+  cx,
+  top,
+  fs,
+}: {
+  badge: ReturnType<typeof policyBadge>;
+  kindLabel: (kind: 'staff' | 'managers') => string;
+  cx: number;
+  top: number;
+  fs: number;
+}) {
+  if (!badge) return null;
+  const label = [badge.kind ? kindLabel(badge.kind) : null, badge.discount].filter(Boolean).join(' ');
+  const size = fs * 0.36;
+  const width = label.length * size * 0.6 + size * 1.2;
+  const fill = badge.kind === 'managers' ? '#7c3aed' : badge.kind === 'staff' ? '#0d9488' : '#dc2626';
+  return (
+    <g pointerEvents="none">
+      <rect x={cx - width / 2} y={top - size * 0.75} width={width} height={size * 1.5} rx={size * 0.75} fill={fill} />
+      <text x={cx} y={top} textAnchor="middle" dominantBaseline="central" fontSize={size} fontWeight={700} fill="#fff">
+        {label}
+      </text>
+    </g>
   );
 }
 

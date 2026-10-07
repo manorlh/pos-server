@@ -20,6 +20,11 @@ GET|PUT /shops/{shop_id}/printer-routing/categories/{category} → one category,
 PUT    /shops/{shop_id}/print-host               → the shop's print server: a till, or none
 PUT    /shops/{shop_id}/printer-options          → `kitchenTicketsOnSale` /
                                                     `kitchenTicketsOnTill` at one level
+GET    /shops/{shop_id}/till-local-printers      → the printers attached to the shop's tills
+                                                    (built-in head, USB, Bluetooth), by name —
+                                                    the kiosk's "מדפסת בונים" (SPEC_KIOSK §16.9)
+POST   /shops/{shop_id}/till-local-printers      → {machineId, connection}: the hosted printer
+                                                    behind one, made or reused
 
 Kitchen stations ("תחנות" — network-wide; super admin, distributor, company manager):
 
@@ -50,6 +55,7 @@ POST   /sync/{m}/print-jobs                      → relay a ticket to a cloud p
                                                     or to the shop's print server
 GET    /sync/{m}/print-jobs/pending              → jobs this till prints (handed out)
 POST   /sync/{m}/print-jobs/{id}/ack             → done / failed
+POST   /sync/{m}/print-jobs/{id}/cancel          → the sender takes back a job no till took yet
 GET    /sync/{m}/print-jobs/status?ids=a,b       → the sender's view of its jobs
 
 Every configuration write wakes the shop's tills after the commit (Ably `settings`,
@@ -86,6 +92,7 @@ from app.schemas.kitchen_printers import (
     PrintJobAckIn,
     PrintJobIn,
     ProductRouteIn,
+    TillLocalPrinterIn,
 )
 from app.services import printers as K
 
@@ -468,6 +475,41 @@ def put_options(
     return K.options_out(db, shop)
 
 
+@router.get("/shops/{shop_id}/till-local-printers")
+def list_till_local_printers(
+    shop_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """`{"printers": [{key, machineId, machineName, deviceModel, connection: till|usb|bluetooth,
+    deviceName, btAddress, printerStatus, online, printerId, printerName, printerActive}]}`."""
+    shop = _shop(db, shop_id, active_tenant_id)
+    K.check_read(db, current_user, shop)
+    out = K.till_local_printers(db, shop)
+    db.commit()  # the built-in parameters, if reading them created them
+    return {"printers": out}
+
+
+@router.post("/shops/{shop_id}/till-local-printers", status_code=status.HTTP_201_CREATED)
+def ensure_till_local_printer(
+    shop_id: uuid.UUID,
+    body: TillLocalPrinterIn,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The hosted printer behind a till's local printer (made, or reused); `422 no_local_printer`."""
+    shop = _shop(db, shop_id, active_tenant_id)
+    K.check_edit(db, current_user, shop)
+    printer = K.ensure_till_local_printer(db, shop, body.machine_id, body.connection)
+    _config_changed(db, shop, background_tasks)
+    db.refresh(printer)
+    return K.printer_out(printer, {m.id: m for m in K.shop_machines(db, shop.id)},
+                         {a.id: a for a in K.shop_areas(db, shop.id)})
+
+
 # ── The till's side ───────────────────────────────────────────────────────────
 
 
@@ -589,6 +631,19 @@ def ack_print_job(
 ):
     job = K.ack_job(db, machine, job_id, body)
     out = K.job_out(job)
+    db.commit()
+    return out
+
+
+@router.post("/sync/{machine_id}/print-jobs/{job_id}/cancel")
+def cancel_print_job(
+    machine_id: str,
+    job_id: str,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """The sender's own job: `cancelled` true when no till ever took it (it will never print)."""
+    out = K.cancel_job(db, machine, job_id)
     db.commit()
     return out
 

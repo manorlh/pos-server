@@ -11,6 +11,7 @@
  * Everything the UI needs to *say* that out loud is derived here so the three
  * report pages cannot drift apart on how they explain it.
  */
+import { addDaysIso, businessToday } from './format';
 
 /** Sentinel pair meaning "whole day"; the server drops the filter for 0/24. */
 export const WHOLE_DAY_FROM_HOUR = 0;
@@ -99,19 +100,12 @@ export function hourSlots(w: HourWindow): boolean[] {
 export const HOUR_OPTIONS_FROM = Array.from({ length: 24 }, (_, h) => h); // 0..23
 export const HOUR_OPTIONS_TO = Array.from({ length: 24 }, (_, i) => i + 1); // 1..24
 
-/** Today as `YYYY-MM-DD` in the browser's local zone. */
+/** Today as `YYYY-MM-DD` in Israel (the business's clock), not the browser's zone. */
 export function todayIso(): string {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${now.getFullYear()}-${month}-${day}`;
+  return businessToday();
 }
 
 /** `daysBack(6)` → the ISO date six days before today. */
 export function daysBackIso(days: number): string {
-  const now = new Date();
-  now.setDate(now.getDate() - days);
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${now.getFullYear()}-${month}-${day}`;
+  return addDaysIso(businessToday(), -days);
 }

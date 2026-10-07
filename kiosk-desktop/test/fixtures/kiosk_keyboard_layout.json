@@ -1,0 +1,24 @@
+{
+  "_doc": "The kiosk's own keyboard, the same on the Android kiosk (domain/KioskKeys.kt) and the Windows kiosk (kiosk-desktop/src/core/kioskKeys.ts). Two equal copies: pos-android app/src/test/resources and pos-server kiosk-desktop/test/fixtures. The letter rows are always left to right (the Israeli keyboard's), a special key is NAME:width (a letter is 1, a full row 10). The bottom row is listed from the start of the screen to its end (in Hebrew from the right): the language, 123, the space, the backspace. Its words are the kiosk texts named in labels (their built-in values here).",
+  "rows": {
+    "he": [
+      ["ק", "ר", "א", "ט", "ו", "ן", "ם", "פ", "'", "-"],
+      ["ש", "ד", "ג", "כ", "ע", "י", "ח", "ל", "ך", "ף"],
+      ["ז", "ס", "ב", "ה", "נ", "מ", "צ", "ת", "ץ"]
+    ],
+    "en": [
+      ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
+      ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
+      ["SHIFT:1", "z", "x", "c", "v", "b", "n", "m", "'", "-"]
+    ],
+    "signs": [
+      ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
+      ["-", "'", "\"", ".", ",", "?", "!", "&", "(", ")"],
+      ["@", "#", "/", ":", "+", "*", "%"]
+    ]
+  },
+  "bottom": ["LANG:2", "PAGE:1.5", "SPACE:4.5", "BACKSPACE:2"],
+  "digits": [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], ["", "0", "BACKSPACE"]],
+  "labels": { "kbToEnglish": "English", "kbToHebrew": "עברית", "kbNumbers": "123", "kbLettersHe": "אבג", "kbLettersEn": "ABC", "kbSpace": "רווח" },
+  "limits": { "name": 30, "phone": 10, "table": 8, "search": 40 }
+}

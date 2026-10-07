@@ -10,7 +10,7 @@ import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { ExternalLink, Globe, Pencil, Plus, Trash2 } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatDateTime } from '@/lib/format';
 import {
@@ -24,6 +24,9 @@ import {
   type KdsShopOverview,
 } from '@/lib/kdsApi';
 import { errorCodeOf } from '@/lib/workflowMode';
+import { boardDisplayOf } from '@/lib/pickupBoard';
+import type { BoardDisplay } from '@/lib/kdsScreenTypes';
+import { BoardLookFields } from './board-look-fields';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -120,7 +123,27 @@ export function DevicesSection({ shopId, overview }: { shopId: string; overview:
               {overview.devices.map((d) => (
                 <TableRow key={d.id}>
                   <TableCell className="font-medium">{d.name}</TableCell>
-                  <TableCell>{tillLabel(d.machineId ? machines.get(d.machineId) : undefined)}</TableCell>
+                  <TableCell>
+                    <span className="inline-flex flex-wrap items-center gap-1">
+                      {tillLabel(d.machineId ? machines.get(d.machineId) : undefined)}
+                      {/* A browser screen (`/kds`, `/board` on this site — SPEC_KDS §13): where it opens. */}
+                      {d.machineId && machines.get(d.machineId)?.platform === 'web' ? (
+                        <>
+                          <Badge variant="outline" className="h-5 gap-0.5 px-1 text-[10px] font-normal">
+                            <Globe className="h-3 w-3" aria-hidden /> {t('web')}
+                          </Badge>
+                          <a
+                            href={d.role === 'pickup' ? '/board' : '/kds'}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-0.5 text-xs text-primary hover:underline"
+                          >
+                            <ExternalLink className="h-3 w-3" aria-hidden /> {t('webOpen')}
+                          </a>
+                        </>
+                      ) : null}
+                    </span>
+                  </TableCell>
                   <TableCell>
                     <Badge variant="secondary">{t(`roles.${d.role}`)}</Badge>
                   </TableCell>
@@ -213,9 +236,13 @@ function DeviceDialog({
   const [role, setRole] = useState<KdsRole>(device?.role ?? 'station');
   const [stationIds, setStationIds] = useState<string[]>(device?.stations.map((s) => s.id) ?? []);
   const [isActive, setIsActive] = useState(device?.isActive ?? true);
+  const [display, setDisplay] = useState<BoardDisplay>(() => boardDisplayOf(device?.display));
 
   const needsStation = role === 'station' && stationIds.length === 0;
   const valid = !!machineId && !needsStation;
+  // "מסך מטבח אינו קופה": a till chosen here for the first time stops being a till.
+  const chosen = overview.machines.find((m) => m.id === machineId);
+  const becomesScreen = !device && !!chosen && chosen.fiscal !== false;
 
   const save = useMutation({
     mutationFn: (body: KdsDeviceInput) => saveDevice(shopId, machineId, body),
@@ -258,6 +285,11 @@ function DeviceDialog({
                 ))}
               </SelectContent>
             </Select>
+            {becomesScreen ? (
+              <p role="note" className="rounded-md bg-amber-50 p-2 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                {td('becomesScreen')}
+              </p>
+            ) : null}
           </div>
 
           <div className="space-y-1.5">
@@ -329,6 +361,9 @@ function DeviceDialog({
             </div>
           ) : null}
 
+          {/* The board's look (every board: the browser's `/board` and the Windows app). */}
+          {role === 'pickup' ? <BoardLookFields value={display} onChange={setDisplay} /> : null}
+
           <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border p-3">
             <span className="text-sm font-medium">{td('active')}</span>
             <Switch checked={isActive} onCheckedChange={setIsActive} aria-label={td('active')} />
@@ -347,6 +382,7 @@ function DeviceDialog({
                 role,
                 stationIds: role === 'station' ? stationIds : [],
                 isActive,
+                ...(role === 'pickup' ? { display: { ...display, title: display.title?.trim() || null } } : {}),
               })
             }
           >

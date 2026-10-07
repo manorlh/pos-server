@@ -74,7 +74,12 @@ import {
 } from '@/components/dashboard/machines/card-transmission';
 import { TerminalSummary } from '@/components/dashboard/machines/card-terminal';
 import { DeviceModelBadge } from '@/components/dashboard/machines/device-model';
-import { DeviceRoleBadge } from '@/components/dashboard/machines/device-role';
+import {
+  DevicePlatformBadge,
+  DeviceRoleBadge,
+  DisplayDeviceNote,
+} from '@/components/dashboard/machines/device-role';
+import { isDisplayDevice } from '@/lib/deviceProfile';
 import { canRequestTillZ } from '@/components/dashboard/till-z/till-z-dialogs';
 import { LatestTillZRequest, ZModeBadge } from '@/components/dashboard/till-z/till-z-request';
 import { IndependentTillBadge } from '@/components/dashboard/independent-till-badge';
@@ -287,6 +292,8 @@ function MachineRowMenu({
     permissions;
   const isSuperAdmin = useIsSuperAdmin();
   const tillMode = zModeOf(m) === 'till';
+  // A KDS / the board is not a till: no card terminal, shift, transmission or Z to act on.
+  const display = isDisplayDevice(m);
 
   // Until the session has hydrated we do not know the role, and a menu that offers
   // everything and then removes half of it is worse than one that waits a beat.
@@ -345,7 +352,7 @@ function MachineRowMenu({
           </DropdownMenuItem>
         ) : null}
         {/* Writes the till's settings layer, so the same role set as the item above. */}
-        {canProduceZ && actions.onTerminalNumber && m.shopId ? (
+        {canProduceZ && actions.onTerminalNumber && m.shopId && !display ? (
           <DropdownMenuItem onClick={() => actions.onTerminalNumber?.(m)}>
             <CreditCard aria-hidden /> {t('updateTerminalNumber')}
           </DropdownMenuItem>
@@ -353,20 +360,20 @@ function MachineRowMenu({
         {/* Two separate actions. Closing the shift remotely only closes it (the X is
             filed, the shift waits for a Z); producing a Z is the wizard, which may also
             close an open shift as part of the run. */}
-        {canProduceZ && canCloseShiftRemotely(m) ? (
+        {canProduceZ && canCloseShiftRemotely(m) && !display ? (
           <DropdownMenuItem onClick={() => actions.onCloseShift(m)}>
             <Power aria-hidden /> {t('closeShiftRemotely')}
           </DropdownMenuItem>
         ) : null}
         {/* Same role set as a remote shift close (docs/SHIFTS_API.md §4.4). */}
-        {canProduceZ && actions.onTransmit && canTransmitRemotely(m) ? (
+        {canProduceZ && actions.onTransmit && canTransmitRemotely(m) && !display ? (
           <DropdownMenuItem onClick={() => actions.onTransmit?.(m)}>
             <RadioTower aria-hidden /> {t('transmitNow')}
           </DropdownMenuItem>
         ) : null}
         {/* A till that produces its own Z is asked for it; the cloud never builds one
             for it, so the wizard's cloud Z is not offered for it here. */}
-        {canProduceZ && tillMode && actions.onRequestTillZ ? (
+        {display ? null : canProduceZ && tillMode && actions.onRequestTillZ ? (
           <DropdownMenuItem
             onClick={() => actions.onRequestTillZ?.(m)}
             disabled={!canRequestTillZ(m)}
@@ -383,7 +390,7 @@ function MachineRowMenu({
         ) : null}
         {/* `PUT /machines/{id}` {zMode}: the roles that produce Zs (docs/SHIFTS_API.md §5.1). */}
         {/* The owner's rule: the super admin alone switches a till's Z mode. */}
-        {isSuperAdmin && actions.onEditZMode && m.pairingStatus === 'assigned' && m.isActive !== false ? (
+        {isSuperAdmin && actions.onEditZMode && m.pairingStatus === 'assigned' && m.isActive !== false && !display ? (
           <DropdownMenuItem onClick={() => actions.onEditZMode?.(m)}>
             <FileCog aria-hidden /> {tZ('mode.menu')}
           </DropdownMenuItem>
@@ -424,9 +431,16 @@ function MachineRowDetails({
   const tZ = useTranslations('tillZ');
   const online = isDeviceOnline(m);
   const mqtt = mqttState(m, online);
+  // A KDS / the board: no transmission, terminal, Z or dead-till recovery — not a till.
+  const display = isDisplayDevice(m);
 
   return (
     <div className="grid gap-3 border-t bg-muted/20 px-3 py-3 md:grid-cols-2 xl:grid-cols-3">
+      {display || m.kdsScreen ? (
+        <div className="md:col-span-2 xl:col-span-3">
+          <DisplayDeviceNote m={m} />
+        </div>
+      ) : null}
       <MachineHealthPanel machine={m} />
 
       <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
@@ -452,7 +466,11 @@ function MachineRowDetails({
         </div>
         <div className="flex items-center justify-between gap-2">
           <span className="text-muted-foreground">{t('deviceRole.label')}</span>
-          <span className="text-xs">{m.deviceRole === 'kiosk' ? t('deviceRole.kiosk') : t('deviceRole.till')}</span>
+          <span className="text-xs">{t(`deviceRole.${m.deviceRole ?? 'till'}`)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-muted-foreground">{t('deviceRole.platform')}</span>
+          <span className="text-xs">{t(`deviceRole.platforms.${m.platform === 'windows' ? 'windows' : 'android'}`)}</span>
         </div>
         <div className="flex items-center justify-between gap-2">
           <span className="text-muted-foreground">{t('deviceModel.label')}</span>
@@ -503,12 +521,14 @@ function MachineRowDetails({
         </div>
       </div>
 
-      <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
-        <div className="text-muted-foreground">{t('transmissionColumn')}</div>
-        <TransmissionSummary m={m} />
-      </div>
+      {display ? null : (
+        <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+          <div className="text-muted-foreground">{t('transmissionColumn')}</div>
+          <TransmissionSummary m={m} />
+        </div>
+      )}
 
-      {m.terminalStatus ? (
+      {m.terminalStatus && !display ? (
         <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
           <div className="text-muted-foreground">{tTerminal('title')}</div>
           <TerminalSummary m={m} />
@@ -516,7 +536,7 @@ function MachineRowDetails({
       ) : null}
       {/* Who produces this till's Z, and — for a till that makes its own — the last
           time the dashboard asked it for one and how that went. */}
-      <div className="space-y-1.5 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+      <div className={`space-y-1.5 rounded-md border bg-muted/30 px-3 py-2 text-sm ${display ? 'hidden' : ''}`}>
         <div className="flex items-center justify-between gap-2">
           <span className="text-muted-foreground">{tZ('mode.label')}</span>
           <span className="flex items-center gap-1">
@@ -549,7 +569,7 @@ function MachineRowDetails({
 
       {/* Only for a terminal that is actually unreachable — offering it on a healthy
           till invites closing a shift out from under a cashier. */}
-      {!online && m.pairingStatus === 'assigned' && m.isActive !== false ? (
+      {!online && m.pairingStatus === 'assigned' && m.isActive !== false && !display ? (
         <div className="md:col-span-2 xl:col-span-3">
           <DeadTillRecovery m={m} />
         </div>
@@ -693,6 +713,15 @@ export function MachineAlerts({
       >
         <CreditCard className="h-3 w-3" aria-hidden />
         {t('alerts.terminal')}
+      </span>,
+    );
+  }
+  // "בדיקת מספר מסוף מושבתת": the till parameter "עקיפת בדיקת מספר מסוף" is on for this till.
+  if (m.terminalNumberCheckBypass) {
+    items.push(
+      <span key="check-bypass" className={ALERT_AMBER} title={tTerminal('checkBypass.warning')}>
+        <CreditCard className="h-3 w-3" aria-hidden />
+        {tTerminal('checkBypass.title')}
       </span>,
     );
   }
@@ -898,6 +927,7 @@ export function MachineRow({
             </span>
             {/* "סוג מכשיר": קופה / קיוסק, then the model. */}
             <DeviceRoleBadge m={m} showTill />
+            <DevicePlatformBadge m={m} showAndroid={isDisplayDevice(m)} />
             <DeviceModelBadge m={m} />
             <IntegrationBadge m={m} />
             {/* Only the exception is marked: most tills are on the shop's cloud Z. */}
@@ -911,7 +941,8 @@ export function MachineRow({
         </div>
 
         <div className="min-w-0 max-md:order-5">
-          <MachineShiftChip m={m} />
+          {/* A screen has no shifts: nothing to show here. */}
+          {isDisplayDevice(m) ? null : <MachineShiftChip m={m} />}
         </div>
 
         <div className="min-w-0 max-md:order-6">

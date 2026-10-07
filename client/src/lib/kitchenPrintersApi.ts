@@ -3,12 +3,14 @@
  * docs/SPEC_PROMOTIONS_TABLES_SHOPZ.md §4.
  */
 import { api } from './api';
+import type { BonTillLocalPrinter, LocalConnection } from './kioskBonPrinters';
 import type { TillParameterValueType } from './types';
 
 export type PrinterConnectionType = 'network' | 'bluetooth' | 'cloud' | 'till' | 'usb';
 /** kitchen — "מדפסת בונים" (tickets, by the routing); receipt — "מדפסת חשבוניות" (bills, receipts, the drawer). */
 export type PrinterPurpose = 'kitchen' | 'receipt';
-export type PrinterHostConnection = 'till' | 'network' | 'bluetooth';
+/** How a cloud printer's host till reaches it: its own head, a network / Bluetooth printer, or its own USB port. */
+export type PrinterHostConnection = 'till' | 'network' | 'bluetooth' | 'usb';
 
 export interface KitchenPrinter {
   id: string;
@@ -237,6 +239,29 @@ export interface PrinterRouting {
 
 export async function fetchKitchenPrinters(shopId: string): Promise<KitchenPrintersPage> {
   const { data } = await api.get<KitchenPrintersPage>(`/shops/${shopId}/printers`);
+  return data;
+}
+
+/** A till's own printer (built-in head, USB, Bluetooth), by name — the kiosk's "מדפסת בונים" (SPEC_KIOSK §16.9). */
+export type TillLocalPrinter = BonTillLocalPrinter & {
+  btAddress: string | null;
+  paperWidth: number | null;
+  printerStatus: string | null;
+  printerName: string | null;
+};
+
+export async function fetchTillLocalPrinters(shopId: string): Promise<TillLocalPrinter[]> {
+  const { data } = await api.get<{ printers: TillLocalPrinter[] }>(`/shops/${shopId}/till-local-printers`);
+  return data.printers ?? [];
+}
+
+/** The hosted printer behind a till's own printer: made, or reused (and switched on). */
+export async function ensureTillLocalPrinter(
+  shopId: string,
+  machineId: string,
+  connection: LocalConnection,
+): Promise<KitchenPrinter> {
+  const { data } = await api.post<KitchenPrinter>(`/shops/${shopId}/till-local-printers`, { machineId, connection });
   return data;
 }
 

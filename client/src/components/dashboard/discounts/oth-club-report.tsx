@@ -21,6 +21,8 @@ import {
   type TillLabel,
 } from '@/lib/discountsReportApi';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import type { ExcelCellKind, ExcelSheet } from '@/lib/excelExport';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -158,8 +160,86 @@ export function OthClubReport({ params }: { params: ReportWindowParams | null })
   if (isError) return <ReportErrorState message={axiosErrorToToastMessage(error, tc('error'))} />;
   if (!data || !rows) return null;
 
+  const hasOth = data.oth.totals.count > 0;
+  const hasClub = data.club.totals.count > 0;
+  // Every OTH grouping as its own sheet (not just the one on screen), then the club tables
+  // as the page shows them. Days go out as the API's ISO dates (real date cells).
+  const getSheets = (): ExcelSheet[] => {
+    const othSheet = (v: OthView): ExcelSheet => ({
+      name: `OTH ${t(`oth.${v}`)}`,
+      columns: [
+        { header: t(`oth.col.${v}`), kind: v === 'byDay' ? 'date' : 'text' },
+        { header: t('col.lines'), kind: 'number' },
+        { header: t('col.units'), kind: 'number' },
+        { header: t('col.value'), kind: 'money' },
+      ],
+      rows:
+        v === 'byDay'
+          ? data.oth.byDay.map((r) => [r.date, r.count, r.quantity, r.value])
+          : rows.oth[v].map((r) => [r.label, r.count, r.quantity, r.value]),
+      totals: [t('total'), data.oth.totals.count, data.oth.totals.quantity, data.oth.totals.value],
+    });
+    const clubSheet = (
+      name: string,
+      head: string,
+      headKind: ExcelCellKind,
+      list: (string | number)[][],
+      totals: ClubFigures,
+    ): ExcelSheet => ({
+      name,
+      columns: [
+        { header: head, kind: headKind },
+        { header: t('col.sales'), kind: 'number' },
+        { header: t('col.amount'), kind: 'money' },
+      ],
+      rows: list,
+      totals: [t('total'), totals.count, totals.amount],
+    });
+    const sheets: ExcelSheet[] = hasOth ? OTH_VIEWS.map(othSheet) : [];
+    if (rows.byKind.length > 0) {
+      sheets.push(
+        clubSheet(
+          t('club.title'),
+          t('club.col.kind'),
+          'text',
+          rows.byKind.map((r) => [r.label, r.count, r.amount]),
+          rows.byKind.reduce(
+            (a, r) => ({ count: a.count + r.count, amount: a.amount + r.amount }),
+            { count: 0, amount: 0 },
+          ),
+        ),
+      );
+      if (hasClub) {
+        sheets.push(
+          clubSheet(
+            t('club.byTill'),
+            t('club.col.till'),
+            'text',
+            rows.clubByTill.map((r) => [r.label, r.count, r.amount]),
+            data.club.totals,
+          ),
+          clubSheet(
+            t('club.byDay'),
+            t('club.col.day'),
+            'date',
+            data.club.byDay.map((r) => [r.date, r.count, r.amount]),
+            data.club.totals,
+          ),
+        );
+      }
+    }
+    return sheets;
+  };
+
   return (
     <div className="space-y-4">
+      <ReportExportToolbar
+        title={`${t('oth.title')} · ${t('club.title')}`}
+        from={data.window.from}
+        to={data.window.to}
+        disabled={!hasOth && rows.byKind.length === 0}
+        getSheets={getSheets}
+      />
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">{t('oth.title')}</CardTitle>

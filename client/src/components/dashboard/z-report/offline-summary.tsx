@@ -15,6 +15,7 @@ import { AlertTriangle } from 'lucide-react';
 import { formatCurrency, formatDateTime } from '@/lib/format';
 import type { Money, PeriodOffline } from '@/lib/types';
 import { cn } from '@/lib/utils';
+import { RemoteCreditQuickButton } from '@/components/dashboard/remote-credit/remote-credit-actions';
 
 export interface OfflineFigures {
   authorizationCount: number;
@@ -109,6 +110,10 @@ export function OfflineDeclinedList({ declined }: { declined: PeriodOffline['dec
               <td className="py-1">
                 <span className="font-mono" dir="ltr">
                   {d.documentNumber ?? d.transactionId.slice(0, 8)}
+                </span>
+                {/* A declined sale is still a tax document: credit it (docs/SPEC_REMOTE_CREDIT.md). */}
+                <span className="ms-2 print:hidden">
+                  <RemoteCreditQuickButton transactionId={d.transactionId} documentNumber={d.documentNumber} />
                 </span>
               </td>
               <td className="py-1">{formatDateTime(d.at)}</td>

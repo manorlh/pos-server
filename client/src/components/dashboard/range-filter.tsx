@@ -7,7 +7,7 @@
 
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 
 export interface DayRange {
@@ -35,22 +35,22 @@ export function RangeFilter({
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1">
           <Label className="text-xs">{t('from')}</Label>
-          <Input
-            type="date"
+          <DatePicker
             value={value.from}
             max={value.to || undefined}
             aria-invalid={invalid || undefined}
             onChange={(e) => onChange({ ...value, from: e.target.value })}
+            range={{ ...value, onSelect: (r) => onChange({ ...value, ...r }) }}
           />
         </div>
         <div className="space-y-1">
           <Label className="text-xs">{t('to')}</Label>
-          <Input
-            type="date"
+          <DatePicker
             value={value.to}
             min={value.from || undefined}
             aria-invalid={invalid || undefined}
             onChange={(e) => onChange({ ...value, to: e.target.value })}
+            range={{ ...value, onSelect: (r) => onChange({ ...value, ...r }) }}
           />
         </div>
         <Button disabled={invalid || isFetching} onClick={onRun}>

@@ -68,6 +68,10 @@ from app.services import kiosk_config as cfgsvc
 from app.services import kiosk_control as svc
 from app.services import kiosk_menu
 from app.services import kiosk_pickup
+from app.services import kiosk_z
+
+# Display devices are not tills (app/services/display_devices.py).
+from app.middleware.auth import FISCAL_SYNC_PATH
 
 till_router = APIRouter(prefix="/sync", tags=["kiosks"])
 router = APIRouter(prefix="/kiosks", tags=["kiosks"])
@@ -108,7 +112,7 @@ def kiosk_sync(
     return out
 
 
-@till_router.post("/{machine_id}/kiosk/orders")
+@till_router.post("/{machine_id}/kiosk/orders", dependencies=FISCAL_SYNC_PATH)
 def post_kiosk_orders(
     machine_id: str,
     body: KioskOrdersIn,
@@ -128,7 +132,7 @@ def post_kiosk_orders(
     return out
 
 
-@till_router.post("/{machine_id}/kiosk/pickup-number")
+@till_router.post("/{machine_id}/kiosk/pickup-number", dependencies=FISCAL_SYNC_PATH)
 def post_pickup_number(
     machine_id: str,
     body: PickupNumberIn,
@@ -188,7 +192,7 @@ def put_kiosk_menu(
     return out
 
 
-@till_router.post("/{machine_id}/kiosks/{kiosk_machine_id}/commands", status_code=status.HTTP_201_CREATED)
+@till_router.post("/{machine_id}/kiosks/{kiosk_machine_id}/commands", status_code=status.HTTP_201_CREATED, dependencies=FISCAL_SYNC_PATH)
 def post_till_kiosk_command(
     machine_id: str,
     kiosk_machine_id: str,
@@ -207,6 +211,14 @@ def post_till_kiosk_command(
         # "נעילה למכירה" / "פתיחה אוטומטית" from a till: a manager's approval (docs/SPEC_KIOSK.md §15).
         try:
             manager = svc.require_till_manager(db, machine, body.pos_user_id)
+        except svc.KioskCommandRefused as refused:
+            return JSONResponse(status_code=refused.status_code, content=refused.body)
+        name = " ".join(p for p in (manager.first_name or "", manager.last_name or "") if p).strip() or manager.username
+        actor = svc.till_actor(machine, kiosk_machine, name)
+    elif kiosk_z.requires_manager(kiosk_machine, body.action):
+        # "הפקת Z" for a kiosk with its own Z, from a till: a manager's approval too (kiosk_z.py).
+        try:
+            manager = kiosk_z.require_manager_for_z(db, machine, body.pos_user_id)
         except svc.KioskCommandRefused as refused:
             return JSONResponse(status_code=refused.status_code, content=refused.body)
         name = " ".join(p for p in (manager.first_name or "", manager.last_name or "") if p).strip() or manager.username

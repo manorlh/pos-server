@@ -16,9 +16,11 @@ import { useQuery } from '@tanstack/react-query';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatCurrency, formatDateTime } from '@/lib/format';
 import { daysBackIso, todayIso } from '@/lib/reportWindow';
-import { fetchTablesReport, type TablesReportRow } from '@/lib/tablesApi';
+import { fetchTablesReport, type TablesReport, type TablesReportRow } from '@/lib/tablesApi';
+import type { ExcelSheet } from '@/lib/excelExport';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -49,21 +51,165 @@ export function TablesReportView({ shopId }: { shopId: string }) {
       </TableRow>
     ));
 
+  /**
+   * Every table of the report as its own sheet, plus the stat tiles as a one-row summary.
+   * "שולחנות למלצר" follows the waiter picked above it (all waiters when none is).
+   */
+  const exportSheets = (d: TablesReport): ExcelSheet[] => {
+    const mins = (m: number | null | undefined) => (m == null ? null : Math.round(m));
+    const tableLabel = (n: number | null | undefined, name: string | null | undefined) =>
+      [n, name].filter((v) => v != null && v !== '').join(' ');
+    const figureColumns: ExcelSheet['columns'] = [
+      { header: t('orders'), kind: 'number' },
+      { header: t('revenue'), kind: 'money' },
+      { header: t('guests'), kind: 'number' },
+      { header: t('export.avgMinutes'), kind: 'number' },
+    ];
+    const figures = (r: TablesReportRow) => [r.orders, r.revenue, r.guests, mins(r.avgMinutes)];
+    const sheets: ExcelSheet[] = [
+      {
+        name: t('export.summary'),
+        columns: [
+          { header: t('paidOrders'), kind: 'number' },
+          { header: t('revenue'), kind: 'money' },
+          { header: t('guests'), kind: 'number' },
+          { header: t('export.avgMinutes'), kind: 'number' },
+          { header: t('cancelledOrders'), kind: 'number' },
+          { header: t('export.cancelledTotal'), kind: 'money' },
+          { header: t('export.payConflicts'), kind: 'number' },
+        ],
+        rows: [
+          [
+            d.summary.paidOrders,
+            d.summary.revenue,
+            d.summary.guests,
+            mins(d.summary.avgSeatingMinutes),
+            d.summary.cancelledOrders,
+            d.summary.cancelledTotal,
+            d.summary.payConflicts,
+          ],
+        ],
+        autoFilter: false,
+      },
+    ];
+    if (d.byWaiter) {
+      sheets.push({
+        name: t('byWaiter'),
+        columns: [
+          { header: t('waiter') },
+          { header: t('waiterTables'), kind: 'number' },
+          { header: t('guests'), kind: 'number' },
+          { header: t('revenue'), kind: 'money' },
+          { header: t('avgCheck'), kind: 'money' },
+          { header: t('avgPerGuest'), kind: 'money' },
+          { header: t('export.avgMinutes'), kind: 'number' },
+          { header: t('tips'), kind: 'money' },
+          { header: t('cancelledOrders'), kind: 'number' },
+          { header: t('export.cancelledTotal'), kind: 'money' },
+        ],
+        rows: d.byWaiter.map((r) => [
+          r.waiter, r.tables, r.guests, r.revenue, r.avgCheck, r.avgPerGuest, mins(r.avgMinutes), r.tips,
+          r.cancelled, r.cancelledTotal,
+        ]),
+      });
+    }
+    if (d.waiterTables) {
+      sheets.push({
+        name: t('tablesOfWaiter'),
+        columns: [
+          { header: t('waiter') },
+          { header: t('table') },
+          { header: t('zone') },
+          { header: t('opened'), kind: 'datetime' },
+          { header: t('closed'), kind: 'datetime' },
+          { header: t('export.minutes'), kind: 'number' },
+          { header: t('guests'), kind: 'number' },
+          { header: tc('total'), kind: 'money' },
+          { header: t('tips'), kind: 'money' },
+          { header: t('receipt') },
+          { header: tc('status'), width: 10 },
+        ],
+        rows: d.waiterTables
+          .filter((r) => !waiter || r.waiter === waiter)
+          .map((r) => [
+            r.waiter, tableLabel(r.tableNumber, r.tableName), r.zoneName, r.openedAt, r.closedAt, mins(r.minutes),
+            r.guests, r.total, r.tip, r.transactionNumber, r.status === 'cancelled' ? t('cancelledShort') : null,
+          ]),
+      });
+    }
+    sheets.push(
+      {
+        name: t('byZone'),
+        columns: [{ header: t('zone') }, ...figureColumns],
+        rows: d.byZone.map((r) => [r.zoneName, ...figures(r)]),
+      },
+      {
+        name: t('byTable'),
+        columns: [{ header: t('table') }, { header: t('zone') }, ...figureColumns],
+        rows: d.byTable.map((r) => [tableLabel(r.number, r.name), r.zoneName, ...figures(r)]),
+      },
+      {
+        name: t('cancelByReason'),
+        columns: [
+          { header: t('reason') },
+          { header: t('cancelledOrders'), kind: 'number' },
+          { header: tc('total'), kind: 'money' },
+        ],
+        rows: d.cancellations.byReason.map((r) => [r.reason, r.count, r.total]),
+      },
+      {
+        name: t('cancelByEmployee'),
+        columns: [
+          { header: t('cancelledBy') },
+          { header: t('cancelledOrders'), kind: 'number' },
+          { header: tc('total'), kind: 'money' },
+        ],
+        rows: d.cancellations.byEmployee.map((r) => [r.employee, r.count, r.total]),
+      },
+      {
+        name: t('cancelRows'),
+        columns: [
+          { header: t('when'), kind: 'datetime' },
+          { header: t('table') },
+          { header: t('zone') },
+          { header: t('reason') },
+          { header: t('reasonText') },
+          { header: t('cancelledBy') },
+          { header: t('approvedBy') },
+          { header: t('items'), width: 40 },
+          { header: tc('total'), kind: 'money' },
+        ],
+        rows: d.cancellations.rows.map((r) => [
+          r.closedAt, tableLabel(r.tableNumber, r.tableName), r.zoneName, r.reason, r.reasonText, r.cancelledBy,
+          r.approvedBy, r.items.map((it) => `${it.quantity} × ${it.name}`).join(', '), r.total,
+        ]),
+      },
+    );
+    return sheets;
+  };
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end gap-3 rounded-lg border bg-card p-3">
+      <div className="flex flex-wrap items-end gap-3 rounded-lg border bg-card p-3 print:hidden">
         <div className="space-y-1">
           <Label className="text-xs">{t('from')}</Label>
-          <Input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
+          <DatePicker value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }} />
         </div>
         <div className="space-y-1">
           <Label className="text-xs">{t('to')}</Label>
-          <Input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
+          <DatePicker value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }} />
         </div>
         <Button disabled={invalid} onClick={() => setApplied({ from, to })}>
           {t('show')}
         </Button>
       </div>
+      <ReportExportToolbar
+        title={t('sectionReport')}
+        from={data?.from ?? applied.from}
+        to={data?.to ?? applied.to}
+        disabled={!data}
+        getSheets={() => (data ? exportSheets(data) : [])}
+      />
 
       {isLoading ? (
         <Skeleton className="h-64 w-full" />

@@ -14,6 +14,7 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { ChevronDown, ChevronUp } from 'lucide-react';
+import { formatShortDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 export const IOS = {
@@ -309,8 +310,7 @@ export function hoursMinutes(minutes: number): string {
   return `${h}:${String(m).padStart(2, '0')}`;
 }
 
-/** A plain business date "2026-09-27" as "27/9". */
+/** A plain business date "2026-09-27" as "27/09". */
 export function dayMonth(iso: string): string {
-  const [, m, d] = iso.split('-').map(Number);
-  return `${d}/${m}`;
+  return formatShortDate(iso);
 }

@@ -141,6 +141,11 @@ class TransmissionReportIn(BaseModel):
     transaction_count: Optional[int] = Field(None, alias="transactionCount")
     amount: Optional[Decimal] = None
     terminal_transaction_ids: List[str] = Field(default_factory=list, alias="terminalTransactionIds")
+    #: The uids of the till's card sales it assumed went in this batch because the terminal
+    #: confirmed it without naming its sales (docs/SPEC_REPORTS.md §7). None: a till from
+    #: before the field — the cloud then reads the batch as the till did
+    #: (`transmissions.assume_unnamed`); a list, even empty, is the till's own word.
+    assumed_terminal_transaction_ids: Optional[List[str]] = Field(None, alias="assumedTerminalTransactionIds")
     report_text: Optional[str] = Field(None, alias="reportText")
     error: Optional[str] = None
 
@@ -193,19 +198,34 @@ class TransmissionReportIn(BaseModel):
         """Blanks dropped, duplicates collapsed (first order kept), each cut to 64."""
         if not isinstance(value, (list, tuple)):
             return []
-        out: List[str] = []
-        seen = set()
-        for raw in value:
-            if raw is None or isinstance(raw, (dict, list, bool)):
-                continue
-            text = str(raw).strip()[:TERMINAL_ID_LENGTH]
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            out.append(text)
-            if len(out) >= MAX_TERMINAL_IDS:
-                break
-        return out
+        return _clean_ids(value)
+
+    @field_validator("assumed_terminal_transaction_ids", mode="wrap")
+    @classmethod
+    def _assumed_ids(cls, value, handler):
+        """None when absent (an older till); otherwise cleaned like the named ids."""
+        if value is None:
+            return None
+        if not isinstance(value, (list, tuple)):
+            return []
+        return _clean_ids(value)
+
+
+def _clean_ids(value) -> List[str]:
+    """Blanks dropped, duplicates collapsed (first order kept), each cut to 64."""
+    out: List[str] = []
+    seen = set()
+    for raw in value:
+        if raw is None or isinstance(raw, (dict, list, bool)):
+            continue
+        text = str(raw).strip()[:TERMINAL_ID_LENGTH]
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+        if len(out) >= MAX_TERMINAL_IDS:
+            break
+    return out
 
 
 class TransmitAckIn(BaseModel):
@@ -257,6 +277,7 @@ class ReplacementCodeBody(BaseModel):
             "SUNMI_K2", "SUNMI",
             "SYNQPAY_DX8000", "SYNQPAY_DX6000", "SYNQPAY_EX8000", "SYNQPAY_RX5000",
             "SYNQPAY_S1P2", "SYNQPAY_S1U2_M4", "SYNQPAY_VERIFONE", "SYNQPAY",
+            "PAX_A77", "UROVO_I9100",
         ]
     ] = Field(None, alias="deviceModel")
     #: Why the till is replaced — kept in "הוחלפה קופה" when a device redeems the code

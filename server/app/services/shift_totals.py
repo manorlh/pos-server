@@ -39,6 +39,7 @@ from app.services.dashboard_stats import SALE_STATUSES
 from app.services.document_prefix import document_number_of, document_series_of
 from app.services.tenders import (
     EXCHANGE_PAYMENT_METHOD,
+    NO_MONEY_BUCKET,
     UNKNOWN_PAYMENT_METHOD,
     expected_tender_total,
     is_refund_document,
@@ -152,6 +153,79 @@ class DocumentTotals:
     def breakdown_json(self) -> Dict[str, str]:
         return {k: str(v.quantize(CENT)) for k, v in sorted(self.payment_breakdown.items())}
 
+    # ── Deltas: a correction to a document already in a Z (docs/SHIFTS_API.md §1.2) ──
+
+    #: The additive fields a delta carries (document ranges are not additive).
+    _COUNTS = ("transactions_count", "sales_count", "credit_notes_count", "non_sale_count", "vat_missing_count")
+    _MONEY = (
+        "total_sales", "total_refunds", "discounts_total", "line_discounts_total",
+        "promotion_discounts_total", "total_tips", "total_cash_tips", "total_card_tips", "vat_declared",
+    )
+
+    def delta_json(self) -> Dict[str, object]:
+        """The additive figures as JSON (money as decimal strings) — what an adjustment stores."""
+        out: Dict[str, object] = {k: int(getattr(self, k)) for k in self._COUNTS}
+        out.update({k: str(_dec(getattr(self, k))) for k in self._MONEY})
+        out["payment_breakdown"] = {k: str(v) for k, v in sorted(self.payment_breakdown.items())}
+        out["card_brands"] = [[b, a, sc, str(sa), rc, str(ra)] for (b, a), (sc, sa, rc, ra) in self.card_brands.items()]
+        return out
+
+    @classmethod
+    def from_delta_json(cls, raw: Optional[dict]) -> "DocumentTotals":
+        out = cls()
+        if not isinstance(raw, dict):
+            return out
+        for k in cls._COUNTS:
+            try:
+                setattr(out, k, int(raw.get(k) or 0))
+            except (TypeError, ValueError):
+                pass
+        for k in cls._MONEY:
+            try:
+                setattr(out, k, Decimal(str(raw.get(k) or "0")))
+            except (ArithmeticError, ValueError):
+                pass
+        for method, amount in (raw.get("payment_breakdown") or {}).items():
+            try:
+                out.payment_breakdown[str(method)] = Decimal(str(amount))
+            except (ArithmeticError, ValueError):
+                continue
+        for row in raw.get("card_brands") or []:
+            try:
+                b, a, sc, sa, rc, ra = row
+                out.card_brands[(b, a)] = [int(sc), Decimal(str(sa)), int(rc), Decimal(str(ra))]
+            except (TypeError, ValueError, ArithmeticError):
+                continue
+        return out
+
+    def add(self, other: "DocumentTotals", sign: int = 1) -> "DocumentTotals":
+        """Add (`sign` 1) or subtract (−1) another set of figures, field by field, in place."""
+        s = Decimal(sign)
+        for k in self._COUNTS:
+            setattr(self, k, getattr(self, k) + sign * getattr(other, k))
+        for k in self._MONEY:
+            setattr(self, k, _dec(getattr(self, k)) + s * _dec(getattr(other, k)))
+        for method, amount in other.payment_breakdown.items():
+            self.payment_breakdown[method] = self.payment_breakdown.get(method, ZERO) + s * amount
+            if self.payment_breakdown[method] == ZERO:
+                del self.payment_breakdown[method]
+        for key, (sc, sa, rc, ra) in other.card_brands.items():
+            bucket = self.card_brands.setdefault(key, [0, ZERO, 0, ZERO])
+            bucket[0] += sign * sc
+            bucket[1] += s * sa
+            bucket[2] += sign * rc
+            bucket[3] += s * ra
+            if bucket == [0, ZERO, 0, ZERO]:
+                del self.card_brands[key]
+        return self
+
+    def is_zero(self) -> bool:
+        return (
+            all(getattr(self, k) == 0 for k in self._COUNTS)
+            and all(_dec(getattr(self, k)) == ZERO for k in self._MONEY)
+            and not any(v != ZERO for v in self.payment_breakdown.values())
+        )
+
     def as_x(self) -> Dict[str, object]:
         """The §3.2 keys, as the model columns name them (gross and discounts included)."""
         return {
@@ -206,6 +280,23 @@ def compute_totals(db: Session, shift_ids: Iterable[uuid.UUID]) -> DocumentTotal
         .populate_existing()
         .all()
     )
+    return _totals_of(db, documents)
+
+
+def document_totals(db: Session, doc: Transaction) -> DocumentTotals:
+    """
+    What one document contributes to an X or a Z, exactly as `compute_totals` counts it —
+    used to carry a correction of a document already in a Z into the next Z as the
+    difference between its two versions (docs/SHIFTS_API.md §1.2).
+    """
+    return _totals_of(db, [doc])
+
+
+def _totals_of(db: Session, documents: List[Transaction]) -> DocumentTotals:
+    totals = DocumentTotals()
+    # "Same number, different id" (docs/SHIFTS_API.md §1.2d): a duplicate copy of a document
+    # that holds its number is the same sale stored twice — counted once, by its holder.
+    documents = [d for d in documents if not getattr(d, "duplicate_copy", False)]
     counted = [d for d in documents if d.status in SALE_STATUSES]
     totals.non_sale_count = len(documents) - len(counted)
 
@@ -218,6 +309,25 @@ def compute_totals(db: Session, shift_ids: Iterable[uuid.UUID]) -> DocumentTotal
             .all()
         ):
             legs_by_doc.setdefault(leg.transaction_id, []).append(leg)
+
+    # "ללא החזר כספי" (docs/SPEC_REMOTE_CREDIT.md): a credit for a sale that never really
+    # happened moved no money. Against an original of the same shift it cancels that sale's
+    # own leg (which moved none either), so it counts in its tender as usual; otherwise it is
+    # a bucket of its own — never cash, card or the drawer. The till's X does the same.
+    no_money_originals = {
+        d.refund_of_transaction_id
+        for d in counted
+        if d.refund_of_transaction_id is not None
+        and any(getattr(l, "no_money_movement", False) for l in legs_by_doc.get(d.id, ()))
+    }
+    original_shift_of: Dict[uuid.UUID, Optional[uuid.UUID]] = {}
+    if no_money_originals:
+        original_shift_of = {
+            row[0]: row[1]
+            for row in db.query(Transaction.id, Transaction.shift_id)
+            .filter(Transaction.id.in_(list(no_money_originals)))
+            .all()
+        }
 
     # Every document number the register issued in these shifts, a cancelled one too:
     # "the last document number" on a Z is about the register's numbering, not takings.
@@ -274,6 +384,15 @@ def compute_totals(db: Session, shift_ids: Iterable[uuid.UUID]) -> DocumentTotal
         if legs:
             for leg in legs:
                 method = (leg.method or "").strip().lower() or UNKNOWN_PAYMENT_METHOD
+                if (
+                    refund
+                    and getattr(leg, "no_money_movement", False)
+                    and (
+                        doc.refund_of_transaction_id not in original_shift_of
+                        or original_shift_of[doc.refund_of_transaction_id] != doc.shift_id
+                    )
+                ):
+                    method = NO_MONEY_BUCKET
                 totals.payment_breakdown[method] = (
                     totals.payment_breakdown.get(method, ZERO) + sign * _dec(leg.amount)
                 )

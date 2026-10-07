@@ -7,7 +7,7 @@
  */
 
 /** The screens of the kiosk the preview can show. */
-export type PreviewScreen = 'attract' | 'service' | 'catalog' | 'product' | 'cart' | 'pay' | 'success' | 'paused';
+export type PreviewScreen = 'attract' | 'service' | 'catalog' | 'product' | 'cart' | 'tip' | 'details' | 'pay' | 'success' | 'paused';
 
 /** The pay screen's state on the real kiosk. */
 export type LivePayPhase = 'idle' | 'starting' | 'charging' | 'declined' | 'unknown' | 'blocked';

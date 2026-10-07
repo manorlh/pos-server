@@ -118,6 +118,9 @@ class ZReportOut(BaseModel):
     #: `{kind: shop|area|till|independent_till, label, tills, independentOutside}`; null on
     #: a Z built before it was stored.
     scope: Optional[Dict[str, Any]] = None
+    #: "סוג Z" (docs/SPEC_REPORTS.md §4): `shop` (Z סניפי) | `independent` (Z עצמאי) |
+    #: `till` (Z לכל קופה) | `kiosk` (a kiosk's own Z) | `legacy` — app/services/z_table.py.
+    z_type: Optional[str] = Field(None, alias="zType")
     offline_discrepancies: Optional[List[Dict[str, Any]]] = Field(None, alias="offlineDiscrepancies")
     #: The card batch transmission the till ran before the Z, with the terminal's answer
     #: (`{outcome, batchNumber, statusMessage, transactionCount, amount, byBrand, …}`).

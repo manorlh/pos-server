@@ -14,7 +14,8 @@ tills and one till (a tablet) can be set apart. The values:
 * `zcredit` — "Z-Credit — מסופון חיצוני" (`zcreditTerminalNumber`, `zcreditPinpadId`,
   `zcreditMode`, and the write-only `zcreditPassword`, app/services/payment_secrets.py).
 * `synqpay` — "SynqPay — מסוף חיצוני" (docs/SPEC_SYNQPAY.md): the `synqpay*` keys (device
-  model, connection USB/LAN and its parameters) and the write-only `synqpayApiKey`.
+  model, connection USB/LAN and its parameters) and the write-only `synqpayApiKey` — which
+  the till normally gets itself, by pairing with the terminal (§2.2), so it is not required.
 * `tap_to_pay` — "Tap to Pay במכשיר (iPOSpays)": reserved, refused on write for now.
 
 `auto` is never stored: written, it removes the layer's own value (inherit again), so a
@@ -141,8 +142,10 @@ REQUIRED_FIELDS: Dict[str, Tuple[str, ...]] = {
     AGAMENTO: (),
     NAYAX_LAN: ("nayaxDeviceHost",),
     ZCREDIT: (ZCREDIT_TERMINAL_NUMBER, ZCREDIT_PASSWORD, ZCREDIT_PINPAD_ID, ZCREDIT_MODE),
-    # The host only on the network (lan): see missing_fields.
-    SYNQPAY: (SYNQPAY_DEVICE_MODEL, SYNQPAY_CONNECTION, SYNQPAY_HOST, SYNQPAY_API_KEY),
+    # The host only on the network (lan): see missing_fields. No API key: the till pairs with
+    # the terminal itself and sends the key up (SPEC_SYNQPAY.md §2.2) — a till with none yet is
+    # "not paired", shown beside the form, not a field missing from it.
+    SYNQPAY: (SYNQPAY_DEVICE_MODEL, SYNQPAY_CONNECTION, SYNQPAY_HOST),
     TAP_TO_PAY: (),
 }
 

@@ -194,7 +194,8 @@ def _clean_name(name: Optional[str], fallback: str) -> str:
 def validate_controllers(db: Session, kiosk_machine: POSMachine, ids: Optional[Sequence[Any]]) -> List[str]:
     """
     The controlling tills, deduped, as id strings: same tenant and company, active, not
-    the kiosk itself, not another kiosk. Else 422 `invalid_controller:<id>`.
+    the kiosk itself, not another kiosk, not a display device (a KDS / the board — no till,
+    app/services/display_devices.py). Else 422 `invalid_controller:<id>`.
     """
     out: List[str] = []
     kiosk_company = _company_of(db, kiosk_machine)
@@ -209,6 +210,7 @@ def validate_controllers(db: Session, kiosk_machine: POSMachine, ids: Optional[S
         if (
             till is None
             or not till.is_active
+            or getattr(till, "is_fiscal", True) is False
             or till.shop_id is None
             or str(till.tenant_id) != str(kiosk_machine.tenant_id)
             or kiosk_company is None
@@ -234,6 +236,9 @@ def convert(
     """Make this till a self-order kiosk. The caller commits (and notifies, see `lock_device_targets`)."""
     if get_device(db, machine.id) is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="already_kiosk")
+    # A display device (a KDS / the board) is no till, so no kiosk either: a new pairing.
+    if getattr(machine, "is_fiscal", True) is False:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="device_not_fiscal")
     if (
         not machine.is_active
         or machine.pairing_status != PairingStatus.ASSIGNED
@@ -364,6 +369,10 @@ def _terminal_identity(machine: POSMachine, settings: Any, lock_of: Any) -> Dict
         "reportedMerchant": machine.terminal_merchant_name,
         "reportedAt": _iso(machine.terminal_reported_at),
         "cardLock": lock_of(machine, settings),
+        # "עקיפת בדיקת מספר מסוף" (docs/SPEC_KIOSK.md §20.1): on → no card lock, and the warning.
+        "numberCheckBypass": bool(getattr(settings, "number_check_bypass", False)),
+        "numberCheckBypassSource": getattr(settings, "number_check_bypass_source", None),
+        "numberCheckBypassReported": getattr(machine, "terminal_number_check_bypass_reported", None),
     }
 
 
@@ -394,6 +403,8 @@ def summaries(db: Session, devices: Sequence[KioskDevice], *, now: Optional[date
         for mid, count, total in (
             db.query(KioskOrder.machine_id, func.count(KioskOrder.id), func.coalesce(func.sum(KioskOrder.total_agorot), 0))
             .filter(KioskOrder.machine_id.in_(day_ids), KioskOrder.business_date == day)
+            # "תשלום בקופה": an order still open at the till (or never paid) is not a sale yet.
+            .filter((KioskOrder.open_state.is_(None)) | (KioskOrder.open_state == "paid"))
             .group_by(KioskOrder.machine_id)
             .all()
         ):
@@ -417,6 +428,10 @@ def summaries(db: Session, devices: Sequence[KioskDevice], *, now: Optional[date
     from app.services.terminal_status import TerminalSettings, card_lock_status, terminal_settings_for
 
     terminal = terminal_settings_for(db, list(machines.values()))
+    # Its Z mode per device, the one shift / Z action it is offered, the last close / Z (kiosk_z.py).
+    from app.services import kiosk_z
+
+    z_fields = kiosk_z.summary_fields(db, devices, machines, now=now)
 
     controller_ids = {
         _uuid(c) for d in devices for c in (d.controller_machine_ids or []) if _uuid(c) is not None
@@ -488,6 +503,7 @@ def summaries(db: Session, devices: Sequence[KioskDevice], *, now: Optional[date
             "controllers": [
                 {"machineId": c, "name": controller_names.get(_uuid(c))} for c in controllers
             ],
+            **z_fields.get(d.machine_id, {}),
         })
     return out
 
@@ -619,6 +635,12 @@ def clean_status(raw: Any) -> Dict[str, Any]:
     integer("pendingOrders")
     integer("unprintedBons")
     string("appVersion", 64)
+    # "תקינות מכשירים": what only the kiosk sees — its screen, terminal, printer, links, uploads.
+    from app.services.kiosk_health import clean_health
+
+    health = clean_health(raw.get("health"))
+    if health:
+        out["health"] = health
     return out
 
 
@@ -855,6 +877,13 @@ def order_out(row: KioskOrder, *, full_phone: bool) -> Dict[str, Any]:
         "status": row.status,
         "createdAt": _iso(row.created_at),
         "updatedAt": _iso(row.updated_at),
+        # "תשלום בקופה" (§23): paid at a till, or still open there; who took it.
+        "payAtTill": bool(getattr(row, "pay_at_till", False)),
+        "openState": getattr(row, "open_state", None),
+        "dueAgorot": getattr(row, "due_agorot", None),
+        "voucherAgorot": getattr(row, "voucher_agorot", None),
+        "paidBy": getattr(row, "paid_by_name", None),
+        "closeReason": getattr(row, "close_reason", None),
     }
 
 
@@ -1105,6 +1134,13 @@ def run_command(
         return CommandResult(row)
     if action not in ("close_shift", "till_z"):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_action")
+    # The kiosk's Z mode decides: "סגירת משמרת" for a shop-Z kiosk, "הפקת Z" for one with its own Z (kiosk_z.py).
+    from app.services import kiosk_z
+
+    try:
+        kiosk_z.check_action(kiosk_machine, action, device_name=device.name)
+    except (KioskCommandRefused, till_z.TillZRefused) as wrong_mode:
+        return CommandResult(audit("refused", detail=str(wrong_mode.body.get("detail"))), wrong_mode)
 
     try:
         if action == "close_shift":

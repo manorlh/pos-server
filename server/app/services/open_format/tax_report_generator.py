@@ -960,8 +960,13 @@ def resolve_payment_legs(
     customer paid on every discounted document. 1223 is now the settled figure and the
     legs follow it.
     """
-    legs = transaction.get("payments") or []
+    original = transaction.get("payments") or []
+    legs = _filed_legs(transaction)
     if len(legs) <= 1:
+        if len(legs) == 1 and len(original) > 1:
+            # A noted document left with one leg of its direction: that leg's tender, for
+            # the whole document.
+            return [(legs[0].get("method"), None)]
         return [(None, None)]
 
     cart = transaction.get("cart") or {}
@@ -985,10 +990,53 @@ def resolve_payment_legs(
 
 def payment_leg_cards(transaction: Dict[str, Any]) -> List[Optional[Dict[str, Any]]]:
     """The card data of each D120 record `resolve_payment_legs` produces, in the same order."""
-    legs = transaction.get("payments") or []
+    legs = _filed_legs(transaction)
     if len(resolve_payment_legs(transaction)) == 1:
         return [legs[0] if legs else None]
     return list(legs)
+
+
+#: The ingest note of a document whose tender legs, as the till sent them, do not add up to
+#: its total (`transactions.ingest_notes`, docs/SHIFTS_API.md §1.2). Such a document is
+#: stored as sent — every document lands — and the export reads the note.
+TENDERS_DO_NOT_RECONCILE = "tenders_do_not_reconcile"
+
+
+def _leg_amount(leg: Dict[str, Any]) -> float:
+    try:
+        return float(leg.get("amount") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _filed_legs(transaction: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    The tender legs the payment records are written from.
+
+    A document's legs as stored — unless it carries `tenders_do_not_reconcile`: the till's
+    legs then do not sum to the document, and apportioning them as they are could write a
+    payment record of the opposite sign (a leg of −50 on a sale) or zero ones. Such a
+    document's records are written from its legs that carry money in its own direction
+    only (amount > 0), apportioned to field 1223 like any split (`resolve_payment_legs`); with
+    none left, one record for the whole document. Either way Σ D120 = 1223, every record
+    positive, and the document is listed with the export (`tax_reports.flagged_documents`).
+    """
+    legs = transaction.get("payments") or []
+    if TENDERS_DO_NOT_RECONCILE not in (transaction.get("ingestNotes") or ()):
+        return legs
+    return [leg for leg in legs if _leg_amount(leg) > 0]
+
+
+def payment_records_flagged(transaction: Dict[str, Any]) -> bool:
+    """Whether the payment records of a noted document differ from its legs as stored."""
+    legs = transaction.get("payments") or []
+    resolved = resolve_payment_legs(transaction)
+    if len(resolved) != len(legs):
+        return True
+    return any(
+        amount is not None and abs(amount - _leg_amount(leg)) > 0.004
+        for (_m, amount), leg in zip(resolved, legs)
+    ) or (len(legs) == 1 and abs(float((transaction.get("cart") or {}).get("totalAmount") or 0) - _leg_amount(legs[0])) > 0.004)
 
 
 def build_z900_record(
@@ -1024,6 +1072,34 @@ class TaxReportResult:
 
 def _branch_sort_key(code: str):
     return (0, int(code), code) if code.isdigit() else (1, 0, code)
+
+
+def filed_document_key(transaction: Dict[str, Any]) -> Tuple[int, str]:
+    """
+    (C100 field 1203, field 1204) of a document as the file writes them: the filed type
+    (`open_format_document_type`: a -400 is filed as a 400, a document linked to an
+    original as a 330) and the number, as the X(20) field holds it.
+    """
+    stored_type = transaction.get("documentType")
+    is_refund = bool(transaction.get("refundOfTransactionId")) or stored_type in (330, RECEIPT_REFUND_DOCUMENT_TYPE)
+    doc_type, _sign = open_format_document_type(stored_type, is_refund)
+    number = charset_text(str(transaction.get("transactionNumber") or "")).strip()[:DOCUMENT_NUMBER_WIDTH]
+    return doc_type, number
+
+
+def duplicate_document_numbers(transactions: List[Dict[str, Any]]) -> Dict[Tuple[int, str], List[Dict[str, Any]]]:
+    """
+    The (type, number) pairs more than one document of the file would carry, each with its
+    documents in file order. The file is one per business — every branch — and the Tax
+    Authority's simulator refuses two C100 records of one type with one number whatever
+    their branch code (field 1231): "נמצאה יותר מרשומה אחת עם אותו מס אסמכתא" (on 1204).
+    Empty for a sound file. `tax_reports.refuse_duplicate_document_numbers` refuses the
+    export on any; the validator of the test data checks the same rule.
+    """
+    seen: Dict[Tuple[int, str], List[Dict[str, Any]]] = {}
+    for transaction in transactions:
+        seen.setdefault(filed_document_key(transaction), []).append(transaction)
+    return {key: docs for key, docs in seen.items() if len(docs) > 1}
 
 
 def generate_tax_report(

@@ -10,6 +10,10 @@ import { useEffect } from 'react';
 export function ServiceWorkerRegistration() {
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
+    // The browser kiosk (`/k`) has a worker of its own (public/kiosk-sw.js, web-kiosk/web-shell.ts),
+    // and so have the browser KDS and board (`/kds`, `/board`: public/screens-sw.js).
+    const path = window.location.pathname;
+    if (['/k', '/kds', '/board'].some((p) => path === p || path.startsWith(`${p}/`))) return;
     if (process.env.NODE_ENV !== 'production') {
       void navigator.serviceWorker
         .getRegistrations()

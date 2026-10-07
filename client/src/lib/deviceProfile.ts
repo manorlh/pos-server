@@ -1,6 +1,8 @@
 /**
- * "סוג מכשיר" — a device's role (קופה / קיוסק) and model, chosen when it is added
- * (pos-server docs/SPEC_DEVICE_ROLE_MODEL.md).
+ * "סוג מכשיר" — a device's role (קופה / קיוסק / מסך מטבח / מסך מוכן-לא מוכן), its platform
+ * (Android / Windows) and its model, chosen when it is added (pos-server
+ * docs/SPEC_DEVICE_ROLE_MODEL.md). The KDS and the board are display devices: NOT tills and
+ * not accounting systems — no sales, shifts, Z or payments (the server refuses them).
  *
  * Self-contained on purpose (no `@/` imports): `npm test` compiles it on its own.
  *
@@ -10,8 +12,95 @@
  * tests (here and tests/test_device_profile.py) pin the same table.
  */
 
-export const DEVICE_ROLES = ['till', 'kiosk'] as const;
+export const DEVICE_ROLES = ['till', 'kiosk', 'kds', 'order_status_board'] as const;
 export type DeviceRole = (typeof DEVICE_ROLES)[number];
+
+/** The display devices: "מסך — לא קופה, בלי מכירות ובלי חשבונאות". */
+export const NON_FISCAL_ROLES = ['kds', 'order_status_board'] as const satisfies readonly DeviceRole[];
+
+/** A till or a kiosk (or no role yet: a till); not a KDS / the board. */
+export function isFiscalRole(role: unknown): boolean {
+  return !(NON_FISCAL_ROLES as readonly unknown[]).includes(role);
+}
+
+/**
+ * A display device: the server's `fiscal: false`, or a display role (a payload from a
+ * server that does not send `fiscal` never names one).
+ */
+export function isDisplayDevice(m: { fiscal?: boolean | null; deviceRole?: unknown }): boolean {
+  return m.fiscal === false || !isFiscalRole(m.deviceRole);
+}
+
+/** Tills (and kiosks) apart from the screens, each in its own order — the lists' two groups. */
+export function splitDisplayDevices<T extends { fiscal?: boolean | null; deviceRole?: unknown }>(
+  machines: readonly T[],
+): { tills: T[]; screens: T[] } {
+  const tills: T[] = [];
+  const screens: T[] = [];
+  for (const m of machines) (isDisplayDevice(m) ? screens : tills).push(m);
+  return { tills, screens };
+}
+
+/**
+ * "web": a browser on the dashboard's own site — the kiosk at `/k` (docs/SPEC_KIOSK.md §27), the KDS
+ * at `/kds` and the "מוכן / לא מוכן" board at `/board` (docs/SPEC_KDS.md §13). Never a till.
+ */
+export const DEVICE_PLATFORMS = ['android', 'windows', 'web'] as const;
+export type DevicePlatform = (typeof DEVICE_PLATFORMS)[number];
+
+/** The roles a browser runs (the server says so too: web_platform_not_a_till). */
+export const WEB_ROLES = ['kiosk', 'kds', 'order_status_board'] as const satisfies readonly DeviceRole[];
+
+/** The platforms a role may be added on: the browser runs a kiosk, a KDS or a board — not a till. */
+export function platformsFor(role: DeviceRole | ''): DevicePlatform[] {
+  return (WEB_ROLES as readonly string[]).includes(role) ? [...DEVICE_PLATFORMS] : ['android', 'windows'];
+}
+
+/** The page on the dashboard's site a browser of this role opens: `/k`, `/kds`, `/board`. */
+export function webPathOf(role: DeviceRole | '' | null | undefined): '/k' | '/kds' | '/board' | null {
+  if (role === 'kiosk') return '/k';
+  if (role === 'kds') return '/kds';
+  if (role === 'order_status_board') return '/board';
+  return null;
+}
+
+/**
+ * A browser screen's address (KDS / board) on this dashboard's site, with the pairing code in the
+ * fragment (never sent to a server; the page pairs with it at once and wipes it from the address bar).
+ */
+export function webScreenLink(origin: string, role: 'kds' | 'order_status_board', code?: string | null): string {
+  const base = `${origin.replace(/\/+$/, '')}${webPathOf(role)}`;
+  const c = (code ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return c ? `${base}#pair=${c}` : base;
+}
+
+/**
+ * The browser kiosk's address on this dashboard's site, with the pairing code in the fragment
+ * (never sent to a server; the kiosk pairs with it at once and wipes it from the address bar).
+ */
+export function webKioskLink(origin: string, code?: string | null): string {
+  const base = `${origin.replace(/\/+$/, '')}/k`;
+  const c = (code ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return c ? `${base}#pair=${c}` : base;
+}
+
+/** "android" | "windows" | "web", else null. */
+export function devicePlatformOf(value: unknown): DevicePlatform | null {
+  const s = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return (DEVICE_PLATFORMS as readonly string[]).includes(s) ? (s as DevicePlatform) : null;
+}
+
+/** A KDS device's screen when it is added (the KDS page's roles; the board is "pickup"). */
+export const KDS_SCREEN_ROLES = ['station', 'expo', 'manager'] as const;
+export type KdsScreenRole = (typeof KDS_SCREEN_ROLES)[number];
+
+export interface KdsScreenDraft {
+  name: string;
+  screenRole: KdsScreenRole;
+  stationIds: string[];
+}
+
+export const EMPTY_KDS_SCREEN: KdsScreenDraft = { name: '', screenRole: 'expo', stationIds: [] };
 
 /** SUNMI (pos-server docs/SPEC_SUNMI.md, app/models/sunmi.py): handhelds, PDAs, desktops, the K2 kiosk. */
 export const SUNMI_MODEL_IDS = [
@@ -56,6 +145,13 @@ export const SYNQPAY_DEVICE_MODEL_IDS = [
   'SYNQPAY',
 ] as const;
 
+/**
+ * PAX A77 / Urovo i9100 (Android 8.1, pos-server app/models/vendor_devices.py): Nayax's Agamento
+ * (TweezerComm) is their card terminal, as on the F20; they print on a 58 mm head of their own
+ * through the vendor's API (PAX: the NeptuneLite SDK, which the owner adds to the till app).
+ */
+export const VENDOR_DEVICE_MODEL_IDS = ['PAX_A77', 'UROVO_I9100'] as const;
+
 export const DEVICE_MODEL_IDS = [
   'N55F',
   'MODO',
@@ -65,6 +161,7 @@ export const DEVICE_MODEL_IDS = [
   'GENERIC_ANDROID',
   ...SUNMI_MODEL_IDS,
   ...SYNQPAY_DEVICE_MODEL_IDS,
+  ...VENDOR_DEVICE_MODEL_IDS,
 ] as const;
 export type DeviceModelId = (typeof DEVICE_MODEL_IDS)[number];
 
@@ -142,6 +239,9 @@ export const DEVICE_MODEL_CAPABILITIES: Record<DeviceModelId, DeviceCapabilities
   SYNQPAY_S1U2_M4: caps(false, true, true),
   SYNQPAY_VERIFONE: caps(false, true, true),
   SYNQPAY: caps(false, true, true),
+  // Agamento / TC on the device (like the F20); a 58 mm head; the Urovo has a scan head.
+  PAX_A77: caps(true, true),
+  UROVO_I9100: { ...caps(true, true), builtinScanner: true },
 };
 
 /** A model this build knows, else null. */
@@ -196,7 +296,7 @@ export function pinpadPortError(port: string): 'invalid' | null {
   return /^\d+$/.test(text) && n >= 1 && n <= 65535 ? null : 'invalid';
 }
 
-/** "till" | "kiosk", else null (absent on an older server; "kds" is not a role). */
+/** One of the four roles, else null (absent on an older server). */
 export function deviceRoleOf(value: unknown): DeviceRole | null {
   const s = typeof value === 'string' ? value.trim().toLowerCase() : '';
   return (DEVICE_ROLES as readonly string[]).includes(s) ? (s as DeviceRole) : null;
@@ -233,15 +333,33 @@ export interface AddDeviceDraft {
   machineCode: string;
   companyId: string;
   shopId: string;
+  /** Android unless said: a device of the other platform cannot redeem the code. */
+  platform?: DevicePlatform;
+  /** A KDS's screen (kds only; the board takes only its name). */
+  kds?: KdsScreenDraft;
+}
+
+/** Every role but a plain till opens in one shop: its code is pre-assigned (the server says so too). */
+export function roleNeedsShop(role: DeviceRole | ''): boolean {
+  return role === 'kiosk' || role === 'kds' || role === 'order_status_board';
+}
+
+/**
+ * Whether the draft needs a model: an Android device does (its printer and terminal). A
+ * Windows PC is none of the models in the table: no model is asked.
+ */
+export function modelNeeded(d: Pick<AddDeviceDraft, 'platform'>): boolean {
+  return (d.platform ?? 'android') === 'android';
 }
 
 /** The first thing the add dialog still needs before a code can be generated, or null. */
-export function addDeviceMissing(d: AddDeviceDraft): 'role' | 'model' | 'machineCode' | 'shop' | null {
+export function addDeviceMissing(d: AddDeviceDraft): 'role' | 'model' | 'machineCode' | 'shop' | 'stations' | null {
   if (!d.role) return 'role';
-  if (!d.model) return 'model';
+  if (!d.model && modelNeeded(d)) return 'model';
   if (!d.machineCode.trim()) return 'machineCode';
-  // A kiosk opens in one shop: its code is pre-assigned (the server says so too).
-  if (d.role === 'kiosk' && (!d.companyId || !d.shopId)) return 'shop';
+  if (roleNeedsShop(d.role) && (!d.companyId || !d.shopId)) return 'shop';
+  // A station screen shows its stations' tasks: at least one (the KDS page's rule).
+  if (d.role === 'kds' && d.kds?.screenRole === 'station' && d.kds.stationIds.length === 0) return 'stations';
   return null;
 }
 
@@ -274,15 +392,29 @@ export function kioskDraftError(kiosk: KioskDraft): 'pinpadHost' | 'pinpadPort' 
   return null;
 }
 
+/** The screen part of a KDS / board request: a board takes only its name. */
+function kdsBody(role: DeviceRole | '', kds: KdsScreenDraft | undefined): Record<string, unknown> {
+  const draft = kds ?? EMPTY_KDS_SCREEN;
+  const name = draft.name.trim();
+  if (role === 'order_status_board') return name ? { name } : {};
+  return {
+    ...(name ? { name } : {}),
+    screenRole: draft.screenRole,
+    stationIds: draft.screenRole === 'station' ? draft.stationIds : [],
+  };
+}
+
 /** `POST /pairing/generate`'s body for the draft (call once `addDeviceMissing` is null). */
 export function pairingRequestBody(d: AddDeviceDraft, kiosk: KioskDraft): Record<string, unknown> {
   const body: Record<string, unknown> = {
     deviceRole: d.role,
-    deviceModel: d.model,
+    ...(d.model && modelNeeded(d) ? { deviceModel: d.model } : {}),
+    platform: d.platform ?? 'android',
     ...(d.companyId ? { companyId: d.companyId } : {}),
     ...(d.shopId ? { shopId: d.shopId } : {}),
   };
   if (d.role === 'kiosk') body.kiosk = kioskBody(kiosk);
+  if (d.role === 'kds' || d.role === 'order_status_board') body.kds = kdsBody(d.role, d.kds);
   return body;
 }
 

@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { ChevronDown, ChevronLeft, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { DateTimePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
@@ -161,8 +162,7 @@ function MessageEditor({
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="space-y-1">
           <span className="text-sm font-medium">{t('fieldStarts')}</span>
-          <Input
-            type="datetime-local"
+          <DateTimePicker
             dir="ltr"
             disabled={disabled}
             value={toLocalInput(message.startsAt)}
@@ -172,8 +172,7 @@ function MessageEditor({
         </label>
         <label className="space-y-1">
           <span className="text-sm font-medium">{t('fieldEnds')}</span>
-          <Input
-            type="datetime-local"
+          <DateTimePicker
             dir="ltr"
             disabled={disabled}
             value={toLocalInput(message.endsAt)}

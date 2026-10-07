@@ -20,7 +20,7 @@
 
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QRCodeSVG } from 'qrcode.react';
-import { format } from 'date-fns';
+import { formatDate, isoDate } from '@/lib/format';
 import type { PrepaidVoucher, PrepaidVoucherBatch } from '@/lib/prepaidVouchersApi';
 import { code128Bars } from '@/lib/barcode128';
 
@@ -96,9 +96,7 @@ export interface VoucherLabels {
 }
 
 function day(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? null : format(d, 'dd/MM/yyyy');
+  return isoDate(iso) ? formatDate(iso) : null;
 }
 
 /** The validity line printed on the voucher, or null without dates (or without the labels). */

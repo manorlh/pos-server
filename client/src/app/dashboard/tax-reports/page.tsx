@@ -14,11 +14,15 @@ import type { TaxOpenFormatPreview } from '@/lib/types';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { dealerTypeOf } from '@/lib/dealerType';
+import { useCanProduceZ } from '@/lib/zAccess';
+import { DocumentPrefixConflictsAlert } from '@/components/dashboard/machines/document-prefix';
+import { OpenFormatSoftwareCard } from '@/components/dashboard/open-format-software-card';
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -37,6 +41,7 @@ export default function TaxReportsPage() {
   const t = useTranslations('taxReports');
   const tc = useTranslations('common');
   const tb = useTranslations('businessType');
+  const canProduceZ = useCanProduceZ();
 
   /**
    * The export's own "scope" select is gone: the endpoint's two modes map exactly
@@ -120,6 +125,12 @@ export default function TaxReportsPage() {
       </div>
 
       <ScopeGate resolution={resolution}>
+        {/*
+          The file is one per business: tills of two branches on one document prefix
+          would put one number in it twice, and the export refuses such a file
+          (docs/SPEC_DOCUMENT_PREFIX.md §5, §9). Listed here before anyone exports.
+        */}
+        <DocumentPrefixConflictsAlert companyId={companyId || null} shopId={shopId || null} canEdit={canProduceZ} />
         <Card>
           <CardHeader>
             <CardTitle>{t('exportSettings')}</CardTitle>
@@ -160,11 +171,19 @@ export default function TaxReportsPage() {
               <div className="flex flex-wrap gap-4">
                 <div className="space-y-1">
                   <Label>{t('from')}</Label>
-                  <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+                  <DatePicker
+                    value={from}
+                    onChange={(e) => setFrom(e.target.value)}
+                    range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
+                  />
                 </div>
                 <div className="space-y-1">
                   <Label>{t('to')}</Label>
-                  <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+                  <DatePicker
+                    value={to}
+                    onChange={(e) => setTo(e.target.value)}
+                    range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
+                  />
                 </div>
               </div>
             ) : (
@@ -206,9 +225,13 @@ export default function TaxReportsPage() {
               <AlertCircle className="size-4" />
               {tc('error')}
             </div>
-            <p className="mt-1 text-muted-foreground">{exportError}</p>
+            {/* The server's refusals are several lines (e.g. the duplicate numbers, one per line). */}
+            <p className="mt-1 whitespace-pre-line text-muted-foreground">{exportError}</p>
           </div>
         )}
+
+        {/* A000 1006–1012: what the file says about the software, and what is still a placeholder. */}
+        <OpenFormatSoftwareCard />
 
         {preview && (
           <div className="rounded-lg border bg-muted/30 p-4 text-sm space-y-2">
@@ -229,6 +252,18 @@ export default function TaxReportsPage() {
             </p>
             {dealerTypeOf(preview.businessInfo.dealerType) === 'exempt' ? (
               <p className="text-muted-foreground">{tb('taxReportExempt')}</p>
+            ) : null}
+            {/* Read from the documents' ingest notes (docs/SHIFTS_API.md §1.2, §1.2d). */}
+            {(preview.flaggedDocuments ?? []).length > 0 ? (
+              <p className="text-amber-700 dark:text-amber-400">
+                {t('flaggedDocuments', {
+                  count: preview.flaggedDocuments!.length,
+                  numbers: preview.flaggedDocuments!.map((d) => d.documentNumber ?? '—').join(', '),
+                })}
+              </p>
+            ) : null}
+            {(preview.excludedDuplicateCopies ?? 0) > 0 ? (
+              <p className="text-muted-foreground">{t('excludedDuplicateCopies', { count: preview.excludedDuplicateCopies! })}</p>
             ) : null}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
               {Object.entries(preview.recordCounts).map(([type, count]) => (

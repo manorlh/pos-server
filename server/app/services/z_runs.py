@@ -20,6 +20,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 from fastapi import HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.pos_machine import PairingStatus, POSMachine
@@ -103,11 +104,16 @@ def tills_not_closed(db: Session, machines: Sequence[POSMachine]) -> List[dict]:
 
 
 def is_seated_in(machine: POSMachine, shop_id: uuid.UUID) -> bool:
-    """An active till assigned to this shop right now — one that can be asked to close."""
+    """
+    An active till assigned to this shop right now — one that can be asked to close. Never
+    a display device (a KDS / the "מוכן / לא מוכן" board, app/services/display_devices.py):
+    not a till, so not a participant of any shop Z.
+    """
     return (
         bool(machine.is_active)
         and machine.pairing_status == PairingStatus.ASSIGNED
         and str(machine.shop_id) == str(shop_id)
+        and getattr(machine, "is_fiscal", True) is not False
     )
 
 
@@ -126,6 +132,9 @@ def shop_tills(db: Session, shop_id: uuid.UUID) -> List[POSMachine]:
             POSMachine.shop_id == shop_id,
             POSMachine.is_active.is_(True),
             POSMachine.pairing_status == PairingStatus.ASSIGNED,
+            # A display device is no till (app/services/display_devices.py). One that was a
+            # till once still comes in below while shifts of it wait for a Z.
+            POSMachine.is_fiscal.is_(True),
         )
         .all()
     )
@@ -764,6 +773,23 @@ def create_z_run(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"z_run_in_progress:{next(iter(live.values())).run_id}",
         )
+    # A Z of this shop waits for documents the cloud knows are missing: it keeps its turn —
+    # and its number — so no other Z of the shop is made meanwhile (`z_completeness`).
+    blocking = waiting_for_documents(db, shop.id)
+    if blocking is not None:
+        from app.services.z_completeness import Z_WAITING_FOR_DOCUMENTS
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": Z_WAITING_FOR_DOCUMENTS,
+                "runId": str(blocking.id),
+                "message": (
+                    "Z קודם של הסניף ממתין למסמכים שהענן יודע שחסרים ושומר על מספרו — "
+                    "השלימו אותו (או בנו אותו בלי הקופה החסרה, או בטלו אותו) לפני Z חדש."
+                ),
+            },
+        )
 
     # "חסימת סגירת יום עם שולחנות פתוחים": 409 `open_tables_block_z` with the tables.
     from app.services.tables import refuse_z_with_open_tables
@@ -989,12 +1015,70 @@ def _strict_check(db: Session, run: ZRun) -> bool:
     return ok
 
 
+def _completeness_check(db: Session, run: ZRun) -> bool:
+    """
+    The last word before any build: True when no ready till of the run has documents the
+    cloud knows are missing (`app.services.z_completeness`). A till that has them keeps the
+    run waiting with `waiting_documents` and the reason on its item (cleared once they came).
+    """
+    from app.services import z_completeness as ZC
+
+    ok = True
+    for item in run.items:
+        if item.status != ZRunItemStatus.READY or item.through_shift_id is None:
+            continue
+        machine = item.machine or db.get(POSMachine, item.machine_id)
+        if machine is None:
+            continue
+        shifts = unreported_shifts(db, item.machine_id, shop_id=run.shop_id)
+        ids = [s.id for s in shifts]
+        if item.through_shift_id not in ids:
+            continue  # the build refuses it (`through_shift_unavailable`), as before
+        taken = shifts[: ids.index(item.through_shift_id) + 1]
+        newest_closed = [s for s in shifts if s.status == ShiftStatus.CLOSED]
+        found = ZC.missing_for_z(
+            db, machine, taken, takes_newest=bool(newest_closed) and newest_closed[-1].id == item.through_shift_id,
+        )
+        if found["missing"]:
+            ok = False
+            text = ZC.message(machine, found)
+            if item.error_code != ZC.WAITING_DOCUMENTS or item.error_message != text:
+                logger.info("Z run %s waits for documents of till %s: %s", run.id, item.machine_id, found)
+            item.error_code = ZC.WAITING_DOCUMENTS
+            item.error_message = text
+        elif item.error_code == ZC.WAITING_DOCUMENTS:
+            item.error_code = None
+            item.error_message = None
+    db.flush()
+    return ok
+
+
+def waiting_for_documents(db: Session, shop_id: uuid.UUID) -> Optional[ZRun]:
+    """The shop's cloud Z that waits for documents the cloud knows are missing, if any."""
+    from app.services.z_completeness import WAITING_DOCUMENTS
+
+    return (
+        db.query(ZRun)
+        .join(ZRunItem, ZRunItem.run_id == ZRun.id)
+        .filter(
+            ZRun.shop_id == shop_id,
+            ZRun.status == ZRunStatus.WAITING,
+            ZRunItem.status == ZRunItemStatus.READY,
+            ZRunItem.error_code == WAITING_DOCUMENTS,
+        )
+        .first()
+    )
+
+
 def retry_strict_runs(db: Session, machine_ids: Iterable[uuid.UUID], *, now: Optional[datetime] = None) -> int:
     """
-    Documents landed in closed shifts of these tills: a strict run that was waiting for
-    them may build now. Never raises past a failed build (`finalise_if_ready`). Returns
-    how many runs were built.
+    Documents landed in closed shifts of these tills: a run that was waiting for them —
+    a strict run (its till's figures), or any run waiting for missing documents — may
+    build now. Never raises past a failed build (`finalise_if_ready`). Returns how many
+    runs were built.
     """
+    from app.services.z_completeness import WAITING_DOCUMENTS
+
     ids = list({m for m in machine_ids if m is not None})
     if not ids:
         return 0
@@ -1003,9 +1087,9 @@ def retry_strict_runs(db: Session, machine_ids: Iterable[uuid.UUID], *, now: Opt
         .join(ZRunItem, ZRunItem.run_id == ZRun.id)
         .filter(
             ZRun.status == ZRunStatus.WAITING,
-            ZRun.strict_cloud_check.is_(True),
             ZRunItem.machine_id.in_(ids),
             ZRunItem.status == ZRunItemStatus.READY,
+            or_(ZRun.strict_cloud_check.is_(True), ZRunItem.error_code == WAITING_DOCUMENTS),
         )
         .distinct()
         .all()
@@ -1131,6 +1215,18 @@ def finalise_if_ready(
             return False
         if not verified:
             return False
+    # No Z with missing documents (`z_completeness`): every run, strict or not, and whatever
+    # `confirmCloudData` said — the Z waits for them, keeping its turn.
+    checkpoint = db.begin_nested()
+    try:
+        complete = _completeness_check(db, run)
+        checkpoint.commit()
+    except Exception:  # noqa: BLE001 - the caller's close must still commit
+        _rollback_savepoint(checkpoint)
+        logger.exception("Z run %s: the missing-documents check failed; the run waits", run.id)
+        return False
+    if not complete:
+        return False
     savepoint = db.begin_nested()
     try:
         z = build_z(
@@ -1269,22 +1365,30 @@ def proceed_without(
                     ),
                 },
             )
+    from app.services.z_completeness import WAITING_DOCUMENTS
+
     for item in list(run.items):
         if item.machine_id not in excluded or item.status == ZRunItemStatus.EXCLUDED:
             continue
-        if item.status == ZRunItemStatus.READY and (not strict or verify_item(db, run, item).ok):
+        if (
+            item.status == ZRunItemStatus.READY
+            and item.error_code != WAITING_DOCUMENTS
+            and (not strict or verify_item(db, run, item).ok)
+        ):
             continue
         if deferred_by:
             run.items.append(_deferred_marker(run, item, deferred_by, now))
         item.status = ZRunItemStatus.EXCLUDED
-        if not item.error_code or item.error_code in VERIFY_CODES:
+        if not item.error_code or item.error_code in VERIFY_CODES or item.error_code == WAITING_DOCUMENTS:
             item.error_code = DEFERRED_BY_OPERATOR
     not_ready = [
         str(i.machine_id)
         for i in run.items
         if i.status not in (ZRunItemStatus.READY, ZRunItemStatus.EXCLUDED)
-        # A strict run's ready till the cloud has not verified is not ready either.
+        # A strict run's ready till the cloud has not verified is not ready either, nor a
+        # ready till whose documents the cloud knows are missing (`z_completeness`).
         or (strict and i.status == ZRunItemStatus.READY and not verify_item(db, run, i).ok)
+        or (i.status == ZRunItemStatus.READY and i.error_code == WAITING_DOCUMENTS)
     ]
     if not_ready:
         db.rollback()

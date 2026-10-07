@@ -10,8 +10,12 @@ import { join } from 'node:path';
 import {
   DEVICE_MODEL_CAPABILITIES,
   DEVICE_MODEL_IDS,
+  DEVICE_PLATFORMS,
+  DEVICE_ROLES,
+  NON_FISCAL_ROLES,
   SYNQPAY_DEVICE_MODEL_IDS,
   SUNMI_MODEL_IDS,
+  VENDOR_DEVICE_MODEL_IDS,
   addDeviceMissing,
   capabilitiesOf,
   deviceModelIdOf,
@@ -19,12 +23,22 @@ import {
   deviceProfileBody,
   deviceProfileErrorCode,
   deviceProfileErrorMessage,
+  devicePlatformOf,
   deviceRoleOf,
+  isDisplayDevice,
+  isFiscalRole,
   kioskDraftError,
   kioskPinpadMissing,
+  modelNeeded,
   pairingRequestBody,
   pinpadHostError,
   pinpadPortError,
+  roleNeedsShop,
+  splitDisplayDevices,
+  platformsFor,
+  webKioskLink,
+  webPathOf,
+  webScreenLink,
 } from './deviceProfile';
 
 const noKiosk = { name: '', controllerMachineIds: [], lockDevice: false, pinpadHost: '', pinpadPort: '' };
@@ -35,7 +49,10 @@ describe('the model catalog', () => {
       [...DEVICE_MODEL_IDS].slice(0, 6),
       ['N55F', 'MODO', 'P18', 'LANDI', 'FEITIAN_TABLET', 'GENERIC_ANDROID'],
     );
-    assert.deepEqual([...DEVICE_MODEL_IDS].slice(6), [...SUNMI_MODEL_IDS, ...SYNQPAY_DEVICE_MODEL_IDS]);
+    assert.deepEqual(
+      [...DEVICE_MODEL_IDS].slice(6),
+      [...SUNMI_MODEL_IDS, ...SYNQPAY_DEVICE_MODEL_IDS, ...VENDOR_DEVICE_MODEL_IDS],
+    );
   });
 
   it('the same capability table as the server', () => {
@@ -117,12 +134,114 @@ describe('SUNMI (docs/SPEC_SUNMI.md)', () => {
   });
 });
 
+describe('PAX A77 / Urovo i9100 (app/models/vendor_devices.py)', () => {
+  // The server's table, shared byte-for-byte with pos-android.
+  const golden = JSON.parse(
+    readFileSync(join(process.cwd(), '..', 'server', 'tests', 'fixtures', 'vendor_devices_golden.json'), 'utf8'),
+  ) as {
+    models: {
+      id: string;
+      printer: boolean;
+      paperMm: number | null;
+      drawerPort: boolean;
+      scanner: boolean;
+      builtinTerminal: boolean;
+    }[];
+  };
+
+  it('the same table as the server, model by model', () => {
+    assert.deepEqual(
+      golden.models.map((m) => m.id),
+      [...VENDOR_DEVICE_MODEL_IDS],
+    );
+    for (const m of golden.models) {
+      const c = DEVICE_MODEL_CAPABILITIES[m.id as keyof typeof DEVICE_MODEL_CAPABILITIES];
+      assert.deepEqual(
+        [c.builtinPrinter, c.paperWidthMm, c.cashDrawerPort, c.builtinScanner, c.builtinTerminal, c.driverPending],
+        [m.printer, m.paperMm, m.drawerPort, m.scanner, m.builtinTerminal, false],
+        m.id,
+      );
+    }
+  });
+
+  it('Agamento on the device, like the F20, but not on a kiosk', () => {
+    assert.equal(capabilitiesOf('PAX_A77').builtinTerminal, true);
+    assert.equal(capabilitiesOf('UROVO_I9100').builtinTerminal, true);
+    assert.equal(capabilitiesOf('UROVO_I9100', { kiosk: true }).builtinTerminal, false);
+    assert.equal(deviceModelIdOf(' pax_a77 '), 'PAX_A77');
+  });
+});
+
 describe('roles', () => {
-  it('a till or a kiosk; a kitchen screen is not a role', () => {
+  it('a till, a kiosk, a KDS or the ready / not-ready board', () => {
+    assert.deepEqual([...DEVICE_ROLES], ['till', 'kiosk', 'kds', 'order_status_board']);
     assert.equal(deviceRoleOf('kiosk'), 'kiosk');
     assert.equal(deviceRoleOf(' TILL '), 'till');
-    assert.equal(deviceRoleOf('kds'), null);
+    assert.equal(deviceRoleOf('kds'), 'kds');
+    assert.equal(deviceRoleOf('order_status_board'), 'order_status_board');
+    assert.equal(deviceRoleOf('printer'), null);
     assert.equal(deviceRoleOf(undefined), null);
+  });
+
+  it('a KDS and the board are not tills, not accounting systems', () => {
+    assert.deepEqual([...NON_FISCAL_ROLES], ['kds', 'order_status_board']);
+    assert.equal(isFiscalRole('till'), true);
+    assert.equal(isFiscalRole('kiosk'), true);
+    assert.equal(isFiscalRole(null), true);
+    assert.equal(isFiscalRole('kds'), false);
+    assert.equal(isFiscalRole('order_status_board'), false);
+    // The server's own `fiscal` wins; an older server's row is a till.
+    assert.equal(isDisplayDevice({ fiscal: false, deviceRole: 'till' }), true);
+    assert.equal(isDisplayDevice({ deviceRole: 'order_status_board' }), true);
+    assert.equal(isDisplayDevice({ fiscal: true, deviceRole: 'kiosk' }), false);
+    assert.equal(isDisplayDevice({}), false);
+  });
+
+  it('the lists keep the screens apart from the tills, in order', () => {
+    const rows = [
+      { id: '1', deviceRole: 'till', fiscal: true },
+      { id: '2', deviceRole: 'kds', fiscal: false },
+      { id: '3', deviceRole: 'kiosk', fiscal: true },
+      { id: '4', deviceRole: 'order_status_board', fiscal: false },
+    ];
+    const { tills, screens } = splitDisplayDevices(rows);
+    assert.deepEqual(tills.map((m) => m.id), ['1', '3']);
+    assert.deepEqual(screens.map((m) => m.id), ['2', '4']);
+  });
+
+  it('every role and platform has its label', () => {
+    const he = JSON.parse(readFileSync(join(process.cwd(), 'src', 'messages', 'he.json'), 'utf8'));
+    const t = he.machines.deviceRole as Record<string, unknown> & { badge: Record<string, unknown> };
+    for (const r of DEVICE_ROLES) {
+      assert.equal(typeof t[r], 'string', r);
+      assert.equal(typeof t[`${r}Hint`], 'string', r);
+    }
+    for (const r of NON_FISCAL_ROLES) assert.equal(typeof t.badge[r], 'string', r);
+    for (const p of DEVICE_PLATFORMS) assert.equal(typeof (t.platforms as Record<string, unknown>)[p], 'string', p);
+  });
+});
+
+describe('platforms', () => {
+  it('Android, Windows or the browser (a kiosk only)', () => {
+    assert.deepEqual([...DEVICE_PLATFORMS], ['android', 'windows', 'web']);
+    assert.equal(devicePlatformOf('Web'), 'web');
+    assert.deepEqual(platformsFor('kiosk'), ['android', 'windows', 'web']);
+    assert.deepEqual(platformsFor('till'), ['android', 'windows']);
+    assert.deepEqual(platformsFor(''), ['android', 'windows']);
+    // The browser KDS and board (`/kds`, `/board` — SPEC_KDS §13): a screen may be a browser, a till never.
+    assert.deepEqual(platformsFor('kds'), ['android', 'windows', 'web']);
+    assert.deepEqual(platformsFor('order_status_board'), ['android', 'windows', 'web']);
+    assert.deepEqual([webPathOf('kiosk'), webPathOf('kds'), webPathOf('order_status_board'), webPathOf('till')], ['/k', '/kds', '/board', null]);
+    assert.equal(webScreenLink('https://pos-cloud-app.vercel.app/', 'kds', 'ab12-cd34'), 'https://pos-cloud-app.vercel.app/kds#pair=AB12CD34');
+    assert.equal(webScreenLink('http://localhost:3002', 'order_status_board', ' xy9 8zz1 '), 'http://localhost:3002/board#pair=XY98ZZ1');
+    assert.equal(webScreenLink('http://localhost:3002', 'order_status_board'), 'http://localhost:3002/board');
+    assert.equal(modelNeeded({ platform: 'web' }), false);
+    assert.equal(webKioskLink('https://pos-cloud-app.vercel.app/', 'ab12-cd34'), 'https://pos-cloud-app.vercel.app/k#pair=AB12CD34');
+    assert.equal(webKioskLink('http://localhost:3002'), 'http://localhost:3002/k');
+    assert.equal(devicePlatformOf(' Windows '), 'windows');
+    assert.equal(devicePlatformOf('android'), 'android');
+    assert.equal(devicePlatformOf('ios'), null);
+    assert.equal(devicePlatformOf(undefined), null);
   });
 });
 
@@ -165,10 +284,65 @@ describe('adding a device', () => {
     assert.equal(addDeviceMissing({ ...draft, role: 'kiosk', companyId: 'c', shopId: 's' }), null);
   });
 
+  it('a KDS and the board need their shop too; a station screen its stations', () => {
+    assert.equal(roleNeedsShop('till'), false);
+    for (const role of ['kiosk', 'kds', 'order_status_board'] as const) assert.equal(roleNeedsShop(role), true);
+    assert.equal(addDeviceMissing({ ...draft, role: 'kds' }), 'shop');
+    assert.equal(addDeviceMissing({ ...draft, role: 'order_status_board' }), 'shop');
+    const inShop = { ...draft, companyId: 'c', shopId: 's' };
+    assert.equal(addDeviceMissing({ ...inShop, role: 'order_status_board' }), null);
+    assert.equal(
+      addDeviceMissing({ ...inShop, role: 'kds', kds: { name: '', screenRole: 'station', stationIds: [] } }),
+      'stations',
+    );
+    assert.equal(
+      addDeviceMissing({ ...inShop, role: 'kds', kds: { name: '', screenRole: 'station', stationIds: ['g'] } }),
+      null,
+    );
+    assert.equal(addDeviceMissing({ ...inShop, role: 'kds', kds: { name: '', screenRole: 'expo', stationIds: [] } }), null);
+  });
+
+  it('a Windows device needs no model; an Android one does', () => {
+    assert.equal(addDeviceMissing({ ...draft, model: '', platform: 'windows' }), null);
+    assert.equal(addDeviceMissing({ ...draft, model: '', platform: 'android' }), 'model');
+    assert.deepEqual(pairingRequestBody({ ...draft, platform: 'windows' }, noKiosk), {
+      deviceRole: 'till',
+      platform: 'windows',
+    });
+  });
+
+  it('the screen of a KDS / board code', () => {
+    const inShop = { ...draft, companyId: 'c', shopId: 's' };
+    assert.deepEqual(
+      pairingRequestBody(
+        { ...inShop, role: 'kds', platform: 'windows', kds: { name: ' גריל ', screenRole: 'station', stationIds: ['g'] } },
+        noKiosk,
+      ),
+      {
+        deviceRole: 'kds',
+        platform: 'windows',
+        companyId: 'c',
+        shopId: 's',
+        kds: { name: 'גריל', screenRole: 'station', stationIds: ['g'] },
+      },
+    );
+    // Stations only for a station screen; the board is a pickup screen with a name at most.
+    assert.deepEqual(
+      pairingRequestBody({ ...inShop, role: 'kds', kds: { name: '', screenRole: 'expo', stationIds: ['g'] } }, noKiosk).kds,
+      { screenRole: 'expo', stationIds: [] },
+    );
+    assert.deepEqual(
+      pairingRequestBody({ ...inShop, role: 'order_status_board', kds: { name: 'TV', screenRole: 'station', stationIds: ['g'] } }, noKiosk).kds,
+      { name: 'TV' },
+    );
+    assert.equal(pairingRequestBody({ ...inShop, role: 'order_status_board' }, noKiosk).kiosk, undefined);
+  });
+
   it('the generate body carries the role, and the kiosk options for a kiosk only', () => {
     assert.deepEqual(pairingRequestBody(draft, { ...noKiosk, lockDevice: true }), {
       deviceRole: 'till',
       deviceModel: 'N55F',
+      platform: 'android',
     });
     assert.deepEqual(
       pairingRequestBody(
@@ -178,6 +352,7 @@ describe('adding a device', () => {
       {
         deviceRole: 'kiosk',
         deviceModel: 'N55F',
+        platform: 'android',
         companyId: 'c',
         shopId: 's',
         kiosk: { name: 'כניסה', controllerMachineIds: ['t1'], lockDevice: true },

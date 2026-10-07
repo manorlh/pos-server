@@ -1,0 +1,62 @@
+{
+  "orders": [
+    {
+      "localId": "3b1f2c9e-5a7d-4c1e-9f3a-6d2e8b1a4c55",
+      "pickupNumber": 17,
+      "pickupLabel": "W-17",
+      "businessDate": "2026-10-07",
+      "serviceType": "take_away",
+      "tableRef": null,
+      "fulfillmentMode": "BON",
+      "configVersion": "c727da0ef0f5b92e",
+      "customerName": "דנה",
+      "customerPhone": null,
+      "itemCount": 3,
+      "totalAgorot": 13000,
+      "tipAgorot": 1300,
+      "voucherAgorot": 5400,
+      "dueAgorot": 8900,
+      "createdAt": "2026-10-07T09:15:01.300Z",
+      "lines": [
+        {
+          "name": "המבורגר קלאסי",
+          "quantity": 2,
+          "totalAgorot": 11800,
+          "notes": "רגיל · גבינה · בלי בצל · עשוי היטב"
+        },
+        {
+          "name": "קולה",
+          "quantity": 1,
+          "totalAgorot": 1200
+        }
+      ],
+      "cart": {
+        "codec": "{\"cartId\":\"3b1f2c9e-5a7d-4c1e-9f3a-6d2e8b1a4c55\",\"lines\":[{\"id\":\"l1\",\"quantity\":2,\"unitPrice\":5900,\"discount\":0,\"discountType\":null,\"notes\":null,\"product\":\"{\\\"id\\\":\\\"p-burger\\\",\\\"cloudId\\\":\\\"p-burger\\\",\\\"name\\\":\\\"המבורגר קלאסי\\\",\\\"sku\\\":\\\"BRG1\\\",\\\"categoryId\\\":\\\"c-burgers\\\",\\\"price\\\":5400,\\\"barcode\\\":\\\"7290000000017\\\",\\\"imageUrl\\\":null,\\\"localImagePath\\\":null,\\\"isAvailable\\\":true,\\\"inStock\\\":true,\\\"trackStock\\\":false,\\\"isOpenPrice\\\":false,\\\"isWeighed\\\":false,\\\"isGeneral\\\":false,\\\"unitLabel\\\":null,\\\"voucherId\\\":null,\\\"noDiscount\\\":false,\\\"allergens\\\":[\\\"gluten\\\"],\\\"courseId\\\":null}\",\"details\":{\"v\":1,\"basePrice\":54,\"modifiers\":[{\"groupId\":\"g-size\",\"groupName\":\"גודל\",\"kind\":\"choice\",\"optionId\":\"o-regular\",\"name\":\"רגיל\",\"price\":0,\"qty\":1,\"pre\":null,\"charged\":0},{\"groupId\":\"g-extras\",\"groupName\":\"תוספות\",\"kind\":\"addon\",\"optionId\":\"o-cheese\",\"name\":\"גבינה\",\"price\":5,\"qty\":1,\"pre\":null,\"charged\":5},{\"groupId\":\"g-without\",\"groupName\":\"בלי\",\"kind\":\"removal\",\"optionId\":\"o-onion\",\"name\":\"בצל\",\"price\":0,\"qty\":1,\"pre\":null,\"charged\":0}],\"noteText\":\"עשוי היטב\"}},{\"id\":\"l2\",\"quantity\":1,\"unitPrice\":1200,\"discount\":0,\"discountType\":null,\"notes\":null,\"product\":\"{\\\"id\\\":\\\"p-cola\\\",\\\"cloudId\\\":\\\"p-cola\\\",\\\"name\\\":\\\"קולה\\\",\\\"sku\\\":\\\"p-cola\\\",\\\"categoryId\\\":\\\"c-drinks\\\",\\\"price\\\":1200,\\\"barcode\\\":null,\\\"imageUrl\\\":null,\\\"localImagePath\\\":null,\\\"isAvailable\\\":true,\\\"inStock\\\":true,\\\"trackStock\\\":false,\\\"isOpenPrice\\\":false,\\\"isWeighed\\\":false,\\\"isGeneral\\\":false,\\\"unitLabel\\\":null,\\\"voucherId\\\":null,\\\"noDiscount\\\":false,\\\"allergens\\\":[],\\\"courseId\\\":null}\",\"details\":null}]}",
+        "bon": {
+          "mode": "routing",
+          "printerId": null,
+          "copies": 1
+        },
+        "fulfillment": "BON"
+      },
+      "vouchers": [
+        {
+          "redemptionId": "8a5c1d2e-9b7f-4e3a-a1c2-0d9e8f7a6b51",
+          "serial": 17,
+          "amountAgorot": 5400,
+          "eventName": "כנס",
+          "redeemed": [
+            {
+              "productId": "p-burger",
+              "tillProductId": "p-burger",
+              "name": "המבורגר קלאסי",
+              "quantity": 1
+            }
+          ]
+        }
+      ],
+      "kitchenSent": false,
+      "state": "open"
+    }
+  ]
+}

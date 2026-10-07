@@ -1,0 +1,31 @@
+{
+  "about": "Silent updates / device owner (docs/SPEC_UPDATES.md section 5). The same bytes in pos-server server/tests/fixtures and pos-android app/src/test/resources: both test suites read it.",
+  "packageName": "il.co.runnersys.pos",
+  "componentName": "il.co.runnersys.pos/.system.PosDeviceAdmin",
+  "adbCommand": "adb shell dpm set-device-owner il.co.runnersys.pos/.system.PosDeviceAdmin",
+  "adminExtras": {
+    "serverUrl": "il.co.runnersys.pos.SERVER_URL",
+    "shopId": "il.co.runnersys.pos.SHOP_ID",
+    "shopName": "il.co.runnersys.pos.SHOP_NAME"
+  },
+  "updatePaths": {
+    "device_owner": true,
+    "self_update": true,
+    "urovo": true,
+    "pax": true,
+    "tap": false
+  },
+  "kioskLocks": ["full", "pinned", "none"],
+  "rebootAckPhases": ["deferred", "rebooting", "refused"],
+  "heartbeatBlock": {
+    "deviceOwner": true,
+    "updatePath": "device_owner",
+    "silentUpdate": true,
+    "sdk": 29,
+    "canRequestInstalls": false,
+    "kioskLock": "full",
+    "lockTaskPermitted": true,
+    "permissionsGranted": ["android.permission.CAMERA", "android.permission.READ_PHONE_STATE"],
+    "provisionedBy": "qr"
+  }
+}

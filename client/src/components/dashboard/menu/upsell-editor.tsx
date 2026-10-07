@@ -52,6 +52,7 @@ import {
 import { ProductListPicker, useCategoryOptions } from '@/components/dashboard/promotions/group-picker';
 import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
 import { Button } from '@/components/ui/button';
+import { TimeInput } from '@/components/ui/date-picker';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { IosCard, IosChip, IosFootnote, IosRow, IosSectionHeader, IosSegmented, IosSwitch } from './ios';
@@ -582,9 +583,9 @@ function UpsellEditor({ rule, onDone }: { rule: UpsellRule | null; onDone: () =>
         {d.timed ? (
           <IosRow>
             <span className="flex-1 text-[15px]">{t('hours')}</span>
-            <Input type="time" value={d.startTime} onChange={(e) => set('startTime', e.target.value)} className="h-8 w-28" aria-label={t('from')} />
+            <TimeInput value={d.startTime} onChange={(e) => set('startTime', e.target.value)} className="h-8 w-28" aria-label={t('from')} />
             <span className="text-[#8E8E93]">–</span>
-            <Input type="time" value={d.endTime} onChange={(e) => set('endTime', e.target.value)} className="h-8 w-28" aria-label={t('to')} />
+            <TimeInput value={d.endTime} onChange={(e) => set('endTime', e.target.value)} className="h-8 w-28" aria-label={t('to')} />
           </IosRow>
         ) : null}
         <IosRow>

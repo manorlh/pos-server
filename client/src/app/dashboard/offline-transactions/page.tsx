@@ -22,6 +22,7 @@ import { fetchOfflineAuthorizationsReport } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
+import { RemoteCreditQuickButton } from '@/components/dashboard/remote-credit/remote-credit-actions';
 import { formatCurrency, formatDateTime } from '@/lib/format';
 import { daysBackIso, todayIso } from '@/lib/reportWindow';
 import type { OfflineAuthorizationReport, OfflineAuthorizationRun } from '@/lib/types';
@@ -29,7 +30,7 @@ import { ReportStatCard } from '@/components/dashboard/report-stat-card';
 import { ReportErrorState, ReportWindowSummary } from '@/components/dashboard/report-window-summary';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -86,8 +87,14 @@ function RunRow({ run }: { run: OfflineAuthorizationRun }) {
                   <TableRow key={d.terminalUid}>
                     <TableCell>
                       {d.matched ? (
-                        <span className="font-mono text-xs" dir="ltr">
-                          {d.documentNumber ?? d.transactionId?.slice(0, 8)}
+                        <span className="inline-flex items-center gap-2">
+                          <span className="font-mono text-xs" dir="ltr">
+                            {d.documentNumber ?? d.transactionId?.slice(0, 8)}
+                          </span>
+                          {/* A declined sale is still a tax document: credit it (docs/SPEC_REMOTE_CREDIT.md). */}
+                          {d.transactionId ? (
+                            <RemoteCreditQuickButton transactionId={d.transactionId} documentNumber={d.documentNumber} />
+                          ) : null}
                         </span>
                       ) : (
                         <span className="text-muted-foreground text-xs">{t('declined.unmatched')}</span>
@@ -155,11 +162,23 @@ export default function OfflineTransactionsPage() {
           <CardContent className="grid gap-4 pt-6 sm:grid-cols-3">
             <div className="space-y-1.5">
               <Label htmlFor="offline-from">{t('filters.from')}</Label>
-              <Input id="offline-from" type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} />
+              <DatePicker
+                id="offline-from"
+                value={from}
+                max={to}
+                onChange={(e) => setFrom(e.target.value)}
+                range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="offline-to">{t('filters.to')}</Label>
-              <Input id="offline-to" type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} />
+              <DatePicker
+                id="offline-to"
+                value={to}
+                min={from}
+                onChange={(e) => setTo(e.target.value)}
+                range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
+              />
             </div>
             <div className="flex items-end">
               <Button className="w-full" disabled={rangeInvalid || isFetching} onClick={() => setApplied({ from, to })}>

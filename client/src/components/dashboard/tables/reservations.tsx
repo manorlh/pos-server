@@ -13,6 +13,7 @@ import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { formatTime } from '@/lib/format';
 import { todayIso } from '@/lib/reportWindow';
 import {
   createReservation,
@@ -24,6 +25,7 @@ import {
 } from '@/lib/tablesApi';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { DatePicker, DateTimePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -45,8 +47,7 @@ function toLocalInput(iso: string): string {
 }
 
 function timeOf(iso: string): string {
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return formatTime(iso);
 }
 
 export function TableReservations({ shopId }: { shopId: string }) {
@@ -76,7 +77,7 @@ export function TableReservations({ shopId }: { shopId: string }) {
           <Label className="text-xs" htmlFor="res-day">
             {t('day')}
           </Label>
-          <Input id="res-day" type="date" value={day} onChange={(e) => setDay(e.target.value || todayIso())} />
+          <DatePicker id="res-day" value={day} onChange={(e) => setDay(e.target.value || todayIso())} />
         </div>
         <p className="text-sm text-muted-foreground">{t('summary', { count: rows.length, guests })}</p>
         <Button className="ms-auto" onClick={() => setEditing('new')}>
@@ -246,7 +247,7 @@ function ReservationForm({
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1">
             <Label htmlFor="res-when">{t('time')}</Label>
-            <Input id="res-when" type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
+            <DateTimePicker id="res-when" value={when} onChange={(e) => setWhen(e.target.value)} />
           </div>
           <div className="space-y-1">
             <Label htmlFor="res-duration">{t('duration')}</Label>

@@ -33,6 +33,7 @@ import {
   verifyJoinOtp,
   type JoinResult,
 } from '@/lib/clubApi';
+import { formatDate } from '@/lib/format';
 import {
   EMPTY_SIGNUP_FORM,
   buildRegisterBody,
@@ -560,7 +561,7 @@ export function JoinFlow({ token }: { token: string }) {
                 <p className="font-semibold text-amber-950">{result.benefit.title}</p>
                 {result.benefit.validUntil ? (
                   <p className="text-sm text-amber-900">
-                    {t('benefitValidUntil', { date: new Date(result.benefit.validUntil).toLocaleDateString('he-IL') })}
+                    {t('benefitValidUntil', { date: formatDate(result.benefit.validUntil) })}
                   </p>
                 ) : null}
               </div>

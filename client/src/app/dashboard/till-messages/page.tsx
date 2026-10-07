@@ -25,7 +25,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { format, formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
 import {
   Ban,
@@ -50,6 +50,7 @@ import {
   updateTillMessage,
 } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { formatDate, formatShortDateTime, isoDate } from '@/lib/format';
 import type {
   TillMessage,
   TillMessageColor,
@@ -70,6 +71,7 @@ import { ScopePicker, useOrgScopeLabel } from '@/components/dashboard/live/scope
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { DatePicker, DateTimePicker, TimeInput } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -145,19 +147,16 @@ function expiryValue(choice: Expiry, custom: string, sendAtLocal: string | null)
 }
 
 function time(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : format(d, 'dd/MM HH:mm', { locale: he });
+  return isoDate(iso) ? formatShortDateTime(iso) : '';
 }
 
 /** dd/MM HH:mm in the message's zone (the tenant's), whatever the browser's. */
 function zonedTime(iso: string | null | undefined, tz: string | null | undefined): string {
-  const local = inZone(iso, tz || DEFAULT_TZ);
-  return local ? `${local.slice(8, 10)}/${local.slice(5, 7)} ${local.slice(11, 16)}` : '';
+  return isoDate(iso) ? formatShortDateTime(iso, tz || DEFAULT_TZ) : '';
 }
 
 function shortDate(ymd: string | null | undefined): string {
-  return ymd ? `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}/${ymd.slice(2, 4)}` : '';
+  return ymd ? formatDate(ymd) : '';
 }
 
 function browserZone(): string {
@@ -394,9 +393,8 @@ function RecurrenceFields({
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1">
           <Label htmlFor={`${idPrefix}-time`}>{t('schedule.time')}</Label>
-          <Input
+          <TimeInput
             id={`${idPrefix}-time`}
-            type="time"
             required
             value={value.time}
             onChange={(e) => set({ time: e.target.value })}
@@ -424,9 +422,8 @@ function RecurrenceFields({
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${idPrefix}-start`}>{t('schedule.startDate')}</Label>
-          <Input
+          <DatePicker
             id={`${idPrefix}-start`}
-            type="date"
             value={value.startDate}
             onChange={(e) => set({ startDate: e.target.value })}
             className="h-11"
@@ -434,9 +431,8 @@ function RecurrenceFields({
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${idPrefix}-end`}>{t('schedule.endDate')}</Label>
-          <Input
+          <DatePicker
             id={`${idPrefix}-end`}
-            type="date"
             value={value.endDate}
             min={value.startDate || undefined}
             onChange={(e) => set({ endDate: e.target.value })}
@@ -618,9 +614,8 @@ function EditPanel({ m, onDone }: { m: TillMessage; onDone: () => void }) {
         <div className="space-y-1">
           <Label htmlFor={`edit-until-${m.id}`}>{tb('until')}</Label>
           <div className="flex gap-2">
-            <Input
+            <DateTimePicker
               id={`edit-until-${m.id}`}
-              type="datetime-local"
               value={until}
               onChange={(e) => setUntil(e.target.value)}
               className="h-11 flex-1"
@@ -638,9 +633,8 @@ function EditPanel({ m, onDone }: { m: TillMessage; onDone: () => void }) {
       ) : (
         <div className="space-y-1">
           <Label htmlFor={`edit-send-${m.id}`}>{t('schedule.sendAt')}</Label>
-          <Input
+          <DateTimePicker
             id={`edit-send-${m.id}`}
-            type="datetime-local"
             required
             value={sendAt}
             onChange={(e) => setSendAt(e.target.value)}
@@ -1012,9 +1006,8 @@ export default function TillMessagesPage() {
               {when === 'scheduled' ? (
                 <div className="space-y-1">
                   <Label htmlFor="msg-send-at">{t('schedule.sendAt')}</Label>
-                  <Input
+                  <DateTimePicker
                     id="msg-send-at"
-                    type="datetime-local"
                     required
                     value={sendAt}
                     min={localInput(new Date())}
@@ -1062,9 +1055,8 @@ export default function TillMessagesPage() {
                 {expiry === 'custom' ? (
                   <div className="space-y-1">
                     <Label htmlFor="msg-expiry">{t('compose.expiryAt')}</Label>
-                    <Input
+                    <DateTimePicker
                       id="msg-expiry"
-                      type="datetime-local"
                       value={customExpiry}
                       onChange={(e) => setCustomExpiry(e.target.value)}
                       className="h-11"

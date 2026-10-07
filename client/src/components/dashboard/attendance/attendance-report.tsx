@@ -27,7 +27,7 @@ import {
 import { useAuth } from '@/lib/auth';
 import { downloadCsv, toCsv } from '@/lib/csv';
 import type { ExcelCellKind } from '@/lib/excelExport';
-import { formatDate } from '@/lib/format';
+import { formatDate, formatTime, toDate } from '@/lib/format';
 import { daysBackIso, todayIso } from '@/lib/reportWindow';
 import { RangeFilter, type DayRange } from '@/components/dashboard/range-filter';
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
@@ -42,8 +42,7 @@ import { ShiftDetailDialog } from './shift-detail-dialog';
 
 function timeOf(iso: string | null | undefined): string {
   if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+  return toDate(iso) ? formatTime(iso) : '';
 }
 
 export function AttendanceReport() {
@@ -79,7 +78,8 @@ export function AttendanceReport() {
 
   const exportCsv = () => {
     if (!data) return;
-    downloadCsv(`attendance-${data.window.from}-${data.window.to}.csv`, toCsv(header, reportExportRows(data.rows, labels)));
+    const rows = reportExportRows(data.rows, labels).map(([day, ...rest]) => [day ? formatDate(day) : '', ...rest]);
+    downloadCsv(`attendance-${data.window.from}-${data.window.to}.csv`, toCsv(header, rows));
   };
 
   return (
@@ -117,7 +117,7 @@ export function AttendanceReport() {
                 name: t('report.sheetShifts'),
                 columns: REPORT_HEADER_KEYS.map((k) => ({
                   header: t(`col.${k}`),
-                  kind: (k === 'hours' || k === 'breaks' ? 'number' : 'text') as ExcelCellKind,
+                  kind: (k === 'hours' || k === 'breaks' ? 'number' : k === 'date' ? 'date' : 'text') as ExcelCellKind,
                 })),
                 rows: reportExportRows(data.rows, labels),
                 totals: [t('report.total'), null, null, null, null, null, null, null,

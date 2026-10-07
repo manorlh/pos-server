@@ -11,7 +11,7 @@ import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertOctagon, AlertTriangle, ArrowLeft, Info, Lightbulb, TrendingUp } from 'lucide-react';
 import { agorot, type InsightCard, type InsightsFeed, type Severity } from '@/lib/insightsApi';
-import { formatQuantity } from '@/lib/format';
+import { formatQuantity, formatShortDate, toDate } from '@/lib/format';
 import { Card, Chip, IOS, Muted, Segmented, hh } from './ios';
 import { useDuration } from './open-tables-widget';
 
@@ -52,10 +52,7 @@ export function useCardText() {
   const weekdays = tr.raw('weekdayNames') as string[];
   const wd = (v: unknown) => weekdays[num(v)] ?? '';
   const names = (v: unknown) => (Array.isArray(v) ? v.map(String).join(', ') : '');
-  const day = (v: unknown) => {
-    const [, m, d] = str(v).split('-').map(Number);
-    return d && m ? `${d}/${m}` : '';
-  };
+  const day = (v: unknown) => (toDate(str(v)) ? formatShortDate(str(v)) : '');
 
   return (card: InsightCard): CardText => {
     const p = card.params;

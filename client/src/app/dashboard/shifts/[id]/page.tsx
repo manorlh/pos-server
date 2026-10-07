@@ -29,6 +29,7 @@ import {
   OfflineNotice,
   offlineOf,
 } from '@/components/dashboard/z-report/offline-summary';
+import { FailedPaymentsSection } from '@/components/dashboard/failed-payments/failed-payments-section';
 import {
   CountedCash,
   Fact,
@@ -39,6 +40,8 @@ import {
   TipsSplit,
   useShiftLabel,
 } from '@/components/dashboard/shifts/shift-parts';
+import { useShiftExportSheets } from '@/components/dashboard/shifts/shift-export-sheets';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -75,6 +78,7 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
   const t = useTranslations('shifts');
   const tSend = useTranslations('transmission');
   const shiftLabel = useShiftLabel();
+  const shiftSheets = useShiftExportSheets();
   const canProduceZ = useCanProduceZ();
   usePageScope({ maxLevel: 'machine', silent: true });
   const tz = useTenantTimeZone();
@@ -143,6 +147,25 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <ReportExportToolbar
+            title={t('detail.title', { shift: shiftLabel(shift) })}
+            from={shift.businessDate}
+            to={shift.businessDate}
+            scopeLabel={[shift.shopName, shift.machineName].filter(Boolean).join(' · ')}
+            getSheets={() =>
+              shiftSheets(
+                shift,
+                shift.totalsMismatch && till
+                  ? COMPARED.flatMap(({ till: keys, server }) => {
+                      const key = keys.find((k) => k in till);
+                      return key
+                        ? [{ label: t(`detail.tillKey.${keys[0]}`), till: till[key], cloud: server(shift) }]
+                        : [];
+                    })
+                  : [],
+              )
+            }
+          />
           {shift.zReportId ? (
             <Link
               href={`/dashboard/z-reports/${shift.zReportId}`}
@@ -326,6 +349,9 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
           <OfflineDeclinedList declined={shift.offline?.declined ?? []} />
         </div>
       ) : null}
+
+      {/* "עסקאות שלא הושלמו" / "מכירות שבוטלו": information only, not in the totals above. */}
+      <FailedPaymentsSection query={{ shiftId: shift.id }} />
 
       {shift.totalsMismatch && till ? (
         <Card>
