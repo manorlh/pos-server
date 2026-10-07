@@ -55,6 +55,11 @@ export class PrintQueue {
     private readonly log: (m: string) => void = () => undefined,
   ) {}
 
+  /** A page is on its way (the USB look waits: both go through the one spooler helper). */
+  get busy(): boolean {
+    return this.working;
+  }
+
   setRenderer(r: PageRenderer | null) {
     this.renderer = r;
     void this.work();
