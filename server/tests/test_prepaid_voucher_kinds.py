@@ -299,6 +299,29 @@ class TestBatches:
         w.db.flush()
         assert refused(make, w, kind="item_discount", targets={"categoryIds": [other.id]}).detail == PV.TARGET_INVALID
 
+    def test_the_target_pickers_offer_what_the_save_accepts(self, w):
+        from app.models.company import Company
+
+        other = Company(id=uuid.uuid4(), tenant_id=w.tenant.id, name="אחרת", vat_number="9")
+        w.db.add(other)
+        w.db.flush()
+        theirs = Category(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=other.id, name="שלהם")
+        w.db.add(theirs)
+        alien = Product(
+            id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=other.id, category_id=theirs.id,
+            catalog_level=CatalogLevel.GLOBAL, name="מוצר זר", price=5, sku="alien",
+        )
+        w.db.add(alien)
+        w.db.commit()
+        cats = R.list_prepaid_voucher_categories(str(w.company.id), **_ctx(w))["items"]
+        assert {c["name"] for c in cats} == {"שתייה חמה", "אוכל", "אספרסו"}
+        assert next(c for c in cats if c["name"] == "אספרסו")["parentId"] == str(w.drinks.id)
+        products = R.list_prepaid_voucher_products(str(w.company.id), search=None, limit=50, **_ctx(w))["items"]
+        assert "מוצר זר" not in {p["name"] for p in products}
+        # …and the save refuses exactly what the pickers leave out.
+        assert refused(make, w, kind="item_discount", targets={"categoryIds": [theirs.id]}).detail == PV.TARGET_INVALID
+        assert refused(make, w, kind="item_discount", targets={"productIds": [alien.id]}).detail == PV.PRODUCT_INVALID
+
     def test_the_rules_of_use_change_the_terms_do_not(self, w):
         b = make(w, usesPerVoucher=5)
         out = R.update_prepaid_voucher_batch(

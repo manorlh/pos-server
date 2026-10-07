@@ -268,7 +268,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
     value: terms.value,
     minPurchase: terms.minPurchase,
     maxDiscount: terms.maxDiscount,
-    targetCount: terms.productIds.length + terms.categoryIds.length,
+    targetCount: terms.products.length + terms.categoryIds.length,
     maxUnits: terms.maxUnits,
     usesPerVoucher: rules.usesPerVoucher,
     maxUsesPerSale: rules.maxUsesPerSale,
@@ -351,7 +351,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
               minPurchase: kind === 'order_discount' ? decimal(terms.minPurchase) : null,
               maxDiscount: kind === 'order_discount' && terms.discountType === 'percent' ? decimal(terms.maxDiscount) : null,
               maxUnits: kind === 'item_discount' ? parseInt(terms.maxUnits, 10) || 1 : null,
-              targets: kind === 'item_discount' ? { productIds: terms.productIds, categoryIds: terms.categoryIds } : null,
+              targets: kind === 'item_discount' ? { productIds: terms.products.map((p) => p.id), categoryIds: terms.categoryIds } : null,
               promotionPolicy: rules.promotionPolicy,
               usesPerVoucher: parseInt(rules.usesPerVoucher, 10) || 1,
               maxUsesPerSale: parseInt(rules.maxUsesPerSale, 10) || 1,
@@ -406,7 +406,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
           </div>
 
           <KindPicker value={kind} onChange={setKind} />
-          {discount ? <DiscountTermsFields kind={kind} value={terms} onChange={setTerms} errors={termErrors} /> : null}
+          {discount ? <DiscountTermsFields kind={kind} companyId={companyId} value={terms} onChange={setTerms} errors={termErrors} /> : null}
 
           {!discount ? (
             <div className="space-y-2">
@@ -566,7 +566,13 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
               <Label>{t('company')}</Label>
               <Select
                 value={companyId}
-                onValueChange={(v) => { setCompanyId(String(v ?? '')); setShopIds([]); }}
+                onValueChange={(v) => {
+                  setCompanyId(String(v ?? ''));
+                  setShopIds([]);
+                  // What another company may carry is another list: the picks go with the company.
+                  setItems([]);
+                  setTerms((cur) => ({ ...cur, products: [], categoryIds: [] }));
+                }}
                 items={(companies.data ?? []).map((c) => ({ value: c.id, label: c.name }))}
               >
                 <SelectTrigger className="w-full"><SelectValue placeholder={t('pickCompany')} /></SelectTrigger>

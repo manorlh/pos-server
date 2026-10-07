@@ -145,6 +145,10 @@
 | `item_discount` — **הנחה על פריט** | על מוצרים ו/או קטגוריות (קטגוריה = כולל תתי-קטגוריות): ₪ או % **לכל יחידה**, עד N יחידות בכל שימוש (ברירת מחדל 1) | כנ״ל | **הנחה על המסמך** |
 
 * כל סדרה שקיימת לפני השינוי היא `items` (המיגרציה ממלאת) והתנהגותה לא משתנה.
+* מוצרים וקטגוריות להנחה על פריט — רק מה שסדרה של החברה רשאית לשאת, **אותו כלל** כמו פריטי שובר הפריטים: מוצרי/קטגוריות קטלוג
+  של החברה, החברות שמעליה ומתחתיה, או בלי חברה (לא פריט כללי, לא שקיל, לא של קופה). הבוחרים בטופס מבקשים
+  GET /prepaid-vouchers/products?companyId= ו-GET /prepaid-vouchers/categories?companyId= — אותו כלל שהשמירה בודקת (_eligible,
+  _eligible_category), כך ששום דבר שמוצע לא נדחה בשמירה; החלפת חברה מנקה את הבחירה.
 * שובר הנחה הוא בלי "פריטים" ובלי "מימוש בחלקים"; במקומם **שימושים** (§7.5).
 * מה שמודפס על השובר ובדשבורד — טקסט ההטבה, אחד בשרת ובדשבורד (`benefit_text`, `lib/prepaidVoucherBenefit.ts`, נעול בבדיקה משותפת):
   "₪30 הנחה על כל ההזמנה", "20% הנחה על כל ההזמנה (עד ₪50) בקנייה מעל ₪100", "20% הנחה על קפה", "₪5 הנחה על קפה, מאפה (עד 2 יחידות)".
@@ -256,6 +260,7 @@
 
 | קריאה | מה |
 |---|---|
+| `GET /prepaid-vouchers/categories?companyId=` | חדש — הקטגוריות שהנחה על פריט של החברה רשאית לציין (כמו `…/products`) |
 | `POST /prepaid-vouchers/batches` | + `kind`, `discountType` (`fixed`/`percent`), `discountValue` (₪ או %), `minPurchase`, `maxDiscount` (₪), `targets` (`productIds`, `categoryIds`), `maxUnits`, `stacking`, `promotionPolicy`, `usesPerVoucher`, `maxUsesPerSale`, `maxUsesPerDay`. `items` ריק לסוגי הנחה |
 | `PATCH /prepaid-vouchers/batches/{id}` | + `stacking`, `promotionPolicy`, `maxUsesPerSale`, `maxUsesPerDay` (null מנקה). ההטבה והשימושים — לא |
 | תשובת סדרה | + השדות לעיל ו-`benefitText`; שובר: + `usesLeft`, `usesPerVoucher`; מימוש: + `uses`, `discountAmount`, `flags` |
