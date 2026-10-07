@@ -6,7 +6,9 @@ rules on top of `app.services.till_z.set_z_mode`:
   reports its takings.
 * **Over a clean break** (`409 till_open`): the till's shift is closed first, so its first
   Z of the new mode starts from nothing. `set_z_mode` adds the rest of the break — no
-  closed shift waiting for a Z of the old mode (`unreported_shifts`), no Z under way.
+  closed shift waiting for a Z of the old mode (`unreported_shifts`), no Z under way. Closed
+  shifts with nothing in them (no document, no money — no Z can ever be made for them) do not
+  count: the first Z of the new mode takes them along (`till_z.waiting_shifts_all_empty`).
 
 A shop or a point of sale is switched as a whole (`PUT /shops/{id}/z-mode`): every till
 of it, all or nothing, each by the same rules.

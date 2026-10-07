@@ -56,6 +56,8 @@ from app.services.close_progress import till_backlog
 from app.services.machine_status import is_online
 from app.services.shifts import refuse_foreign_shift
 from app.services.z_builder import (
+    EMPTY_Z,
+    EMPTY_Z_MESSAGE,
     Z_MODE_CLOUD,
     Z_MODE_TILL,
     ZBuildRefused,
@@ -77,6 +79,9 @@ Z_MODES = (Z_MODE_CLOUD, Z_MODE_TILL)
 #: Same lifetime as a Z run: a till off overnight still gets it, and one back days later
 #: does not produce a Z nobody is waiting for any more.
 TILL_Z_REQUEST_TTL_HOURS = Z_RUN_TTL_HOURS
+
+#: A request answered "no Z on nothing": why, as the request keeps it.
+EMPTY_Z_REQUEST_TEXT = "אין מסמכים — אין צורך ב-Z"
 
 
 class TillZRefused(Exception):
@@ -139,6 +144,54 @@ def unreported_closed_count(db: Session, machine_id: uuid.UUID) -> int:
     )
 
 
+def waiting_shifts_all_empty(db: Session, machine: POSMachine) -> Optional[List[Shift]]:
+    """
+    The till's closed shifts no Z has taken, oldest first — when **every one of them is
+    empty**, else None.
+
+    Empty is what the builder refuses a Z for ("אל תאפשר לסגור Z על 0", `empty_z`): no
+    document of any kind on the cloud, no money, no cash moved between shifts
+    (`shifts_show_activity`) — and nothing on its way from the till either (its last report
+    of documents not delivered yet is zero). Such shifts need no Z of the mode they were
+    closed in: there is nothing to report, so none was ever made for them, and none may be
+    (no Z number is drawn for nothing). A switch of the till's Z mode carries them into the
+    first Z of the new mode — "a later Z with activity takes them along (they add nothing)",
+    as for any empty shift — so the till's run of shifts still has no gap, and the switch
+    records which they were (`z_mode_history[].emptyShiftsCarried`). A single shift with
+    activity, or documents still pending on the till: None — that Z has to be made first.
+    """
+    from app.services.close_progress import documents_on_cloud
+    from app.services.z_builder import shift_order_key, shifts_show_activity
+
+    shifts = sorted(
+        db.query(Shift)
+        .filter(
+            Shift.machine_id == machine.id,
+            Shift.status == ShiftStatus.CLOSED,
+            Shift.z_report_id.is_(None),
+        )
+        .all(),
+        key=shift_order_key,
+    )
+    if not shifts:
+        return []
+    # Known empty only from the till's own accepted close: a shift the cloud closed for a dead
+    # till (or built for waiting documents) may still have documents on that till.
+    if any(s.reconstructed or s.close_accepted_at is None for s in shifts):
+        return None
+    pending = machine.pending_documents if machine.pending_documents is not None else machine.pending_count
+    if pending is not None and pending > 0:
+        return None
+    if any(documents_on_cloud(db, [s.id for s in shifts]).values()):
+        return None
+    by_shop: Dict[Any, List[Shift]] = {}
+    for s in shifts:
+        by_shop.setdefault(s.shop_id, []).append(s)
+    if shifts_show_activity(db, list(by_shop.values())):
+        return None
+    return shifts
+
+
 # ── The setting (§5.1) ────────────────────────────────────────────────────────
 
 
@@ -189,14 +242,23 @@ def set_z_mode(db: Session, machine: POSMachine, mode: str, *, now: Optional[dat
     if live_z_run_item(db, machine.id) is not None or _pending_query(db, machine.id).first() is not None:
         raise TillZRefused(status.HTTP_409_CONFLICT, {"detail": "z_in_progress"})
     count = unreported_closed_count(db, machine.id)
+    carried: List[Shift] = []
     if count and not (mode == Z_MODE_CLOUD and _has_reconstructed_unreported(db, machine.id)):
-        raise TillZRefused(status.HTTP_409_CONFLICT, {"detail": "unreported_shifts", "count": count})
-    logger.info("machine %s z_mode %s -> %s", machine.id, machine.z_mode, mode)
+        # Closed shifts with nothing in them need no Z of the old mode (`waiting_shifts_all_empty`).
+        empty = waiting_shifts_all_empty(db, machine)
+        if empty is None:
+            raise TillZRefused(status.HTTP_409_CONFLICT, {"detail": "unreported_shifts", "count": count})
+        carried = empty
+    logger.info(
+        "machine %s z_mode %s -> %s%s", machine.id, machine.z_mode, mode,
+        f" (carrying {len(carried)} empty shift(s) with no Z)" if carried else "",
+    )
     # Kept over time: a document goes to the Z kind its till was in when it was issued,
     # whatever the till switched to since (`document_filing.mode_at`).
-    machine.z_mode_history = list(getattr(machine, "z_mode_history", None) or []) + [
-        {"at": now.isoformat(), "from": z_mode_of(machine), "to": mode}
-    ]
+    entry: Dict[str, Any] = {"at": now.isoformat(), "from": z_mode_of(machine), "to": mode}
+    if carried:
+        entry["emptyShiftsCarried"] = [str(s.id) for s in carried]
+    machine.z_mode_history = list(getattr(machine, "z_mode_history", None) or []) + [entry]
     machine.z_mode = mode
     return True
 
@@ -300,6 +362,7 @@ def produce_till_z(
             named.error_code = "nothing_to_report"
             named.error_message = "The till had no closed shift waiting for a Z"
             db.flush()
+            _settle_kiosk_commands(db, [named.id])
         raise TillZRefused(
             status.HTTP_409_CONFLICT, {"detail": "nothing_to_report"}, keep=named is not None
         )
@@ -327,8 +390,22 @@ def produce_till_z(
         )
     except ZBuildRefused as refused:
         # Re-checked under the same locks the checks above took, so only a race gets
-        # here; the codes are the Z run's (§2.6).
+        # here; the codes are the Z run's (§2.6) — and "no Z on nothing" (`empty_z`).
         logger.warning("till Z of machine %s refused: %s (%s)", machine.id, refused.code, refused.message)
+        if refused.code == EMPTY_Z and named is not None:
+            # The dashboard's (or a controlling till's) request has its answer: nothing a Z
+            # could report. Ended here, with why — the till's own ack (an older one says only
+            # "http_409") changes nothing after this — and the command that asked says so.
+            named.status = S.FAILED
+            named.failed_at = now
+            named.received_at = named.received_at or now
+            named.error_code = EMPTY_Z
+            named.error_message = EMPTY_Z_REQUEST_TEXT
+            db.flush()
+            _settle_kiosk_commands(db, [named.id])
+            raise TillZRefused(
+                status.HTTP_409_CONFLICT, {"detail": EMPTY_Z, "message": EMPTY_Z_MESSAGE}, keep=True,
+            )
         raise _conflict(refused.code)
     if z.totals_mismatch:
         logger.warning("till Z %s of machine %s: the till's figures differ %s", z.id, machine.id, body.till)
@@ -837,6 +914,7 @@ def _complete_requests(
     request reached the till has produced exactly what it asked for. Left pending, it
     would make the till close the shift it opens next and file a second Z.
     """
+    done = []
     for req in _pending_query(db, machine.id).all():
         if req.created_at is not None and _aware(req.created_at) > _aware(z.closed_at) and req.id != named_id:
             continue  # asked after this Z: it wants the next one
@@ -846,10 +924,21 @@ def _complete_requests(
         req.z_report_id = z.id
         req.error_code = None
         req.error_message = None
+        done.append(req.id)
+    if done:
+        db.flush()
+        _settle_kiosk_commands(db, done)
 
 
 def _aware(moment: datetime) -> datetime:
     return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+
+
+def _settle_kiosk_commands(db: Session, request_ids: Sequence[Any]) -> None:
+    """The kiosk commands (`kiosk_commands`) that made these requests take their outcome."""
+    from app.services import kiosk_z
+
+    kiosk_z.settle_commands(db, request_ids=request_ids)
 
 
 # ── Dashboard requests (§5.3–§5.4) ────────────────────────────────────────────
@@ -871,6 +960,9 @@ def expire_overdue(db: Session, *, now: Optional[datetime] = None) -> int:
         req.error_code = "expired"
         req.error_message = "The till did not produce its Z in time"
         req.failed_at = now
+    if rows:
+        db.flush()
+        _settle_kiosk_commands(db, [r.id for r in rows])
     return len(rows)
 
 
@@ -995,6 +1087,7 @@ def cancel(db: Session, req: TillZRequest) -> TillZRequest:
     req.status = S.CANCELLED
     req.error_code = "cancelled"
     db.flush()
+    _settle_kiosk_commands(db, [req.id])
     return req
 
 
@@ -1077,6 +1170,9 @@ def apply_ack(
     else:  # pragma: no cover - the schema admits only these
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid phase")
     db.flush()
+    if req.status not in PENDING_TILL_Z_STATUSES:
+        # A kiosk's "הפקת Z" command follows the request it made (kiosk_z.settle_commands).
+        _settle_kiosk_commands(db, [req.id])
     return req
 
 
