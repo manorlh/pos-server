@@ -47,7 +47,19 @@ import { allocatePickup, OrderStore } from './kiosk/orders';
 import { PayAtTill, type VoucherResult } from './kiosk/payAtTill';
 import { kdsSaleRelease, releasesToKds } from './kiosk/kdsRelease';
 import { FunnelStore } from './kiosk/funnel';
-import { basketChanges, checkedBasePrice, CLOUD_CHECK_TIMEOUT_MS, overridesLive, overridesOf, type CloudOverrides, type CloudVerdict } from '../core/basketCheck';
+import {
+  basketChanges,
+  checkedBasePrice,
+  cloudCheckRequest,
+  CLOUD_CHECK_TIMEOUT_MS,
+  overridesLive,
+  overridesOf,
+  PRICE_CHANGED,
+  priceChangesOf,
+  PROMOTIONS_PULL_TIMEOUT_MS,
+  type CloudOverrides,
+  type CloudVerdict,
+} from '../core/basketCheck';
 import type { FunnelEvent } from '../core/kioskFunnel';
 import { applyBatteryStep, batteryStep, isCritical, NO_CYCLE, parseThresholds, type BatteryAlertView, type BatteryCycle } from '../core/batteryAlerts';
 import { buildKioskCatalog, catalogMedia, moneyGroupOf, type KGroup, type KProduct } from './kiosk/catalog';
@@ -692,7 +704,8 @@ export class KioskService extends EventEmitter {
 
   /**
    * The cloud's word on the basket before the charge (`POST /sync/{m}/kiosk/basket-check`, ≤ 3 s):
-   * what is no longer sold here and the base prices now. A difference pulls the catalog at once.
+   * what is no longer sold here and the base prices now. A difference pulls the catalog at once; a
+   * changed set of promotions is pulled before the basket is priced (as the Android kiosk).
    * No answer (offline, slow): the local catalog decides, as before.
    */
   private async cloudBasketCheck(input: StartPaymentIn): Promise<void> {
@@ -700,15 +713,16 @@ export class KioskService extends EventEmitter {
     if (!id || this.offlineNow || input.lines.length === 0) return;
     const cat = this.catalogData();
     const byId = new Map<string, KProduct>(cat.products.map((p) => [p.id, p]));
-    const lines = input.lines.map((l) => {
-      const p = byId.get(l.productId);
-      return { productId: l.productId, quantity: Math.max(1, Math.trunc(l.qty)), unitPriceAgorot: p ? ofShekels(p.price) : undefined };
-    });
-    const reply = await this.api.post<CloudVerdict>(`sync/${id}/kiosk/basket-check`, { lines }, { timeoutMs: CLOUD_CHECK_TIMEOUT_MS });
+    const body = cloudCheckRequest(input.lines, (pid) => {
+      const p = byId.get(pid);
+      return p ? ofShekels(p.price) : undefined;
+    }, this.cloud.promotionsEtag());
+    const reply = await this.api.post<CloudVerdict>(`sync/${id}/kiosk/basket-check`, body, { timeoutMs: CLOUD_CHECK_TIMEOUT_MS });
     if (reply.kind !== 'ok' || !reply.body || !Array.isArray(reply.body.lines)) return;
     const o = overridesOf(reply.body, Date.now());
     this.cloudBasket = o.gone.size > 0 || o.prices.size > 0 ? o : null;
     if (!reply.body.ok) void this.sync.pullCatalog(false).then(() => this.dirty()).catch(() => undefined);
+    if (reply.body.promotions?.changed) await within(this.sync.pullPromotions(), PROMOTIONS_PULL_TIMEOUT_MS);
   }
 
   private sideRequest(row: OutboxRow): { path: string; body: unknown } | null {
@@ -1308,8 +1322,23 @@ export class KioskService extends EventEmitter {
       cloudState: null,
       rejected: null,
     };
-    // "שלח למטבח לפני תשלום": this kiosk's own printer has the bon now ("ממתין לתשלום בקופה").
-    if (cfg.payment.cashAtTillKitchenBeforePay && order.fulfillmentMode === 'BON') {
+    // "שלח למטבח לפני תשלום": this kiosk's own printer has the bon ("ממתין לתשלום בקופה") — once the
+    // cloud has not refused the order (it may be offline: the bon prints all the same).
+    const kitchenFirst = cfg.payment.cashAtTillKitchenBeforePay && order.fulfillmentMode === 'BON';
+    order.kitchenSent = kitchenFirst;
+    const placed = await this.payAtTill.place(order);
+    if (placed.rejected === PRICE_CHANGED) {
+      // The cloud prices it otherwise: never placed. The catalog caught up, the customer shown the change.
+      this.payAtTill.forget(localId);
+      await within(this.sync.pullCatalog(false), CATALOG_CATCH_UP_MS);
+      this.dirty();
+      return { ok: false, reason: 'changed', changes: priceChangesOf(placed.refusedLines) };
+    }
+    if (placed.rejected) {
+      this.dirty();
+      return { ok: false, reason: 'rejected', message: `ההזמנה לא נקלטה (${placed.rejected}). אנא פנו לצוות.` };
+    }
+    if (kitchenFirst) {
       this.printQueue.enqueue(
         'bon',
         localId,
@@ -1330,14 +1359,11 @@ export class KioskService extends EventEmitter {
           printerName: null,
         }),
       );
-      order.kitchenSent = true;
     }
-    const placed = await this.payAtTill.place(order);
     if (cfg.printing.pickupSlip) {
       this.printQueue.enqueue('slip', localId, slipDoc({ businessName: this.business().companyName, pickupLabel: pickup.label, service: order.serviceType, itemCount: lines.reduce((n, l) => n + l.qty, 0), totalAgorot: orderDue(placed) }));
     }
     this.dirty();
-    if (placed.rejected) return { ok: false, reason: 'rejected', message: `ההזמנה לא נקלטה (${placed.rejected}). אנא פנו לצוות.` };
     return { ok: true, localId, pickupLabel: pickup.label, vouchers, dueAgorot: orderDue(placed), pending: placed.cloudState === null, code: orderCode(localId) };
   }
 
@@ -2100,4 +2126,18 @@ export class KioskService extends EventEmitter {
   parameterOn(key: string): boolean {
     return parameterOn(this.cloud.parameters()[key]);
   }
+}
+
+/** After the cloud refused an order's prices, the catalog is pulled for at most this long before the customer is asked again. */
+const CATALOG_CATCH_UP_MS = 8_000;
+
+/** [p], waited for at most [ms] (it goes on by itself after). */
+function within(p: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const id = setTimeout(resolve, ms);
+    void p.catch(() => undefined).then(() => {
+      clearTimeout(id);
+      resolve();
+    });
+  });
 }

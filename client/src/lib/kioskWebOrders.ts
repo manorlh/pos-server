@@ -378,6 +378,8 @@ export interface OpenOrder {
   cloudState: string | null;
   /** Refused for good ("invalid:…"): kept, never sent again. */
   rejected: string | null;
+  /** Refused as `price_changed`: the cloud's lines and prices (kiosk_basket_check.price_lines). */
+  refusedLines?: unknown[] | null;
 }
 
 /** The slip's code (and the QR on the screen): the till's scanner opens the order with it. */
@@ -385,8 +387,12 @@ export function orderCode(localId: string): string {
   return `KO:${localId}`;
 }
 
-/** The order as `POST /sync/{m}/kiosk/open-orders` takes it (KioskOpenOrderIn). */
-export function openOrderWire(o: OpenOrder): Record<string, unknown> {
+/**
+ * The order as `POST /sync/{m}/kiosk/open-orders` takes it (KioskOpenOrderIn). [customerWaiting]:
+ * sent while the customer waits for the slip — the cloud then refuses a basket it prices otherwise
+ * (`price_changed`), to be shown and asked again; never on a retry (the slip may be out).
+ */
+export function openOrderWire(o: OpenOrder, customerWaiting = false): Record<string, unknown> {
   const total = goodsAgorot(o.lines);
   const voucher = o.vouchers.reduce((s, v) => s + v.amountAgorot, 0);
   return {
@@ -417,7 +423,23 @@ export function openOrderWire(o: OpenOrder): Record<string, unknown> {
     })),
     kitchenSent: o.kitchenSent,
     state: 'open',
+    ...(customerWaiting ? { customerWaiting: true } : {}),
   };
+}
+
+/** The cloud's answer to `kiosk/open-orders`, read the same way by both kiosks. */
+export interface OpenOrdersAnswer {
+  accepted?: string[];
+  rejected?: Array<{ localId?: string; reason?: string; lines?: unknown }>;
+  states?: Record<string, { state?: string }>;
+}
+
+/** Each sent order as the cloud left it: taken (its state), refused (why, and the cloud's prices), or not named. */
+export function answeredOrder(o: OpenOrder, body: OpenOrdersAnswer | null | undefined): OpenOrder | null {
+  if ((body?.accepted ?? []).includes(o.localId)) return { ...o, cloudState: body?.states?.[o.localId]?.state ?? 'open' };
+  const refused = (body?.rejected ?? []).find((x) => (x.localId ?? '') === o.localId);
+  if (!refused) return null;
+  return { ...o, rejected: refused.reason ?? 'rejected', refusedLines: Array.isArray(refused.lines) ? refused.lines : null };
 }
 
 /** What the till takes for it. */

@@ -10,7 +10,10 @@ docs/SPEC_KIOSK.md §23):
 * a prepaid voucher redeemed on the kiosk pays part of it (pending), the till takes the rest;
   a redemption is never on two orders, never another machine's, never one given back;
 * the config: card / voucher / cash_at_till, a voucher never alone, bare cash still refused,
-  "איך תרצו לשלם?" always the last step.
+  "איך תרצו לשלם?" always the last step;
+* the cloud prices the basket again (base, a menu's price, choices by their group's rules, a
+  meal's upcharges): a new order it prices differently is refused with the lines while the
+  kiosk says its customer waits, and taken with the cloud's verdict on it otherwise.
 
 Runs on the in-memory SQLite world of tests/shift_world.py, through the router functions.
 """
@@ -22,8 +25,12 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+from decimal import Decimal
+
+from app.models.catalog_menu import CatalogMenu, CatalogMenuAssignment, CatalogMenuProduct
 from app.models.category import Category
 from app.models.kiosk import KioskOrder
+from app.models.menu import MealSlot, MealSlotOption, ModifierGroup, ModifierOption
 from app.models.pos_machine import PairingStatus, POSMachine
 from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherRedemption
 from app.models.product import CatalogLevel, Product
@@ -435,3 +442,135 @@ def test_the_dashboard_sees_where_an_order_stands_and_open_ones_are_not_sales(w)
     by = {r["localId"]: r for r in rows}
     assert by["open-1"]["payAtTill"] is True and by["open-1"]["openState"] == "open" and by["open-1"]["dueAgorot"] == 6200
     assert by["paid-1"]["openState"] == "paid" and by["paid-1"]["paidBy"] == "קופה 1 · דנה"
+
+# ── The cloud's price: the basket priced again ────────────────────────────────
+
+
+@pytest.fixture
+def m(w):
+    """Sauces (one free), a hotdog meal with a drink at +₪3, and a lunch menu selling the hotdog at ₪22."""
+    t = w.tenant.id
+    w.sauces = ModifierGroup(id=uuid.uuid4(), tenant_id=t, company_id=w.company.id, name="רטבים", kind="addon",
+                             free_count=1, allow_quantity=True, allow_pre=True, sort_order=0)
+    w.db.add(w.sauces)
+    w.db.flush()
+    w.chili = ModifierOption(id=uuid.uuid4(), group_id=w.sauces.id, name="צ'ילי", price=Decimal("2"), sort_order=0)
+    w.aioli = ModifierOption(id=uuid.uuid4(), group_id=w.sauces.id, name="איולי", price=Decimal("3"), sort_order=1)
+    w.db.add_all([w.chili, w.aioli])
+    w.meal = Product(
+        id=uuid.uuid4(), tenant_id=t, company_id=w.company.id, category_id=w.hotdog.category_id,
+        catalog_level=CatalogLevel.GLOBAL, name="ארוחת נקניקייה", price=40, sku="sku-meal",
+    )
+    w.db.add(w.meal)
+    w.db.flush()
+    w.db.add(ShopProductOverride(id=uuid.uuid4(), shop_id=w.shop.id, global_product_id=w.meal.id, is_listed=True))
+    w.slot = MealSlot(id=uuid.uuid4(), tenant_id=t, product_id=w.meal.id, name="שתייה", quantity=1, min_select=1, max_select=1)
+    w.db.add(w.slot)
+    w.db.flush()
+    w.db.add(MealSlotOption(id=uuid.uuid4(), slot_id=w.slot.id, product_id=w.drink.id, upcharge=Decimal("3"), is_default=True))
+    w.lunch = CatalogMenu(id=uuid.uuid4(), tenant_id=t, company_id=w.company.id, name="צהריים", channel="both", always=True)
+    w.db.add(w.lunch)
+    w.db.flush()
+    w.db.add(CatalogMenuProduct(id=uuid.uuid4(), menu_id=w.lunch.id, product_id=w.hotdog.id, sort_order=0, price=Decimal("22")))
+    w.db.add(CatalogMenuAssignment(id=uuid.uuid4(), tenant_id=t, menu_id=w.lunch.id, level="shop", target_id=w.shop.id))
+    w.db.commit()
+    return w
+
+
+def sauce(option, qty=1, pre=None):
+    return {"groupId": str(option.group_id), "optionId": str(option.id), "qty": qty, "pre": pre}
+
+
+def held(*lines):
+    """The till's held sale, as the kiosks write it (client/src/lib/kioskWebOrders.ts heldSaleCodec)."""
+    return {
+        "codec": json.dumps({
+            "cartId": "c1",
+            "lines": [
+                {
+                    "id": key, "quantity": qty, "unitPrice": unit, "discount": 0, "discountType": None, "notes": None,
+                    "product": json.dumps({"id": str(p.id), "cloudId": str(p.id), "name": p.name, "price": base}),
+                    "details": details,
+                }
+                for key, p, qty, unit, base, details in lines
+            ],
+        }),
+        "bon": {"mode": "routing", "printerId": None, "copies": 1},
+        "fulfillment": "BON",
+    }
+
+
+def test_a_basket_the_cloud_prices_the_same_is_taken(m):
+    # Two sauces, one free — the cheaper one (chili): the aioli's ₪3 is charged.
+    hotdog = (m.hotdog, 1, 2800, 2500, {"v": 1, "basePrice": 25, "modifiers": [sauce(m.aioli), sauce(m.chili)]})
+    drink = (m.drink, 2, 1200, 1200, None)
+    out = post(m, order(cart=held(("l1",) + hotdog, ("l2",) + drink), customerWaiting=True))
+    assert out["accepted"] == ["o-1"] and out["rejected"] == []
+    assert "priceCheck" not in row(m).cart
+
+
+def test_a_price_the_cloud_does_not_hold_is_refused_while_the_customer_is_at_the_kiosk(m):
+    before = m.db.query(KioskOrder).count()
+    cart = held(
+        # The aioli sent free, though the chili is the free one: the cloud charges ₪3.
+        ("l1", m.hotdog, 1, 2500, 2500, {"v": 1, "basePrice": 25, "modifiers": [sauce(m.aioli), sauce(m.chili)]}),
+        # A base price nobody set ("הרבה" doubles nothing here: no sauce).
+        ("l2", m.drink, 1, 500, 500, None),
+        ("l3", m.drink, 1, 1200, 1200, None),
+    )
+    out = post(m, order(cart=cart, customerWaiting=True), now=T0 + timedelta(minutes=2))
+    assert out["accepted"] == []
+    (refused,) = out["rejected"]
+    assert refused["localId"] == "o-1" and refused["reason"] == S.PRICE_CHANGED == "price_changed"
+    got = {l["key"]: (l["fromAgorot"], l["toAgorot"], l["reason"]) for l in refused["lines"]}
+    assert got == {"l1": (2500, 2800, "price"), "l2": (500, 1200, "price")}
+    assert m.db.query(KioskOrder).count() == before
+    # "הרבה" doubles a sauce's price before the free one is chosen; a group without "pre" ignores it.
+    extra = held(("l1", m.hotdog, 1, 2500 + 400, 2500, {"v": 1, "modifiers": [sauce(m.chili, pre="extra"), sauce(m.aioli)]}))
+    assert post(m, order("o-2", cart=extra, customerWaiting=True))["accepted"] == ["o-2"]
+
+
+def test_what_the_cloud_cannot_price_is_named(m):
+    gone = Product(id=uuid.uuid4(), tenant_id=m.tenant.id, company_id=m.company.id, category_id=m.hotdog.category_id,
+                   catalog_level=CatalogLevel.GLOBAL, name="מנה שנמחקה", price=30, sku="sku-gone")
+    other = ModifierOption(id=uuid.uuid4(), group_id=m.sauces.id, name="ישן", price=Decimal("1"), is_active=False)
+    m.db.add(other)
+    m.db.commit()
+    cart = held(
+        ("l1", gone, 1, 3000, 3000, None),
+        ("l2", m.hotdog, 1, 2600, 2500, {"v": 1, "modifiers": [sauce(other)]}),
+        ("l3", m.meal, 1, 4000, 4000, {"v": 1, "meal": {"productId": str(m.meal.id), "components": [
+            {"slotId": str(uuid.uuid4()), "productId": str(m.drink.id), "upcharge": 0, "modifiers": []}]}}),
+    )
+    (refused,) = post(m, order(cart=cart, customerWaiting=True))["rejected"]
+    got = {l["key"]: (l["toAgorot"], l["reason"]) for l in refused["lines"]}
+    assert got == {"l1": (None, "not_in_catalog"), "l2": (None, "choice_gone"), "l3": (None, "meal_changed")}
+
+
+def test_a_menus_price_and_a_meals_upcharge_are_the_clouds_too(m):
+    # "תפריטים": the hotdog at the lunch menu's ₪22 (or the catalog's ₪25), never another price.
+    meal = {"v": 1, "meal": {"productId": str(m.meal.id), "components": [
+        {"slotId": str(m.slot.id), "productId": str(m.drink.id), "upcharge": 3, "modifiers": []}]}}
+    cart = held(("l1", m.hotdog, 1, 2200, 2200, None), ("l2", m.hotdog, 1, 2500, 2500, None), ("l3", m.meal, 1, 4300, 4000, meal))
+    assert post(m, order(cart=cart, customerWaiting=True))["accepted"] == ["o-1"]
+    # The drink's +₪3 left out of the meal: refused with the cloud's ₪43.
+    cart = held(("l1", m.meal, 1, 4000, 4000, meal))
+    (refused,) = post(m, order("o-2", cart=cart, customerWaiting=True))["rejected"]
+    assert [(l["fromAgorot"], l["toAgorot"]) for l in refused["lines"]] == [(4000, 4300)]
+
+
+def test_an_order_whose_customer_may_hold_the_slip_is_taken_with_the_clouds_verdict(m):
+    cart = held(("l1", m.drink, 1, 500, 500, None))
+    # Placed ten minutes ago (the kiosk was offline): the customer holds the slip — taken, the verdict kept.
+    out = post(m, order(cart=cart, created=T0, customerWaiting=True), now=T0 + timedelta(minutes=10))
+    assert out["accepted"] == ["o-1"]
+    check = row(m).cart["priceCheck"]
+    assert check["ok"] is False and check["lines"][0]["toAgorot"] == 1200 and check["checkedAt"]
+    (listed_order,) = listed(m, now=T0 + timedelta(minutes=10))
+    assert listed_order["cart"]["priceCheck"]["lines"][0]["key"] == "l1"
+    # A retry, or a kiosk that does not say its customer waits (the Android kiosk today): taken, the verdict kept.
+    assert post(m, order("o-2", cart=cart))["accepted"] == ["o-2"]
+    assert row(m, "o-2").cart["priceCheck"]["ok"] is False
+    # A till on the shop's LAN already took the money: history, never refused.
+    paid_on_lan = order("o-3", cart=cart, state="paid", paidByName="קופה ראשית", paidTransactionId="tx-lan", customerWaiting=True)
+    assert post(m, paid_on_lan)["accepted"] == ["o-3"]

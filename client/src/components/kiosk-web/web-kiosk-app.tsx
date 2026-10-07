@@ -108,7 +108,7 @@ import {
   type KioskFlowRules,
   type KioskFlowState,
 } from '@/lib/kioskFlow';
-import { webSells, type WebKioskService, type WebKioskView } from '@/lib/kioskWebService';
+import { webSells, type BasketChange, type WebKioskService, type WebKioskView } from '@/lib/kioskWebService';
 import { payFlowEvent, type BridgePayProgress } from '@/lib/kioskBridge';
 import { dueAgorot as dueOf, goodsAgorot as goodsOf, newId, orderCode, voucherCodeOf, type OpenOrder, type VoucherLeg, type WebOrderLine } from '@/lib/kioskWebOrders';
 import { scannedVoucherCode } from '@/lib/kioskScan';
@@ -501,17 +501,25 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     dispatch({ type: 'paymentStarted' });
     const lines = orderLines(cartRef.current);
     const shownAgorot = goodsOf(lines);
-    const check = svc.checkBasket(
-      cartRef.current.map((l) => ({ key: l.key, productId: l.product.id, unitAgorot: lineUnitAgorot(l), qty: l.qty, options: orderOptionsOf(l), meal: orderMealOf(l) })),
-    );
-    if (check.changes.length > 0 && payRef.current.vouchers.length === 0) {
+    // What moved, shown before anything goes to the tills: the basket follows it, and the customer
+    // goes on from the basket (a voucher already taken goes back with the checkout, to be scanned again).
+    const showChanges = (list: readonly BasketChange[], totalAgorot: number | null) => {
       dispatch({ type: 'paymentDeclined' });
-      const removed = new Set(check.changes.filter((c) => c.kind === 'removed').map((c) => c.key));
-      const repriced = new Map(check.changes.flatMap((c) => (c.kind === 'repriced' ? [[c.key, c.to] as const] : [])));
+      const removed = new Set(list.filter((c) => c.kind === 'removed').map((c) => c.key));
+      const repriced = new Map(list.flatMap((c) => (c.kind === 'repriced' ? [[c.key, c.to] as const] : [])));
       setCart((c) => c.filter((l) => !removed.has(l.key)).map((l) => (repriced.has(l.key) ? { ...l, unit: (repriced.get(l.key) ?? 0) / 100, unitAgorot: repriced.get(l.key) ?? 0 } : l)));
-      const said = check.changes.map((c) => (c.kind === 'removed' ? words.t('basketRemoved', { name: c.name }) : words.t('basketRepriced', { name: c.name })));
-      if (check.totalAgorot !== shownAgorot) said.push(words.t('basketNewTotal', { total: formatMoney(check.totalAgorot / 100) }));
+      const said = list.map((c) => (c.kind === 'removed' ? words.t('basketRemoved', { name: c.name }) : words.t('basketRepriced', { name: c.name })));
+      if (totalAgorot !== null && totalAgorot !== shownAgorot) said.push(words.t('basketNewTotal', { total: formatMoney(totalAgorot / 100) }));
+      if (payRef.current.vouchers.length > 0) said.push(words.t('basketVouchersBack'));
       setChanges(said);
+    };
+    // Even after a voucher: the cloud's word first (kiosk/basket-check), then the catalog as it is now.
+    const check = await svc.checkBasket(
+      cartRef.current.map((l) => ({ key: l.key, productId: l.product.id, unitAgorot: lineUnitAgorot(l), qty: l.qty, options: orderOptionsOf(l), meal: orderMealOf(l) })),
+      shownAgorot,
+    );
+    if (check.changes.length > 0 || check.totalMoved) {
+      showChanges(check.changes, check.totalAgorot);
       return;
     }
     dispatch({ type: 'paymentCharging' });
@@ -527,6 +535,11 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
         vouchers: payRef.current.vouchers,
       })
       .catch((e: unknown) => ({ ok: false as const, reason: 'error' as const, message: e instanceof Error ? e.message : String(e) }));
+    // The cloud prices the basket otherwise (kiosk_open_orders): nothing went to the tills.
+    if (!r.ok && r.reason === 'changed') {
+      showChanges(r.changes, null);
+      return;
+    }
     if (!r.ok) {
       dispatch({ type: 'paymentDeclined' });
       setPayBlocked(r.message || words.t('placeFailed'));

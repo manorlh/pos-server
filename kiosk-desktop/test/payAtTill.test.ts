@@ -134,6 +134,36 @@ describe('"מזומן בקופה": the open order to the tills', () => {
     }
   });
 
+  it('the cloud prices it otherwise while the customer waits: nothing placed or printed, the change shown', async () => {
+    const { sent, answers, fetchFn } = fakeCloud();
+    // The cloud's own price of the burger (kiosk_basket_check.price_lines): ₪45, not the ₪42 here.
+    answers['POST sync/m/kiosk/open-orders'] = (b) => ({
+      status: 200,
+      body: { accepted: [], rejected: ((b?.orders ?? []) as Array<{ localId: string }>).map((o) => ({ localId: o.localId, reason: 'price_changed', lines: [{ key: 'L1', productId: 'p-burger', name: 'המבורגר', fromAgorot: 4200, toAgorot: 4500, reason: 'price' }] })) },
+    });
+    answers['GET sync/m/catalog'] = () => ({ status: 200, body: { syncType: 'delta', serverTime: 'y', products: [], categories: [] } });
+    const svc = kiosk(fetchFn, { methods: ['cash_at_till'], cashAtTillKitchenBeforePay: true });
+    try {
+      const r = await svc.placeOpenOrder({ ...basket(5200), vouchers: [] });
+      expect(r).toEqual({ ok: false, reason: 'changed', changes: [{ kind: 'repriced', productId: 'p-burger', name: 'המבורגר', key: 'L1', from: 4200, to: 4500 }] });
+      // Sent while the customer waited; forgotten (never retried); no bon, no slip; the catalog asked at once.
+      const posted = sent.filter((x) => x.path === 'sync/m/kiosk/open-orders');
+      expect((posted[0].body!.orders as Array<Record<string, unknown>>)[0].customerWaiting).toBe(true);
+      expect(svc.payAtTill.orders()).toEqual([]);
+      expect(svc.view().staff.unprintedBons).toBe(0);
+      expect(sent.some((x) => x.method === 'GET' && x.path.startsWith('sync/m/catalog'))).toBe(true);
+      // Asked again and taken: the kitchen's bon ("ממתין לתשלום בקופה") and the slip print now.
+      answers['POST sync/m/kiosk/open-orders'] = (b) => ({ status: 200, body: { accepted: ((b?.orders ?? []) as Array<{ localId: string }>).map((o) => o.localId) } });
+      const again = await svc.placeOpenOrder({ ...basket(5200), vouchers: [] });
+      expect(again.ok).toBe(true);
+      if (!again.ok) return;
+      expect(svc.printQueue.jobsFor(again.localId, 'bon')).toHaveLength(1);
+      expect(svc.payAtTill.order(again.localId)!.kitchenSent).toBe(true);
+    } finally {
+      svc.stop();
+    }
+  });
+
   it('offline: kept, the screen told it waits, sent with the next beat', async () => {
     const { sent, answers, fetchFn } = fakeCloud();
     answers['POST sync/m/kiosk/open-orders'] = () => 'offline';
@@ -145,7 +175,10 @@ describe('"מזומן בקופה": the open order to the tills', () => {
       answers['POST sync/m/kiosk/open-orders'] = (b) => ({ status: 200, body: { accepted: ((b?.orders ?? []) as Array<{ localId: string }>).map((o) => o.localId) } });
       await svc.payAtTill.flush();
       expect(svc.payAtTill.pending()).toBe(0);
-      expect(sent.filter((s) => s.path === 'sync/m/kiosk/open-orders')).toHaveLength(2);
+      const posted = sent.filter((s) => s.path === 'sync/m/kiosk/open-orders');
+      expect(posted).toHaveLength(2);
+      // The retry never says the customer waits: the slip may be in their hand (never refused for its prices).
+      expect(posted.map((p) => (p.body!.orders as Array<Record<string, unknown>>)[0].customerWaiting)).toEqual([true, undefined]);
     } finally {
       svc.stop();
     }

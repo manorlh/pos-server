@@ -394,6 +394,8 @@ export function KioskApp({ view }: { view: KioskView }) {
       const lines = changed.map((c) => (c.kind === 'removed' ? t('basketRemoved', { name: c.name }) : t('basketRepriced', { name: c.name })));
       // The new total, to confirm before anything is charged.
       if (typeof r.totalAgorot === 'number' && r.totalAgorot !== shownAgorot) lines.push(t('basketNewTotal', { total: formatMoney(r.totalAgorot / 100) }));
+      // Back to the basket: a voucher already taken goes back with the checkout, to be scanned again.
+      if (tillRef.current.vouchers.length > 0) lines.push(t('basketVouchersBack'));
       setChanges(lines.length > 0 ? lines : [t('basketNewTotal', { total: formatMoney((r.totalAgorot ?? shownAgorot) / 100) })]);
       return;
     }

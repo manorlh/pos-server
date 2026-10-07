@@ -16,12 +16,14 @@
  */
 
 import {
+  answeredOrder,
   openOrderWire,
   orderNeedsUpload,
   voucherAmount,
   voucherForfeits,
   voucherTake,
   type OpenOrder,
+  type OpenOrdersAnswer,
   type VoucherItem,
   type VoucherLeg,
   type VoucherTaken,
@@ -75,6 +77,13 @@ export class PayAtTill {
   private save(o: OpenOrder) {
     const all = this.d.kv.getJson<Record<string, OpenOrder>>(ORDERS) ?? {};
     all[o.localId] = o;
+    this.d.kv.setJson(ORDERS, all);
+  }
+
+  /** An order that never went out (the cloud refused its prices while the customer waited): gone. */
+  forget(localId: string) {
+    const all = this.d.kv.getJson<Record<string, OpenOrder>>(ORDERS) ?? {};
+    delete all[localId];
     this.d.kv.setJson(ORDERS, all);
   }
 
@@ -163,31 +172,27 @@ export class PayAtTill {
     return false;
   }
 
-  /** The order written, then sent; true when the cloud took it now (else it goes with the next beat). */
+  /**
+   * The order written, then sent while its customer waits (the cloud refuses a basket it prices
+   * otherwise: `price_changed`, with its prices); as the cloud left it (else it goes with the next beat).
+   */
   async place(o: OpenOrder): Promise<OpenOrder> {
     this.save(o);
-    await this.send([o]);
+    await this.send([o], true);
     return this.order(o.localId) ?? o;
   }
 
   /** To the cloud; true when it answered. Each order's state (or its refusal) is kept (kioskWebService.sendOrders). */
-  private async send(list: OpenOrder[]): Promise<boolean> {
+  private async send(list: OpenOrder[], customerWaiting = false): Promise<boolean> {
     const p = this.path('kiosk/open-orders');
     if (!p || list.length === 0) return false;
-    const r = await this.d.api.post<{ accepted?: string[]; rejected?: Array<{ localId?: string; reason?: string }>; states?: Record<string, { state?: string }> }>(
-      p,
-      { orders: list.map(openOrderWire) },
-      { timeoutMs: 12_000 },
-    );
+    const r = await this.d.api.post<OpenOrdersAnswer>(p, { orders: list.map((o) => openOrderWire(o, customerWaiting)) }, { timeoutMs: 12_000 });
     if (r.kind !== 'ok') return false;
-    const accepted = new Set(r.body?.accepted ?? []);
-    const rejected = new Map((r.body?.rejected ?? []).map((x) => [x.localId ?? '', x.reason ?? 'rejected']));
     for (const o of list) {
-      if (accepted.has(o.localId)) this.save({ ...o, cloudState: r.body?.states?.[o.localId]?.state ?? 'open' });
-      else if (rejected.has(o.localId)) {
-        this.d.log(`open order ${o.localId} refused: ${rejected.get(o.localId)}`);
-        this.save({ ...o, rejected: rejected.get(o.localId) ?? 'rejected' });
-      }
+      const next = answeredOrder(o, r.body);
+      if (!next) continue;
+      if (next.rejected) this.d.log(`open order ${o.localId} refused: ${next.rejected}`);
+      this.save(next);
     }
     return true;
   }

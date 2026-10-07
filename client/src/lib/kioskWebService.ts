@@ -25,6 +25,20 @@ import { KioskApi, pairWithCode, tokenRevoked, type ApiReply, type FetchFn, type
 import { applyCatalogPull, buildWebCatalog, configMediaUrls, sizedImage, type CatalogIn, type WebCatalog, type WebGroup } from './kioskWebCatalog';
 import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type MenuGroup, type OptionPick } from './kioskMoney';
 import {
+  CLOUD_CHECK_TIMEOUT_MS,
+  PRICE_CHANGED,
+  PROMOTIONS_PULL_TIMEOUT_MS,
+  checkedBasePrice,
+  cloudCheckRequest,
+  overridesLive,
+  overridesOf,
+  priceChangesOf,
+  totalChanged,
+  type CloudOverrides,
+  type CloudVerdict,
+} from './kioskBasketCheck';
+import {
+  answeredOrder,
   goodsAgorot,
   localDate,
   newId,
@@ -38,6 +52,7 @@ import {
   voucherForfeits,
   voucherTake,
   type OpenOrder,
+  type OpenOrdersAnswer,
   type VoucherItem,
   type VoucherLeg,
   type VoucherTaken,
@@ -52,6 +67,8 @@ export const CATALOG_MS = 60_000;
 export const FULL_SYNC_MS = 15 * 60_000;
 export const HELP_MS = 10 * 60_000;
 export const SHOP_PICKUP_TIMEOUT_MS = 3_000;
+/** After the cloud refused an order's prices, the catalog is pulled for at most this long before the customer is asked again. */
+export const CATALOG_CATCH_UP_MS = 8_000;
 
 export type WebKioskPhase = 'loading' | 'unpaired' | 'waiting' | 'kiosk';
 
@@ -154,7 +171,20 @@ export type VoucherResult =
 
 export type PlaceResult =
   | { ok: true; order: OpenOrder; dueAgorot: number; pending: boolean }
+  /** The cloud prices the basket otherwise (`price_changed`): nothing placed — shown, then asked again. */
+  | { ok: false; reason: 'changed'; changes: BasketChange[] }
   | { ok: false; reason: 'empty' | 'rejected' | 'error'; message: string };
+
+/** The pre-payment check's answer: what changed, the goods' total now, and whether the cloud had its say. */
+export interface BasketCheck {
+  changes: BasketChange[];
+  totalAgorot: number;
+  /** The goods' total moved (a promotion began or ended) though no line did. */
+  totalMoved: boolean;
+  source: 'cloud' | 'local';
+  /** The promotions changed in the cloud and were pulled first. */
+  promotions: boolean;
+}
 
 export interface PlaceInput {
   lines: WebOrderLine[];
@@ -231,6 +261,8 @@ export class WebKioskService {
   private parameters: Record<string, unknown> = {};
   private orders = new Map<string, OpenOrder>();
   private reversals = new Set<string>();
+  /** The cloud's word on the basket a moment ago (kioskBasketCheck.ts), until the catalog catches up. */
+  private cloudBasket: CloudOverrides | null = null;
   private help: HelpRequest | null = null;
   private flow: FlowReport = { flowState: 'attract', screen: 'attract', busy: false, idle: true };
   private loaded = false;
@@ -790,11 +822,49 @@ export class WebKioskService {
   }
 
   /**
-   * The basket against the catalog as it is now (core/basketCheck.ts): what went out, what changed
-   * price — each line priced with the shared money rules (kioskMoney.ts: charged choices, a meal's
-   * components on their defaults) — and the total after the promotions, as the till will charge it.
+   * The cloud's word on the basket before the order goes out (`POST /sync/{m}/kiosk/basket-check`,
+   * at most 3 s; the Android kiosk's KioskViewModel.cloudBasketCheck): what is no longer sold here
+   * and the base prices now, kept as overrides for the check that follows; a difference pulls the
+   * catalog; a changed set of promotions is pulled now (true). Offline, or no answer in time:
+   * nothing — the kiosk's own catalog and promotions decide.
    */
-  checkBasket(
+  private async cloudBasketCheck(lines: ReadonlyArray<{ productId: string; qty?: number }>): Promise<boolean> {
+    if (!this.creds || this.offline || lines.length === 0) return false;
+    const byId = new Map(this.view().catalog.products.map((p) => [p.id, p]));
+    const body = cloudCheckRequest(lines, (id) => byId.get(id)?.priceAgorot, this.promotions.etag);
+    const raw = await this.api.post<CloudVerdict>(this.machinePath('kiosk/basket-check'), body, { timeoutMs: CLOUD_CHECK_TIMEOUT_MS });
+    // A slow answer is not an outage: only an answer goes through `seen`.
+    if (raw.kind === 'offline') return false;
+    const r = await this.seen(raw);
+    if (r.kind !== 'ok' || !r.body || !Array.isArray(r.body.lines)) return false;
+    const o = overridesOf(r.body, this.now());
+    this.cloudBasket = o.gone.size > 0 || o.prices.size > 0 ? o : null;
+    if (!r.body.ok) void this.pullCatalog(false).catch(() => undefined);
+    if (r.body.promotions?.changed) {
+      await this.within(this.pullPromotions(), PROMOTIONS_PULL_TIMEOUT_MS);
+      return true;
+    }
+    return false;
+  }
+
+  /** [p], waited for at most [ms] (it goes on by itself after). */
+  private within(p: Promise<unknown>, ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const id = this.setTimer(resolve, ms);
+      void p.catch(() => undefined).then(() => {
+        this.clearTimer(id);
+        resolve();
+      });
+    });
+  }
+
+  /**
+   * The basket before the order goes out (kioskBasketCheck.ts) — even after a voucher: the cloud's
+   * word first, then against the catalog as it is now: what went out, what changed price — each
+   * line priced with the shared money rules (kioskMoney.ts: charged choices, a meal's components on
+   * their defaults) — and the total after the promotions, as the till will charge it.
+   */
+  async checkBasket(
     lines: ReadonlyArray<{
       key: string;
       productId: string;
@@ -803,25 +873,31 @@ export class WebKioskService {
       options: ReadonlyArray<{ groupId: string; optionId: string; qty?: number; pre?: 'lite' | 'extra' | 'side' | null }>;
       meal?: { components: ReadonlyArray<{ slotId: string; productId: string }> } | null;
     }>,
-    now = new Date(this.now()),
-  ): { changes: BasketChange[]; totalAgorot: number } {
+    shownAgorot: number | null = null,
+    now: Date | null = null,
+  ): Promise<BasketCheck> {
+    const promotions = await this.cloudBasketCheck(lines).catch(() => false);
+    const cloud = overridesLive(this.cloudBasket, this.now());
     const v = this.view();
     const byId = new Map(v.catalog.products.map((p) => [p.id, p]));
+    const sold = (id: string) => {
+      const p = byId.get(id);
+      return p && !p.soldOut && !cloud?.gone.has(id) ? p : null;
+    };
     const changes: BasketChange[] = [];
     const priced: Array<{ key: string; productId: string; categoryId: string | null; unitAgorot: number; qty: number; noDiscount: boolean }> = [];
     for (const l of lines) {
-      const p = byId.get(l.productId);
+      const p = sold(l.productId);
       const slots = v.catalog.meals[l.productId] ?? [];
       const parts = l.meal?.components ?? [];
       const brokenMeal = parts.some((c) => {
         const slot = slots.find((s) => s.id === c.slotId);
-        const cp = byId.get(c.productId);
-        return !slot || !slot.choices.some((x) => x.productId === c.productId) || !cp || cp.soldOut;
+        return !slot || !slot.choices.some((x) => x.productId === c.productId) || !sold(c.productId);
       });
       const groups = (p ? (v.catalog.groups[p.id] ?? []) : []).map(webMoneyGroup);
       const missing = l.options.some((o) => !groups.find((g) => g.id === o.groupId)?.options.some((x) => x.id === o.optionId));
-      if (!p || p.soldOut || brokenMeal || missing) {
-        changes.push({ kind: 'removed', productId: l.productId, name: p?.name ?? '', key: l.key });
+      if (!p || brokenMeal || missing) {
+        changes.push({ kind: 'removed', productId: l.productId, name: byId.get(l.productId)?.name ?? '', key: l.key });
         continue;
       }
       const picks: Record<string, OptionPick[]> = {};
@@ -830,7 +906,7 @@ export class WebKioskService {
         const pre = g.allowPre && (o.pre === 'lite' || o.pre === 'extra' || o.pre === 'side') ? o.pre : null;
         (picks[g.id] ??= []).push({ optionId: o.optionId, qty: Math.max(1, Math.trunc(o.qty ?? 1)), pre });
       }
-      let unit = p.priceAgorot + chosenOptions(groups, picks).reduce((s, o) => s + o.chargedAgorot, 0);
+      let unit = checkedBasePrice(p.id, p.priceAgorot, cloud) + chosenOptions(groups, picks).reduce((s, o) => s + o.chargedAgorot, 0);
       for (const c of parts) {
         const slot = slots.find((s) => s.id === c.slotId)!;
         const cg = (v.catalog.groups[c.productId] ?? []).map(webMoneyGroup);
@@ -842,9 +918,9 @@ export class WebKioskService {
     const basket = priceKioskBasket(
       priced.map((x) => ({ id: x.key, productIds: [x.productId], categoryId: x.categoryId, unitAgorot: x.unitAgorot, qty: x.qty, noDiscount: x.noDiscount })),
       promotionsOf(v.catalog.promotions),
-      localDateTimeOf(now),
+      localDateTimeOf(now ?? new Date(this.now())),
     );
-    return { changes, totalAgorot: basket.totalAgorot };
+    return { changes, totalAgorot: basket.totalAgorot, totalMoved: totalChanged(shownAgorot, basket.totalAgorot), source: cloud ? 'cloud' : 'local', promotions };
   }
 
   /* --------------------------------------------------------------- vouchers */
@@ -1002,9 +1078,20 @@ export class WebKioskService {
     if (cfg.payment.cashAtTillKitchenBeforePay) order.kitchenSent = await this.relayBon(order);
     this.orders.set(localId, order);
     await this.deps.store.set(`${KV.orderPrefix}${localId}`, order);
-    const sent = await this.sendOrders([order]);
+    const sent = await this.sendOrders([order], true);
     const now2 = this.orders.get(localId) ?? order;
     this.dirty();
+    if (now2.rejected === PRICE_CHANGED) {
+      // The cloud prices it otherwise: never placed. Forgotten (unless the kitchen has its bon — then
+      // the staff screen keeps it), the catalog caught up, and the customer shown the change.
+      if (!now2.kitchenSent) {
+        this.orders.delete(localId);
+        await this.deps.store.del(`${KV.orderPrefix}${localId}`);
+      }
+      await this.within(this.pullCatalog(false), CATALOG_CATCH_UP_MS);
+      this.dirty();
+      return { ok: false, reason: 'changed', changes: priceChangesOf(now2.refusedLines).map((c) => ({ ...c, key: c.key ?? '' })) };
+    }
     if (now2.rejected) {
       return { ok: false, reason: 'rejected', message: `ההזמנה לא נקלטה (${now2.rejected}). אנא פנו לצוות.` };
     }
@@ -1047,22 +1134,21 @@ export class WebKioskService {
     return ok;
   }
 
-  /** To the cloud; true when it answered. Each order's state (or its refusal) is kept. */
-  private async sendOrders(list: OpenOrder[]): Promise<boolean> {
+  /**
+   * To the cloud; true when it answered. Each order's state (or its refusal) is kept. [customerWaiting]:
+   * the first sending, while the customer waits for the slip (openOrderWire).
+   */
+  private async sendOrders(list: OpenOrder[], customerWaiting = false): Promise<boolean> {
     if (!this.creds || list.length === 0) return false;
-    const r = await this.seen(await this.api.post<{ accepted?: string[]; rejected?: Array<{ localId?: string; reason?: string }>; states?: Record<string, { state?: string }> }>(
+    const r = await this.seen(await this.api.post<OpenOrdersAnswer>(
       this.machinePath('kiosk/open-orders'),
-      { orders: list.map(openOrderWire) },
+      { orders: list.map((o) => openOrderWire(o, customerWaiting)) },
       { timeoutMs: 12_000 },
     ));
     if (r.kind !== 'ok') return false;
-    const accepted = new Set(r.body?.accepted ?? []);
-    const rejected = new Map((r.body?.rejected ?? []).map((x) => [x.localId ?? '', x.reason ?? 'rejected']));
     for (const o of list) {
-      const next = { ...o };
-      if (accepted.has(o.localId)) next.cloudState = r.body?.states?.[o.localId]?.state ?? 'open';
-      else if (rejected.has(o.localId)) next.rejected = rejected.get(o.localId) ?? 'rejected';
-      else continue;
+      const next = answeredOrder(o, r.body);
+      if (!next) continue;
       this.orders.set(o.localId, next);
       await this.deps.store.set(`${KV.orderPrefix}${o.localId}`, next);
     }

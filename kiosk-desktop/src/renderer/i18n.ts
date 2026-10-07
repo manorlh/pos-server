@@ -37,6 +37,7 @@ export const LIVE: Record<string, string> = {
   basketRemoved: 'אזל מאז שהוזמן והוסר: {name}',
   basketRepriced: 'המחיר עודכן: {name}',
   basketNewTotal: 'הסכום לתשלום עכשיו: {total}',
+  basketVouchersBack: 'השובר הוחזר — אפשר לסרוק אותו שוב בתשלום',
   basketOk: 'הבנתי, להמשיך',
   helpSent: 'קראנו לצוות — מישהו יגיע אליכם בקרוב',
   setupTitle: 'מכינים את הקיוסק',
