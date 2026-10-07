@@ -42,6 +42,10 @@ The rules, and why:
   same rules as the till's): stacking, promotions and uses are checked at reserve (and a
   breach refused), and checked again at confirm — where the sale is already a fiscal
   document, so a breach is recorded and flagged (`flags`, the audit trail), never refused.
+* **Every product type** (§7.14): one rule ([usability]) says what may go on a batch and why
+  not — for the dashboard's pickers (every product shown, with its reason), the save and the
+  redemption. A weighed product goes on goods by weight ("0.5 ק״ג", quantities to the gram);
+  a batch may "include extras" (paid options, a meal's upcharges) or cover the base price.
 * **Clients that predate kinds** (the web and Windows kiosks today) do not say they can
   apply a discount (`supportedKinds`): to them a discount voucher is not redeemable
   (`prepaid_voucher_kind_unsupported`, with a Hebrew message), and a redemption of one is
@@ -51,8 +55,9 @@ from __future__ import annotations
 
 import secrets
 import uuid
-from collections import Counter, OrderedDict
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Dict, Iterable, List, Optional
 
 from fastapi import HTTPException, status
@@ -112,6 +117,11 @@ PARTIAL_NOT_ALLOWED = "prepaid_voucher_partial_not_allowed"
 INSUFFICIENT = "prepaid_voucher_insufficient"
 ITEM_NOT_ON_VOUCHER = "prepaid_voucher_item_not_on_voucher"
 REQUEST_CONFLICT = "prepaid_voucher_request_conflict"
+# Every product type (docs/SPEC_VOUCHER_PRODUCTION.md §7.14): a fraction of a product sold by
+# the piece (400, the form and the till's redeem), and an item whose product can no longer be
+# carried (409 at redemption — it became the general item, or left the batch's company group).
+QUANTITY_FRACTION = "prepaid_voucher_quantity_fraction"
+ITEM_UNUSABLE = "prepaid_voucher_item_unusable"
 # Groups.
 GROUP_NOT_FOUND = "prepaid_voucher_group_not_found"
 ALREADY_GROUPED = "prepaid_voucher_already_grouped"
@@ -295,37 +305,261 @@ def _related_companies(db: Session, company_id) -> set:
     }
 
 
-def _eligible(p: Optional[Product], tenant_id, related: set) -> bool:
-    """A product a voucher may carry: a plain catalog product of the batch's company group."""
-    return (
-        p is not None
-        and str(p.tenant_id) == str(tenant_id)
-        and p.catalog_level == CatalogLevel.GLOBAL
-        and p.pos_machine_id is None
-        and not bool(getattr(p, "is_general", False))
-        and not bool(getattr(p, "is_weighed", False))
-        and (p.company_id is None or str(p.company_id) in related)
+# ── What a voucher may carry — every product type (docs/SPEC_VOUCHER_PRODUCTION.md §7.14) ──
+
+#: The purposes a product is picked for: a goods voucher's item, an item discount's target.
+#: (An order discount takes every line of the sale; it picks nothing.)
+PURPOSE_GOODS = "items"
+PURPOSE_ITEM_DISCOUNT = "item_discount"
+PURPOSES = (PURPOSE_GOODS, PURPOSE_ITEM_DISCOUNT)
+
+#: Why a product cannot be used for a purpose: the picker's badge, and the save's refusal
+#: (`prepaid_voucher_product_<reason>`, 400). The picker shows every product — the owner sees
+#: why one cannot go on the voucher instead of not finding it.
+BLOCK_GENERAL = "general"              # "פריט כללי": no identity — not goods, not an item discount's
+BLOCK_OPEN_PRICE = "open_price"        # goods: an open price has no defined value
+BLOCK_NO_DISCOUNT = "no_discount"      # item discount: "לא מקבל הנחות" takes no discount, ever
+BLOCK_OTHER_COMPANY = "other_company"  # not of the batch's company group
+BLOCK_TILL_SHOP = "till_shop"          # a till's own product, of a shop the voucher is not for
+
+#: What the owner should know about a product that can be used (a badge, never a refusal).
+NOTE_WEIGHED = "weighed"            # sold by weight: the voucher says "0.5 ק״ג"; discounts per kg, pro rata
+NOTE_OPTIONS = "options"            # has options: the base price is covered, paid options charged ("כולל תוספות" covers them)
+NOTE_MEAL = "meal"                  # a meal: its price is covered, upcharges charged (unless "כולל תוספות")
+NOTE_OPEN_PRICE = "open_price"      # item discount: a percent, or a fixed amount up to the line
+NOTE_KIOSK_ONLY = "kiosk_only"      # sold at kiosks only: redeemed there
+NOTE_POS_ONLY = "pos_only"          # sold at tills only: redeemed there
+NOTE_TICKET = "ticket"              # prints its ticket ("שובר לכל יחידה") as on any sale
+NOTE_GIFT_VOUCHER = "gift_voucher"  # prints a gift voucher as on any sale
+NOTE_NOT_LISTED = "not_listed"      # not listed in any shop of the voucher yet: redeemed once it is
+NOTE_TILL_MADE = "till_made"        # made on a till: sold where that till's shop sells it
+NOTE_UNAVAILABLE = "unavailable"    # locked ("לא זמין") right now
+
+
+def product_refusal(reason: str) -> str:
+    """The save's 400 detail for a product that cannot be used ([BLOCK_GENERAL] …)."""
+    return f"prepaid_voucher_product_{reason}"
+
+
+#: A weighed item's quantity on a goods voucher: thousandths of a unit at most.
+QTY_PLACES = Decimal("0.001")
+
+
+def qty(value) -> Decimal:
+    """A goods quantity as stored (JSON number or Decimal) → Decimal, thousandths."""
+    if value is None:
+        return Decimal(0)
+    return Decimal(str(value)).quantize(QTY_PLACES, rounding=ROUND_HALF_UP)
+
+
+def qty_out(value):
+    """A quantity as the API and JSON columns carry it: an int when whole (every voucher before
+    weighed items), else a float of at most three decimals ("0.5")."""
+    d = qty(value)
+    return int(d) if d == d.to_integral_value() else float(d)
+
+
+def qty_text(value) -> str:
+    """"2", "0.5", "1.25" — no trailing zeros."""
+    d = qty(value)
+    return str(int(d)) if d == d.to_integral_value() else format(d.normalize(), "f")
+
+
+#: What a weighed item without a unit of its own is counted in.
+DEFAULT_WEIGHT_UNIT = 'ק"ג'
+
+
+def item_text(quantity, name: str, unit_label: Optional[str] = None, weighed: bool = False) -> str:
+    """One goods line as printed: "2× נקניקייה", or by weight "0.5 ק״ג זיתים"."""
+    if weighed:
+        return f"{qty_text(quantity)} {unit_label or DEFAULT_WEIGHT_UNIT} {name}"
+    return f"{qty_text(quantity)}× {name}"
+
+
+def _owner_shop(db: Session, p: Product) -> Optional[Shop]:
+    """The shop a till's (or a shop's) own product belongs to; None for a catalog product."""
+    if p.pos_machine_id is not None:
+        machine = db.query(POSMachine).filter(POSMachine.id == p.pos_machine_id).first()
+        sid = machine.shop_id if machine is not None else None
+    else:
+        sid = p.shop_id
+    return db.query(Shop).filter(Shop.id == sid).first() if sid else None
+
+
+def _is_own_product(p: Product) -> bool:
+    """A product of one till / shop that is no catalog product's local copy."""
+    return p.catalog_level != CatalogLevel.GLOBAL and p.global_product_id is None
+
+
+def _product_facts(db: Session, tenant_id, products: List[Product], scope_shops: Optional[set]) -> Dict[str, Dict[str, Any]]:
+    """Per product: has options, is a meal, listed in a shop of the voucher, its owner shop."""
+    from app.models.menu import MealSlot
+    from app.services.menu import resolve_groups
+
+    ids = [p.id for p in products]
+    meals = {str(pid) for (pid,) in db.query(MealSlot.product_id).filter(MealSlot.product_id.in_(ids))} if ids else set()
+    listed: set = set()
+    if ids and scope_shops:
+        listed = {
+            str(pid)
+            for (pid,) in db.query(ShopProductOverride.global_product_id).filter(
+                ShopProductOverride.global_product_id.in_(ids),
+                ShopProductOverride.shop_id.in_([_as_uuid(s) for s in scope_shops]),
+                ShopProductOverride.is_listed.is_(True),
+            )
+        }
+    out: Dict[str, Dict[str, Any]] = {}
+    for p in products:
+        try:
+            groups, _ = resolve_groups(db, tenant_id, p)
+        except Exception:  # a menu layer the database does not have yet: no options
+            groups = []
+        own = _is_own_product(p)
+        out[str(p.id)] = {
+            "options": bool(groups),
+            "meal": str(p.id) in meals,
+            "listed": True if own else (str(p.id) in listed),
+            "owner": _owner_shop(db, p) if own else None,
+        }
+    return out
+
+
+def _scope_shops(db: Session, company_id, shop_ids) -> set:
+    """The shops a batch's vouchers are redeemed in: its shops, else every shop of its company group."""
+    if shop_ids:
+        return {str(s) for s in shop_ids}
+    group = [_as_uuid(c) for c in _company_group(db, company_id)]
+    return {str(s) for (s,) in db.query(Shop.id).filter(Shop.company_id.in_(group))}
+
+
+def usability(
+    p: Product,
+    *,
+    tenant_id,
+    company_id,
+    related: set,
+    group: set,
+    shop_ids: Optional[Iterable] = None,
+    facts: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Whether [p] can go on a batch of [company_id] — as a goods voucher's item and as an item
+    discount's target — and what the owner should know about it:
+    `{"goods": reason | None, "itemDiscount": reason | None, "notes": [...]}`.
+
+    One rule for the picker (badges), the save (refusals) and the redemption (re-check).
+    [related]: the company with its parents and children (whose catalog products may go on
+    it); [group]: the company and its children (whose shops redeem it).
+    """
+    from app.services import item_ticket
+
+    facts = facts or {}
+    notes: List[str] = []
+    company_block: Optional[str] = None
+    if _is_own_product(p):
+        # Made on a till (or a shop's own): its shop must be one the voucher is redeemed in.
+        owner = facts.get("owner")
+        owner_company = str(p.company_id) if p.company_id else (str(owner.company_id) if owner is not None else None)
+        if owner is None or owner_company not in group or str(owner.company_id) not in group:
+            company_block = BLOCK_OTHER_COMPANY
+        elif shop_ids and str(owner.id) not in {str(s) for s in shop_ids}:
+            company_block = BLOCK_TILL_SHOP
+        notes.append(NOTE_TILL_MADE)
+    elif p.company_id is not None and str(p.company_id) not in related:
+        company_block = BLOCK_OTHER_COMPANY
+    general = bool(getattr(p, "is_general", False))
+    open_price = bool(getattr(p, "is_open_price", False))
+    goods = company_block or (BLOCK_GENERAL if general else BLOCK_OPEN_PRICE if open_price else None)
+    item = company_block or (
+        BLOCK_GENERAL if general else BLOCK_NO_DISCOUNT if bool(getattr(p, "no_discount", False)) else None
     )
+    if bool(getattr(p, "is_weighed", False)):
+        notes.append(NOTE_WEIGHED)
+    if facts.get("meal"):
+        notes.append(NOTE_MEAL)
+    if facts.get("options"):
+        notes.append(NOTE_OPTIONS)
+    if open_price and not general:
+        notes.append(NOTE_OPEN_PRICE)
+    channel = (getattr(p, "sales_channel", None) or "all").lower()
+    if channel == "kiosk_only":
+        notes.append(NOTE_KIOSK_ONLY)
+    elif channel == "pos_only":
+        notes.append(NOTE_POS_ONLY)
+    try:
+        ticket = item_ticket.effective_mode(p) not in (None, "", "off") or int(getattr(p, "ticket_entries", None) or 1) > 1
+    except Exception:
+        ticket = False
+    if ticket:
+        notes.append(NOTE_TICKET)
+    if getattr(p, "voucher_id", None):
+        notes.append(NOTE_GIFT_VOUCHER)
+    if facts.get("listed") is False and not company_block:
+        notes.append(NOTE_NOT_LISTED)
+    if not bool(getattr(p, "is_available", True)):
+        notes.append(NOTE_UNAVAILABLE)
+    return {"goods": goods, "itemDiscount": item, "notes": notes}
 
 
-def _validate_products(db: Session, tenant_id, company_id, items) -> List[Product]:
+def _usable_for(u: Dict[str, Any], purpose: str) -> Optional[str]:
+    return u["itemDiscount"] if purpose == PURPOSE_ITEM_DISCOUNT else u["goods"]
+
+
+def _validate_products(
+    db: Session, tenant_id, company_id, items, *, purpose: str = PURPOSE_GOODS, shop_ids=None
+) -> List[Product]:
+    """
+    The batch's products, by [usability] for [purpose] — refused with why
+    (`prepaid_voucher_product_general` …). A goods quantity may be a fraction only for a
+    product sold by weight (`prepaid_voucher_quantity_fraction`).
+    """
     related = _related_companies(db, company_id)
+    group = _company_group(db, company_id)
     products: List[Product] = []
     for item in items:
         p = db.query(Product).filter(Product.id == item.product_id).first()
-        if not _eligible(p, tenant_id, related):
+        if p is None or str(p.tenant_id) != str(tenant_id) or (
+            p.catalog_level != CatalogLevel.GLOBAL and not _is_own_product(p)
+        ):
+            # Unknown, another tenant's, or a till's local copy of a catalog product.
             raise _http(status.HTTP_400_BAD_REQUEST, PRODUCT_INVALID)
+        facts = {"owner": _owner_shop(db, p)} if _is_own_product(p) else {}
+        reason = _usable_for(
+            usability(p, tenant_id=tenant_id, company_id=company_id, related=related, group=group,
+                      shop_ids=shop_ids, facts=facts),
+            purpose,
+        )
+        if reason is not None:
+            raise _http(status.HTTP_400_BAD_REQUEST, product_refusal(reason))
+        quantity = getattr(item, "quantity", None)
+        if quantity is not None and purpose == PURPOSE_GOODS:
+            q = qty(quantity)
+            if q != q.to_integral_value() and not bool(getattr(p, "is_weighed", False)):
+                raise _http(status.HTTP_400_BAD_REQUEST, QUANTITY_FRACTION)
         products.append(p)
     return products
 
 
 def eligible_products(
-    db: Session, user: User, tenant_id, company_id, search: Optional[str] = None, limit: int = 50
+    db: Session,
+    user: User,
+    tenant_id,
+    company_id,
+    search: Optional[str] = None,
+    limit: int = 50,
+    *,
+    purpose: str = PURPOSE_GOODS,
+    shop_ids: Optional[Iterable] = None,
 ) -> List[Dict[str, Any]]:
     """
-    The products a batch of [company_id] may carry — exactly what [_validate_products] accepts,
-    so the dashboard's picker never offers one the save then refuses (the owner, 07.10.2026:
-    a product of another company was offered and refused as "אינו מתאים").
+    Every product the owner may look for on a batch of [company_id], each with whether it can
+    be used — as goods and as an item discount's target — and why not, by [usability], the
+    save's own rule (the owner, 07.10.2026: "תוודא ששוברי הפקה תומכים בכל סוגי המוצרים
+    בקטלוג" — so the picker shows a product with its reason instead of hiding it).
+
+    The batch company's catalog products (and its parents' / children's, and the tenant's),
+    and the products made on tills of its shops. Searching also finds what another company
+    the user covers sells, marked as such. Usable ones for [purpose] first, then by name.
     """
     _require_role(user)
     company = db.query(Company).filter(Company.id == _as_uuid(company_id)).first()
@@ -333,25 +567,76 @@ def eligible_products(
         raise _http(status.HTTP_404_NOT_FOUND, COMPANY_NOT_FOUND)
     if not _covers_company(db, user, company.id):
         raise _http(status.HTTP_403_FORBIDDEN, FORBIDDEN)
+    purpose = purpose if isinstance(purpose, str) and purpose in PURPOSES else PURPOSE_GOODS
+    shop_ids = [str(s) for s in shop_ids if _as_uuid(s) is not None] if isinstance(shop_ids, (list, tuple, set)) else []
+    shop_ids = shop_ids or None
     related = _related_companies(db, company.id)
-    q = db.query(Product).filter(
+    group = _company_group(db, company.id)
+    limit = max(1, min(int(limit), 200))
+    text = (search or "").strip()
+
+    def searched(q):
+        if text:
+            like = f"%{text}%"
+            q = q.filter(Product.name.ilike(like) | Product.sku.ilike(like))
+        return q.order_by(Product.name).limit(limit)
+
+    globals_q = db.query(Product).filter(
         Product.tenant_id == tenant_id,
         Product.catalog_level == CatalogLevel.GLOBAL,
         Product.pos_machine_id.is_(None),
-        Product.is_general.is_(False),
-        Product.is_weighed.is_(False),
-        (Product.company_id.is_(None)) | (Product.company_id.in_([_as_uuid(c) for c in related])),
     )
-    text = (search or "").strip()
-    if text:
-        like = f"%{text}%"
-        q = q.filter(Product.name.ilike(like) | Product.sku.ilike(like))
-    rows = q.order_by(Product.name).limit(max(1, min(int(limit), 200))).all()
-    return [
-        {"id": str(p.id), "name": p.name, "price": float(p.price or 0), "sku": p.sku}
-        for p in rows
-        if _eligible(p, tenant_id, related)
+    if not text:
+        # Unsearched: the batch's own group. A search finds another company's too.
+        globals_q = globals_q.filter(
+            (Product.company_id.is_(None)) | (Product.company_id.in_([_as_uuid(c) for c in related]))
+        )
+    rows: List[Product] = [
+        p for p in searched(globals_q).all()
+        if p.company_id is None or str(p.company_id) in related or _covers_company(db, user, p.company_id)
     ]
+    # Made on a till (no catalog product behind it): of a shop the user sees.
+    visible = _visible_shop_ids(db, user, tenant_id)
+    for p in searched(
+        db.query(Product).filter(
+            Product.tenant_id == tenant_id,
+            Product.catalog_level != CatalogLevel.GLOBAL,
+            Product.global_product_id.is_(None),
+        )
+    ).all():
+        owner = _owner_shop(db, p)
+        if owner is not None and str(owner.id) in visible and (text or str(owner.company_id) in group):
+            rows.append(p)
+
+    facts = _product_facts(db, tenant_id, rows, _scope_shops(db, company.id, shop_ids))
+    out: List[Dict[str, Any]] = []
+    for p in rows:
+        f = facts.get(str(p.id), {})
+        u = usability(p, tenant_id=tenant_id, company_id=company.id, related=related, group=group,
+                      shop_ids=shop_ids, facts=f)
+        owner = f.get("owner")
+        company_name = None
+        if u["goods"] == BLOCK_OTHER_COMPANY:
+            cid = p.company_id or (owner.company_id if owner is not None else None)
+            company_name = db.query(Company.name).filter(Company.id == cid).scalar() if cid else None
+        out.append({
+            "id": str(p.id),
+            "name": p.name,
+            "price": float(p.price or 0),
+            "sku": p.sku,
+            "isWeighed": bool(p.is_weighed),
+            "unitLabel": (p.unit_label or DEFAULT_WEIGHT_UNIT) if p.is_weighed else p.unit_label,
+            "isOpenPrice": bool(p.is_open_price),
+            "isGeneral": bool(p.is_general),
+            # Why it cannot be used, per purpose (null: it can), and what to know about it.
+            "blocked": {"goods": u["goods"], "itemDiscount": u["itemDiscount"]},
+            "notes": u["notes"],
+            "shopName": owner.name if owner is not None else None,
+            "companyName": company_name,
+        })
+    key = "itemDiscount" if purpose == PURPOSE_ITEM_DISCOUNT else "goods"
+    out.sort(key=lambda r: (r["blocked"][key] is not None, (r["name"] or "").casefold()))
+    return out[:limit]
 
 def _eligible_category(c: Optional[Category], tenant_id, related: set) -> bool:
     """
@@ -394,16 +679,19 @@ def eligible_categories(db: Session, user: User, tenant_id, company_id) -> List[
     ]
 
 
-def _validate_targets(db: Session, tenant_id, company_id, targets) -> Dict[str, Any]:
+def _validate_targets(db: Session, tenant_id, company_id, targets, shop_ids=None) -> Dict[str, Any]:
     """
-    An item discount's products and categories, by the pickers' own rules ([_eligible],
-    [_eligible_category]), with their names as printed: `{productIds, categoryIds, names}`.
+    An item discount's products and categories, by the pickers' own rules ([usability] for an
+    item discount, [_eligible_category]), with their names as printed: `{productIds, categoryIds, names}`.
     """
     class _One:
         def __init__(self, pid):
             self.product_id = pid
 
-    products = _validate_products(db, tenant_id, company_id, [_One(p) for p in targets.product_ids])
+    products = _validate_products(
+        db, tenant_id, company_id, [_One(p) for p in targets.product_ids],
+        purpose=PURPOSE_ITEM_DISCOUNT, shop_ids=shop_ids,
+    )
     related = _related_companies(db, company_id)
     categories: List[Category] = []
     for cid in targets.category_ids:
@@ -449,7 +737,7 @@ def _issue(
     db: Session, batch: PrepaidVoucherBatch, count: int, group_size: Optional[int] = None
 ) -> List[PrepaidVoucher]:
     discount = is_discount(batch)
-    remaining = {} if discount else {str(i.product_id): int(i.quantity) for i in batch.items}
+    remaining = {} if discount else {str(i.product_id): qty_out(i.quantity) for i in batch.items}
     uses = int(batch.uses_per_voucher or 1) if discount else None
     codes = _unique_codes(db, count)
     start = int(batch.next_serial or 1)
@@ -534,11 +822,11 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
     if not _covers_company(db, user, company.id) and not shop_ids:
         # A shop manager makes batches for their own shop only.
         raise _http(status.HTTP_403_FORBIDDEN, FORBIDDEN)
-    products = _validate_products(db, tenant_id, company.id, body.items)
+    products = _validate_products(db, tenant_id, company.id, body.items, shop_ids=shop_ids)
     kind = getattr(body, "kind", None) or "items"
     discount = kind in RULES.DISCOUNT_KINDS
     targets = (
-        _validate_targets(db, tenant_id, company.id, body.targets)
+        _validate_targets(db, tenant_id, company.id, body.targets, shop_ids=shop_ids)
         if kind == "item_discount" and getattr(body, "targets", None) is not None else None
     )
     from app.schemas.prepaid_voucher import agorot
@@ -562,6 +850,8 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
         barcode_type=body.barcode_type or "qr",
         customer_name=body.customer_name,
         order_ref=body.order_ref,
+        # "כולל תוספות": goods cover the paid options and a meal's upcharges too (§7.14).
+        include_extras=bool(getattr(body, "include_extras", False)) and not discount,
         kind=kind,
         # Agorot for a fixed discount, basis points for a percent (₪ / % × 100 both).
         discount_type=body.discount_type if discount else None,
@@ -584,7 +874,10 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
             id=uuid.uuid4(),
             product_id=p.id,
             product_name=p.name,
-            quantity=item.quantity,
+            quantity=qty(item.quantity),
+            # Sold by weight: "0.5 ק״ג" on the paper, a fraction at the till.
+            weighed=bool(p.is_weighed),
+            unit_label=((p.unit_label or DEFAULT_WEIGHT_UNIT) if p.is_weighed else None),
             sort_order=n,
         )
         for n, (item, p) in enumerate(zip(body.items, products))
@@ -763,9 +1056,21 @@ def set_voucher_note(db: Session, user: User, tenant_id, voucher_id, note: Optio
 # ── Dashboard reads ───────────────────────────────────────────────────────────
 
 
+def _item_weighed(i: PrepaidVoucherBatchItem) -> bool:
+    return bool(getattr(i, "weighed", False))
+
+
 def _batch_items_out(batch: PrepaidVoucherBatch) -> List[Dict[str, Any]]:
     return [
-        {"productId": str(i.product_id), "name": i.product_name, "quantity": int(i.quantity)}
+        {
+            "productId": str(i.product_id),
+            "name": i.product_name,
+            "quantity": qty_out(i.quantity),
+            # Sold by weight: the quantity is in [unitLabel] ("0.5 ק״ג").
+            "weighed": _item_weighed(i),
+            "unitLabel": getattr(i, "unit_label", None),
+            "text": item_text(i.quantity, i.product_name, getattr(i, "unit_label", None), _item_weighed(i)),
+        }
         for i in batch.items
     ]
 
@@ -897,6 +1202,8 @@ def batch_out(db: Session, batch: PrepaidVoucherBatch, stats: Optional[Dict[str,
         "barcodeType": batch.barcode_type or "qr",
         "customerName": batch.customer_name,
         "orderRef": batch.order_ref,
+        # "כולל תוספות": goods cover the paid options and a meal's upcharges too (§7.14).
+        "includeExtras": bool(getattr(batch, "include_extras", False)),
         # Kind and terms (docs/SPEC_VOUCHER_PRODUCTION.md §7).
         **terms_out(batch),
     }
@@ -952,8 +1259,10 @@ def _remaining_out(batch: PrepaidVoucherBatch, voucher: PrepaidVoucher) -> List[
         {
             "productId": str(i.product_id),
             "name": i.product_name,
-            "quantity": int(i.quantity),
-            "remaining": int(rem.get(str(i.product_id), 0)),
+            "quantity": qty_out(i.quantity),
+            "remaining": qty_out(rem.get(str(i.product_id), 0)),
+            "weighed": _item_weighed(i),
+            "unitLabel": getattr(i, "unit_label", None),
         }
         for i in batch.items
     ]
@@ -1074,7 +1383,7 @@ def refusal_reason(db: Session, machine: POSMachine, voucher: PrepaidVoucher, no
     if is_discount(batch):
         if voucher.status == "used" or int(voucher.uses_left or 0) <= 0:
             return USED
-    elif voucher.status == "used" or not any(int(q) > 0 for q in (voucher.remaining or {}).values()):
+    elif voucher.status == "used" or not any(qty(q) > 0 for q in (voucher.remaining or {}).values()):
         return USED
     if batch.valid_from is not None and now < _utc(batch.valid_from):
         return NOT_YET_VALID
@@ -1125,9 +1434,16 @@ def _till_products(db: Session, machine: POSMachine, product_ids: Iterable[str])
             price = float(ovr.price)
         elif g is not None and g.price is not None:
             price = float(g.price)
+        listed = bool(ovr is not None and ovr.is_listed)
+        if g is not None and _is_own_product(g):
+            # A till's own product (no catalog product behind it): the till knows it by its
+            # cloud id, and sells it where it was made — that till, or that shop's.
+            listed = (str(g.pos_machine_id) == str(machine.id)) if g.pos_machine_id else (
+                g.shop_id is not None and str(g.shop_id) == str(machine.shop_id)
+            )
         out[pid] = {
             "tillProductId": str(loc.id) if loc is not None else pid,
-            "inAssortment": bool(ovr is not None and ovr.is_listed),
+            "inAssortment": listed,
             "price": price,
         }
     return out
@@ -1258,6 +1574,7 @@ def till_view(
     elif uses is not None and uses["today"] <= 0:
         reason = DAILY_LIMIT
     till = _till_products(db, machine, [str(i.product_id) for i in batch.items])
+    unusable = _goods_unusable(db, batch) if not is_discount(batch) else {}
     items = []
     for row in _remaining_out(batch, voucher):
         extra = till.get(row["productId"], {})
@@ -1269,6 +1586,14 @@ def till_view(
             "remaining": row["remaining"],
             "inAssortment": extra.get("inAssortment", False),
             "price": extra.get("price"),
+            # Sold by weight: a fraction ("0.5" ק״ג) may be taken. Older tills read none of this.
+            "weighed": row["weighed"],
+            "unitLabel": row["unitLabel"],
+            # Re-checked now: a product that became the general item (or left the batch's
+            # company group) since the batch was made is not handed over
+            # (`prepaid_voucher_item_unusable`).
+            "usable": unusable.get(row["productId"]) is None,
+            "unusableReason": unusable.get(row["productId"]),
         })
     return {
         "id": str(voucher.id),
@@ -1293,6 +1618,9 @@ def till_view(
         "batchId": str(batch.id),
         "kind": batch.kind or "items",
         "stacking": batch.stacking or "single",
+        # Goods: false — a dish's base price is covered and its paid options / a meal's
+        # upcharges are paid at the till; true ("כולל תוספות") — the whole line (§7.14).
+        "includeExtras": bool(getattr(batch, "include_extras", False)),
         "message": message,
         "benefit": benefit_for_till(db, machine, batch),
         "usesLeft": voucher.uses_left,
@@ -1311,19 +1639,53 @@ def lookup(
     return till_view(db, machine, voucher, supported_kinds)
 
 
-def _requested(db: Session, machine: POSMachine, batch: PrepaidVoucherBatch, items) -> "Counter[str]":
-    """The request's quantities per global product id; till ids are mapped back."""
+#: What the redemption re-checks: the product lost its identity (the general item) or left
+#: the batch's company group / shops. An open price is refused at the save only — a batch made
+#: before that rule, with such an item, is paper in customers' hands and keeps working.
+_REDEMPTION_BLOCKS = (BLOCK_GENERAL, BLOCK_OTHER_COMPANY, BLOCK_TILL_SHOP)
+
+
+def _goods_unusable(db: Session, batch: PrepaidVoucherBatch) -> Dict[str, Optional[str]]:
+    """
+    Per product of a goods batch, why it can no longer be handed over (it became the general
+    item, another company's …) — [usability] again, as at the save; None: it can.
+    """
+    ids = [i.product_id for i in batch.items]
+    if not ids:
+        return {}
+    related = _related_companies(db, batch.company_id)
+    group = _company_group(db, batch.company_id)
+    out: Dict[str, Optional[str]] = {}
+    for p in db.query(Product).filter(Product.id.in_(ids)):
+        facts = {"owner": _owner_shop(db, p)} if _is_own_product(p) else {}
+        reason = usability(
+            p, tenant_id=batch.tenant_id, company_id=batch.company_id, related=related, group=group,
+            shop_ids=batch.shop_ids, facts=facts,
+        )["goods"]
+        out[str(p.id)] = reason if reason in _REDEMPTION_BLOCKS else None
+    return out
+
+
+def _requested(db: Session, machine: POSMachine, batch: PrepaidVoucherBatch, items) -> Dict[str, Decimal]:
+    """
+    The request's quantities per global product id; till ids are mapped back. A fraction only
+    of an item sold by weight (`prepaid_voucher_quantity_fraction`).
+    """
     on_voucher = {str(i.product_id) for i in batch.items}
+    weighed = {str(i.product_id) for i in batch.items if _item_weighed(i)}
     till = _till_products(db, machine, on_voucher)
     by_any = {pid: pid for pid in on_voucher}
     by_any.update({v["tillProductId"]: pid for pid, v in till.items()})
-    wanted: "Counter[str]" = Counter()
+    wanted: Dict[str, Decimal] = {}
     for item in items:
         key = str(item.product_id).strip().lower()
         pid = by_any.get(key) or next((g for k, g in by_any.items() if k.lower() == key), None)
         if pid is None:
             raise _http(status.HTTP_400_BAD_REQUEST, ITEM_NOT_ON_VOUCHER)
-        wanted[pid] += int(item.quantity)
+        q = qty(item.quantity)
+        if q != q.to_integral_value() and pid not in weighed:
+            raise _http(status.HTTP_400_BAD_REQUEST, QUANTITY_FRACTION)
+        wanted[pid] = wanted.get(pid, Decimal(0)) + q
     return wanted
 
 
@@ -1361,25 +1723,31 @@ def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
         refusal = RULES.stacking_refusal(_vouchers_in_sale(db, machine, sale_ref), _in_sale(voucher))
         if refusal is not None:
             raise _http(status.HTTP_409_CONFLICT, refusal)
-    remaining = {k: int(v) for k, v in (voucher.remaining or {}).items()}
+    remaining = {k: qty(v) for k, v in (voucher.remaining or {}).items()}
     wanted = _requested(db, machine, batch, body.items)
-    for pid, qty in wanted.items():
-        if qty > remaining.get(pid, 0):
+    for pid, q in wanted.items():
+        if q > remaining.get(pid, Decimal(0)):
             raise _http(status.HTTP_409_CONFLICT, INSUFFICIENT)
+    # Re-checked at redemption as at the save (§7.14): an item whose product can no longer
+    # be carried (it became the general item, open-priced …) is not handed over.
+    unusable = _goods_unusable(db, batch)
+    if any(unusable.get(pid) for pid, q in wanted.items() if q > 0):
+        raise _http(status.HTTP_409_CONFLICT, ITEM_UNUSABLE)
 
     names = {str(i.product_id): i.product_name for i in batch.items}
     order = [str(i.product_id) for i in batch.items]
-    left = {pid: remaining.get(pid, 0) - wanted.get(pid, 0) for pid in remaining}
+    zero = Decimal(0)
+    left = {pid: remaining.get(pid, zero) - wanted.get(pid, zero) for pid in remaining}
     forfeited: List[Dict[str, Any]] = []
     if any(q > 0 for q in left.values()) and not batch.split_allowed:
         if not body.forfeit_rest:
             raise _http(status.HTTP_409_CONFLICT, PARTIAL_NOT_ALLOWED)
         forfeited = [
-            {"productId": pid, "name": names.get(pid), "quantity": left[pid]}
+            {"productId": pid, "name": names.get(pid), "quantity": qty_out(left[pid])}
             for pid in order
-            if left.get(pid, 0) > 0
+            if left.get(pid, zero) > 0
         ]
-        left = {pid: 0 for pid in left}
+        left = {pid: zero for pid in left}
 
     now = _now()
     redemption = PrepaidVoucherRedemption(
@@ -1395,14 +1763,15 @@ def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
         transaction_id=(body.transaction_id or None),
         sale_ref=sale_ref,
         items=[
-            {"productId": pid, "name": names.get(pid), "quantity": wanted[pid]}
+            {"productId": pid, "name": names.get(pid), "quantity": qty_out(wanted[pid])}
             for pid in order
             if wanted.get(pid)
         ],
         forfeited=forfeited or None,
         redeemed_at=now,
     )
-    voucher.remaining = left  # a new dict: JSON columns only notice reassignment
+    # A new dict (JSON columns only notice reassignment); ints stay ints, a weight "0.25".
+    voucher.remaining = {pid: qty_out(q) for pid, q in left.items()}
     voucher.status = "used" if not any(q > 0 for q in left.values()) else "partially_used"
     voucher.first_redeemed_at = voucher.first_redeemed_at or now
     voucher.last_redeemed_at = now
@@ -1441,12 +1810,12 @@ def reverse_redemption(db: Session, machine: POSMachine, redemption_id: str) -> 
         .first()
     )
     if redemption.reversed_at is None and voucher is not None:
-        remaining = {k: int(v) for k, v in (voucher.remaining or {}).items()}
+        remaining = {k: qty(v) for k, v in (voucher.remaining or {}).items()}
         for row in list(redemption.items or []) + list(redemption.forfeited or []):
             pid = str(row.get("productId"))
-            remaining[pid] = remaining.get(pid, 0) + int(row.get("quantity") or 0)
+            remaining[pid] = remaining.get(pid, Decimal(0)) + qty(row.get("quantity") or 0)
         now = _now()
-        voucher.remaining = remaining
+        voucher.remaining = {pid: qty_out(q) for pid, q in remaining.items()}
         if redemption.uses:
             # A discount voucher's use comes back as a use.
             voucher.uses_left = int(voucher.uses_left or 0) + int(redemption.uses)
@@ -1598,6 +1967,8 @@ def _basket(lines) -> List[RULES.BasketLine]:
             promotion=int(line.promotion_agorot),
             voucher=int(line.voucher_agorot),
             discountable=bool(line.discountable),
+            weighed=bool(getattr(line, "weighed", False)),
+            general=bool(getattr(line, "general", False)),
         )
         for line in lines or []
     ]

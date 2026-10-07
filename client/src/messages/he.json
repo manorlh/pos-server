@@ -5147,7 +5147,42 @@
       "barcodeCode128": "ברקוד קווי Code 128 (סורק לייזר)",
       "customerName": "לקוח (רשות)",
       "customerPlaceholder": "למשל: קייטרינג אלון",
-      "orderRef": "מס׳ הזמנה (רשות)"
+      "orderRef": "מס׳ הזמנה (רשות)",
+      "includeExtras": "כולל תוספות",
+      "includeExtrasOn": "השובר מכסה גם תוספות בתשלום ותוספות מחיר בארוחה.",
+      "includeExtrasOff": "השובר מכסה את מחיר הבסיס של המנה; תוספות בתשלום נגבות בקופה. תוספות חינם נשארות חינם.",
+      "weightQty": "כמות ב{unit}",
+      "weightHint": "נמכר במשקל — אפשר שבר (0.5)."
+    },
+    "eligibility": {
+      "blocked": {
+        "general": "פריט כללי — לא לשובר פריטים",
+        "generalItem": "פריט כללי — רק הנחה על כל העסקה",
+        "open_price": "מחיר פתוח — אין לו שווי קבוע לשובר פריטים",
+        "no_discount": "לא מקבל הנחות — שובר הנחה לא חל עליו",
+        "other_company": "של חברה אחרת — לא בקבוצת החברות של השובר",
+        "till_shop": "נוצר בקופה של סניף שאינו בשובר"
+      },
+      "notes": {
+        "weighed": "במשקל — כמות ב{unit}",
+        "weighedDiscount": "במשקל — ההנחה לכל {unit}, באופן יחסי",
+        "options": "עם תוספות — מחיר הבסיס; תוספות בתשלום נגבות (אלא אם \"כולל תוספות\")",
+        "optionsDiscount": "עם תוספות — ההנחה על המחיר בפועל, כולל התוספות",
+        "meal": "ארוחה — מחיר הארוחה; תוספות מחיר נגבות (אלא אם \"כולל תוספות\")",
+        "mealDiscount": "ארוחה — ההנחה על מחיר הארוחה בפועל",
+        "open_price": "מחיר פתוח — הנחה באחוזים, או קבועה עד מחיר השורה",
+        "kiosk_only": "נמכר בקיוסק בלבד — ימומש בקיוסק",
+        "pos_only": "נמכר בקופות בלבד — ימומש בקופה",
+        "ticket": "מדפיס כרטיס / שובר לכל יחידה כרגיל",
+        "gift_voucher": "מדפיס שובר מתנה כרגיל",
+        "not_listed": "לא משויך לסניפי השובר — ימומש רק אחרי שישויך",
+        "till_made": "נוצר בקופה ({shop})",
+        "till_made_plain": "נוצר בקופה",
+        "unavailable": "לא זמין כרגע"
+      },
+      "companyOf": "החברה: {name}",
+      "perUnit": "ל{unit}",
+      "searchHint": "חיפוש מציג גם מוצרים שאי אפשר לשים בשובר — עם הסיבה."
     },
     "layout": {
       "label": "גודל דף להדפסה",
@@ -5203,7 +5238,14 @@
       "prepaid_voucher_batch_cancelled": "הסדרה בוטלה",
       "prepaid_voucher_group_not_found": "הקבוצה לא נמצאה",
       "prepaid_voucher_already_grouped": "כל השוברים בסדרה כבר מחולקים לקבוצות",
-      "prepaid_voucher_not_grouped": "הסדרה לא חולקה לקבוצות"
+      "prepaid_voucher_not_grouped": "הסדרה לא חולקה לקבוצות",
+      "prepaid_voucher_product_general": "פריט כללי — אין לו זהות: לא לשובר פריטים ולא להנחה על פריט",
+      "prepaid_voucher_product_open_price": "מוצר במחיר פתוח — אין לו שווי קבוע לשובר פריטים",
+      "prepaid_voucher_product_no_discount": "מוצר שלא מקבל הנחות — הנחה על פריט לא תחול עליו",
+      "prepaid_voucher_product_other_company": "מוצר של חברה אחרת — לא בקבוצת החברות של השובר",
+      "prepaid_voucher_product_till_shop": "מוצר שנוצר בקופה של סניף שאינו בין סניפי השובר",
+      "prepaid_voucher_quantity_fraction": "כמות בשבר — רק למוצר שנמכר במשקל",
+      "prepaid_voucher_item_unusable": "פריט בשובר אינו ניתן למימוש עוד"
     },
     "zipAll": "ZIP — קובץ PDF לכל שובר",
     "fileServerPreparing": "מכין קובץ… (בשרת)",

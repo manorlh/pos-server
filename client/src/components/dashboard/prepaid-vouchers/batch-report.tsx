@@ -18,6 +18,7 @@ import {
   type PrepaidVoucherBatch,
 } from '@/lib/prepaidVouchersApi';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { DEFAULT_WEIGHT_UNIT } from '@/lib/prepaidVoucherProducts';
 import { formatDate, formatHour } from '@/lib/format';
 import type { ExcelSheet } from '@/lib/excelExport';
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
@@ -152,7 +153,10 @@ function sheetsOf(
         { header: t('col.outstanding'), kind: 'number' },
         { header: t('col.void'), kind: 'number' },
       ],
-      rows: r.products.map((p) => [p.name ?? '', p.perVoucher, p.issued, p.taken, p.forfeited, p.outstanding, p.void]),
+      rows: r.products.map((p) => [
+        p.weighed ? `${p.name ?? ''} (${p.unitLabel || DEFAULT_WEIGHT_UNIT})` : p.name ?? '',
+        p.perVoucher, p.issued, p.taken, p.forfeited, p.outstanding, p.void,
+      ]),
     },
     {
       name: t('sheet.byDay'),
@@ -286,7 +290,8 @@ export function PrepaidBatchReportView({ batch }: { batch: PrepaidVoucherBatch }
             <TableBody>
               {r.products.map((p) => (
                 <TableRow key={p.productId}>
-                  <TableCell>{p.name}</TableCell>
+                  {/* By weight: every figure of the row is in its unit ("זיתים (ק״ג)"). */}
+                  <TableCell>{p.weighed ? `${p.name} (${p.unitLabel || DEFAULT_WEIGHT_UNIT})` : p.name}</TableCell>
                   <TableCell className={NUM}>{p.perVoucher}</TableCell>
                   <TableCell className={NUM}>{p.issued}</TableCell>
                   <TableCell className={`${NUM} font-semibold`}>{p.taken}</TableCell>

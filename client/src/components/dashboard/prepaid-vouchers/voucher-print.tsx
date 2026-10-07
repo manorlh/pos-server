@@ -23,6 +23,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { formatDate, isoDate } from '@/lib/format';
 import type { PrepaidVoucher, PrepaidVoucherBatch } from '@/lib/prepaidVouchersApi';
 import { benefitText, isDiscountKind, termsOfBatch } from '@/lib/prepaidVoucherBenefit';
+import { quantityText } from '@/lib/prepaidVoucherProducts';
 import { code128Bars } from '@/lib/barcode128';
 
 export type PagePresetId = 'ticket80x50' | 'card86x54' | 'card54x86' | 'ticket80x120' | 'a6' | 'a4grid' | 'custom';
@@ -97,6 +98,8 @@ export interface VoucherLabels {
   /** A discount voucher's uses, instead of "one-time / in parts" ("שימוש אחד" / "3 שימושים"). */
   usesOne?: string;
   usesMany?: (n: number) => string;
+  /** Goods that cover paid options / a meal's upcharges too: "כולל תוספות" (§7.14). */
+  includeExtras?: string;
 }
 
 /** The small print: goods one-time / in parts, a discount voucher its uses (as the server's PDF). */
@@ -106,7 +109,8 @@ export function termsLine(batch: PrepaidVoucherBatch, labels: VoucherLabels): st
     if (n === 1 && labels.usesOne) return labels.usesOne;
     if (n > 1 && labels.usesMany) return labels.usesMany(n);
   }
-  return batch.splitAllowed ? labels.splitAllowed : labels.oneTime;
+  const terms = batch.splitAllowed ? labels.splitAllowed : labels.oneTime;
+  return batch.includeExtras && labels.includeExtras ? `${terms} · ${labels.includeExtras}` : terms;
 }
 
 function day(iso: string | null | undefined): string | null {
@@ -221,8 +225,9 @@ function VoucherCard({
       <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: mm(itemFont), lineHeight: 1.25 }}>
         {(benefit ? [] : batch.items).map((i) => (
           <li key={i.productId} style={{ display: 'flex', gap: mm(1.2 * s) }}>
-            <span style={{ fontWeight: 700, minWidth: mm(4 * s), direction: 'ltr', textAlign: 'end' }}>
-              {i.quantity}×
+            <span style={{ fontWeight: 700, minWidth: mm(4 * s), direction: i.weighed ? 'rtl' : 'ltr', textAlign: 'end' }}>
+              {/* "2×", or by weight "0.5 ק״ג" (§7.14) — as the server's PDF. */}
+              {quantityText(i.quantity, i.weighed, i.unitLabel)}
             </span>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.name}</span>
           </li>

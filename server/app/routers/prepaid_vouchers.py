@@ -36,7 +36,7 @@ POST   /sync/{machine_id}/prepaid-vouchers/reservations/{id}/release → give it
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
@@ -78,11 +78,22 @@ def list_prepaid_voucher_products(
     company_id: str = Query(..., alias="companyId"),
     search: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
+    purpose: str = Query("items"),
+    shop_ids: Optional[List[str]] = Query(None, alias="shopIds"),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    return {"items": PV.eligible_products(db, current_user, active_tenant_id, company_id, search, limit)}
+    """
+    Every product a batch of the company may be looking for, each with whether it can go on
+    it — as goods (`purpose=items`) and as an item discount's target — and why not (§7.14).
+    `shopIds`: the batch's shops so far (a till's own product is usable only for its shop).
+    """
+    return {
+        "items": PV.eligible_products(
+            db, current_user, active_tenant_id, company_id, search, limit, purpose=purpose, shop_ids=shop_ids,
+        )
+    }
 
 
 @router.get("/prepaid-vouchers/categories")

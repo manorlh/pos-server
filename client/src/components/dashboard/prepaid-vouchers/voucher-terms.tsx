@@ -14,7 +14,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Loader2, Plus, Search, X } from 'lucide-react';
+import { Loader2, Search, X } from 'lucide-react';
+import { PrepaidProductPickList } from '@/components/dashboard/prepaid-vouchers/product-pick-list';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
   PREPAID_KINDS,
@@ -105,17 +106,20 @@ function usePrepaidCategoryOptions(companyId: string): MultiSelectOption[] {
 }
 
 /**
- * The products an item discount is on: chips of what is chosen, and a search over what a batch
- * of [companyId] may carry (`GET /prepaid-vouchers/products` — the goods picker's list and the
- * save's rule, so nothing offered here is refused on save).
+ * The products an item discount is on: chips of what is chosen, and a search over every product a
+ * batch of [companyId] may be looking for (`GET /prepaid-vouchers/products?purpose=item_discount`,
+ * the save's rule): one an item discount cannot take is shown greyed with why ("לא מקבל הנחות"),
+ * so nothing offered is refused on save and nothing is silently missing (§7.14).
  */
-function TargetProductsPicker({ companyId, value, onChange }: {
+function TargetProductsPicker({ companyId, shopIds, value, onChange }: {
   companyId: string;
+  shopIds?: string[];
   value: PrepaidProductOption[];
   onChange: (next: PrepaidProductOption[]) => void;
 }) {
   const t = useTranslations('prepaidVouchers.kinds');
   const tc = useTranslations('prepaidVouchers.create');
+  const te = useTranslations('prepaidVouchers.eligibility');
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
   useEffect(() => {
@@ -123,8 +127,8 @@ function TargetProductsPicker({ companyId, value, onChange }: {
     return () => window.clearTimeout(id);
   }, [search]);
   const products = useQuery({
-    queryKey: ['prepaid-voucher-products', companyId, debounced],
-    queryFn: () => searchPrepaidProducts(debounced, companyId),
+    queryKey: ['prepaid-voucher-products', companyId, debounced, 'item_discount', shopIds ?? []],
+    queryFn: () => searchPrepaidProducts(debounced, companyId, { purpose: 'item_discount', shopIds }),
     enabled: !!companyId,
   });
   const chosen = new Set(value.map((p) => p.id));
@@ -149,28 +153,18 @@ function TargetProductsPicker({ companyId, value, onChange }: {
         <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={tc('searchProducts')} className="ps-8"
           disabled={!companyId} />
       </div>
-      <div className="max-h-36 overflow-y-auto rounded-lg border">
-        {!companyId ? (
-          <p className="p-2 text-xs text-muted-foreground">{tc('pickCompany')}</p>
-        ) : products.isPending ? (
-          <p className="p-2 text-xs text-muted-foreground">…</p>
-        ) : (products.data ?? []).length === 0 ? (
-          <p className="p-2 text-xs text-muted-foreground">{tc('noProducts')}</p>
-        ) : (
-          <ul>
-            {products.data!.map((p) => (
-              <li key={p.id}>
-                <button type="button" disabled={chosen.has(p.id)} onClick={() => onChange([...value, p])}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-start text-sm hover:bg-muted disabled:opacity-50">
-                  <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                  <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                  <span className="text-xs tabular-nums text-muted-foreground">₪{p.price.toFixed(2)}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+      <div className="max-h-44 overflow-y-auto rounded-lg border">
+        <PrepaidProductPickList
+          products={products.data}
+          purpose="item_discount"
+          chosen={chosen}
+          onPick={(p) => onChange([...value, p])}
+          pending={!!companyId && products.isPending}
+          pendingText="…"
+          emptyText={companyId ? tc('noProducts') : tc('pickCompany')}
+        />
       </div>
+      <p className="text-xs text-muted-foreground">{te('searchHint')}</p>
     </div>
   );
 }
@@ -179,6 +173,7 @@ function TargetProductsPicker({ companyId, value, onChange }: {
 export function DiscountTermsFields({
   kind,
   companyId,
+  shopIds,
   value,
   onChange,
   errors,
@@ -186,6 +181,8 @@ export function DiscountTermsFields({
   kind: PrepaidVoucherKind;
   /** The batch's company: what its products and categories may be (the save's rule). */
   companyId: string;
+  /** The batch's shops so far: a till's own product goes on a voucher of its shop only. */
+  shopIds?: string[];
   value: DiscountTermsState;
   onChange: (next: DiscountTermsState) => void;
   errors: DiscountDraftError[];
@@ -247,7 +244,7 @@ export function DiscountTermsFields({
       {kind === 'item_discount' ? (
         <div className="space-y-2">
           <p className="text-sm font-medium">{t('targets')}</p>
-          <TargetProductsPicker companyId={companyId} value={value.products} onChange={(products) => set({ products })} />
+          <TargetProductsPicker companyId={companyId} shopIds={shopIds} value={value.products} onChange={(products) => set({ products })} />
           <div className="space-y-1">
             <Label>{t('categories')}</Label>
             <EntityMultiSelect
