@@ -34,6 +34,7 @@ import {
   kioskOpenAt,
   messagePlacement,
   motionSpec,
+  profileMotion,
   resolveThemeColors,
   transitionSpec,
   stepMode,
@@ -93,6 +94,7 @@ import {
   ReachToggle,
   REACH_STRIP_PX,
   SuccessScreen,
+  useKioskRenderProfile,
 } from '@/kiosk-shared';
 import { configuredText, kioskTextOf, webTextOverride } from '@/lib/kioskTexts';
 import { localDateTimeOf, promotionsOf } from '@/lib/kioskMoney';
@@ -621,8 +623,11 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   const wide = size.w >= 600;
   const panel = cartPanelShown(cfg.theme, size.w);
   const side = cfg.theme.categoryLayout !== 'top';
-  const motion = motionSpec(cfg.theme, cfg.general, cfg.motion);
-  const transitions = transitionSpec(cfg.motion, cfg.general);
+  // "אפקטים": the config's profile, or this device's (prefers-reduced-motion, a slow first-frames probe).
+  const profile = useKioskRenderProfile(cfg.motion.effects);
+  const played = profileMotion(cfg.motion, profile);
+  const motion = motionSpec(cfg.theme, cfg.general, played);
+  const transitions = transitionSpec(played, cfg.general);
   const colors = resolveThemeColors(cfg.theme);
   // "גודל מוצרים" (layout.productSize) moves the density's columns.
   const cols = productColumns(catalogColumns(cfg.theme.gridDensity, wide, panel, side), layoutOf(cfg).productSize, size.w);
@@ -753,6 +758,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     panel,
     screen: band.top + band.bottom > 0 ? attractSize : size,
     ctaBox: attractBox,
+    light: profile === 'light',
     live,
     quickAdd: (p, from) => {
       const plain = (l: PLine) => l.product.id === p.id && l.extras.length === 0 && !l.note && (l.options?.length ?? 0) === 0;
@@ -897,7 +903,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     '--font-weight-black': String(weights.black),
   } as CSSProperties;
   const bgImage = cfg.theme.backgroundImage?.url;
-  const chrome = useMemo(() => chromeRoot({ cfg, c: colors }), [cfg, colors]);
+  const light = profile === 'light';
+  const chrome = useMemo(() => chromeRoot({ cfg, c: colors, light }), [cfg, colors, light]);
   const onAttractService = serviceOnAttract(cfgIn);
   const placed = pay.placed;
 

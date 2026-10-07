@@ -178,6 +178,11 @@ MOTION_SCREEN_CHANGE = ("slide", "fade", "zoom", "none")
 MOTION_SHEET = ("slide_up", "scale", "fade", "none")
 MOTION_ADD_TO_CART = ("fly", "bounce", "none")
 MOTION_SPEEDS = ("fast", "normal", "relaxed")
+#: "אפקטים" (`motion.effects`, the till's domain/KioskPerf.kt KioskPerfRules.EFFECTS): "auto" — the
+#: device decides (its strength; on the web kiosks prefers-reduced-motion or a slow-frame probe),
+#: "full" — every effect, "light" — the cheaper variant of each (no shadows, no cascade of cards,
+#: fades at the fast pace, none of the tech style's glow and scan line). Not a style's choice.
+MOTION_EFFECTS = ("auto", "full", "light")
 #: "כיתוב רץ" (config `ticker`): a slim strip whose texts scroll without end on the chosen screens,
 #: under the header ("top") or above the basket / action bar ("bottom"). The dashboard's
 #: src/lib/kioskConfig.ts TICKER_* and the till's domain/KioskTicker.kt mirror this.
@@ -446,6 +451,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "motion": {
         "categorySwitch": "slide", "itemsEnter": "cascade", "screenChange": "slide",
         "sheet": "scale", "addToCart": "fly", "speed": "normal",
+        # "אפקטים": the device decides (MOTION_EFFECTS); no style sets it.
+        "effects": "auto",
     },
     # "כיתוב רץ": off; once on, on the menu and the basket, under the header, slowly (readable),
     # in the theme's button colours (null), medium text; a finger on it does not stop it.
@@ -1179,6 +1186,7 @@ SCHEMA = Obj({
         "sheet": Enum(MOTION_SHEET),
         "addToCart": Enum(MOTION_ADD_TO_CART),
         "speed": Enum(MOTION_SPEEDS),
+        "effects": Enum(MOTION_EFFECTS),
     }),
     "ticker": Obj({
         "enabled": Bool(),
@@ -1346,6 +1354,7 @@ def limits() -> Dict[str, Any]:
             "motionSheet": list(MOTION_SHEET),
             "motionAddToCart": list(MOTION_ADD_TO_CART),
             "motionSpeed": list(MOTION_SPEEDS),
+            "motionEffects": list(MOTION_EFFECTS),
             "fonts": [f.id for f in FONT_CATALOG],
         },
         "textKeys": list(TEXT_KEYS),

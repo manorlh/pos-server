@@ -590,6 +590,14 @@ export const SCREEN_CHANGE_FX: ScreenChangeFx[] = ['slide', 'fade', 'zoom', 'non
 export const SHEET_FX: SheetFx[] = ['slide_up', 'scale', 'fade', 'none'];
 export const ADD_TO_CART_FX: AddToCartFx[] = ['fly', 'bounce', 'none'];
 export const MOTION_SPEEDS: MotionSpeed[] = ['fast', 'normal', 'relaxed'];
+/**
+ * "אפקטים" (`motion.effects`; the server's MOTION_EFFECTS, the till's KioskPerfRules.EFFECTS):
+ * "auto" — the device decides (the till by its strength; the web kiosks by prefers-reduced-motion
+ * and a short slow-frame probe), "full" — every effect, "light" — the cheaper variant of each
+ * (kioskRenderProfile, lightenMotion). Not a style's choice: no preset sets it.
+ */
+export type MotionEffects = 'auto' | 'full' | 'light';
+export const MOTION_EFFECTS: MotionEffects[] = ['auto', 'full', 'light'];
 
 export interface KioskMotionSettings {
   /** The dishes' grid when the customer picks another category (one category at a time). */
@@ -602,8 +610,10 @@ export interface KioskMotionSettings {
   sheet: SheetFx;
   /** "fly": the pop-and-fly into the basket; "bounce": only the basket button bounces. */
   addToCart: AddToCartFx;
-  /** Scales every duration above (fast 0.7, normal 1, relaxed 1.35). */
+  /** Scales every duration above (fast 0.75, normal 1, relaxed 1.35). */
   speed: MotionSpeed;
+  /** "אפקטים": everything, the cheaper variant of each, or the device decides (MotionEffects). */
+  effects: MotionEffects;
 }
 
 /**
@@ -877,7 +887,8 @@ export const KIOSK_DEFAULTS: KioskConfig = {
   upsell: { maxShown: 2 },
   success: { message: '', image: null },
   // The "wolt" style's (KIOSK_UI_PRESET_MOTION): the category slides in, its dishes pop in one after another.
-  motion: { categorySwitch: 'slide', itemsEnter: 'cascade', screenChange: 'slide', sheet: 'scale', addToCart: 'fly', speed: 'normal' },
+  // "אפקטים": the device decides.
+  motion: { categorySwitch: 'slide', itemsEnter: 'cascade', screenChange: 'slide', sheet: 'scale', addToCart: 'fly', speed: 'normal', effects: 'auto' },
   // "כיתוב רץ": off; once on, on the menu and the basket, under the header, slowly.
   ticker: {
     enabled: false,
@@ -1236,8 +1247,10 @@ export const KIOSK_UI_PRESET_CTA: Record<UiStyle, UiPresetCta> = {
   },
 };
 
-/** The "הנפשות ומעברים" keys a style decides (unless a layer sets them): all of them. */
+/** The "הנפשות ומעברים" keys a style decides (unless a layer sets them): all but "אפקטים" (the device's). */
 export const PRESET_MOTION_KEYS = ['categorySwitch', 'itemsEnter', 'screenChange', 'sheet', 'addToCart', 'speed'] as const;
+export type PresetMotionKey = (typeof PRESET_MOTION_KEYS)[number];
+export type UiPresetMotion = Pick<KioskMotionSettings, PresetMotionKey>;
 
 /**
  * Each style's transitions — the server's UI_PRESET_MOTION and the till's KioskMotionConfig.PRESETS.
@@ -1245,7 +1258,7 @@ export const PRESET_MOTION_KEYS = ['categorySwitch', 'itemsEnter', 'screenChange
  * add-to-cart stays the pop-and-fly everywhere (docs/SPEC_KIOSK.md §18), at normal speed (the owner: slow
  * enough to see the motion).
  */
-export const KIOSK_UI_PRESET_MOTION: Record<UiStyle, KioskMotionSettings> = {
+export const KIOSK_UI_PRESET_MOTION: Record<UiStyle, UiPresetMotion> = {
   ios: { categorySwitch: 'slide', itemsEnter: 'pop', screenChange: 'slide', sheet: 'slide_up', addToCart: 'fly', speed: 'normal' },
   wolt: { categorySwitch: 'slide', itemsEnter: 'cascade', screenChange: 'slide', sheet: 'scale', addToCart: 'fly', speed: 'normal' },
   classic: { categorySwitch: 'push', itemsEnter: 'pop', screenChange: 'fade', sheet: 'scale', addToCart: 'fly', speed: 'normal' },
@@ -1816,6 +1829,7 @@ export function validateKioskConfig(
       checkEnum(e, 'motion.sheet', mo.sheet, SHEET_FX);
       checkEnum(e, 'motion.addToCart', mo.addToCart, ADD_TO_CART_FX);
       checkEnum(e, 'motion.speed', mo.speed, MOTION_SPEEDS);
+      checkEnum(e, 'motion.effects', mo.effects, MOTION_EFFECTS);
     }
   }
 
@@ -2582,14 +2596,17 @@ export interface MotionSpec {
 }
 
 /**
- * The add never takes longer (the till's KioskMotion.ADD_MAX_MS): ~700 ms at normal speed (the
- * owner, 07.10.2026: slow enough to see), under a second at "relaxed".
+ * The add never takes longer (the till's KioskMotion.ADD_MAX_MS): ~560 ms at normal speed (the
+ * owner, 07.10.2026: seen, but never slow), under a second at "relaxed".
  */
 export const ADD_MAX_MS = 1000;
 export const ADD_POP_LIFT_DP = 18;
 export const ADD_END_SCALE = 0.25;
 export const ADD_END_ALPHA = 0.15;
 const ADD_FADE_FROM = 0.55;
+/** The pop-and-fly at normal speed (the till's KioskMotion.of; kiosk_motion_timings.json "add"): ~560 ms, the total counting in 360. */
+export const ADD_LIVELY: MotionSpec = { popMs: 160, popScale: 1.45, flyMs: 400, arcDp: 170, fadeMs: 0, bounce: 1.25, countUpMs: 360 };
+export const ADD_SUBTLE: MotionSpec = { popMs: 150, popScale: 1.3, flyMs: 380, arcDp: 110, fadeMs: 0, bounce: 1.12, countUpMs: 300 };
 
 /**
  * The add-to-cart motion by `theme.animation` (the till's KioskMotion, docs/SPEC_KIOSK.md §18):
@@ -2608,9 +2625,7 @@ export function motionSpec(
   if (add === 'none') return { popMs: 0, popScale: 1, flyMs: 0, arcDp: 0, fadeMs: 0, bounce: 0, countUpMs: 0 };
   if (general.reduceMotion) return { popMs: 0, popScale: 1, flyMs: 0, arcDp: 0, fadeMs: 280, bounce: 0, countUpMs: 0 };
   const lively = theme.animation === 'lively';
-  const base: MotionSpec = lively
-    ? { popMs: 200, popScale: 1.45, flyMs: 500, arcDp: 170, fadeMs: 0, bounce: 1.25, countUpMs: 450 }
-    : { popMs: 180, popScale: 1.3, flyMs: 460, arcDp: 110, fadeMs: 0, bounce: 1.12, countUpMs: 360 };
+  const base: MotionSpec = lively ? { ...ADD_LIVELY } : { ...ADD_SUBTLE };
   const k = speedFactor(motion?.speed);
   // "קפיצה": no copy flies, the basket button bounces (harder) and the total counts up.
   const countUpMs = Math.round(base.countUpMs * k);
@@ -2623,13 +2638,12 @@ export function motionSpec(
 /* ------------------------------------------------- "הנפשות ומעברים" */
 
 /**
- * "מהירות": every transition's duration times this. Normal is slow enough to see the motion (the
- * owner, 07.10.2026: "צריך פחות מהיר שיוכלו לראות שזה מונפש"); fast is about the first, quicker
- * timing; relaxed 1.4× normal.
+ * "מהירות": every transition's duration times this — the till's KioskTransitions.speedFactor: fast
+ * three quarters of normal, relaxed a third longer (calm, never dragging).
  */
-export const MOTION_SPEED_FACTOR: Record<MotionSpeed, number> = { fast: 0.7, normal: 1, relaxed: 1.4 };
+export const MOTION_SPEED_FACTOR: Record<MotionSpeed, number> = { fast: 0.75, normal: 1, relaxed: 1.35 };
 /** The cascade at normal speed: the last visible card starts at most this long after the first (× the speed). */
-export const STAGGER_CAP_MS = 600;
+export const STAGGER_CAP_MS = 200;
 /** Only the first cards (about a screenful) are staggered; the rest come with the last of them. */
 export const STAGGER_MAX_CARDS = 12;
 
@@ -2638,25 +2652,104 @@ function speedFactor(speed: unknown): number {
 }
 
 /**
- * Each transition's own duration at normal speed (ms), the till's KioskTransitions key for key:
- * a screen ~480, a category ~450, each card's pop ~380 with ~70 between cards (a grid within ~1 s),
- * a window ~400.
+ * Each transition's own duration at normal speed (ms), the till's KioskTransitions key for key —
+ * snappy (the owner, 07.10.2026: "המעברים עוברים מאוד לאט, נותנים הרגשה של איטיות"): a screen
+ * ≤ 220, a category ~240 (a push 280: both screens as one strip), each card ~260 with 16–32 between
+ * cards and the last one starting by 200 ms, a window ~220. The shared golden is
+ * server/tests/fixtures/kiosk_motion_timings.json.
  */
 export const TRANSITION_BASE_MS = {
-  categorySwitch: { slide: 450, fade: 380, fade_scale: 420, push: 480, none: 0 },
-  itemsEnter: { pop: 380, cascade: 380, rise: 400, flip: 440, none: 0 },
+  categorySwitch: { slide: 240, fade: 200, fade_scale: 220, push: 280, none: 0 },
+  itemsEnter: { pop: 260, cascade: 260, rise: 280, flip: 300, none: 0 },
   /** The gap between one card's start and the next one's. */
-  stagger: { pop: 25, cascade: 70, rise: 50, flip: 60, none: 0 },
-  screenChange: { slide: 480, fade: 420, zoom: 460, none: 0 },
-  sheet: { slide_up: 420, scale: 400, fade: 360, none: 0 },
+  stagger: { pop: 16, cascade: 32, rise: 24, flip: 28, none: 0 },
+  screenChange: { slide: 220, fade: 180, zoom: 200, none: 0 },
+  sheet: { slide_up: 260, scale: 220, fade: 180, none: 0 },
 } as const;
 
 /**
- * The curves (CSS; the till's KioskEase): enter decelerates (Material's emphasized decelerate),
- * a leaving screen accelerates away — never linear.
+ * The curves (CSS; the till's KioskEase): arrivals decelerate — off the mark at once, a short soft
+ * landing (no long crawl at the end, which read as lag); leaving accelerates away and is gone by
+ * the end; a push moves both screens on one curve, as a strip. The pop's rise and settle are its
+ * own (kItemPop). Never linear.
  */
-export const EASE_ENTER = 'cubic-bezier(.05,.7,.1,1)';
-export const EASE_EXIT = 'cubic-bezier(.3,0,.8,.15)';
+export const EASE_ENTER = 'cubic-bezier(.2,.7,.2,1)';
+export const EASE_EXIT = 'cubic-bezier(.4,0,1,1)';
+export const EASE_STRIP = 'cubic-bezier(.3,0,.2,1)';
+export const EASE_POP_RISE = 'cubic-bezier(.22,1,.36,1)';
+export const EASE_POP_SETTLE = 'cubic-bezier(.45,0,.55,1)';
+
+/* -------------------------------------------- "אפקטים": the render profile */
+// The till's domain/KioskPerf.kt (KioskMotionConfig.lightened, KioskFrameVerdict), the same rules.
+
+export type KioskRenderProfile = 'full' | 'light';
+
+/**
+ * The light profile's transitions (the till's KioskMotionConfig.lightened): every screen, category
+ * and window fades ("none" stays none), no cascade of cards, at the fast pace. The add keeps its kind.
+ */
+export function lightenMotion<T extends Partial<KioskMotionSettings>>(motion: T): T {
+  const fade = <F extends string>(v: F | undefined): F | 'fade' | undefined => (v === 'none' ? v : 'fade');
+  return {
+    ...motion,
+    categorySwitch: fade(motion.categorySwitch),
+    itemsEnter: 'none',
+    screenChange: fade(motion.screenChange),
+    sheet: fade(motion.sheet),
+    speed: 'fast',
+  } as T;
+}
+
+/** A web kiosk's first frames, as measured (rAF intervals) — the till's KioskFrameVerdict. */
+export interface FrameVerdict {
+  frames: number;
+  p50Ms: number;
+  p90Ms: number;
+  /** The share of frames longer than FRAME_SLOW_FACTOR frame budgets. */
+  slowShare: number;
+  budgetMs: number;
+  /** Too slow for everything: enough frames, and a quarter of them late or the slowest tenth at two budgets. */
+  slow: boolean;
+}
+
+/** The probe: frames measured after a short warm-up; fewer than FRAME_MIN judge nothing. */
+export const FRAME_WARMUP = 20;
+export const FRAME_SAMPLE = 150;
+export const FRAME_MIN = 120;
+export const FRAME_SLOW_FACTOR = 1.25;
+export const FRAME_SLOW_SHARE = 0.25;
+export const FRAME_P90_BUDGETS = 2;
+
+export function frameVerdict(durationsMs: readonly number[], refreshHz = 60): FrameVerdict {
+  const budgetMs = 1000 / (refreshHz >= 20 && refreshHz <= 240 ? refreshHz : 60);
+  const sorted = durationsMs.filter((d) => Number.isFinite(d) && d >= 0).sort((a, b) => a - b);
+  const n = sorted.length;
+  if (n === 0) return { frames: 0, p50Ms: 0, p90Ms: 0, slowShare: 0, budgetMs, slow: false };
+  const p50Ms = sorted[Math.round((n - 1) * 0.5)];
+  const p90Ms = sorted[Math.min(n - 1, Math.max(0, Math.ceil(n * 0.9) - 1))];
+  const slowShare = sorted.filter((d) => d > budgetMs * FRAME_SLOW_FACTOR).length / n;
+  const slow = n >= FRAME_MIN && (slowShare >= FRAME_SLOW_SHARE || p90Ms >= budgetMs * FRAME_P90_BUDGETS);
+  return { frames: n, p50Ms, p90Ms, slowShare, budgetMs, slow };
+}
+
+/**
+ * How a web kiosk draws: the config's explicit choice first ("full" / "light"); with "auto" the
+ * device's prefers-reduced-motion or a slow first-frames probe make it light, else full. (The
+ * dashboard's preview passes no device: "auto" previews the full look.)
+ */
+export function kioskRenderProfile(
+  effects: unknown,
+  device: { reducedMotion?: boolean; slow?: boolean | null } = {},
+): KioskRenderProfile {
+  if (effects === 'full') return 'full';
+  if (effects === 'light') return 'light';
+  return device.reducedMotion || device.slow ? 'light' : 'full';
+}
+
+/** The transitions as a profile plays them: the light one's cheaper variants (lightenMotion). */
+export function profileMotion<T extends Partial<KioskMotionSettings>>(motion: T, profile: KioskRenderProfile): T {
+  return profile === 'light' ? lightenMotion(motion) : motion;
+}
 
 /** The transitions as the screens play them: each effect and its duration (ms, speed applied). */
 export interface TransitionSpec {
@@ -3204,12 +3297,14 @@ export function kioskChrome(
   theme: Pick<KioskTheme, 'uiStyle' | 'primaryColor'>,
   colors: Pick<ResolvedThemeColors, 'surface' | 'text'>,
   general: Pick<KioskGeneral, 'reduceMotion'>,
+  profile: KioskRenderProfile = 'full',
 ): KioskChrome {
   const accent = mixHex(theme.primaryColor, theme.primaryColor, 0);
   switch (theme.uiStyle) {
     case 'tech': {
       const text = mixHex(colors.text, colors.text, 0);
-      const still = !!general.reduceMotion;
+      // Reduce motion and the light profile ("אפקטים"): no add glow, no scan line.
+      const still = !!general.reduceMotion || profile === 'light';
       return {
         backdrop: 'grid',
         backdropStep: TECH_GRID_STEP,

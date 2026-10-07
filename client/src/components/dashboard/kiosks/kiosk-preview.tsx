@@ -29,6 +29,8 @@ import {
   messagePlacement,
   addMs,
   motionSpec,
+  kioskRenderProfile,
+  profileMotion,
   pickupLabel,
   resolveThemeColors,
   stepMode,
@@ -369,8 +371,11 @@ export function KioskPreview({
   const wide = frame === 'tablet';
   const panel = cartPanelShown(config.theme, FRAME_DEVICE_DP[frame]);
   const side = config.theme.categoryLayout !== 'top';
-  const motion = motionSpec(config.theme, config.general, config.motion);
-  const transitions = transitionSpec(config.motion, config.general);
+  // "אפקטים": the preview draws the configured profile ("auto" — the device's choice — previews the full look).
+  const profile = kioskRenderProfile(config.motion.effects);
+  const played = profileMotion(config.motion, profile);
+  const motion = motionSpec(config.theme, config.general, played);
+  const transitions = transitionSpec(played, config.general);
   const colors = resolveThemeColors(config.theme);
   // "גודל מוצרים" (layout.productSize) moves the density's columns.
   const cols = productColumns(catalogColumns(config.theme.gridDensity, wide, panel, side), layoutOf(config).productSize, FRAME_DEVICE_DP[frame]);
@@ -493,6 +498,7 @@ export function KioskPreview({
     panel,
     screen: { w: FRAME_SIZE[frame].w, h: attractH },
     ctaBox: attractBox,
+    light: profile === 'light',
   };
 
   // A flight that lands bounces the badge then; a reduce-motion fade already did at the tap.
