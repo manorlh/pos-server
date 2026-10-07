@@ -596,6 +596,31 @@ def get_my_machine(
     }
 
 
+def _closed_claimed_shift(db: Session, machine: POSMachine, shift_id) -> Optional[Dict[str, Any]]:
+    """
+    The heartbeat's `closedOpenShift` (docs/SHIFTS_API.md §1.6): the shift [shift_id] the till
+    reports open, when it is this till's own and the cloud holds it closed — closed by no close
+    of the till's (that one leaves the till's row closing, never claimed open), but
+    administratively (§2.9) or by support. None otherwise: an unknown shift (its open has not
+    arrived), an open one, another till's (§1.1).
+    """
+    if shift_id is None:
+        return None
+    shift = db.query(Shift).filter(Shift.id == shift_id).first()
+    if shift is None or str(shift.machine_id) != str(machine.id):
+        return None
+    if shift.status != ShiftStatus.CLOSED:
+        return None
+    closed_at = shift.closed_at
+    if closed_at is not None and closed_at.tzinfo is None:
+        closed_at = closed_at.replace(tzinfo=timezone.utc)
+    return {
+        "shiftId": str(shift.id),
+        "closedAt": closed_at.isoformat() if closed_at is not None else None,
+        "reconstructed": bool(getattr(shift, "reconstructed", False)),
+    }
+
+
 def _till_z_run(db: Session, machine: POSMachine) -> Dict[str, Any]:
     from app.services.z_sequence import current_machine_epoch
 
@@ -664,6 +689,14 @@ def post_my_heartbeat(
         machine.reported_open_shift_opened_at = (
             body.open_shift_opened_at if claimed else None
         )
+    # The shift the till says is open is one the cloud holds closed — closed administratively
+    # (§2.9: dead-till recovery, `force` on a till that came back, or support's Z): the till is
+    # told, closes it on its side too and goes to "קופה סגורה" (docs/SHIFTS_API.md §1.6).
+    closed_open_shift = (
+        _closed_claimed_shift(db, machine, body.open_shift_id)
+        if body is not None and not body.open_shift_id_unreadable
+        else None
+    )
     # The pull half of a remote shift close. Every till calls this on a timer, so it is
     # the one channel that does not care whether the terminal was reachable when the
     # manager started the Z — a till that was off finds the instruction when it comes
@@ -805,6 +838,8 @@ def post_my_heartbeat(
         response["fastBeat"] = True
     if pending is not None:
         response["pendingCloseShift"] = pending
+    if closed_open_shift is not None:
+        response["closedOpenShift"] = closed_open_shift
     if pending_transmit is not None:
         response["pendingTransmit"] = pending_transmit
     if pending_till_z is not None:
