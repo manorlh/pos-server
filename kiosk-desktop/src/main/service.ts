@@ -37,6 +37,9 @@ import { TillZService } from './fiscal/tillZService';
 import { FINAL_OUTCOMES, kioskSection, lanCloseReport, lanOutcomeMessage, planLanClose, type LanCloseOutcome, type LanCloseRequest } from './fiscal/shopZPart';
 import { MediaStore, type Downloader, type VariantMaker } from './media/mediaStore';
 import { PayService } from './payment/payService';
+import { identifyPinpad, localPrivateIpv4, PinpadRelocator, readArpTable, sweepPort } from './payment/pinpadRelocator';
+import { pinpadAddressOf } from '../core/nayax';
+import type { PinpadIdentity } from '../core/pinpadRelocation';
 import { PROVIDERS } from './payment/registry';
 import { mergeLocalKey, PAIRING_TEXT, PairingSession, uploadOutcome, type LocalSynqKey, type PairingUpload } from './payment/synqpay/pairing';
 import type { SynqPayProvider } from './payment/synqpay/provider';
@@ -150,6 +153,8 @@ export class KioskService extends EventEmitter {
   /** "מזומן בקופה" and vouchers (kiosk/payAtTill.ts). */
   readonly payAtTill: PayAtTill;
   readonly sync: SyncEngine;
+  /** The pinpad that moved (a DHCP change), found again by its identity — ARP first (payment/pinpadRelocator.ts). */
+  readonly relocator: PinpadRelocator;
   /** The cloud's word on the basket a moment ago (core/basketCheck.ts), until the catalog catches up. */
   private cloudBasket: CloudOverrides | null = null;
   /** "סוללה חלשה": the battery as the screen last read it (null: never — a PC on mains reports none). */
@@ -226,6 +231,17 @@ export class KioskService extends EventEmitter {
       log: this.log,
     });
     this.sync = new SyncEngine(this.api, this.cloud, this.ledger, this.outbox, this.remoteHooks(), opts.appVersion);
+    this.relocator = new PinpadRelocator({
+      now: () => Date.now(),
+      kvGet: (k) => this.kv.get(k),
+      kvSet: (k, v) => (v === null ? this.kv.delete(k) : this.kv.set(k, v)),
+      readArp: readArpTable,
+      localIpv4: localPrivateIpv4,
+      sweep: sweepPort,
+      identify: (host, port) => identifyPinpad(host, port, this.pinpadHere()?.path ?? '/SPICy'),
+      save: (host, port, id, previous) => this.savePinpadHost(host, port, id, previous),
+      log: this.log,
+    });
     this.media.onChange(() => this.dirty());
     this.pay.onChange(() => this.dirty());
     this.printQueue.onChange(() => this.dirty());
@@ -237,6 +253,60 @@ export class KioskService extends EventEmitter {
 
   get machineId(): string | null {
     return this.cloud.credentials()?.machineId ?? null;
+  }
+
+  /** The kiosk's Nayax LAN pinpad as the cloud settings place it; null on any other terminal. */
+  private pinpadHere(): { host: string; port: number; path: string } | null {
+    if (this.pay.describe().kind !== 'nayax_lan') return null;
+    const s = (this.cloud.settings().settings ?? {}) as Record<string, unknown>;
+    const port = s.nayaxDevicePort === undefined || s.nayaxDevicePort === null ? null : String(s.nayaxDevicePort);
+    const a = pinpadAddressOf(s.nayaxDeviceHost as string | null, port, s.nayaxSpicyPath as string | null);
+    return a ? { host: a.host, port: a.port, path: a.path } : null;
+  }
+
+  /**
+   * The pinpad found at a new address: saved in the cloud (`PUT /sync/{id}/pinpad-host` — this
+   * machine's host only, the same terminal), then the settings pulled so the provider follows.
+   */
+  private async savePinpadHost(host: string, port: number, id: PinpadIdentity, previous: string): Promise<'ok' | 'offline' | 'refused'> {
+    const mid = this.machineId;
+    if (!mid) return 'offline';
+    const here = this.pinpadHere();
+    const r = await this.api.put(`sync/${mid}/pinpad-host`, {
+      host,
+      port: here && here.port === port ? undefined : port,
+      reason: 'relocated',
+      terminalNumber: id.terminal ?? undefined,
+      serial: id.serial ?? undefined,
+      previousHost: previous,
+      mac: id.mac ?? id.arpMac ?? undefined,
+    });
+    if (r.kind === 'offline') return 'offline';
+    if (r.kind === 'refused') {
+      this.log(`pinpad-host refused: ${r.status} ${r.detail ?? ''}`);
+      return 'refused';
+    }
+    await this.sync.pullSettings().catch(() => undefined);
+    this.applyProvider();
+    this.dirty();
+    return 'ok';
+  }
+
+  /** The relocator's look, on the 30-second tick: never during a payment (it asks again before moving). */
+  private async relocateTick(): Promise<void> {
+    const here = this.pinpadHere();
+    const m = this.pay.monitor;
+    const answering = m.state === 'unreachable' ? false : m.state === 'ready' && m.lastOkAtMs !== null ? true : null;
+    const s = (this.cloud.settings().settings ?? {}) as Record<string, unknown>;
+    const expected = typeof s.expectedTerminalNumber === 'string' && s.expectedTerminalNumber.trim() ? s.expectedTerminalNumber.trim() : null;
+    await this.relocator.tick({
+      configured: here ? { host: here.host, port: here.port } : null,
+      answering: here ? answering : null,
+      lastOkAtMs: m.lastOkAtMs,
+      inPayment: () => this.flow.busy || this.pay.cardInFlight,
+      online: !this.offlineNow,
+      expectedTerminal: expected,
+    });
   }
 
   get paired(): boolean {
@@ -1818,6 +1888,8 @@ export class KioskService extends EventEmitter {
     const op = this.operator();
     // The main till's shop Z part: a payment waited out, an answer the cloud did not take yet.
     if (this.shopZPart) await this.runShopZPart();
+    // The pinpad that moved (a DHCP change): looked for by who it is, "לפי המאק" first (PinpadRelocator).
+    if (this.fiscalRole && !this.opts.bridge) await this.relocateTick().catch(() => undefined);
     // "סגירה יחד עם ה-Z הסניפי": carried out first, on an idle tick (KioskRepository.autoCloseTick).
     const closeRequest = this.kv.get(SHOP_Z_CLOSE_REQUEST);
     if (mayRun && closeRequest && !this.opts.bridge) {
