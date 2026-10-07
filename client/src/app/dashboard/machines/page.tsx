@@ -58,6 +58,15 @@ import {
 } from '@/components/dashboard/machines/device-role';
 import { WebKioskLink } from '@/components/dashboard/machines/web-kiosk-link';
 import { WebScreenLink } from '@/components/dashboard/machines/web-screen-link';
+import { WorkConfigStep } from '@/components/dashboard/machines/work-config';
+import {
+  EMPTY_DRAFT as EMPTY_WORK_CONFIG,
+  draftError as workConfigDraftError,
+  pairingOutcomeText,
+  planOf as workConfigPlanOf,
+  type PairingOutcome,
+  type WorkConfigDraft,
+} from '@/lib/workConfig';
 import {
   EMPTY_KDS_SCREEN,
   addDeviceMissing,
@@ -114,6 +123,13 @@ export default function MachinesPage() {
   const [pairKds, setPairKds] = useState<KdsScreenDraft>(EMPTY_KDS_SCREEN);
   /** "מסך — לא קופה": a KDS or the board gets no register number, no sales, no Z. */
   const pairIsDisplay = pairDeviceRole !== '' && !isFiscalRole(pairDeviceRole);
+  /**
+   * "תצורת עבודה" (docs/SPEC_DEVICE_WORK_CONFIG.md): "לפי הסניף" unless chosen; the code carries
+   * it and the device gets it as it pairs. Starts over when the shop, role or platform change.
+   */
+  const [pairWorkConfig, setPairWorkConfig] = useState<WorkConfigDraft>(EMPTY_WORK_CONFIG);
+  /** How applying it went, once the device paired (the code's `workConfigResult`). */
+  const [pairWorkConfigOutcome, setPairWorkConfigOutcome] = useState<PairingOutcome | null>(null);
 
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignShopId, setAssignShopId] = useState('');
@@ -228,6 +244,8 @@ export default function MachinesPage() {
     setPairKiosk(EMPTY_KIOSK_DRAFT);
     setPairPlatform('android');
     setPairKds(EMPTY_KDS_SCREEN);
+    setPairWorkConfig(EMPTY_WORK_CONFIG);
+    setPairWorkConfigOutcome(null);
   };
 
   /**
@@ -271,6 +289,8 @@ export default function MachinesPage() {
     kds: pairKds,
   };
   const pairMissing = addDeviceMissing(pairDraft);
+  const pairWorkConfigPlan = pairShopId && pairDeviceRole ? workConfigPlanOf(pairWorkConfig, 'pairing') : null;
+  const pairWorkConfigOutcomeText = pairingOutcomeText(pairWorkConfigOutcome);
   const pairMissingHint =
     pairMissing === 'role'
       ? t('deviceRole.required')
@@ -432,15 +452,33 @@ export default function MachinesPage() {
   }, [fieldInstallOpen, fieldSession?.sessionId]);
 
   // Poll until the POS consumes the pairing code, then refresh the machines list.
+  // With a work configuration: until applying it has an outcome too (it runs right after).
+  const pairAwaitingWorkConfig = pairingComplete && !!pairWorkConfigPlan && pairWorkConfigOutcome === null;
   useEffect(() => {
-    if (!pairOpen || !pairingCodeId || pairingComplete) return;
+    if (!pairOpen || !pairingCodeId || (pairingComplete && !pairAwaitingWorkConfig)) return;
     const poll = () => {
       void api
-        .get<{ isUsed: boolean }>(`/pairing/codes/${pairingCodeId}`)
+        .get<{
+          isUsed: boolean;
+          workConfig?: Record<string, unknown> | null;
+          workConfigResult?: Record<string, unknown> | null;
+        }>(`/pairing/codes/${pairingCodeId}`)
         .then((r) => {
           if (r.data.isUsed) {
             setPairingComplete(true);
             qc.invalidateQueries({ queryKey: ['machines'] });
+          }
+          const result = r.data.workConfigResult;
+          if (r.data.isUsed && !r.data.workConfig) {
+            // The plan changed nothing for a new device ("לפי הסניף" already): no outcome to wait for.
+            setPairWorkConfigOutcome({ preset: null, plan: null, applied: null });
+          } else if (r.data.isUsed && r.data.workConfig && result) {
+            setPairWorkConfigOutcome({
+              preset: (r.data.workConfig.preset as PairingOutcome['preset']) ?? null,
+              plan: r.data.workConfig,
+              applied: result.applied === true,
+              message: typeof result.message === 'string' ? result.message : null,
+            });
           }
         })
         .catch(() => undefined);
@@ -448,7 +486,7 @@ export default function MachinesPage() {
     poll();
     const tmr = window.setInterval(poll, 2500);
     return () => window.clearInterval(tmr);
-  }, [pairOpen, pairingCodeId, pairingComplete, qc]);
+  }, [pairOpen, pairingCodeId, pairingComplete, pairAwaitingWorkConfig, qc]);
 
   /*
    * The server decides this now.
@@ -808,6 +846,20 @@ export default function MachinesPage() {
                 <>
                   <p className="text-sm font-medium text-primary">{t('pairComplete')}</p>
                   <p className="text-xs text-muted-foreground">{t('pairCompleteHint')}</p>
+                  {/* "תצורת עבודה": applied, or why not (the device page offers "החל עכשיו"). */}
+                  {pairWorkConfigOutcomeText ? (
+                    <p
+                      className={
+                        pairWorkConfigOutcomeText.tone === 'ok'
+                          ? 'text-xs text-emerald-700 dark:text-emerald-400'
+                          : 'text-xs text-destructive'
+                      }
+                    >
+                      {pairWorkConfigOutcomeText.text}
+                    </p>
+                  ) : pairAwaitingWorkConfig ? (
+                    <p className="text-xs text-muted-foreground animate-pulse">מחיל את תצורת העבודה…</p>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -871,6 +923,7 @@ export default function MachinesPage() {
                   value={pairDeviceRole}
                   onChange={(role) => {
                     setPairDeviceRole(role);
+                    setPairWorkConfig(EMPTY_WORK_CONFIG);
                     // The browser runs a kiosk, a KDS or a board — never a till.
                     if (!platformsFor(role).includes(pairPlatform)) setPairPlatform('android');
                   }}
@@ -883,7 +936,14 @@ export default function MachinesPage() {
               </div>
               <div className="space-y-2">
                 <Label>{t('deviceRole.platform')}</Label>
-                <DevicePlatformPicker value={pairPlatform} onChange={setPairPlatform} role={pairDeviceRole} />
+                <DevicePlatformPicker
+                  value={pairPlatform}
+                  onChange={(platform) => {
+                    setPairPlatform(platform);
+                    setPairWorkConfig(EMPTY_WORK_CONFIG);
+                  }}
+                  role={pairDeviceRole}
+                />
                 <p className="text-xs text-muted-foreground">{t('deviceRole.platformHint')}</p>
               </div>
               {modelNeeded({ platform: pairPlatform }) ? (
@@ -934,6 +994,7 @@ export default function MachinesPage() {
                     onValueChange={(v) => {
                       setPairCompanyId(v ?? '');
                       setPairShopId('');
+                      setPairWorkConfig(EMPTY_WORK_CONFIG);
                       // A kiosk's controlling tills are of its own company.
                       setPairKiosk((k) => ({ ...k, controllerMachineIds: [] }));
                     }}
@@ -955,7 +1016,10 @@ export default function MachinesPage() {
                   <Label>{t('selectShopOptional')}</Label>
                   <Select
                     value={pairShopId}
-                    onValueChange={(v) => setPairShopId(v ?? '')}
+                    onValueChange={(v) => {
+                      setPairShopId(v ?? '');
+                      setPairWorkConfig(EMPTY_WORK_CONFIG);
+                    }}
                     disabled={!pairCompanyId}
                     items={entitySelectItems(pairShops)}
                   >
@@ -1000,6 +1064,16 @@ export default function MachinesPage() {
                   onChange={setPairKds}
                 />
               ) : null}
+              {/* "תצורת עבודה": after the shop and the role — "לפי הסניף" unless chosen. */}
+              {pairShopId && pairDeviceRole ? (
+                <WorkConfigStep
+                  shopId={pairShopId}
+                  role={pairDeviceRole}
+                  platform={pairPlatform}
+                  value={pairWorkConfig}
+                  onChange={setPairWorkConfig}
+                />
+              ) : null}
               <DialogFooter>
                 <Button variant="outline" onClick={() => setPairOpen(false)}>
                   {tc('cancel')}
@@ -1020,11 +1094,16 @@ export default function MachinesPage() {
                       setPairPreAssignLabel(null);
                     }
                     if (pairMissing) return;
-                    generateCode.mutate(pairingRequestBody(pairDraft, pairKiosk));
+                    setPairWorkConfigOutcome(null);
+                    generateCode.mutate({
+                      ...pairingRequestBody(pairDraft, pairKiosk),
+                      ...(pairWorkConfigPlan ? { workConfig: pairWorkConfigPlan } : {}),
+                    });
                   }}
                   disabled={
                     !!pairMissing ||
                     generateCode.isPending ||
+                    (!!pairWorkConfigPlan && !!workConfigDraftError(pairWorkConfig, null)) ||
                     (pairDeviceRole === 'kiosk' && !!kioskDraftError(pairKiosk))
                   }
                   title={pairMissingHint}
