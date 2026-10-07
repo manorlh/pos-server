@@ -6,7 +6,9 @@ Dashboard (the shop page's "מצב הדרכה" and "תפריט דמה" cards):
 
 GET  /shops/{shop_id}/training-mode                  → the flag, who / when, the
                                                        quarantined counts, the log
-POST /shops/{shop_id}/training-mode/enable           → turn it on; 409 `real_shift_open`
+POST /shops/{shop_id}/training-mode/enable           → turn it on; 409 `training_not_available`
+                                                       (no device implements it yet), 409
+                                                       `real_shift_open`
 GET  /shops/{shop_id}/training-mode/disable-preview  → what leaving would delete, and
                                                        what holds it back (blockers)
 POST /shops/{shop_id}/training-mode/disable          → `{confirmName, removeDemoMenu, force}`
