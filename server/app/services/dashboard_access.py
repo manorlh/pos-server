@@ -16,12 +16,15 @@ How it is enforced, server side:
   so every list and every access check that already went through them follows the profile.
   The organizations themselves are the tenant memberships `get_active_tenant_id` checks.
 
-Who is unaffected: the super admin, always; a user whose profile is `full_access` (every user
-that existed before this — the migration maps them so — and anyone the super admin gives it);
-and a user with no profile row at all (created by a path that predates profiles: self-service
-sign-up makes a distributor of their own new organization). A new user made from the users page
+Who is unaffected: the super admin, always; and a user whose profile is `full_access` (every
+user that existed before this — the migration maps them so — and anyone given it). A new user
 gets "מנהל ארגון": reports (view), products (edit), Z (view) — everything else is closed until
-the super admin opens it.
+the super admin opens it. A user with no profile row at all (made by a path that writes none)
+gets that same default (the owner, 08.10.2026), never more.
+
+Who grants: the super admin anything; any other manager of users (the `users` section at edit,
+over a user their role may manage) only what they hold themselves — a section at most at their
+own level, "full access" only if they have it, an org scope only inside their own.
 
 A section grant never widens what the role allows: it only lets the route's own role checks and
 org scoping run. Nothing here is consulted for till tokens (machine JWTs) — till users are
@@ -74,6 +77,15 @@ class EffectiveAccess:
 
 
 UNRESTRICTED = EffectiveAccess(restricted=False)
+
+#: A user with no profile row: "מנהל ארגון"'s sections, the role's own org scope.
+DEFAULT_ACCESS = EffectiveAccess(
+    restricted=True,
+    sections=dict(DS.ORG_MANAGER_SECTIONS),
+    has_profile=False,
+    full_access=False,
+    template=DS.ORG_MANAGER_TEMPLATE,
+)
 
 _TABLE_CACHE: "weakref.WeakKeyDictionary[Any, bool]" = weakref.WeakKeyDictionary()
 
@@ -142,7 +154,7 @@ def _uuids(raw) -> Tuple[uuid.UUID, ...]:
 
 def _from_profile(profile: Optional[DashboardAccessProfile]) -> EffectiveAccess:
     if profile is None:
-        return UNRESTRICTED
+        return DEFAULT_ACCESS
     template = profile.builtin_template or (str(profile.template_id) if profile.template_id else None)
     return EffectiveAccess(
         restricted=not bool(profile.full_access),
@@ -156,8 +168,13 @@ def _from_profile(profile: Optional[DashboardAccessProfile]) -> EffectiveAccess:
     )
 
 
+def profiles_available(db: Session) -> bool:
+    """A real session on a database that has profiles (unit tests' stand-ins have neither)."""
+    return isinstance(db, Session) and _has_profiles_table(db)
+
+
 def load_profile(db: Session, user_id) -> Optional[DashboardAccessProfile]:
-    if user_id is None or not isinstance(db, Session) or not _has_profiles_table(db):
+    if user_id is None or not profiles_available(db):
         return None
     try:
         key = user_id if isinstance(user_id, uuid.UUID) else uuid.UUID(str(user_id))
@@ -176,10 +193,50 @@ def effective_access(db: Session, user: Any) -> EffectiveAccess:
     memo = _memo(db)
     if memo is not None and user_id in memo:
         return memo[user_id]
-    access = _from_profile(load_profile(db, user_id))
+    if not profiles_available(db):
+        # No profiles here at all (a unit test's stand-in session): the role decides.
+        access = UNRESTRICTED
+    else:
+        # No row: the default, "מנהל ארגון" — never "everything".
+        access = _from_profile(load_profile(db, user_id))
     if memo is not None:
         memo[user_id] = access
     return access
+
+
+# ── Granting: only what you hold ─────────────────────────────────────────────
+
+_RANK = {None: 0, DS.VIEW: 1, DS.EDIT: 2}
+
+
+def grantable(access: EffectiveAccess) -> Dict[str, str]:
+    """The highest level of each section this person may give someone else."""
+    if not access.restricted:
+        return {s.id: DS.EDIT for s in DS.SECTIONS}
+    return dict(access.sections)
+
+
+def cap_sections(sections: Dict[str, str], limit: Dict[str, str]) -> Dict[str, str]:
+    """Each section at most at `limit`'s level (dropped where `limit` has none)."""
+    out: Dict[str, str] = {}
+    for sid, level in DS.clean_sections(sections).items():
+        ceiling = limit.get(sid)
+        if ceiling is None:
+            continue
+        out[sid] = level if _RANK[level] <= _RANK[ceiling] else ceiling
+    return out
+
+
+def sections_over(wanted: Dict[str, str], current: Dict[str, str], limit: Dict[str, str]) -> List[str]:
+    """
+    Sections `wanted` gives above both what the user already had and what the granter holds.
+    Lowering or keeping is always allowed; raising only up to the granter's own level.
+    """
+    over = []
+    for sid, level in DS.clean_sections(wanted).items():
+        if _RANK[level] > max(_RANK[current.get(sid)], _RANK[limit.get(sid)]):
+            over.append(sid)
+    return over
 
 
 # ── Org scope, for the central scoping helpers ───────────────────────────────
@@ -370,6 +427,7 @@ def enforce_section(db: Session, user: Any, section: str, level: str) -> None:
 
 
 def profile_out(profile: Optional[DashboardAccessProfile]) -> dict:
+    """A profile on the wire; no row reads as the default it stands for ("מנהל ארגון")."""
     access = _from_profile(profile)
     return {
         "hasProfile": profile is not None,
@@ -379,7 +437,7 @@ def profile_out(profile: Optional[DashboardAccessProfile]) -> dict:
         "companyIds": [str(c) for c in access.company_ids],
         "shopIds": [str(s) for s in access.shop_ids],
         "templateId": str(profile.template_id) if profile is not None and profile.template_id else None,
-        "builtinTemplate": profile.builtin_template if profile is not None else None,
+        "builtinTemplate": profile.builtin_template if profile is not None else DS.ORG_MANAGER_TEMPLATE,
         "updatedAt": profile.updated_at.isoformat() if profile is not None and profile.updated_at else None,
     }
 
@@ -399,11 +457,17 @@ def _audit(db: Session, *, actor, action: str, user_id=None, template_id=None, b
 
 def create_default_profile(db: Session, user: User, *, actor=None, org_wide: bool = False,
                            company_ids: Iterable = (), shop_ids: Iterable = ()) -> DashboardAccessProfile:
-    """A new dashboard user: "מנהל ארגון" — reports (view), products (edit), Z (view)."""
+    """
+    A new dashboard user: "מנהל ארגון" — reports (view), products (edit), Z (view). Made by
+    someone other than the super admin, capped to what the maker holds (never more).
+    """
+    sections = dict(DS.ORG_MANAGER_SECTIONS)
+    if actor is not None and getattr(actor, "role", None) != UserRole.SUPER_ADMIN:
+        sections = cap_sections(sections, grantable(effective_access(db, actor)))
     profile = DashboardAccessProfile(
         user_id=user.id,
         full_access=False,
-        sections=dict(DS.ORG_MANAGER_SECTIONS),
+        sections=sections,
         org_wide=bool(org_wide),
         company_ids=[str(c) for c in _uuids(company_ids)] or None,
         shop_ids=[str(s) for s in _uuids(shop_ids)] or None,

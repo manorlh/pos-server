@@ -114,6 +114,9 @@ export default function UsersPage() {
   const canRead = me?.canReadUsers === true;
   const canManage = me?.canManageUsers === true;
   const isSuperAdmin = me?.role === 'super_admin';
+  // "הרשאות דשבורד": whoever manages users sets the permissions of those they manage — the
+  // super admin anything, anyone else only what they hold (the server refuses more).
+  const canSetAccess = isSuperAdmin || canManage;
   const creatableRoles = useMemo<UserRole[]>(() => me?.creatableRoles ?? [], [me]);
 
   const {
@@ -144,7 +147,7 @@ export default function UsersPage() {
   const { data: accessRows = [] } = useQuery<UserAccessSummary[]>({
     queryKey: ['dashboard-access', 'summaries'],
     queryFn: fetchAccessSummaries,
-    enabled: canRead && isSuperAdmin,
+    enabled: canRead,
   });
   const accessByUser = useMemo(() => new Map(accessRows.map((r) => [r.userId, r])), [accessRows]);
 
@@ -288,9 +291,10 @@ export default function UsersPage() {
     if (u.role === 'super_admin') return null;
     const row = accessByUser.get(u.id);
     if (!row) return null;
-    if (!row.hasProfile) return <span className="text-muted-foreground text-xs">{ta('badgeNone')}</span>;
     if (row.fullAccess) return <Badge variant="outline">{ta('badgeFull')}</Badge>;
-    return <Badge variant="secondary">{row.templateName ?? ta('badgeCustom')}</Badge>;
+    // No row: the default ("מנהל ארגון"), never more.
+    const name = row.templateName ?? ta('badgeCustom');
+    return <Badge variant="secondary">{row.hasProfile ? name : ta('badgeDefault', { name })}</Badge>;
   };
 
   const scopeName = (u: User) => {
@@ -352,7 +356,7 @@ export default function UsersPage() {
               <TableHead>{t('scope')}</TableHead>
               <TableHead>{tc('status')}</TableHead>
               <TableHead>{tp('column')}</TableHead>
-              {isSuperAdmin && <TableHead>{ta('button')}</TableHead>}
+              {canRead && <TableHead>{ta('button')}</TableHead>}
               {canManage && <TableHead className="w-40" />}
             </TableRow>
           </TableHeader>
@@ -360,7 +364,7 @@ export default function UsersPage() {
             {listLoading
               ? Array.from({ length: 3 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: (canManage ? 7 : 6) + (isSuperAdmin ? 1 : 0) }).map((_, j) => (
+                    {Array.from({ length: (canManage ? 7 : 6) + (canRead ? 1 : 0) }).map((_, j) => (
                       <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                     ))}
                   </TableRow>
@@ -368,7 +372,7 @@ export default function UsersPage() {
               : users.length === 0
               ? (
                   <TableRow>
-                    <TableCell colSpan={(canManage ? 7 : 6) + (isSuperAdmin ? 1 : 0)} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={(canManage ? 7 : 6) + (canRead ? 1 : 0)} className="text-center text-muted-foreground py-8">
                       {t('noUsers')}
                     </TableCell>
                   </TableRow>
@@ -399,7 +403,7 @@ export default function UsersPage() {
                         <span className="text-muted-foreground text-xs">{tp('stateNone')}</span>
                       )}
                     </TableCell>
-                    {isSuperAdmin && <TableCell>{accessBadge(u)}</TableCell>}
+                    {canRead && <TableCell>{accessBadge(u)}</TableCell>}
                     {canManage && (
                       <TableCell>
                         <div className="flex items-center gap-1">
@@ -429,7 +433,7 @@ export default function UsersPage() {
                           <Button variant="ghost" size="icon" title={tc('edit')} onClick={() => openEdit(u)}>
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
-                          {isSuperAdmin && u.role !== 'super_admin' && (
+                          {canSetAccess && u.role !== 'super_admin' && me?.id !== u.id && (
                             <Button variant="ghost" size="icon" title={ta('button')} onClick={() => setAccessTarget(u)}>
                               <ShieldCheck className="h-3.5 w-3.5" />
                             </Button>

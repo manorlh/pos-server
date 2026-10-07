@@ -86,6 +86,8 @@ function AccessEditor({
   const tc = useTranslations('common');
   const qc = useQueryClient();
   const allTenants = useAuth((s) => s.tenants);
+  // Templates are defined by the super admin; others apply them (within what they hold).
+  const isSuperAdmin = useAuth((s) => s.user?.role === 'super_admin');
   const p = detail.profile;
 
   const [fullAccess, setFullAccess] = useState(p.fullAccess);
@@ -100,10 +102,19 @@ function AccessEditor({
 
   const home = detail.user.tenantId;
   const tenantOptions = useMemo(() => {
-    const byId = new Map(allTenants.map((x) => [x.id, x.name]));
+    // Only the super admin changes organizations; anyone else sees the user's own.
+    const byId = new Map(detail.canEditOrganizations ? allTenants.map((x) => [x.id, x.name]) : []);
     for (const o of detail.organizations) byId.set(o.id, o.name);
     return [...byId.entries()].map(([id, name]) => ({ id, name }));
-  }, [allTenants, detail.organizations]);
+  }, [allTenants, detail.organizations, detail.canEditOrganizations]);
+
+  /** A box beyond what the caller holds is shown, not offered (keeping what the user has is fine). */
+  const canTick = (id: SectionId, level: AccessLevel) => {
+    const mine = detail.grantable[id];
+    const had = p.fullAccess ? 'edit' : p.sections[id];
+    const rank = (l?: AccessLevel) => (l === 'edit' ? 2 : l === 'view' ? 1 : 0);
+    return rank(level) <= Math.max(rank(mine), rank(had));
+  };
 
   const shopsInScope = useMemo(() => {
     if (mode === 'role') {
@@ -173,7 +184,7 @@ function AccessEditor({
                 type="checkbox"
                 className="h-4 w-4 accent-primary"
                 checked={o.id === home || tenantIds.includes(o.id)}
-                disabled={o.id === home}
+                disabled={o.id === home || !detail.canEditOrganizations}
                 onChange={() => setTenantIds((ids) => flip(ids, o.id))}
               />
               {o.name}
@@ -193,6 +204,7 @@ function AccessEditor({
                     name="access-scope"
                     className="h-4 w-4 accent-primary"
                     checked={mode === m}
+                    disabled={m === 'org' && !detail.canGrantOrgWide && !p.orgWide}
                     onChange={() => setMode(m)}
                   />
                   {t(m === 'role' ? 'scopeModeRole' : m === 'org' ? 'scopeModeOrg' : 'scopeModeCompanies')}
@@ -244,7 +256,11 @@ function AccessEditor({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 className="font-semibold">{t('sectionsTitle')}</h3>
           <label className="flex items-center gap-2 text-sm">
-            <Switch checked={fullAccess} onCheckedChange={(v) => { setFullAccess(Boolean(v)); setTemplate(null); }} />
+            <Switch
+              checked={fullAccess}
+              disabled={!detail.canGrantFull && !p.fullAccess}
+              onCheckedChange={(v) => { setFullAccess(Boolean(v)); setTemplate(null); }}
+            />
             {t('fullAccess')}
           </label>
         </div>
@@ -295,7 +311,7 @@ function AccessEditor({
                       <input
                         type="checkbox"
                         className="h-5 w-5 accent-primary"
-                        disabled={fullAccess}
+                        disabled={fullAccess || !canTick(s.id, level)}
                         aria-label={`${t(`sections.${s.id}`)} — ${t(`levels.${level}`)}`}
                         checked={level === 'view' ? sections[s.id] !== undefined : sections[s.id] === 'edit'}
                         onChange={(e) => toggle(s.id, level, e.target.checked)}
@@ -308,7 +324,7 @@ function AccessEditor({
           </table>
         </div>
 
-        {!fullAccess ? (
+        {!fullAccess && isSuperAdmin ? (
           <div className="flex flex-wrap items-end gap-2">
             <div className="min-w-56 flex-1 space-y-1">
               <Label className="text-xs text-muted-foreground">{t('templateName')}</Label>

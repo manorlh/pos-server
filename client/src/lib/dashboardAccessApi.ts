@@ -54,6 +54,12 @@ export interface UserAccessDetail {
   user: { id: string; username: string; email: string; role: string; tenantId: string | null; companyId: string | null; shopId: string | null };
   profile: AccessProfile;
   orgScopeAllowed: boolean;
+  /** What the caller may give (the super admin: everything at edit). */
+  grantable: SectionGrants;
+  canGrantFull: boolean;
+  canGrantOrgWide: boolean;
+  /** Organizations (memberships) are the super admin's. */
+  canEditOrganizations: boolean;
   organizations: { id: string; name: string; home: boolean }[];
   companies: { id: string; name: string; tenantId: string | null; parentCompanyId: string | null }[];
   shops: { id: string; name: string; companyId: string; tenantId: string | null }[];

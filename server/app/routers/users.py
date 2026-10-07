@@ -363,35 +363,54 @@ def create_user(
         company_id=user_data.company_id,
         shop_id=user_data.shop_id,
     )
+    # Decided (and refused, when beyond the creator's own) before anything is written.
+    access_values = _plan_dashboard_access(db, current_user, db_user, user_data.access)
     db.add(db_user)
     db.flush()
-    _initial_dashboard_access(db, current_user, db_user, user_data.access)
+    _initial_dashboard_access(db, current_user, db_user, access_values)
     db.commit()
     db.refresh(db_user)
     return db_user
 
 
-def _initial_dashboard_access(db: Session, actor: User, user: User, requested) -> None:
+def _plan_dashboard_access(db: Session, actor: User, user: User, requested) -> Optional[dict]:
     """
     "הרשאות דשבורד" for a new user: "מנהל ארגון" — reports (view), products (edit), Z (view);
-    everything else stays closed until the super admin opens it (the owner, 07.10.2026). Only
-    the super admin may ask for something else at creation (`access`), e.g. the whole
-    organization as the scope of a new "מנהל ארגון".
+    everything else stays closed until it is opened (the owner, 07.10.2026). The creator may
+    ask for something else (`access`): the super admin anything, e.g. the whole organization
+    as the scope of a new "מנהל ארגון"; anyone else only what they hold themselves (the owner,
+    08.10.2026) — the default is capped to that, an explicit grant beyond it is refused (403
+    `grant_exceeds_own`, before the user is written).
+
+    None = the default profile (or, for a super admin, none at all).
     """
+    if user.role == UserRole.SUPER_ADMIN or requested is None:
+        return None
+    from app.routers.dashboard_access import check_grant, resolve_access
+    from app.services.dashboard_sections import ORG_MANAGER_TEMPLATE
+
+    implicit = requested.template is None and requested.sections is None and requested.full_access is None
+    if implicit:
+        # Only a scope was chosen: the sections are still the default ones.
+        requested = requested.model_copy(update={"template": ORG_MANAGER_TEMPLATE})
+    values = resolve_access(db, user, requested, tenant_ids=dashboard_access.user_tenant_ids(db, user))
+    if implicit and actor.role != UserRole.SUPER_ADMIN:
+        values["sections"] = dashboard_access.cap_sections(
+            values["sections"], dashboard_access.grantable(dashboard_access.effective_access(db, actor))
+        )
+    check_grant(db, actor, values, current=None)
+    user.company_id = values.pop("primary_company_id")
+    return values
+
+
+def _initial_dashboard_access(db: Session, actor: User, user: User, values: Optional[dict]) -> None:
+    """Write what `_plan_dashboard_access` decided, once the user has an id."""
     if user.role == UserRole.SUPER_ADMIN:
         return  # never narrowed
-    if requested is not None and actor.role == UserRole.SUPER_ADMIN:
-        from app.routers.dashboard_access import resolve_access
-        from app.services.dashboard_sections import ORG_MANAGER_TEMPLATE
-
-        if requested.template is None and requested.sections is None and requested.full_access is None:
-            # Only a scope was chosen: the sections are still the default ones.
-            requested = requested.model_copy(update={"template": ORG_MANAGER_TEMPLATE})
-        values = resolve_access(db, user, requested, tenant_ids=dashboard_access.user_tenant_ids(db, user))
-        user.company_id = values.pop("primary_company_id")
-        dashboard_access.save_profile(db, user, actor=actor, **values)
+    if values is None:
+        dashboard_access.create_default_profile(db, user, actor=actor)
         return
-    dashboard_access.create_default_profile(db, user, actor=actor)
+    dashboard_access.save_profile(db, user, actor=actor, **values)
 
 
 @router.get("/{user_id}", response_model=UserResponse, response_model_by_alias=True)

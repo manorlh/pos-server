@@ -15,7 +15,11 @@ What is pinned, and how each could look fine while leaking:
 * **Org scope** — the whole organization, a list of companies, a list of shops: lists, access
   checks and scoped queries all follow it.
 * **Nobody loses anything** — the super admin is never checked; a user with `full_access` (the
-  migration's mapping of every existing user) or no profile at all keeps the role's access.
+  migration's mapping of every existing user) keeps the role's access. A user with no profile
+  row gets the default, never more.
+* **Granting only what you hold** — a manager other than the super admin gives a user they
+  manage only sections they have, at most at their level; full access only if they have it;
+  never organizations.
 * **The migration** — every existing user (not the super admin) gets `full_access`; idempotent.
 
 Runs on an in-memory SQLite database (one connection, so the app's threads share it), through
@@ -356,16 +360,90 @@ def test_a_user_created_from_the_users_page_starts_as_org_manager(w):
     profile = w.db.get(DashboardAccessProfile, created.id)
     assert profile.full_access is False and profile.builtin_template == "org_manager"
     assert DS.clean_sections(profile.sections) == {"products": "edit", "reports": "view", "z": "view"}
-    # Only the super admin chooses anything else: `access` from a manager is ignored.
+    # A manager with full access may give full access — what they hold themselves.
     response = w.client.post(
         "/api/v1/users", headers=_headers(legacy, w.tenant),
         json={"email": "cashier@example.com", "role": "cashier", "companyId": str(w.a.id), "shopId": str(w.a_shop1.id),
               "access": {"template": "full"}},
     )
     assert response.status_code == 201, response.text
-    assert w.db.get(DashboardAccessProfile, uuid.UUID(response.json()["id"])).full_access is False
+    assert w.db.get(DashboardAccessProfile, uuid.UUID(response.json()["id"])).full_access is True
     audit = w.db.query(DashboardAccessAudit).filter(DashboardAccessAudit.user_id == created.id).all()
     assert [a.action for a in audit] == ["profile.create"]
+
+
+def _restricted_manager(w, sections, **kw):
+    manager = _user(w.db, kw.pop("name", "mgr"), UserRole.COMPANY_MANAGER, w.tenant, company=w.a)
+    _profile(w.db, manager, sections=sections, **kw)
+    w.db.commit()
+    w.client.get("/api/v1/tenants/mine", headers=_headers(manager))
+    return manager
+
+
+def test_a_restricted_creator_gives_at_most_what_they_hold(w):
+    manager = _restricted_manager(w, {"users": "edit", "reports": "view", "products": "view"})
+    headers = _headers(manager, w.tenant)
+    shop_user = {"role": "shop_manager", "companyId": str(w.a.id), "shopId": str(w.a_shop1.id)}
+    # The default, capped: products only at view, no Z.
+    response = w.client.post("/api/v1/users", headers=headers, json={"email": "a@example.com", **shop_user})
+    assert response.status_code == 201, response.text
+    profile = w.db.get(DashboardAccessProfile, uuid.UUID(response.json()["id"]))
+    assert DS.clean_sections(profile.sections) == {"products": "view", "reports": "view"}
+    # An explicit grant beyond what they hold is refused (and nothing is created).
+    for access in ({"sections": {"devices": "view"}}, {"sections": {"reports": "edit"}}, {"template": "full"}):
+        response = w.client.post("/api/v1/users", headers=headers, json={"email": "b@example.com", **shop_user, "access": access})
+        assert response.status_code == 403 and response.json()["detail"]["code"] == "grant_exceeds_own", response.text
+    assert w.db.query(User).filter(User.email == "b@example.com").first() is None
+    response = w.client.post(
+        "/api/v1/users", headers=headers,
+        json={"email": "c@example.com", **shop_user, "access": {"sections": {"reports": "view", "users": "view"}}},
+    )
+    assert response.status_code == 201, response.text
+
+
+def test_a_restricted_manager_edits_permissions_only_within_their_own(w):
+    manager = _restricted_manager(w, {"users": "edit", "reports": "view", "products": "edit"})
+    target = _user(w.db, "t", UserRole.SHOP_MANAGER, w.tenant, company=w.a, shop=w.a_shop1)
+    # The super admin had given them devices; the manager does not hold it.
+    _profile(w.db, target, sections={"reports": "view", "devices": "view"})
+    peer = _user(w.db, "peer", UserRole.COMPANY_MANAGER, w.tenant, company=w.a)
+    w.db.commit()
+    headers = _headers(manager, w.tenant)
+    url = f"/api/v1/dashboard-access/users/{target.id}"
+
+    detail = w.client.get(url, headers=headers).json()
+    assert detail["grantable"] == {"products": "edit", "reports": "view", "users": "edit"}
+    assert detail["canGrantFull"] is False and detail["canEditOrganizations"] is False
+
+    # Keep what they had (devices too), add what the manager holds: fine.
+    ok = w.client.put(url, headers=headers, json={"sections": {"reports": "view", "devices": "view", "products": "edit"}})
+    assert ok.status_code == 200, ok.text
+    # Raising beyond the manager's own level, or a section they do not hold: refused.
+    for sections in ({"reports": "edit"}, {"devices": "edit"}, {"kiosks": "view"}):
+        bad = w.client.put(url, headers=headers, json={"sections": sections})
+        assert bad.status_code == 403 and bad.json()["detail"]["code"] == "grant_exceeds_own", (sections, bad.text)
+    # Lowering is always allowed.
+    assert w.client.put(url, headers=headers, json={"sections": {"reports": "view"}}).status_code == 200
+    # Never full access, never organizations, never a peer or themselves.
+    assert w.client.put(url, headers=headers, json={"fullAccess": True}).json()["detail"]["code"] == "grant_exceeds_own"
+    response = w.client.put(url, headers=headers, json={"sections": {}, "tenantIds": [str(w.tenant.id), str(w.other_tenant.id)]})
+    assert response.json()["detail"]["code"] == "organizations_super_admin_only"
+    assert w.client.get(f"/api/v1/dashboard-access/users/{peer.id}", headers=headers).status_code == 403
+    assert w.client.get(f"/api/v1/dashboard-access/users/{manager.id}", headers=headers).status_code == 403
+
+
+def test_a_manager_gives_an_org_scope_only_inside_their_own(w):
+    manager = _restricted_manager(w, {"users": "edit", "reports": "view"}, companies=[w.a])
+    lower = _user(w.db, "lower", UserRole.SHOP_MANAGER, w.tenant, company=w.a, shop=w.a_shop2)
+    w.db.commit()
+    headers = _headers(manager, w.tenant)
+    # Org scope belongs to company-level users; a shop manager keeps their shop.
+    response = w.client.put(f"/api/v1/dashboard-access/users/{lower.id}", headers=headers, json={"sections": {}, "orgWide": True})
+    assert response.json()["detail"]["code"] == "org_scope_needs_company_manager"
+    # The options offered are the manager's own companies only.
+    detail = w.client.get(f"/api/v1/dashboard-access/users/{lower.id}", headers=headers).json()
+    assert {c["name"] for c in detail["companies"]} == {"A", "A-sub"}
+    assert detail["canGrantOrgWide"] is False
 
 
 def test_the_super_admin_creates_an_org_manager_for_the_whole_organization(w):
@@ -404,14 +482,26 @@ def test_a_new_super_admin_is_never_restricted(w):
 def test_the_super_admin_and_full_access_users_are_not_checked(w):
     legacy = _user(w.db, "legacy", UserRole.COMPANY_MANAGER, w.tenant, company=w.a)
     _profile(w.db, legacy, full=True)
-    bare = _user(w.db, "bare", UserRole.COMPANY_MANAGER, w.tenant, company=w.a)  # no profile row at all
     w.db.commit()
-    for user in (w.admin, legacy, bare):
+    for user in (w.admin, legacy):
         for method, path in (("GET", "/api/v1/users"), ("GET", "/api/v1/promotions"), ("GET", "/api/v1/attendance/live")):
             response = w.client.request(method, path, headers=_headers(user, w.tenant))
             assert not _is_section_refusal(response), (user.username, path, response.text)
     assert not DA.effective_access(w.db, legacy).restricted
-    assert not DA.effective_access(w.db, bare).restricted
+
+
+def test_a_user_with_no_profile_row_gets_the_default_never_more(w):
+    bare = _user(w.db, "bare", UserRole.COMPANY_MANAGER, w.tenant, company=w.a)  # no profile row at all
+    w.db.commit()
+    access = DA.effective_access(w.db, bare)
+    assert access.restricted and access.sections == DS.ORG_MANAGER_SECTIONS
+    headers = _headers(bare, w.tenant)
+    assert not _is_section_refusal(w.client.get("/api/v1/products", headers=headers))
+    assert _is_section_refusal(w.client.get("/api/v1/users", headers=headers))
+    me = w.client.get("/api/v1/users/me", headers=headers).json()
+    assert me["dashboardAccess"]["restricted"] is True and me["dashboardAccess"]["template"] == "org_manager"
+    # Its org scope is the role's own (no narrowing from a profile that does not exist).
+    assert _shop_names(w, bare) == {"A1", "A2", "Sub"}
 
 
 def test_a_till_path_refuses_a_restricted_dashboard_token_only(w):
@@ -545,17 +635,24 @@ def test_org_scope_is_a_company_managers(w):
     assert response.status_code == 200
 
 
-def test_only_the_super_admin_manages_permissions(w):
+def test_templates_and_the_audit_are_the_super_admins_and_nobody_edits_themselves(w):
     legacy = _user(w.db, "legacy", UserRole.COMPANY_MANAGER, w.tenant, company=w.a)
     _profile(w.db, legacy, full=True)
+    cashier = _user(w.db, "cash", UserRole.CASHIER, w.tenant, company=w.a, shop=w.a_shop1)
+    _profile(w.db, cashier, full=True)
     w.db.commit()
     for method, path in (
         ("GET", f"/api/v1/dashboard-access/users/{legacy.id}"), ("PUT", f"/api/v1/dashboard-access/users/{legacy.id}"),
-        ("GET", "/api/v1/dashboard-access/templates"), ("POST", "/api/v1/dashboard-access/templates"),
-        ("GET", "/api/v1/dashboard-access/audit"), ("GET", "/api/v1/dashboard-access/catalog"),
+        ("POST", "/api/v1/dashboard-access/templates"), ("GET", "/api/v1/dashboard-access/audit"),
     ):
         response = w.client.request(method, path, headers=_headers(legacy, w.tenant), json={} if method != "GET" else None)
         assert response.status_code == 403, (method, path, response.text)
+    # Reading the catalogue and the templates: whoever manages users.
+    assert w.client.get("/api/v1/dashboard-access/catalog", headers=_headers(legacy, w.tenant)).status_code == 200
+    assert w.client.get("/api/v1/dashboard-access/templates", headers=_headers(legacy, w.tenant)).status_code == 200
+    # A role that manages nobody manages nobody's permissions.
+    response = w.client.get(f"/api/v1/dashboard-access/users/{legacy.id}", headers=_headers(cashier, w.tenant))
+    assert response.status_code == 403
 
 
 def test_templates_are_defined_applied_and_deleted(w):
@@ -601,7 +698,7 @@ def test_the_users_page_reads_every_profile_of_the_organization(w):
     rows = w.client.get("/api/v1/dashboard-access/users", headers=_headers(w.admin, w.tenant)).json()
     by_id = {r["userId"]: r for r in rows}
     assert by_id[str(user.id)]["templateName"] == "מנהל ארגון"
-    assert by_id[str(w.admin.id)]["hasProfile"] is False
+    assert by_id[str(w.admin.id)]["hasProfile"] is False and by_id[str(w.admin.id)]["templateName"] is None
     assert len(rows) == 2
 
 

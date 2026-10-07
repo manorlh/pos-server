@@ -1,18 +1,25 @@
 """
-"הרשאות דשבורד" — the super admin's per-user dashboard permissions (app/services/dashboard_access.py).
+"הרשאות דשבורד" — per-user dashboard permissions (app/services/dashboard_access.py).
 
 GET  /dashboard-access/me                    → what I may open ("מה אני רשאי לראות"), anyone signed in
 GET  /dashboard-access/catalog               → the sections and the templates
-GET  /dashboard-access/users                 → each user of the active organization: their profile
-GET  /dashboard-access/users/{user_id}       → one user's profile, organizations, org options, history
-PUT  /dashboard-access/users/{user_id}       → set it (sections, org scope, organizations)
+GET  /dashboard-access/users                 → each user of the active organization I manage: their profile
+GET  /dashboard-access/users/{user_id}       → one user's profile, organizations, org options, history,
+                                                and what I may grant them
+PUT  /dashboard-access/users/{user_id}       → set it (sections, org scope; organizations: super admin)
 GET  /dashboard-access/templates             → "פרופילי הרשאות" (built-in and the super admin's)
-POST /dashboard-access/templates             → a new one
-PUT  /dashboard-access/templates/{id}        → rename / change its sections (users keep what they got)
-DELETE /dashboard-access/templates/{id}
-GET  /dashboard-access/audit                 → the change history (?userId=)
+POST /dashboard-access/templates             → a new one                       (super admin)
+PUT  /dashboard-access/templates/{id}        → change it (users keep what they got) (super admin)
+DELETE /dashboard-access/templates/{id}                                         (super admin)
+GET  /dashboard-access/audit                 → the change history (?userId=)    (super admin)
 
-Everything but `/me` is the super admin's. Not "תפקידים והרשאות בקופה" (till users).
+Who: the super admin, for anyone. Any other manager of users (the `users` section at edit — the
+route table — and a role above the user's, over a user in their scope: the users page's own
+rule) for the users they manage, granting only what they hold themselves (the owner,
+08.10.2026): a section at most at their own level, "full access" only if they have it, an org
+scope only inside theirs; organizations (memberships) stay the super admin's.
+
+Not "תפקידים והרשאות בקופה" (till users).
 """
 from __future__ import annotations
 
@@ -23,7 +30,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.middleware.auth import get_active_tenant_id, get_current_super_admin, get_current_user
+from app.middleware.auth import ensure_same_tenant, get_active_tenant_id, get_current_super_admin, get_current_user
 from app.models.company import Company
 from app.models.dashboard_access import DashboardAccessAudit, DashboardAccessProfile, DashboardAccessTemplate
 from app.models.shop import Shop
@@ -151,6 +158,81 @@ def _tenant_ids_of(db: Session, user: User) -> List[uuid.UUID]:
     return DA.user_tenant_ids(db, user)
 
 
+def _authorise_manager(db: Session, actor: User, target: User, active_tenant_id) -> None:
+    """The super admin anyone; anyone else only a user the users page lets them manage."""
+    if actor.role == UserRole.SUPER_ADMIN:
+        return
+    from app.routers.users import CREATABLE_ROLES, ROLE_LEVEL, _check_scope_access
+
+    if not CREATABLE_ROLES.get(actor.role):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+    ensure_same_tenant(target.tenant_id, active_tenant_id)
+    if actor.id == target.id:
+        raise _error("own_permissions", "אי אפשר לשנות את ההרשאות של עצמך.", status.HTTP_403_FORBIDDEN)
+    if not _check_scope_access(actor, target, db) or ROLE_LEVEL[actor.role] <= ROLE_LEVEL[target.role]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+
+def _actor_covers_company(db: Session, actor: User, company_id) -> bool:
+    if actor.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
+        return True
+    from app.services.company_hierarchy import user_covers_company
+
+    return actor.role == UserRole.COMPANY_MANAGER and user_covers_company(db, actor, company_id)
+
+
+def check_grant(db: Session, actor: User, values: dict, *, current: Optional[DA.EffectiveAccess]) -> None:
+    """
+    Someone other than the super admin grants only what they hold (the owner, 08.10.2026).
+
+    `current` is what the user has now (None for a new user). Keeping or lowering is always
+    allowed; raising only up to the granter's own level. 403 `grant_exceeds_own`.
+    """
+    if actor.role == UserRole.SUPER_ADMIN:
+        return
+    mine = DA.effective_access(db, actor)
+    limit = DA.grantable(mine)
+    already_full = current is not None and not current.restricted
+    if values["full_access"]:
+        if mine.restricted and not already_full:
+            raise _error(
+                "grant_exceeds_own", "גישה מלאה אפשר לתת רק למי שיש לו גישה מלאה בעצמו.", status.HTTP_403_FORBIDDEN
+            )
+    else:
+        had = DA.grantable(current) if current is not None else {}
+        over = DA.sections_over(values["sections"], had, limit)
+        if over:
+            labels = ", ".join(DS.SECTION_BY_ID[sid].label for sid in over)
+            raise _error(
+                "grant_exceeds_own",
+                f"אפשר לתת רק לשוניות שיש לך, ועד הרמה שלך: {labels}.",
+                status.HTTP_403_FORBIDDEN,
+            )
+    # The org scope: only changes are checked, and only inside the granter's own.
+    now = (
+        bool(current.org_wide) if current else False,
+        set(current.company_ids) if current else set(),
+        set(current.shop_ids) if current else set(),
+    )
+    if (values["org_wide"], set(values["company_ids"]), set(values["shop_ids"])) == now:
+        return
+    if values["org_wide"] and not now[0] and not (
+        actor.role == UserRole.DISTRIBUTOR or (actor.role == UserRole.COMPANY_MANAGER and mine.org_wide)
+    ):
+        raise _error("grant_exceeds_own", "את כל הארגון יכול לתת רק מי שרואה את כל הארגון.", status.HTTP_403_FORBIDDEN)
+    for cid in set(values["company_ids"]) - now[1]:
+        if not _actor_covers_company(db, actor, cid):
+            raise _error("grant_exceeds_own", "אחת החברות אינה בהיקף שלך.", status.HTTP_403_FORBIDDEN)
+    from app.services.company_hierarchy import user_covers_shop
+
+    for sid in set(values["shop_ids"]) - now[2]:
+        shop = db.get(Shop, sid)
+        if actor.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
+            continue
+        if shop is None or actor.role != UserRole.COMPANY_MANAGER or not user_covers_shop(db, actor, shop):
+            raise _error("grant_exceeds_own", "אחד הסניפים אינו בהיקף שלך.", status.HTTP_403_FORBIDDEN)
+
+
 def _target(db: Session, user_id: uuid.UUID) -> User:
     user = db.get(User, user_id)
     if user is None:
@@ -230,7 +312,7 @@ def my_access(current_user: User = Depends(get_current_user), db: Session = Depe
 
 
 @router.get("/catalog")
-def catalog(current_user: User = Depends(get_current_super_admin), db: Session = Depends(get_db)):
+def catalog(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     custom = db.query(DashboardAccessTemplate).order_by(DashboardAccessTemplate.name).all()
     return {
         "sections": DS.catalogue(),
@@ -242,12 +324,16 @@ def catalog(current_user: User = Depends(get_current_super_admin), db: Session =
 
 @router.get("/users")
 def list_profiles(
-    current_user: User = Depends(get_current_super_admin),
+    current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """The profile of every user of the active organization (for the users page's badges)."""
-    users = db.query(User).filter(User.tenant_id == active_tenant_id).all()
+    """The profile of every user of the active organization the caller may read (the users page's badges)."""
+    from app.routers.users import USER_READ_ROLES, _apply_scope_filter
+
+    if current_user.role not in USER_READ_ROLES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+    users = _apply_scope_filter(db.query(User), current_user, db).filter(User.tenant_id == active_tenant_id).all()
     profiles = {
         p.user_id: p
         for p in db.query(DashboardAccessProfile).filter(DashboardAccessProfile.user_id.in_([u.id for u in users])).all()
@@ -257,22 +343,40 @@ def list_profiles(
     for u in users:
         p = profiles.get(u.id)
         row = {"userId": str(u.id), **DA.profile_out(p)}
+        builtin = row["builtinTemplate"]
         row["templateName"] = (
-            DS.BUILTIN_TEMPLATES[p.builtin_template]["label"] if p is not None and p.builtin_template in DS.BUILTIN_TEMPLATES
-            else templates.get(p.template_id) if p is not None and p.template_id else None
+            None if u.role == UserRole.SUPER_ADMIN
+            else templates.get(p.template_id) if p is not None and p.template_id
+            else DS.BUILTIN_TEMPLATES[builtin]["label"] if builtin in DS.BUILTIN_TEMPLATES
+            else None
         )
         out.append(row)
     return out
 
 
 @router.get("/users/{user_id}")
-def get_profile(user_id: uuid.UUID, current_user: User = Depends(get_current_super_admin), db: Session = Depends(get_db)):
+def get_profile(
+    user_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
     user = _target(db, user_id)
+    _authorise_manager(db, current_user, user, active_tenant_id)
     profile = db.get(DashboardAccessProfile, user.id)
+    is_admin = current_user.role == UserRole.SUPER_ADMIN
+    mine = DA.effective_access(db, current_user)
     tenant_ids = _tenant_ids_of(db, user)
     tenants = db.query(Tenant).filter(Tenant.id.in_(tenant_ids)).all() if tenant_ids else []
     companies = db.query(Company).filter(Company.tenant_id.in_(tenant_ids)).order_by(Company.name).all() if tenant_ids else []
     shops = db.query(Shop).filter(Shop.tenant_id.in_(tenant_ids)).order_by(Shop.name).all() if tenant_ids else []
+    if not is_admin:
+        # Options inside the granter's own scope only.
+        companies = [c for c in companies if _actor_covers_company(db, current_user, c.id)]
+        allowed = {c.id for c in companies}
+        shops = [s for s in shops if s.company_id in allowed and (
+            current_user.role != UserRole.COMPANY_MANAGER or DA.shop_allowed(db, current_user, s.id)
+        )]
     audit = (
         db.query(DashboardAccessAudit)
         .filter(DashboardAccessAudit.user_id == user.id)
@@ -289,6 +393,13 @@ def get_profile(user_id: uuid.UUID, current_user: User = Depends(get_current_sup
         },
         "profile": DA.profile_out(profile),
         "orgScopeAllowed": user.role == UserRole.COMPANY_MANAGER,
+        # What this caller may give (the dialog greys out the rest; the PUT refuses it).
+        "grantable": DA.grantable(mine),
+        "canGrantFull": not mine.restricted,
+        "canGrantOrgWide": is_admin or current_user.role == UserRole.DISTRIBUTOR or (
+            current_user.role == UserRole.COMPANY_MANAGER and mine.org_wide
+        ),
+        "canEditOrganizations": is_admin,
         "organizations": [
             {"id": str(t.id), "name": t.name, "home": t.id == user.tenant_id} for t in tenants
         ],
@@ -309,15 +420,25 @@ def get_profile(user_id: uuid.UUID, current_user: User = Depends(get_current_sup
 def put_profile(
     user_id: uuid.UUID,
     body: ProfileIn,
-    current_user: User = Depends(get_current_super_admin),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
     user = _target(db, user_id)
     if user.role == UserRole.SUPER_ADMIN:
         raise _error("super_admin_unrestricted", "למנהל מערכת יש גישה לכל — אין לו הרשאות לשנות.")
+    _authorise_manager(db, current_user, user, active_tenant_id)
     if body.tenant_ids is not None:
-        _set_memberships(db, current_user, user, body.tenant_ids)
+        if current_user.role != UserRole.SUPER_ADMIN:
+            if set(body.tenant_ids) | ({user.tenant_id} - {None}) != set(_tenant_ids_of(db, user)):
+                raise _error(
+                    "organizations_super_admin_only", "שיוך לארגונים — מנהל המערכת בלבד.", status.HTTP_403_FORBIDDEN
+                )
+        else:
+            _set_memberships(db, current_user, user, body.tenant_ids)
+    current = DA.effective_access(db, user)
     values = resolve_access(db, user, body, tenant_ids=_tenant_ids_of(db, user))
+    check_grant(db, current_user, values, current=current)
     primary = values.pop("primary_company_id")
     if primary != user.company_id:
         DA.record(
@@ -328,11 +449,11 @@ def put_profile(
         user.company_id = primary
     DA.save_profile(db, user, actor=current_user, **values)
     db.commit()
-    return get_profile(user_id, current_user=current_user, db=db)
+    return get_profile(user_id, current_user=current_user, active_tenant_id=active_tenant_id, db=db)
 
 
 @router.get("/templates")
-def list_templates(current_user: User = Depends(get_current_super_admin), db: Session = Depends(get_db)):
+def list_templates(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     custom = db.query(DashboardAccessTemplate).order_by(DashboardAccessTemplate.name).all()
     return DA.builtin_templates_out() + [DA.template_out(t) for t in custom]
 
