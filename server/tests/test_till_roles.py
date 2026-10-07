@@ -501,7 +501,20 @@ def _render(*args, downgrade=False) -> str:
     buf = io.StringIO()
     cfg = Config(os.path.join(here, "alembic.ini"), output_buffer=buf)
     cfg.set_main_option("script_location", os.path.join(here, "alembic"))
-    (command.downgrade if downgrade else command.upgrade)(cfg, *args, sql=True)
+    # alembic's env.py runs fileConfig(), which disables every existing logger: put them back,
+    # or a later test's caplog sees nothing (tests/test_device_management.py).
+    import logging
+
+    root = logging.getLogger()
+    saved = {n: lg.disabled for n, lg in logging.Logger.manager.loggerDict.items() if isinstance(lg, logging.Logger)}
+    handlers, level = list(root.handlers), root.level
+    try:
+        (command.downgrade if downgrade else command.upgrade)(cfg, *args, sql=True)
+    finally:
+        for n, disabled in saved.items():
+            logging.getLogger(n).disabled = disabled
+        root.handlers[:] = handlers
+        root.setLevel(level)
     return " ".join(buf.getvalue().split())
 
 
@@ -592,3 +605,16 @@ class TestDrawerParams:
         assert refused(R.put_drawer_params, str(w.company.id), body, **ctx(w)).status_code == 422
         body = R.DrawerParamsIn(scopeType="company", scopeId=w.company.id, values={"somethingElse": 1})
         assert refused(R.put_drawer_params, str(w.company.id), body, **ctx(w)).status_code == 422
+
+def test_the_shared_matrix_fixture_is_the_catalogue():
+    """tests/fixtures/till_permissions_matrix.json — the till's PermissionServiceTest reads the same bytes."""
+    import json
+    import pathlib
+
+    data = json.loads((pathlib.Path(__file__).parent / "fixtures" / "till_permissions_matrix.json").read_text("utf-8"))
+    assert data["codes"] == list(TP.CODES)
+    assert data["scopes"] == dict(sorted(TP.SCOPE_PERMISSIONS.items()))
+    assert set(data["roles"]) == set(TP.BUILTIN_BY_KEY)
+    for key in TP.BUILTIN_BY_KEY:
+        assert data["roles"][key]["states"] == TP.DEFAULTS[key], key
+        assert data["roles"][key]["limits"] == TP.DEFAULT_LIMITS.get(key, {}), key

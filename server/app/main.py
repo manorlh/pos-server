@@ -302,6 +302,10 @@ app.include_router(report_center_router.router, prefix=_prefix)
 from app.routers import till_roles as till_roles_router  # noqa: E402
 
 app.include_router(till_roles_router.router, prefix=_prefix)
+from app.routers import cash_drawer as cash_drawer_router  # noqa: E402
+
+app.include_router(cash_drawer_router.till_router, prefix=_prefix)
+app.include_router(cash_drawer_router.router, prefix=_prefix)
 
 
 @app.on_event("startup")

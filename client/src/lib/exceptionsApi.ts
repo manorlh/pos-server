@@ -59,6 +59,16 @@ export const EXCEPTION_TYPES = [
   // A self-order kiosk offline longer than the rule's minutes in its opening hours; closed
   // when it comes back (details: kiosk, offlineSince, backAt; value = minutes offline).
   'kiosk_offline',
+  // "מגירת מזומן" (pos-server app/services/cash_drawer_exceptions.py, docs/SPEC_ROLES_PERMISSIONS.md):
+  // detected from the tills' drawer events and cash movements; thresholds on the roles page.
+  'drawer_after_close',
+  'drawer_manual_burst',
+  'drawer_manual_over_max',
+  'cash_out_over_threshold',
+  'drawer_count_variance',
+  'drawer_open_near_variance',
+  'drawer_open_no_reason',
+  'drawer_open_denied',
 ] as const;
 
 export type ExceptionType = (typeof EXCEPTION_TYPES)[number];

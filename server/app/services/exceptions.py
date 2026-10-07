@@ -173,6 +173,13 @@ RULES: Tuple[RuleSpec, ...] = (
     RuleSpec("card_failures", False, (ParamSpec("count", 3, 1, 100, integer=True),), "medium", "till_event", available=False),
 )
 
+# "מגירת מזומן" (the drawer spec §11, app/services/cash_drawer_exceptions.py): detected from the
+# tills' drawer events and cash movements (app/services/cash_drawer.py); their thresholds are
+# the drawer's till parameters, so each rule here is on / off only.
+from app.services.cash_drawer_exceptions import DRAWER_EXCEPTION_KINDS as _DRAWER_KINDS  # noqa: E402
+
+RULES = RULES + tuple(RuleSpec(k.key, True, (), k.severity, "cash_drawer") for k in _DRAWER_KINDS)
+
 RULES_BY_TYPE: Dict[str, RuleSpec] = {r.type: r for r in RULES}
 EXCEPTION_TYPES = tuple(RULES_BY_TYPE)
 
