@@ -105,7 +105,7 @@
 | `messages` | עד 30: banner / notice / closed, כותרת, גוף, תמונה, מסכים, סגנון, מוצר מקושר, תאריכי תוקף |
 | `hours` | טווחים לפי ימים, כולל אחרי חצות |
 | `payment` | `methods` (card; cash — P2), `tipEnabled` (כבוי), `tipPresets`, `receiptPolicy`, `customerName` / `customerPhone` (off/optional/required), `minOrderAgorot` |
-| `printing` | `bonMode`, `bonPrinterId`, `bonCopies`, `receiptPrinterId`, `pickupSlip` |
+| `printing` | `bonMode`, `bonPrinterId`, `bonCopies`, `receiptPrinterId`, `pickupSlip`, `bonAutoRetryMin`, `bonOnKiosk` (§29) |
 | `pickup` | `scope`, `prefix`, `start`, `max` |
 | `timers` | `inactivitySec`, `warningSec`, `successSec`, `attractSlideSec` |
 | `club` | `enabled`, `joinUrl` (QR בלבד; דף ההרשמה של סוכן ה-SMS/מועדון), `title`, `body` |
@@ -510,7 +510,7 @@ Hebrew, Alef, Varela Round, Secular One, Suez One, Frank Ruhl Libre. הקיוס�
   `1504:0103` (כמו `lsusb`), או יצרן בלבד. ריק: הקופה מוצאת לבד — מדפסת USB אחת היא המדפסת. כמה מדפסות בלי קביעה: זו
   ש-Android כבר אישר אם יש בדיוק אחת, אחרת אף אחת ("קבעו בענן איזו").
 - **קיוסק בלי מדפסת אחרת** (אין ראש הדפסה, אין מדפסת חיצונית בפרמטרים ואין מדפסת חשבוניות של הסניף): הקבלות ופתק האיסוף על
-  מדפסת ה-USB. **בון:** במצב `routing` כשאין לקיוסק אף מדפסת מטבח — כל ההזמנה למדפסת ה-USB, דרך תור המטבח הקיים
+  מדפסת ה-USB. **בון:** במצב `routing` כשאין לקיוסק אף מדפסת מטבח — ורק כש"בון מטבח במדפסת הקיוסק" מופעל (§29.1, ברירת מחדל כבוי) — כל ההזמנה למדפסת ה-USB, דרך תור המטבח הקיים
   (`UsbPrinters.AUTO_PRINTER_ID`): פעם אחת, עם retry. מדפסת שנראתה בקיוסק נזכרת, כך שניתוק רגעי משאיר את הבון בתור עד
   שהיא חוזרת ("שכח מדפסת USB" בניהול למדפסת שהוסרה לתמיד). מדפסת בונים אחת (`single`) או מדפסות מטבח — כמו קודם.
 - **בלי אישור (הפעלה ראשונה):** על מסך הלקוח לא נפתח שום חלון. הדפסה נכשלת מיד ("ממתינה לאישור"), התשלום לא מחכה לה,
@@ -1292,6 +1292,7 @@ Hebrew, Alef, Varela Round, Secular One, Suez One, Frank Ruhl Libre. הקיוס�
   נשלח מיד דרך הענן לקופה המארחת (`POST /sync/{m}/print-jobs`, הכרטיס המובנה של §16.7–16.9) וההזמנה מסומנת `kitchenSent`; בניתוב
   לפי מטבח — הקופה שגובה שולחת.
 - **קבלה:** מהקופה שגובה. אין במערכת קבלה דיגיטלית / QR לקבלה (פער ידוע).
+- **שוברי פריט:** אין מדפסת בדפדפן — הקופה שגובה את "מזומן בקופה" מדפיסה אותם; עם גשר Windows — עסקת אשראי מדפיסה אותם במדפסת המחשב אחרי הפתק (§29.2). בלי גשר ובלי קופה — אין שוברים (פער).
 
 ### 27.6 ברקוד
 - סורק USB / Bluetooth (HID) — בדיוק כמו קיוסק Windows: כל מקש נלקח בחלון, מוצר נכנס לסל / נפתח, "המוצר לא נמצא";
@@ -1496,3 +1497,82 @@ Hebrew, Alef, Varela Round, Secular One, Suez One, Frank Ruhl Libre. הקיוס�
   נדחה / לא ידוע (בלי חיוב שני, חסימה, קוד מנהל, בדוק שוב) / ביטול / מחיר שזז, אין החלפת מכונה עם מסמכים בדרך, WebSocket חתום,
   סגירה עם ה-Z הסניפי, פתיחה בהפעלה ובחירת המצב. `client/src/lib/kioskBridge.test.ts` — חיפוש, צימוד, חתימה, קישור, הקיוסק עם / בלי
   גשר (אריח האשראי, heartbeat, מיזוג, סגירה). `server/tests/test_windows_bridge.py`.
+
+## 29. הדפסה בקיוסק — בון במדפסת הקיוסק, שוברי פריט, מדפסת הקבלות ומקום ההנפקה (07.10.2026)
+
+הבעלים, אחרי בדיקת קיוסק רויאל (תשלום בקופה ושובר מופעלים, המסופון לא מחובר, אף מדפסת מטבח לא עונה):
+"אין צורך שידפיס את בון של המטבח — תאפשר דינמיות, ברירת מחדל תבטל את זה אם היא לא עונה"; "הגדרתי שידפיס
+שובר לכל יחידה וזה לא הדפיס"; "לחצתי על הדפס חשבונית — לא הדפיס"; "יוצא לי 2 פתקים במקום אחד"; "תאפשר
+דינמיות בשובר פריט … מאיזה קופה כן יוצא ומאיזה לא"; "בחשבונית לא מוצג מספר קופה ושם קופה וסניף".
+
+### 29.1 "בון מטבח במדפסת הקיוסק" (`printing.bonOnKiosk`, ברירת מחדל: כבוי)
+- **כבוי** (ברירת המחדל — גם לכל קיוסק קיים: המפתח חדש בברירות המחדל, `configVersion` זז וכל קיוסק מקבל את
+  התצורה): הקיוסק **לעולם** לא מדפיס את בון המטבח במדפסת שלו — לא במדפסת ה-USB כשאין לו מדפסת מטבח (§14), לא
+  כשמדפסת הבונים היחידה שנבחרה (`bonMode: single`) היא שלו (מדפסת USB / הראש שלו / מדפסת ענן שהוא מארח /
+  מדפסת חשבוניות שהוגדרה לו בלבד — כך היה ברויאל: `bonPrinterId` = ה-BIXOLON שלו, ולכן יצאו שני פתקים), לא
+  החלק של "הקופה הזו" בניתוב (שורות שלא נותבו, "עותק קופה"), ולא כגיבוי למדפסת מטבח שלא עונה — הבון נשאר בתור
+  של מדפסת המטבח ובהתראה לצוות. אין מדפסת מטבח בכלל: אין בון — ההזמנה אומרת "לא מודפס בקיוסק — 'בון מטבח
+  במדפסת הקיוסק' כבוי" (סטטוס `none`, לא התראת "בון לא הודפס" על כל הזמנה). "שלח למטבח לפני תשלום" באותו כלל:
+  כשרק הקיוסק היה מדפיס — לא נשלח, והקופה שגובה מדפיסה. מדפסת בונים יחידה במקום אחר (מטבח, קופה אחרת) —
+  ללא שינוי.
+- **מופעל:** כמו קודם.
+- **ההחלטה:** `KioskBon.route` / `ownShare` / `isOwnPrinter` (אנדרואיד `domain/KioskOrders.kt`, העובדות
+  ב-`KioskBonService.bonRoute` — גם לניהול הקיוסק ולתשלום בקופה); `core/kioskBonRoute.ts` בקיוסק Windows ובגשר
+  (שם כל דף יוצא במדפסת שלו: כבוי — אין בון בכלל). מקרים משותפים: `kiosk_bon_route.json` (אותם בתים
+  ב-pos-android ובכאן).
+- **דשבורד:** "מה מודפס בקיוסק" בראש "הדפסה" — "פתק מספר הזמנה ללקוח" (`pickupSlip`: המספר, למשל A-4, ללקוח)
+  ו"בון מטבח במדפסת הקיוסק" (לצוות המטבח), שורת הסבר לכל אחד.
+- **"A-4" בפתק השני:** הפתק השני ברויאל היה בון המטבח ("הזמנה A-4" בראשו): מספר האיסוף — קידומת `A`
+  (`pickup.prefix` ברמת הקיוסק) והמספר הרביעי של היום בקיוסק — אותו מספר שבפתק הלקוח.
+
+### 29.2 שוברי פריט בקיוסק
+- **למה לא הודפסו:** הקיוסק (HIT_KIOSK, `GENERIC_ANDROID` — "אין מדפסת" בענן) מדפיס על מדפסת USB, ו-
+  `ItemTicketService` דילג על כל מכשיר בלי ראש הדפסה (`tillHasPrinter=false`). עכשיו הכלל של הקבלה
+  (`AppContainer.printsReceipts`: ראש משלו, או מדפסת חיצונית / USB) — גם קופה בלי ראש עם מדפסת חיצונית.
+- **אנדרואיד:** הקיוסק מדפיס את שוברי הפריט בעצמו, מיד אחרי פתק האיסוף, במדפסת הקבלות שלו (`receiptPrinterId`,
+  אחרת שלו), ברקע — הלקוח הבא לא מחכה, כשל = שורת לוג ונורית המדפסת, לא כשל קבלה. ה-checkout שמתחתיו לא מדפיס
+  אותם (`ItemTicketPrinting.byCheckout`). לא לחשבונית זיכוי, לא בלי מדפסת. הזמנה ששולמה בקופה ("תשלום בקופה")
+  — הקופה מדפיסה (התשלום הרגיל שלה, `issueVouchers`); נבדק. הזמנה ששוחזרה ("שחזור") — בלי קבלה, פתק ושוברים.
+- **Windows (והגשר):** `core/itemTickets.ts` — הפורט של הכללים (מקרים משותפים `item_ticket_cases.json`), מצב
+  השובר מהקטלוג שהוא מסנכרן (`ticketMode`, `ticketEntries`), דף `ticket` בתור ההדפסה אחרי הפתק והקבלה.
+- **דפדפן בלי גשר:** אין מדפסת — שוברי פריט של הזמנת "מזומן בקופה" יוצאים בקופה שגובה; בלי זה אין שוברים (פער).
+
+### 29.3 "שוברי פריט" — פרמטר קופה (`itemTicketMode`, חברה ← סניף ← נקודת מכירה ← קופה)
+"לפי הפריט" (ברירת מחדל — מצב השובר של המוצר / המחלקה), "כבוי" (המכשיר לא מדפיס שוברי פריט), "שובר לכל יחידה" /
+"שובר לכל פריט" / "שובר אחד לעסקה" — במקום מצב המוצר, רק למוצרים שהשוברים שלהם פועלים (מוצר כבוי לא נדלק
+מכאן). שובר כניסה נשאר שובר כניסה. הענן: `app/services/item_ticket.py` (`ITEM_TICKET_PARAMETER_SPECS`,
+`device_mode`); הקופה והקיוסק באנדרואיד (`ItemTicketSetting`, `ItemTicketPrinting.modeFor`); Windows
+(`itemTicketSetting`, `ticketModeFor`) — אותם מקרים.
+
+### 29.4 מדפסת הקבלות — של הקופה קודם
+- `GET /sync/{m}/printers` אומר לכל מדפסת היכן הוגדרה: `scope` = `machine` / `area` / `shop`.
+- **מדפסת שהוגדרה לקופה הזו גוברת** על מדפסת שהסניף / נקודת המכירה משתפים — בבחירת המדפסת
+  (`ReceiptChoice.decide`, גם מול ברירת מחדל שנזכרה) ובקופה בלי ראש ובלי מדפסת בפרמטרים
+  (`fallbackReceiptPrinter`); מדפסת USB תמיד על המכשיר עצמו. הראש של הקופה נשאר שלה.
+- **קיוסק:** מדפסת ה-USB שלו לפני מדפסת משותפת; קבלה שהמדפסת שלה לא הדפיסה — במדפסת של הקיוסק עצמו (ראש,
+  מדפסת שהוגדרה לו, USB), עם שורת לוג; אין שם אף אחד לשאלת "מדפסת חלופית" (`kioskReceiptFallback`).
+- Windows: מדפסת אחת מקומית — אין בחירה כזו.
+
+### 29.5 מקום ההנפקה בכל מסמך
+שורה אחת מתחת לפרטי העסק בכל מסמך מודפס (קבלה, חשבונית מס/קבלה, זיכוי, העתק): "סניף הרצליה · קופה 3 ·
+קיוסק רויאל" — שם הסניף, מספר הקופה ושם הקופה כפי שהמכשיר מכיר את עצמו (`/machines/me`). סניף ששמו כבר
+"סניף …" לא מקבל קידומת שנייה; שם קופה שהוא שם הסניף או "קופה N" — פעם אחת. אנדרואיד `ReceiptPlace`
+(`ReceiptService` → `ReceiptRenderer`), Windows `placeLine` (`receiptDoc`), הענן `print_documents.place_line`
+(העתק המסמך בדשבורד, עם "מס׳ סניף"). מקרים משותפים: `receipt_place_cases.json` (pos-android, kiosk-desktop,
+server). X / Z ושוברי פריט כבר נושאים סניף וקופה.
+
+### 29.6 קבצים ובדיקות
+- **אנדרואיד:** `domain/KioskAppConfig.kt`, `domain/KioskOrders.kt`, `domain/ItemTicket.kt`, `domain/Receipt.kt`,
+  `domain/ReceiptPrinterConfig.kt`, `data/repo/KioskBonService.kt`, `KioskPayAtTill.kt`, `ItemTicketService.kt`,
+  `ReceiptService.kt`, `hardware/kitchen/KitchenRouting.kt` (`withoutOwnShare`), `KitchenPrintService.kt`
+  (`enqueueTracked(ownPrinter)`), `hardware/printer/ReceiptChoice.kt`, `ExternalReceiptPrinter.kt`,
+  `ReceiptRenderer.kt`, `data/remote/KitchenPrinterDtos.kt` (`scope`), `AppContainer.kt`, `ui/kiosk/KioskViewModel.kt`,
+  `KioskAdmin.kt`, `KioskPayMethodModel.kt`, `ui/checkout/CheckoutViewModel.kt`; `KioskPrintingRulesTest`.
+- **ענן:** `kiosk_config.py`, `item_ticket.py`, `till_parameters.py`, `printers.py` (`printer_scope`),
+  `print_documents.py`; `tests/test_kiosk_printing.py`, `test_kiosks.py`, `test_kitchen_printers.py`.
+- **דשבורד:** `lib/kioskConfig.ts`, `kiosks/section-printing.tsx`, `messages/he.json`.
+- **Windows:** `core/kioskBonRoute.ts`, `core/itemTickets.ts`, `core/printDocs.ts` (`ticketDoc`, `placeLine`),
+  `renderer/print/draw.ts`, `main/printer/printQueue.ts`, `main/service.ts`; `test/kioskPrinting.test.ts`.
+- **לבדוק במכשיר:** קיוסק רויאל — פתק אחד (בלי בון) ב-USB; שוברי פריט ל"מים מינרליים" (לכל יחידה) אחרי
+  הפתק; "הדפס חשבונית" יוצא ב-BIXOLON גם כשמדפסת החשבוניות של הסניף כבויה; שורת "סניף · קופה · שם" בקבלה;
+  קופה שגובה הזמנת קיוסק מדפיסה את השוברים.

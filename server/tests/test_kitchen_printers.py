@@ -304,6 +304,22 @@ class TestTheTillsPull:
         assert set(two["categoryRoutes"][str(k.drinks.id)]) == {shopwide["id"], in_bar["id"]}
         assert pull(k, k.other_till)["printers"] == []
 
+    def test_each_printer_says_where_it_is_set_so_a_tills_own_receipt_printer_wins(self, k):
+        """The Royal kiosk (07.10.2026): the shop's receipt printer and the kiosk's own USB one both
+        reach it; `scope` lets the till prefer the one set to it (receiptPrinterRank)."""
+        t1, t2 = k.tills
+        bar_area = ShopArea(id=uuid.uuid4(), tenant_id=k.tenant.id, shop_id=k.shop.id, name="Bar")
+        k.db.add(bar_area)
+        k.db.flush()
+        t1.area_id = bar_area.id
+        k.db.commit()
+        create(k, name="מדפסת חשבוניות", purpose="receipt", host="192.168.0.223")
+        create(k, name="Bar receipts", purpose="receipt", host="192.168.0.224", areaId=str(bar_area.id))
+        create(k, name="T1 USB", purpose="receipt", connectionType="usb", host=None, machineId=str(t1.id))
+        scopes = {p["name"]: p["scope"] for p in pull(k, t1)["printers"]}
+        assert scopes == {"מדפסת חשבוניות": "shop", "Bar receipts": "area", "T1 USB": "machine"}
+        assert {p["name"]: p["scope"] for p in pull(k, t2)["printers"]} == {"מדפסת חשבוניות": "shop"}
+
     def test_a_machine_local_copy_of_a_routed_product_routes_too(self, k):
         kitchen = create(k, name="Kitchen")
         route_product(k, k.steak, "printers", [kitchen["id"]])

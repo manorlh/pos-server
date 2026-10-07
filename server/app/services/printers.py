@@ -308,6 +308,15 @@ def printer_applies_to(printer: KitchenPrinter, machine: POSMachine) -> bool:
     return True
 
 
+def printer_scope(printer: KitchenPrinter) -> str:
+    """Where a printer is set: "machine" (one till), "area" (a point of sale) or "shop"."""
+    if printer.machine_id is not None:
+        return "machine"
+    if printer.area_id is not None:
+        return "area"
+    return "shop"
+
+
 def tills_using(db: Session, printer: KitchenPrinter) -> List[POSMachine]:
     """The active tills the printer applies to."""
     return [m for m in shop_machines(db, printer.shop_id) if printer_applies_to(printer, m)]
@@ -1217,6 +1226,10 @@ def printer_for_till(
         #: bills and receipts there when asked, and opens its drawer (`cashDrawer`).
         "purpose": printer.purpose or "kitchen",
         "cashDrawer": bool(printer.cash_drawer),
+        #: Where the shop set it: "machine" (this very till), "area" or "shop". A receipt printer
+        #: assigned to the till wins over one the shop shares (the till's receiptPrinterRank;
+        #: the owner, 07.10.2026 — the Royal kiosk's receipt went to the shop's printer).
+        "scope": printer_scope(printer),
         "type": printer.connection_type,
         "host": printer.host,
         "port": printer.port,

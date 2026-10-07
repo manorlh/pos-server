@@ -491,6 +491,12 @@ export interface KioskPrinting {
   pickupSlip: boolean;
   /** An unprinted bon prints again by itself when the printer comes back, if younger than this (min); 0: never. */
   bonAutoRetryMin: number;
+  /**
+   * "בון מטבח במדפסת הקיוסק" (off by default, the server's kiosk_config.py): the kiosk's own printer
+   * may take its kitchen bon — when it has no kitchen printer, or the one bon printer named is its
+   * own. Off: the bon never prints on the kiosk (a kitchen printer that does not answer keeps it).
+   */
+  bonOnKiosk: boolean;
 }
 
 export type PickupScope = 'kiosk' | 'shop';
@@ -832,6 +838,7 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     receiptPrinterId: null,
     pickupSlip: true,
     bonAutoRetryMin: 10,
+    bonOnKiosk: false,
   },
   pickup: { scope: 'kiosk', prefix: '', start: 1, max: 999 },
   timers: { inactivitySec: 60, warningSec: 20, successSec: 12, attractSlideSec: 8 },
@@ -1701,6 +1708,7 @@ export function validateKioskConfig(
   checkRange(e, 'printing.bonCopies', pr.bonCopies, L.bonCopies);
   if (typeof pr.pickupSlip !== 'boolean') e.push({ path: 'printing.pickupSlip', code: 'enum' });
   checkRange(e, 'printing.bonAutoRetryMin', pr.bonAutoRetryMin, { min: 0, max: 120 });
+  if (typeof pr.bonOnKiosk !== 'boolean') e.push({ path: 'printing.bonOnKiosk', code: 'enum' });
 
   const pk = cfg.pickup;
   checkEnum(e, 'pickup.scope', pk.scope, ['kiosk', 'shop']);

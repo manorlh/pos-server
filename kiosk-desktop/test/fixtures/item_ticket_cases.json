@@ -1,0 +1,127 @@
+{
+  "about": "Item tickets (\"שוברים\"): which tickets a sale prints and what is on each. The same bytes in pos-android app/src/test/resources and pos-server kiosk-desktop/test/fixtures; Android domain/ItemTicket.kt (ItemTickets.split, TicketMode.resolve, ItemTicketPrinting.prints), kiosk-desktop core/itemTickets.ts. A line: productId, name, quantity, mode (off | per_unit | per_line | per_sale), optional unitLabel, entries, refund. A ticket: its items, each name, quantity, and unitLabel / entry / entries when set.",
+  "split": [
+    {
+      "name": "per unit: one ticket per unit",
+      "lines": [{ "productId": "hotdog", "name": "נקניקיה", "quantity": 5, "mode": "per_unit" }],
+      "tickets": [
+        [{ "name": "נקניקיה", "quantity": 1 }],
+        [{ "name": "נקניקיה", "quantity": 1 }],
+        [{ "name": "נקניקיה", "quantity": 1 }],
+        [{ "name": "נקניקיה", "quantity": 1 }],
+        [{ "name": "נקניקיה", "quantity": 1 }]
+      ]
+    },
+    {
+      "name": "per line: one ticket per product, the same product on two lines combined",
+      "lines": [
+        { "productId": "hotdog", "name": "נקניקיה", "quantity": 2, "mode": "per_line" },
+        { "productId": "cola", "name": "קולה", "quantity": 2, "mode": "per_line" },
+        { "productId": "hotdog", "name": "נקניקיה", "quantity": 3, "mode": "per_line" }
+      ],
+      "tickets": [
+        [{ "name": "נקניקיה", "quantity": 5 }],
+        [{ "name": "קולה", "quantity": 2 }]
+      ]
+    },
+    {
+      "name": "per sale: one combined ticket, last",
+      "lines": [
+        { "productId": "fries", "name": "צ'יפס", "quantity": 1, "mode": "per_sale" },
+        { "productId": "hotdog", "name": "נקניקיה", "quantity": 2, "mode": "per_unit" },
+        { "productId": "cola", "name": "קולה", "quantity": 3, "mode": "per_line" },
+        { "productId": "napkin", "name": "מפית", "quantity": 4, "mode": "off" },
+        { "productId": "beer", "name": "בירה", "quantity": 2, "mode": "per_sale" }
+      ],
+      "tickets": [
+        [{ "name": "נקניקיה", "quantity": 1 }],
+        [{ "name": "נקניקיה", "quantity": 1 }],
+        [{ "name": "קולה", "quantity": 3 }],
+        [{ "name": "צ'יפס", "quantity": 1 }, { "name": "בירה", "quantity": 2 }]
+      ]
+    },
+    {
+      "name": "refunds, zero and negative quantities, and off: nothing",
+      "lines": [
+        { "productId": "hotdog", "name": "נקניקיה", "quantity": 2, "mode": "per_unit", "refund": true },
+        { "productId": "cola", "name": "קולה", "quantity": 0, "mode": "per_line" },
+        { "productId": "beer", "name": "בירה", "quantity": -1, "mode": "per_sale" },
+        { "productId": "napkin", "name": "מפית", "quantity": 3, "mode": "off" }
+      ],
+      "tickets": []
+    },
+    {
+      "name": "a weighed quantity per unit: one ticket for all of it",
+      "lines": [{ "productId": "cheese", "name": "גבינה", "quantity": 0.734, "unitLabel": "ק\"ג", "mode": "per_unit" }],
+      "tickets": [[{ "name": "גבינה", "quantity": 0.734, "unitLabel": "ק\"ג" }]]
+    },
+    {
+      "name": "an entry ticket: one per entry for every unit, whatever its mode, first",
+      "lines": [
+        { "productId": "cola", "name": "קולה", "quantity": 1, "mode": "per_line" },
+        { "productId": "pass", "name": "כרטיס 3 כניסות", "quantity": 2, "mode": "off", "entries": 3 }
+      ],
+      "tickets": [
+        [{ "name": "כרטיס 3 כניסות", "quantity": 1, "entry": 1, "entries": 3 }],
+        [{ "name": "כרטיס 3 כניסות", "quantity": 1, "entry": 2, "entries": 3 }],
+        [{ "name": "כרטיס 3 כניסות", "quantity": 1, "entry": 3, "entries": 3 }],
+        [{ "name": "כרטיס 3 כניסות", "quantity": 1, "entry": 1, "entries": 3 }],
+        [{ "name": "כרטיס 3 כניסות", "quantity": 1, "entry": 2, "entries": 3 }],
+        [{ "name": "כרטיס 3 כניסות", "quantity": 1, "entry": 3, "entries": 3 }],
+        [{ "name": "קולה", "quantity": 1 }]
+      ]
+    },
+    {
+      "name": "a refunded entry ticket: nothing",
+      "lines": [{ "productId": "pass", "name": "כרטיס", "quantity": 1, "mode": "per_unit", "entries": 3, "refund": true }],
+      "tickets": []
+    },
+    {
+      "name": "nothing sold: nothing",
+      "lines": [],
+      "tickets": []
+    }
+  ],
+  "resolve": [
+    { "product": "per_line", "category": "per_unit", "mode": "per_line" },
+    { "product": "off", "category": "per_unit", "mode": "off" },
+    { "product": null, "category": "per_unit", "mode": "per_unit" },
+    { "product": "inherit", "category": "PER_SALE", "mode": "per_sale" },
+    { "product": null, "category": null, "mode": "off" },
+    { "product": "banana", "category": "nonsense", "mode": "off" }
+  ],
+  "prints": [
+    { "name": "a sale (320) on a device with a printer", "documentType": 320, "hasPrinter": true, "setting": "by_product", "prints": true },
+    { "name": "an exempt dealer's sale (400)", "documentType": 400, "hasPrinter": true, "setting": "by_product", "prints": true },
+    { "name": "a credit note (330): nothing to hand over", "documentType": 330, "hasPrinter": true, "setting": "by_product", "prints": false },
+    { "name": "an exempt dealer's refund (-400)", "documentType": -400, "hasPrinter": true, "setting": "by_product", "prints": false },
+    { "name": "no printer at all", "documentType": 320, "hasPrinter": false, "setting": "by_product", "prints": false },
+    { "name": "\"שוברי פריט\" off on this device", "documentType": 320, "hasPrinter": true, "setting": "off", "prints": false },
+    { "name": "an override still prints", "documentType": 320, "hasPrinter": true, "setting": "per_sale", "prints": true }
+  ],
+  "parameter": {
+    "about": "The till parameter itemTicketMode (\"שוברי פריט\", company → shop → area → till): its options in the cloud's order, the default first.",
+    "key": "itemTicketMode",
+    "options": ["לפי הפריט", "כבוי", "שובר לכל יחידה", "שובר לכל פריט", "שובר אחד לעסקה"],
+    "default": "לפי הפריט"
+  },
+  "settings": [
+    { "value": "לפי הפריט", "setting": "by_product" },
+    { "value": "כבוי", "setting": "off" },
+    { "value": "שובר לכל יחידה", "setting": "per_unit" },
+    { "value": "שובר לכל פריט", "setting": "per_line" },
+    { "value": "שובר אחד לעסקה", "setting": "per_sale" },
+    { "value": null, "setting": "by_product" },
+    { "value": "משהו אחר", "setting": "by_product" }
+  ],
+  "override": [
+    { "setting": "by_product", "product": "per_line", "mode": "per_line" },
+    { "setting": "by_product", "product": "off", "mode": "off" },
+    { "setting": "off", "product": "per_unit", "mode": "off" },
+    { "setting": "per_unit", "product": "per_sale", "mode": "per_unit" },
+    { "setting": "per_line", "product": "per_unit", "mode": "per_line" },
+    { "setting": "per_sale", "product": "per_line", "mode": "per_sale" },
+    { "setting": "per_sale", "product": "off", "mode": "off" },
+    { "setting": "per_unit", "product": "off", "mode": "off" }
+  ]
+}

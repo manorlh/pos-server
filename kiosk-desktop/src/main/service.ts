@@ -17,7 +17,9 @@ import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, ty
 import { OfflineTracker } from '../core/kioskHealth';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
 import { ofShekels } from '../core/money';
-import { bonDoc, receiptDoc, slipDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine } from '../core/printDocs';
+import { bonDoc, receiptDoc, slipDoc, ticketDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine } from '../core/printDocs';
+import { BON_NOT_ON_KIOSK, windowsBonRoute } from '../core/kioskBonRoute';
+import { ITEM_TICKET_PARAM, itemTicketSetting, itemTicketsPrint, resolveTicketMode, splitItemTickets, ticketModeFor } from '../core/itemTickets';
 import { DRAWER_KICK } from '../core/escpos';
 import { kitchenOptions, kitchenOptionText, MAX_LINE_QTY, optionCharged, saleDocumentType, saleTotals, tipToCharge, unitAgorot, vatRateOf, type SaleLine, type SaleOption } from '../core/sale';
 import { autoCloseMayRun, zModeOf } from '../core/tillZ';
@@ -1204,6 +1206,8 @@ export class KioskService extends EventEmitter {
       this.printQueue.enqueue('slip', orderId, slipDoc({ businessName: this.business().companyName, pickupLabel: pickup.label, service: order.serviceType, itemCount: order.itemCount, totalAgorot: order.totalAgorot + order.tipAgorot }));
     }
     if (policy === 'always') this.printReceipt(orderId, false);
+    // "שוברים": the sale's item tickets right after the slip and the receipt, on the same printer.
+    this.printItemTickets(orderId);
     this.orders.update(orderId, (o) => ({ ...o, receiptStatus: receiptAfterApproval(policy, false) }));
     void me;
     void this.sync.flush();
@@ -1323,8 +1327,9 @@ export class KioskService extends EventEmitter {
       rejected: null,
     };
     // "שלח למטבח לפני תשלום": this kiosk's own printer has the bon ("ממתין לתשלום בקופה") — once the
-    // cloud has not refused the order (it may be offline: the bon prints all the same).
-    const kitchenFirst = cfg.payment.cashAtTillKitchenBeforePay && order.fulfillmentMode === 'BON';
+    // cloud has not refused the order (it may be offline: the bon prints all the same). With "בון מטבח
+    // במדפסת הקיוסק" off it never prints here: the till that takes the money prints it.
+    const kitchenFirst = cfg.payment.cashAtTillKitchenBeforePay && order.fulfillmentMode === 'BON' && windowsBonRoute(cfg.printing) !== 'none';
     order.kitchenSent = kitchenFirst;
     const placed = await this.payAtTill.place(order);
     if (placed.rejected === PRICE_CHANGED) {
@@ -1662,8 +1667,67 @@ export class KioskService extends EventEmitter {
         card: doc.card ? { brand: doc.card.brand, last4: doc.card.last4, authNum: doc.card.authNum, payments: doc.card.payments, firstPaymentAgorot: doc.card.firstPaymentAgorot } : null,
         footer,
         logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null,
+        // "סניף הרצליה · קופה 3 · קיוסק רויאל": the machine as the cloud names it (machines/me).
+        place: this.placeOfMachine(),
       }),
     );
+  }
+
+  /** The shop, the till's number and name, as `machines/me` says them (the documents' place line). */
+  private placeOfMachine(): { shopName: string | null; posNumber: string | null; deviceName: string | null } {
+    const me = this.cloud.machine();
+    return { shopName: me?.shopName ?? null, posNumber: me?.posNumber ?? null, deviceName: me?.machineName ?? null };
+  }
+
+  /**
+   * "שוברים" — the sale's item tickets on this kiosk's printer, by the till's rules
+   * (core/itemTickets.ts): each product's ticket mode from the catalog it syncs, "שוברי פריט" from
+   * its parameters; not for a credit note. Queued like any page: a failure is the printer's light
+   * and a retry, never the payment's.
+   */
+  printItemTickets(orderId: string): number {
+    const o = this.orders.get(orderId);
+    const doc = o?.transactionId ? this.ledger.doc(o.transactionId) : null;
+    if (!o || !doc || doc.status !== 'completed') return 0;
+    const setting = itemTicketSetting(this.cloud.parameters()[ITEM_TICKET_PARAM]);
+    if (!itemTicketsPrint(doc.documentType, true, setting)) return 0;
+    const catalog = this.cloud.catalog();
+    const products = new Map(catalog.products.map((p) => [String(p.id), p] as const));
+    const categories = new Map(catalog.categories.map((c) => [String(c.id), c] as const));
+    const tickets = splitItemTickets(
+      doc.lines.map((l) => {
+        const p = products.get(l.productId) ?? {};
+        const category = typeof p.categoryId === 'string' ? categories.get(p.categoryId) : undefined;
+        const entries = typeof p.ticketEntries === 'number' && p.ticketEntries > 1 ? p.ticketEntries : 1;
+        return {
+          productId: l.productId,
+          name: l.name,
+          quantity: l.qty,
+          unitLabel: p.isWeighed === true && typeof p.unitLabel === 'string' ? p.unitLabel : null,
+          mode: ticketModeFor(resolveTicketMode(p.ticketMode, category?.ticketMode), setting),
+          entries,
+        };
+      }),
+    );
+    const place = this.placeOfMachine();
+    tickets.forEach((items, i) => {
+      this.printQueue.enqueue(
+        'ticket',
+        orderId,
+        ticketDoc({
+          businessName: this.business().companyName,
+          shopName: place.shopName,
+          machineName: place.deviceName,
+          posNumber: place.posNumber,
+          transactionNumber: o.transactionNumber,
+          issuedAt: new Date(doc.createdAt),
+          items,
+          index: i + 1,
+          count: tickets.length,
+        }),
+      );
+    });
+    return tickets.length;
   }
 
   /**
@@ -1684,8 +1748,14 @@ export class KioskService extends EventEmitter {
     }
     const doc = o.transactionId ? this.ledger.doc(o.transactionId) : null;
     if (!doc) return;
-    this.orders.update(orderId, (x) => ({ ...x, bonRequestedAtMs: x.bonRequestedAtMs ?? Date.now(), bonStatus: 'queued' })); // write-ahead
     const cfg = this.config();
+    // "בון מטבח במדפסת הקיוסק" (off by default): every page this kiosk prints is on its own printer,
+    // so off it prints no bon — said on the order, never a staff alert (core/kioskBonRoute.ts).
+    if (windowsBonRoute(cfg.printing) === 'none') {
+      this.orders.update(orderId, (x) => ({ ...x, bonStatus: 'none', bonDetail: BON_NOT_ON_KIOSK }));
+      return;
+    }
+    this.orders.update(orderId, (x) => ({ ...x, bonRequestedAtMs: x.bonRequestedAtMs ?? Date.now(), bonStatus: 'queued' })); // write-ahead
     const copies = Math.max(1, Math.min(3, cfg.printing.bonCopies || 1));
     const me = this.cloud.machine();
     const ids: string[] = [];

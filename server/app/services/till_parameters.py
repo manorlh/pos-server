@@ -1464,6 +1464,11 @@ from app.services.terminal_check_bypass import BYPASS_PARAMETER_SPECS as _BYPASS
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _BYPASS_SPECS)
 
+# "שוברי פריט" (app/services/item_ticket.py): the device's item tickets, above each product's setting.
+from app.services.item_ticket import ITEM_TICKET_PARAMETER_SPECS as _ITEM_TICKET_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _ITEM_TICKET_SPECS)
+
 
 def validate_keyed_value(key: str, value: Any) -> Any:
     """A value checked for what its key needs beyond its type (`technicianCode`: 4–8 digits)."""

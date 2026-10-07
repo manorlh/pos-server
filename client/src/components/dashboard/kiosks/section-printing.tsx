@@ -77,6 +77,13 @@ export function PrintingSection() {
 
   return (
     <div className="space-y-4">
+      {/* What comes out of the kiosk's own printer, each slip said in a line (the owner, 07.10.2026:
+          "two slips instead of one" — the customer's number and the kitchen bon). */}
+      <SectionCard title={t('slipsTitle')} description={t('slipsHint')} paths={['printing.pickupSlip', 'printing.bonOnKiosk']}>
+        <SwitchField path="printing.pickupSlip" label={tf('printing.pickupSlip')} hint={t('pickupSlipHint')} />
+        <SwitchField path="printing.bonOnKiosk" label={tf('printing.bonOnKiosk')} hint={t('bonOnKioskHint')} />
+      </SectionCard>
+
       <SectionCard
         title={t('bonTitle')}
         description={t('bonHint')}
@@ -123,7 +130,7 @@ export function PrintingSection() {
         />
       </SectionCard>
 
-      <SectionCard title={t('receiptTitle')} paths={['printing.receiptPrinterId', 'printing.pickupSlip']}>
+      <SectionCard title={t('receiptTitle')} paths={['printing.receiptPrinterId']}>
         <FieldShell path="printing.receiptPrinterId" label={tf('printing.receiptPrinterId')} hint={t('receiptHint')}>
           {!ed.shopId ? (
             <p className="text-sm text-muted-foreground">{t('printersAtShop')}</p>
@@ -137,7 +144,6 @@ export function PrintingSection() {
             />
           )}
         </FieldShell>
-        <SwitchField path="printing.pickupSlip" label={tf('printing.pickupSlip')} hint={t('pickupSlipHint')} />
       </SectionCard>
     </div>
   );

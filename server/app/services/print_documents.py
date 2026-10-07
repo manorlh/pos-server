@@ -171,12 +171,43 @@ def _header(db: Session, tx: Transaction) -> tuple[str, List[str]]:
     place = ", ".join(p for p in (street, header.get("city"), header.get("zip")) if p)
     if place:
         lines.append(place)
-    if header.get("shopName"):
-        branch = f"סניף: {header['shopName']}"
+    # Where it was issued — the shop, the till's number and name — as the till printed it:
+    # "סניף הרצליה · קופה 3 · קיוסק רויאל" (the owner, 07.10.2026), then the branch code.
+    machine: Optional[POSMachine] = tx.machine
+    issued = place_line(
+        header.get("shopName"),
+        tx.pos_number or (machine.pos_number if machine is not None else None),
+        machine.name if machine is not None else None,
+    )
+    if issued or header.get("branchId"):
+        parts = [issued] if issued else []
         if header.get("branchId"):
-            branch += f" · מס׳ סניף {header['branchId']}"
-        lines.append(branch)
+            parts.append(f"מס׳ סניף {header['branchId']}")
+        lines.append(" · ".join(parts))
     return name, lines
+
+
+PLACE_SHOP_WORD = "סניף"
+PLACE_TILL_WORD = "קופה"
+
+
+def place_line(shop_name: Optional[str], pos_number: Optional[str], device_name: Optional[str]) -> Optional[str]:
+    """
+    The place line every printed document carries under the business: "סניף הרצליה · קופה 3 ·
+    קיוסק רויאל". A shop already named "סניף …" is not prefixed again; a till named as the shop or
+    as its own number says it once; nothing known — None. The same rule as pos-android
+    domain/Receipt.kt ReceiptPlace and kiosk-desktop core/printDocs.ts placeLine, pinned by
+    tests/fixtures/receipt_place_cases.json (the same bytes in both repos).
+    """
+    shop_raw = (shop_name or "").strip() or None
+    shop = None if shop_raw is None else (shop_raw if shop_raw.startswith(PLACE_SHOP_WORD) else f"{PLACE_SHOP_WORD} {shop_raw}")
+    number = (str(pos_number) if pos_number is not None else "").strip()
+    till = f"{PLACE_TILL_WORD} {number}" if number else None
+    device = (device_name or "").strip() or None
+    if device in (shop_raw, shop, till):
+        device = None
+    line = " · ".join(p for p in (shop, till, device) if p)
+    return line or None
 
 
 def _cashier_name(db: Session, tx: Transaction) -> Optional[str]:

@@ -1955,3 +1955,17 @@ describe('"איך תרצו לשלם?" by its mode (payMethodAsk, stepModes.payMe
     assert.deepEqual(payMethodAsk(['cash_at_till'], ['cash_at_till'], 'required'), { asks: true, optional: false, fallback: 'cash_at_till' });
   });
 });
+
+describe('"בון מטבח במדפסת הקיוסק" — printing.bonOnKiosk (the server kiosk_config.py, the till KioskBon.route)', () => {
+  const codes = (c: KioskConfig) => validateKioskConfig(c).map((e) => `${e.path}:${e.code}`);
+  it('off by default — an existing kiosk whose layers never had it too — and a boolean', () => {
+    assert.equal(KIOSK_DEFAULTS.printing.bonOnKiosk, false);
+    assert.equal(KIOSK_DEFAULTS.printing.pickupSlip, true);
+    const royal = resolveKioskConfig({ printing: { bonMode: 'single', bonPrinterId: 'p-usb', receiptPrinterId: 'p-usb', bonAutoRetryMin: 0 } });
+    assert.equal(royal.printing.bonOnKiosk, false);
+    assert.deepEqual(validateKioskConfig(royal), []);
+    assert.equal(resolveKioskConfig({ printing: { bonOnKiosk: true } }).printing.bonOnKiosk, true);
+    assert.equal(resolveKioskConfig({ printing: { bonOnKiosk: true } }, { printing: { bonOnKiosk: false } }).printing.bonOnKiosk, false);
+    assert.ok(codes(cfg({ printing: { bonOnKiosk: 'yes' } })).includes('printing.bonOnKiosk:enum'));
+  });
+});
