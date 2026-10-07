@@ -18,6 +18,7 @@ import { documentWire, shiftCloseWire, type DocDraft, type ShiftRow } from '../s
 import { docResults, plan, type OutboxRow } from '../src/main/sync/outbox';
 import { apiBase } from '../src/main/sync/api';
 import { kdsSaleRelease, saleDispatchId } from '../src/main/kiosk/kdsRelease';
+import { kioskSection, lanCloseReport, lanOutcomeMessage } from '../src/main/fiscal/shopZPart';
 import { KioskService } from '../src/main/service';
 import { OrderStore } from '../src/main/kiosk/orders';
 import { openDb } from '../src/main/db/sqlite';
@@ -314,6 +315,28 @@ describe('what the kiosk sends (golden, validated by the server’s schemas)', (
     expect(await store.push(api, 'm')).toBe(true);
     expect(posts).toHaveLength(1);
     expect(posts[0][0].receiptStatus).toBe('skipped');
+  });
+
+  it('the kiosk’s part of the main till’s local shop Z (POST shop-z/remote-part), its manifest the cloud’s own', () => {
+    // The shift closed for the main till's request, with a sale and a declined attempt in it.
+    const declined = { ...draft('cancelled'), id: 'c1a8f0e2-5b7d-4a1e-9f3c-6d2e8b1a4c78', number: 58 };
+    const docs = [draft('completed'), declined];
+    const close = shiftCloseWire(shift, docs, { closedByName: 'קיוסק · קיוסק Windows', unattended: true, closeRequestId: 'lan-req-1', vatRate: 0.18, now: '2026-10-06T21:00:03.120Z' });
+    const closed: ShiftRow = { ...shift, status: 'closing', closed_at: '2026-10-06T21:00:03.120Z', close_payload: JSON.stringify(close) };
+    const built = kioskSection(
+      { machineId: MACHINE, posNumber: '4', machineName: 'קיוסק Windows', operator: { id: `kiosk:${MACHINE}`, name: 'קיוסק Windows' } },
+      [closed],
+      () => docs,
+    );
+    if (built.kind !== 'ok') throw new Error('unreadable');
+    const report = lanCloseReport({ requestId: 'lan-req-1', roundId: 'round-1', force: true }, MACHINE, 'closed', SHIFT, lanOutcomeMessage('closed'), built.section);
+    const section = report.section as Record<string, unknown>;
+    expect(section.shiftIds).toEqual([SHIFT]);
+    expect(section.firstDocumentNumber).toBe('40000057');
+    expect(section.lastDocumentNumber).toBe('40000058');
+    expect((section.report as Record<string, unknown>).deviceRole).toBe('kiosk');
+    expect((section.manifest as Record<string, unknown>).documentIds).toEqual([draft('completed').id]);
+    golden('shop_z_remote_part', report);
   });
 
   it('a KDS release of a paid KDS-mode order (the Android kiosk’s payload, idempotent by the document)', () => {

@@ -63,6 +63,11 @@ export class TillZService {
     return this.d.kv.get(OWED) === '1';
   }
 
+  /** A Z is owed (on disk) before it is asked: no answer, and the tick asks again until it is produced. */
+  markOwed() {
+    this.d.kv.set(OWED, '1');
+  }
+
   /** The 30-second tick of the kiosk (KioskRepository.autoCloseTick). */
   async tick(input: { mayRun: boolean; kioskAt: unknown; paramAt: unknown; closerName: string; vatRate: number; now?: Date }): Promise<void> {
     if (!input.mayRun || this.busy) return;

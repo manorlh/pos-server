@@ -216,6 +216,16 @@ export class Ledger {
     this.db.run("UPDATE shifts SET status = 'retired' WHERE id = ?", shiftId);
   }
 
+  /** The shift a close request already closed (its close carries the request id), or null. */
+  shiftByCloseRequest(requestId: string): ShiftRow | null {
+    return (
+      this.db.get<ShiftRow>(
+        "SELECT * FROM shifts WHERE status IN ('closing', 'closed') AND json_extract(close_payload, '$.closeRequestId') = ? ORDER BY sequence_number DESC LIMIT 1",
+        requestId,
+      ) ?? null
+    );
+  }
+
   /** Shifts closed (and accepted, or still closing) that no Z covers yet. */
   unreportedShifts(): ShiftRow[] {
     return this.db.all<ShiftRow>("SELECT * FROM shifts WHERE status IN ('closing', 'closed') AND z_report_id IS NULL ORDER BY sequence_number");

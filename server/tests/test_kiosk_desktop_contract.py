@@ -136,3 +136,44 @@ def test_the_kds_release_is_the_kitchen_engines_and_idempotent_by_the_document()
     raw[6] = (raw[6] & 0x0F) | 0x30
     raw[8] = (raw[8] & 0x3F) | 0x80
     assert body.id == str(uuid.UUID(bytes=bytes(raw)))
+
+
+def test_the_kiosk_part_of_a_local_shop_z_is_the_clouds_own_computation():
+    """
+    The Windows kiosk's answer to the main till's local shop Z (`POST shop-z/remote-part`,
+    kiosk-desktop src/main/fiscal/shopZPart.ts, PARITY.md gap 5): the section the main till prints
+    and uploads, with its manifest. The manifest must be the one the cloud computes over the same
+    documents as it ingests them (`shop_z_manifest.manifest_of` of the kiosk's own wire, the card
+    sale fixture above), and the printed section must be its manifest — so `verify` can only find
+    the paper and the cloud the same.
+    """
+    from types import SimpleNamespace
+
+    from app.services import shop_z_manifest as M
+    from app.services.local_shop_z import REMOTE_FINAL_OUTCOMES, LocalShopZTill, _paper_vs_manifest
+
+    report = load("shop_z_remote_part")
+    assert report["outcome"] in REMOTE_FINAL_OUTCOMES
+    section = report["section"]
+    part = LocalShopZTill.model_validate(section)
+    assert [str(s) for s in part.shift_ids] == [report["shiftId"]]
+
+    env = TransactionsBatchEnvelope.model_validate(load("transaction_card_sale_320"))
+    (_, tx, _), = validate_documents(env.transactions)[0]
+    row = SimpleNamespace(
+        id=tx.id, transaction_number=tx.transaction_number, document_type=tx.document_type,
+        status=tx.status, refund_of_transaction_id=tx.refund_of_transaction_id,
+        total_amount=tx.total_amount, document_discount=tx.document_discount, vat_amount=tx.vat_amount,
+        tip_amount=tx.tip_amount, payment_method=tx.payment_method,
+    )
+    legs = [SimpleNamespace(method=p.method, amount=p.amount) for p in tx.payments]
+    cloud = M.manifest_of([M.canonical_of_row(row, legs)])
+    printed = dict(section["manifest"])
+    assert printed.pop("machineId") == report["machineId"]
+    assert printed.pop("shiftIds") == section["shiftIds"]
+    assert M.compare(printed, cloud) == []
+    assert printed == cloud
+    assert _paper_vs_manifest(section["report"], cloud) == []
+    # A kiosk's part says so, with its system operator (SPEC_INDEPENDENT_TILL §8.13).
+    assert section["report"]["deviceRole"] == "kiosk"
+    assert section["report"]["operator"]["id"].startswith("kiosk:")

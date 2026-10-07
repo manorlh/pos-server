@@ -32,6 +32,7 @@ import { Outbox, type OutboxRow } from './sync/outbox';
 import { pair as pairRequest, SyncEngine } from './sync/syncEngine';
 import { documentWire, Ledger, type DocDraft } from './fiscal/ledger';
 import { TillZService } from './fiscal/tillZService';
+import { FINAL_OUTCOMES, kioskSection, lanCloseReport, lanOutcomeMessage, planLanClose, type LanCloseOutcome, type LanCloseRequest } from './fiscal/shopZPart';
 import { MediaStore, type Downloader, type VariantMaker } from './media/mediaStore';
 import { PayService } from './payment/payService';
 import { PROVIDERS } from './payment/registry';
@@ -109,6 +110,11 @@ const TECH_LOCK = 'technician.lock';
 const HELP = 'kiosk.helpRequest';
 /** A SynqPay key paired at this kiosk (sealed), until and after the cloud has it (pairing.ts). */
 const SYNQ_LOCAL_KEY = 'synqpay.localKey';
+/** The main till's shop Z part: the answer kept for its request, so a retry sends the same one. */
+const SHOP_Z_PART = 'shopZPart.answer';
+/** "סגירה יחד עם ה-Z הסניפי" (kiosk/sync `closeRequest`): the request to carry out, and its result until the cloud takes it. */
+const SHOP_Z_CLOSE_REQUEST = 'shopZClose.request';
+const SHOP_Z_CLOSE_RESULT = 'shopZClose.result';
 
 export class KioskService extends EventEmitter {
   readonly db: Db;
@@ -157,6 +163,9 @@ export class KioskService extends EventEmitter {
   private pendingClose: { requestId: string } | null = null;
   private pendingZ: { requestId: string } | null = null;
   private pendingTransmit: { requestId: string } | null = null;
+  /** The main till's local shop Z asks for this kiosk's part (heartbeat `pendingShopZPart`), until answered. */
+  private shopZPart: (LanCloseRequest & { payingSinceMs: number | null }) | null = null;
+  private shopZPartBusy = false;
 
   constructor(private readonly opts: ServiceOptions) {
     super();
@@ -520,6 +529,8 @@ export class KioskService extends EventEmitter {
       kioskStatus: () => (this.isKiosk() && !this.opts.bridge ? this.kioskStatus() : null),
       onKioskSnapshot: (next: Record<string, unknown>, prev: Record<string, unknown> | null) => {
         if (next.kiosk && next.configVersion !== prev?.configVersion) this.log(`kiosk config ${String(next.configVersion)}`);
+        // Bridge mode: the browser page carries the close out (closeForShopZ) and reports it.
+        if (!this.opts.bridge) this.onCloseRequest(next.closeRequest);
         this.applyProvider();
         void this.syncMedia();
         this.dirty();
@@ -543,6 +554,11 @@ export class KioskService extends EventEmitter {
         this.pendingTransmit = { requestId: r.requestId };
       },
       onPendingReset: (r: { commandId: string; kind: string }) => void this.handleReset(r),
+      onPendingShopZPart: (r: LanCloseRequest) => {
+        if (!this.fiscalRole) return;
+        if (this.shopZPart?.requestId !== r.requestId) this.shopZPart = { ...r, payingSinceMs: null };
+        void this.runShopZPart();
+      },
       afterBeat: async () => {
         const id = this.machineId;
         if (id && this.isKiosk()) await this.orders.push(this.api, id);
@@ -589,6 +605,8 @@ export class KioskService extends EventEmitter {
       unprintedBons: today.filter((o) => o.bonStatus === 'failed' || o.bonStatus === 'queued').length,
       appVersion: this.opts.appVersion,
       alerts,
+      // "סגירה יחד עם ה-Z הסניפי": what the shop Z's close came to, until the cloud takes it.
+      ...(this.kv.getJson(SHOP_Z_CLOSE_RESULT) ? { closeResult: this.kv.getJson(SHOP_Z_CLOSE_RESULT) } : {}),
       // "תקינות מכשירים" (pos-server kiosk_health.clean_health): what only the kiosk sees.
       health: this.healthReport(health),
     };
@@ -1191,6 +1209,140 @@ export class KioskService extends EventEmitter {
     return result;
   }
 
+  /**
+   * The cloud's `closeRequest` on `kiosk/sync` (KioskRepository.onOpsReply): kept until carried out;
+   * the result is reported with every status until the cloud stops asking, then forgotten.
+   */
+  private onCloseRequest(raw: unknown) {
+    const req = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null;
+    const reported = this.kv.getJson<{ id: string }>(SHOP_Z_CLOSE_RESULT);
+    if (!req) {
+      // The cloud took the result (it no longer asks): nothing more to report.
+      if (reported) this.kv.delete(SHOP_Z_CLOSE_RESULT);
+      return;
+    }
+    const id = typeof req.id === 'string' && req.id.trim() ? req.id : null;
+    if (!id || reported?.id === id) return;
+    if (this.kv.get(SHOP_Z_CLOSE_REQUEST) !== id) {
+      this.log(`kiosk: the shop's Z asks for a close (${String(req.source ?? '')}) — once idle`);
+      this.kv.set(SHOP_Z_CLOSE_REQUEST, id);
+    }
+  }
+
+  /**
+   * "סגירה יחד עם ה-Z הסניפי", on an idle kiosk (KioskRepository.runShopZClose): the shift closed — a
+   * payment still pending holds it, never cut — then, in zMode = till, this kiosk's own Z (owed on
+   * disk first, the number the cloud's next). Done only once the Z is produced; the result goes up
+   * with the next status.
+   */
+  private async runShopZClose(requestId: string): Promise<boolean> {
+    const op = this.operator();
+    let shiftId: string | null = null;
+    if (this.ledger.currentShift()) {
+      const r = this.ledger.closeShift({ closedByName: closerName(op), unattended: true, vatRate: this.vatRate() });
+      // A payment's document still pending: the next tick.
+      if (r.kind === 'pending') return false;
+      if (r.kind === 'closed') {
+        shiftId = r.shift.id;
+        this.log(`kiosk: shift ${shiftId} closed with the shop's Z`);
+        await this.sync.flush();
+      }
+    }
+    let zNumber: number | null = null;
+    if (zModeOf(this.cloud.heartbeat().zMode) === 'till') {
+      this.tillZ.markOwed();
+      const z = await this.tillZ.produce(closerName(op), true);
+      if (z.kind === 'produced' && typeof z.z.machineSequenceNumber === 'number') zNumber = z.z.machineSequenceNumber;
+      else if (z.kind === 'produced' && typeof z.z.zNumber === 'number') zNumber = z.z.zNumber;
+      // No answer from the cloud yet: the Z stays owed and is asked again next tick.
+      if (this.tillZ.owed) return false;
+    }
+    this.kv.setJson(SHOP_Z_CLOSE_RESULT, { id: requestId, state: 'done', shiftId, zNumber });
+    this.kv.delete(SHOP_Z_CLOSE_REQUEST);
+    void this.sync.kioskSync();
+    return true;
+  }
+
+  /**
+   * The main till's local shop Z asks for this kiosk's part through the cloud (main/fiscal/shopZPart.ts):
+   * closed as over the LAN — a customer paying waited out, a pending payment refusing it, never twice
+   * for one request — and answered with the kiosk's section and manifest. The answer is kept before
+   * it is sent, so a retry (offline, a restart) sends the same one.
+   */
+  private async runShopZPart(): Promise<void> {
+    const req = this.shopZPart;
+    const me = this.machineId;
+    if (!req || !me || this.shopZPartBusy) return;
+    this.shopZPartBusy = true;
+    try {
+      const kept = this.kv.getJson<{ requestId: string; report: Record<string, unknown> }>(SHOP_Z_PART);
+      let report = kept?.requestId === req.requestId ? kept.report : null;
+      if (!report) {
+        const open = this.ledger.currentShift();
+        const plan = planLanClose({
+          closedForRequest: this.ledger.shiftByCloseRequest(req.requestId)?.id ?? null,
+          openShiftId: open?.id ?? null,
+          devicePaying: this.pay.cardInFlight,
+          payingSinceMs: req.payingSinceMs,
+          nowMs: Date.now(),
+          pendingDocuments: open ? this.ledger.pendingInShift(open.id) : 0,
+        });
+        if (plan.kind === 'wait') {
+          if (req.payingSinceMs === null) {
+            req.payingSinceMs = Date.now();
+            await this.postShopZPart(lanCloseReport(req, me, 'waiting_card', null, lanOutcomeMessage('waiting_card'), null));
+          }
+          return;
+        }
+        let outcome: LanCloseOutcome;
+        let shiftId: string | null;
+        if (plan.kind === 'close') {
+          const op = this.operator();
+          const r = this.ledger.closeShift({ closedByName: closerName(op), unattended: true, closeRequestId: req.requestId, vatRate: this.vatRate() });
+          outcome = r.kind === 'closed' ? 'closed' : r.kind === 'none' ? 'no_open_shift' : 'blocked_payment';
+          shiftId = r.kind === 'closed' ? r.shift.id : r.kind === 'none' ? null : plan.shiftId;
+          if (r.kind === 'closed') {
+            this.log(`shop Z part ${req.requestId}: shift ${r.shift.id} closed for the main till`);
+            void this.sync.flush();
+          }
+        } else {
+          outcome = plan.outcome;
+          shiftId = plan.shiftId;
+        }
+        if (outcome === 'closed' || outcome === 'no_open_shift') {
+          const m = this.cloud.machine();
+          const op = this.operator();
+          const built = kioskSection(
+            { machineId: me, posNumber: m?.posNumber?.trim() || null, machineName: m?.machineName?.trim() || null, operator: op },
+            this.ledger.unreportedShifts(),
+            (id) => this.ledger.docsOfShift(id),
+          );
+          report =
+            built.kind === 'ok'
+              ? lanCloseReport(req, me, outcome, shiftId, lanOutcomeMessage(outcome), built.section)
+              : lanCloseReport(req, me, 'failed', shiftId, lanOutcomeMessage('failed', `סגירת משמרת ${built.shiftId.slice(0, 8)} לא קריאה`), null);
+        } else {
+          report = lanCloseReport(req, me, outcome, shiftId, lanOutcomeMessage(outcome), null);
+        }
+        this.kv.setJson(SHOP_Z_PART, { requestId: req.requestId, report });
+      }
+      if ((await this.postShopZPart(report)) && FINAL_OUTCOMES.has(report.outcome as LanCloseOutcome)) this.shopZPart = null;
+    } finally {
+      this.shopZPartBusy = false;
+      this.dirty();
+    }
+  }
+
+  /** `POST shop-z/remote-part`: true when the cloud answered (taken, or a request it no longer holds). */
+  private async postShopZPart(report: Record<string, unknown>): Promise<boolean> {
+    const me = this.machineId;
+    if (!me) return false;
+    const reply = await this.api.post(`sync/${me}/shop-z/remote-part`, report, { timeoutMs: 20_000 });
+    if (reply.kind === 'offline') return false;
+    if (reply.kind === 'refused') this.log(`shop Z part refused: HTTP ${reply.status} ${reply.detail ?? ''}`);
+    return true;
+  }
+
   /** A non-fiscal page drawn by the browser's role (a bon, a slip) — never a receipt (those come from the ledger). */
   printPage(kind: 'bon' | 'slip', refId: string | null, doc: PrintDoc): string {
     return this.printQueue.enqueue(kind, refId, doc);
@@ -1406,6 +1558,15 @@ export class KioskService extends EventEmitter {
     const mayRun = autoCloseMayRun({ kiosk: this.fiscalRole && this.isKiosk(), flowIdle: this.flow.idle, flowBusy: this.flow.busy, cardInFlight: this.pay.cardInFlight });
     const cfg = this.isKiosk() ? this.config() : null;
     const op = this.operator();
+    // The main till's shop Z part: a payment waited out, an answer the cloud did not take yet.
+    if (this.shopZPart) await this.runShopZPart();
+    // "סגירה יחד עם ה-Z הסניפי": carried out first, on an idle tick (KioskRepository.autoCloseTick).
+    const closeRequest = this.kv.get(SHOP_Z_CLOSE_REQUEST);
+    if (mayRun && closeRequest && !this.opts.bridge) {
+      await this.runShopZClose(closeRequest);
+      this.dirty();
+      return;
+    }
     if (mayRun && this.pendingClose) {
       const req = this.pendingClose;
       this.pendingClose = null;
