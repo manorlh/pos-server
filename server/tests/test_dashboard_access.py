@@ -702,6 +702,77 @@ def test_the_users_page_reads_every_profile_of_the_organization(w):
     assert len(rows) == 2
 
 
+
+# ── Self-service sign-up: the owner of a new organization ────────────────────
+
+
+def _clerk(w, monkeypatch, *, email, clerk_id):
+    """Sign-in as a Clerk user `clerk_id` with `email`, self-service sign-up on."""
+    from app.services import clerk_provision
+    from app.services.clerk_profile import ClerkProfile
+
+    # The world's super admin has claimed its own Clerk account (else the first sign-in would).
+    w.admin.clerk_user_id = "user_root"
+    w.db.commit()
+
+    monkeypatch.setattr(auth_mw, "verify_clerk_token", lambda token: clerk_id if token == f"clerk:{clerk_id}" else None)
+    monkeypatch.setattr(
+        clerk_provision, "fetch_clerk_profile",
+        lambda cid: ClerkProfile(clerk_user_id=cid, email=email, first_name="Dana", last_name="Cohen", clerk_username=None),
+    )
+    monkeypatch.setattr(auth_mw.settings, "allow_self_service_signup", True)
+    return {"Authorization": f"Bearer clerk:{clerk_id}"}
+
+
+def test_a_self_service_sign_up_owns_its_new_organization_with_full_access(w, monkeypatch):
+    headers = _clerk(w, monkeypatch, email="dana@example.com", clerk_id="user_dana")
+    # The dashboard's first call provisions the account and its own new organization.
+    tenants = w.client.get("/api/v1/tenants/mine", headers=headers)
+    assert tenants.status_code == 200, tenants.text
+    owner = w.db.query(User).filter(User.clerk_user_id == "user_dana").one()
+    assert owner.role == UserRole.DISTRIBUTOR and [t["id"] for t in tenants.json()] == [str(owner.tenant_id)]
+    profile = w.db.get(DashboardAccessProfile, owner.id)
+    assert profile.full_access is True and profile.builtin_template == "full"
+    assert not DA.effective_access(w.db, owner).restricted
+    audit = w.db.query(DashboardAccessAudit).filter(DashboardAccessAudit.user_id == owner.id).all()
+    assert [(a.action, a.actor_user_id) for a in audit] == [("profile.create", None)]
+
+    # It can do what an owner has to: pair devices, manage its people.
+    headers["X-Tenant-Id"] = str(owner.tenant_id)
+    for method, path in (("GET", "/api/v1/machines/unassigned"), ("GET", "/api/v1/users"), ("GET", "/api/v1/pairing/codes")):
+        response = w.client.request(method, path, headers=headers)
+        assert not _is_section_refusal(response), (path, response.text)
+    assert w.client.get("/api/v1/users/me", headers=headers).json()["dashboardAccess"]["restricted"] is False
+
+    # Signing in again changes nothing: one profile, still full.
+    w.client.get("/api/v1/tenants/mine", headers=headers)
+    assert w.db.query(DashboardAccessProfile).filter(DashboardAccessProfile.user_id == owner.id).count() == 1
+
+    # A user the owner then creates in that organization starts with the default.
+    response = w.client.post(
+        "/api/v1/users", headers=headers, json={"email": "staff@example.com", "role": "company_manager"},
+    )
+    assert response.status_code == 201, response.text
+    staff = w.db.get(DashboardAccessProfile, uuid.UUID(response.json()["id"]))
+    assert staff.full_access is False and DS.clean_sections(staff.sections) == DS.ORG_MANAGER_SECTIONS
+
+
+def test_an_invited_user_claiming_their_account_keeps_the_default(w, monkeypatch):
+    # Created inside an existing organization, from the users page, before they ever signed in.
+    response = w.client.post(
+        "/api/v1/users", headers=_headers(w.admin, w.tenant),
+        json={"email": "invited@example.com", "role": "company_manager", "companyId": str(w.a.id)},
+    )
+    assert response.status_code == 201, response.text
+    invited_id = uuid.UUID(response.json()["id"])
+    headers = _clerk(w, monkeypatch, email="invited@example.com", clerk_id="user_invited")
+    me = w.client.get("/api/v1/users/me", headers=headers)
+    assert me.status_code == 200 and me.json()["id"] == str(invited_id)  # claimed, not a new organization
+    assert me.json()["dashboardAccess"]["restricted"] is True
+    assert w.db.get(DashboardAccessProfile, invited_id).full_access is False
+    assert w.db.query(Tenant).count() == 2  # no organization was opened for them
+
+
 # ── `require_section`, stated on a route ─────────────────────────────────────
 
 
