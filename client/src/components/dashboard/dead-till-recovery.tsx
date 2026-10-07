@@ -40,8 +40,6 @@ import { Label } from '@/components/ui/label';
 export function DeadTillRecovery({ m }: { m: PosMachine }) {
   const t = useTranslations('deadTill');
   const tc = useTranslations('common');
-  const qc = useQueryClient();
-  const router = useRouter();
   const canProduceZ = useCanProduceZ();
   const role = useAuth((st) => st.user?.role);
   // Closing a shift from the cloud files an X a Z will take: the Z producers' call.
@@ -51,45 +49,10 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
   const errors = useZErrorText();
 
   const [closeOpen, setCloseOpen] = useState(false);
-  const [note, setNote] = useState('');
-  const [force, setForce] = useState(false);
   const [code, setCode] = useState<{ code: string; expiresAt: string | null } | null>(null);
-
-  // Each opening starts from nothing ticked: "the terminal is unusable" is a statement
-  // about this close, not a preference to carry over from the last one.
-  const openClose = () => {
-    setNote('');
-    setForce(false);
-    setCloseOpen(true);
-  };
 
   const hasOpenShift = m.shiftStatus === 'open';
   const shiftId = m.openShiftId ?? null;
-
-  const closeMutation = useMutation({
-    mutationFn: () => administrativeCloseShift(m.id, shiftId!, { force, note: note || undefined }),
-    onSuccess: (res) => {
-      setCloseOpen(false);
-      setNote('');
-      setForce(false);
-      qc.invalidateQueries({ queryKey: ['machines'] });
-      qc.invalidateQueries({ queryKey: ['machine', m.id] });
-      qc.invalidateQueries({ queryKey: ['shifts'] });
-      qc.invalidateQueries({ queryKey: ['shift', shiftId] });
-      qc.invalidateQueries({ queryKey: ['z-candidates'] });
-      // The shift is closed, not reported: it waits for the shop's next Z. Say so, and
-      // offer the way there.
-      toast.success(res.created ? t('closed') : t('alreadyClosed'), {
-        description: t('closedNext'),
-        action:
-          canProduceZ && m.shopId
-            ? { label: t('toZWizard'), onClick: () => router.push(zWizardHref(m.shopId, m.id)) }
-            : undefined,
-        duration: 10_000,
-      });
-    },
-    onError: (e) => toast.error(errors.forError(e)),
-  });
 
   // Card sales the old terminal never transmitted die with it (docs/SHIFTS_API.md §4.9):
   // the server refuses the code until someone accepts that, having exported the list.
@@ -127,7 +90,7 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
           size="sm"
           variant="outline"
           disabled={!hasOpenShift || !shiftId}
-          onClick={openClose}
+          onClick={() => setCloseOpen(true)}
           title={hasOpenShift ? undefined : t('noOpenShift')}
         >
           <AlertTriangle className="h-4 w-4 ms-1" />
@@ -152,59 +115,7 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
         </Button>
       ) : null}
 
-      <Dialog open={closeOpen} onOpenChange={setCloseOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{t('closeTitle')}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 text-sm">
-            <p className="text-muted-foreground">{t('closeExplain')}</p>
-            {/* What the document will rest on, stated before it is created. */}
-            <div className="bg-muted/40 space-y-1 rounded-md p-3 text-xs">
-              {m.openedAt ? (
-                <div>
-                  {t('basisShift', {
-                    since: formatDateTime(m.openedAt),
-                    by: m.openedBy ?? '—',
-                  })}
-                </div>
-              ) : null}
-              <div>{t('basisLastSeen', { when: formatDateTime(m.lastHeartbeatAt) })}</div>
-              <div>
-                {m.pendingDocuments == null
-                  ? t('basisNeverReported')
-                  : t('basisPending', { count: m.pendingDocuments })}
-              </div>
-            </div>
-            <p className="text-muted-foreground text-xs">{t('noCashCount')}</p>
-            <div className="space-y-1.5">
-              <Label htmlFor="dead-till-note">{t('noteLabel')}</Label>
-              <Input
-                id="dead-till-note"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder={t('notePlaceholder')}
-                maxLength={500}
-              />
-            </div>
-            <label className="flex items-center gap-2 text-xs">
-              <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
-              {t('forceLabel')}
-            </label>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => setCloseOpen(false)}>
-                {tc('cancel')}
-              </Button>
-              <Button
-                onClick={() => closeMutation.mutate()}
-                disabled={closeMutation.isPending || !shiftId}
-              >
-                {closeMutation.isPending ? tc('loading') : t('confirmClose')}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <AdministrativeCloseDialog machine={m} shiftId={shiftId} open={closeOpen} onOpenChange={setCloseOpen} />
 
       <Dialog open={reasonOpen} onOpenChange={setReasonOpen}>
         <DialogContent className="max-w-lg">
@@ -293,5 +204,124 @@ export function DeadTillRecovery({ m }: { m: PosMachine }) {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/**
+ * "סגירת משמרת מהענן" for one open shift of a dead till: what the X will rest on, a note,
+ * "the terminal is unusable", then `POST /machines/{id}/shifts/{shiftId}/administrative-close`
+ * (refused while the till is online). The devices page's dead-till panel and the shifts page
+ * (a dead till's open shift) open the same dialog.
+ */
+export function AdministrativeCloseDialog({
+  machine: m,
+  shiftId,
+  open,
+  onOpenChange,
+}: {
+  machine: PosMachine;
+  shiftId: string | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const t = useTranslations('deadTill');
+  const tc = useTranslations('common');
+  const qc = useQueryClient();
+  const router = useRouter();
+  const canProduceZ = useCanProduceZ();
+  const errors = useZErrorText();
+  const [note, setNote] = useState('');
+  const [force, setForce] = useState(false);
+
+  // Each opening starts from nothing ticked: "the terminal is unusable" is a statement
+  // about this close, not a preference to carry over from the last one.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (open) {
+      setNote('');
+      setForce(false);
+    }
+  }
+
+  const closeMutation = useMutation({
+    mutationFn: () => administrativeCloseShift(m.id, shiftId!, { force, note: note || undefined }),
+    onSuccess: (res) => {
+      onOpenChange(false);
+      setNote('');
+      setForce(false);
+      qc.invalidateQueries({ queryKey: ['machines'] });
+      qc.invalidateQueries({ queryKey: ['machine', m.id] });
+      qc.invalidateQueries({ queryKey: ['shifts'] });
+      qc.invalidateQueries({ queryKey: ['shift', shiftId] });
+      qc.invalidateQueries({ queryKey: ['z-candidates'] });
+      // The shift is closed, not reported: it waits for the shop's next Z. Say so, and
+      // offer the way there.
+      toast.success(res.created ? t('closed') : t('alreadyClosed'), {
+        description: t('closedNext'),
+        action:
+          canProduceZ && m.shopId
+            ? { label: t('toZWizard'), onClick: () => router.push(zWizardHref(m.shopId, m.id)) }
+            : undefined,
+        duration: 10_000,
+      });
+    },
+    onError: (e) => toast.error(errors.forError(e)),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{t('closeTitle')}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 text-sm">
+          <p className="text-muted-foreground">{t('closeExplain')}</p>
+          {/* What the document will rest on, stated before it is created. */}
+          <div className="bg-muted/40 space-y-1 rounded-md p-3 text-xs">
+            {m.openedAt ? (
+              <div>
+                {t('basisShift', {
+                  since: formatDateTime(m.openedAt),
+                  by: m.openedBy ?? '—',
+                })}
+              </div>
+            ) : null}
+            <div>{t('basisLastSeen', { when: formatDateTime(m.lastHeartbeatAt) })}</div>
+            <div>
+              {m.pendingDocuments == null
+                ? t('basisNeverReported')
+                : t('basisPending', { count: m.pendingDocuments })}
+            </div>
+          </div>
+          <p className="text-muted-foreground text-xs">{t('noCashCount')}</p>
+          <div className="space-y-1.5">
+            <Label htmlFor="dead-till-note">{t('noteLabel')}</Label>
+            <Input
+              id="dead-till-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={t('notePlaceholder')}
+              maxLength={500}
+            />
+          </div>
+          <label className="flex items-center gap-2 text-xs">
+            <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
+            {t('forceLabel')}
+          </label>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              {tc('cancel')}
+            </Button>
+            <Button
+              onClick={() => closeMutation.mutate()}
+              disabled={closeMutation.isPending || !shiftId}
+            >
+              {closeMutation.isPending ? tc('loading') : t('confirmClose')}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
