@@ -143,8 +143,10 @@ CATEGORY_STYLES = ("chips", "tabs", "images")
 CATEGORY_LAYOUTS = ("side", "top")
 #: "סגנון ממשק": a coherent bundle of layout and shape choices (and a few colours) a business
 #: picks before styling anything itself — see UI_PRESETS. Its values sit between the defaults
-#: and the layers: whatever a layer sets explicitly wins over the preset.
-UI_STYLES = ("ios", "wolt", "classic", "minimal_dark")
+#: and the layers: whatever a layer sets explicitly wins over the preset. "tech" ("טכנולוגי")
+#: also draws a chrome the clients derive from the style (the dashboard's kioskChrome, the till's
+#: KioskChrome): a grid backdrop, 1 dp outlines, a status line, tabular / monospaced figures.
+UI_STYLES = ("ios", "wolt", "classic", "minimal_dark", "tech")
 TYPE_SCALES = ("normal", "large", "xlarge")
 TYPE_WEIGHTS = ("light", "regular", "bold")
 #: The basket while ordering: the floating bar, or a side panel on a wide screen.
@@ -523,6 +525,18 @@ UI_PRESETS: Dict[str, Dict[str, Any]] = {
         "typeScale": "normal", "typeWeight": "light",
         "cartStyle": "bar", "animation": "subtle", "showDescriptions": True,
     },
+    # "טכנולוגי": near-black, one electric accent (the brand colour, dark words on it), a semi-tone
+    # surface for the panels, 1 dp outlines instead of shadows, sharp corners.
+    "tech": {
+        "mode": "dark", "font": "heebo",
+        "primaryColor": "#22E1FF", "accentColor": "#22E1FF",
+        "backgroundColor": "#0B0F14", "surfaceColor": "#111821", "textColor": "#E6EDF3",
+        "cornerRadius": 10, "cardStyle": "outlined", "buttonShape": "rounded",
+        "gridDensity": "comfortable", "imageRatio": "4:3",
+        "categoryStyle": "tabs", "categoryLayout": "side",
+        "typeScale": "normal", "typeWeight": "regular",
+        "cartStyle": "bar", "animation": "subtle", "showDescriptions": True,
+    },
 }
 
 #: The theme keys a preset decides (unless a layer sets them).
@@ -551,6 +565,12 @@ UI_PRESET_CTA: Dict[str, Dict[str, Any]] = {
         "shadow": False, "icon": "arrow", "iconPosition": "end", "animation": "glow",
         "borderColor": "#C9A227", "borderWidth": 1,
     },
+    # Crisp and still: the attract screen's idle motion is the style's scan line (the clients' chrome).
+    "tech": {
+        "size": "l", "position": "bottom_center", "fontSize": 22, "fontWeight": "bold",
+        "shadow": False, "icon": "arrow", "iconPosition": "end", "animation": "none",
+        "borderColor": None, "borderWidth": 0,
+    },
 }
 PRESET_CTA_KEYS = tuple(UI_PRESET_CTA["wolt"].keys())
 
@@ -563,6 +583,11 @@ UI_PRESET_MOTION: Dict[str, Dict[str, Any]] = {
     "classic": {"categorySwitch": "push", "itemsEnter": "pop", "screenChange": "fade", "sheet": "scale", "addToCart": "fly", "speed": "normal"},
     "minimal_dark": {
         "categorySwitch": "fade_scale", "itemsEnter": "cascade", "screenChange": "fade", "sheet": "fade",
+        "addToCart": "fly", "speed": "normal",
+    },
+    # Crisp and cheap: opacity for the screens and the category, the cards in one after another.
+    "tech": {
+        "categorySwitch": "fade", "itemsEnter": "cascade", "screenChange": "fade", "sheet": "scale",
         "addToCart": "fly", "speed": "normal",
     },
 }
