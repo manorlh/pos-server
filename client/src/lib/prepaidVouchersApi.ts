@@ -426,6 +426,24 @@ export async function searchPrepaidProducts(search: string, companyId: string): 
     }));
 }
 
+/** A category an item discount may name (`GET /prepaid-vouchers/categories`). */
+export interface PrepaidCategoryOption {
+  id: string;
+  name: string;
+  parentId: string | null;
+}
+
+/**
+ * The categories an item discount of [companyId] may name — the cloud's own rule, the one
+ * the save checks (as [searchPrepaidProducts] for the products).
+ */
+export async function fetchPrepaidCategories(companyId: string): Promise<PrepaidCategoryOption[]> {
+  const { data } = await api.get<{ items: PrepaidCategoryOption[] }>('/prepaid-vouchers/categories', {
+    params: { companyId },
+  });
+  return data.items ?? [];
+}
+
 /**
  * The vouchers as a file drawn on the server (`GET /prepaid-vouchers/batches/{id}/file`):
  * `pdf` — one PDF (`group` narrows it to one group, opened by its cover sheet); `zip` — a PDF

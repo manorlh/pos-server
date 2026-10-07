@@ -353,21 +353,62 @@ def eligible_products(
         if _eligible(p, tenant_id, related)
     ]
 
+def _eligible_category(c: Optional[Category], tenant_id, related: set) -> bool:
+    """
+    A category an item discount may name: a catalog category of the batch's company group
+    (its parents, its children) or of no company — the products' rule ([_eligible]) for
+    categories. Never a till's own.
+    """
+    return (
+        c is not None
+        and str(c.tenant_id) == str(tenant_id)
+        and c.pos_machine_id is None
+        and c.catalog_level == CatalogLevel.GLOBAL
+        and (c.company_id is None or str(c.company_id) in related)
+    )
+
+
+def eligible_categories(db: Session, user: User, tenant_id, company_id) -> List[Dict[str, Any]]:
+    """
+    The categories an item discount of [company_id] may name — exactly what [_validate_targets]
+    accepts (as [eligible_products] for the products), so the picker never offers one the save
+    then refuses. With their parent, for the picker's path ("שתייה › חמה").
+    """
+    _require_role(user)
+    company = db.query(Company).filter(Company.id == _as_uuid(company_id)).first()
+    if company is None or str(company.tenant_id) != str(tenant_id):
+        raise _http(status.HTTP_404_NOT_FOUND, COMPANY_NOT_FOUND)
+    if not _covers_company(db, user, company.id):
+        raise _http(status.HTTP_403_FORBIDDEN, FORBIDDEN)
+    related = _related_companies(db, company.id)
+    rows = (
+        db.query(Category)
+        .filter(Category.tenant_id == tenant_id, Category.pos_machine_id.is_(None))
+        .order_by(Category.name)
+        .all()
+    )
+    return [
+        {"id": str(c.id), "name": c.name, "parentId": str(c.parent_id) if c.parent_id else None}
+        for c in rows
+        if _eligible_category(c, tenant_id, related)
+    ]
+
 
 def _validate_targets(db: Session, tenant_id, company_id, targets) -> Dict[str, Any]:
     """
-    An item discount's products (global products of the tenant, as for goods) and categories
-    (the tenant's), with their names as printed: `{productIds, categoryIds, names}`.
+    An item discount's products and categories, by the pickers' own rules ([_eligible],
+    [_eligible_category]), with their names as printed: `{productIds, categoryIds, names}`.
     """
     class _One:
         def __init__(self, pid):
             self.product_id = pid
 
     products = _validate_products(db, tenant_id, company_id, [_One(p) for p in targets.product_ids])
+    related = _related_companies(db, company_id)
     categories: List[Category] = []
     for cid in targets.category_ids:
         c = db.query(Category).filter(Category.id == cid).first()
-        if c is None or str(c.tenant_id) != str(tenant_id) or c.pos_machine_id is not None:
+        if not _eligible_category(c, tenant_id, related):
             raise _http(status.HTTP_400_BAD_REQUEST, TARGET_INVALID)
         categories.append(c)
     return {

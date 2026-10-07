@@ -4,6 +4,7 @@ Prepaid vouchers ("שוברי הפקה") — see app/services/prepaid_vouchers.p
 Dashboard (user JWT, the catalog's writers, scoped by company / shop):
 
 GET    /prepaid-vouchers/products                     → the products a batch of a company may carry
+GET    /prepaid-vouchers/categories                   → the categories an item discount of a company may name
 GET    /prepaid-vouchers/batches                      → batches with their counts
 POST   /prepaid-vouchers/batches                      → make a batch and its vouchers
 GET    /prepaid-vouchers/batches/{id}                 → one batch
@@ -82,6 +83,17 @@ def list_prepaid_voucher_products(
     db: Session = Depends(get_db),
 ):
     return {"items": PV.eligible_products(db, current_user, active_tenant_id, company_id, search, limit)}
+
+
+@router.get("/prepaid-vouchers/categories")
+def list_prepaid_voucher_categories(
+    company_id: str = Query(..., alias="companyId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The categories an item discount of a company may name — the save's own rule."""
+    return {"items": PV.eligible_categories(db, current_user, active_tenant_id, company_id)}
 
 
 @router.get("/prepaid-vouchers/batches")

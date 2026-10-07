@@ -10,11 +10,11 @@
  * the rules of use may change later ([BatchRulesCard]) and apply from the next sale.
  */
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Plus, Search, X } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
   PREPAID_KINDS,
@@ -29,9 +29,14 @@ import {
   type PrepaidStacking,
   type PrepaidVoucherKind,
 } from '@/lib/prepaidVoucherBenefit';
-import { updatePrepaidBatch, type PrepaidVoucherBatch } from '@/lib/prepaidVouchersApi';
-import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
-import { ProductListPicker, useCategoryOptions } from '@/components/dashboard/promotions/group-picker';
+import {
+  fetchPrepaidCategories,
+  searchPrepaidProducts,
+  updatePrepaidBatch,
+  type PrepaidProductOption,
+  type PrepaidVoucherBatch,
+} from '@/lib/prepaidVouchersApi';
+import { EntityMultiSelect, type MultiSelectOption } from '@/components/dashboard/entity-multi-select';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -63,33 +68,136 @@ export interface DiscountTermsState {
   value: string;
   minPurchase: string;
   maxDiscount: string;
-  productIds: string[];
+  /** Chosen with their names (the chips), from the batch company's own list. */
+  products: PrepaidProductOption[];
   categoryIds: string[];
   maxUnits: string;
 }
 
 export const EMPTY_DISCOUNT_TERMS: DiscountTermsState = {
-  discountType: 'fixed', value: '', minPurchase: '', maxDiscount: '', productIds: [], categoryIds: [], maxUnits: '1',
+  discountType: 'fixed', value: '', minPurchase: '', maxDiscount: '', products: [], categoryIds: [], maxUnits: '1',
 };
+
+/**
+ * The categories an item discount of [companyId] may name (`GET /prepaid-vouchers/categories`,
+ * the save's own rule), each named with its parent path ("שתייה › חמה").
+ */
+function usePrepaidCategoryOptions(companyId: string): MultiSelectOption[] {
+  const { data = [] } = useQuery({
+    queryKey: ['prepaid-voucher-categories', companyId],
+    queryFn: () => fetchPrepaidCategories(companyId),
+    enabled: !!companyId,
+  });
+  return useMemo(() => {
+    const byId = new Map(data.map((c) => [c.id, c]));
+    const path = (id: string): string => {
+      const names: string[] = [];
+      let c = byId.get(id);
+      let guard = 0;
+      while (c && guard++ < 10) {
+        names.unshift(c.name);
+        c = c.parentId ? byId.get(c.parentId) : undefined;
+      }
+      return names.join(' › ');
+    };
+    return data.map((c) => ({ id: c.id, label: path(c.id) })).sort((a, b) => a.label.localeCompare(b.label, 'he'));
+  }, [data]);
+}
+
+/**
+ * The products an item discount is on: chips of what is chosen, and a search over what a batch
+ * of [companyId] may carry (`GET /prepaid-vouchers/products` — the goods picker's list and the
+ * save's rule, so nothing offered here is refused on save).
+ */
+function TargetProductsPicker({ companyId, value, onChange }: {
+  companyId: string;
+  value: PrepaidProductOption[];
+  onChange: (next: PrepaidProductOption[]) => void;
+}) {
+  const t = useTranslations('prepaidVouchers.kinds');
+  const tc = useTranslations('prepaidVouchers.create');
+  const [search, setSearch] = useState('');
+  const [debounced, setDebounced] = useState('');
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebounced(search), 300);
+    return () => window.clearTimeout(id);
+  }, [search]);
+  const products = useQuery({
+    queryKey: ['prepaid-voucher-products', companyId, debounced],
+    queryFn: () => searchPrepaidProducts(debounced, companyId),
+    enabled: !!companyId,
+  });
+  const chosen = new Set(value.map((p) => p.id));
+  return (
+    <div className="space-y-1.5">
+      <span className="text-sm font-medium">{t('products')}</span>
+      {value.length ? (
+        <div className="flex flex-wrap gap-1.5">
+          {value.map((p) => (
+            <span key={p.id} className="inline-flex max-w-full items-center gap-1 rounded-full border bg-muted/40 py-0.5 ps-2.5 pe-1 text-xs">
+              <span className="truncate">{p.name}</span>
+              <button type="button" onClick={() => onChange(value.filter((x) => x.id !== p.id))}
+                aria-label={tc('remove')} className="rounded-full p-0.5 hover:bg-muted">
+                <X className="h-3 w-3" aria-hidden />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <div className="relative">
+        <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground ltr:left-2.5 rtl:right-2.5" aria-hidden />
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={tc('searchProducts')} className="ps-8"
+          disabled={!companyId} />
+      </div>
+      <div className="max-h-36 overflow-y-auto rounded-lg border">
+        {!companyId ? (
+          <p className="p-2 text-xs text-muted-foreground">{tc('pickCompany')}</p>
+        ) : products.isPending ? (
+          <p className="p-2 text-xs text-muted-foreground">…</p>
+        ) : (products.data ?? []).length === 0 ? (
+          <p className="p-2 text-xs text-muted-foreground">{tc('noProducts')}</p>
+        ) : (
+          <ul>
+            {products.data!.map((p) => (
+              <li key={p.id}>
+                <button type="button" disabled={chosen.has(p.id)} onClick={() => onChange([...value, p])}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-start text-sm hover:bg-muted disabled:opacity-50">
+                  <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                  <span className="text-xs tabular-nums text-muted-foreground">₪{p.price.toFixed(2)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /** What a discount voucher gives: ₪ or %, how much, a minimum and cap (whole sale), or what it is on (items). */
 export function DiscountTermsFields({
   kind,
+  companyId,
   value,
   onChange,
   errors,
 }: {
   kind: PrepaidVoucherKind;
+  /** The batch's company: what its products and categories may be (the save's rule). */
+  companyId: string;
   value: DiscountTermsState;
   onChange: (next: DiscountTermsState) => void;
   errors: DiscountDraftError[];
 }) {
   const t = useTranslations('prepaidVouchers.kinds');
-  const categoryOptions = useCategoryOptions();
+  const categoryOptions = usePrepaidCategoryOptions(companyId);
   const set = (patch: Partial<DiscountTermsState>) => onChange({ ...value, ...patch });
   const types: PrepaidDiscountType[] = ['fixed', 'percent'];
+  // As the server prints them: the products' names, then the categories'.
   const names = [
-    ...categoryOptions.filter((c) => value.categoryIds.includes(c.id)).map((c) => c.label),
+    ...value.products.map((p) => p.name),
+    ...categoryOptions.filter((c) => value.categoryIds.includes(c.id)).map((c) => c.label.split(' › ').pop() ?? c.label),
   ];
   const preview = benefitText({
     kind,
@@ -98,7 +206,7 @@ export function DiscountTermsFields({
     minPurchaseAgorot: Number(value.minPurchase) > 0 ? Math.round(Number(value.minPurchase) * 100) : null,
     maxDiscountAgorot: Number(value.maxDiscount) > 0 ? Math.round(Number(value.maxDiscount) * 100) : null,
     maxUnits: Number(value.maxUnits) || null,
-    names: value.productIds.length ? [`${value.productIds.length} ${t('products')}`, ...names] : names,
+    names,
   });
   return (
     <div className="space-y-3 rounded-lg border p-3">
@@ -139,7 +247,7 @@ export function DiscountTermsFields({
       {kind === 'item_discount' ? (
         <div className="space-y-2">
           <p className="text-sm font-medium">{t('targets')}</p>
-          <ProductListPicker label={t('products')} value={value.productIds} onChange={(productIds) => set({ productIds })} />
+          <TargetProductsPicker companyId={companyId} value={value.products} onChange={(products) => set({ products })} />
           <div className="space-y-1">
             <Label>{t('categories')}</Label>
             <EntityMultiSelect
@@ -150,6 +258,7 @@ export function DiscountTermsFields({
               allLabel={t('categories')}
               clearLabel={t('categories')}
               emptyLabel={t('targetsEmpty')}
+              disabled={!companyId}
             />
           </div>
           <div className="space-y-1">
