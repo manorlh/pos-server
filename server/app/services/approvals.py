@@ -202,7 +202,9 @@ def verify_document_pos_approver(
     if owner is None or str(owner) != str(tenant_id):
         raise ApprovalRejected("approver_unknown_or_inactive")
 
-    missing = scopes_required_by_document(tx) - pos_user_till_scopes(pos_user.role)
+    from app.services.till_roles import pos_user_scopes
+
+    missing = scopes_required_by_document(tx) - pos_user_scopes(pos_user)
     if missing:
         raise ApprovalRejected(
             "approver_lacks_scope:" + ",".join(sorted(scope.value for scope in missing))

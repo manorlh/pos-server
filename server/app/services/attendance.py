@@ -493,7 +493,11 @@ def _verify_approver(db: Session, machine: POSMachine, approval) -> Tuple[Option
         else None
     )
     name = pos_user_name(approver) or getattr(approval, "name", None)
-    return name, approver is not None and approver.role == PosUserRole.SHOP_MANAGER
+    # "תפקידים והרשאות": an approver whose till role allows ATTENDANCE_MANAGE (a shop
+    # manager with no till role yet, exactly as before).
+    from app.services.till_roles import pos_user_allows
+
+    return name, approver is not None and pos_user_allows(approver, "ATTENDANCE_MANAGE")
 
 
 def apply_till_action(db: Session, machine: POSMachine, body, *, now: Optional[datetime] = None) -> Dict[str, Any]:

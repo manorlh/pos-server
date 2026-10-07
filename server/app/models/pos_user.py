@@ -5,7 +5,7 @@ from sqlalchemy import (
     Column, String, Boolean, ForeignKey, Integer,
     Enum as SQLEnum, DateTime, UniqueConstraint, Index,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -58,6 +58,16 @@ class PosUser(Base):
         UUID(as_uuid=True), ForeignKey("employee_roles.id", ondelete="SET NULL"), nullable=True
     )
 
+    #: The till role ("תפקידים והרשאות", app/models/till_role.py): what this person may do
+    #: at a till. Null — not assigned yet: they keep the legacy role matching `role`
+    #: exactly as before roles existed. `role` itself stays what older tills read; it is
+    #: kept equal to the assigned role's `legacy_role` (app/services/till_roles.py).
+    till_role_id = Column(
+        UUID(as_uuid=True), ForeignKey("till_roles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    #: Per-user exceptions to the role: `{"states": {code: state}, "limits": {code: {...}}}`.
+    permission_overrides = Column(JSONB, nullable=True)
+
     #: Wrong PINs typed at an *elevation* prompt, and the lockout they earn.
     #:
     #: Only the cloud-checked path counts here. The till's own sign-in verifies the same
@@ -72,3 +82,4 @@ class PosUser(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
     shop = relationship("Shop")
+    till_role = relationship("TillRole", foreign_keys=[till_role_id], lazy="select")

@@ -442,7 +442,9 @@ def _operator_with_authority(
         )
         .first()
     )
-    if operator is None or scope not in pos_user_till_scopes(operator.role):
+    from app.services.till_roles import pos_user_scopes
+
+    if operator is None or scope not in pos_user_scopes(operator):
         return None
     return operator
 

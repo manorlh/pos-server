@@ -2028,10 +2028,23 @@ def get_pos_users_sync(
 
     update_machine_sync_timestamp(db, str(machine.id))
 
+    # "תפקידים והרשאות": each row carries the user's effective permissions, resolved here.
+    from app.services.till_roles import effective_for_users, sync_fields
+
+    effective = effective_for_users(db, rows)
+
+    def _row(r: PosUser) -> PosUserSyncRow:
+        row = PosUserSyncRow.model_validate(r)
+        for key, value in sync_fields(effective[r.id]).items():
+            if key == "till_role_id":
+                value = uuid.UUID(value) if value else None
+            setattr(row, key, value)
+        return row
+
     return PosUsersSyncResponse(
         sync_type=sync_type,
         server_time=datetime.now(timezone.utc),
-        users=[PosUserSyncRow.model_validate(r) for r in rows],
+        users=[_row(r) for r in rows],
     )
 
 

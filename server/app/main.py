@@ -298,6 +298,10 @@ app.include_router(catalog_menus_router.router, prefix=_prefix)
 from app.routers import report_center as report_center_router  # noqa: E402
 
 app.include_router(report_center_router.router, prefix=_prefix)
+# "תפקידים והרשאות" for till users and "מגירת מזומן" (docs/SPEC_ROLES_PERMISSIONS.md).
+from app.routers import till_roles as till_roles_router  # noqa: E402
+
+app.include_router(till_roles_router.router, prefix=_prefix)
 
 
 @app.on_event("startup")

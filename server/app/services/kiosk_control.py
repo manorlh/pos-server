@@ -968,6 +968,13 @@ def _schedule_of(db: Session, machine: Optional[POSMachine]) -> Optional[Dict[st
     }
 
 
+def _allows_kiosk_control(pos_user: Any) -> bool:
+    """"תפקידים והרשאות": KIOSK_CONTROL allowed (a shop manager with no till role yet, as before)."""
+    from app.services.till_roles import pos_user_allows
+
+    return pos_user_allows(pos_user, "KIOSK_CONTROL")
+
+
 def require_till_manager(db: Session, till: POSMachine, pos_user_id: Optional[str]) -> Any:
     """
     A controlling till's lock / schedule needs a manager's approval (a PIN on that till): the
@@ -982,7 +989,7 @@ def require_till_manager(db: Session, till: POSMachine, pos_user_id: Optional[st
         user is None
         or not user.is_active
         or user.shop_id != till.shop_id
-        or user.role != PosUserRole.SHOP_MANAGER
+        or not _allows_kiosk_control(user)
     ):
         raise KioskCommandRefused(
             status.HTTP_403_FORBIDDEN, "kiosk_control_requires_manager",

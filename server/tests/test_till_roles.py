@@ -1,0 +1,537 @@
+"""
+"תפקידים והרשאות" for till users (docs/SPEC_ROLES_PERMISSIONS.md): the catalogue, the
+defaults matrix, the migration's promise (nobody's behaviour changes), the resolution
+order, the roles API, assignment, the audit, the roster the till pulls, and elevation.
+
+Runs on the in-memory SQLite world of tests/shift_world.py.
+"""
+from __future__ import annotations
+
+import uuid
+
+import pytest
+from fastapi import HTTPException
+
+from app.models.company import Company
+from app.models.pos_user import PosUser, PosUserRole
+from app.models.till_role import TillRole, TillRoleChange
+from app.models.user import User, UserRole
+from app.routers import pos_users as PU
+from app.routers import sync as sync_router
+from app.routers import till_roles as R
+from app.schemas.pos_user import PosUserCreate, PosUserUpdate
+from app.services import ably_notify
+from app.services import elevation
+from app.services import till_permissions as TP
+from app.services import till_roles as S
+from app.services.permissions import Scope, pos_user_till_scopes
+from shift_world import accept_str_uuids, make_world
+
+A, P, D = TP.ALLOW, TP.APPROVAL, TP.DENY
+
+
+# ── World ─────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def w(monkeypatch):
+    accept_str_uuids(monkeypatch)
+    world = make_world()
+    world.notified = []
+    from app.services import pos_user_notify
+
+    monkeypatch.setattr(
+        pos_user_notify, "publish_pos_users_notify",
+        lambda tenant_id, machine_id, **kw: world.notified.append((machine_id, kw.get("reason"))),
+    )
+    world.dana = _pos_user(world, "dana")
+    world.boss = _pos_user(world, "boss", role=PosUserRole.SHOP_MANAGER)
+    world.nir = _pos_user(world, "nir", shop=world.other_shop)
+    world.shop_manager = _user(world, "mgr", UserRole.SHOP_MANAGER, shop=world.shop)
+    world.supervisor = _user(world, "sup", UserRole.SHIFT_SUPERVISOR, shop=world.shop)
+    world.cashier = _user(world, "cash", UserRole.CASHIER, shop=world.shop)
+    world.company_manager = _user(world, "cm", UserRole.COMPANY_MANAGER)
+    # Another company in the same tenant.
+    world.company2 = Company(id=uuid.uuid4(), tenant_id=world.tenant.id, name="Other", vat_number="2")
+    world.db.add(world.company2)
+    world.db.commit()
+    return world
+
+
+def _pos_user(w, username, role=PosUserRole.CASHIER, shop=None):
+    pu = PosUser(
+        id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=(shop or w.shop).id, username=username,
+        first_name=username.title(), pin_hash="x", role=role, is_active=True,
+    )
+    w.db.add(pu)
+    w.db.flush()
+    return pu
+
+
+def _user(w, name, role, shop=None, company=None):
+    u = User(
+        id=uuid.uuid4(), role=role, tenant_id=w.tenant.id, company_id=(company or w.company).id,
+        shop_id=shop.id if shop is not None else None, email=f"{name}@x", username=name,
+    )
+    w.db.add(u)
+    w.db.flush()
+    return u
+
+
+def ctx(w, user=None):
+    return dict(current_user=user or w.admin, active_tenant_id=w.tenant.id, db=w.db)
+
+
+def roles(w, user=None):
+    return R.list_till_roles(str(w.company.id), **ctx(w, user))
+
+
+def role_by(w, key):
+    return w.db.query(TillRole).filter(TillRole.company_id == w.company.id, TillRole.builtin_key == key).one()
+
+
+def refused(fn, *args, **kwargs) -> HTTPException:
+    with pytest.raises(HTTPException) as e:
+        fn(*args, **kwargs)
+    return e.value
+
+
+def roster(w, till=None):
+    till = till or w.tills[0]
+    out = sync_router.get_pos_users_sync(str(till.id), since=None, machine=till, db=w.db)
+    return {u.username: u for u in out.users}
+
+
+# ── The catalogue ─────────────────────────────────────────────────────────────
+
+
+class TestCatalogue:
+    def test_codes_are_unique_and_every_builtin_sets_every_code(self):
+        assert len(TP.CODES) == len(set(TP.CODES))
+        for key in TP.BUILTIN_BY_KEY:
+            assert set(TP.DEFAULTS[key]) == set(TP.CODES), key
+            assert set(TP.DEFAULTS[key].values()) <= set(TP.STATES)
+
+    def test_the_owners_asks_are_in_it(self):
+        for code in ("SELL", "TABLES.USE", "TABLES.OPEN_OTHERS", "CALCULATOR.USE", "REFUND", "DISCOUNT",
+                     "PRICE_OVERRIDE", "LINE_VOID", "TABLE_CANCEL", "TABLE_VOID", "TABLE_RESTORE",
+                     "TABLE_UNLOCK", "REPRINT", "OTH", "SHIFT_OPEN", "SHIFT_CLOSE", "X", "Z", "TRANSMIT",
+                     "CATALOG_WRITE", "ATTENDANCE_MANAGE", "KIOSK_CONTROL", "VIEW_REPORTS",
+                     "CASH_DRAWER.CASH_IN", "CASH_DRAWER.CASH_OUT", "CASH_DRAWER.DEPOSIT",
+                     "CASH_DRAWER.COUNT", "CASH_DRAWER.BLIND_COUNT"):
+            assert code in TP.PERMISSIONS_BY_CODE, code
+
+    def test_every_drawer_permission_of_the_spec_is_there(self):
+        spec = [
+            "OPEN_ON_CASH_SALE", "OPEN_MANUALLY", "OPEN_FOR_CHANGE", "CASH_IN", "CASH_OUT", "DEPOSIT", "COUNT",
+            "OPEN_FOR_TEST", "APPROVE_OPEN", "OPEN_AFTER_CLOSE", "VIEW_LOG", "VIEW_CASH_MOVEMENTS",
+        ]
+        for name in spec:
+            assert f"CASH_DRAWER.{name}" in TP.PERMISSIONS_BY_CODE
+
+    # The spec's §3 matrix, row by row: מלצר / קופאי / אחמ״ש / מנהל.
+    @pytest.mark.parametrize("code,expected", [
+        ("CASH_DRAWER.OPEN_ON_CASH_SALE", (A, A, A, A)),
+        ("CASH_DRAWER.OPEN_MANUALLY", (P, P, A, A)),
+        ("CASH_DRAWER.OPEN_FOR_CHANGE", (P, P, A, A)),
+        ("CASH_DRAWER.CASH_OUT", (D, P, A, A)),
+        ("CASH_DRAWER.DEPOSIT", (D, P, A, A)),
+        ("CASH_DRAWER.COUNT", (D, P, A, A)),
+        ("CASH_DRAWER.OPEN_FOR_TEST", (D, D, P, A)),
+        ("CASH_DRAWER.OPEN_AFTER_CLOSE", (D, D, P, A)),
+        ("CASH_DRAWER.VIEW_LOG", (D, D, A, A)),
+    ])
+    def test_the_spec_roles_carry_the_spec_matrix(self, code, expected):
+        got = tuple(TP.DEFAULTS[k][code] for k in (TP.WAITER, TP.CASHIER, TP.SUPERVISOR, TP.MANAGER))
+        assert got == expected
+
+    def test_the_supervisor_takes_cash_out_up_to_200_alone(self):
+        sup = TP.effective_permissions(template=TP.SUPERVISOR)
+        assert TP.limit_covers(sup, "CASH_DRAWER.CASH_OUT", amount=200)
+        assert not TP.limit_covers(sup, "CASH_DRAWER.CASH_OUT", amount=200.01)
+        mgr = TP.effective_permissions(template=TP.MANAGER)
+        assert TP.limit_covers(mgr, "CASH_DRAWER.CASH_OUT", amount=5000)
+
+    def test_scope_strings_map_onto_codes(self):
+        for scope in Scope:
+            if scope is Scope.DAY_CLOSE:
+                assert TP.SCOPE_PERMISSIONS[scope.value] == "Z"
+            else:
+                assert scope.value in TP.SCOPE_PERMISSIONS, scope
+
+    def test_validation_refuses_unknowns_and_bad_states(self):
+        with pytest.raises(TP.PermissionValueError):
+            TP.clean_states({"NOPE": A})
+        with pytest.raises(TP.PermissionValueError):
+            TP.clean_states({"SELL": "maybe"})
+        with pytest.raises(TP.PermissionValueError):
+            TP.clean_limits({"DISCOUNT": {"maxPercent": 101}})
+        with pytest.raises(TP.PermissionValueError):
+            TP.clean_limits({"SELL": {"maxAmount": 1}})
+        assert TP.clean_limits({"DISCOUNT": {"maxPercent": 12.5}}) == {"DISCOUNT": {"maxPercent": 12.5}}
+
+
+# ── The migration's promise: legacy roles are today's behaviour ───────────────
+
+
+class TestLegacy:
+    #: TillAuthority.SENIOR_MAY_ACT_ALONE before roles (OTH rode on the discount scope).
+    SENIOR = {
+        "REFUND", "DISCOUNT", "OTH", "CATALOG_WRITE", "TRANSMIT", "TABLE_CANCEL", "TABLE_UNLOCK", "REPRINT",
+        "TABLE_VOID", "TABLE_RESTORE", "USER_SESSION_RELEASE", "KIOSK_UNLOCK", "KIOSK_CONTROL",
+        "ATTENDANCE_MANAGE", "CARD_UNRESOLVED",
+    }
+
+    def test_a_legacy_cashier_needs_approval_for_exactly_what_a_cashier_did(self):
+        eff = TP.legacy_effective("cashier")
+        assert {c for c, s in eff.states.items() if s == P} == self.SENIOR
+        # Everything else was open to everyone ("כרגע אין הרשאות, כולם יכולים לעשות הכל"),
+        # except approving others, which was a manager's alone.
+        assert {c for c, s in eff.states.items() if s == D} == {"CASH_DRAWER.APPROVE_OPEN"}
+        assert eff.allows("SHIFT_CLOSE") and eff.allows("SELL") and eff.allows("CASH_DRAWER.OPEN_MANUALLY")
+
+    def test_a_legacy_shop_manager_may_do_everything(self):
+        eff = TP.legacy_effective(PosUserRole.SHOP_MANAGER)
+        assert set(eff.states.values()) == {A}
+
+    def test_an_unknown_role_string_is_a_cashier(self):
+        assert TP.legacy_effective("admin").states == TP.legacy_effective("cashier").states
+
+    def test_the_legacy_reading_for_older_tills(self):
+        assert TP.legacy_role_for(TP.DEFAULTS[TP.LEGACY_CASHIER]) == "cashier"
+        assert TP.legacy_role_for(TP.DEFAULTS[TP.LEGACY_MANAGER]) == "shop_manager"
+        assert TP.legacy_role_for(TP.DEFAULTS[TP.MANAGER]) == "shop_manager"
+        # A supervisor may not edit the catalog alone → an older till must not think so.
+        assert TP.legacy_role_for(TP.DEFAULTS[TP.SUPERVISOR]) == "cashier"
+        assert TP.legacy_role_for(TP.DEFAULTS[TP.WAITER]) == "cashier"
+
+    def test_cloud_scopes_of_a_legacy_user_match_the_old_table(self, w):
+        old_manager = pos_user_till_scopes(PosUserRole.SHOP_MANAGER)
+        assert S.pos_user_scopes(w.boss) >= old_manager
+        # A legacy cashier never could hold a money scope; they still cannot.
+        for scope in (Scope.REFUND, Scope.DISCOUNT, Scope.CATALOG_WRITE, Scope.TRANSMIT, Scope.TABLE_CANCEL):
+            assert scope not in S.pos_user_scopes(w.dana)
+
+    def test_the_roster_of_an_untouched_company_is_todays(self, w):
+        rows = roster(w)
+        assert rows["dana"].role == PosUserRole.CASHIER
+        assert rows["dana"].permissions == TP.DEFAULTS[TP.LEGACY_CASHIER]
+        assert rows["dana"].till_role_id is None and rows["dana"].till_role_key == TP.LEGACY_CASHIER
+        assert rows["boss"].role == PosUserRole.SHOP_MANAGER
+        assert rows["boss"].permissions == TP.DEFAULTS[TP.LEGACY_MANAGER]
+        assert "nir" not in rows  # another shop's user
+
+
+# ── Resolution order ──────────────────────────────────────────────────────────
+
+
+class TestResolution:
+    def test_override_then_role_then_template(self):
+        eff = TP.effective_permissions(
+            role_states={"REFUND": A, "SELL": D},
+            template=TP.CASHIER,
+            overrides={"states": {"SELL": A}},
+        )
+        assert eff.state("SELL") == A and eff.sources["SELL"] == "override"
+        assert eff.state("REFUND") == A and eff.sources["REFUND"] == "role"
+        assert eff.state("DISCOUNT") == P and eff.sources["DISCOUNT"] == "template"
+
+    def test_limits_follow_the_same_order(self):
+        eff = TP.effective_permissions(
+            role_limits={"CASH_DRAWER.CASH_OUT": {"maxAmount": 100}},
+            template=TP.SUPERVISOR,
+            overrides={"limits": {"DISCOUNT": {"maxPercent": 5}}},
+        )
+        assert eff.limits["CASH_DRAWER.CASH_OUT"] == {"maxAmount": 100}
+        assert eff.limits["DISCOUNT"] == {"maxPercent": 5}
+        assert eff.limits["CASH_DRAWER.DEPOSIT"] == {"maxAmount": 200}
+
+    def test_unknown_codes_are_never_granted(self):
+        eff = TP.effective_permissions(role_states={"GOD_MODE": A}, template=TP.WAITER)
+        assert "GOD_MODE" not in eff.states
+        assert eff.state("GOD_MODE") == D
+
+
+# ── Roles of a company ────────────────────────────────────────────────────────
+
+
+class TestCompanyRoles:
+    def test_the_first_read_creates_the_builtins_once_and_keeps_everyone_as_they_were(self, w):
+        before = {u: r.permissions for u, r in roster(w).items()}
+        out = roles(w)
+        keys = sorted(r["builtinKey"] for r in out["roles"])
+        assert keys == sorted(TP.BUILTIN_BY_KEY)
+        roles(w)  # idempotent
+        assert w.db.query(TillRole).filter(TillRole.company_id == w.company.id).count() == 6
+        w.db.refresh(w.dana)
+        assert w.dana.till_role_id == role_by(w, TP.LEGACY_CASHIER).id
+        assert w.boss.till_role_id == role_by(w, TP.LEGACY_MANAGER).id
+        assert {u: r.permissions for u, r in roster(w).items()} == before
+        counts = {r["builtinKey"]: r["users"] for r in out["roles"]}
+        # Both shops are the company's: dana and nir are its cashiers.
+        assert counts[TP.LEGACY_CASHIER] == 2 and counts[TP.LEGACY_MANAGER] == 1
+
+    def test_who_may_read_and_who_may_edit(self, w):
+        assert roles(w, w.company_manager)["canEdit"] is True
+        assert roles(w, w.shop_manager)["canEdit"] is False
+        assert roles(w, w.supervisor)["canEdit"] is False
+        assert refused(roles, w, w.cashier).status_code == 403
+        other_cm = _user(w, "cm2", UserRole.COMPANY_MANAGER, company=w.company2)
+        assert refused(roles, w, other_cm).status_code == 403
+        body = R.RoleCreateIn(name="ברמן")
+        assert refused(R.create_till_role, str(w.company.id), body, **ctx(w, w.shop_manager)).status_code == 403
+
+    def test_create_blank_from_a_template_and_duplicate(self, w):
+        roles(w)
+        bar = R.create_till_role(
+            str(w.company.id), R.RoleCreateIn(name="ברמן", baseKey=TP.SUPERVISOR, permissions={"TABLES.USE": D}),
+            **ctx(w, w.company_manager),
+        )
+        assert bar["builtin"] is False and bar["permissions"]["TABLES.USE"] == D
+        assert bar["permissions"]["REFUND"] == A  # from the supervisor template
+        copy = R.create_till_role(
+            str(w.company.id), R.RoleCreateIn(name="ברמן 2", copyFromRoleId=bar["id"]), **ctx(w),
+        )
+        assert copy["permissions"] == bar["permissions"]
+        # Editing the source later never moves the copy.
+        R.update_till_role(str(w.company.id), bar["id"], R.RoleUpdateIn(permissions={"REFUND": D}), **ctx(w))
+        again = {r["id"]: r for r in roles(w)["roles"]}
+        assert again[copy["id"]]["permissions"]["REFUND"] == A
+
+    def test_names_are_unique_per_company(self, w):
+        roles(w)
+        err = refused(R.create_till_role, str(w.company.id), R.RoleCreateIn(name=" קופאי "), **ctx(w))
+        assert err.status_code == 409 and err.detail["code"] == "name_taken"
+
+    def test_builtins_are_edited_never_deleted(self, w):
+        roles(w)
+        cashier = role_by(w, TP.CASHIER)
+        out = R.update_till_role(str(w.company.id), str(cashier.id),
+                                 R.RoleUpdateIn(name="קופאית", permissions={"REFUND": A}), **ctx(w))
+        assert out["name"] == "קופאית" and out["permissions"]["REFUND"] == A
+        err = refused(R.delete_till_role, str(w.company.id), str(cashier.id), reassign_to=None, **ctx(w))
+        assert err.status_code == 409 and err.detail["code"] == "builtin_role"
+
+    def test_a_role_in_use_is_deleted_only_with_somewhere_to_go(self, w):
+        roles(w)
+        bar = R.create_till_role(str(w.company.id), R.RoleCreateIn(name="ברמן"), **ctx(w))
+        R.assign_till_role(str(w.shop.id), str(w.dana.id), R.AssignIn(tillRoleId=bar["id"]), **ctx(w))
+        err = refused(R.delete_till_role, str(w.company.id), bar["id"], reassign_to=None, **ctx(w))
+        assert err.detail["code"] == "role_in_use"
+        waiter = role_by(w, TP.WAITER)
+        R.delete_till_role(str(w.company.id), bar["id"], reassign_to=waiter.id, **ctx(w))
+        w.db.refresh(w.dana)
+        assert w.dana.till_role_id == waiter.id
+        assert all(r["id"] != bar["id"] for r in roles(w)["roles"])
+
+    def test_the_matrix_save_restamps_users_and_tells_their_tills(self, w):
+        roles(w)
+        legacy = role_by(w, TP.LEGACY_CASHIER)
+        stamp = w.dana.updated_at
+        everything = {code: A for code in TP.CODES}
+        R.save_till_role_matrix(
+            str(w.company.id), R.MatrixIn(roles=[R.MatrixRoleIn(id=legacy.id, permissions=everything)]), **ctx(w),
+        )
+        w.db.refresh(w.dana)
+        # She may now do alone all a shop manager did: older tills are told so.
+        assert w.dana.role == PosUserRole.SHOP_MANAGER
+        assert w.dana.updated_at != stamp
+        assert any(reason == "till_roles_updated" for _, reason in w.notified)
+        assert roster(w)["dana"].permissions == everything
+
+    def test_an_invalid_matrix_is_refused_whole(self, w):
+        roles(w)
+        cashier, waiter = role_by(w, TP.CASHIER), role_by(w, TP.WAITER)
+        body = R.MatrixIn(roles=[
+            R.MatrixRoleIn(id=cashier.id, permissions={"REFUND": A}),
+            R.MatrixRoleIn(id=waiter.id, permissions={"REFUND": "sometimes"}),
+        ])
+        assert refused(R.save_till_role_matrix, str(w.company.id), body, **ctx(w)).status_code == 422
+        w.db.refresh(cashier)
+        assert cashier.permissions == {}
+
+
+# ── Assignment, overrides, audit ──────────────────────────────────────────────
+
+
+class TestAssignment:
+    def test_assigning_a_spec_role_changes_the_roster_and_the_legacy_role(self, w):
+        roles(w)
+        sup = role_by(w, TP.SUPERVISOR)
+        out = R.assign_till_role(str(w.shop.id), str(w.boss.id), R.AssignIn(tillRoleId=sup.id), **ctx(w, w.shop_manager))
+        assert out["tillRoleName"] == "אחמ״ש" and out["role"] == "cashier"
+        row = roster(w)["boss"]
+        assert row.till_role_key == TP.SUPERVISOR and row.permissions["CATALOG_WRITE"] == P
+        assert row.limits["CASH_DRAWER.CASH_OUT"] == {"maxAmount": 200}
+        audit = w.db.query(TillRoleChange).filter(TillRoleChange.action == "assign").one()
+        assert audit.pos_user_id == w.boss.id and audit.user_email == "mgr@x"
+
+    def test_a_shop_manager_assigns_only_in_their_shop(self, w):
+        roles(w)
+        sup = role_by(w, TP.SUPERVISOR)
+        err = refused(R.assign_till_role, str(w.other_shop.id), str(w.nir.id), R.AssignIn(tillRoleId=sup.id),
+                      **ctx(w, w.shop_manager))
+        assert err.status_code == 403
+        err = refused(R.assign_till_role, str(w.shop.id), str(w.dana.id), R.AssignIn(tillRoleId=sup.id),
+                      **ctx(w, w.supervisor))
+        assert err.status_code == 403
+
+    def test_a_role_of_another_company_is_refused(self, w):
+        roles(w)
+        R.list_till_roles(str(w.company2.id), **ctx(w))
+        foreign = w.db.query(TillRole).filter(TillRole.company_id == w.company2.id).first()
+        err = refused(R.assign_till_role, str(w.shop.id), str(w.dana.id), R.AssignIn(tillRoleId=foreign.id), **ctx(w))
+        assert err.status_code == 404
+
+    def test_overrides_win_and_can_be_cleared(self, w):
+        roles(w)
+        cashier = role_by(w, TP.CASHIER)
+        R.assign_till_role(
+            str(w.shop.id), str(w.dana.id),
+            R.AssignIn(tillRoleId=cashier.id, overrides={"states": {"REFUND": A}, "limits": {"REFUND": {"maxAmount": 50}}}),
+            **ctx(w),
+        )
+        row = roster(w)["dana"]
+        assert row.permissions["REFUND"] == A and row.limits["REFUND"] == {"maxAmount": 50}
+        R.assign_till_role(str(w.shop.id), str(w.dana.id), R.AssignIn(tillRoleId=cashier.id, clearOverrides=True), **ctx(w))
+        assert roster(w)["dana"].permissions["REFUND"] == P
+        actions = [c.action for c in w.db.query(TillRoleChange).order_by(TillRoleChange.created_at).all()]
+        assert actions.count("overrides") == 2
+
+    def test_the_users_list_shows_role_and_effective(self, w):
+        out = R.list_till_role_users(str(w.company.id), shop_id=None, include_inactive=False, **ctx(w, w.shop_manager))
+        names = {u["username"]: u for u in out["users"]}
+        assert set(names) == {"dana", "boss"}  # their own shop only
+        assert names["dana"]["tillRoleName"] == "קופאי (הרשאות קודמות)"
+
+
+class TestApplyDefaults:
+    def test_resets_the_spec_roles_and_optionally_moves_legacy_users(self, w):
+        roles(w)
+        cashier = role_by(w, TP.CASHIER)
+        R.update_till_role(str(w.company.id), str(cashier.id), R.RoleUpdateIn(permissions={"REFUND": A}), **ctx(w))
+        out = R.apply_spec_defaults(str(w.company.id), R.ApplyDefaultsIn(), **ctx(w, w.company_manager))
+        assert out["applied"] == {"resetRoles": [TP.CASHIER], "movedUsers": 0}
+        w.db.refresh(cashier)
+        assert cashier.permissions == {}
+        assert roster(w)["dana"].till_role_key == TP.LEGACY_CASHIER  # not moved
+        out = R.apply_spec_defaults(
+            str(w.company.id), R.ApplyDefaultsIn(resetBuiltins=False, moveLegacyUsers=True), **ctx(w),
+        )
+        assert out["applied"]["movedUsers"] == 3  # dana and nir (both shops), boss
+        rows = roster(w)
+        assert rows["dana"].till_role_key == TP.CASHIER and rows["dana"].permissions == TP.DEFAULTS[TP.CASHIER]
+        assert rows["boss"].till_role_key == TP.MANAGER and rows["boss"].role == PosUserRole.SHOP_MANAGER
+        assert w.db.query(TillRoleChange).filter(TillRoleChange.action == "apply_defaults").count() == 2
+
+
+class TestPosUsersEndpoints:
+    def test_create_with_a_role_and_without_one(self, w):
+        roles(w)
+        waiter = role_by(w, TP.WAITER)
+        made = PU.create_pos_user(
+            str(w.shop.id), PosUserCreate(username="avi", pin="2580", tillRoleId=waiter.id), **ctx(w),
+        )
+        assert made.till_role_id == waiter.id and made.till_role_name == "מלצר"
+        plain = PU.create_pos_user(str(w.shop.id), PosUserCreate(username="old", pin="2580"), **ctx(w))
+        assert plain.till_role_id == role_by(w, TP.LEGACY_CASHIER).id
+
+    def test_an_older_dashboard_changing_role_moves_the_legacy_role(self, w):
+        roles(w)
+        out = PU.update_pos_user(str(w.shop.id), str(w.dana.id), PosUserUpdate(role="shop_manager"), **ctx(w))
+        assert out.till_role_id == role_by(w, TP.LEGACY_MANAGER).id
+        assert roster(w)["dana"].permissions == TP.DEFAULTS[TP.LEGACY_MANAGER]
+
+    def test_update_with_a_till_role(self, w):
+        roles(w)
+        mgr = role_by(w, TP.MANAGER)
+        out = PU.update_pos_user(str(w.shop.id), str(w.dana.id), PosUserUpdate(tillRoleId=mgr.id), **ctx(w))
+        assert out.role == PosUserRole.SHOP_MANAGER and out.till_role_name == "מנהל"
+        err = refused(PU.update_pos_user, str(w.shop.id), str(w.dana.id), PosUserUpdate(tillRoleId=uuid.uuid4()), **ctx(w))
+        assert err.status_code == 422
+
+
+# ── Elevation and the cloud's other approver checks ───────────────────────────
+
+
+class TestElevation:
+    def test_grants_follow_the_role(self, w):
+        roles(w)
+        sup = role_by(w, TP.SUPERVISOR)
+        R.assign_till_role(str(w.shop.id), str(w.dana.id), R.AssignIn(tillRoleId=sup.id), **ctx(w))
+        till = w.tills[0]
+        till.shop_id = w.shop.id
+        asked = [Scope.REFUND, Scope.CATALOG_WRITE, Scope.TRANSMIT]
+        assert elevation.grantable_scopes_for_pos_user(w.dana, till, asked) == [Scope.REFUND, Scope.TRANSMIT]
+        assert elevation.grantable_scopes_for_pos_user(w.boss, till, asked) == asked
+
+    def test_a_demotion_bites_a_live_grant(self, w):
+        roles(w)
+        till = w.tills[0]
+        _, session = elevation.create_session(w.db, None, till, [Scope.REFUND], pos_user=w.boss)
+        w.db.commit()
+        waiter = role_by(w, TP.WAITER)
+        R.assign_till_role(str(w.shop.id), str(w.boss.id), R.AssignIn(tillRoleId=waiter.id), **ctx(w))
+        w.db.refresh(session)
+        held = elevation.session_scopes(session)
+        assert not held.issubset(S.pos_user_scopes(w.boss))
+
+    def test_attendance_and_kiosk_approvers_read_the_permission(self, w):
+        from app.services.kiosk_control import _allows_kiosk_control
+
+        assert _allows_kiosk_control(w.boss) and not _allows_kiosk_control(w.dana)
+        roles(w)
+        R.assign_till_role(str(w.shop.id), str(w.dana.id), R.AssignIn(tillRoleId=role_by(w, TP.SUPERVISOR).id), **ctx(w))
+        assert _allows_kiosk_control(w.dana)
+        assert S.pos_user_allows(w.dana, "ATTENDANCE_MANAGE")
+
+
+# ── The migration ─────────────────────────────────────────────────────────────
+
+
+def _render(*args, downgrade=False) -> str:
+    import io
+    import os
+    import pathlib
+
+    from alembic import command
+    from alembic.config import Config
+
+    here = pathlib.Path(__file__).resolve().parents[1]
+    buf = io.StringIO()
+    cfg = Config(os.path.join(here, "alembic.ini"), output_buffer=buf)
+    cfg.set_main_option("script_location", os.path.join(here, "alembic"))
+    (command.downgrade if downgrade else command.upgrade)(cfg, *args, sql=True)
+    return " ".join(buf.getvalue().split())
+
+
+class TestMigration:
+    def test_on_the_single_head(self):
+        import pathlib
+
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
+        root = pathlib.Path(__file__).resolve().parents[1]
+        config = Config(str(root / "alembic.ini"))
+        config.set_main_option("script_location", str(root / "alembic"))
+        script = ScriptDirectory.from_config(config)
+        heads = script.get_heads()
+        assert len(heads) == 1
+        assert "e5b1c3d7f9a2" in {r.revision for r in script.walk_revisions("base", heads[0])}
+        assert script.get_revision("e5b1c3d7f9a2").down_revision == "c7e2f4a9d1b6"
+
+    def test_upgrade_adds_the_tables_and_the_columns_and_moves_no_data(self):
+        sql = _render("c7e2f4a9d1b6:e5b1c3d7f9a2")
+        assert "CREATE TABLE till_roles" in sql
+        assert "CONSTRAINT uq_till_roles_company_builtin UNIQUE (company_id, builtin_key)" in sql
+        assert "CREATE TABLE till_role_changes" in sql
+        assert "ALTER TABLE pos_users ADD COLUMN till_role_id UUID" in sql
+        assert "ALTER TABLE pos_users ADD COLUMN permission_overrides JSONB" in sql
+        assert "ON DELETE SET NULL" in sql
+        # Nobody is moved: every till user keeps NULL = their legacy role.
+        assert "UPDATE pos_users" not in sql and "INSERT INTO" not in sql.replace("INSERT INTO alembic_version", "")
+
+    def test_downgrade_drops_them(self):
+        sql = _render("e5b1c3d7f9a2:c7e2f4a9d1b6", downgrade=True)
+        assert "DROP TABLE till_roles" in sql and "DROP TABLE till_role_changes" in sql

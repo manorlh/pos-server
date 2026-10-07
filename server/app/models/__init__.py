@@ -121,6 +121,8 @@ from app.models.device_battery import DeviceBatteryAlert
 from app.models.kiosk_web import KioskWebDeviceStatus
 # "עיצוב קופה": the till design layers (docs/SPEC_TILL_DESIGN.md).
 from app.models.till_design import TillDesignSettings
+# "תפקידים והרשאות" for till users (docs/SPEC_ROLES_PERMISSIONS.md).
+from app.models.till_role import TillRole, TillRoleChange
 # "שירות הודעות ו-019" + "מועדון לקוחות" (docs/SPEC_NOTIFICATIONS_CLUB.md).
 from app.models.outbox import OutboxEvent
 from app.models.notifications import (
@@ -214,4 +216,5 @@ __all__ = [
     "RemoteCreditRequest", "RemoteCreditEvent",
     "DocumentRefusal",
     "TillDesignSettings",
+    "TillRole", "TillRoleChange",
 ]

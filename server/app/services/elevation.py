@@ -240,7 +240,9 @@ def grantable_scopes_for_pos_user(
     """`grantable_scopes` for a till user: their role's ceiling ∩ what was asked, at their own shop."""
     if not pos_user_may_use_machine(pos_user, machine):
         return []
-    allowed = pos_user_till_scopes(pos_user.role)
+    from app.services.till_roles import pos_user_scopes
+
+    allowed = pos_user_scopes(pos_user)
     return [scope for scope in requested if scope in allowed]
 
 
@@ -328,7 +330,9 @@ def resolve_session(db: Session, raw_token: str) -> Optional[ElevatedSession]:
             return None
         if str(pos_user.shop_id) != str(session.shop_id):
             return None
-        still_allowed = pos_user_till_scopes(pos_user.role)
+        from app.services.till_roles import pos_user_scopes
+
+        still_allowed = pos_user_scopes(pos_user)
     else:
         user = session.user
         if user is None or not user.is_active:

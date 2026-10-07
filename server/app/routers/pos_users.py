@@ -86,7 +86,43 @@ def list_pos_users(
     if not include_inactive:
         q = q.filter(PosUser.is_active.is_(True))
     q = q.order_by(PosUser.username)
-    return q.all()
+    return _with_role_names(db, q.all())
+
+
+def _with_role_names(db: Session, users: List[PosUser]) -> List[PosUser]:
+    """Stamp each user's resolved till role name (a plain attribute the response reads)."""
+    from app.services.till_roles import effective_for_users
+
+    effective = effective_for_users(db, users)
+    for u in users:
+        u.till_role_name = effective[u.id].role_name
+    return users
+
+
+def _apply_till_role(db: Session, shop: Shop, pu: PosUser, role_id, user: User, *, legacy_role=None) -> None:
+    """
+    Put `pu` on the till role `role_id` (must be of the shop's company), or — none given —
+    on the company's legacy role for `legacy_role` when the company's roles exist.
+    """
+    from app.models.company import Company
+    from app.services import till_roles as TR
+
+    company = db.get(Company, shop.company_id) if shop.company_id else None
+    if company is None:
+        return
+    if role_id is None:
+        role = TR.default_role_for_new_user(db, company.id, legacy_role or pu.role)
+        if role is None:
+            pu.till_role_id = None
+            return
+    else:
+        TR.ensure_company_roles(db, company)
+        from app.models.till_role import TillRole
+
+        role = db.get(TillRole, role_id)
+        if role is None or role.company_id != company.id or role.deleted_at is not None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_till_role")
+    TR.assign_role(db, company, pu, role, user=user)
 
 
 @router.post(
@@ -140,11 +176,13 @@ def create_pos_user(
         is_active=True,
     )
     db.add(user)
+    db.flush()
+    _apply_till_role(db, shop, user, data.till_role_id, current_user, legacy_role=data.role)
     db.commit()
     db.refresh(user)
 
     notify_machines_for_shop_pos_users(db, str(shop.id), reason="pos_user_created")
-    return user
+    return _with_role_names(db, [user])[0]
 
 
 # ── Update / Reset-PIN / Soft-Delete ─────────────────────────────────────────
@@ -194,6 +232,7 @@ def update_pos_user(
                     detail="Worker number already exists in this shop",
                 )
 
+    role_changed = "role" in payload and payload["role"] is not None and payload["role"] != pu.role
     for field in ("first_name", "last_name", "worker_number", "role", "is_active"):
         if field in payload:
             setattr(pu, field, payload[field])
@@ -201,11 +240,18 @@ def update_pos_user(
     if "pin" in payload and payload["pin"] is not None:
         pu.pin_hash = get_password_hash(payload["pin"])
 
+    # "תפקידים והרשאות": a till role chosen wins; a legacy `role` change from an older
+    # dashboard moves the user to that role's legacy till role, so the two never disagree.
+    if payload.get("till_role_id") is not None:
+        _apply_till_role(db, shop, pu, payload["till_role_id"], current_user)
+    elif role_changed:
+        _apply_till_role(db, shop, pu, None, current_user, legacy_role=payload["role"])
+
     db.commit()
     db.refresh(pu)
 
     notify_machines_for_shop_pos_users(db, str(shop.id), reason="pos_user_updated")
-    return pu
+    return _with_role_names(db, [pu])[0]
 
 
 @router.post(
@@ -230,7 +276,7 @@ def reset_pos_user_pin(
     db.refresh(pu)
 
     notify_machines_for_shop_pos_users(db, str(shop.id), reason="pos_user_pin_reset")
-    return pu
+    return _with_role_names(db, [pu])[0]
 
 
 @router.delete(
