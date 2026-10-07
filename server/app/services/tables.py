@@ -630,15 +630,17 @@ def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
     agrees on one — else the shop's main till ("קופה ראשית", app/services/main_till.py),
     else the shop's print server, else the shop's only till, else none.
     """
-    from app.services.independent_till import lan_members
+    from app.services.lan_server import server_candidates
     from app.services.main_till import main_till_of_shop
     from app.services.printers import print_host_of_shop, shop_machines
     from app.services.till_parameters import till_parameters_for_machine
 
     if shop_id is None:
         return None
-    # An independent till ("קופה עצמאית") is outside the shop's LAN group: never its host.
-    members = lan_members(shop_machines(db, shop_id))
+    # An independent till ("קופה עצמאית") is outside the shop's LAN group: never its host;
+    # nor a device set "לא משמש כשרת מקומי" (app/services/lan_server.py) — not even as the
+    # shop's one possible host below.
+    members = server_candidates(db, shop_machines(db, shop_id))
     hosts = [
         m for m in members
         if till_parameters_for_machine(db, m).parameters.get(TABLES_HOST_KEY) is True

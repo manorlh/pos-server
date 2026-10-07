@@ -31,11 +31,12 @@ from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy.exc import IntegrityError
 
 from app.models.pos_machine import PairingStatus, POSMachine
 from app.models.shift import ShiftStatus
+from app.models.shop import Shop
 from app.models.till_parameter import TillParameter, TillParameterValue
 from app.models.user import User, UserRole
 from app.models.z_report import ZReport
@@ -83,6 +84,9 @@ def w(monkeypatch):
     )
     for m in world.six:
         m.last_heartbeat_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+    # The owner's shop works on its LAN: "רשת מקומית" on (docs/SPEC_LAN_MODE.md §4) — with a
+    # main till it is in local mode, as the migration set it for every shop that was.
+    world.shop.local_network = True
     world.db.commit()
     return world
 
@@ -153,8 +157,10 @@ def run_z(w, tills):
 
 
 def cloud_mode(w):
-    """Another till prints and the tables are not on the LAN: the shop is not in local mode."""
+    """"רשת מקומית" off (another till prints, too): the shop is not in local mode."""
     set_param(w, "printHostTill", "machine", w.six[1].id, True)
+    w.shop.local_network = False
+    w.db.flush()
     assert LZ.local_mode_of_shop(w.db, w.shop) is False
     w.db.commit()  # a refused request rolls back to here, never to local mode
 
@@ -638,6 +644,15 @@ class TestOneMainTillServes:
         set_param(w, MT.MAIN_TILL_KEY, "machine", w.six[0].id, True)
         assert LZ.local_mode_of_shop(w.db, w.shop) is True
 
+    def test_the_switch_decides_not_the_tables_or_the_print_server(self, w):
+        """"רשת מקומית" (docs/SPEC_LAN_MODE.md §4): local mode is the switch and a main till."""
+        set_param(w, MT.MAIN_TILL_KEY, "machine", w.six[0].id, True)
+        set_param(w, "printHostTill", "machine", w.six[1].id, True)  # another till prints
+        assert LZ.local_mode_of_shop(w.db, w.shop) is True
+        w.shop.local_network = False
+        set_param(w, "tablesMode", "shop", w.shop.id, "רשת מקומית (קופה ראשית)")
+        assert LZ.local_mode_of_shop(w.db, w.shop) is False
+
     def test_every_till_may_run_it_reads_main_till_only_in_local_mode(self, w):
         set_param(w, MT.SHOP_Z_FROM_KEY, "shop", w.shop.id, MT.Z_FROM_ANY)
         assert MT.till_shop_z_refusal(w.db, w.six[2]) is None
@@ -826,6 +841,19 @@ def set_value(w, key, scope_type, scope_id, value):
     return 200, resp
 
 
+def put_local_network(w, enabled, force=False, user=None):
+    from app.routers import lan_server as LSR
+
+    try:
+        out = LSR.put_local_network(
+            w.shop.id, LSR.LocalNetworkIn(enabled=enabled, forceProducerSwitch=force), BackgroundTasks(),
+            current_user=user or w.admin, active_tenant_id=w.tenant.id, db=w.db,
+        )
+    except HTTPException as e:
+        return e.status_code, {"detail": e.detail}
+    return 200, out
+
+
 class TestOneProducer:
     def test_unsynced_shop_zs_block_every_switch_of_producer(self, w):
         owner_setup(w)
@@ -838,8 +866,8 @@ class TestOneProducer:
         assert "2 דוחות Z סניפיים" in out["detail"]["message"]
         code, out = put_main(w, None)
         assert code == 409
-        code, out = set_value(w, "printHostTill", "machine", w.six[2].id, True)
-        assert code == 409 and out["detail"] == LZ.BUSY
+        code, out = put_local_network(w, False)
+        assert code == 409 and out["detail"]["code"] == LZ.BUSY
         with pytest.raises(Exception):
             IT.apply_shop(w.db, w.admin, w.shop, main_till_id=w.six[3].id)
         w.db.rollback()
@@ -850,12 +878,16 @@ class TestOneProducer:
     def test_turning_the_lan_off_is_refused_while_the_main_till_holds_unsynced_zs(self, w):
         owner_setup(w)
         set_param(w, "tablesMode", "shop", w.shop.id, "רשת מקומית (קופה ראשית)")
-        set_param(w, "printHostTill", "machine", w.six[1].id, True)  # local only by the LAN now
+        set_param(w, "printHostTill", "machine", w.six[1].id, True)
         assert LZ.local_mode_of_shop(w.db, w.shop) is True
         report(w, w.six[0], pending=1)
         w.db.commit()
-        code, out = set_value(w, "tablesMode", "shop", w.shop.id, "כבוי")
-        assert code == 409 and out["detail"] == LZ.BUSY
+        code, out = put_local_network(w, False)
+        assert code == 409 and out["detail"]["code"] == LZ.BUSY
+        assert w.db.get(Shop, w.shop.id).local_network is True
+        # The tables off: the switch stays, and so does the producer.
+        code, _ = set_value(w, "tablesMode", "shop", w.shop.id, "כבוי")
+        assert code == 200 and LZ.local_mode_of_shop(w.db, w.shop) is True
 
     def test_offline_the_main_till_cannot_say_so_and_keeps_it(self, w):
         owner_setup(w)
@@ -923,6 +955,19 @@ class TestOneProducer:
         w.db.commit()
         code, out = set_value(w, MT.MAIN_TILL_KEY, "machine", t1.id, True)
         assert code == 409 and out["reason"] == "cloud_run_live"
+
+    def test_switching_the_lan_on_waits_for_a_cloud_z_under_way(self, w, z_activity_unchecked):
+        w.shop.local_network = False
+        set_param(w, MT.MAIN_TILL_KEY, "machine", w.six[0].id, True)
+        w.db.commit()
+        t1, t2 = w.six[0], w.six[1]
+        closed_shift(w, t1, 1, "10.00")
+        w.shift(t2, 1, status=ShiftStatus.OPEN)
+        run_z(w, [t1, t2])
+        w.db.commit()
+        code, out = put_local_network(w, True)
+        assert code == 409 and out["detail"]["code"] == LZ.BUSY and out["detail"]["reason"] == "cloud_run_live"
+        assert w.db.get(Shop, w.shop.id).local_network is False
 
     def test_a_takeover_moves_the_tables_but_keeps_the_z_production(self, w):
         owner_setup(w)

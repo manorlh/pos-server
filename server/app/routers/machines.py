@@ -15,6 +15,7 @@ from app.services import display_devices
 from app.services import device_identity
 from app.services import device_management
 from app.services import document_prefix
+from app.services import lan_server
 from app.services import support_z, till_reset
 from app.database import get_db
 from app.schemas.pos_machine import POSMachineUpdate, POSMachineResponse, MachineHeartbeatBody
@@ -735,6 +736,9 @@ def post_my_heartbeat(
         from app.services.local_shop_z import note_heartbeat
 
         note_heartbeat(db, machine, body.local_shop_z)
+    # The local server's sync lag (docs/SPEC_LAN_MODE.md §6): what the cloud copy still lacks.
+    if body is not None and body.lan_sync is not None:
+        lan_server.note_sync(machine, body.lan_sync)
     # Local shop Zs of this shop still waiting for their tills' shifts and documents
     # (docs/SPEC_INDEPENDENT_TILL.md §8.12): what arrived is linked, and a Z is verified once
     # everything it names is here. Never fails a heartbeat.
@@ -780,6 +784,10 @@ def post_my_heartbeat(
         # "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md): its own Z, never in the shop Z, and
         # outside the shop's LAN group (no main till, tables host or print server for it).
         "independentTill": bool(getattr(machine, "independent_till", False)),
+        # "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3): never the shop's local server — the
+        # till then starts no LAN host of its own (tables, any later one), whatever its
+        # technician set; it still serves its own printers, and stays in the shop Z.
+        "lanServerExcluded": lan_server.is_excluded(db, machine),
         # The last number of the till's own Z run (0: none yet), so a till in `zMode =
         # till` can number a Z it closes with no connection (docs/SPEC_OFFLINE_TILL_Z.md §4).
         "lastTillZNumber": last_machine_z_number(db, machine.id),

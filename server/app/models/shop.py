@@ -44,6 +44,11 @@ class Shop(Base):
     training_started_by = Column(UUID(as_uuid=True), nullable=True)
     training_ended_at = Column(DateTime(timezone=True), nullable=True)
     training_ended_by = Column(UUID(as_uuid=True), nullable=True)
+    #: "רשת מקומית" (docs/SPEC_LAN_MODE.md §4): the shop works on its LAN through its main
+    #: till — with a main till, the shop is in local mode (`local_shop_z.local_mode_of_shop`).
+    #: Switched on the shop page's main till card, through the shop Z producer's guard.
+    local_network = Column(Boolean, nullable=False, default=False, server_default="false")
+    local_network_changed_at = Column(DateTime(timezone=True), nullable=True)
     settings = Column(JSONB, nullable=False, server_default="{}")
     settings_updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
