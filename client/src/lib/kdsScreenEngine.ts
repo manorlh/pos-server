@@ -35,6 +35,7 @@
 import type { BoardView, KdsActionInput, KdsOrder, KdsView } from './kdsScreenTypes';
 import { ACTION_TEXT, applyPending, checkAction, isSettled, orderTitle, refusalText, screenRole, type OverlayAction, type Settling } from './kdsBoard';
 import { boardDisplayOf, boardOf } from './pickupBoard';
+import { kdsDisplayOf } from './screenLook';
 
 /* ------------------------------------------------------------- the host's parts */
 
@@ -484,6 +485,7 @@ export class KdsModule {
 export function kdsView(s: FeedState, pendingActions: number, lastError: string | null): KdsView {
   const b = s.body ?? {};
   const device = b.device && typeof b.device === 'object' ? (b.device as KdsView['device']) : null;
+  const display = device ? (device as { display?: unknown }).display : null;
   return {
     device,
     shopName: typeof b.shopName === 'string' ? b.shopName : null,
@@ -494,6 +496,8 @@ export function kdsView(s: FeedState, pendingActions: number, lastError: string 
     pendingActions,
     lastError,
     serverOffsetMs: s.serverOffsetMs,
+    // How the screen looks (docs/SPEC_KDS.md §14); null = today's look.
+    display: display && typeof display === 'object' ? kdsDisplayOf(display) : null,
   };
 }
 

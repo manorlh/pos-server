@@ -13,8 +13,11 @@
  * rules) — a small "הקישו להפעלת צליל" says so until then.
  *
  * `?demo=1`: a pretend kitchen / board (lib/kdsScreenDemo.ts), never the network — `&kds=expo|manager`,
- * `&offline=1`, `&empty=1`; the board's `&theme=dark|light|contrast|brand`, `&accent=%23rrggbb`,
- * `&prep=0`, `&title=…`.
+ * `&offline=1`, `&empty=1`, `&busy=1`; the look (docs/SPEC_KDS.md §14, lib/screenLook.ts
+ * `lookFromQuery`): the KDS's `&layout=tickets|columns|rail|list|big`, `&by=`, `&density=`, `&font=`,
+ * `&age=8-12|off`, `&hide=…`, `&clock=0`, `&counts=0`; the board's `&layout=columns|spotlight|grid|
+ * split|ticker`, `&prep=0`, `&title=…`, `&ready=`, `&promo=…`, `&media=demo`; both `&theme=dark|light|
+ * contrast|brand`, `&accent=%23rrggbb`.
  */
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
@@ -27,8 +30,9 @@ import { describeBrowser, webDeviceInfo, type FetchFn, type KioskCredentials } f
 import { BridgeAgent, BridgeClient, bridgeCodeFromHash, bridgeWorthProbing, hashWithoutBridgeCode } from '@/lib/kioskBridge';
 import { bridgeCanPrint, bridgeRoleOf, kdsBonDoc } from '@/lib/screenBridge';
 import { KV, openKioskStore, type StorageLike } from '@/lib/kioskWebStore';
-import { boardDemo, kdsDemo } from '@/lib/kdsScreenDemo';
+import { boardDemo, DEMO_MEDIA, kdsDemo } from '@/lib/kdsScreenDemo';
 import { boardDisplayOf } from '@/lib/pickupBoard';
+import { lookFromQuery } from '@/lib/screenLook';
 import { ScreenWebService, screenKeys, screenStoreOptions, type ScreenRoute, type ScreenWebView } from '@/lib/screenWebService';
 import { WebPairing, type PairingTexts } from '@/components/kiosk-web/web-pairing';
 import { TapSequence, inTechnicianZone } from '@/components/kiosk-web/web-staff';
@@ -259,11 +263,8 @@ export function WebScreen({ route, apiUrl }: { route: ScreenRoute; apiUrl: strin
   }, [svc]);
 
   const bridge = useMemo<RoleScreenBridge | null>(() => demo?.bridge ?? svc?.bridge() ?? null, [demo, svc]);
-  const forcedDisplay = useMemo(() => {
-    if (!demo) return null;
-    const q = demo.params;
-    return boardDisplayOf({ theme: q.get('theme') ?? undefined, accent: q.get('accent') ?? undefined, showPreparing: q.get('prep') !== '0', sound: q.get('sound') !== '0', title: q.get('title') ?? undefined });
-  }, [demo]);
+  // The demo's look from the address (docs/SPEC_KDS.md §14): `&layout=`, `&theme=`, `&accent=`… — screenLook.ts `lookFromQuery`.
+  const forcedDisplay = useMemo(() => (demo ? boardDisplayOf(lookFromQuery(demo.params, 'board', DEMO_MEDIA)) : null), [demo]);
 
   /** Six taps in the top-left corner: the staff sheet (with the technician code). */
   const corner = (e: ReactPointerEvent<HTMLDivElement>) => {

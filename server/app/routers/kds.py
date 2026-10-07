@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.middleware.auth import (
+    FISCAL_SYNC_PATH,
     ensure_same_tenant,
     get_active_tenant_id,
     get_current_user,
@@ -32,6 +33,8 @@ from app.models.user import User, UserRole
 from app.schemas.kds import (
     KdsActionIn,
     KdsDeviceIn,
+    KdsDisplayDefaultsIn,
+    KdsReadyActionIn,
     KdsReleaseIn,
     KdsRouteOverrideIn,
     KdsStationSettingIn,
@@ -116,6 +119,29 @@ def get_kds_order_states(
     db: Session = Depends(get_db),
 ):
     return KDS.order_states(db, machine, source, refs.split(",") if refs else [])
+
+
+@router.get("/sync/{machine_id}/kds/ready-orders")
+def get_kds_ready_orders(
+    machine_id: str,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """"הזמנות להכנה" on a till: the shop's orders in preparation, ready and just handed over (§15)."""
+    return KDS.ready_orders(db, machine)
+
+
+@router.post("/sync/{machine_id}/kds/ready-actions", dependencies=FISCAL_SYNC_PATH)
+def post_kds_ready_action(
+    machine_id: str,
+    body: KdsReadyActionIn,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """The till's "מוכן" / "נמסר" / "החזר" — the KDS's own transitions, idempotent by `id` (§15)."""
+    out = KDS.ready_action(db, machine, body)
+    db.commit()
+    return out
 
 
 # ── The dashboard: workflow configuration ───────────────────────────────────────
@@ -231,6 +257,22 @@ def put_kds_device(
     db.commit()
     _notify_till(background_tasks, shop, machine_id)
     return out
+
+
+@router.put("/kds/shops/{shop_id}/display-defaults")
+def put_kds_display_defaults(
+    shop_id: uuid.UUID,
+    body: KdsDisplayDefaultsIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The shop's default look of its kitchen screens (`kds`) and boards (`board`) — §14."""
+    shop = _shop(db, shop_id, active_tenant_id)
+    K.check_edit(db, current_user, shop)
+    out = KDS.set_display_defaults(db, shop, body)
+    db.commit()
+    return {"displayDefaults": out}
 
 
 def _notify_till(background_tasks: Optional[BackgroundTasks], shop: Shop, machine_id) -> None:

@@ -194,15 +194,28 @@ export function timerLevel(minutes: number, warn: number, late: number): TimerLe
  * from the release of the oldest work still open (a later round — "תוספת" — starts its own
  * count), "מוכן" when nothing is left to prepare or the order is ready / handed over.
  */
-export function orderTimer(order: KdsOrder, settings: KdsView['stationSettings'], nowMs: number): { minutes: number; level: TimerLevel } {
+export function orderTimer(
+  order: KdsOrder,
+  settings: KdsView['stationSettings'],
+  nowMs: number,
+  look?: TimerLook | null,
+): { minutes: number; level: TimerLevel } {
   const start = order.firstReleasedAt ?? order.createdAt;
   const open = openTasks(order);
   const done = open.length === 0 || order.groupState === 'ready_for_pickup' || isFinished(order);
   if (done) return { minutes: minutesSince(start, nowMs), level: 'done' };
   const since = oldestIso(open.map((t) => t.releasedAt)) ?? start;
   const minutes = minutesSince(since, nowMs);
-  const { warn, late } = thresholds(order, settings);
+  // "צבע לפי זמן" off: the minutes only, never orange or red.
+  if (look && look.ageColors === false) return { minutes, level: 'normal' };
+  const { warn, late } = look?.thresholds ?? thresholds(order, settings);
   return { minutes, level: timerLevel(minutes, warn, late) };
+}
+
+/** The screen's own look on the timer (`device.display`): its thresholds (else the stations'), colours on / off. */
+export interface TimerLook {
+  thresholds?: { warn: number; late: number } | null;
+  ageColors?: boolean;
 }
 
 /* ------------------------------------------------------------------- buttons */

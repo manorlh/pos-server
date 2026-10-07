@@ -258,12 +258,14 @@ class TestBoardLook:
         )
         out = kds_router.put_kds_device(kd.shop.id, kd.pickup_screen.id, body, **_ctx(kd))
         want = {"theme": "light", "accent": "#16a34a", "sound": False, "showPreparing": False, "title": "איסוף הזמנות"}
-        assert out["display"] == want
+        # The v1 keys as saved; every v2 key (docs/SPEC_KDS.md §14) at today's look.
+        assert {k: out["display"][k] for k in want} == want
+        assert out["display"]["v"] == 2 and out["display"]["boardLayout"] == "columns" and out["display"]["layout"] == "tickets"
         b = board(kd, kd.pickup_screen)
-        assert b["device"]["display"] == want and "pickup" in b
+        assert b["device"]["display"] == out["display"] and "pickup" in b
         # A save without it (an older dashboard, a pairing) keeps it.
         kds_router.put_kds_device(kd.shop.id, kd.pickup_screen.id, KdsDeviceIn(role="pickup", name="TV 2"), **_ctx(kd))
-        assert board(kd, kd.pickup_screen)["device"]["display"] == want
+        assert board(kd, kd.pickup_screen)["device"]["display"] == out["display"]
 
     def test_none_set_is_null_and_a_bad_value_is_refused(self, kd):
         assert board(kd, kd.expo_screen)["device"]["display"] is None
@@ -275,6 +277,7 @@ class TestBoardLook:
         from app.services import kds as KDS
 
         assert KDS.display_out(None) is None
-        assert KDS.display_out({"theme": "neon", "accent": "red", "sound": None, "title": ""}) == {
+        out = KDS.display_out({"theme": "neon", "accent": "red", "sound": None, "title": ""})
+        assert {k: out[k] for k in ("theme", "accent", "sound", "showPreparing", "title")} == {
             "theme": "dark", "accent": None, "sound": True, "showPreparing": True, "title": None,
         }

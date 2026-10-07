@@ -24,9 +24,9 @@ import {
   type KdsShopOverview,
 } from '@/lib/kdsApi';
 import { errorCodeOf } from '@/lib/workflowMode';
-import { boardDisplayOf } from '@/lib/pickupBoard';
-import type { BoardDisplay } from '@/lib/kdsScreenTypes';
-import { BoardLookFields } from './board-look-fields';
+import type { KdsBoardScope } from '@/lib/kdsApi';
+import { BoardScopeFields, scopeIsWholeShop } from './board-scope-fields';
+import { DesignCell, ScreenDesignDialog } from './screen-design';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -64,11 +64,14 @@ function useTillLabel() {
 
 export function DevicesSection({ shopId, overview }: { shopId: string; overview: KdsShopOverview }) {
   const t = useTranslations('kds.page.devices');
+  const tDesign = useTranslations('kds.page.design');
   const tc = useTranslations('common');
   const qc = useQueryClient();
   const errorText = useKdsErrorText();
   const tillLabel = useTillLabel();
   const [dialog, setDialog] = useState<{ device: KdsDevice | null } | null>(null);
+  const [design, setDesign] = useState<KdsDevice | null>(null);
+  const td = useTranslations('kds.page.devices.dialog.scope');
 
   const machines = new Map(overview.machines.map((m) => [m.id, m]));
   const used = new Set(overview.devices.map((d) => d.machineId).filter((id): id is string => !!id));
@@ -114,6 +117,7 @@ export function DevicesSection({ shopId, overview }: { shopId: string; overview:
                 <TableHead>{t('columns.till')}</TableHead>
                 <TableHead>{t('columns.role')}</TableHead>
                 <TableHead>{t('columns.stations')}</TableHead>
+                <TableHead>{tDesign('screenButton')}</TableHead>
                 <TableHead>{tc('status')}</TableHead>
                 <TableHead>{t('columns.lastSeen')}</TableHead>
                 <TableHead className="w-24" />
@@ -148,9 +152,19 @@ export function DevicesSection({ shopId, overview }: { shopId: string; overview:
                     <Badge variant="secondary">{t(`roles.${d.role}`)}</Badge>
                   </TableCell>
                   <TableCell className="text-sm">
-                    {d.role === 'station'
-                      ? d.stations.map((s) => s.name).join(' · ') || '—'
-                      : t('allStations')}
+                    {d.role === 'station' ? d.stations.map((s) => s.name).join(' · ') || '—' : d.role === 'pickup' ? null : t('allStations')}
+                    {/* Its orders: the whole shop, or some points of sale / tills and kiosks (SPEC_KDS §15). */}
+                    {d.role === 'pickup' || !scopeIsWholeShop(d.scope) ? (
+                      <span className={d.role === 'pickup' ? undefined : 'ms-1 text-xs text-muted-foreground'}>
+                        {d.role === 'pickup' ? '' : '· '}
+                        {scopeIsWholeShop(d.scope)
+                          ? td('summaryAll')
+                          : td('summarySome', { count: String((d.scope?.areaIds.length ?? 0) + (d.scope?.machineIds.length ?? 0)) })}
+                      </span>
+                    ) : null}
+                  </TableCell>
+                  <TableCell>
+                    <DesignCell device={d} canEdit={overview.canEdit} onEdit={() => setDesign(d)} />
                   </TableCell>
                   <TableCell>
                     <Badge variant={d.isActive ? 'secondary' : 'outline'}>
@@ -192,6 +206,7 @@ export function DevicesSection({ shopId, overview }: { shopId: string; overview:
         </div>
       )}
 
+      {design ? <ScreenDesignDialog key={design.id} shopId={shopId} overview={overview} device={design} onClose={() => setDesign(null)} /> : null}
       {dialog ? (
         <DeviceDialog
           key={dialog.device?.id ?? 'new'}
@@ -236,10 +251,15 @@ function DeviceDialog({
   const [role, setRole] = useState<KdsRole>(device?.role ?? 'station');
   const [stationIds, setStationIds] = useState<string[]>(device?.stations.map((s) => s.id) ?? []);
   const [isActive, setIsActive] = useState(device?.isActive ?? true);
-  const [display, setDisplay] = useState<BoardDisplay>(() => boardDisplayOf(device?.display));
+  // The screen's orders, on top of its stations (null = the whole shop, as before).
+  const [scope, setScope] = useState<KdsBoardScope | null>(() => (scopeIsWholeShop(device?.scope) ? null : (device?.scope ?? null)));
 
   const needsStation = role === 'station' && stationIds.length === 0;
-  const valid = !!machineId && !needsStation;
+  const scopeEmpty = scope !== null && scopeIsWholeShop(scope);
+  const valid = !!machineId && !needsStation && !scopeEmpty;
+  // The machines whose orders a screen may show: the shop's tills and kiosks, not its screens.
+  const screens = new Set(overview.devices.map((d) => d.machineId).filter((id): id is string => !!id));
+  const sources = overview.machines.filter((m) => !screens.has(m.id) && (m.fiscal !== false || !!m.kiosk));
   // "מסך מטבח אינו קופה": a till chosen here for the first time stops being a till.
   const chosen = overview.machines.find((m) => m.id === machineId);
   const becomesScreen = !device && !!chosen && chosen.fiscal !== false;
@@ -361,8 +381,8 @@ function DeviceDialog({
             </div>
           ) : null}
 
-          {/* The board's look (every board: the browser's `/board` and the Windows app). */}
-          {role === 'pickup' ? <BoardLookFields value={display} onChange={setDisplay} /> : null}
+          {/* The screen's orders, any role (the cloud filters what it serves: Android, Windows, the browser). The look: "עיצוב" in the table. */}
+          <BoardScopeFields value={scope} onChange={setScope} areas={overview.areas ?? []} machines={sources} tillLabel={(m) => tillLabel(m)} kitchen={role !== 'pickup'} />
 
           <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border p-3">
             <span className="text-sm font-medium">{td('active')}</span>
@@ -382,7 +402,7 @@ function DeviceDialog({
                 role,
                 stationIds: role === 'station' ? stationIds : [],
                 isActive,
-                ...(role === 'pickup' ? { display: { ...display, title: display.title?.trim() || null } } : {}),
+                scope: scope ?? { areaIds: [], machineIds: [] },
               })
             }
           >

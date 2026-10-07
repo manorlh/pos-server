@@ -719,7 +719,26 @@ export class KioskService extends EventEmitter {
     }
     const logo = this.settingsMap().brandReceiptLogoUrl;
     if (typeof logo === 'string' && /^https?:\/\//.test(logo)) list.push({ url: logo, kind: 'image', sha256: null, bytes: null });
+    // A "מוכן / לא מוכן" board's media (its split / ticker layouts — core/screenMedia.ts).
+    if (!this.opts.bridge) list.push(...this.screenMedia);
     return list;
+  }
+
+  private screenMedia: MediaRefIn[] = [];
+  private screenMediaKey = '[]';
+
+  /** The board's media to keep on the disk (main/roles/manager.ts); a change syncs the store. */
+  setScreenMedia(refs: MediaRefIn[]): void {
+    const key = JSON.stringify(refs.map((r) => [r.url, r.sha256]));
+    if (key === this.screenMediaKey) return;
+    this.screenMediaKey = key;
+    this.screenMedia = refs;
+    void this.syncMedia();
+  }
+
+  /** `kiosk://media/<file>` for a board's media file on the disk, or null while it is not. */
+  screenMediaUrl(url: string): string | null {
+    return this.localMediaUrl(url);
   }
 
   async syncMedia(): Promise<void> {

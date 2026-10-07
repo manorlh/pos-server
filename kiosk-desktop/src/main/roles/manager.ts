@@ -9,6 +9,7 @@ import { EventEmitter } from 'node:events';
 import type { KioskService } from '../service';
 import { parameterOn } from '../sync/cloud';
 import { asksKdsDevice, isFiscal, resolveRole } from '../../core/roles';
+import { boardMediaRefs, localizeBoardMedia } from '../../core/screenMedia';
 import type { Activity } from '../../core/updatePolicy';
 import type { AppRole, BoardView, KdsActionInput, KdsView, ShellEvents, ShellView, UpdateView } from '../../shared/roles';
 import { BoardModule } from './board';
@@ -53,6 +54,10 @@ export class RoleManager extends EventEmitter {
 
   start() {
     this.svc.on('view', () => this.recompute());
+    // A board's media file that just reached the disk: the board shows it.
+    this.svc.media.onChange(() => {
+      if (this.board) this.emitEvent('board', this.localBoard(this.board.view()));
+    });
     this.recompute();
     void this.refreshKdsDevice(true);
     this.timer = setInterval(() => {
@@ -129,9 +134,18 @@ export class RoleManager extends EventEmitter {
       this.kds.start();
     }
     if (role === 'order_status_board' && !this.board) {
-      this.board = new BoardModule(this.ctx, (v) => this.emitEvent('board', v));
+      this.board = new BoardModule(this.ctx, (v) => {
+        // Its media on the disk first (core/screenMedia.ts); the screen sees only local copies.
+        this.svc.setScreenMedia(boardMediaRefs(v));
+        this.emitEvent('board', this.localBoard(v));
+      });
       this.board.start();
     }
+    if (role !== 'order_status_board') this.svc.setScreenMedia([]);
+  }
+
+  private localBoard(v: BoardView): BoardView {
+    return localizeBoardMedia(v, (url) => this.svc.screenMediaUrl(url));
   }
 
   /* ---------------------------------------------------------------- views */
@@ -163,7 +177,9 @@ export class RoleManager extends EventEmitter {
   }
 
   boardView(): BoardView {
-    return this.board?.view() ?? { shopName: null, preparing: [], ready: [], updatedAt: null, offline: true, notConfigured: this.current !== 'order_status_board' };
+    return this.board
+      ? this.localBoard(this.board.view())
+      : { shopName: null, preparing: [], ready: [], updatedAt: null, offline: true, notConfigured: this.current !== 'order_status_board' };
   }
 
   kdsView(): KdsView {

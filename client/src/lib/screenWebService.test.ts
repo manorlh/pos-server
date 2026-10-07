@@ -280,7 +280,7 @@ describe('the bridge the shared screens read', () => {
     assert.equal(svc.view().shows, 'board');
     const b = await svc.bridge().board();
     assert.deepEqual([b.preparing.map((n) => n.number), b.ready.map((n) => n.number), b.notConfigured], [['41'], ['40'], false]);
-    assert.deepEqual(b.display, { theme: 'light', accent: '#16a34a', sound: true, showPreparing: false, title: null });
+    assert.deepEqual(b.display, { ...DEFAULT_BOARD_DISPLAY, theme: 'light', accent: '#16a34a', sound: true, showPreparing: false, title: null });
     assert.deepEqual(boards.at(-1), ['40']);
   });
 });
@@ -403,7 +403,7 @@ describe('the engine and the board, shared with the Windows app', () => {
   it("the board's look, cleaned", () => {
     assert.deepEqual(boardDisplayOf(null), DEFAULT_BOARD_DISPLAY);
     assert.deepEqual(boardDisplayOf({ theme: 'neon', accent: 'green', sound: false, showPreparing: 0, title: '  איסוף  ' }), {
-      theme: 'dark', accent: null, sound: false, showPreparing: true, title: 'איסוף',
+      ...DEFAULT_BOARD_DISPLAY, theme: 'dark', accent: null, sound: false, showPreparing: true, title: 'איסוף',
     });
     assert.equal(boardDisplayOf({ theme: 'contrast', accent: '#ABCDEF' }).accent, '#abcdef');
     assert.equal(textOn('#ffff00'), '#000000');

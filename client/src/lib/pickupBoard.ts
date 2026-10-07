@@ -11,7 +11,7 @@
  * board at `/board`; self-contained (no `@/` imports).
  */
 
-import type { BoardDisplay, BoardNumber, BoardThemeName } from './kdsScreenTypes';
+import type { BoardNumber, BoardThemeName } from './kdsScreenTypes';
 
 function clean(list: unknown): BoardNumber[] {
   if (!Array.isArray(list)) return [];
@@ -54,35 +54,38 @@ export function columnFit(count: number): { cols: number; size: 'xl' | 'lg' | 'm
 
 /* -------------------------------------------------------------------- the look */
 
+// The board's look (`device.display`: theme, accent, title, sound, the "בהכנה" column, the layout,
+// how long a number stays ready, the media panel) is read in screenLook.ts with the kitchen's.
+export { DEFAULT_BOARD_DISPLAY, boardDisplayOf, textOn } from './screenLook';
+
 export const BOARD_THEMES: readonly BoardThemeName[] = ['dark', 'light', 'contrast', 'brand'];
 
-export const DEFAULT_BOARD_DISPLAY: BoardDisplay = { theme: 'dark', accent: null, sound: true, showPreparing: true, title: null };
-
-const HEX = /^#[0-9a-f]{6}$/i;
-
-/** The cloud's `device.display` (or a URL's `?theme=`), cleaned: unknown values fall back to the defaults. */
-export function boardDisplayOf(raw: unknown): BoardDisplay {
-  const r = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-  const theme = typeof r.theme === 'string' && (BOARD_THEMES as readonly string[]).includes(r.theme) ? (r.theme as BoardThemeName) : DEFAULT_BOARD_DISPLAY.theme;
-  const accent = typeof r.accent === 'string' && HEX.test(r.accent.trim()) ? r.accent.trim().toLowerCase() : null;
-  const title = typeof r.title === 'string' && r.title.trim() ? r.title.trim().slice(0, 60) : null;
-  return {
-    theme,
-    accent,
-    sound: r.sound !== false,
-    showPreparing: r.showPreparing !== false,
-    title,
-  };
+/** The newest ready number first (the "מוכן עכשיו" spotlight); the cloud already sends them so. */
+export function newestFirst(list: readonly BoardNumber[]): BoardNumber[] {
+  return [...list].sort((a, b) => (Date.parse(b.since ?? '') || 0) - (Date.parse(a.since ?? '') || 0));
 }
 
-/** Black or white text on a "#rrggbb" background (WCAG relative luminance). */
-export function textOn(hex: string): '#000000' | '#ffffff' {
-  if (!HEX.test(hex)) return '#ffffff';
-  const ch = (i: number) => {
-    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  };
-  const l = 0.2126 * ch(1) + 0.7152 * ch(3) + 0.0722 * ch(5);
-  // The colour where black and white text have the same contrast ratio.
-  return l > 0.179 ? '#000000' : '#ffffff';
+/** The ready numbers still on the board after `minutes` (the cloud applies it; the demo and an old board too). */
+export function readyWithin(list: readonly BoardNumber[], minutes: number | null, nowMs: number): BoardNumber[] {
+  if (!minutes) return [...list];
+  return list.filter((n) => {
+    const t = Date.parse(n.since ?? '');
+    return !Number.isFinite(t) || nowMs - t <= minutes * 60_000;
+  });
+}
+
+/**
+ * How many numbers fit a grid of `count` on a panel `w` × `h` (any unit): the columns and the rows
+ * that give the biggest square-ish tiles — the "רשת מספרים" board and the media layouts' panel.
+ */
+export function gridFit(count: number, w: number, h: number, aspect = 1.6): { cols: number; rows: number } {
+  const n = Math.max(1, count);
+  let best = { cols: 1, rows: n, size: 0 };
+  for (let cols = 1; cols <= n; cols++) {
+    const rows = Math.ceil(n / cols);
+    // A tile is about `aspect` × as wide as high (3–4 digits).
+    const size = Math.min(w / cols / aspect, h / rows);
+    if (size > best.size) best = { cols, rows, size };
+  }
+  return { cols: best.cols, rows: best.rows };
 }
