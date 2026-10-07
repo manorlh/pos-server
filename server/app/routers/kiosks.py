@@ -512,7 +512,10 @@ def get_kiosk_commands(
     db: Session = Depends(get_db),
 ):
     machine, _device = svc.kiosk_for_dashboard(db, current_user, machine_id, active_tenant_id)
-    return svc.list_commands(db, machine.id, limit=limit)
+    out = svc.list_commands(db, machine.id, limit=limit)
+    # Commands whose request ended since were settled on the way (kiosk_z.settle_commands).
+    db.commit()
+    return out
 
 
 @router.get("/{machine_id}/orders")
