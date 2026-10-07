@@ -2081,6 +2081,8 @@ describe('"טכנולוגי" — the tech style (the server UI_PRESETS["tech"], 
     }
     assert.equal(words.ready, 'מוכן לקבל הזמנה');
     assert.equal(he.kiosks.appearance.styles.tech.name, 'טכנולוגי');
+  });
+});
 
 import { SERVICE_CHOICES, serviceChoiceOf, serviceChoicePatch, waitLogoOf, WAIT_LOGO_STYLES } from './kioskConfig';
 
