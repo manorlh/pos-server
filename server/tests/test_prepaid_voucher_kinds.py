@@ -760,5 +760,8 @@ def test_the_migration_is_the_single_head_on_the_till_design_merge():
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "alembic"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["c7e2f4a9d1b6"]
+    # One head, with this migration on the line to it (later ones chain on top — e9a3c7f1b5d2).
+    heads = script.get_heads()
+    assert len(heads) == 1
+    assert "c7e2f4a9d1b6" in {r.revision for r in script.iterate_revisions(heads[0], "base")}
     assert script.get_revision("c7e2f4a9d1b6").down_revision == "b4a16fe43e9d"

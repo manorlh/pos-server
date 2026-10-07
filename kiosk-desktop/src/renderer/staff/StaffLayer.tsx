@@ -223,6 +223,7 @@ function AdminScreen({ m, onClose }: { m: PreviewModel; onClose: () => void }) {
         ))}
       </Panel>
       <Panel m={m} title="מדפסת">
+        {info.printer.usb ? <div className="font-semibold">{info.printer.usb}</div> : null}
         <div>{info.printer.target}</div>
         <div>מצב: {info.printer.health}</div>
         {info.printer.lastError ? <div className="text-xs text-red-600">{info.printer.lastError}</div> : null}
@@ -469,8 +470,15 @@ function TechnicianScreen({ m, onClose }: { m: PreviewModel; onClose: () => void
             ))}
           </Panel>
           <Panel m={m} title="מדפסת (SNBC BTP-880)">
+            {info.printer.usb ? <div className="font-semibold">{info.printer.usb}</div> : null}
             <div>{info.printer.target} · {info.printer.health}</div>
             <div className="text-xs">מדפסות Windows: {info.printer.queues.join(' · ') || '—'}</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Btn m={m} onClick={() => act({ type: 'setPrinter', transport: 'spooler', queueName: '' })}>
+                אוטומטי (USB)
+              </Btn>
+              {info.printer.auto ? <span className="text-xs">נבחר: אוטומטי — מדפסת ה-USB המחוברת</span> : null}
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               <input value={queue} onChange={(e) => setQueue(e.target.value)} placeholder="שם תור המדפסת" className="min-w-0 flex-1 rounded border px-2 py-1 text-xs" style={{ borderColor: m.c.border, background: m.c.surface }} />
               <Btn m={m} onClick={() => act({ type: 'setPrinter', transport: 'spooler', queueName: queue.trim() })}>

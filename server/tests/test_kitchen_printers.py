@@ -370,7 +370,8 @@ class TestTheTillsPull:
 
         page = R.list_printers(k.shop.id, **_ctx(k))["options"]
         assert [p["key"] for p in page["parameters"]] == list(K.SETTING_KEYS)
-        assert page["inherited"]["receiptPrinter"] == "מובנית בקופה"
+        # "אוטומטי" (docs/SPEC_KIOSK.md §14.7): a USB printer plugged in, else the till's own.
+        assert page["inherited"]["receiptPrinter"] == "אוטומטי"
         assert set(K.SETTING_KEYS) < set(PRINTERS_PAGE_KEYS)
         assert managed_on("cashDrawer") == "printers" and managed_on("fastCash") is None
 

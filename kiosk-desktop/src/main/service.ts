@@ -42,7 +42,8 @@ import { mergeLocalKey, PAIRING_TEXT, PairingSession, uploadOutcome, type LocalS
 import type { SynqPayProvider } from './payment/synqpay/provider';
 import type { PaymentProvider, ProviderContext, ProviderFactory } from './payment/provider';
 import { PrintQueue, type PageRenderer } from './printer/printQueue';
-import { DefaultTransport, guessQueue, type PrinterTarget, type Transport } from './printer/transports';
+import { DefaultTransport, type PrinterTarget, type Transport } from './printer/transports';
+import { resolvePrinterTarget, targetText, usbStatusText, UsbPrinterWatch, type PrinterResolution } from './printer/usbPrinters';
 import { allocatePickup, OrderStore } from './kiosk/orders';
 import { PayAtTill, type VoucherResult } from './kiosk/payAtTill';
 import { kdsSaleRelease, releasesToKds } from './kiosk/kdsRelease';
@@ -113,9 +114,14 @@ export interface ServiceOptions {
    * the cloud's media itself — only the receipt's logo is kept here.
    */
   bridge?: boolean;
+  /**
+   * The USB printers as last seen (printer/usbPrinters.ts) — the bridge's own, shared, so the
+   * printers are looked at once; by default this service keeps its own.
+   */
+  usbWatch?: UsbPrinterWatch;
 }
 
-/** The kiosk's own local settings (not the cloud's): the printer, the zoom. */
+/** The kiosk's own local settings (not the cloud's): the printer (an empty Windows queue: "אוטומטי"), the zoom. */
 export interface LocalSettings {
   printer: PrinterTarget;
   zoom: number | null;
@@ -155,6 +161,10 @@ export class KioskService extends EventEmitter {
   /** "סוללה חלשה": the battery as the screen last read it (null: never — a PC on mains reports none). */
   private batteryNow: { percent: number | null; charging: boolean } | null = null;
   private readonly transport: Transport;
+  /** The USB printer plugged in, for "אוטומטי" (printer/usbPrinters.ts). */
+  readonly usbWatch: UsbPrinterWatch;
+  private readonly ownsUsbWatch: boolean;
+  private readonly offUsbWatch: () => void;
   private readonly log: (m: string) => void;
   private readonly platform: PlatformHooks;
   private readonly providers: ProviderFactory[];
@@ -208,7 +218,10 @@ export class KioskService extends EventEmitter {
     this.media = new MediaStore(this.db, path.join(opts.dataDir, 'media'), opts.downloader, opts.variantMaker, this.log);
     this.pay = new PayService(this.db, this.log);
     this.transport = opts.transport ?? new DefaultTransport(this.log);
-    this.printQueue = new PrintQueue(this.db, this.transport, () => this.localSettings().printer, opts.renderer ?? null, this.log);
+    this.ownsUsbWatch = !opts.usbWatch;
+    this.usbWatch = opts.usbWatch ?? new UsbPrinterWatch(this.transport, this.log, () => this.printQueue.busy);
+    this.offUsbWatch = this.usbWatch.onChange(() => this.dirty());
+    this.printQueue = new PrintQueue(this.db, this.transport, () => this.printerResolution().target, opts.renderer ?? null, this.log);
     this.orders = new OrderStore(this.db);
     this.funnel = new FunnelStore(this.kv);
     this.payAtTill = new PayAtTill({ kv: this.kv, api: this.api, machineId: () => this.machineId, operator: () => this.operator(), log: this.log });
@@ -256,6 +269,8 @@ export class KioskService extends EventEmitter {
     this.timers.push(setInterval(() => void this.tick10(), 10_000));
     this.timers.push(setInterval(() => void this.tick30(), 30_000));
     this.timers.push(setInterval(() => this.tick5(), 5_000));
+    // The USB printer plugged in, looked at now and every 15 s ("אוטומטי").
+    if (this.ownsUsbWatch) this.usbWatch.start();
     void this.printQueue.work();
   }
 
@@ -264,6 +279,8 @@ export class KioskService extends EventEmitter {
     if (this.emitTimer) clearTimeout(this.emitTimer);
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
+    this.offUsbWatch();
+    if (this.ownsUsbWatch) this.usbWatch.stop();
     this.sync.stop();
     this.transport.dispose();
     this.db.close();
@@ -306,13 +323,18 @@ export class KioskService extends EventEmitter {
     this.dirty();
   }
 
-  /** The spooler queue, found once when none is chosen (SNBC / BTP, else Generic / Text Only). */
-  private async ensurePrinterQueue() {
-    const s = this.localSettings();
-    if (s.printer.transport !== 'spooler' || s.printer.queueName) return;
-    const list = await this.transport.list().catch(() => []);
-    const name = guessQueue(list.map((p) => p.name));
-    if (name) this.setLocalSettings({ printer: { transport: 'spooler', queueName: name } });
+  /**
+   * Where a page goes now: the printer set wins; "אוטומטי" (no Windows queue named) — the USB printer
+   * plugged in, else a queue guessed by name (SNBC / BTP, then Generic / Text Only). Never saved:
+   * the next printer plugged in is found again.
+   */
+  printerResolution(): PrinterResolution {
+    return resolvePrinterTarget(this.localSettings().printer, this.usbWatch.current());
+  }
+
+  /** Look at the printers now (a test page, the technician's screen), not 15 s later. */
+  private async lookForPrinter() {
+    await this.usbWatch.refresh();
   }
 
   /* ---------------------------------------------------------------- views */
@@ -1599,13 +1621,13 @@ export class KioskService extends EventEmitter {
 
   /** "הדפסת בדיקה". */
   async printTest(): Promise<string> {
-    await this.ensurePrinterQueue();
+    await this.lookForPrinter();
     return this.printQueue.enqueue('test', null, slipDoc({ businessName: 'בדיקת מדפסת', pickupLabel: 'TEST', service: 'take_away', itemCount: 0, totalAgorot: 0 }));
   }
 
   /** The cash drawer's kick through the receipt printer (its RJ11 port). */
   async openDrawer(): Promise<void> {
-    await this.transport.send(this.localSettings().printer, DRAWER_KICK);
+    await this.transport.send(this.printerResolution().target, DRAWER_KICK);
   }
 
   /* ------------------------------------------------------------- printing */
@@ -1937,7 +1959,7 @@ export class KioskService extends EventEmitter {
   adminInfo(): AdminInfo {
     const shift = this.ledger.currentShift();
     const media = this.media.getStatus();
-    const s = this.localSettings();
+    const printer = this.printerResolution();
     return {
       operator: this.paired ? this.operator() : null,
       shift: { open: !!shift, number: shift?.sequence_number ?? null, openedAt: shift?.opened_at ?? null },
@@ -1952,10 +1974,12 @@ export class KioskService extends EventEmitter {
         numberCheckBypass: this.parameterOn(TERMINAL_CHECK_BYPASS_KEY),
       },
       printer: {
-        target: s.printer.transport === 'tcp' ? `TCP ${s.printer.host}:${s.printer.port ?? 9100}` : s.printer.transport === 'spooler' ? `Windows: ${s.printer.queueName ?? '—'}` : '—',
+        target: targetText(printer),
         health: this.printQueue.health(),
         lastError: this.printQueue.lastFailure?.error ?? null,
         queues: [],
+        usb: usbStatusText(this.usbWatch.pick()),
+        auto: printer.auto,
       },
       sync: {
         lastBeatOkAt: this.sync.status.lastBeatOkAt,
@@ -1996,7 +2020,7 @@ export class KioskService extends EventEmitter {
         this.printReceipt(a.orderId, true);
         return { ok: true };
       case 'testPrint':
-        await this.ensurePrinterQueue();
+        await this.lookForPrinter();
         this.printQueue.enqueue('test', null, slipDoc({ businessName: 'בדיקת מדפסת', pickupLabel: 'TEST', service: 'take_away', itemCount: 0, totalAgorot: 0 }));
         return { ok: true };
       case 'retryPrints':
@@ -2047,8 +2071,9 @@ export class KioskService extends EventEmitter {
   }
 
   async technicianInfo(): Promise<TechnicianInfo> {
+    const scan = await this.usbWatch.refresh();
     const admin = this.adminInfo();
-    const queues = await this.transport.list().catch(() => []);
+    const queues = scan?.queues ?? (await this.transport.list().catch(() => []));
     const me = this.cloud.machine();
     // The updater's own state — opening the screen never starts a download ("בדוק עכשיו" does).
     const u = this.platform.updateStatus?.() ?? null;
@@ -2075,7 +2100,9 @@ export class KioskService extends EventEmitter {
       case 'printerTest':
         return this.adminAction({ type: 'testPrint' });
       case 'setPrinter':
-        this.setLocalSettings({ printer: a.transport === 'tcp' ? { transport: 'tcp', host: a.host ?? null, port: a.port ?? 9100 } : { transport: 'spooler', queueName: a.queueName ?? null } });
+        // A Windows queue with no name: "אוטומטי" — the USB printer plugged in (printer/usbPrinters.ts).
+        this.setLocalSettings({ printer: a.transport === 'tcp' ? { transport: 'tcp', host: a.host ?? null, port: a.port ?? 9100 } : { transport: 'spooler', queueName: a.queueName?.trim() || null } });
+        void this.usbWatch.refresh();
         return { ok: true };
       case 'pinpadCheck': {
         // Read-only: getStatus, never a charge.

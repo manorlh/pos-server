@@ -49,7 +49,9 @@ export interface BridgeWindowView {
   shift: { open: boolean; number: number | null } | null;
   outbox: number;
   printer: {
+    /** Where a page goes now, in words ("Windows: SNBC BTP-880 (USB · אוטומטי)"). */
     target: string;
+    /** As set: a Windows queue with no name is "אוטומטי". */
     transport: 'spooler' | 'tcp' | 'none';
     queueName: string | null;
     host: string | null;
@@ -57,6 +59,10 @@ export interface BridgeWindowView {
     health: string;
     lastError: string | null;
     lastOkAt: number | null;
+    /** The target is found by itself (main/printer/usbPrinters.ts). */
+    auto: boolean;
+    /** "מדפסת USB: <name> מחוברת / לא נמצאה / נמצא מכשיר בלי דרייבר — התקינו Generic / Text Only". */
+    usb: string;
   };
   queues: string[];
   drawer: boolean;
