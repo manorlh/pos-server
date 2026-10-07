@@ -1086,7 +1086,8 @@ class MenuPlanner:
         sheet = self.p.raw.quick_notes
         if sheet is None:
             return
-        pending: List[Tuple[Tuple[int, int], NotePlan, str, Optional[str], str, Dict[str, Any]]] = []
+        #: (processing order, the row, (target type, ref, label, stored row), its cells).
+        pending: List[Tuple[Tuple[int, int], NotePlan, Tuple[str, Optional[str], str, Any], Dict[str, Any]]] = []
         seen: Dict[Tuple[str, Optional[str], str], int] = {}
         for raw_row in sheet.rows:
             cells = raw_row.cells
