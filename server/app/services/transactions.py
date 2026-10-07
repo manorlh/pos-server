@@ -1122,6 +1122,12 @@ def upsert_transactions(
             )
             stmt = stmt.on_conflict_do_update(index_elements=[Transaction.id], set_=update_cols)
             db.execute(stmt)
+            if number_conflict_of is not None and not duplicate_copy:
+                # "יומן חריגות": a numbering conflict, logged once the push commits (the
+                # upsert bypasses the ORM, app/services/exception_alerts/hooks.py).
+                from app.services.exception_alerts import hooks as _exception_log
+
+                _exception_log.note(db, "transaction", tx.id)
 
             # Replace items atomically.
             db.query(TransactionItem).filter(
