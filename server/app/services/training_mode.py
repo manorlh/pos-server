@@ -125,12 +125,12 @@ def _uuid(value: Any) -> Optional[uuid.UUID]:
 
 def can_manage(db: Session, user: User, shop: Shop) -> bool:
     """Turn it on or off, load or remove a demo menu: as for opening a shop."""
-    from app.services.company_hierarchy import user_covers_company
+    from app.services.company_hierarchy import user_covers_shop
 
     if user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
         return True
     if user.role == UserRole.COMPANY_MANAGER:
-        return bool(user_covers_company(db, user, shop.company_id))
+        return bool(user_covers_shop(db, user, shop))
     return False
 
 

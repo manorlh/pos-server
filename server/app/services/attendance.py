@@ -56,6 +56,7 @@ from app.models.tables import TableOrder
 from app.models.user import User, UserRole
 from app.services.areas import as_utc
 from app.services.company_hierarchy import visible_shop_ids
+from app.services.dashboard_access import profile_scope as _profile_scope
 from app.services.permission_matrix import SHOP_SCOPED_ROLES, Action, Resource, may
 
 logger = logging.getLogger(__name__)
@@ -1212,7 +1213,7 @@ def scope_shops(query, user: User, db: Session, shop_column):
     if user.role == UserRole.DISTRIBUTOR:
         shops = db.query(POSMachine.shop_id).filter(POSMachine.distributor_id == user.id)
         return query.filter(shop_column.in_(shops))
-    if user.role == UserRole.COMPANY_MANAGER and user.company_id:
+    if user.role == UserRole.COMPANY_MANAGER and (user.company_id or _profile_scope(db, user) is not None):
         return query.filter(shop_column.in_(visible_shop_ids(db, user)))
     if user.role in SHOP_SCOPED_ROLES and user.shop_id:
         return query.filter(shop_column == user.shop_id)

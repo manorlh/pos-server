@@ -16,6 +16,7 @@ from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_s
 from app.models.shop import Shop
 from app.services.auth import get_password_hash, get_user_by_username
 from app.services.company_hierarchy import company_scope_ids, user_covers_company
+from app.services import dashboard_access
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -130,7 +131,7 @@ def _apply_scope_filter(query, actor: User, db: Session):
 
 
 @router.get("/me", response_model=CurrentUserResponse, response_model_by_alias=True)
-def get_current_user_info(current_user: User = Depends(get_current_user)):
+def get_current_user_info(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Who is connected, and what they may do.
 
@@ -153,6 +154,9 @@ def get_current_user_info(current_user: User = Depends(get_current_user)):
             "till_scopes": sorted(
                 scope.value for scope in till_grantable_scopes(current_user.role)
             ),
+            # "הרשאות דשבורד": the sections the dashboard shows, the same grant the
+            # routes enforce.
+            "dashboard_access": dashboard_access.summary_for(db, current_user),
         }
     )
 
@@ -360,9 +364,34 @@ def create_user(
         shop_id=user_data.shop_id,
     )
     db.add(db_user)
+    db.flush()
+    _initial_dashboard_access(db, current_user, db_user, user_data.access)
     db.commit()
     db.refresh(db_user)
     return db_user
+
+
+def _initial_dashboard_access(db: Session, actor: User, user: User, requested) -> None:
+    """
+    "הרשאות דשבורד" for a new user: "מנהל ארגון" — reports (view), products (edit), Z (view);
+    everything else stays closed until the super admin opens it (the owner, 07.10.2026). Only
+    the super admin may ask for something else at creation (`access`), e.g. the whole
+    organization as the scope of a new "מנהל ארגון".
+    """
+    if user.role == UserRole.SUPER_ADMIN:
+        return  # never narrowed
+    if requested is not None and actor.role == UserRole.SUPER_ADMIN:
+        from app.routers.dashboard_access import resolve_access
+        from app.services.dashboard_sections import ORG_MANAGER_TEMPLATE
+
+        if requested.template is None and requested.sections is None and requested.full_access is None:
+            # Only a scope was chosen: the sections are still the default ones.
+            requested = requested.model_copy(update={"template": ORG_MANAGER_TEMPLATE})
+        values = resolve_access(db, user, requested, tenant_ids=dashboard_access.user_tenant_ids(db, user))
+        user.company_id = values.pop("primary_company_id")
+        dashboard_access.save_profile(db, user, actor=actor, **values)
+        return
+    dashboard_access.create_default_profile(db, user, actor=actor)
 
 
 @router.get("/{user_id}", response_model=UserResponse, response_model_by_alias=True)

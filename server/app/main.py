@@ -116,6 +116,11 @@ _prefix = settings.api_v1_prefix
 
 app.include_router(auth.router, prefix=_prefix)
 app.include_router(system_access.router, prefix=_prefix)
+# "הרשאות דשבורד" (app/routers/dashboard_access.py): per dashboard user — sections, org scope,
+# templates and their history. Enforced for every route in `get_current_user`.
+from app.routers import dashboard_access as dashboard_access_router  # noqa: E402
+
+app.include_router(dashboard_access_router.router, prefix=_prefix)
 app.include_router(users.router, prefix=_prefix)
 app.include_router(companies.router, prefix=_prefix)
 app.include_router(shops.router, prefix=_prefix)
