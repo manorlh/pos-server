@@ -2081,5 +2081,58 @@ describe('"טכנולוגי" — the tech style (the server UI_PRESETS["tech"], 
     }
     assert.equal(words.ready, 'מוכן לקבל הזמנה');
     assert.equal(he.kiosks.appearance.styles.tech.name, 'טכנולוגי');
+
+import { SERVICE_CHOICES, serviceChoiceOf, serviceChoicePatch, waitLogoOf, WAIT_LOGO_STYLES } from './kioskConfig';
+
+describe('"סוג שירות" — שואלים · תמיד טייק אווי · תמיד ישיבה במקום · ללא (general.serviceMode, the server kiosk_config.py)', () => {
+  it('the four choices read from serviceTypes and serviceMode', () => {
+    assert.deepEqual(SERVICE_CHOICES, ['ask', 'take_away', 'eat_in', 'none']);
+    assert.equal(KIOSK_DEFAULTS.general.serviceMode, 'types');
+    assert.equal(serviceChoiceOf(KIOSK_DEFAULTS.general), 'ask');
+    assert.equal(serviceChoiceOf({ serviceTypes: ['eat_in'] }), 'eat_in');
+    assert.equal(serviceChoiceOf({ serviceTypes: ['take_away'], serviceMode: 'types' }), 'take_away');
+    assert.equal(serviceChoiceOf({ serviceTypes: ['take_away', 'eat_in'], serviceMode: 'none' }), 'none');
+    assert.equal(serviceChoiceOf({}), 'take_away', 'a layer from before the field, with nothing: as the kiosk reads it');
+  });
+
+  it('each choice writes both fields; "ללא" keeps the types for the day it is back', () => {
+    const asked = { serviceTypes: ['eat_in', 'take_away'] as ('eat_in' | 'take_away')[], serviceMode: 'types' as const };
+    assert.deepEqual(serviceChoicePatch(asked, 'none'), { serviceTypes: ['eat_in', 'take_away'], serviceMode: 'none' });
+    assert.deepEqual(serviceChoicePatch({ ...asked, serviceMode: 'none' }, 'ask'), { serviceTypes: ['eat_in', 'take_away'], serviceMode: 'types' });
+    assert.deepEqual(serviceChoicePatch({ serviceTypes: ['eat_in'] }, 'ask'), { serviceTypes: ['eat_in', 'take_away'], serviceMode: 'types' });
+    assert.deepEqual(serviceChoicePatch(asked, 'take_away'), { serviceTypes: ['take_away'], serviceMode: 'types' });
+    assert.deepEqual(serviceChoicePatch(asked, 'eat_in'), { serviceTypes: ['eat_in'], serviceMode: 'types' });
+    assert.deepEqual(serviceChoicePatch({ serviceTypes: [] }, 'none'), { serviceTypes: ['take_away'], serviceMode: 'none' });
+  });
+
+  it('"ללא": the service step is off, and the mode is validated', () => {
+    const none = { general: { ...KIOSK_DEFAULTS.general, serviceMode: 'none' as const }, payment: { ...KIOSK_DEFAULTS.payment } };
+    assert.equal(stepMode(none, 'service'), 'off');
+    assert.equal(stepMode({ general: { ...KIOSK_DEFAULTS.general }, payment: { ...KIOSK_DEFAULTS.payment } }, 'service'), 'required');
+    const ok = { ...KIOSK_DEFAULTS, general: { ...KIOSK_DEFAULTS.general, serviceMode: 'none' as const } };
+    assert.equal(validateKioskConfig(ok).filter((e) => e.path.startsWith('general.service')).length, 0);
+    const bad = { ...KIOSK_DEFAULTS, general: { ...KIOSK_DEFAULTS.general, serviceMode: 'never' as never } };
+    assert.ok(validateKioskConfig(bad).some((e) => e.path === 'general.serviceMode' && e.code === 'enum'));
+  });
+});
+
+describe('"לוגו במסך התשלום" (payment.waitLogo, the server kiosk_config.py WAIT_LOGO_STYLES)', () => {
+  const ref = { url: 'https://cdn.example/wait.png', kind: 'image' as const, sha256: null, bytes: null };
+
+  it('its own picture: none by default — nothing shows', () => {
+    assert.deepEqual(KIOSK_DEFAULTS.payment.waitLogo, { media: null, style: 'plain' });
+    assert.equal(waitLogoOf(KIOSK_DEFAULTS.payment), null);
+    assert.equal(waitLogoOf({}), null, 'a server from before it');
+    assert.deepEqual(waitLogoOf({ waitLogo: { media: ref, style: 'plain' } }), { url: ref.url, plate: false });
+    assert.deepEqual(waitLogoOf({ waitLogo: { media: ref, style: 'plate' } }), { url: ref.url, plate: true });
+    assert.deepEqual(WAIT_LOGO_STYLES, ['plain', 'plate']);
+  });
+
+  it('validated: an image only, and its style', () => {
+    const cfgWith = (waitLogo: unknown) => ({ ...KIOSK_DEFAULTS, payment: { ...KIOSK_DEFAULTS.payment, waitLogo: waitLogo as never } });
+    assert.equal(validateKioskConfig(cfgWith({ media: ref, style: 'plate' })).filter((e) => e.path.startsWith('payment.waitLogo')).length, 0);
+    const bad = validateKioskConfig(cfgWith({ media: { ...ref, kind: 'video' }, style: 'glow' })).map((e) => e.path);
+    assert.ok(bad.some((p) => p.startsWith('payment.waitLogo.media')), String(bad));
+    assert.ok(bad.includes('payment.waitLogo.style'), String(bad));
   });
 });

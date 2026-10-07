@@ -16,6 +16,7 @@
  * can). The card's tile is shown greyed ("לא זמין בקיוסק בדפדפן") when the business offers it.
  */
 
+import { layoutOf, productColumns } from '@/lib/kioskLayout';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { Pencil } from 'lucide-react';
 import {
@@ -50,6 +51,7 @@ import {
   AttractCta,
   AttractScreen,
   AttractServiceButtons,
+  WaitLogo,
   CartScreen,
   CashAtTillDone,
   ConfirmSheet,
@@ -105,6 +107,7 @@ import {
   reduce,
   rulesOf,
   serviceOnAttract,
+  orderServiceOf,
   successDone,
   wire,
   type FlowConfigIn,
@@ -459,7 +462,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       const r = await bridge.startPayment({
         expectedTotalAgorot: shownAgorot,
         lines: lines.map((l) => ({ key: l.key, productId: l.product.id, qty: l.qty, unitAgorot: lineUnitAgorot(l), options: orderOptionsOf(l), meal: orderMealOf(l), notes: l.note ? [l.note] : [] })),
-        service: flowRef.current.service ?? 'take_away',
+        service: orderServiceOf(flowRef.current.service, cfgIn),
         customerName: d.name.trim() || null,
         customerPhone: d.phone.trim() || null,
         tableRef: d.table.trim() || null,
@@ -531,7 +534,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     const r = await svc
       .placeOpenOrder({
         lines,
-        service: flowRef.current.service ?? 'take_away',
+        service: orderServiceOf(flowRef.current.service, cfgIn),
         tableRef: details.table.trim() || null,
         customerName: details.name.trim() || null,
         customerPhone: details.phone.trim() || null,
@@ -552,7 +555,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     setPay((p) => ({ ...p, placed: { order: r.order, dueAgorot: r.dueAgorot, pending: r.pending } }));
     dispatch({ type: 'paymentApproved' });
     setSuccessAt(Date.now());
-  }, [details, dispatch, orderLines, svc, words, fallbackMethod]);
+  }, [details, dispatch, orderLines, svc, words, fallbackMethod, cfgIn]);
 
   // Into the pay screen: the order goes to the tills at once.
   useEffect(() => {
@@ -621,7 +624,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   const motion = motionSpec(cfg.theme, cfg.general, cfg.motion);
   const transitions = transitionSpec(cfg.motion, cfg.general);
   const colors = resolveThemeColors(cfg.theme);
-  const cols = catalogColumns(cfg.theme.gridDensity, wide, panel, side);
+  // "גודל מוצרים" (layout.productSize) moves the density's columns.
+  const cols = productColumns(catalogColumns(cfg.theme.gridDensity, wide, panel, side), layoutOf(cfg).productSize, size.w);
   const rules = rulesFor(cart.length === 0);
   const back = () => {
     const a = backAction(flow, rules);
@@ -869,6 +873,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       setProductId(p.id);
     },
     start: () => dispatch({ type: 'start' }),
+    serviceOnAttract: serviceOnAttract(cfgIn),
     touch: () => setLastTouch(Date.now()),
     onVoucher: atPayMethod && voucherOffered && !pay.busy ? (code) => void redeem(code) : null,
   });
@@ -1249,7 +1254,11 @@ function RestNote({ m, title, body }: { m: PreviewModel; title: string; body: st
 /** The order on its way to the tills (a second, or the time the cloud takes to answer). */
 function Placing({ m, text }: { m: PreviewModel; text: string }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
+    <div className="relative flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
+      {/* "לוגו במסך התשלום": in the free band above, never moving the spinner. */}
+      <div className="absolute inset-x-0 top-6">
+        <WaitLogo m={m} />
+      </div>
       <span className="h-14 w-14 animate-spin rounded-full border-4" style={{ borderColor: `${m.c.button}33`, borderTopColor: m.c.button }} />
       <p className="text-lg font-bold">{text}</p>
     </div>

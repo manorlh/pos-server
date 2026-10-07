@@ -8,9 +8,15 @@
  * document of the shift, and a closed shift then waits here until a Z takes it — the
  * "awaiting Z" filter is the to-do list for whoever produces the shop's Z.
  *
- * Shop and till come from the shared scope bar, as on the transactions and Z pages;
- * `GET /shifts` has no company filter, so a company in scope is called out rather
- * than silently widened to the whole organization.
+ * Shop and till come from the shared scope bar, as on the transactions and Z pages, and
+ * from the page's own "סניף" / "קופה" filters, which never fight the bar: what the bar
+ * fixes they show, locked (lib/shiftsPage.ts shiftPlace). `GET /shifts` has no company
+ * filter, so a company in scope is called out rather than silently widened to the whole
+ * organization.
+ *
+ * An open shift is closed from here as the devices page closes it ("סגור משמרת": the remote
+ * close, or a dead till's administrative close), one at a time or all of the place's at once
+ * (components/dashboard/shifts/shift-close.tsx).
  */
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
@@ -18,7 +24,7 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, FilePlus2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FilePlus2, ListFilter } from 'lucide-react';
 import { AREA_NONE, fetchShifts, type ShiftListParams } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope, useScopeQuery } from '@/lib/scope';
@@ -27,9 +33,11 @@ import { fetchAllPages } from '@/lib/fetchAllPages';
 import { formatCurrency, formatDate, formatDateTimeInZone } from '@/lib/format';
 import { useTenantTimeZone } from '@/lib/auth';
 import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
+import { shiftPlace, shiftRegisterNumber, tillOptions, toggleOpenOnly } from '@/lib/shiftsPage';
 import type { ShiftListResponse, ShiftStatus } from '@/lib/types';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { AreaFilterSelect, AreaName } from '@/components/dashboard/areas/area-filter';
+import { useShopAreas } from '@/components/dashboard/areas/use-shop-areas';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import {
   CountedCash,
@@ -37,6 +45,12 @@ import {
   ShiftBadges,
   useShiftLabel,
 } from '@/components/dashboard/shifts/shift-parts';
+import {
+  BulkCloseOpenShifts,
+  ShiftCloseAction,
+  useShiftCloseDialogs,
+  useTillLabel,
+} from '@/components/dashboard/shifts/shift-close';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
@@ -46,7 +60,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 
 const PAGE_SIZE = 50;
-const COLS = 12;
+const COLS = 15;
+
+/** A select's "all" (a Base UI select item needs a value). */
+const ALL = '__all__';
 
 type StatusFilter = 'all' | ShiftStatus;
 
@@ -61,6 +78,9 @@ function filtersFrom(sp: URLSearchParams | { get(name: string): string | null })
   const page = Math.max(1, Math.floor(Number(sp.get('page') ?? '1')) || 1);
   // `none` = shifts stamped with no area; otherwise an area id of the shop in scope.
   const area = sp.get('area') ?? '';
+  // The page's own "סניף" and "קופה" (beside the scope bar's shop and till).
+  const branch = sp.get('branch') ?? '';
+  const till = sp.get('till') ?? '';
   const status: StatusFilter = awaitingZ
     ? // Awaiting a Z means closed: an open shift is never waiting for one.
       'closed'
@@ -73,6 +93,8 @@ function filtersFrom(sp: URLSearchParams | { get(name: string): string | null })
     from: PLAIN_DATE.test(from) ? from : '',
     to: PLAIN_DATE.test(to) ? to : '',
     area,
+    branch,
+    till,
     page,
   };
 }
@@ -87,14 +109,18 @@ export default function ShiftsPage() {
     maxLevel: 'machine',
     unsupported: ['company'],
   });
-  const shopId = effective.shopId;
-  const machineId = effective.machineId;
   const tz = useTenantTimeZone();
+  const tillLabel = useTillLabel();
+  const closer = useShiftCloseDialogs(scope.machines);
 
   // `?awaitingZ=1` is how the machines page's "closed shifts awaiting a Z" flag lands here.
   const searchParams = useSearchParams();
   const pathname = usePathname();
-  const { status, awaitingZ, from, to, area, page } = filtersFrom(searchParams);
+  const { status, awaitingZ, from, to, area, branch, till, page } = filtersFrom(searchParams);
+  // The shop and till the list is filtered on: the scope bar's, else the page's own.
+  const place = shiftPlace({ shopId: effective.shopId, machineId: effective.machineId }, { branch, till }, scope.machines);
+  const shopId = place.shopId;
+  const machineId = place.machineId;
   const rangeInvalid = !!from && !!to && from > to;
   // A shift's page links back to exactly this list — scope and filters — and carries the
   // scope itself so the bar above it keeps naming the same shop and till.
@@ -114,6 +140,8 @@ export default function ShiftsPage() {
         from: string;
         to: string;
         area: string;
+        branch: string;
+        till: string;
         page: number;
       }>,
     ) => {
@@ -124,6 +152,8 @@ export default function ShiftsPage() {
       if ('from' in patch) put('from', patch.from ?? null);
       if ('to' in patch) put('to', patch.to ?? null);
       if ('area' in patch) put('area', patch.area ?? null);
+      if ('branch' in patch) put('branch', patch.branch ?? null);
+      if ('till' in patch) put('till', patch.till ?? null);
       // Any filter change is a new result set: back to its first page.
       const nextPage = 'page' in patch ? (patch.page ?? 1) : 1;
       put('page', nextPage > 1 ? String(nextPage) : null);
@@ -181,6 +211,51 @@ export default function ShiftsPage() {
     { value: 'closed', label: t('status.closed') },
   ];
 
+  // "סניף" and "קופה": the shops in reach, and the chosen shop's tills ("קופה 2 · בר").
+  const shopNameOf = (id: string | null | undefined) => (id ? (findBySameId(scope.shops, id)?.name ?? '') : '');
+  const shopItems = [
+    { value: ALL, label: t('filter.shopAll') },
+    ...[...scope.shops]
+      .sort((a, b) => a.name.localeCompare(b.name, 'he-IL'))
+      .map((sh) => ({ value: sh.id, label: sh.name })),
+  ];
+  const tillItems = [
+    { value: ALL, label: t('filter.tillAll') },
+    ...tillOptions(scope.machines, shopId, shopNameOf).map((o) => ({
+      value: o.id,
+      label: shopId
+        ? tillLabel(o.name, o.number)
+        : t('filter.tillWithShop', { till: tillLabel(o.name, o.number), shop: shopNameOf(o.shopId) }),
+    })),
+  ];
+  // A shop or till from a link whose list has not loaded (or is out of reach) still shows as chosen.
+  if (shopId && !shopItems.some((i) => i.value === shopId)) shopItems.push({ value: shopId, label: t('filter.unknown') });
+  if (machineId && !tillItems.some((i) => i.value === machineId)) {
+    tillItems.push({ value: machineId, label: findBySameId(scope.machines, machineId)?.name ?? t('filter.unknown') });
+  }
+  const openOnly = status === 'open' && !awaitingZ;
+
+  // What "סגור את כל המשמרות הפתוחות" takes: the list's place — never its dates or status.
+  const { data: areas = [] } = useShopAreas(shopId, true);
+  const placeParams = useMemo<Pick<ShiftListParams, 'shopId' | 'machineId' | 'areaId'>>(() => {
+    const p: Pick<ShiftListParams, 'shopId' | 'machineId' | 'areaId'> = {};
+    if (machineId) p.machineId = machineId;
+    else if (shopId) p.shopId = shopId;
+    if (area) p.areaId = area;
+    return p;
+  }, [area, machineId, shopId]);
+  const placeLabel = [
+    shopId ? shopNameOf(shopId) || t('filter.unknown') : t('close.bulkAllShops'),
+    machineId ? (findBySameId(scope.machines, machineId)?.name ?? t('filter.unknown')) : null,
+    area
+      ? area === AREA_NONE
+        ? t('close.bulkNoArea')
+        : (areas.find((a) => a.id === area)?.name ?? t('filter.unknown'))
+      : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3 print:hidden">
@@ -198,7 +273,7 @@ export default function ShiftsPage() {
 
       <ScopeGate resolution={resolution}>
         <div className="rounded-lg border bg-card p-4 space-y-3 print:hidden">
-          <div className="grid gap-3 md:grid-cols-5">
+          <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
             <div className="space-y-1">
               <Label className="text-xs">{t('filter.status')}</Label>
               <Select
@@ -240,12 +315,68 @@ export default function ShiftsPage() {
                 range={{ from, to, onSelect: (r) => setFilters({ from: r.from, to: r.to }) }}
               />
             </div>
+            <div className="space-y-1" title={place.shopLocked ? t('filter.lockedByScope') : undefined}>
+              <Label className="text-xs">{t('filter.shop')}</Label>
+              <Select
+                value={shopId ?? ALL}
+                // Another shop: its tills and areas are others — both start over.
+                onValueChange={(v) =>
+                  setFilters({ branch: !v || v === ALL ? '' : String(v), till: '', area: area === AREA_NONE ? area : '' })
+                }
+                items={shopItems}
+                disabled={place.shopLocked}
+              >
+                <SelectTrigger className="min-w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {shopItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value} label={item.label}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1" title={place.tillLocked ? t('filter.lockedByScope') : undefined}>
+              <Label className="text-xs">{t('filter.till')}</Label>
+              <Select
+                value={machineId ?? ALL}
+                onValueChange={(v) => setFilters({ till: !v || v === ALL ? '' : String(v) })}
+                items={tillItems}
+                disabled={place.tillLocked}
+              >
+                <SelectTrigger className="min-w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {tillItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value} label={item.label}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <AreaFilterSelect
               shopId={shopId}
               value={area}
               onChange={(next) => setFilters({ area: next })}
             />
-            <label className="flex items-center gap-2 self-end pb-2 text-sm">
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            {/* "רק פתוחות": the status select's "open" in one tap, in step with it. */}
+            <Button
+              size="sm"
+              variant={openOnly ? 'default' : 'outline'}
+              aria-pressed={openOnly}
+              className="rounded-full"
+              onClick={() => setFilters(toggleOpenOnly({ status, awaitingZ }))}
+            >
+              <ListFilter className="h-4 w-4 me-1" aria-hidden />
+              {t('filter.openOnly')}
+            </Button>
+            <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
                 className="h-4 w-4 accent-primary"
@@ -254,6 +385,14 @@ export default function ShiftsPage() {
               />
               {t('filter.awaitingZ')}
             </label>
+            <div className="ms-auto">
+              <BulkCloseOpenShifts
+                place={placeParams}
+                placeLabel={placeLabel}
+                machines={scope.machines}
+                canClose={canProduceZ}
+              />
+            </div>
           </div>
           {rangeInvalid ? (
             <p className="text-destructive text-xs">{t('filter.rangeInvalid')}</p>
@@ -272,7 +411,9 @@ export default function ShiftsPage() {
               columns: [
                 { header: t('col.shift'), width: 14 },
                 { header: t('col.businessDate'), kind: 'date' },
+                { header: t('col.posNumber'), width: 10 },
                 { header: t('col.till') },
+                { header: t('col.shop') },
                 { header: t('col.area'), width: 14 },
                 { header: t('col.opened'), kind: 'datetime' },
                 { header: t('col.closed'), kind: 'datetime' },
@@ -286,7 +427,9 @@ export default function ShiftsPage() {
                 await fetchAllPages((p, pageSize) => fetchShifts({ ...params, page: p, pageSize }), { pageSize: 200 })
               ).map((s) => [
                 shiftLabel(s), s.businessDate,
+                shiftRegisterNumber(s, findBySameId(scope.machines, s.machineId)),
                 s.machineName ?? findBySameId(scope.machines, s.machineId)?.name ?? null,
+                s.shopName ?? findBySameId(scope.shops, s.shopId)?.name ?? null,
                 s.areaName ?? null, s.openedAt, s.status === 'open' ? null : (s.closedAt ?? null),
                 s.serverTotals?.totalSales ?? null, s.serverTotals?.totalCash ?? null, s.expectedCash ?? null,
                 s.status === 'open' ? null : (s.countedCash ?? null), s.status === 'open' ? null : (s.discrepancy ?? null),
@@ -303,7 +446,9 @@ export default function ShiftsPage() {
                 <TableRow>
                   <TableHead>{t('col.shift')}</TableHead>
                   <TableHead>{t('col.businessDate')}</TableHead>
+                  <TableHead className="whitespace-nowrap">{t('col.posNumber')}</TableHead>
                   <TableHead>{t('col.till')}</TableHead>
+                  <TableHead>{t('col.shop')}</TableHead>
                   <TableHead>{t('col.area')}</TableHead>
                   <TableHead>{t('col.opened')}</TableHead>
                   <TableHead>{t('col.closed')}</TableHead>
@@ -313,6 +458,9 @@ export default function ShiftsPage() {
                   <TableHead className="text-end">{t('col.counted')}</TableHead>
                   <TableHead className="text-end">{t('col.overShort')}</TableHead>
                   <TableHead>{t('col.state')}</TableHead>
+                  <TableHead>
+                    <span className="sr-only">{t('col.actions')}</span>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -332,9 +480,10 @@ export default function ShiftsPage() {
                   </TableRow>
                 ) : (
                   data.items.map((s) => {
-                    const machineName =
-                      s.machineName ?? findBySameId(scope.machines, s.machineId)?.name ?? '—';
+                    const machine = findBySameId(scope.machines, s.machineId);
+                    const machineName = s.machineName ?? machine?.name ?? '—';
                     const shopName = s.shopName ?? findBySameId(scope.shops, s.shopId)?.name;
+                    const number = shiftRegisterNumber(s, machine);
                     return (
                       <TableRow
                         key={s.id}
@@ -351,11 +500,12 @@ export default function ShiftsPage() {
                           </Link>
                         </TableCell>
                         <TableCell>{formatDate(s.businessDate)}</TableCell>
-                        <TableCell>
-                          <div>{machineName}</div>
-                          {shopName ? (
-                            <div className="text-muted-foreground text-xs">{shopName}</div>
-                          ) : null}
+                        <TableCell className="tabular-nums">
+                          {number !== null ? number : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell>{machineName}</TableCell>
+                        <TableCell className="text-sm">
+                          {shopName ?? <span className="text-muted-foreground">—</span>}
                         </TableCell>
                         <TableCell className="text-sm">
                           <AreaName name={s.areaName} />
@@ -402,6 +552,9 @@ export default function ShiftsPage() {
                         <TableCell>
                           <ShiftBadges shift={s} />
                         </TableCell>
+                        <TableCell>
+                          <ShiftCloseAction shift={s} canClose={canProduceZ} closer={closer} />
+                        </TableCell>
                       </TableRow>
                     );
                   })
@@ -437,6 +590,7 @@ export default function ShiftsPage() {
           </div>
         ) : null}
       </ScopeGate>
+      {closer.dialogs}
     </div>
   );
 }

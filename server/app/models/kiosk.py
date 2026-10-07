@@ -147,7 +147,8 @@ class KioskOrder(Base):
     pickup_number = Column(Integer, nullable=False)
     pickup_label = Column(String(32), nullable=False)
     business_date = Column(Date, nullable=False)
-    service_type = Column(String(16), nullable=False)
+    #: take_away | eat_in; null — "ללא סוג שירות" (the kiosk's general.serviceMode = none).
+    service_type = Column(String(16), nullable=True)
     table_ref = Column(String(64), nullable=True)
     #: "BON" | "KDS" — the snapshot; never changed after the insert.
     fulfillment_mode = Column(String(8), nullable=False)

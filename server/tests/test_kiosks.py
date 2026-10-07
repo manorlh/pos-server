@@ -199,6 +199,8 @@ def test_defaults_are_valid_and_complete():
         },
         # "תשלום בקופה" (§23): an open order expires after this long; the bon waits for the money.
         "cashAtTillExpiryMin": 30, "cashAtTillKitchenBeforePay": False,
+        # "לוגו במסך התשלום": its own upload; none by default — nothing shows.
+        "waitLogo": {"media": None, "style": "plain"},
     }
     assert cfg["printing"] == {
         "bonMode": "routing", "bonPrinterId": None, "bonCopies": 1, "receiptPrinterId": None, "pickupSlip": True,
@@ -1713,3 +1715,55 @@ def test_motion_is_saved_and_reaches_the_kiosk(w):
     err = refused(put, w, "machine", w.kiosk.id, {"motion": {"sheet": "spin"}})
     assert err.status_code == 422
     assert {"path": "motion.sheet", "code": "invalid_value"}.items() <= err.detail["errors"][0].items()
+
+
+# ── "ללא סוג שירות" and "לוגו במסך התשלום" (the owner, 07.10.2026) ─────────────
+
+
+def test_service_mode_none_validates_and_turns_the_service_step_off():
+    d = C.default_config()
+    assert d["general"]["serviceMode"] == "types"
+    cleaned, errors = C.validate_layer({"general": {"serviceMode": "none"}})
+    assert errors == [] and cleaned == {"general": {"serviceMode": "none"}}
+    _c, errors = C.validate_layer({"general": {"serviceMode": "maybe"}})
+    assert paths(errors).get("general.serviceMode") == "invalid_value"
+    # Never asked: the step is off, whatever its own mode and however many types are kept.
+    none = C.resolve({"general": {"serviceMode": "none", "serviceTypes": ["take_away", "eat_in"]}})
+    assert C.step_mode(none, "service") == "off"
+    assert none["general"]["serviceTypes"] == ["take_away", "eat_in"], "kept for the day it is back"
+    # A config stored before it (no serviceMode) keeps asking as it did.
+    assert C.step_mode(C.resolve({"general": {"serviceTypes": ["take_away", "eat_in"]}}), "service") == "required"
+    assert C.limits()["enums"]["serviceMode"] == ["types", "none"]
+
+
+def test_an_order_with_no_service_is_kept_with_none(w):
+    convert(w)
+    out = post_orders(w, w.kiosk, order("n1", serviceType=None), order("n2"))
+    assert out == {"accepted": ["n1", "n2"], "rejected": []}
+    w.db.expire_all()
+    rows = {r.local_id: r for r in w.db.query(KioskOrder).all()}
+    assert rows["n1"].service_type is None and rows["n2"].service_type == "take_away"
+    assert S.order_out(rows["n1"], full_phone=False)["serviceType"] is None
+    # A word that is neither is still refused.
+    bad = post_orders(w, w.kiosk, order("n3", serviceType="drive_in"))
+    assert bad["rejected"] == [{"localId": "n3", "reason": "invalid:serviceType"}]
+
+
+def test_the_payment_wait_logo_is_validated_and_downloaded_with_the_media():
+    d = C.default_config()
+    assert d["payment"]["waitLogo"] == {"media": None, "style": "plain"}
+    ref = {"url": "https://cdn.example/wait-logo.png", "kind": "image", "sha256": SHA, "bytes": 120}
+    good = {"payment": {"waitLogo": {"media": ref, "style": "plate"}}}
+    cleaned, errors = C.validate_layer(good)
+    assert errors == [] and cleaned == good
+    eff = C.resolve(good)
+    assert eff["payment"]["waitLogo"] == {"media": ref, "style": "plate"}
+    assert ref in C.media_manifest(eff), "cached on the kiosk like the other pictures"
+    # A layer that changes only the style keeps the picture of the layer under it.
+    assert C.resolve(good, {"payment": {"waitLogo": {"style": "plain"}}})["payment"]["waitLogo"] == {"media": ref, "style": "plain"}
+    _c, errors = C.validate_layer({"payment": {"waitLogo": {"media": {"url": "ftp://x", "kind": "image"}, "style": "glow"}}})
+    got = paths(errors)
+    assert got.get("payment.waitLogo.style") == "invalid_value"
+    assert any(p.startswith("payment.waitLogo.media") for p in got), got
+    _c, errors = C.validate_layer({"payment": {"waitLogo": {"media": {"url": "https://cdn.example/v.mp4", "kind": "video"}}}})
+    assert any(p.startswith("payment.waitLogo.media") for p in paths(errors))

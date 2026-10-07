@@ -34,6 +34,8 @@ export interface WebScanInput {
   add: (p: PProduct, from: DOMRect | null) => void;
   choose: (p: PProduct) => void;
   start: () => void;
+  /** "לקחת / לשבת" are on the attract screen (only they start): a dish scanned there waits for them. */
+  serviceOnAttract?: boolean;
   touch: () => void;
   /** "איך תרצו לשלם?" is on the screen with a voucher to take: a voucher scan is redeemed. */
   onVoucher: ((code: string) => void) | null;
@@ -42,6 +44,9 @@ export interface WebScanInput {
 type Shown = ScanProduct & { p: PProduct };
 
 const MENU: ReadonlySet<KioskScreen> = new Set(['catalog', 'cart', 'confirm']);
+
+/** How long a dish scanned on the attract screen waits for "לקחת" / "לשבת" there (never for the next customer). */
+const ATTRACT_SCAN_HOLD_MS = 20_000;
 
 function typingInField(): boolean {
   const el = document.activeElement as HTMLElement | null;
@@ -109,9 +114,16 @@ export function useWebScanner(input: WebScanInput): ReactNode {
             pending.current = p.id;
             if (action.start === 'start_order') {
               i.start();
+              // The order did not start (the screen changed under the scan): nothing waits — except with
+              // "לקחת / לשבת" on the attract screen, where only they start: the dish waits for them a while.
               window.setTimeout(() => {
-                if (latest.current.screen === 'attract') pending.current = null;
+                if (latest.current.screen === 'attract' && !latest.current.serviceOnAttract) pending.current = null;
               }, 120);
+              if (i.serviceOnAttract) {
+                window.setTimeout(() => {
+                  if (pending.current === p.id && latest.current.screen === 'attract') pending.current = null;
+                }, ATTRACT_SCAN_HOLD_MS);
+              }
             }
           }
         }
@@ -159,6 +171,8 @@ export function useWebScanner(input: WebScanInput): ReactNode {
     const id = pending.current;
     if (!id) return;
     if (!ORDERING.has(screen)) {
+      // Scanned on the attract screen with "לקחת / לשבת" there: it waits for the choice (a while, above).
+      if (screen === 'attract' && latest.current.serviceOnAttract) return;
       pending.current = null;
       return;
     }

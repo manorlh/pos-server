@@ -37,7 +37,8 @@ export interface ScreenBonDoc {
   title: string;
   sub: string;
   notice: string | null;
-  dining: 'take_away' | 'eat_in';
+  /** Null: the order has no service ("ללא סוג שירות") — no band. */
+  dining: 'take_away' | 'eat_in' | null;
   lines: Array<{ qty: number; name: string; detail: string | null; mods: string[]; removals: string[]; notes: string | null }>;
   foot: string[];
   printerName: string | null;
@@ -82,5 +83,5 @@ export function kdsBonDoc(order: KdsOrder, ctx: { device: KdsDeviceInfo | null; 
     ...(blank(order.waiterName) ? [`מלצר: ${order.waiterName!.trim()}`] : []),
     `מסך: ${blank(ctx.machineName) ?? blank(ctx.device?.name) ?? 'KDS'}`,
   ];
-  return { kind: 'bon', title, sub, notice, dining: order.serviceType === 'eat_in' ? 'eat_in' : 'take_away', lines, foot, printerName: null };
+  return { kind: 'bon', title, sub, notice, dining: order.serviceType === 'eat_in' || order.serviceType === 'take_away' ? order.serviceType : null, lines, foot, printerName: null };
 }

@@ -9,6 +9,8 @@
  *    סל": straight to payment, or a mini confirm) → details (only when something is asked: the
  *    checkout steps — the customer's details, the tip and "איך תרצו לשלם?", in the configured order)
  *    → payment → success → back to the attract screen;
+ *  - the service is asked once: on its own screen, or (`general.servicePlacement` = attract) by the
+ *    two buttons on the attract screen — then never as a step too (nothing else there starts an order);
  *  - nothing resets, pauses or closes the kiosk while a payment is on its way or its result
  *    is unknown — the inactivity timer does not even run there;
  *  - a pause, the opening hours and the terminal's state take effect when the kiosk is idle or
@@ -90,11 +92,12 @@ export interface KioskFlowRules {
   asksPayMethod?: boolean;
   cartEmpty: boolean;
   detailsStep: KioskDetailsStep;
-  /** "לקחת / לשבת" is chosen on the attract screen: no service screen to go back to. */
+  /** "לקחת / לשבת" is chosen on the attract screen: no service screen at all — none to start into, none to go back to. */
   serviceOnAttract?: boolean;
 }
 
 export type KioskEvent =
+  /** The attract button, or a tap anywhere when that is on — nothing with "לקחת / לשבת" on the attract screen (serviceOnAttract). */
   | { type: 'start' }
   | { type: 'startWith'; service: KioskService }
   | { type: 'chooseService'; service: KioskService }
@@ -208,6 +211,8 @@ export function reduce(s: KioskFlowState, e: KioskEvent, r: KioskFlowRules): Kio
     case 'start':
       if (s.screen !== 'attract') return s;
       if (r.services.length <= 1) return afterService({ ...s, service: r.services[0] ?? null, cameFrom: 'attract' }, r);
+      // "לקחת / לשבת" are the attract screen's own buttons (startWith): asked there or as a step, never both.
+      if (r.serviceOnAttract) return s;
       return { ...s, screen: 'service', cameFrom: 'attract' };
     case 'startWith':
       if (s.screen !== 'attract' || !r.services.includes(e.service)) return s;
@@ -291,7 +296,7 @@ function back(s: KioskFlowState, r: KioskFlowRules): KioskFlowState {
     case 'details': {
       if (s.pay === 'approved') return s;
       if (s.cameFrom === 'attract') return rest(s);
-      if (s.cameFrom === 'service') return { ...s, screen: 'service', cameFrom: 'attract', detailsNext: null };
+      if (s.cameFrom === 'service') return r.serviceOnAttract ? rest(s) : { ...s, screen: 'service', cameFrom: 'attract', detailsNext: null };
       const to: KioskScreen = s.cameFrom && s.cameFrom !== 'details' ? s.cameFrom : 'cart';
       const next: KioskFlowState = { ...s, screen: to, cameFrom: null, detailsNext: null };
       return next.screen === 'cart' && r.skipCart !== 'off' ? { ...next, screen: 'catalog' } : next;
@@ -350,7 +355,7 @@ export function successDone(s: KioskFlowState, successAtMs: number | null, nowMs
 /* --------------------------------------------------------- rules from cfg */
 
 export interface FlowConfigIn {
-  general: { serviceTypes: string[]; skipCart: string; askTableNumber: boolean; servicePlacement?: string };
+  general: { serviceTypes: string[]; skipCart: string; askTableNumber: boolean; servicePlacement?: string; serviceMode?: string };
   payment: {
     customerName: string;
     customerPhone: string;
@@ -372,10 +377,21 @@ export function detailsStepOf(cfg: FlowConfigIn): KioskDetailsStep {
 }
 
 export function servicesOf(cfg: FlowConfigIn): KioskService[] {
+  // "ללא סוג שירות" (general.serviceMode = none): no service at all — never asked, the order carries none.
+  if (cfg.general.serviceMode === 'none') return [];
   const list = (cfg.general.serviceTypes ?? []).filter((s): s is KioskService => s === 'take_away' || s === 'eat_in');
   // "כבוי" (stepModes.service): never asked — every order is the first type.
   if (list.length > 1 && cfg.payment.stepModes?.service === 'off') return [list[0]];
   return list.length > 0 ? list : ['take_away'];
+}
+
+/**
+ * The service an order carries: the one chosen (or, never asked, the one type) — none at all with
+ * "ללא סוג שירות" (general.serviceMode = none): no word for it on the slip, the bon or the KDS.
+ */
+export function orderServiceOf(chosen: KioskService | null | undefined, cfg: FlowConfigIn): KioskService | null {
+  if (cfg.general.serviceMode === 'none') return null;
+  return chosen ?? servicesOf(cfg)[0] ?? 'take_away';
 }
 
 /** `general.servicePlacement = attract` with two services: "לקחת / לשבת" on the attract screen. */
