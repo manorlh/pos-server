@@ -24,12 +24,13 @@ the few cross-field rules a parent's later change can break below it (warningSec
 inactivitySec, pickup start < max, `bonMode: single` without a printer, the club's URL,
 KDS while it is not available). So what a kiosk receives always validates.
 
-KDS hook (docs/SPEC_KDS.md): `kds_available()` is False until the KDS agent ships its
-release API. TODO(KDS): when it exists, make `kds_available()` read it, and release a
-paid `fulfillmentMode: "KDS"` kiosk order through it — the till calls the KDS release for
-the order it posts to `/sync/{id}/kiosk/orders` (source "kiosk", no table), or the server
-does on receiving that order; either way the order's `fulfillment_mode` snapshot decides,
-never the kiosk's current config.
+KDS (docs/SPEC_KDS.md, docs/SPEC_LAN_MODE.md §8): `kds_available()` — the kitchen engine's
+release API exists and every kiosk releases through it: a paid `fulfillmentMode: "KDS"` order
+goes to `POST /sync/{id}/kds/release` (source "kiosk", no table) from the Android kiosk
+(KdsBridge), the Windows kiosk and its bridge (kiosk-desktop kiosk/kdsRelease.ts), and — for a
+browser kiosk's pay-at-till order — from the till that settles it (KioskPayAtTill). The
+order's `fulfillment_mode` snapshot decides, never the kiosk's current config; the shop's
+`kdsEnabled` must be on too.
 """
 from __future__ import annotations
 
@@ -50,10 +51,11 @@ from app.services import kiosk_layout as layouts
 
 def kds_available() -> bool:
     """
-    Whether `fulfillmentMode: "KDS"` may be chosen. False until the KDS agent's release API
-    exists (docs/SPEC_KDS.md); see the module docstring for the hook to wire then.
+    Whether `fulfillmentMode: "KDS"` may be chosen: yes — every kiosk releases its paid KDS
+    orders to the kitchen engine (the module docstring). Kept as a switch: False closes it
+    again everywhere (the dashboard's choice, the kiosk's config, the KDS health alert).
     """
-    return False
+    return True
 
 
 # ── The font catalog (contract §1.2) ─────────────────────────────────────────

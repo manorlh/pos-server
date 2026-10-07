@@ -41,6 +41,7 @@ import type { PaymentProvider, ProviderContext, ProviderFactory } from './paymen
 import { PrintQueue, type PageRenderer } from './printer/printQueue';
 import { DefaultTransport, guessQueue, type PrinterTarget, type Transport } from './printer/transports';
 import { allocatePickup, OrderStore } from './kiosk/orders';
+import { kdsSaleRelease, releasesToKds } from './kiosk/kdsRelease';
 import { FunnelStore } from './kiosk/funnel';
 import { basketChanges, checkedBasePrice, CLOUD_CHECK_TIMEOUT_MS, overridesLive, overridesOf, type CloudOverrides, type CloudVerdict } from '../core/basketCheck';
 import type { FunnelEvent } from '../core/kioskFunnel';
@@ -693,6 +694,10 @@ export class KioskService extends EventEmitter {
       const a = this.kv.getJson<Record<string, unknown>>(`ack:z:${row.ref_id}`);
       return a ? { path: 'till-z/ack', body: a } : null;
     }
+    if (row.kind === 'kds_release') {
+      const r = this.kv.getJson<Record<string, unknown>>(`kds:${row.ref_id}`);
+      return r ? { path: 'kds/release', body: r } : null;
+    }
     return null;
   }
 
@@ -1082,6 +1087,8 @@ export class KioskService extends EventEmitter {
       return;
     }
     this.printBon(orderId, false);
+    // A KDS order: to the kitchen screens instead of the bon (`bonStep` prints none for it).
+    this.releaseToKds(orderId);
     if (cfg.printing.pickupSlip) {
       this.printQueue.enqueue('slip', orderId, slipDoc({ businessName: this.business().companyName, pickupLabel: pickup.label, service: order.serviceType, itemCount: order.itemCount, totalAgorot: order.totalAgorot + order.tipAgorot }));
     }
@@ -1296,6 +1303,36 @@ export class KioskService extends EventEmitter {
       );
     }
     this.orders.update(orderId, (x) => ({ ...x, bonJobIds: reprint ? [...x.bonJobIds, ...ids] : ids }));
+  }
+
+  /**
+   * A paid KDS-mode order to the cloud's kitchen engine — the release the Android kiosk sends
+   * (kiosk/kdsRelease.ts), behind the same switch (`kdsEnabled`). Durable: the body is kept and
+   * a side row of the outbox carries it (one per document — the release id is the document's),
+   * sent with the documents' flush and again until the cloud answers.
+   */
+  releaseToKds(orderId: string): boolean {
+    const o = this.orders.get(orderId);
+    if (!o || !o.paid || !o.transactionId) return false;
+    if (!releasesToKds(o, this.parameterOn('kdsEnabled'))) return false;
+    const doc = this.ledger.doc(o.transactionId);
+    if (!doc) return false;
+    const categories = new Map<string, string>();
+    for (const p of this.cloud.catalog().products) {
+      if (typeof p.id === 'string' && typeof p.categoryId === 'string') categories.set(p.id, p.categoryId);
+    }
+    const body = kdsSaleRelease({
+      transactionId: doc.id,
+      transactionNumber: o.transactionNumber,
+      order: o,
+      lines: doc.lines,
+      categoryOf: (id) => categories.get(id) ?? null,
+      actorName: this.operator().name,
+      occurredAt: doc.updatedAt,
+    });
+    this.kv.setJson(`kds:${doc.id}`, body);
+    this.outbox.enqueue('kds_release', doc.id);
+    return true;
   }
 
   /** The bon's state from its jobs ("sent" is never reported as "printed"). */

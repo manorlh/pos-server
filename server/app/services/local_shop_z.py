@@ -153,25 +153,21 @@ def _conflict(detail: str, **extra) -> LocalShopZRefused:
 
 def local_mode_of_shop(db: Session, shop: Shop) -> bool:
     """
-    Does the shop work in local mode: a main till ("קופה ראשית") that the shop leans on over
-    the LAN — `tablesMode` «רשת מקומית (קופה ראשית)» for the shop, or the main till being the
-    shop's print server? Without a main till there is no local mode: exactly one till serves
-    the LAN close, and it is the main till.
+    Does the shop work in local mode: its switch "רשת מקומית" on (`shops.local_network`,
+    docs/SPEC_LAN_MODE.md §4) and a main till ("קופה ראשית") to lean on over the LAN? Without
+    a main till there is no local mode: exactly one till serves the LAN close, and it is the
+    main till.
+
+    Before the switch existed, local mode followed the configuration: `tablesMode` «רשת מקומית
+    (קופה ראשית)» for the shop, or the main till being the shop's print server. The migration
+    that added the switch (`c3e9f1a7b5d2`) set it on for exactly those shops, so no shop's Z
+    production moved with it; from then on the switch alone decides.
     """
     from app.services.main_till import main_till_of_shop
-    from app.services.printers import print_host_of_shop
-    from app.services.tables import MODE_LAN, TABLES_MODE_KEY, mode_of
-    from app.services.till_parameters import resolve_for_shop
 
-    if shop is None:
+    if shop is None or not bool(getattr(shop, "local_network", False)):
         return False
-    main = main_till_of_shop(db, shop.id)
-    if main is None:
-        return False
-    if mode_of(resolve_for_shop(db, shop).get(TABLES_MODE_KEY)) == MODE_LAN:
-        return True
-    host = print_host_of_shop(db, shop.id)
-    return host is not None and host.id == main.id
+    return main_till_of_shop(db, shop.id) is not None
 
 
 def participants(db: Session, shop_id: uuid.UUID) -> List[POSMachine]:

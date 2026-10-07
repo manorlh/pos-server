@@ -320,6 +320,9 @@ def shop_state(db: Session, shop, user: User) -> dict:
     tills = [m for m in ZR.shop_tills(db, shop.id) if ZR.is_seated_in(m, shop.id)]
     remote = remote_till_ids(shop)
     seen_on_lan = lan_seen_hint(db, shop)
+    from app.services.lan_server import card_rows
+
+    lan_server = card_rows(db, tills)
     out = []
     for m in sorted(tills, key=MT.till_order):
         cand = ZR.till_candidates(db, m, shop.id)
@@ -340,12 +343,16 @@ def shop_state(db: Session, shop, user: User) -> dict:
             "link": "remote" if str(m.id) in remote else "lan",
             # … and the main till's view of who it hears on the LAN is a hint (null: unknown).
             "seenOnLan": None if seen_on_lan is None else str(m.id) in seen_on_lan,
+            # "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3): never the shop's server.
+            **lan_server[str(m.id)],
         })
     return {
         "shopId": str(shop.id),
         "tills": out,
         "mainTill": MT.till_ref(main),
         "localMode": local_mode_of_shop(db, shop),
+        # "רשת מקומית" (docs/SPEC_LAN_MODE.md §4): the shop's switch, as stored.
+        "localNetwork": bool(getattr(shop, "local_network", False)),
         "canEdit": user.role == UserRole.SUPER_ADMIN,
         # Who produces the shop's Zs, a handover waiting, conflicts for support (§8.10–8.11).
         "shopZ": producer_state(db, shop),
@@ -365,13 +372,16 @@ def apply_shop(
     main_till_id: Any = _MAIN_UNCHANGED,
     force_producer_switch: bool = False,
     remote: Optional[Sequence[uuid.UUID]] = None,
+    lan_server_excluded: Optional[Sequence[uuid.UUID]] = None,
     now: Optional[datetime] = None,
 ) -> List[POSMachine]:
     """
     The card's save: `participants` join the shop Z, `independent` become independent, a
     till in neither stays as it is; `main_till_id` (when given) becomes the shop's main
-    till — which must be in the LAN group after the save. All or nothing: every refusal
-    is raised before anything is written. The tills that changed.
+    till — which must be in the LAN group after the save. `lan_server_excluded` (when given):
+    exactly these devices are "לא משמש כשרת מקומי" after the save (docs/SPEC_LAN_MODE.md §3),
+    and the main till may not be one of them. All or nothing: every refusal is raised
+    before anything is written. The tills that changed.
     """
     from app.models.z_run import ZRun, ZRunStatus
     from app.services import main_till as MT
@@ -441,6 +451,32 @@ def apply_shop(
                     {"detail": "remote_main_till", "machineId": machine_id,
                      "message": f"{till_label(m)} היא הקופה הראשית (השרת המקומי) — היא לא יכולה להיות מרוחקת."},
                 )
+    excluded_after = None
+    if lan_server_excluded is not None:
+        excluded_after = {str(i) for i in lan_server_excluded}
+        for machine_id in sorted(excluded_after):
+            if machine_id not in seated:
+                raise IndependentSwitchRefused(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    {"detail": "machine_not_in_shop", "message": "הקופה אינה משויכת לסניף הזה.", "machineId": machine_id},
+                )
+    if main_after is not None and main_after in seated and (
+        main_till_id is not _MAIN_UNCHANGED or (excluded_after is not None and main_after in excluded_after)
+    ):
+        from app.services import lan_server
+
+        # "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3) after the save: the list as sent (else
+        # the flag as stored), and a till showing a KDS screen whatever the list says.
+        m = seated[main_after]
+        flagged = main_after in excluded_after if excluded_after is not None else bool(m.lan_server_excluded)
+        if flagged or m.id in lan_server.kds_screen_ids(db, [m.id]):
+            refusal = (
+                lan_server.excluded_main_refusal(m) if main_till_id is _MAIN_UNCHANGED
+                else lan_server.main_till_refusal(m)
+            )
+            raise IndependentSwitchRefused(refusal.status_code, {"detail": refusal.detail["code"], **{
+                k: v for k, v in refusal.detail.items() if k != "code"
+            }})
     if main_till_id is not _MAIN_UNCHANGED:
         live = (
             db.query(ZRun.id)
@@ -476,6 +512,12 @@ def apply_shop(
         from app.services.local_shop_z import set_remote_till_ids
 
         set_remote_till_ids(shop, remote_after)
+    if excluded_after is not None:
+        from app.services.lan_server import apply_excluded
+
+        for machine_id, m in seated.items():
+            if apply_excluded(db, m, machine_id in excluded_after, now) and m not in changed:
+                changed.append(m)
     db.flush()
     guard.check(force=force_producer_switch, user=user)
     return changed

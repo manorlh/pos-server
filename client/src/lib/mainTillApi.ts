@@ -3,6 +3,7 @@
  * on (tables host, print server, the shop Z), and where the shop Z may come from.
  */
 import { api } from './api';
+import type { LanHealthRow, LanSyncState } from './lanMode';
 import type { TillRef } from './types';
 
 export interface MainTillState {
@@ -23,6 +24,14 @@ export interface MainTillState {
   tills: TillRef[];
   /** The super admin's alone to change. */
   canEdit: boolean;
+  /** "רשת מקומית" (docs/SPEC_LAN_MODE.md §4): the switch as stored. */
+  localNetwork?: boolean;
+  /** The switch on and a main till: the main till produces the shop Z on the LAN. */
+  localMode?: boolean;
+  /** A row per system: what works on the LAN through the main till today. */
+  lanHealth?: LanHealthRow[];
+  /** "סנכרון רשת מקומית": what the local server holds that the cloud copy lacks. */
+  lanSync?: LanSyncState | null;
 }
 
 export async function fetchMainTill(shopId: string): Promise<MainTillState> {

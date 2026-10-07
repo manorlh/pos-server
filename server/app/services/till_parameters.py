@@ -384,6 +384,13 @@ def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedPar
         from app.services.independent_till import apply_to_resolved
 
         resolved = apply_to_resolved(machine, parameters, values, resolved)
+    else:
+        # "לא משמש כשרת מקומי" (app/services/lan_server.py): never a host of the shop's LAN
+        # group either — but still in it, so its tables mode stays as the shop set it.
+        from app.services.lan_server import excluded_parameters, is_excluded
+
+        if is_excluded(db, machine):
+            resolved.parameters = excluded_parameters(resolved.parameters)
     # "קוד טכנאי לקיוסק" (app/services/kiosk_technician.py): never sent in clear — the till
     # gets the code's hash, salted with its own id.
     from app.services.kiosk_technician import hash_for_machine

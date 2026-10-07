@@ -63,6 +63,7 @@ from app.routers import (
     prepaid_vouchers as prepaid_vouchers_router,
     till_shop_z as till_shop_z_router,
     main_till as main_till_router,
+    lan_server as lan_server_router,
     z_mode as z_mode_router,
     z_participation as z_participation_router,
     till_shop_z_local as till_shop_z_local_router,
@@ -177,6 +178,8 @@ app.include_router(till_messages_router.router, prefix=_prefix)
 app.include_router(prepaid_vouchers_router.router, prefix=_prefix)
 app.include_router(till_shop_z_router.router, prefix=_prefix)
 app.include_router(main_till_router.router, prefix=_prefix)
+# "רשת מקומית" and "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3–4).
+app.include_router(lan_server_router.router, prefix=_prefix)
 app.include_router(z_mode_router.router, prefix=_prefix)
 app.include_router(z_participation_router.router, prefix=_prefix)
 app.include_router(till_shop_z_local_router.router, prefix=_prefix)

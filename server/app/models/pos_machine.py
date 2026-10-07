@@ -545,6 +545,20 @@ class POSMachine(Base):
     #: "android" | "windows": what the device runs, from `device_info.platform` at pairing.
     #: Null: a device paired before the column — Android.
     platform = Column(String(16), nullable=True)
+    # ── "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3) ──────────────────────────
+    #: Never the shop's local server: never elected the main till, the tables host, the
+    #: print server or the shop Z master, and its host parameters read "off" — but still a
+    #: member of the shop's LAN group and of the shop Z (unlike an independent till). A till
+    #: showing a KDS screen is excluded whatever this says (app/services/lan_server.py).
+    lan_server_excluded = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: When the dashboard last set it; null — never chosen (the dashboard then pre-ticks a
+    #: kiosk or a handheld, `lan_server.suggested`).
+    lan_server_excluded_at = Column(DateTime(timezone=True), nullable=True)
+    #: As a local server (docs/SPEC_LAN_MODE.md §6): the changes it holds that the cloud copy
+    #: does not have yet — `{pending, oldestAt, systems: {tables: {pending, oldestAt}}}`, the
+    #: oldest change's moment worked out on arrival — from its last heartbeat that said.
+    lan_sync = Column(JSONB, nullable=True)
+    lan_sync_reported_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

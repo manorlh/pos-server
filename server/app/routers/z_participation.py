@@ -61,6 +61,10 @@ class ZParticipationIn(BaseModel):
     #: a till or kiosk off the shop's LAN; every other participant is "מחובר ברשת המקומית"
     #: (docs/SPEC_INDEPENDENT_TILL.md §8.14).
     remote: Optional[List[uuid.UUID]] = None
+    #: Absent: unchanged. Every device of the shop set "לא משמש כשרת מקומי" — never its main
+    #: till, tables host or print server, still in its LAN and its shop Z
+    #: (docs/SPEC_LAN_MODE.md §3). A till showing a KDS screen is excluded whatever is sent.
+    lan_server_excluded: Optional[List[uuid.UUID]] = Field(None, alias="lanServerExcluded")
 
 
 class ConflictResolveIn(BaseModel):
@@ -270,6 +274,8 @@ def put_z_participation(
         kwargs["main_till_id"] = body.main_till_id
     if body.remote is not None:
         kwargs["remote"] = body.remote
+    if body.lan_server_excluded is not None:
+        kwargs["lan_server_excluded"] = body.lan_server_excluded
     try:
         IT.apply_shop(
             db, current_user, shop,

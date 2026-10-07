@@ -12,7 +12,7 @@
  */
 
 import { apiBase, tokenRevoked, type Api, type ApiReply } from './api';
-import { docResults, plan, type Outbox, type OutboxRow } from './outbox';
+import { docResults, FINAL_ON_REFUSAL, plan, type Outbox, type OutboxRow } from './outbox';
 import type { CloudStore, Credentials, MachineMe } from './cloud';
 import type { Ledger } from '../fiscal/ledger';
 import { documentWire } from '../fiscal/ledger';
@@ -344,7 +344,10 @@ export class SyncEngine {
         const reply = await this.api.post(this.machinePath(req.path), req.body);
         if (reply.kind === 'offline') return this.stopFlush(reply.reason);
         if (reply.kind === 'ok' || (reply.kind === 'refused' && (reply.status === 404 || reply.status === 410))) this.outbox.remove(step.row.kind, step.row.ref_id);
-        else this.outbox.park(step.row.kind, step.row.ref_id, `HTTP ${reply.status} ${reply.detail ?? ''}`);
+        else if (reply.kind === 'refused' && reply.status >= 400 && reply.status < 500 && FINAL_ON_REFUSAL.has(step.row.kind)) {
+          this.hooks.log(`${step.row.kind} ${step.row.ref_id} refused for good: HTTP ${reply.status} ${reply.detail ?? ''}`);
+          this.outbox.remove(step.row.kind, step.row.ref_id);
+        } else this.outbox.park(step.row.kind, step.row.ref_id, `HTTP ${reply.status} ${reply.detail ?? ''}`);
         continue;
       }
       if (step.kind === 'open') {

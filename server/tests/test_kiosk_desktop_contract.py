@@ -90,3 +90,21 @@ def test_the_kiosk_orders_validate():
     orders = [KioskOrderIn.model_validate(o) for o in body.orders]
     assert orders[0].pickup_label == "A-17"
     assert orders[0].transaction_number == "40000057"
+
+
+def test_the_kds_release_is_the_kitchen_engines_and_idempotent_by_the_document():
+    """A paid KDS-mode order of the Windows kiosk (kiosk-desktop src/main/kiosk/kdsRelease.ts)."""
+    import hashlib
+    import uuid
+
+    from app.schemas.kds import KdsReleaseIn
+
+    body = KdsReleaseIn.model_validate(load("kds_release"))
+    assert (body.source, body.trigger, body.paid) == ("kiosk", "payment", True)
+    assert body.pickup_number == 17 and body.transaction_number == "40000057"
+    assert [i.line_key for i in body.items] == ["l1:0", "l2:0"]
+    # Java's UUID.nameUUIDFromBytes of "kds-release:sale:<document>" — the till's derivation too.
+    raw = bytearray(hashlib.md5(f"kds-release:sale:{body.source_ref}".encode("utf-8")).digest())
+    raw[6] = (raw[6] & 0x0F) | 0x30
+    raw[8] = (raw[8] & 0x3F) | 0x80
+    assert body.id == str(uuid.UUID(bytes=bytes(raw)))

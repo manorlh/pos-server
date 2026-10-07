@@ -16,8 +16,12 @@ import {
   choiceForTick,
   conflictNumbersOf,
   effectOf,
+  exclusionListOf,
+  exclusionLocked,
+  exclusionPreTicked,
   formatTillNumbers,
   initialChoices,
+  initialExclusions,
   isKnownRefusal,
   isShopZ,
   mainTillOptions,
@@ -361,5 +365,49 @@ describe('refusals', () => {
     assert.equal(refusalOf({ response: { data: { detail: [{ msg: 'x' }] } } }), null);
     assert.equal(isKnownRefusal('till_in_both_lists'), true);
     assert.equal(isKnownRefusal('something_else'), false);
+  });
+});
+
+describe('"לא משמש כשרת מקומי"', () => {
+  const tills = () => [
+    till(1, 'shop_z', { mainTill: true }),
+    till(2, 'shop_z', { lanServerExcluded: true, lanServerExcludedReason: 'set', lanServerExcludedChosen: true }),
+    till(3, 'shop_z', { lanServerExcludedSuggested: true }),
+    till(4, 'shop_z', { lanServerExcludedSuggested: true, lanServerExcludedChosen: true }),
+    till(5, 'shop_z', { lanServerExcluded: true, lanServerExcludedReason: 'kds_screen', lanServerExcludedAuto: true }),
+    till(6, 'shop_z'),
+  ];
+
+  it('opens as stored, a KDS screen by itself, and a kiosk or handheld nobody chose for pre-ticked', () => {
+    const state = shop(tills());
+    const ex = initialExclusions(state);
+    assert.deepEqual(ex, { m1: false, m2: true, m3: true, m4: false, m5: true, m6: false });
+    assert.equal(exclusionPreTicked(state.tills[2], ex), true);
+    assert.equal(exclusionPreTicked(state.tills[1], ex), false);
+    assert.equal(exclusionLocked(state.tills[4]), true);
+    // A pre-ticked main till is not: it cannot be excluded.
+    assert.equal(initialExclusions(shop([till(1, 'shop_z', { mainTill: true, lanServerExcludedSuggested: true })]))['m1'], false);
+  });
+
+  it('the list is sent whole when it differs — a pre-tick is a change, a KDS screen never in it', () => {
+    const state = shop(tills());
+    const ex = initialExclusions(state);
+    assert.deepEqual(exclusionListOf(state, ex), ['m2', 'm3']);
+    const body = buildParticipationBody(state, initialChoices(state), 'm1', undefined, ex);
+    assert.deepEqual(body?.lanServerExcluded, ['m2', 'm3']);
+    // As stored (nothing pre-ticked): no change, no body.
+    const stored = { ...ex, m3: false };
+    assert.equal(buildParticipationBody(state, initialChoices(state), 'm1', undefined, stored), null);
+  });
+
+  it('never the main till: not offered, and refused when ticked', () => {
+    const state = shop(tills());
+    const ex = initialExclusions(state);
+    assert.deepEqual(mainTillOptions(state.tills, initialChoices(state), ex).map((t) => t.machineId), ['m1', 'm4', 'm6']);
+    const issues = validateParticipation(state, initialChoices(state), 'm1', { ...ex, m1: true });
+    assert.deepEqual(issues, [{ kind: 'main_excluded', machineId: 'm1' }]);
+    assert.deepEqual(validateParticipation(state, initialChoices(state), 'm5', ex).map((i) => i.kind), ['main_excluded']);
+    assert.equal(isKnownRefusal('main_till_not_server'), true);
+    assert.equal(isKnownRefusal('lan_server_excluded_main_till'), true);
   });
 });

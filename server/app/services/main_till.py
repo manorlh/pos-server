@@ -73,12 +73,15 @@ def main_till_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
     """The shop's active till whose `mainTill` resolves on; several — the lowest number."""
     from app.services.printers import shop_machines
 
-    from app.services.independent_till import lan_members
+    from app.services.lan_server import server_candidates
 
     if shop_id is None:
         return None
-    # An independent till ("קופה עצמאית") is never the shop's main till, whatever is set.
-    marked = [m for m in lan_members(shop_machines(db, shop_id)) if is_on(_params(db, m).get(MAIN_TILL_KEY))]
+    # An independent till ("קופה עצמאית") is never the shop's main till, whatever is set, nor
+    # a device set "לא משמש כשרת מקומי" (app/services/lan_server.py).
+    marked = [
+        m for m in server_candidates(db, shop_machines(db, shop_id)) if is_on(_params(db, m).get(MAIN_TILL_KEY))
+    ]
     return sorted(marked, key=till_order)[0] if marked else None
 
 
@@ -161,11 +164,14 @@ def till_shop_z_refusal(db: Session, machine: POSMachine) -> Optional[str]:
 
 
 def shop_tills_out(db: Session, shop_id: Any) -> List[Dict[str, Any]]:
-    """The tills that may be the main till: the shop's, but its independent tills."""
-    from app.services.independent_till import lan_members
+    """
+    The tills that may be the main till: the shop's, but its independent tills and the
+    devices set "לא משמש כשרת מקומי".
+    """
+    from app.services.lan_server import server_candidates
     from app.services.printers import shop_machines
 
-    return [till_ref(m) for m in sorted(lan_members(shop_machines(db, shop_id)), key=till_order)]
+    return [till_ref(m) for m in sorted(server_candidates(db, shop_machines(db, shop_id)), key=till_order)]
 
 
 def set_main_till(db: Session, shop: Shop, machine_id: Any, *, now: Optional[datetime] = None) -> None:
@@ -229,6 +235,11 @@ def take_over(db: Session, machine: POSMachine, operator: Optional[str] = None) 
     if is_independent(machine):
         # "קופה עצמאית": outside the shop's LAN group — it never becomes its server.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=INDEPENDENT)
+    from app.services import lan_server
+
+    if lan_server.is_excluded(db, machine):
+        # "לא משמש כשרת מקומי": in the LAN group, but never its server.
+        raise lan_server.take_over_refusal(machine)
     if mode_of(_params(db, machine).get(TABLES_MODE_KEY)) != MODE_LAN:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="tables_not_lan")
     old = tables_host_of_shop(db, machine.shop_id)

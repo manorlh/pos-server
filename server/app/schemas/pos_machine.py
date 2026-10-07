@@ -119,6 +119,30 @@ class HeartbeatLocalShopZ(BaseModel):
     lan_seen: Optional[List[str]] = Field(None, alias="lanSeen", max_length=200)
 
 
+class HeartbeatLanSyncSystem(BaseModel):
+    """One system's changes the LAN host holds that the cloud copy does not have yet."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    pending: Optional[int] = Field(None, ge=0, le=1_000_000)
+    oldest_age_ms: Optional[int] = Field(None, alias="oldestAgeMs", ge=0)
+
+
+class HeartbeatLanSync(BaseModel):
+    """
+    The local server's sync lag (docs/SPEC_LAN_MODE.md §6, "השרת מעדכן את הענן בזמן אמת"):
+    how many changes it holds that the cloud copy does not have yet, and the age of the
+    oldest — in total and per system (`tables` today; `kds`, `kiosk` as they move to the
+    main till). Sent by a device that serves a system to the shop's LAN.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    pending: Optional[int] = Field(None, ge=0, le=1_000_000)
+    oldest_age_ms: Optional[int] = Field(None, alias="oldestAgeMs", ge=0)
+    systems: Optional[Dict[str, HeartbeatLanSyncSystem]] = None
+
+
 class MachineHeartbeatBody(BaseModel):
     """
     HTTP heartbeat payload from a till (Android) or the POS desktop.
@@ -194,6 +218,9 @@ class MachineHeartbeatBody(BaseModel):
     #: Shop Zs made on this main till in local mode, not in the cloud yet
     #: (docs/SPEC_INDEPENDENT_TILL.md §8.10). Absent leaves the stored reading as it was.
     local_shop_z: Optional[HeartbeatLocalShopZ] = Field(None, alias="localShopZ")
+    #: The local server's sync lag (docs/SPEC_LAN_MODE.md §6): what it holds that the cloud
+    #: copy has not got yet. Sent only while it serves the LAN; absent leaves it as it was.
+    lan_sync: Optional[HeartbeatLanSync] = Field(None, alias="lanSync")
 
     model_config = ConfigDict(populate_by_name=True)
 

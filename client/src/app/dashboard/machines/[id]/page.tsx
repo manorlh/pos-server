@@ -66,6 +66,7 @@ import { SupportZButton } from '@/components/dashboard/machines/support-z-dialog
 import { TillResetButton } from '@/components/dashboard/machines/till-reset-dialog';
 import { TillReplacements } from '@/components/dashboard/machines/till-replacements';
 import { DeviceManagementCard } from '@/components/dashboard/machines/device-management';
+import { MachineLanServerCard } from '@/components/dashboard/machines/machine-lan-server-card';
 import { tillResetTone, type TillResetRecord } from '@/lib/tillReset';
 import { IndependentTillBadge } from '@/components/dashboard/independent-till-badge';
 import { LatestTillZRequest } from '@/components/dashboard/till-z/till-z-request';
@@ -625,6 +626,9 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
 
       {/* "עדכון שקט": device owner / silent updates, how to turn it on (adb or QR), "הפעל מחדש". */}
       <DeviceManagementCard machine={machine} />
+
+      {/* "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3): never the shop's local server. */}
+      {!display ? <MachineLanServerCard machineId={machine.id} shopId={machine.shopId} /> : null}
 
       {/* Card sales waiting for Shva, the batches the till reported, and — for a till
           that dies with its batch — the list to take to the card company. */}

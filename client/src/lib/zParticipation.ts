@@ -43,7 +43,22 @@ export interface ZParticipationTill {
   link?: TillLink;
   /** The main till's view: does it hear this till on the LAN? null = unknown (main till silent). */
   seenOnLan?: boolean | null;
+  /**
+   * "לא משמש כשרת מקומי" (pos-server docs/SPEC_LAN_MODE.md §3): never the shop's main till,
+   * tables host or print server — still in the shop Z and on the LAN.
+   */
+  lanServerExcluded?: boolean;
+  /** `set` (the dashboard), `kds_screen` (a till showing a KDS screen: excluded by itself). */
+  lanServerExcludedReason?: LanServerReason | null;
+  /** Excluded by itself (a KDS screen): the tick cannot take it back. */
+  lanServerExcludedAuto?: boolean;
+  /** A kiosk or a handheld: pre-ticked until someone chose for it. */
+  lanServerExcludedSuggested?: boolean;
+  /** Someone set it (on or off) at least once. */
+  lanServerExcludedChosen?: boolean;
 }
+
+export type LanServerReason = 'set' | 'kds_screen';
 
 export type TillLink = 'lan' | 'remote';
 
@@ -74,6 +89,8 @@ export interface ZParticipationBody {
   forceProducerSwitch?: boolean;
   /** Every till set "מרוחק (דרך הענן)"; absent = unchanged. Participants only, never the main till. */
   remote?: string[];
+  /** Every device set "לא משמש כשרת מקומי"; absent = unchanged. Never the main till. */
+  lanServerExcluded?: string[];
 }
 
 // ── The shop Z's one producer ("אין דבר כזה זד שממוספר מחדש") ─────────────────
@@ -258,6 +275,44 @@ export function linkHintOf(link: TillLink, seenOnLan: boolean | null | undefined
   return null;
 }
 
+// ── "לא משמש כשרת מקומי" ───────────────────────────────────────────────────────
+
+/** The tick of each device, by machine id, as the card edits it. */
+export type ZExclusions = Record<string, boolean>;
+
+/**
+ * The ticks as the card opens: as stored — a KDS screen ticked by itself — and a kiosk or a
+ * handheld nobody chose for yet pre-ticked (saved with the card), unless it is the main till.
+ */
+export function initialExclusions(state: Pick<ZParticipationState, 'tills'>): ZExclusions {
+  const out: ZExclusions = {};
+  for (const t of state.tills) {
+    out[t.machineId] =
+      !!t.lanServerExcludedAuto ||
+      !!t.lanServerExcluded ||
+      (!t.lanServerExcludedChosen && !!t.lanServerExcludedSuggested && !t.mainTill);
+  }
+  return out;
+}
+
+/** Pre-ticked by the card, not stored yet: said beside it ("מסומן מראש"). */
+export function exclusionPreTicked(t: ZParticipationTill, exclusions: ZExclusions): boolean {
+  return !!exclusions[t.machineId] && !t.lanServerExcluded && !t.lanServerExcludedChosen && !!t.lanServerExcludedSuggested;
+}
+
+/** Ticked for good: a till showing a KDS screen is excluded by itself. */
+export function exclusionLocked(t: Pick<ZParticipationTill, 'lanServerExcludedAuto'>): boolean {
+  return !!t.lanServerExcludedAuto;
+}
+
+/** The devices ticked after the edit, by number — the `lanServerExcluded` list the PUT sends whole. */
+export function exclusionListOf(state: Pick<ZParticipationState, 'tills'>, exclusions: ZExclusions): string[] {
+  return sortTills(state.tills)
+    .filter((t) => !exclusionLocked(t))
+    .filter((t) => exclusions[t.machineId] ?? !!t.lanServerExcluded)
+    .map((t) => t.machineId);
+}
+
 /** Why a till cannot change sides now — the server refuses a switch over an unfinished shift. */
 export type SwitchBlock = 'open_shift' | 'awaiting_z';
 
@@ -280,6 +335,7 @@ export function buildParticipationBody(
   choices: ZChoices,
   mainTillId: string | null,
   links?: ZLinks,
+  exclusions?: ZExclusions,
 ): ZParticipationBody | null {
   const participants: string[] = [];
   const independent: string[] = [];
@@ -303,11 +359,22 @@ export function buildParticipationBody(
     remoteChanged = before.length !== after.length || before.some((id, i) => id !== after[i]);
     if (remoteChanged) body.remote = after;
   }
-  return participants.length || independent.length || mainChanged || remoteChanged ? body : null;
+  // "לא משמש כשרת מקומי", whole, when it differs from the stored flags (or a device is pre-ticked).
+  let excludedChanged = false;
+  if (exclusions) {
+    const before = sortTills(state.tills)
+      .filter((t) => !exclusionLocked(t) && t.lanServerExcludedReason === 'set')
+      .map((t) => t.machineId);
+    const after = exclusionListOf(state, exclusions);
+    excludedChanged = before.length !== after.length || before.some((id, i) => id !== after[i]);
+    if (excludedChanged) body.lanServerExcluded = after;
+  }
+  return participants.length || independent.length || mainChanged || remoteChanged || excludedChanged ? body : null;
 }
 
 export type ParticipationIssue =
   | { kind: 'main_not_participating'; machineId: string }
+  | { kind: 'main_excluded'; machineId: string }
   | { kind: 'blocked'; machineId: string; reason: SwitchBlock };
 
 /**
@@ -319,12 +386,18 @@ export function validateParticipation(
   state: Pick<ZParticipationState, 'tills'>,
   choices: ZChoices,
   mainTillId: string | null,
+  exclusions?: ZExclusions,
 ): ParticipationIssue[] {
   const issues: ParticipationIssue[] = [];
   if (mainTillId) {
     const known = state.tills.some((t) => t.machineId === mainTillId);
     if (!known || choices[mainTillId] !== 'shop_z') {
       issues.push({ kind: 'main_not_participating', machineId: mainTillId });
+    }
+    // "לא משמש כשרת מקומי" is never the main till (the server refuses `main_till_not_server`).
+    const main = state.tills.find((t) => t.machineId === mainTillId);
+    if (main && (exclusionLocked(main) || (exclusions?.[mainTillId] ?? !!main.lanServerExcluded))) {
+      issues.push({ kind: 'main_excluded', machineId: mainTillId });
     }
   }
   for (const t of sortTills(state.tills)) {
@@ -336,9 +409,16 @@ export function validateParticipation(
   return issues;
 }
 
-/** The tills a main till may be picked from: the ticked ones, by number. */
-export function mainTillOptions<T extends ZParticipationTill>(tills: T[], choices: ZChoices): T[] {
-  return sortTills(tills.filter((t) => (choices[t.machineId] ?? roleOf(t)) === 'shop_z'));
+/** The tills a main till may be picked from: the ticked ones, by number — never one "לא משמש כשרת מקומי". */
+export function mainTillOptions<T extends ZParticipationTill>(tills: T[], choices: ZChoices, exclusions?: ZExclusions): T[] {
+  return sortTills(
+    tills.filter(
+      (t) =>
+        (choices[t.machineId] ?? roleOf(t)) === 'shop_z' &&
+        !exclusionLocked(t) &&
+        !(exclusions?.[t.machineId] ?? !!t.lanServerExcluded),
+    ),
+  );
 }
 
 /**
@@ -500,6 +580,8 @@ export const KNOWN_REFUSALS = [
   'shop_z_producer_busy',
   'remote_not_participant',
   'remote_main_till',
+  'main_till_not_server',
+  'lan_server_excluded_main_till',
 ] as const;
 
 export type KnownRefusal = (typeof KNOWN_REFUSALS)[number];

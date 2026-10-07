@@ -1250,15 +1250,17 @@ def print_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
     register number, so every till agrees on one. None marked: the shop's main till
     ("קופה ראשית", app/services/main_till.py), else none — off by default.
     """
-    from app.services.independent_till import lan_members
+    from app.services.lan_server import server_candidates
     from app.services.main_till import main_till_of_shop
     from app.services.till_parameters import till_parameters_for_machine
 
     if shop_id is None:
         return None
-    # An independent till ("קופה עצמאית") is outside the shop's LAN group: never its server.
+    # An independent till ("קופה עצמאית") is outside the shop's LAN group: never its server;
+    # nor a device set "לא משמש כשרת מקומי" (app/services/lan_server.py). A printer hosted by
+    # such a device is still printed by it (`is_hosted_by`): a printer endpoint, not the server.
     hosts = [
-        m for m in lan_members(shop_machines(db, shop_id))
+        m for m in server_candidates(db, shop_machines(db, shop_id))
         if till_parameters_for_machine(db, m).parameters.get(PRINT_HOST_KEY) is True
     ]
     if not hosts:
@@ -1999,6 +2001,12 @@ def set_print_host(db: Session, shop: Shop, machine_id: Optional[uuid.UUID]) -> 
     tills = shop_machines(db, shop.id)
     if machine_id is not None and str(machine_id) not in {str(m.id) for m in tills}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="machine_not_in_shop")
+    chosen = next((m for m in tills if machine_id is not None and str(m.id) == str(machine_id)), None)
+    from app.services import lan_server
+
+    if chosen is not None and lan_server.is_excluded(db, chosen):
+        # "לא משמש כשרת מקומי" (app/services/lan_server.py): never the shop's print server.
+        raise lan_server.print_host_refusal(chosen)
     db.query(TillParameterValue).filter(
         TillParameterValue.parameter_id == parameter.id,
         TillParameterValue.scope_type == "machine",
