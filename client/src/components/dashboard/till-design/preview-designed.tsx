@@ -577,10 +577,11 @@ function RowItem({ m, p, h, last, d }: { m: PreviewModel; p: PProduct; h: number
   );
 }
 
-function RowList({ m, items, h, header, d, w }: { m: PreviewModel; items: PProduct[]; h: number; header: boolean; d: D; w: number }) {
+function RowList({ m, items, h, header, d, w, clipped }: { m: PreviewModel; items: PProduct[]; h: number; header: boolean; d: D; w: number; clipped: boolean }) {
   const t = m.t;
+  // A list longer than the pane runs to its bottom, the last row cut there (it scrolls on the till).
   return (
-    <div style={{ flex: '1 1 0', minWidth: 0, width: w, border: `1px solid ${t.border}`, borderRadius: R, background: t.surface, overflow: 'hidden', alignSelf: 'flex-start' }}>
+    <div style={{ flex: '1 1 0', minWidth: 0, width: w, border: `1px solid ${t.border}`, borderRadius: R, background: t.surface, overflow: 'hidden', alignSelf: clipped ? 'stretch' : 'flex-start' }}>
       {header ? (
         <div style={{ height: 36, display: 'flex', alignItems: 'center', gap: 12, padding: '0 12px', borderBottom: `1px solid ${t.border}`, color: t.ink2, fontSize: m.fs(13), background: t.bg }}>
           <span style={{ flex: '1 1 auto' }}>פריט</span>
@@ -608,19 +609,21 @@ function ProductGrid({ m, d }: { m: PreviewModel; d: D }) {
     const th = tileHeight({ style, size: m.tileSize, density: m.view.density, tileWidth: tileW, withPhoto });
     if (style === 'row') {
       const header = m.view.template === 'professional';
-      const perList = Math.max(1, Math.floor((size.h - (header ? 37 : 2)) / (th + 1)));
+      // Every row that shows at all, the last one cut at the pane's bottom (the list scrolls on the till).
+      const perList = Math.max(1, Math.ceil((size.h - (header ? 37 : 2)) / (th + 1)));
       const lists = cols >= 2 ? [items.slice(0, perList), items.slice(perList, perList * 2)] : [items.slice(0, perList)];
       body = (
         <div style={{ display: 'flex', gap: G, height: '100%' }}>
           {lists
             .filter((l, i) => i === 0 || l.length > 0)
             .map((list, i) => (
-              <RowList key={i} m={m} items={list} h={th} header={header} d={d} w={tileW} />
+              <RowList key={i} m={m} items={list} h={th} header={header} d={d} w={tileW} clipped={list.length * (th + 1) + (header ? 37 : 2) > size.h} />
             ))}
         </div>
       );
     } else {
-      const rows = Math.max(1, Math.floor((size.h + G) / (th + G)));
+      // The grid fills the pane down to the bill: the last row cut at the bottom, never an empty band.
+      const rows = Math.max(1, Math.ceil((size.h + G) / (th + G)));
       const shown = items.slice(0, cols * rows);
       body = (
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridAutoRows: th, gap: G }}>
@@ -742,8 +745,10 @@ function MenuArea({ m, d }: { m: PreviewModel; d: D }) {
   const P = pad(m);
   const G = gap(m);
   const side = m.view.categoryBar === 'side';
+  // Tiles run to the bill's own border (the last row cut there); a bordered list or rail keeps a gap.
+  const bottom = side || m.view.tileStyle === 'row' ? G : 0;
   return (
-    <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10, padding: `0 ${P}px ${G}px` }}>
+    <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10, padding: `0 ${P}px ${bottom}px` }}>
       {m.view.features.includes('searchField') ? <SearchField m={m} /> : null}
       {side ? null : <CategoryRow m={m} d={d} />}
       <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', gap: G }}>

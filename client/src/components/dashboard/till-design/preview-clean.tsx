@@ -205,7 +205,7 @@ function DishGrid({ m, d }: { m: PreviewModel; d: D }) {
     const w = (size.w - (cols - 1) * g) / cols;
     const compact = cols >= 4;
     const h = Math.round(w * 0.75) + (compact ? 18 : 22) + (compact ? 34 : 48) + 2;
-    const rows = Math.max(1, Math.floor((size.h + g) / (h + g)));
+    const rows = Math.max(1, Math.ceil((size.h + g) / (h + g)));
     body = (
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: g }}>
         {m.products.slice(0, cols * rows).map((p) => (
@@ -370,7 +370,7 @@ function QuickGrid({ m, d, padding }: { m: PreviewModel; d: D; padding: number }
     const w = (size.w - (cols - 1) * g) / cols;
     const base = Math.round(TILE_HEIGHT_DP[m.tileSize] * (DENSITY_FACTOR[m.view.density] ?? 1));
     const h = m.handheld ? base : Math.max(base, Math.min(Math.max(base, 280), Math.round(w * 0.9)));
-    const rows = Math.max(1, Math.floor((size.h + g) / (h + g)));
+    const rows = Math.max(1, Math.ceil((size.h + g) / (h + g)));
     body = (
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: g }}>
         {m.products.slice(0, cols * rows).map((p) => (
