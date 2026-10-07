@@ -71,6 +71,7 @@ const rec: Reconciliation = {
     numbering_conflicts: { match: 0, difference: 0, missing: 0, pending: 0 },
     z_completeness: { match: 0, difference: 0, missing: 0, pending: 0 },
     ingest_notes: { match: 0, difference: 0, missing: 0, pending: 0 },
+    cloud_card_refunds: { match: 0, difference: 0, missing: 0, pending: 0 },
   },
   totals: { match: 1, difference: 0, missing: 1, pending: 0 },
   rows: [
