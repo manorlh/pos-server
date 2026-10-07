@@ -1171,8 +1171,17 @@ for (const style of UI_STYLES) {
 describe('the kiosk screens never branch on the style\'s name (look only)', () => {
   it('preview-screens.tsx and kiosk-preview.tsx', () => {
     const dir = join(process.cwd(), 'src', 'components', 'dashboard', 'kiosks');
-    const branch = /uiStyle\s*(===|!==|==|!=)|case\s+'(ios|wolt|classic|minimal_dark)'|'(ios|wolt|classic|minimal_dark)'\s*(===|!==)/;
+    const branch = /uiStyle\s*(===|!==|==|!=)|case\s+'(ios|wolt|classic|minimal_dark|tech)'|'(ios|wolt|classic|minimal_dark|tech)'\s*(===|!==)/;
     const offenders = ['preview-screens.tsx', 'kiosk-preview.tsx'].filter((f) => branch.test(readFileSync(join(dir, f), 'utf8')));
+    // The shared layouts and the two kiosk apps draw the chrome from its tokens too.
+    const shared = join(process.cwd(), 'src', 'kiosk-shared');
+    const more = [
+      ...readdirSync(join(shared, 'layouts')).filter((f) => f.endsWith('.tsx')).map((f) => join(shared, 'layouts', f)),
+      join(shared, 'pay-method.tsx'),
+      join(process.cwd(), 'src', 'components', 'kiosk-web', 'web-kiosk-app.tsx'),
+      join(process.cwd(), '..', 'kiosk-desktop', 'src', 'renderer', 'kiosk', 'KioskApp.tsx'),
+    ].filter((f) => branch.test(readFileSync(f, 'utf8')));
+    assert.deepEqual(more, []);
     assert.deepEqual(offenders, []);
   });
 });
@@ -1953,5 +1962,124 @@ describe('"איך תרצו לשלם?" by its mode (payMethodAsk, stepModes.payMe
     assert.deepEqual(payMethodAsk(['cash_at_till', 'card'], ['cash_at_till', 'card'], 'optional'), { asks: true, optional: true, fallback: 'card' });
     assert.deepEqual(payMethodAsk(['cash_at_till', 'card'], ['cash_at_till', 'card'], 'required'), { asks: true, optional: false, fallback: 'card' });
     assert.deepEqual(payMethodAsk(['cash_at_till'], ['cash_at_till'], 'required'), { asks: true, optional: false, fallback: 'cash_at_till' });
+  });
+});
+
+import {
+  MONO_FIGURES_STACK,
+  NO_CHROME,
+  STATUS_LINE_DP,
+  STATUS_WARN,
+  TECH_ADD_GLOW_MS,
+  TECH_PRESS_SCALE,
+  TECH_SCAN_MS,
+  buttonRadius as buttonRadiusOf,
+  contrastRatio as contrastRatioOf,
+  contrastText as contrastTextOf,
+  kioskChrome,
+  kioskRestLook as kioskRestLookOf,
+  kioskServiceLook as kioskServiceLookOf,
+  kioskStatusLine,
+  luminance as luminanceOf,
+  resolveKioskConfig as resolveTech,
+  resolveThemeColors as colorsOf,
+  statusClock,
+  UI_STYLES as STYLES,
+  validateKioskConfig as validateTech,
+} from './kioskConfig';
+
+describe('"טכנולוגי" — the tech style (the server UI_PRESETS["tech"], the till KioskUiPresets / KioskChrome)', () => {
+  const tech = () => resolveTech({ theme: { uiStyle: 'tech' } });
+
+  it('is one pick: its theme, attract button and transitions, valid, the last of the styles', () => {
+    assert.equal(STYLES[STYLES.length - 1], 'tech');
+    const c = tech();
+    assert.deepEqual(validateTech(c), []);
+    assert.deepEqual(
+      [c.theme.mode, c.theme.font, c.theme.primaryColor, c.theme.accentColor, c.theme.backgroundColor, c.theme.surfaceColor, c.theme.textColor],
+      ['dark', 'heebo', '#22E1FF', '#22E1FF', '#0B0F14', '#111821', '#E6EDF3'],
+    );
+    assert.deepEqual([c.theme.cornerRadius, c.theme.cardStyle, c.theme.buttonShape, c.theme.categoryStyle, c.theme.typeWeight], [10, 'outlined', 'rounded', 'tabs', 'regular']);
+    assert.deepEqual(
+      [c.attract.cta.size, c.attract.cta.icon, c.attract.cta.animation, c.attract.cta.shadow, c.attract.cta.borderWidth],
+      ['l', 'arrow', 'none', false, 0],
+    );
+    assert.deepEqual(c.motion, { categorySwitch: 'fade', itemsEnter: 'cascade', screenChange: 'fade', sheet: 'scale', addToCart: 'fly', speed: 'normal' });
+    // The brand colour stays the business's: the style follows it.
+    assert.equal(resolveTech({ theme: { uiStyle: 'tech' } }, { theme: { primaryColor: '#3B82F6' } }).theme.primaryColor, '#3B82F6');
+  });
+
+  it('reads: dark words on the accent (on the till too — its luminance is above 0.55), text and muted text on the background', () => {
+    const c = tech();
+    const colors = colorsOf(c.theme);
+    assert.equal(colors.buttonText, '#111111');
+    assert.equal(contrastTextOf('#22E1FF'), '#111111');
+    assert.ok(luminanceOf('#22E1FF') > 0.55);
+    assert.ok(contrastRatioOf(colors.buttonText, colors.button) >= 4.5);
+    assert.ok(contrastRatioOf(colors.text, colors.background) >= 7);
+    assert.ok(contrastRatioOf(colors.mutedText, colors.background) >= 4.5);
+    assert.equal(buttonRadiusOf(c.theme), 6);
+  });
+
+  it("its chrome, the till's numbers: a 32 dp grid at 6 %, 1 dp outlines, the status line, the figures, the micro-motion", () => {
+    const c = tech();
+    const ch = kioskChrome(c.theme, colorsOf(c.theme), c.general);
+    assert.deepEqual(ch, {
+      backdrop: 'grid', backdropStep: 32, backdropInk: '#E6EDF30F', outline: '#2F363E',
+      statusBar: true, tabularFigures: true, monoFigures: true,
+      pressScale: TECH_PRESS_SCALE, addGlowMs: TECH_ADD_GLOW_MS, scanMs: TECH_SCAN_MS, accent: '#22E1FF',
+    });
+    assert.deepEqual([TECH_PRESS_SCALE, TECH_ADD_GLOW_MS, TECH_SCAN_MS, STATUS_LINE_DP, STATUS_WARN], [0.98, 150, 7000, 28, '#F5A524']);
+    assert.ok(MONO_FIGURES_STACK.endsWith('monospace'));
+    // Reduce motion: nothing moves (the scan line not even mounted); the look stays.
+    const still = kioskChrome(c.theme, colorsOf(c.theme), { reduceMotion: true });
+    assert.deepEqual([still.addGlowMs, still.scanMs, still.backdrop, still.statusBar], [0, 0, 'grid', true]);
+    // The accent follows the brand colour.
+    const blue = resolveTech({ theme: { uiStyle: 'tech', primaryColor: '#3b82f6' } });
+    assert.equal(kioskChrome(blue.theme, colorsOf(blue.theme), blue.general).accent, '#3B82F6');
+  });
+
+  it('every other style draws exactly as before: no chrome at all', () => {
+    for (const style of STYLES.filter((s) => s !== 'tech')) {
+      const c = resolveTech({ theme: { uiStyle: style } });
+      const { accent, ...rest } = kioskChrome(c.theme, colorsOf(c.theme), c.general);
+      assert.deepEqual(rest, NO_CHROME, style);
+      assert.equal(accent, c.theme.primaryColor.toUpperCase(), style);
+    }
+  });
+
+  it("its service choices and its closed screen (the till's KioskServiceLook / KioskRestLook)", () => {
+    const c = tech();
+    const colors = colorsOf(c.theme);
+    assert.deepEqual(kioskServiceLookOf(c.theme, colors), {
+      from: '#111821', to: '#111821', diagonal: false, ink: '#E6EDF3', badge: '#22E1FF1F', icon: '#22E1FF', border: '#22E1FF',
+    });
+    assert.deepEqual(kioskRestLookOf(c.theme, colors), {
+      from: '#0B0F14', to: '#0B0F14', diagonal: false, glow: null, ink: '#E6EDF3', title: '#22E1FF', spots: false,
+    });
+  });
+
+  it("the status line: the state of every screen, its tone, the order's number once it has one; the clock", () => {
+    const at = (screen: string, pickup?: string | null) => kioskStatusLine(screen, pickup);
+    assert.deepEqual(at('attract'), { key: 'ready', tone: 'ok', order: null });
+    for (const s of ['service', 'catalog', 'product', 'confirm', 'cart', 'tip', 'details']) assert.equal(at(s).key, 'ordering', s);
+    assert.equal(at('pay').key, 'paying');
+    assert.deepEqual(at('success', ' A-17 '), { key: 'done', tone: 'ok', order: 'A-17' });
+    assert.deepEqual(at('success', ''), { key: 'done', tone: 'ok', order: null });
+    const warn: Array<[string, string]> = [['paused', 'paused'], ['closed', 'closed'], ['no_payment', 'noPayment'], ['noPayment', 'noPayment'], ['offline', 'offline'], ['setup', 'setup']];
+    for (const [s, key] of warn) assert.deepEqual(at(s), { key, tone: 'warn', order: null }, s);
+    assert.equal(at('something-new').key, 'ready');
+    assert.equal(statusClock(new Date(2026, 9, 7, 9, 5)), '09:05');
+    assert.equal(statusClock(new Date(2026, 9, 7, 23, 59)), '23:59');
+  });
+
+  it("the status line's words are in the dashboard's messages (the kiosks read them from there)", () => {
+    const he = JSON.parse(readFileSync(join(process.cwd(), 'src', 'messages', 'he.json'), 'utf8'));
+    const words = he.kiosks.preview.status;
+    for (const key of ['ready', 'ordering', 'paying', 'done', 'paused', 'closed', 'noPayment', 'offline', 'setup', 'order']) {
+      assert.ok(typeof words[key] === 'string' && words[key].length > 0, key);
+    }
+    assert.equal(words.ready, 'מוכן לקבל הזמנה');
+    assert.equal(he.kiosks.appearance.styles.tech.name, 'טכנולוגי');
   });
 });

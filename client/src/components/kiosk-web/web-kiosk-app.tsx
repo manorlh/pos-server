@@ -55,6 +55,8 @@ import {
   ConfirmSheet,
   EntryWindow,
   Flyer,
+  KioskBackdrop,
+  KioskStatusBar,
   KioskSwap,
   MessageOverlay,
   PausedScreen,
@@ -63,6 +65,8 @@ import {
   ServiceScreen,
   TickerFrame,
   cardStyle,
+  chromeRoot,
+  statusLinePx,
   basketPricing,
   lineUnitAgorot,
   orderMealOf,
@@ -697,7 +701,10 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
         : undefined,
   };
 
-  const band = flow.screen === 'attract' ? tickerBandPx(cfg, 'attract', new Date(nowMs), FOOTER_PX) : { top: 0, bottom: 0 };
+  // The style's status line (tech) takes its height off the top of every screen.
+  const statusPx = statusLinePx({ cfg, c: colors });
+  const ticker = flow.screen === 'attract' ? tickerBandPx(cfg, 'attract', new Date(nowMs), FOOTER_PX) : { top: 0, bottom: 0 };
+  const band = { top: ticker.top + statusPx, bottom: ticker.bottom };
   const attractSize = { w: size.w, h: size.h - band.top - band.bottom };
   const attractBox = ctaBox(cfg.attract.cta, attractSize.w, attractSize.h);
   const ctaOnScreen = band.top > 0 ? { ...attractBox, y: attractBox.y + band.top } : attractBox;
@@ -885,6 +892,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     '--font-weight-black': String(weights.black),
   } as CSSProperties;
   const bgImage = cfg.theme.backgroundImage?.url;
+  const chrome = useMemo(() => chromeRoot({ cfg, c: colors }), [cfg, colors]);
   const onAttractService = serviceOnAttract(cfgIn);
   const placed = pay.placed;
 
@@ -892,8 +900,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     <div
       ref={screenRef}
       dir="rtl"
-      className={`k-root relative h-dvh w-screen overflow-hidden select-none ${cfg.general.reduceMotion ? 'k-reduce' : ''}`}
-      style={{ ...rootVars, background: colors.background, color: colors.text, fontFamily: m.font, touchAction: 'manipulation' }}
+      className={`k-root relative h-dvh w-screen overflow-hidden select-none ${cfg.general.reduceMotion ? 'k-reduce' : ''} ${chrome.className}`}
+      style={{ ...rootVars, ...chrome.style, background: colors.background, color: colors.text, fontFamily: m.font, touchAction: 'manipulation' }}
       onPointerDownCapture={(e) => {
         setLastTouch(Date.now());
         // "ניהול הקיוסק": a 2 s press in the physical top-right corner.
@@ -932,7 +940,17 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
           <div className="absolute inset-0" style={{ background: screen === 'attract' ? `${colors.background}66` : `${colors.background}D9` }} />
         </>
       ) : null}
-      <div className="relative h-full" style={resting ? undefined : { paddingBottom: FOOTER_PX + (cfg.layout?.reachToggle ? REACH_STRIP_PX : 0) }}>
+      {/* The style's backdrop pattern (tech): behind every screen. */}
+      <KioskBackdrop m={m} />
+      <div
+        className="relative h-full"
+        style={{
+          ...(resting ? {} : { paddingBottom: FOOTER_PX + (cfg.layout?.reachToggle ? REACH_STRIP_PX : 0) }),
+          ...(statusPx > 0 ? { paddingTop: statusPx } : {}),
+        }}
+      >
+        {/* "שורת מצב" (tech): the state, the order's number and the time, over the screens. */}
+        <KioskStatusBar m={m} screen={flow.screen} pickup={flow.screen === 'success' ? (cardPay?.pickupLabel ?? placed?.order.pickupLabel ?? null) : null} />
         <ReachFrame m={m} screen={screen === 'confirm' ? 'catalog' : screen} dish={product} category={activeCategory}>
           <KioskSwap
             id={screen === 'confirm' ? 'catalog' : screen}

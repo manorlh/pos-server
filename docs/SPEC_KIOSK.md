@@ -347,19 +347,19 @@ Hebrew, Alef, Varela Round, Secular One, Suez One, Frank Ruhl Libre. הקיוס�
 - `uiStyle` עצמו נלקח מהשכבה האחרונה שקבעה אותו. ברירת המחדל `wolt` היא המראה הקודם בדיוק.
 - `GET /kiosks/settings` מחזיר גם `inheritedLayers` — הערכים המפורשים של ההורים — כדי שהדשבורד יחשב את הבסיס לפי הסגנון שנבחר.
 - ערך שרק עוקב אחרי הסגנון לא נשמר כ-override. החלפת סגנון מעבירה איתה את הערכים שעקבו אחרי הסגנון הקודם.
-- הבורר — ארבעה כרטיסים עם תמונה ממוזערת — נמצא בראש מקטע "מראה".
+- הבורר — חמישה כרטיסים עם תמונה ממוזערת — נמצא בראש מקטע "מראה".
 
-| מפתח | iOS (`ios`) | וולט (`wolt`, ברירת מחדל) | קלאסי / מזון מהיר (`classic`) | מינימלי כהה / יוקרתי (`minimal_dark`) |
-|---|---|---|---|---|
-| mode · font | light · system | light · system | light · heebo | dark · assistant |
-| primary / accent | #0A84FF / #34C759 | #1F6FEB / #16A34A | #E11D48 / #F59E0B | #C9A227 / #C9A227 |
-| רקע / משטח / טקסט | #F2F2F7 / #FFFFFF / — | של המצב | #FFFFFF / #FFFFFF / #000000 | #0B0B0D / #16161A / #F5F5F4 |
-| cornerRadius · cardStyle · buttonShape | 16 · elevated · rounded | 20 · elevated · pill | 6 · outlined · square | 8 · flat · rounded |
-| gridDensity · imageRatio | comfortable · 4:3 | comfortable · 4:3 | large · 1:1 | comfortable · 4:3 |
-| categoryStyle · categoryLayout | tabs · side | chips · side | images · side | tabs · side |
-| typeScale · typeWeight | large · regular | normal · bold | xlarge · bold | normal · light |
-| cartStyle · animation · showDescriptions | bar · subtle · כן | bar · lively · כן | panel · subtle · לא | bar · subtle · כן |
-| כפתור הפתיחה (§13.8) | l, רוחב מלא, 22, bold, בלי צל, בלי אנימציה | l, רוחב מלא, 24, bold, צל, pulse | xl, רוחב מלא, 34, black, צל, עגלה בהתחלה, bounce | m, מרכז למטה, 22, regular, בלי צל, חץ בסוף, glow, מסגרת זהב 1 |
+| מפתח | iOS (`ios`) | וולט (`wolt`, ברירת מחדל) | קלאסי / מזון מהיר (`classic`) | מינימלי כהה / יוקרתי (`minimal_dark`) | טכנולוגי (`tech`) |
+|---|---|---|---|---|---|
+| mode · font | light · system | light · system | light · heebo | dark · assistant | dark · heebo |
+| primary / accent | #0A84FF / #34C759 | #1F6FEB / #16A34A | #E11D48 / #F59E0B | #C9A227 / #C9A227 | #22E1FF / #22E1FF |
+| רקע / משטח / טקסט | #F2F2F7 / #FFFFFF / — | של המצב | #FFFFFF / #FFFFFF / #000000 | #0B0B0D / #16161A / #F5F5F4 | #0B0F14 / #111821 / #E6EDF3 |
+| cornerRadius · cardStyle · buttonShape | 16 · elevated · rounded | 20 · elevated · pill | 6 · outlined · square | 8 · flat · rounded | 10 · outlined · rounded |
+| gridDensity · imageRatio | comfortable · 4:3 | comfortable · 4:3 | large · 1:1 | comfortable · 4:3 | comfortable · 4:3 |
+| categoryStyle · categoryLayout | tabs · side | chips · side | images · side | tabs · side | tabs · side |
+| typeScale · typeWeight | large · regular | normal · bold | xlarge · bold | normal · light | normal · regular |
+| cartStyle · animation · showDescriptions | bar · subtle · כן | bar · lively · כן | panel · subtle · לא | bar · subtle · כן | bar · subtle · כן |
+| כפתור הפתיחה (§13.8) | l, רוחב מלא, 22, bold, בלי צל, בלי אנימציה | l, רוחב מלא, 24, bold, צל, pulse | xl, רוחב מלא, 34, black, צל, עגלה בהתחלה, bounce | m, מרכז למטה, 22, regular, בלי צל, חץ בסוף, glow, מסגרת זהב 1 | l, מרכז למטה, 22, bold, בלי צל, חץ בסוף, בלי אנימציה |
 
 מפתחות חדשים:
 - `typeScale`: normal ×1, large ×1.12, xlarge ×1.25.
@@ -369,6 +369,15 @@ Hebrew, Alef, Varela Round, Secular One, Suez One, Frank Ruhl Libre. הקיוס�
   - **החלטה:** הפאנל מיועד למסך לרוחב. בטאבלט לאורך הוא היה משאיר עמודת מנות אחת, ולכן גם בסגנון "קלאסי" טאבלט לאורך מקבל את הפס.
   - **בתצוגה המקדימה:** שתי המסגרות לאורך, ולכן גם הן מציגות את הפס, כמו הקופה. כשנבחר `panel` מוצגת הערה, ובעורך יש הסבר.
 - `animation`: subtle / lively (§13.4).
+
+**"טכנולוגי" (`tech`) — המעטפת (chrome).** כהה ומדויק: אותו מראה בקיוסק אנדרואיד (Compose), בקיוסק Windows ובקיוסק בדפדפן. המעטפת נגזרת מהסגנון בלבד (`kioskChrome` ב-`client/src/lib/kioskConfig.ts`, `domain/KioskChrome.kt` בקופה — אותם מספרים, נבדקים בשני הצדדים); שאר הסגנונות לא מציירים ממנה כלום. המסכים עצמם לעולם לא בודקים את שם הסגנון — רק את הערכים.
+- **רקע:** רשת קווים של 1px כל 32dp, בצבע הטקסט ב-6% (`#E6EDF30F`), ממורכזת; סטטית, מצוירת פעם אחת מאחורי כל מסך (גם מסך הסגירה, "התשלום אינו זמין"). מסך הפתיחה בלי פלייליסט מראה את הרשת במקום מעבר הצבע.
+- **קווי מתאר במקום צל:** כרטיסים ופאנלים בקו 1dp (`#2F363E` — המשטח לעבר הטקסט ב-14%), גם כש-`cardStyle` הוא elevated; ראשי תיבות של קטגוריה ולוגו חלופי — במסגרת ובצבע המבטא, לא כגוש צבע.
+- **צבע מבטא אחד:** `primaryColor` (ניתן לשינוי כרגיל). #22E1FF נבחר כך שגם הקופה (סף בהירות 0.55) וגם הווב יכתבו עליו טקסט כהה.
+- **שורת מצב** (28dp × typeScale) בראש כל מסך: נקודה + מצב ("מוכן לקבל הזמנה", "הזמנה בתהליך", "ממתין לתשלום", "ההזמנה התקבלה", "מושהה זמנית", "סגור כעת", "התשלום אינו זמין", "אין חיבור לרשת"), מספר ההזמנה כשיש (אחרי תשלום) והשעה. במצב שהקיוסק לא מקבל הזמנות — נקודה כתומה (`#F5A524`). המסכים מתחתיה מקבלים פחות גובה (גם כפתור הפתיחה מחושב מתחתיה).
+- **ספרות:** מחירים, סכומים וכמויות בספרות טבלאיות (`tnum`); מספר ההזמנה והספרות בשורת המצב בגופן מונוספייס.
+- **מיקרו-תנועות זולות:** לחיצה מקטינה ל-0.98; זוהר מבטא של 150ms על הסל כשמנה נוחתת; קו סריקה דק שעובר על מסך הפתיחה כל 7 שניות (transform בלבד, בשכבה, בלי layout). עם "הפחתת תנועה" הזוהר וקו הסריקה לא מצוירים בכלל.
+- **בלי blur** (RK3568): "זכוכית" = משטח חצי-טון אטום (`#111821` על `#0B0F14`).
 
 ### 13.6 מסופון חיצוני בלבד (`domain/KioskTerminal.kt`, `data/repo/KioskTerminalMonitor.kt`)
 - **סוגים מותרים:** Nayax/Agamento ב-LAN (צריך כתובת), או Z-Credit PinPad (צריך הגדרות מלאות).

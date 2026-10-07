@@ -28,6 +28,7 @@ import {
   messagePlacement,
   addMs,
   motionSpec,
+  pickupLabel,
   resolveThemeColors,
   stepMode,
   tickerBandPx,
@@ -50,6 +51,8 @@ import {
   CartScreen,
   ConfirmSheet,
   Flyer,
+  KioskBackdrop,
+  KioskStatusBar,
   MessageOverlay,
   UpsellWindow,
   PausedScreen,
@@ -58,6 +61,8 @@ import {
   ServiceScreen,
   SuccessScreen,
   TipScreen,
+  chromeRoot,
+  statusLinePx,
   type Flight,
   type PausedVariant,
   type PCategory,
@@ -425,7 +430,10 @@ export function KioskPreview({
   };
 
   // "כיתוב רץ" on the attract screen: its start button and the rest are laid out on what the strip leaves.
-  const band = screen === 'attract' ? tickerBandPx(config, 'attract', new Date(nowMs), PREVIEW_FOOTER_PX) : { top: 0, bottom: 0 };
+  // The style's status line (tech) takes its height off the top of every screen.
+  const statusPx = statusLinePx({ cfg: config, c: colors });
+  const ticker = screen === 'attract' ? tickerBandPx(config, 'attract', new Date(nowMs), PREVIEW_FOOTER_PX) : { top: 0, bottom: 0 };
+  const band = { top: ticker.top + statusPx, bottom: ticker.bottom };
   const attractH = FRAME_SIZE[frame].h - band.top - band.bottom;
   const attractBox = ctaBox(config.attract.cta, FRAME_SIZE[frame].w, attractH);
   /** The start button's box over the whole frame (below a strip at the top). */
@@ -591,6 +599,7 @@ export function KioskPreview({
   const messageScreen = (screen === 'product' ? 'catalog' : screen) as MessageScreen;
   const overlay = messagePlacement(messageScreen) === 'overlay-center';
   const weights = typeWeights(config.theme.typeWeight);
+  const chrome = chromeRoot(model);
   const rootVars = {
     '--k-scale': String(typeScaleFactor(config.theme.typeScale)),
     '--k-w-body': String(weights.body),
@@ -670,9 +679,10 @@ export function KioskPreview({
           <div
             ref={screenRef}
             dir={previewLang === 'he' || previewLang === 'ar' ? 'rtl' : 'ltr'}
-            className={cn('k-root relative overflow-hidden', config.general.reduceMotion && 'k-reduce')}
+            className={cn('k-root relative overflow-hidden', config.general.reduceMotion && 'k-reduce', chrome.className)}
             style={{
               ...rootVars,
+              ...chrome.style,
               width: size.w,
               height: size.h,
               borderRadius: frame === 'phone' ? 34 : 18,
@@ -691,7 +701,16 @@ export function KioskPreview({
                 />
               </>
             ) : null}
-            <div className={cn('relative h-full', frame === 'phone' && 'pt-7')}>
+            {/* The style's backdrop pattern (tech): behind every screen. */}
+            <KioskBackdrop m={model} />
+            <div className={cn('relative h-full', frame === 'phone' && 'pt-7')} style={statusPx > 0 ? { paddingTop: (frame === 'phone' ? 28 : 0) + statusPx } : undefined}>
+              {/* "שורת מצב" (tech): the state, the order's number and the time, over the screens. */}
+              <KioskStatusBar
+                m={model}
+                screen={screen === 'paused' ? pausedVariant : screen}
+                pickup={screen === 'success' ? pickupLabel(config.pickup.prefix, Number.isFinite(config.pickup.start) ? config.pickup.start : 1) : null}
+                top={frame === 'phone' ? 28 : 0}
+              />
               {/* "מעבר בין מסכים": the screen swaps with the chosen transition (the product sheet belongs to the catalog). */}
               {/* "נגיש" (layout.reach): the screens in the bottom half under a display (kiosk-shared/layouts). */}
               <ReachFrame m={model} screen={screen === 'product' ? 'catalog' : screen} dish={screen === 'product' ? product : null} category={activeCategory}>
