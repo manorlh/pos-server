@@ -199,6 +199,10 @@ class TransactionItemIn(BaseModel):
     promotion_discount: Optional[Decimal] = Field(None, alias="promotionDiscount")
     #: The promotion that took it. Optional; an unreadable id is dropped, not refused.
     promotion_id: Optional[str] = Field(None, alias="promotionId")
+    #: The line's share of what discount vouchers took off (docs/SPEC_VOUCHER_PRODUCTION.md
+    #: §7), an amount; inside `documentDiscount` like `promotionDiscount`, never in
+    #: `totalPrice`, never a tender. Optional.
+    voucher_discount: Optional[Decimal] = Field(None, alias="voucherDiscount")
     #: What the dish was ordered with (docs/SPEC_MENU_MODIFIERS.md §3.8): modifiers, notes,
     #: allergies, seat, course, a meal's components. Optional; never checked against the
     #: menu — anything that is not an object, or too big, is dropped and the line kept.
@@ -251,6 +255,46 @@ class TransactionPromotionIn(BaseModel):
 
     class Config:
         populate_by_name = True
+
+
+class TransactionVoucherDiscountIn(BaseModel):
+    """
+    One discount voucher on a sale ("שובר #12 — פסטיבל הקיץ"): what it took off (inside
+    `documentDiscount`), and the reservation it confirms — the document reaching the cloud
+    confirms it even when the till's own confirm call never landed. Never a reason to
+    refuse the document: what cannot be read or linked is dropped with a warning.
+    """
+
+    reservation_id: Optional[str] = Field(None, alias="reservationId")
+    voucher_id: Optional[str] = Field(None, alias="voucherId")
+    batch_id: Optional[str] = Field(None, alias="batchId")
+    serial: Optional[int] = None
+    batch_name: Optional[str] = Field(None, alias="batchName")
+    kind: Optional[str] = None
+    uses: int = Field(1, ge=1, le=1000)
+    amount: Decimal = Decimal("0")
+    #: [{"itemId", "amount"}] — the lines it took its discount from.
+    lines: Optional[List[Any]] = None
+
+    class Config:
+        populate_by_name = True
+
+    @field_validator("batch_name", mode="before")
+    @classmethod
+    def _cut_name(cls, value):
+        return cut_text(value, 200)
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _cut_kind(cls, value):
+        return cut_text(value, 16)
+
+    @field_validator("lines", mode="before")
+    @classmethod
+    def _lines(cls, value):
+        if not isinstance(value, list):
+            return None
+        return [v for v in value if isinstance(v, dict)][:500]
 
 
 class TransactionIn(BaseModel):
@@ -349,6 +393,8 @@ class TransactionIn(BaseModel):
     #: The promotions ("מבצעים") the till applied to this sale. Optional; an older
     #: till sends none.
     promotions: List[TransactionPromotionIn] = Field(default_factory=list)
+    #: The discount vouchers on this sale (docs/SPEC_VOUCHER_PRODUCTION.md §7). Optional.
+    voucher_discounts: List[TransactionVoucherDiscountIn] = Field(default_factory=list, alias="voucherDiscounts")
 
     class Config:
         populate_by_name = True

@@ -395,6 +395,8 @@ def machine_section(machine: POSMachine, shifts: Sequence[Shift], totals: Docume
         "discountsTotal": _money(totals.discounts_total),
         "lineDiscountsTotal": _money(totals.line_discounts_total),
         "promotionDiscountsTotal": _money(totals.promotion_discounts_total),
+        # Discount vouchers: only when there were any (a Z without them reads as before).
+        **({"voucherDiscountsTotal": _money(totals.voucher_discounts_total)} if totals.voucher_discounts_total else {}),
         "vatTotal": _money(totals.vat_total),
         "vatMissingCount": totals.vat_missing_count,
         "totalCash": _money(totals.total_cash),
@@ -644,6 +646,10 @@ def build_z(
         z.header = {**z.header, "lineDiscountsTotal": _money(overall.line_discounts_total)}
         # Promotion discounts ("הנחות מבצעים") the same way: inside `discounts_total`.
         z.header = {**z.header, "promotionDiscountsTotal": _money(overall.promotion_discounts_total)}
+        # Discount vouchers ("שוברי הנחה") likewise: a discount on the documents, never a
+        # tender — on the header only when there were any.
+        if overall.voucher_discounts_total:
+            z.header = {**z.header, "voucherDiscountsTotal": _money(overall.voucher_discounts_total)}
         # Per waiter ("פירוט לפי מלצר"): the same documents, by whose table or sale they were.
         z.header = {**z.header, "byWaiter": waiter_breakdown(db, [s.id for s in all_shifts], shop_id)}
         # What this Z includes, in words (docs/SPEC_INDEPENDENT_TILL.md §7).

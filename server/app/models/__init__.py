@@ -65,6 +65,8 @@ from app.models.prepaid_voucher import (
     PrepaidVoucherBatchItem,
     PrepaidVoucherEvent,
     PrepaidVoucherRedemption,
+    PrepaidVoucherReservation,
+    TransactionVoucherDiscount,
 )
 from app.models.promotion import Promotion, TransactionPromotion
 from app.models.tables import DiningTable, TableCancelReason, TableEvent, TableOrder, TableReservation, TableType, TableZone
@@ -187,7 +189,7 @@ __all__ = [
     "AuditException", "ExceptionRuleValue", "TillEvent",
     "FailedPaymentAttempt",
     "PrepaidVoucherBatch", "PrepaidVoucherBatchItem", "PrepaidVoucher", "PrepaidVoucherRedemption",
-    "PrepaidVoucherEvent",
+    "PrepaidVoucherEvent", "PrepaidVoucherReservation", "TransactionVoucherDiscount",
     "Promotion", "TransactionPromotion",
     "TableZone", "DiningTable", "TableOrder", "TableEvent", "TableCancelReason", "TableReservation", "TableType", "PlatformSetting",
     "KitchenPrinter", "KitchenPrinterRoute", "KitchenPrintJob",

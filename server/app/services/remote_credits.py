@@ -164,13 +164,17 @@ def _shekels(agorot: int) -> Decimal:
 def collected_per_line(items: Sequence[TransactionItem], document_discount: Any) -> Dict[uuid.UUID, int]:
     """
     What the customer paid for each line, in agorot: the line's gross less its own
-    discounts (the cashier's and its promotions'), less its share of the basket discount
-    — `document_discount` less the lines' own — shared by value after the lines' own,
-    the agorot that do not divide going to the largest remainders.
+    discounts (the cashier's, its promotions' and its discount vouchers'), less its share
+    of the basket discount — `document_discount` less the lines' own — shared by value
+    after the lines' own, the agorot that do not divide going to the largest remainders.
     """
 
     def own(item) -> int:
-        return abs(_agorot(item.discount)) + abs(_agorot(getattr(item, "promotion_discount", None)))
+        return (
+            abs(_agorot(item.discount))
+            + abs(_agorot(getattr(item, "promotion_discount", None)))
+            + abs(_agorot(getattr(item, "voucher_discount", None)))
+        )
 
     after_line: Dict[uuid.UUID, int] = {}
     for item in items:
@@ -905,6 +909,8 @@ def _original_payload(db: Session, req: RemoteCreditRequest) -> Optional[dict]:
                 "discount": _money(s.item.discount),
                 "discountType": s.item.discount_type,
                 "promotionDiscount": _money(getattr(s.item, "promotion_discount", None)),
+                # The line's share of the discount vouchers (docs/SPEC_VOUCHER_PRODUCTION.md §7).
+                "voucherDiscount": _money(getattr(s.item, "voucher_discount", None)),
                 # Credited by credit notes already issued (any till) — not by pending requests.
                 "credited": float(s.credited),
             }

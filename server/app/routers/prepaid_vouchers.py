@@ -28,6 +28,10 @@ Till (machine JWT only, online):
 POST   /sync/{machine_id}/prepaid-vouchers/lookup     → the voucher as this till sees it
 POST   /sync/{machine_id}/prepaid-vouchers/redeem     → take goods off it; atomic, idempotent
                                                         by `clientRequestId`
+POST   /sync/{machine_id}/prepaid-vouchers/reserve    → hold a discount voucher for an open sale
+                                                        (idempotent / renewed by `clientRequestId`)
+POST   /sync/{machine_id}/prepaid-vouchers/reservations/{id}/confirm → the sale was written
+POST   /sync/{machine_id}/prepaid-vouchers/reservations/{id}/release → give it back
 """
 from __future__ import annotations
 
@@ -49,10 +53,12 @@ from app.schemas.prepaid_voucher import (
     PrepaidVoucherBatchCreate,
     PrepaidVoucherBatchUpdate,
     PrepaidVoucherCancelIn,
+    PrepaidVoucherConfirmIn,
     PrepaidVoucherGroupsIn,
     PrepaidVoucherLookupIn,
     PrepaidVoucherNoteIn,
     PrepaidVoucherRedeemIn,
+    PrepaidVoucherReserveIn,
 )
 from app.services import prepaid_vouchers as PV
 from app.services import prepaid_voucher_reports as PVR
@@ -396,9 +402,12 @@ def lookup_prepaid_voucher(
     """
     The voucher as this till sees it: its goods with what is left, the till's own
     product ids, and whether it can be redeemed here now (`redeemable`, else `reason`).
-    404 `prepaid_voucher_not_found` for an unknown code or another tenant's.
+    A discount voucher: its kind, terms (`benefit`) and uses. A client that does not list
+    the kind in `supportedKinds` gets it as not redeemable (`prepaid_voucher_kind_unsupported`,
+    with a Hebrew `message`). 404 `prepaid_voucher_not_found` for an unknown code or
+    another tenant's.
     """
-    return PV.lookup(db, machine, body.code)
+    return PV.lookup(db, machine, body.code, body.supported_kinds)
 
 
 @router.post("/sync/{machine_id}/prepaid-vouchers/redeem", dependencies=FISCAL_MACHINE_TOKEN)
@@ -452,3 +461,59 @@ def attach_prepaid_redemption_transaction(
     PV.attach_transaction(db, machine, redemption_id, tx)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/sync/{machine_id}/prepaid-vouchers/reserve", dependencies=FISCAL_MACHINE_TOKEN)
+def reserve_prepaid_voucher(
+    machine_id: str,
+    body: PrepaidVoucherReserveIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    Hold a discount voucher for this till's open sale (`saleRef`), checked against the
+    basket sent (`lines`, agorot) under the shared rules: the discount it takes
+    (`amountAgorot`, per line `shares`), the lines it leaves out and why (`skipped`), the
+    lines whose promotion gives way (`dropPromotion`), the uses granted. Held until
+    `expiresAt`; the same `clientRequestId` renews it. 409 with the reason when refused.
+    """
+    out = PV.reserve(db, machine, body)
+    db.commit()
+    return out
+
+
+@router.post(
+    "/sync/{machine_id}/prepaid-vouchers/reservations/{reservation_id}/confirm",
+    dependencies=FISCAL_MACHINE_TOKEN,
+)
+def confirm_prepaid_reservation(
+    machine_id: str,
+    reservation_id: str,
+    body: PrepaidVoucherConfirmIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    The sale was written (`transactionId`): the voucher's uses are taken. Idempotent; the
+    document itself confirms it too when it reaches the cloud (the till's outbox). A breach
+    found by the re-check is recorded in `flags`, never refused.
+    """
+    out = PV.confirm(db, machine, reservation_id, body.transaction_id, body.amount_agorot, body.uses)
+    db.commit()
+    return out
+
+
+@router.post(
+    "/sync/{machine_id}/prepaid-vouchers/reservations/{reservation_id}/release",
+    dependencies=FISCAL_MACHINE_TOKEN,
+)
+def release_prepaid_reservation(
+    machine_id: str,
+    reservation_id: str,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """Give a held voucher back (removed, or the sale abandoned). Idempotent."""
+    out = PV.release(db, machine, reservation_id)
+    db.commit()
+    return out

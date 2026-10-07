@@ -335,7 +335,7 @@ def _top_items(db: Session, ctx, ids, start, end) -> List[Dict[str, Any]]:
         .subquery()
     )
     sign = case((tx.c.is_refund.is_(True), -1), else_=1)
-    discount = func.coalesce(TransactionItem.discount, 0) + func.coalesce(TransactionItem.promotion_discount, 0)
+    discount = func.coalesce(TransactionItem.discount, 0) + func.coalesce(TransactionItem.promotion_discount, 0) + func.coalesce(TransactionItem.voucher_discount, 0)
     rows = (
         db.query(
             TransactionItem.product_id.label("pid"),

@@ -460,6 +460,8 @@ def _build_cart_from_items(
                 "lineDiscount": _decimal_to_float(it.line_discount),
                 # The promotions' share of the line ("מבצעים"): a discount of the line's own.
                 "promotionDiscount": _decimal_to_float(getattr(it, "promotion_discount", None)),
+                # Discount vouchers' share of the line: a discount of the line's own too.
+                "voucherDiscount": _decimal_to_float(getattr(it, "voucher_discount", None)),
                 "transactionType": it.transaction_type or 2,
                 # The receipt this credit-note line returns (D110 1256/1257), when the
                 # line names its original and the cloud holds it.
@@ -479,6 +481,7 @@ def _build_cart_from_items(
         own = sum(
             abs(_decimal_to_float(it.discount) or _decimal_to_float(it.line_discount))
             + abs(_decimal_to_float(getattr(it, "promotion_discount", None)))
+            + abs(_decimal_to_float(getattr(it, "voucher_discount", None)))
             for it in items
         )
         basket = round(max(discount - own, 0.0), 2)

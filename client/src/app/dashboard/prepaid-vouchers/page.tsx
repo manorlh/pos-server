@@ -51,6 +51,18 @@ import {
   type PrepaidVoucherStatus,
 } from '@/lib/prepaidVouchersApi';
 import { groupPlan, groupSizeOf, serialRange, type GroupMode } from '@/lib/prepaidVoucherGroups';
+import { discountDraftErrors, isDiscountKind, type PrepaidVoucherKind } from '@/lib/prepaidVoucherBenefit';
+import {
+  BatchRulesCard,
+  DEFAULT_RULES,
+  DiscountTermsFields,
+  EMPTY_DISCOUNT_TERMS,
+  KindPicker,
+  RulesFields,
+  useBatchTermsText,
+  type DiscountTermsState,
+  type RulesState,
+} from '@/components/dashboard/prepaid-vouchers/voucher-terms';
 import { PrepaidBatchGroupsView } from '@/components/dashboard/prepaid-vouchers/batch-groups';
 import { cn } from '@/lib/utils';
 import { formatDate, formatDateTime, isoDate } from '@/lib/format';
@@ -117,6 +129,7 @@ function useErrorText() {
 
 function useCardLabels(): VoucherLabels {
   const t = useTranslations('prepaidVouchers.card');
+  const tk = useTranslations('prepaidVouchers.kinds');
   return useMemo(
     () => ({
       serial: (n: string) => t('serial', { n }),
@@ -126,8 +139,10 @@ function useCardLabels(): VoucherLabels {
       validUntil: (until: string) => t('validUntil', { until }),
       validFrom: (since: string) => t('validFrom', { since }),
       validBetween: (since: string, until: string) => t('validBetween', { since, until }),
+      usesOne: tk('usesOne'),
+      usesMany: (n: number) => tk('usesMany', { n }),
     }),
-    [t],
+    [t, tk],
   );
 }
 
@@ -242,6 +257,23 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   const [barcodeType, setBarcodeType] = useState<PrepaidBarcodeType>('qr');
   const [customerName, setCustomerName] = useState('');
   const [orderRef, setOrderRef] = useState('');
+  // Kind and terms (docs/SPEC_VOUCHER_PRODUCTION.md §7).
+  const [kind, setKind] = useState<PrepaidVoucherKind>('items');
+  const [terms, setTerms] = useState<DiscountTermsState>(EMPTY_DISCOUNT_TERMS);
+  const [rules, setRules] = useState<RulesState>(DEFAULT_RULES);
+  const discount = isDiscountKind(kind);
+  const termErrors = discountDraftErrors({
+    kind,
+    discountType: terms.discountType,
+    value: terms.value,
+    minPurchase: terms.minPurchase,
+    maxDiscount: terms.maxDiscount,
+    targetCount: terms.productIds.length + terms.categoryIds.length,
+    maxUnits: terms.maxUnits,
+    usesPerVoucher: rules.usesPerVoucher,
+    maxUsesPerSale: rules.maxUsesPerSale,
+    maxUsesPerDay: rules.maxUsesPerDay,
+  });
   const planText = useGroupPlanText();
 
   useEffect(() => {
@@ -278,14 +310,18 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
     setBarcodeType('qr');
     setCustomerName('');
     setOrderRef('');
+    setKind('items');
+    setTerms(EMPTY_DISCOUNT_TERMS);
+    setRules(DEFAULT_RULES);
   };
 
   const n = parseInt(count, 10);
   const groupSize = groupSizeOf(groupMode, groupCustom);
   const groupOk = groupMode === 'none' || groupSize !== null;
   const plan = groupOk ? planText(n, groupSize) : null;
-  const canCreate = name.trim() && companyId && items.length > 0 && n >= 1 && n <= 5000 && groupOk &&
-    (!validFrom || !validUntil || validFrom <= validUntil);
+  const canCreate = name.trim() && companyId && (discount ? termErrors.length === 0 : items.length > 0) &&
+    n >= 1 && n <= 5000 && groupOk && (!validFrom || !validUntil || validFrom <= validUntil);
+  const decimal = (v: string) => (v.trim() ? Number(v) : null);
 
   const create = useMutation({
     mutationFn: () =>
@@ -298,14 +334,30 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
         freeText: freeText.trim() || null,
         validFrom: dayBoundIso(validFrom, false),
         validUntil: dayBoundIso(validUntil, true),
-        splitAllowed,
-        items: items.map((i) => ({ productId: i.product.id, quantity: i.quantity })),
+        splitAllowed: discount ? false : splitAllowed,
+        items: discount ? [] : items.map((i) => ({ productId: i.product.id, quantity: i.quantity })),
         count: n,
         groupSize,
         showCode,
         barcodeType,
         customerName: customerName.trim() || null,
         orderRef: orderRef.trim() || null,
+        kind,
+        stacking: rules.stacking,
+        ...(discount
+          ? {
+              discountType: terms.discountType,
+              discountValue: decimal(terms.value),
+              minPurchase: kind === 'order_discount' ? decimal(terms.minPurchase) : null,
+              maxDiscount: kind === 'order_discount' && terms.discountType === 'percent' ? decimal(terms.maxDiscount) : null,
+              maxUnits: kind === 'item_discount' ? parseInt(terms.maxUnits, 10) || 1 : null,
+              targets: kind === 'item_discount' ? { productIds: terms.productIds, categoryIds: terms.categoryIds } : null,
+              promotionPolicy: rules.promotionPolicy,
+              usesPerVoucher: parseInt(rules.usesPerVoucher, 10) || 1,
+              maxUsesPerSale: parseInt(rules.maxUsesPerSale, 10) || 1,
+              maxUsesPerDay: rules.maxUsesPerDay.trim() ? parseInt(rules.maxUsesPerDay, 10) : null,
+            }
+          : {}),
       }),
     onSuccess: (b) => {
       toast.success(t('created', { count: b.stats.total }));
@@ -353,75 +405,86 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label>{t('items')}</Label>
-            {items.length ? (
-              <ul className="divide-y rounded-lg border">
-                {items.map((i) => (
-                  <li key={i.product.id} className="flex items-center gap-2 px-3 py-2 text-sm">
-                    <span className="min-w-0 flex-1 truncate">{i.product.name}</span>
-                    <Button type="button" size="icon-sm" variant="outline" aria-label={t('less')} onClick={() => setQty(i.product.id, i.quantity - 1)}>
-                      <Minus className="h-3.5 w-3.5" />
-                    </Button>
-                    <span className="w-6 text-center tabular-nums">{i.quantity}</span>
-                    <Button type="button" size="icon-sm" variant="outline" aria-label={t('more')} onClick={() => setQty(i.product.id, i.quantity + 1)}>
-                      <Plus className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button type="button" size="icon-sm" variant="ghost" aria-label={t('remove')}
-                      onClick={() => setItems((cur) => cur.filter((x) => x.product.id !== i.product.id))}>
-                      <X className="h-3.5 w-3.5" />
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-xs text-muted-foreground">{t('itemsEmpty')}</p>
-            )}
-            <div className="relative">
-              <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground ltr:left-2.5 rtl:right-2.5" aria-hidden />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('searchProducts')} className="ps-8" />
-            </div>
-            <div className="max-h-40 overflow-y-auto rounded-lg border">
-              {products.isPending ? (
-                <p className="p-2 text-xs text-muted-foreground">{tc('loading')}</p>
-              ) : (products.data ?? []).length === 0 ? (
-                <p className="p-2 text-xs text-muted-foreground">{t('noProducts')}</p>
-              ) : (
-                <ul>
-                  {products.data!.map((p) => {
-                    const added = items.some((i) => i.product.id === p.id);
-                    return (
-                      <li key={p.id}>
-                        <button
-                          type="button"
-                          disabled={added}
-                          onClick={() => addItem(p)}
-                          className="flex w-full items-center gap-2 px-3 py-1.5 text-start text-sm hover:bg-muted disabled:opacity-50"
-                        >
-                          <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                          <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                          <span className="text-xs tabular-nums text-muted-foreground">₪{p.price.toFixed(2)}</span>
-                        </button>
-                      </li>
-                    );
-                  })}
+          <KindPicker value={kind} onChange={setKind} />
+          {discount ? <DiscountTermsFields kind={kind} value={terms} onChange={setTerms} errors={termErrors} /> : null}
+
+          {!discount ? (
+            <div className="space-y-2">
+              <Label>{t('items')}</Label>
+              {items.length ? (
+                <ul className="divide-y rounded-lg border">
+                  {items.map((i) => (
+                    <li key={i.product.id} className="flex items-center gap-2 px-3 py-2 text-sm">
+                      <span className="min-w-0 flex-1 truncate">{i.product.name}</span>
+                      <Button type="button" size="icon-sm" variant="outline" aria-label={t('less')} onClick={() => setQty(i.product.id, i.quantity - 1)}>
+                        <Minus className="h-3.5 w-3.5" />
+                      </Button>
+                      <span className="w-6 text-center tabular-nums">{i.quantity}</span>
+                      <Button type="button" size="icon-sm" variant="outline" aria-label={t('more')} onClick={() => setQty(i.product.id, i.quantity + 1)}>
+                        <Plus className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button type="button" size="icon-sm" variant="ghost" aria-label={t('remove')}
+                        onClick={() => setItems((cur) => cur.filter((x) => x.product.id !== i.product.id))}>
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </li>
+                  ))}
                 </ul>
+              ) : (
+                <p className="text-xs text-muted-foreground">{t('itemsEmpty')}</p>
               )}
+              <div className="relative">
+                <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground ltr:left-2.5 rtl:right-2.5" aria-hidden />
+                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('searchProducts')} className="ps-8" />
+              </div>
+              <div className="max-h-40 overflow-y-auto rounded-lg border">
+                {products.isPending ? (
+                  <p className="p-2 text-xs text-muted-foreground">{tc('loading')}</p>
+                ) : (products.data ?? []).length === 0 ? (
+                  <p className="p-2 text-xs text-muted-foreground">{t('noProducts')}</p>
+                ) : (
+                  <ul>
+                    {products.data!.map((p) => {
+                      const added = items.some((i) => i.product.id === p.id);
+                      return (
+                        <li key={p.id}>
+                          <button
+                            type="button"
+                            disabled={added}
+                            onClick={() => addItem(p)}
+                            className="flex w-full items-center gap-2 px-3 py-1.5 text-start text-sm hover:bg-muted disabled:opacity-50"
+                          >
+                            <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                            <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                            <span className="text-xs tabular-nums text-muted-foreground">₪{p.price.toFixed(2)}</span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
             </div>
-          </div>
+          ) : null}
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <Label htmlFor="pv-count">{t('count')}</Label>
               <Input id="pv-count" type="number" min={1} max={5000} value={count} onChange={(e) => setCount(e.target.value)} />
             </div>
-            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{splitAllowed ? t('splitOn') : t('splitOff')}</p>
-                <p className="text-xs text-muted-foreground">{splitAllowed ? t('splitOnHint') : t('splitOffHint')}</p>
+            {!discount ? (
+              <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{splitAllowed ? t('splitOn') : t('splitOff')}</p>
+                  <p className="text-xs text-muted-foreground">{splitAllowed ? t('splitOnHint') : t('splitOffHint')}</p>
+                </div>
+                <Switch checked={splitAllowed} onCheckedChange={(v) => setSplitAllowed(!!v)} aria-label={t('splitLabel')} />
               </div>
-              <Switch checked={splitAllowed} onCheckedChange={(v) => setSplitAllowed(!!v)} aria-label={t('splitLabel')} />
-            </div>
+            ) : null}
+          </div>
+
+          <div className="rounded-lg border p-3">
+            <RulesFields kind={kind} value={rules} onChange={setRules} />
           </div>
 
           <div className="space-y-2 rounded-lg border p-3">
@@ -565,8 +628,15 @@ function StatsBar({ b }: { b: PrepaidVoucherBatch }) {
   );
 }
 
+/** What a batch is worth, in a line: its goods, or what its discount gives. */
+function contentsText(b: PrepaidVoucherBatch, benefit: string | null): string {
+  return benefit ?? b.items.map((i) => `${i.quantity}× ${i.name}`).join(' + ');
+}
+
 function BatchCard({ b, onOpen }: { b: PrepaidVoucherBatch; onOpen: () => void }) {
   const t = useTranslations('prepaidVouchers');
+  const termsText = useBatchTermsText()(b);
+  const discount = isDiscountKind(b.kind);
   return (
     <li>
       <button type="button" onClick={onOpen} className="w-full space-y-2 rounded-xl bg-card p-3 text-start ring-1 ring-foreground/10 hover:ring-foreground/25">
@@ -575,16 +645,20 @@ function BatchCard({ b, onOpen }: { b: PrepaidVoucherBatch; onOpen: () => void }
             <p className="truncate font-semibold">{b.eventName || b.name}</p>
             <p className="truncate text-xs text-muted-foreground">
               {b.eventName ? `${b.name} · ` : ''}
-              {b.items.map((i) => `${i.quantity}× ${i.name}`).join(' + ')}
+              {contentsText(b, termsText.benefit)}
             </p>
           </div>
+          <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px]',
+            discount ? 'bg-violet-100 text-violet-900 dark:bg-violet-950/40 dark:text-violet-300' : 'bg-muted')}>
+            {termsText.kind}
+          </span>
           <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px]', b.status === 'cancelled' ? STATUS_STYLE.cancelled : STATUS_STYLE.active)}>
             {t(`batchStatus.${b.status}`)}
           </span>
         </div>
         <StatsBar b={b} />
         <p className="text-xs text-muted-foreground">
-          {b.splitAllowed ? t('card.splitAllowed') : t('card.oneTime')}
+          {termsText.uses ?? (b.splitAllowed ? t('card.splitAllowed') : t('card.oneTime'))}
           {b.validUntil ? ` · ${t('validUntil', { date: day(b.validUntil) })}` : ''}
           {' · '}
           {b.shops.length ? b.shops.map((s) => s.name).join(', ') : t('allShopsOf', { company: b.companyName ?? '' })}
@@ -646,7 +720,14 @@ function LayoutPicker({ layout, onChange }: { layout: PrintLayout; onChange: (l:
 
 function RedemptionHistory({ voucherId }: { voucherId: string }) {
   const t = useTranslations('prepaidVouchers.history');
+  const tk = useTranslations('prepaidVouchers.kinds');
   const q = useQuery({ queryKey: ['prepaid-voucher', voucherId], queryFn: () => fetchPrepaidVoucher(voucherId) });
+  // A discount voucher's use: its uses and the ₪ it took off (a discount on the sale, not a tender).
+  const discountUseText = (r: { uses?: number | null; discountAmount?: number | null }) =>
+    tk('historyUse', {
+      uses: (r.uses ?? 1) === 1 ? tk('usesOne') : tk('usesMany', { n: r.uses ?? 1 }),
+      amount: `₪${(r.discountAmount ?? 0).toFixed(2)}`,
+    });
   if (q.isPending) return <Skeleton className="h-10 w-full" />;
   const rows = q.data?.redemptions ?? [];
   if (!rows.length) return <p className="text-xs text-muted-foreground">{t('empty')}</p>;
@@ -662,7 +743,12 @@ function RedemptionHistory({ voucherId }: { voucherId: string }) {
           {r.machineName ?? t('unknownTill')}
           {r.posUserName ? ` · ${r.posUserName}` : ''}
           {' — '}
-          {r.items.map((i) => `${i.quantity}× ${i.name ?? ''}`).join(', ')}
+          {r.uses ? discountUseText(r) : r.items.map((i) => `${i.quantity}× ${i.name ?? ''}`).join(', ')}
+          {(r.flags ?? []).map((f) => (
+            <span key={f} className="ms-1 rounded bg-amber-100 px-1 text-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+              {tk.has(`flag.${f}`) ? tk(`flag.${f}`) : f}
+            </span>
+          ))}
           {r.forfeited.length ? (
             <span className="text-destructive">
               {' '}({t('forfeited', { items: r.forfeited.map((i) => `${i.quantity}× ${i.name ?? ''}`).join(', ') })})
@@ -676,9 +762,12 @@ function RedemptionHistory({ voucherId }: { voucherId: string }) {
 
 function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: () => void }) {
   const t = useTranslations('prepaidVouchers');
+  const tk = useTranslations('prepaidVouchers.kinds');
   const errorText = useErrorText();
   const labels = useCardLabels();
   const qc = useQueryClient();
+  const termsText = useBatchTermsText()(batch);
+  const discount = isDiscountKind(batch.kind);
 
   const [layout, setLayoutState] = useState<PrintLayout>({ preset: 'ticket80x50' });
   useEffect(() => setLayoutState(readLayout()), []);
@@ -850,10 +939,16 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
           <h2 className="text-xl font-bold">{batch.eventName || batch.name}</h2>
           <p className="text-sm text-muted-foreground">
             {batch.eventName ? `${batch.name} · ` : ''}
-            {batch.items.map((i) => `${i.quantity}× ${i.name}`).join(' + ')}
+            {contentsText(batch, termsText.benefit)}
           </p>
           <p className="text-xs text-muted-foreground">
-            {batch.splitAllowed ? t('card.splitAllowed') : t('card.oneTime')}
+            {termsText.kind}
+            {discount ? ` · ${tk('notTender')}` : ''}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {termsText.uses ?? (batch.splitAllowed ? t('card.splitAllowed') : t('card.oneTime'))}
+            {` · ${tk(`stacking.${batch.stacking ?? 'single'}`)}`}
+            {discount ? ` · ${tk(`promotionPolicy.${batch.promotionPolicy ?? 'exclude'}`)}` : ''}
             {batch.validFrom ? ` · ${t('validFrom', { date: day(batch.validFrom) })}` : ''}
             {batch.validUntil ? ` · ${t('validUntil', { date: day(batch.validUntil) })}` : ''}
             {' · '}
@@ -964,6 +1059,9 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
         </CardContent>
       </Card>
 
+      <BatchRulesCard key={`${batch.stacking}:${batch.promotionPolicy}:${batch.maxUsesPerSale}:${batch.maxUsesPerDay}`}
+        batch={batch} onSaved={refresh} />
+
       {!cancelled ? (
         <div className="flex flex-wrap items-end gap-2">
           <div className="space-y-1">
@@ -1040,7 +1138,9 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
                   ) : null}
                   <span className={cn('rounded-full px-2 py-0.5 text-[11px]', STATUS_STYLE[v.status])}>{t(`status.${v.status}`)}</span>
                   <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                    {v.items.map((i) => t('remainingOf', { name: i.name, left: i.remaining, total: i.quantity })).join(' · ')}
+                    {v.usesLeft != null
+                      ? tk('usesLeft', { left: v.usesLeft, total: v.usesPerVoucher ?? batch.usesPerVoucher ?? 1 })
+                      : v.items.map((i) => t('remainingOf', { name: i.name, left: i.remaining, total: i.quantity })).join(' · ')}
                   </span>
                   <div className="flex gap-1">
                     <VoucherNoteButton voucher={v} onEdit={() => setEditingNote(editingNote === v.id ? null : v.id)} />

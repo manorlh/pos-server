@@ -542,7 +542,7 @@ def build_product_sales_report(
     qty = TransactionItem.quantity
     line_gross = TransactionItem.total_price
     # The line's own discount and its promotions' share: both are this product's.
-    line_discount = func.coalesce(TransactionItem.discount, 0) + func.coalesce(TransactionItem.promotion_discount, 0)
+    line_discount = func.coalesce(TransactionItem.discount, 0) + func.coalesce(TransactionItem.promotion_discount, 0) + func.coalesce(TransactionItem.voucher_discount, 0)
 
     query = (
         db.query(

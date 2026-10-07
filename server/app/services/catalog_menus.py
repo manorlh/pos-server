@@ -1345,7 +1345,7 @@ def menu_sales_report(
         return out
     T = TransactionItem
     is_refund = tx.c.is_refund
-    discount = func.coalesce(T.discount, 0) + func.coalesce(T.promotion_discount, 0)
+    discount = func.coalesce(T.discount, 0) + func.coalesce(T.promotion_discount, 0) + func.coalesce(T.voucher_discount, 0)
     rows = (
         db.query(
             T.menu_id, T.menu_name, T.price_source,

@@ -22,6 +22,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QRCodeSVG } from 'qrcode.react';
 import { formatDate, isoDate } from '@/lib/format';
 import type { PrepaidVoucher, PrepaidVoucherBatch } from '@/lib/prepaidVouchersApi';
+import { benefitText, isDiscountKind, termsOfBatch } from '@/lib/prepaidVoucherBenefit';
 import { code128Bars } from '@/lib/barcode128';
 
 export type PagePresetId = 'ticket80x50' | 'card86x54' | 'card54x86' | 'ticket80x120' | 'a6' | 'a4grid' | 'custom';
@@ -93,6 +94,19 @@ export interface VoucherLabels {
   validUntil?: (until: string) => string;
   validFrom?: (since: string) => string;
   validBetween?: (since: string, until: string) => string;
+  /** A discount voucher's uses, instead of "one-time / in parts" ("שימוש אחד" / "3 שימושים"). */
+  usesOne?: string;
+  usesMany?: (n: number) => string;
+}
+
+/** The small print: goods one-time / in parts, a discount voucher its uses (as the server's PDF). */
+export function termsLine(batch: PrepaidVoucherBatch, labels: VoucherLabels): string {
+  if (isDiscountKind(batch.kind)) {
+    const n = batch.usesPerVoucher ?? 1;
+    if (n === 1 && labels.usesOne) return labels.usesOne;
+    if (n > 1 && labels.usesMany) return labels.usesMany(n);
+  }
+  return batch.splitAllowed ? labels.splitAllowed : labels.oneTime;
 }
 
 function day(iso: string | null | undefined): string | null {
@@ -165,7 +179,9 @@ function VoucherCard({
   const landscape = w >= h * 1.15 && !linear;
   const s = Math.min(w, h) / 50; // 1 at a 50 mm short side
   const pad = 2.6 * s;
-  const n = batch.items.length;
+  // A discount voucher prints what it gives ("₪30 הנחה על כל ההזמנה") instead of goods.
+  const benefit = isDiscountKind(batch.kind) ? (batch.benefitText ?? benefitText(termsOfBatch(batch))) : null;
+  const n = benefit ? 0 : batch.items.length;
   const itemFont = 3.1 * s * (n > 4 ? Math.max(0.55, Math.sqrt(4 / n)) : 1);
   const under = underBarcodeLines(batch, voucher, labels);
   const underH = under.reduce((sum, l) => sum + (l.code ? 2.6 : 2.4) * s * 1.25, 0.6 * s);
@@ -197,8 +213,13 @@ function VoucherCard({
       <div style={{ fontWeight: 700, fontSize: mm(4 * s), lineHeight: 1.15, textAlign: landscape ? 'start' : 'center' }}>
         {title}
       </div>
+      {benefit ? (
+        <div style={{ fontWeight: 700, fontSize: mm(3.3 * s), lineHeight: 1.2, textAlign: landscape ? 'start' : 'center' }}>
+          {benefit}
+        </div>
+      ) : null}
       <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: mm(itemFont), lineHeight: 1.25 }}>
-        {batch.items.map((i) => (
+        {(benefit ? [] : batch.items).map((i) => (
           <li key={i.productId} style={{ display: 'flex', gap: mm(1.2 * s) }}>
             <span style={{ fontWeight: 700, minWidth: mm(4 * s), direction: 'ltr', textAlign: 'end' }}>
               {i.quantity}×
@@ -214,7 +235,7 @@ function VoucherCard({
         <div style={{ fontSize: mm(2.3 * s), fontWeight: 700, textAlign: landscape ? 'start' : 'center' }}>{validity}</div>
       ) : null}
       <div style={{ fontSize: mm(2.1 * s), color: '#444', textAlign: landscape ? 'start' : 'center' }}>
-        {batch.splitAllowed ? labels.splitAllowed : labels.oneTime}
+        {termsLine(batch, labels)}
       </div>
     </div>
   );

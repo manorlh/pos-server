@@ -214,7 +214,10 @@ def build_items(db: Session, docs: Sequence[Doc], machines: Dict[str, POSMachine
             value = -dec(line.total_price)
             qty = -qty
         else:
-            value = dec(line.total_price) - dec(line.discount) - dec(line.promotion_discount)
+            value = (
+                dec(line.total_price) - dec(line.discount) - dec(line.promotion_discount)
+                - dec(getattr(line, "voucher_discount", None))
+            )
         row = acc.setdefault(key, {
             "key": key, "name": name, "categoryId": cat, "categoryName": cats.get(cat) if cat else None,
             "quantity": ZERO, "sold": ZERO, "refunded": ZERO, "revenue": ZERO, "lines": 0,

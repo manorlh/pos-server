@@ -11,6 +11,11 @@ Both are switched on per till by parameters (`othEnabled`, `clubButtonEnabled`,
   `basket_discount`. By till and local day — and beside the manual basket discounts,
   so the two read as the two kinds of basket discount they are.
 
+* a discount voucher ("שובר הנחה", a prepaid voucher of a discount kind —
+  docs/SPEC_VOUCHER_PRODUCTION.md §7) is a row of `transaction_voucher_discounts` on the
+  sale: a discount on the document like the others, never a tender. By batch, till and
+  local day, with the uses taken.
+
 Over the same document set as every report (`build_scoped_transaction_query`: the
 window, the caller's scope, sale statuses), sales only — a credit note credits what
 was paid, and an OTH line was paid nothing.
@@ -124,6 +129,10 @@ def build_discounts_report(
         },
         "club": {"totals": {"count": 0, "amount": 0.0}, "byTill": [], "byDay": []},
         "basketByKind": [],
+        "vouchers": {
+            "totals": {"count": 0, "uses": 0, "amount": 0.0, "documents": 0},
+            "byBatch": [], "byTill": [], "byDay": [],
+        },
     }
     tx_q = build_scoped_transaction_query(db, user, tenant_id, window, shop_id=shop_id, machine_id=machine_id)
     if tx_q is None:
@@ -227,8 +236,47 @@ def build_discounts_report(
     def club_flat(b) -> Dict[str, Any]:
         return {"count": b["count"], "amount": _money(b["amount"])}
 
+    # ── Discount vouchers ──
+    from app.models.prepaid_voucher import TransactionVoucherDiscount as TVD
+
+    voucher_rows = (
+        db.query(
+            TVD.discount_amount, TVD.uses, TVD.batch_id, TVD.batch_name,
+            Transaction.id, Transaction.created_at, Transaction.machine_id,
+        )
+        .join(Transaction, Transaction.id == TVD.transaction_id)
+        .filter(TVD.transaction_id.in_(db.query(sale_ids.c.id)))
+        .all()
+    )
+
+    def voucher_bucket():
+        return {"count": 0, "uses": 0, "amount": Decimal("0"), "documents": set()}
+
+    v_totals = voucher_bucket()
+    v_by_batch: Dict[Optional[str], dict] = {}
+    v_batch_names: Dict[Optional[str], Optional[str]] = {}
+    v_by_till: Dict[Optional[str], dict] = {}
+    v_by_day: Dict[str, dict] = {}
+    for amount, uses, batch_id, batch_name, tx_id, created_at, till in voucher_rows:
+        batch_key = str(batch_id) if batch_id else None
+        if batch_name:
+            v_batch_names[batch_key] = batch_name
+        for b in (
+            v_totals,
+            v_by_batch.setdefault(batch_key, voucher_bucket()),
+            v_by_till.setdefault(str(till) if till else None, voucher_bucket()),
+            v_by_day.setdefault(_local_day(created_at, zone), voucher_bucket()),
+        ):
+            b["count"] += 1
+            b["uses"] += int(uses or 1)
+            b["amount"] += abs(_dec(amount))
+            b["documents"].add(tx_id)
+
+    def voucher_flat(b) -> Dict[str, Any]:
+        return {"count": b["count"], "uses": b["uses"], "amount": _money(b["amount"]), "documents": len(b["documents"])}
+
     # ── Names ──
-    tills = names.tills([k for k in list(by_till) + list(club_by_till) if k])
+    tills = names.tills([k for k in list(by_till) + list(club_by_till) + list(v_by_till) if k])
     shops = names.shops([str(m.shop_id) for m in tills.values() if m.shop_id])
     people = names.people([k for k in by_employee if k])
 
@@ -266,4 +314,14 @@ def build_discounts_report(
     out["basketByKind"] = [
         {"kind": kind, **club_flat(by_kind[kind])} for kind in (CLUB, MANUAL) if kind in by_kind
     ]
+    out["vouchers"] = {
+        "totals": voucher_flat(v_totals),
+        "byBatch": by_value([
+            {"batchId": k, "name": v_batch_names.get(k), **voucher_flat(b)} for k, b in v_by_batch.items()
+        ], "amount"),
+        "byTill": by_value([
+            {**_till_row(k, tills, shops), **voucher_flat(b)} for k, b in v_by_till.items()
+        ], "amount"),
+        "byDay": [{"date": d, **voucher_flat(v_by_day[d])} for d in sorted(v_by_day)],
+    }
     return out

@@ -139,6 +139,9 @@ function useRows(data: DiscountsReport | undefined) {
       clubByTill: data.club.byTill.map((r, i) => ({ ...r, key: r.machineId ?? `t${i}`, label: tillLabel(r, unknown, register) })),
       clubByDay: data.club.byDay.map((r) => ({ ...r, key: r.date, label: r.date })),
       byKind: data.basketByKind.map((r) => ({ ...r, key: r.kind, label: t(`kind.${r.kind}`) })),
+      vouchersByBatch: (data.vouchers?.byBatch ?? []).map((r, i) => ({ ...r, key: r.batchId ?? `b${i}`, label: r.name ?? unknown })),
+      vouchersByTill: (data.vouchers?.byTill ?? []).map((r, i) => ({ ...r, key: r.machineId ?? `t${i}`, label: tillLabel(r, unknown, register) })),
+      vouchersByDay: (data.vouchers?.byDay ?? []).map((r) => ({ ...r, key: r.date, label: r.date })),
     };
   }, [data, t]);
 }
@@ -162,6 +165,8 @@ export function OthClubReport({ params }: { params: ReportWindowParams | null })
 
   const hasOth = data.oth.totals.count > 0;
   const hasClub = data.club.totals.count > 0;
+  const voucherTotals = data.vouchers?.totals;
+  const hasVouchers = (voucherTotals?.count ?? 0) > 0;
   // Every OTH grouping as its own sheet (not just the one on screen), then the club tables
   // as the page shows them. Days go out as the API's ISO dates (real date cells).
   const getSheets = (): ExcelSheet[] => {
@@ -228,6 +233,25 @@ export function OthClubReport({ params }: { params: ReportWindowParams | null })
         );
       }
     }
+    if (hasVouchers && voucherTotals) {
+      // Discount vouchers: by batch, till and day — the uses beside the sales and the ₪.
+      const voucherSheet = (name: string, head: string, headKind: ExcelCellKind, list: (string | number)[][]): ExcelSheet => ({
+        name: `${t('vouchers.title')} ${name}`,
+        columns: [
+          { header: head, kind: headKind },
+          { header: t('col.sales'), kind: 'number' },
+          { header: t('vouchers.col.uses'), kind: 'number' },
+          { header: t('col.amount'), kind: 'money' },
+        ],
+        rows: list,
+        totals: [t('total'), voucherTotals.count, voucherTotals.uses, voucherTotals.amount],
+      });
+      sheets.push(
+        voucherSheet(t('vouchers.byBatch'), t('vouchers.col.batch'), 'text', rows.vouchersByBatch.map((r) => [r.label, r.count, r.uses, r.amount])),
+        voucherSheet(t('vouchers.byTill'), t('vouchers.col.till'), 'text', rows.vouchersByTill.map((r) => [r.label, r.count, r.uses, r.amount])),
+        voucherSheet(t('vouchers.byDay'), t('vouchers.col.day'), 'date', (data.vouchers?.byDay ?? []).map((r) => [r.date, r.count, r.uses, r.amount])),
+      );
+    }
     return sheets;
   };
 
@@ -237,7 +261,7 @@ export function OthClubReport({ params }: { params: ReportWindowParams | null })
         title={`${t('oth.title')} · ${t('club.title')}`}
         from={data.window.from}
         to={data.window.to}
-        disabled={!hasOth && rows.byKind.length === 0}
+        disabled={!hasOth && rows.byKind.length === 0 && !hasVouchers}
         getSheets={getSheets}
       />
       <Card>
@@ -312,6 +336,41 @@ export function OthClubReport({ params }: { params: ReportWindowParams | null })
                   </div>
                 </>
               ) : null}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">{t('vouchers.title')}</CardTitle>
+          <p className="text-sm text-muted-foreground">{t('vouchers.subtitle')}</p>
+        </CardHeader>
+        <CardContent className="space-y-4 p-0 pb-2">
+          {!hasVouchers || !voucherTotals ? (
+            <p className="px-6 py-6 text-center text-sm text-muted-foreground">{t('vouchers.none')}</p>
+          ) : (
+            <>
+              <p className="px-6 text-sm">
+                {t('vouchers.summary', {
+                  count: voucherTotals.count,
+                  uses: voucherTotals.uses,
+                  amount: formatCurrency(voucherTotals.amount),
+                  documents: voucherTotals.documents,
+                })}
+              </p>
+              <h3 className="px-6 text-sm font-semibold">{t('vouchers.byBatch')}</h3>
+              <div className="overflow-x-auto">
+                <ClubTable head={t('vouchers.col.batch')} rows={rows.vouchersByBatch} totals={voucherTotals} />
+              </div>
+              <h3 className="px-6 text-sm font-semibold">{t('vouchers.byTill')}</h3>
+              <div className="overflow-x-auto">
+                <ClubTable head={t('vouchers.col.till')} rows={rows.vouchersByTill} totals={voucherTotals} />
+              </div>
+              <h3 className="px-6 text-sm font-semibold">{t('vouchers.byDay')}</h3>
+              <div className="overflow-x-auto">
+                <ClubTable head={t('vouchers.col.day')} rows={rows.vouchersByDay} totals={voucherTotals} />
+              </div>
             </>
           )}
         </CardContent>

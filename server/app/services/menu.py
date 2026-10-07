@@ -1700,7 +1700,7 @@ def parts_for_item(transaction_id, item) -> List[TransactionItemPart]:
         gross = _agorot(getattr(item, "total_price", 0))
         discount = _agorot(getattr(item, "discount", None) or 0) + _agorot(
             getattr(item, "promotion_discount", None) or 0
-        )
+        ) + _agorot(getattr(item, "voucher_discount", None) or 0)
         shares = allocate_meal(gross, discount, line_qty, components)
         for index, (c, share) in enumerate(zip(components, shares)):
             qty = _dec(c.get("qty"), Decimal("1"))
@@ -2070,6 +2070,7 @@ def build_upsell_report(db: Session, user: User, tenant_id, window, *, shop_id=N
                     TransactionItem.total_price
                     - func.coalesce(TransactionItem.discount, 0)
                     - func.coalesce(TransactionItem.promotion_discount, 0)
+                    - func.coalesce(TransactionItem.voucher_discount, 0)
                 ), 0),
                 func.count(TransactionItem.id),
             )

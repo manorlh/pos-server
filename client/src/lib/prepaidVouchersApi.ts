@@ -5,8 +5,44 @@
  * Unrelated to `/vouchers` (gift-voucher templates) and to item tickets.
  */
 import { api } from './api';
+import type {
+  PrepaidDiscountType,
+  PrepaidPromotionPolicy,
+  PrepaidStacking,
+  PrepaidVoucherKind,
+} from './prepaidVoucherBenefit';
+
+export type { PrepaidDiscountType, PrepaidPromotionPolicy, PrepaidStacking, PrepaidVoucherKind };
 
 export type PrepaidVoucherStatus = 'active' | 'partially_used' | 'used' | 'cancelled';
+
+/** An item discount's products and categories (global ids) and their names as printed. */
+export interface PrepaidTargets {
+  productIds: string[];
+  categoryIds: string[];
+  names?: string[];
+}
+
+/**
+ * A batch's kind and terms (docs/SPEC_VOUCHER_PRODUCTION.md §7). Money in ₪, a percent as a
+ * percent (20 = 20%). Absent from a server that predates kinds: read as goods.
+ */
+export interface PrepaidBatchTerms {
+  kind?: PrepaidVoucherKind;
+  discountType?: PrepaidDiscountType | null;
+  discountValue?: number | null;
+  minPurchase?: number | null;
+  maxDiscount?: number | null;
+  maxUnits?: number | null;
+  targets?: PrepaidTargets | null;
+  stacking?: PrepaidStacking;
+  promotionPolicy?: PrepaidPromotionPolicy;
+  usesPerVoucher?: number;
+  maxUsesPerSale?: number;
+  maxUsesPerDay?: number | null;
+  /** "₪30 הנחה על כל ההזמנה" — what the paper says; null for goods. */
+  benefitText?: string | null;
+}
 
 export interface PrepaidBatchItem {
   productId: string;
@@ -22,7 +58,7 @@ export interface PrepaidBatchStats {
   cancelled: number;
 }
 
-export interface PrepaidVoucherBatch {
+export interface PrepaidVoucherBatch extends PrepaidBatchTerms {
   id: string;
   name: string;
   eventName: string | null;
@@ -77,6 +113,11 @@ export interface PrepaidRedemption {
   forfeited: PrepaidRedemptionLine[];
   /** Set when the till gave it back (its payment was abandoned): the goods returned to the voucher. */
   reversedAt?: string | null;
+  /** A discount voucher's use: the uses it took and the ₪ it took off the sale. */
+  uses?: number | null;
+  discountAmount?: number | null;
+  /** What the cloud's re-check found when the sale confirmed it (late, over_use, …). */
+  flags?: string[];
 }
 
 export interface PrepaidVoucher {
@@ -92,6 +133,9 @@ export interface PrepaidVoucher {
   /** Free text from the dashboard; the till's lookup shows it too. */
   note?: string | null;
   items: PrepaidVoucherItem[];
+  /** A discount voucher: its uses left of the batch's per-voucher uses (null for goods). */
+  usesLeft?: number | null;
+  usesPerVoucher?: number | null;
   firstRedeemedAt: string | null;
   lastRedeemedAt: string | null;
   cancelledAt: string | null;
@@ -108,6 +152,7 @@ export interface PrepaidBatchCreate {
   validFrom: string | null;
   validUntil: string | null;
   splitAllowed: boolean;
+  /** Goods; empty for a discount kind. */
   items: { productId: string; quantity: number }[];
   count: number;
   groupSize?: number | null;
@@ -115,6 +160,27 @@ export interface PrepaidBatchCreate {
   barcodeType?: PrepaidBarcodeType;
   customerName?: string | null;
   orderRef?: string | null;
+  kind?: PrepaidVoucherKind;
+  discountType?: PrepaidDiscountType | null;
+  discountValue?: number | null;
+  minPurchase?: number | null;
+  maxDiscount?: number | null;
+  maxUnits?: number | null;
+  targets?: { productIds: string[]; categoryIds: string[] } | null;
+  stacking?: PrepaidStacking;
+  promotionPolicy?: PrepaidPromotionPolicy;
+  usesPerVoucher?: number;
+  maxUsesPerSale?: number;
+  maxUsesPerDay?: number | null;
+}
+
+/** The rules of use that may change after printing (what it gives and its uses never do). */
+export interface PrepaidBatchRulesUpdate {
+  stacking?: PrepaidStacking;
+  promotionPolicy?: PrepaidPromotionPolicy;
+  maxUsesPerSale?: number;
+  /** Null clears the daily limit. */
+  maxUsesPerDay?: number | null;
 }
 
 /** A catalog product as the item picker needs it (`GET /products`, global level). */
@@ -145,7 +211,7 @@ export async function updatePrepaidBatch(
   body: Partial<Pick<
     PrepaidBatchCreate,
     'name' | 'eventName' | 'logoUrl' | 'freeText' | 'validFrom' | 'validUntil' | 'showCode' | 'barcodeType' | 'customerName' | 'orderRef'
-  >>,
+  >> & PrepaidBatchRulesUpdate,
 ): Promise<PrepaidVoucherBatch> {
   const { data } = await api.patch<PrepaidVoucherBatch>(`/prepaid-vouchers/batches/${id}`, body);
   return data;
@@ -203,7 +269,7 @@ export async function cancelPrepaidGroup(
 }
 
 export type PrepaidEventAction =
-  | 'create' | 'add' | 'assign_groups' | 'update' | 'cancel_batch' | 'cancel_group' | 'cancel_voucher';
+  | 'create' | 'add' | 'assign_groups' | 'update' | 'cancel_batch' | 'cancel_group' | 'cancel_voucher' | 'use_flagged';
 
 export interface PrepaidBatchEvent {
   id: string;
@@ -275,7 +341,10 @@ export async function setPrepaidVoucherNote(id: string, note: string | null): Pr
 export interface PrepaidReportCounts {
   redemptions: number;
   vouchers: number;
+  /** Goods: units taken. A discount batch: uses taken. */
   units: number;
+  /** A discount batch: the ₪ its uses took off. */
+  amount?: number;
 }
 
 export interface PrepaidReportProduct {
@@ -299,10 +368,29 @@ export interface PrepaidReportGroup extends PrepaidReportCounts {
   shopName?: string | null;
 }
 
+/**
+ * A batch's usage: uses (a discount batch) or units (goods) issued, used, remaining on live
+ * vouchers and void on cancelled ones; the ₪ a discount batch gave (null for goods).
+ */
+export interface PrepaidBatchUsage {
+  unit: 'uses' | 'units';
+  issued: number;
+  used: number;
+  remaining: number;
+  void: number;
+  benefit: number | null;
+  /** Uses the cloud's re-check flagged when their sale confirmed them. */
+  flagged: number;
+  /** Uses held by open sales right now. */
+  held: number;
+}
+
 export interface PrepaidBatchReport {
   batchId: string;
   timezone: string;
   generatedAt: string;
+  kind?: PrepaidVoucherKind;
+  usage?: PrepaidBatchUsage;
   vouchers: PrepaidBatchStats;
   products: PrepaidReportProduct[];
   totals: PrepaidReportCounts;
