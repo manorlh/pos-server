@@ -183,6 +183,9 @@ def world(w, monkeypatch):
 
     w.shop.settings = {"paymentIntegration": "zcredit", "zcreditTerminalNumber": SHOP_TERMINAL}
     PS.apply_secret_patch(w.db, "shop", w.shop.id, {"zcreditPassword": SHOP_PASSWORD}, tenant_id=w.tenant.id)
+    # Every till here runs a build that issues `card_refunded` credits (svc.MIN_CARD_REFUNDED_VERSION_CODE).
+    for m in list(w.tills) + [w.other_till]:
+        m.app_version = "0.1.248+test-device"
     w.shift1 = open_shift(w, w.tills[0])
     w.north_shift = open_shift(w, w.other_till)
     w.original = sale(
@@ -864,3 +867,17 @@ def test_the_migration_is_on_the_single_head():
     heads = script.get_heads()
     assert len(heads) == 1
     assert "c4e8a2f6b1d3" in {r.revision for r in script.walk_revisions("base", heads[0])}
+
+
+def test_a_till_too_old_for_card_refunded_is_never_sent_the_credit(world):
+    # 6cca075 (0.1.248) is the first build that issues it; an older one would answer
+    # unknown_mode after the card was already refunded.
+    assert svc.till_version_code("0.1.248+b6e07db-device") == 248
+    assert svc.till_version_code("0.1.231") == 231
+    assert svc.till_version_code(None) is None and svc.till_version_code("dev") is None
+    world.tills[0].app_version = "0.1.231+7579d17-device"
+    assert svc.version_refusal(world.tills[0]).detail["code"] == "target_too_old"
+    world.tills[0].app_version = None
+    assert svc.version_refusal(world.tills[0]).detail["code"] == "target_too_old"
+    world.tills[0].app_version = "0.1.300+x"
+    assert svc.version_refusal(world.tills[0]) is None

@@ -284,6 +284,33 @@ def _refund_document_ids(db: Session, original: Transaction) -> Tuple[set, set]:
     return req_ids, doc_ids
 
 
+#: The first till build that issues a `card_refunded` credit (pos-android 6cca075, 0.1.248). An
+#: older till answers `unknown_mode` AFTER the card was refunded, so it is never chosen.
+MIN_CARD_REFUNDED_VERSION_CODE = 248
+
+
+def till_version_code(app_version: Optional[str]) -> Optional[int]:
+    """"0.1.248+b6e07db-device" -> 248; None when the till never said or it cannot be read."""
+    head = (app_version or "").strip().split("+", 1)[0]
+    parts = head.split(".")
+    if len(parts) < 3 or not parts[2].isdigit():
+        return None
+    return int(parts[2])
+
+
+def version_refusal(target) -> Optional[HTTPException]:
+    """A till too old to issue the credit (or that never reported its version)."""
+    code = till_version_code(getattr(target, "app_version", None))
+    if code is None or code < MIN_CARD_REFUNDED_VERSION_CODE:
+        shown = (getattr(target, "app_version", None) or "לא ידועה").split("+", 1)[0]
+        return _refuse(
+            "target_too_old",
+            f"הקופה בגרסה {shown} — זיכוי מהענן דורש גרסה 0.1.{MIN_CARD_REFUNDED_VERSION_CODE} ומעלה. "
+            "עדכנו את הקופה או בחרו קופה אחרת.",
+        )
+    return None
+
+
 def till_card_credits(db: Session, original: Transaction) -> int:
     """
     Agorot the tills already gave back on a card for `original` — the card legs (money that
@@ -571,6 +598,9 @@ def _start(
     if why is not None:
         raise _refuse(*why)
     refusal = rc.target_refusal(db, original, target)
+    if refusal is not None:
+        raise refusal
+    refusal = version_refusal(target)
     if refusal is not None:
         raise refusal
     machine = _original_machine(db, original)
@@ -1049,6 +1079,9 @@ def resend(
     if original is None:
         raise _refuse("original_unknown", "המסמך המקורי לא נמצא.", status.HTTP_404_NOT_FOUND)
     refusal = rc.target_refusal(db, original, target)
+    if refusal is not None:
+        raise refusal
+    refusal = version_refusal(target)
     if refusal is not None:
         raise refusal
     latest = (
