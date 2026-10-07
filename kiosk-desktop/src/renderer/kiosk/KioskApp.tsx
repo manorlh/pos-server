@@ -722,6 +722,7 @@ export function KioskApp({ view }: { view: KioskView }) {
       setProductId(p.id);
     },
     start: () => dispatch({ type: 'start' }),
+    serviceOnAttract: serviceOnAttract(cfgIn),
     touch: () => setLastTouch(Date.now()),
     // A voucher scanned on "איך תרצו לשלם?" is redeemed there.
     onVoucher: atPayMethod && voucherOffered && !till.busy ? (code) => void redeem(code) : null,

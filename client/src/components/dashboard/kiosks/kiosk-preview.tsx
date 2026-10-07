@@ -56,6 +56,7 @@ import {
   PayScreen,
   PREVIEW_CSS,
   ServiceScreen,
+  serviceOnAttractOf,
   SuccessScreen,
   TipScreen,
   type Flight,
@@ -772,7 +773,7 @@ export function KioskPreview({
               ) : null}
               <ReachToggle m={model} bottom={PREVIEW_FOOTER_PX + 6} />
               {screen === 'attract' ? (
-                config.general.servicePlacement === 'attract' && config.general.serviceTypes.length > 1 ? (
+                serviceOnAttractOf(model) ? (
                   <AttractServiceButtons m={model} box={ctaOnFrame} onPick={(t) => {
                     setService(t);
                     navigate('catalog');

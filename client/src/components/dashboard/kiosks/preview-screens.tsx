@@ -733,8 +733,20 @@ export function serviceAsked(m: Pick<PreviewModel, 'cfg'>): boolean {
   return m.cfg.general.serviceTypes.length > 1 && stepMode(m.cfg, 'service') !== 'off';
 }
 
-/** Where the attract screen starts an order (the service screen, or straight to the menu). */
+/**
+ * "לקחת / לשבת" are the attract screen's own two buttons (`general.servicePlacement` = attract, the
+ * flow's serviceOnAttract): only they start an order there, and the service is never a step too.
+ */
+export function serviceOnAttractOf(m: Pick<PreviewModel, 'cfg'>): boolean {
+  return serviceAsked(m) && m.cfg.general.servicePlacement === 'attract';
+}
+
+/**
+ * Where the attract screen starts an order (the service screen, or straight to the menu). With
+ * "לקחת / לשבת" on the attract screen nothing but those buttons starts: a tap elsewhere stays there.
+ */
 export function attractNext(m: PreviewModel): void {
+  if (serviceOnAttractOf(m)) return;
   if (!serviceAsked(m)) m.setService(stepDefaultService(m.cfg.general.serviceTypes));
   m.go(serviceAsked(m) ? 'service' : 'catalog');
 }
@@ -1030,6 +1042,8 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
   const cta = cfg.attract.cta;
   const sections = cfg.attract.sections;
   const next = () => attractNext(m);
+  // "לקחת / לשבת" here: only those buttons start — the screen itself takes no tap.
+  const tapStarts = attractTapAnywhere(cta) && !serviceOnAttractOf(m);
   // The phone frame's notch, a 16 px margin and the 44 px logo: where the header ends.
   const notch = m.wide ? 0 : 28;
   // "ברוכים הבאים" (attract.welcome, kiosk-shared/layouts/welcome.tsx): under the header it takes its room from the content.
@@ -1109,7 +1123,7 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
   }
 
   return (
-    <div className={cn('relative h-full overflow-hidden', attractTapAnywhere(cta) && 'cursor-pointer')} onClick={attractTapAnywhere(cta) ? next : undefined}>
+    <div className={cn('relative h-full overflow-hidden', tapStarts && 'cursor-pointer')} onClick={tapStarts ? next : undefined}>
       {/* The hero fills the screen behind everything, as on the till; a veil keeps the text readable. */}
       {sections.includes('hero') ? <PlaylistHero m={m} fill /> : null}
       <div

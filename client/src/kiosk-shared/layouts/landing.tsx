@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
 import { basketKindOf, layoutOf, landingColumnsFor } from '@/lib/kioskLayout';
 import { checkoutStepsNow } from '@/lib/kioskConfig';
 import { KioskSwap, itemEnter } from '@/components/dashboard/kiosks/preview-motion';
-import { CartBar, CartPanel, CatalogHeader, cardStyle, type PCategory, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
+import { CartBar, CartPanel, CatalogHeader, cardStyle, serviceAsked, serviceOnAttractOf, type PCategory, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { detailsFields } from '@/components/dashboard/kiosks/preview-entry';
 import { TickerSlot, PREVIEW_FOOTER_PX } from '@/components/dashboard/kiosks/preview-ticker';
 import { CategoryVisual } from './icons';
@@ -25,9 +25,9 @@ export function guidedCheckout(m: PreviewModel): Array<'tip' | 'details' | 'payM
   return checkoutStepsNow(m.cfg.payment, detailsFields(m.cfg, m.service).length > 0, false) as Array<'tip' | 'details' | 'payMethod'>;
 }
 
-/** The service is its own screen (and so a step of the guided bar). */
+/** The service is its own screen (and so a step of the guided bar): asked, and not on the attract screen's two buttons. */
 export function serviceStepOf(m: PreviewModel): boolean {
-  return m.cfg.general.serviceTypes.length > 1 && m.cfg.general.servicePlacement !== 'attract';
+  return serviceAsked(m) && !serviceOnAttractOf(m);
 }
 
 export function LandingCatalog({ m, onCategory }: { m: PreviewModel; onCategory?: (id: string) => void }) {

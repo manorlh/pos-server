@@ -57,6 +57,66 @@ describe('the browser kiosk flow', () => {
   });
 });
 
+describe('"ישיבה במקום / טייק אווי" asked once: on the attract screen or as a step, never both', () => {
+  const two = (servicePlacement: string, detailsStep = 'before_pay', customerName = 'off'): FlowConfigIn => ({
+    general: { serviceTypes: ['take_away', 'eat_in'], skipCart: 'off', askTableNumber: false, servicePlacement },
+    payment: { customerName, customerPhone: 'off', tipEnabled: false, detailsStep },
+  });
+
+  it('on the attract screen: a tap elsewhere (or a scan) starts nothing, only its two buttons do', () => {
+    const r = rulesOf(two('attract'), false);
+    assert.equal(r.serviceOnAttract, true);
+    assert.equal(reduce(INITIAL_FLOW, { type: 'start' }, r), INITIAL_FLOW);
+    assert.equal(backAction(INITIAL_FLOW, r), 'none');
+    const menu = run(r, [{ type: 'start' }, { type: 'startWith', service: 'eat_in' }]);
+    assert.deepEqual([menu.screen, menu.service], ['catalog', 'eat_in']);
+    assert.equal(run(r, [{ type: 'back' }], menu).screen, 'attract');
+  });
+
+  it('after the start button (as always): the service step', () => {
+    for (const placement of ['after_start', 'screen']) {
+      const r = rulesOf(two(placement), false);
+      assert.equal(r.serviceOnAttract, false);
+      assert.equal(run(r, [{ type: 'start' }]).screen, 'service');
+    }
+    // One service: no buttons on the attract screen, a tap starts straight into the menu.
+    const one = rulesOf({ ...two('attract'), general: { ...two('attract').general, serviceTypes: ['eat_in'] } }, false);
+    assert.equal(one.serviceOnAttract, false);
+    assert.deepEqual([run(one, [{ type: 'start' }]).screen, run(one, [{ type: 'start' }]).service], ['catalog', 'eat_in']);
+  });
+
+  it('no way from the attract screen ever reaches the service step, at every details step', () => {
+    const events: Parameters<typeof reduce>[1][] = [
+      { type: 'start' }, { type: 'startWith', service: 'take_away' }, { type: 'startWith', service: 'eat_in' }, { type: 'itemAdded' },
+      { type: 'openCart' }, { type: 'backToCatalog' }, { type: 'checkout' }, { type: 'detailsDone' }, { type: 'back' }, { type: 'reset' },
+      { type: 'paymentStarted' }, { type: 'paymentDeclined' }, { type: 'paymentApproved' }, { type: 'successDone' },
+    ];
+    for (const step of ['after_service', 'before_cart', 'before_pay', 'after_pay']) {
+      for (const name of ['off', 'required']) {
+        const r = rulesOf(two('attract', step, name), false);
+        let seen: KioskFlowState[] = [INITIAL_FLOW];
+        for (let depth = 0; depth < 5; depth++) {
+          const next = new Map<string, KioskFlowState>(seen.map((s) => [JSON.stringify(s), s]));
+          for (const s of seen) for (const e of events) next.set(JSON.stringify(reduce(s, e, r)), reduce(s, e, r));
+          seen = [...next.values()];
+        }
+        assert.ok(!seen.some((s) => s.screen === 'service'), `${step} / ${name}`);
+        assert.ok(seen.some((s) => s.screen === 'catalog'), `${step} / ${name}: the menu is reached`);
+      }
+    }
+  });
+
+  it('back from the details asked right after the service: the attract screen, never a service step', () => {
+    const r = rulesOf(two('attract', 'after_service', 'required'), false);
+    const details = run(r, [{ type: 'startWith', service: 'take_away' }]);
+    assert.equal(details.screen, 'details');
+    assert.equal(run(r, [{ type: 'back' }], details).screen, 'attract');
+    // A details screen reached from a service screen (the placement changed mid-order): the attract screen too.
+    assert.equal(run(r, [{ type: 'back' }], { ...details, cameFrom: 'service' }).screen, 'attract');
+    assert.equal(run(rulesOf(two('after_start', 'after_service', 'required'), false), [{ type: 'back' }], { ...details, cameFrom: 'service' }).screen, 'service');
+  });
+});
+
 describe('scans on the browser kiosk', () => {
   it('a voucher is "PV:" + its code; a product barcode is never one', () => {
     assert.equal(scannedVoucherCode('PV:ABCD-EFGH-JKMN-PQRS\r'), 'ABCDEFGHJKMNPQRS');

@@ -862,6 +862,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       setProductId(p.id);
     },
     start: () => dispatch({ type: 'start' }),
+    serviceOnAttract: serviceOnAttract(cfgIn),
     touch: () => setLastTouch(Date.now()),
     onVoucher: atPayMethod && voucherOffered && !pay.busy ? (code) => void redeem(code) : null,
   });

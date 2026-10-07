@@ -84,6 +84,8 @@ describe('the browser kiosk runs the same flow', () => {
           a = desk.reduce(a, e, ra);
           b = web.reduce(b, e as web.KioskEvent, rb);
           expect(b).toEqual(a);
+          // "לקחת / לשבת" on the attract screen: the service is never a step too.
+          if (ra.serviceOnAttract) expect(a.screen).not.toBe('service');
           expect(web.backAction(b, rb)).toBe(desk.backAction(a, ra));
           expect(web.wire(b)).toBe(desk.wire(a));
           const timers = { inactivitySec: 30, warningSec: 10, successSec: 8 };
