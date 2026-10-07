@@ -17,6 +17,7 @@ import { saleTotals, type SaleLine } from '../src/core/sale';
 import { documentWire, shiftCloseWire, type DocDraft, type ShiftRow } from '../src/main/fiscal/ledger';
 import { docResults, plan, type OutboxRow } from '../src/main/sync/outbox';
 import { apiBase } from '../src/main/sync/api';
+import { kdsSaleRelease, saleDispatchId } from '../src/main/kiosk/kdsRelease';
 import { KioskService } from '../src/main/service';
 import type { Transport } from '../src/main/printer/transports';
 
@@ -259,6 +260,21 @@ describe('what the kiosk sends (golden, validated by the server’s schemas)', (
       syncedHash: null,
     };
     golden('kiosk_orders', { orders: [orderWire(o)] });
+  });
+
+  it('a KDS release of a paid KDS-mode order (the Android kiosk’s payload, idempotent by the document)', () => {
+    const doc = draft('completed');
+    const body = kdsSaleRelease({
+      transactionId: doc.id,
+      transactionNumber: '40000057',
+      order: { serviceType: 'take_away', customerName: 'דנה', customerPhone: '0501234567', pickupNumber: 17 },
+      lines: doc.lines,
+      categoryOf: (id) => (id === line1.productId ? '0b1c2d3e-0000-4000-8000-0000000000e1' : null),
+      actorName: 'קיוסק Windows',
+      occurredAt: doc.updatedAt,
+    });
+    expect(body.id).toBe(saleDispatchId(doc.id));
+    golden('kds_release', body);
   });
 });
 

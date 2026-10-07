@@ -1,0 +1,36 @@
+{
+  "id": "ada063ec-3f97-3bd4-981b-dad55e8599a7",
+  "source": "kiosk",
+  "sourceRef": "c1a8f0e2-5b7d-4a1e-9f3c-6d2e8b1a4c77",
+  "trigger": "payment",
+  "paid": true,
+  "fallbackPrinted": false,
+  "occurredAt": "2026-10-06T09:15:01.300Z",
+  "actorName": "קיוסק Windows",
+  "waiterName": "קיוסק Windows",
+  "serviceType": "take_away",
+  "pickupName": "דנה",
+  "contactPhone": "0501234567",
+  "transactionNumber": "40000057",
+  "pickupNumber": 17,
+  "items": [
+    {
+      "lineKey": "l1:0",
+      "productId": "0b1c2d3e-0000-4000-8000-000000000001",
+      "name": "המבורגר",
+      "quantity": 1,
+      "categoryId": "0b1c2d3e-0000-4000-8000-0000000000e1",
+      "notes": "בלי בצל",
+      "mods": [
+        "גבינה"
+      ]
+    },
+    {
+      "lineKey": "l2:0",
+      "productId": "0b1c2d3e-0000-4000-8000-000000000002",
+      "name": "צ׳יפס",
+      "quantity": 2
+    }
+  ],
+  "noteUpdates": []
+}

@@ -13,9 +13,16 @@
 
 import type { Db } from '../db/sqlite';
 
-export type OutboxKind = 'transaction' | 'shift_open' | 'shift_close' | 'transmission' | 'shift_close_ack' | 'till_z_ack';
+export type OutboxKind = 'transaction' | 'shift_open' | 'shift_close' | 'transmission' | 'shift_close_ack' | 'till_z_ack' | 'kds_release';
 
-export const SIDE_KINDS: ReadonlySet<OutboxKind> = new Set(['transmission', 'shift_close_ack', 'till_z_ack']);
+export const SIDE_KINDS: ReadonlySet<OutboxKind> = new Set(['transmission', 'shift_close_ack', 'till_z_ack', 'kds_release']);
+
+/**
+ * A refusal the cloud gives these for good (a 4xx): dropped and logged, never parked for ever —
+ * a KDS release the kitchen engine refuses (`release_requires_payment`, `order_of_another_shop`…)
+ * is not made acceptable by sending it again (pos-android KdsOutbox: "a 4xx refusal is final").
+ */
+export const FINAL_ON_REFUSAL: ReadonlySet<OutboxKind> = new Set(['kds_release']);
 
 export interface OutboxRow {
   seq: number;
