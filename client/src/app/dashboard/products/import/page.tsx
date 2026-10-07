@@ -61,9 +61,20 @@ import {
 import { DropZone } from '@/components/dashboard/products/catalog-import/drop-zone';
 import {
   CategoryRows,
+  GroupRows,
+  NoteRows,
+  OptionRows,
   ProductRows,
   type RowFilter,
 } from '@/components/dashboard/products/catalog-import/preview-rows';
+import {
+  actionableCount,
+  confirmLines as confirmLineItems,
+  firstTab,
+  previewTabs,
+  resultLines as resultLineItems,
+  type ImportTab,
+} from '@/lib/catalogImportSummary';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 /** Where the import stands; a preview or a result belongs to the company it was made for. */
@@ -144,7 +155,7 @@ export default function CatalogImportPage() {
   const companyName = summary.data?.companyName ?? '';
 
   const [stepState, setStep] = useState<Step>({ kind: 'idle' });
-  const [tab, setTab] = useState<'products' | 'categories'>('products');
+  const [tab, setTab] = useState<ImportTab>('products');
   const [filter, setFilter] = useState<RowFilter>('all');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [shareState, setShare] = useState<(ShareLink & { forCompany: string | null }) | null>(null);
@@ -198,7 +209,7 @@ export default function CatalogImportPage() {
     onSuccess: ({ file, preview }) => {
       setStep({ kind: 'preview', companyId, file, preview });
       resetRows();
-      if (preview.products.length === 0 && preview.categories.length > 0) setTab('categories');
+      setTab(firstTab(preview));
     },
     onError: (err: unknown) => toast.error(importErrorDetail(err)?.msg ?? axiosErrorToToastMessage(err, t('drop.error'))),
   });
@@ -213,6 +224,10 @@ export default function CatalogImportPage() {
       qc.invalidateQueries({ queryKey: ['categories'] });
       qc.invalidateQueries({ queryKey: ['catalog-import-summary'] });
       qc.invalidateQueries({ queryKey: ['kitchen-printer-routing'] });
+      // The add-on layer, quick notes and catalog menus the file may have written.
+      for (const key of ['menu-groups', 'menu-notes', 'product-menu', 'category-menu', 'catalog-menus']) {
+        qc.invalidateQueries({ queryKey: [key] });
+      }
     },
     onError: (err: unknown, args) => {
       setConfirmOpen(false);
@@ -235,33 +250,15 @@ export default function CatalogImportPage() {
   const s = preview?.summary;
   const fileErrors = preview?.issues.filter((i) => i.level === 'error') ?? [];
   const rowErrors = preview ? (s?.errors ?? 0) - fileErrors.length : 0;
-  const actionable = (s?.productsNew ?? 0) + (s?.productsUpdated ?? 0) + (s?.categoriesNew ?? 0) +
-    (s?.categoriesUpdated ?? 0) + (s?.routingChanges ?? 0);
+  const actionable = s ? actionableCount(s) : 0;
   const canImport = !!preview && preview.canCommit && fileErrors.length === 0;
 
-  const confirmLines: string[] = [];
-  if (s) {
-    if (s.productsNew) confirmLines.push(t('commit.confirmCreate', { count: s.productsNew }));
-    if (s.productsUpdated) confirmLines.push(t('commit.confirmUpdate', { count: s.productsUpdated }));
-    if (s.categoriesNew) confirmLines.push(t('commit.confirmCategories', { count: s.categoriesNew }));
-    if (s.categoriesUpdated) confirmLines.push(t('commit.confirmCategoriesUpdated', { count: s.categoriesUpdated }));
-    if (s.routingChanges) {
-      confirmLines.push(t('commit.confirmRouting', { count: s.routingChanges, shops: s.routingShops }));
-    }
-    if (rowErrors > 0) confirmLines.push(t('commit.confirmSkip', { count: rowErrors }));
-  }
+  const confirmLines: string[] = s
+    ? confirmLineItems(s, Math.max(rowErrors, 0)).map((line) => t(`commit.${line.key}`, { count: line.count, ...line.values }))
+    : [];
 
-  const resultLines = (r: ImportResult): string[] => {
-    const lines: string[] = [];
-    if (r.productsCreated) lines.push(t('result.productsCreated', { count: r.productsCreated }));
-    if (r.productsUpdated) lines.push(t('result.productsUpdated', { count: r.productsUpdated }));
-    if (r.categoriesCreated) lines.push(t('result.categoriesCreated', { count: r.categoriesCreated }));
-    if (r.categoriesUpdated) lines.push(t('result.categoriesUpdated', { count: r.categoriesUpdated }));
-    if (r.routingChanges) lines.push(t('result.routingChanges', { count: r.routingChanges }));
-    if (r.costsUpdated) lines.push(t('result.costsUpdated', { count: r.costsUpdated }));
-    if (r.skippedErrorRows) lines.push(t('result.skipped', { count: r.skippedErrorRows }));
-    return lines;
-  };
+  const resultLines = (r: ImportResult): string[] =>
+    resultLineItems(r).map((line) => t(`result.${line.key}`, { count: line.count }));
 
   const startOver = () => {
     setStep({ kind: 'idle' });
@@ -287,6 +284,7 @@ export default function CatalogImportPage() {
               {t('stats', {
                 products: summary.data.products,
                 categories: summary.data.categories,
+                groups: summary.data.groups ?? 0,
                 printers: summary.data.printers.length,
               })}
             </p>
@@ -388,6 +386,9 @@ export default function CatalogImportPage() {
                       .join(', '),
                   })
                 : t('template.printersNone')}
+              {summary.data.menus?.length
+                ? ` ${t('template.menusNote', { list: summary.data.menus.join(', ') })}`
+                : ''}
             </p>
           ) : null}
 
@@ -521,6 +522,30 @@ export default function CatalogImportPage() {
                 <Tile label={t('preview.tiles.categoriesNew')} value={s.categoriesNew} color={IOS.teal}
                   active={tab === 'categories' && filter === 'create'}
                   onClick={() => { setTab('categories'); setFilter('create'); }} />
+                {(preview.groups?.length ?? 0) > 0 ? (
+                  <Tile label={t('preview.tiles.groupsNew')} value={s.groupsNew} color={IOS.purple}
+                    active={tab === 'groups' && filter === 'create'}
+                    onClick={() => { setTab('groups'); setFilter('create'); }} />
+                ) : null}
+                {(preview.options?.length ?? 0) > 0 ? (
+                  <Tile label={t('preview.tiles.optionsNew')} value={s.optionsNew} color={IOS.pink}
+                    active={tab === 'options' && filter === 'create'}
+                    onClick={() => { setTab('options'); setFilter('create'); }} />
+                ) : null}
+                {(preview.notes?.length ?? 0) > 0 ? (
+                  <Tile label={t('preview.tiles.notesNew')} value={s.notesNew} color={IOS.teal}
+                    active={tab === 'notes' && filter === 'create'}
+                    onClick={() => { setTab('notes'); setFilter('create'); }} />
+                ) : null}
+                {(s.linkChanges ?? 0) > 0 ? (
+                  <Tile label={t('preview.tiles.linkChanges')} value={s.linkChanges} color={IOS.purple} />
+                ) : null}
+                {(s.imageChanges ?? 0) > 0 ? (
+                  <Tile label={t('preview.tiles.imageChanges')} value={s.imageChanges} color={IOS.blue} />
+                ) : null}
+                {(s.menuPriceChanges ?? 0) > 0 ? (
+                  <Tile label={t('preview.tiles.menuPriceChanges')} value={s.menuPriceChanges} color={IOS.orange} />
+                ) : null}
                 <Tile label={t('preview.tiles.routingChanges')} value={s.routingChanges} color={IOS.indigo} />
                 <Tile label={t('preview.tiles.warnings')} value={s.warnings} color={IOS.orange}
                   active={filter === 'warning'} onClick={() => setFilter('warning')} />
@@ -530,14 +555,17 @@ export default function CatalogImportPage() {
 
               <IosSectionHeader>{t('sections.rows')}</IosSectionHeader>
               <div className="space-y-2 px-1">
-                <IosSegmented
-                  value={tab}
-                  onChange={setTab}
-                  options={[
-                    { id: 'products', label: t('preview.tabs.products', { count: preview.products.length }) },
-                    { id: 'categories', label: t('preview.tabs.categories', { count: preview.categories.length }) },
-                  ]}
-                />
+                <div className="overflow-x-auto pb-1">
+                  <IosSegmented
+                    value={tab}
+                    onChange={setTab}
+                    className={previewTabs(preview).length > 3 ? 'min-w-[520px]' : undefined}
+                    options={previewTabs(preview).map((option) => ({
+                      id: option.id,
+                      label: t(`preview.tabs.${option.id}`, { count: option.count }),
+                    }))}
+                  />
+                </div>
                 <div className="overflow-x-auto pb-1">
                   <IosSegmented
                     value={filter}
@@ -550,8 +578,14 @@ export default function CatalogImportPage() {
               <IosCard className="mt-2 overflow-hidden p-0">
                 {tab === 'products' ? (
                   <ProductRows key={`p-${preview.token}`} rows={preview.products} filter={filter} />
-                ) : (
+                ) : tab === 'categories' ? (
                   <CategoryRows rows={preview.categories} filter={filter} />
+                ) : tab === 'groups' ? (
+                  <GroupRows key={`g-${preview.token}`} rows={preview.groups} filter={filter} />
+                ) : tab === 'options' ? (
+                  <OptionRows key={`o-${preview.token}`} rows={preview.options} filter={filter} />
+                ) : (
+                  <NoteRows key={`n-${preview.token}`} rows={preview.notes} filter={filter} />
                 )}
               </IosCard>
 
@@ -595,6 +629,16 @@ export default function CatalogImportPage() {
                     ))}
                   </ul>
                 )}
+                {step.result.imageFailures?.length ? (
+                  <div className="w-full max-w-xl rounded-[12px] bg-[#FF9500]/10 px-3 py-2 text-start text-[13px] text-[#A05A00] dark:text-[#FFD60A]">
+                    <p className="font-semibold">{t('result.imageFailures', { count: step.result.imageFailures.length })}</p>
+                    <ul className="mt-1 space-y-0.5">
+                      {step.result.imageFailures.slice(0, 50).map((failure, i) => (
+                        <li key={i}>{failure.text}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
                 <p className="text-[13px] text-[#8E8E93]">{t('result.tills', { count: step.result.machinesNotified })}</p>
                 <div className="mt-2 flex flex-wrap justify-center gap-2">
                   <Link
@@ -628,6 +672,9 @@ export default function CatalogImportPage() {
             ))}
           </ul>
           <p className="text-[13px] text-muted-foreground">{t('commit.confirmScope')}</p>
+          {s?.imageChanges ? (
+            <p className="text-[13px] text-muted-foreground">{t('commit.confirmImagesHint')}</p>
+          ) : null}
           <DialogFooter>
             <IosButton variant="tinted" onClick={() => setConfirmOpen(false)} disabled={commit.isPending}>
               {t('commit.cancel')}
