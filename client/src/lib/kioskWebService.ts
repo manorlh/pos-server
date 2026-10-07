@@ -188,7 +188,8 @@ export interface BasketCheck {
 
 export interface PlaceInput {
   lines: WebOrderLine[];
-  service: 'take_away' | 'eat_in';
+  /** Null: "ללא סוג שירות" — the order has none. */
+  service: 'take_away' | 'eat_in' | null;
   tableRef: string | null;
   customerName: string | null;
   customerPhone: string | null;
@@ -1111,7 +1112,8 @@ export class WebKioskService {
       orderRef: o.pickupLabel,
       sourceName: this.operator().name,
       customerName: o.customerName,
-      dining: o.serviceType === 'eat_in' ? 'eat_in' : 'take_away',
+      // "ללא סוג שירות": no band on the bon.
+      dining: o.serviceType ?? null,
       tableName: o.tableRef,
       notice: 'ממתין לתשלום בקופה',
       isAddition: false,

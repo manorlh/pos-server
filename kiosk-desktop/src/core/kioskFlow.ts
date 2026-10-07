@@ -351,7 +351,7 @@ export function successDone(s: KioskFlowState, successAtMs: number | null, nowMs
 /* --------------------------------------------------------- rules from cfg */
 
 export interface FlowConfigIn {
-  general: { serviceTypes: string[]; skipCart: string; askTableNumber: boolean; servicePlacement?: string };
+  general: { serviceTypes: string[]; skipCart: string; askTableNumber: boolean; servicePlacement?: string; serviceMode?: string };
   payment: {
     customerName: string;
     customerPhone: string;
@@ -373,10 +373,21 @@ export function detailsStepOf(cfg: FlowConfigIn): KioskDetailsStep {
 }
 
 export function servicesOf(cfg: FlowConfigIn): KioskService[] {
+  // "ללא סוג שירות" (general.serviceMode = none): no service at all — never asked, the order carries none.
+  if (cfg.general.serviceMode === 'none') return [];
   const list = (cfg.general.serviceTypes ?? []).filter((s): s is KioskService => s === 'take_away' || s === 'eat_in');
   // "כבוי" (stepModes.service): never asked — every order is the first type.
   if (list.length > 1 && cfg.payment.stepModes?.service === 'off') return [list[0]];
   return list.length > 0 ? list : ['take_away'];
+}
+
+/**
+ * The service an order carries: the one chosen (or, never asked, the one type) — none at all with
+ * "ללא סוג שירות" (general.serviceMode = none): no word for it on the slip, the bon or the KDS.
+ */
+export function orderServiceOf(chosen: KioskService | null | undefined, cfg: FlowConfigIn): KioskService | null {
+  if (cfg.general.serviceMode === 'none') return null;
+  return chosen ?? servicesOf(cfg)[0] ?? 'take_away';
 }
 
 /** `general.servicePlacement = attract` with two services: "לקחת / לשבת" on the attract screen. */

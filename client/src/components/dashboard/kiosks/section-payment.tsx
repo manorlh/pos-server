@@ -15,11 +15,37 @@ import {
   type CustomerFieldMode,
   type DetailsStep,
   type ReceiptPolicy,
+  type MediaRef,
+  WAIT_LOGO_STYLES,
+  type WaitLogoStyle,
 } from '@/lib/kioskConfig';
 import { useKioskField } from './editor-context';
-import { FieldShell, MoveButtons, NumberInput, SectionCard, SegmentField, SwitchField } from './fields';
+import { FieldShell, MediaField, MoveButtons, NumberInput, SectionCard, SegmentField, SwitchField } from './fields';
 import { CashAtTillFields, PayMethodStepRow, PaymentMethodsField } from './section-payment-methods';
 import { StepModesCard } from './section-step-modes';
+
+/**
+ * "לוגו במסך התשלום" (payment.waitLogo): its own upload (POST /kiosks/media, cached on the kiosk
+ * with the rest of its media), at the top of the screens that wait for the payment; and how it
+ * sits — as it is (a transparent PNG) or on a rounded light plate. Nothing uploaded: nothing shows.
+ */
+function WaitLogoFields() {
+  const t = useTranslations('kiosks.payment');
+  const media = useKioskField<MediaRef | null | undefined>('payment.waitLogo.media');
+  return (
+    <>
+      <MediaField path="payment.waitLogo.media" label={t('waitLogo')} hint={t('waitLogoHint')} />
+      {media.value ? (
+        <SegmentField<WaitLogoStyle>
+          path="payment.waitLogo.style"
+          label={t('waitLogoStyle')}
+          hint={t('waitLogoStyleHint.plain')}
+          options={WAIT_LOGO_STYLES.map((v) => ({ value: v, label: t(`waitLogoStyleOption.${v}`) }))}
+        />
+      ) : null}
+    </>
+  );
+}
 
 /** "סכום אחר": only while the tip is on. */
 function TipOther() {
@@ -198,6 +224,10 @@ export function PaymentSection() {
 
       {/* "חובה / רשות / כבוי" per step (docs/SPEC_KIOSK_INSIGHTS.md §4). */}
       <StepModesCard />
+
+      <SectionCard title={t('waitLogoTitle')} description={t('waitLogoDescription')} paths={['payment.waitLogo.media', 'payment.waitLogo.style']}>
+        <WaitLogoFields />
+      </SectionCard>
 
       <SectionCard title={t('receiptTitle')} paths={['payment.receiptPolicy']}>
         <SegmentField<ReceiptPolicy>

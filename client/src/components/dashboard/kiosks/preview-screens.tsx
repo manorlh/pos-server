@@ -63,6 +63,7 @@ import {
   TIP_OTHER_MAX_SHEKELS,
   tipOtherAgorot,
   tipPercentAgorot,
+  waitLogoOf,
   type AddPath,
   type CheckoutStep,
   type CtaBox,
@@ -729,8 +730,14 @@ function PlaylistHero({ m, fill = false }: { m: PreviewModel; fill?: boolean }) 
  * word (every order is that one — the bon and the receipt still say it).
  */
 export function serviceAsked(m: Pick<PreviewModel, 'cfg'>): boolean {
-  // "כבוי" (payment.stepModes.service): never asked — every order is the first type.
+  // "כבוי" (payment.stepModes.service): never asked — every order is the first type; "ללא סוג
+  // שירות" (general.serviceMode = none): never asked, and no service at all (stepMode says off).
   return m.cfg.general.serviceTypes.length > 1 && stepMode(m.cfg, 'service') !== 'off';
+}
+
+/** "ללא סוג שירות" (general.serviceMode = none): the order carries no service, and no word says one. */
+export function serviceNone(m: Pick<PreviewModel, 'cfg'>): boolean {
+  return m.cfg.general.serviceMode === 'none';
 }
 
 /**
@@ -1258,9 +1265,9 @@ export function ServiceScreen({ m }: { m: PreviewModel }) {
                 {m.txt('serviceSubtitle')}
               </p>
             </div>
-            {types.length < 2 ? (
+            {types.length < 2 || serviceNone(m) ? (
               <p className="rounded-xl px-3 py-2 text-center text-xs" style={{ background: `${m.c.accent}1F`, color: m.c.text }}>
-                {m.t('skippedService')}
+                {serviceNone(m) ? m.t('noService') : m.t('skippedService')}
               </p>
             ) : null}
             <div className={`grid ${types.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`} style={{ gap }}>
@@ -2779,6 +2786,28 @@ function PinpadScene({ m, muted = false }: { m: PreviewModel; muted?: boolean })
  * (checked with the terminal — never charged again, no button), or blocked before anything was
  * sent (no internet / no pinpad).
  */
+/**
+ * "לוגו במסך התשלום" (payment.waitLogo): the business's own picture at the top of the screens that
+ * wait for the payment — as it is (a transparent PNG), or on a rounded light plate. Modest: at most
+ * a third of the width and about an eighth of the height, so the amount and the instructions keep
+ * their place. Nothing uploaded — nothing at all.
+ */
+export function WaitLogo({ m }: { m: PreviewModel }) {
+  const logo = waitLogoOf(m.cfg.payment);
+  if (!logo) return null;
+  const height = Math.round(Math.max(48, Math.min(m.screen.h * 0.12, 180)));
+  const plate: CSSProperties = logo.plate
+    ? { background: '#FFFFFF', borderRadius: 18, padding: Math.round(height * 0.12), boxShadow: '0 4px 14px rgba(0,0,0,0.10)' }
+    : {};
+  return (
+    <div data-wait-logo className="flex w-full shrink-0 justify-center" style={{ height }}>
+      <div className="flex h-full items-center justify-center" style={{ maxWidth: '34%', ...plate }}>
+        <Img src={logo.url} className="h-full w-auto max-w-full object-contain" />
+      </div>
+    </div>
+  );
+}
+
 function LivePay({ m, live }: { m: PreviewModel; live: NonNullable<KioskLive['pay']> }) {
   const spinner = (
     <span
@@ -2790,6 +2819,7 @@ function LivePay({ m, live }: { m: PreviewModel; live: NonNullable<KioskLive['pa
   return (
     <ScreenBody m={m}>
       <div className="flex min-h-full flex-col items-center gap-4 p-4 text-center">
+        <WaitLogo m={m} />
         <ScreenImage m={m} k="pay" height={80} />
         <h2 className="text-xl font-extrabold">{m.txt('payTitle')}</h2>
         <div className="text-4xl font-black tabular-nums" style={{ color: m.c.text }}>
@@ -2866,6 +2896,7 @@ export function PayScreen({ m, tipAgorot = 0 }: { m: PreviewModel; tipAgorot?: n
   return (
     <ScreenBody m={m}>
       <div className="flex min-h-full flex-col items-center gap-4 p-4 text-center">
+        <WaitLogo m={m} />
         <ScreenImage m={m} k="pay" height={80} />
         <h2 className="text-xl font-extrabold">{m.txt('payTitle')}</h2>
         <div className="text-4xl font-black tabular-nums" style={{ color: m.c.text }}>

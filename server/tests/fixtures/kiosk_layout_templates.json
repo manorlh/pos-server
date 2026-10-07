@@ -40,6 +40,11 @@
       3,
       4
     ],
+    "productSize": [
+      "s",
+      "m",
+      "l"
+    ],
     "hero": [
       "off",
       "manual",
@@ -110,6 +115,7 @@
     "categoryIcons": null,
     "railSize": "m",
     "landingColumns": 3,
+    "productSize": "m",
     "landingShowCounts": true,
     "hero": "off",
     "magazineFeed": false,

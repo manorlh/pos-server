@@ -23,7 +23,7 @@ from app.services import kiosk_layout as L
 FIX = Path(__file__).parent / "fixtures"
 
 #: The fixtures' SHA-256 — the same constants in pos-android's KioskLayoutTest and the dashboard's kioskLayout.test.ts.
-TEMPLATES_SHA256 = "aeb8184f6b7ca4949d12cb589a61a828ff61c5f5030aea04db3f7ef1a596d2af"
+TEMPLATES_SHA256 = "5e3e5a40ac97ec2b4b7b801b1ec886f94df8af80892c967d6e82dac6c2ec96aa"
 ICONS_SHA256 = "75ac9c79776f320370b5c73429009e4daa77a13bf3d90fbdccd8b94dd5c64fa6"
 REGISTRY_SHA256 = "604e2b58954849c25cb1883a74705114ae56d12e0f60003a0d892acec56ee5a6"
 
@@ -196,3 +196,13 @@ def test_an_older_kiosk_reads_the_layout_it_can():
     del old_apk_view["layout"]
     assert old_apk_view["theme"]["categoryLayout"] == "top"
     assert old_apk_view["catalog"]["oneCategory"] is False
+
+
+def test_the_product_size_is_validated_and_m_by_default():
+    """"גודל מוצרים" (layout.productSize, the owner 07.10.2026): s / m / l; m is today."""
+    assert C.DEFAULT_CONFIG["layout"]["productSize"] == "m"
+    assert C.resolve({"layout": {"template": "landing", "productSize": "l"}})["layout"]["productSize"] == "l"
+    cleaned, errors = C.validate_layer({"layout": {"productSize": "s"}})
+    assert errors == [] and cleaned == {"layout": {"productSize": "s"}}
+    _clean, errors = C.validate_layer({"layout": {"productSize": "xl"}})
+    assert {e.path for e in errors} == {"layout.productSize"}

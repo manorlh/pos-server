@@ -19,7 +19,7 @@ import { SectionCard, SegmentField } from './fields';
 function offBecause(key: StepModeKey, general: Partial<KioskGeneral>, payment: Partial<KioskPayment>): string | null {
   const effective = stepMode({ general, payment: { ...payment, stepModes: { [key]: 'required' } } }, key);
   if (effective !== 'off') return null;
-  if (key === 'service') return 'oneService';
+  if (key === 'service') return general.serviceMode === 'none' ? 'noService' : 'oneService';
   if (key === 'tip') return 'tipOff';
   if (key === 'payMethod') return 'oneMethod';
   return 'upsellOff';
@@ -45,6 +45,7 @@ function StepModeRow({ k, general, payment }: { k: StepModeKey; general: Partial
 export function StepModesCard() {
   const t = useTranslations('kiosks.stepModes');
   const serviceTypes = useKioskField<string[]>('general.serviceTypes');
+  const serviceMode = useKioskField<KioskGeneral['serviceMode']>('general.serviceMode');
   const upsellEnabled = useKioskField<boolean>('general.upsellEnabled');
   const tipEnabled = useKioskField<boolean>('payment.tipEnabled');
   const tipPresets = useKioskField<number[]>('payment.tipPresets');
@@ -52,6 +53,7 @@ export function StepModesCard() {
   const methods = useKioskField<string[]>('payment.methods');
   const general: Partial<KioskGeneral> = {
     serviceTypes: (serviceTypes.value ?? ['take_away', 'eat_in']) as KioskGeneral['serviceTypes'],
+    serviceMode: serviceMode.value ?? 'types',
     upsellEnabled: upsellEnabled.value !== false,
   };
   const payment: Partial<KioskPayment> = {

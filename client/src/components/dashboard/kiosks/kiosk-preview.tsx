@@ -7,6 +7,7 @@
  * add-to-cart motion), pay on the pinpad beside the screen.
  */
 
+import { layoutOf, productColumns } from '@/lib/kioskLayout';
 import { useCallback, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type Ref } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
@@ -56,6 +57,7 @@ import {
   PayScreen,
   PREVIEW_CSS,
   ServiceScreen,
+  serviceAsked,
   serviceOnAttractOf,
   SuccessScreen,
   TipScreen,
@@ -365,7 +367,8 @@ export function KioskPreview({
   const motion = motionSpec(config.theme, config.general, config.motion);
   const transitions = transitionSpec(config.motion, config.general);
   const colors = resolveThemeColors(config.theme);
-  const cols = catalogColumns(config.theme.gridDensity, wide, panel, side);
+  // "גודל מוצרים" (layout.productSize) moves the density's columns.
+  const cols = productColumns(catalogColumns(config.theme.gridDensity, wide, panel, side), layoutOf(config).productSize, FRAME_DEVICE_DP[frame]);
 
   /** The window for [moment], if a rule for the kiosk asks one (true: shown). */
   const offerUpsell = (moment: UpsellMoment, then: PreviewScreen | null): boolean => {
@@ -555,7 +558,8 @@ export function KioskPreview({
     if (card && p) model.quickAdd?.(p, card.getBoundingClientRect());
   };
   const nextScreen = (s: PreviewScreen): PreviewScreen => {
-    const service = config.general.serviceTypes.length > 1 && config.general.servicePlacement !== 'attract';
+    // The service screen only when it is a step: asked, and not on the attract screen's buttons ("ללא" never).
+    const service = serviceAsked(model) && !serviceOnAttractOf(model);
     if (s === 'attract') return service ? 'service' : 'catalog';
     if (s === 'service') return 'catalog';
     if (s === 'catalog' || s === 'product') return 'cart';

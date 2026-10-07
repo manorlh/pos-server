@@ -9,14 +9,14 @@
 import { useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { basketKindOf, layoutOf, landingColumnsFor } from '@/lib/kioskLayout';
+import { basketKindOf, layoutOf, landingColumnsFor, productColumns } from '@/lib/kioskLayout';
 import { checkoutStepsNow } from '@/lib/kioskConfig';
 import { KioskSwap, itemEnter } from '@/components/dashboard/kiosks/preview-motion';
 import { CartBar, CartPanel, CatalogHeader, cardStyle, serviceAsked, serviceOnAttractOf, type PCategory, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { detailsFields } from '@/components/dashboard/kiosks/preview-entry';
 import { TickerSlot, PREVIEW_FOOTER_PX } from '@/components/dashboard/kiosks/preview-ticker';
 import { CategoryVisual } from './icons';
-import { Empty, GuidedBar, GuidedBasketButton, LayoutDishCard, OrderSummaryBar, cartCounts, itemsCount, kt, unitOf, widthDpOf } from './parts';
+import { DP_PER_PX, Empty, GuidedBar, GuidedBasketButton, LayoutDishCard, OrderSummaryBar, cartCounts, itemsCount, kt, unitOf, widthDpOf } from './parts';
 
 const HOME = '\u0000home';
 
@@ -133,7 +133,8 @@ function CategoryPage({ m, cat, onEnter }: { m: PreviewModel; cat: PCategory; on
   const layout = layoutOf(m.cfg);
   const counts = cartCounts(m);
   const rows = layout.card === 'row';
-  const cols = rows ? 1 : Math.max(2, Math.floor((m.screen.w - (m.panel ? 132 : 0)) / 210));
+  const gridPx = m.screen.w - (m.panel ? 132 : 0);
+  const cols = rows ? 1 : productColumns(Math.max(2, Math.floor(gridPx / 210)), layout.productSize, gridPx * DP_PER_PX);
   const u = unitOf(m);
   return (
     <section data-section={cat.id} className="space-y-3 px-3 pb-4 pt-2">

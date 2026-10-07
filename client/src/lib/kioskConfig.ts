@@ -49,6 +49,12 @@ export const KIOSK_RENDERERS: readonly KioskRenderer[] = ['native', 'web'];
 export interface KioskGeneral {
   fulfillmentMode: FulfillmentMode;
   serviceTypes: ServiceType[];
+  /**
+   * "סוג שירות": `types` (default) — as `serviceTypes` says: asked with two, else every order is
+   * the one; `none` — "ללא סוג שירות": never asked, and no service word anywhere for the order
+   * (screens, slip, bon, receipt, KDS); `serviceTypes` stays as it was, for the day it is back.
+   */
+  serviceMode: ServiceMode;
   askTableNumber: boolean;
   languages: KioskLanguage[];
   skipCart: SkipCartMode;
@@ -79,6 +85,8 @@ export interface KioskGeneral {
   serviceSelect: ServiceSelect;
 }
 
+export type ServiceMode = 'types' | 'none';
+export const SERVICE_MODES: ServiceMode[] = ['types', 'none'];
 export type ServicePlacement = 'after_start' | 'attract';
 export const SERVICE_PLACEMENTS: ServicePlacement[] = ['after_start', 'attract'];
 export type ServiceSelect = 'confirm' | 'instant';
@@ -456,6 +464,12 @@ export interface KioskPayment {
   /** "שלח למטבח לפני תשלום": the bon of an order to pay at the till prints at once (off: once paid). */
   cashAtTillKitchenBeforePay: boolean;
   /**
+   * "לוגו במסך התשלום": its own picture (POST /kiosks/media), at the top of the screens that wait
+   * for the payment — as it is ("plain", a transparent PNG) or on a rounded light plate ("plate").
+   * No picture: nothing shows. Optional on the wire: a server before it sends none.
+   */
+  waitLogo?: KioskWaitLogo;
+  /**
    * "חובה / רשות / כבוי" for the steps that are not a customer field (STEP_MODE_KEYS; `stepMode`
    * gives the effective one). Optional on the wire: a server before it sends none — the defaults.
    */
@@ -479,6 +493,21 @@ export const STEP_MODE_DEFAULTS: Record<StepModeKey, CustomerFieldMode> = {
   upsellSteps: 'optional',
   upsellCheckout: 'optional',
 };
+
+export type WaitLogoStyle = 'plain' | 'plate';
+export const WAIT_LOGO_STYLES: WaitLogoStyle[] = ['plain', 'plate'];
+export interface KioskWaitLogo {
+  media: MediaRef | null;
+  style: WaitLogoStyle;
+}
+
+/** The payment-wait logo to draw, or null: none uploaded (or a config from before it). */
+export function waitLogoOf(payment: { waitLogo?: Partial<KioskWaitLogo> | null } | null | undefined): { url: string; plate: boolean } | null {
+  const w = payment?.waitLogo;
+  const url = w?.media?.url;
+  if (!url) return null;
+  return { url, plate: w?.style === 'plate' };
+}
 
 export type BonMode = 'routing' | 'single';
 
@@ -716,6 +745,7 @@ export const KIOSK_DEFAULTS: KioskConfig = {
   general: {
     fulfillmentMode: 'BON',
     serviceTypes: ['take_away', 'eat_in'],
+    serviceMode: 'types',
     askTableNumber: false,
     languages: ['he'],
     skipCart: 'off',
@@ -823,6 +853,7 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     checkoutSteps: ['tip', 'details', 'payMethod'],
     cashAtTillExpiryMin: 30,
     cashAtTillKitchenBeforePay: false,
+    waitLogo: { media: null, style: 'plain' },
     stepModes: { ...STEP_MODE_DEFAULTS },
   },
   printing: {
@@ -1509,6 +1540,7 @@ export function validateKioskConfig(
   checkEnum(e, 'general.skipCart', g.skipCart, ['off', 'direct', 'confirm']);
   checkEnum(e, 'general.soldOutMode', g.soldOutMode, ['disable', 'hide']);
   checkEnum(e, 'general.renderer', g.renderer, KIOSK_RENDERERS);
+  checkEnum(e, 'general.serviceMode', g.serviceMode, SERVICE_MODES);
   checkEnum(e, 'general.servicePlacement', g.servicePlacement, SERVICE_PLACEMENTS);
   checkEnum(e, 'general.serviceSelect', g.serviceSelect, SERVICE_SELECTS);
   for (const key of ['askTableNumber', 'upsellEnabled', 'searchEnabled', 'notesEnabled', 'quickNotesEnabled', 'showAllergens', 'showDietary', 'reduceMotion', 'offlineSound', 'blockWhenOffline', 'offlineNotice'] as const) {
@@ -1668,6 +1700,10 @@ export function validateKioskConfig(
     e.push({ path: 'payment.tipPresets', code: 'range', params: { min: L.tipPreset.min, max: L.tipPreset.max } });
   }
   checkEnum(e, 'payment.receiptPolicy', pay.receiptPolicy, ['always', 'ask', 'never']);
+  if (pay.waitLogo !== undefined) {
+    checkMedia(e, 'payment.waitLogo.media', pay.waitLogo?.media ?? null, ['image']);
+    checkEnum(e, 'payment.waitLogo.style', pay.waitLogo?.style, WAIT_LOGO_STYLES);
+  }
   checkEnum(e, 'payment.customerName', pay.customerName, ['off', 'optional', 'required']);
   checkEnum(e, 'payment.customerPhone', pay.customerPhone, ['off', 'optional', 'required']);
   if (!isInt(pay.minOrderAgorot) || pay.minOrderAgorot < 0) e.push({ path: 'payment.minOrderAgorot', code: 'nonNegative' });
@@ -2065,7 +2101,7 @@ export function kioskTipAsked(payment: Pick<KioskPayment, 'tipEnabled' | 'tipPre
 }
 
 export interface StepModeConfigIn {
-  general: Partial<Pick<KioskGeneral, 'serviceTypes' | 'upsellEnabled'>>;
+  general: Partial<Pick<KioskGeneral, 'serviceTypes' | 'serviceMode' | 'upsellEnabled'>>;
   payment: Partial<Pick<KioskPayment, 'tipEnabled' | 'tipPresets' | 'tipOther' | 'methods' | 'stepModes' | 'customerName' | 'customerPhone' | 'tableNumber'>>;
 }
 
@@ -2083,11 +2119,44 @@ export function stepMode(cfg: StepModeConfigIn, key: StepModeKey | 'customerName
   }
   const own = pay.stepModes?.[key];
   const mode = valid(own) ? own : STEP_MODE_DEFAULTS[key];
-  if (key === 'service' && (cfg.general?.serviceTypes?.length ?? 2) <= 1) return 'off';
+  if (key === 'service' && ((cfg.general?.serviceTypes?.length ?? 2) <= 1 || cfg.general?.serviceMode === 'none')) return 'off';
   if (key === 'tip' && !kioskTipAsked({ tipEnabled: !!pay.tipEnabled, tipPresets: pay.tipPresets ?? [], tipOther: pay.tipOther !== false })) return 'off';
   if (key === 'payMethod' && !kioskAsksPayMethod(pay.methods)) return 'off';
   if (key.startsWith('upsell') && cfg.general?.upsellEnabled === false) return 'off';
   return mode;
+}
+
+/**
+ * The designer's "סוג שירות" (4 choices): "שואלים" (both types — their order is the buttons'),
+ * "תמיד טייק אווי" / "תמיד ישיבה במקום" (one type: never asked, every order is it — and says it),
+ * "ללא" (serviceMode none: never asked, no service at all).
+ */
+export type ServiceChoice = 'ask' | 'take_away' | 'eat_in' | 'none';
+export const SERVICE_CHOICES: ServiceChoice[] = ['ask', 'take_away', 'eat_in', 'none'];
+
+/** The choice a config's `serviceTypes` / `serviceMode` make. */
+export function serviceChoiceOf(g: Partial<Pick<KioskGeneral, 'serviceTypes' | 'serviceMode'>> | null | undefined): ServiceChoice {
+  if (g?.serviceMode === 'none') return 'none';
+  const list = (Array.isArray(g?.serviceTypes) ? g.serviceTypes : []).filter((v) => SERVICE_TYPES.includes(v));
+  if (list.length > 1) return 'ask';
+  return list[0] === 'eat_in' ? 'eat_in' : 'take_away';
+}
+
+/**
+ * The fields a choice writes. "ללא" keeps `serviceTypes` as it was (back to "שואלים" finds the
+ * buttons' order again); "שואלים" keeps the order it had, else the one type first.
+ */
+export function serviceChoicePatch(
+  g: Partial<Pick<KioskGeneral, 'serviceTypes' | 'serviceMode'>> | null | undefined,
+  choice: ServiceChoice,
+): Pick<KioskGeneral, 'serviceTypes' | 'serviceMode'> {
+  const list = (Array.isArray(g?.serviceTypes) ? g.serviceTypes : []).filter((v) => SERVICE_TYPES.includes(v));
+  if (choice === 'none') return { serviceTypes: list.length > 0 ? list : ['take_away'], serviceMode: 'none' };
+  if (choice === 'ask') {
+    const first = list[0] ?? 'take_away';
+    return { serviceTypes: list.length > 1 ? list : [first, ...SERVICE_TYPES.filter((x) => x !== first)], serviceMode: 'types' };
+  }
+  return { serviceTypes: [choice], serviceMode: 'types' };
 }
 
 /** The step's default answer when it is passed ("optional") or off: the first service type, no tip, the first method that pays. */

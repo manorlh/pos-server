@@ -232,6 +232,10 @@ REMAINDER_METHODS = ("card", "cash_at_till")
 CASH_AT_TILL_EXPIRY_MIN = (5, 240)
 RECEIPT_POLICIES = ("always", "ask", "never")
 CUSTOMER_FIELD_MODES = ("off", "optional", "required")
+#: "סוג שירות": "types" — as `serviceTypes` says (asked with two, else every order is the one);
+#: "none" — "ללא סוג שירות": never asked, and the order carries no service at all (no word on
+#: the screens, the slip, the bon, the receipt or the KDS). `serviceTypes` is kept as it was.
+SERVICE_MODES = ("types", "none")
 #: "לקחת / לשבת": after "הזמינו כאן" (the current flow) or as two big buttons on the attract screen.
 SERVICE_PLACEMENTS = ("after_start", "attract")
 #: "לאכול כאן או לקחת?": a tap picks and "להמשך" goes on (default), or a tap goes on at once.
@@ -260,6 +264,9 @@ UPSELL_MAX_SHOWN = 5
 #: own upsell rules of 06.10.2026, replaced by the menu's rules).
 RETIRED_KEYS = (("upsell", "rules"), ("upsell", "when"))
 SUCCESS_MESSAGE_MAX = 300
+#: "לוגו במסך התשלום": the business's logo above the card step — as it is ("plain", for a
+#: transparent PNG) or on a rounded light plate ("plate", for a logo with its own background).
+WAIT_LOGO_STYLES = ("plain", "plate")
 BON_MODES = ("routing", "single")
 PICKUP_SCOPES = ("kiosk", "shop")
 MEDIA_KINDS = ("image", "video", "font")
@@ -292,6 +299,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "general": {
         "fulfillmentMode": "BON",
         "serviceTypes": ["take_away", "eat_in"],
+        # "ללא סוג שירות" is "none"; absent (every config stored before it) reads as "types".
+        "serviceMode": "types",
         "askTableNumber": False,
         "languages": ["he"],
         "skipCart": "off",
@@ -422,6 +431,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # "שלח למטבח לפני תשלום": the kiosk prints the bon of an order to pay at the till at once
         # (off: the till sends it when it takes the money).
         "cashAtTillKitchenBeforePay": False,
+        # "לוגו במסך התשלום": its own upload (POST /kiosks/media), shown at the top of the screens
+        # that wait for the payment; no picture — nothing shows.
+        "waitLogo": {"media": None, "style": "plain"},
     },
     # "הגדלת מכירה": the menu's rules for the kiosk (§21); at most `maxShown` windows in one order.
     "upsell": {"maxShown": 2},
@@ -1000,6 +1012,7 @@ SCHEMA = Obj({
     "general": Obj({
         "fulfillmentMode": Enum(FULFILLMENT_MODES),
         "serviceTypes": UList(Enum(SERVICE_TYPES), min_len=1, max_len=len(SERVICE_TYPES), unique=True),
+        "serviceMode": Enum(SERVICE_MODES),
         "askTableNumber": Bool(),
         "languages": UList(Enum(LANGUAGES), min_len=1, max_len=len(LANGUAGES), unique=True),
         "skipCart": Enum(SKIP_CART),
@@ -1122,6 +1135,10 @@ SCHEMA = Obj({
         "stepModes": Obj({key: Enum(CUSTOMER_FIELD_MODES) for key in STEP_MODE_KEYS}),
         "cashAtTillExpiryMin": Int(*CASH_AT_TILL_EXPIRY_MIN),
         "cashAtTillKitchenBeforePay": Bool(),
+        "waitLogo": Obj({
+            "media": Media(("image",), nullable=True),
+            "style": Enum(WAIT_LOGO_STYLES),
+        }),
     }),
     "upsell": Obj({
         "maxShown": Int(1, UPSELL_MAX_SHOWN),
@@ -1196,6 +1213,7 @@ SCHEMA = Obj({
         "categoryIcons": Enum(layouts.LAYOUT_CATEGORY_ICONS, nullable=True),
         "railSize": Enum(layouts.LAYOUT_RAIL_SIZES),
         "landingColumns": Int(min(layouts.LAYOUT_LANDING_COLUMNS), max(layouts.LAYOUT_LANDING_COLUMNS)),
+        "productSize": Enum(layouts.LAYOUT_PRODUCT_SIZES),
         "landingShowCounts": Bool(),
         "hero": Enum(layouts.LAYOUT_HEROES),
         "magazineFeed": Bool(),
@@ -1260,6 +1278,7 @@ def limits() -> Dict[str, Any]:
         "enums": {
             "fulfillmentMode": list(FULFILLMENT_MODES),
             "serviceTypes": list(SERVICE_TYPES),
+            "serviceMode": list(SERVICE_MODES),
             "languages": list(LANGUAGES),
             "skipCart": list(SKIP_CART),
             "soldOutMode": list(SOLD_OUT_MODES),
@@ -1291,6 +1310,7 @@ def limits() -> Dict[str, Any]:
             "bonMode": list(BON_MODES),
             "pickupScope": list(PICKUP_SCOPES),
             "servicePlacement": list(SERVICE_PLACEMENTS),
+            "waitLogoStyle": list(WAIT_LOGO_STYLES),
             "serviceSelect": list(SERVICE_SELECTS),
             "detailsStep": list(DETAILS_STEPS),
             "checkoutSteps": list(CHECKOUT_STEPS),
@@ -1580,7 +1600,7 @@ def step_mode(cfg: Dict[str, Any], key: str) -> str:
         return mode if mode in CUSTOMER_FIELD_MODES else "off"
     mode = (payment.get("stepModes") or {}).get(key)
     mode = mode if mode in CUSTOMER_FIELD_MODES else DEFAULT_CONFIG["payment"]["stepModes"].get(key, "optional")
-    if key == "service" and len(general.get("serviceTypes") or []) <= 1:
+    if key == "service" and (len(general.get("serviceTypes") or []) <= 1 or general.get("serviceMode") == "none"):
         return "off"
     if key == "tip" and not (payment.get("tipEnabled") and (payment.get("tipPresets") or payment.get("tipOther", True))):
         return "off"
@@ -1674,6 +1694,7 @@ def _media_refs(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     refs += [category_images[key] for key in sorted(category_images) if key not in hidden]
     refs += [m.get("image") for m in (_get(cfg, "messages") or []) if isinstance(m, dict)]
     refs.append(_get(cfg, "success", "image"))
+    refs.append(_get(cfg, "payment", "waitLogo", "media"))
     return [r for r in refs if isinstance(r, dict) and r.get("url")]
 
 

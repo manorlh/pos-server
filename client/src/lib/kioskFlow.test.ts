@@ -125,3 +125,30 @@ describe('scans on the browser kiosk', () => {
     assert.equal(parseScan(']E07290000000017').symbology, 'EAN-13');
   });
 });
+
+import { orderServiceOf, servicesOf } from './kioskFlow';
+
+describe('"ללא סוג שירות" (general.serviceMode = none) on the browser kiosk', () => {
+  const none: FlowConfigIn = {
+    general: { serviceTypes: ['take_away', 'eat_in'], skipCart: 'off', askTableNumber: true, servicePlacement: 'attract', serviceMode: 'none' },
+    payment: { customerName: 'off', customerPhone: 'off', tipEnabled: false },
+  };
+
+  it('never asked: a tap goes to the menu with no service, and the order carries none', () => {
+    assert.deepEqual(servicesOf(none), []);
+    const r = rulesOf(none, true);
+    assert.equal(r.serviceOnAttract, false);
+    const menu = run(r, [{ type: 'start' }]);
+    assert.deepEqual([menu.screen, menu.service], ['catalog', null]);
+    assert.equal(run(r, [{ type: 'back' }], menu).screen, 'attract');
+    assert.equal(orderServiceOf(menu.service, none), null);
+    assert.equal(r.asksDetails(null), false, 'no table either: it belongs to eat-in');
+  });
+
+  it('every other config: the chosen service, else the one type', () => {
+    const two: FlowConfigIn = { ...none, general: { ...none.general, serviceMode: 'types' } };
+    assert.equal(orderServiceOf('eat_in', two), 'eat_in');
+    assert.equal(orderServiceOf(null, { ...cfg, general: { ...cfg.general, serviceTypes: ['eat_in'] } }), 'eat_in');
+    assert.equal(orderServiceOf(null, cfg), 'take_away');
+  });
+});

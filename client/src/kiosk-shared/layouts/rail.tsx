@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { basketKindOf, layoutOf, railMeasures } from '@/lib/kioskLayout';
+import { basketKindOf, layoutOf, productColumns, railMeasures } from '@/lib/kioskLayout';
 import { KioskSwap } from '@/components/dashboard/kiosks/preview-motion';
 import { CartBar, CartPanel, CatalogHeader, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { TickerSlot, PREVIEW_FOOTER_PX } from '@/components/dashboard/kiosks/preview-ticker';
@@ -47,7 +47,8 @@ export function RailCatalog({ m, onCategory }: { m: PreviewModel; onCategory?: (
   const railW = Math.round(measures.widthDp / DP_PER_PX);
   const itemH = Math.round(measures.itemDp / DP_PER_PX);
   const imageSize = Math.round(measures.imageDp / DP_PER_PX);
-  const cols = Math.max(2, Math.floor((m.screen.w - railW - (m.panel ? 132 : 0)) / 190));
+  const gridPx = m.screen.w - railW - (m.panel ? 132 : 0);
+  const cols = productColumns(Math.max(2, Math.floor(gridPx / 190)), layout.productSize, gridPx * DP_PER_PX, layout.card === 'row');
   const counts = cartCounts(m);
   const pick = (id: string) => {
     setActive(id);

@@ -41,7 +41,7 @@ import { KIOSK_ICON_DATA } from './kioskIconData';
 import { KIOSK_TEXT_REGISTRY_DATA } from './kioskTextRegistryData';
 import { KIOSK_TEXTS, configuredText, defaultText, isKioskTextKey, kioskTextOf, textShownUnder, validateKioskTexts, webTextOverride } from './kioskTexts';
 
-const TEMPLATES_SHA256 = 'aeb8184f6b7ca4949d12cb589a61a828ff61c5f5030aea04db3f7ef1a596d2af';
+const TEMPLATES_SHA256 = '5e3e5a40ac97ec2b4b7b801b1ec886f94df8af80892c967d6e82dac6c2ec96aa';
 const ICONS_SHA256 = '75ac9c79776f320370b5c73429009e4daa77a13bf3d90fbdccd8b94dd5c64fa6';
 const REGISTRY_SHA256 = '604e2b58954849c25cb1883a74705114ae56d12e0f60003a0d892acec56ee5a6';
 
@@ -268,5 +268,30 @@ describe('the text registry fixture', () => {
     assert.equal(textShownUnder({ catalog: ['landing'] }, { catalog: 'rail' }), false);
     assert.equal(textShownUnder({ any: [{ reach: ['low'] }, { reachToggle: [true] }] }, { reach: 'normal', reachToggle: true }), true);
     assert.equal(textShownUnder(null, {}), true);
+  });
+});
+
+import { LAYOUT_PRODUCT_SIZES, productColumns, validateLayout } from './kioskLayout';
+
+describe('"גודל מוצרים" (layout.productSize — the Android kiosk\'s KioskLayouts.productColumns)', () => {
+  it('m is today; s a column more; l a column fewer, never under two tiles from a 400 dp grid', () => {
+    assert.deepEqual(LAYOUT_PRODUCT_SIZES, ['s', 'm', 'l']);
+    assert.equal(KIOSK_LAYOUT_DEFAULTS.productSize, 'm');
+    assert.equal(productColumns(3, 'm', 720), 3);
+    assert.equal(productColumns(3, undefined, 720), 3);
+    assert.equal(productColumns(3, 's', 720), 4);
+    assert.equal(productColumns(3, 'l', 720), 2);
+    assert.equal(productColumns(2, 'l', 720), 2);
+    assert.equal(productColumns(2, 'l', 360), 1);
+    assert.equal(productColumns(1, 'l', 800), 1);
+    assert.equal(productColumns(1, 's', 720, true), 1, 'rows keep theirs');
+    assert.equal(productColumns(4, 's', 1200), 5);
+  });
+
+  it('validated with the rest of the layout', () => {
+    const bad = validateLayout({ layout: { ...KIOSK_LAYOUT_DEFAULTS, productSize: 'xl' as never }, attract: KIOSK_DEFAULTS.attract });
+    assert.ok(bad.some((e) => e.path === 'layout.productSize'));
+    const ok = validateLayout({ layout: { ...KIOSK_LAYOUT_DEFAULTS, productSize: 'l' }, attract: KIOSK_DEFAULTS.attract });
+    assert.equal(ok.filter((e) => e.path === 'layout.productSize').length, 0);
   });
 });

@@ -31,6 +31,14 @@ for (const serviceTypes of [['take_away'], ['take_away', 'eat_in']]) {
   }
 }
 
+// "ללא סוג שירות" (general.serviceMode = none): walked by both too.
+for (const detailsStep of ['after_service', 'before_pay']) {
+  CONFIGS.push({
+    general: { serviceTypes: ['take_away', 'eat_in'], skipCart: 'off', askTableNumber: true, servicePlacement: 'attract', serviceMode: 'none' },
+    payment: { customerName: 'optional', customerPhone: 'off', tipEnabled: true, tipPresets: [10, 15], detailsStep, tableNumber: 'optional' },
+  });
+}
+
 const EVENTS: desk.KioskEvent[] = [
   { type: 'start' },
   { type: 'startWith', service: 'eat_in' },

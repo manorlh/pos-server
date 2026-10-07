@@ -246,9 +246,12 @@ function drawSlipAt384(doc: SlipDoc): HTMLCanvasElement {
   font(ctx, plain.length <= 4 ? 120 : 84, 'bold');
   ctx.fillText(doc.label, W / 2, y);
   y += 46;
-  font(ctx, 30, 'bold');
-  ctx.fillText(doc.service, W / 2, y);
-  y += 38;
+  // "ללא סוג שירות": no service line.
+  if (doc.service) {
+    font(ctx, 30, 'bold');
+    ctx.fillText(doc.service, W / 2, y);
+    y += 38;
+  }
   font(ctx, 22);
   ctx.fillText(doc.summary, W / 2, y);
   y += 34;
@@ -344,7 +347,8 @@ function drawBon(doc: BonDoc, w: number): HTMLCanvasElement {
     centred(doc.title, fitSize(doc.title, 56, 30), true);
     centred(doc.sub, 24, true);
     if (doc.notice) band(doc.notice, fitSize(doc.notice, 38, 24), true);
-    band(doc.dining === 'take_away' ? 'לקחת' : 'לשבת', 40, doc.dining === 'take_away');
+    // "ללא סוג שירות": no band.
+    if (doc.dining) band(doc.dining === 'take_away' ? 'לקחת' : 'לשבת', 40, doc.dining === 'take_away');
     divider();
     for (const l of doc.lines) {
       y += 8 * s;
