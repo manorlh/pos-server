@@ -10,6 +10,10 @@
  * The super admin's alone (pos-server `PUT /shops/{id}/z-participation`), all or nothing,
  * and only for tills with no open shift and no closed shifts awaiting a Z; everyone else
  * sees it read-only. The rules are in lib/zParticipation.ts.
+ *
+ * And per device, "לא משמש כשרת מקומי" (pos-server docs/SPEC_LAN_MODE.md §3): never the main
+ * till, the tables host or the print server, yet in the shop Z and on the LAN. A till showing
+ * a KDS screen is ticked by itself; a kiosk or a handheld nobody chose for is pre-ticked.
  */
 
 import { useState } from 'react';
@@ -23,7 +27,10 @@ import {
   canBeRemote,
   choiceForTick,
   effectOf,
+  exclusionLocked,
+  exclusionPreTicked,
   initialChoices,
+  initialExclusions,
   initialLinks,
   isKnownRefusal,
   linkHintOf,
@@ -39,6 +46,7 @@ import {
   type ProducerBusy,
   type TillLink,
   type ZChoices,
+  type ZExclusions,
   type ZLinks,
   type ZParticipationState,
   type ZParticipationTill,
@@ -75,7 +83,7 @@ export function ZParticipationCard({ shopId }: { shopId: string }) {
         ) : (
           // Keyed by what was saved: a save (or another admin's) starts the form afresh.
           <ZParticipationForm
-            key={`${data.mainTill?.machineId ?? ''}|${data.tills.map((x) => `${x.machineId}:${roleOf(x)}:${x.link ?? 'lan'}`).join(',')}`}
+            key={`${data.mainTill?.machineId ?? ''}|${data.tills.map((x) => `${x.machineId}:${roleOf(x)}:${x.link ?? 'lan'}:${x.lanServerExcluded ? 1 : 0}`).join(',')}`}
             shopId={shopId}
             data={data}
           />
@@ -95,14 +103,17 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
   const [refusal, setRefusal] = useState<ParticipationRefusal | null>(null);
   // "מחובר ברשת המקומית" / "מרוחק (דרך הענן)" per till; saved whole as `remote`.
   const [links, setLinks] = useState<ZLinks>(() => initialLinks(data));
+  // "לא משמש כשרת מקומי" per device; saved whole as `lanServerExcluded`.
+  const [exclusions, setExclusions] = useState<ZExclusions>(() => initialExclusions(data));
   // A setting of local mode (the main till closes the tills over the LAN), or one still set.
   const showLinks = data.localMode || data.tills.some((x) => x.link === 'remote');
 
   const tills = sortTills(data.tills);
-  const body = buildParticipationBody(data, choices, mainTillId || null, links);
-  const issues = validateParticipation(data, choices, mainTillId || null);
+  const body = buildParticipationBody(data, choices, mainTillId || null, links, exclusions);
+  const issues = validateParticipation(data, choices, mainTillId || null, exclusions);
   const mainIssue = issues.find((i) => i.kind === 'main_not_participating');
-  const options = mainTillOptions(data.tills, choices);
+  const excludedMainIssue = issues.find((i) => i.kind === 'main_excluded');
+  const options = mainTillOptions(data.tills, choices, exclusions);
 
   // 409 `shop_z_producer_busy`: the shop Z's producer has not handed over; a super admin may force it.
   const [producerBusy, setProducerBusy] = useState<ProducerBusy | null>(null);
@@ -161,6 +172,10 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
   const setLink = (id: string, link: TillLink) => {
     setRefusal(null);
     setLinks((l) => ({ ...l, [id]: link }));
+  };
+  const setExcluded = (id: string, on: boolean) => {
+    setRefusal(null);
+    setExclusions((e) => ({ ...e, [id]: on }));
   };
   const summary = summarySegments(data, choices, mainTillId || null, links)
     .map((s) => t(`summary.${s.key}`, s.values))
@@ -232,6 +247,29 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
                     {block === 'open_shift' ? t('blocked.openShift') : t('blocked.awaitingZ', { n: x.awaitingZ })}
                   </p>
                 ) : null}
+                {/* "לא משמש כשרת מקומי": in the LAN group and the shop Z, never its server. */}
+                {choice !== 'independent' ? (
+                  <div className="flex flex-wrap items-center gap-2 ps-6">
+                    <label htmlFor={`${id}-lan`} className="flex items-center gap-2 text-xs">
+                      <input
+                        id={`${id}-lan`}
+                        type="checkbox"
+                        className="h-3.5 w-3.5 accent-primary"
+                        checked={exclusionLocked(x) || !!exclusions[x.machineId]}
+                        disabled={busy || exclusionLocked(x) || (isMain && !exclusions[x.machineId])}
+                        onChange={(e) => setExcluded(x.machineId, e.target.checked)}
+                      />
+                      <span>{t('lanServer.column')}</span>
+                    </label>
+                    {exclusionLocked(x) ? (
+                      <span className="text-xs text-muted-foreground">{t('lanServer.auto')}</span>
+                    ) : isMain && !exclusions[x.machineId] ? (
+                      <span className="text-xs text-muted-foreground">{t('lanServer.mainTill')}</span>
+                    ) : exclusionPreTicked(x, exclusions) ? (
+                      <span className="text-xs text-amber-700/80 dark:text-amber-400/80">{t('lanServer.preTicked')}</span>
+                    ) : null}
+                  </div>
+                ) : null}
                 {/* On the shop's LAN, or elsewhere and closed through the cloud. The main till
                     is the LAN server; an independent till is outside the shop Z altogether. */}
                 {showLinks && isMain ? (
@@ -299,6 +337,8 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
       {mainIssue ? (
         <p className="text-xs text-destructive">{t('invalid.mainNotParticipating')}</p>
       ) : null}
+      {excludedMainIssue ? <p className="text-xs text-destructive">{t('invalid.mainExcluded')}</p> : null}
+      <p className="text-xs text-muted-foreground">{t('lanServer.hint')}</p>
 
       {tills.length > 0 ? (
         <p className="rounded-md border bg-muted/30 p-3 text-sm">{summary}</p>
