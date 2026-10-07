@@ -10,7 +10,8 @@ import { EventEmitter } from 'node:events';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import bcrypt from 'bcryptjs';
-import { resolveKioskConfig } from '@dash-lib/kioskConfig';
+import { kioskPayMethods, resolveKioskConfig, type PaymentMethod } from '@dash-lib/kioskConfig';
+import { orderCode, orderDue, type OpenOrder, type VoucherLeg, type WebLineOption, type WebOrderLine } from '@dash-lib/kioskWebOrders';
 import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type OptionPick } from '@dash-lib/kioskMoney';
 import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, type KioskOrder, type PickupRules } from '../core/kioskOrders';
 import { OfflineTracker } from '../core/kioskHealth';
@@ -43,6 +44,7 @@ import type { PaymentProvider, ProviderContext, ProviderFactory } from './paymen
 import { PrintQueue, type PageRenderer } from './printer/printQueue';
 import { DefaultTransport, guessQueue, type PrinterTarget, type Transport } from './printer/transports';
 import { allocatePickup, OrderStore } from './kiosk/orders';
+import { PayAtTill, type VoucherResult } from './kiosk/payAtTill';
 import { kdsSaleRelease, releasesToKds } from './kiosk/kdsRelease';
 import { FunnelStore } from './kiosk/funnel';
 import { basketChanges, checkedBasePrice, CLOUD_CHECK_TIMEOUT_MS, overridesLive, overridesOf, type CloudOverrides, type CloudVerdict } from '../core/basketCheck';
@@ -56,6 +58,8 @@ import type {
   KioskEvents,
   KioskView,
   PayProgress,
+  PlaceOrderIn,
+  PlaceOrderOut,
   StartPaymentIn,
   StartPaymentOut,
   TechnicianAction,
@@ -131,6 +135,8 @@ export class KioskService extends EventEmitter {
   readonly orders: OrderStore;
   /** "ביצועי קיוסקים": the funnel's events waiting for the cloud (kiosk/funnel.ts). */
   readonly funnel: FunnelStore;
+  /** "מזומן בקופה" and vouchers (kiosk/payAtTill.ts). */
+  readonly payAtTill: PayAtTill;
   readonly sync: SyncEngine;
   /** The cloud's word on the basket a moment ago (core/basketCheck.ts), until the catalog catches up. */
   private cloudBasket: CloudOverrides | null = null;
@@ -193,6 +199,7 @@ export class KioskService extends EventEmitter {
     this.printQueue = new PrintQueue(this.db, this.transport, () => this.localSettings().printer, opts.renderer ?? null, this.log);
     this.orders = new OrderStore(this.db);
     this.funnel = new FunnelStore(this.kv);
+    this.payAtTill = new PayAtTill({ kv: this.kv, api: this.api, machineId: () => this.machineId, operator: () => this.operator(), log: this.log });
     this.providers = opts.providers ?? PROVIDERS;
     this.tillZ = new TillZService({
       db: this.db,
@@ -457,9 +464,10 @@ export class KioskService extends EventEmitter {
       staff: {
         unprintedBons: today.filter((o) => o.bonStatus === 'failed' || o.bonStatus === 'queued').length,
         printer: this.printQueue.health(),
-        pendingUploads: this.outbox.count(),
+        pendingUploads: this.outbox.count() + this.payAtTill.pending(),
         mediaMissing: media.missing,
       },
+      pay: this.payView(phase === 'kiosk'),
     };
     this.viewDirty = false;
     return this.viewCache;
@@ -566,6 +574,8 @@ export class KioskService extends EventEmitter {
         if (id && this.isKiosk()) await this.orders.push(this.api, id);
         // "ביצועי קיוסקים": the funnel's events, after the orders.
         if (id && this.isKiosk()) await this.funnel.push(this.api, id).catch(() => false);
+        // "מזומן בקופה": the open orders the cloud has not taken, the vouchers to give back.
+        if (id && this.isKiosk()) await this.payAtTill.flush().catch((e) => this.log(`pay at till: ${String(e)}`));
       },
       sideRequest: (row: OutboxRow) => this.sideRequest(row),
       onRevoked: () => {
@@ -1185,6 +1195,150 @@ export class KioskService extends EventEmitter {
     void this.sync.flush();
     if (this.machineId) void this.orders.push(this.api, this.machineId);
     this.dirty();
+  }
+
+  /* ------------------------------------------------ "מזומן בקופה" and vouchers */
+
+  /** What this kiosk can take now, of the methods configured (payment.methods). */
+  private payView(kiosk: boolean): KioskView['pay'] {
+    const methods = kiosk ? kioskPayMethods(this.config().payment.methods) : (['card'] as PaymentMethod[]);
+    const state = this.pay.monitor.state;
+    const cardOff = this.pay.blocked()
+      ? 'תשלום קודם ממתין לבירור. אנא פנו לצוות.'
+      : state === 'ready'
+        ? null
+        : state === 'unconfigured'
+          ? 'לא הוגדר מסופון אשראי לקיוסק'
+          : 'מסופון האשראי לא זמין כרגע';
+    const usable = methods.filter((m) => (m === 'card' ? this.fiscalRole && cardOff === null : m === 'voucher' ? !this.offlineNow : this.fiscalRole));
+    return { methods, usable, cardOff };
+  }
+
+  /** The basket priced here (priceBasket) as the till's held sale carries it (client lib/kioskWebOrders.ts WebOrderLine). */
+  private webLines(lines: SaleLine[]): WebOrderLine[] {
+    const raw = new Map(this.cloud.catalog().products.map((p) => [String(p.id), p] as const));
+    const option = (o: SaleOption): WebLineOption => ({
+      groupId: o.groupId,
+      groupName: o.groupName ?? null,
+      kind: o.kind ?? 'addon',
+      optionId: o.optionId,
+      name: o.name,
+      priceAgorot: o.priceAgorot,
+      qty: o.qty,
+      pre: o.pre ?? null,
+      chargedAgorot: optionCharged(o),
+    });
+    return lines.map((l) => {
+      const row = raw.get(l.productId) ?? {};
+      return {
+        key: l.key,
+        productId: l.productId,
+        name: l.name,
+        qty: l.qty,
+        baseAgorot: l.basePriceAgorot,
+        unitAgorot: unitAgorot(l),
+        options: l.options.map(option),
+        note: l.notes.join(' · ') || null,
+        categoryId: l.categoryId ?? null,
+        sku: l.sku,
+        barcode: typeof row.barcode === 'string' ? row.barcode : null,
+        imageUrl: typeof row.imageUrl === 'string' ? row.imageUrl : null,
+        allergens: Array.isArray(row.allergens) ? (row.allergens as unknown[]).filter((a): a is string => typeof a === 'string') : [],
+        meal: l.meal
+          ? { components: l.meal.components.map((c) => ({ slotId: c.slotId, slotName: c.slotName, productId: c.productId, name: c.name, categoryId: c.categoryId, listPriceAgorot: c.listPriceAgorot, upchargeAgorot: c.upchargeAgorot, options: c.options.map(option) })) }
+          : null,
+        noDiscount: l.noDiscount === true,
+        ...((l.promotionAgorot ?? 0) > 0 ? { promotionAgorot: l.promotionAgorot, promotionId: l.promotionId ?? null, promotionName: l.promotionName ?? null } : {}),
+      };
+    });
+  }
+
+  /** A voucher for this basket, redeemed online (kiosk/payAtTill.ts); the basket priced here. */
+  async redeemVoucher(input: { code: string; basket: StartPaymentIn; earlier: VoucherLeg[]; forfeitRest?: boolean; clientRequestId: string }): Promise<VoucherResult> {
+    if (!this.fiscalRole || !this.isKiosk()) return { kind: 'refused', reason: 'not_a_kiosk' };
+    const { lines } = this.priceBasket(input.basket);
+    return this.payAtTill.redeem({ code: input.code, lines: this.webLines(lines), earlier: input.earlier ?? [], forfeitRest: input.forfeitRest, clientRequestId: input.clientRequestId });
+  }
+
+  async reverseVoucher(redemptionId: string): Promise<void> {
+    if (typeof redemptionId === 'string' && redemptionId) await this.payAtTill.reverse(redemptionId);
+  }
+
+  /**
+   * "מזומן בקופה": the basket checked and priced here as for the card (never a total the customer did
+   * not see), its number, then the open order to the shop's tills — no document here: the till that
+   * takes the money writes it. With "שלח למטבח לפני תשלום" the bon is printed now, else the till's.
+   */
+  async placeOpenOrder(input: PlaceOrderIn): Promise<PlaceOrderOut> {
+    if (!this.fiscalRole || !this.isKiosk()) return { ok: false, reason: 'error', message: 'המכשיר אינו קיוסק פעיל' };
+    const cfg = this.config();
+    if (!kioskPayMethods(cfg.payment.methods).includes('cash_at_till')) return { ok: false, reason: 'error', message: 'תשלום בקופה אינו מוגדר לקיוסק' };
+    await this.cloudBasketCheck(input).catch(() => undefined);
+    const { lines, changes } = this.priceBasket(input);
+    const goods = saleTotals(lines, this.vatRate()).totalAgorot;
+    if (changes.length > 0) return { ok: false, reason: 'changed', changes, totalAgorot: goods };
+    if (typeof input.expectedTotalAgorot === 'number' && Number.isFinite(input.expectedTotalAgorot) && Math.round(input.expectedTotalAgorot) !== goods) {
+      return { ok: false, reason: 'changed', changes: [], totalAgorot: goods };
+    }
+    if (lines.length === 0) return { ok: false, reason: 'empty', message: 'הסל ריק' };
+    const tip = cfg.payment.tipEnabled ? tipToCharge(goods, input.tipPct, input.tipAgorot) : 0;
+    const vouchers = (Array.isArray(input.vouchers) ? input.vouchers : []).filter((v) => v && typeof v.redemptionId === 'string' && Number.isInteger(v.amountAgorot) && v.amountAgorot >= 0);
+    if (vouchers.reduce((s, v) => s + v.amountAgorot, 0) > goods + tip) return { ok: false, reason: 'error', message: 'השוברים עולים על ההזמנה' };
+    const now = Date.now();
+    const localId = randomUUID();
+    const businessDate = localDate(now);
+    const pickup = await allocatePickup(this.kv, this.api, this.machineId, { localId, businessDate }, { scope: cfg.pickup.scope, prefix: cfg.pickup.prefix, start: cfg.pickup.start, max: cfg.pickup.max });
+    const order: OpenOrder = {
+      localId,
+      createdAtMs: now,
+      businessDate,
+      serviceType: input.service,
+      tableRef: input.tableRef?.trim() || null,
+      fulfillmentMode: cfg.general.fulfillmentMode === 'KDS' ? 'KDS' : 'BON',
+      configVersion: (this.snapshot()?.configVersion as string) ?? null,
+      customerName: input.customerName?.trim() || null,
+      customerPhone: input.customerPhone?.trim() || null,
+      lines: this.webLines(lines),
+      tipAgorot: tip,
+      vouchers,
+      pickupNumber: pickup.number,
+      pickupLabel: pickup.label,
+      bon: { mode: cfg.printing.bonMode === 'single' ? 'single' : 'routing', printerId: cfg.printing.bonPrinterId ?? null, copies: Math.max(1, Math.min(5, cfg.printing.bonCopies || 1)) },
+      kitchenSent: false,
+      cloudState: null,
+      rejected: null,
+    };
+    // "שלח למטבח לפני תשלום": this kiosk's own printer has the bon now ("ממתין לתשלום בקופה").
+    if (cfg.payment.cashAtTillKitchenBeforePay && order.fulfillmentMode === 'BON') {
+      this.printQueue.enqueue(
+        'bon',
+        localId,
+        bonDoc({
+          pickupLabel: pickup.label,
+          customerName: order.customerName,
+          tableRef: order.tableRef,
+          documentNumber: pickup.label,
+          sub: 'ממתין לתשלום בקופה',
+          service: order.serviceType,
+          createdAt: new Date(now),
+          kioskName: this.operator().name,
+          posNumber: this.cloud.machine()?.posNumber ?? null,
+          machineName: this.cloud.machine()?.machineName ?? null,
+          lines: lines.map((l) => ({ qty: l.qty, name: l.name, options: kitchenOptions(l), notes: l.notes.join(' · ') || null })),
+          reprint: false,
+          copy: 1,
+          printerName: null,
+        }),
+      );
+      order.kitchenSent = true;
+    }
+    const placed = await this.payAtTill.place(order);
+    if (cfg.printing.pickupSlip) {
+      this.printQueue.enqueue('slip', localId, slipDoc({ businessName: this.business().companyName, pickupLabel: pickup.label, service: order.serviceType, itemCount: lines.reduce((n, l) => n + l.qty, 0), totalAgorot: orderDue(placed) }));
+    }
+    this.dirty();
+    if (placed.rejected) return { ok: false, reason: 'rejected', message: `ההזמנה לא נקלטה (${placed.rejected}). אנא פנו לצוות.` };
+    return { ok: true, localId, pickupLabel: pickup.label, vouchers, dueAgorot: orderDue(placed), pending: placed.cloudState === null, code: orderCode(localId) };
   }
 
   async cancelPayment(): Promise<void> {

@@ -177,3 +177,21 @@ def test_the_kiosk_part_of_a_local_shop_z_is_the_clouds_own_computation():
     # A kiosk's part says so, with its system operator (SPEC_INDEPENDENT_TILL §8.13).
     assert section["report"]["deviceRole"] == "kiosk"
     assert section["report"]["operator"]["id"].startswith("kiosk:")
+
+
+def test_the_windows_kiosks_open_order_validates():
+    """
+    "מזומן בקופה" on the Windows kiosk (kiosk-desktop src/main/kiosk/payAtTill.ts, PARITY.md gap 7):
+    the open order as it posts it — the browser kiosk's own wire (client lib/kioskWebOrders.ts) —
+    validated by the server's schema: what the till takes adds up, and the lines are what the goods
+    cost after the promotions.
+    """
+    from app.schemas.kiosk_open_orders import KioskOpenOrderIn
+
+    raw = load("open_order")
+    order = KioskOpenOrderIn.model_validate(raw)
+    assert order.state == "open"
+    assert sum(line.total_agorot for line in order.lines) == order.total_agorot
+    assert order.due_agorot == order.total_agorot + order.tip_agorot - order.voucher_agorot
+    codec = json.loads(order.cart["codec"])
+    assert [line["id"] for line in codec["lines"]] == ["L1", "L2"]

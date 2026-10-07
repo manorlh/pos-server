@@ -127,7 +127,9 @@ export function localMediaOnly(v: unknown): unknown {
 export function normalizeView(view: KioskView): KioskView {
   if (!view || !view.config) return view;
   const resolved = resolveKioskConfig(view.config as KioskLayer);
-  return { ...view, config: localMediaOnly(JSON.parse(JSON.stringify(resolved))) as Record<string, unknown> };
+  // The APK's web engine takes the card only (its own screens take the other methods): no "איך תרצו לשלם?".
+  const pay = view.pay ?? { methods: ['card'], usable: ['card'], cardOff: null };
+  return { ...view, pay, config: localMediaOnly(JSON.parse(JSON.stringify(resolved))) as Record<string, unknown> };
 }
 
 export interface AndroidBridges {

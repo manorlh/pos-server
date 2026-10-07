@@ -85,7 +85,7 @@ export class OrderStore {
 }
 
 /** The pickup number of a paid order (allocatePickup). */
-export async function allocatePickup(kv: Kv, api: Api | null, machineId: string | null, order: KioskOrder, rules: PickupRules): Promise<{ number: number; label: string }> {
+export async function allocatePickup(kv: Kv, api: Api | null, machineId: string | null, order: Pick<KioskOrder, 'localId' | 'businessDate'>, rules: PickupRules): Promise<{ number: number; label: string }> {
   const local = (key: string) => {
     const lastDate = kv.get(`${key}.date`);
     const last = kv.getNumber(`${key}.last`);

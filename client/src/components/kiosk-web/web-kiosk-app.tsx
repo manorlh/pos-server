@@ -36,6 +36,7 @@ import {
   resolveThemeColors,
   transitionSpec,
   stepMode,
+  payMethodAsk,
   tickerBandPx,
   typeScaleFactor,
   typeWeights,
@@ -107,7 +108,7 @@ import {
   type KioskFlowRules,
   type KioskFlowState,
 } from '@/lib/kioskFlow';
-import { asksPayMethod, webSells, type WebKioskService, type WebKioskView } from '@/lib/kioskWebService';
+import { webSells, type WebKioskService, type WebKioskView } from '@/lib/kioskWebService';
 import { payFlowEvent, type BridgePayProgress } from '@/lib/kioskBridge';
 import { dueAgorot as dueOf, goodsAgorot as goodsOf, newId, orderCode, voucherCodeOf, type OpenOrder, type VoucherLeg, type WebOrderLine } from '@/lib/kioskWebOrders';
 import { scannedVoucherCode } from '@/lib/kioskScan';
@@ -166,10 +167,13 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   const cfgIn = cfg as unknown as FlowConfigIn;
   // The card only through a paired Windows bridge (§28, lib/kioskBridge.ts).
   const cardReady = view.pay.usable.includes('card');
-  // The browser asks the method when it can sell (the customer confirms paying at the till), unless
-  // the card through the bridge is the only way — then straight to the pinpad, as the Windows kiosk.
+  // "איך תרצו לשלם?" by its mode (payment.stepModes.payMethod, payMethodAsk): asked when the browser
+  // can sell, unless the card through the bridge is the only way, or the step is off and the card is
+  // usable — then straight to the pinpad, as the Windows kiosk; "רשות" may be passed with the default.
   const sells = webSells(view.pay.methods, cardReady);
-  const asks = asksPayMethod(view.pay.methods, cardReady);
+  const payAsk = payMethodAsk(view.pay.methods, view.pay.usable, stepMode(cfg, 'payMethod'));
+  const asks = payAsk.asks;
+  const fallbackMethod: 'card' | 'cash_at_till' = payAsk.fallback === 'card' ? 'card' : 'cash_at_till';
   const rulesFor = useCallback((cartEmpty: boolean): KioskFlowRules => ({ ...rulesOf(cfgIn, cartEmpty), asksPayMethod: asks }), [cfgIn, asks]);
   const flowReducer = useCallback((s: KioskFlowState, a: FlowAction) => reduce(s, a.event, rulesFor(a.cartEmpty)), [rulesFor]);
   const [flow, dispatchFlow] = useReducer(flowReducer, INITIAL_FLOW);
@@ -435,7 +439,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     // Started by the pay screen's effect: nothing changes before the next tick.
     await Promise.resolve();
     // The card (picked, or the only way): through the bridge.
-    if ((methodRef.current ?? (asks ? 'cash_at_till' : 'card')) === 'card') {
+    if ((methodRef.current ?? fallbackMethod) === 'card') {
       const bridge = svc.bridge;
       dispatch({ type: 'paymentStarted' });
       setPayBlocked(null);
@@ -531,7 +535,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     setPay((p) => ({ ...p, placed: { order: r.order, dueAgorot: r.dueAgorot, pending: r.pending } }));
     dispatch({ type: 'paymentApproved' });
     setSuccessAt(Date.now());
-  }, [details, dispatch, orderLines, svc, words, asks]);
+  }, [details, dispatch, orderLines, svc, words, fallbackMethod]);
 
   // Into the pay screen: the order goes to the tills at once.
   useEffect(() => {
@@ -609,7 +613,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     else if (a === 'navigate') dispatch({ type: 'back' });
   };
   /** This order's payment is the card's (through the bridge). */
-  const cardMode = flow.screen === 'pay' && (methodChoice ?? (asks ? 'cash_at_till' : 'card')) === 'card';
+  const cardMode = flow.screen === 'pay' && (methodChoice ?? fallbackMethod) === 'card';
 
   const go = (target: PreviewScreen) => {
     const s = flowRef.current.screen;
@@ -810,6 +814,18 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
         busy: pay.busy,
         note: pay.note,
         error: pay.error,
+        // "רשות": passed with the default method (never with a voucher waiting to pay the rest by card).
+        skip:
+          payAsk.optional && payAsk.fallback && payAsk.fallback !== 'voucher' && !(payAsk.fallback === 'card' && cardOff !== null)
+            ? {
+                method: payAsk.fallback,
+                onSkip: () => {
+                  setLastTouch(Date.now());
+                  chooseMethod(fallbackMethod);
+                  dispatch({ type: 'detailsDone' });
+                },
+              }
+            : null,
         extra:
           voucherOffered && cameraScanAvailable() ? (
             <CameraScanButton m={m} label={words.t('voucherCamera')} onClick={() => setPay((p) => ({ ...p, camera: true, error: null }))} />

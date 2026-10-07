@@ -222,6 +222,8 @@ export interface BonInput {
   reprint: boolean;
   copy: number;
   printerName: string | null;
+  /** In place of "מכירה #…": an order not paid yet ("ממתין לתשלום בקופה"). */
+  sub?: string | null;
 }
 
 export function bonDoc(b: BonInput): BonDoc {
@@ -231,7 +233,7 @@ export function bonDoc(b: BonInput): BonDoc {
   return {
     kind: 'bon',
     title,
-    sub: `מכירה ${ltr(`#${b.documentNumber}`)}`,
+    sub: b.sub ?? `מכירה ${ltr(`#${b.documentNumber}`)}`,
     notice,
     dining: b.service,
     lines: b.lines.map((l) => ({

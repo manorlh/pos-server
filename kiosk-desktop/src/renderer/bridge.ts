@@ -4,7 +4,7 @@
  * it never charges anything and never reaches the network.
  */
 
-import { KIOSK_DEFAULTS, UI_STYLES, resolveKioskConfig, type UiStyle } from '@dash-lib/kioskConfig';
+import { KIOSK_DEFAULTS, UI_STYLES, kioskPayMethods, resolveKioskConfig, type PaymentMethod, type UiStyle } from '@dash-lib/kioskConfig';
 import type { KioskBridge, KioskEvents, KioskView, PayProgress } from '../shared/bridge';
 import { tipToCharge } from '../core/sale';
 import { demoLayoutLayer, demoRich, richCatalog } from './demoLayouts';
@@ -49,6 +49,13 @@ function demoCheckout(): Record<string, unknown> {
   const q = new URLSearchParams(window.location.search);
   const out: Record<string, unknown> = {};
   if (q.get('tip') === '1') out.payment = { tipEnabled: true, ...(q.get('first') === 'details' ? { checkoutSteps: ['details', 'tip'] } : {}) };
+  // `&pay=card,cash_at_till,voucher`: the methods offered ("איך תרצו לשלם?"); `&paymode=off|optional|required`.
+  const pay = q.get('pay');
+  if (pay) {
+    const methods = pay.split(',').filter((m): m is PaymentMethod => m === 'card' || m === 'cash_at_till' || m === 'voucher');
+    const mode = q.get('paymode');
+    out.payment = { ...((out.payment as Record<string, unknown>) ?? {}), methods, ...(mode === 'off' || mode === 'optional' || mode === 'required' ? { stepModes: { payMethod: mode } } : {}) };
+  }
   const general: Record<string, unknown> = {};
   if (q.get('select') === 'instant') general.serviceSelect = 'instant';
   if (q.get('notes') === '1') general.notesEnabled = true;
@@ -75,6 +82,7 @@ function demoCheckout(): Record<string, unknown> {
 
 function demoView(): KioskView {
   const rest = demoRest();
+  const methods = kioskPayMethods(((demoCheckout().payment ?? {}) as { methods?: unknown[] }).methods);
   const cats = [
     { id: 'c1', name: 'המבורגרים', imageUrl: null },
     { id: 'c2', name: 'שתייה', imageUrl: null },
@@ -144,6 +152,7 @@ function demoView(): KioskView {
     },
     state: { ...rest.state, noPayment: false, terminal: 'ready', offline: false, offlineSince: null, cardBlocked: false },
     staff: { unprintedBons: 0, printer: 'ok', pendingUploads: 0, mediaMissing: 0 },
+    pay: { methods, usable: methods, cardOff: null },
   };
 }
 
@@ -176,6 +185,20 @@ function webBridge(): KioskBridge {
       setTimeout(() => fire('pay', { ...base, phase: 'approved', canCancel: false, pickupLabel: String(order), documentNumber: `9000000${order}`, receipt: 'ask' }), 2500);
       return { ok: true, orderId, amountAgorot: amount };
     },
+    // "מזומן בקופה" in the demo: a number and the code, nothing sent anywhere.
+    placeOpenOrder: async (input) => {
+      const n = ++order;
+      const goods = typeof input.expectedTotalAgorot === 'number' ? input.expectedTotalAgorot : 0;
+      const tip = tipToCharge(goods, input.tipPct, input.tipAgorot);
+      const paid = input.vouchers.reduce((s, v) => s + v.amountAgorot, 0);
+      return { ok: true, localId: `demo-open-${n}`, pickupLabel: String(n), vouchers: input.vouchers, dueAgorot: Math.max(0, goods + tip - paid), pending: false, code: `KO:demo-open-${n}` };
+    },
+    // The demo's one voucher: "DEMO2026" pays ₪10.
+    redeemVoucher: async (input) =>
+      input.code === 'DEMO2026'
+        ? { kind: 'ok', leg: { redemptionId: `demo-${input.clientRequestId}`, serial: 2026, amountAgorot: 1000, eventName: 'שובר הדגמה', redeemed: [] } }
+        : { kind: 'refused', reason: 'prepaid_voucher_not_found' },
+    reverseVoucher: async () => undefined,
     cancelPayment: async () => undefined,
     receiptChoice: async () => undefined,
     helpRequest: async () => undefined,

@@ -4,6 +4,9 @@
  */
 
 import type { MealSlot } from '@dash-lib/kioskMoney';
+import type { PaymentMethod } from '@dash-lib/kioskConfig';
+import type { VoucherLeg } from '@dash-lib/kioskWebOrders';
+import type { VoucherResult } from '../main/kiosk/payAtTill';
 import type { KCategory, KGroup, KProduct } from '../main/kiosk/catalog';
 import type { FunnelEvent } from '../core/kioskFunnel';
 import type { BatteryAlertView } from '../core/batteryAlerts';
@@ -60,7 +63,25 @@ export interface KioskView {
     pendingUploads: number;
     mediaMissing: number;
   };
+  /**
+   * "איך תרצו לשלם?" (payment.methods, SPEC_KIOSK §23): the methods configured, what this kiosk can take
+   * now (the card through its terminal, a voucher online, cash at the till always), and why the card
+   * cannot (Hebrew), else null.
+   */
+  pay: { methods: PaymentMethod[]; usable: PaymentMethod[]; cardOff: string | null };
 }
+
+/** "מזומן בקופה": the order to the tills, with the vouchers already redeemed towards it. */
+export interface PlaceOrderIn extends StartPaymentIn {
+  vouchers: VoucherLeg[];
+}
+
+export type PlaceOrderOut =
+  | { ok: true; localId: string; pickupLabel: string; vouchers: VoucherLeg[]; dueAgorot: number; pending: boolean; code: string }
+  | { ok: false; reason: 'changed'; changes: BasketChange[]; totalAgorot?: number }
+  | { ok: false; reason: 'empty' | 'rejected' | 'error'; message: string };
+
+export type { VoucherResult };
 
 export interface OrderLineIn {
   key: string;
@@ -198,6 +219,12 @@ export interface KioskBridge {
   /** "סוללה חלשה": the battery as the screen reads it → what to show and whether to sound the alarm (core/batteryAlerts.ts). */
   battery?(reading: { percent: number | null; charging: boolean }): Promise<BatteryAlertView>;
   startPayment(input: StartPaymentIn): Promise<StartPaymentOut>;
+  /** "מזומן בקופה": the order to the shop's tills (no document here); absent where the kiosk cannot. */
+  placeOpenOrder?(input: PlaceOrderIn): Promise<PlaceOrderOut>;
+  /** A prepaid voucher redeemed online for the basket's goods (`clientRequestId`: a retry never redeems twice). */
+  redeemVoucher?(input: { code: string; basket: StartPaymentIn; earlier: VoucherLeg[]; forfeitRest?: boolean; clientRequestId: string }): Promise<VoucherResult>;
+  /** A redeemed voucher back on itself (kept and retried until the cloud answers). */
+  reverseVoucher?(redemptionId: string): Promise<void>;
   cancelPayment(): Promise<void>;
   receiptChoice(orderId: string, print: boolean): Promise<void>;
   /** "עזרה": a help request to the tills (an alert on the next sync). */

@@ -1,9 +1,10 @@
 /**
  * The details screen — the host of the steps between the basket and the payment (the Android
  * kiosk's checkout steps, client lib/kioskConfig.ts checkoutStepsNow): "טיפ לצוות" (the shared
- * TipScreen) and the customer's details (the page with its rows and the entry window opening by
- * itself on arrival), in the order the dashboard set. Asked at another step (after the service,
- * before the cart, after the payment) it shows the details alone.
+ * TipScreen), the customer's details (the page with its rows and the entry window opening by
+ * itself on arrival) and — last, right before the payment — "איך תרצו לשלם?" (the shared
+ * PayMethodStep), in the order the dashboard set. Asked at another step (after the service, before
+ * the cart, after the payment) it shows the details alone.
  *
  * Back goes to the previous step, at the first one the flow's back; the last step's "המשך" is the
  * flow's detailsDone. The required fields and the phone are checked as before (phoneValid).
@@ -11,7 +12,7 @@
 
 import { useEffect, useState } from 'react';
 import { tipPercentAgorot, type CheckoutStep } from '@dash-lib/kioskConfig';
-import { DetailsStep, KioskSwap, TipScreen, detailsFields, type DetailsField, type PreviewModel } from '@kiosk-shared/index';
+import { DetailsStep, KioskSwap, PayMethodStep, TipScreen, detailsFields, type DetailsField, type KioskLivePayMethod, type PreviewModel } from '@kiosk-shared/index';
 import { phoneValid } from '../../core/kioskOrders';
 
 export interface DetailsValue {
@@ -43,6 +44,7 @@ export function DetailsScreen({
   onDone,
   onBack,
   onStep,
+  payMethod = null,
 }: {
   m: PreviewModel;
   value: DetailsValue;
@@ -58,6 +60,8 @@ export function DetailsScreen({
   onBack: (() => void) | null;
   /** The step shown now (the funnel's "tip" / "details", core/kioskFunnel.ts). */
   onStep?: (step: CheckoutStep) => void;
+  /** "איך תרצו לשלם?"'s live state (null when it is not one of this order's steps). */
+  payMethod?: KioskLivePayMethod | null;
 }) {
   const [at, setAt] = useState(() => (startAtEnd ? Math.max(0, steps.length - 1) : 0));
   const index = Math.min(at, steps.length - 1);
@@ -100,6 +104,8 @@ export function DetailsScreen({
               },
             }}
           />
+        ) : s === 'payMethod' && payMethod ? (
+          <PayMethodStep m={{ ...m, live: { ...m.live, back: back ?? undefined } }} live={payMethod} />
         ) : (
           <DetailsStep
             m={m}
