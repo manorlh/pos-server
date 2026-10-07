@@ -50,9 +50,14 @@ import {
   SuccessScreen,
   TickerFrame,
   cardStyle,
-  cartTotal,
+  basketPricing,
+  lineUnitAgorot,
+  orderMealOf,
+  orderOptionsOf,
   screenOrder,
   type Flight,
+  type PGroup,
+  type PMeal,
   type KioskLive,
   type PCategory,
   type PLine,
@@ -68,6 +73,7 @@ import {
   REACH_STRIP_PX,
 } from '@kiosk-shared/index';
 import { configuredText, kioskTextOf, webTextOverride } from '@dash-lib/kioskTexts';
+import { localDateTimeOf, promotionsOf } from '@dash-lib/kioskMoney';
 import {
   backAction,
   busy as flowBusy,
@@ -197,6 +203,40 @@ export function KioskApp({ view }: { view: KioskView }) {
   const featured = useMemo(() => view2.featured.map((x) => toP(x.product, x.soldOut, required(x.product.id))), [view2, required]);
   const allProducts = useMemo(() => categories.flatMap((c) => c.products), [categories]);
   const product = productId ? (allProducts.find((p) => p.id === productId) ?? null) : null;
+  /** Every product the kiosk sells (a meal's component may sit in no category shown). */
+  const soldById = useMemo(() => new Map(view.catalog.products.map((p) => [p.id, p])), [view.catalog.products]);
+  const groupsOf = useCallback((id: string): PGroup[] => pGroupsOf(view.catalog.groups[id] ?? []), [view.catalog.groups]);
+  /** A meal's window (menu.meals): each slot's products, a component's groups. */
+  const mealOf = useCallback(
+    (p: PProduct): PMeal | null => {
+      const slots = view.catalog.meals?.[p.id];
+      if (!slots || slots.length === 0) return null;
+      return {
+        slots: slots.map((s) => ({
+          id: s.id,
+          name: s.name,
+          minSelect: s.minSelect,
+          maxSelect: s.maxSelect,
+          allowRepeat: s.allowRepeat,
+          choices: s.choices.flatMap((c) => {
+            const x = soldById.get(c.productId);
+            return x ? [{ product: toP(x, x.soldOut, false), upchargeAgorot: c.upchargeAgorot, isDefault: c.isDefault }] : [];
+          }),
+        })),
+        groupsOf,
+      };
+    },
+    [view.catalog.meals, soldById, groupsOf],
+  );
+  // "מבצעים": the basket priced as it will be charged (kioskMoney.ts — the till's promotions), by the minute.
+  const promotions = useMemo(() => promotionsOf(view.catalog.promotions ?? []), [view.catalog.promotions]);
+  const minute = Math.floor(nowMs / 60_000);
+  const { pricing } = useMemo(
+    () => basketPricing(cart, promotions, localDateTimeOf(new Date(minute * 60_000)), (id) => soldById.get(id)?.noDiscount === true),
+    [cart, promotions, minute, soldById],
+  );
+  const pricingRef = useRef(pricing);
+  pricingRef.current = pricing;
 
   /* ---------------------------------------------------- the outside world */
 
@@ -244,12 +284,13 @@ export function KioskApp({ view }: { view: KioskView }) {
   const startPayment = useCallback(async () => {
     dispatch({ type: 'paymentStarted' });
     setPayBlocked(null);
-    const shownAgorot = Math.round(cartTotal(cartRef.current) * 100);
+    // The total the customer saw, after the promotions.
+    const shownAgorot = pricingRef.current.totalAgorot;
     funnel.noteTip(tipOfDetails(details, shownAgorot));
     const r = await kiosk.startPayment({
       // The unit prices and the total the customer saw: never charged if they moved (core/basketCheck.ts).
       expectedTotalAgorot: shownAgorot,
-      lines: cartRef.current.map((l) => ({ key: l.key, productId: l.product.id, qty: l.qty, unitAgorot: Math.round(l.unit * 100), options: (l.options ?? []).map((o) => ({ groupId: o.groupId, optionId: o.optionId })), notes: l.note ? [l.note] : [] })),
+      lines: cartRef.current.map((l) => ({ key: l.key, productId: l.product.id, qty: l.qty, unitAgorot: lineUnitAgorot(l), options: orderOptionsOf(l), meal: orderMealOf(l), notes: l.note ? [l.note] : [] })),
       service: flowRef.current.service ?? 'take_away',
       customerName: details.name.trim() || null,
       customerPhone: details.phone.trim() || null,
@@ -269,7 +310,7 @@ export function KioskApp({ view }: { view: KioskView }) {
           .filter((l) => !removed.has(l.key) && !removed.has(l.product.id))
           .map((l) => {
             const to = repriced.get(l.key) ?? repriced.get(l.product.id);
-            return to === undefined ? l : { ...l, unit: to / 100 };
+            return to === undefined ? l : { ...l, unit: to / 100, unitAgorot: to };
           }),
       );
       funnel.basketCheck({
@@ -320,7 +361,7 @@ export function KioskApp({ view }: { view: KioskView }) {
     sub: flow.screen === 'details' ? detailsSub : null,
     pay: flow.pay,
     service: flow.service,
-    basketAgorot: Math.round(cartTotal(cart) * 100),
+    basketAgorot: pricing.totalAgorot,
     items: cart.reduce((n, l) => n + l.qty, 0),
     idleWarn: idleState.kind !== 'none',
   });
@@ -427,6 +468,8 @@ export function KioskApp({ view }: { view: KioskView }) {
     // "רוצים להפוך לארוחה?": the meals the till's upsells offer for a dish.
     mealOptions: (p) => mealsFor(view, p.id, allProducts),
     reach: { toggled: reachToggled, toggle: () => setReachToggled((v) => !v) },
+    pricing,
+    mealOf,
     money: formatMoney,
     categories,
     featured,
@@ -464,7 +507,7 @@ export function KioskApp({ view }: { view: KioskView }) {
     ? checkoutStepsNow(cfg.payment, detailsAsked(cfgIn, flow.service), flow.detailsDone).filter((s) => s !== 'payMethod')
     : [];
   const detailsSteps = nowSteps.length > 0 ? nowSteps : (['details'] as const).slice();
-  const goodsAgorot = Math.round(cartTotal(cart) * 100);
+  const goodsAgorot = pricing.totalAgorot;
 
   // As the preview (and the till): a flight that lands bounces the badge then; a reduce-motion fade already did at the tap.
   const removeFlight = useCallback((flight: Flight) => {
@@ -481,7 +524,7 @@ export function KioskApp({ view }: { view: KioskView }) {
     setJustAdded(line.product.id);
     // From the basket's offers: an upsell taken.
     const fromUpsell = flowRef.current.screen === 'cart' && upsellRef.current.some((u) => u.id === line.product.id);
-    funnel.itemAdd(line.product.id, line.qty, fromUpsell, Math.round(line.unit * 100));
+    funnel.itemAdd(line.product.id, line.qty, fromUpsell, lineUnitAgorot(line));
     if (fromUpsell) funnel.upsell('accepted', 'steps', null, line.product.id);
     if (justAddedTimer.current) window.clearTimeout(justAddedTimer.current);
     justAddedTimer.current = window.setTimeout(() => setJustAdded(null), 900);
@@ -503,7 +546,7 @@ export function KioskApp({ view }: { view: KioskView }) {
   m.quickAdd = (p, from) => {
     const plain = (l: PLine) => l.product.id === p.id && l.extras.length === 0 && !l.note && (l.options?.length ?? 0) === 0;
     // At most one plain line per dish (the next joins it), so its key is unique.
-    addLine({ key: `${p.id}-plain`, product: p, qty: 1, unit: p.price, extras: [], options: [] }, from, plain);
+    addLine({ key: `${p.id}-plain`, product: p, qty: 1, unit: p.price, unitAgorot: p.priceAgorot, extras: [], options: [] }, from, plain);
   };
 
   // Barcode scans (a USB HID scanner), 1D and 2D, no button first — the Android kiosk's rules (kioskScanner.tsx).
@@ -673,7 +716,7 @@ export function KioskApp({ view }: { view: KioskView }) {
             key={product.id}
             m={m}
             product={product}
-            groups={(view.catalog.groups[product.id] ?? []).map((g) => ({ id: g.id, name: g.name, min: g.min, max: g.max, options: g.options.map((o) => ({ id: o.id, name: o.name, price: o.price })) }))}
+            groups={groupsOf(product.id)}
             allergens={view.catalog.products.find((p) => p.id === product.id)?.allergens ?? []}
             quickNotes={view.catalog.quickNotes[product.id] ?? []}
             onClose={() => setProductId(null)}
@@ -756,6 +799,7 @@ function toP(p: KioskView['catalog']['products'][number], soldOut: boolean, requ
     id: p.id,
     name: p.name,
     price: p.price,
+    priceAgorot: p.priceAgorot,
     imageUrl: p.imageUrl,
     imageLarge: p.imageLarge,
     soldOut,
@@ -763,6 +807,21 @@ function toP(p: KioskView['catalog']['products'][number], soldOut: boolean, requ
     categoryId: p.categoryId,
     dietaryTags: p.dietaryTags,
   };
+}
+
+/** The catalog's groups as the shared screens take them, with every rule that prices them (kioskMoney.ts). */
+function pGroupsOf(groups: KioskView['catalog']['groups'][string]): PGroup[] {
+  return groups.map((g) => ({
+    id: g.id,
+    name: g.name,
+    min: g.min,
+    max: g.max,
+    kind: g.kind,
+    freeCount: g.freeCount,
+    allowQuantity: g.allowQuantity,
+    allowPre: g.allowPre,
+    options: g.options.map((o) => ({ id: o.id, name: o.name, price: o.price, priceAgorot: o.priceAgorot, isDefault: o.isDefault, maxQty: o.maxQty })),
+  }));
 }
 
 /**

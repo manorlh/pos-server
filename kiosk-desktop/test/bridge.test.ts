@@ -334,7 +334,16 @@ describe('the protocol (pure)', () => {
     expect(startPaymentInput({ lines: [] })).toBe(null);
     expect(startPaymentInput({ lines: [{ key: 'k', productId: 'p', qty: 0 }] })).toBe(null);
     const ok = startPaymentInput({ lines: [{ key: 'k', productId: 'p', qty: 2, options: [{ groupId: 'g', optionId: 'o' }, { bad: 1 }], notes: ['בלי בצל', 3] }], service: 'eat_in', tipPct: 10, expectedTotalAgorot: 100.4 });
-    expect(ok).toMatchObject({ lines: [{ key: 'k', productId: 'p', qty: 2, options: [{ groupId: 'g', optionId: 'o' }], notes: ['בלי בצל'] }], service: 'eat_in', tipPct: 10, expectedTotalAgorot: 100 });
+    expect(ok).toMatchObject({ lines: [{ key: 'k', productId: 'p', qty: 2, options: [{ groupId: 'g', optionId: 'o', qty: 1, pre: null }], notes: ['בלי בצל'] }], service: 'eat_in', tipPct: 10, expectedTotalAgorot: 100 });
+    // A choice's quantity and "מעט / הרבה / בצד", a meal's components (the service prices them from its catalog).
+    const rich = startPaymentInput({
+      lines: [
+        { key: 'k', productId: 'p', qty: 1, options: [{ groupId: 'g', optionId: 'o', qty: 3, pre: 'extra' }, { groupId: 'g', optionId: 'x', qty: 1000, pre: 'huge' }] },
+        { key: 'm', productId: 'meal', qty: 1, options: [], meal: { components: [{ slotId: 's1', productId: 'b1' }, { slotId: '', productId: 'b2' }] } },
+      ],
+    });
+    expect(rich?.lines[0].options).toEqual([{ groupId: 'g', optionId: 'o', qty: 3, pre: 'extra' }, { groupId: 'g', optionId: 'x', qty: 1, pre: null }]);
+    expect(rich?.lines[1].meal).toEqual({ components: [{ slotId: 's1', productId: 'b1' }] });
     expect(printablePage('bon', { kind: 'bon', lines: [] })).not.toBe(null);
     expect(printablePage('receipt', { kind: 'receipt' })).toBe(null);
     expect(printablePage('bon', { kind: 'slip' })).toBe(null);

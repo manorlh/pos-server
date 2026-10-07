@@ -22,7 +22,8 @@
 
 import { kioskPayMethods, resolveKioskConfig, type KioskConfig, type PaymentMethod } from './kioskConfig';
 import { KioskApi, pairWithCode, tokenRevoked, type ApiReply, type FetchFn, type KioskCredentials } from './kioskWebApi';
-import { applyCatalogPull, buildWebCatalog, configMediaUrls, sizedImage, type CatalogIn, type WebCatalog } from './kioskWebCatalog';
+import { applyCatalogPull, buildWebCatalog, configMediaUrls, sizedImage, type CatalogIn, type WebCatalog, type WebGroup } from './kioskWebCatalog';
+import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type MenuGroup, type OptionPick } from './kioskMoney';
 import {
   goodsAgorot,
   localDate,
@@ -71,7 +72,8 @@ export interface WebKioskView {
   fontFace: string | null;
   fontFamily: string | null;
   brandName: string;
-  catalog: WebCatalog & { categoryImages: Record<string, string> };
+  /** `promotions`: as the cloud sent them (kioskMoney.ts promotionsOf reads them) — the basket is priced with them. */
+  catalog: WebCatalog & { categoryImages: Record<string, string>; promotions: Array<Record<string, unknown>> };
   state: {
     paused: boolean;
     pausedMessage: string | null;
@@ -200,11 +202,27 @@ export function asksPayMethod(methods: readonly PaymentMethod[], cardReady: bool
   return !(cardReady && methods.length === 1 && methods[0] === 'card');
 }
 
+/** A catalog group as the shared money rules read it (kioskMoney.ts MenuGroup). */
+export function webMoneyGroup(g: WebGroup): MenuGroup {
+  return {
+    id: g.id,
+    name: g.name,
+    kind: g.kind,
+    minSelect: g.min,
+    maxSelect: g.max,
+    freeCount: g.freeCount,
+    allowQuantity: g.allowQuantity,
+    allowPre: g.allowPre,
+    options: g.options.map((o) => ({ id: o.id, name: o.name, priceAgorot: o.priceAgorot, isDefault: o.isDefault, maxQty: o.maxQty })),
+  };
+}
+
 export class WebKioskService {
   private creds: KioskCredentials | null = null;
   private machine: Record<string, unknown> | null = null;
   private snapshot: Record<string, unknown> | null = null;
   private catalog: CatalogStore = EMPTY_CATALOG;
+  private promotions: { etag: string | null; list: Array<Record<string, unknown>> } = { etag: null, list: [] };
   private settings: { settings: Record<string, unknown>; businessInfo: Record<string, unknown> | null; settingsUpdatedAt: string | null } = {
     settings: {},
     businessInfo: null,
@@ -283,6 +301,7 @@ export class WebKioskService {
     this.machine = await s.get<Record<string, unknown>>(KV.machine);
     this.snapshot = await s.get<Record<string, unknown>>(KV.snapshot);
     this.catalog = (await s.get<CatalogStore>(KV.catalog)) ?? EMPTY_CATALOG;
+    this.promotions = (await s.get<WebKioskService['promotions']>(KV.promotions)) ?? this.promotions;
     this.settings = (await s.get<WebKioskService['settings']>(KV.settings)) ?? this.settings;
     this.parameters = (await s.get<Record<string, unknown>>(KV.parameters)) ?? {};
     for (const key of await s.keys(KV.orderPrefix)) {
@@ -372,7 +391,7 @@ export class WebKioskService {
     const kiosk = this.snapshot?.kiosk === true;
     const phase: WebKioskPhase = !this.loaded ? 'loading' : !creds ? 'unpaired' : kiosk ? 'kiosk' : 'waiting';
     const cfg = phase === 'kiosk' ? this.config() : null;
-    const cat = phase === 'kiosk' ? buildWebCatalog(this.catalog, this.settings.settings) : { categories: [], products: [], groups: {}, quickNotes: {}, upsells: [] };
+    const cat = phase === 'kiosk' ? buildWebCatalog(this.catalog, this.settings.settings) : { categories: [], products: [], groups: {}, meals: {}, quickNotes: {}, upsells: [] };
     const categoryImages: Record<string, string> = {};
     if (cfg) {
       for (const [id, ref] of Object.entries(cfg.catalog.categoryImages ?? {})) {
@@ -405,7 +424,7 @@ export class WebKioskService {
       fontFace: font.css,
       fontFamily: font.family,
       brandName: s(this.settings.businessInfo?.companyName) ?? s(me.companyName) ?? 'R2M',
-      catalog: { ...cat, categoryImages },
+      catalog: { ...cat, categoryImages, promotions: phase === 'kiosk' ? this.promotions.list : [] },
       state: {
         paused: paused.paused,
         pausedMessage: paused.message,
@@ -488,9 +507,10 @@ export class WebKioskService {
     this.machine = null;
     this.snapshot = null;
     this.catalog = EMPTY_CATALOG;
+    this.promotions = { etag: null, list: [] };
     this.parameters = {};
     this.help = null;
-    for (const key of [KV.credentials, KV.machine, KV.snapshot, KV.snapshotAt, KV.catalog, KV.settings, KV.parameters]) await this.deps.store.del(key);
+    for (const key of [KV.credentials, KV.machine, KV.snapshot, KV.snapshotAt, KV.catalog, KV.promotions, KV.settings, KV.parameters]) await this.deps.store.del(key);
     this.dirty();
   }
 
@@ -540,6 +560,7 @@ export class WebKioskService {
         if (this.creds && now - this.lastCatalogAt >= CATALOG_MS) {
           await this.pullSettings(false);
           await this.pullCatalog(false);
+          await this.pullPromotions();
         }
       }
       if (this.creds && !this.offline) await this.flush();
@@ -567,6 +588,7 @@ export class WebKioskService {
     await this.pullSettings(true);
     await this.pullParameters();
     await this.pullCatalog(true);
+    await this.pullPromotions();
   }
 
   private async pullMachine() {
@@ -736,6 +758,18 @@ export class WebKioskService {
     if (changed) this.dirty();
   }
 
+  /** "מבצעים": the till's promotions (`GET /sync/{m}/promotions`, ETag); offline, the last ones stay. */
+  private async pullPromotions() {
+    if (!this.creds) return;
+    const q = this.promotions.etag ? `?etag=${encodeURIComponent(this.promotions.etag)}` : '';
+    const r = await this.seen(await this.api.get<{ syncType?: string; etag?: string; promotions?: unknown }>(this.machinePath(`promotions${q}`), { timeoutMs: 20_000 }));
+    if (r.kind !== 'ok' || !r.body || typeof r.body !== 'object' || r.body.syncType === 'unchanged') return;
+    const list = Array.isArray(r.body.promotions) ? (r.body.promotions as unknown[]).filter((p): p is Record<string, unknown> => !!p && typeof p === 'object') : [];
+    this.promotions = { etag: typeof r.body.etag === 'string' ? r.body.etag : null, list };
+    await this.deps.store.set(KV.promotions, this.promotions);
+    this.dirty();
+  }
+
   /* ------------------------------------------------------------ the screens */
 
   reportFlow(f: FlowReport) {
@@ -755,34 +789,62 @@ export class WebKioskService {
     if (this.creds) this.schedule(0);
   }
 
-  /** The basket against the catalog as it is now: what went out, what changed price (core/basketCheck.ts). */
-  checkBasket(lines: ReadonlyArray<{ key: string; productId: string; unitAgorot: number; qty?: number; options: ReadonlyArray<{ groupId: string; optionId: string }> }>): { changes: BasketChange[]; totalAgorot: number } {
+  /**
+   * The basket against the catalog as it is now (core/basketCheck.ts): what went out, what changed
+   * price — each line priced with the shared money rules (kioskMoney.ts: charged choices, a meal's
+   * components on their defaults) — and the total after the promotions, as the till will charge it.
+   */
+  checkBasket(
+    lines: ReadonlyArray<{
+      key: string;
+      productId: string;
+      unitAgorot: number;
+      qty?: number;
+      options: ReadonlyArray<{ groupId: string; optionId: string; qty?: number; pre?: 'lite' | 'extra' | 'side' | null }>;
+      meal?: { components: ReadonlyArray<{ slotId: string; productId: string }> } | null;
+    }>,
+    now = new Date(this.now()),
+  ): { changes: BasketChange[]; totalAgorot: number } {
     const v = this.view();
     const byId = new Map(v.catalog.products.map((p) => [p.id, p]));
     const changes: BasketChange[] = [];
-    let total = 0;
+    const priced: Array<{ key: string; productId: string; categoryId: string | null; unitAgorot: number; qty: number; noDiscount: boolean }> = [];
     for (const l of lines) {
       const p = byId.get(l.productId);
-      if (!p || p.soldOut) {
+      const slots = v.catalog.meals[l.productId] ?? [];
+      const parts = l.meal?.components ?? [];
+      const brokenMeal = parts.some((c) => {
+        const slot = slots.find((s) => s.id === c.slotId);
+        const cp = byId.get(c.productId);
+        return !slot || !slot.choices.some((x) => x.productId === c.productId) || !cp || cp.soldOut;
+      });
+      const groups = (p ? (v.catalog.groups[p.id] ?? []) : []).map(webMoneyGroup);
+      const missing = l.options.some((o) => !groups.find((g) => g.id === o.groupId)?.options.some((x) => x.id === o.optionId));
+      if (!p || p.soldOut || brokenMeal || missing) {
         changes.push({ kind: 'removed', productId: l.productId, name: p?.name ?? '', key: l.key });
         continue;
       }
-      const groups = v.catalog.groups[p.id] ?? [];
-      let unit = Math.round(p.price * 100);
-      let missing = false;
+      const picks: Record<string, OptionPick[]> = {};
       for (const o of l.options) {
-        const opt = groups.find((g) => g.id === o.groupId)?.options.find((x) => x.id === o.optionId);
-        if (!opt) missing = true;
-        else unit += Math.round(opt.price * 100);
+        const g = groups.find((x) => x.id === o.groupId)!;
+        const pre = g.allowPre && (o.pre === 'lite' || o.pre === 'extra' || o.pre === 'side') ? o.pre : null;
+        (picks[g.id] ??= []).push({ optionId: o.optionId, qty: Math.max(1, Math.trunc(o.qty ?? 1)), pre });
       }
-      if (missing) {
-        changes.push({ kind: 'removed', productId: l.productId, name: p.name, key: l.key });
-        continue;
+      let unit = p.priceAgorot + chosenOptions(groups, picks).reduce((s, o) => s + o.chargedAgorot, 0);
+      for (const c of parts) {
+        const slot = slots.find((s) => s.id === c.slotId)!;
+        const cg = (v.catalog.groups[c.productId] ?? []).map(webMoneyGroup);
+        unit += slot.choices.find((x) => x.productId === c.productId)!.upchargeAgorot + chosenOptions(cg, Object.fromEntries(cg.map((g) => [g.id, defaultPicks(g)]))).reduce((s, o) => s + o.chargedAgorot, 0);
       }
       if (unit !== l.unitAgorot) changes.push({ kind: 'repriced', productId: l.productId, name: p.name, key: l.key, from: l.unitAgorot, to: unit });
-      total += unit * (l.qty ?? 1);
+      priced.push({ key: l.key, productId: p.id, categoryId: p.categoryId, unitAgorot: unit, qty: l.qty ?? 1, noDiscount: p.noDiscount });
     }
-    return { changes, totalAgorot: total };
+    const basket = priceKioskBasket(
+      priced.map((x) => ({ id: x.key, productIds: [x.productId], categoryId: x.categoryId, unitAgorot: x.unitAgorot, qty: x.qty, noDiscount: x.noDiscount })),
+      promotionsOf(v.catalog.promotions),
+      localDateTimeOf(now),
+    );
+    return { changes, totalAgorot: basket.totalAgorot };
   }
 
   /* --------------------------------------------------------------- vouchers */
@@ -971,7 +1033,7 @@ export class WebKioskService {
         categoryId: l.categoryId,
         name: l.name,
         quantity: l.qty,
-        mods: l.options.filter((x) => x.kind !== 'removal').map((x) => x.name),
+        mods: [...l.options.filter((x) => x.kind !== 'removal').map((x) => x.name), ...(l.meal?.components ?? []).map((c) => c.name)],
         removals: l.options.filter((x) => x.kind === 'removal').map((x) => x.name),
         notes: l.note ?? undefined,
       })),

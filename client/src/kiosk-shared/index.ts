@@ -14,6 +14,8 @@ export * from '../components/dashboard/kiosks/preview-ticker';
 // The kiosk's keyboard and its entry window (the name, the phone, the table, a tip amount, a note);
 // its model is `lib/kioskKeys` (pure, like `lib/kioskConfig`).
 export * from '../components/dashboard/kiosks/preview-entry';
+// The dish's and the meal's choices and the basket's promotions, priced by lib/kioskMoney.ts (the till's rules).
+export * from '../components/dashboard/kiosks/preview-dish';
 export * from './types';
 // "מבנה הקיוסק" (config `layout`): the layouts' screens and their one switch point (kiosk-shared/layouts).
 export * from './layouts';

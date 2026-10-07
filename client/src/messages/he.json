@@ -12594,6 +12594,15 @@
       "required": "חובה",
       "optional": "רשות",
       "chooseUpTo": "עד {n}",
+      "freeChoices": "{n} בחינם",
+      "free": "חינם",
+      "pre": {
+        "regular": "רגיל",
+        "lite": "מעט",
+        "extra": "הרבה",
+        "side": "בצד"
+      },
+      "promotionLine": "{name}: −{amount}",
       "allergens": "אלרגנים",
       "quickNote1": "בלי בצל",
       "quickNote2": "רוטב בצד",

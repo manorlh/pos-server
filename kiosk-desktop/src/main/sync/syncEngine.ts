@@ -6,7 +6,7 @@
  *    fast beat; its answer carries zMode, lastTillZNumber, Zs that cover our shifts, and remote
  *    instructions (close the shift, produce the Z, transmit, reset, the main till's shop Z part);
  *  - after a good beat (at most every 25 s): parameters (ETag), settings (since), kiosk/sync
- *    (every 15 s for a kiosk), catalog (delta), the outbox;
+ *    (every 15 s for a kiosk), catalog (delta), promotions (ETag), the outbox;
  *  - every 15 minutes (and at start): machines/me, a full catalog, POS users;
  *  - nothing here is on the customer's path: the screens only ever read the local copies.
  */
@@ -32,6 +32,8 @@ export interface RemoteHooks {
   /** The kiosk snapshot changed (config, state, media list). */
   onKioskSnapshot(next: Record<string, unknown>, prev: Record<string, unknown> | null): void;
   onCatalog(): void;
+  /** The promotions changed (the basket is priced with them, lib/kioskMoney.ts). */
+  onPromotions?(): void;
   onSettings(): void;
   onParameters(): void;
   /** Remote instructions from the heartbeat. */
@@ -230,6 +232,7 @@ export class SyncEngine {
     await this.pullSettings();
     if (Date.now() - this.lastKioskSyncAttempt >= KIOSK_SYNC_MS) await this.kioskSync();
     await this.pullCatalog(false);
+    await this.pullPromotions();
   }
 
   async fullSync(): Promise<void> {
@@ -238,6 +241,7 @@ export class SyncEngine {
     await this.pullParameters();
     await this.kioskSync();
     await this.pullCatalog(true);
+    await this.pullPromotions();
     await this.pullPosUsers();
   }
 
@@ -288,6 +292,18 @@ export class SyncEngine {
     this.cloud.applyCatalog(b);
     this.status.lastCatalogAt = Date.now();
     if (changed) this.hooks.onCatalog();
+  }
+
+  /** "מבצעים": the till's promotions (`GET /sync/{m}/promotions`, ETag); offline, the last ones stay. */
+  async pullPromotions(): Promise<void> {
+    const etag = this.cloud.promotionsEtag();
+    const q = etag ? `?etag=${encodeURIComponent(etag)}` : '';
+    const reply = await this.api.get<{ syncType?: string; etag?: string; promotions?: unknown }>(this.machinePath(`promotions${q}`), { timeoutMs: 20_000 });
+    if (!this.check(reply) || reply.kind !== 'ok' || !reply.body) return;
+    if (reply.body.syncType === 'unchanged') return;
+    const list = Array.isArray(reply.body.promotions) ? (reply.body.promotions as Array<Record<string, unknown>>).filter((p) => !!p && typeof p === 'object') : [];
+    this.cloud.setPromotions(list, typeof reply.body.etag === 'string' ? reply.body.etag : null);
+    this.hooks.onPromotions?.();
   }
 
   async pullPosUsers(): Promise<void> {

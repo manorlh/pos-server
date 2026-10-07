@@ -11,13 +11,14 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import bcrypt from 'bcryptjs';
 import { resolveKioskConfig } from '@dash-lib/kioskConfig';
+import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type OptionPick } from '@dash-lib/kioskMoney';
 import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, type KioskOrder, type PickupRules } from '../core/kioskOrders';
 import { OfflineTracker } from '../core/kioskHealth';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
 import { ofShekels } from '../core/money';
 import { bonDoc, receiptDoc, slipDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine } from '../core/printDocs';
 import { DRAWER_KICK } from '../core/escpos';
-import { saleDocumentType, saleTotals, tipToCharge, unitAgorot, vatRateOf, type SaleLine } from '../core/sale';
+import { kitchenOptions, kitchenOptionText, MAX_LINE_QTY, optionCharged, saleDocumentType, saleTotals, tipToCharge, unitAgorot, vatRateOf, type SaleLine, type SaleOption } from '../core/sale';
 import { autoCloseMayRun, zModeOf } from '../core/tillZ';
 import { attempt as techAttempt, codeMatches, NO_LOCK, type TechLock } from '../core/technician';
 import { pickVariant, type MediaRefIn } from '../core/mediaPlan';
@@ -30,7 +31,7 @@ import { Api, type FetchFn } from './sync/api';
 import { CloudStore, parameterOn, PLAIN_BOX, type Credentials, type SecretBox } from './sync/cloud';
 import { Outbox, type OutboxRow } from './sync/outbox';
 import { pair as pairRequest, SyncEngine } from './sync/syncEngine';
-import { documentWire, Ledger, type DocDraft } from './fiscal/ledger';
+import { documentWire, Ledger, type AppliedPromotionRow, type DocDraft } from './fiscal/ledger';
 import { TillZService } from './fiscal/tillZService';
 import { FINAL_OUTCOMES, kioskSection, lanCloseReport, lanOutcomeMessage, planLanClose, type LanCloseOutcome, type LanCloseRequest } from './fiscal/shopZPart';
 import { MediaStore, type Downloader, type VariantMaker } from './media/mediaStore';
@@ -47,7 +48,7 @@ import { FunnelStore } from './kiosk/funnel';
 import { basketChanges, checkedBasePrice, CLOUD_CHECK_TIMEOUT_MS, overridesLive, overridesOf, type CloudOverrides, type CloudVerdict } from '../core/basketCheck';
 import type { FunnelEvent } from '../core/kioskFunnel';
 import { applyBatteryStep, batteryStep, isCritical, NO_CYCLE, parseThresholds, type BatteryAlertView, type BatteryCycle } from '../core/batteryAlerts';
-import { buildKioskCatalog, catalogMedia, type KProduct } from './kiosk/catalog';
+import { buildKioskCatalog, catalogMedia, moneyGroupOf, type KGroup, type KProduct } from './kiosk/catalog';
 import type {
   AdminAction,
   AdminInfo,
@@ -415,7 +416,7 @@ export class KioskService extends EventEmitter {
     const phase: KioskView['phase'] = !creds ? 'unpaired' : snap?.kiosk === true ? 'kiosk' : 'waiting';
     const cfg = phase === 'kiosk' ? this.config() : null;
     const font = this.fontFace();
-    const cat = phase === 'kiosk' ? this.catalogData() : { categories: [], products: [], groups: {}, quickNotes: {}, upsells: [] };
+    const cat = phase === 'kiosk' ? this.catalogData() : { categories: [], products: [], groups: {}, meals: {}, quickNotes: {}, upsells: [] };
     const categoryImages: Record<string, string> = {};
     if (cfg) for (const [id, ref] of Object.entries(cfg.catalog.categoryImages ?? {})) {
       const local = this.localMediaUrl(ref?.url ?? null, 'card');
@@ -442,7 +443,7 @@ export class KioskService extends EventEmitter {
       fontFace: font.css,
       fontFamily: font.family,
       brandName: this.business().companyName ?? me?.companyName ?? 'R2M',
-      catalog: { ...cat, categoryImages },
+      catalog: { ...cat, categoryImages, promotions: phase === 'kiosk' ? this.cloud.promotions() : [] },
       state: {
         paused: paused.paused,
         pausedMessage: paused.message,
@@ -539,6 +540,7 @@ export class KioskService extends EventEmitter {
         void this.syncMedia();
         this.dirty();
       },
+      onPromotions: () => this.dirty(),
       onSettings: () => {
         this.applyProvider();
         this.dirty();
@@ -931,7 +933,13 @@ export class KioskService extends EventEmitter {
   }
 
   /** Re-price the basket from the local catalog (the screens' prices are never trusted). */
-  private priceBasket(input: StartPaymentIn): { lines: SaleLine[]; changes: BasketChange[]; tracked: string[] } {
+  /**
+   * The basket priced from the kiosk's own catalog with the shared money rules (client/src/lib/kioskMoney.ts,
+   * the Android till's, ported once): each choice charged as its group says (free choices, quantities,
+   * "הרבה"), a meal's components on their defaults with their upcharges, then the promotions — each
+   * line's share is the document's discount. The screen's figures are only compared, never trusted.
+   */
+  private priceBasket(input: StartPaymentIn, now = new Date()): { lines: SaleLine[]; changes: BasketChange[]; tracked: string[]; promotions: AppliedPromotionRow[] } {
     const cat = this.catalogData();
     const byId = new Map<string, KProduct>(cat.products.map((p) => [p.id, p]));
     const lines: SaleLine[] = [];
@@ -939,27 +947,87 @@ export class KioskService extends EventEmitter {
     const tracked = new Set<string>();
     // What the cloud said a moment ago wins over a catalog that has not caught up yet.
     const cloud = overridesLive(this.cloudBasket, Date.now());
+    const gone = (id: string, p: KProduct | undefined) => !p || p.soldOut || !!cloud?.gone.has(id);
     for (const l of input.lines) {
       const p = byId.get(l.productId);
-      if (!p || p.soldOut || cloud?.gone.has(l.productId)) {
+      // A meal whose chosen component is no longer sold goes as a whole: the customer chooses again.
+      const parts = l.meal?.components ?? [];
+      const slots = cat.meals[l.productId] ?? [];
+      const brokenMeal = parts.some((c) => {
+        const slot = slots.find((s) => s.id === c.slotId);
+        return !slot || !slot.choices.some((x) => x.productId === c.productId) || gone(c.productId, byId.get(c.productId));
+      });
+      if (!p || gone(l.productId, p) || brokenMeal) {
         changes.push({ kind: 'removed', productId: l.productId, name: p?.name ?? '', key: l.key });
         continue;
       }
-      const groups = cat.groups[p.id] ?? [];
-      const options = l.options
-        .map((o) => {
-          const g = groups.find((x) => x.id === o.groupId);
-          const opt = g?.options.find((x) => x.id === o.optionId);
-          return g && opt ? { groupId: g.id, optionId: opt.id, name: opt.name, priceAgorot: ofShekels(opt.price), qty: 1 } : null;
-        })
-        .filter((x): x is NonNullable<typeof x> => !!x);
+      const options = this.chargedOptions(cat.groups[p.id] ?? [], l.options);
+      const components = parts.map((c) => {
+        const slot = slots.find((s) => s.id === c.slotId)!;
+        const cp = byId.get(c.productId)!;
+        const groups = (cat.groups[cp.id] ?? []).map(moneyGroupOf);
+        // The kiosk's meal: each component on its own defaults (MealDraft.start).
+        const chosen = chosenOptions(groups, Object.fromEntries(groups.map((g) => [g.id, defaultPicks(g)])));
+        if (cp.trackStock) tracked.add(cp.id);
+        return {
+          slotId: slot.id,
+          slotName: slot.name,
+          productId: cp.id,
+          name: cp.name,
+          categoryId: cp.categoryId,
+          listPriceAgorot: checkedBasePrice(cp.id, cp.priceAgorot, cloud),
+          upchargeAgorot: slot.choices.find((x) => x.productId === cp.id)!.upchargeAgorot,
+          options: chosen.map((o): SaleOption => ({ groupId: o.groupId, groupName: o.groupName, kind: o.kind, optionId: o.optionId, name: o.name, priceAgorot: o.priceAgorot, qty: o.qty, pre: o.pre, chargedAgorot: o.chargedAgorot })),
+        };
+      });
       if (p.trackStock) tracked.add(p.id);
-      lines.push({ key: l.key, productId: p.id, name: p.name, sku: p.sku, basePriceAgorot: checkedBasePrice(p.id, ofShekels(p.price), cloud), options, notes: l.notes.filter((n) => n.trim()), qty: Math.max(1, Math.trunc(l.qty)) });
+      lines.push({
+        key: l.key,
+        productId: p.id,
+        name: p.name,
+        sku: p.sku,
+        basePriceAgorot: checkedBasePrice(p.id, p.priceAgorot, cloud),
+        options,
+        notes: l.notes.filter((n) => n.trim()),
+        qty: Math.min(MAX_LINE_QTY, Math.max(1, Math.trunc(l.qty))),
+        meal: components.length > 0 ? { productId: p.id, name: p.name, components } : null,
+        categoryId: p.categoryId,
+        noDiscount: p.noDiscount,
+      });
     }
     // A price that moved since the screen showed it: shown to the customer, never charged as is.
     const priced = new Map(lines.map((x) => [x.key, { name: x.name, unitAgorot: unitAgorot(x) }] as const));
     for (const c of basketChanges(input.lines.filter((l) => priced.has(l.key)), priced)) if (c.kind === 'repriced') changes.push(c);
-    return { lines, changes, tracked: [...tracked] };
+    // "מבצעים": the promotions on this basket now, by the kiosk's clock (KioskViewModel.price).
+    const promo = priceKioskBasket(
+      lines.map((x) => ({ id: x.key, productIds: [x.productId], categoryId: x.categoryId ?? null, unitAgorot: unitAgorot(x), qty: x.qty, noDiscount: x.noDiscount === true })),
+      promotionsOf(this.cloud.promotions()),
+      localDateTimeOf(now),
+    );
+    const shares = new Map(promo.lines.map((x) => [x.id, x] as const));
+    for (const x of lines) {
+      const share = shares.get(x.key);
+      if (share && share.promotionAgorot > 0) {
+        x.promotionAgorot = share.promotionAgorot;
+        x.promotionId = share.promotionId;
+        x.promotionName = share.promotionName;
+      }
+    }
+    const promotions = promo.applied.map((a) => ({ promotionId: a.promotionId, name: a.name, type: a.type, applications: a.applications, discountAgorot: a.discountAgorot }));
+    return { lines, changes, tracked: [...tracked], promotions };
+  }
+
+  /** A dish's choices from its catalog groups, priced per unit of the dish (kioskMoney.ts pickCharges); unknown ones dropped. */
+  private chargedOptions(groups: KGroup[], picked: StartPaymentIn['lines'][number]['options']): SaleOption[] {
+    const money = groups.map(moneyGroupOf);
+    const picks: Record<string, OptionPick[]> = {};
+    for (const o of picked) {
+      const g = money.find((x) => x.id === o.groupId);
+      if (!g || !g.options.some((x) => x.id === o.optionId)) continue;
+      const pre = o.pre === 'lite' || o.pre === 'extra' || o.pre === 'side' ? o.pre : null;
+      (picks[g.id] ??= []).push({ optionId: o.optionId, qty: Math.max(1, Math.trunc(o.qty ?? 1)), pre: g.allowPre ? pre : null });
+    }
+    return chosenOptions(money, picks).map((o) => ({ groupId: o.groupId, groupName: o.groupName, kind: o.kind, optionId: o.optionId, name: o.name, priceAgorot: o.priceAgorot, qty: o.qty, pre: o.pre, chargedAgorot: o.chargedAgorot }));
   }
 
   /**
@@ -974,7 +1042,7 @@ export class KioskService extends EventEmitter {
     if (this.pay.blocked()) return { ok: false, reason: 'unresolved', message: 'תשלום קודם ממתין לבירור. אנא פנו לצוות.' };
     // The cloud's word first, when it answers in time (core/basketCheck.ts).
     await this.cloudBasketCheck(input).catch(() => undefined);
-    const { lines, changes, tracked } = this.priceBasket(input);
+    const { lines, changes, tracked, promotions } = this.priceBasket(input);
     const nowTotal = saleTotals(lines, this.vatRate()).totalAgorot;
     if (changes.length > 0) return { ok: false, reason: 'changed', changes, totalAgorot: nowTotal };
     // The total the customer saw: never a different one charged.
@@ -1029,6 +1097,7 @@ export class KioskService extends EventEmitter {
       lines,
       tracked,
       totals,
+      promotions,
     });
     if (!doc) return { ok: false, reason: 'no_shift', message: 'אין משמרת פתוחה' };
     this.orders.update(order.localId, (o) => ({ ...o, transactionId: doc.id }));
@@ -1369,7 +1438,14 @@ export class KioskService extends EventEmitter {
         qty: l.qty,
         unitAgorot: unit,
         totalAgorot: unit * l.qty,
-        paid: l.options.filter((o) => o.priceAgorot > 0).map((o) => ({ text: o.qty > 1 ? `${o.name} ×${o.qty}` : o.name, priceAgorot: o.priceAgorot })),
+        // What was charged (free choices are not printed), a meal's components with their upcharge (LineText.receiptSubLines).
+        paid: [
+          ...l.options.filter((o) => optionCharged(o) > 0).map((o) => ({ text: kitchenOptionText(o), priceAgorot: optionCharged(o) })),
+          ...(l.meal?.components ?? []).flatMap((c) => [
+            { text: c.name, priceAgorot: c.upchargeAgorot },
+            ...c.options.filter((o) => optionCharged(o) > 0).map((o) => ({ text: `  ${kitchenOptionText(o)}`, priceAgorot: optionCharged(o) })),
+          ]),
+        ],
       };
     });
   }
@@ -1401,6 +1477,8 @@ export class KioskService extends EventEmitter {
         vatAgorot: doc.totals.vatAgorot,
         vatRate: doc.totals.vatRate,
         tipAgorot: doc.totals.tipAgorot,
+        // "הנחת מבצע: <שם>" — the promotions the sale was priced with.
+        promotions: (doc.promotions ?? []).map((p) => ({ name: p.name, discountAgorot: p.discountAgorot })),
         card: doc.card ? { brand: doc.card.brand, last4: doc.card.last4, authNum: doc.card.authNum, payments: doc.card.payments, firstPaymentAgorot: doc.card.firstPaymentAgorot } : null,
         footer,
         logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null,
@@ -1446,7 +1524,7 @@ export class KioskService extends EventEmitter {
             kioskName: this.operator().name,
             posNumber: me?.posNumber ?? null,
             machineName: me?.machineName ?? null,
-            lines: doc.lines.map((l) => ({ qty: l.qty, name: l.name, options: l.options.map((x) => x.name), notes: l.notes.join(' · ') || null })),
+            lines: doc.lines.map((l) => ({ qty: l.qty, name: l.name, options: kitchenOptions(l), notes: l.notes.join(' · ') || null })),
             reprint,
             copy: c,
             printerName: null,

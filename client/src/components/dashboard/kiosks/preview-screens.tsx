@@ -82,6 +82,7 @@ import {
 import type { LivePayPhase, PreviewScreen } from '@/kiosk-shared/types';
 import { attractStackOrder, welcomeOf, welcomeTopHeight, WelcomeBlock } from '@/kiosk-shared/layouts/welcome';
 import { CategoryVisual } from '@/kiosk-shared/layouts/icons';
+import { lineOptionsOf, useDishSheet, type DishSheet } from './preview-dish';
 import { layoutOf, reachLow } from '@/lib/kioskLayout';
 import { KioskSwap, MOTION_CSS, itemEnter, sheetEnter } from './preview-motion';
 import { EntryHeader, EntryWindow } from './preview-entry';
@@ -93,6 +94,8 @@ export interface PProduct {
   id: string;
   name: string;
   price: number;
+  /** The real kiosk: the exact price in agorot (`price` is for display). */
+  priceAgorot?: number;
   imageUrl: string | null;
   soldOut: boolean;
   description: string | null;
@@ -119,6 +122,10 @@ export interface POption {
   id: string;
   name: string;
   price: number;
+  /** The real kiosk (lib/kioskMoney.ts): the exact price, the catalog's default, the most of it in one dish. */
+  priceAgorot?: number;
+  isDefault?: boolean;
+  maxQty?: number | null;
 }
 
 export interface PGroup {
@@ -127,6 +134,48 @@ export interface PGroup {
   min: number;
   max: number | null;
   options: POption[];
+  /** The real kiosk's menu rules (lib/kioskMoney.ts): absent in the preview's samples. */
+  kind?: 'choice' | 'addon' | 'removal';
+  /** This many units of choice are free — the cheapest ones. */
+  freeCount?: number;
+  /** A quantity per option ("+ / −"). */
+  allowQuantity?: boolean;
+  /** "מעט / הרבה / בצד". */
+  allowPre?: boolean;
+}
+
+/** One component of a meal line: its slot, the product, its upcharge and its choices (their defaults). */
+export interface PMealComponent {
+  slotId: string;
+  slotName: string;
+  productId: string;
+  name: string;
+  upchargeAgorot: number;
+  options: NonNullable<PLine['options']>;
+}
+
+/** A meal's window (lib/kioskMoney.ts MealSlot): each slot's products, with their upcharge. */
+export interface PMeal {
+  slots: Array<{
+    id: string;
+    name: string;
+    minSelect: number;
+    maxSelect: number;
+    allowRepeat: boolean;
+    choices: Array<{ product: PProduct; upchargeAgorot: number; isDefault: boolean }>;
+  }>;
+  /** A component's groups (its defaults are what the meal includes of it). */
+  groupsOf: (productId: string) => PGroup[];
+}
+
+/** The basket priced by the real kiosk (lib/kioskMoney.ts priceKioskBasket): its promotions and what it costs. */
+export interface CartPricing {
+  /** What the goods cost after the promotions, agorot. */
+  totalAgorot: number;
+  promotionAgorot: number;
+  /** By line key: its share of the promotions. */
+  lines: Record<string, { promotionAgorot: number; promotionName: string | null }>;
+  applied: Array<{ name: string; discountAgorot: number }>;
 }
 
 export interface PLine {
@@ -135,8 +184,25 @@ export interface PLine {
   qty: number;
   unit: number;
   extras: string[];
-  /** The options picked, as the real kiosk writes them on the document (the preview ignores them). */
-  options?: Array<{ groupId: string; optionId: string; name: string; price: number }>;
+  /** One unit in agorot, as the sheet priced it (lib/kioskMoney.ts); `unit` is for display. */
+  unitAgorot?: number;
+  /**
+   * The options picked, as the real kiosk writes them on the document (the preview ignores them):
+   * their quantity, "מעט / הרבה / בצד", and what each was charged per unit of the dish.
+   */
+  options?: Array<{
+    groupId: string;
+    optionId: string;
+    name: string;
+    price: number;
+    qty?: number;
+    pre?: 'lite' | 'extra' | 'side' | null;
+    chargedAgorot?: number;
+    kind?: 'choice' | 'addon' | 'removal';
+    groupName?: string;
+  }>;
+  /** A meal: its components, each with its slot and choices. */
+  meal?: { components: PMealComponent[] };
   /** The free note typed for the kitchen (real kiosk). */
   note?: string;
 }
@@ -258,12 +324,21 @@ export interface PreviewModel {
   mealOptions?: (p: PProduct) => PProduct[];
   /** "נגיש" (layout.reach / reachToggle): this customer's ♿, kept by the screens' owner (reset at rest). */
   reach?: { toggled: boolean; toggle: () => void };
+  /** The real kiosk: the basket with its promotions (absent: the lines' own sum, as the preview). */
+  pricing?: CartPricing | null;
+  /** The real kiosk: the meal's window for a product that is a meal, else null. */
+  mealOf?: (p: PProduct) => PMeal | null;
 }
 
 /* --------------------------------------------------------------- helpers */
 
 export function cartTotal(lines: PLine[]): number {
   return lines.reduce((s, l) => s + l.unit * l.qty, 0);
+}
+
+/** What the basket costs as the kiosk will charge it: after its promotions (the real kiosk), else the lines' sum. */
+export function basketTotal(m: Pick<PreviewModel, 'cart' | 'pricing'>): number {
+  return m.pricing ? m.pricing.totalAgorot / 100 : cartTotal(m.cart);
 }
 
 export function cartCount(lines: PLine[]): number {
@@ -1463,7 +1538,7 @@ export function CartBar({ m }: { m: PreviewModel }) {
         </CartTarget>
         <span>{m.cfg.general.skipCart === 'off' ? m.t('viewCart') : m.txt('checkoutCta')}</span>
         <span className="tabular-nums">
-          <CountUp value={cartTotal(m.cart)} ms={m.motion.countUpMs} format={m.money} />
+          <CountUp value={basketTotal(m)} ms={m.motion.countUpMs} format={m.money} />
         </span>
       </BigButton>
     </div>
@@ -1515,7 +1590,7 @@ export function CartPanel({ m }: { m: PreviewModel }) {
         <div className="flex items-center justify-between kt-11 font-bold">
           <span>{m.t('total')}</span>
           <span className="tabular-nums">
-            <CountUp value={cartTotal(m.cart)} ms={m.motion.countUpMs} format={m.money} />
+            <CountUp value={basketTotal(m)} ms={m.motion.countUpMs} format={m.money} />
           </span>
         </div>
         <button
@@ -1810,25 +1885,14 @@ export function ProductSheet({
 }) {
   const { cfg } = m;
   const full = variant === 'full';
-  const [picked, setPicked] = useState<Record<string, string[]>>(() =>
-    Object.fromEntries(groups.map((g) => [g.id, g.min > 0 && g.options[0] ? [g.options[0].id] : []])),
-  );
+  // The choices priced as the till prices them (lib/kioskMoney.ts): free ones, quantities, "מעט / הרבה / בצד".
+  const dish = useDishSheet(product, groups);
   const [qty, setQty] = useState(1);
   const [notes, setNotes] = useState<string[]>([]);
   const [note, setNote] = useState('');
-  // A required group with fewer than its minimum picked: nothing goes in the order yet.
-  const missing = groups.some((g) => (picked[g.id] ?? []).length < g.min);
-  const extras = groups.flatMap((g) => g.options.filter((o) => (picked[g.id] ?? []).includes(o.id)));
-  const unit = product.price + extras.reduce((s, o) => s + o.price, 0);
-  const toggle = (g: PGroup, id: string) => {
-    setPicked((prev) => {
-      const cur = prev[g.id] ?? [];
-      if (g.max === 1) return { ...prev, [g.id]: [id] };
-      if (cur.includes(id)) return { ...prev, [g.id]: cur.filter((x) => x !== id) };
-      if (g.max !== null && cur.length >= g.max) return prev;
-      return { ...prev, [g.id]: [...cur, id] };
-    });
-  };
+  // A group not answered (fewer than its minimum picked): nothing goes in the order yet.
+  const missing = !dish.valid;
+  const unit = dish.unitAgorot / 100;
   const quick = quickNotes ?? [m.t('quickNote1'), m.t('quickNote2'), m.t('quickNote3')];
   const showDietary = cfg.general.showDietary;
   const picture = product.imageLarge ? { ...product, imageUrl: product.imageLarge } : product;
@@ -1913,43 +1977,26 @@ export function ProductSheet({
             </div>
             {groups.map((g) => (
               <div key={g.id} className="space-y-1.5">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span className="text-sm font-bold">{g.name}</span>
-                  <span
-                    className="rounded-full px-2 py-0.5 kt-10 font-semibold"
-                    style={g.min > 0 ? { background: `${m.c.button}1A`, color: m.c.button } : { background: '#0000000D', color: m.c.mutedText }}
-                  >
-                    {g.min > 0 ? m.t('required') : g.max ? m.t('chooseUpTo', { n: g.max }) : m.t('optional')}
+                  <span className="flex items-center gap-1">
+                    {g.freeCount ? (
+                      <span className="rounded-full px-2 py-0.5 kt-10 font-semibold" style={{ background: `${m.c.accent}1F`, color: m.c.accent }}>
+                        {m.t('freeChoices', { n: g.freeCount })}
+                      </span>
+                    ) : null}
+                    <span
+                      className="rounded-full px-2 py-0.5 kt-10 font-semibold"
+                      style={g.min > 0 ? { background: `${m.c.button}1A`, color: m.c.button } : { background: '#0000000D', color: m.c.mutedText }}
+                    >
+                      {g.min > 0 ? m.t('required') : g.max ? m.t('chooseUpTo', { n: g.max }) : m.t('optional')}
+                    </span>
                   </span>
                 </div>
                 <div className="overflow-hidden" style={{ ...cardStyle(m), boxShadow: 'none', border: `1px solid ${m.c.border}` }}>
-                  {g.options.map((o, i) => {
-                    const on = (picked[g.id] ?? []).includes(o.id);
-                    const radio = g.max === 1;
-                    return (
-                      <button
-                        key={o.id}
-                        type="button"
-                        onClick={() => toggle(g, o.id)}
-                        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-start text-sm"
-                        style={{ borderTop: i > 0 ? `1px solid ${m.c.border}` : undefined }}
-                      >
-                        <span
-                          className="flex h-5 w-5 shrink-0 items-center justify-center transition-colors duration-150"
-                          style={{
-                            borderRadius: radio ? 999 : 6,
-                            border: `2px solid ${on ? m.c.button : m.c.border}`,
-                            background: on ? m.c.button : 'transparent',
-                            color: m.c.buttonText,
-                          }}
-                        >
-                          {on ? <Check className="h-3 w-3" /> : null}
-                        </span>
-                        <span className="flex-1">{o.name}</span>
-                        {o.price > 0 ? <span className="text-xs tabular-nums" style={{ color: m.c.mutedText }}>+{m.money(o.price)}</span> : null}
-                      </button>
-                    );
-                  })}
+                  {g.options.map((o, i) => (
+                    <OptionRow key={o.id} m={m} dish={dish} group={g} option={o} first={i === 0} />
+                  ))}
                 </div>
               </div>
             ))}
@@ -1996,10 +2043,9 @@ export function ProductSheet({
                   product,
                   qty,
                   unit,
-                  extras: [...extras.map((o) => o.name), ...notes, ...(typed ? [typed] : [])],
-                  options: groups.flatMap((g) =>
-                    g.options.filter((o) => (picked[g.id] ?? []).includes(o.id)).map((o) => ({ groupId: g.id, optionId: o.id, name: o.name, price: o.price })),
-                  ),
+                  unitAgorot: dish.unitAgorot,
+                  extras: [...dish.texts, ...notes, ...(typed ? [typed] : [])],
+                  options: lineOptionsOf(dish.chosen),
                   note: [...notes, ...(typed ? [typed] : [])].join(' · ') || undefined,
                 },
                 flyFrom(e.currentTarget.getBoundingClientRect()),
@@ -2010,6 +2056,68 @@ export function ProductSheet({
           </BigButton>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * One option of a group on the dish's sheet: on / off (a radio in a one-choice group), and once on,
+ * its quantity ("+ / −", where the group takes quantities) and "מעט / הרבה / בצד" (where it allows
+ * them) — "חינם" when the group's free choices took it.
+ */
+export function OptionRow({ m, dish, group, option, first }: { m: PreviewModel; dish: DishSheet; group: PGroup; option: POption; first: boolean }) {
+  const on = dish.isOn(group.id, option.id);
+  const radio = group.max === 1;
+  const qty = dish.qtyOf(group.id, option.id);
+  const pre = dish.preOf(group.id, option.id);
+  const free = on && dish.freeOf(group.id, option.id);
+  const pill = (label: string, onClick: () => void, disabled = false) => (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className="flex h-8 min-w-8 items-center justify-center px-2 kt-11 font-bold disabled:opacity-40"
+      style={{ borderRadius: 999, border: `1.5px solid ${m.c.border}`, background: m.c.surface, color: m.c.text }}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div className="flex w-full items-center gap-2 px-3 py-2" style={{ borderTop: first ? undefined : `1px solid ${m.c.border}` }}>
+      <button type="button" onClick={() => dish.toggle(group.id, option.id)} className="flex min-w-0 flex-1 items-center gap-2.5 py-0.5 text-start text-sm">
+        <span
+          className="flex h-5 w-5 shrink-0 items-center justify-center transition-colors duration-150"
+          style={{
+            borderRadius: radio ? 999 : 6,
+            border: `2px solid ${on ? m.c.button : m.c.border}`,
+            background: on ? m.c.button : 'transparent',
+            color: m.c.buttonText,
+          }}
+        >
+          {on ? <Check className="h-3 w-3" /> : null}
+        </span>
+        <span className="min-w-0 flex-1 truncate">{option.name}</span>
+        {free ? (
+          <span className="shrink-0 kt-11 font-bold" style={{ color: m.c.accent }}>
+            {m.t('free')}
+          </span>
+        ) : option.price > 0 ? (
+          <span className="shrink-0 text-xs tabular-nums" style={{ color: m.c.mutedText }}>
+            +{m.money(option.price)}
+          </span>
+        ) : null}
+      </button>
+      {on && group.allowPre ? pill(pre ? m.t(`pre.${pre}`) : m.t('pre.regular'), () => dish.cyclePre(group.id, option.id)) : null}
+      {on && group.allowQuantity ? (
+        <span className="flex shrink-0 items-center gap-1">
+          {pill('−', () => dish.changeQty(group.id, option.id, -1))}
+          <span className="min-w-5 text-center text-sm font-bold tabular-nums">{qty}</span>
+          {pill('+', () => dish.changeQty(group.id, option.id, 1), !dish.canAdd(group.id, option.id))}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -2028,7 +2136,7 @@ export function ConfirmSheet({ m, onMore, onPay }: { m: PreviewModel; onMore: ()
             <Check className="h-4 w-4" />
           </span>
           <span className="font-bold">{m.t('confirmTitle')}</span>
-          <span className="ms-auto text-sm font-bold tabular-nums">{m.money(cartTotal(m.cart))}</span>
+          <span className="ms-auto text-sm font-bold tabular-nums">{m.money(basketTotal(m))}</span>
         </div>
         <div className="grid grid-cols-2 gap-2">
           <BigButton m={m} variant="soft" onClick={onMore}>
@@ -2288,7 +2396,9 @@ export function UpsellWindow({
  */
 export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] }) {
   const { cfg } = m;
-  const total = cartTotal(m.cart);
+  const subtotal = cartTotal(m.cart);
+  const total = basketTotal(m);
+  const promotions = m.pricing?.applied.filter((a) => a.discountAgorot > 0) ?? [];
   const count = cartCount(m.cart);
   const min = cfg.payment.minOrderAgorot / 100;
   const below = min > 0 && total < min;
@@ -2352,6 +2462,11 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
                 <div className="text-xs font-bold tabular-nums" style={{ color: m.c.primary }}>
                   {m.money(l.unit * l.qty)}
                 </div>
+                {m.pricing?.lines[l.key]?.promotionAgorot ? (
+                  <div className="truncate kt-11 font-semibold tabular-nums" style={{ color: m.c.accent }}>
+                    {m.t('promotionLine', { name: m.pricing.lines[l.key].promotionName ?? '', amount: m.money(m.pricing.lines[l.key].promotionAgorot / 100) })}
+                  </div>
+                ) : null}
               </div>
               <Stepper
                 m={m}
@@ -2373,8 +2488,15 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
           <div className="space-y-1.5 p-3" style={{ background: `${m.c.primary}0D`, borderRadius: Math.min(Math.max(m.radius, 8), 16) }}>
             <div className="flex items-center justify-between kt-13" style={{ color: m.c.mutedText }}>
               <span>{m.txt('reviewSubtotal')}</span>
-              <span className="tabular-nums">{m.money(total)}</span>
+              <span className="tabular-nums">{m.money(subtotal)}</span>
             </div>
+            {/* The promotions the kiosk will charge with (the real kiosk's pricing). */}
+            {promotions.map((a) => (
+              <div key={a.name} className="flex items-center justify-between kt-13 font-semibold" style={{ color: m.c.accent }}>
+                <span className="min-w-0 truncate">{a.name}</span>
+                <span className="tabular-nums">−{m.money(a.discountAgorot / 100)}</span>
+              </div>
+            ))}
             <div className="flex items-center justify-between border-t pt-1.5 text-base font-extrabold" style={{ borderColor: m.c.border }}>
               <span>{m.txt('reviewTotal')}</span>
               <span className="tabular-nums" style={{ color: m.c.primary }}>
@@ -2440,7 +2562,7 @@ export function TipScreen({ m, steps: previewSteps, onDone }: { m: PreviewModel;
   const value = live ? live.value : own;
   const setValue = live ? live.onChange : setOwn;
   const steps = live ? live.steps : previewSteps && previewSteps.includes('tip') ? previewSteps : ['tip' as const];
-  const goods = live ? live.goodsAgorot : Math.round(cartTotal(m.cart) * 100);
+  const goods = live ? live.goodsAgorot : Math.round(basketTotal(m) * 100);
   const tip = value.agorot !== null ? value.agorot : tipPercentAgorot(goods, value.pct);
   const total = goods + tip;
   /** The payment comes next (else the details): the main button says so. */
@@ -2725,7 +2847,7 @@ function LivePay({ m, live }: { m: PreviewModel; live: NonNullable<KioskLive['pa
 
 /** `tipAgorot`: the preview's tip chosen on its tip step (the tip itself is asked there, before). */
 export function PayScreen({ m, tipAgorot = 0 }: { m: PreviewModel; tipAgorot?: number }) {
-  const base = cartTotal(m.cart);
+  const base = basketTotal(m);
   if (m.live?.pay) return <LivePay m={m} live={m.live.pay} />;
   return (
     <ScreenBody m={m}>

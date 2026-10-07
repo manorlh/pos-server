@@ -62,14 +62,19 @@ import {
   ServiceScreen,
   TickerFrame,
   cardStyle,
-  cartTotal,
+  basketPricing,
+  lineUnitAgorot,
+  orderMealOf,
+  orderOptionsOf,
   screenOrder,
   type EntryStep,
   type Flight,
   type KioskLive,
   type KioskLivePayMethod,
   type PCategory,
+  type PGroup,
   type PLine,
+  type PMeal,
   type PProduct,
   type PreviewModel,
   type PreviewScreen,
@@ -83,6 +88,7 @@ import {
   SuccessScreen,
 } from '@/kiosk-shared';
 import { configuredText, kioskTextOf, webTextOverride } from '@/lib/kioskTexts';
+import { localDateTimeOf, promotionsOf } from '@/lib/kioskMoney';
 import {
   backAction,
   busy as flowBusy,
@@ -286,34 +292,97 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   const featured = useMemo(() => view2.featured.map((x) => toP(x.product, x.soldOut, required(x.product.id))), [view2, required]);
   const allProducts = useMemo(() => categories.flatMap((c) => c.products), [categories]);
   const product = productId ? (allProducts.find((p) => p.id === productId) ?? null) : null;
+  /** Every product the kiosk sells (a meal's component may sit in no category shown). */
+  const soldById = useMemo(() => new Map(view.catalog.products.map((p) => [p.id, p])), [view.catalog.products]);
+  const groupsOf = useCallback((id: string): PGroup[] => pGroupsOf(view.catalog.groups[id] ?? []), [view.catalog.groups]);
+  /** A meal's window (menu.meals): each slot's products, a component's groups. */
+  const mealOf = useCallback(
+    (p: PProduct): PMeal | null => {
+      const slots = view.catalog.meals?.[p.id];
+      if (!slots || slots.length === 0) return null;
+      return {
+        slots: slots.map((s) => ({
+          id: s.id,
+          name: s.name,
+          minSelect: s.minSelect,
+          maxSelect: s.maxSelect,
+          allowRepeat: s.allowRepeat,
+          choices: s.choices.flatMap((c) => {
+            const x = soldById.get(c.productId);
+            return x ? [{ product: toP(x, x.soldOut, false), upchargeAgorot: c.upchargeAgorot, isDefault: c.isDefault }] : [];
+          }),
+        })),
+        groupsOf,
+      };
+    },
+    [view.catalog.meals, soldById, groupsOf],
+  );
+  // "מבצעים": the basket priced as the till will charge it (lib/kioskMoney.ts — the till's promotions), by the minute.
+  const promotions = useMemo(() => promotionsOf(view.catalog.promotions ?? []), [view.catalog.promotions]);
+  const minute = Math.floor(nowMs / 60_000);
+  const { pricing, priced } = useMemo(
+    () => basketPricing(cart, promotions, localDateTimeOf(new Date(minute * 60_000)), (id) => soldById.get(id)?.noDiscount === true),
+    [cart, promotions, minute, soldById],
+  );
+  const pricingRef = useRef(pricing);
+  const pricedRef = useRef(priced);
+  useEffect(() => {
+    pricingRef.current = pricing;
+    pricedRef.current = priced;
+  }, [pricing, priced]);
 
-  /** The basket as the order carries it (the options' groups and the dish's own price from the catalog). */
+  /** The basket as the order carries it (the choices as charged, a meal's components, each line's promotions). */
   const orderLines = useCallback(
-    (lines: PLine[]): WebOrderLine[] =>
-      lines.map((l) => {
-        const row = view.catalog.products.find((p) => p.id === l.product.id);
-        const groups = view.catalog.groups[l.product.id] ?? [];
+    (lines: PLine[]): WebOrderLine[] => {
+      const shares = new Map(pricedRef.current.lines.map((x) => [x.id, x] as const));
+      return lines.map((l) => {
+        const row = soldById.get(l.product.id);
+        const share = shares.get(l.key);
+        const option = (o: NonNullable<PLine['options']>[number]) => ({
+          groupId: o.groupId,
+          groupName: o.groupName ?? null,
+          kind: o.kind ?? 'addon',
+          optionId: o.optionId,
+          name: o.name,
+          priceAgorot: Math.round(o.price * 100),
+          qty: o.qty ?? 1,
+          pre: o.pre ?? null,
+          ...(o.chargedAgorot !== undefined ? { chargedAgorot: o.chargedAgorot } : {}),
+        });
         return {
           key: l.key,
           productId: l.product.id,
           name: l.product.name,
           qty: l.qty,
-          baseAgorot: Math.round((row?.price ?? l.product.price) * 100),
-          unitAgorot: Math.round(l.unit * 100),
-          options: (l.options ?? []).map((o) => {
-            const g = groups.find((x) => x.id === o.groupId);
-            const kind = g?.kind === 'choice' || g?.kind === 'removal' ? g.kind : 'addon';
-            return { groupId: o.groupId, groupName: g?.name ?? null, kind, optionId: o.optionId, name: o.name, priceAgorot: Math.round(o.price * 100) };
-          }),
+          baseAgorot: row?.priceAgorot ?? Math.round(l.product.price * 100),
+          unitAgorot: lineUnitAgorot(l),
+          options: (l.options ?? []).map(option),
           note: l.note?.trim() || null,
           categoryId: l.product.categoryId,
           sku: row?.sku ?? null,
           barcode: row?.barcode ?? null,
           imageUrl: row?.imageUrl ?? null,
           allergens: row?.allergenCodes ?? [],
+          meal: l.meal
+            ? {
+                components: l.meal.components.map((c) => ({
+                  slotId: c.slotId,
+                  slotName: c.slotName,
+                  productId: c.productId,
+                  name: c.name,
+                  categoryId: soldById.get(c.productId)?.categoryId ?? null,
+                  listPriceAgorot: soldById.get(c.productId)?.priceAgorot ?? 0,
+                  upchargeAgorot: c.upchargeAgorot,
+                  options: c.options.map(option),
+                })),
+              }
+            : null,
+          noDiscount: row?.noDiscount === true,
+          ...(share && share.promotionAgorot > 0 ? { promotionAgorot: share.promotionAgorot, promotionId: share.promotionId, promotionName: share.promotionName } : {}),
         };
-      }),
-    [view.catalog.products, view.catalog.groups],
+      });
+    },
+    [soldById],
   );
 
   /* ---------------------------------------------------- the outside world */
@@ -350,7 +419,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
 
   /* -------------------------------------------------------------- payment */
 
-  const goodsAgorot = Math.round(cartTotal(cart) * 100);
+  // What the goods cost after the promotions (the tip is on that, as the till's).
+  const goodsAgorot = pricing.totalAgorot;
   const tipAgorot = tipOfDetails(details, goodsAgorot);
   const dueNow = dueOf(goodsAgorot, tipAgorot, pay.vouchers);
 
@@ -376,11 +446,11 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
         return;
       }
       const lines = cartRef.current;
-      const shownAgorot = Math.round(cartTotal(lines) * 100);
+      const shownAgorot = pricingRef.current.totalAgorot;
       const d = detailsRef.current;
       const r = await bridge.startPayment({
         expectedTotalAgorot: shownAgorot,
-        lines: lines.map((l) => ({ key: l.key, productId: l.product.id, qty: l.qty, unitAgorot: Math.round(l.unit * 100), options: (l.options ?? []).map((o) => ({ groupId: o.groupId, optionId: o.optionId })), notes: l.note ? [l.note] : [] })),
+        lines: lines.map((l) => ({ key: l.key, productId: l.product.id, qty: l.qty, unitAgorot: lineUnitAgorot(l), options: orderOptionsOf(l), meal: orderMealOf(l), notes: l.note ? [l.note] : [] })),
         service: flowRef.current.service ?? 'take_away',
         customerName: d.name.trim() || null,
         customerPhone: d.phone.trim() || null,
@@ -404,7 +474,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
               .filter((l) => !removed.has(l.key) && !removed.has(l.product.id))
               .map((l) => {
                 const to = repriced.get(l.key) ?? repriced.get(l.product.id);
-                return to === undefined ? l : { ...l, unit: to / 100 };
+                return to === undefined ? l : { ...l, unit: to / 100, unitAgorot: to };
               }),
           );
           const said = out.changes.map((c) => (c.kind === 'removed' ? words.t('basketRemoved', { name: c.name }) : words.t('basketRepriced', { name: c.name })));
@@ -427,12 +497,14 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     dispatch({ type: 'paymentStarted' });
     const lines = orderLines(cartRef.current);
     const shownAgorot = goodsOf(lines);
-    const check = svc.checkBasket(lines.map((l) => ({ key: l.key, productId: l.productId, unitAgorot: l.unitAgorot, qty: l.qty, options: l.options })));
+    const check = svc.checkBasket(
+      cartRef.current.map((l) => ({ key: l.key, productId: l.product.id, unitAgorot: lineUnitAgorot(l), qty: l.qty, options: orderOptionsOf(l), meal: orderMealOf(l) })),
+    );
     if (check.changes.length > 0 && payRef.current.vouchers.length === 0) {
       dispatch({ type: 'paymentDeclined' });
       const removed = new Set(check.changes.filter((c) => c.kind === 'removed').map((c) => c.key));
       const repriced = new Map(check.changes.flatMap((c) => (c.kind === 'repriced' ? [[c.key, c.to] as const] : [])));
-      setCart((c) => c.filter((l) => !removed.has(l.key)).map((l) => (repriced.has(l.key) ? { ...l, unit: (repriced.get(l.key) ?? 0) / 100 } : l)));
+      setCart((c) => c.filter((l) => !removed.has(l.key)).map((l) => (repriced.has(l.key) ? { ...l, unit: (repriced.get(l.key) ?? 0) / 100, unitAgorot: repriced.get(l.key) ?? 0 } : l)));
       const said = check.changes.map((c) => (c.kind === 'removed' ? words.t('basketRemoved', { name: c.name }) : words.t('basketRepriced', { name: c.name })));
       if (check.totalAgorot !== shownAgorot) said.push(words.t('basketNewTotal', { total: formatMoney(check.totalAgorot / 100) }));
       setChanges(said);
@@ -487,7 +559,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
         payRef.current = { ...payRef.current, vouchers: legs };
         setPay((p) => ({ ...p, busy: false, error: null, vouchers: legs, note: words.t('voucherAppliedNote', { amount: formatMoney(r.leg.amountAgorot / 100) }) }));
         // Everything paid by the vouchers (no tip left): the order goes to the tills by itself — once, on this answer.
-        const goods = Math.round(cartTotal(cartRef.current) * 100);
+        const goods = pricingRef.current.totalAgorot;
         if (dueOf(goods, tipOfDetails(detailsRef.current, goods), legs) === 0) {
           chooseMethod('cash_at_till');
           dispatch({ type: 'detailsDone' });
@@ -626,6 +698,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     kt: (key, values) => kioskTextOf(cfg, 'he', key, values),
     mealOptions: (p) => mealsFor(view, p.id, allProducts),
     reach: { toggled: reachToggled, toggle: () => setReachToggled((v) => !v) },
+    pricing,
+    mealOf,
     money: formatMoney,
     categories,
     featured,
@@ -654,7 +728,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     live,
     quickAdd: (p, from) => {
       const plain = (l: PLine) => l.product.id === p.id && l.extras.length === 0 && !l.note && (l.options?.length ?? 0) === 0;
-      addLine({ key: `${p.id}-plain`, product: p, qty: 1, unit: p.price, extras: [], options: [] }, from, plain);
+      addLine({ key: `${p.id}-plain`, product: p, qty: 1, unit: p.price, unitAgorot: p.priceAgorot, extras: [], options: [] }, from, plain);
     },
   };
 
@@ -908,7 +982,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
               key={product.id}
               m={m}
               product={product}
-              groups={(view.catalog.groups[product.id] ?? []).map((g) => ({ id: g.id, name: g.name, min: g.min, max: g.max, options: g.options.map((o) => ({ id: o.id, name: o.name, price: o.price })) }))}
+              groups={groupsOf(product.id)}
               allergens={view.catalog.products.find((p) => p.id === product.id)?.allergens ?? []}
               quickNotes={view.catalog.quickNotes[product.id] ?? []}
               onClose={() => setProductId(null)}
@@ -1036,6 +1110,7 @@ function toP(p: WebKioskView['catalog']['products'][number], soldOut: boolean, r
     id: p.id,
     name: p.name,
     price: p.price,
+    priceAgorot: p.priceAgorot,
     imageUrl: p.imageUrl,
     imageLarge: p.imageLarge,
     soldOut,
@@ -1043,6 +1118,21 @@ function toP(p: WebKioskView['catalog']['products'][number], soldOut: boolean, r
     categoryId: p.categoryId,
     dietaryTags: p.dietaryTags,
   };
+}
+
+/** The catalog's groups as the shared screens take them, with every rule that prices them (kioskMoney.ts). */
+function pGroupsOf(groups: WebKioskView['catalog']['groups'][string]): PGroup[] {
+  return groups.map((g) => ({
+    id: g.id,
+    name: g.name,
+    min: g.min,
+    max: g.max,
+    kind: g.kind,
+    freeCount: g.freeCount,
+    allowQuantity: g.allowQuantity,
+    allowPre: g.allowPre,
+    options: g.options.map((o) => ({ id: o.id, name: o.name, price: o.price, priceAgorot: o.priceAgorot, isDefault: o.isDefault, maxQty: o.maxQty })),
+  }));
 }
 
 /** The offers: the kiosk's own rules, else the till's menu upsells (as the Windows kiosk). */

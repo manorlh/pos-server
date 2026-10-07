@@ -84,6 +84,8 @@ function demoView(): KioskView {
     id,
     name,
     price,
+    priceAgorot: Math.round(price * 100),
+    noDiscount: false,
     imageUrl: null,
     imageLarge: null,
     soldOut,
@@ -118,12 +120,27 @@ function demoView(): KioskView {
       ],
       groups: {
         p1: [
-          { id: 'g1', name: 'גודל', kind: 'choice', min: 1, max: 1, options: [{ id: 'o1', name: 'רגיל', price: 0, isDefault: true }, { id: 'o2', name: 'גדול', price: 8, isDefault: false }] },
+          {
+            id: 'g1',
+            name: 'גודל',
+            kind: 'choice',
+            min: 1,
+            max: 1,
+            freeCount: 0,
+            allowQuantity: false,
+            allowPre: false,
+            options: [
+              { id: 'o1', name: 'רגיל', price: 0, priceAgorot: 0, isDefault: true, maxQty: null },
+              { id: 'o2', name: 'גדול', price: 8, priceAgorot: 800, isDefault: false, maxQty: null },
+            ],
+          },
         ],
       },
+      meals: {},
       quickNotes: { p1: ['בלי בצל', 'רוטב בצד'] },
       upsells: [],
       categoryImages: {},
+      promotions: [],
     },
     state: { ...rest.state, noPayment: false, terminal: 'ready', offline: false, offlineSince: null, cardBlocked: false },
     staff: { unprintedBons: 0, printer: 'ok', pendingUploads: 0, mediaMissing: 0 },
@@ -150,8 +167,10 @@ function webBridge(): KioskBridge {
           return sum + unit * l.qty;
         }, 0) * 100,
       );
+      // The total the screen priced (choices, meals, promotions) is the demo's: it has no money of its own.
+      const shown = typeof input.expectedTotalAgorot === 'number' ? input.expectedTotalAgorot : goods;
       // The tip on top, as the real service charges it.
-      const amount = goods + tipToCharge(goods, input.tipPct, input.tipAgorot);
+      const amount = shown + tipToCharge(shown, input.tipPct, input.tipAgorot);
       const base: PayProgress = { orderId, phase: 'starting', message: null, amountAgorot: amount, canCancel: true, cancelling: false };
       setTimeout(() => fire('pay', { ...base, phase: 'charging' }), 400);
       setTimeout(() => fire('pay', { ...base, phase: 'approved', canCancel: false, pickupLabel: String(order), documentNumber: `9000000${order}`, receipt: 'ask' }), 2500);

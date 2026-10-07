@@ -3,6 +3,7 @@
  * The screens never reach the network: everything they show comes from here, from local data.
  */
 
+import type { MealSlot } from '@dash-lib/kioskMoney';
 import type { KCategory, KGroup, KProduct } from '../main/kiosk/catalog';
 import type { FunnelEvent } from '../core/kioskFunnel';
 import type { BatteryAlertView } from '../core/batteryAlerts';
@@ -36,6 +37,10 @@ export interface KioskView {
     upsells: Array<{ triggerType: string; triggerIds: string[]; productIds: string[]; categoryIds: string[]; prompt: string | null }>;
     /** Kiosk category pictures (local) by category id. */
     categoryImages: Record<string, string>;
+    /** The meals' slots by meal product id (client/src/lib/kioskMoney.ts MealSlot). */
+    meals: Record<string, MealSlot[]>;
+    /** The promotions as the cloud sent them (kioskMoney.ts promotionsOf reads them): the basket is priced with them. */
+    promotions: Array<Record<string, unknown>>;
   };
   state: {
     paused: boolean;
@@ -61,10 +66,13 @@ export interface OrderLineIn {
   key: string;
   productId: string;
   qty: number;
-  options: Array<{ groupId: string; optionId: string }>;
+  /** The choices, in the order picked: a quantity and "מעט / הרבה / בצד" where the group allows them. */
+  options: Array<{ groupId: string; optionId: string; qty?: number; pre?: 'lite' | 'extra' | 'side' | null }>;
   notes: string[];
   /** The unit price (with its options, agorot) the screen showed: the pre-payment check compares it (core/basketCheck.ts). */
   unitAgorot?: number;
+  /** A meal: the product chosen in each slot (each on its own defaults) — priced here from the catalog. */
+  meal?: { components: Array<{ slotId: string; productId: string }> } | null;
 }
 
 export interface StartPaymentIn {
@@ -76,7 +84,7 @@ export interface StartPaymentIn {
   tipPct: number | null;
   /** "סכום אחר": the customer's own tip in agorot (whole shekels, up to the order's total); wins over tipPct. */
   tipAgorot: number | null;
-  /** The goods' total the customer saw (agorot): never charged if it moved (core/basketCheck.ts). */
+  /** The goods' total the customer saw (agorot), after the promotions: never charged if it moved (core/basketCheck.ts). */
   expectedTotalAgorot?: number;
 }
 

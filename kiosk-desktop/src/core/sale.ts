@@ -2,7 +2,11 @@
  * A kiosk card sale's numbers, as the till computes them (pos-android domain/Cart.kt totals,
  * data/repo/SaleRepository.kt buildTransaction/buildItems, domain/XReport.kt):
  *
- *  - prices include VAT; a line's gross = unit × qty (HALF_UP to the agora);
+ *  - prices include VAT; a line's gross = unit × qty (HALF_UP to the agora); a unit = the dish's
+ *    price + what each choice was charged (free choices, quantities, "הרבה" — client/src/lib/kioskMoney.ts)
+ *    + on a meal, each component's upcharge and paid choices;
+ *  - the promotions (kioskMoney.ts, the till's PromotionEngine) are the document's discount: each
+ *    line carries its share, the total is the gross less them;
  *  - the VAT is computed ONCE per document: net = round(total / (1 + rate)), vat = total − net;
  *  - the card is charged total + tip; the card tender is the goods total, the tip goes in
  *    `tipAmount` (tipPaymentMethod "card");
@@ -11,15 +15,41 @@
  * Pure: amounts in agorot inside, shekels (2 decimals) on the wire.
  */
 
+import { optionText } from '@dash-lib/kioskMoney';
 import { ofShekels, times, toShekels, vatNet } from './money';
+
+/** At most this many of one line (the Android kiosk's KioskViewModel.MAX_QTY). */
+export const MAX_LINE_QTY = 20;
 
 export interface SaleOption {
   groupId: string;
   optionId: string;
   name: string;
-  /** Extra per unit, agorot. */
+  /** The option's own price per unit, agorot. */
   priceAgorot: number;
   qty: number;
+  /** "מעט / הרבה / בצד". */
+  pre?: 'lite' | 'extra' | 'side' | null;
+  /**
+   * What it was charged per unit of the dish, after the group's free choices and "הרבה"
+   * (kioskMoney.ts pickCharges). Absent on a document written before: price × qty.
+   */
+  chargedAgorot?: number;
+  kind?: 'choice' | 'addon' | 'removal';
+  groupName?: string;
+}
+
+/** One component of a meal line (LineDetails MealComponent). */
+export interface SaleMealComponent {
+  slotId: string;
+  slotName: string;
+  productId: string;
+  name: string;
+  categoryId: string | null;
+  /** The component's own catalog price: what the meal's base is allocated by. */
+  listPriceAgorot: number;
+  upchargeAgorot: number;
+  options: SaleOption[];
 }
 
 export interface SaleLine {
@@ -32,11 +62,40 @@ export interface SaleLine {
   options: SaleOption[];
   notes: string[];
   qty: number;
+  /** A meal: its components (the line's product is the meal). */
+  meal?: { productId: string; name: string; components: SaleMealComponent[] } | null;
+  categoryId?: string | null;
+  /** "לא מקבל הנחות". */
+  noDiscount?: boolean;
+  /** The line's share of the promotions, agorot, and the promotion that took most of it. */
+  promotionAgorot?: number;
+  promotionId?: string | null;
+  promotionName?: string | null;
 }
 
-/** Unit price with the paid options (per unit). */
-export function unitAgorot(l: Pick<SaleLine, 'basePriceAgorot' | 'options'>): number {
-  return l.basePriceAgorot + l.options.reduce((s, o) => s + o.priceAgorot * Math.max(1, o.qty), 0);
+/** What one choice adds to one unit of the dish. */
+export function optionCharged(o: Pick<SaleOption, 'priceAgorot' | 'qty' | 'chargedAgorot'>): number {
+  return o.chargedAgorot ?? o.priceAgorot * Math.max(1, o.qty);
+}
+
+/** A choice as the kitchen and the receipt word it: "הרבה טחינה ×2", "בלי בצל" (LineModifier.displayText). */
+export function kitchenOptionText(o: Pick<SaleOption, 'name' | 'qty' | 'pre' | 'kind'>): string {
+  return optionText({ kind: o.kind ?? 'addon', name: o.name, pre: o.pre ?? null, qty: o.qty });
+}
+
+/** A line's choices for the bon and the KDS: its own, and a meal's components with theirs. */
+export function kitchenOptions(l: Pick<SaleLine, 'options' | 'meal'>): string[] {
+  return [
+    ...l.options.map(kitchenOptionText),
+    ...(l.meal?.components ?? []).map((c) => (c.options.length > 0 ? `${c.name} (${c.options.map(kitchenOptionText).join(', ')})` : c.name)),
+  ];
+}
+
+/** Unit price with the paid options, and a meal's upcharges and its components' paid choices (per unit). */
+export function unitAgorot(l: Pick<SaleLine, 'basePriceAgorot' | 'options'> & { meal?: SaleLine['meal'] }): number {
+  const options = l.options.reduce((s, o) => s + optionCharged(o), 0);
+  const meal = (l.meal?.components ?? []).reduce((s, c) => s + c.upchargeAgorot + c.options.reduce((x, o) => x + optionCharged(o), 0), 0);
+  return l.basePriceAgorot + options + meal;
 }
 
 export function lineGross(l: SaleLine): number {
@@ -59,7 +118,8 @@ export interface SaleTotals {
 
 export function saleTotals(lines: readonly SaleLine[], vatRate: number, tipAgorot = 0): SaleTotals {
   const gross = lines.reduce((s, l) => s + lineGross(l), 0);
-  const discount = 0;
+  // The promotions' shares (Cart.totals): the document's discount.
+  const discount = lines.reduce((s, l) => s + Math.max(0, l.promotionAgorot ?? 0), 0);
   const total = gross - discount;
   const net = vatNet(total, vatRate);
   return {

@@ -68,6 +68,8 @@ export interface ReceiptInput {
   vatAgorot: number;
   vatRate: number;
   tipAgorot: number;
+  /** The promotions the sale was priced with: "הנחת מבצע: <שם>" (the total is after them). */
+  promotions?: Array<{ name: string; discountAgorot: number }>;
   card: { brand: CardBrand; last4: string | null; authNum: string | null; payments: number | null; firstPaymentAgorot: number | null } | null;
   footer: [string | null, string | null];
   logoUrl: string | null;
@@ -139,6 +141,9 @@ export function receiptDoc(r: ReceiptInput): ReceiptDoc {
     ops.push({ t: 'row', label: `${receiptQty(l.qty)} × ${formatAgorot(l.unitAgorot)}`, value: formatAgorot(l.totalAgorot), style: 'small' });
   }
   ops.push({ t: 'divider', gap: 8 });
+  for (const p of r.promotions ?? []) {
+    if (p.discountAgorot > 0) ops.push({ t: 'row', label: `הנחת מבצע: ${p.name}`, value: formatAgorot(-p.discountAgorot), style: 'body' });
+  }
   ops.push({ t: 'row', label: 'סה"כ פריטים לתשלום', value: formatAgorot(r.totalAgorot), style: 'body' });
   const showVat = r.documentType !== 400 && r.documentType !== -400;
   if (showVat) {
