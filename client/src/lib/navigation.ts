@@ -19,6 +19,7 @@ import {
   Activity,
   BadgePercent,
   BarChart3,
+  BellRing,
   BookOpenCheck,
   BookOpenText,
   Boxes,
@@ -59,6 +60,7 @@ import {
   QrCode,
   Receipt,
   Scale,
+  ScrollText,
   ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
@@ -217,6 +219,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: '/dashboard/cash-variance', labelKey: 'cashVariance', icon: Scale },
       // Discounts, refunds, cancelled baskets, long orders, high tips… for review.
       { href: '/dashboard/exceptions', labelKey: 'exceptions', icon: ShieldAlert },
+      // "יומן חריגות": every detected exception from every source, handled with a note, with its SMS.
+      { href: '/dashboard/exceptions-log', labelKey: 'exceptionsLog', icon: ScrollText },
       { href: '/dashboard/tax-reports', labelKey: 'taxReports', icon: FileText },
       // The books: the same super-admin / distributor / company-manager set the
       // accounting router enforces, which is exactly the `branding` gate's.
@@ -296,6 +300,13 @@ export const NAV_SECTIONS: NavSection[] = [
         href: '/dashboard/exception-settings',
         labelKey: 'exceptionSettings',
         icon: SlidersVertical,
+        gate: 'settingsWrite',
+      },
+      // "התראות SMS על חריגות": the alert rules per company / shop (dry run unless configured).
+      {
+        href: '/dashboard/exception-alerts',
+        labelKey: 'exceptionAlerts',
+        icon: BellRing,
         gate: 'settingsWrite',
       },
       {
