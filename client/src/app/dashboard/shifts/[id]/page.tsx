@@ -182,6 +182,13 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
               {t('produceZ')}
             </Link>
           ) : null}
+          {/* "מגירת מזומן": the shift's drawer timeline — openings, movements, counts. */}
+          <Link
+            href={`/dashboard/cash-drawer?shiftId=${shift.id}`}
+            className={buttonVariants({ variant: 'outline', size: 'sm' })}
+          >
+            {t('detail.drawerTimeline')}
+          </Link>
           <Link href={backHref} onClick={goBack} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
             {t('detail.backToList')}
           </Link>

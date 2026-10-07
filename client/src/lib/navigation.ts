@@ -18,6 +18,7 @@ import type { ElementType } from 'react';
 import {
   Activity,
   BadgePercent,
+  Banknote,
   BarChart3,
   BookOpenCheck,
   BookOpenText,
@@ -218,6 +219,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: '/dashboard/cash-variance', labelKey: 'cashVariance', icon: Scale },
       // Discounts, refunds, cancelled baskets, long orders, high tips… for review.
       { href: '/dashboard/exceptions', labelKey: 'exceptions', icon: ShieldAlert },
+      // "מגירת מזומן": every drawer opening and cash movement, KPIs and a shift's timeline.
+      { href: '/dashboard/cash-drawer', labelKey: 'cashDrawer', icon: Banknote },
       { href: '/dashboard/tax-reports', labelKey: 'taxReports', icon: FileText },
       // The books: the same super-admin / distributor / company-manager set the
       // accounting router enforces, which is exactly the `branding` gate's.
