@@ -9,7 +9,7 @@
  * board.
  */
 import { api } from './api';
-import type { BoardDisplay } from './kdsScreenTypes';
+import type { ScreenDisplay } from './kdsScreenTypes';
 import type { WorkflowLevelView, WorkflowScopeType, WorkflowValues } from './workflowMode';
 
 // ── Workflow configuration ──────────────────────────────────────────────────────
@@ -64,8 +64,26 @@ export interface KdsDevice {
   stations: { id: string; name: string }[];
   isActive: boolean;
   lastSeenAt: string | null;
-  /** The board's look (a pickup screen; null = the defaults — docs/SPEC_KDS.md §13). */
-  display?: BoardDisplay | null;
+  /**
+   * How the screen looks (docs/SPEC_KDS.md §14): its own look, else the shop's default for its kind,
+   * else null (today's look). Read it with screenLook.ts `screenDisplayOf`.
+   */
+  display?: ScreenDisplay | null;
+  /** Whether `display` is the screen's own (false: the shop's default / the built-in look). */
+  displayOwn?: boolean;
+  /** The screen's orders (any role): these points of sale / tills and kiosks; both empty = the whole shop (§15). */
+  scope?: KdsBoardScope;
+}
+
+export interface KdsBoardScope {
+  areaIds: string[];
+  machineIds: string[];
+}
+
+/** The shop's default look per kind — the screens without a look of their own show it. */
+export interface KdsDisplayDefaults {
+  kds: ScreenDisplay | null;
+  board: ScreenDisplay | null;
 }
 
 export interface KdsShopMachine {
@@ -79,6 +97,10 @@ export interface KdsShopMachine {
   fiscal?: boolean;
   /** "web": a browser screen (`/kds`, `/board` on this site). */
   platform?: 'android' | 'windows' | 'web' | null;
+  /** A self-order kiosk (a screen's scope lists tills and kiosks). */
+  kiosk?: boolean;
+  /** Its point of sale. */
+  areaId?: string | null;
 }
 
 export interface KdsRouteOverride {
@@ -102,6 +124,9 @@ export interface KdsShopOverview {
   unroutedTasks: number;
   version: number;
   canEdit: boolean;
+  /** The shop's points of sale (a screen's scope). */
+  areas?: { id: string; name: string }[];
+  displayDefaults?: KdsDisplayDefaults;
 }
 
 export interface KdsDeviceInput {
@@ -109,8 +134,18 @@ export interface KdsDeviceInput {
   role: KdsRole;
   stationIds: string[];
   isActive: boolean;
-  /** A pickup screen's look; omitted keeps what the screen has. */
-  display?: BoardDisplay;
+  /** The screen's look (`KdsDisplayIn`); omitted keeps what the screen has. */
+  display?: ScreenDisplay;
+  /** True: drop the screen's own look and follow the shop's default. */
+  displayInherit?: boolean;
+  /** The screen's orders (any role); omitted keeps, both empty = the whole shop. */
+  scope?: KdsBoardScope;
+}
+
+/** The shop's default look of one kind (`kds` / `board`); null removes it. Returns the defaults. */
+export async function saveDisplayDefaults(shopId: string, body: Partial<Record<'kds' | 'board', ScreenDisplay | null>>): Promise<KdsDisplayDefaults> {
+  const { data } = await api.put<{ displayDefaults: KdsDisplayDefaults }>(`/kds/shops/${shopId}/display-defaults`, body);
+  return data.displayDefaults;
 }
 
 export interface KdsStationInput {

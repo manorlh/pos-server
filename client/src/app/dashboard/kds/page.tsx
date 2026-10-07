@@ -17,6 +17,7 @@ import { getKdsShop } from '@/lib/kdsApi';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { StationsSection } from '@/components/dashboard/kds/stations-section';
 import { DevicesSection } from '@/components/dashboard/kds/devices-section';
+import { DesignDefaultsSection } from '@/components/dashboard/kds/screen-design';
 import { PickupSection } from '@/components/dashboard/kds/pickup-section';
 import { LiveBoard } from '@/components/dashboard/kds/live-board';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -65,6 +66,7 @@ export default function KdsPage() {
             ) : null}
             <StationsSection shopId={shopId} overview={overview} />
             <DevicesSection shopId={shopId} overview={overview} />
+            <DesignDefaultsSection shopId={shopId} overview={overview} />
             <PickupSection shopId={shopId} overview={overview} />
             <LiveBoard shopId={shopId} stations={overview.stations} />
           </>
