@@ -3,8 +3,8 @@
  * kiosk's core/kioskFlow.ts and core/kioskScan.ts in client/src/lib (the dashboard is built and
  * deployed without this folder). This test drives both copies through the same events and scans
  * and asserts the same answers — change one, change the other (pos-server docs/SPEC_KIOSK.md §27).
- * The browser's own addition, `asksPayMethod` ("איך תרצו לשלם?" hosted by the details screen), is
- * absent here and so never changes this kiosk.
+ * "איך תרצו לשלם?" (`asksPayMethod`, hosted by the details screen) is walked both ways too: both
+ * kiosks take cash at the till, vouchers and the card (payment.methods).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -77,10 +77,14 @@ describe('the browser kiosk runs the same flow', () => {
         let b = web.INITIAL_FLOW;
         for (const [i, e] of walk.entries()) {
           const cartEmpty = i % 5 === 0;
-          a = desk.reduce(a, e, desk.rulesOf(cfg, cartEmpty));
-          b = web.reduce(b, e as web.KioskEvent, web.rulesOf(cfg as web.FlowConfigIn, cartEmpty));
+          // "איך תרצו לשלם?" asked on every other config (the host decides it from payment.methods).
+          const asksPayMethod = CONFIGS.indexOf(cfg) % 2 === 1;
+          const ra = { ...desk.rulesOf(cfg, cartEmpty), asksPayMethod };
+          const rb = { ...web.rulesOf(cfg as web.FlowConfigIn, cartEmpty), asksPayMethod };
+          a = desk.reduce(a, e, ra);
+          b = web.reduce(b, e as web.KioskEvent, rb);
           expect(b).toEqual(a);
-          expect(web.backAction(b, web.rulesOf(cfg as web.FlowConfigIn, cartEmpty))).toBe(desk.backAction(a, desk.rulesOf(cfg, cartEmpty)));
+          expect(web.backAction(b, rb)).toBe(desk.backAction(a, ra));
           expect(web.wire(b)).toBe(desk.wire(a));
           const timers = { inactivitySec: 30, warningSec: 10, successSec: 8 };
           expect(web.idleCheck(b, 0, 35_000, timers)).toEqual(desk.idleCheck(a, 0, 35_000, timers));

@@ -70,6 +70,10 @@ class KioskOpenOrderIn(_In):
     vouchers: List[OpenOrderVoucherIn] = Field(default_factory=list, max_length=MAX_VOUCHERS)
     #: "שלח למטבח לפני תשלום": the kiosk printed its bon already.
     kitchen_sent: bool = Field(False, alias="kitchenSent")
+    #: The kiosk sends it while its customer waits for the slip: an order the cloud prices
+    #: differently is then refused with the cloud's prices, to be shown and asked again
+    #: (never on a retry — the slip may be in the customer's hand).
+    customer_waiting: bool = Field(False, alias="customerWaiting")
     state: Literal["open", "paid", "cancelled"] = "open"
     paid_by_name: Optional[str] = Field(None, alias="paidByName", max_length=200)
     paid_transaction_id: Optional[str] = Field(None, alias="paidTransactionId", max_length=64)

@@ -2024,6 +2024,35 @@ export function kioskAsksPayMethod(methods: readonly unknown[] | null | undefine
   return m.length > 1 || m[0] !== 'card';
 }
 
+/** "איך תרצו לשלם?" on one device: asked, passable ("רשות"), and the method taken when it is not asked or passed. */
+export interface PayMethodAsk {
+  asks: boolean;
+  /** "רשות": the step has "המשך" that takes `fallback`. */
+  optional: boolean;
+  /** The method of an order whose step is not asked (or passed): the card when this device can charge it, else the first that pays. */
+  fallback: PaymentMethod | null;
+}
+
+/**
+ * "איך תרצו לשלם?" on a device that can take `usable` of the configured `methods` now (the card through
+ * its terminal, a voucher online, cash at the till), by the step's mode (`stepMode(cfg, 'payMethod')`;
+ * the Android kiosk's KioskCheckoutSteps.asksPayMethod):
+ *  - nothing it can sell with (a voucher never pays for sure): not asked;
+ *  - the card the only method configured, and usable: straight to the pinpad;
+ *  - "כבוי": the card charged without asking when it is offered and usable — else there is nothing to
+ *    charge without asking, and the step is asked as "חובה";
+ *  - "רשות": asked, and may be passed with the fallback; "חובה": asked, a choice made.
+ */
+export function payMethodAsk(methods: readonly PaymentMethod[], usable: readonly PaymentMethod[], mode: CustomerFieldMode): PayMethodAsk {
+  const card = methods.includes('card') && usable.includes('card');
+  const pays = usable.filter((m) => m !== 'voucher' && methods.includes(m));
+  const fallback: PaymentMethod | null = card ? 'card' : (pays[0] ?? null);
+  if (fallback === null) return { asks: false, optional: false, fallback: null };
+  if (card && methods.length === 1) return { asks: false, optional: false, fallback };
+  if (mode === 'off') return card ? { asks: false, optional: false, fallback } : { asks: true, optional: false, fallback };
+  return { asks: true, optional: mode === 'optional', fallback };
+}
+
 /** Left to pay after the vouchers, in agorot: the order and its tip less them, never below zero. */
 export function kioskRemainderAgorot(goodsAgorot: number, tipAgorot: number, voucherAgorot: readonly number[]): number {
   const vouchers = voucherAgorot.reduce((sum, v) => sum + Math.max(0, Math.trunc(v)), 0);

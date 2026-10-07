@@ -18,8 +18,10 @@ import {
   buildXTill,
   lastTransactionNumberOf,
   lineGross,
+  optionCharged,
   unitAgorot,
   type SaleLine,
+  type SaleOption,
   type SaleTotals,
   type XDoc,
 } from '../../core/sale';
@@ -50,6 +52,8 @@ export interface DocDraft {
   /** Products whose stock the cloud tracks: a sale movement goes with them. */
   tracked: string[];
   totals: SaleTotals;
+  /** The promotions the sale was priced with ("מבצעים"): what the receipt prints and the cloud reports. */
+  promotions?: AppliedPromotionRow[];
   card: ApprovedCard | null;
   paymentId: string;
   /** The lookup's evidence on a voided document. */
@@ -70,6 +74,15 @@ export interface ShiftRow {
   close_accepted_at: string | null;
   z_report_id: string | null;
   z_number: number | null;
+}
+
+/** One promotion on the document (PromotionJson): how often it applied and what it took off. */
+export interface AppliedPromotionRow {
+  promotionId: string;
+  name: string;
+  type: string;
+  applications: number;
+  discountAgorot: number;
 }
 
 const SHIFT_SEQ_KEY = 'shift.lastSequence';
@@ -216,6 +229,16 @@ export class Ledger {
     this.db.run("UPDATE shifts SET status = 'retired' WHERE id = ?", shiftId);
   }
 
+  /** The shift a close request already closed (its close carries the request id), or null. */
+  shiftByCloseRequest(requestId: string): ShiftRow | null {
+    return (
+      this.db.get<ShiftRow>(
+        "SELECT * FROM shifts WHERE status IN ('closing', 'closed') AND json_extract(close_payload, '$.closeRequestId') = ? ORDER BY sequence_number DESC LIMIT 1",
+        requestId,
+      ) ?? null
+    );
+  }
+
   /** Shifts closed (and accepted, or still closing) that no Z covers yet. */
   unreportedShifts(): ShiftRow[] {
     return this.db.all<ShiftRow>("SELECT * FROM shifts WHERE status IN ('closing', 'closed') AND z_report_id IS NULL ORDER BY sequence_number");
@@ -244,6 +267,7 @@ export class Ledger {
     lines: SaleLine[];
     tracked: string[];
     totals: SaleTotals;
+    promotions?: AppliedPromotionRow[];
     now?: Date;
   }): DocDraft | null {
     return this.db.tx(() => {
@@ -269,6 +293,7 @@ export class Ledger {
         itemIds: input.lines.map(() => randomUUID()),
         tracked: input.tracked,
         totals: input.totals,
+        ...(input.promotions && input.promotions.length > 0 ? { promotions: input.promotions } : {}),
         card: null,
         paymentId: randomUUID(),
         voidMeta: null,
@@ -409,6 +434,21 @@ export function flattenMeta(meta: Record<string, unknown> | null | undefined): R
 
 const r2 = (agorot: number) => toShekels(agorot);
 
+/** A choice on the wire (LineDetailsCodec modifier): its price, quantity, "מעט / הרבה / בצד", and what it was charged per unit of the dish. */
+function modifierWire(o: SaleOption): Record<string, unknown> {
+  return {
+    groupId: o.groupId,
+    ...(o.groupName ? { groupName: o.groupName } : {}),
+    ...(o.kind ? { kind: o.kind } : {}),
+    optionId: o.optionId,
+    name: o.name,
+    price: r2(o.priceAgorot),
+    qty: o.qty,
+    pre: o.pre ?? null,
+    charged: r2(optionCharged(o)),
+  };
+}
+
 /** The document as POST /sync/{m}/transactions takes it (TransactionPayload). */
 export function documentWire(d: DocDraft): Record<string, unknown> {
   const items = d.lines.map((l, i) => {
@@ -423,25 +463,40 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
       totalPrice: r2(lineGross(l)),
       transactionType: 2,
     };
-    if (l.options.length > 0 || l.notes.length > 0) {
+    const meal = l.meal && l.meal.components.length > 0 ? l.meal : null;
+    if (l.options.length > 0 || l.notes.length > 0 || meal) {
       item.details = {
         v: 1,
         basePrice: r2(l.basePriceAgorot),
-        ...(l.options.length > 0
+        ...(l.options.length > 0 ? { modifiers: l.options.map(modifierWire) } : {}),
+        ...(l.notes.length > 0 ? { notes: l.notes } : {}),
+        // A meal's components (LineDetailsCodec meal): the cloud allocates the line over them.
+        ...(meal
           ? {
-              modifiers: l.options.map((o) => ({
-                groupId: o.groupId,
-                optionId: o.optionId,
-                name: o.name,
-                price: r2(o.priceAgorot),
-                qty: o.qty,
-                charged: r2(o.priceAgorot * Math.max(1, o.qty)),
-              })),
+              meal: {
+                productId: meal.productId,
+                name: meal.name,
+                components: meal.components.map((c) => ({
+                  slotId: c.slotId,
+                  slotName: c.slotName,
+                  productId: c.productId,
+                  name: c.name,
+                  ...(c.categoryId ? { categoryId: c.categoryId } : {}),
+                  listPrice: r2(c.listPriceAgorot),
+                  qty: 1,
+                  upcharge: r2(c.upchargeAgorot),
+                  modifiers: c.options.map(modifierWire),
+                })),
+              },
             }
           : {}),
-        ...(l.notes.length > 0 ? { notes: l.notes } : {}),
       };
       if (l.notes.length > 0) item.notes = l.notes.join(' · ');
+    }
+    // The promotions' share ("מבצעים"): inside the document's discount, never in totalPrice.
+    if ((l.promotionAgorot ?? 0) > 0) {
+      item.promotionDiscount = r2(l.promotionAgorot!);
+      if (l.promotionId) item.promotionId = l.promotionId;
     }
     for (const k of Object.keys(item)) if (item[k] === undefined) delete item[k];
     return item;
@@ -470,6 +525,10 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
     items,
+    // The promotions ("מבצעים") the sale was priced with.
+    ...(d.promotions && d.promotions.length > 0
+      ? { promotions: d.promotions.map((p) => ({ promotionId: p.promotionId, name: p.name, type: p.type, applications: p.applications, discount: r2(p.discountAgorot) })) }
+      : {}),
   };
   if (d.status === 'completed' && d.card) {
     wire.payments = [

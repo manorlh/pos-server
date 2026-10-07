@@ -37,6 +37,7 @@ export const LIVE: Record<string, string> = {
   basketRemoved: 'אזל מאז שהוזמן והוסר: {name}',
   basketRepriced: 'המחיר עודכן: {name}',
   basketNewTotal: 'הסכום לתשלום עכשיו: {total}',
+  basketVouchersBack: 'השובר הוחזר — אפשר לסרוק אותו שוב בתשלום',
   basketOk: 'הבנתי, להמשיך',
   helpSent: 'קראנו לצוות — מישהו יגיע אליכם בקרוב',
   setupTitle: 'מכינים את הקיוסק',
@@ -50,7 +51,32 @@ export const LIVE: Record<string, string> = {
   staffPrinter: 'תקלת מדפסת',
   staffCard: 'תשלום לבירור',
   poweredBy: 'POWERED BY R2M POS',
+  // "מזומן בקופה" and vouchers (as the browser kiosk's web-i18n.ts).
+  placing: 'שולחים את ההזמנה לקופה…',
+  placeFailed: 'ההזמנה לא נשלחה. נסו שוב או פנו לצוות.',
+  cardWithVoucher: 'אשראי לא משולב עם שובר — היתרה בקופה',
+  voucherOffline: 'תשלום בשובר אינו זמין כרגע — אין חיבור לרשת',
+  voucherAppliedNote: 'השובר נקלט · {amount}',
+  voucherChecking: 'בודקים את השובר…',
+  voucherForfeitYes: 'לממש בכל זאת',
+  voucherForfeitNo: 'לא, תודה',
+  'voucher.prepaid_voucher_not_found': 'השובר לא נמצא',
+  'voucher.prepaid_voucher_used': 'השובר כבר מומש',
+  'voucher.prepaid_voucher_cancelled': 'השובר בוטל',
+  'voucher.prepaid_voucher_expired': 'תוקף השובר פג',
+  'voucher.prepaid_voucher_not_yet_valid': 'השובר עדיין לא בתוקף',
+  'voucher.prepaid_voucher_wrong_shop': 'השובר אינו תקף בסניף הזה',
+  'voucher.prepaid_voucher_partial_not_allowed': 'שובר חד-פעמי: יש לממש את כולו בבת אחת',
+  'voucher.prepaid_voucher_insufficient': 'לא נשאר בשובר מספיק',
+  'voucher.prepaid_voucher_item_not_on_voucher': 'הפריט אינו כלול בשובר',
+  'voucher.other': 'השובר לא נקלט. אפשר לנסות שוב או לשלם בקופה.',
 };
+
+/** The voucher's refusal in words (`prepaid_voucher_used` → "השובר כבר מומש"). */
+export function voucherReason(reason: string): string {
+  const key = `voucher.${reason}`;
+  return LIVE[key] ? LIVE[key] : LIVE['voucher.other'];
+}
 
 function lookup(path: string): string | null {
   if (LIVE[path] !== undefined) return LIVE[path];

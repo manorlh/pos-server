@@ -188,6 +188,9 @@ def test_it_lands_as_an_open_order_the_shops_tills_list(w):
     (o,) = [x for x in listed if x["localId"] == raw["localId"]]
     assert o["pickupLabel"] == "W-17" and o["dueAgorot"] == 14300
     assert json.loads(o["cart"]["codec"])["lines"][0]["unitPrice"] == 5900
+    # Its dishes ("p-burger"…) are not in this world's catalog: the cloud says so on it (sent
+    # without `customerWaiting`, it is never refused — tests/test_kiosk_open_orders.py).
+    assert {l["reason"] for l in o["cart"]["priceCheck"]["lines"]} == {"not_in_catalog"}
     # Posting it again (the kiosk's retry) changes nothing.
     again = S.upsert_from_kiosk(w.db, kiosk, [raw], now=created + timedelta(seconds=4))
     assert again["accepted"] == [raw["localId"]]

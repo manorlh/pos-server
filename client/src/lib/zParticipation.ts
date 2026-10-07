@@ -41,6 +41,11 @@ export interface ZParticipationTill {
    * cloud. The setting decides.
    */
   link?: TillLink;
+  /**
+   * Always `remote`, not a choice: a Windows device has no LAN client, so the main till closes
+   * it through the cloud whatever the setting (pos-server local_shop_z.closes_through_cloud).
+   */
+  linkFixed?: boolean;
   /** The main till's view: does it hear this till on the LAN? null = unknown (main till silent). */
   seenOnLan?: boolean | null;
   /**

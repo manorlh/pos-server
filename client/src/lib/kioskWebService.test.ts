@@ -259,6 +259,33 @@ describe('"מזומן בקופה" orders', () => {
     assert.equal(b.ok && b.order.pickupLabel, 'AL-1');
   });
 
+  it('the cloud prices it otherwise while the customer waits: never placed, the catalog pulled, the change shown', async () => {
+    const { cloud, svc } = await paired();
+    cloud.handlers['POST sync/m1/kiosk/open-orders'] = (c) => ({
+      status: 200,
+      body: { accepted: [], rejected: [{ localId: (c.body?.orders as Array<{ localId: string }>)[0].localId, reason: 'price_changed', lines: [{ key: 'k1', productId: 'p1', name: 'המבורגר', fromAgorot: 5400, toAgorot: 5600, reason: 'price' }] }] },
+    });
+    const pulls = cloud.calls.filter((c) => c.path.startsWith('sync/m1/catalog')).length;
+    const r = await svc.placeOpenOrder({ lines: [line()], service: 'take_away', tableRef: null, customerName: null, customerPhone: null, tipAgorot: 0, vouchers: [] });
+    assert.deepEqual(r, { ok: false, reason: 'changed', changes: [{ kind: 'repriced', productId: 'p1', name: 'המבורגר', key: 'k1', from: 5400, to: 5600 }] });
+    const sent = cloud.calls.filter((c) => c.path === 'sync/m1/kiosk/open-orders');
+    assert.equal((sent[0].body?.orders as Array<Record<string, unknown>>)[0].customerWaiting, true);
+    // Forgotten (never retried, not on the staff screen); the catalog asked to catch up.
+    assert.deepEqual([svc.view().staff.pendingOrders, svc.todaysOrders().length], [0, 0]);
+    assert.equal(cloud.calls.filter((c) => c.path.startsWith('sync/m1/catalog')).length, pulls + 1);
+  });
+
+  it('a retry never says the customer waits (the slip may be in their hand)', async () => {
+    const { cloud, svc, tick } = await paired();
+    cloud.setOnline(false);
+    await svc.placeOpenOrder({ lines: [line()], service: 'take_away', tableRef: null, customerName: null, customerPhone: null, tipAgorot: 0, vouchers: [] });
+    cloud.setOnline(true);
+    tick(20_000);
+    await svc.tick();
+    const sent = cloud.calls.filter((c) => c.path === 'sync/m1/kiosk/open-orders');
+    assert.deepEqual(sent.map((c) => (c.body?.orders as Array<Record<string, unknown>>)[0].customerWaiting), [true, undefined]);
+  });
+
   it('refused for good: never sent again, and the customer is told', async () => {
     const { cloud, svc } = await paired();
     cloud.handlers['POST sync/m1/kiosk/open-orders'] = (c) => ({ status: 200, body: { accepted: [], rejected: [{ localId: (c.body?.orders as Array<{ localId: string }>)[0].localId, reason: 'invalid' }], states: {} } });
@@ -377,14 +404,58 @@ describe('the kiosk and the tills', () => {
   });
 
   it('checks the basket against the catalog before the order goes out', async () => {
-    const { svc } = await paired();
-    const r = svc.checkBasket([
+    const { cloud, svc } = await paired();
+    // The cloud does not answer in time: the kiosk's own catalog decides (and the kiosk is not "offline" for it).
+    cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => 'offline';
+    const r = await svc.checkBasket([
       { key: 'a', productId: 'p1', unitAgorot: 5000, qty: 2, options: [] },
       { key: 'b', productId: 'p2', unitAgorot: 1000, options: [] },
       { key: 'c', productId: 'p1', unitAgorot: 5900, options: [{ groupId: 'g1', optionId: 'o1' }] },
     ]);
     assert.deepEqual(r.changes.map((c) => [c.kind, c.key]), [['repriced', 'a'], ['removed', 'b']]);
     assert.equal(r.totalAgorot, 2 * 5400 + 5900);
+    assert.equal(r.source, 'local');
+    assert.equal(svc.view().state.offline, false);
+  });
+
+  it('asks the cloud first (kiosk/basket-check): gone, a base price now, changed promotions pulled', async () => {
+    const { cloud, svc } = await paired();
+    cloud.handlers['GET sync/m1/promotions'] = () => ({
+      status: 200,
+      body: { etag: 'e2', promotions: [{ id: 'pr1', name: '10% המבורגרים', type: 'discount', priority: 0, config: { target: { categoryIds: ['c1'] }, discountKind: 'percent', discountValue: 10 } }] },
+    });
+    cloud.handlers['POST sync/m1/kiosk/basket-check'] = (c) => {
+      const lines = c.body?.lines as Array<{ productId: string; unitPriceAgorot?: number }>;
+      return {
+        status: 200,
+        body: {
+          ok: false,
+          lines: lines.map((l) => (l.productId === 'p1' ? { productId: 'p1', available: true, reason: null, priceAgorot: 5600, priceChanged: true } : { productId: l.productId, available: false, reason: 'unavailable', priceAgorot: null, priceChanged: false })),
+          promotions: { etag: 'e2', changed: true },
+        },
+      };
+    };
+    const shown = 5400 + 5900;
+    const r = await svc.checkBasket(
+      [
+        { key: 'a', productId: 'p1', unitAgorot: 5400, options: [] },
+        { key: 'c', productId: 'p1', unitAgorot: 5900, options: [{ groupId: 'g1', optionId: 'o1' }] },
+      ],
+      shown,
+    );
+    const ask = cloud.calls.find((c) => c.path === 'sync/m1/kiosk/basket-check')!;
+    // Each line's product with the base price the kiosk holds (no option), one per line.
+    assert.deepEqual(ask.body?.lines, [{ productId: 'p1', quantity: 1, unitPriceAgorot: 5400 }, { productId: 'p1', quantity: 1, unitPriceAgorot: 5400 }]);
+    assert.deepEqual(r.changes.map((c) => (c.kind === 'repriced' ? [c.key, c.from, c.to] : [c.key])), [['a', 5400, 5600], ['c', 5900, 6100]]);
+    // The new promotion (10%) pulled before pricing: the total the customer is shown now.
+    assert.equal(r.promotions, true);
+    assert.equal(r.source, 'cloud');
+    assert.equal(r.totalAgorot, 5600 - 560 + (6100 - 610));
+    assert.equal(r.totalMoved, true);
+    // A product the cloud says is gone is removed, though the kiosk's catalog still sells it.
+    cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => ({ status: 200, body: { ok: false, lines: [{ productId: 'p1', available: false, reason: 'out_of_stock', priceAgorot: 5400, priceChanged: false }] } });
+    const gone = await svc.checkBasket([{ key: 'a', productId: 'p1', unitAgorot: 5600, options: [] }]);
+    assert.deepEqual(gone.changes.map((c) => [c.kind, c.key]), [['removed', 'a']]);
   });
 });
 

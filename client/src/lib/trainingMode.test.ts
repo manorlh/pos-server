@@ -16,6 +16,8 @@ import {
   splitBlockers,
   tableLabel,
   templateCountsAsEntities,
+  TRAINING_MODE_AVAILABLE,
+  trainingCanBeEnabled,
   withoutTrainingFields,
 } from './trainingMode';
 import type { TrainingBlocker, UnsyncedTillBlocker } from './trainingMode';
@@ -147,5 +149,17 @@ describe('apiErrorInfo', () => {
 describe('withoutTrainingFields', () => {
   it('drops the training fields and keeps the rest', () => {
     assert.deepEqual(withoutTrainingFields({ name: 'א', trainingMode: true, trainingStartedAt: null }), { name: 'א' });
+  });
+});
+
+describe('turning it on while no device implements it (PARITY.md gap 6)', () => {
+  it('is offered only when the server says it is available', () => {
+    assert.equal(trainingCanBeEnabled({ available: true }), true);
+    assert.equal(trainingCanBeEnabled({ available: false }), false);
+    assert.equal(trainingCanBeEnabled({}), false);
+  });
+
+  it('a new shop does not open in it', () => {
+    assert.equal(TRAINING_MODE_AVAILABLE, false);
   });
 });

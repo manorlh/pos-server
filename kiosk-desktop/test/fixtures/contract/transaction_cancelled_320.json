@@ -48,6 +48,7 @@
                 "name": "גבינה",
                 "price": 4,
                 "qty": 1,
+                "pre": null,
                 "charged": 4
               }
             ],

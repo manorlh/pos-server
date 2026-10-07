@@ -1,0 +1,377 @@
+{
+  "about": "Golden fixtures of the kiosk's money (PARITY.md gaps 1-3, guard rail 1): what a dish with its choices, a meal and a basket with promotions cost, in whole agorot. The expected numbers are derived from the Android till's Kotlin, which is the reference; the TypeScript port shared by the Windows and the browser kiosk (client/src/lib/kioskMoney.ts) must reproduce every one of them, and the Android kiosk is to run the same file (app/src/test/resources). Money: catalog / promotion prices in shekels as the cloud sends them; everything computed in agorot.",
+  "version": 1,
+  "pins": {
+    "modifiers": "pos-android domain/LineDetails.kt ModifierMath.charges, ModifierMath.validate, ModifierMath.canAddOne; domain/MenuOrdering.kt DishDraft.unitPrice (product.price + Σ LineModifier.charged); domain/Menu.kt MenuCodec.parse (groups); the cloud's twin: pos-server app/services/menu.py price_picks / validate_picks",
+    "mealPicks": "pos-android domain/MenuOrdering.kt MealDraft.pick",
+    "meals": "pos-android domain/MenuOrdering.kt MealDraft.unitPrice (meal.price + Σ (choice.upcharge + component DishDraft.extras)), MealDraft.start (each component on its groups' defaults: ModifierMath.defaults), domain/Menu.kt MenuCodec.parse (meals)",
+    "baskets": "pos-android domain/Promotions.kt PromotionEngine.evaluate (buyXGetY, bundle, itemDiscount, combo, gift, itemPrice, basketDiscount, spread, bestOrder, byPriority) and Promotion.isActiveAt; domain/PromotionMapper.kt fromDto / ruleOf; domain/Cart.kt Cart.withPromotions and Cart.totals (total = gross − promotions); domain/Vat.kt Vat.net; domain/KioskOrders.kt KioskCustomer.tipOf (the tip on the total after promotions, ui/kiosk/KioskViewModel.price)"
+  },
+  "modifiers": [
+    {
+      "name": "free choices: the cheapest units are free, ties to the earlier pick",
+      "baseAgorot": 4200,
+      "group": {"id": "g-top", "name": "תוספות", "kind": "addon", "minSelect": 0, "maxSelect": null, "freeCount": 2, "allowQuantity": false, "allowPre": false, "options": [
+        {"id": "cheese", "name": "גבינה", "price": 3.0, "isDefault": false, "maxQty": null},
+        {"id": "bacon", "name": "בייקון", "price": 6.0, "isDefault": false, "maxQty": null},
+        {"id": "onion", "name": "בצל", "price": 2.0, "isDefault": false, "maxQty": null},
+        {"id": "egg", "name": "ביצה", "price": 3.0, "isDefault": false, "maxQty": null}
+      ]},
+      "picks": [{"optionId": "bacon", "qty": 1, "pre": null}, {"optionId": "cheese", "qty": 1, "pre": null}, {"optionId": "egg", "qty": 1, "pre": null}, {"optionId": "onion", "qty": 1, "pre": null}],
+      "expected": {"charges": [600, 0, 300, 0], "problems": [], "unitAgorot": 5100, "canAddOne": {"cheese": false, "bacon": false}}
+    },
+    {
+      "name": "a quantity per option: the free units cross options; an option's own maximum",
+      "baseAgorot": 1900,
+      "group": {"id": "g-pita", "name": "לפיתה", "kind": "addon", "minSelect": 0, "maxSelect": 8, "freeCount": 2, "allowQuantity": true, "allowPre": false, "options": [
+        {"id": "falafel", "name": "כדור פלאפל", "price": 2.5, "isDefault": false, "maxQty": 3},
+        {"id": "egg", "name": "ביצה", "price": 3.0, "isDefault": false, "maxQty": null},
+        {"id": "pickles", "name": "חמוצים", "price": 1.0, "isDefault": false, "maxQty": null}
+      ]},
+      "picks": [{"optionId": "falafel", "qty": 3, "pre": null}, {"optionId": "egg", "qty": 1, "pre": null}, {"optionId": "pickles", "qty": 2, "pre": null}],
+      "expected": {"charges": [750, 300, 0], "problems": [], "unitAgorot": 2950, "canAddOne": {"falafel": false, "egg": true, "pickles": true}}
+    },
+    {
+      "name": "מעט / הרבה / בצד: הרבה doubles a unit; the free unit is the cheapest after doubling",
+      "baseAgorot": 3000,
+      "group": {"id": "g-sauce", "name": "רטבים", "kind": "addon", "minSelect": 0, "maxSelect": null, "freeCount": 1, "allowQuantity": false, "allowPre": true, "options": [
+        {"id": "tahini", "name": "טחינה", "price": 2.0, "isDefault": false, "maxQty": null},
+        {"id": "hummus", "name": "חומוס", "price": 3.0, "isDefault": false, "maxQty": null},
+        {"id": "amba", "name": "עמבה", "price": 1.5, "isDefault": false, "maxQty": null}
+      ]},
+      "picks": [{"optionId": "tahini", "qty": 1, "pre": "extra"}, {"optionId": "hummus", "qty": 1, "pre": "side"}, {"optionId": "amba", "qty": 1, "pre": "lite"}],
+      "expected": {"charges": [400, 300, 0], "problems": [], "unitAgorot": 3700, "canAddOne": {"tahini": false}}
+    },
+    {
+      "name": "a removal and a default: removals cost nothing, the defaults are what a fresh sheet starts with",
+      "baseAgorot": 4200,
+      "group": {"id": "g-no", "name": "בלי", "kind": "removal", "minSelect": 0, "maxSelect": null, "freeCount": 0, "allowQuantity": false, "allowPre": false, "options": [
+        {"id": "no-onion", "name": "בצל", "price": 0, "isDefault": false, "maxQty": null},
+        {"id": "no-pickle", "name": "מלפפון", "price": 0, "isDefault": true, "maxQty": null}
+      ]},
+      "picks": null,
+      "expected": {"charges": [0], "problems": [], "unitAgorot": 4200, "defaults": ["no-pickle"]}
+    },
+    {
+      "name": "validation: nothing picked in a required group",
+      "baseAgorot": 0,
+      "group": {"id": "g-req", "name": "בחירה", "kind": "addon", "minSelect": 1, "maxSelect": 2, "freeCount": 0, "allowQuantity": false, "allowPre": false, "options": [
+        {"id": "a", "name": "א", "price": 1.0}, {"id": "b", "name": "ב", "price": 1.0}, {"id": "c", "name": "ג", "price": 1.0}
+      ]},
+      "picks": [],
+      "expected": {"charges": [], "problems": ["below_min"], "unitAgorot": 0}
+    },
+    {
+      "name": "validation: the same option twice where quantities are not allowed",
+      "baseAgorot": 0,
+      "group": {"id": "g-req", "name": "בחירה", "kind": "addon", "minSelect": 1, "maxSelect": 2, "freeCount": 0, "allowQuantity": false, "allowPre": false, "options": [
+        {"id": "a", "name": "א", "price": 1.0}, {"id": "b", "name": "ב", "price": 1.0}, {"id": "c", "name": "ג", "price": 1.0}
+      ]},
+      "picks": [{"optionId": "a", "qty": 1, "pre": null}, {"optionId": "a", "qty": 1, "pre": null}],
+      "expected": {"charges": [100, 100], "problems": ["duplicate"], "unitAgorot": 200}
+    },
+    {
+      "name": "validation: a quantity, a pre-modifier, too many, an unknown option",
+      "baseAgorot": 0,
+      "group": {"id": "g-req", "name": "בחירה", "kind": "addon", "minSelect": 1, "maxSelect": 2, "freeCount": 0, "allowQuantity": false, "allowPre": false, "options": [
+        {"id": "a", "name": "א", "price": 1.0}, {"id": "b", "name": "ב", "price": 1.0}, {"id": "c", "name": "ג", "price": 1.0}
+      ]},
+      "picks": [{"optionId": "a", "qty": 2, "pre": "extra"}, {"optionId": "b", "qty": 1, "pre": null}, {"optionId": "zz", "qty": 1, "pre": null}],
+      "expected": {"charges": [400, 100, 0], "problems": ["quantity_not_allowed", "pre_not_allowed", "unknown_option", "above_max"], "unitAgorot": 500}
+    },
+    {
+      "name": "validation: above an option's own maximum",
+      "baseAgorot": 1900,
+      "group": {"id": "g-pita", "name": "לפיתה", "kind": "addon", "minSelect": 0, "maxSelect": 8, "freeCount": 2, "allowQuantity": true, "allowPre": false, "options": [
+        {"id": "falafel", "name": "כדור פלאפל", "price": 2.5, "isDefault": false, "maxQty": 3},
+        {"id": "egg", "name": "ביצה", "price": 3.0, "isDefault": false, "maxQty": null}
+      ]},
+      "picks": [{"optionId": "falafel", "qty": 4, "pre": null}],
+      "expected": {"charges": [500], "problems": ["option_above_max"], "unitAgorot": 2400}
+    }
+  ],
+  "mealPicks": [
+    {
+      "name": "two of a slot, no repeats: full, then a tap on a chosen one takes it off",
+      "slot": {"id": "s-sauce", "name": "רטבים", "minSelect": 1, "maxSelect": 2, "allowRepeat": false, "options": [
+        {"productId": "x", "upcharge": 0, "isDefault": false}, {"productId": "y", "upcharge": 0, "isDefault": false}, {"productId": "z", "upcharge": 0, "isDefault": false}
+      ]},
+      "taps": ["x", "y", "z", "x"],
+      "expected": [["x"], ["x", "y"], ["x", "y"], ["y"]]
+    },
+    {
+      "name": "repeats allowed: up to the slot's maximum, then the last one of it off",
+      "slot": {"id": "s-wings", "name": "כנפיים", "minSelect": 1, "maxSelect": 3, "allowRepeat": true, "options": [
+        {"productId": "x", "upcharge": 0, "isDefault": false}, {"productId": "y", "upcharge": 0, "isDefault": false}
+      ]},
+      "taps": ["x", "x", "y", "x", "y"],
+      "expected": [["x"], ["x", "x"], ["x", "x", "y"], ["x", "y"], ["x", "y", "y"]]
+    },
+    {
+      "name": "one of a slot: a tap swaps, a tap on the chosen one clears it",
+      "slot": {"id": "s-drink", "name": "שתייה", "minSelect": 1, "maxSelect": 1, "allowRepeat": false, "options": [
+        {"productId": "cola", "upcharge": 0, "isDefault": true}, {"productId": "beer", "upcharge": 9.0, "isDefault": false}
+      ]},
+      "taps": ["beer", "cola", "cola"],
+      "start": ["cola"],
+      "expected": [["beer"], ["cola"], []]
+    }
+  ],
+  "meals": [
+    {
+      "name": "a meal: the meal's price, each component's upcharge and its default choices",
+      "mealPriceAgorot": 5900,
+      "slots": [
+        {"id": "s-main", "name": "עיקרית", "minSelect": 1, "maxSelect": 1, "quantity": 1, "allowRepeat": false, "options": [
+          {"productId": "p-burger", "upcharge": 0, "isDefault": true}, {"productId": "p-schnitzel", "upcharge": 5.0, "isDefault": false}
+        ]},
+        {"id": "s-side", "name": "תוספת", "minSelect": 1, "maxSelect": 1, "quantity": 1, "allowRepeat": false, "options": [
+          {"productId": "p-fries", "upcharge": 0, "isDefault": true}, {"productId": "p-rings", "upcharge": 3.0, "isDefault": false}
+        ]},
+        {"id": "s-drink", "name": "שתייה", "minSelect": 1, "maxSelect": 1, "quantity": 1, "allowRepeat": false, "options": [
+          {"productId": "p-cola", "upcharge": 0, "isDefault": true}, {"productId": "p-beer", "upcharge": 9.0, "isDefault": false}
+        ]}
+      ],
+      "componentGroups": {
+        "p-schnitzel": [{"id": "g-schnitzel", "name": "רוטב", "kind": "addon", "minSelect": 0, "maxSelect": 1, "freeCount": 0, "allowQuantity": false, "allowPre": false, "options": [
+          {"id": "aioli", "name": "איולי", "price": 2.0, "isDefault": true}, {"id": "ketchup", "name": "קטשופ", "price": 0, "isDefault": false}
+        ]}]
+      },
+      "chosen": {"s-main": ["p-schnitzel"], "s-side": ["p-rings"], "s-drink": ["p-cola"]},
+      "expected": {"defaults": {"s-main": ["p-burger"], "s-side": ["p-fries"], "s-drink": ["p-cola"]}, "components": [700, 300, 0], "unitAgorot": 6900, "valid": true}
+    },
+    {
+      "name": "a free choice in a component, and a slot not answered",
+      "mealPriceAgorot": 4500,
+      "slots": [
+        {"id": "s-main", "name": "עיקרית", "minSelect": 1, "maxSelect": 1, "quantity": 1, "allowRepeat": false, "options": [
+          {"productId": "p-schnitzel", "upcharge": 0, "isDefault": false}
+        ]},
+        {"id": "s-drink", "name": "שתייה", "minSelect": 1, "maxSelect": 1, "quantity": 1, "allowRepeat": false, "options": [
+          {"productId": "p-cola", "upcharge": 0, "isDefault": false}
+        ]}
+      ],
+      "componentGroups": {
+        "p-schnitzel": [{"id": "g-schnitzel", "name": "רוטב", "kind": "addon", "minSelect": 0, "maxSelect": 1, "freeCount": 1, "allowQuantity": false, "allowPre": false, "options": [
+          {"id": "aioli", "name": "איולי", "price": 2.0, "isDefault": true}
+        ]}]
+      },
+      "chosen": {"s-main": ["p-schnitzel"], "s-drink": []},
+      "expected": {"defaults": {"s-main": [], "s-drink": []}, "components": [0], "unitAgorot": 4500, "valid": false}
+    }
+  ],
+  "products": {
+    "p-burger": {"categoryId": "c-main"},
+    "p-salad": {"categoryId": "c-main", "noDiscount": true},
+    "p-fries": {"categoryId": "c-sides"},
+    "p-cola": {"categoryId": "c-drinks"},
+    "p-water": {"categoryId": "c-drinks"},
+    "p-cake": {"categoryId": "c-dessert"}
+  },
+  "baskets": [
+    {
+      "name": "no promotion: the goods, the VAT once, a 10% tip",
+      "now": "2026-10-07T12:30",
+      "promotions": [],
+      "lines": [{"id": "L1", "productId": "p-burger", "unitAgorot": 4200, "qty": 1}, {"id": "L2", "productId": "p-cola", "unitAgorot": 1000, "qty": 2}],
+      "vatRate": 0.18,
+      "tipPct": 10,
+      "expected": {
+        "lines": [{"id": "L1", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 4200}, {"id": "L2", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 2000}],
+        "applied": [], "grossAgorot": 6200, "promotionAgorot": 0, "totalAgorot": 6200, "itemCount": 3, "netAgorot": 5254, "vatAgorot": 946, "tipAgorot": 620
+      }
+    },
+    {
+      "name": "1+1 on drinks: the cheaper one free, the discount spread over both by price",
+      "now": "2026-10-07T12:30",
+      "promotions": [{"id": "P1", "name": "1+1 שתייה", "type": "buy_x_get_y", "priority": 0, "config": {"target": {"categoryIds": ["c-drinks"]}, "buyQuantity": 1, "getQuantity": 1, "getDiscountPercent": 100}}],
+      "lines": [{"id": "L1", "productId": "p-cola", "unitAgorot": 1000, "qty": 1}, {"id": "L2", "productId": "p-water", "unitAgorot": 800, "qty": 1}, {"id": "L3", "productId": "p-burger", "unitAgorot": 4200, "qty": 1}],
+      "vatRate": 0.18,
+      "tipPct": 10,
+      "expected": {
+        "lines": [{"id": "L1", "promotionAgorot": 444, "promotionId": "P1", "totalAgorot": 556}, {"id": "L2", "promotionAgorot": 356, "promotionId": "P1", "totalAgorot": 444}, {"id": "L3", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 4200}],
+        "applied": [{"promotionId": "P1", "applications": 1, "discountAgorot": 800}], "grossAgorot": 6000, "promotionAgorot": 800, "totalAgorot": 5200, "itemCount": 3, "netAgorot": 4407, "vatAgorot": 793, "tipAgorot": 520
+      }
+    },
+    {
+      "name": "3 drinks for ₪25: the most expensive first, the rest at full price",
+      "now": "2026-10-07T12:30",
+      "promotions": [{"id": "P2", "name": "3 שתיות ב-25", "type": "bundle_price", "priority": 0, "config": {"target": {"categoryIds": ["c-drinks"]}, "quantity": 3, "price": 25}}],
+      "lines": [{"id": "L1", "productId": "p-cola", "unitAgorot": 1000, "qty": 3}, {"id": "L2", "productId": "p-water", "unitAgorot": 800, "qty": 2}],
+      "vatRate": 0.18,
+      "tipPct": null,
+      "expected": {
+        "lines": [{"id": "L1", "promotionAgorot": 500, "promotionId": "P2", "totalAgorot": 2500}, {"id": "L2", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 1600}],
+        "applied": [{"promotionId": "P2", "applications": 1, "discountAgorot": 500}], "grossAgorot": 4600, "promotionAgorot": 500, "totalAgorot": 4100, "itemCount": 5, "netAgorot": 3475, "vatAgorot": 625, "tipAgorot": 0
+      }
+    },
+    {
+      "name": "15% off mains, twice at most; a product that takes no discount is never touched",
+      "now": "2026-10-07T12:30",
+      "promotions": [{"id": "P3", "name": "15% על עיקריות", "type": "discount", "priority": 0, "maxApplications": 2, "config": {"target": {"categoryIds": ["c-main"]}, "discountKind": "percent", "discountValue": 15}}],
+      "lines": [{"id": "L1", "productId": "p-burger", "unitAgorot": 4200, "qty": 3}, {"id": "L2", "productId": "p-salad", "unitAgorot": 3900, "qty": 1}],
+      "vatRate": 0.18,
+      "tipPct": 12,
+      "expected": {
+        "lines": [{"id": "L1", "promotionAgorot": 1260, "promotionId": "P3", "totalAgorot": 11340}, {"id": "L2", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 3900}],
+        "applied": [{"promotionId": "P3", "applications": 2, "discountAgorot": 1260}], "grossAgorot": 16500, "promotionAgorot": 1260, "totalAgorot": 15240, "itemCount": 4, "netAgorot": 12915, "vatAgorot": 2325, "tipAgorot": 1829
+      }
+    },
+    {
+      "name": "two promotions of one priority on the same units do not stack: the order that takes the most off",
+      "now": "2026-10-07T12:30",
+      "promotions": [
+        {"id": "P4", "name": "₪6 הנחה לשתייה", "type": "discount", "priority": 0, "config": {"target": {"categoryIds": ["c-drinks"]}, "discountKind": "amount", "discountValue": 6}},
+        {"id": "P5", "name": "1+1 שתייה", "type": "buy_x_get_y", "priority": 0, "config": {"target": {"categoryIds": ["c-drinks"]}, "buyQuantity": 1, "getQuantity": 1}}
+      ],
+      "lines": [{"id": "L1", "productId": "p-cola", "unitAgorot": 1000, "qty": 2}],
+      "vatRate": 0.18,
+      "tipPct": null,
+      "expected": {
+        "lines": [{"id": "L1", "promotionAgorot": 1200, "promotionId": "P4", "totalAgorot": 800}],
+        "applied": [{"promotionId": "P4", "applications": 2, "discountAgorot": 1200}], "grossAgorot": 2000, "promotionAgorot": 1200, "totalAgorot": 800, "itemCount": 2, "netAgorot": 678, "vatAgorot": 122, "tipAgorot": 0
+      }
+    },
+    {
+      "name": "priority first: the higher one takes the units even where a lower one would save more",
+      "now": "2026-10-07T12:30",
+      "promotions": [
+        {"id": "P6", "name": "10% שתייה", "type": "discount", "priority": 5, "config": {"target": {"categoryIds": ["c-drinks"]}, "discountKind": "percent", "discountValue": 10}},
+        {"id": "P7", "name": "1+1 שתייה", "type": "buy_x_get_y", "priority": 0, "config": {"target": {"categoryIds": ["c-drinks"]}, "buyQuantity": 1, "getQuantity": 1}}
+      ],
+      "lines": [{"id": "L1", "productId": "p-cola", "unitAgorot": 1000, "qty": 2}],
+      "vatRate": 0.18,
+      "tipPct": null,
+      "expected": {
+        "lines": [{"id": "L1", "promotionAgorot": 200, "promotionId": "P6", "totalAgorot": 1800}],
+        "applied": [{"promotionId": "P6", "applications": 2, "discountAgorot": 200}], "grossAgorot": 2000, "promotionAgorot": 200, "totalAgorot": 1800, "itemCount": 2, "netAgorot": 1525, "vatAgorot": 275, "tipAgorot": 0
+      }
+    },
+    {
+      "name": "a combo (main + fries + drink for ₪59): the scarcest part first, the dearest drink, spread by price",
+      "now": "2026-10-07T12:30",
+      "promotions": [{"id": "P8", "name": "ארוחה ב-59", "type": "combo", "priority": 0, "config": {"components": [{"group": {"categoryIds": ["c-main"]}, "quantity": 1}, {"group": {"productIds": ["p-fries"]}, "quantity": 1}, {"group": {"categoryIds": ["c-drinks"]}, "quantity": 1}], "price": 59}}],
+      "lines": [{"id": "L1", "productId": "p-burger", "unitAgorot": 4200, "qty": 1}, {"id": "L2", "productId": "p-fries", "unitAgorot": 1500, "qty": 1}, {"id": "L3", "productId": "p-cola", "unitAgorot": 1000, "qty": 1}, {"id": "L4", "productId": "p-water", "unitAgorot": 800, "qty": 1}],
+      "vatRate": 0.18,
+      "tipPct": null,
+      "expected": {
+        "lines": [{"id": "L1", "promotionAgorot": 502, "promotionId": "P8", "totalAgorot": 3698}, {"id": "L2", "promotionAgorot": 179, "promotionId": "P8", "totalAgorot": 1321}, {"id": "L3", "promotionAgorot": 119, "promotionId": "P8", "totalAgorot": 881}, {"id": "L4", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 800}],
+        "applied": [{"promotionId": "P8", "applications": 1, "discountAgorot": 800}], "grossAgorot": 7500, "promotionAgorot": 800, "totalAgorot": 6700, "itemCount": 4, "netAgorot": 5678, "vatAgorot": 1022, "tipAgorot": 0
+      }
+    },
+    {
+      "name": "a spend threshold (₪10 off from ₪100) counted after the item promotions, never on units they took",
+      "now": "2026-10-07T12:30",
+      "promotions": [
+        {"id": "P1", "name": "1+1 שתייה", "type": "buy_x_get_y", "priority": 0, "config": {"target": {"categoryIds": ["c-drinks"]}, "buyQuantity": 1, "getQuantity": 1, "getDiscountPercent": 100}},
+        {"id": "P9", "name": "₪10 הנחה מ-100", "type": "threshold_basket_discount", "priority": 0, "config": {"threshold": 100, "discountKind": "amount", "discountValue": 10}}
+      ],
+      "lines": [{"id": "L1", "productId": "p-burger", "unitAgorot": 4200, "qty": 2}, {"id": "L2", "productId": "p-cola", "unitAgorot": 1000, "qty": 1}, {"id": "L3", "productId": "p-water", "unitAgorot": 800, "qty": 1}, {"id": "L4", "productId": "p-fries", "unitAgorot": 1500, "qty": 1}],
+      "vatRate": 0.18,
+      "tipPct": 10,
+      "expected": {
+        "lines": [{"id": "L1", "promotionAgorot": 848, "promotionId": "P9", "totalAgorot": 7552}, {"id": "L2", "promotionAgorot": 444, "promotionId": "P1", "totalAgorot": 556}, {"id": "L3", "promotionAgorot": 356, "promotionId": "P1", "totalAgorot": 444}, {"id": "L4", "promotionAgorot": 152, "promotionId": "P9", "totalAgorot": 1348}],
+        "applied": [{"promotionId": "P1", "applications": 1, "discountAgorot": 800}, {"promotionId": "P9", "applications": 1, "discountAgorot": 1000}], "grossAgorot": 11700, "promotionAgorot": 1800, "totalAgorot": 9900, "itemCount": 5, "netAgorot": 8390, "vatAgorot": 1510, "tipAgorot": 990
+      }
+    },
+    {
+      "name": "a gift from ₪60: the gift itself never counts towards its own threshold",
+      "now": "2026-10-07T12:30",
+      "promotions": [{"id": "P10", "name": "עוגה מתנה מ-60", "type": "threshold_gift", "priority": 0, "config": {"threshold": 60, "giftProductId": "p-cake", "giftQuantity": 1}}],
+      "lines": [{"id": "L1", "productId": "p-burger", "unitAgorot": 4200, "qty": 1}, {"id": "L2", "productId": "p-fries", "unitAgorot": 1500, "qty": 1}, {"id": "L3", "productId": "p-cake", "unitAgorot": 2400, "qty": 1}],
+      "vatRate": 0.18,
+      "tipPct": null,
+      "expected": {
+        "lines": [{"id": "L1", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 4200}, {"id": "L2", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 1500}, {"id": "L3", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 2400}],
+        "applied": [], "grossAgorot": 8100, "promotionAgorot": 0, "totalAgorot": 8100, "itemCount": 3, "netAgorot": 6864, "vatAgorot": 1236, "tipAgorot": 0,
+        "giftOffers": [], "near": [{"promotionId": "P10", "kind": "gift", "missingAgorot": 300}]
+      }
+    },
+    {
+      "name": "the gift earned and in the basket: free",
+      "now": "2026-10-07T12:30",
+      "promotions": [{"id": "P10", "name": "עוגה מתנה מ-60", "type": "threshold_gift", "priority": 0, "config": {"threshold": 60, "giftProductId": "p-cake", "giftQuantity": 1}}],
+      "lines": [{"id": "L1", "productId": "p-burger", "unitAgorot": 4200, "qty": 1}, {"id": "L2", "productId": "p-fries", "unitAgorot": 1500, "qty": 2}, {"id": "L3", "productId": "p-cake", "unitAgorot": 2400, "qty": 1}],
+      "vatRate": 0.18,
+      "tipPct": null,
+      "expected": {
+        "lines": [{"id": "L1", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 4200}, {"id": "L2", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 3000}, {"id": "L3", "promotionAgorot": 2400, "promotionId": "P10", "totalAgorot": 0}],
+        "applied": [{"promotionId": "P10", "applications": 1, "discountAgorot": 2400}], "grossAgorot": 9600, "promotionAgorot": 2400, "totalAgorot": 7200, "itemCount": 4, "netAgorot": 6102, "vatAgorot": 1098, "tipAgorot": 0,
+        "giftOffers": [], "near": []
+      }
+    },
+    {
+      "name": "the gift earned and not in the basket: offered, never added",
+      "now": "2026-10-07T12:30",
+      "promotions": [{"id": "P10", "name": "עוגה מתנה מ-60", "type": "threshold_gift", "priority": 0, "config": {"threshold": 60, "giftProductId": "p-cake", "giftQuantity": 1}}],
+      "lines": [{"id": "L1", "productId": "p-burger", "unitAgorot": 4200, "qty": 1}, {"id": "L2", "productId": "p-fries", "unitAgorot": 1500, "qty": 2}],
+      "vatRate": 0.18,
+      "tipPct": null,
+      "expected": {
+        "lines": [{"id": "L1", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 4200}, {"id": "L2", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 3000}],
+        "applied": [], "grossAgorot": 7200, "promotionAgorot": 0, "totalAgorot": 7200, "itemCount": 3, "netAgorot": 6102, "vatAgorot": 1098, "tipAgorot": 0,
+        "giftOffers": [{"promotionId": "P10", "productId": "p-cake", "quantity": 1}], "near": []
+      }
+    },
+    {
+      "name": "a window across midnight belongs to the day it began (Wednesday 22:00–02:00, at Thursday 01:30)",
+      "now": "2026-10-08T01:30",
+      "promotions": [{"id": "P11", "name": "קינוח לילה 20%", "type": "discount", "priority": 0, "weekdays": [3], "startTime": "22:00", "endTime": "02:00", "config": {"target": {"categoryIds": ["c-dessert"]}, "discountKind": "percent", "discountValue": 20}}],
+      "lines": [{"id": "L1", "productId": "p-cake", "unitAgorot": 2400, "qty": 1}],
+      "vatRate": 0.18,
+      "tipPct": null,
+      "expected": {
+        "lines": [{"id": "L1", "promotionAgorot": 480, "promotionId": "P11", "totalAgorot": 1920}],
+        "applied": [{"promotionId": "P11", "applications": 1, "discountAgorot": 480}], "grossAgorot": 2400, "promotionAgorot": 480, "totalAgorot": 1920, "itemCount": 1, "netAgorot": 1627, "vatAgorot": 293, "tipAgorot": 0
+      }
+    },
+    {
+      "name": "the same window on Thursday night: not Wednesday's, not applied",
+      "now": "2026-10-08T22:30",
+      "promotions": [{"id": "P11", "name": "קינוח לילה 20%", "type": "discount", "priority": 0, "weekdays": [3], "startTime": "22:00", "endTime": "02:00", "config": {"target": {"categoryIds": ["c-dessert"]}, "discountKind": "percent", "discountValue": 20}}],
+      "lines": [{"id": "L1", "productId": "p-cake", "unitAgorot": 2400, "qty": 1}],
+      "vatRate": 0.18,
+      "tipPct": null,
+      "expected": {
+        "lines": [{"id": "L1", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 2400}],
+        "applied": [], "grossAgorot": 2400, "promotionAgorot": 0, "totalAgorot": 2400, "itemCount": 1, "netAgorot": 2034, "vatAgorot": 366, "tipAgorot": 0
+      }
+    },
+    {
+      "name": "a promotion past its last date is not applied",
+      "now": "2026-10-07T12:30",
+      "promotions": [{"id": "P1", "name": "1+1 שתייה", "type": "buy_x_get_y", "priority": 0, "validTo": "2026-10-06", "config": {"target": {"categoryIds": ["c-drinks"]}, "buyQuantity": 1, "getQuantity": 1}}],
+      "lines": [{"id": "L1", "productId": "p-cola", "unitAgorot": 1000, "qty": 2}],
+      "vatRate": 0.18,
+      "tipPct": null,
+      "expected": {
+        "lines": [{"id": "L1", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 2000}],
+        "applied": [], "grossAgorot": 2000, "promotionAgorot": 0, "totalAgorot": 2000, "itemCount": 2, "netAgorot": 1695, "vatAgorot": 305, "tipAgorot": 0
+      }
+    },
+    {
+      "name": "one dessert at ₪5 from ₪80: the reward not counted towards the threshold it unlocks",
+      "now": "2026-10-07T12:30",
+      "promotions": [{"id": "P12", "name": "קינוח ב-5 מ-80", "type": "threshold_item_price", "priority": 0, "config": {"threshold": 80, "reward": {"categoryIds": ["c-dessert"]}, "specialPrice": 5}}],
+      "lines": [{"id": "L1", "productId": "p-burger", "unitAgorot": 4200, "qty": 2}, {"id": "L2", "productId": "p-cake", "unitAgorot": 2400, "qty": 1}],
+      "vatRate": 0.18,
+      "tipPct": null,
+      "expected": {
+        "lines": [{"id": "L1", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 8400}, {"id": "L2", "promotionAgorot": 1900, "promotionId": "P12", "totalAgorot": 500}],
+        "applied": [{"promotionId": "P12", "applications": 1, "discountAgorot": 1900}], "grossAgorot": 10800, "promotionAgorot": 1900, "totalAgorot": 8900, "itemCount": 3, "netAgorot": 7542, "vatAgorot": 1358, "tipAgorot": 0
+      }
+    },
+    {
+      "name": "10% off mains from ₪50: a no-discount product counts towards the threshold and is not discounted",
+      "now": "2026-10-07T12:30",
+      "promotions": [{"id": "P13", "name": "10% על עיקריות מ-50", "type": "threshold_basket_discount", "priority": 0, "config": {"threshold": 50, "counted": {"categoryIds": ["c-main"]}, "discountKind": "percent", "discountValue": 10}}],
+      "lines": [{"id": "L1", "productId": "p-burger", "unitAgorot": 4200, "qty": 1}, {"id": "L2", "productId": "p-salad", "unitAgorot": 3900, "qty": 1}, {"id": "L3", "productId": "p-cola", "unitAgorot": 1000, "qty": 1}],
+      "vatRate": 0.18,
+      "tipPct": null,
+      "expected": {
+        "lines": [{"id": "L1", "promotionAgorot": 420, "promotionId": "P13", "totalAgorot": 3780}, {"id": "L2", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 3900}, {"id": "L3", "promotionAgorot": 0, "promotionId": null, "totalAgorot": 1000}],
+        "applied": [{"promotionId": "P13", "applications": 1, "discountAgorot": 420}], "grossAgorot": 9100, "promotionAgorot": 420, "totalAgorot": 8680, "itemCount": 3, "netAgorot": 7356, "vatAgorot": 1324, "tipAgorot": 0
+      }
+    }
+  ]
+}

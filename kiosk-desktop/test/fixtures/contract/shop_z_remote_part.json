@@ -1,0 +1,121 @@
+{
+  "requestId": "lan-req-1",
+  "roundId": "round-1",
+  "machineId": "549e903c-4aba-4528-bc4a-c61b4019a64e",
+  "outcome": "closed",
+  "shiftId": "5b0c7e1d-1111-4222-8333-444455556666",
+  "message": "נסגרה",
+  "section": {
+    "machineId": "549e903c-4aba-4528-bc4a-c61b4019a64e",
+    "posNumber": "4",
+    "machineName": "קיוסק Windows",
+    "shiftIds": [
+      "5b0c7e1d-1111-4222-8333-444455556666"
+    ],
+    "firstBusinessDate": "2026-10-06",
+    "lastBusinessDate": "2026-10-06",
+    "firstDocumentNumber": "40000057",
+    "lastDocumentNumber": "40000058",
+    "till": {
+      "totalSales": 89,
+      "totalDiscounts": 0,
+      "totalRefunds": 0,
+      "totalCash": 0,
+      "totalCard": 89,
+      "totalExchange": 0,
+      "totalTips": 0,
+      "vatTotal": 13.58,
+      "transactionsCount": 1
+    },
+    "report": {
+      "machineId": "549e903c-4aba-4528-bc4a-c61b4019a64e",
+      "posNumber": "4",
+      "machineName": "קיוסק Windows",
+      "shiftIds": [
+        "5b0c7e1d-1111-4222-8333-444455556666"
+      ],
+      "shiftCount": 1,
+      "transactionsCount": 1,
+      "firstShiftSequence": 12,
+      "lastShiftSequence": 12,
+      "firstDocumentNumber": "40000057",
+      "lastDocumentNumber": "40000058",
+      "salesCount": 1,
+      "creditNotesCount": 0,
+      "nonSaleDocumentsCount": 1,
+      "totalCashTips": "0.00",
+      "totalCardTips": "0.00",
+      "openingCash": "0.00",
+      "expectedCash": "0.00",
+      "countedCash": null,
+      "overShort": null,
+      "cashSalesNet": "0.00",
+      "betweenShiftAdjustments": "0.00",
+      "uncountedShiftCount": 1,
+      "unattendedShiftCount": 1,
+      "grossSales": "89.00",
+      "discountsTotal": "0.00",
+      "totalSales": "89.00",
+      "totalRefunds": "0.00",
+      "netSales": "89.00",
+      "totalCash": "0.00",
+      "totalCard": "89.00",
+      "totalExchange": "0.00",
+      "totalTips": "0.00",
+      "vatTotal": "13.58",
+      "paymentBreakdown": {
+        "card": "89.00"
+      },
+      "documentRanges": {
+        "320": {
+          "count": 1,
+          "first": "57",
+          "last": "57"
+        }
+      },
+      "manifestDigest": "3399886196f406cc0fa95e6a5b4462f33c22abadd78edaf228b83c43e1deb354",
+      "deviceRole": "kiosk",
+      "operator": {
+        "id": "kiosk:549e903c-4aba-4528-bc4a-c61b4019a64e",
+        "name": "קיוסק Windows"
+      },
+      "closedByName": "קיוסק · קיוסק Windows"
+    },
+    "manifest": {
+      "version": 1,
+      "documents": 1,
+      "documentIds": [
+        "c1a8f0e2-5b7d-4a1e-9f3c-6d2e8b1a4c77"
+      ],
+      "types": {
+        "320": {
+          "count": 1,
+          "first": "57",
+          "last": "57"
+        }
+      },
+      "totals": {
+        "documents": 1,
+        "gross": "89.00",
+        "discounts": "0.00",
+        "refunds": "0.00",
+        "net": "89.00",
+        "cash": "0.00",
+        "card": "89.00",
+        "exchange": "0.00",
+        "tips": "0.00",
+        "vat": "13.58",
+        "payments": {
+          "card": "89.00"
+        }
+      },
+      "digest": "3399886196f406cc0fa95e6a5b4462f33c22abadd78edaf228b83c43e1deb354",
+      "machineId": "549e903c-4aba-4528-bc4a-c61b4019a64e",
+      "shiftIds": [
+        "5b0c7e1d-1111-4222-8333-444455556666"
+      ]
+    },
+    "late": false,
+    "label": null
+  }
+}
