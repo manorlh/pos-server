@@ -50,9 +50,14 @@ import type { BoardView, KdsActionInput, KdsView } from '@dash-lib/kdsScreenType
 
 export type {
   BoardDisplay,
+  BoardLayout,
+  BoardMedia,
   BoardNumber,
   BoardThemeName,
   BoardView,
+  KdsDisplay,
+  KdsLayout,
+  ScreenDisplay,
   KdsActionInput,
   KdsActionType,
   KdsChange,
