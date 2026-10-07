@@ -63,7 +63,7 @@ from app.schemas.kitchen_printers import (
     ProductRouteIn,
 )
 from app.services.areas import as_utc
-from app.services.company_hierarchy import user_covers_company
+from app.services.company_hierarchy import user_covers_shop
 
 #: The till parameters this module reads (and lets a shop's managers set).
 ON_SALE_KEY = "kitchenTicketsOnSale"
@@ -130,7 +130,7 @@ def can_edit(db: Session, user: User, shop: Shop) -> bool:
     if user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
         return True
     if user.role == UserRole.COMPANY_MANAGER:
-        return bool(user_covers_company(db, user, shop.company_id))
+        return bool(user_covers_shop(db, user, shop))
     return user.shop_id is not None and str(user.shop_id) == str(shop.id)
 
 

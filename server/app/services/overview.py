@@ -47,7 +47,7 @@ from app.schemas.reports import (
     OverviewResponse,
     OverviewShop,
 )
-from app.services.company_hierarchy import company_scope_ids, descendant_company_ids
+from app.services.company_hierarchy import descendant_company_ids, visible_shop_ids
 from app.services.dashboard_stats import SALE_STATUSES
 from app.services.permission_matrix import SHOP_SCOPED_ROLES
 from app.services.reports import (
@@ -64,7 +64,7 @@ def _visible_shops_query(db: Session, user: User, tenant_id):
     """`GET /shops`'s role rule, or None when the role sees no shop at all."""
     query = db.query(Shop).filter(Shop.tenant_id == tenant_id)
     if user.role == UserRole.COMPANY_MANAGER:
-        return query.filter(Shop.company_id.in_(company_scope_ids(db, user)))
+        return query.filter(Shop.id.in_(visible_shop_ids(db, user)))
     if user.role in SHOP_SCOPED_ROLES:
         if not user.shop_id:
             return None

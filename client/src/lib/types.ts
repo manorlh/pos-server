@@ -61,6 +61,11 @@ export interface UserCapabilities {
    * PIN would buy them nothing, so the profile page says so instead of offering it.
    */
   tillScopes?: string[];
+  /**
+   * "הרשאות דשבורד": the sections this user may open (lib/dashboardAccess.ts). The server
+   * enforces the same grant on every route; this only decides the menu and the pages.
+   */
+  dashboardAccess?: import('./dashboardAccess').DashboardAccess;
 }
 
 /** `GET /users/me` — the caller's own record plus its capabilities. */

@@ -3,6 +3,7 @@ from typing import Optional, List
 from datetime import datetime
 import uuid
 from app.models.user import UserRole
+from app.schemas.dashboard_access import AccessScopeIn
 
 
 #: Every other schema in this package speaks camelCase on the wire — see
@@ -40,6 +41,11 @@ class UserCreate(UserBase):
     #: Optional too — derived from the email when omitted. Nobody should have to
     #: invent a login name for a person who may never type one.
     username: Optional[str] = None
+    #: "הרשאות דשבורד" — the super admin's choice of sections and org scope for the new user
+    #: ("מנהל ארגון" = `{"template": "org_manager", "orgWide": true}`). Ignored from anyone
+    #: else: every new user starts as "מנהל ארגון" (reports, products, Z) and the super admin
+    #: opens the rest.
+    access: Optional[AccessScopeIn] = None
 
 
 class UserUpdate(BaseModel):
@@ -87,6 +93,9 @@ class CurrentUserResponse(UserBase):
     #: Scopes this user could hold at a till, so the dashboard can explain what a
     #: PIN would actually let them do rather than describing it vaguely.
     till_scopes: List[str] = Field(default_factory=list, alias="tillScopes")
+    #: "הרשאות דשבורד": `{restricted, sections: {id: "view"|"edit"}, orgWide, companyIds,
+    #: shopIds, template}`. `restricted` false = everything the role allows.
+    dashboard_access: Optional[dict] = Field(None, alias="dashboardAccess")
 
 
 class UserResponse(UserBase):

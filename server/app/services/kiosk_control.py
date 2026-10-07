@@ -45,7 +45,7 @@ from app.schemas.kiosk import KioskOrderIn
 from app.services import kiosk_config as cfgsvc
 from app.services import kiosk_identity
 from app.services import kiosk_schedule
-from app.services.company_hierarchy import user_covers_company, user_may_use_machine, visible_shop_ids
+from app.services.company_hierarchy import user_covers_company, user_covers_shop, user_may_use_machine, visible_shop_ids
 from app.services.machine_status import is_online, local_today
 
 logger = logging.getLogger(__name__)
@@ -126,7 +126,7 @@ def check_shop_scope(db: Session, user: User, shop: Shop, tenant_id) -> None:
     _same_tenant(shop.tenant_id, tenant_id)
     if user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
         return
-    if user.role == UserRole.COMPANY_MANAGER and user_covers_company(db, user, shop.company_id):
+    if user.role == UserRole.COMPANY_MANAGER and user_covers_shop(db, user, shop):
         return
     if user.role == UserRole.SHOP_MANAGER and str(shop.id) == str(user.shop_id):
         return

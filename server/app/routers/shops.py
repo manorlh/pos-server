@@ -31,8 +31,9 @@ from app.services import product_availability as availability
 from app.services import general_item
 from app.services.company_hierarchy import (
     ancestor_company_ids,
-    company_scope_ids,
     user_covers_company,
+    user_covers_shop,
+    visible_shop_ids,
 )
 from app.services.product_shop_scope import product_allowed_in_shop, reconcile_shops
 from app.services.pos_user_defaults import ensure_default_pos_user
@@ -66,7 +67,7 @@ def _check_shop_access(user: User, shop: Shop, db: Session):
         return
     if user.role == UserRole.DISTRIBUTOR:
         return
-    if user.role == UserRole.COMPANY_MANAGER and user_covers_company(db, user, shop.company_id):
+    if user.role == UserRole.COMPANY_MANAGER and user_covers_shop(db, user, shop):
         return
     if user.role in SHOP_SCOPED_ROLES and shop.id == user.shop_id:
         return
@@ -411,8 +412,9 @@ def list_shops(
     query = db.query(Shop).filter(Shop.tenant_id == active_tenant_id)
 
     if current_user.role == UserRole.COMPANY_MANAGER:
-        # The group's own shops plus every subsidiary's.
-        query = query.filter(Shop.company_id.in_(company_scope_ids(db, current_user)))
+        # The group's own shops plus every subsidiary's (and only the shops a
+        # "הרשאות דשבורד" profile lists, when it lists some).
+        query = query.filter(Shop.id.in_(visible_shop_ids(db, current_user)))
     elif current_user.role in SHOP_SCOPED_ROLES:
         query = query.filter(Shop.id == current_user.shop_id)
     elif company_id:

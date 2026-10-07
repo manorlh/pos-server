@@ -146,6 +146,8 @@ from app.models.kds import (
     FulfillmentGroup, KdsDevice, KdsRouteOverride, KdsShopState, KdsStationSetting, KitchenAction,
     KitchenChange, KitchenDispatch, KitchenOrder, KitchenTask,
 )
+# "הרשאות דשבורד": per dashboard user — sections, org scope, templates, audit.
+from app.models.dashboard_access import DashboardAccessAudit, DashboardAccessProfile, DashboardAccessTemplate
 
 __all__ = [
     "User", "UserRole",
@@ -225,4 +227,5 @@ __all__ = [
     "DocumentRefusal",
     "ExceptionLogEntry", "ExceptionAlertRule", "ExceptionAlertDispatch", "ExceptionAlertRuleChange",
     "TillDesignSettings",
+    "DashboardAccessAudit", "DashboardAccessProfile", "DashboardAccessTemplate",
 ]

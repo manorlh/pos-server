@@ -13,7 +13,7 @@ from app.models.stock_movement import StockMovementReason
 from app.models.user import User, UserRole
 from app.services.permission_matrix import Action, Resource, roles_for
 from app.routers.shops import _check_shop_access
-from app.services.company_hierarchy import user_covers_company
+from app.services.company_hierarchy import user_covers_shop
 from app.schemas.stock import (
     AdjustmentRequest,
     GoodsReceiptRequest,
@@ -37,7 +37,7 @@ _STOCK_WRITE_ROLES = roles_for(Resource.STOCK, Action.WRITE)
 def _check_stock_write(user: User, shop: Shop, db: Session) -> None:
     if user.role not in _STOCK_WRITE_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
-    if user.role == UserRole.COMPANY_MANAGER and not user_covers_company(db, user, shop.company_id):
+    if user.role == UserRole.COMPANY_MANAGER and not user_covers_shop(db, user, shop):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     if user.role == UserRole.SHOP_MANAGER and shop.id != user.shop_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")

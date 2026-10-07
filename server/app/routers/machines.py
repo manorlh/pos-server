@@ -47,7 +47,7 @@ from app.services.sync import (
 )
 from app.services.catalog_notify import notify_machine_catalog_changed
 from app.routers.shops import _check_shop_access
-from app.services.company_hierarchy import user_covers_company, visible_shop_ids
+from app.services.company_hierarchy import user_covers_shop, visible_shop_ids
 from app.services.shop_validation import shop_belongs_to_company
 from app.services.realtime_info import (
     machine_realtime_connection_info,
@@ -383,7 +383,7 @@ def _check_machine_list_access(current_user: User, machine: POSMachine, db: Sess
         return True
     if current_user.role == UserRole.COMPANY_MANAGER and machine.shop_id:
         shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
-        return shop is not None and user_covers_company(db, current_user, shop.company_id)
+        return shop is not None and user_covers_shop(db, current_user, shop)
     if current_user.role in SHOP_SCOPED_ROLES:
         return machine.shop_id == current_user.shop_id
     return False

@@ -5,6 +5,7 @@
 import { create } from 'zustand';
 import { api } from './api';
 import type { UserCapabilities, UserRole } from './types';
+import { parseDashboardAccess } from './dashboardAccess';
 
 /**
  * `role` is the server's enum, not a free string, so a typo in a comparison at a
@@ -113,6 +114,9 @@ export const useAuth = create<AuthState>((set) => ({
           // only at a till, so for them that card is the whole feature.
           hasTillPin: data.hasTillPin === true,
           tillScopes: Array.isArray(data.tillScopes) ? data.tillScopes : [],
+          // "הרשאות דשבורד": absent (an older server) reads as unrestricted — the server
+          // still enforces whatever it enforces; the menu just does not narrow.
+          dashboardAccess: parseDashboardAccess(data.dashboardAccess),
         },
         tenants,
         activeTenantId,

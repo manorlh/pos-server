@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { clearMyTillPin, setMyTillPin } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { TillPinDialog } from '@/components/dashboard/till-pin-dialog';
+import { MyAccessCard } from '@/components/dashboard/access/my-access-card';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -150,6 +151,9 @@ export default function ProfilePage() {
           </CardFooter>
         ) : null}
       </Card>
+
+      {/* "הרשאות דשבורד": what this user may open, and from which part of the organization. */}
+      <MyAccessCard />
 
       <TillPinDialog
         open={pinOpen}
