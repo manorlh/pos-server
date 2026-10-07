@@ -173,6 +173,11 @@ def incompatible_values(
     return [v for v in values if not _is_valid(value_type, v.value, enum_options)]
 
 
+#: "מדפסת חשבוניות" = "אוטומטי" (the default): a USB receipt printer plugged into a regular till and
+#: approved prints the receipts by itself, else as "מובנית בקופה" (pos-android domain/UsbPrinterAuto.kt
+#: `tillReceiptOnUsb`, docs/SPEC_KIOSK.md §14.7). Migration e9a3c7f1b5d2 adds it to existing databases.
+RECEIPT_PRINTER_AUTO = "אוטומטי"
+
 # ── Image parameters ─────────────────────────────────────────────────────────
 
 #: The receipt logo, printed at the head of every receipt. Supersedes the branding
@@ -717,11 +722,14 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         key="receiptPrinter",
         label="מדפסת חשבוניות",
         value_type="enum",
-        enum_options=("מובנית בקופה", "רשת (IP)", "Bluetooth", "USB"),
-        default_value="מובנית בקופה",
+        enum_options=(RECEIPT_PRINTER_AUTO, "מובנית בקופה", "רשת (IP)", "Bluetooth", "USB"),
+        default_value=RECEIPT_PRINTER_AUTO,
         description=(
             "לאן הקופה מדפיסה חשבוניות, העתקים, שוברים, דוחות X / Z וחשבונות שולחן. "
-            "«מובנית בקופה» — המדפסת של הקופה (ברירת מחדל). "
+            "«אוטומטי» (ברירת מחדל) — מדפסת USB שמחוברת לקופה ומאושרת מדפיסה את הקבלות לבד; "
+            "בלעדיה — המדפסת של הקופה, ובקופה בלי מדפסת — מדפסת החשבוניות של הסניף "
+            "(docs/SPEC_KIOSK.md §14.7; קיוסק — כמו קודם). "
+            "«מובנית בקופה» — תמיד המדפסת של הקופה, גם כשמחוברת מדפסת USB. "
             "«רשת (IP)» / «Bluetooth» / «USB» — מדפסת חשבוניות חיצונית (ESC/POS), למשל SNBC BTP-880: "
             "את הכתובת קובעים ב\"מדפסת חשבוניות — כתובת\" ואת הדגם ב\"מדפסת חשבוניות — דגם\". "
             "גם קופה בלי מדפסת (MODO) מדפיסה כך. מגדירים בדרך כלל לקופה בודדת. "
