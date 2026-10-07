@@ -110,6 +110,16 @@ EVENTS: Dict[str, EventSpec] = {
         title="התראת ציוד (פנימי)",
         sample={"branch_name": "מרכז", "alert_text": "מדפסת מטבח לא זמינה"},
     ),
+    # "התראות SMS על חריגות" (app/services/exception_alerts): the text is composed by the
+    # alert rule (what · where · who · amount · time · link), ≤ 160 characters where possible.
+    "ExceptionAlert": EventSpec(
+        event_type="ExceptionAlert",
+        category=CATEGORY_INTERNAL,
+        required=("alert_text",),
+        body="{alert_text}",
+        title="התראת חריגה (פנימי)",
+        sample={"alert_text": "חריגה: החזר ₪250 · מרכז · קופה 2 · דנה · 14:32"},
+    ),
     "Campaign": EventSpec(
         event_type="Campaign",
         category=CATEGORY_MARKETING,

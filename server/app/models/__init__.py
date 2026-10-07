@@ -59,6 +59,13 @@ from app.models.failed_payment import FailedPaymentAttempt
 # "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the dashboard asks a till to issue a credit.
 from app.models.remote_credit import RemoteCreditEvent, RemoteCreditRequest
 from app.models.document_refusal import DocumentRefusal
+# "יומן חריגות" + "התראות SMS על חריגות" (app/services/exception_alerts).
+from app.models.exception_alerts import (
+    ExceptionAlertDispatch,
+    ExceptionAlertRule,
+    ExceptionAlertRuleChange,
+    ExceptionLogEntry,
+)
 from app.models.prepaid_voucher import (
     PrepaidVoucher,
     PrepaidVoucherBatch,
@@ -213,5 +220,6 @@ __all__ = [
     "KioskSession", "KioskEvent", "DeviceBatteryAlert", "KioskWebDeviceStatus",
     "RemoteCreditRequest", "RemoteCreditEvent",
     "DocumentRefusal",
+    "ExceptionLogEntry", "ExceptionAlertRule", "ExceptionAlertDispatch", "ExceptionAlertRuleChange",
     "TillDesignSettings",
 ]

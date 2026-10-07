@@ -39,6 +39,18 @@ class Settings(BaseSettings):
     # Empty = <pairing_mobile_app_base_url>/join.
     club_join_base_url: str = ""
 
+    # "התראות SMS על חריגות" (app/services/exception_alerts). Which SMS provider the
+    # exception alerts use: "dry_run" (the default — nothing leaves the server; every
+    # message is recorded in the exceptions log and the process log only) or
+    # "notifications" (the 019 queue above, under ITS own mock / test / live gates).
+    # Anything else falls back to dry_run.
+    exception_alerts_sms_provider: str = "dry_run"
+    # Base URL of the dashboard for the SMS link (<base>/x/<code>). Empty =
+    # pairing_mobile_app_base_url (the dashboard's public URL).
+    exception_alerts_link_base_url: str = ""
+    # The background digest pass (rate-limited / quiet-hours alerts summed up afterwards).
+    exception_alerts_worker_enabled: bool = True
+
     # Ably realtime notify (per-machine channel + token auth from GET /machines/me/ably-auth)
     ably_api_key: str = ""
     

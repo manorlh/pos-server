@@ -251,6 +251,25 @@ def start_notifications_worker():
     from app.services.notifications.worker import start_background_worker
 
     start_background_worker(SessionLocal)
+
+
+# "יומן חריגות" + "התראות SMS על חריגות" (app/services/exception_alerts): the log of every
+# detected exception, and the SMS alert rules (dry run unless EXCEPTION_ALERTS_SMS_PROVIDER).
+from app.routers import exception_alerts as exception_alerts_router, exception_log as exception_log_router  # noqa: E402
+
+app.include_router(exception_log_router.router, prefix=_prefix)
+app.include_router(exception_alerts_router.router, prefix=_prefix)
+
+
+@app.on_event("startup")
+def start_exception_alerts_worker():
+    """The digests of rate-limited / quiet-hours alerts; EXCEPTION_ALERTS_WORKER_ENABLED=false stops it."""
+    if not getattr(settings, "exception_alerts_worker_enabled", True):
+        return
+    from app.database import SessionLocal
+    from app.services.exception_alerts.worker import start_background_worker as start_alerts_worker
+
+    start_alerts_worker(SessionLocal)
 # KDS and "תצורת עבודה לעמדה" (docs/SPEC_KDS.md): releases, screens, the workflow card.
 from app.routers import kds as kds_router  # noqa: E402
 
