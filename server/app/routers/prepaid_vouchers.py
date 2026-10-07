@@ -3,6 +3,7 @@ Prepaid vouchers ("שוברי הפקה") — see app/services/prepaid_vouchers.p
 
 Dashboard (user JWT, the catalog's writers, scoped by company / shop):
 
+GET    /prepaid-vouchers/products                     → the products a batch of a company may carry
 GET    /prepaid-vouchers/batches                      → batches with their counts
 POST   /prepaid-vouchers/batches                      → make a batch and its vouchers
 GET    /prepaid-vouchers/batches/{id}                 → one batch
@@ -63,6 +64,18 @@ router = APIRouter(tags=["prepaid-vouchers"])
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/prepaid-vouchers/products")
+def list_prepaid_voucher_products(
+    company_id: str = Query(..., alias="companyId"),
+    search: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    return {"items": PV.eligible_products(db, current_user, active_tenant_id, company_id, search, limit)}
 
 
 @router.get("/prepaid-vouchers/batches")

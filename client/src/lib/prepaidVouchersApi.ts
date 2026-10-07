@@ -321,18 +321,15 @@ export async function fetchPrepaidBatchReport(batchId: string): Promise<PrepaidB
   return data;
 }
 
-export async function searchPrepaidProducts(search: string, companyId?: string): Promise<PrepaidProductOption[]> {
-  const { data } = await api.get<{ items: Record<string, unknown>[] }>('/products', {
+export async function searchPrepaidProducts(search: string, companyId: string): Promise<PrepaidProductOption[]> {
+  // The cloud's own rule for what a batch of this company may carry — the save checks the same.
+  const { data } = await api.get<{ items: Record<string, unknown>[] }>('/prepaid-vouchers/products', {
     params: {
-      page: 1,
-      pageSize: 50,
-      catalogLevel: 'global',
+      companyId,
       ...(search.trim() ? { search: search.trim() } : {}),
-      ...(companyId ? { companyId } : {}),
     },
   });
   return (data.items ?? [])
-    .filter((p) => !p.isGeneral && !p.is_general && !p.isWeighed && !p.is_weighed)
     .map((p) => ({
       id: String(p.id),
       name: String(p.name ?? ''),
