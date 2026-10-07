@@ -1657,6 +1657,32 @@ class TestRemoteParticipant:
         hist = LR.till_shop_z_history(str(main.id), days=31, machine=main, db=w.db)
         assert next(p for p in hist["participants"] if p["posNumber"] == "5")["remote"] is True
 
+    def test_a_windows_kiosk_is_always_closed_through_the_cloud(self, w):
+        """
+        The Windows kiosk has no LAN client: over the LAN the main till would wait for it as
+        unreachable, forever (PARITY.md gap 5). It is remote whatever the setting, and the card
+        says the choice is not one.
+        """
+        owner_setup(w)
+        kiosk = _make_kiosk(w, w.six[4])
+        kiosk.platform = "windows"
+        w.db.commit()
+        card = ZP.get_z_participation(w.shop.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+        five = next(t for t in card["tills"] if t["posNumber"] == "5")
+        assert five["link"] == "remote" and five["linkFixed"] is True
+        assert next(t for t in card["tills"] if t["posNumber"] == "2")["linkFixed"] is False
+        main = w.six[0]
+        hist = LR.till_shop_z_history(str(main.id), days=31, machine=main, db=w.db)
+        remote = {p["posNumber"]: p["remote"] for p in hist["participants"]}
+        assert remote["5"] is True and remote["2"] is False
+        # The main till may ask the cloud to close it, like any remote participant.
+        out = LR.till_shop_z_remote_close(
+            str(main.id),
+            LR.RemoteCloseIn.model_validate({"roundId": "r1", "requests": [{"machineId": str(kiosk.id), "requestId": "q1"}]}),
+            machine=main, db=w.db,
+        )
+        assert out["refused"] == [] and [p["state"] for p in out["parts"]] == ["requested"]
+
     def test_only_a_participant_and_never_the_main_till_is_remote(self, w):
         owner_setup(w)
         out = _put_remote(w, [w.six[0].id])

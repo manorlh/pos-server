@@ -287,9 +287,9 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   }, [companies.data, companyId]);
   const shops = useQuery({ queryKey: ['shops', companyId], queryFn: () => fetchShops(companyId), enabled: open && !!companyId });
   const products = useQuery({
-    queryKey: ['prepaid-voucher-products', debounced],
-    queryFn: () => searchPrepaidProducts(debounced),
-    enabled: open,
+    queryKey: ['prepaid-voucher-products', companyId, debounced],
+    queryFn: () => searchPrepaidProducts(debounced, companyId),
+    enabled: open && !!companyId,
   });
 
   const reset = () => {

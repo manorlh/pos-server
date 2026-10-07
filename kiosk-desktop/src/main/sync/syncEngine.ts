@@ -4,9 +4,9 @@
  *
  *  - heartbeat every 30 s (no realtime channel on Windows yet), 5 s while the cloud asks for a
  *    fast beat; its answer carries zMode, lastTillZNumber, Zs that cover our shifts, and remote
- *    instructions (close the shift, produce the Z, transmit, reset);
+ *    instructions (close the shift, produce the Z, transmit, reset, the main till's shop Z part);
  *  - after a good beat (at most every 25 s): parameters (ETag), settings (since), kiosk/sync
- *    (every 15 s for a kiosk), catalog (delta), the outbox;
+ *    (every 15 s for a kiosk), catalog (delta), promotions (ETag), the outbox;
  *  - every 15 minutes (and at start): machines/me, a full catalog, POS users;
  *  - nothing here is on the customer's path: the screens only ever read the local copies.
  */
@@ -32,6 +32,8 @@ export interface RemoteHooks {
   /** The kiosk snapshot changed (config, state, media list). */
   onKioskSnapshot(next: Record<string, unknown>, prev: Record<string, unknown> | null): void;
   onCatalog(): void;
+  /** The promotions changed (the basket is priced with them, lib/kioskMoney.ts). */
+  onPromotions?(): void;
   onSettings(): void;
   onParameters(): void;
   /** Remote instructions from the heartbeat. */
@@ -39,6 +41,11 @@ export interface RemoteHooks {
   onPendingTillZ(req: { requestId: string; force?: boolean }): void;
   onPendingTransmit(req: { requestId: string }): void;
   onPendingReset(req: { commandId: string; kind: string; reason?: string }): void;
+  /**
+   * The main till's local shop Z asks this kiosk for its part through the cloud (SPEC_INDEPENDENT_TILL
+   * §8.14): repeated on every beat until the kiosk answers (main/fiscal/shopZPart.ts).
+   */
+  onPendingShopZPart(req: { requestId: string; roundId: string; force: boolean }): void;
   /** Kiosk orders and other side uploads after a good beat. */
   afterBeat(): Promise<void>;
   /** A side outbox row (transmission, acks): its request, or null to drop it. */
@@ -213,6 +220,8 @@ export class SyncEngine {
     if (transmit && typeof transmit.requestId === 'string') this.hooks.onPendingTransmit({ requestId: transmit.requestId });
     const reset = req(b.pendingReset);
     if (reset && typeof reset.commandId === 'string') this.hooks.onPendingReset({ commandId: reset.commandId, kind: String(reset.kind ?? ''), reason: (reset.reason as string) ?? undefined });
+    const part = req(b.pendingShopZPart);
+    if (part && typeof part.requestId === 'string' && typeof part.roundId === 'string') this.hooks.onPendingShopZPart({ requestId: part.requestId, roundId: part.roundId, force: part.force !== false });
     return true;
   }
 
@@ -223,6 +232,7 @@ export class SyncEngine {
     await this.pullSettings();
     if (Date.now() - this.lastKioskSyncAttempt >= KIOSK_SYNC_MS) await this.kioskSync();
     await this.pullCatalog(false);
+    await this.pullPromotions();
   }
 
   async fullSync(): Promise<void> {
@@ -231,6 +241,7 @@ export class SyncEngine {
     await this.pullParameters();
     await this.kioskSync();
     await this.pullCatalog(true);
+    await this.pullPromotions();
     await this.pullPosUsers();
   }
 
@@ -281,6 +292,18 @@ export class SyncEngine {
     this.cloud.applyCatalog(b);
     this.status.lastCatalogAt = Date.now();
     if (changed) this.hooks.onCatalog();
+  }
+
+  /** "מבצעים": the till's promotions (`GET /sync/{m}/promotions`, ETag); offline, the last ones stay. */
+  async pullPromotions(): Promise<void> {
+    const etag = this.cloud.promotionsEtag();
+    const q = etag ? `?etag=${encodeURIComponent(etag)}` : '';
+    const reply = await this.api.get<{ syncType?: string; etag?: string; promotions?: unknown }>(this.machinePath(`promotions${q}`), { timeoutMs: 20_000 });
+    if (!this.check(reply) || reply.kind !== 'ok' || !reply.body) return;
+    if (reply.body.syncType === 'unchanged') return;
+    const list = Array.isArray(reply.body.promotions) ? (reply.body.promotions as Array<Record<string, unknown>>).filter((p) => !!p && typeof p === 'object') : [];
+    this.cloud.setPromotions(list, typeof reply.body.etag === 'string' ? reply.body.etag : null);
+    this.hooks.onPromotions?.();
   }
 
   async pullPosUsers(): Promise<void> {

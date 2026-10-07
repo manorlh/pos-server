@@ -288,42 +288,127 @@ def _validate_shops(db: Session, user: User, tenant_id, company_id, shop_ids) ->
     return out
 
 
-def _validate_products(db: Session, tenant_id, company_id, items) -> List[Product]:
-    related = {str(c) for c in descendant_company_ids(db, company_id)} | {
+def _related_companies(db: Session, company_id) -> set:
+    """The batch's company with its parents and children: their catalog products may go on it."""
+    return {str(c) for c in descendant_company_ids(db, company_id)} | {
         str(c) for c in ancestor_company_ids(db, company_id)
     }
+
+
+def _eligible(p: Optional[Product], tenant_id, related: set) -> bool:
+    """A product a voucher may carry: a plain catalog product of the batch's company group."""
+    return (
+        p is not None
+        and str(p.tenant_id) == str(tenant_id)
+        and p.catalog_level == CatalogLevel.GLOBAL
+        and p.pos_machine_id is None
+        and not bool(getattr(p, "is_general", False))
+        and not bool(getattr(p, "is_weighed", False))
+        and (p.company_id is None or str(p.company_id) in related)
+    )
+
+
+def _validate_products(db: Session, tenant_id, company_id, items) -> List[Product]:
+    related = _related_companies(db, company_id)
     products: List[Product] = []
     for item in items:
         p = db.query(Product).filter(Product.id == item.product_id).first()
-        ok = (
-            p is not None
-            and str(p.tenant_id) == str(tenant_id)
-            and p.catalog_level == CatalogLevel.GLOBAL
-            and p.pos_machine_id is None
-            and not bool(getattr(p, "is_general", False))
-            and not bool(getattr(p, "is_weighed", False))
-            and (p.company_id is None or str(p.company_id) in related)
-        )
-        if not ok:
+        if not _eligible(p, tenant_id, related):
             raise _http(status.HTTP_400_BAD_REQUEST, PRODUCT_INVALID)
         products.append(p)
     return products
 
 
+def eligible_products(
+    db: Session, user: User, tenant_id, company_id, search: Optional[str] = None, limit: int = 50
+) -> List[Dict[str, Any]]:
+    """
+    The products a batch of [company_id] may carry — exactly what [_validate_products] accepts,
+    so the dashboard's picker never offers one the save then refuses (the owner, 07.10.2026:
+    a product of another company was offered and refused as "אינו מתאים").
+    """
+    _require_role(user)
+    company = db.query(Company).filter(Company.id == _as_uuid(company_id)).first()
+    if company is None or str(company.tenant_id) != str(tenant_id):
+        raise _http(status.HTTP_404_NOT_FOUND, COMPANY_NOT_FOUND)
+    if not _covers_company(db, user, company.id):
+        raise _http(status.HTTP_403_FORBIDDEN, FORBIDDEN)
+    related = _related_companies(db, company.id)
+    q = db.query(Product).filter(
+        Product.tenant_id == tenant_id,
+        Product.catalog_level == CatalogLevel.GLOBAL,
+        Product.pos_machine_id.is_(None),
+        Product.is_general.is_(False),
+        Product.is_weighed.is_(False),
+        (Product.company_id.is_(None)) | (Product.company_id.in_([_as_uuid(c) for c in related])),
+    )
+    text = (search or "").strip()
+    if text:
+        like = f"%{text}%"
+        q = q.filter(Product.name.ilike(like) | Product.sku.ilike(like))
+    rows = q.order_by(Product.name).limit(max(1, min(int(limit), 200))).all()
+    return [
+        {"id": str(p.id), "name": p.name, "price": float(p.price or 0), "sku": p.sku}
+        for p in rows
+        if _eligible(p, tenant_id, related)
+    ]
+
+def _eligible_category(c: Optional[Category], tenant_id, related: set) -> bool:
+    """
+    A category an item discount may name: a catalog category of the batch's company group
+    (its parents, its children) or of no company — the products' rule ([_eligible]) for
+    categories. Never a till's own.
+    """
+    return (
+        c is not None
+        and str(c.tenant_id) == str(tenant_id)
+        and c.pos_machine_id is None
+        and c.catalog_level == CatalogLevel.GLOBAL
+        and (c.company_id is None or str(c.company_id) in related)
+    )
+
+
+def eligible_categories(db: Session, user: User, tenant_id, company_id) -> List[Dict[str, Any]]:
+    """
+    The categories an item discount of [company_id] may name — exactly what [_validate_targets]
+    accepts (as [eligible_products] for the products), so the picker never offers one the save
+    then refuses. With their parent, for the picker's path ("שתייה › חמה").
+    """
+    _require_role(user)
+    company = db.query(Company).filter(Company.id == _as_uuid(company_id)).first()
+    if company is None or str(company.tenant_id) != str(tenant_id):
+        raise _http(status.HTTP_404_NOT_FOUND, COMPANY_NOT_FOUND)
+    if not _covers_company(db, user, company.id):
+        raise _http(status.HTTP_403_FORBIDDEN, FORBIDDEN)
+    related = _related_companies(db, company.id)
+    rows = (
+        db.query(Category)
+        .filter(Category.tenant_id == tenant_id, Category.pos_machine_id.is_(None))
+        .order_by(Category.name)
+        .all()
+    )
+    return [
+        {"id": str(c.id), "name": c.name, "parentId": str(c.parent_id) if c.parent_id else None}
+        for c in rows
+        if _eligible_category(c, tenant_id, related)
+    ]
+
+
 def _validate_targets(db: Session, tenant_id, company_id, targets) -> Dict[str, Any]:
     """
-    An item discount's products (global products of the tenant, as for goods) and categories
-    (the tenant's), with their names as printed: `{productIds, categoryIds, names}`.
+    An item discount's products and categories, by the pickers' own rules ([_eligible],
+    [_eligible_category]), with their names as printed: `{productIds, categoryIds, names}`.
     """
     class _One:
         def __init__(self, pid):
             self.product_id = pid
 
     products = _validate_products(db, tenant_id, company_id, [_One(p) for p in targets.product_ids])
+    related = _related_companies(db, company_id)
     categories: List[Category] = []
     for cid in targets.category_ids:
         c = db.query(Category).filter(Category.id == cid).first()
-        if c is None or str(c.tenant_id) != str(tenant_id) or c.pos_machine_id is not None:
+        if not _eligible_category(c, tenant_id, related):
             raise _http(status.HTTP_400_BAD_REQUEST, TARGET_INVALID)
         categories.append(c)
     return {

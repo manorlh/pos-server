@@ -274,6 +274,8 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
                     is the LAN server; an independent till is outside the shop Z altogether. */}
                 {showLinks && isMain ? (
                   <p className="ps-6 text-xs text-muted-foreground">{t('link.mainServer')}</p>
+                ) : showLinks && remoteAllowed && x.linkFixed ? (
+                  <p className="ps-6 text-xs text-muted-foreground">{t('link.fixedWindows')}</p>
                 ) : showLinks && remoteAllowed ? (
                   <div className="flex flex-wrap items-center gap-2 ps-6">
                     <select

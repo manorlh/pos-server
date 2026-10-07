@@ -6,7 +6,9 @@
  *  - only what a kiosk sells: not deleted, not delisted (`inStock`), not "קופות בלבד"
  *    (`salesChannel` pos_only), on this till's list when the machine catalog is "selected", in an
  *    active category; "אזל" = not available;
- *  - modifier groups by the menu links (a product's own list, [] = none, else its category's);
+ *  - modifier groups by the menu links (a product's own list, [] = none, else its category's), with
+ *    the rules that price them (free choices, quantities, "מעט / הרבה / בצד") and the meals' slots —
+ *    read by the shared money rules (lib/kioskMoney.ts, the Android till's, ported once);
  *    quick notes from the menu (all ⊕ category ⊕ product); upsells as the menu offers them;
  *  - pictures from the network (the kiosk's service worker keeps them), a Cloudinary picture asked
  *    at the card's / the sheet's size.
@@ -16,6 +18,8 @@
  *
  * Pure; no `@/` imports (the node tests compile it on its own).
  */
+
+import { agorotOfShekels, mealsOf, menuGroupOf, type MealSlot } from './kioskMoney';
 
 export const ALLERGEN_HE: Record<string, string> = {
   gluten: 'גלוטן',
@@ -48,15 +52,23 @@ export interface WebOption {
   name: string;
   /** Shekels (display). */
   price: number;
+  /** The exact price (lib/kioskMoney.ts). */
+  priceAgorot: number;
   isDefault: boolean;
+  /** The most of this option in one dish; null: only the group's max. */
+  maxQty: number | null;
 }
 
 export interface WebGroup {
   id: string;
   name: string;
-  kind: string;
+  kind: 'choice' | 'addon' | 'removal';
   min: number;
   max: number | null;
+  /** This many units of choice are free — the cheapest ones. */
+  freeCount: number;
+  allowQuantity: boolean;
+  allowPre: boolean;
   options: WebOption[];
 }
 
@@ -65,6 +77,10 @@ export interface WebProduct {
   name: string;
   /** Shekels (display). */
   price: number;
+  /** The exact price, agorot. */
+  priceAgorot: number;
+  /** "לא מקבל הנחות": no promotion discounts it (it still counts towards a spend threshold). */
+  noDiscount: boolean;
   imageUrl: string | null;
   imageLarge: string | null;
   soldOut: boolean;
@@ -94,6 +110,8 @@ export interface WebCatalog {
   categories: WebCategory[];
   products: WebProduct[];
   groups: Record<string, WebGroup[]>;
+  /** The meals' slots by meal product id (menu.meals). */
+  meals: Record<string, MealSlot[]>;
   quickNotes: Record<string, string[]>;
   upsells: WebUpsell[];
 }
@@ -103,8 +121,8 @@ type Row = Record<string, unknown>;
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
 const num = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && v.trim() && Number.isFinite(Number(v)) ? Number(v) : null;
-/** Shekels from the catalog, rounded to the agora (never a float drift on the screen). */
-const money = (v: unknown) => Math.round((num(v) ?? 0) * 100) / 100;
+/** Shekels from the catalog, to the agora as the till reads them (Agorot.ofShekels). */
+const money = (v: unknown) => agorotOfShekels(num(v) ?? 0) / 100;
 
 /**
  * A Cloudinary picture asked at `width` (auto format and quality); any other URL as it is.
@@ -172,6 +190,8 @@ export function buildWebCatalog(catalog: CatalogIn, settings: Record<string, unk
         id: String(p.id),
         name: String(p.name ?? ''),
         price: money(p.price),
+        priceAgorot: agorotOfShekels(num(p.price) ?? 0),
+        noDiscount: p.noDiscount === true,
         imageUrl: sizedImage(url, 480),
         imageLarge: sizedImage(url, 960),
         soldOut: !available,
@@ -189,19 +209,19 @@ export function buildWebCatalog(catalog: CatalogIn, settings: Record<string, unk
     });
 
   const groupsById = new Map<string, WebGroup>();
-  for (const g of Array.isArray(menu.groups) ? (menu.groups as Row[]) : []) {
-    if (typeof g.id !== 'string') continue;
-    const kind = String(g.kind ?? 'addon');
-    const maxRaw = num(g.maxSelect);
+  for (const row of Array.isArray(menu.groups) ? (menu.groups as Row[]) : []) {
+    const g = menuGroupOf(row);
+    if (!g) continue;
     groupsById.set(g.id, {
       id: g.id,
-      name: String(g.name ?? ''),
-      kind,
-      min: Math.max(0, num(g.minSelect) ?? 0),
-      max: kind === 'choice' && maxRaw === null ? 1 : maxRaw,
-      options: (Array.isArray(g.options) ? (g.options as Row[]) : [])
-        .filter((o) => typeof o.id === 'string')
-        .map((o) => ({ id: String(o.id), name: String(o.name ?? ''), price: money(o.price), isDefault: o.isDefault === true })),
+      name: g.name,
+      kind: g.kind,
+      min: g.minSelect,
+      max: g.maxSelect,
+      freeCount: g.freeCount,
+      allowQuantity: g.allowQuantity,
+      allowPre: g.allowPre,
+      options: g.options.map((o) => ({ id: o.id, name: o.name, price: o.priceAgorot / 100, priceAgorot: o.priceAgorot, isDefault: o.isDefault, maxQty: o.maxQty })),
     });
   }
   const links = (menu.links ?? {}) as { categories?: Record<string, string[]>; products?: Record<string, string[]> };
@@ -227,7 +247,15 @@ export function buildWebCatalog(catalog: CatalogIn, settings: Record<string, unk
       prompt: str(u.prompt) ?? str(u.message),
     };
   });
-  return { categories, products, groups, quickNotes, upsells };
+  // The meals of what the kiosk sells, each slot's choices among what it sells.
+  const sold = new Set(products.map((p) => p.id));
+  const meals: Record<string, MealSlot[]> = {};
+  for (const [id, slots] of Object.entries(mealsOf(menu))) {
+    if (!sold.has(id)) continue;
+    const usable = slots.map((s) => ({ ...s, choices: s.choices.filter((c) => sold.has(c.productId)) })).filter((s) => s.choices.length > 0);
+    if (usable.length > 0) meals[id] = usable;
+  }
+  return { categories, products, groups, meals, quickNotes, upsells };
 }
 
 /** A full pull replaces; a delta upserts by id (the menu only when sent). A full pull of nothing never empties the kiosk. */

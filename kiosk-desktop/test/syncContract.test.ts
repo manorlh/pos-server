@@ -12,13 +12,18 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFil
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { orderWire, type KioskOrder } from '../src/core/kioskOrders';
+import { orderWire, receiptAfterApproval, receiptStatusOf, type KioskOrder, type ReceiptStatus } from '../src/core/kioskOrders';
 import { saleTotals, type SaleLine } from '../src/core/sale';
 import { documentWire, shiftCloseWire, type DocDraft, type ShiftRow } from '../src/main/fiscal/ledger';
 import { docResults, plan, type OutboxRow } from '../src/main/sync/outbox';
 import { apiBase } from '../src/main/sync/api';
 import { kdsSaleRelease, saleDispatchId } from '../src/main/kiosk/kdsRelease';
+import { kioskSection, lanCloseReport, lanOutcomeMessage } from '../src/main/fiscal/shopZPart';
 import { KioskService } from '../src/main/service';
+import { OrderStore } from '../src/main/kiosk/orders';
+import { openDb } from '../src/main/db/sqlite';
+import { migrate } from '../src/main/db/schema';
+import type { Api } from '../src/main/sync/api';
 import type { Transport } from '../src/main/printer/transports';
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
@@ -259,7 +264,79 @@ describe('what the kiosk sends (golden, validated by the server’s schemas)', (
       recovered: false,
       syncedHash: null,
     };
-    golden('kiosk_orders', { orders: [orderWire(o)] });
+    // Every value this kiosk (and the Android one, KioskOrders.kt) can put on the wire: each receipt
+    // and bon state and each order status — and the values older versions stored ("none" /
+    // "queued" receipts, which the cloud refused), as they are sent now.
+    const variant = (n: number, change: Partial<KioskOrder>): KioskOrder => ({ ...o, localId: `order-${n}`, pickupNumber: 16 + n, pickupLabel: `A-${16 + n}`, ...change });
+    const all: KioskOrder[] = [
+      o,
+      variant(2, { receiptStatus: 'pending', bonStatus: 'queued' }),
+      variant(3, { receiptStatus: 'printed', bonStatus: 'printed' }),
+      variant(4, { receiptStatus: 'failed', bonStatus: 'failed', bonDetail: 'לא הודפס' }),
+      variant(5, { receiptStatus: 'skipped', bonStatus: 'none', fulfillmentMode: 'KDS', serviceType: 'eat_in', tableRef: '12', customerPhone: '0501234567' }),
+      variant(6, { receiptStatus: receiptAfterApproval('ask', true), recovered: true, bonDetail: 'שוחזר — הדפסה חוזרת מהניהול' }),
+      variant(7, { receiptStatus: 'none' as unknown as ReceiptStatus }),
+      variant(8, { receiptStatus: 'queued' as unknown as ReceiptStatus }),
+    ];
+    const wires = all.map(orderWire);
+    expect(new Set(wires.map((w) => w.receiptStatus))).toEqual(new Set(['pending', 'printed', 'declined', 'failed', 'skipped']));
+    expect(new Set(wires.map((w) => w.bonStatus))).toEqual(new Set(['none', 'queued', 'sent', 'printed', 'failed']));
+    expect(new Set(wires.map((w) => w.status))).toEqual(new Set(['paid', 'paid_print_failed', 'recovered']));
+    expect(wires.slice(6).map((w) => w.receiptStatus)).toEqual(['skipped', 'pending']);
+    golden('kiosk_orders', { orders: wires });
+  });
+
+  it('the receipt after the money, by the policy (the Android kiosk’s values)', () => {
+    expect(receiptAfterApproval('always', false)).toBe('printed');
+    expect(receiptAfterApproval('ask', false)).toBe('pending');
+    expect(receiptAfterApproval('never', false)).toBe('skipped');
+    expect(receiptAfterApproval('always', true)).toBe('skipped');
+    expect(['pending', 'printed', 'declined', 'failed', 'skipped'].map(receiptStatusOf)).toEqual(['pending', 'printed', 'declined', 'failed', 'skipped']);
+    expect([undefined, null, 'none', 'queued', 'x'].map(receiptStatusOf)).toEqual(['pending', 'pending', 'skipped', 'pending', 'pending']);
+  });
+
+  it('an order stored with a refused receipt value is sent as one the cloud takes, once', async () => {
+    const db = openDb(path.join(mkdtempSync(path.join(os.tmpdir(), 'kd-orders-')), 'k.db'));
+    migrate(db);
+    const store = new OrderStore(db);
+    const stored = { localId: 'old-1', createdAtMs: 1, businessDate: '2026-10-06', serviceType: 'take_away', tableRef: null, fulfillmentMode: 'BON', configVersion: null, customerName: null, customerPhone: null, itemCount: 1, totalAgorot: 1200, tipAgorot: 0, paid: true, paidAt: '2026-10-06T09:15:01.300Z', transactionId: 't', transactionNumber: '40000001', pickupNumber: 1, pickupLabel: '1', bonRequestedAtMs: 1, bonJobIds: ['j'], bonStatus: 'sent', bonDetail: null, receiptStatus: 'none', recovered: false, syncedHash: 'refused-before' };
+    db.run('INSERT INTO kiosk_orders (local_id, created_at, json) VALUES (?, ?, ?)', 'old-1', 1, JSON.stringify(stored));
+    expect(store.get('old-1')?.receiptStatus).toBe('skipped');
+    const posts: Array<Array<Record<string, unknown>>> = [];
+    const api = {
+      post: async (_p: string, body: { orders: Array<Record<string, unknown>> }) => {
+        posts.push(body.orders);
+        // As server/app/schemas/kiosk.py KioskOrderIn takes it.
+        for (const w of body.orders) expect(['printed', 'declined', 'failed', 'skipped', 'pending']).toContain(w.receiptStatus);
+        return { kind: 'ok', status: 200, body: { accepted: body.orders.map((w) => w.localId) }, headers: new Headers() };
+      },
+    } as unknown as Api;
+    expect(await store.push(api, 'm')).toBe(true);
+    expect(await store.push(api, 'm')).toBe(true);
+    expect(posts).toHaveLength(1);
+    expect(posts[0][0].receiptStatus).toBe('skipped');
+  });
+
+  it('the kiosk’s part of the main till’s local shop Z (POST shop-z/remote-part), its manifest the cloud’s own', () => {
+    // The shift closed for the main till's request, with a sale and a declined attempt in it.
+    const declined = { ...draft('cancelled'), id: 'c1a8f0e2-5b7d-4a1e-9f3c-6d2e8b1a4c78', number: 58 };
+    const docs = [draft('completed'), declined];
+    const close = shiftCloseWire(shift, docs, { closedByName: 'קיוסק · קיוסק Windows', unattended: true, closeRequestId: 'lan-req-1', vatRate: 0.18, now: '2026-10-06T21:00:03.120Z' });
+    const closed: ShiftRow = { ...shift, status: 'closing', closed_at: '2026-10-06T21:00:03.120Z', close_payload: JSON.stringify(close) };
+    const built = kioskSection(
+      { machineId: MACHINE, posNumber: '4', machineName: 'קיוסק Windows', operator: { id: `kiosk:${MACHINE}`, name: 'קיוסק Windows' } },
+      [closed],
+      () => docs,
+    );
+    if (built.kind !== 'ok') throw new Error('unreadable');
+    const report = lanCloseReport({ requestId: 'lan-req-1', roundId: 'round-1', force: true }, MACHINE, 'closed', SHIFT, lanOutcomeMessage('closed'), built.section);
+    const section = report.section as Record<string, unknown>;
+    expect(section.shiftIds).toEqual([SHIFT]);
+    expect(section.firstDocumentNumber).toBe('40000057');
+    expect(section.lastDocumentNumber).toBe('40000058');
+    expect((section.report as Record<string, unknown>).deviceRole).toBe('kiosk');
+    expect((section.manifest as Record<string, unknown>).documentIds).toEqual([draft('completed').id]);
+    golden('shop_z_remote_part', report);
   });
 
   it('a KDS release of a paid KDS-mode order (the Android kiosk’s payload, idempotent by the document)', () => {

@@ -13,6 +13,7 @@ import {
   CHECKOUT_STEPS,
   PAYMENT_METHODS,
   kioskAsksPayMethod,
+  payMethodAsk,
   kioskPayMethods,
   kioskRemainderAgorot,
   TIP_OTHER_MAX_SHEKELS,
@@ -1933,5 +1934,24 @@ describe('"מנוע תצוגה בקיוסק אנדרואיד" — general.render
     assert.deepEqual(codes('web'), []);
     assert.deepEqual(codes('native'), []);
     assert.deepEqual(codes('html'), ['general.renderer:enum']);
+  });
+});
+
+describe('"איך תרצו לשלם?" by its mode (payMethodAsk, stepModes.payMethod — PARITY gap 10)', () => {
+  it('the card alone and usable: straight to the pinpad; nothing that pays: not asked', () => {
+    assert.deepEqual(payMethodAsk(['card'], ['card'], 'off'), { asks: false, optional: false, fallback: 'card' });
+    assert.deepEqual(payMethodAsk(['card', 'voucher'], ['voucher'], 'required'), { asks: false, optional: false, fallback: null });
+  });
+
+  it('off: the card charged without asking when it is offered and usable — else asked as required', () => {
+    assert.deepEqual(payMethodAsk(['card', 'cash_at_till', 'voucher'], ['card', 'cash_at_till', 'voucher'], 'off'), { asks: false, optional: false, fallback: 'card' });
+    assert.deepEqual(payMethodAsk(['card', 'cash_at_till'], ['cash_at_till'], 'off'), { asks: true, optional: false, fallback: 'cash_at_till' });
+    assert.deepEqual(payMethodAsk(['cash_at_till', 'voucher'], ['cash_at_till', 'voucher'], 'off'), { asks: true, optional: false, fallback: 'cash_at_till' });
+  });
+
+  it('optional: asked, and may be passed with the default; required: a choice made', () => {
+    assert.deepEqual(payMethodAsk(['cash_at_till', 'card'], ['cash_at_till', 'card'], 'optional'), { asks: true, optional: true, fallback: 'card' });
+    assert.deepEqual(payMethodAsk(['cash_at_till', 'card'], ['cash_at_till', 'card'], 'required'), { asks: true, optional: false, fallback: 'card' });
+    assert.deepEqual(payMethodAsk(['cash_at_till'], ['cash_at_till'], 'required'), { asks: true, optional: false, fallback: 'cash_at_till' });
   });
 });

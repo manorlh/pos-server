@@ -31,6 +31,8 @@ export const KV = {
   snapshot: 'r2m.kiosk.snapshot',
   snapshotAt: 'r2m.kiosk.snapshotAt',
   catalog: 'r2m.kiosk.catalog',
+  /** "מבצעים": `GET /sync/{m}/promotions` as it came, with its ETag. */
+  promotions: 'r2m.kiosk.promotions',
   settings: 'r2m.kiosk.settings',
   parameters: 'r2m.kiosk.parameters',
   pickup: 'r2m.kiosk.pickup',

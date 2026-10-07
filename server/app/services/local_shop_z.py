@@ -194,7 +194,7 @@ def _participant(db: Session, machine: POSMachine, remote: Optional[set] = None)
 
     out = _ref(machine)
     out["kiosk"] = bool(getattr(machine, "is_kiosk", False))
-    out["remote"] = str(machine.id) in (remote or set())
+    out["remote"] = closes_through_cloud(machine, remote)
     section = lan_section(db, machine)
     if section is not None:
         out["supportClosed"] = section
@@ -1890,6 +1890,18 @@ REMOTE_FINAL_OUTCOMES = ("closed", "no_open_shift", "blocked_payment", "blocked_
 REMOTE_OUTCOMES = REMOTE_FINAL_OUTCOMES + ("waiting_card",)
 #: A main till's word on who it heard on the LAN is a hint while the main till is heard from.
 LAN_SEEN_FRESH = timedelta(minutes=15)
+
+
+def closes_through_cloud(machine: POSMachine, remote: Optional[set] = None) -> bool:
+    """
+    Is this participant closed through the cloud rather than over the LAN: set "מרוחק (דרך
+    הענן)", or a Windows device whatever the setting — the Windows kiosk has no LAN client to
+    hear the main till (it answers `pendingShopZPart` only), so over the LAN it would block
+    the Z as unreachable, forever (PARITY.md gap 5).
+    """
+    from app.services.display_devices import PLATFORM_WINDOWS, platform_of
+
+    return str(machine.id) in (remote or set()) or platform_of(machine) == PLATFORM_WINDOWS
 
 
 def remote_till_ids(shop: Optional[Shop]) -> set:

@@ -152,12 +152,22 @@ export function startPaymentInput(raw: unknown): StartPaymentIn | null {
       ? (l.options as Array<Record<string, unknown>>).slice(0, 60).flatMap((o) => {
           const groupId = str(o?.groupId, 64);
           const optionId = str(o?.optionId, 64);
-          return groupId && optionId ? [{ groupId, optionId }] : [];
+          const q = Number(o?.qty);
+          const pre: 'lite' | 'extra' | 'side' | null = o?.pre === 'lite' || o?.pre === 'extra' || o?.pre === 'side' ? o.pre : null;
+          return groupId && optionId ? [{ groupId, optionId, qty: Number.isFinite(q) && q >= 1 && q <= 99 ? Math.trunc(q) : 1, pre }] : [];
         })
+      : [];
+    // A meal: each slot's product (the service prices it from its own catalog).
+    const parts = Array.isArray((l.meal as Record<string, unknown> | undefined)?.components)
+      ? (((l.meal as Record<string, unknown>).components as Array<Record<string, unknown>>).slice(0, 20).flatMap((c) => {
+          const slotId = str(c?.slotId, 64);
+          const pid = str(c?.productId, 64);
+          return slotId && pid ? [{ slotId, productId: pid }] : [];
+        }))
       : [];
     const notes = Array.isArray(l.notes) ? (l.notes as unknown[]).flatMap((n) => (typeof n === 'string' && n.trim() ? [n.slice(0, 200)] : [])).slice(0, 5) : [];
     const unit = Number(l.unitAgorot);
-    lines.push({ key, productId, qty: Math.trunc(qty), options, notes, ...(Number.isFinite(unit) ? { unitAgorot: Math.round(unit) } : {}) });
+    lines.push({ key, productId, qty: Math.trunc(qty), options, notes, ...(Number.isFinite(unit) ? { unitAgorot: Math.round(unit) } : {}), ...(parts.length > 0 ? { meal: { components: parts } } : {}) });
   }
   const service = b.service === 'eat_in' ? 'eat_in' : 'take_away';
   const tipPct = typeof b.tipPct === 'number' && Number.isFinite(b.tipPct) && b.tipPct >= 0 && b.tipPct <= 100 ? b.tipPct : null;

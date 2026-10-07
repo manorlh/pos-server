@@ -5,8 +5,8 @@
  *
  *  - attract → service type (skipped when only one) → catalog → product → cart (or "דלג על
  *    סל": straight to payment, or a mini confirm) → details (only when something is asked: the
- *    checkout steps — the customer's details and / or the tip, in the configured order)
- *    → payment on the terminal → success → back to the attract screen;
+ *    checkout steps — the customer's details, the tip and "איך תרצו לשלם?", in the configured order)
+ *    → payment (the terminal, or the order to the till) → success → back to the attract screen;
  *  - nothing resets, pauses or closes the kiosk while a payment is on its way or its result
  *    is unknown — the inactivity timer does not even run there;
  *  - a pause, the opening hours and the terminal's state take effect when the kiosk is idle or
@@ -79,6 +79,11 @@ export interface KioskFlowRules {
   asksDetails: (service: KioskService | null) => boolean;
   /** "טיפ לצוות" is asked before the payment (kioskTipAsked): a step of its own on the details screen. */
   asksTip?: boolean;
+  /**
+   * "איך תרצו לשלם?" is asked right before the payment (the Android kiosk's KioskFlow.asksPayMethod,
+   * docs/SPEC_KIOSK.md §23): the details screen hosts it, so the checkout goes there first. Absent: never.
+   */
+  asksPayMethod?: boolean;
   cartEmpty: boolean;
   detailsStep: KioskDetailsStep;
   /** "לקחת / לשבת" is chosen on the attract screen: no service screen to go back to. */
@@ -170,7 +175,7 @@ function checkout(s: KioskFlowState, r: KioskFlowRules): KioskFlowState {
   if (r.cartEmpty) return s;
   const asks =
     r.asksDetails(s.service) && (r.detailsStep === 'before_pay' ? true : r.detailsStep === 'after_pay' ? false : !s.detailsDone);
-  return asks || r.asksTip ? details(s, 'pay') : { ...s, screen: 'pay', cameFrom: s.screen, pay: 'idle' };
+  return asks || r.asksTip || r.asksPayMethod ? details(s, 'pay') : { ...s, screen: 'pay', cameFrom: s.screen, pay: 'idle' };
 }
 
 export type KioskBackAction = 'navigate' | 'confirm_leave' | 'cancel_payment' | 'blocked' | 'none';
@@ -289,7 +294,7 @@ function back(s: KioskFlowState, r: KioskFlowRules): KioskFlowState {
     }
     case 'pay':
       if (holds(s.pay) || s.pay === 'approved') return s;
-      if ((r.detailsStep === 'before_pay' && r.asksDetails(s.service)) || r.asksTip) return { ...s, screen: 'details', pay: 'idle', detailsNext: 'pay' };
+      if ((r.detailsStep === 'before_pay' && r.asksDetails(s.service)) || r.asksTip || r.asksPayMethod) return { ...s, screen: 'details', pay: 'idle', detailsNext: 'pay' };
       return { ...s, screen: r.skipCart === 'off' ? 'cart' : 'catalog', pay: 'idle' };
     case 'success':
       return rest(s);

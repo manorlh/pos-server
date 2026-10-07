@@ -18,7 +18,14 @@ Rules:
   till may take it, and the order may expire again;
 * a locked order never expires under the till that holds it;
 * "paid" always wins: a till that took the money (even one that was offline and never got the
-  lock) is believed, and the conflict is logged.
+  lock) is believed, and the conflict is logged;
+* the cloud prices the basket again (`kiosk_basket_check.price_lines`: base prices, choices,
+  meals — the till runs its own promotions when it takes the money). A new order that differs
+  is refused (`price_changed`, with the lines and the cloud's prices) while its customer is
+  still at the kiosk — the kiosk says so (`customerWaiting`) and it reached the cloud within
+  `PRICE_FRESH_MIN` — so the kiosk shows the change and asks again. Any other (a retry, a kiosk
+  that was offline, one that does not say: the slip may be in the customer's hand) is taken as
+  it is, the cloud's verdict kept on it (`cart.priceCheck`) and logged.
 """
 from __future__ import annotations
 
@@ -50,6 +57,10 @@ DEFAULT_EXPIRY_MIN = 30
 WAKE_EVENT = "kiosk-order"
 
 NOT_FOUND = "kiosk_order_not_found"
+PRICE_CHANGED = "price_changed"
+#: A new order the cloud prices differently is refused at most this long after it was placed,
+#: and only while the kiosk says its customer waits; later it is taken as it is, with the verdict.
+PRICE_FRESH_MIN = 5
 LOCKED = "kiosk_order_locked"
 CLOSED = "kiosk_order_closed"
 NOT_A_TILL = "kiosk_cannot_pay_orders"
@@ -257,6 +268,16 @@ def expire_due(db: Session, shop_id: Any, *, now: Optional[datetime] = None) -> 
     return out
 
 
+def price_check(db: Session, kiosk: POSMachine, cart: Any) -> Optional[Dict[str, Any]]:
+    """The cloud's price of the order's basket (its held sale); None when it carries none."""
+    from app.services import kiosk_basket_check as BC
+
+    lines = BC.codec_lines(cart)
+    if lines is None:
+        return None
+    return BC.price_lines(db, kiosk, lines)
+
+
 def upsert_from_kiosk(db: Session, kiosk: POSMachine, items: Iterable[Any], *, now: Optional[datetime] = None) -> Dict[str, Any]:
     """`POST /sync/{kiosk}/kiosk/open-orders`: upsert by (kiosk, localId). The caller commits."""
     now = _now(now)
@@ -285,6 +306,18 @@ def upsert_from_kiosk(db: Session, kiosk: POSMachine, items: Iterable[Any], *, n
                 rejected.append({"localId": order.local_id, "reason": problem})
                 continue
             created = min(_aware(order.created_at) or now, now)
+            cart = order.cart
+            # The cloud's price, for an order still to be paid (one a LAN till took is history).
+            priced = price_check(db, kiosk, cart) if order.state == OPEN else None
+            if priced is not None and not priced["ok"]:
+                if order.customer_waiting and now - created <= timedelta(minutes=PRICE_FRESH_MIN):
+                    rejected.append({"localId": order.local_id, "reason": PRICE_CHANGED, "lines": priced["lines"]})
+                    continue
+                logger.warning(
+                    "kiosk order %s (kiosk %s) taken with prices the cloud does not hold: %s",
+                    order.local_id, kiosk.id, priced["lines"],
+                )
+                cart = {**cart, "priceCheck": {**priced, "checkedAt": _iso(now)}}
             row = KioskOrder(
                 id=uuid.uuid4(),
                 tenant_id=kiosk.tenant_id,
@@ -312,7 +345,7 @@ def upsert_from_kiosk(db: Session, kiosk: POSMachine, items: Iterable[Any], *, n
                 due_agorot=order.due_agorot,
                 voucher_agorot=order.voucher_agorot,
                 lines=[line.model_dump(by_alias=True) for line in order.lines],
-                cart=order.cart,
+                cart=cart,
                 vouchers=[v.model_dump(by_alias=True) for v in order.vouchers] or None,
                 expires_at=created + timedelta(minutes=_expiry_min(db, kiosk)),
                 kitchen_sent=order.kitchen_sent,

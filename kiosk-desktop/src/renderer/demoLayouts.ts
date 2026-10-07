@@ -67,6 +67,8 @@ export function richCatalog(): Catalog {
       id,
       name,
       price,
+      priceAgorot: Math.round(price * 100),
+      noDiscount: false,
       imageUrl: art(emoji, hue),
       imageLarge: null,
       soldOut: false,
@@ -111,18 +113,39 @@ export function richCatalog(): Catalog {
     groups: {
       b1: [
         { id: 'g1', name: 'מידת עשייה', kind: 'choice', min: 1, max: 1, options: [{ id: 'o1', name: 'מדיום', price: 0, isDefault: true }, { id: 'o2', name: 'מדיום־וול', price: 0, isDefault: false }, { id: 'o3', name: 'וול דאן', price: 0, isDefault: false }] },
-        { id: 'g2', name: 'תוספות', kind: 'addon', min: 0, max: 3, options: [{ id: 'o4', name: 'ביצת עין', price: 6, isDefault: false }, { id: 'o5', name: 'פטריות', price: 5, isDefault: false }, { id: 'o6', name: 'חלפיניו', price: 4, isDefault: false }] },
+        // "1 בחינם", a quantity per option (eggs up to 2): the till's own rules (kioskMoney.ts).
+        { id: 'g2', name: 'תוספות', kind: 'addon', min: 0, max: 4, freeCount: 1, allowQuantity: true, allowPre: false, options: [{ id: 'o4', name: 'ביצת עין', price: 6, priceAgorot: 600, isDefault: false, maxQty: 2 }, { id: 'o5', name: 'פטריות', price: 5, priceAgorot: 500, isDefault: false, maxQty: null }, { id: 'o6', name: 'חלפיניו', price: 4, priceAgorot: 400, isDefault: false, maxQty: null }] },
+        // "מעט / הרבה / בצד" ("הרבה" twice the price).
+        { id: 'g5', name: 'רטבים', kind: 'addon', min: 0, max: 2, freeCount: 0, allowQuantity: false, allowPre: true, options: [{ id: 'o12', name: 'איולי', price: 2, priceAgorot: 200, isDefault: false, maxQty: null }, { id: 'o13', name: 'צ׳ילי', price: 2, priceAgorot: 200, isDefault: false, maxQty: null }] },
       ],
       b2: [
         { id: 'g3', name: 'גודל', kind: 'choice', min: 1, max: 1, options: [{ id: 'o7', name: 'רגיל', price: 0, isDefault: true }, { id: 'o8', name: 'כפול', price: 10, isDefault: false }] },
         { id: 'g4', name: 'בלי…', kind: 'removal', min: 0, max: 4, options: [{ id: 'o9', name: 'בצל', price: 0, isDefault: false }, { id: 'o10', name: 'עגבנייה', price: 0, isDefault: false }, { id: 'o11', name: 'חסה', price: 0, isDefault: false }] },
       ],
     } as unknown as Catalog['groups'],
+    // The meals' windows (menu.meals): a slot at a time, upcharges on the dearer choices.
+    meals: {
+      d1: [
+        { id: 'm-main', name: 'בורגר', minSelect: 1, maxSelect: 1, quantity: 1, allowRepeat: false, choices: [{ productId: 'b2', upchargeAgorot: 0, isDefault: true }, { productId: 'b3', upchargeAgorot: 0, isDefault: false }] },
+        { id: 'm-side', name: 'תוספת', minSelect: 1, maxSelect: 1, quantity: 1, allowRepeat: false, choices: [{ productId: 't1', upchargeAgorot: 0, isDefault: true }, { productId: 't2', upchargeAgorot: 400, isDefault: false }] },
+        { id: 'm-drink', name: 'שתייה', minSelect: 1, maxSelect: 1, quantity: 1, allowRepeat: false, choices: [{ productId: 'r1', upchargeAgorot: 0, isDefault: true }, { productId: 'r2', upchargeAgorot: 200, isDefault: false }, { productId: 'r3', upchargeAgorot: 1200, isDefault: false }] },
+      ],
+      b5: [
+        { id: 'm-main', name: 'בורגר', minSelect: 1, maxSelect: 1, quantity: 1, allowRepeat: false, choices: [{ productId: 'b1', upchargeAgorot: 0, isDefault: true }, { productId: 'b4', upchargeAgorot: 0, isDefault: false }] },
+        { id: 'm-side', name: 'תוספת', minSelect: 1, maxSelect: 1, quantity: 1, allowRepeat: false, choices: [{ productId: 't1', upchargeAgorot: 0, isDefault: true }, { productId: 't2', upchargeAgorot: 400, isDefault: false }] },
+        { id: 'm-drink', name: 'שתייה', minSelect: 1, maxSelect: 1, quantity: 1, allowRepeat: false, choices: [{ productId: 'r1', upchargeAgorot: 0, isDefault: true }, { productId: 'r2', upchargeAgorot: 200, isDefault: false }] },
+      ],
+    },
     quickNotes: { b1: ['בלי בצל', 'רוטב בצד'] },
     // "להפוך לארוחה?": the burgers' upgrade to the meals.
     upsells: [
       { triggerType: 'product', triggerIds: ['b1', 'b2', 'b3'], productIds: ['b5', 'b6'], categoryIds: [], prompt: 'רוצים להפוך לארוחה?' },
     ],
     categoryImages: {},
+    // "מבצעים", as the cloud sends them (GET /sync/{m}/promotions).
+    promotions: [
+      { id: 'dp1', name: 'קולה שנייה חינם', type: 'buy_x_get_y', priority: 0, config: { target: { productIds: ['r1'] }, buyQuantity: 1, getQuantity: 1 } },
+      { id: 'dp2', name: '10% על קינוחים', type: 'discount', priority: 0, config: { target: { categoryIds: ['k-desserts'] }, discountKind: 'percent', discountValue: 10 } },
+    ],
   };
 }

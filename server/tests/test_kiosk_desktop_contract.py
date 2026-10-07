@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import json
 import pathlib
+from typing import get_args
 
 import pytest
+from pydantic import ValidationError
 
 from app.schemas.kiosk import KioskOrderIn, KioskOrdersIn
 from app.schemas.shift import ShiftCloseIn, ShiftOpenIn
@@ -92,6 +94,32 @@ def test_the_kiosk_orders_validate():
     assert orders[0].transaction_number == "40000057"
 
 
+def _literal_values(field: str) -> set:
+    return set(get_args(KioskOrderIn.model_fields[field].annotation))
+
+
+def test_the_kiosk_orders_cover_every_state_the_server_takes():
+    """
+    Every receipt / bon state and order status, each one validated by the server: the Windows
+    kiosk once sent receipt "none" / "queued", which this schema refuses, and those orders were
+    sent again on every sync, forever (PARITY.md gap 4). The Android kiosk sends the same values
+    (domain/KioskOrders.kt KioskReceiptStatus / KioskBonStatus).
+    """
+    orders = [KioskOrderIn.model_validate(o) for o in load("kiosk_orders")["orders"]]
+    assert {o.receipt_status for o in orders} == _literal_values("receipt_status")
+    assert {o.bon_status for o in orders} == _literal_values("bon_status")
+    assert {o.status for o in orders} == _literal_values("status")
+    assert {o.fulfillment_mode for o in orders} == {"BON", "KDS"}
+    assert {o.service_type for o in orders} == {"take_away", "eat_in"}
+
+
+def test_a_refused_receipt_value_is_still_refused():
+    """The kiosk maps the old values itself; the server's vocabulary does not widen for them."""
+    raw = dict(load("kiosk_orders")["orders"][0], receiptStatus="none")
+    with pytest.raises(ValidationError):
+        KioskOrderIn.model_validate(raw)
+
+
 def test_the_kds_release_is_the_kitchen_engines_and_idempotent_by_the_document():
     """A paid KDS-mode order of the Windows kiosk (kiosk-desktop src/main/kiosk/kdsRelease.ts)."""
     import hashlib
@@ -108,3 +136,62 @@ def test_the_kds_release_is_the_kitchen_engines_and_idempotent_by_the_document()
     raw[6] = (raw[6] & 0x0F) | 0x30
     raw[8] = (raw[8] & 0x3F) | 0x80
     assert body.id == str(uuid.UUID(bytes=bytes(raw)))
+
+
+def test_the_kiosk_part_of_a_local_shop_z_is_the_clouds_own_computation():
+    """
+    The Windows kiosk's answer to the main till's local shop Z (`POST shop-z/remote-part`,
+    kiosk-desktop src/main/fiscal/shopZPart.ts, PARITY.md gap 5): the section the main till prints
+    and uploads, with its manifest. The manifest must be the one the cloud computes over the same
+    documents as it ingests them (`shop_z_manifest.manifest_of` of the kiosk's own wire, the card
+    sale fixture above), and the printed section must be its manifest — so `verify` can only find
+    the paper and the cloud the same.
+    """
+    from types import SimpleNamespace
+
+    from app.services import shop_z_manifest as M
+    from app.services.local_shop_z import REMOTE_FINAL_OUTCOMES, LocalShopZTill, _paper_vs_manifest
+
+    report = load("shop_z_remote_part")
+    assert report["outcome"] in REMOTE_FINAL_OUTCOMES
+    section = report["section"]
+    part = LocalShopZTill.model_validate(section)
+    assert [str(s) for s in part.shift_ids] == [report["shiftId"]]
+
+    env = TransactionsBatchEnvelope.model_validate(load("transaction_card_sale_320"))
+    (_, tx, _), = validate_documents(env.transactions)[0]
+    row = SimpleNamespace(
+        id=tx.id, transaction_number=tx.transaction_number, document_type=tx.document_type,
+        status=tx.status, refund_of_transaction_id=tx.refund_of_transaction_id,
+        total_amount=tx.total_amount, document_discount=tx.document_discount, vat_amount=tx.vat_amount,
+        tip_amount=tx.tip_amount, payment_method=tx.payment_method,
+    )
+    legs = [SimpleNamespace(method=p.method, amount=p.amount) for p in tx.payments]
+    cloud = M.manifest_of([M.canonical_of_row(row, legs)])
+    printed = dict(section["manifest"])
+    assert printed.pop("machineId") == report["machineId"]
+    assert printed.pop("shiftIds") == section["shiftIds"]
+    assert M.compare(printed, cloud) == []
+    assert printed == cloud
+    assert _paper_vs_manifest(section["report"], cloud) == []
+    # A kiosk's part says so, with its system operator (SPEC_INDEPENDENT_TILL §8.13).
+    assert section["report"]["deviceRole"] == "kiosk"
+    assert section["report"]["operator"]["id"].startswith("kiosk:")
+
+
+def test_the_windows_kiosks_open_order_validates():
+    """
+    "מזומן בקופה" on the Windows kiosk (kiosk-desktop src/main/kiosk/payAtTill.ts, PARITY.md gap 7):
+    the open order as it posts it — the browser kiosk's own wire (client lib/kioskWebOrders.ts) —
+    validated by the server's schema: what the till takes adds up, and the lines are what the goods
+    cost after the promotions.
+    """
+    from app.schemas.kiosk_open_orders import KioskOpenOrderIn
+
+    raw = load("open_order")
+    order = KioskOpenOrderIn.model_validate(raw)
+    assert order.state == "open"
+    assert sum(line.total_agorot for line in order.lines) == order.total_agorot
+    assert order.due_agorot == order.total_agorot + order.tip_agorot - order.voucher_agorot
+    codec = json.loads(order.cart["codec"])
+    assert [line["id"] for line in codec["lines"]] == ["L1", "L2"]

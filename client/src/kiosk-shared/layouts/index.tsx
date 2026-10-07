@@ -12,7 +12,7 @@
 import { useContext, useEffect, useState, type ComponentType, type ReactNode } from 'react';
 import { catalogKindOf, itemViewOf, layoutOf, type LayoutCatalog } from '@/lib/kioskLayout';
 import { CatalogScreen, ProductSheet, type PGroup, type PLine, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
-import { MealChooser, StepsProductSheet } from './item';
+import { MealChooser, MealSheet, StepsProductSheet } from './item';
 import { ReachDishContext } from './reach';
 import { guidedCheckout, LandingCatalog, serviceStepOf } from './landing';
 import { GuidedBar, LayoutActionsContext } from './parts';
@@ -100,6 +100,9 @@ interface SheetProps {
 
 /** The dish's window as layout.itemView says: one group at a time (steps), the whole screen, a smaller window, today's. */
 export function LayoutProductSheet(props: SheetProps) {
+  // A meal (the real kiosk's menu.meals): its window, a slot at a time, priced with its components.
+  const meal = props.m.mealOf?.(props.product) ?? null;
+  if (meal) return <MealSheet m={props.m} product={props.product} meal={meal} onClose={props.onClose} onAdd={props.onAdd} />;
   const view = itemViewOf(props.m.cfg);
   if (view === 'steps') return <StepsProductSheet {...props} />;
   return <ProductSheet {...props} variant={view === 'full' ? 'full' : view === 'modal' ? 'modal' : 'sheet'} />;

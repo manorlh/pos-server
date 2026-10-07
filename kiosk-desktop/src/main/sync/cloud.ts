@@ -95,6 +95,8 @@ const K = {
   beat: 'cloud.heartbeat',
   users: 'cloud.posUsers',
   usersAt: 'cloud.posUsersAt',
+  promotions: 'cloud.promotions',
+  promotionsEtag: 'cloud.promotionsEtag',
 } as const;
 
 export class CloudStore {
@@ -196,6 +198,20 @@ export class CloudStore {
       machineCatalog: (body.machineCatalog as CatalogSnapshot['machineCatalog']) ?? prev.machineCatalog,
       serverTime: typeof body.serverTime === 'string' ? body.serverTime : prev.serverTime,
     } satisfies CatalogSnapshot);
+  }
+
+  /** The promotions as `GET /sync/{m}/promotions` sent them (read by lib/kioskMoney.ts promotionsOf). */
+  promotions(): Array<Record<string, unknown>> {
+    return this.read<Array<Record<string, unknown>>>(K.promotions) ?? [];
+  }
+
+  promotionsEtag(): string | null {
+    return this.kv.get(K.promotionsEtag);
+  }
+
+  setPromotions(list: Array<Record<string, unknown>>, etag: string | null) {
+    this.write(K.promotions, list);
+    if (etag) this.kv.set(K.promotionsEtag, etag);
   }
 
   kioskSnapshot(): Record<string, unknown> | null {

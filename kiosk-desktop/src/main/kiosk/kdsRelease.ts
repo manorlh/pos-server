@@ -95,7 +95,13 @@ export function kdsSaleRelease(input: KdsSaleInput): Record<string, unknown> {
       if (category) item.categoryId = category.slice(0, 64);
       const notes = cut(l.notes.join(' · '), 500);
       if (notes) item.notes = notes;
-      const mods = l.options.map((o) => (o.qty > 1 ? `${o.qty}× ${o.name}` : o.name)).filter((m) => m.trim()).slice(0, 40);
+      const mods = [
+        ...l.options.map((o) => (o.qty > 1 ? `${o.qty}× ${o.name}` : o.name)),
+        // A meal: its components, for the kitchen to make.
+        ...(l.meal?.components ?? []).map((c) => c.name),
+      ]
+        .filter((m) => m.trim())
+        .slice(0, 40);
       if (mods.length > 0) item.mods = mods;
       return item;
     });

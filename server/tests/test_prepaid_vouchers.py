@@ -178,6 +178,30 @@ class TestBatches:
         assert refused(make_batch, w, items=[{"productId": w.general.id, "quantity": 1}]).detail == PV.PRODUCT_INVALID
         assert refused(make_batch, w, items=[{"productId": uuid.uuid4(), "quantity": 1}]).detail == PV.PRODUCT_INVALID
 
+    def test_the_picker_offers_exactly_what_a_batch_may_carry(self, w):
+        # 07.10.2026: the picker listed every company's products and the save refused one of
+        # another company as "אינו מתאים". Now it asks the cloud, which applies the save's rule.
+        other = Company(id=uuid.uuid4(), tenant_id=w.tenant.id, name="חברה אחרת")
+        w.db.add(other)
+        w.db.flush()
+        foreign = Product(
+            id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=other.id, category_id=w.hotdog.category_id,
+            catalog_level=CatalogLevel.GLOBAL, name="של חברה אחרת", price=5, sku="sku-foreign",
+        )
+        w.db.add(foreign)
+        w.db.commit()
+
+        def offered(search=None):
+            out = R.list_prepaid_voucher_products(company_id=str(w.company.id), search=search, limit=50, **_ctx(w))
+            return [p["name"] for p in out["items"]]
+
+        # Neither the general item nor the other company's product is offered…
+        assert sorted(offered()) == sorted(["נקניקייה", "שתייה"])
+        assert offered("שתי") == ["שתייה"]
+        # …and what is not offered is what the save refuses; what is offered, it takes.
+        assert refused(make_batch, w, items=[{"productId": foreign.id, "quantity": 1}]).detail == PV.PRODUCT_INVALID
+        assert make_batch(w, items=[{"productId": w.drink.id, "quantity": 1}])["items"][0]["name"] == "שתייה"
+
     def test_the_form_is_validated(self, w):
         with pytest.raises(ValidationError):
             PrepaidVoucherBatchCreate(name=" ", companyId=w.company.id, items=[{"productId": w.hotdog.id, "quantity": 1}], count=1)
@@ -397,6 +421,7 @@ def test_the_till_routes_are_mounted():
     assert ("POST", "/api/v1/sync/{machine_id}/prepaid-vouchers/lookup") in mounted
     assert ("POST", "/api/v1/sync/{machine_id}/prepaid-vouchers/redeem") in mounted
     assert ("POST", "/api/v1/prepaid-vouchers/batches") in mounted
+    assert ("GET", "/api/v1/prepaid-vouchers/products") in mounted
 
 
 class TestReverse:

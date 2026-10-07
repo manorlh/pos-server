@@ -57,6 +57,11 @@ export interface KioskLivePayMethod {
   error: string | null;
   /** Something the host adds under the tiles (the browser's camera button for a voucher). */
   extra?: ReactNode;
+  /**
+   * "רשות" (payment.stepModes.payMethod optional, lib/kioskConfig.ts payMethodAsk): the step may be
+   * passed with this method ("המשך · אשראי"); absent when a choice must be made.
+   */
+  skip?: { method: PaymentMethod; onSkip: () => void } | null;
 }
 
 const ICONS: Record<PaymentMethod, typeof CreditCard> = { card: CreditCard, voucher: Ticket, cash_at_till: Banknote };
@@ -168,6 +173,12 @@ export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePay
             ) : (
               <div className="flex flex-col gap-2.5">{live.tiles.map(tile)}</div>
             )}
+            {/* "רשות": passed with the default method. */}
+            {live.skip && !asking ? (
+              <BigButton m={m} variant="soft" onClick={() => !live.busy && live.skip?.onSkip()} disabledLook={live.busy}>
+                {m.txt('entryContinue')} · {m.txt(LABEL[live.skip.method])}
+              </BigButton>
+            ) : null}
             {live.extra}
             {vouchered ? (
               <div className="space-y-2 p-3.5" style={{ background: `${m.c.primary}0D`, borderRadius: radius }}>

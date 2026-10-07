@@ -23,8 +23,10 @@ Everything else — a document without the flag and without the "ה-" number —
 document and takes the real path unchanged, even while the shop is in training mode: a
 till that has not picked up the flag yet still sells for real (the spec's edge case).
 
-**Turning it on** is refused while a real shift is open on any till of the shop: a till
-switches only at a shift boundary. **Turning it off** (the dashboard's wizard) deletes
+**Turning it on** is refused for now (`AVAILABLE`, 409 `training_not_available`): no device
+implements phase 2 yet, so a practice sale would be a real document. Once they do, it is
+refused while a real shift is open on any till of the shop: a till switches only at a shift
+boundary. **Turning it off** (the dashboard's wizard) deletes
 the quarantine and the shop's open table orders (and the orders paid with training
 documents), optionally removes the demo menu (app/services/demo_menu.py), and logs who,
 when and what was deleted.
@@ -72,7 +74,16 @@ REAL = "real"
 QUARANTINE = "quarantine"
 DROP = "drop"
 
+#: Whether a shop may be put in training mode at all. **Off until the devices implement it**
+#: (docs/SPEC_TRAINING_MODE.md phase 2): no Android till, kiosk, Windows kiosk or browser
+#: flags a training document or uses the "ה-" series today, so a "practice" sale in a shop in
+#: training mode would be a real tax document and a real card charge (PARITY.md gap 6).
+#: Only turning it ON is blocked: a shop already in it can still leave, and the quarantine
+#: still takes whatever a device flags.
+AVAILABLE = False
+
 #: The 409 / 422 codes (`detail.code`).
+NOT_AVAILABLE = "training_not_available"
 REAL_SHIFT_OPEN = "real_shift_open"
 NOT_IN_TRAINING = "not_in_training"
 NAME_MISMATCH = "name_mismatch"
@@ -517,6 +528,8 @@ def status_out(db: Session, shop: Shop, user: User) -> Dict[str, Any]:
         "shopId": str(shop.id),
         "shopName": shop.name,
         "trainingMode": is_on(shop),
+        #: False: it cannot be turned on yet (`AVAILABLE`); the dashboard shows why.
+        "available": AVAILABLE,
         "startedAt": _iso(shop.training_started_at),
         "startedBy": _user_ref(db, shop.training_started_by),
         "endedAt": _iso(shop.training_ended_at),
@@ -584,9 +597,20 @@ def _flag_moved(shop: Shop, now: datetime) -> None:
 
 
 def start(db: Session, shop: Shop, user: Optional[User], *, check_shifts: bool = True) -> None:
-    """Turn it on. 409 `real_shift_open` (with the tills) while a real shift is open."""
+    """
+    Turn it on. 409 `training_not_available` while the devices do not implement it
+    (`AVAILABLE`); 409 `real_shift_open` (with the tills) while a real shift is open.
+    """
     if is_on(shop):
         return
+    if not AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": NOT_AVAILABLE,
+                "message": "מצב הדרכה עדיין לא זמין: הקופות והקיוסקים לא תומכים בו, ומכירה בו הייתה נרשמת כמסמך אמיתי.",
+            },
+        )
     if check_shifts:
         busy = real_open_shift_tills(db, shop)
         if busy:

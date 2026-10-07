@@ -10,8 +10,12 @@
  *  - the order as `POST /sync/{m}/kiosk/open-orders` takes it (server app/schemas/kiosk_open_orders.py),
  *    with the basket for the till to rebuild exactly: the till's held-sale form
  *    (pos-android domain/HeldSaleCodec.kt, LineDetailsCodec v1) in `cart.codec`;
- *  - a voucher pays the goods it covers at the dish's own price (paid add-ons stay to be paid),
- *    never the tip, never more than what is left (pos-android KioskPayRemainder, coverByVoucher);
+ *  - the basket priced as the till will charge it (lib/kioskMoney.ts — the till's rules, ported once):
+ *    each line's unit with its charged choices (or a meal's components), its share of the
+ *    promotions; the till that collects prices it again with the same rules and the same promotions;
+ *  - a voucher pays the goods it covers at the dish's own price (paid add-ons stay to be paid), net
+ *    of the line's promotions, never the tip, never more than what is left (pos-android
+ *    KioskPayRemainder, coverByVoucher / voucherCoverable);
  *  - the slip's code "KO:" + the order id — on the screen as a QR (a browser cannot print).
  *
  * Money is agorot (integers) throughout. Pure; no `@/` imports (the node tests compile it alone).
@@ -63,8 +67,31 @@ export interface WebLineOption {
   kind: GroupKind;
   optionId: string;
   name: string;
-  /** Per unit of the dish. */
+  /** The option's own price, per unit. */
   priceAgorot: number;
+  qty?: number;
+  /** "מעט / הרבה / בצד". */
+  pre?: 'lite' | 'extra' | 'side' | null;
+  /** What it was charged per unit of the dish, after free choices and "הרבה" (kioskMoney.ts); absent: price × qty. */
+  chargedAgorot?: number;
+}
+
+/** One component of a meal line (the till's MealComponent). */
+export interface WebMealComponent {
+  slotId: string;
+  slotName: string;
+  productId: string;
+  name: string;
+  categoryId: string | null;
+  /** The component's own catalog price: what the meal's base is allocated by. */
+  listPriceAgorot: number;
+  upchargeAgorot: number;
+  options: WebLineOption[];
+}
+
+/** What one choice adds to one unit of the dish. */
+export function optionChargedAgorot(o: Pick<WebLineOption, 'priceAgorot' | 'qty' | 'chargedAgorot'>): number {
+  return o.chargedAgorot ?? o.priceAgorot * Math.max(1, o.qty ?? 1);
 }
 
 /** One basket line, as the kiosk took it (prices as the customer saw them). */
@@ -84,17 +111,52 @@ export interface WebOrderLine {
   barcode: string | null;
   imageUrl: string | null;
   allergens: string[];
+  /** A meal: its components (the line's product is the meal). */
+  meal?: { components: WebMealComponent[] } | null;
+  /** "לא מקבל הנחות" (the till's promotions never touch it). */
+  noDiscount?: boolean;
+  /** The line's share of the promotions (kioskMoney.ts), agorot, and the promotion that took most of it. */
+  promotionAgorot?: number;
+  promotionId?: string | null;
+  promotionName?: string | null;
 }
 
-export function lineTotalAgorot(l: Pick<WebOrderLine, 'qty' | 'unitAgorot'>): number {
-  return Math.round(l.qty * l.unitAgorot);
+/** What the line costs: unit × qty, less its share of the promotions. */
+export function lineTotalAgorot(l: Pick<WebOrderLine, 'qty' | 'unitAgorot'> & { promotionAgorot?: number }): number {
+  return Math.round(l.qty * l.unitAgorot) - Math.max(0, l.promotionAgorot ?? 0);
 }
 
-export function goodsAgorot(lines: ReadonlyArray<Pick<WebOrderLine, 'qty' | 'unitAgorot'>>): number {
+/** What the goods cost, after the promotions. */
+export function goodsAgorot(lines: ReadonlyArray<Pick<WebOrderLine, 'qty' | 'unitAgorot'> & { promotionAgorot?: number }>): number {
   return lines.reduce((s, l) => s + lineTotalAgorot(l), 0);
 }
 
-const shekels = (agorot: number) => Math.round(agorot) / 100;
+/** A choice on the till's held sale (LineDetailsCodec modifier). */
+function modifierCodec(o: WebLineOption) {
+  return {
+    groupId: o.groupId,
+    groupName: o.groupName,
+    kind: o.kind,
+    optionId: o.optionId,
+    name: o.name,
+    price: shekels(o.priceAgorot),
+    qty: o.qty ?? 1,
+    pre: o.pre ?? null,
+    charged: shekels(optionChargedAgorot(o)),
+  };
+}
+
+/** "הרבה טחינה ×2", "בלי בצל" — the kitchen's and the tills' wording (LineModifier.displayText). */
+function optionWords(o: WebLineOption): string {
+  const pre = o.pre === 'lite' ? 'מעט' : o.pre === 'extra' ? 'הרבה' : o.pre === 'side' ? 'בצד' : null;
+  const withPre = pre === null ? o.name : o.pre === 'side' ? `${o.name} ${pre}` : `${pre} ${o.name}`;
+  const text = o.kind === 'removal' ? `בלי ${withPre}` : withPre;
+  return (o.qty ?? 1) > 1 ? `${text} ×${o.qty}` : text;
+}
+
+function shekels(agorot: number): number {
+  return Math.round(agorot) / 100;
+}
 
 /**
  * The basket as the till's held sale (pos-android HeldSaleCodec.encode): the product travels with
@@ -130,27 +192,38 @@ export function heldSaleCodec(cartId: string, lines: readonly WebOrderLine[]): s
         isGeneral: false,
         unitLabel: null,
         voucherId: null,
-        noDiscount: false,
+        noDiscount: l.noDiscount === true,
         allergens: l.allergens,
         courseId: null,
       }),
       details:
-        l.options.length > 0 || (l.note && l.note.trim())
+        l.options.length > 0 || (l.note && l.note.trim()) || (l.meal && l.meal.components.length > 0)
           ? {
               v: 1,
               basePrice: shekels(l.baseAgorot),
-              modifiers: l.options.map((o) => ({
-                groupId: o.groupId,
-                groupName: o.groupName,
-                kind: o.kind,
-                optionId: o.optionId,
-                name: o.name,
-                price: shekels(o.priceAgorot),
-                qty: 1,
-                pre: null,
-                charged: shekels(o.priceAgorot),
-              })),
+              modifiers: l.options.map(modifierCodec),
               ...(l.note && l.note.trim() ? { noteText: l.note.trim().slice(0, 300) } : {}),
+              // A meal: its components (the till rebuilds the meal line exactly, MealDetails).
+              ...(l.meal && l.meal.components.length > 0
+                ? {
+                    meal: {
+                      productId: l.productId,
+                      name: l.name,
+                      components: l.meal.components.map((c) => ({
+                        slotId: c.slotId,
+                        slotName: c.slotName,
+                        productId: c.productId,
+                        name: c.name,
+                        ...(c.categoryId ? { categoryId: c.categoryId } : {}),
+                        listPrice: shekels(c.listPriceAgorot),
+                        qty: 1,
+                        upcharge: shekels(c.upchargeAgorot),
+                        modifiers: c.options.map(modifierCodec),
+                      })),
+                      slots: [],
+                    },
+                  }
+                : {}),
             }
           : null,
     })),
@@ -162,7 +235,7 @@ export function openLines(lines: readonly WebOrderLine[]): Array<{ name: string;
   return lines
     .filter((l) => l.qty > 0)
     .map((l) => {
-      const mods = l.options.map((o) => (o.kind === 'removal' ? `בלי ${o.name}` : o.name));
+      const mods = [...l.options.map(optionWords), ...(l.meal?.components ?? []).map((c) => (c.options.length > 0 ? `${c.name} (${c.options.map(optionWords).join(', ')})` : c.name))];
       const notes = [...mods, ...(l.note && l.note.trim() ? [l.note.trim()] : [])].join(' · ');
       return { name: l.name.slice(0, 255), quantity: l.qty, totalAgorot: lineTotalAgorot(l), ...(notes ? { notes: notes.slice(0, 300) } : {}) };
     });
@@ -199,8 +272,8 @@ export interface VoucherLeg {
 const matches = (line: Pick<WebOrderLine, 'productId'>, item: { productId: string; tillProductId?: string | null }) =>
   line.productId === item.productId || (!!item.tillProductId && line.productId === item.tillProductId);
 
-/** What a voucher covers of a line: the line's total in the share of its price that is the dish's own. */
-export function voucherCoverable(l: Pick<WebOrderLine, 'qty' | 'unitAgorot' | 'baseAgorot'>): number {
+/** What a voucher covers of a line: the line's total (after its promotions) in the share of its price that is the dish's own. */
+export function voucherCoverable(l: Pick<WebOrderLine, 'qty' | 'unitAgorot' | 'baseAgorot'> & { promotionAgorot?: number }): number {
   const total = lineTotalAgorot(l);
   if (l.unitAgorot <= 0 || l.baseAgorot >= l.unitAgorot) return total;
   return Math.round((total * l.baseAgorot) / l.unitAgorot);
@@ -305,6 +378,8 @@ export interface OpenOrder {
   cloudState: string | null;
   /** Refused for good ("invalid:…"): kept, never sent again. */
   rejected: string | null;
+  /** Refused as `price_changed`: the cloud's lines and prices (kiosk_basket_check.price_lines). */
+  refusedLines?: unknown[] | null;
 }
 
 /** The slip's code (and the QR on the screen): the till's scanner opens the order with it. */
@@ -312,8 +387,12 @@ export function orderCode(localId: string): string {
   return `KO:${localId}`;
 }
 
-/** The order as `POST /sync/{m}/kiosk/open-orders` takes it (KioskOpenOrderIn). */
-export function openOrderWire(o: OpenOrder): Record<string, unknown> {
+/**
+ * The order as `POST /sync/{m}/kiosk/open-orders` takes it (KioskOpenOrderIn). [customerWaiting]:
+ * sent while the customer waits for the slip — the cloud then refuses a basket it prices otherwise
+ * (`price_changed`), to be shown and asked again; never on a retry (the slip may be out).
+ */
+export function openOrderWire(o: OpenOrder, customerWaiting = false): Record<string, unknown> {
   const total = goodsAgorot(o.lines);
   const voucher = o.vouchers.reduce((s, v) => s + v.amountAgorot, 0);
   return {
@@ -344,7 +423,23 @@ export function openOrderWire(o: OpenOrder): Record<string, unknown> {
     })),
     kitchenSent: o.kitchenSent,
     state: 'open',
+    ...(customerWaiting ? { customerWaiting: true } : {}),
   };
+}
+
+/** The cloud's answer to `kiosk/open-orders`, read the same way by both kiosks. */
+export interface OpenOrdersAnswer {
+  accepted?: string[];
+  rejected?: Array<{ localId?: string; reason?: string; lines?: unknown }>;
+  states?: Record<string, { state?: string }>;
+}
+
+/** Each sent order as the cloud left it: taken (its state), refused (why, and the cloud's prices), or not named. */
+export function answeredOrder(o: OpenOrder, body: OpenOrdersAnswer | null | undefined): OpenOrder | null {
+  if ((body?.accepted ?? []).includes(o.localId)) return { ...o, cloudState: body?.states?.[o.localId]?.state ?? 'open' };
+  const refused = (body?.rejected ?? []).find((x) => (x.localId ?? '') === o.localId);
+  if (!refused) return null;
+  return { ...o, rejected: refused.reason ?? 'rejected', refusedLines: Array.isArray(refused.lines) ? refused.lines : null };
 }
 
 /** What the till takes for it. */

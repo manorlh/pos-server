@@ -8,7 +8,8 @@
  *  - a product found among what the kiosk shows: into the basket with the pop and the flight of
  *    the card's "+", or its sheet when something must be chosen; the attract screen starts the
  *    order (the service screen keeps the dish until "לקחת" / "לשבת");
- *  - not found: "המוצר לא נמצא"; a prepaid voucher: "יש להציג את השובר בקופה";
+ *  - not found: "המוצר לא נמצא"; a prepaid voucher ("PV:…"): on "איך תרצו לשלם?" it is redeemed
+ *    (`onVoucher`), anywhere else "יש להציג את השובר בקופה";
  *  - ignored on payment, success, details, the rest screens, a sheet and the staff's screens;
  *    the same code within 800 ms counts once.
  */
@@ -16,7 +17,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { cardStyle, type PProduct, type PreviewModel } from '@kiosk-shared/index';
 import { ORDERING, type KioskScreen } from '../../core/kioskFlow';
-import { decideScan, IDLE_END_MS, keyLeftAlone, parseScan, ScanDedupe, ScanKeyReader, type ScanProduct } from '../../core/kioskScan';
+import { decideScan, IDLE_END_MS, keyLeftAlone, parseScan, scannedVoucherCode, ScanDedupe, ScanKeyReader, type ScanProduct } from '../../core/kioskScan';
 
 export interface KioskScanInput {
   m: PreviewModel;
@@ -40,6 +41,8 @@ export interface KioskScanInput {
   start: () => void;
   /** The customer is here (the inactivity timer). */
   touch: () => void;
+  /** "איך תרצו לשלם?" is on the screen with a voucher to take: a voucher scan is redeemed. */
+  onVoucher?: ((code: string) => void) | null;
 }
 
 type Shown = ScanProduct & { p: PProduct };
@@ -82,6 +85,15 @@ export function useKioskScanner(input: KioskScanInput): ReactNode {
       const i = latest.current;
       const code = parseScan(raw);
       const duplicate = !dedupe.accept(code.text, performance.now());
+      // A voucher on the payment method step: redeemed there (the cloud checks it).
+      const voucher = scannedVoucherCode(raw);
+      if (voucher && i.onVoucher && !i.staff) {
+        if (!duplicate) {
+          i.touch();
+          i.onVoucher(voucher);
+        }
+        return;
+      }
       const byId = new Map(i.codes.map((c) => [c.id, c]));
       const shown: Shown[] = i.shown.map((p) => ({ id: p.id, barcode: byId.get(p.id)?.barcode ?? null, sku: byId.get(p.id)?.sku ?? null, soldOut: p.soldOut, p }));
       const all = i.codes.map((c) => ({ barcode: c.barcode ?? null, sku: c.sku }));

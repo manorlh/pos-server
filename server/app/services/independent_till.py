@@ -313,7 +313,14 @@ def shop_state(db: Session, shop, user: User) -> dict:
     """Every seated till of the shop with its role, the main till, and the local mode."""
     from app.services import main_till as MT
     from app.services import z_runs as ZR
-    from app.services.local_shop_z import lan_seen_hint, local_mode_of_shop, producer_state, remote_till_ids
+    from app.services.local_shop_z import (
+        closes_through_cloud,
+        lan_seen_hint,
+        local_mode_of_shop,
+        producer_state,
+        remote_till_ids,
+    )
+    from app.services.display_devices import PLATFORM_WINDOWS, platform_of
     from app.services.machine_status import is_online
 
     main = MT.main_till_of_shop(db, shop.id)
@@ -340,7 +347,9 @@ def shop_state(db: Session, shop, user: User) -> dict:
             "online": is_online(m.last_heartbeat_at),
             "kiosk": bool(getattr(m, "is_kiosk", False)),
             # "מחובר ברשת המקומית" / "מרוחק (דרך הענן)" — the setting decides (§8.14) …
-            "link": "remote" if str(m.id) in remote else "lan",
+            "link": "remote" if closes_through_cloud(m, remote) else "lan",
+            # A Windows device is always closed through the cloud (no LAN client): not a choice.
+            "linkFixed": platform_of(m) == PLATFORM_WINDOWS,
             # … and the main till's view of who it hears on the LAN is a hint (null: unknown).
             "seenOnLan": None if seen_on_lan is None else str(m.id) in seen_on_lan,
             # "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3): never the shop's server.
