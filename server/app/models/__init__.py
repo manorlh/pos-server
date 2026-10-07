@@ -58,6 +58,8 @@ from app.models.audit_exception import AuditException, ExceptionRuleValue, TillE
 from app.models.failed_payment import FailedPaymentAttempt
 # "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the dashboard asks a till to issue a credit.
 from app.models.remote_credit import RemoteCreditEvent, RemoteCreditRequest
+# "זיכוי באשראי מהענן (Z-Credit)" (docs/SPEC_REMOTE_CREDIT.md §11): the cloud refunds the card.
+from app.models.cloud_card_refund import CloudCardRefund, CloudCardRefundEvent
 from app.models.document_refusal import DocumentRefusal
 from app.models.prepaid_voucher import (
     PrepaidVoucher,
@@ -212,6 +214,7 @@ __all__ = [
     "KioskSettings", "KioskDevice", "KioskOrder", "KioskPickupCounter", "KioskPickupAllocation", "KioskCommand",
     "KioskSession", "KioskEvent", "DeviceBatteryAlert", "KioskWebDeviceStatus",
     "RemoteCreditRequest", "RemoteCreditEvent",
+    "CloudCardRefund", "CloudCardRefundEvent",
     "DocumentRefusal",
     "TillDesignSettings",
 ]

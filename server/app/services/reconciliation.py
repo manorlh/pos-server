@@ -34,6 +34,9 @@ local days and the shops / tills chosen, each row with a status and the reason:
 10. `z_completeness` — a Z waiting for documents the cloud knows are missing, a till whose next
     Z will, and corrections of documents an earlier Z counted waiting for the next Z.
 11. `ingest_notes` — what ingest noted (tenders that do not add up, filed by time, …).
+12. `cloud_card_refunds` — card refunds the cloud made through Z-Credit against their credit
+    notes (a till issues those): the note issued (תואם), still to come (ממתין), never coming (חסר),
+    or an outcome unknown at Z-Credit / a note of another total (הפרש).
 
 Every row also carries `gapType`, `action` (`{label, href}` — what the owner does) and, for
 the documents, `container` / `zMode`: where they belong — the till's shift and the shop Z, or
@@ -76,6 +79,7 @@ STATUS_LABELS = {MATCH: "תואם", DIFFERENCE: "הפרש", MISSING: "חסר", P
 CHECKS = (
     "documents_z", "z_totals", "document_numbers", "z_numbers", "card_legs", "transmissions",
     "refused_documents", "repaired_tills", "numbering_conflicts", "z_completeness", "ingest_notes",
+    "cloud_card_refunds",
 )
 CHECK_LABELS = {
     "documents_z": "מסמכים ↔ Z",
@@ -89,6 +93,7 @@ CHECK_LABELS = {
     "numbering_conflicts": "מספר מסמך כפול בקופה",
     "z_completeness": "Z שממתין למסמכים ותיקונים ל-Z קודם",
     "ingest_notes": "הערות קליטה ותיוק",
+    "cloud_card_refunds": "זיכויי אשראי מהענן ↔ מסמכי זיכוי",
 }
 #: The subject of a refused document's row, in the owner's words.
 REFUSED_SUBJECT = "מסמך שנדחה בענן"
@@ -1234,6 +1239,92 @@ def check_ingest_notes(ctx: _Ctx, docs: Sequence[Transaction]) -> List[Dict[str,
     return rows
 
 
+# ── 12. Cloud card refunds ↔ credit notes ────────────────────────────────────
+
+
+def check_cloud_card_refunds(ctx: _Ctx, machine_ids: Sequence[uuid.UUID]) -> List[Dict[str, Any]]:
+    """
+    "זיכוי באשראי מהענן (Z-Credit)" (docs/SPEC_REMOTE_CREDIT.md §11): every card refund the cloud
+    made (or may have made) in the window, of a sale of a till in scope, against its credit note.
+    The money moved at Z-Credit; the fiscal document comes from a till — until it reaches the
+    cloud the refund is a gap: ממתין while a till still has it to issue, חסר when no till will
+    (refused, expired), הפרש when the outcome at Z-Credit is unknown or the note's total differs.
+    A declined refund moved nothing and is not listed.
+    """
+    from app.models.cloud_card_refund import CloudCardRefund, CloudCardRefundStatus as CS
+    from app.models.remote_credit import PENDING_REMOTE_CREDIT_STATUSES, RemoteCreditRequest
+    from app.services.cloud_card_refunds import _stale
+
+    try:
+        refunds = (
+            ctx.db.query(CloudCardRefund)
+            .filter(
+                CloudCardRefund.original_machine_id.in_(list(machine_ids)),
+                CloudCardRefund.created_at >= ctx.window.start,
+                CloudCardRefund.created_at < ctx.window.end,
+                CloudCardRefund.status != CS.DECLINED,
+            )
+            .order_by(CloudCardRefund.created_at.asc())
+            .all()
+        )
+    except Exception:  # noqa: BLE001 - a missing table must never fail the report
+        ctx.db.rollback()
+        return []
+    rows: List[Dict[str, Any]] = []
+    for r in refunds:
+        req = (
+            ctx.db.query(RemoteCreditRequest).filter(RemoteCreditRequest.id == r.remote_credit_request_id).first()
+            if r.remote_credit_request_id
+            else None
+        )
+        credit = (
+            ctx.db.query(Transaction).filter(Transaction.id == r.credit_transaction_id).first()
+            if r.credit_transaction_id
+            else None
+        )
+        amount = _d(r.amount)
+        subject = f"זיכוי באשראי מהענן · מסמך {r.original_document_number or str(r.original_transaction_id)[:8]}"
+        if r.card_last4:
+            subject += f" · ****{r.card_last4}"
+        href = f"/dashboard/transactions?tx={r.original_transaction_id}"
+        if r.status == CS.UNKNOWN or (r.status == CS.IN_FLIGHT and _stale(r, ctx.now)):
+            status, gap = DIFFERENCE, "card_refund_unknown"
+            why = "לא ידוע אם הכרטיס זוכה ב-Z-Credit — בדקו מול Z-Credit ורשמו את התוצאה"
+            action = _action("בדקו את הזיכוי", href)
+        elif r.status == CS.IN_FLIGHT:
+            status, gap, why, action = PENDING, "card_refund_in_progress", "הזיכוי בביצוע מול Z-Credit", None
+        elif credit is not None and credit.status != TransactionStatus.CANCELLED:
+            got = abs(_d(credit.total_amount))
+            if abs(got - amount) > TOLERANCE:
+                status, gap = DIFFERENCE, "card_refund_document_differs"
+                why = f"מסמך הזיכוי {document_number_of(credit)} על {_f(got)} ₪ והכרטיס זוכה ב-{_f(amount)} ₪"
+                action = _action("פתחו את מסמך הזיכוי", f"/dashboard/transactions?tx={credit.id}")
+            else:
+                status, gap, action = MATCH, None, None
+                why = f"הכרטיס זוכה ומסמך זיכוי {document_number_of(credit)} הופק בקופה"
+        elif r.credit_transaction_id is not None:
+            status, gap, action = PENDING, "card_refund_document_unsynced", None
+            why = f"הקופה הפיקה את מסמך הזיכוי {r.credit_document_number or ''} — ממתין לסנכרון לענן".replace("  ", " ")
+        elif req is not None and req.status in PENDING_REMOTE_CREDIT_STATUSES:
+            status, gap, action = PENDING, "card_refund_document_pending", None
+            why = "הכרטיס זוכה; מסמך הזיכוי ממתין להפקה בקופה"
+        else:
+            status, gap = MISSING, "card_refund_document_missing"
+            why = "הכרטיס זוכה ב-Z-Credit אבל מסמך זיכוי לא הופק" + (
+                f" ({req.error_message or req.error_code})" if req is not None and (req.error_message or req.error_code) else ""
+            )
+            action = _action("שלחו את מסמך הזיכוי לקופה", href)
+        rows.append(ctx.row(
+            "cloud_card_refunds", status, machine_id=r.original_machine_id, day=ctx.day(r.created_at),
+            subject=subject, count=1, expected=_f(amount),
+            actual=_f(abs(_d(credit.total_amount))) if credit is not None else None,
+            reason=why, gapType=gap, action=action,
+            transactionId=str(r.original_transaction_id), cardRefundId=str(r.id),
+            **({"creditTransactionId": str(credit.id)} if credit is not None else {}),
+        ))
+    return rows
+
+
 # ── The report ───────────────────────────────────────────────────────────────
 
 
@@ -1294,6 +1385,8 @@ def build_reconciliation(
             rows += check_z_completeness(ctx, ids)
         if "ingest_notes" in checks:
             rows += check_ingest_notes(ctx, docs)
+        if "cloud_card_refunds" in checks:
+            rows += check_cloud_card_refunds(ctx, ids)
 
     summary = {c: {s: 0 for s in STATUSES} for c in CHECKS if c in checks}
     for r in rows:
