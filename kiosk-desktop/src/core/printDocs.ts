@@ -202,7 +202,8 @@ export interface BonDoc {
   sub: string;
   /** "הדפסה חוזרת" / "עותק 2" — a black band. */
   notice: string | null;
-  dining: 'take_away' | 'eat_in';
+  /** Null: the order has no service ("ללא סוג שירות") — no band. */
+  dining: 'take_away' | 'eat_in' | null;
   lines: Array<{ qty: number; name: string; detail: string | null; mods: string[]; removals: string[]; notes: string | null }>;
   foot: string[];
   printerName: string | null;
@@ -213,7 +214,7 @@ export interface BonInput {
   customerName: string | null;
   tableRef: string | null;
   documentNumber: string;
-  service: 'take_away' | 'eat_in';
+  service: 'take_away' | 'eat_in' | null;
   createdAt: Date;
   kioskName: string;
   posNumber: string | null;
@@ -256,18 +257,19 @@ export interface SlipDoc {
   businessName: string | null;
   heading: string;
   label: string;
-  service: string;
+  /** "טייק אווי" / "ישיבה במקום"; null — the order has none (no line). */
+  service: string | null;
   summary: string;
   footer: string;
 }
 
-export function slipDoc(input: { businessName: string | null; pickupLabel: string; service: 'take_away' | 'eat_in'; itemCount: number; totalAgorot: number }): SlipDoc {
+export function slipDoc(input: { businessName: string | null; pickupLabel: string; service: 'take_away' | 'eat_in' | null; itemCount: number; totalAgorot: number }): SlipDoc {
   return {
     kind: 'slip',
     businessName: nonBlank(input.businessName)?.slice(0, 32) ?? null,
     heading: 'מספר ההזמנה',
     label: ltr(input.pickupLabel),
-    service: input.service === 'eat_in' ? 'ישיבה במקום' : 'טייק אווי',
+    service: input.service === null ? null : input.service === 'eat_in' ? 'ישיבה במקום' : 'טייק אווי',
     summary: `${input.itemCount} פריטים · ${ltr(formatShekelSign(input.totalAgorot))}`,
     footer: 'המתינו לקריאה בדלפק',
   };

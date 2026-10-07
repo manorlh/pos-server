@@ -1584,6 +1584,11 @@ export interface Shift {
   machineName?: string | null;
   shopName?: string | null;
   /**
+   * The till's register number in the shift's shop ("קופה 2"); null once the till moved to
+   * another shop. Absent from a server that predates it (lib/shiftsPage shiftRegisterNumber).
+   */
+  posNumber?: string | null;
+  /**
    * The area the till was in when the cloud created this shift. Stamped, never
    * updated: moving the till later does not move its past shifts.
    */

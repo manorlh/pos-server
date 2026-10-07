@@ -773,10 +773,12 @@ def test_the_migration_is_on_the_single_head():
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "alembic"))
     script = ScriptDirectory.from_config(config)
-    # One head, and this revision on its line (the merge 7c3e9a1d5b20 joins it to main's).
+    # One head, and this revision on its line (the merges 7c3e9a1d5b20 and e4b7d1a9c3f6 join
+    # it to main's; later ones chain on top).
     heads = script.get_heads()
     assert len(heads) == 1
     on_line = {r.revision for r in script.walk_revisions("base", heads[0])}
-    assert {"d4a8c2e6f0b1", "7c3e9a1d5b20", "1dbac9d07adb"} <= on_line
+    assert {"d4a8c2e6f0b1", "7c3e9a1d5b20", "e4b7d1a9c3f6", "a1f0b62029f1"} <= on_line
     assert script.get_revision("d4a8c2e6f0b1").down_revision == "e9a3c7f1b5d2"
     assert set(script.get_revision("7c3e9a1d5b20").down_revision) == {"1dbac9d07adb", "d4a8c2e6f0b1"}
+    assert set(script.get_revision("e4b7d1a9c3f6").down_revision) == {"7c3e9a1d5b20", "a1f0b62029f1"}

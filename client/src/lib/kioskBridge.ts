@@ -97,7 +97,8 @@ export interface BridgeBasketLine {
 
 export interface BridgeStartPayment {
   lines: BridgeBasketLine[];
-  service: 'take_away' | 'eat_in';
+  /** Null: "ללא סוג שירות" — the order has none. */
+  service: 'take_away' | 'eat_in' | null;
   customerName: string | null;
   customerPhone: string | null;
   tableRef: string | null;

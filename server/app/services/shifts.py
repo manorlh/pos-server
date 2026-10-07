@@ -962,12 +962,27 @@ def _stamped_area_name(shift: Shift) -> Optional[str]:
     return area.name if area is not None else None
 
 
+def register_number_of(shift: Shift) -> Optional[str]:
+    """
+    The shift's till's register number in its shop — the "2" of "קופה 2" — or None.
+
+    A register number belongs to one shop's run: once the till has moved to another shop
+    its number there is not the one it took this shift under, so none is given then.
+    """
+    machine = getattr(shift, "machine", None)
+    if machine is None or machine.shop_id is None or machine.shop_id != shift.shop_id:
+        return None
+    number = (machine.pos_number or "").strip()
+    return number or None
+
+
 def shift_to_out(
     shift: Shift,
     *,
     z_number: Optional[int] = None,
     machine_name: Optional[str] = None,
     shop_name: Optional[str] = None,
+    pos_number: Optional[str] = None,
     payment_breakdown: Optional[dict] = None,
 ) -> ShiftOut:
     status_val = shift.status.value if hasattr(shift.status, "value") else shift.status
@@ -1003,6 +1018,7 @@ def shift_to_out(
         z_number=z_number,
         machine_name=machine_name,
         shop_name=shop_name,
+        pos_number=pos_number,
         area_id=getattr(shift, "area_id", None),
         # The stamped area's name as it is called now. What an area is called is not
         # fiscal content; which area the shift was taken under is, and that is the id.

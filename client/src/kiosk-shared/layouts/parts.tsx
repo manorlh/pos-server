@@ -10,7 +10,7 @@ import { Check, Plus, ShoppingBag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { contrastText } from '@/lib/kioskConfig';
 import { kioskTextOf } from '@/lib/kioskTexts';
-import { cardKindOf, guidedBar, layoutOf, type GuidedBarItem, type GuidedStep } from '@/lib/kioskLayout';
+import { cardKindOf, guidedBar, layoutOf, productColumns, type GuidedBarItem, type GuidedStep } from '@/lib/kioskLayout';
 import {
   CartTarget,
   CountUp,
@@ -44,7 +44,8 @@ export function dishColumnsFor(m: PreviewModel, widthPx: number): number {
   const dp = widthPx * DP_PER_PX;
   const density = m.cfg.theme.gridDensity;
   const [phone, tablet] = density === 'compact' ? [3, 4] : density === 'large' ? [dp >= 400 ? 2 : 1, 2] : [2, 3];
-  return dp < 600 ? phone : dp >= 1100 ? tablet + 1 : tablet;
+  // "גודל מוצרים" (layout.productSize): a column more or fewer, as on the Android kiosk.
+  return productColumns(dp < 600 ? phone : dp >= 1100 ? tablet + 1 : tablet, layoutOf(m.cfg).productSize, dp);
 }
 
 /** The frame's scale against the kiosk's 540 CSS px. */

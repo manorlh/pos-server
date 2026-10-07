@@ -6,6 +6,7 @@
  * network.
  */
 
+import { layoutOf, productColumns } from '@dash-lib/kioskLayout';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { Pencil } from 'lucide-react';
 import {
@@ -95,6 +96,7 @@ import {
   reduce,
   rulesOf,
   serviceOnAttract,
+  orderServiceOf,
   successDone,
   wire,
   type FlowConfigIn,
@@ -343,7 +345,7 @@ export function KioskApp({ view }: { view: KioskView }) {
       // The unit prices and the total the customer saw: never charged if they moved (core/basketCheck.ts).
       expectedTotalAgorot: pricingRef.current.totalAgorot,
       lines: cartRef.current.map((l) => ({ key: l.key, productId: l.product.id, qty: l.qty, unitAgorot: lineUnitAgorot(l), options: orderOptionsOf(l), meal: orderMealOf(l), notes: l.note ? [l.note] : [] })),
-      service: flowRef.current.service ?? 'take_away',
+      service: orderServiceOf(flowRef.current.service, cfgIn),
       customerName: details.name.trim() || null,
       customerPhone: details.phone.trim() || null,
       tableRef: details.table.trim() || null,
@@ -351,7 +353,7 @@ export function KioskApp({ view }: { view: KioskView }) {
       tipPct: details.tipAgorot === null ? details.tipPct : null,
       tipAgorot: details.tipAgorot,
     }),
-    [details],
+    [details, cfgIn],
   );
 
   const startPayment = useCallback(async () => {
@@ -493,7 +495,8 @@ export function KioskApp({ view }: { view: KioskView }) {
   // "הנפשות ומעברים": the dashboard's choices, all off with reduce motion.
   const transitions = transitionSpec(cfg.motion, cfg.general);
   const colors = resolveThemeColors(cfg.theme);
-  const cols = catalogColumns(cfg.theme.gridDensity, wide, panel, side);
+  // "גודל מוצרים" (layout.productSize) moves the density's columns.
+  const cols = productColumns(catalogColumns(cfg.theme.gridDensity, wide, panel, side), layoutOf(cfg).productSize, size.w);
   const rules = { ...rulesOf(cfgIn, cart.length === 0), asksPayMethod: asksPay };
   const back = () => {
     const a = backAction(flow, rules);
@@ -729,6 +732,7 @@ export function KioskApp({ view }: { view: KioskView }) {
       setProductId(p.id);
     },
     start: () => dispatch({ type: 'start' }),
+    serviceOnAttract: serviceOnAttract(cfgIn),
     touch: () => setLastTouch(Date.now()),
     // A voucher scanned on "איך תרצו לשלם?" is redeemed there.
     onVoucher: atPayMethod && voucherOffered && !till.busy ? (code) => void redeem(code) : null,

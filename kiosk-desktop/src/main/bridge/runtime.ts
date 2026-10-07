@@ -170,7 +170,8 @@ export function startPaymentInput(raw: unknown): StartPaymentIn | null {
     const unit = Number(l.unitAgorot);
     lines.push({ key, productId, qty: Math.trunc(qty), options, notes, ...(Number.isFinite(unit) ? { unitAgorot: Math.round(unit) } : {}), ...(parts.length > 0 ? { meal: { components: parts } } : {}) });
   }
-  const service = b.service === 'eat_in' ? 'eat_in' : 'take_away';
+  // "ללא סוג שירות": an explicit null stays none; anything else unknown is take-away, as always.
+  const service = b.service === null ? null : b.service === 'eat_in' ? 'eat_in' : 'take_away';
   const tipPct = typeof b.tipPct === 'number' && Number.isFinite(b.tipPct) && b.tipPct >= 0 && b.tipPct <= 100 ? b.tipPct : null;
   const tipAgorot = typeof b.tipAgorot === 'number' && Number.isFinite(b.tipAgorot) && b.tipAgorot >= 0 ? Math.round(b.tipAgorot) : null;
   const expected = typeof b.expectedTotalAgorot === 'number' && Number.isFinite(b.expectedTotalAgorot) ? Math.round(b.expectedTotalAgorot) : undefined;

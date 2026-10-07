@@ -3,15 +3,18 @@
 import { useTranslations } from 'next-intl';
 import { Check } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import {
   KIOSK_RENDERERS,
   LANGUAGES,
+  SERVICE_CHOICES,
   SERVICE_PLACEMENTS,
   SERVICE_SELECTS,
-  SERVICE_TYPES,
   moveItem,
+  serviceChoiceOf,
+  serviceChoicePatch,
+  type ServiceChoice,
+  type ServiceMode,
   type KioskLanguage,
   type KioskRenderer,
   type ServicePlacement,
@@ -23,33 +26,36 @@ import { useKioskField } from './editor-context';
 import { FieldShell, MoveButtons, OrderedPick, SectionCard, Segmented, SegmentField, SwitchField } from './fields';
 
 /**
- * "לשאול לקחת או לשבת": on, both service types (in the order of their buttons); off, one — every
- * order is that one and the customer sees neither the choice nor its word (general.serviceTypes).
+ * "סוג שירות": one control, four choices — "שואלים" (both types, in the order of their buttons),
+ * "תמיד טייק אווי" / "תמיד ישיבה במקום" (never asked; every order is that one, and says so on the
+ * bon and the receipt), "ללא" (general.serviceMode = none: never asked, and no service word
+ * anywhere). A line under it says what the choice means (lib/kioskConfig serviceChoicePatch).
  */
 function ServiceTypesField() {
   const t = useTranslations('kiosks.general');
   const tf = useTranslations('kiosks.fields');
-  const f = useKioskField<ServiceType[]>('general.serviceTypes');
-  const list = (Array.isArray(f.value) ? f.value : []).filter((v) => SERVICE_TYPES.includes(v));
-  const ask = list.length > 1;
-  const only: ServiceType = list[0] ?? 'take_away';
+  const types = useKioskField<ServiceType[]>('general.serviceTypes');
+  const mode = useKioskField<ServiceMode>('general.serviceMode');
+  const general = { serviceTypes: types.value, serviceMode: mode.value };
+  const choice = serviceChoiceOf(general);
+  const list = choice === 'ask' ? serviceChoicePatch(general, 'ask').serviceTypes : [];
   const label = (v: ServiceType) => (v === 'take_away' ? t('takeAway') : t('eatIn'));
+  const pick = (next: ServiceChoice) => {
+    const patch = serviceChoicePatch(general, next);
+    if (JSON.stringify(patch.serviceTypes) !== JSON.stringify(types.value)) types.set(patch.serviceTypes);
+    if (patch.serviceMode !== (mode.value ?? 'types')) mode.set(patch.serviceMode);
+  };
   return (
-    <FieldShell path="general.serviceTypes" label={tf('general.serviceTypes')} hint={t('serviceTypesHint')}>
+    <FieldShell path="general.serviceTypes" label={tf('general.serviceTypes')} hint={t(`serviceChoiceHint.${choice}`)}>
       <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3 rounded-xl border p-3">
-          <div className="min-w-0 space-y-0.5">
-            <div className="text-sm font-medium">{t('askService')}</div>
-            <p className="text-xs text-muted-foreground">{t('askServiceHint')}</p>
-          </div>
-          <Switch
-            checked={ask}
-            disabled={f.disabled}
-            aria-label={t('askService')}
-            onCheckedChange={(v) => f.set(v ? [only, ...SERVICE_TYPES.filter((x) => x !== only)] : [only])}
-          />
-        </div>
-        {ask ? (
+        <Segmented<ServiceChoice>
+          value={choice}
+          options={SERVICE_CHOICES.map((v) => ({ value: v, label: t(`serviceChoiceOption.${v}`) }))}
+          onChange={pick}
+          disabled={types.disabled || mode.disabled}
+          ariaLabel={tf('general.serviceTypes')}
+        />
+        {choice === 'ask' ? (
           <div className="space-y-1.5">
             <div className="text-xs text-muted-foreground">{t('serviceOrder')}</div>
             <ol className="divide-y rounded-xl border">
@@ -59,23 +65,12 @@ function ServiceTypesField() {
                     <span className="w-4 text-xs text-muted-foreground tabular-nums">{i + 1}</span>
                     {label(v)}
                   </span>
-                  <MoveButtons index={i} count={list.length} disabled={f.disabled} onMove={(d) => f.set(moveItem(list, i, d))} />
+                  <MoveButtons index={i} count={list.length} disabled={types.disabled} onMove={(d) => types.set(moveItem(list, i, d))} />
                 </li>
               ))}
             </ol>
           </div>
-        ) : (
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-sm">{t('oneService')}</span>
-            <Segmented<ServiceType>
-              value={only}
-              options={SERVICE_TYPES.map((v) => ({ value: v, label: label(v) }))}
-              onChange={(v) => f.set([v])}
-              disabled={f.disabled}
-              ariaLabel={t('oneService')}
-            />
-          </div>
-        )}
+        ) : null}
       </div>
     </FieldShell>
   );
@@ -86,6 +81,9 @@ export function GeneralSection() {
   const tf = useTranslations('kiosks.fields');
   const mode = useKioskField<'BON' | 'KDS'>('general.fulfillmentMode');
   const services = useKioskField<ServiceType[]>('general.serviceTypes');
+  const serviceMode = useKioskField<ServiceMode>('general.serviceMode');
+  // The service's own settings (the table, where and how it is chosen) only while there is one.
+  const served = serviceMode.value !== 'none' && Array.isArray(services.value);
   const skip = useKioskField<SkipCartMode>('general.skipCart');
   const dietary = useKioskField<boolean>('general.showDietary');
 
@@ -125,13 +123,13 @@ export function GeneralSection() {
 
       <SectionCard
         title={t('orderingTitle')}
-        paths={['general.serviceTypes', 'general.askTableNumber', 'general.serviceSelect', 'general.skipCart', 'general.languages']}
+        paths={['general.serviceTypes', 'general.serviceMode', 'general.askTableNumber', 'general.serviceSelect', 'general.skipCart', 'general.languages']}
       >
         <ServiceTypesField />
-        {Array.isArray(services.value) && services.value.includes('eat_in') ? (
+        {served && services.value.includes('eat_in') ? (
           <SwitchField path="general.askTableNumber" label={tf('general.askTableNumber')} hint={t('askTableHint')} />
         ) : null}
-        {Array.isArray(services.value) && services.value.length > 1 ? (
+        {served && services.value.length > 1 ? (
           <SegmentField<ServicePlacement>
             path="general.servicePlacement"
             label={t('servicePlacement')}
@@ -139,7 +137,7 @@ export function GeneralSection() {
             options={SERVICE_PLACEMENTS.map((v) => ({ value: v, label: t(`servicePlacementOption.${v}`) }))}
           />
         ) : null}
-        {Array.isArray(services.value) && services.value.length > 1 ? (
+        {served && services.value.length > 1 ? (
           <SegmentField<ServiceSelect>
             path="general.serviceSelect"
             label={t('serviceSelect')}

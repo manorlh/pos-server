@@ -31,6 +31,14 @@ for (const serviceTypes of [['take_away'], ['take_away', 'eat_in']]) {
   }
 }
 
+// "ללא סוג שירות" (general.serviceMode = none): walked by both too.
+for (const detailsStep of ['after_service', 'before_pay']) {
+  CONFIGS.push({
+    general: { serviceTypes: ['take_away', 'eat_in'], skipCart: 'off', askTableNumber: true, servicePlacement: 'attract', serviceMode: 'none' },
+    payment: { customerName: 'optional', customerPhone: 'off', tipEnabled: true, tipPresets: [10, 15], detailsStep, tableNumber: 'optional' },
+  });
+}
+
 const EVENTS: desk.KioskEvent[] = [
   { type: 'start' },
   { type: 'startWith', service: 'eat_in' },
@@ -84,6 +92,8 @@ describe('the browser kiosk runs the same flow', () => {
           a = desk.reduce(a, e, ra);
           b = web.reduce(b, e as web.KioskEvent, rb);
           expect(b).toEqual(a);
+          // "לקחת / לשבת" on the attract screen: the service is never a step too.
+          if (ra.serviceOnAttract) expect(a.screen).not.toBe('service');
           expect(web.backAction(b, rb)).toBe(desk.backAction(a, ra));
           expect(web.wire(b)).toBe(desk.wire(a));
           const timers = { inactivitySec: 30, warningSec: 10, successSec: 8 };

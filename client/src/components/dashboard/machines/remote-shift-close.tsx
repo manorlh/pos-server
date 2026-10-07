@@ -45,20 +45,10 @@ import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
 const PENDING = new Set<ShiftCloseRequestStatus>(['waiting_close', 'closing']);
 
 /**
- * Whether this till has a shift the cloud can be asked to close.
- *
- * Not while a Z run is already waiting for that close: the run owns it, and a second,
- * standalone request would only race it. The row links to the run instead.
+ * Whether this till has a shift the cloud can be asked to close — one rule for the devices
+ * page and the shifts page (lib/shiftsPage.ts): not while a Z run already waits for that close.
  */
-export function canCloseShiftRemotely(m: PosMachine): boolean {
-  return (
-    m.isActive !== false &&
-    m.pairingStatus === 'assigned' &&
-    !!m.shopId &&
-    (m.shiftStatus === 'open' || !!m.reportedOpenShiftId) &&
-    !(m.closeShiftPending && m.pendingCloseSource === 'z_run')
-  );
-}
+export { canCloseShiftRemotely } from '@/lib/shiftsPage';
 
 /** The HTTP status of a failed request, if it has one. */
 function httpStatus(err: unknown): number | undefined {

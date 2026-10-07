@@ -574,3 +574,11 @@ def test_an_order_whose_customer_may_hold_the_slip_is_taken_with_the_clouds_verd
     # A till on the shop's LAN already took the money: history, never refused.
     paid_on_lan = order("o-3", cart=cart, state="paid", paidByName="קופה ראשית", paidTransactionId="tx-lan", customerWaiting=True)
     assert post(m, paid_on_lan)["accepted"] == ["o-3"]
+
+
+def test_an_order_with_no_service_reaches_the_tills_with_none(w):
+    """"ללא סוג שירות" (general.serviceMode = none): no service, and the tills hear of none."""
+    out = post(w, order("o-none", serviceType=None))
+    assert out["accepted"] == ["o-none"] and out["rejected"] == []
+    o = next(x for x in listed(w) if x["localId"] == "o-none")
+    assert o["serviceType"] is None

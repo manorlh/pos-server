@@ -32,6 +32,9 @@ LAYOUT_CATALOGS = ("rail", "top", "landing", "list", "shelves", "magazine", "wal
 LAYOUT_CATEGORY_ICONS = ("photo", "line", "filled", "duotone", "emoji", "none")
 LAYOUT_RAIL_SIZES = ("s", "m", "l")
 LAYOUT_LANDING_COLUMNS = (2, 3, 4)
+#: "גודל מוצרים": the dishes' cards in every catalog — s: one column more (smaller cards), m: as
+#: today, l: one fewer (larger; never under two tiles across from a 400 dp grid).
+LAYOUT_PRODUCT_SIZES = ("s", "m", "l")
 LAYOUT_HEROES = ("off", "manual", "auto")
 LAYOUT_CARDS = ("tile", "row", "plate", "bleed", "button", "outlined")
 LAYOUT_FLOWS = ("free", "guided")
@@ -52,6 +55,7 @@ LAYOUT_VOCABULARY: Dict[str, Tuple[Any, ...]] = {
     "categoryIcons": LAYOUT_CATEGORY_ICONS,
     "railSize": LAYOUT_RAIL_SIZES,
     "landingColumns": LAYOUT_LANDING_COLUMNS,
+    "productSize": LAYOUT_PRODUCT_SIZES,
     "hero": LAYOUT_HEROES,
     "card": LAYOUT_CARDS,
     "flow": LAYOUT_FLOWS,
@@ -72,6 +76,7 @@ LAYOUT_DEFAULTS: Dict[str, Any] = {
     "categoryIcons": None,
     "railSize": "m",
     "landingColumns": 3,
+    "productSize": "m",
     "landingShowCounts": True,
     "hero": "off",
     "magazineFeed": False,
