@@ -117,6 +117,8 @@ from app.models.kiosk_insights import KioskEvent, KioskSession
 from app.models.device_battery import DeviceBatteryAlert
 # The Android kiosk's web renderer status (kiosk web bundles, platform "kiosk_web").
 from app.models.kiosk_web import KioskWebDeviceStatus
+# "עיצוב קופה": the till design layers (docs/SPEC_TILL_DESIGN.md).
+from app.models.till_design import TillDesignSettings
 # "שירות הודעות ו-019" + "מועדון לקוחות" (docs/SPEC_NOTIFICATIONS_CLUB.md).
 from app.models.outbox import OutboxEvent
 from app.models.notifications import (
@@ -209,4 +211,5 @@ __all__ = [
     "KioskSession", "KioskEvent", "DeviceBatteryAlert", "KioskWebDeviceStatus",
     "RemoteCreditRequest", "RemoteCreditEvent",
     "DocumentRefusal",
+    "TillDesignSettings",
 ]

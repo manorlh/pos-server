@@ -42,6 +42,7 @@ import {
   IdCard,
   LayoutDashboard,
   LayoutGrid,
+  LayoutTemplate,
   Layers,
   Lightbulb,
   ListFilter,
@@ -255,6 +256,10 @@ export const NAV_SECTIONS: NavSection[] = [
       // Customer self-order kiosks: tills turned into kiosks, their status, remote control,
       // and their look and behaviour per company / shop / kiosk — the machine-admin roles.
       { href: '/dashboard/kiosks', labelKey: 'kiosks', icon: MonitorSmartphone, gate: 'settingsWrite' },
+      // "עיצוב קופה": the tills' order screens — template per device, layout, menu order,
+      // action bar, colours, texts, fields — per company / shop / point of sale / till, with a
+      // live preview; the same roles as the kiosks page.
+      { href: '/dashboard/till-design', labelKey: 'tillDesign', icon: LayoutTemplate, gate: 'settingsWrite' },
       // "תקינות מכשירים": each kiosk's parts (app, terminal, printer, till link, KDS, media,
       // uploads) live, and its open alerts — the same roles as the kiosks page.
       { href: '/dashboard/kiosks/health', labelKey: 'deviceHealth', icon: HeartPulse, gate: 'settingsWrite' },
