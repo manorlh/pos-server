@@ -214,7 +214,7 @@ def test_defaults_are_valid_and_complete():
 
 def test_defaults_endpoint_and_font_catalog(w):
     out = R.get_defaults(current_user=w.manager)
-    assert out["defaults"] == C.DEFAULT_CONFIG and out["kdsAvailable"] is False
+    assert out["defaults"] == C.DEFAULT_CONFIG and out["kdsAvailable"] is True  # every kiosk releases to the KDS
     fonts = {f["id"]: f for f in out["fonts"]}
     assert list(fonts)[0] == "system" and fonts["system"]["regular"] is None
     assert fonts["rubik"] == {
@@ -443,6 +443,9 @@ def test_validation_errors_have_paths():
 
 
 def test_cross_field_rules(monkeypatch):
+    # The KDS switch closed: KDS is refused by its code.
+    monkeypatch.setattr(C, "kds_available", lambda: False)
+
     def errs(layer):
         cleaned, layer_errors = C.validate_layer(layer)
         assert layer_errors == []
@@ -467,7 +470,8 @@ def test_cross_field_rules(monkeypatch):
     assert errs({"general": {"fulfillmentMode": "KDS"}}) == {}
 
 
-def test_kds_error_message_is_the_token():
+def test_kds_error_message_is_the_token(monkeypatch):
+    monkeypatch.setattr(C, "kds_available", lambda: False)
     errors = C.validate_config(C.merge(C.default_config(), {"general": {"fulfillmentMode": "KDS"}}))
     assert [e.to_wire() for e in errors] == [
         {"path": "general.fulfillmentMode", "code": "kds_not_available", "message": "kds_not_available"}
@@ -494,7 +498,8 @@ def test_media_ref_shape():
     assert paths(errors) == {"attract.playlist[0].durationSec": "out_of_range"}
 
 
-def test_put_settings_refuses_with_the_contract_shape(w):
+def test_put_settings_refuses_with_the_contract_shape(w, monkeypatch):
+    monkeypatch.setattr(C, "kds_available", lambda: False)  # the KDS switch closed
     err = refused(put, w, "shop", w.shop.id, {"theme": {"cornerRadius": 99, "nope": 1}})
     assert err.status_code == 422
     assert err.detail["code"] == "invalid_kiosk_config"
@@ -688,7 +693,7 @@ def test_sync_for_a_kiosk_and_its_controller(w):
     assert out["config"]["theme"]["font"] == "rubik" and out["font"]["id"] == "rubik"
     assert out["media"] == [{"url": f"{GF}/ofl/rubik/Rubik%5Bwght%5D.ttf", "kind": "font", "sha256": None, "bytes": None}]
     assert out["state"] == {"paused": False, "message": None, "since": None, "by": None, "until": None, "mode": None}
-    assert out["kdsAvailable"] is False and out["controls"] == []
+    assert out["kdsAvailable"] is True and out["controls"] == []
     device = w.db.get(KioskDevice, w.kiosk.id)
     assert device.status["flowState"] == "attract" and "junk" not in device.status
     assert device.last_kiosk_sync_at is not None
