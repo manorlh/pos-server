@@ -13,7 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { MobileNav } from '@/components/mobile-nav';
 import { useRoleAccess } from '@/lib/accessApi';
 import { findNavEntry } from '@/lib/navigation';
-import { pageAccess, sectionForPath } from '@/lib/dashboardAccess';
+import { canAccess, levelForPath, pageAccess, sectionForPath } from '@/lib/dashboardAccess';
 import { useDashboardAccess } from '@/lib/dashboardAccessApi';
 import { MyAccessCard, SectionDenied } from '@/components/dashboard/access/my-access-card';
 
@@ -70,7 +70,11 @@ function AccessGuard({ children }: { children: React.ReactNode }) {
   }
   const verdict = pageAccess(dashboardAccess, pathname);
   if (verdict === 'summary') return <MyAccessCard className="max-w-xl" />;
-  if (verdict === 'denied') return <SectionDenied section={sectionForPath(pathname) ?? ''} />;
+  if (verdict === 'denied') {
+    const section = sectionForPath(pathname);
+    const needsEdit = section !== undefined && levelForPath(pathname) === 'edit' && canAccess(dashboardAccess, section, 'view');
+    return <SectionDenied section={section ?? ''} needsEdit={needsEdit} />;
+  }
   return <>{children}</>;
 }
 

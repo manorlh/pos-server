@@ -40,6 +40,8 @@ export interface DashboardSection {
   id: SectionId;
   /** The dashboard pages this section opens (their drill-downs follow them). */
   pages: string[];
+  /** Pages that only act (producing a Z): shown with edit, not with view alone. */
+  editPages?: string[];
 }
 
 /** Same order and pages as the server's `SECTIONS`. Labels: messages `dashboardAccess.sections`. */
@@ -58,7 +60,7 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
       '/dashboard/tax-reports',
     ],
   },
-  { id: 'z', pages: ['/dashboard/shifts', '/dashboard/z-reports/new', '/dashboard/z-reports'] },
+  { id: 'z', pages: ['/dashboard/shifts', '/dashboard/z-reports/new', '/dashboard/z-reports'], editPages: ['/dashboard/z-reports/new'] },
   {
     id: 'products',
     pages: [
@@ -168,11 +170,18 @@ export function sectionForPath(pathname: string | null | undefined): SectionId |
   return best;
 }
 
-/** Whether a menu entry (by its href) is shown: its section must be granted (view). */
+/** The level a page needs: edit for a page that only acts (`editPages`), else view. */
+export function levelForPath(pathname: string | null | undefined): AccessLevel {
+  if (!pathname) return 'view';
+  const editPages = DASHBOARD_SECTIONS.flatMap((s) => s.editPages ?? []);
+  return editPages.some((page) => pathname === page || pathname.startsWith(`${page}/`)) ? 'edit' : 'view';
+}
+
+/** Whether a menu entry (by its href) is shown: its section must be granted at the page's level. */
 export function navHrefAllowed(access: DashboardAccess, href: string): boolean {
   if (!access.restricted) return true;
   const section = sectionForPath(href);
-  return section === undefined || canAccess(access, section, 'view');
+  return section === undefined || canAccess(access, section, levelForPath(href));
 }
 
 /** The menu's groups with the entries this user may not open left out (and empty groups dropped). */
@@ -192,7 +201,7 @@ export type PageAccess = 'ok' | 'denied' | 'summary';
 export function pageAccess(access: DashboardAccess, pathname: string | null | undefined): PageAccess {
   if (!access.restricted) return 'ok';
   const section = sectionForPath(pathname);
-  if (section === undefined || canAccess(access, section, 'view')) return 'ok';
+  if (section === undefined || canAccess(access, section, levelForPath(pathname))) return 'ok';
   return pathname === '/dashboard' || pathname === '/dashboard/' ? 'summary' : 'denied';
 }
 

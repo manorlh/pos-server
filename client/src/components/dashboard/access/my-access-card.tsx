@@ -83,14 +83,20 @@ export function MyAccessCard({ className }: { className?: string }) {
   );
 }
 
-/** A page of a section this user was not given: say so, and what they may open instead. */
-export function SectionDenied({ section }: { section: string }) {
+/**
+ * A page of a section this user was not given (or, for a page that only acts, given at view
+ * alone): say so, and what they may open instead.
+ */
+export function SectionDenied({ section, needsEdit = false }: { section: string; needsEdit?: boolean }) {
   const t = useTranslations('dashboardAccess');
+  const label = t(`sections.${section}`);
   return (
     <div className="max-w-xl space-y-4">
       <div className="rounded-lg border bg-card p-6">
         <h1 className="text-lg font-semibold">{t('deniedTitle')}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{t('deniedBody', { section: t(`sections.${section}`) })}</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {needsEdit ? t('deniedEditBody', { section: label }) : t('deniedBody', { section: label })}
+        </p>
       </div>
       <MyAccessCard />
     </div>

@@ -81,10 +81,13 @@ describe('filterNavByAccess — the menu', () => {
       [
         ['overview', ['/dashboard', '/dashboard/live-items']],
         ['catalog', ['/dashboard/products']],
-        ['reports', ['/dashboard/transactions', '/dashboard/z-reports/new', '/dashboard/z-reports']],
+        // Z at view: the Zs, not "produce a Z", which is an action.
+        ['reports', ['/dashboard/transactions', '/dashboard/z-reports']],
         ['settings', ['/dashboard/profile']],
       ],
     );
+    const zEditor: DashboardAccess = { restricted: true, sections: { ...ORG_MANAGER_SECTIONS, z: 'edit' } };
+    assert.ok(navHrefAllowed(zEditor, '/dashboard/z-reports/new'));
   });
 
   it('drops a group left empty, keeps the profile always', () => {
@@ -112,6 +115,9 @@ describe('pageAccess — a page reached by its address', () => {
     assert.equal(pageAccess(ORG_MANAGER, '/dashboard/machines/123'), 'denied');
     assert.equal(pageAccess(ORG_MANAGER, '/dashboard/products/import'), 'ok');
     assert.equal(pageAccess(ORG_MANAGER, '/dashboard/profile'), 'ok');
+    // An action page needs edit: Z at view reads the Zs but does not produce one.
+    assert.equal(pageAccess(ORG_MANAGER, '/dashboard/z-reports'), 'ok');
+    assert.equal(pageAccess(ORG_MANAGER, '/dashboard/z-reports/new'), 'denied');
   });
 
   it('home without reports shows what the user may open', () => {
