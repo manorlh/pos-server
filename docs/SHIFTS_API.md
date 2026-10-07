@@ -572,8 +572,11 @@ are read from any 200 (a duplicate included); an ack answered 404 or 410 is drop
 ```
 - `received`: the till has the instruction (item → `closing`).
 - `deferred`: the till cannot close yet; it will retry by itself. The till sends
-  `errorCode: "card_in_flight"` for a card payment in flight. The item becomes `closing`
-  and `errorCode`/`errorMessage` are shown to the operator.
+  `errorCode: "card_in_flight"` for a card payment in flight, and (2026-10-07)
+  `errorCode: "payment_in_progress"` while its payment screen is open — a close that is not
+  forced never runs in the middle of a payment; it runs on the next delivery once the payment
+  is done or cancelled (a forced close parks the basket instead, as before). The item becomes
+  `closing` and `errorCode`/`errorMessage` are shown to the operator.
 - `completed`: informational — the item only becomes ready when the **close** (§1.3) is
   accepted with all documents; an ack alone never makes it ready.
 - `failed`: the till gave up (item → `failed`).
@@ -636,10 +639,19 @@ Response
     {"shiftId": "…", "zReportId": "…", "zNumber": 7}
   ],
   "pendingCloseShift": {"requestId": "…", "shiftId": "…"},  // only when a remote close is waiting for this till
+  "closedOpenShift": {"shiftId": "…", "closedAt": "…", "reconstructed": true},  // only when the openShiftId sent is this till's and closed in the cloud (below)
   "zMode": "cloud",                  // or "till" (§5.1). Always present.
   "pendingTillZ": {"requestId": "…", "initiatedBy": "…", "createdAt": "…"}   // only while a dashboard asks this till for its Z (§5.3)
 }
 ```
+`closedOpenShift` (2026-10-07): the `openShiftId` this beat sent is this till's own shift and the
+cloud holds it `closed` — not by a close of the till's (that leaves the till's row closing, never
+reported open again) but administratively (§2.9) or by support. Repeated on every beat while
+the till still reports it. The till closes that shift on its side too — unattended, uncounted,
+only that shift, never in the middle of a payment (it waits for the next beat) — and goes to
+"קופה סגורה"; its close then answers `200 duplicate` (§1.3). Absent otherwise (an unknown, open
+or another till's shift).
+
 `recentShiftZs` is how the till learns the Z number of an older shift (for shift history and
 X reprints); the close response only carries it when the shift is already in a Z. A till Z
 (§5) is listed exactly like a cloud Z, its `zNumber` being its `machineSequenceNumber`, and it
@@ -858,7 +870,8 @@ Dead-till recovery (replaces `trading-day/reconstruct-close`). Body `{"force": f
 Closes that open shift from the cloud's documents: `reconstructed`, `unattended`, uncounted.
 It then is an ordinary Z candidate, and a Z run or close request waiting for that shift is
 completed by it (the run builds if that was the last till), and the till's heartbeat claim of
-it is dropped. `reconstructionBasis.lastReportedPendingDocuments` is the status light's reading
+it is dropped. A till that still reports it open on a later beat is answered `closedOpenShift`
+(§1.6) and closes it on its side too. `reconstructionBasis.lastReportedPendingDocuments` is the status light's reading
 (`pendingDocuments`, else the outbox depth `pendingCount`). Guards: 409 `shift_not_open`, 409 `terminal_is_online…`,
 409 `terminal_recently_seen…` (silent < 2h) unless `force`. `200 {"created": true, "shift": Shift}`
 (`created: false` if already closed). `POST /machines/{id}/trading-day/reconstruct-close` → 410.

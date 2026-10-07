@@ -27,6 +27,8 @@ const KNOWN = new Set([
   'shift_already_in_z',
   'expired',
   'card_in_flight',
+  // The till's payment screen is open: a close that is not forced waits for it (SHIFTS_API §1.4).
+  'payment_in_progress',
   'deferred',
   'failed',
   'cancelled',
