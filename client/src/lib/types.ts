@@ -2363,6 +2363,10 @@ export interface PosUser {
   workerNumber?: string | null;
   role: PosUserRole;
   isActive: boolean;
+  /** "תפקידים והרשאות": the till role (null = not assigned yet: the legacy role of ole). */
+  tillRoleId?: string | null;
+  tillRoleName?: string | null;
+  permissionOverrides?: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -2373,6 +2377,7 @@ export interface PosUserCreate {
   lastName?: string;
   workerNumber?: string;
   role: PosUserRole;
+  tillRoleId?: string;
   pin: string;
 }
 
@@ -2381,6 +2386,7 @@ export interface PosUserUpdate {
   lastName?: string;
   workerNumber?: string | null;
   role?: PosUserRole;
+  tillRoleId?: string;
   isActive?: boolean;
   pin?: string;
 }

@@ -40,6 +40,7 @@ import {
   RadioTower,
   Grid3x3,
   IdCard,
+  KeyRound,
   LayoutDashboard,
   LayoutGrid,
   LayoutTemplate,
@@ -279,6 +280,9 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: IdCard,
         gate: 'canManagePosUsers',
       },
+      // "תפקידים והרשאות": what each till user may do — roles × permissions (tri-state), the
+      // users' roles, the cash drawer's parameters and the audit (docs/SPEC_ROLES_PERMISSIONS.md).
+      { href: '/dashboard/till-roles', labelKey: 'tillRoles', icon: KeyRound, gate: 'canManagePosUsers' },
       { href: '/dashboard/branding', labelKey: 'branding', icon: Palette, gate: 'branding' },
       // "מועדון לקוחות": one club per company — the server's CLUB_ADMIN_ROLES, which are
       // exactly the `branding` gate's super-admin / distributor / company-manager set.

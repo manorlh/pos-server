@@ -12,6 +12,8 @@ of till users and the audit (docs/SPEC_ROLES_PERMISSIONS.md).
     GET    /companies/{id}/till-roles/changes                the audit
     GET    /companies/{id}/till-roles/users?shopId=          the till users, their role and overrides
     PUT    /shops/{shop_id}/pos-users/{id}/till-role         assign a role (+ overrides)
+    GET    /companies/{id}/till-drawer-params?scopeType=&scopeId=   the drawer's parameters at a level (spec §17)
+    PUT    /companies/{id}/till-drawer-params                set / clear them at a level
 
 Who: reading — the super admin, a distributor, a company manager over the company, and a
 shop's managers / shift supervisors for their own shop's company. Defining roles — the
@@ -356,6 +358,87 @@ def list_till_role_users(
             for u in users
         ],
     }
+
+
+# ── The drawer's parameters per level (spec §17) ──────────────────────────────
+
+
+class DrawerParamsIn(BaseModel):
+    scope_type: str = Field(..., alias="scopeType")
+    scope_id: uuid.UUID = Field(..., alias="scopeId")
+    #: key → value; null clears this level's own value (it inherits again).
+    values: Dict[str, Any]
+
+    model_config = {"populate_by_name": True}
+
+
+def _level_access(db: Session, company: Company, scope_type: str, scope_id: Any, user: User, *, write: bool) -> None:
+    from app.services import cash_drawer as CD
+
+    if scope_type not in CD.SCOPE_TYPES:
+        raise HTTPException(status_code=422, detail="bad_scope_type")
+    level_company, level_shop = CD.scope_company(db, scope_type, scope_id)
+    if level_company is None or str(level_company) != str(company.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="level_not_in_company")
+    if may_edit(db, user, company):
+        return
+    if not write and may_read(db, user, company):
+        return
+    # A shop's manager sets their own shop's levels (not the company's).
+    if (
+        write
+        and getattr(user, "role", None) == UserRole.SHOP_MANAGER
+        and level_shop is not None
+        and str(getattr(user, "shop_id", None)) == str(level_shop)
+    ):
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+
+
+@router.get("/companies/{company_id}/till-drawer-params")
+def get_drawer_params(
+    company_id: str,
+    scope_type: str = Query(..., alias="scopeType"),
+    scope_id: uuid.UUID = Query(..., alias="scopeId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    from app.services import cash_drawer as CD
+
+    company = _readable(db, company_id, current_user, active_tenant_id)
+    _level_access(db, company, scope_type, scope_id, current_user, write=False)
+    view = CD.level_view(db, scope_type, scope_id)
+    view["canEdit"] = may_edit(db, current_user, company) or (
+        scope_type != "company"
+        and current_user.role == UserRole.SHOP_MANAGER
+        and str(CD.scope_company(db, scope_type, scope_id)[1]) == str(current_user.shop_id)
+    )
+    db.commit()
+    return view
+
+
+@router.put("/companies/{company_id}/till-drawer-params")
+def put_drawer_params(
+    company_id: str,
+    body: DrawerParamsIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    from app.services import cash_drawer as CD
+    from app.services.till_parameters import TillParameterValueError, publish_parameters_notify
+
+    company = _company(db, company_id, active_tenant_id)
+    _level_access(db, company, body.scope_type, body.scope_id, current_user, write=True)
+    try:
+        targets = CD.save_values(db, body.scope_type, body.scope_id, body.values, user=current_user)
+    except TillParameterValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail={"code": "invalid_value", "message": str(exc)})
+    db.commit()
+    publish_parameters_notify(targets)
+    return CD.level_view(db, body.scope_type, body.scope_id)
 
 
 @router.put("/shops/{shop_id}/pos-users/{pos_user_id}/till-role")

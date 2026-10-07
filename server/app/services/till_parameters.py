@@ -1464,6 +1464,12 @@ from app.services.terminal_check_bypass import BYPASS_PARAMETER_SPECS as _BYPASS
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _BYPASS_SPECS)
 
+# "מגירת מזומן" (app/services/cash_drawer.py, docs/SPEC_ROLES_PERMISSIONS.md): the drawer's
+# management parameters (spec §17), edited on the roles page per company → shop → area → till.
+from app.services.cash_drawer import CASH_DRAWER_PARAMETER_SPECS as _CASH_DRAWER_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CASH_DRAWER_SPECS)
+
 
 def validate_keyed_value(key: str, value: Any) -> Any:
     """A value checked for what its key needs beyond its type (`technicianCode`: 4–8 digits)."""

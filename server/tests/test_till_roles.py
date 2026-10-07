@@ -535,3 +535,60 @@ class TestMigration:
     def test_downgrade_drops_them(self):
         sql = _render("e5b1c3d7f9a2:c7e2f4a9d1b6", downgrade=True)
         assert "DROP TABLE till_roles" in sql and "DROP TABLE till_role_changes" in sql
+
+# ── The drawer's parameters per level (spec §17) ──────────────────────────────
+
+
+class TestDrawerParams:
+    def test_the_spec_parameters_are_built_in_with_safe_defaults(self):
+        from app.services import cash_drawer as CD
+        from app.services.till_parameters import BUILTIN_PARAMETERS
+
+        keys = {p.key: p for p in BUILTIN_PARAMETERS}
+        for key in (CD.REQUIRE_REASON_KEY, CD.ALLOW_AFTER_CLOSE_KEY, CD.BLIND_COUNT_KEY, CD.MAX_MANUAL_OPENS_KEY,
+                    CD.ALERT_OPENS_MINUTES_KEY, CD.CASH_OUT_ALERT_AMOUNT_KEY, CD.VARIANCE_ALERT_AMOUNT_KEY,
+                    CD.DENIED_UI_KEY):
+            assert key in keys, key
+        assert keys[CD.REQUIRE_REASON_KEY].default_value is True
+        assert keys[CD.BLIND_COUNT_KEY].default_value is False
+        assert keys[CD.MAX_MANUAL_OPENS_KEY].default_value == 0
+        # The existing hardware switch is the editor's first row, not a duplicate.
+        assert CD.LEVEL_KEYS[0] == "cashDrawer"
+
+    def test_levels_inherit_company_shop_till(self, w):
+        from app.services.till_parameters import till_parameters_for_machine
+
+        put = lambda scope_type, scope_id, values, user=None: R.put_drawer_params(  # noqa: E731
+            str(w.company.id), R.DrawerParamsIn(scopeType=scope_type, scopeId=scope_id, values=values), **ctx(w, user),
+        )
+        put("company", w.company.id, {"cashDrawer.maxManualOpensPerShift": 5, "cashDrawer.blindCount": True},
+            w.company_manager)
+        put("shop", w.shop.id, {"cashDrawer.maxManualOpensPerShift": 3}, w.shop_manager)
+        view = put("machine", w.tills[0].id, {"cashDrawer.blindCount": False})
+        assert view["own"] == {"cashDrawer.blindCount": False}
+        assert view["inherited"]["cashDrawer.maxManualOpensPerShift"] == 3
+        params = till_parameters_for_machine(w.db, w.tills[0]).parameters
+        assert params["cashDrawer.maxManualOpensPerShift"] == 3 and params["cashDrawer.blindCount"] is False
+        assert till_parameters_for_machine(w.db, w.tills[1]).parameters["cashDrawer.blindCount"] is True
+        # Cleared: back to inheriting.
+        put("machine", w.tills[0].id, {"cashDrawer.blindCount": None})
+        assert till_parameters_for_machine(w.db, w.tills[0]).parameters["cashDrawer.blindCount"] is True
+        from app.models.till_parameter import TillParameterChange
+
+        actions = [c.action for c in w.db.query(TillParameterChange).all()]
+        assert actions.count("set") == 4 and actions.count("clear") == 1
+
+    def test_who_may_set_which_level(self, w):
+        body = R.DrawerParamsIn(scopeType="company", scopeId=w.company.id, values={"cashDrawer.blindCount": True})
+        assert refused(R.put_drawer_params, str(w.company.id), body, **ctx(w, w.shop_manager)).status_code == 403
+        other = R.DrawerParamsIn(scopeType="shop", scopeId=w.other_shop.id, values={"cashDrawer.blindCount": True})
+        assert refused(R.put_drawer_params, str(w.company.id), other, **ctx(w, w.shop_manager)).status_code == 403
+        assert refused(R.put_drawer_params, str(w.company.id), other, **ctx(w, w.supervisor)).status_code == 403
+        foreign = R.DrawerParamsIn(scopeType="company", scopeId=w.company2.id, values={})
+        assert refused(R.put_drawer_params, str(w.company.id), foreign, **ctx(w)).status_code == 404
+
+    def test_a_bad_value_is_refused(self, w):
+        body = R.DrawerParamsIn(scopeType="company", scopeId=w.company.id, values={"cashDrawer.blindCount": "yes"})
+        assert refused(R.put_drawer_params, str(w.company.id), body, **ctx(w)).status_code == 422
+        body = R.DrawerParamsIn(scopeType="company", scopeId=w.company.id, values={"somethingElse": 1})
+        assert refused(R.put_drawer_params, str(w.company.id), body, **ctx(w)).status_code == 422
