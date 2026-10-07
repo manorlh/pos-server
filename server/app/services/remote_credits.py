@@ -21,6 +21,10 @@ Two modes (`RemoteCreditMode`):
   original's, marked `noMoneyMovement` — no pinpad, no drawer, no refund expected.
 * `prepared` — "להשלמה בקופה": a waiting refund on the till that the cashier completes with
   the till's normal refund flow and any tender. Expires after `remoteCreditExpiryHours`.
+* `card_refunded` — "זוכה באשראי מהענן (Z-Credit)" (§11, app/services/cloud_card_refunds.py):
+  never asked for directly. The cloud already refunded the card through Z-Credit's web API;
+  the till issues the credit note at once with the card tender the request carries. Not
+  cancellable (the money moved) — only sent to another till.
 
 What may be credited is what the till's own refund flow allows (`RefundMath` in
 pos-android): per original line, the quantity sold less what earlier credit notes took
@@ -302,9 +306,18 @@ def creditable(
     pending_requests = pending_q.all()
     pending_qty: Dict[str, Decimal] = {}
     pending_amount = Decimal("0")
-    for req in pending_requests:
-        pending_amount += _dec(req.amount)
-        for line in req.lines or []:
+    holds: List[Tuple[Any, Any]] = [(req.amount, req.lines) for req in pending_requests]
+    # A cloud card refund whose money may be gone and whose credit note has not reached the
+    # cloud yet (in flight, unknown, or refunded with the note still to come) holds its lines
+    # too — unless the pending request above already counts it (§11).
+    from app.services.cloud_card_refunds import unlanded_refund_holds
+
+    holds += unlanded_refund_holds(
+        db, original, counted_request_ids={r.id for r in pending_requests}, exclude_request_id=exclude_request_id
+    )
+    for amount, req_lines in holds:
+        pending_amount += _dec(amount)
+        for line in req_lines or []:
             key = str(line.get("itemId"))
             pending_qty[key] = pending_qty.get(key, Decimal("0")) + _dec(line.get("quantity"))
 
@@ -653,6 +666,7 @@ def expire_overdue(db: Session, *, now: Optional[datetime] = None) -> int:
         req.failed_at = now
         req.updated_at = now
         _event(db, req, "expired", actor="system", now=now)
+        _card_refund_hook(db, req, "expired", now)
     if rows:
         db.flush()
     return len(rows)
@@ -786,6 +800,76 @@ def create(
     return req, True
 
 
+def create_for_card_refund(
+    db: Session,
+    refund: Any,
+    machine: POSMachine,
+    tenders: List[dict],
+    *,
+    user: Optional[User] = None,
+    now: Optional[datetime] = None,
+) -> RemoteCreditRequest:
+    """
+    The credit note of a cloud card refund that the gateway confirmed (§11): a `card_refunded`
+    request to `machine`, its lines and money the refund's, its tender the refunded card leg.
+
+    No check refuses it here — the money already moved, so the note must be asked for. The
+    target was checked before the refund (an open shift, the same business, a till), and the
+    till checks again: a till that refuses it fails the request, and the refund is sent to
+    another till from the dashboard. Lives as long as a request may (`MAX_TTL_HOURS`).
+    """
+    now = _now(now)
+    req = RemoteCreditRequest(
+        id=uuid.uuid4(),
+        tenant_id=refund.tenant_id,
+        company_id=refund.company_id,
+        machine_id=machine.id,
+        shop_id=machine.shop_id,
+        original_transaction_id=refund.original_transaction_id,
+        original_machine_id=refund.original_machine_id,
+        original_document_number=refund.original_document_number,
+        original_document_type=refund.original_document_type,
+        original_issued_at=None,
+        mode=M.CARD_REFUNDED,
+        card_refund_id=refund.id,
+        full_credit=bool(refund.full_credit),
+        lines=list(refund.lines or []),
+        amount=_dec(refund.amount),
+        tenders=tenders,
+        reason_code=refund.reason_code,
+        reason=refund.reason,
+        status=S.QUEUED,
+        expires_at=now + timedelta(hours=MAX_TTL_HOURS),
+        created_by_user_id=user.id if user is not None else refund.created_by_user_id,
+        initiated_by=_initiator(user) if user is not None else refund.initiated_by,
+        created_at=now,
+        updated_at=now,
+    )
+    original = db.query(Transaction).filter(Transaction.id == refund.original_transaction_id).first()
+    if original is not None:
+        req.original_issued_at = _utc(original.created_at)
+    db.add(req)
+    db.flush()
+    _event(
+        db, req, "created", actor="user" if user is not None else "system", user=user, detail=refund.reason,
+        data={"mode": M.CARD_REFUNDED, "machineId": str(machine.id), "amount": str(_dec(refund.amount)),
+              "cardRefundId": str(refund.id)},
+        now=now,
+    )
+    _notify(machine, req, now)
+    db.flush()
+    return req
+
+
+def _card_refund_hook(db: Session, req: RemoteCreditRequest, what: str, now: datetime, **kw) -> None:
+    """Tell the cloud card refund behind a `card_refunded` request what became of its credit note."""
+    if req.card_refund_id is None:
+        return
+    from app.services import cloud_card_refunds
+
+    cloud_card_refunds.on_document_request(db, req, what, now=now, **kw)
+
+
 def _notify(machine: POSMachine, req: RemoteCreditRequest, now: datetime, *, cancelled: bool = False) -> None:
     """The fast path: wake the till. Offline (or no Ably) is a delay — the heartbeat hands it over."""
     from app.services import ably_notify
@@ -808,13 +892,33 @@ def cancel(
     expire_overdue(db, now=now)
     if req.status not in PENDING_REMOTE_CREDIT_STATUSES:
         raise _refuse("request_not_pending", "אפשר לבטל רק בקשה שעדיין לא בוצעה.")
+    if req.mode == M.CARD_REFUNDED:
+        # The card was refunded already: its credit note is owed, it can only move to another till.
+        raise _refuse(
+            "card_refunded_not_cancellable",
+            "הכסף כבר הוחזר לכרטיס דרך Z-Credit — את מסמך הזיכוי אי אפשר לבטל. "
+            "אפשר לשלוח אותו לקופה אחרת מתוך פרטי הזיכוי באשראי.",
+        )
+    return cancel_pending(db, req, user, reason=reason, now=now)
+
+
+def cancel_pending(
+    db: Session, req: RemoteCreditRequest, user: Optional[User], *, reason: Optional[str], now: datetime
+) -> RemoteCreditRequest:
+    """
+    Cancel a pending request — also a `card_refunded` one moving to another till, or one whose
+    refund another till already issued the note for (§11; `user` None: the cloud itself).
+    """
     req.status = S.CANCELLED
     req.error_code = "cancelled"
     req.cancelled_at = now
-    req.cancelled_by_user_id = user.id
+    req.cancelled_by_user_id = user.id if user is not None else None
     req.cancel_reason = (" ".join((reason or "").split()) or None)
     req.updated_at = now
-    _event(db, req, "cancelled", actor="user", user=user, detail=req.cancel_reason, now=now)
+    _event(
+        db, req, "cancelled", actor="user" if user is not None else "system", user=user,
+        detail=req.cancel_reason, now=now,
+    )
     machine = req.machine or db.query(POSMachine).filter(POSMachine.id == req.machine_id).first()
     if machine is not None:
         _notify(machine, req, now, cancelled=True)
@@ -949,11 +1053,31 @@ def till_payload(db: Session, req: RemoteCreditRequest) -> dict:
             }
             for l in (req.lines or [])
         ],
-        "tenders": [
-            {"method": t.get("method"), "amount": float(_dec(t.get("amount")))} for t in (req.tenders or [])
-        ],
+        "tenders": [_till_tender(t) for t in (req.tenders or [])],
+        # Mode `card_refunded` (§11): the refund the cloud made, which the credit note records.
+        "cardRefund": _card_refund_payload(db, req),
         "original": _original_payload(db, req),
     }
+
+
+#: Besides method and amount, what a `card_refunded` tender carries to the till verbatim.
+_TENDER_EXTRA_KEYS = ("nayaxMeta", "cardBrand", "cardAcquirer", "cardIssuer", "cardRefundId")
+
+
+def _till_tender(t: dict) -> dict:
+    out = {"method": t.get("method"), "amount": float(_dec(t.get("amount")))}
+    for key in _TENDER_EXTRA_KEYS:
+        if t.get(key) is not None:
+            out[key] = t[key]
+    return out
+
+
+def _card_refund_payload(db: Session, req: RemoteCreditRequest) -> Optional[dict]:
+    if req.card_refund_id is None:
+        return None
+    from app.services import cloud_card_refunds
+
+    return cloud_card_refunds.till_block(db, req.card_refund_id)
 
 
 def for_till(db: Session, machine: POSMachine, *, now: Optional[datetime] = None) -> dict:
@@ -987,6 +1111,7 @@ def _complete(
             db, req, "duplicate_credit", actor="till", machine_id=machine.id,
             detail="זיכוי נוסף לאותה בקשה", data={"creditTransactionId": str(credit_id)}, now=now,
         )
+        _card_refund_hook(db, req, "duplicate", now, credit_id=credit_id)
         return
     was = req.status
     req.credit_transaction_id = credit_id or req.credit_transaction_id
@@ -1010,6 +1135,7 @@ def _complete(
             detail=number, data={"creditTransactionId": str(credit_id) if credit_id else None, "via": how}, now=now,
         )
     req.updated_at = now
+    _card_refund_hook(db, req, "completed", now)
 
 
 def apply_ack(
@@ -1074,6 +1200,7 @@ def apply_ack(
         req.error_code = (error_code or "failed")[:64]
         req.error_message = error_message
         _event(db, req, "failed", actor="till", machine_id=machine.id, detail=error_message or error_code, now=now)
+        _card_refund_hook(db, req, "failed", now)
     req.updated_at = now
     db.flush()
     return req
@@ -1145,10 +1272,12 @@ def request_to_out(db: Session, req: RemoteCreditRequest, *, events: bool = Fals
         "shopName": shop.name if shop is not None else None,
         "online": is_online(machine.last_heartbeat_at, now=now) if machine is not None else False,
         "mode": req.mode,
+        "cardRefundId": str(req.card_refund_id) if req.card_refund_id else None,
         "fullCredit": bool(req.full_credit),
         "lines": req.lines or [],
         "amount": str(_dec(req.amount).quantize(CENT)),
-        "tenders": req.tenders or [],
+        # Method and money only: a `card_refunded` tender's card meta stays with the till payload.
+        "tenders": [{"method": t.get("method"), "amount": t.get("amount")} for t in (req.tenders or [])],
         "reasonCode": req.reason_code,
         "reason": req.reason,
         "status": req.status,

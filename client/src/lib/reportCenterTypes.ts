@@ -300,6 +300,8 @@ export const RECONCILIATION_CHECKS = [
   'numbering_conflicts',
   'z_completeness',
   'ingest_notes',
+  // Card refunds the cloud made through Z-Credit ↔ their credit notes (SPEC_REMOTE_CREDIT.md §11).
+  'cloud_card_refunds',
 ] as const;
 export type ReconciliationCheck = (typeof RECONCILIATION_CHECKS)[number];
 export type ReconciliationStatus = 'match' | 'difference' | 'missing' | 'pending';

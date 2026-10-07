@@ -50,6 +50,11 @@ import {
   RemoteCreditButton,
   RemoteCreditSection,
 } from '@/components/dashboard/remote-credit/remote-credit-actions';
+import {
+  CloudCardRefundLegBadge,
+  CloudCardRefundLegButton,
+  CloudCardRefundSection,
+} from '@/components/dashboard/cloud-card-refund/cloud-card-refund-actions';
 
 const PAGE_SIZE = 50;
 
@@ -762,12 +767,20 @@ function TransactionDetailsDialog({
                         </span>
                       ) : null}
                       {leg.noMoneyMovement ? <RemoteCreditBadges tx={{ noMoneyMovement: true }} /> : null}
+                      <CloudCardRefundLegBadge leg={leg} />
                     </span>
-                    <span className="tabular-nums">{formatCurrency(leg.amount)}</span>
+                    <span className="flex items-center gap-2">
+                      {/* "זיכוי באשראי (Z-Credit)" (SPEC_REMOTE_CREDIT.md §11): only on a Z-Credit leg. */}
+                      <CloudCardRefundLegButton tx={data} leg={leg} onOpenDocument={onSelect} />
+                      <span className="tabular-nums">{formatCurrency(leg.amount)}</span>
+                    </span>
                   </div>
                 ))}
               </div>
             )}
+
+            {/* The card refunds the cloud made for this deal, and their credit notes. */}
+            <CloudCardRefundSection tx={data} onOpenDocument={onSelect} />
 
             {/* "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): create one, follow it, or where this credit came from. */}
             <RemoteCreditSection tx={data} onOpenDocument={onSelect} />

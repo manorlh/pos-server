@@ -129,8 +129,8 @@ export type ImageRatio = '1:1' | '4:3' | '16:9';
 export type CategoryStyle = 'chips' | 'tabs' | 'images';
 /** The categories: a rail on the start side (right in RTL), or the strip across the top. */
 export type CategoryLayout = 'side' | 'top';
-/** "סגנון ממשק" — see KIOSK_UI_PRESETS. */
-export type UiStyle = 'ios' | 'wolt' | 'classic' | 'minimal_dark';
+/** "סגנון ממשק" — see KIOSK_UI_PRESETS ("tech": "טכנולוגי", its chrome in kioskChrome). */
+export type UiStyle = 'ios' | 'wolt' | 'classic' | 'minimal_dark' | 'tech';
 export type TypeScale = 'normal' | 'large' | 'xlarge';
 export type TypeWeight = 'light' | 'regular' | 'bold';
 /** The basket while ordering: the floating bar, or a side panel on a wide screen. */
@@ -1072,7 +1072,7 @@ export function stripNulls(layer: unknown): KioskLayer {
 
 /* ------------------------------------------------------- "סגנון ממשק" */
 
-export const UI_STYLES: UiStyle[] = ['ios', 'wolt', 'classic', 'minimal_dark'];
+export const UI_STYLES: UiStyle[] = ['ios', 'wolt', 'classic', 'minimal_dark', 'tech'];
 
 /** The theme keys a preset decides (unless a layer sets them). */
 export const PRESET_THEME_KEYS = [
@@ -1144,6 +1144,19 @@ export const KIOSK_UI_PRESETS: Record<UiStyle, UiPreset> = {
     typeScale: 'normal', typeWeight: 'light',
     cartStyle: 'bar', animation: 'subtle', showDescriptions: true,
   },
+  // "טכנולוגי": near-black, one electric accent (the brand colour; dark words on it everywhere),
+  // a semi-tone surface for the panels, 1 dp outlines instead of shadows, sharp corners. Its grid,
+  // status line, figures and micro-motion are its chrome (kioskChrome).
+  tech: {
+    mode: 'dark', font: 'heebo',
+    primaryColor: '#22E1FF', accentColor: '#22E1FF',
+    backgroundColor: '#0B0F14', surfaceColor: '#111821', textColor: '#E6EDF3',
+    cornerRadius: 10, cardStyle: 'outlined', buttonShape: 'rounded',
+    gridDensity: 'comfortable', imageRatio: '4:3',
+    categoryStyle: 'tabs', categoryLayout: 'side',
+    typeScale: 'normal', typeWeight: 'regular',
+    cartStyle: 'bar', animation: 'subtle', showDescriptions: true,
+  },
 };
 
 /** The attract button keys a style decides (unless a layer sets them). */
@@ -1184,6 +1197,12 @@ export const KIOSK_UI_PRESET_CTA: Record<UiStyle, UiPresetCta> = {
     shadow: false, icon: 'arrow', iconPosition: 'end', animation: 'glow',
     borderColor: '#C9A227', borderWidth: 1,
   },
+  // Crisp and still: the attract screen's idle motion is the style's scan line (kioskChrome).
+  tech: {
+    size: 'l', position: 'bottom_center', fontSize: 22, fontWeight: 'bold',
+    shadow: false, icon: 'arrow', iconPosition: 'end', animation: 'none',
+    borderColor: null, borderWidth: 0,
+  },
 };
 
 /** The "הנפשות ומעברים" keys a style decides (unless a layer sets them): all of them. */
@@ -1200,6 +1219,8 @@ export const KIOSK_UI_PRESET_MOTION: Record<UiStyle, KioskMotionSettings> = {
   wolt: { categorySwitch: 'slide', itemsEnter: 'cascade', screenChange: 'slide', sheet: 'scale', addToCart: 'fly', speed: 'normal' },
   classic: { categorySwitch: 'push', itemsEnter: 'pop', screenChange: 'fade', sheet: 'scale', addToCart: 'fly', speed: 'normal' },
   minimal_dark: { categorySwitch: 'fade_scale', itemsEnter: 'cascade', screenChange: 'fade', sheet: 'fade', addToCart: 'fly', speed: 'normal' },
+  // Crisp and cheap: opacity for the screens and the category, the cards in one after another.
+  tech: { categorySwitch: 'fade', itemsEnter: 'cascade', screenChange: 'fade', sheet: 'scale', addToCart: 'fly', speed: 'normal' },
 };
 
 /** Where a style decides values: the theme's keys, the attract button's and the transitions. */
@@ -2179,7 +2200,8 @@ export interface KioskServiceLook {
 /**
  * "איך תרצו לקבל את ההזמנה?": the two choices' colours by UI style (the till's KioskServiceLook):
  * ios a soft tint with the icon on a brand badge; wolt the brand-to-accent sweep; classic a flat
- * bold fill; minimal_dark its own surface ringed in the brand colour. The words always read (3:1).
+ * bold fill; minimal_dark its own surface ringed in the brand colour; tech its semi-tone panel
+ * outlined in the accent, the icon on a faint accent badge. The words always read (3:1).
  */
 export function kioskServiceLook(
   theme: Pick<KioskTheme, 'uiStyle' | 'primaryColor' | 'accentColor'>,
@@ -2204,6 +2226,8 @@ export function kioskServiceLook(
       return filled(p, p, false);
     case 'minimal_dark':
       return { from: surface, to: surface, diagonal: false, ink: text, badge: alpha(p, 0x2e), icon: contrastRatio(p, surface) >= REST_LARGE_TEXT_CONTRAST ? p : text, border: p };
+    case 'tech':
+      return { from: surface, to: surface, diagonal: false, ink: text, badge: alpha(p, 0x1f), icon: contrastRatio(p, surface) >= REST_LARGE_TEXT_CONTRAST ? p : text, border: p };
     default:
       return filled(p, mixHex(mixHex(p, theme.accentColor, 0.5), '#000000', 0.18), true);
   }
@@ -3011,7 +3035,8 @@ export interface KioskRestLook {
  * The closed screen's colours by UI style, as its attract screen colours it (the till's
  * KioskRestLook, the same numbers): ios a soft fall of the brand colour; wolt the
  * brand-to-accent sweep of its hero; classic a flat bold fill; minimal_dark its near-black with
- * the brand colour glowing, the title in it.
+ * the brand colour glowing, the title in it; tech its near-black with no glow (its grid shows
+ * through — kioskChrome), the title in the accent.
  */
 export function kioskRestLook(
   theme: Pick<KioskTheme, 'uiStyle' | 'primaryColor' | 'accentColor'>,
@@ -3033,9 +3058,152 @@ export function kioskRestLook(
       const text = mixHex(colors.text, colors.text, 0);
       return { from: bg, to: bg, diagonal: false, glow: p, ink: text, title: contrastRatio(p, bg) >= REST_LARGE_TEXT_CONTRAST ? p : text, spots: false };
     }
+    case 'tech': {
+      const bg = mixHex(colors.background, colors.background, 0);
+      const text = mixHex(colors.text, colors.text, 0);
+      return { from: bg, to: bg, diagonal: false, glow: null, ink: text, title: contrastRatio(p, bg) >= REST_LARGE_TEXT_CONTRAST ? p : text, spots: false };
+    }
     default:
       return fill(p, mixHex(mixHex(p, theme.accentColor, 0.5), '#000000', 0.18), true, true);
   }
+}
+
+/* ------------------------------------------------ "טכנולוגי": the chrome */
+// The till's domain/KioskChrome.kt — the same rules and numbers (both repos' tests pin them).
+
+/** The screens' backdrop pattern: none, thin grid lines, or a dot matrix. */
+export type KioskBackdrop = 'none' | 'grid' | 'dots';
+
+/**
+ * A style's chrome — what it draws around the content, the same on every screen and layout:
+ * the backdrop pattern, the outline that replaces shadows, the status line, the figures, the press,
+ * the add-to-cart glow and the attract screen's scan line. Only "tech" has any of it; the other
+ * styles draw exactly as before. Nothing here costs a frame while idle except the scan line, and
+ * `general.reduceMotion` turns the moving parts off (0 ms: not even mounted).
+ */
+export interface KioskChrome {
+  backdrop: KioskBackdrop;
+  /** The pattern's step (dp) and its ink ("#RRGGBBAA": the text colour, faint). */
+  backdropStep: number;
+  backdropInk: string;
+  /** Cards and panels: a 1 dp outline in this colour and no shadow; null — the card style's own. */
+  outline: string | null;
+  /** "שורת מצב": the time · the order's number · the kiosk's state, along the top of every screen. */
+  statusBar: boolean;
+  /** Prices, totals and counts in tabular figures (every digit as wide, columns that line up). */
+  tabularFigures: boolean;
+  /** The order's number and the status line's figures in a monospaced face. */
+  monoFigures: boolean;
+  /** The press: the element's scale while held; null — the style's own press. */
+  pressScale: number | null;
+  /** A short glow of the accent on the basket as a dish lands (ms; 0: none). */
+  addGlowMs: number;
+  /** The attract screen's idle scan line, one sweep top to bottom (ms; 0: none — nothing drawn). */
+  scanMs: number;
+  /** The accent the glow, the scan line and the status line's dot are drawn in. */
+  accent: string;
+}
+
+/** The chrome of a style that has none. */
+export const NO_CHROME: Omit<KioskChrome, 'accent'> = {
+  backdrop: 'none',
+  backdropStep: 0,
+  backdropInk: '#00000000',
+  outline: null,
+  statusBar: false,
+  tabularFigures: false,
+  monoFigures: false,
+  pressScale: null,
+  addGlowMs: 0,
+  scanMs: 0,
+};
+
+/** "טכנולוגי"'s numbers: a 32 dp grid at 6 % of the text, 0.98 on press, a 150 ms glow, a 7 s sweep. */
+export const TECH_GRID_STEP = 32;
+export const TECH_GRID_ALPHA = 0x0f;
+export const TECH_OUTLINE_MIX = 0.14;
+export const TECH_PRESS_SCALE = 0.98;
+export const TECH_ADD_GLOW_MS = 150;
+export const TECH_SCAN_MS = 7000;
+/** The status line's height (dp, at type scale 1) and its warning dot (paused, closed, no payment). */
+export const STATUS_LINE_DP = 28;
+export const STATUS_WARN = '#F5A524';
+/** The monospaced face of the figures (web; the till uses the device's monospace). */
+export const MONO_FIGURES_STACK = 'ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", "Roboto Mono", Consolas, "Droid Sans Mono", monospace';
+
+export function kioskChrome(
+  theme: Pick<KioskTheme, 'uiStyle' | 'primaryColor'>,
+  colors: Pick<ResolvedThemeColors, 'surface' | 'text'>,
+  general: Pick<KioskGeneral, 'reduceMotion'>,
+): KioskChrome {
+  const accent = mixHex(theme.primaryColor, theme.primaryColor, 0);
+  switch (theme.uiStyle) {
+    case 'tech': {
+      const text = mixHex(colors.text, colors.text, 0);
+      const still = !!general.reduceMotion;
+      return {
+        backdrop: 'grid',
+        backdropStep: TECH_GRID_STEP,
+        backdropInk: text + TECH_GRID_ALPHA.toString(16).padStart(2, '0').toUpperCase(),
+        outline: mixHex(colors.surface, text, TECH_OUTLINE_MIX),
+        statusBar: true,
+        tabularFigures: true,
+        monoFigures: true,
+        pressScale: TECH_PRESS_SCALE,
+        addGlowMs: still ? 0 : TECH_ADD_GLOW_MS,
+        scanMs: still ? 0 : TECH_SCAN_MS,
+        accent,
+      };
+    }
+    default:
+      return { ...NO_CHROME, accent };
+  }
+}
+
+/** What the status line says: the state (its words: kiosks.preview.status.<key>), its tone, the order's number. */
+export type KioskStatusKey = 'ready' | 'ordering' | 'paying' | 'done' | 'paused' | 'closed' | 'noPayment' | 'offline' | 'setup';
+export interface KioskStatusLine {
+  key: KioskStatusKey;
+  /** ok: the accent dot; warn: the amber one (the kiosk does not take orders now). */
+  tone: 'ok' | 'warn';
+  /** The order's number (its pickup label) once it has one; null before. */
+  order: string | null;
+}
+
+const STATUS_OF: Record<string, KioskStatusKey> = {
+  attract: 'ready',
+  service: 'ordering',
+  catalog: 'ordering',
+  product: 'ordering',
+  confirm: 'ordering',
+  cart: 'ordering',
+  tip: 'ordering',
+  details: 'ordering',
+  pay: 'paying',
+  success: 'done',
+  paused: 'paused',
+  closed: 'closed',
+  no_payment: 'noPayment',
+  noPayment: 'noPayment',
+  offline: 'offline',
+  setup: 'setup',
+};
+const STATUS_WARN_KEYS: KioskStatusKey[] = ['paused', 'closed', 'noPayment', 'offline', 'setup'];
+
+/**
+ * The status line of `screen` (the screens' names, the till's KioskScreen wire names, and the rest
+ * screens' variants): "מוכן לקבל הזמנה" at rest, "הזמנה בתהליך" while ordering… — and the order's
+ * number once the payment gave it one (`pickup`).
+ */
+export function kioskStatusLine(screen: string, pickup?: string | null): KioskStatusLine {
+  const key = STATUS_OF[screen] ?? 'ready';
+  const order = (pickup ?? '').trim();
+  return { key, tone: STATUS_WARN_KEYS.includes(key) ? 'warn' : 'ok', order: order ? order : null };
+}
+
+/** The status line's clock: "HH:MM", 24 hours, the device's local time. */
+export function statusClock(at: Date): string {
+  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
 }
 
 /* -------------------------------------------------------------- "כיתוב רץ" */

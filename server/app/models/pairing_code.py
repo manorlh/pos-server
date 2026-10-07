@@ -55,6 +55,12 @@ class PairingCode(Base):
     platform = Column(String(16), nullable=True)
     #: A KDS / board code's screen: `{"name", "screenRole", "stationIds"}` (`kds.save_device`).
     kds_options = Column(JSON, nullable=True)
+    #: "תצורת עבודה" chosen in the dialog (app/services/work_config.py, the plan: `{preset,
+    #: tablesMode, lanServerExcluded, link, enableLocalNetwork, receiptPrinter, workflowTargets}`),
+    #: applied to the machine right after it pairs. Null: "לפי הסניף" — nothing to apply.
+    work_config = Column(JSON, nullable=True)
+    #: How that went: `{applied, changes, detail, message, at}` — shown on the device page.
+    work_config_result = Column(JSON, nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     is_used = Column(Boolean, default=False, nullable=False)
     used_at = Column(DateTime(timezone=True), nullable=True)

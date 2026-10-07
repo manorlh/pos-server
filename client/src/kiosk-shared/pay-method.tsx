@@ -21,8 +21,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Banknote, Check, CreditCard, Ticket, Trash2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { checkoutBar, type CheckoutStep, type KioskTextKey, type PaymentMethod } from '@/lib/kioskConfig';
-import { BigButton, LiveBack, cardStyle, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
+import { checkoutBar, MONO_FIGURES_STACK, type CheckoutStep, type KioskTextKey, type PaymentMethod } from '@/lib/kioskConfig';
+import { BigButton, LiveBack, cardStyle, chromeOf, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { EntryHeader } from '@/components/dashboard/kiosks/preview-entry';
 
 /** A tile on the step: `off` — why it cannot be taken now (the host's words), else null. */
@@ -290,7 +290,7 @@ export function CashAtTillDone({ m, live }: { m: PreviewModel; live: KioskLiveCa
             <div className="text-sm font-semibold" style={{ color: m.c.mutedText }}>
               {payText(m, 'cashDoneBody', { number: '' }).trim() || m.txt('pickupLabel')}
             </div>
-            <div className="text-6xl font-black tabular-nums" dir="ltr" style={{ color: m.c.primary }}>
+            <div className="text-6xl font-black tabular-nums" dir="ltr" style={{ color: m.c.primary, fontFamily: chromeOf(m).monoFigures ? MONO_FIGURES_STACK : undefined }}>
               {live.pickupLabel}
             </div>
           </div>

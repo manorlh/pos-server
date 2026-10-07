@@ -22,6 +22,7 @@ export type SectionId =
   | 'customers'
   | 'notifications'
   | 'till_messages'
+  | 'exception_alerts'
   | 'organization'
   | 'devices'
   | 'tables'
@@ -57,7 +58,7 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
       '/dashboard/sales-by-payment', '/dashboard/card-brands', '/dashboard/promotions-report',
       '/dashboard/menu-reports', '/dashboard/hourly-sales', '/dashboard/department-sales',
       '/dashboard/document-sequence', '/dashboard/cash-variance', '/dashboard/exceptions',
-      '/dashboard/tax-reports',
+      '/dashboard/exceptions-log', '/dashboard/tax-reports',
     ],
   },
   { id: 'z', pages: ['/dashboard/shifts', '/dashboard/z-reports/new', '/dashboard/z-reports'], editPages: ['/dashboard/z-reports/new'] },
@@ -75,6 +76,7 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'customers', pages: ['/dashboard/club'] },
   { id: 'notifications', pages: ['/dashboard/notifications'] },
   { id: 'till_messages', pages: ['/dashboard/till-messages'] },
+  { id: 'exception_alerts', pages: ['/dashboard/exception-alerts'] },
   { id: 'organization', pages: ['/dashboard/companies', '/dashboard/shops'] },
   { id: 'devices', pages: ['/dashboard/machines'] },
   { id: 'tables', pages: ['/dashboard/tables'] },

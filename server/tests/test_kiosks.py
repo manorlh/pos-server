@@ -1062,6 +1062,30 @@ def test_a_preset_sets_the_theme_and_explicit_settings_win_at_any_level():
     assert C.style_of(shop, {"theme": {"uiStyle": None}}) == "minimal_dark"
 
 
+def test_the_tech_style_is_one_pick_its_theme_cta_and_motion():
+    """"טכנולוגי": one tap in the designer — the theme, the attract button and the transitions."""
+    assert C.UI_STYLES[-1] == "tech" and set(C.UI_STYLES) == set(C.UI_PRESETS) == set(C.UI_PRESET_CTA) == set(C.UI_PRESET_MOTION)
+    cfg = C.resolve({"theme": {"uiStyle": "tech"}})
+    assert C.validate_config(cfg) == []
+    theme = cfg["theme"]
+    assert theme["mode"] == "dark" and theme["backgroundColor"] == "#0B0F14" and theme["surfaceColor"] == "#111821"
+    # One electric accent: the brand colour is the accent (dark words on it, as on the dashboard and the till).
+    assert theme["primaryColor"] == theme["accentColor"] == "#22E1FF"
+    assert theme["cardStyle"] == "outlined" and theme["cornerRadius"] == 10 and theme["buttonShape"] == "rounded"
+    assert cfg["attract"]["cta"]["animation"] == "none" and cfg["attract"]["cta"]["shadow"] is False
+    assert cfg["attract"]["cta"]["icon"] == "arrow" and cfg["attract"]["cta"]["position"] == "bottom_center"
+    assert cfg["motion"] == {
+        "categorySwitch": "fade", "itemsEnter": "cascade", "screenChange": "fade", "sheet": "scale",
+        "addToCart": "fly", "speed": "normal",
+    }
+    assert C.preset_layer("tech")["theme"] == C.UI_PRESETS["tech"]
+    # The brand colour stays configurable on top of the style.
+    cfg = C.resolve({"theme": {"uiStyle": "tech"}}, {"theme": {"primaryColor": "#3B82F6"}})
+    assert cfg["theme"]["primaryColor"] == "#3B82F6" and cfg["theme"]["backgroundColor"] == "#0B0F14"
+    # Offered to the designer.
+    assert C.limits()["enums"]["uiStyle"][-1] == "tech"
+
+
 def test_settings_answer_the_parents_explicit_layers(w):
     put(w, "company", w.company.id, {"theme": {"uiStyle": "ios", "cornerRadius": 9}})
     view = get_settings(w, "shop", w.shop.id)

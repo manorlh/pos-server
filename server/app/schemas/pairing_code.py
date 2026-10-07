@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 
 from app.schemas.device_profile import KdsScreenOptionsIn, KioskOptionsIn
+from app.schemas.work_config import WorkConfigIn
 from app.schemas.pos_machine import DeviceModel, DevicePlatform, DeviceRole
 
 
@@ -30,6 +31,9 @@ class PairingCodeGenerateRequest(BaseModel):
     #: A KDS code's screen (`screenRole` station / expo / manager, `stationIds`, `name`); a
     #: board code's `name`. Ignored for a till / kiosk.
     kds: Optional[KdsScreenOptionsIn] = None
+    #: "תצורת עבודה" (docs/SPEC_DEVICE_WORK_CONFIG.md): a preset and overrides, applied to the
+    #: machine right after it pairs. Absent / null: "לפי הסניף". Needs `shopId`.
+    work_config: Optional[WorkConfigIn] = Field(None, alias="workConfig")
 
 
 class PairingCodeCreate(BaseModel):
@@ -62,6 +66,9 @@ class PairingCodeResponse(BaseModel):
     device_model: Optional[str] = Field(None, alias="deviceModel")
     device_role: Optional[str] = Field(None, alias="deviceRole")
     platform: Optional[str] = None
+    #: The plan the code carries, and — once a device redeemed it — how applying it went.
+    work_config: Optional[Dict[str, Any]] = Field(None, alias="workConfig")
+    work_config_result: Optional[Dict[str, Any]] = Field(None, alias="workConfigResult")
     expires_at: datetime = Field(..., alias="expiresAt")
     is_used: bool = Field(..., alias="isUsed")
     used_at: Optional[datetime] = Field(None, alias="usedAt")

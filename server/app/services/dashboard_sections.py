@@ -51,8 +51,9 @@ class Section:
 SECTIONS: Tuple[Section, ...] = (
     Section(
         "reports", "דוחות",
-        "סקירה, דוחות מכירות, עסקאות, תובנות, התאמות, שידורים, אירועים, חריגים ודוח למס הכנסה. "
-        "עריכה: אירועים, סקירת חריגים, עלויות מוצרים וזיכוי מרחוק.",
+        "סקירה, דוחות מכירות, עסקאות, תובנות, התאמות, שידורים, אירועים, חריגים, יומן חריגות ודוח "
+        "למס הכנסה. עריכה: אירועים, סקירת חריגים וטיפול ביומן, עלויות מוצרים, זיכוי מרחוק וזיכוי "
+        "באשראי מהענן.",
         (
             "/dashboard", "/dashboard/live-items", "/dashboard/compare", "/dashboard/insights",
             "/dashboard/insights/kiosks", "/dashboard/transactions", "/dashboard/day-summary",
@@ -62,12 +63,12 @@ SECTIONS: Tuple[Section, ...] = (
             "/dashboard/sales-by-payment", "/dashboard/card-brands", "/dashboard/promotions-report",
             "/dashboard/menu-reports", "/dashboard/hourly-sales", "/dashboard/department-sales",
             "/dashboard/document-sequence", "/dashboard/cash-variance", "/dashboard/exceptions",
-            "/dashboard/tax-reports",
+            "/dashboard/exceptions-log", "/dashboard/tax-reports",
         ),
     ),
     Section(
         "z", "זדים ומשמרות",
-        "משמרות ודוחות Z. עריכה: הפקת Z, סגירת משמרת, שידור עסקאות וזיכוי מרחוק.",
+        "משמרות ודוחות Z. עריכה: הפקת Z, סגירת משמרת, שידור עסקאות, זיכוי מרחוק וזיכוי באשראי מהענן.",
         ("/dashboard/shifts", "/dashboard/z-reports/new", "/dashboard/z-reports"),
     ),
     Section(
@@ -86,13 +87,19 @@ SECTIONS: Tuple[Section, ...] = (
     Section("notifications", "הודעות SMS", "יומן הודעות, תבניות וחשבון 019.", ("/dashboard/notifications",)),
     Section("till_messages", "הודעות לקופות", "הודעה שכל קופה צריכה לאשר.", ("/dashboard/till-messages",)),
     Section(
+        "exception_alerts", "התראות SMS על חריגות",
+        "חוקי ההתראה על חריגות לפי חברה / סניף (מחזיקים מספרי טלפון של עובדים), הודעת בדיקה וההיסטוריה. "
+        "יומן החריגות עצמו הוא דוח.",
+        ("/dashboard/exception-alerts",),
+    ),
+    Section(
         "organization", "חברות וסניפים",
         "הקמה ועריכה של חברות, סניפים ועמדות (הרשימות עצמן גלויות לכולם לבחירת היקף).",
         ("/dashboard/companies", "/dashboard/shops"),
     ),
     Section(
         "devices", "מכשירים",
-        "קופות ומכשירים: צימוד, העברה, הסרה, הפעלה מחדש, קופה ראשית ורשת מקומית.",
+        "קופות ומכשירים: צימוד, העברה, הסרה, הפעלה מחדש, תצורת עבודה, קופה ראשית ורשת מקומית.",
         ("/dashboard/machines",),
     ),
     Section("tables", "שולחנות", "אזורים, שולחנות, הזמנות ודוח שולחנות.", ("/dashboard/tables",)),
@@ -264,6 +271,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/z-runs*", S("z")),
     (_GET, "/report-center/*", S("reports", "z")),
     (_ALL, "/remote-credits*", S("reports", "z")),
+    # "זיכוי באשראי מהענן (Z-Credit)": the same people as a remote credit.
+    (_ALL, "/cloud-card-refunds*", S("reports", "z")),
     (_GET, "/failed-payments", S("reports", "z", level=VIEW)),
     # ── Customers, club, messages ──
     (_ALL, "/club*", S("customers")),
@@ -280,6 +289,10 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/dashboard/*", S("reports")),
     (_ALL, "/exceptions/rules", S("till_settings")),
     (_ALL, "/exceptions*", S("reports")),
+    # "יומן חריגות": a report (marking "טופל" is a report action, like reviewing exceptions);
+    # its SMS alert rules hold staff phone numbers and send messages — their own section.
+    (_ALL, "/exception-log*", S("reports", "exception_alerts")),
+    (_ALL, "/exception-alerts/*", S("exception_alerts")),
     (_GET, "/insights/kiosks", S("reports", "kiosks", level=VIEW)),
     ("PUT", "/insights/product-costs/{}", S("reports", "products", level=EDIT)),
     (_GET, "/insights*", S("reports")),
@@ -321,6 +334,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     ("POST", "/machines/{}/trading-day/*", S("z")),
     (_GET, "/machines/{}/transmissions*", S("z", "reports", level=VIEW)),
     (_GET, "/machines/{}/untransmitted", S("z", "reports", level=VIEW)),
+    # "תצורת עבודה למכשיר", and the add-device dialog's step for a device still to pair.
+    (_ALL, "/machines/{}/work-config", S("devices")),
     ("POST", "/machines/{}/transmit", S("z")),
     (_ALL, "/machines/*", S("devices")),
     # ── A shop's own sub-resources (the shop itself is a look-up, above) ──
@@ -328,6 +343,7 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     ("PUT", "/shops/{}/local-network", S("devices")),
     (_ALL, "/shops/{}/local-shop-z*", S("z")),
     (_ALL, "/shops/{}/main-till", S("devices")),
+    (_GET, "/shops/{}/work-config", S("devices")),
     (_ALL, "/shops/{}/menu-broadcast*", S("products")),
     (_GET, "/shops/{}/next-register-number", S("devices", "organization", level=VIEW)),
     (_ALL, "/shops/{}/pos-users*", S("pos_users")),

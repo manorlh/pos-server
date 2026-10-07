@@ -667,7 +667,7 @@ def test_the_migration_keeps_every_existing_user_as_they_were(w):
     assert w.db.query(DashboardAccessProfile).count() == 3
 
 
-def test_the_migration_is_the_single_head_on_receipt_printer_auto():
+def test_the_migration_is_on_the_single_head():
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
@@ -676,5 +676,10 @@ def test_the_migration_is_the_single_head_on_receipt_printer_auto():
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "alembic"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["d4a8c2e6f0b1"]
+    # One head, and this revision on its line (the merge 7c3e9a1d5b20 joins it to main's).
+    heads = script.get_heads()
+    assert len(heads) == 1
+    on_line = {r.revision for r in script.walk_revisions("base", heads[0])}
+    assert {"d4a8c2e6f0b1", "7c3e9a1d5b20", "1dbac9d07adb"} <= on_line
     assert script.get_revision("d4a8c2e6f0b1").down_revision == "e9a3c7f1b5d2"
+    assert set(script.get_revision("7c3e9a1d5b20").down_revision) == {"1dbac9d07adb", "d4a8c2e6f0b1"}

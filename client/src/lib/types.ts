@@ -1400,6 +1400,12 @@ export interface TransactionPayment {
   cardIssuer?: string | null;
   /** "ללא החזר כספי" (docs/SPEC_REMOTE_CREDIT.md): no money moved on this leg. */
   noMoneyMovement?: boolean;
+  /**
+   * The acquirer's reply as the till stored it: `result.provider` says Z-Credit (a cloud card
+   * refund may be offered, SPEC_REMOTE_CREDIT.md §11); `cloudCardRefundId` marks a credit
+   * note's leg that records one.
+   */
+  nayaxMeta?: Record<string, unknown> | null;
 }
 
 /** Another document of the same mixed basket (same `basketId`). */

@@ -132,10 +132,10 @@ def test_the_migration_is_the_single_head_on_prepaid_voucher_kinds():
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "alembic"))
     script = ScriptDirectory.from_config(config)
-    # One head, with this migration on the line to it (later ones chain on top — d4a8c2e6f0b1).
+    # One head, and this revision on its line (cloud card refunds, c4e8a2f6b1d3, follow it).
     heads = script.get_heads()
     assert len(heads) == 1
-    assert "e9a3c7f1b5d2" in {r.revision for r in script.iterate_revisions(heads[0], "base")}
+    assert "e9a3c7f1b5d2" in {r.revision for r in script.walk_revisions("base", heads[0])}
     assert script.get_revision("e9a3c7f1b5d2").down_revision == "c7e2f4a9d1b6"
 
 

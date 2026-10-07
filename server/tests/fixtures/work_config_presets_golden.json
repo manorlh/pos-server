@@ -1,0 +1,175 @@
+[
+  {
+    "id": "shop_z_cloud",
+    "role": "till",
+    "zMode": "cloud",
+    "independent": false,
+    "remote": "no",
+    "mainTill": false,
+    "lanServerExcluded": "keep",
+    "lanServerExcludedDefault": null,
+    "tables": [
+      "inherit",
+      "מסונכרן בין הקופות",
+      "קופה אחת"
+    ],
+    "tablesDefault": "inherit",
+    "needsLocalNetwork": false,
+    "lanClientOnly": false,
+    "display": false
+  },
+  {
+    "id": "main_till",
+    "role": "till",
+    "zMode": "cloud",
+    "independent": false,
+    "remote": "no",
+    "mainTill": true,
+    "lanServerExcluded": "off",
+    "lanServerExcludedDefault": null,
+    "tables": [
+      "inherit"
+    ],
+    "tablesDefault": "inherit",
+    "needsLocalNetwork": true,
+    "lanClientOnly": true,
+    "display": false
+  },
+  {
+    "id": "lan_member",
+    "role": "till",
+    "zMode": "cloud",
+    "independent": false,
+    "remote": "no",
+    "mainTill": false,
+    "lanServerExcluded": "option",
+    "lanServerExcludedDefault": null,
+    "tables": [
+      "inherit",
+      "רשת מקומית (קופה ראשית)",
+      "קופה אחת",
+      "כבוי"
+    ],
+    "tablesDefault": "inherit",
+    "needsLocalNetwork": true,
+    "lanClientOnly": true,
+    "display": false
+  },
+  {
+    "id": "remote_shop_z",
+    "role": "till",
+    "zMode": "cloud",
+    "independent": false,
+    "remote": "yes",
+    "mainTill": false,
+    "lanServerExcluded": "on",
+    "lanServerExcludedDefault": null,
+    "tables": [
+      "כבוי",
+      "קופה אחת"
+    ],
+    "tablesDefault": "כבוי",
+    "needsLocalNetwork": true,
+    "lanClientOnly": false,
+    "display": false
+  },
+  {
+    "id": "independent",
+    "role": "till",
+    "zMode": "till",
+    "independent": true,
+    "remote": "no",
+    "mainTill": false,
+    "lanServerExcluded": "keep",
+    "lanServerExcludedDefault": null,
+    "tables": [
+      "כבוי",
+      "קופה אחת"
+    ],
+    "tablesDefault": "כבוי",
+    "needsLocalNetwork": null,
+    "lanClientOnly": false,
+    "display": false
+  },
+  {
+    "id": "own_z",
+    "role": "till",
+    "zMode": "till",
+    "independent": false,
+    "remote": "no",
+    "mainTill": false,
+    "lanServerExcluded": "option",
+    "lanServerExcludedDefault": null,
+    "tables": [
+      "inherit",
+      "כבוי",
+      "קופה אחת",
+      "מסונכרן בין הקופות",
+      "רשת מקומית (קופה ראשית)"
+    ],
+    "tablesDefault": "inherit",
+    "needsLocalNetwork": null,
+    "lanClientOnly": false,
+    "display": false
+  },
+  {
+    "id": "kiosk_shop_z",
+    "role": "kiosk",
+    "zMode": "cloud",
+    "independent": false,
+    "remote": "option",
+    "mainTill": false,
+    "lanServerExcluded": "option",
+    "lanServerExcludedDefault": true,
+    "tables": [],
+    "tablesDefault": null,
+    "needsLocalNetwork": null,
+    "lanClientOnly": false,
+    "display": false
+  },
+  {
+    "id": "kiosk_own_z",
+    "role": "kiosk",
+    "zMode": "till",
+    "independent": true,
+    "remote": "no",
+    "mainTill": false,
+    "lanServerExcluded": "keep",
+    "lanServerExcludedDefault": null,
+    "tables": [],
+    "tablesDefault": null,
+    "needsLocalNetwork": null,
+    "lanClientOnly": false,
+    "display": false
+  },
+  {
+    "id": "kds_screen",
+    "role": "kds",
+    "zMode": null,
+    "independent": null,
+    "remote": "no",
+    "mainTill": null,
+    "lanServerExcluded": "keep",
+    "lanServerExcludedDefault": null,
+    "tables": [],
+    "tablesDefault": null,
+    "needsLocalNetwork": null,
+    "lanClientOnly": false,
+    "display": true
+  },
+  {
+    "id": "ready_board",
+    "role": "order_status_board",
+    "zMode": null,
+    "independent": null,
+    "remote": "no",
+    "mainTill": null,
+    "lanServerExcluded": "keep",
+    "lanServerExcludedDefault": null,
+    "tables": [],
+    "tablesDefault": null,
+    "needsLocalNetwork": null,
+    "lanClientOnly": false,
+    "display": true
+  }
+]

@@ -187,6 +187,10 @@ app.include_router(main_till_router.router, prefix=_prefix)
 app.include_router(lan_server_router.router, prefix=_prefix)
 app.include_router(z_mode_router.router, prefix=_prefix)
 app.include_router(z_participation_router.router, prefix=_prefix)
+# "תצורת עבודה למכשיר" (docs/SPEC_DEVICE_WORK_CONFIG.md): a device's way of working in one place.
+from app.routers import work_config as work_config_router  # noqa: E402
+
+app.include_router(work_config_router.router, prefix=_prefix)
 app.include_router(till_shop_z_local_router.router, prefix=_prefix)
 app.include_router(exceptions_router.router, prefix=_prefix)
 app.include_router(exceptions_router.till_router, prefix=_prefix)
@@ -200,6 +204,11 @@ from app.routers import remote_credits as remote_credits_router  # noqa: E402
 
 app.include_router(remote_credits_router.till_router, prefix=_prefix)
 app.include_router(remote_credits_router.router, prefix=_prefix)
+# "זיכוי באשראי מהענן (Z-Credit)" (docs/SPEC_REMOTE_CREDIT.md §11): the cloud refunds the card,
+# a till issues the credit note.
+from app.routers import cloud_card_refunds as cloud_card_refunds_router  # noqa: E402
+
+app.include_router(cloud_card_refunds_router.router, prefix=_prefix)
 app.include_router(promotions_router.router, prefix=_prefix)
 app.include_router(tables_router.router, prefix=_prefix)
 app.include_router(printers_router.router, prefix=_prefix)
@@ -256,6 +265,25 @@ def start_notifications_worker():
     from app.services.notifications.worker import start_background_worker
 
     start_background_worker(SessionLocal)
+
+
+# "יומן חריגות" + "התראות SMS על חריגות" (app/services/exception_alerts): the log of every
+# detected exception, and the SMS alert rules (dry run unless EXCEPTION_ALERTS_SMS_PROVIDER).
+from app.routers import exception_alerts as exception_alerts_router, exception_log as exception_log_router  # noqa: E402
+
+app.include_router(exception_log_router.router, prefix=_prefix)
+app.include_router(exception_alerts_router.router, prefix=_prefix)
+
+
+@app.on_event("startup")
+def start_exception_alerts_worker():
+    """The digests of rate-limited / quiet-hours alerts; EXCEPTION_ALERTS_WORKER_ENABLED=false stops it."""
+    if not getattr(settings, "exception_alerts_worker_enabled", True):
+        return
+    from app.database import SessionLocal
+    from app.services.exception_alerts.worker import start_background_worker as start_alerts_worker
+
+    start_alerts_worker(SessionLocal)
 # KDS and "תצורת עבודה לעמדה" (docs/SPEC_KDS.md): releases, screens, the workflow card.
 from app.routers import kds as kds_router  # noqa: E402
 

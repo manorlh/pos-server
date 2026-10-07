@@ -100,6 +100,7 @@ def create_pairing_code(
     kiosk_options: Optional[dict] = None,
     platform: Optional[str] = None,
     kds_options: Optional[dict] = None,
+    work_config: Optional[dict] = None,
 ) -> PairingCode:
     """
     Create a new pairing code, optionally with company/shop pre-assignment.
@@ -112,7 +113,8 @@ def create_pairing_code(
     machine a kiosk as it pairs (docs/SPEC_DEVICE_ROLE_MODEL.md); "kds" /
     "order_status_board" (with `kds_options`) a display device — not a till
     (app/services/display_devices.py). `platform` ("android" | "windows") refuses a device
-    of the other platform; None checks nothing.
+    of the other platform; None checks nothing. `work_config` ("תצורת עבודה", checked by
+    `work_config.check_pairing_request`) is applied to the new machine right after it pairs.
     """
     code = generate_pairing_code()
     while db.query(PairingCode).filter(PairingCode.code == code).first():
@@ -140,6 +142,7 @@ def create_pairing_code(
         kiosk_options=kiosk_options,
         platform=platform,
         kds_options=kds_options,
+        work_config=work_config,
         expires_at=expires_at,
         is_used=False,
     )
@@ -241,6 +244,12 @@ def validate_pairing_code(
     # A KDS / board code: its screen row and `kdsScreen` (never fails the pairing; the
     # machine is non-fiscal whatever happens there).
     display_devices.apply_on_pairing(db, pairing_code, pos_machine)
+    # "תצורת עבודה" chosen in the dialog (docs/SPEC_DEVICE_WORK_CONFIG.md): last, once the
+    # machine is in its shop with its role. Never fails the pairing; the outcome is kept on
+    # the code for the device page.
+    from app.services import work_config
+
+    work_config.apply_on_pairing(db, pairing_code, pos_machine)
 
     return pos_machine
 

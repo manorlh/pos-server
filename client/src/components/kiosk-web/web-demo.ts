@@ -4,7 +4,7 @@
  * a fetch that answers here, in memory. Nothing reaches the network, nothing is charged, nothing
  * is kept (a memory store). Never used by a paired kiosk.
  *
- *   ?demo=1&style=ios|wolt|classic|minimal_dark   the kiosk's `theme.uiStyle`
+ *   ?demo=1&style=ios|wolt|classic|minimal_dark|tech   the kiosk's `theme.uiStyle`
  *   &tip=1                                         "טיפ לצוות" before the payment
  *   &methods=cash_at_till,voucher,card             `payment.methods` (default: card, voucher, cash at the till)
  *   &paused=1                                      the pause screen
