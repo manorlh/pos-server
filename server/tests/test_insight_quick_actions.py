@@ -374,10 +374,13 @@ class TestResult:
 
 
 class TestSections:
-    def test_each_quick_action_needs_its_own_section(self):
-        assert DS.rule_for("POST", "/insights/quick-actions/messages").sections == ("till_messages",)
-        assert DS.rule_for("POST", "/insights/quick-actions/messages/{action_id}/cancel").sections == ("till_messages",)
-        assert DS.rule_for("POST", "/insights/quick-actions/promotions").sections == ("promotions",)
-        assert DS.rule_for("POST", "/insights/quick-actions/promotions/{action_id}/cancel").sections == ("promotions",)
+    def test_quick_actions_have_their_own_section_and_reads_stay_reports(self):
+        for path in ("/insights/quick-actions/messages", "/insights/quick-actions/messages/{action_id}/cancel",
+                     "/insights/quick-actions/promotions", "/insights/quick-actions/promotions/{action_id}/cancel",
+                     "/insights/quick-actions/happy-hours"):
+            assert DS.rule_for("POST", path).describe("POST") == "quick_actions:edit", path
+        assert DS.rule_for("GET", "/insights/quick-actions").describe("GET") == "reports|quick_actions:view"
         assert DS.rule_for("GET", "/insights/anomalies").sections == ("reports",)
         assert DS.rule_for("PUT", "/insights/anomaly-settings").describe("PUT") == "reports:edit"
+        assert DS.rule_for("POST", "/promotions").describe("POST") == "promotions:edit"
+        assert "quick_actions" in DS.SECTION_IDS

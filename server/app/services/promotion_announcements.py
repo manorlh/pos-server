@@ -87,20 +87,27 @@ def clean_settings(raw: Any) -> Optional[Dict[str, Any]]:
     return out
 
 
-def may_message(db: Session, user: User) -> bool:
+#: The promotions page needs "הודעות לקופות" at edit; a quick action, "פעולות מהירות" (or that).
+PAGE_SECTIONS = ("till_messages",)
+QUICK_SECTIONS = ("quick_actions", "till_messages")
+
+
+def may_message(db: Session, user: User, sections: Sequence[str] = PAGE_SECTIONS) -> bool:
     if user is None or user.role not in MESSAGE_ROLES:
         return False
     from app.services import dashboard_access
 
-    return dashboard_access.effective_access(db, user).allows("till_messages", "edit")
+    access = dashboard_access.effective_access(db, user)
+    return any(access.allows(s, "edit") for s in sections)
 
 
-def require_messaging(db: Session, user: User) -> None:
+def require_messaging(db: Session, user: User, sections: Sequence[str] = PAGE_SECTIONS) -> None:
     if user is None or user.role not in MESSAGE_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail=FORBIDDEN)
-    from app.services import dashboard_access
+    if not may_message(db, user, sections):
+        from app.services import dashboard_access
 
-    dashboard_access.enforce_section(db, user, "till_messages", "edit")
+        raise dashboard_access._refusal(sections[0], "edit")
 
 
 # ── The words ─────────────────────────────────────────────────────────────────
@@ -227,7 +234,7 @@ def _send(db: Session, user: User, promotion: Promotion, *, text: str, color: st
 
 
 def plan(db: Session, user: User, promotion: Promotion, *, settings: Optional[Dict[str, Any]] = None,
-         now: Optional[datetime] = None) -> List[POSMachine]:
+         now: Optional[datetime] = None, sections: Sequence[str] = PAGE_SECTIONS) -> List[POSMachine]:
     """
     (Re)plan the promotion's announcements from what it is now, after `settings` (the body's,
     None: keep). Returns the tills to wake for what went out now.
@@ -236,7 +243,7 @@ def plan(db: Session, user: User, promotion: Promotion, *, settings: Optional[Di
     state = dict(promotion.announcement or {})
     if settings is not None:
         if settings.get("enabled") and not state.get("enabled"):
-            require_messaging(db, user)
+            require_messaging(db, user, sections)
         state.update(settings)
     if not state.get("enabled") and not state.get("startMessageIds") and not state.get("endMessageIds"):
         if settings is not None:
@@ -266,7 +273,7 @@ def plan(db: Session, user: User, promotion: Promotion, *, settings: Optional[Di
         promotion.announcement = state
         return woken
 
-    if not may_message(db, user):
+    if not may_message(db, user, sections):
         promotion.announcement = state
         return woken
 

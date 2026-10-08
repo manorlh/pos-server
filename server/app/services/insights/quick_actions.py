@@ -683,7 +683,7 @@ def create_quick_promotion(db: Session, user: User, tenant_id, body: Dict[str, A
         raise _bad(NO_TILLS)
     announce = PA.clean_settings(body.get("announce"))
     if announce and announce.get("enabled"):
-        PA.require_messaging(db, user)
+        PA.require_messaging(db, user, PA.QUICK_SECTIONS)
     items = group_items(db, tenant_id, subject, target.shop_ids)
     raw_offer = body.get("offer") or {}
     offer = check_group(subject, raw_offer.get("kind"), raw_offer.get("value"), items)
@@ -707,7 +707,7 @@ def create_quick_promotion(db: Session, user: User, tenant_id, body: Dict[str, A
         "endTime": window.end_time,
         "priority": 0,
     })
-    woken = PA.plan(db, user, promotion, settings=announce, now=now) if announce else []
+    woken = PA.plan(db, user, promotion, settings=announce, now=now, sections=PA.QUICK_SECTIONS) if announce else []
     pricing = items[0].pricing if subject.product is not None else None
     action = _action(
         db, user, tenant_id, kind="promotion", product=subject.product, category=subject.category, target=target,
@@ -851,7 +851,7 @@ def create_happy_hour(db: Session, user: User, tenant_id, body: Dict[str, Any]) 
         raise _bad(NO_TILLS)
     announce = PA.clean_settings(body.get("announce"))
     if announce and announce.get("enabled"):
-        PA.require_messaging(db, user)
+        PA.require_messaging(db, user, PA.QUICK_SECTIONS)
     items = group_items(db, tenant_id, subject, target.shop_ids)
     raw_offer = body.get("offer") or {}
     offer = check_group(subject, raw_offer.get("kind"), raw_offer.get("value"), items)
@@ -878,7 +878,7 @@ def create_happy_hour(db: Session, user: User, tenant_id, body: Dict[str, Any]) 
         "endTime": end,
         "priority": 0,
     })
-    woken = PA.plan(db, user, promotion, settings=announce, now=now) if announce else []
+    woken = PA.plan(db, user, promotion, settings=announce, now=now, sections=PA.QUICK_SECTIONS) if announce else []
     nxt = PS.current_or_next(schedule, tz, now)
     action = _action(
         db, user, tenant_id, kind="promotion", product=subject.product, category=subject.category, target=target,
@@ -939,7 +939,7 @@ def cancel_quick_promotion(db: Session, user: User, tenant_id, action_id) -> Tup
             promotion = None  # deleted on the promotions page since: nothing left to stop
         if promotion is not None:
             P.set_paused(db, user, tenant_id, promotion, True)
-            woken = PA.plan(db, user, promotion)
+            woken = PA.plan(db, user, promotion, sections=PA.QUICK_SECTIONS)
     _cancelled(db, user, action)
     return action, woken
 
@@ -984,7 +984,7 @@ def promotion_suggestion(db: Session, user: User, tenant_id, body: Dict[str, Any
         "options": group_options(subject, items),
         "suggested": suggest_group(subject, items),
         "canCreate": user.role in PROMOTION_ROLES,
-        "canAnnounce": PA.may_message(db, user),
+        "canAnnounce": PA.may_message(db, user, PA.QUICK_SECTIONS),
         "maxHours": MAX_HOURS,
         "maxUntilDays": MAX_UNTIL_DAYS,
     }

@@ -87,6 +87,11 @@ SECTIONS: Tuple[Section, ...] = (
     Section("notifications", "הודעות SMS", "יומן הודעות, תבניות וחשבון 019.", ("/dashboard/notifications",)),
     Section("till_messages", "הודעות לקופות", "הודעה שכל קופה צריכה לאשר.", ("/dashboard/till-messages",)),
     Section(
+        "quick_actions", "פעולות מהירות",
+        "מלוח הבקרה ומהתובנות: הודעה מהירה לקופות, מבצע מהיר / מזדמן ו-Happy hour — בלי הרשאת מבצעים מלאה.",
+        (),
+    ),
+    Section(
         "exception_alerts", "התראות SMS על חריגות",
         "חוקי ההתראה על חריגות לפי חברה / סניף (מחזיקים מספרי טלפון של עובדים), הודעת בדיקה וההיסטוריה. "
         "יומן החריגות עצמו הוא דוח.",
@@ -316,12 +321,14 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/exception-alerts/*", S("exception_alerts")),
     (_GET, "/insights/kiosks", S("reports", "kiosks", level=VIEW)),
     ("PUT", "/insights/product-costs/{}", S("reports", "products", level=EDIT)),
-    # The insights' quick actions: a quick message is a till message, a quick promotion a
-    # promotion — each needs that section's edit, as on its own page.
-    (_ALL, "/insights/quick-actions/messages*", S("till_messages")),
-    (_GET, "/insights/quick-actions/promotions/suggestion", S("promotions", "reports", level=VIEW)),
-    (_ALL, "/insights/quick-actions/promotions*", S("promotions")),
-    (_ALL, "/insights/quick-actions/happy-hours*", S("promotions")),
+    # "פעולות מהירות" (the cockpit's and the insights' quick message, quick / ad-hoc promotion
+    # and happy hour): their own section at edit — a manager may act without the full
+    # promotions or till-messages pages. Reading them is a report.
+    (_GET, "/insights/quick-actions", S("reports", "quick_actions", level=VIEW)),
+    (_GET, "/insights/quick-actions/promotions/suggestion", S("quick_actions", "reports", level=VIEW)),
+    (_ALL, "/insights/quick-actions/messages*", S("quick_actions", level=EDIT)),
+    (_ALL, "/insights/quick-actions/promotions*", S("quick_actions", level=EDIT)),
+    (_ALL, "/insights/quick-actions/happy-hours*", S("quick_actions", level=EDIT)),
     ("PUT", "/insights/anomaly-settings", S("reports")),
     (_GET, "/insights*", S("reports")),
     (_ALL, "/report-events*", S("reports")),

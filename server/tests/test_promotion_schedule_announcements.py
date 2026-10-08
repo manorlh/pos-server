@@ -317,6 +317,20 @@ class TestAdHoc:
         w.db.refresh(message)
         assert message.cancelled_at is not None
 
+    def test_quick_actions_section_is_enough_to_announce_a_quick_promotion(self, w):
+        body = adhoc(w, announce={"enabled": True, "text": "מבצע!"})
+        with pytest.raises(HTTPException) as refused:
+            R.post_quick_promotion(BackgroundTasks(), body=body, **ctx(w, w.restricted))
+        assert refused.value.status_code == 403
+        w.db.get(DashboardAccessProfile, w.restricted.id).sections = {"quick_actions": "edit", "reports": "view"}
+        w.db.commit()
+        dashboard_access.forget(w.db)
+        out = R.post_quick_promotion(BackgroundTasks(), body=body, **ctx(w, w.restricted))
+        assert out["params"]["announce"]["enabled"] is True and w.db.query(TillMessage).count() == 1
+        # On the promotions page the same user needs "הודעות לקופות".
+        with pytest.raises(HTTPException):
+            PR.create_promotion(promotion_in(w), BackgroundTasks(), **ctx(w, w.restricted))
+
 
 def happy(w, **kw):
     body = {"weekdays": [2, 3], "startTime": "15:00", "endTime": "17:00", "weeks": 4, "all": True,
