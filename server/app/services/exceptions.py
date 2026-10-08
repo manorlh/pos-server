@@ -147,6 +147,10 @@ RULES: Tuple[RuleSpec, ...] = (
     # ("איפוס נתוני קופה (תמיכה)", docs/SPEC_OFFLINE_TILL_Z.md §4.7): who, when, why, what
     # the cloud saw before, and what the till did or why it refused.
     RuleSpec("till_reset", True, (), "high", "z"),
+    # "תשלום לא מוכרע": a manager decided an unknown card from the cloud against what the terminal
+    # said on a check — or with no check at all — on an explicit confirmation: who, when, the
+    # verdict, the decision (app/services/card_attempt_commands.py).
+    RuleSpec("card_decision_override", True, (), "high", "document"),
     # "הוחלפה קופה": a replacement device took over a till (§4.6.2) — the old and the new
     # device, who, when, why, and whether support produced its Z first.
     RuleSpec("till_replaced", True, (), "medium", "z"),

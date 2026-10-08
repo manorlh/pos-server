@@ -251,6 +251,8 @@ export class KioskService extends EventEmitter {
     this.ledger = new Ledger(this.db, this.kv, this.outbox);
     this.media = new MediaStore(this.db, path.join(opts.dataDir, 'media'), opts.downloader, opts.variantMaker, this.log);
     this.pay = new PayService(this.db, this.log);
+    // "חסימת אשראי כשיש תשלום לא מוכרע" (till parameter, off unless the cloud sets it).
+    this.pay.setLockOnUnresolved(() => this.parameterOn('cardLockOnUnresolved'));
     this.transport = opts.transport ?? new DefaultTransport(this.log);
     this.ownsUsbWatch = !opts.usbWatch;
     this.usbWatch = opts.usbWatch ?? new UsbPrinterWatch(this.transport, this.log, () => this.printQueue.busy);
@@ -588,7 +590,8 @@ export class KioskService extends EventEmitter {
         paused: paused.paused,
         pausedMessage: paused.message,
         pausedUntil: paused.until,
-        noPayment: this.pay.monitor.state !== 'ready',
+        // No terminal set up at all; a health check that did not answer is tried on the press.
+        noPayment: !this.pay.configured,
         terminal: this.pay.monitor.state,
         offline: this.offlineNow,
         offlineSince: this.offline.since,
@@ -731,7 +734,7 @@ export class KioskService extends EventEmitter {
     if (bonsFailed > 0) alerts.push({ kind: 'printer', key: 'printer:bon', reason: 'bon_failed', detail: { failed: bonsFailed } });
     if (this.pay.monitor.state === 'unreachable') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'unreachable', detail: { address: this.pay.describe().address } });
     else if (this.pay.monitor.state === 'unconfigured') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'not_configured' });
-    if (this.pay.blocked()) alerts.push({ kind: 'terminal', key: 'terminal:card', reason: 'card_unknown' });
+    if (this.pay.unresolved()) alerts.push({ kind: 'terminal', key: 'terminal:card', reason: 'card_unknown' });
     const help = this.kv.getJson<{ requestId: string; at: number; screen: string }>(HELP);
     if (help && Date.now() - help.at < 10 * 60_000) alerts.push({ kind: 'help', key: 'help', reason: 'help', requestId: help.requestId, detail: { screen: help.screen } });
     return {
@@ -1187,7 +1190,8 @@ export class KioskService extends EventEmitter {
     // A screen (KDS, order status board) is not a till: it never sells.
     if (!this.fiscalRole) return { ok: false, reason: 'error', message: 'מכשיר תצוגה אינו קופה' };
     if (this.pay.cardInFlight) return { ok: false, reason: 'busy', message: 'תשלום כבר בתהליך' };
-    if (this.pay.monitor.state !== 'ready') return { ok: false, reason: 'terminal', message: 'מסופון האשראי לא זמין כרגע. אנא פנו לצוות.' };
+    // No terminal set up: refused. One whose last check did not answer is tried now — its error said if it fails.
+    if (!this.pay.configured) return { ok: false, reason: 'terminal', message: 'לא הוגדר מסופון אשראי לקיוסק. אנא פנו לצוות.' };
     if (this.pay.blocked()) return { ok: false, reason: 'unresolved', message: 'תשלום קודם ממתין לבירור. אנא פנו לצוות.' };
     // The cloud's word first, when it answers in time (core/basketCheck.ts).
     await this.cloudBasketCheck(input).catch(() => undefined);
@@ -1344,9 +1348,11 @@ export class KioskService extends EventEmitter {
   private payView(kiosk: boolean): KioskView['pay'] {
     const methods = kiosk ? kioskPayMethods(this.config().payment.methods) : (['card'] as PaymentMethod[]);
     const state = this.pay.monitor.state;
+    // Off in advance only with no terminal set up (or the cloud's lock on an unresolved card):
+    // a terminal that did not answer its check is tried on the press.
     const cardOff = this.pay.blocked()
       ? 'תשלום קודם ממתין לבירור. אנא פנו לצוות.'
-      : state === 'ready'
+      : this.pay.configured
         ? null
         : state === 'unconfigured'
           ? 'לא הוגדר מסופון אשראי לקיוסק'
@@ -1526,7 +1532,7 @@ export class KioskService extends EventEmitter {
     if (!this.fiscalRole || !this.paired) return { ready: false, state, blocked, reason: 'הגשר אינו מקושר לקיוסק' };
     if (!this.isKiosk()) return { ready: false, state, blocked, reason: 'המכשיר אינו קיוסק פעיל בענן' };
     if (blocked) return { ready: false, state, blocked, reason: 'תשלום קודם ממתין לבירור. אנא פנו לצוות.' };
-    if (state !== 'ready') return { ready: false, state, blocked, reason: state === 'unconfigured' ? 'לא הוגדר מסופון אשראי לקיוסק' : 'מסופון האשראי לא זמין כרגע' };
+    if (!this.pay.configured) return { ready: false, state, blocked, reason: state === 'unconfigured' ? 'לא הוגדר מסופון אשראי לקיוסק' : 'מסופון האשראי לא זמין כרגע' };
     return { ready: true, state, blocked, reason: null };
   }
 
@@ -2217,7 +2223,7 @@ export class KioskService extends EventEmitter {
         return { ok: this.pay.monitor.state === 'ready', message: this.pay.monitor.lastError ?? undefined };
       case 'recheckPayment':
         await this.settleOrphans();
-        return { ok: !this.pay.blocked() };
+        return { ok: !this.pay.unresolved() };
       case 'markNotApproved': {
         const ok = this.pay.markNotApproved(a.reference, { id: 'admin', name: this.adminName ?? 'מנהל' }, (att, meta) => {
           this.ledger.voidCardSale(att.transactionId, meta);

@@ -38,10 +38,13 @@ MANAGED_SETTING_KEYS = (
     "synqpayUsbDevice",
     "synqpaySerialNumber",
     # "מכשירי תשלום" (app/services/payment_devices.py): whether a till without built-in
-    # clearing works with several devices, and the one preselected. The devices themselves
-    # (`paymentDevices`) and their secrets are added by the till's sync, not a layer.
+    # clearing works with several devices, and how it picks one (a fixed device, or a group to
+    # choose from). The devices themselves (`paymentDevices`), their secrets and the group as
+    # a JSON string are put in by the till's sync.
     "multiPaymentDevices",
-    "defaultPaymentDeviceId",
+    "paymentDeviceMode",
+    "fixedPaymentDeviceId",
+    "paymentDeviceGroup",
     "outOfStockPolicy",
     # "פתיחת פריטים אוטומטית אחרי Z" ("off" | "day" | "all") and whether it opens an item
     # that tracks stock and has none (app/services/availability_reopen.py). Sent to the

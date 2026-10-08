@@ -20,6 +20,15 @@ from sqlalchemy.sql import func
 
 from app.database import Base
 
+#: "לא הוכרע": the card's result is not known yet (the terminal took it and never answered).
+#: `resolvedAt` null; a later upload of the same id replaces it with a final outcome. An
+#: open, not-completed attempt — counted, listed first, and the manager's to decide
+#: (app/services/card_attempt_commands.py).
+OUTCOME_UNRESOLVED = "unresolved"
+#: "אושר בבדיקה": an unknown card found charged and its sale completed (`paidByTransactionId`
+#: the document, `paidByMethod` "card"). NOT a failed payment: never counted as one.
+OUTCOME_APPROVED_LATE = "approved_late"
+
 #: What became of an attempt (`outcome`), as the till sends it.
 OUTCOMES = (
     "declined",
@@ -28,7 +37,11 @@ OUTCOMES = (
     "no_answer",
     "terminal_error",
     "card_locked",
+    OUTCOME_UNRESOLVED,
+    OUTCOME_APPROVED_LATE,
 )
+#: Outcomes that are not a failed / not-completed payment: left out of every count and total.
+NOT_FAILED_OUTCOMES = (OUTCOME_APPROVED_LATE,)
 #: `kind`: a sale, a keyed (manual card entry) sale, or money back to a card (a refund).
 KIND_SALE = "sale"
 KIND_KEYED = "keyed"

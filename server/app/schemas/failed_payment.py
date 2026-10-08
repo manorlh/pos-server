@@ -5,7 +5,7 @@ and the dashboard's list out. camelCase on the wire, like the neighbouring schem
 import re
 import uuid
 from datetime import date, datetime
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -213,19 +213,32 @@ class FailedPaymentOut(BaseModel):
     paid_by_transaction_number: Optional[str] = Field(None, alias="paidByTransactionNumber")
     paid_by_method: Optional[str] = Field(None, alias="paidByMethod")
     paid_at: Optional[datetime] = Field(None, alias="paidAt")
+    #: An `unresolved` attempt's latest manager command to its till (app/services/card_attempt_commands.py
+    #: `command_out`): `{id, action, status, statusLabel, requestedByName, requestedAt, deliveredAt,
+    #: answeredAt, resultOutcome, resultMessage…}`; null when none.
+    card_command: Optional[Dict[str, Any]] = Field(None, alias="cardCommand")
+    #: Its latest check the till answered (what the terminal said: `details.verdict`…); null when none.
+    card_check: Optional[Dict[str, Any]] = Field(None, alias="cardCheck")
 
     class Config:
         populate_by_name = True
 
 
 class FailedPaymentSummary(BaseModel):
-    """Sales (kind sale + keyed) and payouts apart; `paidLaterCount` of the sales."""
+    """
+    Sales (kind sale + keyed) and payouts apart; `paidLaterCount` of the sales. `approved_late`
+    ("אושר בבדיקה") is in none of them (`approvedLateCount` apart); `unresolved` ("לא הוכרע") is
+    in them and also counted apart.
+    """
 
     count: int = 0
     total_agorot: int = Field(0, alias="totalAgorot")
     payout_count: int = Field(0, alias="payoutCount")
     payout_total_agorot: int = Field(0, alias="payoutTotalAgorot")
     paid_later_count: int = Field(0, alias="paidLaterCount")
+    unresolved_count: int = Field(0, alias="unresolvedCount")
+    unresolved_total_agorot: int = Field(0, alias="unresolvedTotalAgorot")
+    approved_late_count: int = Field(0, alias="approvedLateCount")
 
     class Config:
         populate_by_name = True
@@ -271,3 +284,77 @@ class FailedPaymentListResponse(BaseModel):
 
     class Config:
         populate_by_name = True
+
+
+# ── "תשלום לא מוכרע": the manager's commands (app/services/card_attempt_commands.py) ──
+
+
+class CardCommandIn(BaseModel):
+    """
+    `POST /failed-payments/{attemptId}/card-commands`: check on the terminal, or decide
+    ("אשר והכנס את העסקה" = `mark_approved`, "בטל" = `mark_not_approved`). `confirmMismatch`: the
+    manager confirmed a decision against the terminal's answer, or with none (else 409
+    `card_decision_mismatch`).
+    """
+
+    action: Literal["check", "mark_approved", "mark_not_approved"]
+    confirm_mismatch: bool = Field(False, alias="confirmMismatch")
+
+    class Config:
+        populate_by_name = True
+
+
+class CardCheckDetailsIn(BaseModel):
+    """
+    What the terminal said on a check (the till's lookup by vuid, read-only). Cleaned, never
+    refused for a field it cannot read: of the card only the last four digits are kept.
+    """
+
+    verdict: Literal["approved", "cancelled", "not_found", "unknown"]
+    terminal_uid: Optional[str] = Field(None, alias="terminalUid")
+    at: Optional[datetime] = None
+    amount_agorot: Optional[int] = Field(None, alias="amountAgorot", ge=0, le=AMOUNT_AGOROT_MAX)
+    last4: Optional[str] = None
+    auth_number: Optional[str] = Field(None, alias="authNumber")
+    brand: Optional[str] = None
+    checked_at: Optional[datetime] = Field(None, alias="checkedAt")
+
+    class Config:
+        populate_by_name = True
+        extra = "ignore"
+
+    @field_validator("terminal_uid", mode="before")
+    @classmethod
+    def _uid(cls, value):
+        return _text(value, 100)
+
+    @field_validator("auth_number", mode="before")
+    @classmethod
+    def _auth(cls, value):
+        return _text(value, 32)
+
+    @field_validator("brand", mode="before")
+    @classmethod
+    def _brand(cls, value):
+        return _text(value, 32)
+
+    @field_validator("last4", mode="before")
+    @classmethod
+    def _last4(cls, value):
+        text = str(value).strip() if isinstance(value, (str, int)) and not isinstance(value, bool) else ""
+        return text if _LAST4_RE.match(text) else None
+
+    def stored(self) -> Dict[str, Any]:
+        """As kept on the command: camelCase, ISO times, nothing empty."""
+        return self.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+
+class CardCommandResultIn(BaseModel):
+    """`POST /sync/{m}/card-commands/{commandId}/result`: what the till did and found."""
+
+    status: Literal["done", "failed", "not_found", "busy"]
+    outcome: Optional[Literal["approved", "not_charged", "unknown"]] = None
+    message: Optional[str] = Field(None, max_length=2000)
+    #: A check: what the terminal said (`{verdict, terminalUid?, at?, amountAgorot?, last4?,
+    #: authNumber?, brand?, checkedAt}`).
+    details: Optional[CardCheckDetailsIn] = None

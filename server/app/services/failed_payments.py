@@ -33,7 +33,13 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from sqlalchemy import and_, case, exists, false, func, or_
 from sqlalchemy.orm import Query, Session, aliased
 
-from app.models.failed_payment import KIND_PAYOUT, FailedPaymentAttempt
+from app.models.failed_payment import (
+    KIND_PAYOUT,
+    NOT_FAILED_OUTCOMES,
+    OUTCOME_APPROVED_LATE,
+    OUTCOME_UNRESOLVED,
+    FailedPaymentAttempt,
+)
 from app.models.pos_machine import POSMachine
 from app.models.pos_user import PosUser
 from app.models.shift import Shift
@@ -73,7 +79,16 @@ OUTCOME_LABELS = {
     "no_answer": "אין תשובה מהמסוף — לא חויב",
     "terminal_error": "תקלת מסוף",
     "card_locked": "אשראי נעול",
+    # The card's result not known yet: possibly charged, the till's documents wait for a decision.
+    OUTCOME_UNRESOLVED: "לא הוכרע",
+    # Found charged on a check: the sale was completed — not a failed payment.
+    OUTCOME_APPROVED_LATE: "אושר בבדיקה",
 }
+#: The explanation beside an unresolved attempt (the dashboard, the paper).
+UNRESOLVED_EXPLANATION = (
+    "תוצאת התשלום באשראי לא ידועה — ייתכן שהלקוח חויב. בדקו במסוף או הכריעו כאן; "
+    "המסמכים בקופה ממתינים עד ההכרעה."
+)
 METHOD_LABELS = {"card": "אשראי", "cash": "מזומן", "voucher": "שובר", "mixed": "מעורב"}
 #: "שולם בהמשך במזומן / באשראי / בשובר / (מעורב)".
 PAID_LATER_WORDS = {"cash": "במזומן", "card": "באשראי", "voucher": "בשובר", "mixed": "(מעורב)"}
@@ -403,22 +418,39 @@ def cancelled_query(db: Session, tenant_id: Any, user, f: Filters) -> Optional[Q
 
 
 def summarize(query: Optional[Query]) -> Dict[str, int]:
-    """Sales (sale + keyed) and payouts apart; how many sales were paid later."""
-    out = {"count": 0, "totalAgorot": 0, "payoutCount": 0, "payoutTotalAgorot": 0, "paidLaterCount": 0}
+    """
+    Sales (sale + keyed) and payouts apart; how many sales were paid later. An attempt found
+    charged later (`approved_late`) is not a failed payment: left out of every figure (and
+    counted apart, `approvedLateCount`). The unresolved ones (`unresolved`) are open, not
+    completed: in the figures, and also counted apart.
+    """
+    out = {
+        "count": 0, "totalAgorot": 0, "payoutCount": 0, "payoutTotalAgorot": 0, "paidLaterCount": 0,
+        "unresolvedCount": 0, "unresolvedTotalAgorot": 0, "approvedLateCount": 0,
+    }
     if query is None:
         return out
     A = FailedPaymentAttempt
-    payout = A.kind == KIND_PAYOUT
+    failed = A.outcome.notin_(list(NOT_FAILED_OUTCOMES))
+    sale = and_(failed, A.kind != KIND_PAYOUT)
+    payout = and_(failed, A.kind == KIND_PAYOUT)
+    unresolved = A.outcome == OUTCOME_UNRESOLVED
     row = query.order_by(None).with_entities(
-        func.coalesce(func.sum(case((payout, 0), else_=1)), 0),
-        func.coalesce(func.sum(case((payout, 0), else_=A.amount_agorot)), 0),
+        func.coalesce(func.sum(case((sale, 1), else_=0)), 0),
+        func.coalesce(func.sum(case((sale, A.amount_agorot), else_=0)), 0),
         func.coalesce(func.sum(case((payout, 1), else_=0)), 0),
         func.coalesce(func.sum(case((payout, A.amount_agorot), else_=0)), 0),
-        func.coalesce(
-            func.sum(case((and_(A.kind != KIND_PAYOUT, A.paid_by_transaction_id.isnot(None)), 1), else_=0)), 0
-        ),
+        func.coalesce(func.sum(case((and_(sale, A.paid_by_transaction_id.isnot(None)), 1), else_=0)), 0),
+        func.coalesce(func.sum(case((unresolved, 1), else_=0)), 0),
+        func.coalesce(func.sum(case((unresolved, A.amount_agorot), else_=0)), 0),
+        func.coalesce(func.sum(case((A.outcome == OUTCOME_APPROVED_LATE, 1), else_=0)), 0),
     ).one()
     return dict(zip(out.keys(), (int(v or 0) for v in row)))
+
+
+def is_failed(a: FailedPaymentAttempt) -> bool:
+    """A failed or not-completed attempt (not one found charged later)."""
+    return (a.outcome or "") not in NOT_FAILED_OUTCOMES
 
 
 # ── Labels for the rows ───────────────────────────────────────────────────────
@@ -511,7 +543,17 @@ def attempt_out(row: FailedPaymentAttempt, labels: Dict[str, Dict[Any, Any]]) ->
         "paid_by_transaction_number": labels["documents"].get(row.paid_by_transaction_id),
         "paid_by_method": row.paid_by_method,
         "paid_at": _utc(row.paid_at),
+        # "תשלום לא מוכרע": the manager's latest command to the till about it, and what it said;
+        # and the latest answered check (what the terminal said), whatever came after it.
+        "card_command": _command_out(labels.get("commands", {}).get(row.id)),
+        "card_check": _command_out(labels.get("checks", {}).get(row.id)),
     }
+
+
+def _command_out(cmd) -> Optional[Dict[str, Any]]:
+    from app.services.card_attempt_commands import command_out
+
+    return command_out(cmd)
 
 
 def cancelled_out(tx: Transaction, machines: Dict[uuid.UUID, POSMachine], cashiers: Dict[str, str]) -> Dict[str, Any]:
@@ -557,7 +599,12 @@ def cancelled_block(db: Session, query: Optional[Query], limit: int = CANCELLED_
 
 
 def labels_for(db: Session, tenant_id: Any, rows: Sequence[FailedPaymentAttempt]) -> Dict[str, Dict[Any, Any]]:
+    from app.services.card_attempt_commands import latest_by_attempt, latest_checks_by_attempt
+
+    unresolved = [r.id for r in rows if r.outcome == OUTCOME_UNRESOLVED]
     return {
+        "commands": latest_by_attempt(db, unresolved),
+        "checks": latest_checks_by_attempt(db, unresolved),
         "machines": _machines(db, (r.machine_id for r in rows)),
         "shops": _shops(db, (r.shop_id for r in rows)),
         "shifts": _shift_numbers(db, (r.shift_id for r in rows)),
@@ -630,8 +677,10 @@ def list_response(
     if query is None:
         return out
     total = query.order_by(None).count()
+    A = FailedPaymentAttempt
     rows = (
-        query.order_by(FailedPaymentAttempt.occurred_at.desc(), FailedPaymentAttempt.id)
+        # The unresolved first ("לא הוכרע": possibly charged, the till waits), then newest first.
+        query.order_by(case((A.outcome == OUTCOME_UNRESOLVED, 0), else_=1), A.occurred_at.desc(), A.id)
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
@@ -720,6 +769,8 @@ def print_sections(
     f = Filters(machine_id=_uuid(machine_id), coverage=cov)
     query = attempts_query(db, z.tenant_id, None, f)
     attempts = query.order_by(FailedPaymentAttempt.occurred_at, FailedPaymentAttempt.id).all() if query is not None else []
+    # One found charged later completed its sale: not a payment that did not go through.
+    attempts = [a for a in attempts if is_failed(a)]
     cancelled_q = cancelled_query(db, z.tenant_id, None, f)
     cancelled = (
         cancelled_q.order_by(Transaction.created_at, Transaction.id).all() if cancelled_q is not None else []
@@ -797,3 +848,19 @@ def with_print_sections(
     if extra:
         doc["sections"] = [*(doc.get("sections") or []), *extra]
     return doc
+
+
+# ── One attempt, for the dashboard's actions ──────────────────────────────────
+
+
+def attempt_for_user(db: Session, tenant_id: Any, user, attempt_id: Any) -> Optional[FailedPaymentAttempt]:
+    """The attempt when it is in the tenant and the user's scope (as the list reads it), else None."""
+    A = FailedPaymentAttempt
+    ident = _uuid(attempt_id)
+    if ident is None:
+        return None
+    query = db.query(A).filter(A.id == ident)
+    if tenant_id is not None:
+        query = query.filter(A.tenant_id == tenant_id)
+    query = _scoped(query, user, db, A.shop_id, A.machine_id)
+    return query.first() if query is not None else None

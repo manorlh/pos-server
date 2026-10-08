@@ -25,6 +25,11 @@ export interface SaleRequest {
   payments: number;
   /** The terminal's progress, for the pay screen's status line. */
   onProgress?: (message: string) => void;
+  /**
+   * The terminal has answered the sale (before any acknowledgement it asks for, TerminalAck): from
+   * here a customer's cancel sends nothing — never an abort after an answer.
+   */
+  onAnswered?: () => void;
 }
 
 /** What the document's card leg and the receipt need of an approval. */

@@ -263,8 +263,14 @@ export interface PosSettingsV1 {
    * payment devices of its shop. Unset = inherit (off when no level sets it).
    */
   multiPaymentDevices?: boolean;
-  /** The device preselected at card payment (a device id of the shop); shop / area / till only. */
-  defaultPaymentDeviceId?: string;
+  /**
+   * How a till picks its device (shop = the default for its tills, area, till): "fixed" — always
+   * `fixedPaymentDeviceId`; "group" — the cashier picks from `paymentDeviceGroup` (empty = every
+   * device of the shop). Unset everywhere = a group of every device.
+   */
+  paymentDeviceMode?: 'fixed' | 'group';
+  fixedPaymentDeviceId?: string;
+  paymentDeviceGroup?: string[];
   outOfStockPolicy?: OutOfStockPolicy;
   /**
    * "פתיחת פריטים אוטומטית אחרי Z" (lib/availabilityReopen.ts, pos-server
@@ -402,14 +408,18 @@ export type PosSettingsPatch = Partial<
     | 'autoReopenAfterZ'
     | 'autoReopenIgnoreStock'
     | 'multiPaymentDevices'
-    | 'defaultPaymentDeviceId'
+    | 'paymentDeviceMode'
+    | 'fixedPaymentDeviceId'
+    | 'paymentDeviceGroup'
     | ResettableSwitchKey
     | PaymentIntegrationSettingKey
   >
 > & {
-  /** "מכשירי תשלום": `null` = inherit the switch / the default device from the level above again. */
+  /** "מכשירי תשלום": `null` = inherit the switch / the device choice from the level above again. */
   multiPaymentDevices?: boolean | null;
-  defaultPaymentDeviceId?: string | null;
+  paymentDeviceMode?: 'fixed' | 'group' | null;
+  fixedPaymentDeviceId?: string | null;
+  paymentDeviceGroup?: string[] | null;
   /** `null` = inherit "פתיחת פריטים אוטומטית אחרי Z" from the level above again. */
   autoReopenAfterZ?: AutoReopenMode | null;
   autoReopenIgnoreStock?: boolean | null;

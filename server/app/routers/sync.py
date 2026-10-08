@@ -2225,15 +2225,14 @@ def get_settings_sync(
             effective.pop(key, None)
         else:
             effective[key] = value
-    # "מכשירי תשלום": the shop's devices that apply to this till (`paymentDevices`, a JSON
-    # string, inactive ones included), their secrets to a till without built-in clearing
-    # (`paymentDeviceSecrets`), and the default device only when it is one of them
-    # (app/services/payment_devices.py).
+    # "מכשירי תשלום": all the shop's devices (`paymentDevices`, a JSON string, inactive ones
+    # included), their secrets to a till without built-in clearing (`paymentDeviceSecrets`),
+    # how this till picks one (`paymentDeviceMode`, `fixedPaymentDeviceId`, `paymentDeviceGroup`
+    # as a JSON string) and the merged expected terminal number of all the layers, unguarded
+    # (`paymentDevicesTerminalNumber`) — app/services/payment_devices.py.
     from app.services import payment_devices
 
-    for key, value in payment_devices.till_sync_fields(
-        db, machine, shop, effective.get(payment_devices.DEFAULT_KEY)
-    ).items():
+    for key, value in payment_devices.till_sync_fields(db, machine, shop, all_settings).items():
         if value is None:
             effective.pop(key, None)
         else:

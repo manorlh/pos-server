@@ -413,7 +413,11 @@ class TestReport:
         attempt(w, w.tills[0])
         dumped = listed(w, from_date=FROM, to_date=TO).model_dump(by_alias=True, mode="json")
         assert {"page", "pageSize", "total", "summary", "items", "cancelledSales"} <= set(dumped)
-        assert {"count", "totalAgorot", "payoutCount", "payoutTotalAgorot", "paidLaterCount"} == set(dumped["summary"])
+        assert {
+            "count", "totalAgorot", "payoutCount", "payoutTotalAgorot", "paidLaterCount",
+            # "לא הוכרע" / "אושר בבדיקה" counted apart (tests/test_card_attempt_commands.py).
+            "unresolvedCount", "unresolvedTotalAgorot", "approvedLateCount",
+        } == set(dumped["summary"])
         item = dumped["items"][0]
         assert item["amountAgorot"] == 14000 and item["cardLast4"] == "1234" and item["machineName"]
 

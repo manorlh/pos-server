@@ -790,6 +790,16 @@ def post_my_heartbeat(
     pending_shop_z_part = take_pending_remote_part(db, machine)
     # Support ordered a reset of this till's data (offline till Z §4.7): the only way.
     pending_reset = till_reset.take_pending(db, machine)
+    # "תשלום לא מוכרע": a manager's check / decision on an unknown card of this till
+    # (app/services/card_attempt_commands.py), said on every beat until answered. Never fails a beat.
+    pending_card_commands = None
+    try:
+        from app.services import card_attempt_commands
+
+        with db.begin_nested():
+            pending_card_commands = card_attempt_commands.take_pending(db, machine)
+    except Exception:  # noqa: BLE001
+        logger.exception("card command hand-over failed for %s", machine.id)
     through = z_reported_through_sequence(db, machine.id)
     recent = recent_shift_zs(db, machine.id)
     # A shop Z is about (the master till's "סגירת Z סניפי" is open, or a run is waiting):
@@ -854,6 +864,8 @@ def post_my_heartbeat(
         response["pendingReboot"] = pending_reboot
     if pending_remote_credits:
         response["pendingRemoteCredits"] = pending_remote_credits
+    if pending_card_commands:
+        response["pendingCardCommands"] = pending_card_commands
     return response
 
 

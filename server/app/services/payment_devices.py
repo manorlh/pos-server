@@ -3,32 +3,50 @@
 
 A till or tablet with no built-in clearing (a P18 — not an F20, whose Agamento is its own)
 can work with several payment devices of its shop. Each has a nickname; at card payment the
-cashier sends the transaction to one of them. The kinds:
+till sends the transaction to one of them. The kinds:
 
-* `zcredit_pinpad` — a Z-Credit PinPad (`pinpadId`; `terminalNumber` / `mode` when this pinpad
-  is not on the till's merged `zcreditTerminalNumber` / `zcreditMode`); secret: the terminal
-  password (`zcreditPassword`).
+* `zcredit_pinpad` — a Z-Credit PinPad: only its `pinpadId`. The terminal number and password
+  are the branch's (the shop's / till's Z-Credit settings), shared by all its pinpads — a
+  `terminalNumber` / `mode` / `zcreditPassword` sent for a pinpad is silently dropped.
 * `synqpay` — a SynqPay terminal (model, connection lan | usb, host on lan, protocol, port, TLS,
-  USB device, serial number); secret: the API key (`synqpayApiKey`), normally sent up by the
-  till that paired with it (`POST /sync/{m}/synqpay/pairing` with `paymentDeviceId`).
+  USB device, serial number, optional terminal number); secret: the API key (`synqpayApiKey`),
+  normally sent up by the till that paired with it (`POST /sync/{m}/synqpay/pairing` with
+  `paymentDeviceId`).
 * `agamento_lan` — a Nayax handheld running only Agamento, reached over the LAN (TweezerComm
-  over plain HTTP, port 8080, path /SPICy); no secret.
+  over plain HTTP, port 8080, path /SPICy; optional MAC and terminal number); no secret.
 
-It is a feature switch on the usual settings layers: `multiPaymentDevices` (a shop for all its
-tills, a till overriding its shop; absent = inherit), and `defaultPaymentDeviceId` (the device
-preselected at payment — a shop's, an area's or a till's; refused on a tenant or company, which
-have no devices). The kiosk is out of scope: it keeps its one pinpad and is sent nothing here.
+A device belongs to its shop. Several devices may share one terminal number (nothing is unique
+about it). Which devices a till uses is a setting on the usual layers (shop = the default for its
+tills, area, till; refused on a tenant or company — they have no devices; absent = inherit):
 
-What the till gets (`GET /sync/{m}/settings`, inside `settings`):
+* `multiPaymentDevices` — the feature switch.
+* `paymentDeviceMode` — "fixed" ("מכשיר קבוע": every card goes to one device, no picker) or
+  "group" ("קבוצת מכשירים לבחירה": the cashier picks; the till preselects the last one used,
+  else the first by sort order). Absent = a group of all the shop's devices.
+* `fixedPaymentDeviceId` — the fixed device, a device of that shop. A layer that writes mode
+  "fixed" must end up with one — its own, or one a layer above gives (checked on that layer
+  merged with the layers above it, when the mode or the device changes).
+* `paymentDeviceGroup` — device ids of that shop; empty / absent = every device of the shop.
 
-* `paymentDevices` — a JSON *string*: the devices of its shop that apply to it (`machine_ids`
-  empty or naming it), inactive ones included (a card left unresolved on a device switched off
-  must still be followed up), by `sort_order` then nickname:
-  `[{"id", "nickname", "kind", "active", "sortOrder", "config": {...}}]`. Absent when none.
-* `paymentDeviceSecrets` — a JSON *string* `{"<deviceId>": {"zcreditPassword"?, "synqpayApiKey"?}}`
-  in the clear, only to a till without a built-in terminal, only for the devices above. Absent
-  when empty. Never logged, never in a dashboard answer.
-* `defaultPaymentDeviceId` — the merged value, sent only when it names one of those devices.
+The kiosk is out of scope: it keeps its one pinpad, is sent nothing here, and its own layer
+refuses these keys.
+
+What the till gets (`GET /sync/{m}/settings`, inside `settings`), only with `paymentDevices`:
+
+* `paymentDevices` — a JSON *string*: ALL the devices of its shop, inactive ones included (the
+  till refuses a card on one switched off, and still follows up one left unresolved), by
+  `sort_order` then nickname: `[{"id", "nickname", "kind", "active", "sortOrder", "config"}]`.
+  Absent when the shop has none, and for a kiosk.
+* `paymentDeviceSecrets` — a JSON *string* `{"<deviceId>": {"synqpayApiKey": "…"}}` in the
+  clear, only to a till without a built-in terminal. Absent when empty. Never logged, never in a
+  dashboard answer.
+* `paymentDeviceMode` — the merged value, only when "fixed" or "group".
+* `fixedPaymentDeviceId` — the merged value, only when it names one of the shop's devices.
+* `paymentDeviceGroup` — a JSON *string* of the merged list, filtered to the shop's devices;
+  absent when unrestricted (the till's settings table would flatten a raw list).
+* `paymentDevicesTerminalNumber` — the merged `expectedTerminalNumber` of ALL the layers
+  (tenant → … → till), NOT filtered by terminal_config_guard: a read-only value the till
+  compares a device's reported terminal with (its card lock), never written to a terminal.
 
 Every change here (a device created, edited, deleted, a secret, a pairing) moves the shop's
 `settings_updated_at` — the till's settings watermark — and tells the shop's tills to pull.
@@ -62,7 +80,7 @@ from app.services.payment_terminal import (
     clean_pinpad_host,
     clean_pinpad_path,
 )
-from app.services.settings_merge import patch_settings_json, utc_now
+from app.services.settings_merge import deep_merge_settings, patch_settings_json, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -80,13 +98,13 @@ KIND_LABELS_HE: Dict[str, str] = {
 }
 
 #: The secrets each kind uses; any other sent for it is dropped, and a kind change removes
-#: the old kind's.
+#: the old kind's. A Z-Credit pinpad has none: the password is the branch's.
 KIND_SECRETS: Dict[str, Tuple[str, ...]] = {
-    ZCREDIT_PINPAD: (PS.ZCREDIT_PASSWORD,),
+    ZCREDIT_PINPAD: (),
     SYNQPAY: (PS.SYNQPAY_API_KEY,),
     AGAMENTO_LAN: (),
 }
-DEVICE_SECRET_KEYS: Tuple[str, ...] = (PS.ZCREDIT_PASSWORD, PS.SYNQPAY_API_KEY)
+DEVICE_SECRET_KEYS: Tuple[str, ...] = (PS.SYNQPAY_API_KEY,)
 
 #: `payment_integration_secrets.level` of a device's secret (entity_id = the device's id).
 SECRET_LEVEL = "payment_device"
@@ -94,15 +112,28 @@ SECRET_LEVEL = "payment_device"
 # ── Settings keys (managed: app/services/settings_merge.py) ───────────────────
 
 MULTI_KEY = "multiPaymentDevices"
-DEFAULT_KEY = "defaultPaymentDeviceId"
-SETTING_KEYS: Tuple[str, ...] = (MULTI_KEY, DEFAULT_KEY)
-#: Keys of the till's settings sync (JSON strings).
+MODE_KEY = "paymentDeviceMode"
+FIXED_KEY = "fixedPaymentDeviceId"
+GROUP_KEY = "paymentDeviceGroup"
+SETTING_KEYS: Tuple[str, ...] = (MULTI_KEY, MODE_KEY, FIXED_KEY, GROUP_KEY)
+#: The keys that name devices (or how a till picks one): shop, area and till layers only.
+CHOICE_KEYS: Tuple[str, ...] = (MODE_KEY, FIXED_KEY, GROUP_KEY)
+MODE_FIXED = "fixed"
+MODE_GROUP = "group"
+MODES: Tuple[str, ...] = (MODE_FIXED, MODE_GROUP)
+# The earlier "default device" (`defaultPaymentDeviceId`) is gone: not managed, never sent,
+# removed from every layer by migration 3b8f6d2a9c41.
+
+#: Keys of the till's settings sync.
 SYNC_DEVICES_KEY = "paymentDevices"
 SYNC_SECRETS_KEY = "paymentDeviceSecrets"
+SYNC_TERMINAL_KEY = "paymentDevicesTerminalNumber"
+EXPECTED_TERMINAL_KEY = "expectedTerminalNumber"
 
 NOTIFY_REASON = "payment_devices_updated"
 
 SORT_ORDER_MAX = 9999
+GROUP_MAX = 200
 
 # ── Errors ───────────────────────────────────────────────────────────────────
 
@@ -123,7 +154,6 @@ MESSAGES_HE: Dict[str, str] = {
     "terminal_number_invalid": "מספר מסוף — ספרות בלבד, עד 20",
     "pinpad_required": "יש להזין מזהה PinPad",
     "pinpad_invalid": "מזהה PinPad — אותיות באנגלית וספרות בלבד, עם או בלי הקידומת PINPAD",
-    "mode_invalid": "מצב — בדיקה או ייצור",
     "model_required": "יש לבחור את דגם המסוף",
     "model_invalid": "דגם מסוף לא מוכר",
     "connection_required": "יש לבחור סוג חיבור — רשת או USB",
@@ -132,17 +162,15 @@ MESSAGES_HE: Dict[str, str] = {
     "tls_invalid": "ערך TLS לא תקין",
     "usb_device_invalid": "התקן USB — VVVV:PPPP בהקס (למשל 0B00:0080), או ריק לזיהוי אוטומטי",
     "serial_invalid": "מספר סידורי — 4–32 אותיות באנגלית, ספרות או מקף",
-    "machine_ids_invalid": "רשימת הקופות אינה תקינה",
-    "machine_not_in_shop": "אחת הקופות שנבחרו אינה קופה של הסניף",
-    "machine_is_kiosk": "קיוסק עובד עם המסופון שלו — לא ניתן לשייך לו מכשיר תשלום",
     "sort_order_invalid": f"סדר — מספר שלם בין 0 ל-{SORT_ORDER_MAX}",
     "active_invalid": "ערך 'פעיל' לא תקין",
     "secret_invalid": "עד 200 תווים, ללא תווי בקרה",
     "synqpay_key_invalid": "מפתח API — אותיות באנגלית וספרות בלבד, עד 64 תווים",
     "payment_device_not_found": "מכשיר התשלום לא נמצא",
-    "payment_device_level_invalid": "מכשיר ברירת מחדל נקבע ברמת סניף, נקודת מכירה או קופה בלבד",
+    "payment_device_level_invalid": "בחירת מכשירי התשלום לקופות נקבעת ברמת סניף, נקודת מכירה או קופה בלבד",
     "payment_device_not_in_shop": "המכשיר שנבחר אינו מכשיר תשלום של הסניף",
-    "payment_device_not_for_machine": "המכשיר שנבחר אינו משויך לקופה הזו",
+    "payment_device_kiosk": "קיוסק עובד עם המסופון שלו — אין לו מכשירי תשלום",
+    "fixed_payment_device_required": "במצב 'מכשיר קבוע' יש לבחור את המכשיר",
     "payment_device_not_synqpay": "המכשיר אינו מסוף SynqPay",
 }
 
@@ -151,7 +179,7 @@ class PaymentDeviceError(HTTPException):
     """
     A refusal with a machine-readable `detail.code`, the Hebrew `detail.msg` (the key the
     dashboard's error formatter reads) and, for a field, `detail.field` ("nickname",
-    "config.host", "machineIds", "zcreditPassword", "defaultPaymentDeviceId"…).
+    "config.host", "synqpayApiKey", "fixedPaymentDeviceId", "paymentDeviceGroup"…).
     """
 
     def __init__(self, code: str, *, field: Optional[str] = None, status_code: int = 422):
@@ -246,7 +274,7 @@ def clean_mac(value: Any) -> Optional[str]:
 
 
 def clean_terminal_number(value: Any) -> Optional[str]:
-    """Digits, 1–20, leading zeros kept; None for blank."""
+    """Digits, 1–20, leading zeros kept; None for blank. Never unique: devices may share one."""
     if _blank(value):
         return None
     if isinstance(value, bool) or not isinstance(value, (str, int)):
@@ -351,6 +379,7 @@ def _agamento_config(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _zcredit_config(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Only the PinPad: the terminal number, mode and password are the branch's (dropped here)."""
     if _blank(raw.get("pinpadId")):
         raise PaymentDeviceError("pinpad_required", field="config.pinpadId")
     if isinstance(raw.get("pinpadId"), bool):
@@ -359,17 +388,7 @@ def _zcredit_config(raw: Dict[str, Any]) -> Dict[str, Any]:
         pinpad = PI.clean_pinpad_id(raw.get("pinpadId"))
     except ValueError:
         raise PaymentDeviceError("pinpad_invalid", field="config.pinpadId") from None
-    out: Dict[str, Any] = {"pinpadId": pinpad}
-    terminal = clean_terminal_number(raw.get("terminalNumber"))
-    if terminal:
-        out["terminalNumber"] = terminal
-    try:
-        mode = PI.validate_mode(raw.get("mode"))
-    except ValueError:
-        raise PaymentDeviceError("mode_invalid", field="config.mode") from None
-    if mode:
-        out["mode"] = mode
-    return out
+    return {"pinpadId": pinpad}
 
 
 def _synqpay_config(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -447,6 +466,9 @@ def till_config(kind: str, config: Any) -> Dict[str, Any]:
     elif kind == SYNQPAY:
         out.setdefault("protocol", "tcp")
         out.setdefault("tls", False)
+    elif kind == ZCREDIT_PINPAD:
+        # The branch's terminal number and mode, never the pinpad's (a row from before).
+        out = {k: v for k, v in out.items() if k == "pinpadId"}
     return out
 
 
@@ -472,54 +494,6 @@ def _kiosk_ids(db: Session, machine_ids: Sequence[Any]) -> set:
     from app.models.kiosk import KioskDevice
 
     return {_uuid(row[0]) for row in db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id.in_(ids)).all()}
-
-
-def clean_machine_ids(db: Session, shop: Shop, raw: Any, previous: Iterable[Any] = ()) -> List[str]:
-    """
-    The tills a device is for (ids as strings, repeats removed, in the order given); empty =
-    every till of the shop. Each must be a till of the shop (422 `machine_not_in_shop`), not a
-    kiosk (422 `machine_is_kiosk`). An id the device already had that is no longer the shop's
-    (the till moved away) is dropped rather than refused, so its form still saves.
-    """
-    if raw is None:
-        return []
-    if not isinstance(raw, (list, tuple)):
-        raise PaymentDeviceError("machine_ids_invalid", field="machineIds")
-    wanted: List[uuid.UUID] = []
-    for item in raw:
-        ident = _uuid(item)
-        if ident is None or isinstance(item, bool):
-            raise PaymentDeviceError("machine_ids_invalid", field="machineIds")
-        if ident not in wanted:
-            wanted.append(ident)
-    if not wanted:
-        return []
-    found = {
-        m.id: m
-        for m in db.query(POSMachine).filter(POSMachine.id.in_(wanted)).all()
-        if _uuid(m.shop_id) == _uuid(shop.id)
-    }
-    kiosks = _kiosk_ids(db, list(found))
-    before = {_uuid(x) for x in previous or ()}
-    out: List[str] = []
-    for ident in wanted:
-        if ident not in found or ident in kiosks:
-            if ident in before:
-                continue
-            raise PaymentDeviceError(
-                "machine_is_kiosk" if ident in kiosks else "machine_not_in_shop", field="machineIds"
-            )
-        out.append(str(ident))
-    return out
-
-
-def applies_to(device: PaymentDevice, machine_id: Any) -> bool:
-    """For every till of its shop (no list), or for the tills listed."""
-    ids = device.machine_ids or []
-    if not ids:
-        return True
-    wanted = _uuid(machine_id)
-    return any(_uuid(x) == wanted for x in ids)
 
 
 # ── Devices ──────────────────────────────────────────────────────────────────
@@ -553,25 +527,24 @@ def _check_nickname_free(db: Session, shop_id: Any, nickname: str, *, except_id:
 
 def secret_patch(body: Any) -> Dict[str, Optional[str]]:
     """
-    The write-only secrets a body carries: key → value to store, or None to remove. Only the
-    fields sent; the dashboard's mask ("••••") echoed back is left out (keep). Never echoes a
-    value in an error.
+    The write-only secret a body carries (SynqPay's API key): key → value to store, or None to
+    remove. Only when sent; the dashboard's mask ("••••") echoed back is left out (keep). Never
+    echoes a value in an error.
     """
     sent = getattr(body, "model_fields_set", set())
     out: Dict[str, Optional[str]] = {}
-    for field, key in (("zcredit_password", PS.ZCREDIT_PASSWORD), ("synqpay_api_key", PS.SYNQPAY_API_KEY)):
-        if field not in sent:
-            continue
-        raw = getattr(body, field, None)
-        if PS.is_mask(raw):
-            continue
-        try:
-            value = PS.clean_secret(raw)
-        except PS.PaymentSecretError:
-            raise PaymentDeviceError("secret_invalid", field=key) from None
-        if key == PS.SYNQPAY_API_KEY and value is not None and not PS.is_synqpay_api_key(value):
-            raise PaymentDeviceError("synqpay_key_invalid", field=key)
-        out[key] = value
+    if "synqpay_api_key" not in sent:
+        return out
+    raw = getattr(body, "synqpay_api_key", None)
+    if PS.is_mask(raw):
+        return out
+    try:
+        value = PS.clean_secret(raw)
+    except PS.PaymentSecretError:
+        raise PaymentDeviceError("secret_invalid", field=PS.SYNQPAY_API_KEY) from None
+    if value is not None and not PS.is_synqpay_api_key(value):
+        raise PaymentDeviceError("synqpay_key_invalid", field=PS.SYNQPAY_API_KEY)
+    out[PS.SYNQPAY_API_KEY] = value
     return out
 
 
@@ -599,7 +572,8 @@ def _new_secret_row(device: PaymentDevice, key: str) -> PaymentIntegrationSecret
 def apply_device_secrets(db: Session, device: PaymentDevice, patch: Dict[str, Optional[str]], *, user_id: Any = None) -> bool:
     """
     Store / remove the device's secrets (encrypted). Secrets of a kind the device is not are
-    removed whatever the patch says (a kind change), and never stored. True when anything changed.
+    removed whatever the patch says (a kind change, a pinpad's old password), and never stored.
+    True when anything changed.
     """
     allowed = KIND_SECRETS.get(device.kind, ())
     rows = dict(_secret_rows(db, [device.id]).get(_uuid(device.id), {}))
@@ -641,15 +615,11 @@ def remove_device_secrets(db: Session, device_id: Any) -> None:
 
 
 def secrets_status(db: Session, rows: Dict[str, PaymentIntegrationSecret]) -> Dict[str, Dict[str, Any]]:
-    """For the dashboard: per secret, whether one is stored (and SynqPay's pairing). Never the value."""
-    out: Dict[str, Dict[str, Any]] = {}
-    for key in DEVICE_SECRET_KEYS:
-        row = rows.get(key)
-        entry: Dict[str, Any] = {"set": row is not None, "updatedAt": row.updated_at if row is not None else None}
-        if key == PS.SYNQPAY_API_KEY:
-            entry.update(PS.pairing_status(db, row))
-        out[key] = entry
-    return out
+    """For the dashboard: whether a SynqPay key is stored, and its pairing. Never the value."""
+    row = rows.get(PS.SYNQPAY_API_KEY)
+    entry: Dict[str, Any] = {"set": row is not None, "updatedAt": row.updated_at if row is not None else None}
+    entry.update(PS.pairing_status(db, row))
+    return {PS.SYNQPAY_API_KEY: entry}
 
 
 def till_device(device: PaymentDevice) -> Dict[str, Any]:
@@ -665,13 +635,12 @@ def till_device(device: PaymentDevice) -> Dict[str, Any]:
 
 
 def device_out(db: Session, device: PaymentDevice, rows: Optional[Dict[str, PaymentIntegrationSecret]] = None) -> Dict[str, Any]:
-    """One device as the dashboard gets it: the till's shape, its tills, times, secret status."""
+    """One device as the dashboard gets it: the till's shape, times, secret status."""
     if rows is None:
         rows = _secret_rows(db, [device.id]).get(_uuid(device.id), {})
     return {
         **till_device(device),
         "shopId": str(device.shop_id),
-        "machineIds": [str(x) for x in (device.machine_ids or [])],
         "createdAt": device.created_at,
         "updatedAt": device.updated_at,
         "secrets": secrets_status(db, rows),
@@ -698,7 +667,6 @@ def create_device(db: Session, shop: Shop, body: Any, *, user_id: Any = None) ->
     nickname = clean_nickname(body.nickname)
     kind = clean_kind(body.kind)
     config = clean_config(kind, body.config)
-    machine_ids = clean_machine_ids(db, shop, body.machine_ids)
     sort_order = clean_sort_order(body.sort_order)
     active = clean_active(body.active)
     secrets = secret_patch(body)
@@ -710,7 +678,6 @@ def create_device(db: Session, shop: Shop, body: Any, *, user_id: Any = None) ->
         nickname=nickname,
         kind=kind,
         config=config,
-        machine_ids=machine_ids,
         active=active,
         sort_order=sort_order,
     )
@@ -725,7 +692,7 @@ def update_device(db: Session, shop: Shop, device: PaymentDevice, body: Any, *, 
     """
     Change the fields the body sends (absent = keep). A new kind validates the config for it
     (the stored one when the kind is unchanged and no config is sent) and removes the old
-    kind's secrets. A till taken off the device loses it as its own default device.
+    kind's secrets. Deactivating clears nothing: the till refuses a card on it instead.
     """
     sent = getattr(body, "model_fields_set", set())
     nickname = clean_nickname(body.nickname) if "nickname" in sent else device.nickname
@@ -735,11 +702,6 @@ def update_device(db: Session, shop: Shop, device: PaymentDevice, body: Any, *, 
     else:
         raw_config = device.config if kind == device.kind else {}
     config = clean_config(kind, raw_config)
-    machine_ids = (
-        clean_machine_ids(db, shop, body.machine_ids, previous=device.machine_ids or [])
-        if "machine_ids" in sent
-        else [str(x) for x in (device.machine_ids or [])]
-    )
     sort_order = clean_sort_order(body.sort_order, int(device.sort_order or 0)) if "sort_order" in sent else device.sort_order
     active = clean_active(body.active, bool(device.active)) if "active" in sent else device.active
     secrets = secret_patch(body)
@@ -749,47 +711,136 @@ def update_device(db: Session, shop: Shop, device: PaymentDevice, body: Any, *, 
     device.nickname = nickname
     device.kind = kind
     device.config = config
-    device.machine_ids = machine_ids
     device.sort_order = sort_order
     device.active = active
     device.updated_at = datetime.now(timezone.utc)
     db.flush()
     apply_device_secrets(db, device, secrets, user_id=user_id)
-    if machine_ids:
-        covered = {_uuid(x) for x in machine_ids}
-        _clear_machine_defaults(db, shop, device.id, keep=lambda m: _uuid(m.id) in covered)
     touch_shop(shop)
     return device
 
 
+def strip_device_from_settings(settings: Any, device_id: str) -> Optional[Dict[str, Any]]:
+    """
+    A layer's settings without [device_id]: out of `paymentDeviceGroup` (a group left empty is
+    removed — the layer inherits again rather than turning into "every device"), and as
+    `fixedPaymentDeviceId` (with the layer's own mode "fixed", which has nothing left to point
+    at). None when the layer did not name the device.
+    """
+    out = _as_dict(settings)
+    changed = False
+    if out.get(FIXED_KEY) == device_id:
+        out.pop(FIXED_KEY)
+        if out.get(MODE_KEY) == MODE_FIXED:
+            out.pop(MODE_KEY)
+        changed = True
+    group = out.get(GROUP_KEY)
+    if isinstance(group, list) and any(str(x) == device_id for x in group):
+        rest = [x for x in group if str(x) != device_id]
+        if rest:
+            out[GROUP_KEY] = rest
+        else:
+            out.pop(GROUP_KEY)
+        changed = True
+    return out if changed else None
+
+
 def delete_device(db: Session, shop: Shop, device: PaymentDevice) -> None:
     """
-    Delete it, its secrets, and every `defaultPaymentDeviceId` naming it — the shop's, its
-    areas' and its tills' — in the same transaction. The caller commits and notifies.
+    Delete it, its secrets, and every reference to it — `fixedPaymentDeviceId` and
+    `paymentDeviceGroup` of the shop, its areas and its tills — in the same transaction,
+    moving each changed layer's stamp. The caller commits and notifies.
     """
-    now = utc_now()
-    if _as_dict(shop.settings).get(DEFAULT_KEY) == str(device.id):
-        shop.settings = patch_settings_json(shop.settings, {DEFAULT_KEY: None})
     from app.models.shop_area import ShopArea
 
+    now = utc_now()
+    ident = str(device.id)
+    stripped = strip_device_from_settings(shop.settings, ident)
+    if stripped is not None:
+        shop.settings = stripped
     for area in db.query(ShopArea).filter(ShopArea.shop_id == _uuid(shop.id)).all():
-        if _as_dict(area.settings).get(DEFAULT_KEY) == str(device.id):
-            area.settings = patch_settings_json(area.settings, {DEFAULT_KEY: None})
+        stripped = strip_device_from_settings(area.settings, ident)
+        if stripped is not None:
+            area.settings = stripped
             area.settings_updated_at = now
-    _clear_machine_defaults(db, shop, device.id, keep=lambda m: False)
+    for machine in db.query(POSMachine).filter(POSMachine.shop_id == _uuid(shop.id)).all():
+        stripped = strip_device_from_settings(machine.settings, ident)
+        if stripped is not None:
+            machine.settings = stripped
+            machine.settings_updated_at = now
     remove_device_secrets(db, device.id)
     db.delete(device)
     touch_shop(shop)
 
 
-def _clear_machine_defaults(db: Session, shop: Shop, device_id: Any, *, keep) -> None:
-    """Remove `defaultPaymentDeviceId` = [device_id] from the shop's tills' own layers, but [keep]'s."""
-    now = utc_now()
-    for machine in db.query(POSMachine).filter(POSMachine.shop_id == _uuid(shop.id)).all():
-        if _as_dict(machine.settings).get(DEFAULT_KEY) != str(device_id) or keep(machine):
-            continue
-        machine.settings = patch_settings_json(machine.settings, {DEFAULT_KEY: None})
-        machine.settings_updated_at = now
+# ── What a till uses ─────────────────────────────────────────────────────────
+
+
+def _str_ids(values: Any) -> List[str]:
+    """Device ids as canonical strings, once each, in order; anything else left out."""
+    out: List[str] = []
+    if not isinstance(values, (list, tuple)):
+        return out
+    for v in values:
+        ident = _uuid(v)
+        if ident is not None and str(ident) not in out:
+            out.append(str(ident))
+    return out
+
+
+def till_choice(merged: Dict[str, Any], device_ids: Sequence[str]) -> Dict[str, Any]:
+    """
+    How a till picks a device, from its merged settings and its shop's device ids:
+    `{enabled, mode, fixedDeviceId, groupDeviceIds}` — mode "group" when unset; the fixed device
+    only when it is one of the shop's; the group filtered to the shop's devices, None = all.
+    """
+    ids = [str(x) for x in device_ids]
+    mode = merged.get(MODE_KEY) if merged.get(MODE_KEY) in MODES else MODE_GROUP
+    fixed = merged.get(FIXED_KEY)
+    group = [g for g in _str_ids(merged.get(GROUP_KEY)) if g in ids]
+    return {
+        "enabled": merged.get(MULTI_KEY) is True,
+        "mode": mode,
+        "fixedDeviceId": fixed if isinstance(fixed, str) and fixed in ids else None,
+        "groupDeviceIds": group or None,
+    }
+
+
+def _tills_summary(db: Session, shop: Shop, devices: List[PaymentDevice]) -> List[Dict[str, Any]]:
+    """Each non-kiosk till of the shop, its hardware and how it picks a device (merged layers)."""
+    from app.models.company import Company
+    from app.models.shop_area import ShopArea
+    from app.models.tenant import Tenant
+
+    company = db.query(Company).filter(Company.id == shop.company_id).first() if shop.company_id else None
+    tenant = (
+        db.query(Tenant).filter(Tenant.id == company.tenant_id).first()
+        if company is not None and company.tenant_id
+        else None
+    )
+    areas = {a.id: a for a in db.query(ShopArea).filter(ShopArea.shop_id == _uuid(shop.id)).all()}
+    ids = [str(d.id) for d in devices]
+    out: List[Dict[str, Any]] = []
+    for m in shop_tills(db, shop.id):
+        area = areas.get(getattr(m, "area_id", None))
+        merged = deep_merge_settings(
+            _as_dict(getattr(tenant, "settings", None)),
+            _as_dict(getattr(company, "settings", None)),
+            _as_dict(shop.settings),
+            _as_dict(getattr(area, "settings", None)),
+            _as_dict(m.settings),
+        )
+        own = _as_dict(m.settings)
+        out.append({
+            "id": str(m.id),
+            "name": m.name,
+            "posNumber": m.pos_number,
+            "hasBuiltinTerminal": bool(m.has_builtin_terminal),
+            "choice": till_choice(merged, ids),
+            #: The till's own layer sets one of these keys (else it follows the shop / its area).
+            "ownChoice": any(k in own for k in SETTING_KEYS),
+        })
+    return out
 
 
 # ── The dashboard's pages ────────────────────────────────────────────────────
@@ -824,30 +875,26 @@ def dashboard_page(db: Session, shop: Shop, *, can_edit: bool) -> Dict[str, Any]
     return {
         "shopId": str(shop.id),
         "devices": [device_out(db, d, rows.get(_uuid(d.id), {})) for d in devices],
-        "machines": [
-            {
-                "id": str(m.id),
-                "name": m.name,
-                "posNumber": m.pos_number,
-                "hasBuiltinTerminal": bool(m.has_builtin_terminal),
-            }
-            for m in shop_tills(db, shop.id)
-        ],
+        # Each non-kiosk till: its hardware and how it picks a device now (the per-till summary).
+        "machines": _tills_summary(db, shop, devices),
         "multiPaymentDevices": own.get(MULTI_KEY) if isinstance(own.get(MULTI_KEY), bool) else None,
         "multiPaymentDevicesInherited": inherited,
         "multiPaymentDevicesInheritedSource": source,
-        "defaultPaymentDeviceId": own.get(DEFAULT_KEY) if isinstance(own.get(DEFAULT_KEY), str) else None,
+        # The shop's own choice: the default for its tills.
+        "paymentDeviceMode": own.get(MODE_KEY) if own.get(MODE_KEY) in MODES else None,
+        "fixedPaymentDeviceId": own.get(FIXED_KEY) if isinstance(own.get(FIXED_KEY), str) else None,
+        "paymentDeviceGroup": _str_ids(own.get(GROUP_KEY)) if isinstance(own.get(GROUP_KEY), list) else None,
         "kinds": [{"value": k, "label": KIND_LABELS_HE[k]} for k in KINDS],
         "canEdit": can_edit,
     }
 
 
 def machine_page(db: Session, machine: POSMachine) -> Dict[str, Any]:
-    """`GET /machines/{id}/payment-devices`: the devices of the till's shop that apply to it."""
+    """`GET /machines/{id}/payment-devices`: the devices of the till's shop (none for a kiosk)."""
     kiosk = bool(machine.is_kiosk)
     devices: List[PaymentDevice] = []
     if machine.shop_id is not None and not kiosk:
-        devices = [d for d in shop_devices(db, machine.shop_id) if applies_to(d, machine.id)]
+        devices = shop_devices(db, machine.shop_id)
     rows = _secret_rows(db, [d.id for d in devices])
     return {
         "machineId": str(machine.id),
@@ -861,30 +908,57 @@ def machine_page(db: Session, machine: POSMachine) -> Dict[str, Any]:
 # ── Settings PATCH (app/routers/settings.py) ──────────────────────────────────
 
 
+def _layers_above(db: Session, level: str, entity: Any) -> List[Dict[str, Any]]:
+    """The settings of the layers above [entity] that may hold a device choice, least specific first."""
+    if level == "area":
+        shop = db.query(Shop).filter(Shop.id == entity.shop_id).first()
+        return [_as_dict(getattr(shop, "settings", None))]
+    if level == "machine":
+        from app.services.areas import get_area
+
+        shop = db.query(Shop).filter(Shop.id == entity.shop_id).first() if entity.shop_id else None
+        area = get_area(db, getattr(entity, "area_id", None)) if shop is not None else None
+        return [_as_dict(getattr(shop, "settings", None)), _as_dict(getattr(area, "settings", None))]
+    return []
+
+
 def check_settings_patch(db: Session, level: str, entity: Any, patch: Dict[str, Any]) -> None:
     """
-    `defaultPaymentDeviceId` written on a layer: a device of that shop (a till's: its shop's,
-    and one that applies to it). Refused on a tenant or a company — they have no devices. Only
-    a *change* is checked: the dashboard sends the whole form on every save, so a value stored
-    earlier round-trips unchanged without blocking an unrelated save.
+    The device choice written on a layer (`paymentDeviceMode`, `fixedPaymentDeviceId`,
+    `paymentDeviceGroup`):
+
+    * shop, area and till only (422 `payment_device_level_invalid` on a tenant / company), and
+      not a kiosk's own layer (422 `payment_device_kiosk`);
+    * every id a device of that shop — a till's: its shop's (422 `payment_device_not_in_shop`);
+    * a layer whose own mode ends up "fixed" must have a fixed device, its own or one a layer
+      above gives (422 `fixed_payment_device_required`).
+
+    Only a *change* is checked: the dashboard sends the whole form on every save, so a value
+    stored earlier round-trips unchanged without blocking an unrelated save. A `null` (inherit
+    again) is never refused, except where it leaves a "fixed" mode without its device.
     """
-    if DEFAULT_KEY not in patch:
+    stored = _as_dict(getattr(entity, "settings", None))
+    changed = [k for k in CHOICE_KEYS if k in patch and patch[k] != stored.get(k)]
+    if not changed:
         return
-    value = patch.get(DEFAULT_KEY)
-    if value is None:
-        return
-    stored = _as_dict(getattr(entity, "settings", None)).get(DEFAULT_KEY)
-    if stored == value:
-        return
-    field = DEFAULT_KEY
+    writes = [k for k in changed if patch[k] is not None]
+    if writes and level not in ("shop", "area", "machine"):
+        raise PaymentDeviceError("payment_device_level_invalid", field=writes[0])
+    if writes and level == "machine" and bool(getattr(entity, "is_kiosk", False)):
+        raise PaymentDeviceError("payment_device_kiosk", field=writes[0])
     if level not in ("shop", "area", "machine"):
-        raise PaymentDeviceError("payment_device_level_invalid", field=field)
+        return
     shop_id = entity.id if level == "shop" else getattr(entity, "shop_id", None)
-    device = get_device(db, value)
-    if device is None or shop_id is None or _uuid(device.shop_id) != _uuid(shop_id):
-        raise PaymentDeviceError("payment_device_not_in_shop", field=field)
-    if level == "machine" and not applies_to(device, entity.id):
-        raise PaymentDeviceError("payment_device_not_for_machine", field=field)
+    ids = {str(d.id) for d in shop_devices(db, shop_id)} if shop_id is not None else set()
+    if FIXED_KEY in writes and patch[FIXED_KEY] not in ids:
+        raise PaymentDeviceError("payment_device_not_in_shop", field=FIXED_KEY)
+    if GROUP_KEY in writes and any(g not in ids for g in _str_ids(patch[GROUP_KEY])):
+        raise PaymentDeviceError("payment_device_not_in_shop", field=GROUP_KEY)
+    after = patch_settings_json(stored, {k: patch[k] for k in CHOICE_KEYS if k in patch})
+    if after.get(MODE_KEY) == MODE_FIXED and (MODE_KEY in changed or FIXED_KEY in changed):
+        merged = deep_merge_settings(*_layers_above(db, level, entity), after)
+        if not (isinstance(merged.get(FIXED_KEY), str) and merged[FIXED_KEY]):
+            raise PaymentDeviceError("fixed_payment_device_required", field=FIXED_KEY)
 
 
 # ── The till ─────────────────────────────────────────────────────────────────
@@ -895,26 +969,40 @@ def _dumps(value: Any) -> str:
 
 
 def till_devices(db: Session, machine: Any, shop: Any) -> List[PaymentDevice]:
-    """The devices [machine] gets: its shop's that apply to it; none for a kiosk."""
+    """The devices [machine] gets: all its shop's; none for a kiosk."""
     if shop is None or machine is None or bool(getattr(machine, "is_kiosk", False)):
         return []
-    return [d for d in shop_devices(db, shop.id) if applies_to(d, machine.id)]
+    return shop_devices(db, shop.id)
 
 
-def till_sync_fields(db: Session, machine: Any, shop: Any, merged_default: Any = None) -> Dict[str, Optional[str]]:
+def till_sync_fields(db: Session, machine: Any, shop: Any, merged: Optional[Dict[str, Any]] = None) -> Dict[str, Optional[str]]:
     """
-    What the till's settings sync adds: `paymentDevices`, `paymentDeviceSecrets` (JSON strings)
-    and `defaultPaymentDeviceId` (kept only when it names one of the till's devices). A key
-    mapped to None is removed from the sync's settings.
+    What the till's settings sync adds or replaces (see the module docstring). [merged] is the
+    till's merged settings of ALL layers, before terminal_config_guard. A key mapped to None is
+    removed from the sync's settings: none of them goes out without `paymentDevices`.
     """
-    out: Dict[str, Optional[str]] = {SYNC_DEVICES_KEY: None, SYNC_SECRETS_KEY: None, DEFAULT_KEY: None}
+    merged = merged or {}
+    out: Dict[str, Optional[str]] = {
+        SYNC_DEVICES_KEY: None,
+        SYNC_SECRETS_KEY: None,
+        MODE_KEY: None,
+        FIXED_KEY: None,
+        GROUP_KEY: None,
+        SYNC_TERMINAL_KEY: None,
+    }
     devices = till_devices(db, machine, shop)
     if not devices:
         return out
     out[SYNC_DEVICES_KEY] = _dumps([till_device(d) for d in devices])
-    ids = {str(d.id) for d in devices}
-    if isinstance(merged_default, str) and merged_default in ids:
-        out[DEFAULT_KEY] = merged_default
+    choice = till_choice(merged, [str(d.id) for d in devices])
+    if merged.get(MODE_KEY) in MODES:
+        out[MODE_KEY] = merged[MODE_KEY]
+    out[FIXED_KEY] = choice["fixedDeviceId"]
+    if choice["groupDeviceIds"]:
+        out[GROUP_KEY] = _dumps(choice["groupDeviceIds"])
+    terminal = merged.get(EXPECTED_TERMINAL_KEY)
+    if isinstance(terminal, str) and terminal.strip():
+        out[SYNC_TERMINAL_KEY] = terminal.strip()
     if bool(getattr(machine, "has_builtin_terminal", True)):
         return out
     rows = _secret_rows(db, [d.id for d in devices])
@@ -942,13 +1030,9 @@ def device_for_till(db: Session, machine: Any, device_id: Any) -> PaymentDevice:
 
 
 def check_pairing_target(device: PaymentDevice, machine: Any) -> None:
-    """A SynqPay device the till uses (409 `payment_device_not_synqpay` / `payment_device_not_for_machine`)."""
+    """A SynqPay device (409 `payment_device_not_synqpay`)."""
     if device.kind != SYNQPAY:
         raise PaymentDeviceError("payment_device_not_synqpay", field="paymentDeviceId", status_code=status.HTTP_409_CONFLICT)
-    if not applies_to(device, machine.id):
-        raise PaymentDeviceError(
-            "payment_device_not_for_machine", field="paymentDeviceId", status_code=status.HTTP_409_CONFLICT
-        )
 
 
 def store_device_pairing(
@@ -989,6 +1073,170 @@ def store_device_pairing(
         device.updated_at = at
     db.flush()
     return row
+
+
+# ── "קישור מחדש": an Agamento handheld that moved on the LAN ──────────────────
+
+#: The till event that records each move (`till_events.event_type`, 32 characters at most).
+DEVICE_HOST_EVENT = "payment_device_host_set"
+
+
+class DeviceRelinkRefused(Exception):
+    """A move the cloud does not make. [code] is the API's `detail`, [status_code] its status."""
+
+    def __init__(self, status_code: int, code: str, message: str):
+        super().__init__(code)
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+
+
+def _merged_expected_terminal(db: Session, machine: Any) -> Optional[str]:
+    """The till's `expectedTerminalNumber` merged over ALL its layers (as `paymentDevicesTerminalNumber`)."""
+    from app.models.company import Company
+    from app.models.tenant import Tenant
+    from app.services.areas import get_area
+    from app.services.settings_merge import merge_all_settings_layers
+
+    shop = db.query(Shop).filter(Shop.id == machine.shop_id).first() if machine.shop_id else None
+    company = db.query(Company).filter(Company.id == shop.company_id).first() if shop is not None else None
+    if company is None:
+        return None
+    tenant = db.query(Tenant).filter(Tenant.id == company.tenant_id).first() if company.tenant_id else None
+    area = get_area(db, getattr(machine, "area_id", None))
+    merged = merge_all_settings_layers(company, shop, tenant, machine, area)
+    value = merged.get(EXPECTED_TERMINAL_KEY)
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def relink_device_host(
+    db: Session,
+    machine: Any,
+    device_id: Any,
+    *,
+    host: Any,
+    port: Any = None,
+    reason: str = "relocated",
+    terminal_number: Optional[str] = None,
+    serial: Optional[str] = None,
+    previous_host: Optional[str] = None,
+    mac: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """
+    `PUT /sync/{machine_id}/payment-devices/{device_id}/host` — an Agamento LAN handheld of the
+    till's shop, found by the till at a new address (its read-only sweep, as the kiosk's
+    PinpadRelinker), or picked on the technician screen. The rules of `relink_pinpad`
+    (app/services/payment_terminal.py), for a device instead of the till's own pinpad:
+
+    * a device of the till's shop (404 `payment_device_not_found`), an `agamento_lan` one
+      (409 `payment_device_not_agamento_lan`); never from a kiosk (409 `payment_device_kiosk`);
+    * a private IPv4 address (422 `host_invalid` / `host_not_private` / `port_invalid`);
+    * a move the till made by itself (`relocated`) names the terminal it found there, and it must
+      be the device's own terminal number — else the till's merged expected one — when one is set
+      (422 `terminal_number_required`, 409 `terminal_mismatch`): never another business's pinpad.
+
+    Only `config.host` (and `config.port` when given) change; path, https, MAC and terminal number
+    stay. The same address again is answered `unchanged` with nothing written. A move is a till
+    event (`payment_device_host_set`, naming the device) and a log line; the shop's stamp moves.
+    The caller commits and notifies the shop's tills.
+    """
+    import ipaddress
+
+    from app.models.audit_exception import TillEvent
+    from app.services.payment_terminal import (
+        RELINK_REASONS,
+        RELINK_RELOCATED,
+        clean_pinpad_port,
+        same_terminal,
+    )
+
+    reason = (reason or RELINK_RELOCATED).strip()
+    if reason not in RELINK_REASONS:
+        raise DeviceRelinkRefused(422, "reason_invalid", "סיבה לא מוכרת")
+    if bool(getattr(machine, "is_kiosk", False)):
+        raise DeviceRelinkRefused(409, "payment_device_kiosk", MESSAGES_HE["payment_device_kiosk"])
+    device = get_device(db, device_id)
+    if device is None or getattr(machine, "shop_id", None) is None or _uuid(device.shop_id) != _uuid(machine.shop_id):
+        raise DeviceRelinkRefused(404, "payment_device_not_found", MESSAGES_HE["payment_device_not_found"])
+    if device.kind != AGAMENTO_LAN:
+        raise DeviceRelinkRefused(409, "payment_device_not_agamento_lan", "המכשיר אינו מסופון Agamento ברשת")
+    try:
+        clean_host = clean_pinpad_host(host)
+        clean_port = clean_pinpad_port(port) if port is not None else None
+    except PinpadAddressError as exc:
+        raise DeviceRelinkRefused(422, exc.code, "כתובת המכשיר אינה תקינה") from None
+    try:
+        private = ipaddress.IPv4Address(clean_host).is_private
+    except ValueError:
+        private = False
+    if not private:
+        raise DeviceRelinkRefused(422, "host_not_private", "המכשיר חייב להיות בכתובת IP פרטית ברשת המקומית")
+
+    config = _as_dict(device.config)
+    current = config.get("host")
+    current_port = config.get("port") if isinstance(config.get("port"), int) else DEFAULT_PORT
+    own_terminal = config.get("terminalNumber") if isinstance(config.get("terminalNumber"), str) else None
+    expected = own_terminal or _merged_expected_terminal(db, machine)
+    number = (terminal_number or "").strip() or None
+    if reason == RELINK_RELOCATED:
+        if number is None:
+            raise DeviceRelinkRefused(422, "terminal_number_required", "חסר מספר המסוף שנמצא בכתובת החדשה")
+        if expected is not None and not same_terminal(expected, number):
+            raise DeviceRelinkRefused(
+                409, "terminal_mismatch",
+                f"המסופון שנמצא (מסוף {number}) אינו המסוף של המכשיר \"{device.nickname}\" ({expected})",
+            )
+    unchanged = current == clean_host and (clean_port is None or clean_port == current_port)
+    out = {
+        "deviceId": str(device.id),
+        "host": clean_host,
+        "port": clean_port if clean_port is not None else current_port,
+        "previousHost": current,
+        "reason": reason,
+        "terminalMatches": same_terminal(expected, number) if expected is not None and number is not None else None,
+        "unchanged": unchanged,
+    }
+    if unchanged:
+        return out
+    moment = now or datetime.now(timezone.utc)
+    config["host"] = clean_host
+    if clean_port is not None:
+        config["port"] = clean_port
+    device.config = config
+    device.updated_at = moment
+    shop = db.query(Shop).filter(Shop.id == device.shop_id).first()
+    if shop is not None:
+        touch_shop(shop)
+    db.add(TillEvent(
+        id=uuid.uuid4(),
+        tenant_id=machine.tenant_id,
+        machine_id=machine.id,
+        shop_id=machine.shop_id,
+        area_id=getattr(machine, "area_id", None),
+        event_type=DEVICE_HOST_EVENT,
+        occurred_at=moment,
+        details={
+            "deviceId": str(device.id),
+            "deviceNickname": device.nickname,
+            "from": current,
+            "fromPort": current_port,
+            "to": clean_host,
+            "toPort": out["port"],
+            "reason": reason,
+            "terminalNumber": number,
+            "expectedTerminalNumber": expected,
+            "serial": (serial or "").strip()[:60] or None,
+            "mac": (mac or "").strip()[:32] or None,
+            "tillPreviousHost": (previous_host or "").strip()[:300] or None,
+        },
+    ))
+    logger.info(
+        "payment device %s (%s) moved %s:%s -> %s:%s by till %s (%s, terminal %s, expected %s)",
+        device.id, device.nickname, current, current_port, clean_host, out["port"], machine.id, reason, number, expected,
+    )
+    db.flush()
+    return out
 
 
 def mark_device_key_rejected(db: Session, device: PaymentDevice, machine: Any, *, now: Optional[datetime] = None):

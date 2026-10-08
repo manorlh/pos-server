@@ -2,10 +2,11 @@
 
 /**
  * "מכשירי תשלום" in the settings dialog of a shop or a till (PosSettingsForm): the switch
- * `multiPaymentDevices` — on / off / as the level above ("לפי הסניף" on a till) — and the
- * default device `defaultPaymentDeviceId` (the shop's devices; on a till, those that apply to
- * it; "ללא" = none of its own). It edits the dialog's form state; the dialog saves it with the
- * rest. The devices themselves are managed on the till-settings page (PaymentDevicesCard).
+ * `multiPaymentDevices` — on / off / as the level above ("לפי הסניף" on a till) — and "אופן
+ * בחירת המכשיר" (`paymentDeviceMode`, `fixedPaymentDeviceId`, `paymentDeviceGroup`): as the
+ * level above, a fixed device, or a group to choose from. On a shop it is the default for its
+ * tills. It edits the dialog's form state; the dialog saves it with the rest. The devices
+ * themselves are managed on the till-settings page (PaymentDevicesCard).
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -13,12 +14,15 @@ import { useTranslations } from 'next-intl';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { SimpleSelect } from '@/components/dashboard/kitchen-printers/printer-dialog';
+import { DeviceChoiceEditor } from '@/components/dashboard/payment-devices/device-choice-editor';
 import {
-  defaultDeviceChoices,
+  choiceDraftOf,
+  choicePatch,
   effectiveSwitch,
+  sortDevices,
   triStateOf,
   triStateValue,
-  type PaymentDevice,
+  type DeviceChoiceDraft,
   type TriState,
 } from '@/lib/paymentDevices';
 import {
@@ -28,8 +32,6 @@ import {
   shopPaymentDevicesKey,
 } from '@/lib/paymentDevicesApi';
 import type { PosSettingsPatch, PosSettingsV1, SettingsLevel } from '@/lib/types';
-
-const NONE = '__none__';
 
 type Props = {
   value: PosSettingsPatch;
@@ -77,21 +79,9 @@ function Section({
     { value: 'off', label: t('switchOff') },
   ];
 
-  const devices: PaymentDevice[] = data ? defaultDeviceChoices(data.devices) : [];
-  const ownDefault = typeof value.defaultPaymentDeviceId === 'string' ? value.defaultPaymentDeviceId : null;
-  const inheritedDefault = level === 'machine' ? inherited?.defaultPaymentDeviceId : undefined;
-  const inheritedDevice = inheritedDefault ? devices.find((d) => d.id === inheritedDefault) : undefined;
-  const defaultOptions = [
-    {
-      value: NONE,
-      label: inheritedDevice ? t('defaultNoneInherited', { name: inheritedDevice.nickname }) : t('defaultNone'),
-    },
-    ...devices.map((d) => ({ value: d.id, label: d.active ? d.nickname : `${d.nickname} (${t('inactive')})` })),
-  ];
-  if (ownDefault && !devices.some((d) => d.id === ownDefault)) {
-    defaultOptions.push({ value: ownDefault, label: t('defaultUnknown') });
-  }
-
+  const devices = data ? sortDevices(data.devices) : [];
+  const draft = choiceDraftOf(value as { [key: string]: unknown });
+  const above: DeviceChoiceDraft | null = level === 'machine' ? choiceDraftOf(inherited as { [key: string]: unknown }) : null;
   const notApplicable = data && (data.isKiosk || data.hasBuiltinTerminal);
 
   return (
@@ -119,25 +109,20 @@ function Section({
           ariaLabel={t('switchLabel')}
         />
       </div>
-      <div className="space-y-1">
-        <Label>{t('defaultDevice')}</Label>
-        <SimpleSelect
-          value={ownDefault ?? NONE}
-          onChange={(v) => set({ defaultPaymentDeviceId: v === NONE ? null : v })}
-          options={defaultOptions}
-          disabled={!data || (devices.length === 0 && !ownDefault)}
-          ariaLabel={t('defaultDevice')}
-        />
-        {isError ? (
-          <p className="text-xs text-destructive">{t('loadError')}</p>
-        ) : data && devices.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            {level === 'machine' ? t('noDevicesForTill') : t('noDevicesForShop')}
-          </p>
-        ) : (
-          <p className="text-xs text-muted-foreground">{t('defaultDeviceHint')}</p>
-        )}
-      </div>
+      {isError ? (
+        <p className="text-xs text-destructive">{t('loadError')}</p>
+      ) : data && !data.isKiosk ? (
+        <>
+          <DeviceChoiceEditor
+            level={level}
+            draft={draft}
+            onChange={(next) => set(choicePatch(next))}
+            devices={devices}
+            inherited={above}
+          />
+          {level === 'shop' ? <p className="text-xs text-muted-foreground">{t('modeShopHint')}</p> : null}
+        </>
+      ) : null}
     </div>
   );
 }

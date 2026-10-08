@@ -17,8 +17,10 @@ import { formatCurrency, formatDateTime } from '@/lib/format';
 import {
   agorotToShekels,
   failedPaymentsParams,
+  isUnresolved,
   type FailedPaymentsResponse,
 } from '@/lib/failedPayments';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -31,6 +33,7 @@ import {
   useFailedPaymentLabels,
 } from './parts';
 import { CancelledSalesList } from './failed-payments-section';
+import { CardCommandPanel, UnresolvedBadge } from './card-command-panel';
 import { useFailedPaymentsSheets } from './export-sheets';
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 
@@ -97,6 +100,19 @@ export function FailedPaymentsTable({
           <Stat label={t('attempts')} value={String(data.summary.count)} />
           <Stat label={t('totalAmount')} value={money(data.summary.totalAgorot)} />
           <Stat label={t('paidLaterCount')} value={String(data.summary.paidLaterCount)} />
+          {(data.summary.unresolvedCount ?? 0) > 0 ? (
+            <Stat
+              label={t('unresolvedCount')}
+              value={t('countTotalValue', {
+                count: data.summary.unresolvedCount ?? 0,
+                total: money(data.summary.unresolvedTotalAgorot ?? 0),
+              })}
+              alert
+            />
+          ) : null}
+          {(data.summary.approvedLateCount ?? 0) > 0 ? (
+            <Stat label={t('approvedLateCount')} value={String(data.summary.approvedLateCount)} />
+          ) : null}
           {data.summary.payoutCount > 0 ? (
             <Stat
               label={t('payouts')}
@@ -123,9 +139,12 @@ export function FailedPaymentsTable({
           <li className="py-6 text-center text-sm text-muted-foreground">{t('none')}</li>
         ) : (
           data.items.map((a) => (
-            <li key={a.id} className="space-y-1 p-3 text-sm">
+            <li key={a.id} className={cn('space-y-1 p-3 text-sm', isUnresolved(a) && 'bg-red-50/60 dark:bg-red-950/30')}>
               <div className="flex items-baseline justify-between gap-2">
-                <span className="font-medium">{labels.outcome(a.outcome)}</span>
+                <span className="font-medium">
+                  {labels.outcome(a.outcome)}
+                  <UnresolvedBadge a={a} />
+                </span>
                 <span className="font-medium tabular-nums">
                   {money(a.amountAgorot)}
                   <AttemptBadges a={a} />
@@ -141,6 +160,7 @@ export function FailedPaymentsTable({
               {a.paidByTransactionId || a.paidByMethod ? (
                 <div className="text-xs"><PaidLaterText a={a} onOpen={onOpenTransaction} /></div>
               ) : null}
+              <CardCommandPanel a={a} />
             </li>
           ))
         )}
@@ -176,8 +196,8 @@ export function FailedPaymentsTable({
                 </TableCell>
               </TableRow>
             ) : (
-              data.items.map((a) => (
-                <TableRow key={a.id}>
+              data.items.map((a) => [
+                <TableRow key={a.id} className={cn(isUnresolved(a) && 'bg-red-50/60 dark:bg-red-950/30')}>
                   <TableCell className="whitespace-nowrap">{formatDateTime(a.occurredAt)}</TableCell>
                   <TableCell>
                     {a.machineName ?? '—'}
@@ -193,13 +213,24 @@ export function FailedPaymentsTable({
                     <AttemptBadges a={a} />
                   </TableCell>
                   <TableCell>{labels.method(a.method)}</TableCell>
-                  <TableCell><OutcomeText a={a} /></TableCell>
+                  <TableCell>
+                    <OutcomeText a={a} />
+                    <UnresolvedBadge a={a} />
+                  </TableCell>
                   <TableCell><CardText a={a} /></TableCell>
                   <TableCell className="text-end tabular-nums">{a.lineCount ?? '—'}</TableCell>
                   <TableCell className="text-xs"><PaidLaterText a={a} onOpen={onOpenTransaction} /></TableCell>
                   <TableCell><VoidedDocument a={a} onOpen={onOpenTransaction} /></TableCell>
-                </TableRow>
-              ))
+                </TableRow>,
+                // "לא הוכרע": what it means, the command sent to the till, the manager's actions.
+                isUnresolved(a) ? (
+                  <TableRow key={`${a.id}-command`} className="bg-red-50/60 hover:bg-red-50/60 dark:bg-red-950/30">
+                    <TableCell colSpan={10} className="pt-0">
+                      <CardCommandPanel a={a} />
+                    </TableCell>
+                  </TableRow>
+                ) : null,
+              ])
             )}
           </TableBody>
         </Table>
@@ -232,9 +263,9 @@ export function FailedPaymentsTable({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, alert = false }: { label: string; value: string; alert?: boolean }) {
   return (
-    <div className="rounded-lg border bg-card p-3">
+    <div className={cn('rounded-lg border bg-card p-3', alert && 'border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950')}>
       <p className="text-muted-foreground text-xs">{label}</p>
       <p className="text-lg font-semibold tabular-nums">{value}</p>
     </div>

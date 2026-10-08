@@ -470,6 +470,8 @@ def _payments(db: Session, ids, start, end) -> Dict[str, Any]:
                 FailedPaymentAttempt.machine_id.in_(list(ids)),
                 FailedPaymentAttempt.occurred_at >= start,
                 FailedPaymentAttempt.occurred_at < end,
+                # Found charged later ("אושר בבדיקה"): not a terminal failure.
+                FailedPaymentAttempt.outcome != "approved_late",
             )
             .group_by(FailedPaymentAttempt.outcome)
             .all()

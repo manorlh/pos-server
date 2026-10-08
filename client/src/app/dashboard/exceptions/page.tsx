@@ -91,6 +91,7 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   offline_z_conflict: 'bg-red-300 text-red-950 dark:bg-red-800 dark:text-red-50',
   support_z_produced: 'bg-purple-200 text-purple-950 dark:bg-purple-900 dark:text-purple-100',
   till_reset: 'bg-purple-200 text-purple-950 dark:bg-purple-900 dark:text-purple-100',
+  card_decision_override: 'bg-red-200 text-red-950 dark:bg-red-900 dark:text-red-100',
   till_replaced: 'bg-sky-200 text-sky-950 dark:bg-sky-900 dark:text-sky-100',
   shop_z_producer_forced: 'bg-amber-200 text-amber-950 dark:bg-amber-900 dark:text-amber-100',
   local_shop_z_mismatch: 'bg-red-300 text-red-950 dark:bg-red-800 dark:text-red-50',

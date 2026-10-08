@@ -119,7 +119,7 @@ function fakePinpad() {
 }
 
 /** The cloud as the bridge (as the browser kiosk's machine) sees it. */
-function fakeCloud() {
+function fakeCloud(parameters: Record<string, string> = {}) {
   const state = { down: false };
   const sent: Array<{ method: string; path: string; body: unknown; auth: string | null }> = [];
   const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', Date: new Date().toUTCString() } });
@@ -135,7 +135,7 @@ function fakeCloud() {
     if (p === 'machines/me') return json(200, { machineId: MACHINE, machineName: 'קיוסק דפדפן', posNumber: '7', shopName: 'סניף', companyName: 'עסק', deviceRole: 'kiosk', fiscal: true, platform: 'web' });
     if (p === 'machines/me/heartbeat') return json(200, { ok: true, zMode: 'cloud', lastTillZNumber: 0, tillZEpoch: 0 });
     if (p === `${m}settings`) return json(200, { syncType: 'full', settings: { paymentIntegration: 'nayax_lan' }, businessInfo: { companyName: 'עסק בע״מ', vatNumber: '515555555' }, settingsUpdatedAt: '2026-10-07T00:00:00Z' });
-    if (p === `${m}parameters`) return json(200, { parameters: {} });
+    if (p === `${m}parameters`) return json(200, { parameters });
     if (p === `${m}kiosk/sync`) {
       return json(200, {
         kiosk: true,
@@ -191,9 +191,9 @@ interface Harness {
 
 const open: Harness[] = [];
 
-async function harness(): Promise<Harness> {
+async function harness(parameters: Record<string, string> = {}): Promise<Harness> {
   const pinpad = fakePinpad();
-  const cloud = fakeCloud();
+  const cloud = fakeCloud(parameters);
   let n = 0;
   const runtime = new BridgeRuntime({
     dataDir: mkdtempSync(path.join(os.tmpdir(), 'r2m-bridge-')),
@@ -578,8 +578,8 @@ describe('what each role may ask', () => {
 });
 
 describe('a card payment through the bridge (the Windows kiosk’s ledger and card rules)', () => {
-  async function linkedKiosk() {
-    const h = await harness();
+  async function linkedKiosk(parameters: Record<string, string> = {}) {
+    const h = await harness(parameters);
     const page = await paired(h);
     const agent = new BridgeAgent(page, { machine: () => ({ serverUrl: 'http://cloud.test', machineId: MACHINE, accessToken: 'machine-token-123', machineName: 'קיוסק דפדפן' }), WebSocket: null });
     const s = await agent.refresh();
@@ -650,8 +650,25 @@ describe('a card payment through the bridge (the Windows kiosk’s ledger and ca
     expect((await agent.refresh()).ready.card).toBe(true);
   });
 
-  it('unknown: never a second charge — the reference asked, the document held, every card blocked until staff settle it', async () => {
+  it('unknown, the default: the reference asked, the document held, an alert for staff — the next customer pays by card', async () => {
     const { h, agent } = await linkedKiosk();
+    h.pinpad.script.sale = { answer: 'UNKNOWN', message: 'timeout', raw: null };
+    await pay(agent, (p) => p.phase === 'unknown');
+    expect(h.pinpad.asked).toEqual(['sale', 'resolve']);
+    const s = await agent.refresh();
+    expect(s.status?.card?.unresolved).toHaveLength(1);
+    // No global block (the owner: "אל תחסום בכללי"): card stays on, the alert is staff's.
+    expect(s.ready.card).toBe(true);
+    expect(bridgeCardReason(s, MACHINE)).toBe(null);
+    h.pinpad.script.sale = { answer: 'APPROVED', raw: '', card: { brand: 'visa', last4: '4242', authNum: '0123457', uid: 'u-2', payments: null, firstPaymentAgorot: null, chargedAgorot: null, meta: { vuid: 'y' } } };
+    await pay(agent, (p) => p.phase === 'approved');
+    // The first sale's card was never asked about on the way to the second charge.
+    expect(h.pinpad.asked).toEqual(['sale', 'resolve', 'sale']);
+    expect((await agent.refresh()).status?.card?.unresolved).toHaveLength(1);
+  });
+
+  it('unknown, with "חסימת אשראי כשיש תשלום לא מוכרע" on: every card blocked until staff settle it', async () => {
+    const { h, agent } = await linkedKiosk({ cardLockOnUnresolved: 'true' });
     h.pinpad.script.sale = { answer: 'UNKNOWN', message: 'timeout', raw: null };
     const { seen } = await pay(agent, (p) => p.phase === 'unknown');
     expect(seen[seen.length - 1].phase).toBe('unknown');

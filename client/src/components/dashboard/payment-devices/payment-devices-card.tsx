@@ -2,29 +2,41 @@
 
 /**
  * "מכשירי תשלום" of one shop, on the till-settings page ("אמצעי תשלום") when a shop is in
- * scope: the shop's switch "עבודה עם כמה מכשירי תשלום" (on / off / as the company), its
- * default device, and the devices — nickname, kind, where, which tills, active — with add /
- * edit / delete. Each write is saved at once and reaches the shop's tills on their next pull
- * (the server wakes them). A single till's own switch and default are in its settings dialog.
+ * scope:
+ *
+ * - the shop's switch "עבודה עם כמה מכשירי תשלום" (on / off / as the company), saved at once;
+ * - "אופן בחירת המכשיר" — the default for the shop's tills: a fixed device, or a group to choose
+ *   from (none ticked = every device of the shop); saved with its own button;
+ * - what each till of the shop uses now (its effective mode and devices; "סליקה מובנית — לא
+ *   רלוונטי" for one with its own clearing), with its settings one click away;
+ * - the devices — nickname, kind, where, active — with add / edit / delete.
+ *
+ * Everything reaches the shop's tills on their next pull (the server wakes them).
  */
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Settings2, Trash2 } from 'lucide-react';
 import { patchShopSettings } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
+  choiceDraftOf,
+  choiceError,
+  choicePatch,
   connectionSummary,
   deviceServerError,
-  deviceTillNames,
+  sameChoice,
   sortDevices,
+  tillSummary,
   triStateOf,
   triStateValue,
+  type DeviceChoiceDraft,
   type DeviceServerError,
   type PaymentDevice,
   type PaymentDeviceInput,
+  type PaymentDeviceMachine,
   type ShopPaymentDevices,
   type TriState,
 } from '@/lib/paymentDevices';
@@ -41,11 +53,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { SimpleSelect } from '@/components/dashboard/kitchen-printers/printer-dialog';
+import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
 import { PaymentDeviceDialog } from '@/components/dashboard/payment-devices/payment-device-dialog';
+import { DeviceChoiceEditor } from '@/components/dashboard/payment-devices/device-choice-editor';
 import { cn } from '@/lib/utils';
-
-const NONE = '__none__';
 
 export function PaymentDevicesCard({ shopId }: { shopId: string }) {
   const t = useTranslations('paymentDevices');
@@ -60,6 +71,7 @@ export function PaymentDevicesCard({ shopId }: { shopId: string }) {
 
   const [dialog, setDialog] = useState<{ device: PaymentDevice | null } | null>(null);
   const [serverError, setServerError] = useState<DeviceServerError | null>(null);
+  const [tillSettings, setTillSettings] = useState<string | null>(null);
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['payment-devices'] });
 
@@ -89,8 +101,12 @@ export function PaymentDevicesCard({ shopId }: { shopId: string }) {
   });
 
   const saveShop = useMutation({
-    mutationFn: (patch: { multiPaymentDevices?: boolean | null; defaultPaymentDeviceId?: string | null }) =>
-      patchShopSettings(shopId, patch),
+    mutationFn: (patch: {
+      multiPaymentDevices?: boolean | null;
+      paymentDeviceMode?: 'fixed' | 'group' | null;
+      fixedPaymentDeviceId?: string | null;
+      paymentDeviceGroup?: string[] | null;
+    }) => patchShopSettings(shopId, patch),
     onSuccess: () => {
       toast.success(t('saved'));
       void refresh();
@@ -107,7 +123,7 @@ export function PaymentDevicesCard({ shopId }: { shopId: string }) {
         <CardTitle className="text-base">{t('title')}</CardTitle>
         <p className="text-muted-foreground text-xs">{t('explain')}</p>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-5">
         {isError ? (
           <p className="text-sm text-destructive">{t('loadError')}</p>
         ) : isLoading || !page ? (
@@ -120,11 +136,13 @@ export function PaymentDevicesCard({ shopId }: { shopId: string }) {
               disabled={!page.canEdit || saveShop.isPending}
               onChange={(state) => saveShop.mutate({ multiPaymentDevices: triStateValue(state) })}
             />
-            <ShopDefault
+            <ShopChoice
+              key={`${page.paymentDeviceMode}:${page.fixedPaymentDeviceId}:${(page.paymentDeviceGroup ?? ['-']).join(',')}`}
               page={page}
-              disabled={!page.canEdit || saveShop.isPending}
-              onChange={(id) => saveShop.mutate({ defaultPaymentDeviceId: id })}
+              saving={saveShop.isPending}
+              onSave={(draft) => saveShop.mutate(choicePatch(draft))}
             />
+            <TillsSummary page={page} onOpen={(id) => setTillSettings(id)} />
             <DevicesTable
               page={page}
               onEdit={(device) => {
@@ -161,6 +179,18 @@ export function PaymentDevicesCard({ shopId }: { shopId: string }) {
                 onSave={(body) => save.mutate({ id: dialog.device?.id ?? null, body })}
               />
             ) : null}
+            {/* One till's own settings (its switch and device choice among them). */}
+            <EntityPosSettingsDialog
+              level="machine"
+              entityId={tillSettings}
+              open={!!tillSettings}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setTillSettings(null);
+                  void refresh();
+                }
+              }}
+            />
           </>
         )}
       </CardContent>
@@ -228,39 +258,108 @@ function ShopSwitch({
   );
 }
 
-/** The shop's default device ("ללא" = none set at the shop). */
-function ShopDefault({
+/** "אופן בחירת המכשיר" at the shop: the default for its tills, saved with its own button. */
+function ShopChoice({
   page,
-  disabled,
-  onChange,
+  saving,
+  onSave,
 }: {
   page: ShopPaymentDevices;
-  disabled: boolean;
-  onChange: (id: string | null) => void;
+  saving: boolean;
+  onSave: (draft: DeviceChoiceDraft) => void;
 }) {
   const t = useTranslations('paymentDevices');
+  const stored = choiceDraftOf({
+    paymentDeviceMode: page.paymentDeviceMode,
+    fixedPaymentDeviceId: page.fixedPaymentDeviceId,
+    paymentDeviceGroup: page.paymentDeviceGroup,
+  });
+  const [draft, setDraft] = useState<DeviceChoiceDraft>(stored);
   const devices = sortDevices(page.devices);
-  const current = page.defaultPaymentDeviceId;
-  const options = [
-    { value: NONE, label: t('defaultNone') },
-    ...devices.map((d) => ({ value: d.id, label: d.active ? d.nickname : `${d.nickname} (${t('inactive')})` })),
-  ];
-  if (current && !devices.some((d) => d.id === current)) options.push({ value: current, label: t('defaultUnknown') });
+  const error = choiceError(draft, null, devices.map((d) => d.id));
+  const dirty = !sameChoice(draft, stored);
   return (
-    <div className="max-w-md space-y-1">
-      <Label>{t('defaultDevice')}</Label>
-      <SimpleSelect
-        value={current ?? NONE}
-        onChange={(v) => {
-          const next = v === NONE ? null : v;
-          if (next !== current) onChange(next);
-        }}
-        options={options}
-        disabled={disabled || devices.length === 0}
-        ariaLabel={t('defaultDevice')}
+    <div className="max-w-xl space-y-2 rounded-lg border p-3">
+      <DeviceChoiceEditor
+        level="shop"
+        draft={draft}
+        onChange={setDraft}
+        devices={devices}
+        inherited={null}
+        disabled={!page.canEdit || saving}
       />
-      <p className="text-muted-foreground text-xs">{t('defaultDeviceHint')}</p>
+      <p className="text-muted-foreground text-xs">{t('modeShopHint')}</p>
+      {page.canEdit ? (
+        <div className="flex gap-2">
+          <Button size="sm" disabled={!dirty || !!error || saving} onClick={() => onSave(draft)}>
+            {t('choiceSave')}
+          </Button>
+          <Button size="sm" variant="outline" disabled={!dirty || saving} onClick={() => setDraft(stored)}>
+            {t('choiceDiscard')}
+          </Button>
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+/** One line per till: what it uses now, and its settings. */
+function TillsSummary({ page, onOpen }: { page: ShopPaymentDevices; onOpen: (machineId: string) => void }) {
+  const t = useTranslations('paymentDevices');
+  const describe = (m: PaymentDeviceMachine): string => {
+    const s = tillSummary(m, page.devices);
+    const name = (d: PaymentDevice) => (d.active ? d.nickname : `${d.nickname} ${t('inactiveSuffix')}`);
+    switch (s.state) {
+      case 'builtin':
+        return t('summaryBuiltin');
+      case 'off':
+        return t('summaryOff');
+      case 'fixed':
+        return t('summaryFixed', { name: name(s.devices[0]) });
+      case 'fixed_missing':
+        return t('summaryFixedMissing');
+      case 'group_all':
+        return t('summaryGroupAll');
+      default:
+        return t('summaryGroup', { names: s.devices.map(name).join(', ') });
+    }
+  };
+  return (
+    <section className="space-y-2">
+      <h3 className="text-sm font-medium">{t('tillsTitle')}</h3>
+      {page.machines.length === 0 ? (
+        <p className="text-muted-foreground text-sm">{t('tillsEmpty')}</p>
+      ) : (
+        <ul className="divide-y rounded-lg border">
+          {page.machines.map((m) => {
+            const state = tillSummary(m, page.devices).state;
+            return (
+              <li key={m.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+                <span className="font-medium">{m.name}</span>
+                {m.ownChoice ? (
+                  <Badge variant="outline" className="text-xs">
+                    {t('tillOwn')}
+                  </Badge>
+                ) : null}
+                <span
+                  className={cn(
+                    'min-w-0 flex-1 text-xs',
+                    state === 'fixed_missing' ? 'text-destructive' : 'text-muted-foreground',
+                  )}
+                >
+                  {describe(m)}
+                </span>
+                {page.canEdit && !m.hasBuiltinTerminal ? (
+                  <Button size="sm" variant="ghost" onClick={() => onOpen(m.id)}>
+                    <Settings2 className="h-4 w-4" /> {t('tillSettings')}
+                  </Button>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -291,16 +390,13 @@ function DevicesTable({
                 <TableHead>{t('columns.nickname')}</TableHead>
                 <TableHead>{t('columns.kind')}</TableHead>
                 <TableHead>{t('columns.connection')}</TableHead>
-                <TableHead>{t('columns.tills')}</TableHead>
                 <TableHead>{t('columns.status')}</TableHead>
                 <TableHead className="w-24" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {devices.map((d) => {
-                const names = deviceTillNames(d, page.machines);
-                const secret =
-                  d.kind === 'zcredit_pinpad' ? d.secrets?.zcreditPassword : d.kind === 'synqpay' ? d.secrets?.synqpayApiKey : null;
+                const key = d.kind === 'synqpay' ? d.secrets?.synqpayApiKey : null;
                 return (
                   <TableRow key={d.id}>
                     <TableCell className="font-medium">{d.nickname}</TableCell>
@@ -309,24 +405,17 @@ function DevicesTable({
                       <span dir="ltr" className="font-mono text-xs">
                         {connectionSummary(d)}
                       </span>
-                      {secret !== null && secret !== undefined ? (
+                      {key ? (
                         <span
                           className={cn(
                             'ms-2 text-xs',
-                            secret.rejectedAt ? 'text-destructive' : secret.set ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400',
+                            key.rejectedAt ? 'text-destructive' : key.set ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400',
                           )}
                         >
-                          {secret.rejectedAt
-                            ? t('keyRejected')
-                            : secret.set
-                              ? t('secretSet')
-                              : d.kind === 'synqpay'
-                                ? t('notPaired')
-                                : t('secretNotSet')}
+                          {key.rejectedAt ? t('keyRejected') : key.set ? t('secretSet') : t('notPaired')}
                         </span>
                       ) : null}
                     </TableCell>
-                    <TableCell className="text-sm">{names === null ? t('allTills') : names.join(', ') || '—'}</TableCell>
                     <TableCell>
                       <Badge variant={d.active ? 'secondary' : 'outline'}>{d.active ? t('active') : t('inactive')}</Badge>
                     </TableCell>

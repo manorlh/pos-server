@@ -186,6 +186,17 @@ def publish_remote_credit_notify(
     publish_notify(tenant_id, machine_id, "remote-credit", body)
 
 
+def publish_card_command_notify(tenant_id: str, machine_id: str, command: dict[str, Any]) -> None:
+    """
+    "תשלום לא מוכרע" (app/services/card_attempt_commands.py): a manager's command about an
+    unknown card for this till — `{commandId, vuid, action, requestedBy, requestedAt}`, the
+    same item the heartbeat's `pendingCardCommands` carries to a till that missed this.
+    """
+    body = _notify_base()
+    body.update(command)
+    publish_notify(tenant_id, machine_id, "card-command", body)
+
+
 def publish_transactions_synced(tenant_id: str, machine_id: str, count: int) -> None:
     body = _notify_base()
     body["count"] = count

@@ -253,14 +253,40 @@ describe('PayService (whatever the terminal)', () => {
     expect(asked).toEqual(['sale', 'resolve']);
   });
 
-  it('still unknown → held: the attempt stays on disk and every next card is refused before anything is sent', async () => {
+  it('still unknown → held: the attempt stays on disk, an alert for staff; the next customer still pays by card', async () => {
     const { p, asked } = provider({ answer: 'UNKNOWN', message: 'timeout', raw: null });
     const { svc } = payService(p);
     expect((await svc.charge({ transactionId: 'd1', orderId: null, amountAgorot: 100, tipAgorot: 0 })).kind).toBe('unknown');
-    expect(svc.blocked()).toBe(true);
+    expect(svc.unresolved()).toBe(true);
+    // "חסימת אשראי כשיש תשלום לא מוכרע" off (the default): no global block.
+    expect(svc.blocked()).toBe(false);
     expect(svc.attempts()[0]).toMatchObject({ transactionId: 'd1', state: 'unknown' });
+    expect((await svc.charge({ transactionId: 'd2', orderId: null, amountAgorot: 100, tipAgorot: 0 })).kind).not.toBe('refused');
+    expect(asked.filter((a) => a === 'sale')).toHaveLength(2);
+  });
+
+  it('with "חסימת אשראי כשיש תשלום לא מוכרע" on: every next card is refused before anything is sent', async () => {
+    const { p, asked } = provider({ answer: 'UNKNOWN', message: 'timeout', raw: null });
+    const { svc } = payService(p);
+    svc.setLockOnUnresolved(() => true);
+    expect((await svc.charge({ transactionId: 'd1', orderId: null, amountAgorot: 100, tipAgorot: 0 })).kind).toBe('unknown');
+    expect(svc.blocked()).toBe(true);
     expect(await svc.charge({ transactionId: 'd2', orderId: null, amountAgorot: 100, tipAgorot: 0 })).toEqual({ kind: 'refused', reason: 'unresolved' });
     expect(asked.filter((a) => a === 'sale')).toHaveLength(1);
+    // A parameter that cannot be read is off: never a block because of it.
+    svc.setLockOnUnresolved(() => {
+      throw new Error('no parameters');
+    });
+    expect(svc.blocked()).toBe(false);
+  });
+
+  it('a terminal whose health check did not answer is tried on the press, not refused in advance', async () => {
+    const { p, asked } = provider({ answer: 'DECLINED', message: 'אין תקשורת', raw: null, statusCode: 33 });
+    const { svc } = payService(p);
+    (svc.monitor as unknown as { state: string }).state = 'unreachable';
+    expect(svc.configured).toBe(true);
+    expect((await svc.charge({ transactionId: 'd1', orderId: null, amountAgorot: 100, tipAgorot: 0 })).kind).toBe('declined');
+    expect(asked).toContain('sale');
   });
 
   it('a manager’s "not approved" voids and releases the kiosk', async () => {
@@ -270,7 +296,7 @@ describe('PayService (whatever the terminal)', () => {
     const voided: string[] = [];
     expect(svc.markNotApproved('ref1', { id: 'u', name: 'מנהל' }, (a, meta) => voided.push(`${a.transactionId}:${String(meta.outcome)}`))).toBe(true);
     expect(voided).toEqual(['d1:marked_not_approved']);
-    expect(svc.blocked()).toBe(false);
+    expect(svc.unresolved()).toBe(false);
   });
 
   it('no usable terminal: refused before anything is written', async () => {
@@ -293,6 +319,6 @@ describe('PayService (whatever the terminal)', () => {
     const r = await later.resolveOrphans({ isPending: () => true, complete: (a) => completed.push(a.transactionId), void: () => undefined });
     expect(r).toEqual({ settled: 1, unknown: 0 });
     expect(completed).toEqual(['d1']);
-    expect(later.blocked()).toBe(false);
+    expect(later.unresolved()).toBe(false);
   });
 });

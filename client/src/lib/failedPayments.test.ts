@@ -15,6 +15,14 @@ import {
   summarize,
   tillLabel,
   wasPaidLater,
+  cardCommandActions,
+  cardCommandPhase,
+  checkVerdict,
+  decisionDisagrees,
+  decisionMismatchOf,
+  isFailedAttempt,
+  isUnresolved,
+  sortAttempts,
   type FailedPaymentAttempt,
   type FailedPaymentsResponse,
 } from './failedPayments';
@@ -57,7 +65,132 @@ describe('summarize', () => {
       attempt({ kind: 'keyed', amountAgorot: 2500 }),
       attempt({ kind: 'payout', amountAgorot: 7000, outcome: 'terminal_error' }),
     ]);
-    assert.deepEqual(s, { count: 2, totalAgorot: 16500, payoutCount: 1, payoutTotalAgorot: 7000, paidLaterCount: 1 });
+    assert.deepEqual(s, {
+      count: 2,
+      totalAgorot: 16500,
+      payoutCount: 1,
+      payoutTotalAgorot: 7000,
+      paidLaterCount: 1,
+      unresolvedCount: 0,
+      unresolvedTotalAgorot: 0,
+      approvedLateCount: 0,
+    });
+  });
+
+  it('counts "לא הוכרע" in the figures and apart; "אושר בבדיקה" in none of them', () => {
+    const s = summarize([
+      attempt({ outcome: 'unresolved', amountAgorot: 5000 }),
+      attempt({ outcome: 'approved_late', amountAgorot: 9900, paidByTransactionId: 't1', paidByMethod: 'card' }),
+      attempt({ amountAgorot: 1000 }),
+    ]);
+    assert.equal(s.count, 2);
+    assert.equal(s.totalAgorot, 6000);
+    assert.equal(s.paidLaterCount, 0);
+    assert.equal(s.unresolvedCount, 1);
+    assert.equal(s.unresolvedTotalAgorot, 5000);
+    assert.equal(s.approvedLateCount, 1);
+  });
+});
+
+describe('"תשלום לא מוכרע"', () => {
+  it('the new outcomes are known; approved_late is not a failure', () => {
+    assert.equal(outcomeKey('unresolved'), 'unresolved');
+    assert.equal(outcomeKey('approved_late'), 'approved_late');
+    assert.equal(isFailedAttempt({ outcome: 'approved_late' }), false);
+    assert.equal(isFailedAttempt({ outcome: 'unresolved' }), true);
+    assert.equal(isUnresolved({ outcome: 'unresolved' }), true);
+  });
+
+  it('the unresolved first, then newest first', () => {
+    const rows = sortAttempts([
+      attempt({ id: 'new', occurredAt: '2026-10-07T13:00:00Z' }),
+      attempt({ id: 'stuck', outcome: 'unresolved', occurredAt: '2026-10-07T09:00:00Z' }),
+      attempt({ id: 'old', occurredAt: '2026-10-07T08:00:00Z' }),
+    ]);
+    assert.deepEqual(rows.map((r) => r.id), ['stuck', 'new', 'old']);
+  });
+
+  it('who may act, and on what', () => {
+    const stuck = attempt({ outcome: 'unresolved', vuid: 'V1' });
+    assert.deepEqual(cardCommandActions(stuck, 'shop_manager'), {
+      check: true,
+      markApproved: true,
+      markNotApproved: true,
+      cancel: false,
+    });
+    const none = { check: false, markApproved: false, markNotApproved: false, cancel: false };
+    assert.deepEqual(cardCommandActions(stuck, 'cashier'), none);
+    assert.deepEqual(cardCommandActions(stuck, null), none);
+    assert.deepEqual(cardCommandActions(attempt({ vuid: 'V1' }), 'super_admin'), none);
+    assert.deepEqual(cardCommandActions(attempt({ outcome: 'unresolved' }), 'super_admin'), none);
+    // Without edit on "דוחות": nothing, whatever the role.
+    assert.deepEqual(cardCommandActions(stuck, 'super_admin', false), none);
+    // A check waiting for the till: a decision may replace it, or withdraw it; no second check.
+    const checking = attempt({
+      outcome: 'unresolved',
+      vuid: 'V1',
+      cardCommand: { id: 'c1', machineId: 'm1', action: 'check', status: 'pending' },
+    });
+    assert.deepEqual(cardCommandActions(checking, 'company_manager'), {
+      check: false,
+      markApproved: true,
+      markNotApproved: true,
+      cancel: true,
+    });
+    // A decision waiting for the till: only withdraw it.
+    const deciding = attempt({
+      outcome: 'unresolved',
+      vuid: 'V1',
+      cardCommand: { id: 'c2', machineId: 'm1', action: 'mark_approved', status: 'pending', isDecision: true },
+    });
+    assert.deepEqual(cardCommandActions(deciding, 'company_manager'), { ...none, cancel: true });
+    const answered = attempt({
+      outcome: 'unresolved',
+      vuid: 'V1',
+      cardCommand: { id: 'c1', machineId: 'm1', action: 'check', status: 'done', resultOutcome: 'unknown' },
+    });
+    assert.equal(cardCommandActions(answered, 'distributor').check, true);
+  });
+
+  it('the command phase: a check sent / taken / answered; a decision waiting, then done', () => {
+    assert.equal(cardCommandPhase(null), 'none');
+    assert.equal(cardCommandPhase({ id: 'c', machineId: 'm', action: 'check', status: 'pending' }), 'sent');
+    assert.equal(
+      cardCommandPhase({ id: 'c', machineId: 'm', action: 'check', status: 'pending', deliveredAt: '2026-10-08T10:00:00Z' }),
+      'delivered',
+    );
+    assert.equal(cardCommandPhase({ id: 'c', machineId: 'm', action: 'check', status: 'busy' }), 'answered');
+    assert.equal(cardCommandPhase({ id: 'c', machineId: 'm', action: 'check', status: 'expired' }), 'ended');
+    assert.equal(cardCommandPhase({ id: 'c', machineId: 'm', action: 'check', status: 'cancelled' }), 'ended');
+    assert.equal(cardCommandPhase({ id: 'd', machineId: 'm', action: 'mark_approved', status: 'pending' }), 'waiting');
+    assert.equal(
+      cardCommandPhase({ id: 'd', machineId: 'm', action: 'mark_not_approved', status: 'pending', deliveredAt: 'x' }),
+      'waiting',
+    );
+    assert.equal(cardCommandPhase({ id: 'd', machineId: 'm', action: 'mark_approved', status: 'done' }), 'done');
+    assert.equal(cardCommandPhase({ id: 'd', machineId: 'm', action: 'mark_approved', status: 'failed' }), 'answered');
+    assert.equal(cardCommandPhase({ id: 'd', machineId: 'm', action: 'mark_approved', status: 'cancelled' }), 'ended');
+  });
+
+  it("the check's verdict, and when a decision disagrees with it", () => {
+    assert.equal(checkVerdict(null), 'not_checked');
+    const check = (over: Record<string, unknown>) => ({ id: 'c', machineId: 'm', action: 'check', status: 'done', ...over });
+    assert.equal(checkVerdict(check({ details: { verdict: 'not_found' } })), 'not_found');
+    assert.equal(checkVerdict(check({ resultOutcome: 'approved' })), 'approved');
+    assert.equal(checkVerdict(check({ resultOutcome: 'not_charged' })), 'cancelled');
+    assert.equal(checkVerdict(check({ resultOutcome: 'unknown' })), 'unknown');
+    assert.equal(decisionDisagrees('mark_approved', 'approved'), false);
+    for (const v of ['cancelled', 'not_found', 'unknown', 'not_checked'] as const) {
+      assert.equal(decisionDisagrees('mark_approved', v), true);
+    }
+    assert.equal(decisionDisagrees('mark_not_approved', 'cancelled'), false);
+    assert.equal(decisionDisagrees('mark_not_approved', 'not_found'), false);
+    for (const v of ['approved', 'unknown', 'not_checked'] as const) {
+      assert.equal(decisionDisagrees('mark_not_approved', v), true);
+    }
+    const err = { response: { status: 409, data: { detail: { code: 'card_decision_mismatch', verdict: 'approved', verdictLabel: 'אושר במסוף' } } } };
+    assert.deepEqual(decisionMismatchOf(err), { verdict: 'approved', label: 'אושר במסוף' });
+    assert.equal(decisionMismatchOf({ response: { data: { detail: { code: 'card_command_pending' } } } }), null);
   });
 });
 

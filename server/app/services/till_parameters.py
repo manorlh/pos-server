@@ -1495,6 +1495,11 @@ from app.services.cash_drawer import CASH_DRAWER_PARAMETER_SPECS as _CASH_DRAWER
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CASH_DRAWER_SPECS)
 
+# "חסימת אשראי כשיש תשלום לא מוכרע" (app/services/card_lock.py): what an unresolved card payment blocks.
+from app.services.card_lock import CARD_LOCK_PARAMETER_SPECS as _CARD_LOCK_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CARD_LOCK_SPECS)
+
 
 def validate_keyed_value(key: str, value: Any) -> Any:
     """A value checked for what its key needs beyond its type (`technicianCode`: 4–8 digits)."""

@@ -3,8 +3,11 @@
  * (pos-server docs/SPEC_CARD_RECOVERY.md; pos-android CheckoutViewModel.chargeCard,
  * CardAttemptRecovery.kt, KioskTerminalMonitor.kt):
  *
- *  1. refused BEFORE anything is written or sent: no usable terminal, a frame already out, or any
- *     earlier attempt unresolved (then the kiosk takes no card at all);
+ *  1. refused BEFORE anything is written or sent: no terminal set up at all, a frame already out,
+ *     or — only with "חסימת אשראי כשיש תשלום לא מוכרע" on in the cloud (cardLockOnUnresolved) — an
+ *     earlier attempt unresolved. A terminal whose health check did not answer is tried on the
+ *     press, its error said then (the owner, 08.10.2026: "אל תחסום בכללי — אם יש שגיאה שיופיע
+ *     בלחיצה על אשראי"); an unresolved attempt is otherwise an alert for staff;
  *  2. the pending document is written (by the caller, with its number) — then the attempt goes to
  *     disk (reference, amount, document) — only then the frame leaves;
  *  3. approved → complete; certainly not charged → void (a new attempt is a new document and
@@ -42,6 +45,8 @@ export class PayService {
   private lastCardAnswerAtMs: number | null = null;
   readonly monitor: MonitorState = { config: 'unconfigured', failures: 0, lastCheckAtMs: null, lastOkAtMs: null, lastError: null, state: 'unconfigured' };
   private listeners = new Set<() => void>();
+  /** "חסימת אשראי כשיש תשלום לא מוכרע" (the till parameter cardLockOnUnresolved), read per charge. Off unless set. */
+  private lockOnUnresolved: () => boolean = () => false;
 
   constructor(
     private readonly db: Db,
@@ -98,9 +103,30 @@ export class PayService {
     this.db.run('DELETE FROM card_attempts WHERE vuid = ?', reference);
   }
 
-  /** Any attempt unresolved: no card at all until it is settled (or a person took it over). */
-  blocked(): boolean {
+  /** The cloud's "חסימת אשראי כשיש תשלום לא מוכרע" (read on every check). */
+  setLockOnUnresolved(fn: () => boolean) {
+    this.lockOnUnresolved = fn;
+  }
+
+  /** Any attempt unresolved (an urgent alert for staff), whatever the parameter says. */
+  unresolved(): boolean {
     return cardBlocked(this.attempts());
+  }
+
+  /** Card refused for an unresolved attempt: only with "חסימת אשראי כשיש תשלום לא מוכרע" on. */
+  blocked(): boolean {
+    let lock = false;
+    try {
+      lock = this.lockOnUnresolved();
+    } catch {
+      lock = false;
+    }
+    return lock && this.unresolved();
+  }
+
+  /** A terminal is set up to charge on: what refuses a card in advance — never its health check. */
+  get configured(): boolean {
+    return !!this.provider && this.monitor.config === 'ready';
   }
 
   /* ------------------------------------------------------------- charging */
@@ -119,7 +145,7 @@ export class PayService {
     onProgress?: (message: string) => void;
   }): Promise<ChargeOutcome> {
     const provider = this.provider;
-    if (!provider || this.monitor.state !== 'ready') return { kind: 'refused', reason: 'terminal' };
+    if (!provider || this.monitor.config !== 'ready') return { kind: 'refused', reason: 'terminal' };
     if (this.inFlight) return { kind: 'refused', reason: 'in_flight' };
     if (this.blocked()) return { kind: 'refused', reason: 'unresolved' };
     if (!Number.isInteger(input.amountAgorot) || input.amountAgorot < 1) return { kind: 'refused', reason: 'amount' };
@@ -144,7 +170,16 @@ export class PayService {
     this.emit();
     input.onSent?.();
     try {
-      const result = await provider.sale({ amountAgorot: input.amountAgorot, reference, payments: attempt.payments, onProgress: input.onProgress });
+      const result = await provider.sale({
+        amountAgorot: input.amountAgorot,
+        reference,
+        payments: attempt.payments,
+        onProgress: input.onProgress,
+        // Answered (its acknowledgement may still be on its way): a cancel now sends nothing.
+        onAnswered: () => {
+          if (this.inFlight?.reference === reference) this.inFlight.answered = true;
+        },
+      });
       this.inFlight.answered = true;
       this.lastCardAnswerAtMs = Date.now();
       if (result.answer === 'APPROVED') return { kind: 'approved', card: result.card, recovered: false };

@@ -153,13 +153,26 @@ FAILED_OUTCOME_LABELS = {
     "no_answer": "המסוף לא ענה",
     "terminal_error": "שגיאת מסוף",
     "card_locked": "כרטיס נעול",
+    "unresolved": "לא הוכרע — ייתכן שהלקוח חויב",
+    "approved_late": "אושר בבדיקה",
 }
-FAILED_OUTCOME_SEVERITY = {"no_answer": "medium", "terminal_error": "medium", "card_locked": "high"}
+FAILED_OUTCOME_SEVERITY = {
+    "no_answer": "medium", "terminal_error": "medium", "card_locked": "high",
+    # The card's result unknown: possibly charged, the till's documents wait for a decision.
+    "unresolved": "high",
+}
 
 
 def _failed_payment(ctx: Ctx, fp) -> Optional[EntrySpec]:
     scope = ctx.scope_of_machine(fp.machine_id)
     outcome = fp.outcome or ""
+    if outcome == "approved_late":
+        # Found charged and completed: not a failed payment. Only an entry already written
+        # (it was "לא הוכרע" first) is refreshed to say how it ended.
+        from app.services.exception_alerts import log as L
+
+        if L.find(ctx.db, f"failed_payment:{fp.id}") is None:
+            return None
     card = " ".join(p for p in (fp.card_brand or "", fp.card_last4 or "") if p)
     summary = " · ".join(p for p in (FAILED_OUTCOME_LABELS.get(outcome, outcome), card or None,
                                        "החזר לכרטיס" if fp.kind == "payout" else None) if p)
