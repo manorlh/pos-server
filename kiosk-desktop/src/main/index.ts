@@ -143,7 +143,10 @@ function installConfig(): {
   updateCheckMinutes?: number;
   bridgePort?: unknown;
   bridgeOrigins?: unknown;
-  /** Back from the desktop by itself after this many idle minutes (0 = never; default 10). */
+  /**
+   * Back from the desktop by itself after this many idle minutes (0 = never) — only when the
+   * cloud's setting "חזרה אוטומטית לקיוסק" (`desktopIdleReturnMinutes`) has not reached the device.
+   */
   desktopIdleReturnMinutes?: number;
 } {
   try {
@@ -395,7 +398,8 @@ void app.whenReady().then(async () => {
     return;
   }
   windowed = windowedArg || install.windowed === true;
-  const idleMinutes = typeof install.desktopIdleReturnMinutes === 'number' && install.desktopIdleReturnMinutes >= 0 ? install.desktopIdleReturnMinutes : IDLE_RETURN_MINUTES;
+  // "חזרה אוטומטית לקיוסק": the cloud's setting, read on every look; kiosk.json only when the cloud sent none.
+  const idleMinutes = () => service?.desktopIdleReturnMinutes(install.desktopIdleReturnMinutes) ?? IDLE_RETURN_MINUTES;
   desktop = new DesktopMode(
     {
       window: () => main,

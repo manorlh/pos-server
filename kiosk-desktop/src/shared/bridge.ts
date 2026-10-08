@@ -189,6 +189,11 @@ export interface AdminInfo {
   zOwed: boolean;
   zMode: string;
   offlineSince: number | null;
+  /**
+   * "יציאה לשולחן העבודה" / "יציאה מהתוכנה" from this menu: whether the manager who opened it holds
+   * DESKTOP_EXIT (else why not, Hebrew). Absent from a service that predates it.
+   */
+  desktopExit?: { allowed: boolean; reason: string | null };
 }
 
 export interface TechnicianInfo {
@@ -258,7 +263,10 @@ export type AdminAction =
   | { type: 'recheckPayment'; reference: string }
   | { type: 'markNotApproved'; reference: string }
   | { type: 'retryPrints' }
+  /** "יציאה מהתוכנה": the manager who opened the menu must hold DESKTOP_EXIT. */
   | { type: 'exitKiosk' }
+  /** "יציאה לשולחן העבודה" from the menu: the same manager's DESKTOP_EXIT, no second code. */
+  | { type: 'desktopExit' }
   /** "צימוד מסוף SynqPay": `pair` (the first code, or "שלח קוד חדש"); the serial when the kiosk cannot tell it. */
   | { type: 'synqpayPair'; serialNumber?: string | null }
   /** The 6 digits from the terminal's screen. */

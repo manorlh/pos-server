@@ -17,18 +17,31 @@
  *    and "התקן עכשיו"'s): refused before the PIN is even looked at.
  *  - Every exit, and the way back, is a till event (`POST /sync/{m}/events`, type `desktop_exit`):
  *    who, when, from which screen.
+ *  - The manager's menu ("ניהול הקיוסק") opens for a role that allows `KIOSK_UNLOCK` (as the
+ *    Android kiosk's manager corner); its "יציאה לשולחן העבודה" and "יציאה מהתוכנה" need that
+ *    same manager to hold `DESKTOP_EXIT` — never a legacy role string (main/service.ts).
  */
 
+import { DESKTOP_IDLE_RETURN_DEFAULT } from '@dash-lib/desktopIdleReturn';
 import { paymentGuard, type Activity } from './updatePolicy';
 
 export const DESKTOP_EXIT = 'DESKTOP_EXIT';
 export const PERMISSION_LABEL = 'יציאה לשולחן העבודה (Windows)';
+/**
+ * Opening the kiosk's manager menu ("ניהול הקיוסק"): the role's "יציאה מנעילת קופה (קיוסק)" —
+ * the Android kiosk's manager corner asks the same (ElevationScope.KIOSK_UNLOCK).
+ */
+export const KIOSK_UNLOCK = 'KIOSK_UNLOCK';
+export const KIOSK_UNLOCK_LABEL = 'יציאה מנעילת קופה (קיוסק)';
 export const MAX_FAILURES = 5;
 export const LOCKOUT_MS = 60_000;
 /** The pad closes by itself when nobody types. */
 export const PAD_IDLE_MS = 45_000;
-/** Back to the kiosk by itself after this long with nobody at the keyboard or mouse (kiosk.json `desktopIdleReturnMinutes`, 0 = never). */
-export const IDLE_RETURN_MINUTES = 10;
+/**
+ * Back to the kiosk by itself after this long with nobody at the keyboard or mouse — the default
+ * of the cloud's setting `desktopIdleReturnMinutes` (client lib/desktopIdleReturn.ts; 0 = never).
+ */
+export const IDLE_RETURN_MINUTES = DESKTOP_IDLE_RETURN_DEFAULT;
 
 export type PermState = 'allow' | 'approval' | 'deny';
 
@@ -99,9 +112,31 @@ export function ofShop(user: Pick<RosterUser, 'shopId'>, shopId: string | null |
   return user.shopId.toLowerCase() === shopId.toLowerCase();
 }
 
-/** Who may take this device to the desktop: active, of this shop, with a PIN, `DESKTOP_EXIT` allowed. */
+/**
+ * Who may do `code` here with their own PIN: active, of this shop, with a PIN, and the role's
+ * answer `allow` — nothing else counts (an "approval" is a second person's, not a pad's).
+ */
+export function usersAllowed(users: readonly RosterUser[], shopId: string | null | undefined, code: string): RosterUser[] {
+  return users.filter((u) => u.isActive && !!u.pinHash && ofShop(u, shopId) && permissionState(u, code) === 'allow');
+}
+
+/** Who may take this device to the desktop (`DESKTOP_EXIT`). */
 export function exitCandidates(users: readonly RosterUser[], shopId: string | null | undefined): RosterUser[] {
-  return users.filter((u) => u.isActive && !!u.pinHash && ofShop(u, shopId) && permissionState(u, DESKTOP_EXIT) === 'allow');
+  return usersAllowed(users, shopId, DESKTOP_EXIT);
+}
+
+/** The first of `candidates` whose PIN this is (bcrypt one at a time), or null. */
+export async function findByPin(candidates: readonly RosterUser[], pin: string, compare: BcryptCompare): Promise<RosterUser | null> {
+  for (const u of candidates) {
+    if (await verifyPin(pin, u.pinHash, compare)) return u;
+  }
+  return null;
+}
+
+/** May this user (re-read from the roster now) take the device out — the admin's buttons. */
+export function userMayExit(users: readonly RosterUser[], shopId: string | null | undefined, userId: string | null | undefined): RosterUser | null {
+  if (!userId) return null;
+  return exitCandidates(users, shopId).find((u) => u.id === userId) ?? null;
 }
 
 export function displayName(u: Pick<RosterUser, 'firstName' | 'lastName' | 'username'>): string {
@@ -194,11 +229,8 @@ export async function decideExit(input: {
   if (candidates.length === 0) return { ...base, outcome: 'no_managers', message: TEXT.noManagers };
   const pin = String(input.pin ?? '');
   if (pin.trim() === '') return { ...base, outcome: 'blank', message: TEXT.blank };
-  for (const u of candidates) {
-    if (await verifyPin(pin, u.pinHash, input.compare)) {
-      return { outcome: 'granted', user: u, lock: NO_LOCK, triesLeft: MAX_FAILURES, lockedForMs: 0, message: null };
-    }
-  }
+  const u = await findByPin(candidates, pin, input.compare);
+  if (u) return { outcome: 'granted', user: u, lock: NO_LOCK, triesLeft: MAX_FAILURES, lockedForMs: 0, message: null };
   const failures = lock.failures + 1;
   if (failures >= MAX_FAILURES) {
     const next = { failures, lockedUntilMs: input.nowMs + LOCKOUT_MS };
@@ -237,6 +269,10 @@ export function exitEvent(input: {
   screen: string;
   deviceRole: string | null;
   appVersion: string;
+  /** `exit` to the desktop (default), or `quit` — "יציאה מהתוכנה" from the manager's menu. */
+  action?: 'exit' | 'quit';
+  /** `admin`: from the manager's menu (no second code); absent: the corner's pad. */
+  via?: 'admin';
 }): DesktopExitEvent {
   return {
     id: input.id,
@@ -245,7 +281,8 @@ export function exitEvent(input: {
     shiftId: input.shiftId,
     posUserId: input.user.id,
     details: {
-      action: 'exit',
+      action: input.action ?? 'exit',
+      ...(input.via ? { via: input.via } : {}),
       permission: DESKTOP_EXIT,
       userName: displayName(input.user),
       ...(input.user.tillRoleName ? { roleName: input.user.tillRoleName } : {}),
