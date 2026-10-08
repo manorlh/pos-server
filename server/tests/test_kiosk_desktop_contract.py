@@ -195,3 +195,19 @@ def test_the_windows_kiosks_open_order_validates():
     assert order.due_agorot == order.total_agorot + order.tip_agorot - order.voucher_agorot
     codec = json.loads(order.cart["codec"])
     assert [line["id"] for line in codec["lines"]] == ["L1", "L2"]
+
+
+def test_the_desktop_exit_event_validates():
+    """
+    "יציאה לשולחן העבודה" (kiosk-desktop core/desktopExit.ts, permission DESKTOP_EXIT): who left the
+    Windows app for the desktop and when, as it posts it to `POST /sync/{m}/events` — and the way back.
+    """
+    from app.schemas.audit_exception import TillEventIn
+
+    body = load("till_event_desktop_exit")
+    exit_event, back = (TillEventIn.model_validate(e) for e in body["events"])
+    assert exit_event.type == back.type == "desktop_exit"
+    assert exit_event.pos_user_id and exit_event.details["action"] == "exit"
+    assert exit_event.details["userName"] and exit_event.details["permission"] == "DESKTOP_EXIT"
+    assert back.details["action"] == "return" and back.details["exitId"] == str(exit_event.id)
+    assert exit_event.amount is None and exit_event.transaction_id is None

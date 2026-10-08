@@ -184,7 +184,9 @@ RULES_BY_TYPE: Dict[str, RuleSpec] = {r.type: r for r in RULES}
 EXCEPTION_TYPES = tuple(RULES_BY_TYPE)
 
 #: Till event types this server accepts, and the rule each one feeds.
-TILL_EVENT_TYPES = ("drawer_open", "line_void", "basket_cancel", "basket_completed", "reprint", "forced_z_close")
+TILL_EVENT_TYPES = ("drawer_open", "line_void", "basket_cancel", "basket_completed", "reprint", "forced_z_close",
+                    # The Windows app left to the desktop (and back): recorded, feeds no rule.
+                    "desktop_exit")
 
 
 class RuleValueError(ValueError):

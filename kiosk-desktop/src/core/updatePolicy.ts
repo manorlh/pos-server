@@ -102,6 +102,8 @@ export interface Activity {
   cardBlocked: boolean;
   /** Epoch ms of the last touch / screen change (null: never). */
   lastActivityAt: number | null;
+  /** A manager took the device to the Windows desktop (core/desktopExit.ts): it waits for the way back. */
+  desktop?: boolean;
 }
 
 /** Screens of an order in progress (kiosk): never restart under them. */
@@ -138,7 +140,9 @@ export function autoInstallDecision(input: {
   const guard = paymentGuard(input.activity);
   if (guard) return { install: false, wait: guard };
   if (input.activity.cardBlocked) return { install: false, wait: 'תשלום ממתין לבירור' };
-  const window = input.offer.installWindow ?? input.localWindow ?? null;
+  // A restart would pull the manager's desktop back into the kiosk under their hands.
+  if (input.activity.desktop) return { install: false, wait: 'ממתין לחזרה לקיוסק (המכשיר בשולחן העבודה)' };
+  const window =input.offer.installWindow ?? input.localWindow ?? null;
   if (window && !inWindow(input.now, window)) return { install: false, wait: `ממתין לחלון ההתקנה ${window.start}–${window.end}` };
   const quiet = QUIET_MS[input.activity.role ?? 'unknown'];
   const last = input.activity.lastActivityAt;

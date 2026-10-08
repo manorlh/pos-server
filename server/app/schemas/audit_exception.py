@@ -18,7 +18,9 @@ class TillEventIn(BaseModel):
     """
 
     id: uuid.UUID
-    type: Literal["drawer_open", "line_void", "basket_cancel", "basket_completed", "reprint", "forced_z_close"]
+    #: `desktop_exit`: R2M POS for Windows left to the desktop by a manager's code (DESKTOP_EXIT),
+    #: or back (`details.action` exit | return) — kept for the record, no exception rule.
+    type: Literal["drawer_open", "line_void", "basket_cancel", "basket_completed", "reprint", "forced_z_close", "desktop_exit"]
     occurred_at: datetime = Field(..., alias="occurredAt")
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)

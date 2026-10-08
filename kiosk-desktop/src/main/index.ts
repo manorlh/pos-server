@@ -2,7 +2,9 @@
  * R2M POS for Windows — the Electron shell. One app for every role the cloud gives this device
  * (kiosk, KDS, order status board; till and customer display come next — main/roles/types.ts):
  *
- *  - one full-screen window (no frame, no menu, no shortcuts out), started at login;
+ *  - one full-screen window (no frame, no menu, no shortcuts out), started at login; a manager's
+ *    code (DESKTOP_EXIT) takes it out to the Windows desktop and the tray / "חזרה לקיוסק" brings it
+ *    back (shell/desktopMode.ts, core/desktopExit.ts);
  *  - the local service layer (service.ts: pairing, auth, sync, media, printing, payment, logs,
  *    technician tools) and the updater (update/updater.ts), shared by every role;
  *  - the role manager (roles/manager.ts): which role, and its module (KDS / board feeds);
@@ -14,7 +16,7 @@
  *  - IPC: shared/bridge.ts (the kiosk, `window.kiosk`) and shared/roles.ts (the shell, `window.r2m`).
  */
 
-import { app, BrowserWindow, ipcMain, net as enet, powerSaveBlocker, protocol, safeStorage, screen, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, net as enet, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, shell, Tray } from 'electron';
 import { spawn } from 'node:child_process';
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -28,6 +30,8 @@ import { APP_ID, DATA_DIR_NAME, SHELL_NAME } from './shell/identity';
 import { BRIDGE_MARKER, shellModeOf } from './shell/mode';
 import { startBridgeMode, type BridgeModeHandle } from './bridge/electron';
 import { QUICKSUPPORT_PATHS } from '../core/technician';
+import { IDLE_RETURN_MINUTES } from '../core/desktopExit';
+import { DesktopMode } from './shell/desktopMode';
 import { parseWindow } from '../core/updatePolicy';
 import type { PrintDoc } from '../core/printDocs';
 import type { KdsActionInput } from '../shared/roles';
@@ -117,6 +121,11 @@ let main: BrowserWindow | null = null;
 let printer: BrowserWindow | null = null;
 let printerReady: Promise<void> | null = null;
 let printSeq = 0;
+/** "יציאה לשולחן העבודה" (shell/desktopMode.ts): the window out of full screen and the ways back. */
+let desktop: DesktopMode | null = null;
+let returnTray: Tray | null = null;
+/** The desktop shortcut "חזרה לקיוסק" launches the app with this; the running one takes it (second-instance). */
+const RETURN_ARG = '--return-to-kiosk';
 const printWaiters = new Map<number, (r: { width: number; height: number; rgba: Uint8Array } | { error: string }) => void>();
 
 function appVersion(): string {
@@ -128,7 +137,15 @@ function appVersion(): string {
  * { "windowed": false, "updateWindow": "02:00-05:00", "updateCheckMinutes": 15 }.
  * `updateWindow` is used when the cloud's assignment gives no install window.
  */
-function installConfig(): { windowed?: boolean; updateWindow?: string; updateCheckMinutes?: number; bridgePort?: unknown; bridgeOrigins?: unknown } {
+function installConfig(): {
+  windowed?: boolean;
+  updateWindow?: string;
+  updateCheckMinutes?: number;
+  bridgePort?: unknown;
+  bridgeOrigins?: unknown;
+  /** Back from the desktop by itself after this many idle minutes (0 = never; default 10). */
+  desktopIdleReturnMinutes?: number;
+} {
   try {
     return JSON.parse(readFileSync(path.join(app.getPath('userData'), 'kiosk.json'), 'utf8'));
   } catch {
@@ -211,6 +228,8 @@ function createMain() {
   main.once('ready-to-show', () => main?.show());
   main.webContents.on('did-finish-load', () => main?.webContents.setZoomFactor(zoomFor(main)));
   main.on('resize', () => main && main.webContents.setZoomFactor(zoomFor(main)));
+  // Out on the desktop, the taskbar button brings the kiosk back — in full screen.
+  main.on('restore', () => desktop?.onWindowRestored());
   // No way out for a customer: no new windows, no navigation, no reload / devtools / zoom keys.
   main.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   main.webContents.on('will-navigate', (e, url) => {
@@ -227,6 +246,33 @@ function createMain() {
     setTimeout(() => main?.reload(), 500);
   });
   void main.loadURL('kiosk://app/index.html');
+}
+
+/** "חזרה לקיוסק" next to the clock while the kiosk is out on the desktop. */
+function showReturnTray(onReturn: () => void) {
+  if (returnTray) return;
+  const file = path.join(rendererDir(), 'tray.png');
+  const icon = existsSync(file) ? nativeImage.createFromPath(file).resize({ width: 16, height: 16 }) : nativeImage.createEmpty();
+  returnTray = new Tray(icon);
+  returnTray.setToolTip(`${SHELL_NAME} · חזרה לקיוסק`);
+  returnTray.setContextMenu(Menu.buildFromTemplate([{ label: 'חזרה לקיוסק', click: onReturn }]));
+  returnTray.on('click', onReturn);
+  returnTray.on('double-click', onReturn);
+  // Windows 11 tucks new tray icons away: say where the way back is.
+  returnTray.displayBalloon({ title: SHELL_NAME, content: 'הקיוסק ממוזער. חזרה: האייקון כאן, "חזרה לקיוסק" בשולחן העבודה, או הכפתור בשורת המשימות.', iconType: 'info' });
+}
+
+function hideReturnTray() {
+  returnTray?.destroy();
+  returnTray = null;
+}
+
+/** The desktop shortcut "חזרה לקיוסק" (an installed app only): created once, kept. */
+function ensureReturnShortcut() {
+  if (process.platform !== 'win32' || !app.isPackaged) return;
+  const file = path.join(app.getPath('desktop'), 'חזרה לקיוסק.lnk');
+  if (existsSync(file)) return;
+  shell.writeShortcutLink(file, 'create', { target: process.execPath, args: RETURN_ARG, description: `${SHELL_NAME} — חזרה למסך המלא`, icon: process.execPath, iconIndex: 0 });
 }
 
 function bridge(svc: KioskService) {
@@ -260,6 +306,8 @@ function bridge(svc: KioskService) {
   ipcMain.handle('shell:kds', () => roles?.kdsView());
   ipcMain.handle('shell:kdsAction', (_e, a: KdsActionInput) => roles?.kdsAction(a) ?? { ok: false });
   ipcMain.on('shell:activity', () => roles?.touch());
+  // "יציאה לשולחן העבודה": the PIN and the rules in the service (core/desktopExit.ts), the window in shell/desktopMode.ts.
+  ipcMain.handle('shell:desktopExit', (_e, pin: unknown) => svc.desktopExit(typeof pin === 'string' ? pin : '', roles?.activity() ?? svc.activity()));
   // "הפעלה כגשר לדפדפן" on the pairing screen (an unpaired device only): the marker, then a restart in bridge mode.
   ipcMain.handle('shell:becomeBridge', () => {
     if (svc.paired) return { ok: false, message: 'המכשיר מצומד — אי אפשר להפוך אותו לגשר' };
@@ -347,6 +395,21 @@ void app.whenReady().then(async () => {
     return;
   }
   windowed = windowedArg || install.windowed === true;
+  const idleMinutes = typeof install.desktopIdleReturnMinutes === 'number' && install.desktopIdleReturnMinutes >= 0 ? install.desktopIdleReturnMinutes : IDLE_RETURN_MINUTES;
+  desktop = new DesktopMode(
+    {
+      window: () => main,
+      windowed: () => windowed,
+      showTray: showReturnTray,
+      hideTray: hideReturnTray,
+      ensureShortcut: ensureReturnShortcut,
+      systemIdleSec: () => powerMonitor.getSystemIdleTime(),
+      returned: (via) => service?.desktopReturned(via),
+      wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      log: (m) => console.log(`[shell] ${m}`),
+    },
+    idleMinutes,
+  );
   const dataDir = path.join(app.getPath('userData'), 'data');
   service = new KioskService({
     dataDir,
@@ -369,6 +432,7 @@ void app.whenReady().then(async () => {
       checkUpdate: () => updater!.checkNow(),
       installUpdate: () => updater!.installNow(),
       updateStatus: () => updater!.view(),
+      exitToDesktop: () => desktop!.exit(),
     },
     log: (m) => console.log(`[kiosk] ${m}`),
   });
@@ -380,7 +444,8 @@ void app.whenReady().then(async () => {
     token: () => svc.cloud.credentials()?.accessToken ?? null,
     currentVersion: appVersion(),
     dir: path.join(app.getPath('userData'), 'updates'),
-    activity: () => roles?.activity() ?? svc.activity(),
+    // Out on the desktop: an automatic install waits for the way back (core/updatePolicy.ts).
+    activity: () => ({ ...(roles?.activity() ?? svc.activity()), desktop: desktop?.active === true }),
     localWindow: parseWindow(install.updateWindow),
     checkEveryMs: Math.max(5, Number(install.updateCheckMinutes) || 15) * 60_000,
     runInstaller: (file, args) => {
@@ -406,15 +471,22 @@ void app.whenReady().then(async () => {
   if (!isDev && app.isPackaged) app.setLoginItemSettings({ openAtLogin: true, path: process.execPath });
   createMain();
   await service.start();
+  // Restarted while out on the desktop (a crash, an update, a reboot): back in full screen, and said so.
+  if (service.desktopExitState()) service.desktopReturned('restart');
   roles.start();
   // Development builds check only on "בדוק עכשיו"; an installed app on its own timer too.
   if (app.isPackaged && !isDev) updater.start();
   else void updater.confirmInstalled();
 });
 
-app.on('second-instance', () => {
+app.on('second-instance', (_e, argv) => {
   if (bridgeMode) {
     bridgeMode.show();
+    return;
+  }
+  // "חזרה לקיוסק" (the desktop shortcut), or the app launched again from the Start menu: the running one comes back.
+  if (desktop) {
+    desktop.back(argv.includes(RETURN_ARG) ? 'shortcut' : 'relaunch');
     return;
   }
   if (main) {
@@ -426,6 +498,8 @@ app.on('second-instance', () => {
 app.on('window-all-closed', () => {
   // The bridge lives in the tray: its window is hidden, never the end of the app.
   if (shellMode === 'bridge') return;
+  desktop?.stop();
+  hideReturnTray();
   updater?.stop();
   roles?.stop();
   service?.stop();

@@ -73,6 +73,21 @@ export interface ShellEvents {
   kds: KdsView;
 }
 
+/**
+ * "יציאה לשולחן העבודה" (core/desktopExit.ts): the pad's answer. `granted` — the window has left
+ * full screen and is minimised; the way back is the tray icon / the "חזרה לקיוסק" shortcut.
+ */
+export interface DesktopExitResult {
+  ok: boolean;
+  outcome: 'granted' | 'wrong' | 'locked_out' | 'locked' | 'busy' | 'no_managers' | 'blank' | 'failed';
+  /** Hebrew, shown under the pad as is (null on success). */
+  message: string | null;
+  /** Who opened it (granted). */
+  name?: string | null;
+  triesLeft?: number;
+  lockedForMs?: number;
+}
+
 /** `window.r2m` (preload): the shell's own door, next to `window.kiosk`. */
 export interface ShellBridge {
   view(): Promise<ShellView>;
@@ -83,5 +98,7 @@ export interface ShellBridge {
   activity(): void;
   /** "הפעלה כגשר לדפדפן" (an unpaired device): restarts as the bridge (main/shell/mode.ts). */
   becomeBridge?(): Promise<{ ok: boolean; message?: string }>;
+  /** "יציאה לשולחן העבודה": a manager's PIN (DESKTOP_EXIT, checked offline) → out of full screen. */
+  desktopExit?(pin: string): Promise<DesktopExitResult>;
   on<K extends keyof ShellEvents>(event: K, fn: (payload: ShellEvents[K]) => void): () => void;
 }
