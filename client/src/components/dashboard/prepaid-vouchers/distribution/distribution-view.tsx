@@ -51,6 +51,12 @@ export function VoucherDistributionView({ batch }: { batch: PrepaidVoucherBatch 
             {t('vouchers', { assigned: o.vouchers.assigned, free: o.vouchers.free, total: o.vouchers.total })}
           </p>
           {o.batchCancelled ? <p className="text-xs text-destructive">{t('batchCancelled')}</p> : null}
+          {/* Links nobody outside this computer can open: the server's public address is not set. */}
+          {/^https?:\/\/(localhost|127\.|\[::1\])/i.test(o.linkBase) ? (
+            <p className="rounded-md bg-amber-100 p-2 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-300" dir="auto">
+              {t('localLinks', { base: o.linkBase })}
+            </p>
+          ) : null}
         </CardContent>
       </Card>
       <ImportPanel batch={batch} overview={o} />

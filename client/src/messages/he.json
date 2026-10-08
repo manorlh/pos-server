@@ -14959,6 +14959,7 @@
     "recipients": "{n, plural, one {נמען אחד} other {# נמענים}}",
     "vouchers": "שוברים: {assigned} חולקו לנמענים · {free} פנויים לחלוקה · {total} בסך הכול",
     "batchCancelled": "האצווה בוטלה — הקישורים אינם פעילים.",
+    "localLinks": "הקישורים האישיים מצביעים על {base} — כתובת שנמענים מחוץ למחשב הזה לא יכולים לפתוח. יש להגדיר בשרת VOUCHER_LINK_BASE_URL (או PUBLIC_BASE_URL) לכתובת הציבורית של השרת לפני השליחה.",
     "state": {
       "pending": "ממתין",
       "sent": "נשלח",
