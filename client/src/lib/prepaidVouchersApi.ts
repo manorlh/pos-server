@@ -95,6 +95,8 @@ export interface PrepaidVoucherBatch extends PrepaidBatchTerms {
   groupCount?: number;
   /** Print the voucher's code under its barcode. */
   showCode?: boolean;
+  /** "הצגת הפריטים על השובר": print the goods (a discount: what it gives). Absent: true. */
+  showItems?: boolean;
   barcodeType?: PrepaidBarcodeType;
   customerName?: string | null;
   orderRef?: string | null;
@@ -174,6 +176,8 @@ export interface PrepaidBatchCreate {
   includeExtras?: boolean;
   groupSize?: number | null;
   showCode?: boolean;
+  /** "הצגת הפריטים על השובר" (default true). */
+  showItems?: boolean;
   barcodeType?: PrepaidBarcodeType;
   customerName?: string | null;
   orderRef?: string | null;
@@ -222,7 +226,8 @@ export async function updatePrepaidBatch(
   id: string,
   body: Partial<Pick<
     PrepaidBatchCreate,
-    'name' | 'eventName' | 'logoUrl' | 'freeText' | 'validFrom' | 'validUntil' | 'showCode' | 'barcodeType' | 'customerName' | 'orderRef'
+    | 'name' | 'eventName' | 'logoUrl' | 'freeText' | 'validFrom' | 'validUntil' | 'showCode' | 'showItems' | 'barcodeType'
+    | 'customerName' | 'orderRef'
   >> & PrepaidBatchRulesUpdate,
 ): Promise<PrepaidVoucherBatch> {
   const { data } = await api.patch<PrepaidVoucherBatch>(`/prepaid-vouchers/batches/${id}`, body);

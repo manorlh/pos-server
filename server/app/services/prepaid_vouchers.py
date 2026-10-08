@@ -847,6 +847,7 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
         next_serial=1,
         group_size=body.group_size or None,
         show_code=bool(body.show_code),
+        show_items=getattr(body, "show_items", True) is not False,
         barcode_type=body.barcode_type or "qr",
         customer_name=body.customer_name,
         order_ref=body.order_ref,
@@ -956,7 +957,7 @@ def update_batch(db: Session, user: User, tenant_id, batch_id, body) -> PrepaidV
         fields.pop("name")
     # Print settings are never cleared by a null: they always have a value. Nor are the
     # rules of use (a null daily limit clears it: no limit is a value of its own).
-    for key in ("show_code", "barcode_type", "stacking", "promotion_policy", "max_uses_per_sale"):
+    for key in ("show_code", "show_items", "barcode_type", "stacking", "promotion_policy", "max_uses_per_sale"):
         if key in fields and fields[key] is None:
             fields.pop(key)
     if not is_discount(batch):
@@ -1199,6 +1200,8 @@ def batch_out(db: Session, batch: PrepaidVoucherBatch, stats: Optional[Dict[str,
         "groupSize": batch.group_size,
         "groupCount": _last_group(db, batch.id),
         "showCode": bool(batch.show_code),
+        # "הצגת הפריטים על השובר" — off: the paper leaves the goods / the benefit out.
+        "showItems": getattr(batch, "show_items", None) is not False,
         "barcodeType": batch.barcode_type or "qr",
         "customerName": batch.customer_name,
         "orderRef": batch.order_ref,

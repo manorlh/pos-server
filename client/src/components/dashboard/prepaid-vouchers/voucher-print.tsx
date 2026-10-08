@@ -14,7 +14,8 @@
  *
  * The barcode — a QR, or a Code 128 line barcode when the batch asks for one (`barcodeType`) —
  * carries only `PV:<code>`. Under it: the code itself when the batch says so (`showCode`), then
- * the serial (and the group, in a run made in groups). The validity dates are printed when set.
+ * the serial (and the group, in a run made in groups). The validity dates are printed when set;
+ * the goods (or a discount's benefit) unless the batch hides them (`showItems: false`).
  * The server draws the same card into its PDF (app/services/prepaid_voucher_pdf.py).
  */
 
@@ -22,7 +23,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QRCodeSVG } from 'qrcode.react';
 import { formatDate, isoDate } from '@/lib/format';
 import type { PrepaidVoucher, PrepaidVoucherBatch } from '@/lib/prepaidVouchersApi';
-import { benefitText, isDiscountKind, termsOfBatch } from '@/lib/prepaidVoucherBenefit';
+import { cardContents, isDiscountKind } from '@/lib/prepaidVoucherBenefit';
 import { quantityText } from '@/lib/prepaidVoucherProducts';
 import { code128Bars } from '@/lib/barcode128';
 
@@ -183,9 +184,10 @@ function VoucherCard({
   const landscape = w >= h * 1.15 && !linear;
   const s = Math.min(w, h) / 50; // 1 at a 50 mm short side
   const pad = 2.6 * s;
-  // A discount voucher prints what it gives ("₪30 הנחה על כל ההזמנה") instead of goods.
-  const benefit = isDiscountKind(batch.kind) ? (batch.benefitText ?? benefitText(termsOfBatch(batch))) : null;
-  const n = benefit ? 0 : batch.items.length;
+  // A discount voucher prints what it gives ("₪30 הנחה על כל ההזמנה") instead of goods;
+  // "הצגת הפריטים על השובר" off (`showItems: false`): neither.
+  const { benefit, items } = cardContents(batch);
+  const n = items.length;
   const itemFont = 3.1 * s * (n > 4 ? Math.max(0.55, Math.sqrt(4 / n)) : 1);
   const under = underBarcodeLines(batch, voucher, labels);
   const underH = under.reduce((sum, l) => sum + (l.code ? 2.6 : 2.4) * s * 1.25, 0.6 * s);
@@ -222,8 +224,8 @@ function VoucherCard({
           {benefit}
         </div>
       ) : null}
-      <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: mm(itemFont), lineHeight: 1.25 }}>
-        {(benefit ? [] : batch.items).map((i) => (
+      <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: mm(itemFont), lineHeight: 1.25, display: n ? undefined : 'none' }}>
+        {items.map((i) => (
           <li key={i.productId} style={{ display: 'flex', gap: mm(1.2 * s) }}>
             <span style={{ fontWeight: 700, minWidth: mm(4 * s), direction: i.weighed ? 'rtl' : 'ltr', textAlign: 'end' }}>
               {/* "2×", or by weight "0.5 ק״ג" (§7.14) — as the server's PDF. */}
@@ -234,7 +236,10 @@ function VoucherCard({
         ))}
       </ul>
       {batch.freeText ? (
-        <div style={{ fontSize: mm(2.5 * s), lineHeight: 1.2, whiteSpace: 'pre-wrap' }}>{batch.freeText}</div>
+        // Its own lines kept, long ones wrapped to the card (as the server's PDF).
+        <div style={{ fontSize: mm(2.5 * s), lineHeight: 1.2, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', textAlign: landscape ? 'start' : 'center' }}>
+          {batch.freeText}
+        </div>
       ) : null}
       {validity ? (
         <div style={{ fontSize: mm(2.3 * s), fontWeight: 700, textAlign: landscape ? 'start' : 'center' }}>{validity}</div>

@@ -68,6 +68,8 @@ PRESETS = {
     "a6": (105.0, 148.0, 1, 1),
     "a4grid": (210.0, 297.0, 2, 4),
 }
+#: The free text ("טקסט חופשי (מודפס)") at most — fewer when the voucher has less room.
+FREE_TEXT_MAX_LINES = 12
 
 #: Heebo (SIL OFL 1.1, app/assets/fonts/LICENSE-Heebo.txt — the till's font too) ships with
 #: the server and is tried first: every voucher is Hebrew, and a server with no system fonts
@@ -299,6 +301,9 @@ class PrintOptions:
     show_code: bool = False
     #: Already formatted for the tenant's zone, e.g. "בתוקף עד 14/08/2026"; None: no line.
     validity: Optional[str] = None
+    #: "הצגת הפריטים על השובר": the goods lines (a discount voucher: what it gives). Off:
+    #: title, free text, validity, barcode, code and serial only.
+    show_items: bool = True
 
 
 def options_for(batch: PrepaidVoucherBatch, zone=None, labels: Labels = Labels()) -> PrintOptions:
@@ -306,7 +311,19 @@ def options_for(batch: PrepaidVoucherBatch, zone=None, labels: Labels = Labels()
         barcode_type=(getattr(batch, "barcode_type", None) or "qr"),
         show_code=bool(getattr(batch, "show_code", False)),
         validity=validity_text(batch, zone, labels),
+        show_items=getattr(batch, "show_items", None) is not False,
     )
+
+
+def card_contents(batch: PrepaidVoucherBatch, opts: PrintOptions) -> Tuple[Optional[str], list]:
+    """
+    What a voucher prints between its title and its free text: a discount voucher's benefit
+    ("₪30 הנחה על כל ההזמנה") or the goods lines — neither when the batch hides them.
+    """
+    if not opts.show_items:
+        return None, []
+    benefit = RULES.batch_benefit_text(batch)
+    return benefit, ([] if benefit else list(batch.items))
 
 
 def _local_day(moment: Optional[datetime], zone) -> Optional[str]:
@@ -503,19 +520,29 @@ def _draw_card(
         line(t, title_font, center=center)
     y += _px(0.6 * s)
 
-    # A discount voucher says what it gives ("₪30 הנחה על כל ההזמנה") instead of goods.
-    benefit = RULES.batch_benefit_text(batch)
+    # The bottom of the column is kept for the validity and the terms, and for the first
+    # lines of the free text, so a long list of goods never pushes them off the voucher.
+    valid_font = _font(_px(2.3 * s), bold=True)
+    small = _font(_px(2.1 * s))
+    free_font = _font(_px(2.5 * s))
+    free_step = int(free_font.size * 1.22)
+    footer_h = (int(valid_font.size * 1.22) if opts.validity else 0) + int(small.size * 1.22)
+    free_lines = _wrap(d, batch.free_text, free_font, text_w, FREE_TEXT_MAX_LINES) if batch.free_text else []
+    goods_bottom = text_bottom - footer_h - min(len(free_lines), 2) * free_step
+
+    # A discount voucher says what it gives ("₪30 הנחה על כל ההזמנה") instead of goods;
+    # "הצגת הפריטים על השובר" off: neither.
+    benefit, items = card_contents(batch, opts)
     if benefit:
         bf = _font(_px(3.3 * s), bold=True)
         for t in _wrap(d, benefit, bf, text_w, 3):
             line(t, bf, center=center)
-    items = [] if benefit else list(batch.items)
     n = len(items)
     item_size = 3.1 * s * (max(0.55, (4 / n) ** 0.5) if n > 4 else 1)
     item_font = _font(_px(item_size))
     qty_font = _font(_px(item_size), bold=True)
     for it in items:
-        if y + item_font.size > text_bottom:
+        if y + item_font.size > goods_bottom:
             break
         amount = _qty_label(it)
         qty_w = int(d.textlength(amount, font=qty_font))
@@ -529,15 +556,19 @@ def _draw_card(
         d.text((right, y), amount, font=qty_font, fill="black", anchor="ra")
         d.text((right - qty_w - _px(1.2 * s), y), name, font=item_font, fill="black", anchor="ra")
         y += int(item_font.size * 1.25)
-    y += _px(0.6 * s)
+    if items or benefit:
+        y += _px(0.6 * s)
 
-    if batch.free_text:
-        ft = _font(_px(2.5 * s))
-        for t in _wrap(d, batch.free_text, ft, text_w, 3):
-            line(t, ft, center=center)
-    small = _font(_px(2.1 * s))
+    # The free text: its own lines kept, long ones wrapped to the column — as many as the
+    # space above the validity holds, the last one cut with "…" when there is more.
+    if free_lines:
+        room = max(0, (text_bottom - footer_h - y) // free_step)
+        if room < len(free_lines):
+            free_lines = _wrap(d, batch.free_text, free_font, text_w, room) if room else []
+        for t in free_lines:
+            line(t, free_font, center=center)
     if opts.validity:
-        line(_visual(opts.validity), _font(_px(2.3 * s), bold=True), center=center)
+        line(_visual(opts.validity), valid_font, center=center)
     line(_visual(terms_line(batch, labels)), small, center=center)
 
     if cut_lines:

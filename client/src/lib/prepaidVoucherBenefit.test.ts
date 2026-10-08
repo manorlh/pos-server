@@ -10,6 +10,7 @@ import { join } from 'node:path';
 
 import {
   benefitText,
+  cardContents,
   discountDraftErrors,
   isDiscountKind,
   moneyText,
@@ -81,5 +82,22 @@ describe('discountDraftErrors', () => {
     assert.deepEqual(discountDraftErrors(draft({ kind: 'item_discount' })), ['targets']);
     assert.deepEqual(discountDraftErrors(draft({ kind: 'item_discount', targetCount: 1, maxUnits: '0' })), ['maxUnits']);
     assert.deepEqual(discountDraftErrors(draft({ usesPerVoucher: '1.5', maxUsesPerDay: '0' })), ['uses', 'usesPerDay']);
+  });
+});
+
+describe('cardContents ("הצגת הפריטים על השובר", as the server PDF)', () => {
+  const goods = [{ name: 'נקניקייה' }, { name: 'שתייה' }];
+
+  it('goods print their lines unless the batch hides them', () => {
+    assert.deepEqual(cardContents({ kind: 'items', items: goods }), { benefit: null, items: goods });
+    assert.deepEqual(cardContents({ kind: 'items', items: goods, showItems: true }), { benefit: null, items: goods });
+    assert.deepEqual(cardContents({ kind: 'items', items: goods, showItems: false }), { benefit: null, items: [] });
+  });
+
+  it('a discount prints what it gives, unless hidden too', () => {
+    const d = { kind: 'order_discount' as const, discountType: 'fixed' as const, discountValue: 30, items: [] as { name: string }[] };
+    assert.deepEqual(cardContents(d), { benefit: '₪30 הנחה על כל ההזמנה', items: [] });
+    assert.deepEqual(cardContents({ ...d, benefitText: 'מהשרת' }), { benefit: 'מהשרת', items: [] });
+    assert.deepEqual(cardContents({ ...d, showItems: false }), { benefit: null, items: [] });
   });
 });

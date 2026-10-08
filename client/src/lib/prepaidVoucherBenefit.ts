@@ -85,6 +85,20 @@ export function termsOfBatch(b: {
   };
 }
 
+/**
+ * What a voucher prints between its title and its free text — the server's PDF says the same
+ * (`card_contents`, app/services/prepaid_voucher_pdf.py): a discount voucher's benefit
+ * ("₪30 הנחה על כל ההזמנה"), or the goods; neither when the batch hides them
+ * ("הצגת הפריטים על השובר" off, `showItems: false`; absent: shown).
+ */
+export function cardContents<I>(
+  b: Parameters<typeof termsOfBatch>[0] & { items: I[]; showItems?: boolean; benefitText?: string | null },
+): { benefit: string | null; items: I[] } {
+  if (b.showItems === false) return { benefit: null, items: [] };
+  const benefit = isDiscountKind(b.kind) ? (b.benefitText ?? benefitText(termsOfBatch(b))) : null;
+  return { benefit, items: benefit ? [] : b.items };
+}
+
 export interface DiscountDraft {
   kind: PrepaidVoucherKind;
   discountType: PrepaidDiscountType;

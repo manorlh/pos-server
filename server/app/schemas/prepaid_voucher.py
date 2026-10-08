@@ -210,6 +210,8 @@ class PrepaidVoucherBatchCreate(BaseModel):
     group_size: Optional[int] = Field(None, alias="groupSize", ge=1, le=MAX_GROUP_SIZE)
     #: Print the voucher's code under its barcode.
     show_code: bool = Field(False, alias="showCode")
+    #: "הצגת הפריטים על השובר": print the goods (a discount: what it gives). On by default.
+    show_items: bool = Field(True, alias="showItems")
     #: "qr" (default) or "code128".
     barcode_type: str = Field("qr", alias="barcodeType")
     customer_name: Optional[str] = Field(None, alias="customerName")
@@ -316,6 +318,7 @@ class PrepaidVoucherBatchUpdate(BaseModel):
     valid_until: Optional[datetime] = Field(None, alias="validUntil")
     # Print settings: they only change what the next print looks like.
     show_code: Optional[bool] = Field(None, alias="showCode")
+    show_items: Optional[bool] = Field(None, alias="showItems")
     barcode_type: Optional[str] = Field(None, alias="barcodeType")
     customer_name: Optional[str] = Field(None, alias="customerName")
     order_ref: Optional[str] = Field(None, alias="orderRef")

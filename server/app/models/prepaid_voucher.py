@@ -90,6 +90,10 @@ class PrepaidVoucherBatch(Base):
     #: Print the voucher's code under its barcode (human-readable). Off by default: the
     #: barcode is what is redeemed, and a printed code is one more way to copy a voucher.
     show_code = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: "הצגת הפריטים על השובר": print the goods (a discount voucher: what it gives) on the
+    #: voucher. Off: title, free text, validity, barcode, code and serial only — the till
+    #: still knows what the voucher is worth. On by default, and every batch before it.
+    show_items = Column(Boolean, nullable=False, default=True, server_default="true")
     #: `qr` (2D, any camera / imager) or `code128` (a line barcode, for 1D laser scanners).
     barcode_type = Column(String(16), nullable=False, default="qr", server_default="qr")
     #: Who ordered the run ("קייטרינג אלון") and their order number — cover sheets, manifest.

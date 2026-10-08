@@ -277,6 +277,8 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   const [groupMode, setGroupMode] = useState<GroupMode>('none');
   const [groupCustom, setGroupCustom] = useState('');
   const [showCode, setShowCode] = useState(false);
+  // "הצגת הפריטים על השובר": on by default; off prints the voucher without its goods / benefit.
+  const [showItems, setShowItems] = useState(true);
   const [barcodeType, setBarcodeType] = useState<PrepaidBarcodeType>('qr');
   const [customerName, setCustomerName] = useState('');
   const [orderRef, setOrderRef] = useState('');
@@ -333,6 +335,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
     setGroupMode('none');
     setGroupCustom('');
     setShowCode(false);
+    setShowItems(true);
     setBarcodeType('qr');
     setCustomerName('');
     setOrderRef('');
@@ -367,6 +370,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
         count: n,
         groupSize,
         showCode,
+        showItems,
         barcodeType,
         customerName: customerName.trim() || null,
         orderRef: orderRef.trim() || null,
@@ -531,6 +535,14 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
             ) : null}
           </div>
 
+          <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">{t('showItems')}</p>
+              <p className="text-xs text-muted-foreground">{showItems ? t('showItemsOn') : t('showItemsOff')}</p>
+            </div>
+            <Switch checked={showItems} onCheckedChange={(v) => setShowItems(!!v)} aria-label={t('showItems')} />
+          </div>
+
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
               <div className="min-w-0">
@@ -568,7 +580,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
             <Label htmlFor="pv-text">{t('freeText')}</Label>
             <textarea
               id="pv-text"
-              rows={2}
+              rows={3}
               value={freeText}
               maxLength={1000}
               onChange={(e) => setFreeText(e.target.value)}
@@ -866,10 +878,21 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
     void qc.invalidateQueries({ queryKey: ['prepaid-voucher-events', batch.id] });
   };
 
-  // Print settings: only what the next print looks like changes (the code under the barcode, the barcode).
+  // Print settings: only what the next print looks like changes (the code under the barcode,
+  // the goods on the voucher, the barcode).
   const saveSettings = useMutation({
-    mutationFn: (body: { showCode?: boolean; barcodeType?: PrepaidBarcodeType }) => updatePrepaidBatch(batch.id, body),
+    mutationFn: (body: { showCode?: boolean; showItems?: boolean; barcodeType?: PrepaidBarcodeType }) =>
+      updatePrepaidBatch(batch.id, body),
     onSuccess: () => { toast.success(t('production.settingsSaved')); refresh(); },
+    onError: (err) => toast.error(errorText(err)),
+  });
+  // The free text ("טקסט חופשי (מודפס)") after creation: what the next print says.
+  const [freeText, setFreeText] = useState(batch.freeText ?? '');
+  useEffect(() => setFreeText(batch.freeText ?? ''), [batch.freeText]);
+  const freeTextChanged = freeText.trim() !== (batch.freeText ?? '').trim();
+  const saveFreeText = useMutation({
+    mutationFn: () => updatePrepaidBatch(batch.id, { freeText: freeText.trim() || null }),
+    onSuccess: () => { toast.success(t('production.freeTextSaved')); refresh(); },
     onError: (err) => toast.error(errorText(err)),
   });
   const assignSize = groupSizeOf(assignMode, assignCustom);
@@ -1048,10 +1071,42 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
             </div>
             <BarcodeTypePicker value={batch.barcodeType ?? 'qr'} disabled={saveSettings.isPending || cancelled}
               onChange={(v) => saveSettings.mutate({ barcodeType: v })} />
+            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{t('create.showItems')}</p>
+                <p className="text-xs text-muted-foreground">
+                  {batch.showItems === false ? t('create.showItemsOff') : t('create.showItemsOn')}
+                </p>
+              </div>
+              <Switch checked={batch.showItems !== false} disabled={saveSettings.isPending || cancelled}
+                onCheckedChange={(v) => saveSettings.mutate({ showItems: !!v })} aria-label={t('create.showItems')} />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="pv-free-text-edit">{t('create.freeText')}</Label>
+            <textarea
+              id="pv-free-text-edit"
+              rows={3}
+              value={freeText}
+              maxLength={1000}
+              disabled={cancelled}
+              onChange={(e) => setFreeText(e.target.value)}
+              placeholder={t('create.freeTextPlaceholder')}
+              className="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50 dark:bg-input/30"
+            />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-muted-foreground">{t('production.freeTextHint')}</p>
+              <Button size="sm" variant="outline" disabled={!freeTextChanged || saveFreeText.isPending || cancelled}
+                onClick={() => saveFreeText.mutate()}>
+                {saveFreeText.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {t('production.freeTextSave')}
+              </Button>
+            </div>
           </div>
           {narrowLine ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('production.code128Narrow')}</p> : null}
           <div className="overflow-x-auto py-1">
-            <VoucherPreview batch={batch} voucher={sample} layout={layout} labels={labels} />
+            {/* The free text as being typed: the preview shows what saving it will print. */}
+            <VoucherPreview batch={{ ...batch, freeText: freeText.trim() || null }} voucher={sample} layout={layout} labels={labels} />
           </div>
           <p className="text-xs text-muted-foreground">{t('printHint')}</p>
           <div className="flex flex-wrap gap-2">
