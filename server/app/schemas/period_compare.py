@@ -104,6 +104,9 @@ class PeriodCompareResponse(_Camel):
     window: ReportWindowOut
     #: Null with no comparison.
     compare_window: Optional[ReportWindowOut] = None
+    #: While the current period is still running: the instant the compared period's figures
+    #: stop (like for like — its start plus the time the current one has run). Its curve is whole.
+    compare_cut_at: Optional[datetime] = None
     #: "hour" or "day".
     granularity: str
     #: "clock" (hour of day / n-th calendar day) or "elapsed" (since each period began —

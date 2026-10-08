@@ -343,6 +343,31 @@ def _enrich_machine_status(
     return result
 
 
+#: The ₪ a till's list carries (its card legs not yet transmitted). `/machines` is a look-up every
+#: signed-in user reads (the board's tills for a user without "דוחות"); the money is not.
+MONEY_FIELDS = ("pendingTransmissionAmount", "untransmittedCardAmount")
+#: The sections that read a till's money: the reports, the Zs, the devices.
+MONEY_SECTIONS = ("reports", "z", "devices")
+
+
+def _may_read_till_money(db: Session, user: User) -> bool:
+    from app.services import dashboard_access
+
+    access = dashboard_access.effective_access(db, user)
+    return any(access.allows(section, "view") for section in MONEY_SECTIONS)
+
+
+def strip_money(rows: List[Dict[str, Any]], db: Session, user: User) -> List[Dict[str, Any]]:
+    """The till rows without their ₪ for a user who holds none of `MONEY_SECTIONS`."""
+    if _may_read_till_money(db, user):
+        return rows
+    for row in rows:
+        for key in MONEY_FIELDS:
+            if key in row:
+                row[key] = None
+    return rows
+
+
 def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict[str, Any]]:
     if not machines:
         return []
@@ -439,7 +464,7 @@ def list_machines(
     query = areas.filter_on_column(query, POSMachine.area_id, area_filter)
 
     machines = query.offset(skip).limit(limit).all()
-    return _enrich_machines_batch(machines, db)
+    return strip_money(_enrich_machines_batch(machines, db), db, current_user)
 
 
 @router.get("/unassigned", response_model=List[POSMachineResponse])
@@ -888,7 +913,7 @@ def get_machine(
     elif not _check_machine_list_access(current_user, machine, db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    return _enrich_machine_status(machine, db)
+    return strip_money([_enrich_machine_status(machine, db)], db, current_user)[0]
 
 
 @router.put("/{machine_id}", response_model=POSMachineResponse)

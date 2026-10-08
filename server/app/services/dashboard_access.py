@@ -540,6 +540,8 @@ def builtin_templates_out() -> List[dict]:
             "fullAccess": spec["fullAccess"],
         }
         for key, spec in DS.BUILTIN_TEMPLATES.items()
+        # Not offered yet ("מנהל אזור" until dashboard users can be scoped to a point of sale).
+        if not spec.get("hidden")
     ]
 
 

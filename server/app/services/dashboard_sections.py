@@ -178,12 +178,16 @@ BRANCH_MANAGER_SECTIONS: Dict[str, str] = {
     "item_blocks": EDIT,
     "device_control": EDIT,
     "till_messages": EDIT,
-    "kiosks": EDIT,
+    # View only: kiosk edit opens its Z, closing its shift and converting a till to a kiosk.
+    # Pausing a kiosk and its messages come through `device_control`.
+    "kiosks": VIEW,
     "stock": EDIT,
 }
-#: "מנהל אזור" — the same, for a user whose org scope is an area (a shop's points of sale).
+#: "מנהל אזור" — the same, meant for a user scoped to a point of sale. Dashboard users cannot be
+#: scoped to one yet (Saturday): until then the label says so and the template is `hidden` — not
+#: offered where admins assign templates.
 AREA_MANAGER_TEMPLATE = "area_manager"
-AREA_MANAGER_LABEL = "מנהל אזור"
+AREA_MANAGER_LABEL = "מנהל אזור (בקרוב: הגבלה לנקודת מכירה)"
 AREA_MANAGER_SECTIONS: Dict[str, str] = dict(BRANCH_MANAGER_SECTIONS)
 #: The templates of a manager who runs a place from the cockpit: "תצוגת מנהל פשוטה" by default.
 MANAGER_TEMPLATES = (BRANCH_MANAGER_TEMPLATE, AREA_MANAGER_TEMPLATE)
@@ -192,7 +196,9 @@ BUILTIN_TEMPLATES = {
     ORG_MANAGER_TEMPLATE: {"label": ORG_MANAGER_LABEL, "sections": ORG_MANAGER_SECTIONS, "fullAccess": False},
     FULL_TEMPLATE: {"label": FULL_LABEL, "sections": {}, "fullAccess": True},
     BRANCH_MANAGER_TEMPLATE: {"label": BRANCH_MANAGER_LABEL, "sections": BRANCH_MANAGER_SECTIONS, "fullAccess": False},
-    AREA_MANAGER_TEMPLATE: {"label": AREA_MANAGER_LABEL, "sections": AREA_MANAGER_SECTIONS, "fullAccess": False},
+    AREA_MANAGER_TEMPLATE: {
+        "label": AREA_MANAGER_LABEL, "sections": AREA_MANAGER_SECTIONS, "fullAccess": False, "hidden": True,
+    },
 }
 
 
@@ -293,7 +299,7 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     ("POST", "/accounting/preview", S("accounting", level=VIEW)),
     (_ALL, "/accounting/*", S("accounting")),
     # ── Till app versions (the rest is the super admin's, by its dependency) ──
-    (_GET, "/app-releases/rollout", S("devices", "reports", level=VIEW)),
+    (_GET, "/app-releases/rollout", S("devices", "reports", "cockpit", level=VIEW)),
     (_GET, "/app-releases/windows/*", S("kiosks", "devices", level=VIEW)),
     # ── Points of sale (areas) ──
     (_ALL, "/areas/{}/settings", S("till_settings")),
@@ -335,15 +341,17 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/remote-credits*", S("reports", "z")),
     # "זיכוי באשראי מהענן (Z-Credit)": the same people as a remote credit.
     (_ALL, "/cloud-card-refunds*", S("reports", "z")),
-    (_GET, "/failed-payments", S("reports", "z", level=VIEW)),
+    (_GET, "/failed-payments", S("reports", "z", "cockpit", level=VIEW)),
     # "תשלום לא מוכרע": reading the commands is the list's; checking on the terminal and the cloud's
     # decision are edits of "דוחות" (the transactions page and its "עסקאות שלא הושלמו").
-    (_GET, "/failed-payments/*", S("reports", "z", level=VIEW)),
+    (_GET, "/failed-payments/*", S("reports", "z", "cockpit", level=VIEW)),
     (_ALL, "/failed-payments/*", S("reports")),
     # ── Customers, club, messages ──
     (_ALL, "/club*", S("customers")),
     (_ALL, "/customers*", S("customers")),
     (_ALL, "/notifications*", S("notifications")),
+    # The cockpit's "הודעה לקופות" is a quick action: a manager sends one without the section.
+    ("POST", "/till-messages", S("till_messages", "quick_actions")),
     (_ALL, "/till-messages*", S("till_messages")),
     # ── Companies (the look-ups are above) ──
     (_GET, "/companies/parent-options", S("organization")),
@@ -366,14 +374,24 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/exceptions*", S("reports")),
     # "יומן חריגות": a report (marking "טופל" is a report action, like reviewing exceptions);
     # its SMS alert rules hold staff phone numbers and send messages — their own section.
+    (_GET, "/exception-log*", S("reports", "exception_alerts", "alerts", level=VIEW)),
     (_ALL, "/exception-log*", S("reports", "exception_alerts")),
     (_ALL, "/exception-alerts/*", S("exception_alerts")),
     (_GET, "/insights/kiosks", S("reports", "kiosks", level=VIEW)),
     ("PUT", "/insights/product-costs/{}", S("reports", "products", level=EDIT)),
     (_GET, "/insights*", S("reports")),
+    # "מצב אירוע חי" reads the events (making and confirming one stays a report action).
+    (_GET, "/report-events*", S("reports", "live_event", level=VIEW)),
     (_ALL, "/report-events*", S("reports")),
     # The control board's "שוברים" card: the redemptions in scope — a report, and the vouchers' own.
-    (_GET, "/reports/prepaid-vouchers", S("reports", "prepaid_vouchers", level=VIEW)),
+    (_GET, "/reports/prepaid-vouchers", S("reports", "prepaid_vouchers", "cockpit", level=VIEW)),
+    # What the cockpit ("הניהול שלי") reads: the board, its comparisons, events and vouchers.
+    (_GET, "/reports/overview", S("reports", "cockpit", level=VIEW)),
+    (_GET, "/reports/hourly", S("reports", "cockpit", level=VIEW)),
+    (_GET, "/reports/live-items", S("reports", "cockpit", level=VIEW)),
+    (_GET, "/reports/compare", S("reports", "cockpit", level=VIEW)),
+    (_GET, "/reports/side-by-side", S("reports", "cockpit", level=VIEW)),
+    (_GET, "/reports/event-options", S("reports", "cockpit", "live_event", level=VIEW)),
     (_GET, "/reports/discounts", S("reports", "promotions")),
     (_GET, "/reports/promotions", S("reports", "promotions")),
     (_GET, "/reports/upsells", S("reports", "products")),
@@ -417,6 +435,9 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/machines/{}/untransmitted", S("z", "reports", level=VIEW)),
     # "תצורת עבודה למכשיר", and the add-device dialog's step for a device still to pair.
     (_ALL, "/machines/{}/work-config", S("devices")),
+    # "שליטה מרחוק": restart a till, make it sync now — from the cockpit, without the device admin.
+    (_ALL, "/machines/{}/reboot", S("devices", "device_control")),
+    ("POST", "/machines/{}/sync", S("devices", "device_control")),
     ("POST", "/machines/{}/transmit", S("z")),
     (_ALL, "/machines/*", S("devices")),
     # ── A shop's own sub-resources (the shop itself is a look-up, above) ──

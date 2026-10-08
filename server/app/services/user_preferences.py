@@ -9,9 +9,9 @@ computer too — never only in one browser's storage.
   falls back to the board for a page the user may not open — the board itself is open to
   everyone signed in and shows what they may see.
 * `simpleMode` — "תצוגת מנהל פשוטה": the menu collapsed to the manager's own (the cockpit, a
-  short list of reports, the settings they may change). Unset, it is on for a manager who runs
-  a place — a shop manager, or a user given "מנהל סניף / אירוע" or "מנהל אזור" — and off for
-  everyone else (owners, admins); `simpleModeDefault` says which.
+  short list of reports, the settings they may change). Unset, it is on only for a user given
+  "מנהל סניף / אירוע" or "מנהל אזור" — never by role alone (a shop manager keeps the full menu
+  unless they are on one of those) — and off for everyone else; `simpleModeDefault` says which.
 
 Reading is forgiving (an unknown key or value reads as the default, never a 500); writing
 is strict (an unknown value is a 422), so nothing but known values is ever stored.
@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models.user import User, UserRole
+from app.models.user import User
 
 HOME_PAGE_KEY = "homePage"
 SIMPLE_MODE_KEY = "simpleMode"
@@ -39,14 +39,8 @@ HOME_PAGES = (
     "machines",
     "products",
 )
-#: Roles that run one place: the simple manager view by default.
-SIMPLE_MODE_ROLES = (UserRole.SHOP_MANAGER,)
-
-
 def simple_mode_default(db: Optional[Session], user: User) -> bool:
-    """On for a shop manager, or for a user on a manager template ("מנהל סניף / אירוע", "מנהל אזור")."""
-    if getattr(user, "role", None) in SIMPLE_MODE_ROLES:
-        return True
+    """On only for a user on a manager template ("מנהל סניף / אירוע", "מנהל אזור")."""
     if db is None or not callable(getattr(db, "get", None)):
         return False
     from app.models.dashboard_access import DashboardAccessProfile

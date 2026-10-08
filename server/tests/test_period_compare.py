@@ -71,7 +71,7 @@ def compare(w, user=None, *, frm=TODAY, to=TODAY, cmp_from=None, cmp_to=None, **
 def side(w, kind, ids, user=None, *, frm=TODAY, to=TODAY, **extra):
     args = dict(
         kind=kind, ids=[str(i) for i in ids], from_date=frm, to_date=to, granularity=None, tz=TZ, company_id=None,
-        event_id=None,
+        event_id=None, shop_id=None, area_id=None, machine_id=None,
     )
     args.update(extra)
     return reports_router.get_side_by_side_report(**args, **_ctx(w, user))
@@ -340,9 +340,9 @@ class TestHomePagePreference:
     def test_the_default_is_the_board_and_me_says_so(self, w):
         assert UP.read_preferences(w.admin, w.db) == {"homePage": "board", "simpleMode": False, "simpleModeDefault": False}
         me = users_router.get_current_user_info(current_user=w.manager, db=w.db)
-        # A shop manager runs one place: the simple manager view by default.
+        # The short menu is the manager templates' default, never a role's.
         assert me.model_dump(by_alias=True)["preferences"] == {
-            "homePage": "board", "simpleMode": True, "simpleModeDefault": True,
+            "homePage": "board", "simpleMode": False, "simpleModeDefault": False,
         }
 
     def test_set_read_back_and_reset(self, w):
@@ -367,7 +367,7 @@ class TestHomePagePreference:
             UserPreferencesUpdate.model_validate({"homePage": "board", "theme": "dark"})
         w.manager.preferences = {"homePage": "gone", "simpleMode": "yes"}
         assert UP.read_preferences(w.manager)["homePage"] == "board"
-        assert UP.read_preferences(w.manager)["simpleMode"] is True  # the role's default
+        assert UP.read_preferences(w.manager)["simpleMode"] is False  # the default, not the bad value
 
     def test_the_preference_is_the_callers_own_and_the_comparisons_are_reports(self):
         from app.services.dashboard_sections import rule_for
@@ -375,7 +375,8 @@ class TestHomePagePreference:
         assert rule_for("PUT", "/users/me/preferences").kind == "self"
         assert rule_for("GET", "/users/me/preferences").kind == "self"
         for path in ("/reports/compare", "/reports/side-by-side"):
-            assert rule_for("GET", path).describe("GET") == "reports:view"
+            # A report — and what the cockpit ("הניהול שלי") reads.
+            assert rule_for("GET", path).describe("GET") == "reports|cockpit:view"
 
     def test_the_migration_is_on_the_single_head(self):
         import pathlib
@@ -387,8 +388,9 @@ class TestHomePagePreference:
         config = Config(str(root / "alembic.ini"))
         config.set_main_option("script_location", str(root / "alembic"))
         script = ScriptDirectory.from_config(config)
-        assert script.get_heads() == ["6d818753b5ec"]
+        assert script.get_heads() == ["3d29a3cb3cca"]
         assert script.get_revision("6d818753b5ec").down_revision == "6b1e9d4f2a87"
+        assert script.get_revision("3d29a3cb3cca").down_revision == "6d818753b5ec"
 
 
 # ── Events ("אירוע") ─────────────────────────────────────────────────────────
@@ -451,7 +453,7 @@ class TestEvents:
 
     def test_the_event_list_is_the_callers_shops(self, w, events):
         def options(user=None, **kw):
-            args = dict(q=None, shop_id=None)
+            args = dict(q=None, shop_id=None, ids=None)
             args.update(kw)
             return [e.name for e in reports_router.get_event_options(**args, **_ctx(w, user)).events]
 
@@ -499,3 +501,131 @@ def test_the_dashboard_offers_the_same_opening_pages():
     block = block[: block.index("];")]
     assert tuple(re.findall(r"id: '([a-z_]+)'", block)) == UP.HOME_PAGES
     assert UP.DEFAULT_HOME_PAGE == "board"
+
+
+# ── Review fixes (09.10.2026) ────────────────────────────────────────────────
+
+
+class TestLikeForLike:
+    """A period still running is weighed against the compared one up to the same point."""
+
+    def _windows(self, w, a, b):
+        wa = resolve_report_window(w.db, w.tenant.id, from_date=a[0], to_date=a[1], tz=TZ)
+        wb = resolve_report_window(w.db, w.tenant.id, from_date=b[0], to_date=b[1], tz=TZ)
+        return wa, wb
+
+    def test_today_at_21_against_yesterday_until_21(self, w, trading):
+        # Yesterday 22:30 local: after the point today has reached (21:00) — not in the figures.
+        at(w.doc(w.tills[0], None, "500.00"), NOW - timedelta(days=1) + timedelta(hours=1, minutes=30))
+        w.db.commit()
+        wa, wb = self._windows(w, (TODAY, TODAY), (YESTERDAY, YESTERDAY))
+        out = PC.build_period_compare(w.db, w.admin, w.tenant.id, wa, wb, now=NOW)
+        assert out.previous.sales == 60.0 and out.deltas["sales"].abs == 133.33
+        # Cut at yesterday's start plus today's run: yesterday 21:00 local.
+        assert out.compare_cut_at == NOW - timedelta(days=1)
+        # The compared curve stays whole: its 22:00 hour is drawn.
+        assert out.series[22].previous == 500.0 and out.series[22].current is None
+
+    def test_a_week_still_running_against_the_same_point_of_the_week_before(self, w, trading):
+        late = at(w.doc(w.tills[1], None, "70.00"), NOW - timedelta(days=7) + timedelta(hours=2))
+        assert late is not None
+        w.db.commit()
+        wa, wb = self._windows(w, (TODAY - timedelta(days=6), TODAY), (TODAY - timedelta(days=13), TODAY - timedelta(days=7)))
+        out = PC.build_period_compare(w.db, w.admin, w.tenant.id, wa, wb, now=NOW)
+        # Last week's 21:00 sale is in, its 23:00 one is not: 200, not 270.
+        assert out.previous.sales == 200.0
+
+    def test_a_past_period_compares_whole(self, w, trading):
+        at(w.doc(w.tills[0], None, "500.00"), NOW - timedelta(days=1) + timedelta(hours=1, minutes=30))
+        w.db.commit()
+        # The route's "now" is the real clock, long after the world's today.
+        out = compare(w, cmp_from=YESTERDAY, cmp_to=YESTERDAY)
+        assert out.previous.sales == 560.0 and out.compare_cut_at is None
+
+    def test_pure_rule(self, w):
+        wa, wb = self._windows(w, (TODAY, TODAY), (YESTERDAY, YESTERDAY))
+        a, b = PC.Period(wa), PC.Period(wb)
+        assert PC.like_for_like(a, None, NOW) is None
+        cut = PC.like_for_like(a, b, NOW)
+        assert cut.cut == b.start + (NOW - a.start) and cut.end == cut.cut and cut.full_end == wb.end
+        # Not begun, or over: whole.
+        assert PC.like_for_like(a, b, a.start - timedelta(hours=1)) is b
+        assert PC.like_for_like(a, b, wa.end + timedelta(minutes=1)) is b
+
+
+class TestSideBySideScope:
+    def test_cashiers_compared_on_a_shop_count_that_shops_sales_only(self, w):
+        w.doc(w.tills[0], None, "30.00").cashier_id = "dana"
+        w.doc(w.other_till, None, "20.00").cashier_id = "dana"
+        w.doc(w.other_till, None, "5.00").cashier_id = "omer"
+        w.db.commit()
+        everywhere = side(w, "cashier", ["dana", "omer"])
+        assert [e.figures.sales for e in everywhere.entities] == [50.0, 5.0]
+        center = side(w, "cashier", ["dana", "omer"], shop_id=w.shop.id)
+        assert [e.figures.sales for e in center.entities] == [30.0, 0.0]
+        till = side(w, "cashier", ["dana", "omer"], machine_id=w.other_till.id)
+        assert [e.figures.sales for e in till.entities] == [20.0, 5.0]
+
+    def test_a_point_of_sale_narrows_the_tills(self, w):
+        t1, t2 = w.tills
+        bar = create(w, "Bar")
+        members(w, bar["id"], t1)
+        w.doc(t1, open_shift(w, t1, 1), "12.00")
+        w.doc(t2, open_shift(w, t2, 1), "8.00")
+        w.db.commit()
+        out = side(w, "machine", [t1.id, t2.id], area_id=str(bar["id"]))
+        assert [e.figures.sales for e in out.entities] == [12.0, 0.0]
+
+
+class TestTheOverviewsTotal:
+    def test_a_document_with_no_shop_is_in_neither(self, w, trading):
+        stray = w.doc(w.tills[0], None, "999.00")
+        stray.shop_id = None
+        w.db.commit()
+        assert compare(w).current.sales == overview(w).kpis.sales_today == 193.33
+
+
+class TestPostgresBuckets:
+    """The Postgres SQL itself (the tests run on SQLite): local hour, local date, hours since a start."""
+
+    class _PgDb:
+        class _Bind:
+            class dialect:  # noqa: N801
+                name = "postgresql"
+
+        def get_bind(self):
+            return self._Bind()
+
+    def _sql(self, expr):
+        from sqlalchemy import select
+        from sqlalchemy.dialects import postgresql
+
+        return str(select(expr).compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+
+    def test_clock_and_elapsed_buckets(self, w):
+        wa = resolve_report_window(w.db, w.tenant.id, from_date=TODAY, to_date=TODAY, tz=TZ)
+        period = PC.Period(wa)
+        hour = self._sql(PC._bucket_expr(self._PgDb(), period, "hour", "clock"))
+        assert "EXTRACT(hour FROM timezone('Asia/Jerusalem', transactions.created_at))" in hour
+        day = self._sql(PC._bucket_expr(self._PgDb(), period, "day", "clock"))
+        assert "CAST(timezone('Asia/Jerusalem', transactions.created_at) AS DATE)" in day
+        elapsed = self._sql(PC._bucket_expr(self._PgDb(), period, "hour", "elapsed"))
+        assert "floor((EXTRACT(epoch FROM transactions.created_at) -" in elapsed and "3600.0" in elapsed
+        # Back from the database: an hour, a date, an elapsed count.
+        assert PC._bucket_index(self._PgDb(), period, "hour", "clock", 21) == 21
+        assert PC._bucket_index(self._PgDb(), period, "day", "clock", TODAY) == 0
+        assert PC._bucket_index(self._PgDb(), period, "hour", "elapsed", 3) == 3
+
+
+class TestEventById:
+    def test_an_event_named_by_id_is_listed_even_past_the_newest(self, w, events, monkeypatch):
+        monkeypatch.setattr(PC, "EVENT_OPTIONS_MAX", 1)
+        names = lambda **kw: [e.name for e in reports_router.get_event_options(  # noqa: E731
+            **{"q": None, "shop_id": None, "ids": None, **kw}, **_ctx(w)
+        ).events]
+        assert len(names()) == 1
+        assert names(ids=[events["last_week"].id]) == ["Jazz night 1"]
+        # Never another organization's, nor a shop the caller cannot see.
+        assert reports_router.get_event_options(
+            q=None, shop_id=None, ids=[events["north"].id], **_ctx(w, w.manager)
+        ).events == []
