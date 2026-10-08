@@ -35,6 +35,8 @@ JWT_TTL_SECONDS = 12 * 60 * 60
 #: How long the push service keeps an undelivered message (a phone off for the night).
 DEFAULT_TTL = 6 * 60 * 60
 MAX_PAYLOAD = 3000
+#: One push service answering slowly must not hold the sender for long.
+SEND_TIMEOUT = 5
 
 
 def b64u(data: bytes) -> str:
@@ -220,9 +222,9 @@ def send(
         if client is None:
             import httpx
 
-            response = httpx.post(endpoint, content=content, headers=headers, timeout=10)
+            response = httpx.post(endpoint, content=content, headers=headers, timeout=SEND_TIMEOUT)
         else:
-            response = client.post(endpoint, content=content, headers=headers, timeout=10)
+            response = client.post(endpoint, content=content, headers=headers, timeout=SEND_TIMEOUT)
     except Exception as exc:  # noqa: BLE001 - see the docstring
         return SendResult(ok=False, status=None, error=type(exc).__name__)
     status = getattr(response, "status_code", None)

@@ -7,10 +7,13 @@ they settle. The hook for the vouchers' Production entity (P:\\specs\\production
 Until that lands, from what exists now:
 
 * **The batches** (`event_batches`): the ones the owner linked on the event's "עמדת מפיק"
-  (`report_events.producer_settings.batchIds`), plus — automatically — the batches of the
-  event's company whose `report_event_id` is the event (once the column exists) or whose
-  printed event name (`event_name`) is the event's name. A Production module adds its own with
-  `register_production_provider` (`(db, event) -> batch ids`).
+  (`report_events.producer_settings.batchIds`), plus — automatically — the batches whose
+  `report_event_id` is the event (once the column exists). A batch whose printed event name
+  (`event_name`) is the event's name is only *suggested* in the owner's tab (recurring events
+  share names: linking by name would show one production another's vouchers). A Production
+  module adds its own with `register_production_provider` (`(db, event) -> batch ids`).
+* **Which batches the owner may pick**: the event's company's batches valid at the event's
+  shop (`shop_ids` empty = every shop of the company).
 * **The price** (`production_price`): the price typed on the event for that batch
   (`productionPrices`), else the batch's own production price once the vouchers branch stores
   one (`production_price` ₪, or `production_price_agorot`), else none — the settlement then
@@ -68,23 +71,40 @@ def _uuids(values) -> List[uuid.UUID]:
     return out
 
 
-def company_batches(db: Session, event: ReportEvent) -> List[PrepaidVoucherBatch]:
-    """The batches the owner may link: the event's company's, newest first."""
+def _valid_at_shop(batch: PrepaidVoucherBatch, shop_id: Any) -> bool:
+    shops = batch.shop_ids if isinstance(batch.shop_ids, list) else None
+    return not shops or str(shop_id) in {str(s) for s in shops}
+
+
+def _company_query(db: Session, event: ReportEvent):
     q = db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.tenant_id == event.tenant_id)
     if event.company_id is not None:
         q = q.filter(PrepaidVoucherBatch.company_id == event.company_id)
-    return q.order_by(PrepaidVoucherBatch.created_at.desc()).limit(500).all()
+    return q
+
+
+def company_batches(db: Session, event: ReportEvent, *, limit: Optional[int] = 500) -> List[PrepaidVoucherBatch]:
+    """The batches the owner may link: the event's company's, valid at the event's shop, newest first."""
+    q = _company_query(db, event).order_by(PrepaidVoucherBatch.created_at.desc())
+    rows = q.limit(limit).all() if limit else q.all()
+    return [b for b in rows if _valid_at_shop(b, event.shop_id)]
 
 
 def auto_batch_ids(db: Session, event: ReportEvent) -> List[uuid.UUID]:
-    """Linked without the owner: `report_event_id` (when the column exists) or the same event name."""
-    q = db.query(PrepaidVoucherBatch.id).filter(PrepaidVoucherBatch.tenant_id == event.tenant_id)
-    if event.company_id is not None:
-        q = q.filter(PrepaidVoucherBatch.company_id == event.company_id)
-    by_name = func.lower(func.trim(PrepaidVoucherBatch.event_name)) == (event.name or "").strip().lower()
+    """Linked without the owner: the batches whose `report_event_id` is the event (once the column exists)."""
     column = getattr(PrepaidVoucherBatch, "report_event_id", None)
-    condition = by_name if column is None else (by_name | (column == event.id))
-    return [r[0] for r in q.filter(condition).all()]
+    if column is None:
+        return []
+    return [b.id for b in _company_query(db, event).filter(column == event.id).all() if _valid_at_shop(b, event.shop_id)]
+
+
+def suggested_batch_ids(db: Session, event: ReportEvent) -> List[uuid.UUID]:
+    """Suggested to the owner (never linked by itself): the same printed event name."""
+    name = (event.name or "").strip().lower()
+    if not name:
+        return []
+    rows = _company_query(db, event).filter(func.lower(func.trim(PrepaidVoucherBatch.event_name)) == name).all()
+    return [b.id for b in rows if _valid_at_shop(b, event.shop_id)]
 
 
 def event_batches(db: Session, event: ReportEvent) -> List[PrepaidVoucherBatch]:
@@ -96,12 +116,8 @@ def event_batches(db: Session, event: ReportEvent) -> List[PrepaidVoucherBatch]:
             logger.exception("production provider %r failed", provider)
     if not ids:
         return []
-    q = db.query(PrepaidVoucherBatch).filter(
-        PrepaidVoucherBatch.id.in_(list(ids)[:MAX_BATCHES]), PrepaidVoucherBatch.tenant_id == event.tenant_id,
-    )
-    if event.company_id is not None:
-        q = q.filter(PrepaidVoucherBatch.company_id == event.company_id)
-    return q.order_by(PrepaidVoucherBatch.created_at).all()
+    q = _company_query(db, event).filter(PrepaidVoucherBatch.id.in_(list(ids)[:MAX_BATCHES]))
+    return [b for b in q.order_by(PrepaidVoucherBatch.created_at).all() if _valid_at_shop(b, event.shop_id)]
 
 
 def _money(value: Any) -> Optional[Decimal]:
@@ -139,7 +155,7 @@ def clean_settings(event: ReportEvent, db: Session, body: Dict[str, Any]) -> Dic
     raw_ids = body.get("batchIds", current["batchIds"])
     if not isinstance(raw_ids, list):
         raise ValueError("batches_invalid")
-    allowed = {b.id for b in company_batches(db, event)}
+    allowed = {b.id for b in company_batches(db, event, limit=None)}
     ids = []
     for b in _uuids(raw_ids):
         if b not in allowed:

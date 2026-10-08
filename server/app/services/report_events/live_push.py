@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 TOKEN_TTL_MS = 60 * 60 * 1000
 #: A document that lands just after the end still moves the final figures.
 AFTER_END = timedelta(minutes=15)
+#: At most one tick per event this often (per API process): a busy event's tills sync all the
+#: time, and every tick makes every open screen refetch.
+TICK_EVERY = timedelta(seconds=5)
+_last_tick: Dict[str, datetime] = {}
 
 
 def channel_for(tenant_id: Any, event_id: Any) -> str:
@@ -93,7 +97,13 @@ def notify_machine_synced(tenant_id: Any, machine_id: Any, count: int = 0) -> in
     finally:
         db.close()
     told = 0
+    now = datetime.now(timezone.utc)
     for event_id in ids:
+        channel = channel_for(tenant_id, event_id)
+        last = _last_tick.get(channel)
+        if last is not None and now - last < TICK_EVERY:
+            continue
+        _last_tick[channel] = now
         try:
             client.channels.get(channel_for(tenant_id, event_id)).publish(
                 "tick", {"machineId": str(machine_id), "count": int(count or 0),

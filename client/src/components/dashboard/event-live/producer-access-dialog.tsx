@@ -54,7 +54,8 @@ function SettingsForm({ eventId, view }: { eventId: string; view: ProducerOwnerV
       <div className="space-y-1">
         <p className="font-semibold">{t('batches')}</p>
         <p className="text-xs text-muted-foreground">{t('batchesHint')}</p>
-        {view.batches.length === 0 ? <p className="text-sm text-muted-foreground">{t('noBatches')}</p> : null}
+        {view.canSeeBatches === false ? <p className="text-sm text-muted-foreground">{t('batchesNoAccess')}</p> : null}
+        {view.canSeeBatches !== false && view.batches.length === 0 ? <p className="text-sm text-muted-foreground">{t('noBatches')}</p> : null}
         <ul className="max-h-64 space-y-1 overflow-y-auto">
           {view.batches.map((b) => {
             const linked = b.auto || draft.batchIds.includes(b.id);
@@ -65,7 +66,7 @@ function SettingsForm({ eventId, view }: { eventId: string; view: ProducerOwnerV
                     type="checkbox"
                     className="size-4 accent-[#007AFF]"
                     checked={linked}
-                    disabled={b.auto}
+                    disabled={b.auto || view.canEditBatches === false}
                     onChange={() =>
                       setDraft((d) => ({
                         ...d,
@@ -76,7 +77,7 @@ function SettingsForm({ eventId, view }: { eventId: string; view: ProducerOwnerV
                   <span className="min-w-0">
                     <span className="block truncate font-medium">{b.name}</span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {[b.eventName, b.customerName, b.auto ? t('auto') : null].filter(Boolean).join(' · ')}
+                      {[b.eventName, b.customerName, b.auto ? t('auto') : b.suggested ? t('suggested') : null].filter(Boolean).join(' · ')}
                     </span>
                   </span>
                 </label>
@@ -85,6 +86,7 @@ function SettingsForm({ eventId, view }: { eventId: string; view: ProducerOwnerV
                     {t('price')}
                     <Input
                       inputMode="decimal"
+                      disabled={view.canEditBatches === false}
                       className="h-8 w-24"
                       value={String(draft.productionPrices[b.id] ?? (b.productionPrice ?? ''))}
                       aria-invalid={!validPrice(draft.productionPrices[b.id])}

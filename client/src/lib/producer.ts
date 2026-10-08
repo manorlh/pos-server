@@ -97,6 +97,8 @@ export interface ProducerBatchOption {
   customerName: string | null;
   linked: boolean;
   auto: boolean;
+  /** Same printed event name: offered, never linked by itself. */
+  suggested?: boolean;
   productionPrice: number | null;
   createdAt: string | null;
 }
@@ -105,6 +107,9 @@ export interface ProducerOwnerView {
   grants: ProducerGrant[];
   settings: ProducerSettings;
   batches: ProducerBatchOption[];
+  /** The batches (names, customers, prices) are the prepaid vouchers' section. */
+  canSeeBatches?: boolean;
+  canEditBatches?: boolean;
   inviteUrl?: string;
 }
 

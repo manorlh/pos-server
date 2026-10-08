@@ -103,6 +103,7 @@ def add_device(
             db, current_user, active_tenant_id,
             endpoint=str(body.get("endpoint") or ""), p256dh=str(keys.get("p256dh") or ""), auth=str(keys.get("auth") or ""),
             user_agent=request.headers.get("user-agent"), label=body.get("label"),
+            initial={"shopIds": body.get("shopIds"), "eventIds": body.get("eventIds")},
         )
     except RuleError as exc:
         raise _rule_error(exc) from None
@@ -247,8 +248,7 @@ def list_alerts(
     q = scoped(db, current_user, active_tenant_id)
     if q is None:
         return {"alerts": [], "open": 0, "canAcknowledge": False, "canOpenLog": False}
-    kinds = sorted({k for c in P.CATEGORIES for k in c.kinds})
-    q = q.filter(ExceptionLogEntry.kind.in_(kinds), ExceptionLogEntry.occurred_at >= _now() - timedelta(days=days))
+    q = q.filter(ExceptionLogEntry.occurred_at >= _now() - timedelta(days=days))
     if company_id is not None:
         q = q.filter(ExceptionLogEntry.company_id.in_(descendant_company_ids(db, company_id) or [company_id]))
     if shop_id is not None:
@@ -269,8 +269,22 @@ def list_alerts(
         )
     if open_only:
         q = q.filter(ExceptionLogEntry.acknowledged_at.is_(None))
-    rows = [r for r in q.order_by(ExceptionLogEntry.occurred_at.desc()).limit(limit * 2).all() if P.category_of(r)]
-    rows = rows[:limit]
+    # Every push kind but a failed payment is wholly a push alert; a failed payment only when the
+    # terminal failed (its details say) — those are the medium / high ones, read and judged apart
+    # so a run of declined cards never pushes real alerts out of the page.
+    kinds = sorted({k for c in P.CATEGORIES for k in c.kinds} - {"failed_payment"})
+    main = q.filter(ExceptionLogEntry.kind.in_(kinds))
+    payments = q.filter(ExceptionLogEntry.kind == "failed_payment", ExceptionLogEntry.severity.in_(("medium", "high")))
+    newest = ExceptionLogEntry.occurred_at.desc()
+    candidates = main.order_by(newest).limit(limit).all() + [
+        r for r in payments.order_by(newest).limit(max(limit, 200)).all() if P.category_of(r)
+    ]
+    candidates.sort(key=lambda r: L.aware(r.occurred_at), reverse=True)
+    rows = candidates[:limit]
+    open_payments = sum(
+        1 for r in payments.filter(ExceptionLogEntry.acknowledged_at.is_(None)).limit(500).all() if P.category_of(r)
+    )
+    open_count = main.filter(ExceptionLogEntry.acknowledged_at.is_(None)).count() + open_payments
     labels = _labels(db, rows)
     out = []
     for r in rows:
@@ -280,7 +294,7 @@ def list_alerts(
         out.append(item)
     return {
         "alerts": out,
-        "open": sum(1 for r in rows if r.acknowledged_at is None),
+        "open": open_count,
         "canAcknowledge": current_user.role not in NO_ACK_ROLES,
         # An alert's own page is the exceptions log's (`/x/<code>`): only with that section.
         "canOpenLog": P.may_open_log(db, current_user),

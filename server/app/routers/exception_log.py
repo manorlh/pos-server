@@ -179,7 +179,8 @@ def _labels(db: Session, rows: List[ExceptionLogEntry]) -> Dict[str, Dict[Any, A
     )
     dispatches = (
         db.query(ExceptionAlertDispatch)
-        .filter(ExceptionAlertDispatch.entry_id.in_(entry_ids))
+        # The SMS attempts only: a phone (push) attempt is its user's own (GET /push/history).
+        .filter(ExceptionAlertDispatch.entry_id.in_(entry_ids), ExceptionAlertDispatch.channel == "sms")
         .order_by(ExceptionAlertDispatch.created_at)
         .all() if entry_ids else []
     )

@@ -55,7 +55,7 @@ from app.models.exception_alerts import (
 )
 from app.services.exception_alerts import messages as M
 from app.services.exception_alerts import sms as SMS
-from app.services.exception_alerts.catalog import kind_spec, label_of, severity_rank
+from app.services.exception_alerts.catalog import OPT_IN_KINDS, kind_spec, label_of, severity_rank
 from app.services.exception_alerts.log import aware, utcnow
 from app.services.exception_alerts.rules import minutes_of
 from app.services.notifications.phone import mask_phone, phone_hash
@@ -112,6 +112,9 @@ def entry_matches(rule: ExceptionAlertRule, entry: ExceptionLogEntry) -> bool:
     """Kinds / severity and the amount and percent thresholds. Pure."""
     kinds = list(rule.kinds or [])
     if kinds and entry.kind not in kinds:
+        return False
+    if not kinds and entry.kind in OPT_IN_KINDS:
+        # "Every kind" rules were written before these existed: they never start texting them.
         return False
     if rule.min_severity and severity_rank(entry.severity) < severity_rank(rule.min_severity):
         return False
@@ -390,10 +393,14 @@ def process_entry(
     # "התראות לטלפון": the users' push rules, same holds and dedupe (push.py). Never costs the SMS.
     from app.services.exception_alerts import push as PUSH
 
+    queued = len(db.info.get(PUSH.PENDING_JOBS, []))
     try:
         with db.begin_nested():
             out.extend(PUSH.process_entry(db, entry, now=now, tzinfo=tzinfo))
     except Exception:  # noqa: BLE001 - the entry and its SMS stand; the push is logged
+        # Nothing of the rolled-back savepoint is sent.
+        if PUSH.PENDING_JOBS in db.info:
+            del db.info[PUSH.PENDING_JOBS][queued:]
         logger.exception("push alerts: entry %s failed", entry.id)
     return out
 

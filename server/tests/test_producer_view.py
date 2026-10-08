@@ -326,17 +326,21 @@ def test_the_sales_totals_hourly_and_items(w):
 
 
 def test_the_vouchers_of_their_production_only(w):
-    linked = _batch(w, "צוות במה", event_name="Main stage")      # auto: the same event name
+    linked = _batch(w, "צוות במה")                                 # linked by the owner
     chosen = _batch(w, "VIP")                                      # linked by the owner
+    named = _batch(w, "שנה שעברה", event_name="Main stage")        # same name: only suggested
     stranger = _batch(w, "שובר אחר")                               # not theirs
-    w.event.producer_settings = {"batchIds": [str(chosen.id)], "settlementEnabled": True,
+    w.event.producer_settings = {"batchIds": [str(linked.id), str(chosen.id)], "settlementEnabled": True,
                                  "productionPrices": {str(linked.id): 28}}
     w.db.flush()
     v = _redeem(w, linked, w.t1, 20, qty=2)
     _redeem(w, linked, w.t1, 40, voucher=v)                        # the same voucher again
     _redeem(w, linked, w.t1, 50, reversed_=True)                   # undone: nowhere
     _redeem(w, linked, w.beach_till, 30)                           # another shop
-    _redeem(w, chosen, w.t2, 35)                                   # the shop's other till still counts
+    _redeem(w, linked, w.t1, -60)                                  # before the event
+    _redeem(w, chosen, w.t2, 35)                                   # the sibling event's till: not this event
+    _redeem(w, chosen, w.t1, 45)
+    _redeem(w, named, w.t1, 25)
     _redeem(w, stranger, w.t1, 25)
     w.db.commit()
     body = _get(w, w.producer, w.event.id, "/vouchers").json()
@@ -344,6 +348,9 @@ def test_the_vouchers_of_their_production_only(w):
     assert set(rows) == {"צוות במה", "VIP"}
     assert (rows["צוות במה"]["redemptions"], rows["צוות במה"]["redeemedVouchers"], rows["צוות במה"]["units"]) == (2, 1, 3.0)
     assert rows["VIP"]["redemptions"] == 1 and body["totals"]["redemptions"] == 3
+    owner = PR.owner_view(w.db, w.event, w.manager)
+    suggested = {b["name"]: b for b in owner["batches"]}
+    assert suggested["שנה שעברה"]["suggested"] is True and suggested["שנה שעברה"]["linked"] is False
 
     settle = _get(w, w.producer, w.event.id, "/settlement").json()
     by = {r["name"]: r for r in settle["rows"]}
@@ -397,6 +404,25 @@ def test_the_owner_routes(w):
     w.db.commit()
     assert w.client.get(f"/api/v1/report-events/{w.event.id}/producers", headers=_headers(cashier, w.tenant)).status_code == 403
     assert w.client.get(f"/api/v1/report-events/{w.event.id}/producers", headers=_headers(w.producer, w.tenant)).status_code == 403
+
+
+def test_batches_are_the_prepaid_vouchers_section(w):
+    restricted = _user(w.db, "restricted2", UserRole.COMPANY_MANAGER, w.tenant, company=w.company)
+    w.db.add(DashboardAccessProfile(user_id=restricted.id, full_access=False, sections={"reports": "edit"}))
+    mine = _batch(w, "Stage crew")
+    w.event.producer_settings = {"batchIds": [str(mine.id)]}
+    w.db.commit()
+    headers = _headers(restricted, w.tenant)
+    view = w.client.get(f"/api/v1/report-events/{w.event.id}/producers", headers=headers).json()
+    assert view["batches"] == [] and view["canSeeBatches"] is False and view["settings"]["batchIds"] == []
+    other = _batch(w, "Other crew")
+    w.db.commit()
+    saved = w.client.put(f"/api/v1/report-events/{w.event.id}/producer-settings", headers=headers,
+                         json={"settlementEnabled": True, "batchIds": [str(other.id)]})
+    assert saved.status_code == 200
+    w.db.refresh(w.event)
+    assert w.event.producer_settings["batchIds"] == [str(mine.id)]   # the links were not this user's to change
+    assert w.event.producer_settings["settlementEnabled"] is True
 
 
 def test_production_batches_and_prices():

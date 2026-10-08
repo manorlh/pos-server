@@ -12,7 +12,8 @@ the grant row; a producer left with no event is deactivated.
 
 * `summary` — the event's sales: totals, by the hour, the items (the event report's money);
 * `vouchers` — the prepaid vouchers of their production (production.py: the linked batches)
-  redeemed at the event's shop, reversed ones skipped — counts and units, never codes or staff;
+  redeemed on the event's tills during the event, reversed ones skipped — counts and units,
+  never codes or staff;
 * `settlement` — only when the owner switched it on for the event: per batch, the vouchers
   redeemed × the production price.
 
@@ -234,10 +235,36 @@ def grants_json(db: Session, event: ReportEvent) -> List[Dict[str, Any]]:
     ]
 
 
-def owner_view(db: Session, event: ReportEvent) -> Dict[str, Any]:
-    """The event's "עמדת מפיק" tab: who is invited, the settings, the batches that may be linked."""
+def may_see_batches(db: Session, user: Any) -> bool:
+    """The batches, their customers and production prices are the prepaid vouchers' section."""
+    from app.services import dashboard_access
+
+    return dashboard_access.effective_access(db, user).allows("prepaid_vouchers", "view")
+
+
+def may_edit_batches(db: Session, user: Any) -> bool:
+    from app.services import dashboard_access
+
+    return dashboard_access.effective_access(db, user).allows("prepaid_vouchers", "edit")
+
+
+def owner_view(db: Session, event: ReportEvent, user: Any = None) -> Dict[str, Any]:
+    """
+    The event's "עמדת מפיק" tab: who is invited, the settings, and — for someone with the prepaid
+    vouchers' section — the batches that may be linked (valid at the event's shop).
+    """
     settings = PROD.settings_of(event)
+    can_see = user is None or may_see_batches(db, user)
+    if not can_see:
+        return {
+            "grants": grants_json(db, event),
+            "settings": {**settings, "batchIds": [], "productionPrices": {}},
+            "batches": [],
+            "canSeeBatches": False,
+            "canEditBatches": False,
+        }
     auto = set(PROD.auto_batch_ids(db, event))
+    suggested = set(PROD.suggested_batch_ids(db, event))
     linked = {b.id for b in PROD.event_batches(db, event)}
     batches = []
     for b in PROD.company_batches(db, event):
@@ -249,10 +276,17 @@ def owner_view(db: Session, event: ReportEvent) -> Dict[str, Any]:
             "customerName": b.customer_name,
             "linked": b.id in linked,
             "auto": b.id in auto,
+            "suggested": b.id in suggested and b.id not in linked,
             "productionPrice": money(price) if price is not None else None,
             "createdAt": iso(b.created_at),
         })
-    return {"grants": grants_json(db, event), "settings": settings, "batches": batches}
+    return {
+        "grants": grants_json(db, event),
+        "settings": settings,
+        "batches": batches,
+        "canSeeBatches": True,
+        "canEditBatches": user is None or may_edit_batches(db, user),
+    }
 
 
 # ── What the producer sees ───────────────────────────────────────────────────
@@ -305,7 +339,8 @@ def summary(db: Session, event: ReportEvent, now: datetime) -> Dict[str, Any]:
     for point in LIVE.bucket_series(((d.at, d.net) for d in docs), start=starts, end=end if now > starts else starts, minutes=60):
         at = datetime.fromisoformat(point["at"])
         hourly.append({**point, "hour": at.astimezone(tz).strftime("%H:00"), "date": at.astimezone(tz).date().isoformat()})
-    items = LIVE.item_rows(db, docs, limit=ITEMS_MAX)
+    every_item = LIVE.item_rows(db, docs, limit=None)
+    items = every_item[:ITEMS_MAX]
     return {
         "event": event_card(db, event, now),
         "now": now.isoformat(),
@@ -316,7 +351,7 @@ def summary(db: Session, event: ReportEvent, now: datetime) -> Dict[str, Any]:
             "refunds": totals["refunds"],
             "refundsAmount": money(totals["refundsAmount"]),
             "avgTicket": money(totals["avgTicket"]) if totals["avgTicket"] is not None else None,
-            "itemsSold": round(sum(i["quantity"] for i in items), 3),
+            "itemsSold": round(sum(i["quantity"] for i in every_item), 3),
         },
         "hourly": hourly,
         "items": items,
@@ -324,14 +359,18 @@ def summary(db: Session, event: ReportEvent, now: datetime) -> Dict[str, Any]:
 
 
 def _redemptions(db: Session, event: ReportEvent, batch_ids: List[Any]):
-    if not batch_ids:
+    """The batches' redemptions on the event's tills, inside its window; a reversed one nowhere."""
+    machine_ids = [r.machine_id for r in event.machines or []]
+    if not batch_ids or not machine_ids:
         return []
     return (
         db.query(PrepaidVoucherRedemption)
         .filter(
             PrepaidVoucherRedemption.batch_id.in_(batch_ids),
             PrepaidVoucherRedemption.tenant_id == event.tenant_id,
-            PrepaidVoucherRedemption.shop_id == event.shop_id,
+            PrepaidVoucherRedemption.machine_id.in_(machine_ids),
+            PrepaidVoucherRedemption.redeemed_at >= utc(event.starts_at),
+            PrepaidVoucherRedemption.redeemed_at < utc(event.ends_at),
             PrepaidVoucherRedemption.reversed_at.is_(None),
         )
         .order_by(PrepaidVoucherRedemption.redeemed_at)

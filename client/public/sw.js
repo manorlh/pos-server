@@ -121,13 +121,19 @@ self.addEventListener('notificationclick', (event) => {
     // keep the alerts page
   }
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
-      for (const client of list) {
-        if (client.url.startsWith(self.location.origin) && 'focus' in client) {
-          return client.navigate(target.href).then((c) => (c || client).focus());
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (list) => {
+      // A dashboard window only (the browser kiosk and the KDS have workers of their own).
+      const client = list.find((c) => new URL(c.url).pathname.startsWith('/dashboard'));
+      if (client) {
+        try {
+          await client.focus();
+          if (client.url !== target.href) await client.navigate(target.href);
+          return;
+        } catch {
+          // Not ours to navigate: open a window instead.
         }
       }
-      return self.clients.openWindow(target.href);
+      await self.clients.openWindow(target.href);
     }),
   );
 });

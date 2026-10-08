@@ -85,8 +85,14 @@ async function serviceWorker(): Promise<ServiceWorkerRegistration> {
 
 export type SubscribeOutcome = 'subscribed' | 'denied' | 'not_configured';
 
-/** Ask for permission, subscribe with the server's VAPID key, and register the device. */
-export async function subscribeThisBrowser(publicKey: string | null): Promise<SubscribeOutcome> {
+/**
+ * Ask for permission, subscribe with the server's VAPID key, and register the device. `initial`
+ * narrows the preferences the first device creates (the shop / event it was subscribed from).
+ */
+export async function subscribeThisBrowser(
+  publicKey: string | null,
+  initial: { shopIds?: string[]; eventIds?: string[] } = {},
+): Promise<SubscribeOutcome> {
   if (!publicKey) return 'not_configured';
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') return 'denied';
@@ -107,7 +113,7 @@ export async function subscribeThisBrowser(publicKey: string | null): Promise<Su
     sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
   }
   const json = sub.toJSON();
-  await api.post('/push/devices', { endpoint: json.endpoint, keys: json.keys });
+  await api.post('/push/devices', { endpoint: json.endpoint, keys: json.keys, ...initial });
   return 'subscribed';
 }
 
@@ -125,4 +131,24 @@ export async function unsubscribeThisBrowser(): Promise<void> {
   if (!sub) return;
   await api.post('/push/devices/unsubscribe', { endpoint: sub.endpoint });
   await sub.unsubscribe();
+}
+
+/**
+ * On sign-out: this browser stops receiving the person's alerts (a shared phone must not keep
+ * showing them on its lock screen). Best effort and quick — never holds the sign-out up.
+ */
+export async function forgetThisBrowserOnSignOut(): Promise<void> {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+  await Promise.race([
+    unsubscribeThisBrowser().catch(() => {}),
+    new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+  ]);
+}
+
+/** SHA-256 hex of this browser's push endpoint (the server's `endpointHash`), or null. */
+export async function currentEndpointHash(): Promise<string | null> {
+  const endpoint = await currentEndpoint();
+  if (!endpoint || typeof crypto === 'undefined' || !crypto.subtle) return null;
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
 }

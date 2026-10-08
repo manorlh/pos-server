@@ -84,7 +84,11 @@ def get_event_live(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bucket must be 1 or 5")
     event = C.load_event(db, current_user, active_tenant_id, event_id)
     out = L.build_live(db, event, now=_now(), bucket=bucket)
-    out["canSetTarget"] = current_user.role in C.WRITE_ROLES
+    from app.services import dashboard_access
+
+    out["canSetTarget"] = current_user.role in C.WRITE_ROLES and dashboard_access.effective_access(
+        db, current_user
+    ).allows("live_event", "edit")
     return out
 
 

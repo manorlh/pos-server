@@ -115,12 +115,11 @@ def scan(db: Session, *, now: Optional[datetime] = None) -> int:
     now = _utc(now) or datetime.now(timezone.utc)
     changed = 0
     kiosks = db.query(KioskDevice.machine_id)
+    trading = db.query(Shift.machine_id).filter(Shift.status == ShiftStatus.OPEN, Shift.opened_at > now - SHIFT_MAX_AGE)
     candidates = (
         db.query(POSMachine)
-        .join(Shift, Shift.machine_id == POSMachine.id)
         .filter(
-            Shift.status == ShiftStatus.OPEN,
-            Shift.opened_at > now - SHIFT_MAX_AGE,
+            POSMachine.id.in_(trading),
             POSMachine.is_active.is_(True),
             POSMachine.is_fiscal.is_(True),
             POSMachine.last_heartbeat_at.isnot(None),
@@ -128,7 +127,6 @@ def scan(db: Session, *, now: Optional[datetime] = None) -> int:
             POSMachine.last_heartbeat_at > now - LOOKBACK,
             POSMachine.id.notin_(kiosks),
         )
-        .distinct()
         .all()
     )
     for machine in candidates:

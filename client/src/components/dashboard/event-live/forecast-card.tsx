@@ -121,7 +121,9 @@ export function ForecastCard({
                       ? t('band', { low: wholeShekels(shop.tomorrow.low), high: wholeShekels(shop.tomorrow.high) })
                       : null,
                     t(`confidence.${shop.tomorrow.confidence}`),
-                    shop.trendFactor && shop.trendFactor !== 1 ? t('trend', { pct: Math.round((shop.trendFactor - 1) * 100) }) : null,
+                    shop.trendFactor && Math.round((shop.trendFactor - 1) * 100) !== 0
+                      ? t('trend', { pct: `${shop.trendFactor > 1 ? '+' : ''}${Math.round((shop.trendFactor - 1) * 100)}%` })
+                      : null,
                   ]
                     .filter(Boolean)
                     .join(' · ')}

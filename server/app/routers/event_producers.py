@@ -3,7 +3,9 @@
 
 Dashboard (Clerk/user JWT + X-Tenant-Id). The event's managing roles over its shop, like
 editing the event (`crud.load_event(write=True)`: super admin, distributor, company manager,
-shop manager); reading the tab follows the same rule — it lists the producers' e-mails.
+shop manager); reading the tab follows the same rule — it lists the producers' e-mails. The
+voucher batches (names, customers, production prices) are shown and linked only with the prepaid
+vouchers' section (view / edit).
 
 GET    /report-events/{id}/producers               → invited producers, the settings, the batches
 POST   /report-events/{id}/producers               → invite {email, name?, sendInvite?}
@@ -44,7 +46,7 @@ def _invite_url() -> str:
 def get_event_producers(event_id: uuid.UUID, current_user: User = Depends(get_current_user),
                         active_tenant_id=Depends(get_active_tenant_id), db: Session = Depends(get_db)):
     event = C.load_event(db, current_user, active_tenant_id, event_id, write=True)
-    return {**PR.owner_view(db, event), "inviteUrl": _invite_url()}
+    return {**PR.owner_view(db, event, current_user), "inviteUrl": _invite_url()}
 
 
 @router.post("/{event_id}/producers", status_code=status.HTTP_201_CREATED)
@@ -71,7 +73,7 @@ def invite_event_producer(
         "created": created,
         "inviteUrl": _invite_url(),
         "invitation": invitation,
-        **PR.owner_view(db, event),
+        **PR.owner_view(db, event, current_user),
     }
 
 
@@ -96,10 +98,13 @@ def put_producer_settings(
     db: Session = Depends(get_db),
 ):
     event = C.load_event(db, current_user, active_tenant_id, event_id, write=True)
+    if not PR.may_edit_batches(db, current_user):
+        # Linking batches and their prices is the prepaid vouchers' section; the switch is the event's.
+        body = {k: v for k, v in (body or {}).items() if k == "settlementEnabled"}
     try:
         event.producer_settings = PROD.clean_settings(event, db, body)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"code": str(exc)}) from None
     db.commit()
     db.refresh(event)
-    return PR.owner_view(db, event)
+    return PR.owner_view(db, event, current_user)

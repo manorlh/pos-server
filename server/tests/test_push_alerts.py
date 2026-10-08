@@ -82,7 +82,7 @@ def browser():
 
 def device(w, user, name="phone"):
     key, p256dh, auth = browser()
-    row = P.subscribe(w.db, user, w.tenant.id, endpoint=f"https://push.example.com/{name}/{uuid.uuid4().hex}",
+    row = P.subscribe(w.db, user, w.tenant.id, endpoint=f"https://fcm.googleapis.com/fcm/send/{name}-{uuid.uuid4().hex}",
                       p256dh=p256dh, auth=auth, user_agent="Mozilla/5.0 (Linux; Android 14) Chrome/130.0")
     row._key, row._auth = key, auth
     return row
@@ -127,6 +127,27 @@ def test_the_message_decrypts_with_the_browsers_key():
     body = W.encrypt(b'{"title":"hello"}', p256dh, auth)
     assert W.decrypt(body, key, auth) == b'{"title":"hello"}'
     assert body[16:20] == (4096).to_bytes(4, "big") and body[20] == 65
+
+
+def test_the_encryption_matches_rfc_8291_appendix_a():
+    """The RFC's own example: the same keys and salt give the same body, byte for byte."""
+    server_key = W.private_key_from("yfWPiYE-n46HLnH0KqZOF1fJJU3MYrct3AELtAQ-oRw")
+    assert W.public_key_of(server_key) == (
+        "BP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A8"
+    )
+    body = W.encrypt(
+        b"When I grow up, I want to be a watermelon",
+        "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4",
+        "BTBZMqHH6r4Tts7J_aSIgg",
+        salt=W.b64u_decode("DGv6ra1nlYgDCS1FRnbzlw"),
+        server_key=server_key,
+    )
+    assert W.b64u(body) == (
+        "DGv6ra1nlYgDCS1FRnbzlwAAEABBBP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A_y"
+        "l95bQpu6cVPTpK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNWQexSgSxsj_Qulcy4a-fN"
+    )
+    ua_key = W.private_key_from("q1dXpw3UpT5VOmu_cf_v6ih07Aems3njxI-JWgLcM94")
+    assert W.decrypt(body, ua_key, "BTBZMqHH6r4Tts7J_aSIgg") == b"When I grow up, I want to be a watermelon"
 
 
 def test_the_vapid_token_verifies_with_the_public_key():
@@ -204,7 +225,7 @@ def test_a_large_refund_reaches_the_owners_phone(w):
     assert [d.status for d in sent] == ["sent"] and sent[0].subscription_id == phone.id and sent[0].user_id == w.admin.id
     payload = json.loads(W.decrypt(w.push.calls[0].content, phone._key, phone._auth))
     assert payload["title"].startswith("ביטול / זיכוי גדול") and payload["url"].startswith("/x/")
-    assert "₪450" in payload["body"] and payload["tag"].startswith("refund:")
+    assert "₪450" in payload["body"] and payload["tag"] == f"entry:{sent[0].entry_id}"
     # Under the minimum, another type: nothing.
     assert run(w, entry(w, "refund", amount=Decimal("150"))) == []
     assert run(w, entry(w, "till_offline")) == []
@@ -357,7 +378,7 @@ def test_subscribing_preferences_test_message_and_history(w, monkeypatch):
         R.add_device(_req(), {"endpoint": "http://insecure", "keys": {"p256dh": p256dh, "auth": auth}},
                      current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
     assert err.value.status_code == 422
-    out = R.add_device(_req(), {"endpoint": "https://push.example.com/x", "keys": {"p256dh": p256dh, "auth": auth}},
+    out = R.add_device(_req(), {"endpoint": "https://fcm.googleapis.com/fcm/send/x", "keys": {"p256dh": p256dh, "auth": auth}},
                        current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
     assert out["label"] == "Chrome · Windows" and out["active"]
     prefs = R.get_preferences(current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
@@ -436,3 +457,67 @@ def test_a_shift_forgotten_open_overnight_is_not_trading(w):
     till.last_heartbeat_at = NOW - timedelta(minutes=30)
     w.db.flush()
     assert TW.scan(w.db, now=NOW) == 0
+
+
+def test_only_the_browsers_push_services_and_ten_devices_a_user(w):
+    for bad in ("https://evil.example.com/x", "https://127.0.0.1/x", "http://fcm.googleapis.com/x",
+                "https://fcm.googleapis.com:8443/x", "https://user:pw@fcm.googleapis.com/x",
+                "https://fcm.googleapis.com.evil.com/x", "https://push.apple.com.attacker.net/x"):
+        assert P.push_service_endpoint(bad) is False, bad
+    for good in ("https://fcm.googleapis.com/fcm/send/abc", "https://updates.push.services.mozilla.com/wpush/v2/x",
+                 "https://web.push.apple.com/QAB", "https://wns2-db5p.notify.windows.com/w/?token=x"):
+        assert P.push_service_endpoint(good) is True, good
+    _key, p256dh, auth = browser()
+    with pytest.raises(RuleError) as err:
+        P.subscribe(w.db, w.admin, w.tenant.id, endpoint="https://evil.example.com/x", p256dh=p256dh, auth=auth)
+    assert err.value.code == "endpoint_invalid"
+    for i in range(12):
+        device(w, w.admin, f"d{i}")
+    active = w.db.query(PushSubscription).filter(PushSubscription.user_id == w.admin.id, PushSubscription.disabled_at.is_(None)).count()
+    assert active == P.MAX_DEVICES
+
+
+def test_the_first_device_narrows_to_where_it_subscribed_from(w):
+    _key, p256dh, auth = browser()
+    P.subscribe(w.db, w.admin, w.tenant.id, endpoint="https://fcm.googleapis.com/fcm/send/narrow", p256dh=p256dh, auth=auth,
+                initial={"shopIds": [str(w.other_shop.id)]})
+    prefs = P.as_json(P.rule_for_user(w.db, w.admin.id, w.tenant.id))
+    assert prefs["shopIds"] == [str(w.other_shop.id)] and prefs["eventIds"] is None
+
+
+def test_a_one_off_alert_never_replaces_another_on_the_phone(w):
+    phone = device(w, w.admin)
+    P.save_preferences(w.db, w.admin, w.tenant.id, {"rateLimitMinutes": 0})
+    run(w, entry(w, "refund", amount=Decimal("500")))
+    run(w, entry(w, "refund", amount=Decimal("700")))
+    run(w, entry(w, "till_offline"))
+    tags = [json.loads(W.decrypt(c.content, phone._key, phone._auth))["tag"] for c in w.push.calls]
+    assert tags[0] != tags[1] and tags[0].startswith("entry:") and tags[2].startswith("till_offline:")
+
+
+def test_new_kinds_never_start_an_old_every_kind_sms_rule(w):
+    from app.models.exception_alerts import ExceptionAlertRule
+
+    rule = ExceptionAlertRule(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=w.company.id, name="הכול", kinds=[],
+                              min_severity="medium", recipients=[{"phone": "+972501234567"}])
+    assert E.entry_matches(rule, SimpleNamespace(kind="till_offline", severity="high", amount=None, value=None)) is False
+    assert E.entry_matches(rule, SimpleNamespace(kind="cash_difference", severity="high", amount=None, value=None)) is True
+    rule.kinds = ["till_offline"]
+    assert E.entry_matches(rule, SimpleNamespace(kind="till_offline", severity="high", amount=None, value=None)) is True
+
+
+def test_sending_waits_for_the_commit_and_a_rollback_sends_nothing(w, monkeypatch):
+    phone = device(w, w.admin)
+    P.save_preferences(w.db, w.admin, w.tenant.id, {})
+    w.db.commit()
+    queued = []
+    monkeypatch.setattr(P, "SEND_MODE", "thread")
+    monkeypatch.setattr(P, "_enqueue", lambda jobs: queued.extend(jobs))
+    run(w, entry(w, "till_offline"))
+    assert queued == []                       # not before the commit
+    w.db.commit()
+    assert len(queued) == 1 and queued[0]["subscriptionId"] == phone.id
+    run(w, entry(w, "till_offline"))
+    w.db.rollback()
+    w.db.commit()
+    assert len(queued) == 1                   # the rolled-back one is never sent

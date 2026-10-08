@@ -74,6 +74,8 @@ const C = {
 
 const TONE: Record<Tone, string> = { good: C.green, warn: C.amber, bad: C.red, neutral: C.ink };
 
+const TICK_MIN_MS = 10_000;
+
 /** Over the whole dashboard shell (sidebar and bars included): the screen is the page. */
 const OVERLAY = 'fixed inset-0 z-40 overflow-y-auto overscroll-contain';
 
@@ -138,6 +140,7 @@ function useWakeLock() {
 function useLivePush(eventId: string, onTick: () => void): boolean {
   const [connected, setConnected] = useState(false);
   const tick = useRef(onTick);
+  const lastTick = useRef(0);
   useEffect(() => {
     tick.current = onTick;
   }, [onTick]);
@@ -151,7 +154,14 @@ function useLivePush(eventId: string, onTick: () => void): boolean {
         if (stopped || !info.enabled || !info.token || typeof EventSource === 'undefined') return;
         source = new EventSource(ablySseUrl(info.channel, info.token));
         source.onopen = () => setConnected(true);
-        source.onmessage = () => tick.current();
+        source.onmessage = () => {
+          // A busy event's tills sync all the time: at most one refetch every 10 seconds.
+          const now = Date.now();
+          if (now - lastTick.current >= TICK_MIN_MS) {
+            lastTick.current = now;
+            tick.current();
+          }
+        };
         source.onerror = () => {
           setConnected(false);
           source?.close();
@@ -572,7 +582,6 @@ export function LiveScreen({ eventId, backHref, onClose }: { eventId: string; ba
     queryKey: ['event-live', eventId, bucket],
     queryFn: () => fetchEventLive(eventId, bucket),
     refetchInterval: (q) => liveRefetchMs(q.state.data?.phase, pushConnected),
-    refetchIntervalInBackground: true,
   });
   const live = query.data;
 

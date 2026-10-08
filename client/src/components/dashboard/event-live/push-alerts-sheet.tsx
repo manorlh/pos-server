@@ -26,7 +26,7 @@ import {
   type PushSupport,
 } from '@/lib/pushAlerts';
 import {
-  currentEndpoint,
+  currentEndpointHash,
   fetchPushConfig,
   fetchPushDevices,
   fetchPushOptions,
@@ -185,33 +185,37 @@ function PreferencesForm({ initial, onSaved }: { initial: PrefsDraft; onSaved: (
   );
 }
 
-function ThisDevice() {
+function ThisDevice({ initial }: { initial: { shopIds?: string[]; eventIds?: string[] } }) {
   const t = useTranslations('phoneAlerts');
   const qc = useQueryClient();
   const support = useBrowserSupport();
   const config = useQuery({ queryKey: ['push-config'], queryFn: fetchPushConfig });
   const devices = useQuery({ queryKey: ['push-devices'], queryFn: fetchPushDevices });
-  const [endpointKnown, setEndpointKnown] = useState<boolean | null>(null);
+  // This browser counts as subscribed only when ITS endpoint is one of MY active devices (a shared
+  // phone subscribed by someone else is not mine).
+  const [hash, setHash] = useState<string | null>(null);
+  const [hashTick, setHashTick] = useState(0);
   useEffect(() => {
     let alive = true;
-    void currentEndpoint().then((e) => {
-      if (alive) setEndpointKnown(!!e);
+    void currentEndpointHash().then((h) => {
+      if (alive) setHash(h);
     });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [hashTick]);
+  const endpointKnown = !!hash && (devices.data ?? []).some((d) => d.active && d.endpointHash === hash);
+  const setEndpointKnown = () => setHashTick((n) => n + 1);
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['push-devices'] });
     void qc.invalidateQueries({ queryKey: ['push-preferences'] });
   };
   const subscribe = useMutation({
-    mutationFn: () => subscribeThisBrowser(config.data?.publicKey ?? null),
+    mutationFn: () => subscribeThisBrowser(config.data?.publicKey ?? null, initial),
     onSuccess: (outcome) => {
-      if (outcome === 'subscribed') {
-        toast.success(t('subscribed'));
-        setEndpointKnown(true);
-      } else toast.error(t(outcome === 'denied' ? 'denied' : 'notConfigured'));
+      if (outcome === 'subscribed') toast.success(t('subscribed'));
+      else toast.error(t(outcome === 'denied' ? 'denied' : 'notConfigured'));
+      setEndpointKnown();
       refresh();
     },
     onError: () => toast.error(t('subscribeFailed')),
@@ -219,7 +223,7 @@ function ThisDevice() {
   const stop = useMutation({
     mutationFn: unsubscribeThisBrowser,
     onSuccess: () => {
-      setEndpointKnown(false);
+      setEndpointKnown();
       refresh();
     },
   });
@@ -324,10 +328,10 @@ export function PushAlertsSheet({
             <DialogDescription>{t('sheetHint')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <ThisDevice />
+            <ThisDevice initial={scope.eventId ? { eventIds: [scope.eventId] } : scope.shopId ? { shopIds: [scope.shopId] } : {}} />
             {initial ? (
               <PreferencesForm
-                key={prefs.dataUpdatedAt}
+                key={String(prefs.data?.exists)}
                 initial={initial}
                 onSaved={() => {
                   void qc.invalidateQueries({ queryKey: ['push-preferences'] });

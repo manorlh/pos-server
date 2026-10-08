@@ -44,6 +44,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -384,6 +385,22 @@ def _names(db: Session, entry: ExceptionLogEntry) -> Tuple[Optional[str], Option
     return names(db, entry)
 
 
+def may_open_alerts(db: Session, user: Any) -> bool:
+    """Whether "התראות" (/dashboard/alerts, the section "alerts") opens for this user."""
+    from app.services import dashboard_access
+
+    return user is not None and dashboard_access.effective_access(db, user).allows("alerts", "view")
+
+
+def home_url(db: Session, user: Any) -> str:
+    """Where a digest or a test leads: "התראות" when this user may open it, else the dashboard's home."""
+    return "/dashboard/alerts" if may_open_alerts(db, user) else "/dashboard"
+
+
+#: Kinds that describe a state of a till: a newer alert replaces the older one on the phone.
+STATE_KINDS = frozenset({"till_offline", "kiosk_offline"})
+
+
 def may_open_log(db: Session, user: Any) -> bool:
     """Whether a tap may lead to the entry's page (`/x/<code>`, the exceptions log's section)."""
     from app.services import dashboard_access
@@ -394,7 +411,8 @@ def may_open_log(db: Session, user: Any) -> bool:
     return access.allows("reports", "view") or access.allows("exception_alerts", "view")
 
 
-def payload_for(db: Session, entry: ExceptionLogEntry, tzinfo, *, open_log: bool = True) -> Dict[str, Any]:
+def payload_for(db: Session, entry: ExceptionLogEntry, tzinfo, *, open_log: bool = True,
+                fallback_url: str = "/dashboard/alerts") -> Dict[str, Any]:
     """What the phone shows: title (type · till), body (shop · what · time), where a tap leads."""
     category = category_of(entry)
     shop, till = _names(db, entry)
@@ -409,13 +427,15 @@ def payload_for(db: Session, entry: ExceptionLogEntry, tzinfo, *, open_log: bool
     elif open_log and entry.short_code:
         url = f"/x/{entry.short_code}"
     else:
-        url = "/dashboard/alerts"
+        url = fallback_url
+    # A till's state (offline) replaces its previous notice; every other alert stands on its own.
+    tag = f"{entry.kind}:{entry.machine_id or entry.shop_id}" if entry.kind in STATE_KINDS else f"entry:{entry.id}"
 
     return {
         "title": title[:120],
         "body": body[:240],
         "url": url,
-        "tag": f"{entry.kind}:{entry.machine_id or entry.shop_id or entry.id}"[:64],
+        "tag": tag[:64],
         "kind": entry.kind,
         "category": category,
         "severity": entry.severity,
@@ -424,12 +444,13 @@ def payload_for(db: Session, entry: ExceptionLogEntry, tzinfo, *, open_log: bool
     }
 
 
-def digest_payload(count: int, kinds: Sequence[str], since: str, until: str, quiet: bool) -> Dict[str, Any]:
+def digest_payload(count: int, kinds: Sequence[str], since: str, until: str, quiet: bool,
+                   url: str = "/dashboard/alerts") -> Dict[str, Any]:
     labels = ", ".join(dict.fromkeys(kinds))
     return {
         "title": f"{count} התראות חדשות",
         "body": f"{labels} · {since}–{until}" + (" (שעות שקט)" if quiet else ""),
-        "url": "/dashboard/alerts",
+        "url": url,
         "tag": "digest",
         "kind": "digest",
     }
@@ -508,33 +529,65 @@ def _worker_loop() -> None:
         job = _queue.get()
         try:
             result = _send(job)
-            # The dispatch row is committed by the request that wrote it — usually already.
-            for attempt in range(10):
-                db = _factory()
-                db.info[SKIP] = True
-                try:
-                    if _record(db, job, result, utcnow()):
-                        db.commit()
-                        break
-                finally:
-                    db.close()
-                time.sleep(0.3 * (attempt + 1))
+            db = _factory()
+            db.info[SKIP] = True
+            try:
+                if _record(db, job, result, utcnow()):
+                    db.commit()
+            finally:
+                db.close()
         except Exception:  # noqa: BLE001 - one message never stops the sender
             logger.exception("push: sending a message failed")
 
 
-def _submit(db: Session, job: Dict[str, Any]) -> None:
+PENDING_JOBS = "push_pending_jobs"
+
+
+def _enqueue(jobs: Iterable[Dict[str, Any]]) -> None:
     global _thread
+    with _lock:
+        if _thread is None or not _thread.is_alive():
+            _thread = threading.Thread(target=_worker_loop, name="push-sender", daemon=True)
+            _thread.start()
+    for job in jobs:
+        _queue.put(job)
+
+
+def _submit(db: Session, job: Dict[str, Any]) -> None:
+    """
+    Inline (tests): send now. Thread (production): held on the session and handed to the sender
+    only once the transaction that wrote its dispatch row commits — a rolled-back row never
+    sends, and the sender always finds the row it records the result on.
+    """
     if SEND_MODE == "off":
         return
     if SEND_MODE == "inline":
         _record(db, job, _send(job), utcnow())
         return
-    with _lock:
-        if _thread is None or not _thread.is_alive():
-            _thread = threading.Thread(target=_worker_loop, name="push-sender", daemon=True)
-            _thread.start()
-    _queue.put(job)
+    db.info.setdefault(PENDING_JOBS, []).append(job)
+
+
+def _install_session_hooks() -> None:
+    from sqlalchemy import event
+
+    def after_commit(session):
+        if session.in_nested_transaction():
+            return  # a savepoint's release: the real commit is still to come
+        jobs = session.info.pop(PENDING_JOBS, None)
+        if jobs:
+            _enqueue(jobs)
+
+    def after_rollback(session):
+        if session.in_nested_transaction():
+            return  # a savepoint: the engine trims what was queued inside it (engine.process_entry)
+        session.info.pop(PENDING_JOBS, None)
+
+    if not event.contains(Session, "after_commit", after_commit):
+        event.listen(Session, "after_commit", after_commit)
+        event.listen(Session, "after_rollback", after_rollback)
+
+
+_install_session_hooks()
 
 
 def _deliver(
@@ -625,7 +678,7 @@ def process_entry(db: Session, entry: ExceptionLogEntry, *, now: datetime, tzinf
             status, reason = ST_SUPPRESSED_RATE, f"{rule.rate_limit_minutes}m"
         out.extend(_deliver(
             db, rule=rule, kind=DISPATCH_ALERT, devices=devices,
-            payload=payload_for(db, entry, tzinfo, open_log=may_open_log(db, owner)),
+            payload=payload_for(db, entry, tzinfo, open_log=may_open_log(db, owner), fallback_url=home_url(db, owner)),
             status=status, reason=reason, dedupe_prefix=f"alert:{entry.id}:{rule.id}", now=now, entry=entry,
         ))
     return out
@@ -660,16 +713,18 @@ def flush_rule(db: Session, rule: ExceptionAlertRule, now: datetime) -> int:
             d.digest_id = d.id
         db.flush()
         return 0
-    if len(entries) == 1:
-        from app.models.user import User
+    from app.models.user import User
 
-        payload = payload_for(db, entries[0], tzinfo, open_log=may_open_log(db, db.get(User, rule.owner_user_id)))
+    owner = db.get(User, rule.owner_user_id)
+    if len(entries) == 1:
+        payload = payload_for(db, entries[0], tzinfo, open_log=may_open_log(db, owner), fallback_url=home_url(db, owner))
     else:
         payload = digest_payload(
             len(entries), [CATEGORY_BY_KEY[c].label for c in (category_of(e) for e in entries) if c],
             aware(entries[0].occurred_at).astimezone(tzinfo).strftime("%H:%M"),
             aware(entries[-1].occurred_at).astimezone(tzinfo).strftime("%H:%M"),
             all(d.status == ST_SUPPRESSED_QUIET for d in pending),
+            url=home_url(db, owner),
         )
     made = _deliver(
         db, rule=rule, kind=DISPATCH_DIGEST, devices=devices, payload=payload, status=None, reason=None,
@@ -697,7 +752,7 @@ def send_test(db: Session, user: Any, tenant_id: Any, *, now: Optional[datetime]
     if last is not None and now - aware(last[0]) < TEST_MIN_GAP:
         raise RuleError("test_too_soon", None)
     rule = rule_for_user(db, user.id, tenant_id) or save_preferences(db, user, tenant_id, {})
-    payload = {"title": "התראת בדיקה", "body": "ההתראות לטלפון פועלות במכשיר הזה.", "url": "/dashboard/alerts",
+    payload = {"title": "התראת בדיקה", "body": "ההתראות לטלפון פועלות במכשיר הזה.", "url": home_url(db, user),
                "tag": "test", "kind": "test"}
     return _deliver(db, rule=rule, kind=DISPATCH_TEST, devices=devices, payload=payload, status=None, reason=None,
                     dedupe_prefix=f"test:{uuid.uuid4().hex}", now=now)
@@ -750,13 +805,44 @@ def device_label(user_agent: Optional[str]) -> str:
     return f"{browser} · {system}" if system else browser
 
 
+#: The browsers' push services — the only hosts the server ever posts to (a subscription is
+#: an address the browser hands us; anything else would make the server call any URL).
+PUSH_SERVICE_HOSTS = (
+    "fcm.googleapis.com",            # Chrome, Edge (Chromium), Samsung Internet, Opera
+    ".push.services.mozilla.com",    # Firefox
+    ".notify.windows.com",           # legacy Edge / Windows
+    ".push.apple.com",               # Safari, iOS home-screen apps
+)
+#: Devices per user; subscribing one more retires the least recently used.
+MAX_DEVICES = 10
+
+
+def push_service_endpoint(endpoint: str) -> bool:
+    """An https URL on a known push service (a host name, never an address), default port."""
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(endpoint)
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "https" or not host or parts.port not in (None, 443) or parts.username or parts.password:
+        return False
+    return any(host == h or (h.startswith(".") and host.endswith(h)) for h in PUSH_SERVICE_HOSTS)
+
+
 def subscribe(db: Session, user: Any, tenant_id: Any, *, endpoint: str, p256dh: str, auth: str,
-              user_agent: Optional[str] = None, label: Optional[str] = None) -> PushSubscription:
-    """Add (or move to this user, or revive) a device. Validated; the caller commits."""
+              user_agent: Optional[str] = None, label: Optional[str] = None,
+              initial: Optional[Dict[str, Any]] = None) -> PushSubscription:
+    """
+    Add (or move to this user, or revive) a device. Validated; the caller commits. The first
+    device of a user creates their preferences — `initial` narrows them (the shop / event the
+    person subscribed from), else every alert type, everywhere they may see.
+    """
     from app.services import webpush
 
     endpoint = (endpoint or "").strip()
-    if not endpoint.startswith("https://") or len(endpoint) > 2000:
+    if len(endpoint) > 2000 or not push_service_endpoint(endpoint):
         raise RuleError("endpoint_invalid", "endpoint")
     if not webpush.valid_client_key(p256dh, auth):
         raise RuleError("keys_invalid", "keys")
@@ -775,8 +861,18 @@ def subscribe(db: Session, user: Any, tenant_id: Any, *, endpoint: str, p256dh: 
     row.failure_count = 0
     row.last_error = None
     db.flush()
+    active = (
+        db.query(PushSubscription)
+        .filter(PushSubscription.user_id == user.id, PushSubscription.disabled_at.is_(None), PushSubscription.id != row.id)
+        .order_by(func.coalesce(PushSubscription.last_success_at, PushSubscription.created_at).desc())
+        .all()
+    )
+    for old in active[MAX_DEVICES - 1:]:
+        old.disabled_at = utcnow()
     if rule_for_user(db, user.id, tenant_id) is None:
-        save_preferences(db, user, tenant_id, {})  # the first device: every alert type, everywhere
+        narrowed = {k: v for k, v in (initial or {}).items() if k in ("shopIds", "eventIds") and v}
+        save_preferences(db, user, tenant_id, narrowed)
+    db.flush()
     return row
 
 

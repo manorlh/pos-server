@@ -114,6 +114,10 @@ KINDS = KINDS + tuple(
 )
 
 KINDS_BY_KEY: Dict[str, Kind] = {k.key: k for k in KINDS}
+#: Kinds an SMS rule fires on only when it names them — an "every kind" rule written before they
+#: existed does not start texting them (feat/event-live: a till outage, a till barely selling,
+#: a target reached; the phone alerts carry them).
+OPT_IN_KINDS = frozenset({"till_offline", "till_low_sales", "target_reached"})
 SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2}
 SEVERITY_LABELS = {"low": "נמוכה", "medium": "בינונית", "high": "גבוהה"}
 COUNT_SCOPES = ("machine", "employee", "shop")
