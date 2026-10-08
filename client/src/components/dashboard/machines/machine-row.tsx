@@ -59,6 +59,7 @@ import {
   Unplug,
   Wifi,
   WifiOff,
+  MonitorCog,
   type LucideIcon,
 } from 'lucide-react';
 import { formatCurrency, formatHashNumber } from '@/lib/format';
@@ -141,6 +142,8 @@ export interface MachineRowActions {
   onRequestTillZ?: (m: PosMachine) => void;
   /** Switch who produces the till's Z (the cloud or the till). */
   onEditZMode?: (m: PosMachine) => void;
+  /** "שליטה מרחוק": lock, sync, sign out, restart, update (components/dashboard/live-control). */
+  onRemoteControl?: (m: PosMachine) => void;
 }
 
 export interface MachineRowProps {
@@ -369,6 +372,12 @@ function MachineRowMenu({
         {canProduceZ && actions.onTransmit && canTransmitRemotely(m) && !display ? (
           <DropdownMenuItem onClick={() => actions.onTransmit?.(m)}>
             <RadioTower aria-hidden /> {t('transmitNow')}
+          </DropdownMenuItem>
+        ) : null}
+        {/* "שליטה מרחוק" (components/dashboard/live-control): this till preselected. */}
+        {!display && actions.onRemoteControl && m.pairingStatus === 'assigned' ? (
+          <DropdownMenuItem onClick={() => actions.onRemoteControl?.(m)}>
+            <MonitorCog aria-hidden /> שליטה מרחוק
           </DropdownMenuItem>
         ) : null}
         {/* A till that produces its own Z is asked for it; the cloud never builds one

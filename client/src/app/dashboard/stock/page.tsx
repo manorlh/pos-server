@@ -18,11 +18,16 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { PackagePlus, ClipboardList, SlidersHorizontal } from 'lucide-react';
+import { PackagePlus, ClipboardList, SlidersHorizontal, PackageX } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
+// "חסימות ואזל" (components/dashboard/live-control): block a product, the blocks in force.
+import { ActiveBlocksList, BlockItemSheet } from '@/components/dashboard/live-control';
+import { cn } from '@/lib/utils';
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 import { AvailabilityReopenCard } from '@/components/dashboard/stock/availability-reopen-card';
 
 type ActionKind = 'receipt' | 'adjust' | 'stocktake';
+type StockTab = 'stock' | 'blocks';
 
 const PRODUCTS_PAGE_SIZE = 200;
 
@@ -72,6 +77,11 @@ export default function ShopStockPage() {
   const [quantity, setQuantity] = useState('');
   const [delta, setDelta] = useState('');
   const [note, setNote] = useState('');
+  // The page's tabs: the stock, and "חסימות פעילות" (`?tab=blocks`, the board links there).
+  const searchParams = useSearchParams();
+  const [tab, setTab] = useState<StockTab>(searchParams.get('tab') === 'blocks' ? 'blocks' : 'stock');
+  const [blockFor, setBlockFor] = useState<string | null | undefined>(undefined);
+  const blockScope = { companyId: effective.companyId ?? null, shopId: effective.shopId ?? null };
 
   const { data: productsData, isError: productsError } = useQuery<ProductListResponse>({
     queryKey: ['products', 'stock-tracked'],
@@ -190,6 +200,37 @@ export default function ShopStockPage() {
         </div>
       </div>
 
+      <div className="flex gap-1 rounded-xl bg-muted p-1 print:hidden" role="tablist">
+        {(['stock', 'blocks'] as const).map((id) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={tab === id}
+            onClick={() => setTab(id)}
+            className={cn('min-h-10 flex-1 rounded-lg px-3 text-sm font-medium sm:flex-none', tab === id ? 'bg-background shadow-sm' : 'text-muted-foreground')}
+          >
+            {id === 'stock' ? 'מלאי מהיר' : 'חסימות פעילות'}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'blocks' ? (
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-muted-foreground">פריטים שסומנו &quot;אזל&quot; או &quot;חסום&quot; — לכל אחד: איפה, מי, עד מתי. אפשר להאריך או לבטל מיד.</p>
+            <Button size="sm" className="min-h-10 gap-1" onClick={() => setBlockFor(null)}>
+              <PackageX className="h-4 w-4" /> חסום / אזל
+            </Button>
+          </div>
+          <ActiveBlocksList scope={blockScope} />
+        </section>
+      ) : null}
+      {blockFor !== undefined ? (
+        <BlockItemSheet scope={blockScope} context={{ productId: blockFor }} onDone={() => setBlockFor(undefined)} />
+      ) : null}
+
+      {tab === 'stock' ? (
       <ScopeGate resolution={resolution}>
       <ReportExportToolbar
         title={t('title')}
@@ -285,6 +326,9 @@ export default function ShopStockPage() {
                       >
                         <ClipboardList className="h-3.5 w-3.5" />
                       </Button>
+                      <Button variant="ghost" size="icon" title="חסום / אזל" aria-label="חסום / אזל" onClick={() => setBlockFor(row.productId)}>
+                        <PackageX className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -294,9 +338,10 @@ export default function ShopStockPage() {
         </Table>
       </div>
       </ScopeGate>
+      ) : null}
 
       {/* "פתיחת פריטים אוטומטית אחרי Z": the inventory setting, per company, shop or point of sale. */}
-      <AvailabilityReopenCard companyId={effective.companyId} shopId={effective.shopId} />
+      {tab === 'stock' ? <AvailabilityReopenCard companyId={effective.companyId} shopId={effective.shopId} /> : null}
 
       <Dialog open={actionOpen} onOpenChange={setActionOpen}>
         <DialogContent className="max-w-sm">
