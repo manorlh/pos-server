@@ -6060,6 +6060,8 @@
         "prepaid_voucher_batch_cancelled": "הסדרה בוטלה",
         "prepaid_voucher_replacement_bad_reason": "בחרו סיבה וכתבו פירוט (לפחות 2 תווים)",
         "prepaid_voucher_replacement_bad_items": "הפריטים לשובר החלופי אינם תואמים למה שנותר בשובר",
+        "prepaid_voucher_replacement_partly_valued": "שובר בשווי קבוע שמומש בחלקו — לא ניתן להנפיק לו שובר חלופי",
+        "prepaid_settlement_closed": "ההסכם סגור — לא ניתן לקשר אליו חשבונית",
         "prepaid_voucher_control_bad_scope": "בחרו על מה (אירוע, הפקה, סוג שובר או סדרה)",
         "prepaid_voucher_quota_bad_period": "תקופת המכסה לא תקינה",
         "prepaid_voucher_pause_until_past": "מועד הסיום של ההשהיה כבר עבר",
