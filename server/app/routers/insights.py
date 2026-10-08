@@ -27,24 +27,43 @@ GET  /insights/tables-live         → open tables now (the control board's widg
 GET  /insights/tables              → covers, spend per cover, seated time, turnover
 GET  /insights/customers           → identified and repeat customers
 PUT  /insights/product-costs/{id}  → a product's unit cost (excl. VAT); `null` clears it
+
+Till anomalies and quick actions (docs/SPEC_INSIGHTS.md §10):
+
+GET  /insights/anomalies                         → each till against its peers (`window`:
+                                                   period | today): cards and the figures
+GET  /insights/anomaly-settings                  → the organization's thresholds
+PUT  /insights/anomaly-settings                  → … replaced (company managers and up)
+GET  /insights/quick-actions                     → recent quick actions with their result
+GET  /insights/quick-actions/promotions/suggestion → a product's price, cost and offers
+POST /insights/quick-actions/messages            → "הודעה מהירה": a banner to the tills
+POST /insights/quick-actions/messages/{id}/cancel
+POST /insights/quick-actions/promotions          → "מבצע מהיר": a promotion, never below cost
+POST /insights/quick-actions/promotions/{id}/cancel → "בטל מבצע"
+
+`eventId` on any read: the scope is a report event (docs/SPEC_EVENTS.md) — its tills, its
+window, its business days.
 """
 from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.middleware.auth import get_active_tenant_id, get_current_user
+from app.middleware.auth import get_active_tenant_id, get_current_machine_admin, get_current_user
 from app.models.user import User
+from app.services import promotions as P
+from app.services import till_messages as TM
 from app.services.areas import parse_area_filter
 from app.services.insights import feed as F
+from app.services.insights import quick_actions as Q
 from app.services.insights import service as S
-from app.services.insights.data import InsightScope
+from app.services.insights.data import InsightScope, _as_dt
 
 router = APIRouter(prefix="/insights", tags=["insights"])
 
@@ -60,6 +79,7 @@ class InsightParams:
     days: Optional[int] = None
     tz: Optional[str] = None
     day_start_hour: Optional[int] = None
+    event_id: Optional[uuid.UUID] = None
 
 
 def insight_params(
@@ -72,16 +92,42 @@ def insight_params(
     days: Optional[int] = Query(None, ge=1, le=366, description="Without from/to: the complete days ending yesterday (28)."),
     tz: Optional[str] = Query(None, description="IANA timezone; the tenant's, else Asia/Jerusalem."),
     day_start_hour: Optional[int] = Query(None, alias="dayStartHour", ge=0, le=8, description="When a business day starts (04:00)."),
+    event_id: Optional[uuid.UUID] = Query(None, alias="eventId", description="A report event: its tills, window and days (the period is ignored)."),
 ) -> InsightParams:
-    return InsightParams(company_id, shop_id, area_id, machine_id, from_date, to_date, days, tz, day_start_hour)
+    return InsightParams(company_id, shop_id, area_id, machine_id, from_date, to_date, days, tz, day_start_hour, event_id)
 
 
 def _uuid(value: Any) -> Optional[uuid.UUID]:
     return value if isinstance(value, uuid.UUID) else None
 
 
+def _event_context(db: Session, user: User, tenant_id, p: InsightParams, clock) -> S.InsightsContext:
+    """An event's scope: its shop, its tills (a till of it narrows), its window and its days."""
+    from app.services.report_events.crud import load_event
+
+    event = load_event(db, user, tenant_id, p.event_id)
+    machine_ids = tuple(row.machine_id for row in event.machines)
+    machine_id = _uuid(p.machine_id)
+    if machine_id is not None and machine_id not in machine_ids:
+        machine_id = None
+    starts, ends = _as_dt(event.starts_at), _as_dt(event.ends_at)
+    scope = InsightScope(
+        user=user,
+        tenant_id=tenant_id,
+        shop_id=event.shop_id,
+        machine_id=machine_id,
+        machine_ids=machine_ids,
+        window_start=starts,
+        window_end=ends,
+        event=event,
+    )
+    return S.InsightsContext(db, scope, clock, S.event_period(clock, starts, ends))
+
+
 def build_context(db: Session, user: User, tenant_id, p: InsightParams) -> S.InsightsContext:
     clock = S.make_clock(db, tenant_id, tz=p.tz, day_start_hour=p.day_start_hour)
+    if _uuid(p.event_id) is not None:
+        return _event_context(db, user, tenant_id, p, clock)
     period = S.resolve_period(clock, p.from_date, p.to_date, p.days)
     scope = InsightScope(
         user=user,
@@ -230,3 +276,138 @@ def put_product_cost(
 ):
     """What a unit of the product costs (excl. VAT), for the menu engineering."""
     return S.set_product_cost(db, current_user, active_tenant_id, product_id, cost)
+
+
+# ── Till anomalies ────────────────────────────────────────────────────────────
+
+
+@router.get("/anomalies")
+def get_till_anomalies(
+    window: str = Query("period", pattern="^(period|today)$", description="The page's period (an event: its window), or today so far."),
+    p: InsightParams = Depends(insight_params),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Each till against its peers (median and MAD): weak sales, an odd average ticket, odd cash."""
+    kind = window if isinstance(window, str) else "period"
+    return _section(S.anomalies, p, current_user, active_tenant_id, db, window=kind)
+
+
+@router.get("/anomaly-settings")
+def get_anomaly_settings(
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The organization's anomaly thresholds, the defaults and the limits."""
+    return S.anomaly_settings(db, current_user, active_tenant_id)
+
+
+@router.put("/anomaly-settings")
+def put_anomaly_settings(
+    thresholds: Optional[Dict[str, Any]] = Body(None, embed=True, description="Keys of DEFAULT_THRESHOLDS; missing: the default."),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Replace the organization's anomaly thresholds (super admin, distributor, company manager)."""
+    return S.set_anomaly_settings(db, current_user, active_tenant_id, thresholds)
+
+
+# ── Quick actions ─────────────────────────────────────────────────────────────
+
+
+@router.get("/quick-actions")
+def list_quick_actions(
+    product_id: Optional[uuid.UUID] = Query(None, alias="productId"),
+    limit: int = Query(30, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Recent quick messages and promotions that reached a till the caller sees, with their result."""
+    pid = product_id if isinstance(product_id, uuid.UUID) else None
+    n = limit if isinstance(limit, int) else 30
+    return Q.list_quick_actions(db, current_user, active_tenant_id, product_id=pid, limit=n)
+
+
+@router.get("/quick-actions/promotions/suggestion")
+def get_promotion_suggestion(
+    product_id: uuid.UUID = Query(..., alias="productId"),
+    target_level: Optional[str] = Query(None, alias="targetLevel"),
+    target_id: Optional[uuid.UUID] = Query(None, alias="targetId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The product's price (lowest in the target) and cost, the offers and the suggested one."""
+    level = target_level if isinstance(target_level, str) else None
+    tid = target_id if isinstance(target_id, uuid.UUID) else None
+    return Q.promotion_suggestion(db, current_user, active_tenant_id, product_id, level, tid)
+
+
+@router.post("/quick-actions/messages", status_code=status.HTTP_201_CREATED)
+def post_quick_message(
+    background_tasks: BackgroundTasks,
+    body: Dict[str, Any] = Body(..., description="text, targetLevel, targetId, duration, productId?, display?, color?, source?"),
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"הודעה מהירה": a banner to the target's tills that ends by itself (the till messages' rule)."""
+    action, machines = Q.send_quick_message(db, current_user, active_tenant_id, body)
+    targets = TM.notify_targets(machines)
+    db.commit()
+    background_tasks.add_task(TM.publish_message_notify, targets)
+    return Q.action_out(action, Q._now())
+
+
+@router.post("/quick-actions/messages/{action_id}/cancel")
+def cancel_quick_message(
+    action_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Take the quick message down now; idempotent."""
+    action, machines = Q.cancel_quick_message(db, current_user, active_tenant_id, action_id)
+    targets = TM.notify_targets(machines)
+    db.commit()
+    background_tasks.add_task(TM.publish_message_notify, targets)
+    return Q.action_out(action, Q._now())
+
+
+def _promotions_changed(db: Session, tenant_id, background_tasks: BackgroundTasks) -> None:
+    targets = P.notify_targets(db, tenant_id)
+    db.commit()
+    background_tasks.add_task(P.publish_promotions_notify, targets)
+
+
+@router.post("/quick-actions/promotions", status_code=status.HTTP_201_CREATED)
+def post_quick_promotion(
+    background_tasks: BackgroundTasks,
+    body: Dict[str, Any] = Body(..., description="productId, targetLevel, targetId, offer {kind, value}, duration, source?"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"מבצע מהיר": a promotion on the product for the target's tills, ending by itself."""
+    action = Q.create_quick_promotion(db, current_user, active_tenant_id, body)
+    _promotions_changed(db, active_tenant_id, background_tasks)
+    return Q.action_out(action, Q._now())
+
+
+@router.post("/quick-actions/promotions/{action_id}/cancel")
+def cancel_quick_promotion(
+    action_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"בטל מבצע": the promotion is paused now (the tills drop it on their next pull)."""
+    action = Q.cancel_quick_promotion(db, current_user, active_tenant_id, action_id)
+    _promotions_changed(db, active_tenant_id, background_tasks)
+    return Q.action_out(action, Q._now())

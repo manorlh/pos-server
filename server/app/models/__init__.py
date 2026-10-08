@@ -95,6 +95,8 @@ from app.models.menu import (
     UpsellStat,
 )
 from app.models.product_cost import ProductCost
+# "פעולות מהירות" from the insights: a quick message / promotion, its log and its result anchor.
+from app.models.insight_quick_action import InsightQuickAction
 from app.models.report_event import ReportEvent, ReportEventMachine
 from app.models.training import DemoMenuItem, TrainingAuditLog, TrainingDocument
 from app.models.pos_user_session import PosUserSession
@@ -214,6 +216,7 @@ __all__ = [
     "ModifierGroup", "ModifierOption", "ModifierLink", "PrepNotePreset", "MealSlot", "MealSlotOption",
     "UpsellRule", "UpsellStat", "MenuCourse", "MenuSyncState", "TransactionItemPart",
     "ReportEvent", "ReportEventMachine",
+    "InsightQuickAction",
     "TrainingDocument", "TrainingAuditLog", "DemoMenuItem",
     "PosUserSession",
     "EmployeeRole", "AttendanceShift", "AttendanceBreak", "AttendanceAdjustment",

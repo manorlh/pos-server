@@ -316,6 +316,12 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/exception-alerts/*", S("exception_alerts")),
     (_GET, "/insights/kiosks", S("reports", "kiosks", level=VIEW)),
     ("PUT", "/insights/product-costs/{}", S("reports", "products", level=EDIT)),
+    # The insights' quick actions: a quick message is a till message, a quick promotion a
+    # promotion — each needs that section's edit, as on its own page.
+    (_ALL, "/insights/quick-actions/messages*", S("till_messages")),
+    (_GET, "/insights/quick-actions/promotions/suggestion", S("promotions", "reports", level=VIEW)),
+    (_ALL, "/insights/quick-actions/promotions*", S("promotions")),
+    ("PUT", "/insights/anomaly-settings", S("reports")),
     (_GET, "/insights*", S("reports")),
     (_ALL, "/report-events*", S("reports")),
     (_GET, "/reports/discounts", S("reports", "promotions")),
