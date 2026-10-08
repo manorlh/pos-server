@@ -248,4 +248,30 @@ describe('the Windows kiosk prints', () => {
       svc.stop();
     }
   });
+
+  it('one paper (the owner, 08.10.2026): no separate number slip by default, the order number big on the receipt', () => {
+    const svc = kiosk({});
+    const off = kiosk({ orderNumberOnReceipt: false, pickupSlip: true });
+    try {
+      expect(svc.config().printing.pickupSlip).toBe(false);
+      expect(svc.config().printing.orderNumberOnReceipt).toBe(true);
+      const id = paidOrder(svc);
+      svc.printReceipt(id, false);
+      const [doc] = docsOf<ReceiptDoc>(svc, id, 'receipt');
+      const texts = doc.ops.map((o) => ('text' in o ? o.text : o.t));
+      const heading = texts.indexOf('מספר הזמנה');
+      expect(heading).toBeGreaterThan(texts.indexOf('סניף הרצליה · קופה 3 · קיוסק רויאל'));
+      expect(heading).toBeLessThan(texts.indexOf('חשבונית מס/קבלה'));
+      expect(doc.ops[heading + 1]).toEqual({ t: 'text', text: '⁦A-4⁩', style: 'number', align: 'center' });
+      // A kiosk that saved the slip on and the number off: as it saved.
+      expect(off.config().printing.pickupSlip).toBe(true);
+      const other = paidOrder(off);
+      off.printReceipt(other, false);
+      const [plain] = docsOf<ReceiptDoc>(off, other, 'receipt');
+      expect(plain.ops.some((o) => 'text' in o && o.text === 'מספר הזמנה')).toBe(false);
+    } finally {
+      svc.stop();
+      off.stop();
+    }
+  });
 });

@@ -546,8 +546,13 @@ export interface KioskPrinting {
   bonPrinterId: string | null;
   bonCopies: number;
   receiptPrinterId: string | null;
-  /** A small customer slip with the pickup number on the receipt printer (whatever receiptPolicy says). */
+  /**
+   * "פתק מספר הזמנה נפרד": a small customer slip with the pickup number on the receipt printer (whatever
+   * receiptPolicy says). Off by default (the owner, 08.10.2026: one paper — the number is on the receipt).
+   */
   pickupSlip: boolean;
+  /** "מספר הזמנה על החשבונית": the kiosk's receipt prints the order number, large, near the top. On by default. */
+  orderNumberOnReceipt: boolean;
   /** An unprinted bon prints again by itself when the printer comes back, if younger than this (min); 0: never. */
   bonAutoRetryMin: number;
   /**
@@ -924,7 +929,8 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     bonPrinterId: null,
     bonCopies: 1,
     receiptPrinterId: null,
-    pickupSlip: true,
+    pickupSlip: false,
+    orderNumberOnReceipt: true,
     bonAutoRetryMin: 10,
     bonOnKiosk: false,
   },
@@ -1839,6 +1845,7 @@ export function validateKioskConfig(
   if (pr.bonMode === 'single' && !pr.bonPrinterId) e.push({ path: 'printing.bonPrinterId', code: 'bonPrinterRequired' });
   checkRange(e, 'printing.bonCopies', pr.bonCopies, L.bonCopies);
   if (typeof pr.pickupSlip !== 'boolean') e.push({ path: 'printing.pickupSlip', code: 'enum' });
+  if (typeof pr.orderNumberOnReceipt !== 'boolean') e.push({ path: 'printing.orderNumberOnReceipt', code: 'enum' });
   checkRange(e, 'printing.bonAutoRetryMin', pr.bonAutoRetryMin, { min: 0, max: 120 });
   if (typeof pr.bonOnKiosk !== 'boolean') e.push({ path: 'printing.bonOnKiosk', code: 'enum' });
 

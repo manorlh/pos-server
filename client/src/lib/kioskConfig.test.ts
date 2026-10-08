@@ -2303,13 +2303,37 @@ describe('"בון מטבח במדפסת הקיוסק" — printing.bonOnKiosk (t
   const codes = (c: KioskConfig) => validateKioskConfig(c).map((e) => `${e.path}:${e.code}`);
   it('off by default — an existing kiosk whose layers never had it too — and a boolean', () => {
     assert.equal(KIOSK_DEFAULTS.printing.bonOnKiosk, false);
-    assert.equal(KIOSK_DEFAULTS.printing.pickupSlip, true);
     const royal = resolveKioskConfig({ printing: { bonMode: 'single', bonPrinterId: 'p-usb', receiptPrinterId: 'p-usb', bonAutoRetryMin: 0 } });
     assert.equal(royal.printing.bonOnKiosk, false);
     assert.deepEqual(validateKioskConfig(royal), []);
     assert.equal(resolveKioskConfig({ printing: { bonOnKiosk: true } }).printing.bonOnKiosk, true);
     assert.equal(resolveKioskConfig({ printing: { bonOnKiosk: true } }, { printing: { bonOnKiosk: false } }).printing.bonOnKiosk, false);
     assert.ok(codes(cfg({ printing: { bonOnKiosk: 'yes' } })).includes('printing.bonOnKiosk:enum'));
+  });
+});
+
+describe('One paper — printing.pickupSlip off, printing.orderNumberOnReceipt on (the owner, 08.10.2026; the server kiosk_config.py)', () => {
+  const codes = (c: KioskConfig) => validateKioskConfig(c).map((e) => `${e.path}:${e.code}`);
+  it('no separate number slip by default, the order number on the receipt', () => {
+    assert.equal(KIOSK_DEFAULTS.printing.pickupSlip, false);
+    assert.equal(KIOSK_DEFAULTS.printing.orderNumberOnReceipt, true);
+    // An existing kiosk whose layers never had either key (the Royal kiosk's).
+    const royal = resolveKioskConfig({ printing: { bonMode: 'single', bonPrinterId: 'p-usb', receiptPrinterId: 'p-usb', bonAutoRetryMin: 0 } });
+    assert.equal(royal.printing.pickupSlip, false);
+    assert.equal(royal.printing.orderNumberOnReceipt, true);
+    assert.deepEqual(validateKioskConfig(royal), []);
+  });
+  it('a saved config keeps what it saved; a level below may change it', () => {
+    const saved = resolveKioskConfig({ printing: { pickupSlip: true, orderNumberOnReceipt: false } });
+    assert.equal(saved.printing.pickupSlip, true);
+    assert.equal(saved.printing.orderNumberOnReceipt, false);
+    const below = resolveKioskConfig({ printing: { pickupSlip: true } }, { printing: { pickupSlip: false } });
+    assert.equal(below.printing.pickupSlip, false);
+  });
+  it('both are booleans', () => {
+    const bad = codes(cfg({ printing: { pickupSlip: 'yes', orderNumberOnReceipt: 1 } }));
+    assert.ok(bad.includes('printing.pickupSlip:enum'));
+    assert.ok(bad.includes('printing.orderNumberOnReceipt:enum'));
   });
 });
 

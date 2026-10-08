@@ -17,7 +17,7 @@ import { formatAgorot, formatShekelSign, ltr } from './money';
 export type ReceiptOp =
   | { t: 'logo' }
   | { t: 'gap'; h: number }
-  | { t: 'text'; text: string; style: 'title' | 'heading' | 'body' | 'bodyBold' | 'small' | 'grand'; align: 'center' | 'start' }
+  | { t: 'text'; text: string; style: 'title' | 'heading' | 'body' | 'bodyBold' | 'small' | 'grand' | 'number'; align: 'center' | 'start' }
   | { t: 'row'; label: string; value: string; style: 'body' | 'bodyBold' | 'small' | 'grand' }
   | { t: 'sub'; label: string; value: string }
   | { t: 'divider'; gap: number }
@@ -75,6 +75,11 @@ export interface ReceiptInput {
   logoUrl: string | null;
   /** Where it was issued — the shop, the till's number and name ([placeLine]); absent: no line. */
   place?: { shopName: string | null; posNumber: string | null; deviceName: string | null } | null;
+  /**
+   * "מספר הזמנה A-1" — the kiosk's order (pickup) number, large, near the top (`printing.orderNumberOnReceipt`,
+   * the owner 08.10.2026: one paper). Absent / null / blank: no block (as before).
+   */
+  orderNumber?: string | null;
 }
 
 /**
@@ -147,6 +152,14 @@ export function receiptDoc(r: ReceiptInput): ReceiptDoc {
   // "סניף הרצליה · קופה 3 · קיוסק רויאל" — where it was issued, on the copies too.
   const issued = r.place ? placeLine(r.place.shopName, r.place.posNumber, r.place.deviceName) : null;
   if (issued) ops.push({ t: 'text', text: issued, style: 'small', align: 'center' });
+  // "מספר הזמנה" and the number, big — what the customer waits to hear (pos-android ReceiptRenderer).
+  const orderNumber = nonBlank(r.orderNumber ?? null);
+  if (orderNumber) {
+    ops.push({ t: 'divider', gap: 8 });
+    ops.push({ t: 'text', text: 'מספר הזמנה', style: 'heading', align: 'center' });
+    ops.push({ t: 'text', text: ltr(orderNumber), style: 'number', align: 'center' });
+    ops.push({ t: 'gap', h: 6 });
+  }
   ops.push({ t: 'divider', gap: 8 });
   ops.push({ t: 'text', text: documentTitleFor(r.documentType), style: 'heading', align: 'center' });
   ops.push({ t: 'text', text: r.copy === 'copy' ? 'העתק' : 'מקור', style: 'small', align: 'center' });

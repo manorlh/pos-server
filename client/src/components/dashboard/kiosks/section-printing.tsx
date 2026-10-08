@@ -78,8 +78,14 @@ export function PrintingSection() {
   return (
     <div className="space-y-4">
       {/* What comes out of the kiosk's own printer, each slip said in a line (the owner, 07.10.2026:
-          "two slips instead of one" — the customer's number and the kitchen bon). */}
-      <SectionCard title={t('slipsTitle')} description={t('slipsHint')} paths={['printing.pickupSlip', 'printing.bonOnKiosk']}>
+          "two slips instead of one" — the customer's number and the kitchen bon; 08.10.2026: one paper —
+          the receipt with the order number on it, no separate number slip by default). */}
+      <SectionCard
+        title={t('slipsTitle')}
+        description={t('slipsHint')}
+        paths={['printing.orderNumberOnReceipt', 'printing.pickupSlip', 'printing.bonOnKiosk']}
+      >
+        <SwitchField path="printing.orderNumberOnReceipt" label={tf('printing.orderNumberOnReceipt')} hint={t('orderNumberOnReceiptHint')} />
         <SwitchField path="printing.pickupSlip" label={tf('printing.pickupSlip')} hint={t('pickupSlipHint')} />
         <SwitchField path="printing.bonOnKiosk" label={tf('printing.bonOnKiosk')} hint={t('bonOnKioskHint')} />
       </SectionCard>

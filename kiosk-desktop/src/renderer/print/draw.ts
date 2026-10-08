@@ -88,6 +88,8 @@ const STYLES: Record<string, { size: number; bold: boolean }> = {
   bodyBold: { size: 21, bold: true },
   small: { size: 18, bold: false },
   grand: { size: 28, bold: true },
+  // The order number on the kiosk's receipt ("מספר הזמנה A-1"), as the till's ReceiptRenderer draws it.
+  number: { size: 56, bold: true },
 };
 
 async function drawReceiptAt384(doc: ReceiptDoc): Promise<HTMLCanvasElement> {

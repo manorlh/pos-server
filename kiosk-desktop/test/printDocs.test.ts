@@ -15,7 +15,7 @@ const business: BusinessInfo = {
 };
 
 describe('the receipt (ReceiptRenderer, 320)', () => {
-  const doc = receiptDoc({
+  const base: Parameters<typeof receiptDoc>[0] = {
     documentType: 320,
     number: '40000057',
     copy: 'original',
@@ -35,7 +35,8 @@ describe('the receipt (ReceiptRenderer, 320)', () => {
     card: { brand: 'visa', last4: '1234', authNum: '0123456', payments: null, firstPaymentAgorot: null },
     footer: [null, ''],
     logoUrl: null,
-  });
+  };
+  const doc = receiptDoc(base);
   const texts = doc.ops.map((o) => ('text' in o ? o.text : 'label' in o ? `${o.label}|${o.value}` : o.t));
 
   it('prints the till’s lines in the till’s order', () => {
@@ -57,6 +58,17 @@ describe('the receipt (ReceiptRenderer, 320)', () => {
     expect(texts).toContain('אישור|0123456');
     expect(texts).toContain('ראנר מערכות קופות ממוחשבות');
     expect(texts).not.toContain('טלפון: 054-2666669'); // "" drops the line
+  });
+
+  it('no order number unless given: then "מספר הזמנה" and the number big, before the document title', () => {
+    expect(texts).not.toContain('מספר הזמנה');
+    const numbered = receiptDoc({ ...base, orderNumber: 'A-12' });
+    const t = numbered.ops.map((o) => ('text' in o ? o.text : o.t));
+    expect(t.indexOf('מספר הזמנה')).toBeLessThan(t.indexOf('חשבונית מס/קבלה'));
+    expect(numbered.ops[t.indexOf('מספר הזמנה') + 1]).toMatchObject({ t: 'text', style: 'number', align: 'center' });
+    expect(t).toContain('⁦A-12⁩');
+    // Blank is none.
+    expect(receiptDoc({ ...base, orderNumber: '  ' }).ops).toEqual(doc.ops);
   });
 
   it('labels, titles and quantities as the till', () => {
