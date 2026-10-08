@@ -58,6 +58,7 @@ export const LIVE: Record<string, string> = {
   voucherOffline: 'תשלום בשובר אינו זמין כרגע — אין חיבור לרשת',
   voucherAppliedNote: 'השובר נקלט · {amount}',
   voucherChecking: 'בודקים את השובר…',
+  voucherNoAnswer: 'לא הצלחנו לבדוק את השובר כרגע. נסו שוב או פנו לצוות.',
   voucherForfeitYes: 'לממש בכל זאת',
   voucherForfeitNo: 'לא, תודה',
   'voucher.prepaid_voucher_not_found': 'השובר לא נמצא',

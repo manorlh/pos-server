@@ -37,6 +37,10 @@ export interface KioskPayVoucher {
   serial: number;
   amountAgorot: number;
   label?: string | null;
+  /** Its own words, in place of "שובר #N · label" (the Android kiosk's "שובר מס׳ 0008 · ארוחה"). */
+  title?: string | null;
+  /** What it covered ("מנה: נקניקייה ×1"), under it. */
+  lines?: string[];
 }
 
 export interface KioskLivePayMethod {
@@ -212,13 +216,22 @@ export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePay
                 ) : null}
                 {live.vouchers.map((v) => (
                   <div key={v.id} className="flex items-center justify-between gap-2 kt-13">
-                    <span className="flex min-w-0 items-center gap-1.5" style={{ color: m.c.mutedText }}>
-                      <Ticket className="h-4 w-4 shrink-0" />
-                      <span className="truncate">
-                        {m.txt('payVoucherLabel')}
-                        {v.serial ? ` #${v.serial}` : ''}
-                        {v.label ? ` · ${v.label}` : ''}
+                    <span className="flex min-w-0 flex-col" style={{ color: m.c.mutedText }}>
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <Ticket className="h-4 w-4 shrink-0" />
+                        <span className="truncate">
+                          {v.title ? (
+                            v.title
+                          ) : (
+                            <>
+                              {m.txt('payVoucherLabel')}
+                              {v.serial ? ` #${v.serial}` : ''}
+                              {v.label ? ` · ${v.label}` : ''}
+                            </>
+                          )}
+                        </span>
                       </span>
+                      {v.lines && v.lines.length > 0 ? <span className="ps-[22px] kt-11 leading-snug">{v.lines.join(' · ')}</span> : null}
                     </span>
                     <span className="flex items-center gap-2">
                       <span className="font-semibold tabular-nums" dir="ltr">

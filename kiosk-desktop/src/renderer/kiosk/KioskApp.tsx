@@ -111,7 +111,7 @@ import {
   type KioskFlowState,
 } from '../../core/kioskFlow';
 import { inTechnicianZone, mayOpen as technicianMayOpen, TapSequence } from '../../core/technician';
-import type { BasketChange, KioskView, PayProgress, PlaceOrderOut, StartPaymentIn } from '../../shared/bridge';
+import type { BasketChange, KioskView, PayProgress, PlaceOrderOut, StartPaymentIn, VoucherAnswer } from '../../shared/bridge';
 import { scannedVoucherCode } from '../../core/kioskScan';
 import { kiosk } from '../bridge';
 import { formatMoney, t, txtOf, voucherReason } from '../i18n';
@@ -143,9 +143,14 @@ interface TillState {
   forfeit: string | null;
   /** The order sent to the tills. */
   placed: Extract<PlaceOrderOut, { ok: true }> | null;
+  /**
+   * Android: the APK holds this order's vouchers (voucherApply / voucherRemove) — its last answer.
+   * It keeps them while the flow reports "details" or "pay"; leaving the checkout gives them back there.
+   */
+  native: VoucherAnswer | null;
 }
 
-const NO_TILL: TillState = { vouchers: [], busy: false, note: null, error: null, entry: false, forfeit: null, placed: null };
+const NO_TILL: TillState = { vouchers: [], busy: false, note: null, error: null, entry: false, forfeit: null, placed: null, native: null };
 
 /** Screens outside the checkout: an order that reaches one before it went to the tills gives its vouchers back. */
 const LEAVES_CHECKOUT: ReadonlySet<string> = new Set(['attract', 'paused', 'closed', 'no_payment', 'setup', 'service', 'catalog', 'cart', 'confirm']);
@@ -317,7 +322,9 @@ export function KioskApp({ view }: { view: KioskView }) {
     return () => window.clearInterval(id);
   }, [cfg.hours, dispatch]);
 
-  // The flow, as the cloud's status and the automatic close read it.
+  // The flow, as the cloud's status and the automatic close read it — and, on Android, as the APK
+  // follows it: the checkout's steps ("איך תרצו לשלם?" included) are the "details" screen and the
+  // charge is "pay", where the APK keeps the order's vouchers; any other screen gives them back.
   useEffect(() => {
     kiosk.reportFlow({ flowState: wire(flow), screen: flow.screen, busy: flowBusy(flow), idle: flowIdle(flow) });
   }, [flow]);
@@ -417,7 +424,7 @@ export function KioskApp({ view }: { view: KioskView }) {
       // The new total, to confirm before anything is charged.
       if (typeof r.totalAgorot === 'number' && r.totalAgorot !== shownAgorot) lines.push(t('basketNewTotal', { total: formatMoney(r.totalAgorot / 100) }));
       // Back to the basket: a voucher already taken goes back with the checkout, to be scanned again.
-      if (tillRef.current.vouchers.length > 0) lines.push(t('basketVouchersBack'));
+      if (tillRef.current.vouchers.length > 0 || (tillRef.current.native?.vouchers.length ?? 0) > 0) lines.push(t('basketVouchersBack'));
       setChanges(lines.length > 0 ? lines : [t('basketNewTotal', { total: formatMoney((r.totalAgorot ?? shownAgorot) / 100) })]);
       return;
     }
@@ -434,7 +441,29 @@ export function KioskApp({ view }: { view: KioskView }) {
   const redeem = useCallback(
     async (raw: string, forfeitRest = false) => {
       const code = scannedVoucherCode(raw) ?? voucherCodeOf(raw);
-      if (!code || tillRef.current.busy || !kiosk.redeemVoucher) return;
+      if (!code || tillRef.current.busy) return;
+      if (kiosk.voucherApply) {
+        // Android: the APK redeems it and holds it (its own path, the payment books it), and answers
+        // with the order's vouchers and what is left to pay.
+        setTill((p) => ({ ...p, busy: true, error: null, note: t('voucherChecking'), entry: false, forfeit: null }));
+        const had = new Set((tillRef.current.native?.vouchers ?? []).map((v) => v.serial));
+        const a = await kiosk.voucherApply({ code, payment: paymentInput() });
+        if (!a) {
+          setTill((p) => ({ ...p, busy: false, note: null, error: t('voucherNoAnswer') }));
+          return;
+        }
+        const added = a.error ? undefined : a.vouchers.find((v) => !had.has(v.serial));
+        const note = a.error ? null : (a.note ?? (added ? t('voucherAppliedNote', { amount: formatMoney(added.amountAgorot / 100) }) : null));
+        tillRef.current = { ...tillRef.current, native: a };
+        setTill((p) => ({ ...p, busy: false, native: a, error: a.error, note }));
+        // Everything paid by the vouchers (no tip left): the payment books them with no card — once, on this answer.
+        if (added && a.dueAgorot === 0) {
+          methodRef.current = 'card';
+          dispatch({ type: 'detailsDone' });
+        }
+        return;
+      }
+      if (!kiosk.redeemVoucher) return;
       if (!voucherAttempt.current || voucherAttempt.current.code !== code) voucherAttempt.current = { code, id: newId() };
       setTill((p) => ({ ...p, busy: true, error: null, note: t('voucherChecking'), entry: false, forfeit: null }));
       const r = await kiosk.redeemVoucher({ code, basket: paymentInput(), earlier: tillRef.current.vouchers, forfeitRest, clientRequestId: voucherAttempt.current.id });
@@ -458,6 +487,15 @@ export function KioskApp({ view }: { view: KioskView }) {
     },
     [details, dispatch, paymentInput, screenText],
   );
+
+  /** Android: a voucher off the order — the APK gives its hold back and answers the order's vouchers now. */
+  const removeNative = useCallback(async (serial: number) => {
+    if (tillRef.current.busy || !kiosk.voucherRemove) return;
+    setTill((p) => ({ ...p, busy: true, error: null, note: null }));
+    const a = await kiosk.voucherRemove(serial);
+    if (a) tillRef.current = { ...tillRef.current, native: a };
+    setTill((p) => (a ? { ...p, busy: false, native: a, error: a.error, note: a.note } : { ...p, busy: false, error: t('voucherNoAnswer') }));
+  }, []);
 
   // Into the pay screen: the charge starts at once (as on the till).
   useEffect(() => {
@@ -650,7 +688,9 @@ export function KioskApp({ view }: { view: KioskView }) {
   const detailsSteps: CheckoutStep[] = nowSteps.length > 0 ? nowSteps : ['details'];
   const goodsAgorot = pricing.totalAgorot;
   const tipNow = tipOfDetails(details, goodsAgorot);
-  const dueNow = dueOf(goodsAgorot, tipNow, till.vouchers);
+  // Android: what the APK says is left (its vouchers, the tip included) once one is on the order.
+  const native = till.native && till.native.vouchers.length > 0 ? till.native : null;
+  const dueNow = native ? native.dueAgorot : dueOf(goodsAgorot, tipNow, till.vouchers);
   const atPayMethod = flow.screen === 'details' && flow.detailsNext === 'pay';
   const usable = new Set(payInfo.usable);
   const voucherOffered = usable.has('voucher') && dueNow > 0;
@@ -663,9 +703,11 @@ export function KioskApp({ view }: { view: KioskView }) {
           method,
           off: method === 'card' ? cardOff : method === 'voucher' && !usable.has('voucher') ? t('voucherOffline') : method === 'voucher' && dueNow === 0 ? m.txt('voucherApplied') : null,
         })),
-        goodsAgorot,
+        goodsAgorot: native?.totalAgorot ?? goodsAgorot,
         tipAgorot: tipNow,
-        vouchers: till.vouchers.map((v) => ({ id: v.redemptionId, serial: v.serial, amountAgorot: v.amountAgorot, label: v.eventName })),
+        vouchers: native
+          ? native.vouchers.map((v) => ({ id: String(v.serial), serial: v.serial, amountAgorot: v.amountAgorot, title: v.title, lines: v.lines }))
+          : till.vouchers.map((v) => ({ id: v.redemptionId, serial: v.serial, amountAgorot: v.amountAgorot, label: v.eventName })),
         dueAgorot: dueNow,
         onPick: (method) => {
           setLastTouch(Date.now());
@@ -676,6 +718,10 @@ export function KioskApp({ view }: { view: KioskView }) {
           }
         },
         onRemoveVoucher: (id) => {
+          if (native) {
+            void removeNative(Number(id));
+            return;
+          }
           void kiosk.reverseVoucher?.(id);
           setTill((p) => ({ ...p, vouchers: p.vouchers.filter((v) => v.redemptionId !== id), note: null }));
         },

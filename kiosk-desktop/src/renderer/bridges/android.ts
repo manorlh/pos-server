@@ -24,7 +24,8 @@
  */
 
 import { resolveKioskConfig, type KioskLayer } from '@dash-lib/kioskConfig';
-import type { KioskBridge, KioskEvents, KioskView, StartPaymentIn, StartPaymentOut } from '../../shared/bridge';
+import type { PaymentMethod } from '@dash-lib/kioskConfig';
+import type { AppliedVoucher, KioskBridge, KioskEvents, KioskView, StartPaymentIn, StartPaymentOut, VoucherAnswer, VoucherApplyIn } from '../../shared/bridge';
 import type { ShellBridge, ShellEvents, ShellView } from '../../shared/roles';
 import { ANDROID_BRIDGE_API, ANDROID_ORIGIN, type ANDROID_CALLS, type ANDROID_EVENTS, type ANDROID_SENDS } from './androidWire';
 
@@ -57,6 +58,9 @@ export const CALL_TIMEOUT_MS: Record<AndroidCall, number> = {
   cancelPayment: 15_000,
   receiptChoice: 15_000,
   helpRequest: 15_000,
+  // The APK waits up to 20 s for the cloud's word on a voucher (KioskWebSession START_WAIT_MS).
+  voucherApply: 30_000,
+  voucherRemove: 15_000,
 };
 
 /** The staff's screens are the APK's on Android (its corners, its PIN, its admin). */
@@ -119,6 +123,44 @@ export function localMediaOnly(v: unknown): unknown {
   return v;
 }
 
+const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
+
+/**
+ * The APK's answer to voucherApply / voucherRemove, checked: anything that is not the answer's
+ * shape is no answer (null) — the screens keep the order's vouchers as they were.
+ */
+export function voucherAnswerOf(v: unknown): VoucherAnswer | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  const due = num(o.dueAgorot);
+  if (due === null || !Array.isArray(o.vouchers)) return null;
+  const vouchers: AppliedVoucher[] = [];
+  for (const x of o.vouchers as unknown[]) {
+    const u = (x ?? {}) as Record<string, unknown>;
+    const serial = num(u.serial);
+    const amount = num(u.amountAgorot);
+    if (serial === null || amount === null) return null;
+    vouchers.push({
+      serial,
+      title: text(u.title) ?? `שובר מס׳ ${String(serial).padStart(4, '0')}`,
+      mode: text(u.mode) ?? 'payment',
+      amountAgorot: Math.max(0, Math.trunc(amount)),
+      lines: Array.isArray(u.lines) ? (u.lines as unknown[]).filter((l): l is string => typeof l === 'string' && l.trim() !== '') : [],
+    });
+  }
+  const error = text(o.error);
+  return {
+    ok: o.ok === true && error === null,
+    error,
+    note: text(o.note),
+    totalAgorot: num(o.totalAgorot),
+    deductionAgorot: Math.max(0, Math.trunc(num(o.deductionAgorot) ?? 0)),
+    dueAgorot: Math.max(0, Math.trunc(due)),
+    vouchers,
+  };
+}
+
 /**
  * The APK sends the cloud's kiosk config as it came (its media already on the local copy): resolved
  * here against the screens' own defaults, as the Windows kiosk's main process resolves it
@@ -127,8 +169,12 @@ export function localMediaOnly(v: unknown): unknown {
 export function normalizeView(view: KioskView): KioskView {
   if (!view || !view.config) return view;
   const resolved = resolveKioskConfig(view.config as KioskLayer);
-  // The APK's web engine takes the card only (its own screens take the other methods): no "איך תרצו לשלם?".
-  const pay = view.pay ?? { methods: ['card'], usable: ['card'], cardOff: null };
+  // The APK's web engine takes the card (its own screens take cash at the till), and a voucher
+  // where the kiosk is set to take one — the APK holds it (voucherApply) and the payment books it.
+  // With the card alone: no "איך תרצו לשלם?".
+  const configured: readonly unknown[] = Array.isArray(resolved.payment?.methods) ? resolved.payment.methods : [];
+  const methods: PaymentMethod[] = configured.includes('voucher') ? ['card', 'voucher'] : ['card'];
+  const pay = view.pay ?? { methods, usable: methods, cardOff: null };
   return { ...view, pay, config: localMediaOnly(JSON.parse(JSON.stringify(resolved))) as Record<string, unknown> };
 }
 
@@ -235,6 +281,9 @@ export function createAndroidBridges(native: AndroidNative, opts: { onScan?: (co
     cancelPayment: () => call<unknown>('cancelPayment', {}).then(noop, noop),
     receiptChoice: (orderId, print) => call<unknown>('receiptChoice', { orderId, print }).then(noop, noop),
     helpRequest: () => call<unknown>('helpRequest', {}).then(noop, noop),
+    // Production vouchers: the APK redeems and holds them; its answer is the order's vouchers now.
+    voucherApply: (input: VoucherApplyIn) => call<unknown>('voucherApply', input).then(voucherAnswerOf, () => null),
+    voucherRemove: (serial: number) => call<unknown>('voucherRemove', { serial }).then(voucherAnswerOf, () => null),
     adminUnlock: async () => ({ ok: false, error: NATIVE_STAFF }),
     adminInfo: () => Promise.reject(new Error(NATIVE_STAFF)),
     adminAction: async () => ({ ok: false, message: NATIVE_STAFF }),

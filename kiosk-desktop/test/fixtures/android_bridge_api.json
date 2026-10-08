@@ -5,7 +5,7 @@
   "inbox": "__r2mAndroid",
   "origin": "https://appassets.androidplatform.net",
   "manifestKind": "r2m-kiosk-web",
-  "calls": ["bootstrap", "shellView", "startPayment", "cancelPayment", "receiptChoice", "helpRequest"],
+  "calls": ["bootstrap", "shellView", "startPayment", "cancelPayment", "receiptChoice", "helpRequest", "voucherApply", "voucherRemove"],
   "sends": ["reportFlow", "funnel", "activity", "ready", "error"],
   "events": ["view", "pay", "toast", "shell", "scan"],
   "fallbackReasons": ["ready_timeout", "render_gone", "js_errors", "no_bundle", "bridge_api", "load_error", "webview_old"],
@@ -28,6 +28,24 @@
     "ready": { "bundle": { "version": "2026.10.07-1530", "versionCode": 913530, "bridgeApi": 1 }, "at": 1791364212000 },
     "error": { "message": "TypeError: x is undefined", "source": "https://appassets.androidplatform.net/assets/android-abc.js", "line": 12, "fatal": false },
     "pay": { "orderId": "order-1", "phase": "approved", "message": null, "amountAgorot": 14960, "canCancel": false, "cancelling": false, "pickupLabel": "A17", "documentNumber": "20000057", "receipt": "ask" },
-    "startPaymentChanged": { "ok": false, "reason": "changed", "changes": [{ "kind": "repriced", "productId": "p-burger", "name": "המבורגר", "key": "l1", "from": 6200, "to": 6400 }, { "kind": "removed", "productId": "p-cola", "name": "קולה", "key": "l2" }], "totalAgorot": 12800 }
+    "startPaymentChanged": { "ok": false, "reason": "changed", "changes": [{ "kind": "repriced", "productId": "p-burger", "name": "המבורגר", "key": "l1", "from": 6200, "to": 6400 }, { "kind": "removed", "productId": "p-cola", "name": "קולה", "key": "l2" }], "totalAgorot": 12800 },
+    "voucherApply": {
+      "code": "PV:ABCD-EFGH-JKLM-NPQR",
+      "payment": {
+        "lines": [
+          { "key": "l1", "productId": "p-hotdog", "qty": 1, "options": [], "notes": [], "unitAgorot": 3500 },
+          { "key": "l2", "productId": "p-cola", "qty": 1, "options": [], "notes": [], "unitAgorot": 1500 }
+        ],
+        "service": "eat_in",
+        "customerName": null,
+        "customerPhone": null,
+        "tableRef": null,
+        "tipPct": null,
+        "tipAgorot": null,
+        "expectedTotalAgorot": 5000
+      }
+    },
+    "voucherRemove": { "serial": 8 },
+    "voucherAnswer": { "ok": true, "error": null, "note": null, "totalAgorot": 5000, "deductionAgorot": 4000, "dueAgorot": 1000, "vouchers": [{ "serial": 8, "title": "שובר מס׳ 0008 · ארוחה", "mode": "discount", "amountAgorot": 4000, "lines": ["מנה: נקניקייה ×1", "משקה: קולה ×1"] }] }
   }
 }
