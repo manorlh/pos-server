@@ -64,7 +64,7 @@ from shift_world import NOW, TODAY, accept_str_uuids, make_world
 
 FIXTURE = Path(__file__).parent / "fixtures" / "prepaid_voucher_rules.json"
 #: The fixture's SHA-256 with line endings as LF — the till's test pins the same value.
-FIXTURE_SHA256 = "948e2da480987393918a2b9ba3427cbd64d70a710b46d51343b8b048e0e9aef8"
+FIXTURE_SHA256 = "2576f9361a559d34e9d8c472307cebb16de4404ed4a8c52f7f6bca54ae4f5bdb"
 KINDS = ["items", "order_discount", "item_discount"]
 
 
@@ -213,9 +213,16 @@ class TestRules:
     @pytest.mark.parametrize("case", _rules_fixture()["stacking"], ids=lambda c: c["name"])
     def test_stacking(self, case):
         def v(d):
-            return RULES.VoucherInSale(d["voucherId"], d["batchId"], d["kind"], d["stacking"])
+            return RULES.VoucherInSale(d["voucherId"], d["batchId"], d["kind"], d["stacking"], d.get("maxVouchersPerSale"))
 
-        assert RULES.stacking_refusal([v(e) for e in case["existing"]], v(case["incoming"])) == case["refusal"]
+        existing, incoming = [v(e) for e in case["existing"]], v(case["incoming"])
+        refusal = RULES.stacking_refusal(existing, incoming)
+        assert refusal == case["refusal"]
+        # "הגעת למספר השוברים המקסימלי בעסקה (N)": the N, and the words the cashier reads.
+        others = [e for e in existing if e.voucher_id != incoming.voucher_id]
+        limit = RULES.sale_limit(others, incoming) if refusal == RULES.MAX_PER_SALE else None
+        assert limit == case["limit"]
+        assert RULES.stacking_text(refusal, limit) == case["text"]
 
     @pytest.mark.parametrize("case", _rules_fixture()["discount"], ids=lambda c: c["name"])
     def test_discount(self, case):
@@ -256,11 +263,13 @@ class TestBatches:
         assert (row.discount_value, row.min_purchase, row.max_discount) == (2000, 10000, 5000)
         assert all(v.uses_left == 3 and v.remaining == {} for v in w.db.query(PrepaidVoucher))
 
-    def test_defaults_one_voucher_a_sale_no_double_benefit_one_use(self, w):
+    def test_defaults_many_vouchers_a_sale_no_double_benefit_one_use(self, w):
+        # The owner: a new type is "כמה שוברים בעסקה", with no maximum.
         b = make(w)
-        assert (b["stacking"], b["promotionPolicy"], b["usesPerVoucher"], b["maxUsesPerSale"]) == ("single", "exclude", 1, 1)
+        assert (b["stacking"], b["maxVouchersPerSale"], b["promotionPolicy"], b["usesPerVoucher"], b["maxUsesPerSale"]) == (
+            "unlimited", None, "exclude", 1, 1)
         goods = make(w, kind="items")
-        assert goods["stacking"] == "single" and goods["kind"] == "items" and goods["benefitText"] is None
+        assert goods["stacking"] == "unlimited" and goods["kind"] == "items" and goods["benefitText"] is None
 
     def test_an_item_discount_names_products_and_categories(self, w):
         b = make(w, kind="item_discount", targets={"productIds": [w.coffee.id], "categoryIds": [w.drinks.id]}, maxUnits=2)
@@ -362,7 +371,7 @@ class TestLookup:
         # A category means it and its sub-categories.
         assert set(out["benefit"]["categoryIds"]) == {str(w.drinks.id), str(w.espresso.id)}
         assert (out["usesLeft"], out["usesAvailable"], out["maxUsesPerSale"]) == (4, 4, 2)
-        assert out["stacking"] == "single" and out["batchId"] == b["id"]
+        assert out["stacking"] == "unlimited" and out["maxVouchersPerSale"] is None and out["batchId"] == b["id"]
 
     def test_a_client_that_cannot_apply_a_discount_is_told_so(self, w):
         b = make(w)
@@ -442,8 +451,8 @@ class TestReserve:
         w.db.query(PrepaidVoucherReservation).update({"expires_at": datetime.now(timezone.utc) - timedelta(seconds=1)})
         assert reserve(w, code, lines, sale="b", till=w.tills[1])["status"] == "held"
 
-    def test_stacking_single_by_default(self, w):
-        a, b = codes(w, make(w, name="א"))[0], codes(w, make(w, name="ב"))[0]
+    def test_stacking_single(self, w):
+        a, b = codes(w, make(w, name="א", stacking="single"))[0], codes(w, make(w, name="ב", stacking="single"))[0]
         lines = basket(("L1", w.sandwich, 1, 40))
         reserve(w, a, lines)
         assert refused(reserve, w, b, lines).detail == RULES.NOT_STACKABLE
@@ -484,6 +493,13 @@ class TestReserve:
         two = codes(w, legacy)
         R.redeem_prepaid_voucher(str(w.tills[0].id), body(two[0], "3", "s2"), machine=w.tills[0], db=w.db)
         R.redeem_prepaid_voucher(str(w.tills[0].id), body(two[1], "4", "s2"), machine=w.tills[0], db=w.db)
+
+    def test_one_voucher_a_sale_whatever_the_kind(self, w):
+        # "שובר אחד בעסקה" on a goods voucher refuses a discount voucher after it, and the other way round.
+        goods = codes(w, make(w, kind="items", stacking="single"))[0]
+        redeem_goods(w, goods, "g1", "s1")
+        discount = codes(w, make(w, name="ב"))[0]
+        assert refused(reserve, w, discount, basket(("L1", w.sandwich, 1, 40)), sale="s1").detail == RULES.OTHER_NOT_STACKABLE
 
     def test_promotions_per_line_and_the_minimum_on_the_same_base(self, w):
         code = codes(w, make(w, discountType="percent", discountValue=20, minPurchase=50))[0]
@@ -772,3 +788,107 @@ def test_the_migration_is_the_single_head_on_the_till_design_merge():
     assert len(heads) == 1
     assert "c7e2f4a9d1b6" in {r.revision for r in script.iterate_revisions(heads[0], "base")}
     assert script.get_revision("c7e2f4a9d1b6").down_revision == "b4a16fe43e9d"
+
+
+# ── "מספר שוברים מקסימלי בעסקה" ──────────────────────────────────────────────
+
+
+def redeem_goods(w, code, request_id, sale, till=None):
+    till = till or w.tills[0]
+    body = PrepaidVoucherRedeemIn(
+        code=code, items=[{"productId": str(w.hotdog.id), "quantity": 1}], clientRequestId=request_id, saleRef=sale,
+    )
+    return R.redeem_prepaid_voucher(str(till.id), body, machine=till, db=w.db)
+
+
+class TestVouchersPerSale:
+    """The owner: "שובר אחד בעסקה" / "כמה שוברים בעסקה", and with many an optional maximum."""
+
+    def test_the_maximum_is_stored_and_reaches_the_till(self, w):
+        b = make(w, kind="items", count=3, maxVouchersPerSale=2)
+        assert (b["stacking"], b["maxVouchersPerSale"]) == ("unlimited", 2)
+        assert lookup(w, codes(w, b)[0])["maxVouchersPerSale"] == 2
+        assert w.db.query(PrepaidVoucherBatch).one().max_vouchers_per_sale == 2
+
+    def test_one_voucher_a_sale_has_no_maximum(self, w):
+        b = make(w, kind="items", stacking="single", maxVouchersPerSale=4)
+        assert (b["stacking"], b["maxVouchersPerSale"]) == ("single", None)
+        assert lookup(w, codes(w, b)[0])["maxVouchersPerSale"] is None
+
+    @pytest.mark.parametrize("n", [0, -1, 51])
+    def test_a_maximum_out_of_range_is_refused(self, w, n):
+        with pytest.raises(ValueError):
+            PrepaidVoucherBatchCreate(name="x", companyId=w.company.id, count=1, kind="items",
+                                      items=[{"productId": w.hotdog.id, "quantity": 1}], maxVouchersPerSale=n)
+
+    def test_the_goods_vouchers_of_one_sale_up_to_the_maximum(self, w):
+        three = codes(w, make(w, kind="items", count=4, maxVouchersPerSale=2, splitAllowed=True,
+                             items=[{"productId": w.hotdog.id, "quantity": 2}]))
+        redeem_goods(w, three[0], "1", "s1")
+        redeem_goods(w, three[1], "2", "s1")
+        e = refused(redeem_goods, w, three[2], "3", "s1")
+        assert e.detail == RULES.MAX_PER_SALE
+        assert RULES.stacking_text(e.detail, 2) == "הגעת למספר השוברים המקסימלי בעסקה (2)"
+        # The rest of a voucher already in the sale is not another voucher …
+        redeem_goods(w, three[0], "1b", "s1")
+        # … and another sale is another sale.
+        redeem_goods(w, three[2], "4", "s2")
+
+    def test_another_vouchers_maximum_counts_too(self, w):
+        capped = codes(w, make(w, kind="items", name="א", maxVouchersPerSale=2))[0]
+        free = codes(w, make(w, kind="items", name="ב", count=3))
+        redeem_goods(w, capped, "1", "s1")
+        redeem_goods(w, free[0], "2", "s1")
+        assert refused(redeem_goods, w, free[1], "3", "s1").detail == RULES.MAX_PER_SALE
+
+    def test_a_discount_voucher_counts_against_the_maximum(self, w):
+        goods = codes(w, make(w, kind="items", name="א", count=2, maxVouchersPerSale=2))
+        redeem_goods(w, goods[0], "1", "s1")
+        redeem_goods(w, goods[1], "2", "s1")
+        discount = codes(w, make(w, name="ב"))[0]
+        assert refused(reserve, w, discount, basket(("L1", w.sandwich, 1, 40)), sale="s1").detail == RULES.MAX_PER_SALE
+
+    def test_what_the_till_says_it_holds_counts(self, w):
+        discount = codes(w, make(w))[0]
+        held = [{"voucherId": str(uuid.uuid4()), "batchId": str(uuid.uuid4()), "kind": "items", "stacking": "unlimited",
+                 "maxVouchersPerSale": 1}]
+        e = refused(reserve, w, discount, basket(("L1", w.sandwich, 1, 40)), sale="s9", others=held)
+        assert e.detail == RULES.MAX_PER_SALE
+        # An older till sends no maximum: nothing to honour.
+        held[0].pop("maxVouchersPerSale")
+        assert reserve(w, discount, basket(("L1", w.sandwich, 1, 40)), sale="s9", others=held)["status"] == "held"
+
+    def test_it_changes_after_issue_and_one_a_sale_clears_it(self, w):
+        b = make(w, kind="items")
+        out = R.update_prepaid_voucher_batch(b["id"], PrepaidVoucherBatchUpdate(maxVouchersPerSale=3), **_ctx(w))
+        assert out["maxVouchersPerSale"] == 3
+        out = R.update_prepaid_voucher_batch(b["id"], PrepaidVoucherBatchUpdate(stacking="single"), **_ctx(w))
+        assert (out["stacking"], out["maxVouchersPerSale"]) == ("single", None)
+        assert w.db.query(PrepaidVoucherBatch).one().max_vouchers_per_sale is None
+        R.update_prepaid_voucher_batch(b["id"], PrepaidVoucherBatchUpdate(stacking="unlimited", maxVouchersPerSale=2), **_ctx(w))
+        out = R.update_prepaid_voucher_batch(b["id"], PrepaidVoucherBatchUpdate(maxVouchersPerSale=None), **_ctx(w))
+        assert (out["stacking"], out["maxVouchersPerSale"]) == ("unlimited", None)
+
+    def test_the_sale_is_locked_before_the_voucher(self, w, monkeypatch):
+        """Atomic per sale: on Postgres a transaction lock keyed by the till and the sale."""
+        calls = []
+
+        class Bind:
+            class dialect:
+                name = "postgresql"
+
+        class Db:
+            def get_bind(self):
+                return Bind()
+
+            def execute(self, stmt, params):
+                calls.append((str(stmt), params))
+
+        PV._lock_sale(Db(), w.tills[0], "sale-1")
+        PV._lock_sale(Db(), w.tills[0], "sale-1")
+        PV._lock_sale(Db(), w.tills[0], "sale-2")
+        PV._lock_sale(Db(), w.tills[0], "  ")
+        assert [c[0] for c in calls] == ["SELECT pg_advisory_xact_lock(:key)"] * 3
+        assert calls[0][1] == calls[1][1] != calls[2][1]
+        # SQLite (the tests' world): nothing to lock.
+        PV._lock_sale(w.db, w.tills[0], "sale-1")

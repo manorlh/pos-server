@@ -43,6 +43,8 @@ export interface PrepaidBatchTerms {
   maxUnits?: number | null;
   targets?: PrepaidTargets | null;
   stacking?: PrepaidStacking;
+  /** "מספר שוברים מקסימלי בעסקה" (with many); null: no maximum. */
+  maxVouchersPerSale?: number | null;
   promotionPolicy?: PrepaidPromotionPolicy;
   usesPerVoucher?: number;
   maxUsesPerSale?: number;
@@ -210,6 +212,8 @@ export interface PrepaidTypeBody {
   maxUnits?: number | null;
   targets?: { productIds: string[]; categoryIds: string[] } | null;
   stacking?: PrepaidStacking;
+  /** "מספר שוברים מקסימלי בעסקה" (with many); null: no maximum. */
+  maxVouchersPerSale?: number | null;
   promotionPolicy?: PrepaidPromotionPolicy;
   usesPerVoucher?: number;
   maxUsesPerSale?: number;
@@ -352,6 +356,8 @@ export interface PrepaidBatchCreate {
   maxUnits?: number | null;
   targets?: { productIds: string[]; categoryIds: string[] } | null;
   stacking?: PrepaidStacking;
+  /** "מספר שוברים מקסימלי בעסקה" (with many); null: no maximum. */
+  maxVouchersPerSale?: number | null;
   promotionPolicy?: PrepaidPromotionPolicy;
   usesPerVoucher?: number;
   maxUsesPerSale?: number;
@@ -361,6 +367,8 @@ export interface PrepaidBatchCreate {
 /** The rules of use that may change after printing (what it gives and its uses never do). */
 export interface PrepaidBatchRulesUpdate {
   stacking?: PrepaidStacking;
+  /** "מספר שוברים מקסימלי בעסקה" (with many); null: no maximum. */
+  maxVouchersPerSale?: number | null;
   promotionPolicy?: PrepaidPromotionPolicy;
   maxUsesPerSale?: number;
   /** Null clears the daily limit. */

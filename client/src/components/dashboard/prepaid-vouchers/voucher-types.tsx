@@ -36,6 +36,8 @@ import {
   EMPTY_DISCOUNT_TERMS,
   KindPicker,
   RulesFields,
+  stackingBody,
+  stackingValid,
   type DiscountTermsState,
   type RulesState,
 } from '@/components/dashboard/prepaid-vouchers/voucher-terms';
@@ -228,7 +230,8 @@ function TypeForm({
     categoryIds: initial?.targets?.categoryIds ?? [],
   });
   const [rules, setRules] = useState<RulesState>({
-    stacking: initial?.stacking ?? 'single',
+    stacking: initial?.stacking ?? 'unlimited',
+    maxVouchersPerSale: initial?.maxVouchersPerSale ? String(initial.maxVouchersPerSale) : '',
     promotionPolicy: initial?.promotionPolicy ?? 'exclude',
     usesPerVoucher: String(initial?.usesPerVoucher ?? 1),
     maxUsesPerSale: String(initial?.maxUsesPerSale ?? 1),
@@ -264,6 +267,7 @@ function TypeForm({
     !companyId ? t('problem.company') : null,
     !discount && goodsCount === 0 ? t('problem.items') : null,
     discount && termErrors.length ? t('problem.terms') : null,
+    !stackingValid(rules) ? t('problem.maxVouchers') : null,
     !discount && pricing === 'fixed' && decimal(tillValue) == null ? t('problem.value') : null,
   ].filter(Boolean) as string[];
 
@@ -271,7 +275,7 @@ function TypeForm({
     const out: PrepaidTypeBody = {
       name: name.trim(), code: code.trim() || null, description: description.trim() || null,
       includeExtras: !discount && includeExtras, splitAllowed: !discount && splitAllowed,
-      stacking: rules.stacking,
+      ...stackingBody(rules),
     };
     if (!initial) Object.assign(out, { companyId, kind });
     if (!discount) {

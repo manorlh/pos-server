@@ -74,6 +74,8 @@ import {
   EMPTY_DISCOUNT_TERMS,
   KindPicker,
   RulesFields,
+  stackingBody,
+  stackingValid,
   useBatchTermsText,
   type DiscountTermsState,
   type RulesState,
@@ -340,6 +342,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   const problems = batchFormProblems({
     name, companyId, discount, itemCount: chosen ? Math.max(1, chosen.items.length) : items.length,
     termErrors: termErrors.length, count: n, groupOk, validFrom, validUntil,
+    stackingOk: chosen ? true : stackingValid(rules),
   });
   const canCreate = problems.length === 0;
   // "100 שוברים … זכאות ל-300 יחידות" — what the run entitles to in all, before it is issued.
@@ -390,7 +393,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
         customerName: customerName.trim() || null,
         orderRef: orderRef.trim() || null,
         kind,
-        stacking: rules.stacking,
+        ...stackingBody(rules),
         ...(discount
           ? {
               discountType: terms.discountType,
@@ -1080,6 +1083,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
           <p className="text-xs text-muted-foreground">
             {termsText.uses ?? (batch.splitAllowed ? t('card.splitAllowed') : t('card.oneTime'))}
             {` · ${tk(`stacking.${batch.stacking ?? 'single'}`)}`}
+            {batch.maxVouchersPerSale ? ` · ${tk('maxVouchersShort', { n: batch.maxVouchersPerSale })}` : null}
             {discount ? ` · ${tk(`promotionPolicy.${batch.promotionPolicy ?? 'exclude'}`)}` : ''}
             {batch.validFrom ? ` · ${t('validFrom', { date: day(batch.validFrom) })}` : ''}
             {batch.validUntil ? ` · ${t('validUntil', { date: day(batch.validUntil) })}` : ''}
@@ -1261,7 +1265,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
         </CardContent>
       </Card>
 
-      <BatchRulesCard key={`${batch.stacking}:${batch.promotionPolicy}:${batch.maxUsesPerSale}:${batch.maxUsesPerDay}`}
+      <BatchRulesCard key={`${batch.stacking}:${batch.maxVouchersPerSale}:${batch.promotionPolicy}:${batch.maxUsesPerSale}:${batch.maxUsesPerDay}`}
         batch={batch} onSaved={refresh} />
 
       {!cancelled ? (

@@ -55,7 +55,7 @@ TERM_FIELDS = (
     "kind", "till_value", "production_price", "pricing", "allow_top_up", "redemption_accounting",
     "show_validity",
     "split_allowed", "include_extras", "print_till_value", "discount_type", "discount_value",
-    "min_purchase", "max_discount", "max_units", "targets", "stacking", "promotion_policy",
+    "min_purchase", "max_discount", "max_units", "targets", "stacking", "max_vouchers_per_sale", "promotion_policy",
     "uses_per_voucher", "max_uses_per_sale", "max_uses_per_day", "offline_allowed",
 )
 #: The discount-block policy's columns (from the schema's nested `discount_block_policy`).

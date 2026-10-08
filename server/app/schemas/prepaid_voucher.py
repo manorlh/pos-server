@@ -30,6 +30,8 @@ REF_MAX = 100
 #: Discount vouchers: the most a fixed one, a minimum or a cap may be (₪), and uses.
 MONEY_MAX = Decimal("100000")
 MAX_USES = 1000
+#: "מספר שוברים מקסימלי בעסקה" — the most a sale may hold.
+MAX_VOUCHERS_PER_SALE = 50
 MAX_TARGETS = 200
 
 
@@ -137,6 +139,8 @@ def _check_terms(m) -> None:
     What a voucher gives, checked and tidied — the same for a batch made without a type and
     for a type: goods need items (each product once), a discount needs its terms.
     """
+    if getattr(m, "stacking", None) == "single":
+        m.max_vouchers_per_sale = None  # "שובר אחד בעסקה" is its own maximum
     if m.kind not in DISCOUNT_KINDS:
         if not m.items:
             raise ValueError("at least one item")
@@ -289,7 +293,10 @@ class PrepaidVoucherTypeCreate(BaseModel):
     max_discount: Optional[Decimal] = Field(None, alias="maxDiscount")
     targets: Optional[PrepaidVoucherTargetsIn] = None
     max_units: Optional[int] = Field(None, alias="maxUnits", ge=1, le=MAX_ITEM_QUANTITY)
-    stacking: str = "single"
+    #: "כמה שוברים בעסקה" by default (the owner); "שובר אחד בעסקה" = single.
+    stacking: str = "unlimited"
+    #: "מספר שוברים מקסימלי בעסקה" — with unlimited / distinct_batches; null: no maximum.
+    max_vouchers_per_sale: Optional[int] = Field(None, alias="maxVouchersPerSale", ge=1, le=MAX_VOUCHERS_PER_SALE)
     promotion_policy: str = Field("exclude", alias="promotionPolicy")
     uses_per_voucher: int = Field(1, alias="usesPerVoucher", ge=1, le=MAX_USES)
     max_uses_per_sale: int = Field(1, alias="maxUsesPerSale", ge=1, le=MAX_USES)
@@ -335,7 +342,7 @@ class PrepaidVoucherTypeCreate(BaseModel):
     @field_validator("stacking", mode="before")
     @classmethod
     def _stacking(cls, value):
-        return _choice(value, STACKING, "stacking") or "single"
+        return _choice(value, STACKING, "stacking") or "unlimited"
 
     @field_validator("promotion_policy", mode="before")
     @classmethod
@@ -386,6 +393,8 @@ class PrepaidVoucherTypeUpdate(BaseModel):
     targets: Optional[PrepaidVoucherTargetsIn] = None
     max_units: Optional[int] = Field(None, alias="maxUnits", ge=1, le=MAX_ITEM_QUANTITY)
     stacking: Optional[str] = None
+    #: Null clears the maximum.
+    max_vouchers_per_sale: Optional[int] = Field(None, alias="maxVouchersPerSale", ge=1, le=MAX_VOUCHERS_PER_SALE)
     promotion_policy: Optional[str] = Field(None, alias="promotionPolicy")
     uses_per_voucher: Optional[int] = Field(None, alias="usesPerVoucher", ge=1, le=MAX_USES)
     max_uses_per_sale: Optional[int] = Field(None, alias="maxUsesPerSale", ge=1, le=MAX_USES)
@@ -483,8 +492,11 @@ class PrepaidVoucherBatchCreate(BaseModel):
     #: item_discount: what is discounted, and how many units per use (default 1).
     targets: Optional[PrepaidVoucherTargetsIn] = None
     max_units: Optional[int] = Field(None, alias="maxUnits", ge=1, le=MAX_ITEM_QUANTITY)
-    #: "single" (default), "distinct_batches", "unlimited".
-    stacking: str = "single"
+    #: "unlimited" ("כמה שוברים בעסקה", the default), "single" ("שובר אחד בעסקה"),
+    #: "distinct_batches" ("כמה שוברים, רק מסוגים שונים").
+    stacking: str = "unlimited"
+    #: "מספר שוברים מקסימלי בעסקה" — with unlimited / distinct_batches; null: no maximum.
+    max_vouchers_per_sale: Optional[int] = Field(None, alias="maxVouchersPerSale", ge=1, le=MAX_VOUCHERS_PER_SALE)
     #: Discount kinds: "exclude" (default), "best", "combine".
     promotion_policy: str = Field("exclude", alias="promotionPolicy")
     #: Discount kinds: uses per voucher, per sale, and (optional) per day.
@@ -520,7 +532,7 @@ class PrepaidVoucherBatchCreate(BaseModel):
     @field_validator("stacking", mode="before")
     @classmethod
     def _stacking(cls, value):
-        return _choice(value, STACKING, "stacking") or "single"
+        return _choice(value, STACKING, "stacking") or "unlimited"
 
     @field_validator("promotion_policy", mode="before")
     @classmethod
@@ -644,6 +656,8 @@ class PrepaidVoucherBatchUpdate(BaseModel):
     # The rules of use — not on the paper, so they may change (the next sale reads them).
     # What the voucher gives and its uses are printed / issued and never change.
     stacking: Optional[str] = None
+    #: "מספר שוברים מקסימלי בעסקה"; null clears it (no maximum).
+    max_vouchers_per_sale: Optional[int] = Field(None, alias="maxVouchersPerSale", ge=1, le=MAX_VOUCHERS_PER_SALE)
     promotion_policy: Optional[str] = Field(None, alias="promotionPolicy")
     max_uses_per_sale: Optional[int] = Field(None, alias="maxUsesPerSale", ge=1, le=MAX_USES)
     #: Null clears the daily limit.
@@ -830,6 +844,8 @@ class PrepaidVoucherInSaleIn(BaseModel):
     batch_id: str = Field(..., alias="batchId", min_length=1, max_length=100)
     kind: str = "items"
     stacking: str = "single"
+    #: Its batch's "מספר שוברים מקסימלי בעסקה" (lookup's `maxVouchersPerSale`). Absent from older tills.
+    max_vouchers_per_sale: Optional[int] = Field(None, alias="maxVouchersPerSale", ge=1, le=MAX_VOUCHERS_PER_SALE)
 
 
 class PrepaidVoucherReserveIn(BaseModel):

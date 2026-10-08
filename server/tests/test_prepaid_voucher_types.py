@@ -378,3 +378,77 @@ class TestRedemptionAccounting:
         t = make_type(w)
         b = batch_from(w, t["id"], customerName="קייטרינג אלון")
         assert lookup(w, first_code(w, b))["productionName"] == "קייטרינג אלון"
+
+
+class TestVouchersPerSale:
+    """"שובר אחד בעסקה" / "כמה שוברים בעסקה" (the default), and the optional maximum."""
+
+    def test_a_new_type_takes_many_with_no_maximum(self, w):
+        t = make_type(w)
+        assert (t["stacking"], t["maxVouchersPerSale"]) == ("unlimited", None)
+
+    def test_the_batch_copies_the_maximum_and_the_till_reads_it(self, w):
+        t = make_type(w, maxVouchersPerSale=3)
+        assert t["maxVouchersPerSale"] == 3
+        b = batch_from(w, t["id"])
+        assert (b["stacking"], b["maxVouchersPerSale"]) == ("unlimited", 3)
+        assert lookup(w, first_code(w, b))["maxVouchersPerSale"] == 3
+
+    def test_one_a_sale_drops_the_maximum_in_a_new_version(self, w):
+        t = make_type(w, stacking="distinct_batches", maxVouchersPerSale=2)
+        out = patch(w, t["id"], stacking="single")
+        assert (out["stacking"], out["maxVouchersPerSale"], out["version"]) == ("single", None, 2)
+        out = patch(w, t["id"], stacking="unlimited", maxVouchersPerSale=4)
+        assert (out["stacking"], out["maxVouchersPerSale"]) == ("unlimited", 4)
+        assert patch(w, t["id"], maxVouchersPerSale=None)["maxVouchersPerSale"] is None
+
+
+class TestMaxPerSaleMigration:
+    REVISION = "9e4b2d7c1a05"
+
+    def _module(self):
+        path = ROOT / "alembic" / "versions" / f"{self.REVISION}_prepaid_voucher_max_per_sale.py"
+        spec = importlib.util.spec_from_file_location(f"migration_{self.REVISION}", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_on_the_single_head_after_the_types(self):
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
+        config = Config(str(ROOT / "alembic.ini"))
+        config.set_main_option("script_location", str(ROOT / "alembic"))
+        script = ScriptDirectory.from_config(config)
+        heads = script.get_heads()
+        assert len(heads) == 1
+        assert self.REVISION in {r.revision for r in script.walk_revisions("base", heads[0])}
+        assert script.get_revision(self.REVISION).down_revision == "2c7e9a4f1d38"
+
+    def test_a_nullable_column_on_types_and_batches_and_nothing_changes(self):
+        import sqlalchemy as sa
+        from alembic.operations import Operations
+        from alembic.runtime.migration import MigrationContext
+
+        module = self._module()
+        engine = sa.create_engine("sqlite://")
+        with engine.begin() as conn:
+            conn.execute(sa.text("CREATE TABLE prepaid_voucher_types (id CHAR(32) PRIMARY KEY, stacking VARCHAR)"))
+            conn.execute(sa.text("CREATE TABLE prepaid_voucher_batches (id CHAR(32) PRIMARY KEY, stacking VARCHAR)"))
+            conn.execute(sa.text("INSERT INTO prepaid_voucher_types VALUES ('t1', 'single')"))
+            conn.execute(sa.text("INSERT INTO prepaid_voucher_batches VALUES ('b1', 'unlimited')"))
+            with Operations.context(MigrationContext.configure(conn)):
+                module.upgrade()
+                module.upgrade()  # idempotent
+            assert conn.execute(sa.text("SELECT stacking, max_vouchers_per_sale FROM prepaid_voucher_types")).one() == (
+                "single", None)
+            assert conn.execute(sa.text("SELECT stacking, max_vouchers_per_sale FROM prepaid_voucher_batches")).one() == (
+                "unlimited", None)
+        buf = io.StringIO()
+        offline = MigrationContext.configure(dialect_name="postgresql", opts={"as_sql": True, "output_buffer": buf})
+        with Operations.context(offline):
+            module.upgrade()
+        sql = buf.getvalue()
+        assert "ALTER TABLE prepaid_voucher_types ADD COLUMN max_vouchers_per_sale INTEGER" in sql
+        assert "ALTER TABLE prepaid_voucher_batches ADD COLUMN max_vouchers_per_sale INTEGER" in sql
+

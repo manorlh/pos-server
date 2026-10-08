@@ -145,7 +145,11 @@ class PrepaidVoucherType(Base):
     max_discount = Column(Integer, nullable=True)
     max_units = Column(Integer, nullable=True)
     targets = Column(JSON, nullable=True)
+    #: "שובר אחד בעסקה" (`single`) / "כמה שוברים בעסקה" (`unlimited`, a new type's default — the form's) /
+    #: "כמה שוברים, רק מסוגים שונים" (`distinct_batches`).
     stacking = Column(String(24), nullable=False, default="single", server_default="single")
+    #: "מספר שוברים מקסימלי בעסקה" — with `unlimited` / `distinct_batches` only; null: no maximum.
+    max_vouchers_per_sale = Column(Integer, nullable=True)
     promotion_policy = Column(String(16), nullable=False, default="exclude", server_default="exclude")
     uses_per_voucher = Column(Integer, nullable=False, default=1, server_default="1")
     max_uses_per_sale = Column(Integer, nullable=False, default=1, server_default="1")
@@ -302,10 +306,14 @@ class PrepaidVoucherBatch(Base):
     #: ids; a category means it and its sub-categories; names as printed).
     max_units = Column(Integer, nullable=True)
     targets = Column(JSON, nullable=True)
-    #: Other vouchers in the same sale: `single` (no other), `distinct_batches` (only of
-    #: other batches) or `unlimited`. New batches: single; the migration gave every batch
-    #: made before it `unlimited` (what the tills did then).
+    #: Other vouchers in the same sale: `single` ("שובר אחד בעסקה", no other),
+    #: `unlimited` ("כמה שוברים בעסקה", a new type's default) or `distinct_batches` ("כמה
+    #: שוברים, רק מסוגים שונים"). The migration gave every batch made before kinds `unlimited`
+    #: (what the tills did then); a batch keeps its value.
     stacking = Column(String(24), nullable=False, default="single", server_default="single")
+    #: "מספר שוברים מקסימלי בעסקה" — with `unlimited` / `distinct_batches` only: the most
+    #: vouchers one sale holds, this one included. Null: no maximum.
+    max_vouchers_per_sale = Column(Integer, nullable=True)
     #: A discount voucher on a line that has a promotion: `exclude` (never — the line is
     #: left out), `best` (the bigger of the two, never both) or `combine` (both).
     promotion_policy = Column(String(16), nullable=False, default="exclude", server_default="exclude")

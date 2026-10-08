@@ -61,7 +61,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Dict, Iterable, List, Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -888,7 +888,11 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
         max_discount=terms.get("max_discount") if discount else None,
         max_units=terms.get("max_units") if kind == "item_discount" else None,
         targets=targets,
-        stacking=terms.get("stacking") or "single",
+        stacking=terms.get("stacking") or "unlimited",
+        # "מספר שוברים מקסימלי בעסקה" — "שובר אחד בעסקה" is its own maximum.
+        max_vouchers_per_sale=(
+            terms.get("max_vouchers_per_sale") if (terms.get("stacking") or "unlimited") != "single" else None
+        ),
         promotion_policy=terms.get("promotion_policy") or "exclude",
         uses_per_voucher=int(terms.get("uses_per_voucher") or 1) if discount else 1,
         max_uses_per_sale=int(terms.get("max_uses_per_sale") or 1) if discount else 1,
@@ -1022,6 +1026,10 @@ def update_batch(db: Session, user: User, tenant_id, batch_id, body) -> PrepaidV
         from app.services import prepaid_voucher_offline as PVO
 
         PVO.refuse_if_assigned(db, batch)
+    if (fields.get("stacking") or batch.stacking) == "single":
+        # "שובר אחד בעסקה" has no "מספר שוברים מקסימלי בעסקה".
+        if fields.get("max_vouchers_per_sale") is not None or getattr(batch, "max_vouchers_per_sale", None) is not None:
+            fields["max_vouchers_per_sale"] = None
     changed = sorted(k for k, v in fields.items() if getattr(batch, k) != v)
     for key, value in fields.items():
         setattr(batch, key, value)
@@ -1332,6 +1340,14 @@ def _shekels_out(agorot_value: Optional[int]) -> Optional[float]:
     return None if agorot_value is None else round(int(agorot_value) / 100, 2)
 
 
+def _max_per_sale(batch) -> Optional[int]:
+    """"מספר שוברים מקסימלי בעסקה" — none with "שובר אחד בעסקה"; None: no maximum."""
+    n = getattr(batch, "max_vouchers_per_sale", None)
+    if not n or (getattr(batch, "stacking", None) or "single") == "single":
+        return None
+    return int(n)
+
+
 def terms_out(batch: PrepaidVoucherBatch) -> Dict[str, Any]:
     """A batch's kind and terms as the dashboard reads them (₪ and %, not agorot)."""
     discount = is_discount(batch)
@@ -1353,6 +1369,7 @@ def terms_out(batch: PrepaidVoucherBatch) -> Dict[str, Any]:
             if batch.kind == "item_discount" else None
         ),
         "stacking": batch.stacking or "single",
+        "maxVouchersPerSale": _max_per_sale(batch),
         "promotionPolicy": batch.promotion_policy or "exclude",
         "usesPerVoucher": int(batch.uses_per_voucher or 1),
         "maxUsesPerSale": int(batch.max_uses_per_sale or 1),
@@ -1793,6 +1810,8 @@ def till_view(
         "batchId": str(batch.id),
         "kind": batch.kind or "items",
         "stacking": batch.stacking or "single",
+        # "מספר שוברים מקסימלי בעסקה" (with "כמה שוברים בעסקה"); null: no maximum.
+        "maxVouchersPerSale": _max_per_sale(batch),
         # Goods: false — a dish's base price is covered and its paid options / a meal's
         # upcharges are paid at the till; true ("כולל תוספות") — the whole line (§7.14).
         "includeExtras": bool(getattr(batch, "include_extras", False)),
@@ -1882,8 +1901,10 @@ def _requested(db: Session, machine: POSMachine, batch: PrepaidVoucherBatch, ite
 def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
     """
     Take goods off a voucher. The caller commits. See the module docstring for the rules;
-    the order here matters: lock, then idempotency, then every check, then the write.
+    the order here matters: lock (the sale, then the voucher), then idempotency, then every
+    check, then the write.
     """
+    _lock_sale(db, machine, getattr(body, "sale_ref", None))
     voucher = _locate(db, machine, body.code, lock=True)
     request_id = body.client_request_id.strip()
 
@@ -2077,6 +2098,22 @@ def _redeem_out(
 # ── Till: discount vouchers — reserve → confirm / release ────────────────────
 
 
+def _lock_sale(db: Session, machine: POSMachine, sale_ref: Optional[str]) -> None:
+    """
+    One voucher at a time per sale (this till's basket), so its stacking — "שובר אחד בעסקה",
+    "מספר שוברים מקסימלי בעסקה" — is checked atomically: two vouchers scanned into one sale at
+    once cannot both see it empty. Taken before the voucher's own lock, always in that order.
+    A transaction lock (released at commit / rollback); Postgres only.
+    """
+    sale = (sale_ref or "").strip()
+    if not sale or db.get_bind().dialect.name != "postgresql":
+        return
+    import hashlib
+
+    digest = hashlib.sha256(f"prepaid-sale:{machine.id}:{sale}".encode("utf-8")).digest()
+    db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": int.from_bytes(digest[:8], "big", signed=True)})
+
+
 def _in_sale(voucher: PrepaidVoucher) -> RULES.VoucherInSale:
     batch = voucher.batch
     return RULES.VoucherInSale(
@@ -2084,6 +2121,7 @@ def _in_sale(voucher: PrepaidVoucher) -> RULES.VoucherInSale:
         batch_id=str(batch.id),
         kind=batch.kind or "items",
         stacking=batch.stacking or "single",
+        max_per_sale=_max_per_sale(batch),
     )
 
 
@@ -2141,6 +2179,7 @@ def _vouchers_in_sale(
                 batch_id=str(getattr(other, "batch_id", "") or ""),
                 kind=getattr(other, "kind", None) or "items",
                 stacking=getattr(other, "stacking", None) or "single",
+                max_per_sale=getattr(other, "max_vouchers_per_sale", None),
             )
     return list(seen.values())
 
@@ -2204,6 +2243,7 @@ def reserve(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
     The same `clientRequestId` again renews it (held for the full time again, the basket
     re-checked) — or answers a confirmed one as it stands; a released one is refused.
     """
+    _lock_sale(db, machine, body.sale_ref)
     voucher = _locate(db, machine, body.code, lock=True)
     batch = voucher.batch
     now = _now()

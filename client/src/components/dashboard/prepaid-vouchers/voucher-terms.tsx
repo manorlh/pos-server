@@ -20,9 +20,10 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
   PREPAID_KINDS,
   PREPAID_PROMOTION_POLICIES,
-  PREPAID_STACKING,
+  MAX_VOUCHERS_PER_SALE,
   benefitText,
   isDiscountKind,
+  maxVouchersPerSale,
   termsOfBatch,
   type DiscountDraftError,
   type PrepaidDiscountType,
@@ -277,6 +278,8 @@ export function DiscountTermsFields({
 
 export interface RulesState {
   stacking: PrepaidStacking;
+  /** "מספר שוברים מקסימלי בעסקה" as typed; empty: no maximum. */
+  maxVouchersPerSale: string;
   promotionPolicy: PrepaidPromotionPolicy;
   usesPerVoucher: string;
   maxUsesPerSale: string;
@@ -284,8 +287,19 @@ export interface RulesState {
 }
 
 export const DEFAULT_RULES: RulesState = {
-  stacking: 'single', promotionPolicy: 'exclude', usesPerVoucher: '1', maxUsesPerSale: '1', maxUsesPerDay: '',
+  // The owner: "כמה שוברים בעסקה", with no maximum.
+  stacking: 'unlimited', maxVouchersPerSale: '', promotionPolicy: 'exclude', usesPerVoucher: '1', maxUsesPerSale: '1', maxUsesPerDay: '',
 };
+
+/** The rules' stacking as the API takes it (null clears the maximum). */
+export function stackingBody(rules: RulesState): { stacking: PrepaidStacking; maxVouchersPerSale: number | null } {
+  return { stacking: rules.stacking, maxVouchersPerSale: maxVouchersPerSale(rules.stacking, rules.maxVouchersPerSale) ?? null };
+}
+
+/** True when "מספר שוברים מקסימלי בעסקה" is empty or a whole number in range. */
+export function stackingValid(rules: RulesState): boolean {
+  return maxVouchersPerSale(rules.stacking, rules.maxVouchersPerSale) !== undefined;
+}
 
 /** Other vouchers in the sale, promotions, uses. [usesFixed]: after printing, uses per voucher do not change. */
 export function RulesFields({
@@ -305,17 +319,40 @@ export function RulesFields({
   return (
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1">
+        <div className="space-y-2">
           <Label>{t('stackingLabel')}</Label>
-          <Select value={value.stacking} onValueChange={(v) => v && set({ stacking: v as PrepaidStacking })}
-            items={PREPAID_STACKING.map((s) => ({ value: s, label: t(`stacking.${s}`) }))}>
-            <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {PREPAID_STACKING.map((s) => (
-                <SelectItem key={s} value={s} label={t(`stacking.${s}`)}>{t(`stacking.${s}`)}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="grid grid-cols-2 gap-1" role="radiogroup" aria-label={t('stackingLabel')}>
+            {(['single', 'many'] as const).map((choice) => {
+              const on = choice === 'single' ? value.stacking === 'single' : value.stacking !== 'single';
+              return (
+                <Button key={choice} type="button" size="sm" variant={on ? 'default' : 'outline'} role="radio" aria-checked={on}
+                  onClick={() => set(choice === 'single'
+                    ? { stacking: 'single', maxVouchersPerSale: '' }
+                    : { stacking: value.stacking === 'single' ? 'unlimited' : value.stacking })}>
+                  {t(choice === 'single' ? 'stacking.single' : 'stacking.unlimited')}
+                </Button>
+              );
+            })}
+          </div>
+          {value.stacking !== 'single' ? (
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" className="h-4 w-4" checked={value.stacking === 'distinct_batches'}
+                  onChange={(e) => set({ stacking: e.target.checked ? 'distinct_batches' : 'unlimited' })} />
+                {t('stacking.distinct_batches')}
+              </label>
+              <div className="space-y-1">
+                <Label htmlFor="pv-max-vouchers">{t('maxVouchersPerSale')}</Label>
+                <Input id="pv-max-vouchers" type="number" min={1} max={MAX_VOUCHERS_PER_SALE} className="h-9"
+                  placeholder={t('noMaximum')} value={value.maxVouchersPerSale}
+                  aria-invalid={!stackingValid(value)}
+                  onChange={(e) => set({ maxVouchersPerSale: e.target.value })} />
+                {!stackingValid(value) ? (
+                  <p className="text-xs text-destructive">{t('maxVouchersInvalid', { max: MAX_VOUCHERS_PER_SALE })}</p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
           {discount ? <p className="text-xs text-muted-foreground">{t('stackingHint')}</p> : null}
         </div>
         {discount ? (
@@ -380,6 +417,7 @@ export function BatchRulesCard({ batch, onSaved }: { batch: PrepaidVoucherBatch;
   const kind = batch.kind ?? 'items';
   const [rules, setRules] = useState<RulesState>({
     stacking: batch.stacking ?? 'single',
+    maxVouchersPerSale: batch.maxVouchersPerSale ? String(batch.maxVouchersPerSale) : '',
     promotionPolicy: batch.promotionPolicy ?? 'exclude',
     usesPerVoucher: String(batch.usesPerVoucher ?? 1),
     maxUsesPerSale: String(batch.maxUsesPerSale ?? 1),
@@ -387,12 +425,13 @@ export function BatchRulesCard({ batch, onSaved }: { batch: PrepaidVoucherBatch;
   });
   const perSale = parseInt(rules.maxUsesPerSale, 10);
   const perDay = rules.maxUsesPerDay.trim() ? parseInt(rules.maxUsesPerDay, 10) : null;
-  const valid = Number.isFinite(perSale) && perSale >= 1 && (perDay === null || (Number.isFinite(perDay) && perDay >= 1));
+  const valid = Number.isFinite(perSale) && perSale >= 1 && (perDay === null || (Number.isFinite(perDay) && perDay >= 1))
+    && stackingValid(rules);
   const save = useMutation({
     mutationFn: () =>
       updatePrepaidBatch(batch.id, isDiscountKind(kind)
-        ? { stacking: rules.stacking, promotionPolicy: rules.promotionPolicy, maxUsesPerSale: perSale, maxUsesPerDay: perDay }
-        : { stacking: rules.stacking }),
+        ? { ...stackingBody(rules), promotionPolicy: rules.promotionPolicy, maxUsesPerSale: perSale, maxUsesPerDay: perDay }
+        : stackingBody(rules)),
     onSuccess: () => {
       toast.success(t('rulesSaved'));
       void qc.invalidateQueries({ queryKey: ['prepaid-voucher-batches'] });

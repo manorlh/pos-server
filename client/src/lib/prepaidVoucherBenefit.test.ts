@@ -13,6 +13,8 @@ import {
   cardContents,
   discountDraftErrors,
   isDiscountKind,
+  MAX_VOUCHERS_PER_SALE,
+  maxVouchersPerSale,
   moneyText,
   percentText,
   termsOfBatch,
@@ -99,5 +101,25 @@ describe('cardContents ("הצגת הפריטים על השובר", as the server
     assert.deepEqual(cardContents(d), { benefit: '₪30 הנחה על כל ההזמנה', items: [] });
     assert.deepEqual(cardContents({ ...d, benefitText: 'מהשרת' }), { benefit: 'מהשרת', items: [] });
     assert.deepEqual(cardContents({ ...d, showItems: false }), { benefit: null, items: [] });
+  });
+});
+
+describe('maxVouchersPerSale ("מספר שוברים מקסימלי בעסקה")', () => {
+  it('empty is no maximum; a whole number in range is the maximum', () => {
+    assert.equal(maxVouchersPerSale('unlimited', ''), null);
+    assert.equal(maxVouchersPerSale('unlimited', ' 3 '), 3);
+    assert.equal(maxVouchersPerSale('distinct_batches', '1'), 1);
+    assert.equal(maxVouchersPerSale('unlimited', String(MAX_VOUCHERS_PER_SALE)), MAX_VOUCHERS_PER_SALE);
+  });
+
+  it('anything else is invalid', () => {
+    for (const typed of ['0', '-1', '2.5', 'abc', String(MAX_VOUCHERS_PER_SALE + 1)]) {
+      assert.equal(maxVouchersPerSale('unlimited', typed), undefined, typed);
+    }
+  });
+
+  it('"שובר אחד בעסקה" has none, whatever was typed', () => {
+    assert.equal(maxVouchersPerSale('single', '4'), null);
+    assert.equal(maxVouchersPerSale('single', 'abc'), null);
   });
 });

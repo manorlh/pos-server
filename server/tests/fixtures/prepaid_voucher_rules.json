@@ -10,7 +10,9 @@
         "kind": "order_discount",
         "stacking": "single"
       },
-      "refusal": null
+      "refusal": null,
+      "limit": null,
+      "text": null
     },
     {
       "name": "single: no other voucher",
@@ -28,7 +30,9 @@
         "kind": "items",
         "stacking": "single"
       },
-      "refusal": "prepaid_voucher_not_stackable"
+      "refusal": "prepaid_voucher_not_stackable",
+      "limit": null,
+      "text": "ניתן לממש שובר אחד בלבד בעסקה"
     },
     {
       "name": "another one is single",
@@ -46,7 +50,9 @@
         "kind": "order_discount",
         "stacking": "unlimited"
       },
-      "refusal": "prepaid_voucher_other_not_stackable"
+      "refusal": "prepaid_voucher_other_not_stackable",
+      "limit": null,
+      "text": "ניתן לממש שובר אחד בלבד בעסקה"
     },
     {
       "name": "two discount vouchers of one batch, never",
@@ -64,7 +70,9 @@
         "kind": "order_discount",
         "stacking": "unlimited"
       },
-      "refusal": "prepaid_voucher_same_batch"
+      "refusal": "prepaid_voucher_same_batch",
+      "limit": null,
+      "text": null
     },
     {
       "name": "goods of one batch, unlimited",
@@ -82,7 +90,9 @@
         "kind": "items",
         "stacking": "unlimited"
       },
-      "refusal": null
+      "refusal": null,
+      "limit": null,
+      "text": null
     },
     {
       "name": "distinct batches: the one in the sale says so",
@@ -100,7 +110,9 @@
         "kind": "items",
         "stacking": "unlimited"
       },
-      "refusal": "prepaid_voucher_same_batch"
+      "refusal": "prepaid_voucher_same_batch",
+      "limit": null,
+      "text": null
     },
     {
       "name": "distinct batches: the new one says so",
@@ -118,7 +130,9 @@
         "kind": "items",
         "stacking": "distinct_batches"
       },
-      "refusal": "prepaid_voucher_same_batch"
+      "refusal": "prepaid_voucher_same_batch",
+      "limit": null,
+      "text": null
     },
     {
       "name": "distinct batches, other batches",
@@ -136,7 +150,9 @@
         "kind": "order_discount",
         "stacking": "distinct_batches"
       },
-      "refusal": null
+      "refusal": null,
+      "limit": null,
+      "text": null
     },
     {
       "name": "a discount voucher again in the same sale",
@@ -154,7 +170,9 @@
         "kind": "item_discount",
         "stacking": "unlimited"
       },
-      "refusal": "prepaid_voucher_already_applied"
+      "refusal": "prepaid_voucher_already_applied",
+      "limit": null,
+      "text": null
     },
     {
       "name": "a goods voucher again (the rest of its goods)",
@@ -172,7 +190,9 @@
         "kind": "items",
         "stacking": "single"
       },
-      "refusal": null
+      "refusal": null,
+      "limit": null,
+      "text": null
     },
     {
       "name": "one single among several",
@@ -196,7 +216,264 @@
         "kind": "items",
         "stacking": "unlimited"
       },
-      "refusal": "prepaid_voucher_other_not_stackable"
+      "refusal": "prepaid_voucher_other_not_stackable",
+      "limit": null,
+      "text": "ניתן לממש שובר אחד בלבד בעסקה"
+    },
+    {
+      "name": "a maximum of 2: the second fits",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 2
+        }
+      ],
+      "incoming": {
+        "voucherId": "v2",
+        "batchId": "B",
+        "kind": "items",
+        "stacking": "unlimited"
+      },
+      "refusal": null,
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "a maximum of 2: the third is refused",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 2
+        },
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "items",
+          "stacking": "unlimited"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v3",
+        "batchId": "C",
+        "kind": "items",
+        "stacking": "unlimited"
+      },
+      "refusal": "prepaid_voucher_max_per_sale",
+      "limit": 2,
+      "text": "הגעת למספר השוברים המקסימלי בעסקה (2)"
+    },
+    {
+      "name": "the new one's maximum counts too",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited"
+        },
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "items",
+          "stacking": "unlimited"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v3",
+        "batchId": "C",
+        "kind": "items",
+        "stacking": "unlimited",
+        "maxVouchersPerSale": 2
+      },
+      "refusal": "prepaid_voucher_max_per_sale",
+      "limit": 2,
+      "text": "הגעת למספר השוברים המקסימלי בעסקה (2)"
+    },
+    {
+      "name": "the smallest maximum wins",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 3
+        },
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "items",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 2
+        }
+      ],
+      "incoming": {
+        "voucherId": "v3",
+        "batchId": "C",
+        "kind": "items",
+        "stacking": "unlimited",
+        "maxVouchersPerSale": 5
+      },
+      "refusal": "prepaid_voucher_max_per_sale",
+      "limit": 2,
+      "text": "הגעת למספר השוברים המקסימלי בעסקה (2)"
+    },
+    {
+      "name": "a maximum of 3 with two in the sale",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 3
+        },
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "items",
+          "stacking": "unlimited"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v3",
+        "batchId": "C",
+        "kind": "items",
+        "stacking": "unlimited"
+      },
+      "refusal": null,
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "a goods voucher again does not count twice",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 2
+        },
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "items",
+          "stacking": "unlimited"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v1",
+        "batchId": "A",
+        "kind": "items",
+        "stacking": "unlimited",
+        "maxVouchersPerSale": 2
+      },
+      "refusal": null,
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "a maximum of 1",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 1
+        }
+      ],
+      "incoming": {
+        "voucherId": "v2",
+        "batchId": "B",
+        "kind": "items",
+        "stacking": "unlimited"
+      },
+      "refusal": "prepaid_voucher_max_per_sale",
+      "limit": 1,
+      "text": "הגעת למספר השוברים המקסימלי בעסקה (1)"
+    },
+    {
+      "name": "distinct batches with a maximum",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "distinct_batches",
+          "maxVouchersPerSale": 2
+        },
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "items",
+          "stacking": "distinct_batches"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v3",
+        "batchId": "C",
+        "kind": "items",
+        "stacking": "distinct_batches"
+      },
+      "refusal": "prepaid_voucher_max_per_sale",
+      "limit": 2,
+      "text": "הגעת למספר השוברים המקסימלי בעסקה (2)"
+    },
+    {
+      "name": "the same batch is refused before the maximum",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "distinct_batches",
+          "maxVouchersPerSale": 1
+        }
+      ],
+      "incoming": {
+        "voucherId": "v2",
+        "batchId": "A",
+        "kind": "items",
+        "stacking": "distinct_batches"
+      },
+      "refusal": "prepaid_voucher_same_batch",
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "a maximum counts discount vouchers too",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited"
+        },
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "order_discount",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 2
+        }
+      ],
+      "incoming": {
+        "voucherId": "v3",
+        "batchId": "C",
+        "kind": "item_discount",
+        "stacking": "unlimited"
+      },
+      "refusal": "prepaid_voucher_max_per_sale",
+      "limit": 2,
+      "text": "הגעת למספר השוברים המקסימלי בעסקה (2)"
     }
   ],
   "discount": [
