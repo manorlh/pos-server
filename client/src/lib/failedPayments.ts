@@ -72,6 +72,8 @@ export interface FailedPaymentAttempt {
   paidAt?: string | null;
   /** An unresolved attempt's latest manager command to its till; null when none. */
   cardCommand?: CardCommand | null;
+  /** Its latest check the till answered — what the terminal said; null when never checked. */
+  cardCheck?: CardCommand | null;
 }
 
 export interface FailedPaymentSummary {
@@ -103,6 +105,21 @@ export const CARD_COMMAND_STATUSES: readonly CardCommandStatus[] = [
   'cancelled',
 ];
 export type CardCommandResult = 'approved' | 'not_charged' | 'unknown';
+/** What the terminal said on a check; `not_checked` when no check was answered. */
+export type CheckVerdict = 'approved' | 'cancelled' | 'not_found' | 'unknown' | 'not_checked';
+export const CHECK_VERDICTS: readonly CheckVerdict[] = ['approved', 'cancelled', 'not_found', 'unknown', 'not_checked'];
+
+/** A check's answer from the terminal (the till's read-only lookup by vuid). */
+export interface CardCheckDetails {
+  verdict: Exclude<CheckVerdict, 'not_checked'> | string;
+  terminalUid?: string | null;
+  at?: string | null;
+  amountAgorot?: number | null;
+  last4?: string | null;
+  authNumber?: string | null;
+  brand?: string | null;
+  checkedAt?: string | null;
+}
 
 export interface CardCommand {
   id: string;
@@ -119,6 +136,15 @@ export interface CardCommand {
   resultOutcome?: CardCommandResult | string | null;
   resultMessage?: string | null;
   cancelledByName?: string | null;
+  /** mark_approved / mark_not_approved: the cloud's decision (waits for the till, never expires). */
+  isDecision?: boolean;
+  /** A check: what the terminal said. */
+  details?: CardCheckDetails | null;
+  verdict?: string | null;
+  /** A decision: what the latest check said when it was made, and the manager's confirmation. */
+  verdictAtDecision?: string | null;
+  checkCommandId?: string | null;
+  mismatchConfirmed?: boolean;
 }
 
 export interface CancelledSale {
@@ -243,31 +269,76 @@ export interface CardCommandActions {
 }
 
 /**
- * What a user may do on a row: only an unresolved attempt with a vuid; while a command waits
- * for the till, only withdraw it. Nothing for someone outside CARD_COMMAND_ROLES.
+ * What a user may do on a row: only an unresolved attempt with a vuid; while a decision waits
+ * for the till, only withdraw it (a pending check may still be replaced by a decision). Nothing
+ * for someone outside CARD_COMMAND_ROLES, or without edit on "דוחות" ([canEdit]: the dashboard
+ * section the server's route rules ask for).
  */
 export function cardCommandActions(
   a: Pick<FailedPaymentAttempt, 'outcome' | 'vuid' | 'cardCommand'>,
   role: string | null | undefined,
+  canEdit = true,
 ): CardCommandActions {
   const none = { check: false, markApproved: false, markNotApproved: false, cancel: false };
-  if (!role || !CARD_COMMAND_ROLES.includes(role) || !isUnresolved(a)) return none;
-  if (a.cardCommand?.status === 'pending') return { ...none, cancel: true };
-  if (!(a.vuid ?? '').trim()) return none;
+  if (!canEdit || !role || !CARD_COMMAND_ROLES.includes(role) || !isUnresolved(a)) return none;
+  const pending = a.cardCommand?.status === 'pending' ? a.cardCommand : null;
+  if (pending && isDecision(pending)) return { ...none, cancel: true };
+  if (!(a.vuid ?? '').trim()) return pending ? { ...none, cancel: true } : none;
+  if (pending) return { check: false, markApproved: true, markNotApproved: true, cancel: true };
   return { check: true, markApproved: true, markNotApproved: true, cancel: false };
 }
 
+export function isDecision(cmd: Pick<CardCommand, 'action' | 'isDecision'> | null | undefined): boolean {
+  if (!cmd) return false;
+  return cmd.isDecision ?? (cmd.action === 'mark_approved' || cmd.action === 'mark_not_approved');
+}
+
 /**
- * How the row's command reads: `sent` ("נשלח לקופה…") while pending, `delivered` once the till
- * took it, `answered` with the till's answer, `ended` (expired / withdrawn), or `none`.
+ * How the row's command reads:
+ * - a decision: `waiting` ("ממתין לקופה") until the till answers, then `done` ("בוצע");
+ * - a check: `sent` ("נשלח לקופה…"), `delivered` once the till took it, then `answered`;
+ * - `ended` (expired / withdrawn), or `none`.
  */
-export type CardCommandPhase = 'none' | 'sent' | 'delivered' | 'answered' | 'ended';
+export type CardCommandPhase = 'none' | 'waiting' | 'sent' | 'delivered' | 'done' | 'answered' | 'ended';
 
 export function cardCommandPhase(cmd: CardCommand | null | undefined): CardCommandPhase {
   if (!cmd) return 'none';
-  if (cmd.status === 'pending') return cmd.deliveredAt ? 'delivered' : 'sent';
   if (cmd.status === 'expired' || cmd.status === 'cancelled') return 'ended';
+  if (isDecision(cmd)) return cmd.status === 'pending' ? 'waiting' : cmd.status === 'done' ? 'done' : 'answered';
+  if (cmd.status === 'pending') return cmd.deliveredAt ? 'delivered' : 'sent';
   return 'answered';
+}
+
+/** What the latest answered check said (its details, else its outcome); `not_checked` with none. */
+export function checkVerdict(check: CardCommand | null | undefined): CheckVerdict {
+  if (!check) return 'not_checked';
+  const v = check.details?.verdict ?? check.verdict;
+  if (v === 'approved' || v === 'cancelled' || v === 'not_found' || v === 'unknown') return v;
+  if (check.resultOutcome === 'approved') return 'approved';
+  if (check.resultOutcome === 'not_charged') return 'cancelled';
+  return 'unknown';
+}
+
+/**
+ * Whether a decision goes against the terminal's answer, as the server rules: approving after
+ * anything but "approved", cancelling after anything but "cancelled" / "not found" — so with no
+ * check, or an "unknown" one, either decision needs the manager's explicit confirmation.
+ */
+export function decisionDisagrees(action: 'mark_approved' | 'mark_not_approved', verdict: CheckVerdict): boolean {
+  if (action === 'mark_approved') return verdict !== 'approved';
+  return verdict !== 'cancelled' && verdict !== 'not_found';
+}
+
+/** The server's 409 `card_decision_mismatch` (stale page): the verdict it holds, else null. */
+export function decisionMismatchOf(err: unknown): { verdict: CheckVerdict; label: string | null } | null {
+  const detail = (err as { response?: { status?: number; data?: { detail?: unknown } } } | null)?.response?.data?.detail;
+  if (!detail || typeof detail !== 'object') return null;
+  const d = detail as { code?: unknown; verdict?: unknown; verdictLabel?: unknown };
+  if (d.code !== 'card_decision_mismatch') return null;
+  const v = typeof d.verdict === 'string' && (CHECK_VERDICTS as readonly string[]).includes(d.verdict)
+    ? (d.verdict as CheckVerdict)
+    : 'unknown';
+  return { verdict: v, label: typeof d.verdictLabel === 'string' ? d.verdictLabel : null };
 }
 
 /** The summary of a list of attempts — sales (sale + keyed) and payouts apart, as the server's. */

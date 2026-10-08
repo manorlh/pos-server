@@ -43,6 +43,9 @@ export const EXCEPTION_TYPES = [
   'support_z_produced',
   // Support ordered a reset of a till's data from the cloud — the only way (§4.7).
   'till_reset',
+  // "תשלום לא מוכרע": a manager decided an unknown card from the cloud against what the terminal
+  // said on a check, or with no check — on an explicit confirmation (who, when, the verdict).
+  'card_decision_override',
   // "הוחלפה קופה": a replacement device took over a till (§4.6.2).
   'till_replaced',
   // A super admin moved the shop Z's production before its producer handed over

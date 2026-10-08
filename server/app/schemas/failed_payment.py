@@ -217,6 +217,8 @@ class FailedPaymentOut(BaseModel):
     #: `command_out`): `{id, action, status, statusLabel, requestedByName, requestedAt, deliveredAt,
     #: answeredAt, resultOutcome, resultMessage…}`; null when none.
     card_command: Optional[Dict[str, Any]] = Field(None, alias="cardCommand")
+    #: Its latest check the till answered (what the terminal said: `details.verdict`…); null when none.
+    card_check: Optional[Dict[str, Any]] = Field(None, alias="cardCheck")
 
     class Config:
         populate_by_name = True
@@ -288,9 +290,63 @@ class FailedPaymentListResponse(BaseModel):
 
 
 class CardCommandIn(BaseModel):
-    """`POST /failed-payments/{attemptId}/card-commands`: check on the terminal, or decide."""
+    """
+    `POST /failed-payments/{attemptId}/card-commands`: check on the terminal, or decide
+    ("אשר והכנס את העסקה" = `mark_approved`, "בטל" = `mark_not_approved`). `confirmMismatch`: the
+    manager confirmed a decision against the terminal's answer, or with none (else 409
+    `card_decision_mismatch`).
+    """
 
     action: Literal["check", "mark_approved", "mark_not_approved"]
+    confirm_mismatch: bool = Field(False, alias="confirmMismatch")
+
+    class Config:
+        populate_by_name = True
+
+
+class CardCheckDetailsIn(BaseModel):
+    """
+    What the terminal said on a check (the till's lookup by vuid, read-only). Cleaned, never
+    refused for a field it cannot read: of the card only the last four digits are kept.
+    """
+
+    verdict: Literal["approved", "cancelled", "not_found", "unknown"]
+    terminal_uid: Optional[str] = Field(None, alias="terminalUid")
+    at: Optional[datetime] = None
+    amount_agorot: Optional[int] = Field(None, alias="amountAgorot", ge=0, le=AMOUNT_AGOROT_MAX)
+    last4: Optional[str] = None
+    auth_number: Optional[str] = Field(None, alias="authNumber")
+    brand: Optional[str] = None
+    checked_at: Optional[datetime] = Field(None, alias="checkedAt")
+
+    class Config:
+        populate_by_name = True
+        extra = "ignore"
+
+    @field_validator("terminal_uid", mode="before")
+    @classmethod
+    def _uid(cls, value):
+        return _text(value, 100)
+
+    @field_validator("auth_number", mode="before")
+    @classmethod
+    def _auth(cls, value):
+        return _text(value, 32)
+
+    @field_validator("brand", mode="before")
+    @classmethod
+    def _brand(cls, value):
+        return _text(value, 32)
+
+    @field_validator("last4", mode="before")
+    @classmethod
+    def _last4(cls, value):
+        text = str(value).strip() if isinstance(value, (str, int)) and not isinstance(value, bool) else ""
+        return text if _LAST4_RE.match(text) else None
+
+    def stored(self) -> Dict[str, Any]:
+        """As kept on the command: camelCase, ISO times, nothing empty."""
+        return self.model_dump(mode="json", by_alias=True, exclude_none=True)
 
 
 class CardCommandResultIn(BaseModel):
@@ -299,3 +355,6 @@ class CardCommandResultIn(BaseModel):
     status: Literal["done", "failed", "not_found", "busy"]
     outcome: Optional[Literal["approved", "not_charged", "unknown"]] = None
     message: Optional[str] = Field(None, max_length=2000)
+    #: A check: what the terminal said (`{verdict, terminalUid?, at?, amountAgorot?, last4?,
+    #: authNumber?, brand?, checkedAt}`).
+    details: Optional[CardCheckDetailsIn] = None

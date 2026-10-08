@@ -17,6 +17,9 @@ import {
   wasPaidLater,
   cardCommandActions,
   cardCommandPhase,
+  checkVerdict,
+  decisionDisagrees,
+  decisionMismatchOf,
   isFailedAttempt,
   isUnresolved,
   sortAttempts,
@@ -120,12 +123,27 @@ describe('"תשלום לא מוכרע"', () => {
     assert.deepEqual(cardCommandActions(stuck, null), none);
     assert.deepEqual(cardCommandActions(attempt({ vuid: 'V1' }), 'super_admin'), none);
     assert.deepEqual(cardCommandActions(attempt({ outcome: 'unresolved' }), 'super_admin'), none);
-    const waiting = attempt({
+    // Without edit on "דוחות": nothing, whatever the role.
+    assert.deepEqual(cardCommandActions(stuck, 'super_admin', false), none);
+    // A check waiting for the till: a decision may replace it, or withdraw it; no second check.
+    const checking = attempt({
       outcome: 'unresolved',
       vuid: 'V1',
       cardCommand: { id: 'c1', machineId: 'm1', action: 'check', status: 'pending' },
     });
-    assert.deepEqual(cardCommandActions(waiting, 'company_manager'), { ...none, cancel: true });
+    assert.deepEqual(cardCommandActions(checking, 'company_manager'), {
+      check: false,
+      markApproved: true,
+      markNotApproved: true,
+      cancel: true,
+    });
+    // A decision waiting for the till: only withdraw it.
+    const deciding = attempt({
+      outcome: 'unresolved',
+      vuid: 'V1',
+      cardCommand: { id: 'c2', machineId: 'm1', action: 'mark_approved', status: 'pending', isDecision: true },
+    });
+    assert.deepEqual(cardCommandActions(deciding, 'company_manager'), { ...none, cancel: true });
     const answered = attempt({
       outcome: 'unresolved',
       vuid: 'V1',
@@ -134,7 +152,7 @@ describe('"תשלום לא מוכרע"', () => {
     assert.equal(cardCommandActions(answered, 'distributor').check, true);
   });
 
-  it('the command phase', () => {
+  it('the command phase: a check sent / taken / answered; a decision waiting, then done', () => {
     assert.equal(cardCommandPhase(null), 'none');
     assert.equal(cardCommandPhase({ id: 'c', machineId: 'm', action: 'check', status: 'pending' }), 'sent');
     assert.equal(
@@ -144,6 +162,35 @@ describe('"תשלום לא מוכרע"', () => {
     assert.equal(cardCommandPhase({ id: 'c', machineId: 'm', action: 'check', status: 'busy' }), 'answered');
     assert.equal(cardCommandPhase({ id: 'c', machineId: 'm', action: 'check', status: 'expired' }), 'ended');
     assert.equal(cardCommandPhase({ id: 'c', machineId: 'm', action: 'check', status: 'cancelled' }), 'ended');
+    assert.equal(cardCommandPhase({ id: 'd', machineId: 'm', action: 'mark_approved', status: 'pending' }), 'waiting');
+    assert.equal(
+      cardCommandPhase({ id: 'd', machineId: 'm', action: 'mark_not_approved', status: 'pending', deliveredAt: 'x' }),
+      'waiting',
+    );
+    assert.equal(cardCommandPhase({ id: 'd', machineId: 'm', action: 'mark_approved', status: 'done' }), 'done');
+    assert.equal(cardCommandPhase({ id: 'd', machineId: 'm', action: 'mark_approved', status: 'failed' }), 'answered');
+    assert.equal(cardCommandPhase({ id: 'd', machineId: 'm', action: 'mark_approved', status: 'cancelled' }), 'ended');
+  });
+
+  it("the check's verdict, and when a decision disagrees with it", () => {
+    assert.equal(checkVerdict(null), 'not_checked');
+    const check = (over: Record<string, unknown>) => ({ id: 'c', machineId: 'm', action: 'check', status: 'done', ...over });
+    assert.equal(checkVerdict(check({ details: { verdict: 'not_found' } })), 'not_found');
+    assert.equal(checkVerdict(check({ resultOutcome: 'approved' })), 'approved');
+    assert.equal(checkVerdict(check({ resultOutcome: 'not_charged' })), 'cancelled');
+    assert.equal(checkVerdict(check({ resultOutcome: 'unknown' })), 'unknown');
+    assert.equal(decisionDisagrees('mark_approved', 'approved'), false);
+    for (const v of ['cancelled', 'not_found', 'unknown', 'not_checked'] as const) {
+      assert.equal(decisionDisagrees('mark_approved', v), true);
+    }
+    assert.equal(decisionDisagrees('mark_not_approved', 'cancelled'), false);
+    assert.equal(decisionDisagrees('mark_not_approved', 'not_found'), false);
+    for (const v of ['approved', 'unknown', 'not_checked'] as const) {
+      assert.equal(decisionDisagrees('mark_not_approved', v), true);
+    }
+    const err = { response: { status: 409, data: { detail: { code: 'card_decision_mismatch', verdict: 'approved', verdictLabel: 'אושר במסוף' } } } };
+    assert.deepEqual(decisionMismatchOf(err), { verdict: 'approved', label: 'אושר במסוף' });
+    assert.equal(decisionMismatchOf({ response: { data: { detail: { code: 'card_command_pending' } } } }), null);
   });
 });
 

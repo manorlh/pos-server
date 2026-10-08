@@ -5,18 +5,22 @@
 A card attempt left UNKNOWN reaches "עסקאות שלא הושלמו" as outcome `unresolved`. From there a
 manager may ask the till that made it to:
 
-* `check` — "בדוק במסוף": run the lookup by the attempt's vuid on the terminal and report;
-* `mark_approved` — "סמן כאושר": complete the pending documents (the card was charged);
-* `mark_not_approved` — "סמן כלא אושר": void them (it was not).
+* `check` — "בדוק במסוף": run the lookup by the attempt's vuid on the terminal (read-only) and
+  report what the terminal says (`details`: verdict, its uid, time, amount…);
+* `mark_approved` — "אשר והכנס את העסקה": the cloud's decision — the till completes the pending
+  documents (a normal sale);
+* `mark_not_approved` — "בטל": the till voids them.
 
-One row per command. It travels on the till's heartbeat (`pendingCardCommands`) while pending
-(24 h at most), and the till answers it (`POST /sync/{m}/card-commands/{id}/result`); the
-attempt's own row is then updated by the till's normal failed-payment upload.
+One row per command. It travels on the till's heartbeat (`pendingCardCommands`) while pending —
+a check for 24 h at most, a decision until the till takes it — and the till answers it
+(`POST /sync/{m}/card-commands/{id}/result`); the attempt's own row is then updated by the
+till's normal failed-payment upload. A decision against what the terminal said (or with no
+check at all) is made only on the manager's explicit confirmation, kept here.
 """
 import uuid
 
-from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, String
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -25,6 +29,8 @@ ACTION_CHECK = "check"
 ACTION_MARK_APPROVED = "mark_approved"
 ACTION_MARK_NOT_APPROVED = "mark_not_approved"
 ACTIONS = (ACTION_CHECK, ACTION_MARK_APPROVED, ACTION_MARK_NOT_APPROVED)
+#: The cloud's decisions: they wait for the till as long as it takes (never expire).
+DECISIONS = (ACTION_MARK_APPROVED, ACTION_MARK_NOT_APPROVED)
 
 STATUS_PENDING = "pending"
 #: What the till answers.
@@ -33,6 +39,10 @@ TILL_STATUSES = ("done", "failed", "not_found", "busy")
 STATUSES = (STATUS_PENDING, *TILL_STATUSES, "expired", "cancelled")
 #: What the till found (`check`) or did: approved | not_charged | unknown.
 RESULT_OUTCOMES = ("approved", "not_charged", "unknown")
+#: What the terminal said on a check (`details.verdict`).
+CHECK_VERDICTS = ("approved", "cancelled", "not_found", "unknown")
+#: `verdict_at_decision` when no check was ever answered.
+NOT_CHECKED = "not_checked"
 
 
 class CardAttemptCommand(Base):
@@ -62,7 +72,8 @@ class CardAttemptCommand(Base):
     requested_by_user_id = Column(UUID(as_uuid=True), nullable=True)
     requested_by_name = Column(String(200), nullable=True)
     requested_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    expires_at = Column(DateTime(timezone=True), nullable=False)
+    #: A check's end of life (24 h); null for a decision, which waits for the till.
+    expires_at = Column(DateTime(timezone=True), nullable=True)
     #: First handed to the till (its heartbeat, or the realtime wake-up).
     delivered_at = Column(DateTime(timezone=True), nullable=True)
     status = Column(String(16), nullable=False, default=STATUS_PENDING, server_default=STATUS_PENDING)
@@ -71,3 +82,11 @@ class CardAttemptCommand(Base):
     answered_at = Column(DateTime(timezone=True), nullable=True)
     #: Who withdrew it (`cancelled`), as they were then.
     cancelled_by_name = Column(String(200), nullable=True)
+    #: A check's answer from the terminal: `{verdict, terminalUid?, at?, amountAgorot?, last4?,
+    #: authNumber?, brand?, checkedAt}` (approved | cancelled | not_found | unknown).
+    details = Column(JSONB, nullable=True)
+    #: A decision: what the latest answered check said when it was made (`CHECK_VERDICTS`, or
+    #: `not_checked`), that check, and whether the manager confirmed going against it.
+    verdict_at_decision = Column(String(16), nullable=True)
+    check_command_id = Column(UUID(as_uuid=True), nullable=True)
+    mismatch_confirmed = Column(Boolean, nullable=False, default=False, server_default="false")

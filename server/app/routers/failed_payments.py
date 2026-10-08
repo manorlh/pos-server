@@ -183,7 +183,7 @@ def create_card_command(
     if machine is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
     check_shift_admin_access(db, machine, current_user, active_tenant_id)
-    cmd = CC.create(db, attempt, machine, body.action, current_user)
+    cmd = CC.create(db, attempt, machine, body.action, current_user, confirm_mismatch=body.confirm_mismatch)
     db.commit()
     CC.notify(machine, cmd)
     db.commit()
@@ -231,7 +231,8 @@ def post_card_command_result(
     from app.services import card_attempt_commands as CC
 
     cmd = CC.apply_result(
-        db, machine, command_id, result_status=body.status, outcome=body.outcome, message=body.message
+        db, machine, command_id, result_status=body.status, outcome=body.outcome, message=body.message,
+        details=body.details.stored() if body.details is not None else None,
     )
     db.commit()
     return {

@@ -543,8 +543,10 @@ def attempt_out(row: FailedPaymentAttempt, labels: Dict[str, Dict[Any, Any]]) ->
         "paid_by_transaction_number": labels["documents"].get(row.paid_by_transaction_id),
         "paid_by_method": row.paid_by_method,
         "paid_at": _utc(row.paid_at),
-        # "תשלום לא מוכרע": the manager's latest command to the till about it, and what it said.
+        # "תשלום לא מוכרע": the manager's latest command to the till about it, and what it said;
+        # and the latest answered check (what the terminal said), whatever came after it.
         "card_command": _command_out(labels.get("commands", {}).get(row.id)),
+        "card_check": _command_out(labels.get("checks", {}).get(row.id)),
     }
 
 
@@ -597,10 +599,12 @@ def cancelled_block(db: Session, query: Optional[Query], limit: int = CANCELLED_
 
 
 def labels_for(db: Session, tenant_id: Any, rows: Sequence[FailedPaymentAttempt]) -> Dict[str, Dict[Any, Any]]:
-    from app.services.card_attempt_commands import latest_by_attempt
+    from app.services.card_attempt_commands import latest_by_attempt, latest_checks_by_attempt
 
+    unresolved = [r.id for r in rows if r.outcome == OUTCOME_UNRESOLVED]
     return {
-        "commands": latest_by_attempt(db, [r.id for r in rows if r.outcome == OUTCOME_UNRESOLVED]),
+        "commands": latest_by_attempt(db, unresolved),
+        "checks": latest_checks_by_attempt(db, unresolved),
         "machines": _machines(db, (r.machine_id for r in rows)),
         "shops": _shops(db, (r.shop_id for r in rows)),
         "shifts": _shift_numbers(db, (r.shift_id for r in rows)),

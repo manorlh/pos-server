@@ -74,6 +74,7 @@ KINDS: Tuple[Kind, ...] = (
     Kind("shop_z_producer_forced", "הפקת ה-Z הסניפי הועברה בכפייה", "high", "audit_exception"),
     Kind("support_z_produced", "Z הופק מהענן ע״י התמיכה", "high", "audit_exception", link="z"),
     Kind("till_reset", "איפוס נתוני קופה ע״י התמיכה", "high", "audit_exception"),
+    Kind("card_decision_override", "הכרעת אשראי בניגוד לבדיקה במסוף", "high", "audit_exception", amount=True),
     Kind("till_replaced", "הוחלפה קופה", "medium", "audit_exception"),
     Kind("kiosk_offline", "קיוסק לא מחובר", "high", "audit_exception"),
     # Listed by the exception rules as planned; nothing reports them yet.
