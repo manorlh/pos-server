@@ -147,8 +147,9 @@ def resolve_access(db: Session, target: User, body: AccessScopeIn, *, tenant_ids
     allowed_shops = set(body.shop_ids) if body.shop_ids else (
         {target.shop_id} if target.role == UserRole.SHOP_MANAGER and target.shop_id else set(shops)
     )
-    area_ids = list(getattr(body, "area_ids", []) or [])
-    machine_ids = list(getattr(body, "machine_ids", []) or [])
+    # Absent (an older dashboard): None, and the profile keeps the ones it has.
+    area_ids = None if getattr(body, "area_ids", None) is None else list(body.area_ids)
+    machine_ids = None if getattr(body, "machine_ids", None) is None else list(body.machine_ids)
     if area_ids:
         from app.models.shop_area import ShopArea
 
