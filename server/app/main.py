@@ -148,6 +148,10 @@ from app.routers import item_blocks as item_blocks_router  # noqa: E402
 from app.routers import device_commands as device_commands_router  # noqa: E402
 
 app.include_router(item_blocks_router.router, prefix=_prefix)
+# Stock over the hierarchy: quick stock, transfers, managed levels, alerts, the daily reset.
+from app.routers import stock_live as stock_live_router  # noqa: E402
+
+app.include_router(stock_live_router.router, prefix=_prefix)
 app.include_router(device_commands_router.router, prefix=_prefix)
 app.include_router(device_commands_router.till_router, prefix=_prefix)
 app.include_router(tips.router, prefix=_prefix)
@@ -284,6 +288,19 @@ from app.routers import exception_alerts as exception_alerts_router, exception_l
 
 app.include_router(exception_log_router.router, prefix=_prefix)
 app.include_router(exception_alerts_router.router, prefix=_prefix)
+
+
+@app.on_event("startup")
+def start_stock_reset_worker():
+    """"איפוס יומי": each stock location at its business day's start (app/services/stock_reset.py)."""
+    import os
+
+    if os.environ.get("STOCK_RESET_WORKER_ENABLED", "true").lower() in ("0", "false", "no"):
+        return
+    from app.database import SessionLocal
+    from app.services.stock_reset import start_background_worker as start_reset_worker
+
+    start_reset_worker(SessionLocal)
 
 
 @app.on_event("startup")

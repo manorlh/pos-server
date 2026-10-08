@@ -51,7 +51,7 @@ from app.services.shifts import (
     resolve_shift_for_document,
 )
 from app.services import document_filing as filing
-from app.services.stock import apply_movement
+from app.services.stock import apply_movement, sale_location
 from app.services.promotions import replace_document_promotions
 from app.services import menu as _menu
 from app.services import product_alerts as _product_alerts
@@ -1280,6 +1280,8 @@ def upsert_transactions(
                         )
                         continue
                     reason = StockMovementReason(sm.reason)
+                    # The stock location this till sells the product from ("אופן ניהול מלאי",
+                    # app/services/stock_locations.py): the shop's unless managed lower or higher.
                     apply_movement(
                         db,
                         movement_id=sm.id,
@@ -1293,6 +1295,7 @@ def upsert_transactions(
                         transaction_item_id=sm.transaction_item_id,
                         machine_id=issuer.id,
                         note=sm.note,
+                        location=sale_location(db, issuer, sm.product_id),
                     )
 
             is_duplicate = previous is not None and (

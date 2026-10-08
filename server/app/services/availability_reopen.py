@@ -267,11 +267,11 @@ def _category_locks(db: Session, scope: _Scope) -> List[CategoryAvailabilityOver
 
 
 def _out_of_stock(db: Session, shop_id, product: Optional[Product]) -> bool:
-    """Tracks stock and has none in the shop (no stock row at all is none)."""
+    """Tracks stock and has none in the shop — its stock locations together (no row is none)."""
     if product is None or not getattr(product, "track_stock", False):
         return False
     qty = (
-        db.query(StockLevel.quantity)
+        db.query(func.sum(StockLevel.quantity))
         .filter(StockLevel.shop_id == shop_id, StockLevel.product_id == product.id)
         .scalar()
     )

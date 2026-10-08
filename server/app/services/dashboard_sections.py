@@ -406,6 +406,9 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/shops/{}/training-mode*", S("till_settings")),
     (_ALL, "/shops/{}/shop-z-*", S("z")),
     (_ALL, "/shops/{}/stock*", S("stock")),
+    # Stock over the hierarchy (app/routers/stock_live.py): the switch preview only reads.
+    ("POST", "/stock/settings/preview", S("stock", level=VIEW)),
+    (_ALL, "/stock/*", S("stock")),
     ("POST", "/shops/{}/till-z", S("z")),
     (_GET, "/shops/{}/tips/report", S("reports")),
     (_GET, "/shops/{}/work-types", S("products", "till_settings", level=VIEW)),

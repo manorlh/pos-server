@@ -527,6 +527,34 @@ def _till_parameter(ctx: Ctx, c) -> Optional[EntrySpec]:
     )
 
 
+# ── stock: low / out at a location ───────────────────────────────────────────
+
+
+def _stock_alert(ctx: Ctx, a) -> Optional[EntrySpec]:
+    where = a.level
+    summary = ("אזל מהמלאי" if a.kind == "out" else "מלאי נמוך") + (f": {a.product_name}" if a.product_name else "")
+    return EntrySpec(
+        source="stock_alert",
+        source_id=str(a.id),
+        dedupe_key=f"stock_alert:{a.id}",
+        kind="stock_out" if a.kind == "out" else "stock_low",
+        severity="medium" if a.kind == "out" else "low",
+        occurred_at=_utc(a.raised_at),
+        tenant_id=a.tenant_id,
+        company_id=a.company_id,
+        shop_id=a.shop_id,
+        area_id=a.area_id,
+        machine_id=a.machine_id,
+        value=a.quantity,
+        threshold=a.threshold,
+        summary=summary,
+        details={"level": where, "targetId": str(a.target_id), "productId": str(a.product_id),
+                 "suggestLevel": a.suggest_level,
+                 "suggestTargetId": str(a.suggest_target_id) if a.suggest_target_id else None,
+                 "suggestQuantity": float(a.suggest_quantity) if a.suggest_quantity is not None else None},
+    )
+
+
 def _one(fn: Callable[[Ctx, Any], Optional[EntrySpec]]) -> Callable[[Ctx, Any], List[EntrySpec]]:
     def wrapped(ctx: Ctx, row: Any) -> List[EntrySpec]:
         spec = fn(ctx, row)
@@ -548,6 +576,7 @@ SOURCES: Tuple[Source, ...] = (
     Source("training", "app.models.training:TrainingAuditLog",
            lambda t: loaded(t, "action") in ("enabled", "disabled", "dropped"), _one(_training)),
     Source("till_parameter", "app.models.till_parameter:TillParameterChange", _param_wants, _one(_till_parameter)),
+    Source("stock_alert", "app.models.stock_setting:StockAlert", lambda a: loaded(a, "cleared_at") is None, _one(_stock_alert)),
 )
 
 _BY_NAME = {s.name: s for s in SOURCES}

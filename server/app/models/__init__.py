@@ -159,6 +159,8 @@ from app.models.dashboard_access import DashboardAccessAudit, DashboardAccessPro
 from app.models.sold_out import SoldOutMark
 from app.models.kiosk_live import KioskQuickHide
 from app.models.device_command import DeviceCommand, DeviceRemoteState
+# Stock locations: managed levels, low-stock alerts, the daily reset (app/services/stock_locations.py).
+from app.models.stock_setting import StockAlert, StockLevelSetting, StockReset, StockResetItem
 
 __all__ = [
     "User", "UserRole",
@@ -244,4 +246,5 @@ __all__ = [
     "TillRole", "TillRoleChange",
     "CashDrawerEvent", "CashMovement",
     "SoldOutMark", "KioskQuickHide", "DeviceCommand", "DeviceRemoteState",
+    "StockAlert", "StockLevelSetting", "StockReset", "StockResetItem",
 ]

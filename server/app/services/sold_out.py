@@ -241,9 +241,15 @@ def blocks_for_machine(
     q = q.filter(or_(*relevant))
     till = ctx.till()
     grouped: Dict[str, List[SoldOutMark]] = {}
+    sells_from: Dict[Any, Any] = {}
     for mark in q.all():
-        if rules.covers(mark, till):
-            grouped.setdefault(str(mark.product_id), []).append(mark)
+        if not rules.covers(mark, till):
+            continue
+        # An automatic "אזל" is about one stock location: it reaches only the devices that sell
+        # the product from it (app/services/stock_locations.py `sell_from`).
+        if mark.source == "auto" and not _sells_from(db, machine, mark, sells_from):
+            continue
+        grouped.setdefault(str(mark.product_id), []).append(mark)
     out: Dict[str, ProductBlocks] = {}
     for pid, marks in grouped.items():
         stamps: List[datetime] = []
@@ -257,6 +263,25 @@ def blocks_for_machine(
             changed_at=max(stamps) if stamps else None,
         )
     return out
+
+
+def _sells_from(db: Session, machine: POSMachine, mark: SoldOutMark, cache: Dict[Any, Any]) -> bool:
+    """The automatic block's location is where this device sells the product from."""
+    from app.services import stock_locations as SL
+
+    if "path" not in cache:
+        cache["path"] = SL.path_of_machine(db, machine)
+        cache["book"] = SL.rulebook_for_path(db, cache["path"])
+    key = mark.product_id
+    if key not in cache:
+        product = db.get(Product, mark.product_id)
+        if product is None:
+            cache[key] = None
+        else:
+            managed = cache["book"].managed(company_id=cache["path"].company_id, shop_id=cache["path"].shop_id, product=product)
+            cache[key] = SL.sell_from(cache["path"], managed)
+    loc = cache[key]
+    return loc is not None and loc.level == mark.scope and str(loc.target_id) == str(mark.scope_id)
 
 
 def block_out(mark: SoldOutMark) -> Dict[str, Any]:

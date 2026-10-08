@@ -119,6 +119,15 @@ def _check_target(db: Session, user: User, target: svc.Target, tenant_id) -> Non
     if shop is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
     kiosk_control.check_shop_scope(db, user, shop, tenant_id)
+    # A manager of points of sale (app/services/stock_scope.py): only their areas and the devices in them.
+    from app.services import stock_locations as SL
+    from app.services import stock_scope
+
+    narrowed = stock_scope.scope_of(db, user)
+    if narrowed.narrowed:
+        level = {"area": "area", "machine": "machine", "kiosk": "machine"}.get(target.scope)
+        if level is None or not narrowed.covers_path(SL.path_of(db, level, target.scope_id)):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="outside_your_points_of_sale")
 
 
 def _check_mark(db: Session, user: User, mark: SoldOutMark, tenant_id) -> None:

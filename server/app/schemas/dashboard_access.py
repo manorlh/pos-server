@@ -21,6 +21,11 @@ class AccessScopeIn(BaseModel):
     org_wide: bool = Field(False, alias="orgWide")
     company_ids: List[uuid.UUID] = Field(default_factory=list, alias="companyIds")
     shop_ids: List[uuid.UUID] = Field(default_factory=list, alias="shopIds")
+    #: "מנהל נקודת מכירה": only these points of sale (and their devices) — the stock and block
+    #: screens (app/services/stock_scope.py). Empty = whole shops.
+    area_ids: List[uuid.UUID] = Field(default_factory=list, alias="areaIds")
+    #: Only these tills / kiosks (the narrowest). Empty = no narrowing.
+    machine_ids: List[uuid.UUID] = Field(default_factory=list, alias="machineIds")
 
 
 class ProfileIn(AccessScopeIn):

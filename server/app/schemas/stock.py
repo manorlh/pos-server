@@ -17,6 +17,11 @@ class StockLevelOut(BaseModel):
     reorder_max: Optional[int] = Field(None, alias="reorderMax")
     reorder_opt: Optional[int] = Field(None, alias="reorderOpt")
     updated_at: datetime = Field(..., alias="updatedAt")
+    #: The stock location this level is (a till's pull: the one it sells from; app/services/stock_locations.py).
+    level: Optional[str] = None
+    target_id: Optional[uuid.UUID] = Field(None, alias="targetId")
+    #: "איפוס יומי": when this location was last reset — the till counts only its unsynced sales after it.
+    reset_at: Optional[datetime] = Field(None, alias="resetAt")
 
 
 class StockMovementIn(BaseModel):

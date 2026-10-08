@@ -95,6 +95,9 @@ KINDS: Tuple[Kind, ...] = (
     Kind("training_mode", "מצב הדרכה הופעל / כובה", "medium", "training"),
     Kind("training_dropped", "מסמכי הדרכה מקופה שלא במצב הדרכה", "high", "training"),
     Kind("terminal_check_bypass", "עקיפת בדיקת מספר מסוף הופעלה", "high", "till_parameter"),
+    # Stock locations (app/services/stock_alerts.py): a product low or out at a location.
+    Kind("stock_low", "מלאי נמוך", "low", "stock_alert", link="none"),
+    Kind("stock_out", "אזל מהמלאי", "medium", "stock_alert", link="none"),
 )
 
 # "מגירת מזומן" (the drawer spec §10–§11, app/services/cash_drawer_exceptions.py): opening after

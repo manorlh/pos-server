@@ -126,7 +126,7 @@ from app.services.shifts import (
     z_number_of,
 )
 from app.services.remote_close import apply_close_shift_ack, on_shift_close_accepted
-from app.services.stock import effective_stock_updated_at, get_levels_for_shop
+from app.services.stock import effective_stock_updated_at, get_levels_for_shop, levels_for_machine
 from app.schemas.transmission import TransmissionReportIn, TransmitAckIn
 from app.services import transmissions, transmit_requests
 from app.schemas.offline_authorization import OfflineAuthorizationIn
@@ -2366,7 +2366,14 @@ def get_stock_sync(
             levels=[],
         )
 
-    watermark = effective_stock_updated_at(db, machine.shop_id)
+    from app.models.shop import Shop as _Shop
+
+    shop_row = db.get(_Shop, machine.shop_id)
+    watermark = effective_stock_updated_at(db, machine.shop_id, shop_row.company_id if shop_row else None)
+    moved = getattr(machine, "area_changed_at", None)
+    if moved is not None:
+        moved = moved if moved.tzinfo else moved.replace(tzinfo=timezone.utc)
+        watermark = max(watermark, moved)
     since_dt: Optional[datetime] = None
     if since:
         try:
@@ -2382,7 +2389,8 @@ def get_stock_sync(
             levels=[],
         )
 
-    levels = get_levels_for_shop(db, machine.shop_id, since=since_dt)
+    # One level per product: the stock location this till sells it from (app/services/stock.py).
+    levels = levels_for_machine(db, machine, since=since_dt)
     out = [
         StockLevelOut(
             product_id=l.product_id,
@@ -2393,6 +2401,9 @@ def get_stock_sync(
             reorder_max=l.reorder_max,
             reorder_opt=l.reorder_opt,
             updated_at=l.updated_at,
+            level=l.location.level,
+            target_id=l.location.target_id,
+            reset_at=l.reset_at,
         )
         for l in levels
     ]
