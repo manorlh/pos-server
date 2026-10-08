@@ -57,12 +57,14 @@
     "reconciliation": "דוח התאמה",
     "transmissions": "שידורים",
     "sections": {
+      "mine": "הניהול שלי",
       "overview": "סקירה",
       "catalog": "קטלוג",
       "reports": "דוחות",
       "organization": "ארגון",
       "settings": "הגדרות"
     },
+    "cockpit": "הניהול שלי",
     "overview": "סקירה כללית",
     "liveItems": "מכירות לפי פריט — חי",
     "tillMessages": "הודעות לקופות",
@@ -839,7 +841,29 @@
     "subtitle": "נהל את פרטי החשבון וההתחברות שלך",
     "account": "פרטי חשבון",
     "role": "תפקיד:",
-    "signout": "התנתק"
+    "signout": "התנתק",
+    "homePage": {
+      "title": "דף פתיחה",
+      "hint": "הדף שנפתח בכל כניסה למערכת — בטלפון ובמחשב.",
+      "label": "דף פתיחה",
+      "saved": "דף הפתיחה נשמר",
+      "simpleMode": "תצוגת מנהל פשוטה",
+      "simpleModeHint": "תפריט קצר: הניהול שלי, דוחות עיקריים וההגדרות שמותר לך לשנות.",
+      "simpleModeDefaultOn": "מופעלת כברירת מחדל לתפקיד שלך.",
+      "simpleSaved": "התצוגה עודכנה",
+      "saveFailed": "לא ניתן לשמור את דף הפתיחה",
+      "notAllowed": "אין לך הרשאה לדף הזה — הכניסה תיפתח בלוח הבקרה.",
+      "pages": {
+        "board": "לוח בקרה",
+        "compare": "השוואות",
+        "live_items": "מכירות לפי פריט — חי",
+        "transactions": "עסקאות",
+        "shifts": "משמרות",
+        "z_reports": "דוחות Z",
+        "machines": "קופות ומכשירים",
+        "products": "מוצרים"
+      }
+    }
   },
   "dashboard": {
     "title": "סקירה כללית",
@@ -1084,6 +1108,260 @@
       "overview": "סקירה",
       "tills": "קופות",
       "alerts": "התראות"
+    },
+    "cockpit": {
+      "quickActions": "פעולות מהירות",
+      "devices": "הקופות",
+      "hasAlerts": "יש התראות",
+      "actions": {
+        "tillMessage": "הודעה לקופות",
+        "failedPayments": "תשלומים לא מוכרעים",
+        "quickMessage": "הודעה מהירה",
+        "quickPromo": "מבצע מהיר",
+        "blockItem": "חסום / אזל",
+        "deviceControl": "שליטה בקופות וקיוסקים",
+        "liveEvent": "מצב אירוע חי",
+        "vouchers": "שוברים",
+        "stockUpdate": "עדכון מלאי"
+      },
+      "itemActions": {
+        "openTill": "לקופה",
+        "review": "לבדיקה"
+      },
+      "feed": {
+        "title": "דורש תשומת לב",
+        "count": "{count, plural, one {פריט אחד} other {# פריטים}}",
+        "allGood": "הכל תקין — אין כרגע מה לטפל בו.",
+        "more": "{count, plural, one {עוד פריט} other {עוד # פריטים}}",
+        "less": "הצג פחות",
+        "lastSeen": "עדכון אחרון {ago}",
+        "till": {
+          "unsynced": "{till} לא מחוברת ויש בה {count, plural, =0 {מכירות שלא נשלחו} one {מכירה שלא נשלחה} other {# מכירות שלא נשלחו}}",
+          "offline": "{till} לא מחוברת והמשמרת פתוחה",
+          "flags": "{till} — יש מה לבדוק"
+        },
+        "failedPayment": "תשלום באשראי לא מוכרע · {amount}"
+      },
+      "scope": {
+        "label": "מה מנהלים",
+        "shop": "סניף",
+        "event": "אירוע",
+        "advanced": "מתקדם: חברה, נקודת מכירה, קופה"
+      },
+      "tillMessage": {
+        "to": {
+          "machine": "לקופה {name}",
+          "area": "לכל הקופות בנקודת המכירה",
+          "shop": "לכל הקופות בסניף {name}",
+          "company": "לכל הקופות בחברה {name}"
+        },
+        "pickScope": "בחרו סניף כדי לשלוח הודעה לקופות שלו.",
+        "titleLabel": "כותרת",
+        "titlePlaceholder": "כותרת (לא חובה)",
+        "bodyLabel": "ההודעה",
+        "bodyPlaceholder": "מה הקופאים צריכים לדעת?",
+        "send": "שליחה לקופות",
+        "sent": "ההודעה נשלחה לקופות",
+        "failed": "לא ניתן לשלוח את ההודעה"
+      },
+      "failedPayments": {
+        "hint": "תשלומים שהקופה לא הצליחה לסגור ואולי חויבו. ההכרעה — במסך העסקאות.",
+        "none": "אין תשלומים לא מוכרעים.",
+        "decide": "להכרעה במסך העסקאות"
+      }
+    },
+    "home": {
+      "label": "תצוגת דף הבית",
+      "board": "לוח בקרה",
+      "compare": "השוואות",
+      "insights": "תובנות"
+    },
+    "limited": {
+      "title": "מצב הקופות",
+      "hint": "אין לך הרשאה לנתוני מכירות — מוצג כאן מצב הקופות בלבד.",
+      "myAccess": "מה אני רשאי לראות"
+    },
+    "event": {
+      "label": "אירוע",
+      "none": "ללא אירוע",
+      "pick": "בחירת אירוע",
+      "pickCompare": "בחירת אירוע להשוואה",
+      "search": "חיפוש אירוע",
+      "searchPlaceholder": "שם האירוע…",
+      "loading": "טוען אירועים…",
+      "empty": "אין אירועים בסניפים שבהרשאתך.",
+      "noMatch": "לא נמצא אירוע בשם הזה.",
+      "clear": "בלי אירוע",
+      "when": "{date} · {from}–{to}",
+      "whenAcross": "{date} {from} – {endDate} {to}",
+      "tills": "{count, plural, =0 {בלי קופות} one {קופה אחת} other {# קופות}}",
+      "draft": "טיוטה",
+      "confirmed": "מאושר",
+      "fullCompare": "השוואה מלאה בין האירועים",
+      "chip": "אירוע: {name}",
+      "notFound": "האירוע לא נמצא או שאין לך הרשאה אליו.",
+      "versus": "מול {name}"
+    },
+    "vouchers": {
+      "title": "שוברים",
+      "redeemed": "{count, plural, one {שובר אחד מומש} other {# שוברים מומשו}}",
+      "vouchers": "שוברים",
+      "units": "פריטים",
+      "uses": "שימושים",
+      "value": "שווי",
+      "redemptions": "{count, plural, one {מימוש אחד} other {# מימושים}}",
+      "rowUnits": "{units} {kind, select, items {פריטים} other {שימושים}}",
+      "open": "פתיחת השובר {name}",
+      "all": "לכל השוברים",
+      "versus": "מול {count}",
+      "kinds": {
+        "items": "שובר פריטים",
+        "order_discount": "הנחה על העסקה",
+        "item_discount": "הנחה על פריטים"
+      }
+    },
+    "compareView": {
+      "title": "השוואות",
+      "loadError": "לא ניתן לטעון את ההשוואה",
+      "retry": "נסו שוב",
+      "period": {
+        "label": "תקופה",
+        "day": "יום",
+        "week": "שבוע",
+        "month": "חודש",
+        "range": "טווח"
+      },
+      "periodName": {
+        "week": "שבוע {from}–{to}",
+        "month": "{month} {year}",
+        "range": "{from}–{to}"
+      },
+      "months": [
+        "ינואר",
+        "פברואר",
+        "מרץ",
+        "אפריל",
+        "מאי",
+        "יוני",
+        "יולי",
+        "אוגוסט",
+        "ספטמבר",
+        "אוקטובר",
+        "נובמבר",
+        "דצמבר"
+      ],
+      "prevPeriod": "התקופה הקודמת",
+      "nextPeriod": "התקופה הבאה",
+      "anchor": "בחירת תאריך",
+      "from": "מתאריך",
+      "to": "עד תאריך",
+      "vsFrom": "השוואה מתאריך",
+      "vsTo": "השוואה עד תאריך",
+      "vs": {
+        "label": "מול",
+        "prev": "התקופה הקודמת",
+        "prevDay": "היום הקודם",
+        "prevWeek": "השבוע הקודם",
+        "prevMonth": "החודש הקודם",
+        "lastWeek": "אותו יום בשבוע שעבר",
+        "lastYear": "אותה תקופה אשתקד",
+        "custom": "טווח אחר…",
+        "event": "אירוע אחר…",
+        "none": "ללא השוואה"
+      },
+      "mode": {
+        "label": "סוג ההשוואה",
+        "periods": "תקופה מול תקופה",
+        "side": "זה מול זה"
+      },
+      "side": {
+        "label": "מה משווים",
+        "shop": "סניפים",
+        "area": "נקודות מכירה",
+        "machine": "קופות",
+        "cashier": "קופאים",
+        "pick": "בחרו 2–4 להשוואה",
+        "picked": "נבחרו {count} מתוך 4",
+        "pickMore": "בחרו לפחות שניים כדי להשוות.",
+        "needShop": "בחרו סניף בסינון כדי להשוות את נקודות המכירה שלו.",
+        "noCandidates": "אין מה להשוות בהיקף שנבחר.",
+        "cashiersHint": "הקופאים שמכרו בתקופה.",
+        "unknown": "לא נמצא בהיקף שלך",
+        "share": "{pct}% מהסך",
+        "table": "השוואה בטבלה"
+      },
+      "figures": {
+        "sales": "מכירות נטו",
+        "gross": "מכירות ברוטו",
+        "discounts": "הנחות",
+        "refunds": "החזרות",
+        "documents": "מסמכים",
+        "salesCount": "עסקאות",
+        "refundsCount": "זיכויים",
+        "averageTicket": "ממוצע עסקה",
+        "items": "פריטים שנמכרו",
+        "cash": "מזומן",
+        "card": "אשראי",
+        "other": "שוברים ואחר",
+        "tips": "טיפים"
+      },
+      "versus": "מול {value}",
+      "deltaAbs": "{sign}{value}",
+      "new": "חדש",
+      "noCompare": "ללא השוואה",
+      "chart": {
+        "title": "לאורך התקופה",
+        "byHour": "לפי שעה",
+        "byDay": "לפי יום",
+        "sinceStart": "מתחילת האירוע",
+        "perBucket": "לכל נקודה",
+        "cumulative": "מצטבר",
+        "peak": "השיא: {label}",
+        "empty": "אין מכירות בתקופה."
+      },
+      "tenders": "אמצעי תשלום",
+      "items": "הנמכרים ביותר",
+      "itemsEmpty": "לא נמכרו פריטים בתקופה.",
+      "qty": "{qty} יח׳",
+      "qtyVs": "{qty} יח׳ · מול {other}",
+      "sellers": "קופאים",
+      "sellersEmpty": "אין מכירות לקופאים בתקופות.",
+      "sellerLine": "{docs} מסמכים · ממוצע {avg}",
+      "breakdown": "פילוח — {level}",
+      "breakdownEmpty": "אין נתונים להיקף שנבחר.",
+      "levels": {
+        "companies": "חברות",
+        "shops": "סניפים",
+        "areas": "נקודות מכירה",
+        "tills": "קופות"
+      },
+      "brands": "מותגי אשראי",
+      "brandsEmpty": "אין עסקאות אשראי בתקופה.",
+      "hours": "שעה אחר שעה",
+      "hourLine": "{docs} מסמכים · מול {other}",
+      "eventOnly": "בהשוואת אירועים מוצגים הנתונים של קופות האירוע בחלון שלו.",
+      "export": {
+        "title": "השוואות — {a}",
+        "titleVs": "השוואות — {a} מול {b}",
+        "sideTitle": "זה מול זה — {kind}",
+        "summary": "סיכום",
+        "curve": "לאורך התקופה",
+        "items": "פריטים",
+        "vouchers": "שוברים",
+        "figure": "נתון",
+        "change": "שינוי",
+        "changePct": "שינוי %",
+        "bucket": "זמן",
+        "item": "פריט",
+        "sku": "מק״ט",
+        "qty": "יח׳",
+        "net": "נטו",
+        "total": "סה״כ",
+        "voucher": "שובר",
+        "voucherCount": "שוברים",
+        "units": "פריטים",
+        "value": "שווי"
+      }
     }
   },
   "products": {
@@ -14859,6 +15137,12 @@
       "reports": "דוחות",
       "z": "זדים ומשמרות",
       "products": "מוצרים וקטלוג",
+      "cockpit": "הניהול שלי",
+      "quick_actions": "פעולות מהירות",
+      "item_blocks": "חסימות ואזל",
+      "device_control": "שליטה מרחוק בקופות וקיוסקים",
+      "live_event": "מצב אירוע חי",
+      "alerts": "התראות",
       "stock": "מלאי",
       "vouchers": "שוברים",
       "prepaid_vouchers": "שוברי הפקה",

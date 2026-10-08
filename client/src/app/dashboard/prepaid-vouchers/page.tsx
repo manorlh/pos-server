@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -1361,7 +1362,9 @@ export default function PrepaidVouchersPage() {
   const t = useTranslations('prepaidVouchers');
   const errorText = useErrorText();
   const [creating, setCreating] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // `?batch=<id>`: the control board's "שוברים" card opens a voucher's batch directly.
+  const searchParams = useSearchParams();
+  const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get('batch'));
 
   const batches = useQuery({ queryKey: ['prepaid-voucher-batches'], queryFn: fetchPrepaidBatches });
   const selected = batches.data?.find((b) => b.id === selectedId) ?? null;

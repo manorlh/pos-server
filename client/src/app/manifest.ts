@@ -15,7 +15,8 @@ export default function manifest(): MetadataRoute.Manifest {
     lang: 'he',
     dir: 'rtl',
     id: '/dashboard',
-    start_url: '/dashboard',
+    // Through the landing route, so the installed app opens on the user's opening page.
+    start_url: '/dashboard/start',
     scope: '/',
     display: 'standalone',
     orientation: 'any',
