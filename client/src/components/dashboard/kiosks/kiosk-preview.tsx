@@ -7,7 +7,7 @@
  * add-to-cart motion), pay on the pinpad beside the screen.
  */
 
-import { layoutOf, productColumns } from '@/lib/kioskLayout';
+import { layoutOf, mealViewOf, productColumns } from '@/lib/kioskLayout';
 import { useCallback, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type Ref } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
@@ -74,6 +74,7 @@ import {
   type PCategory,
   type PGroup,
   type PLine,
+  type PMeal,
   type PProduct,
   type PreviewModel,
 } from './preview-screens';
@@ -321,6 +322,28 @@ export function KioskPreview({
   );
   const featured = useMemo(() => view.featured.map((x) => ({ ...x.product, soldOut: x.soldOut })), [view]);
   const allProducts = useMemo(() => categories.flatMap((c) => c.products), [categories]);
+  // "ארוחות" (layout.mealView = tray): the preview has no meals of its own (the kiosks take them from
+  // the menu), so a dish of the first category shows the tray with it in the first place and the next
+  // two categories' dishes for the others — how a meal fills up, on this catalog.
+  const tray = mealViewOf(config) === 'tray';
+  const demoMealOf = useMemo(() => {
+    if (!tray || categories.length < 2) return undefined;
+    const [first, ...rest] = categories;
+    return (p: PProduct): PMeal | null => {
+      if (!first.products.some((x) => x.id === p.id)) return null;
+      const slotOf = (cat: PCategory, chosen: string | null) => ({
+        id: `demo-${cat.id}`,
+        name: cat.name,
+        minSelect: 1,
+        maxSelect: 1,
+        allowRepeat: false,
+        choices: [...(chosen ? cat.products.filter((x) => x.id === chosen) : []), ...cat.products.filter((x) => x.id !== chosen)]
+          .slice(0, 6)
+          .map((x) => ({ product: x, upchargeAgorot: 0, isDefault: x.id === chosen })),
+      });
+      return { slots: [slotOf(first, p.id), ...rest.slice(0, 2).map((c) => slotOf(c, null))], groupsOf: () => [] };
+    };
+  }, [tray, categories]);
   const firstAvailable = allProducts.find((p) => !p.soldOut) ?? allProducts[0] ?? null;
   const product = allProducts.find((p) => p.id === productId) ?? firstAvailable;
   const { groups, allergens } = useProductGroups(product?.id ?? null, real);
@@ -470,6 +493,7 @@ export function KioskPreview({
         .filter((x): x is PProduct => !!x)
         .slice(0, 3),
     reach: { toggled: reachToggled, toggle: () => setReachToggled((v) => !v) },
+    mealOf: demoMealOf,
     money: (n) => formatCurrency(n),
     categories,
     featured,

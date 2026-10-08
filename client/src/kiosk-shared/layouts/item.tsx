@@ -10,7 +10,7 @@ import { Check, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { sheetEnter } from '@/components/dashboard/kiosks/preview-motion';
 import { ERROR_COLOR, errorFx, revealIn } from '@/components/dashboard/kiosks/preview-feedback';
-import { BigButton, OptionRow, ProductImage, Stepper, cardStyle, type PGroup, type PLine, type PMeal, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
+import { BigButton, OptionRow, ProductImage, Stepper, cardStyle, textSize, type PGroup, type PLine, type PMeal, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { initialPicks, lineOptionsOf, menuGroupOfP, useDishSheet } from '@/components/dashboard/kiosks/preview-dish';
 import { reachLow } from '@/lib/kioskLayout';
 import { chosenOptions, mealPick, mealSlotProblem, mealUnitAgorot, optionText, type MealSlot } from '@/lib/kioskMoney';
@@ -96,7 +96,9 @@ export function StepsProductSheet({
             <ProductImage m={m} p={product} className="h-full w-full" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="line-clamp-2 text-lg font-extrabold leading-tight">{product.name}</div>
+            <div className="line-clamp-2 text-lg font-extrabold leading-tight" style={textSize(m, 'itemName', 18)}>
+              {product.name}
+            </div>
             <div className="kt-13 font-bold tabular-nums" style={{ color: m.c.primary }}>
               {m.money(unit * qty)}
             </div>
@@ -162,7 +164,7 @@ export function StepsProductSheet({
                         border: `${on ? 2 : 1.5}px solid ${on ? m.c.primary : m.c.border}`,
                       }}
                     >
-                      <span className="flex items-center gap-1.5 kt-15 font-bold">
+                      <span className="flex items-center gap-1.5 kt-15 font-bold" style={textSize(m, 'itemOptions', 15)}>
                         {on ? (
                           <span className="flex h-5 w-5 items-center justify-center rounded-full" style={{ background: m.c.primary, color: m.c.buttonText }}>
                             <Check className="h-3 w-3" />
@@ -244,6 +246,9 @@ function mealLineKey(productId: string): string {
  * products with their upcharge, as many as the slot takes (a repeat where it allows one), the last
  * step the meal with its quantity. Each component comes with its own defaults (MealDraft.start) and is
  * priced with them; the line costs the meal's price, the upcharges and the components' paid choices.
+ * `tray` (layout.mealView = tray — the combo template, the Android kiosk's KioskMealTray): the steps
+ * drawn as a tray — a place per slot, a dashed plate until it is chosen, then the chosen dish on it;
+ * a tap on a place goes back to it — and the slot's dishes three across.
  */
 export function MealSheet({
   m,
@@ -251,12 +256,14 @@ export function MealSheet({
   meal,
   onClose,
   onAdd,
+  tray = false,
 }: {
   m: PreviewModel;
   product: PProduct;
   meal: PMeal;
   onClose: () => void;
   onAdd: (line: PLine, from: DOMRect | null) => void;
+  tray?: boolean;
 }) {
   const u = unitOf(m);
   const slots: MealSlot[] = meal.slots.map((s) => ({
@@ -352,7 +359,9 @@ export function MealSheet({
             <ProductImage m={m} p={product} className="h-full w-full" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="line-clamp-2 text-lg font-extrabold leading-tight">{product.name}</div>
+            <div className="line-clamp-2 text-lg font-extrabold leading-tight" style={textSize(m, 'itemName', 18)}>
+              {product.name}
+            </div>
             <div className="kt-13 font-bold tabular-nums" style={{ color: m.c.primary }}>
               {m.money((unitAgorot * qty) / 100)}
             </div>
@@ -361,7 +370,35 @@ export function MealSheet({
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="mx-3 flex items-center gap-2 px-3 py-2 kt-13" style={{ background: `${m.c.primary}12`, borderRadius: 12 }}>
+        {tray ? (
+          <div
+            className="mx-3 flex items-start justify-around gap-1 px-1.5 py-2.5"
+            style={{ background: `${m.c.primary}12`, border: `1.5px solid ${m.c.primary}2E`, borderRadius: Math.min(m.radius, 22) }}
+            data-tray
+          >
+            {meal.slots.map((s, i) => {
+              const picked = (chosen[s.id] ?? [])[0];
+              const dish = picked ? s.choices.find((c) => c.product.id === picked)?.product ?? null : null;
+              const many = (chosen[s.id] ?? []).length;
+              const ring = error && problem(i) ? '#DC2626' : i === at ? m.c.primary : `${m.c.text}47`;
+              return (
+                <button key={s.id} type="button" onClick={() => setStep(i)} className="flex min-w-0 flex-1 flex-col items-center gap-1 text-center" style={{ maxWidth: 96 * u }}>
+                  <span
+                    className="relative flex shrink-0 items-center justify-center overflow-hidden rounded-full kt-15 font-bold"
+                    style={{ width: 52 * u, height: 52 * u, border: `${i === at ? 2.5 : 2}px ${dish ? 'solid' : 'dashed'} ${ring}`, color: ring }}
+                  >
+                    {dish ? <ProductImage m={m} p={dish} className={cn('h-full w-full', !m.cfg.general.reduceMotion && 'animate-in zoom-in-50 duration-300')} /> : i + 1}
+                  </span>
+                  {many > 1 ? <span className="-mt-3 rounded-full px-1.5 kt-10 font-bold" style={{ background: m.c.primary, color: m.c.buttonText }}>×{many}</span> : null}
+                  <span className="w-full truncate kt-11 font-semibold" style={{ color: i === at ? m.c.primary : m.c.text }}>
+                    {s.name}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        <div className={cn('mx-3 flex items-center gap-2 px-3 py-2 kt-13', tray && 'hidden')} style={{ background: `${m.c.primary}12`, borderRadius: 12 }}>
           <span className="min-w-0 flex-1 truncate font-semibold" data-text-key="guidedStepOf">
             {kt(m, 'guidedStepOf', { n: at + 1, count: total })} · {slot ? slot.name : m.t('total')}
           </span>
@@ -386,7 +423,7 @@ export function MealSheet({
               </p>
               <div
                 key={error && err ? `nudge-${tries}` : 'tiles'}
-                className={cn('grid grid-cols-2 gap-2', error && err && problem(at) && err.className)}
+                className={cn('grid gap-2', tray ? 'grid-cols-3' : 'grid-cols-2', error && err && problem(at) && err.className)}
                 style={error && err && problem(at) ? err.style : undefined}
               >
                 {meal.slots[at].choices.map((c) => {
@@ -419,7 +456,9 @@ export function MealSheet({
                       <span className="overflow-hidden" style={{ width: 48 * u, height: 48 * u, borderRadius: 12 }}>
                         <ProductImage m={m} p={c.product} className="h-full w-full" />
                       </span>
-                      <span className="line-clamp-2 kt-13 font-bold leading-tight">{c.product.name}</span>
+                      <span className="line-clamp-2 kt-13 font-bold leading-tight" style={textSize(m, 'itemOptions', 13)}>
+                        {c.product.name}
+                      </span>
                       {c.upchargeAgorot > 0 ? (
                         <span className="kt-11 tabular-nums" style={{ color: m.c.mutedText }}>
                           +{m.money(c.upchargeAgorot / 100)}

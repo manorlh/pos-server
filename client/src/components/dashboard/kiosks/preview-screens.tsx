@@ -1866,7 +1866,8 @@ function FeaturedRow({ m }: { m: PreviewModel }) {
   );
 }
 
-export function CatalogHeader({ m, children }: { m: PreviewModel; children?: ReactNode }) {
+/** The menu's header; `search` false: the screen keeps its own search field (the list layout). */
+export function CatalogHeader({ m, children, search = true }: { m: PreviewModel; children?: ReactNode; search?: boolean }) {
   const header = m.cfg.screenImages?.catalogHeader;
   return (
     <div className="z-10 shrink-0 space-y-2 pb-1 pt-3 backdrop-blur-md" style={{ background: `${m.c.background}E6` }}>
@@ -1890,7 +1891,7 @@ export function CatalogHeader({ m, children }: { m: PreviewModel; children?: Rea
           <Img src={header.url} className="h-full w-full object-cover" />
         </div>
       ) : null}
-      {m.cfg.general.searchEnabled && !m.live ? (
+      {search && m.cfg.general.searchEnabled && !m.live ? (
         <div className="mx-3 flex items-center gap-2 px-3 py-2 text-xs" style={{ ...cardStyle(m), borderRadius: 999, color: m.c.mutedText }}>
           <Search className="h-3.5 w-3.5" /> {m.t('search')}
         </div>
@@ -2123,11 +2124,15 @@ export function ProductSheet({
   onAdd: (line: PLine, from: DOMRect | null) => void;
   /** The menu's quick notes for this product (the real kiosk); the preview shows samples. */
   quickNotes?: string[];
-  /** layout.itemView (kiosk-shared/layouts): the centred window of today, a smaller one, or the whole screen. */
-  variant?: 'sheet' | 'modal' | 'full';
+  /**
+   * layout.itemView (kiosk-shared/layouts): the centred window of today, a smaller one, the whole
+   * screen, or the compact one (inline / popover: no big picture — a small one beside the name).
+   */
+  variant?: 'sheet' | 'modal' | 'full' | 'compact';
 }) {
   const { cfg } = m;
   const full = variant === 'full';
+  const compact = variant === 'compact';
   // The choices priced as the till prices them (lib/kioskMoney.ts): free ones, quantities, "מעט / הרבה / בצד".
   const dish = useDishSheet(product, groups);
   const [qty, setQty] = useState(1);
@@ -2175,7 +2180,7 @@ export function ProductSheet({
       <div
         className={cn(
           'relative flex w-full flex-col overflow-hidden',
-          full ? 'h-full' : variant === 'modal' ? 'max-h-[86%] max-w-[360px]' : 'max-h-[90%] max-w-[420px]',
+          full ? 'h-full' : variant === 'modal' ? 'max-h-[86%] max-w-[360px]' : compact ? 'max-h-[86%] max-w-[400px]' : 'max-h-[90%] max-w-[420px]',
           sheetEnter(m.transitions).panel,
         )}
         style={{ ...sheetEnter(m.transitions).style, background: m.c.surface, color: m.c.text, borderRadius: full ? 0 : Math.max(16, m.radius) }}
@@ -2189,18 +2194,24 @@ export function ProductSheet({
           >
             <X className="h-5 w-5" />
           </button>
-        ) : (
+        ) : compact ? null : (
           <div className="absolute inset-x-0 top-2 z-10 mx-auto h-1.5 w-10 rounded-full bg-white/80 shadow" />
         )}
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none]">
           {/* In the accessible mode the dish shows in the display half (kiosk-shared/layouts/reach.tsx). */}
-          {reachLow(m.cfg, m.reach?.toggled ?? false) ? null : (
+          {reachLow(m.cfg, m.reach?.toggled ?? false) || compact ? null : (
             <div ref={pictureRef} className="w-full" style={{ aspectRatio: m.ratio }}>
               <ProductImage m={m} p={picture} className="h-full w-full" />
             </div>
           )}
           <div className="space-y-4 p-4">
-            <div>
+            <div className={compact ? 'flex items-start gap-3' : undefined}>
+              {compact ? (
+                <div ref={pictureRef} className="shrink-0 overflow-hidden" style={{ width: 60, height: 60, borderRadius: Math.min(m.radius, 14) }}>
+                  <ProductImage m={m} p={product} className="h-full w-full" />
+                </div>
+              ) : null}
+              <div className={compact ? 'min-w-0 flex-1' : undefined}>
               <h3 className="text-xl font-extrabold leading-tight" style={textSize(m, 'itemName', 20)}>
                 {product.name}
               </h3>
@@ -2232,6 +2243,18 @@ export function ProductSheet({
                     <span className="font-bold">{m.t('allergens')}:</span> {allergens.join(', ')}
                   </span>
                 </div>
+              ) : null}
+              </div>
+              {compact ? (
+                <button
+                  type="button"
+                  aria-label={m.t('close')}
+                  onClick={onClose}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
+                  style={{ background: `${m.c.text}10` }}
+                >
+                  <X className="h-5 w-5" />
+                </button>
               ) : null}
             </div>
             {groups.map((g) => {

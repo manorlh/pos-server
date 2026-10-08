@@ -189,11 +189,11 @@ export const KIOSK_LAYOUT_TEMPLATES: Record<LayoutTemplate, KioskLayer> = {
 };
 
 /**
- * The templates this build draws (the dashboard offers only these). Phase 2 (cafe, combo, list,
- * magazine, wall) adds its renderers and its name here; a config naming one this build does not
- * draw falls back to the categories as theme.categoryLayout says (what an older kiosk shows).
+ * The templates this build draws (the dashboard offers only these): all ten — phase 2 added cafe,
+ * combo, list, magazine and wall. A config naming one a kiosk does not draw falls back to the
+ * categories as theme.categoryLayout says (what an older kiosk shows).
  */
-export const LAYOUT_TEMPLATES_READY: LayoutTemplate[] = ['standard', 'guided', 'tabs', 'landing', 'fastfood'];
+export const LAYOUT_TEMPLATES_READY: LayoutTemplate[] = ['standard', 'guided', 'tabs', 'landing', 'fastfood', 'cafe', 'combo', 'list', 'magazine', 'wall'];
 
 /** What an older kiosk (no `layout`) reads: theme.categoryLayout / theme.cartStyle from the layout. */
 export const LAYOUT_BACK_COMPAT: {
@@ -489,24 +489,20 @@ export function layoutOf(cfg: Pick<KioskConfig, 'layout'> | null | undefined): K
   return l ? { ...KIOSK_LAYOUT_DEFAULTS, ...l } : KIOSK_LAYOUT_DEFAULTS;
 }
 
-/** The catalogs this build draws itself; any other (phase 2) is drawn as theme.categoryLayout says. */
-export const LAYOUT_CATALOGS_READY: LayoutCatalog[] = ['rail', 'top', 'landing'];
+/** The catalogs this build draws itself: all of them since phase 2 (null is today's screen). */
+export const LAYOUT_CATALOGS_READY: LayoutCatalog[] = ['rail', 'top', 'landing', 'list', 'shelves', 'magazine', 'wall'];
 
 /**
  * The values of each key this build draws (the editor offers the others as "בקרוב"); a key not
- * listed — every value. Phase 2 adds its values here and to the CATALOGS / ITEM_VIEWS tables.
+ * listed — every value. Still to come: the cards bleed / button / outlined, the meal's own steps,
+ * "להפוך לארוחה?" after the add, and the service / name screens' variants (today's screens).
  */
 export const LAYOUT_VALUES_READY: Partial<Record<keyof KioskLayout, readonly unknown[]>> = {
   template: LAYOUT_TEMPLATES_READY,
   catalog: [null, ...LAYOUT_CATALOGS_READY],
-  hero: ['off'],
-  magazineFeed: [false],
   card: [null, 'tile', 'row', 'plate'],
-  itemView: ['sheet', 'full', 'modal', 'steps'],
-  quickAdd: ['off', 'no_required'],
-  mealView: ['sheet'],
+  mealView: ['sheet', 'tray'],
   mealUpsell: ['off', 'first'],
-  basket: [null, 'bar', 'panel', 'summary'],
   service: ['cards'],
   name: ['card'],
 };
@@ -529,23 +525,91 @@ export function catalogKindOf(cfg: Pick<KioskConfig, 'layout'>): LayoutCatalog |
 /** The side panel needs this much width (as cartPanelShown / the till's KioskCategoryLayout.cartPanel). */
 const PANEL_MIN_DP = 900;
 
+export type BasketKind = 'bar' | 'panel' | 'summary' | 'fab' | 'drawer' | 'receipt';
+
 /**
  * The basket while ordering on a screen `widthDp` wide: null — as today (theme.cartStyle); a panel
- * on a narrow screen — the summary bar; the ones this build does not draw yet — the bar.
+ * on a narrow screen — the summary bar; fab (a round button at the end corner), drawer (the bar
+ * opens the order from the side) and receipt (the lines docked under the menu) as they are.
  */
-export function basketKindOf(cfg: Pick<KioskConfig, 'layout' | 'theme'>, widthDp: number): 'bar' | 'panel' | 'summary' {
+export function basketKindOf(cfg: Pick<KioskConfig, 'layout' | 'theme'>, widthDp: number): BasketKind {
   const b = layoutOf(cfg).basket;
   if (b === null) return cfg.theme.cartStyle === 'panel' && widthDp >= PANEL_MIN_DP ? 'panel' : 'bar';
   if (b === 'panel') return widthDp >= PANEL_MIN_DP ? 'panel' : 'summary';
-  if (b === 'summary') return 'summary';
+  if (b === 'summary' || b === 'fab' || b === 'drawer' || b === 'receipt') return b;
   return 'bar';
 }
 
-/** The dish's window: sheet (today) / modal / full / steps; inline and popover (phase 2) — the sheet. */
-export function itemViewOf(cfg: Pick<KioskConfig, 'layout'>): 'sheet' | 'modal' | 'full' | 'steps' {
-  const v = layoutOf(cfg).itemView;
-  return v === 'modal' || v === 'full' || v === 'steps' ? v : 'sheet';
+/** A basket docked under the menu (the screen's column ends on it): the order bar, the receipt. */
+export function basketDocked(kind: string): boolean {
+  return kind === 'summary' || kind === 'receipt';
 }
+
+/** A basket floating over the dishes' bottom: the bar, the round button, the drawer's bar. */
+export function basketFloats(kind: string): boolean {
+  return kind === 'bar' || kind === 'fab' || kind === 'drawer';
+}
+
+/**
+ * The dish's window: sheet (today) / modal / full / steps, and the compact window — inline (the list)
+ * and popover (the wall): the choices and the add, without the big picture.
+ */
+export function itemViewOf(cfg: Pick<KioskConfig, 'layout'>): 'sheet' | 'modal' | 'full' | 'steps' | 'inline' | 'popover' {
+  const v = layoutOf(cfg).itemView;
+  return v === 'modal' || v === 'full' || v === 'steps' || v === 'inline' || v === 'popover' ? v : 'sheet';
+}
+
+/** A meal's window: its slots in the window of today, or the tray filling up a slot at a time (combo). */
+export function mealViewOf(cfg: Pick<KioskConfig, 'layout'>): 'sheet' | 'tray' {
+  return layoutOf(cfg).mealView === 'tray' ? 'tray' : 'sheet';
+}
+
+/** The catalogs that carry "באנר מומלצים" (layout.hero): the shelves and the tabs' one menu. */
+export const HERO_CATALOGS: LayoutCatalog[] = ['shelves', 'top'];
+
+/** "באנר מומלצים" on screen: on (manual — still; auto — turning by itself), the catalog carries it, something featured. */
+export function heroShown(cfg: Pick<KioskConfig, 'layout'>, featured: number): boolean {
+  const l = layoutOf(cfg);
+  const kind = catalogKindOf(cfg);
+  return l.hero !== 'off' && featured > 0 && kind !== null && HERO_CATALOGS.includes(kind);
+}
+
+/** hero = auto: the banner turns to its next dish this often (never while it is touched). */
+export const HERO_TURN_MS = 5000;
+
+/**
+ * A tap on a dish where the layout adds on a tap: quickAdd "always" puts in a dish whose required
+ * choices its defaults answer; a meal and a choice with no default still open their window (the
+ * Android kiosk's KioskLayouts.addPathOnTap).
+ */
+export function addPathOnTap(path: 'direct' | 'sheet' | 'none', quickAdd: LayoutQuickAdd, meal: boolean, defaultsComplete: boolean): 'direct' | 'sheet' | 'none' {
+  return path === 'sheet' && quickAdd === 'always' && !meal && defaultsComplete ? 'direct' : path;
+}
+
+/** shelves: a card's width (dp) so a shelf shows about 2.4 of them at "m" — the till's KioskLayouts.shelfCardDp. */
+export function shelfCardDp(widthDp: number, size: LayoutProductSize | null | undefined): number {
+  const acrossTenths = size === 's' ? 33 : size === 'l' ? 17 : 24;
+  return Math.min(460, Math.max(150, Math.floor(((widthDp - 20) * 10) / acrossTenths) - 14));
+}
+
+/** list: one column on a portrait kiosk, two from 1000 dp. */
+export function listColumns(widthDp: number): number {
+  return widthDp >= 1000 ? 2 : 1;
+}
+
+/** magazine: a dish's page in a feed `heightDp` tall — most of it, the next one peeking. */
+export function storyHeightDp(heightDp: number, size: LayoutProductSize | null | undefined): number {
+  const percent = size === 's' ? 62 : size === 'l' ? 90 : 78;
+  return Math.min(1400, Math.max(320, Math.floor((heightDp * percent) / 100)));
+}
+
+/** wall: the buttons across a screen `widthDp` wide — three on a portrait kiosk — moved by "גודל מוצרים". */
+export function wallColumns(widthDp: number, size: LayoutProductSize | null | undefined): number {
+  return productColumns(widthDp >= 1100 ? 5 : widthDp >= 600 ? 3 : 2, size, widthDp);
+}
+
+/** receipt: the lines it shows before it scrolls. */
+export const RECEIPT_LINES = 4;
 
 /** A dish's card: tile (today), row, plate; the others (phase 2) — a tile. */
 export function cardKindOf(cfg: Pick<KioskConfig, 'layout'>): 'tile' | 'row' | 'plate' {

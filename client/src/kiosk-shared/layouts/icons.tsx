@@ -70,7 +70,7 @@ export function CategoryVisual({ m, cat, mode, size, on = false, style }: {
   }
   const id = categoryIconId(m, cat);
   const icon = kioskIcon(id);
-  const dark = m.cfg.theme.mode === 'dark';
+  const dark = m.c.dark;
   if (mode === 'photo') {
     return (
       <span

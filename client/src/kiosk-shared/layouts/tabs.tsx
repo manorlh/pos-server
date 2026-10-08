@@ -8,12 +8,14 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
-import { basketKindOf, layoutOf } from '@/lib/kioskLayout';
+import { basketDocked, basketKindOf, heroShown, layoutOf } from '@/lib/kioskLayout';
 import { KioskSwap, itemEnter } from '@/components/dashboard/kiosks/preview-motion';
-import { CartBar, CartPanel, CatalogHeader, type PCategory, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
+import { CartPanel, CatalogHeader, textSize, type PCategory, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { TickerSlot, PREVIEW_FOOTER_PX } from '@/components/dashboard/kiosks/preview-ticker';
+import { DockedBasket, FloatingBasket } from './baskets';
+import { HeroBanner } from './hero';
 import { CategoryVisual, KioskIconSvg, categoryIconId } from './icons';
-import { Empty, LayoutDishCard, OrderSummaryBar, SectionTitle, cartCounts, dishColumnsFor, unitOf, widthDpOf } from './parts';
+import { Empty, LayoutDishCard, SectionTitle, cartCounts, dishColumnsFor, unitOf, widthDpOf } from './parts';
 import { kioskIcon } from '@/lib/kioskIcons';
 
 export function TabsCatalog({ m, activeCategory, onCategory }: { m: PreviewModel; activeCategory: string | null; onCategory: (id: string) => void }) {
@@ -105,29 +107,29 @@ export function TabsCatalog({ m, activeCategory, onCategory }: { m: PreviewModel
               }}
             />
           ) : (
-            m.categories.map((cat, i) => (
-              <section key={cat.id} data-section={cat.id} className="space-y-2">
-                <SectionTitle m={m} title={cat.name} count={cat.products.length} />
-                {grid(cat, i === 0)}
-              </section>
-            ))
+            <>
+              {/* "באנר מומלצים" (layout.hero) at the top of the one menu. */}
+              {heroShown(m.cfg, m.featured.length) ? <HeroBanner m={m} /> : null}
+              {m.categories.map((cat, i) => (
+                <section key={cat.id} data-section={cat.id} className="space-y-2">
+                  <SectionTitle m={m} title={cat.name} count={cat.products.length} />
+                  {grid(cat, i === 0)}
+                </section>
+              ))}
+            </>
           )}
         </div>
-        {basket === 'bar' && !m.panel ? (
-          <div className="shrink-0 p-2" style={{ background: `linear-gradient(to top, ${m.c.background}, ${m.c.background}00)` }}>
-            <CartBar m={m} />
-          </div>
-        ) : null}
-        <TickerSlot m={m} screen="catalog" position="bottom" gapBelow={basket === 'summary' ? 0 : m.live ? 0 : PREVIEW_FOOTER_PX} />
-        {basket === 'summary' ? <OrderSummaryBar m={m} /> : null}
+        <FloatingBasket m={m} kind={basket} />
+        <TickerSlot m={m} screen="catalog" position="bottom" gapBelow={basketDocked(basket) ? 0 : m.live ? 0 : PREVIEW_FOOTER_PX} />
+        <DockedBasket m={m} kind={basket} />
       </div>
       {m.panel && basket === 'panel' ? <CartPanel m={m} /> : null}
     </div>
   );
 }
 
-/** A chip with its category's icon (layout.categoryIcons) and name; the lit one in the brand colour. */
-function IconChip({ m, cat, on, onPick }: { m: PreviewModel; cat: PCategory; on: boolean; onPick: () => void }) {
+/** A chip with its category's icon (layout.categoryIcons) and name; the lit one in the brand colour (the list, the magazine and the wall too). */
+export function IconChip({ m, cat, on, onPick }: { m: PreviewModel; cat: PCategory; on: boolean; onPick: () => void }) {
   const mode = layoutOf(m.cfg).categoryIcons;
   const u = unitOf(m);
   const size = Math.round(22 * u);
@@ -146,6 +148,7 @@ function IconChip({ m, cat, on, onPick }: { m: PreviewModel; cat: PCategory; on:
         background: on ? m.c.button : m.c.surface,
         color: fg,
         border: on ? '1px solid transparent' : `1px solid ${m.c.border}`,
+        ...textSize(m, 'categoryName', 13),
       }}
     >
       {mode === 'line' || mode === 'filled' || mode === 'duotone' ? (
