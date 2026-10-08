@@ -152,6 +152,33 @@ class TestCatalogue:
         mgr = TP.effective_permissions(template=TP.MANAGER)
         assert TP.limit_covers(mgr, "CASH_DRAWER.CASH_OUT", amount=5000)
 
+    def test_leaving_the_windows_app_to_the_desktop_is_a_managers(self):
+        """DESKTOP_EXIT (the owner, 08.10.2026): managers yes, cashiers no — checked on the PC itself."""
+        spec = TP.PERMISSIONS_BY_CODE["DESKTOP_EXIT"]
+        assert spec.label == "יציאה לשולחן העבודה (Windows)"
+        assert spec.group == "admin" and spec.devices == (TP.DEVICE_WINDOWS,)
+        # No elevation scope: the Windows device decides offline from the roster.
+        assert spec.scope is None and "DESKTOP_EXIT" not in TP.SCOPE_PERMISSIONS.values()
+        states = {key: TP.DEFAULTS[key]["DESKTOP_EXIT"] for key in TP.BUILTIN_BY_KEY}
+        assert states == {
+            TP.WAITER: D, TP.CASHIER: D, TP.SUPERVISOR: D, TP.MANAGER: A,
+            TP.LEGACY_CASHIER: D, TP.LEGACY_MANAGER: A,
+        }
+        # A custom role made from the manager's template gets it without a migration; from a blank one not.
+        assert TP.effective_permissions(template=TP.template_of(None, TP.MANAGER)).allows("DESKTOP_EXIT")
+        assert not TP.effective_permissions(template=TP.template_of(None, None)).allows("DESKTOP_EXIT")
+        # The older tills' reading of a role does not move: it is not one of the senior codes.
+        assert "DESKTOP_EXIT" not in TP.LEGACY_SENIOR_CODES
+        assert TP.legacy_role_for(TP.DEFAULTS[TP.MANAGER]) == "shop_manager"
+
+    def test_the_catalogue_names_the_windows_device(self):
+        out = TP.catalogue_out()
+        assert {"key": "windows", "label": "Windows"} in out["devices"]
+        by_code = {p["code"]: p for p in out["permissions"]}
+        assert by_code["DESKTOP_EXIT"]["devices"] == ["windows"]
+        # Every permission that was Android's stays Android's (no Windows till yet).
+        assert "windows" not in by_code["SELL"]["devices"]
+
     def test_scope_strings_map_onto_codes(self):
         for scope in Scope:
             if scope is Scope.DAY_CLOSE:
@@ -186,8 +213,8 @@ class TestLegacy:
         eff = TP.legacy_effective("cashier")
         assert {c for c, s in eff.states.items() if s == P} == self.SENIOR
         # Everything else was open to everyone ("כרגע אין הרשאות, כולם יכולים לעשות הכל"),
-        # except approving others, which was a manager's alone.
-        assert {c for c, s in eff.states.items() if s == D} == {"CASH_DRAWER.APPROVE_OPEN"}
+        # except approving others and leaving the Windows kiosk, which were a manager's alone.
+        assert {c for c, s in eff.states.items() if s == D} == {"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT"}
         assert eff.allows("SHIFT_CLOSE") and eff.allows("SELL") and eff.allows("CASH_DRAWER.OPEN_MANUALLY")
 
     def test_a_legacy_shop_manager_may_do_everything(self):
@@ -365,6 +392,23 @@ class TestAssignment:
         assert row.limits["CASH_DRAWER.CASH_OUT"] == {"maxAmount": 200}
         audit = w.db.query(TillRoleChange).filter(TillRoleChange.action == "assign").one()
         assert audit.pos_user_id == w.boss.id and audit.user_email == "mgr@x"
+
+    def test_the_roster_tells_the_windows_device_who_may_leave_to_the_desktop(self, w):
+        """kiosk-desktop checks DESKTOP_EXIT offline, from this roster (with the user's shop)."""
+        rows = roster(w)
+        assert rows["boss"].permissions["DESKTOP_EXIT"] == A  # a legacy shop manager, as before
+        assert rows["dana"].permissions["DESKTOP_EXIT"] == D
+        assert str(rows["dana"].shop_id) == str(w.shop.id)
+        roles(w)
+        R.assign_till_role(str(w.shop.id), str(w.dana.id), R.AssignIn(tillRoleId=role_by(w, TP.MANAGER).id), **ctx(w))
+        assert roster(w)["dana"].permissions["DESKTOP_EXIT"] == A
+        # A personal override takes it away from one manager only.
+        R.assign_till_role(
+            str(w.shop.id), str(w.dana.id),
+            R.AssignIn(tillRoleId=role_by(w, TP.MANAGER).id, overrides={"states": {"DESKTOP_EXIT": D}}), **ctx(w),
+        )
+        assert roster(w)["dana"].permissions["DESKTOP_EXIT"] == D
+        assert roster(w)["boss"].permissions["DESKTOP_EXIT"] == A
 
     def test_a_shop_manager_assigns_only_in_their_shop(self, w):
         roles(w)
