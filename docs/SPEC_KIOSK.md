@@ -97,7 +97,7 @@
 | מקטע | מפתחות עיקריים |
 |---|---|
 | `general` | `fulfillmentMode` (BON/KDS), `serviceTypes` (סדר; אחד = דילוג), `askTableNumber`, `languages` (he/en מוצגות; ar/ru — P2), `skipCart` (off / direct / confirm), `upsellEnabled`, `searchEnabled`, `notesEnabled`, `quickNotesEnabled`, `showAllergens`, `soldOutMode` (disable / hide) |
-| `theme` | `mode` (light/dark), `font` (קטלוג מאוצר), צבעים: `primaryColor`, `accentColor`, `backgroundColor`, `surfaceColor`, `textColor`, `buttonColor`, `buttonTextColor`; `backgroundImage`, `logo`; `cornerRadius` 0–40, `cardStyle` (elevated/outlined/flat), `buttonShape` (pill/rounded/square), `gridDensity` (compact/comfortable/large), `imageRatio` (1:1/4:3/16:9), `categoryStyle` (chips/tabs/images), `showDescriptions` |
+| `theme` | `mode` (light/dark), `font` (קטלוג מאוצר), צבעים: `primaryColor`, `accentColor`, `backgroundColor`, `surfaceColor`, `textColor`, `buttonColor`, `buttonTextColor`; `backgroundImage`, `backgroundOverlay` 0–90, `backgroundScope` (all/rest), `logo`; `textSizes` (לכל רכיב 80–150 בצעדי 10); `cornerRadius` 0–40, `cardStyle` (elevated/outlined/flat), `buttonShape` (pill/rounded/square), `gridDensity` (compact/comfortable/large), `imageRatio` (1:1/4:3/16:9), `categoryStyle` (chips/tabs/images), `showDescriptions` |
 | `texts` | טקסט לכל מסך (attractTitle … upsellTitle); ריק = טקסט מובנה |
 | `screenImages` | תמונה למסך: service, catalogHeader, cart, pay, success, paused |
 | `attract` | `sections` (hero/promos/categories/club, סדר), `playlist` (עד 20, תמונות/סרטונים + משך), `videoMuted`, `showHelp` |
@@ -378,6 +378,15 @@ Hebrew, Alef, Varela Round, Secular One, Suez One, Frank Ruhl Libre. הקיוס�
 - **ספרות:** מחירים, סכומים וכמויות בספרות טבלאיות (`tnum`); מספר ההזמנה והספרות בשורת המצב בגופן מונוספייס.
 - **מיקרו-תנועות זולות:** לחיצה מקטינה ל-0.98; זוהר מבטא של 150ms על הסל כשמנה נוחתת; קו סריקה דק שעובר על מסך הפתיחה כל 7 שניות (transform בלבד, בשכבה, בלי layout). עם "הפחתת תנועה" הזוהר וקו הסריקה לא מצוירים בכלל.
 - **בלי blur** (RK3568): "זכוכית" = משטח חצי-טון אטום (`#111821` על `#0B0F14`).
+
+**"רקע הקיוסק" (08.10.2026).** הבעלים: "תן לי לשנות את הרקע של הקיוסק, שבאמת יהיה בכל המסכים — תמונה או צבע". בעורך, מראה ← "רקע הקיוסק".
+- **צבע** (`theme.backgroundColor`) גובר על הרקע של כל סגנון, גם "טכנולוגי". הרקע קובע אם הקיוסק כהה או בהיר. טקסט שלא קריא עליו (פחות מ-3:1) מתחלף לטקסט של המצב, וכרטיס שהטקסט לא קריא עליו נגזר מהרקע (לבן, או הרקע +8% לבן בכהה). כך גם הרשת וקווי המתאר של "טכנולוגי" נגזרים מהצבע. בלי צבע, ובכל סגנון כמו שהוא — הצבעים לא משתנים. אותו כלל בשלושת המנועים: `kioskThemeColors` ב-`client/src/lib/kioskConfig.ts`, `domain/KioskThemeColors.kt` בקופה, ו-golden משותף `server/tests/fixtures/kiosk_theme_colors_golden.json` (גם ב-`app/src/test/resources` באנדרואיד, אותם בייטים).
+- **תמונה** (`theme.backgroundImage`) מאחורי כל המסכים (`backgroundScope` = `all`, ברירת מחדל), או רק במסכי מנוחה (`rest`: פתיחה ומסך סגור, כמו קודם).
+  - השורש של הקיוסק מצייר אותה פעם אחת מתחת למסכים ולמעברים ביניהם. המסכים עצמם שקופים.
+  - מעליה שכבה בצבע הרקע בעוצמה `backgroundOverlay` (ברירת מחדל 70%; במסך הפתיחה חצי מזה), כדי שהטקסט והכרטיסים יישארו קריאים.
+  - המסך הסגור בלי תמונה משלו נותן לה לעבור (בלי מילוי משלו, בצבעי הטקסט של הקיוסק). תמונת מסך (`screenImages`) גוברת במסך שלה.
+  - בקופה: ביטמפ אחד, מפוענח וחתוך לגודל המסך פעם אחת (Coil, בלי מטמון זיכרון). אין פענוח מחדש במעבר מסך, אין blur, ואין כתיבת state בכל פריים. השכבה מתחלפת בין הפתיחה לשאר המסכים בשלב הציור בלבד (`ui/kiosk/KioskWallpaperUi.kt`).
+- **גודל טקסט לפי רכיב** (`theme.textSizes`): `productName`, `productDescription`, `productPrice`, `categoryName`, `itemName`, `itemDescription`, `itemOptions`, `cartLines`, `buttons`. כל אחד באחוזים (80–150, בצעדי 10, ברירת מחדל 100), מעל `typeScale`. השרת דוחה ערך מחוץ לטווח (`out_of_range`) או לא בצעד (`invalid_step`); הקופה מצמצמת ומעגלת. רמה יכולה לקבוע רכיב אחד, והשאר עוברים בירושה. החלפת סגנון לא מאפסת אותם.
 
 ### 13.6 מסופון חיצוני בלבד (`domain/KioskTerminal.kt`, `data/repo/KioskTerminalMonitor.kt`)
 - **סוגים מותרים:** Nayax/Agamento ב-LAN (צריך כתובת), או Z-Credit PinPad (צריך הגדרות מלאות).

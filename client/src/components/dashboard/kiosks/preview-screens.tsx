@@ -85,7 +85,13 @@ import {
   type MotionSpec,
   type ResolvedThemeColors,
   type TransitionSpec,
+  type TextSizeKey,
   typeScaleFactor,
+  textSizeFactor,
+  wallpaperEverywhere,
+  wallpaperOn,
+  wallpaperScrim,
+  kioskRestLookOverBackdrop,
 } from '@/lib/kioskConfig';
 import type { LivePayPhase, PreviewScreen } from '@/kiosk-shared/types';
 import { attractStackOrder, welcomeOf, welcomeTopHeight, WelcomeBlock } from '@/kiosk-shared/layouts/welcome';
@@ -410,6 +416,38 @@ export function chromeRoot(m: Pick<PreviewModel, 'cfg' | 'c' | 'light'>): { clas
 }
 
 /**
+ * "גודל טקסט" per element (theme.textSizes): the element's own size `px` (at type scale 1) times its
+ * factor, through the kiosk's --k-scale; nothing at 100 % (the element's class stays as it was).
+ */
+export function textSize(m: Pick<PreviewModel, 'cfg'>, key: TextSizeKey, px: number): CSSProperties {
+  const f = textSizeFactor(m.cfg.theme, key);
+  return f === 1 ? {} : { fontSize: `calc(${Math.round(px * f * 100) / 100}px * var(--k-scale, 1))` };
+}
+
+/**
+ * "תמונת רקע" behind the screens (the kiosks' roots draw it once, under the screens and their
+ * transitions — the screens' own background is clear): the picture, and the background colour over
+ * it at the veil (theme.backgroundOverlay; the attract screen, the showcase, at half), eased over the
+ * screens' own transition. With "רק במסכי מנוחה" only the rest screens show it. Nothing without one.
+ */
+export function KioskWallpaper({ m, screen }: { m: Pick<PreviewModel, 'cfg' | 'c'> & { transitions?: TransitionSpec }; screen: string }) {
+  const url = m.cfg.theme.backgroundImage?.url;
+  if (!url || !wallpaperOn(m.cfg.theme, screen)) return null;
+  const veil = wallpaperScrim(m.cfg.theme.backgroundOverlay, screen === 'attract');
+  return (
+    <>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={url} alt="" aria-hidden className="pointer-events-none absolute inset-0 h-full w-full object-cover" draggable={false} />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{ background: m.c.background, opacity: veil, transition: `opacity ${Math.max(0, m.transitions?.screenMs ?? 0)}ms linear` }}
+      />
+    </>
+  );
+}
+
+/**
  * The backdrop pattern behind the screens (a grid of 1 px lines or a dot matrix, static — painted
  * once, never animated). Nothing for a style without one.
  */
@@ -509,7 +547,7 @@ export function AddGlow({ m, radius }: { m: PreviewModel; radius: number }) {
 }
 
 export function cardStyle(m: PreviewModel): CSSProperties {
-  const dark = m.cfg.theme.mode === 'dark';
+  const dark = m.c.dark;
   // A style with an outline (tech) draws its cards with a 1 px line, never a shadow.
   const outline = chromeOf(m).outline;
   switch (m.cfg.theme.cardStyle) {
@@ -757,7 +795,7 @@ export function BigButton({ m, children, onClick, variant = 'primary', className
       type="button"
       onClick={onClick}
       className={`flex w-full items-center justify-center gap-2 px-4 py-3 kt-15 font-bold transition-transform duration-150 active:scale-[0.98] ${disabledLook ? 'opacity-50' : ''} ${className}`}
-      style={buttonStyle(m, variant)}
+      style={{ ...buttonStyle(m, variant), ...textSize(m, 'buttons', 15) }}
     >
       {children}
     </button>
@@ -828,7 +866,7 @@ export function DietaryChips({ m, tags }: { m: PreviewModel; tags: DietaryTag[] 
           key={tag}
           title={m.t(`diet.${tag}`)}
           className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-px kt-10 leading-tight"
-          style={{ background: m.cfg.theme.mode === 'dark' ? '#FFFFFF14' : '#0000000A' }}
+          style={{ background: m.c.dark ? '#FFFFFF14' : '#0000000A' }}
         >
           <span aria-hidden>{DIETARY_EMOJI[tag]}</span>
           {tag === 'gluten_free' ? <span>{m.t('diet.gluten_free')}</span> : null}
@@ -853,8 +891,8 @@ function PlaylistHero({ m, fill = false }: { m: PreviewModel; fill?: boolean }) 
   }, [item, list.length]);
 
   const frame = fill ? 'absolute inset-0 overflow-hidden' : 'relative aspect-[4/3] w-full overflow-hidden';
-  // A style with a backdrop (tech) lets it show through the empty hero: no colour sweep, no spots.
-  if (!item && fill && chromeOf(m).backdrop !== 'none') return null;
+  // A style with a backdrop (tech), or the picture behind every screen, shows through the empty hero: no colour sweep, no spots.
+  if (!item && fill && (chromeOf(m).backdrop !== 'none' || wallpaperEverywhere(m.cfg.theme))) return null;
   if (!item) {
     return (
       <div
@@ -1537,14 +1575,16 @@ export function ProductCard({ m, p }: { m: PreviewModel; p: PProduct }) {
         )}
       </div>
       <div className={large ? 'space-y-1 p-3' : 'space-y-0.5 p-2'} style={p.soldOut ? { opacity: 0.6 } : undefined}>
-        <div className={`line-clamp-2 font-bold leading-snug ${large ? 'text-base' : 'kt-13'}`}>{p.name}</div>
+        <div className={`line-clamp-2 font-bold leading-snug ${large ? 'text-base' : 'kt-13'}`} style={textSize(m, 'productName', large ? 16 : 13)}>
+          {p.name}
+        </div>
         {showDesc ? (
-          <div className="line-clamp-2 kt-11 leading-snug" style={{ color: m.c.mutedText }}>
+          <div className="line-clamp-2 kt-11 leading-snug" style={{ color: m.c.mutedText, ...textSize(m, 'productDescription', 11) }}>
             {p.description}
           </div>
         ) : null}
         <DietaryChips m={m} tags={p.dietaryTags} />
-        <div className="kt-13 font-bold tabular-nums" style={{ color: m.c.primary }}>
+        <div className="kt-13 font-bold tabular-nums" style={{ color: m.c.primary, ...textSize(m, 'productPrice', 13) }}>
           {m.money(p.price)}
         </div>
       </div>
@@ -1568,7 +1608,7 @@ function CategoryStrip({ m, active, onPick }: { m: PreviewModel; active: string 
               >
                 <CategoryImage m={m} cat={cat} size={48} radius={Math.max(10, m.radius * 0.7)} />
               </div>
-              <div className="mt-1 truncate kt-10 font-semibold" style={{ color: on ? m.c.button : m.c.text }}>
+              <div className="mt-1 truncate kt-10 font-semibold" style={{ color: on ? m.c.button : m.c.text, ...textSize(m, 'categoryName', 10) }}>
                 {cat.name}
               </div>
             </button>
@@ -1590,7 +1630,7 @@ function CategoryStrip({ m, active, onPick }: { m: PreviewModel; active: string 
               data-active={on || undefined}
               onClick={() => onPick(cat.id)}
               className="shrink-0 border-b-2 pb-2 pt-1 kt-13 font-semibold transition-colors duration-200"
-              style={{ borderColor: on ? m.c.button : 'transparent', color: on ? m.c.button : m.c.mutedText }}
+              style={{ borderColor: on ? m.c.button : 'transparent', color: on ? m.c.button : m.c.mutedText, ...textSize(m, 'categoryName', 13) }}
             >
               {cat.name}
             </button>
@@ -1611,11 +1651,12 @@ function CategoryStrip({ m, active, onPick }: { m: PreviewModel; active: string 
             data-active={on || undefined}
             onClick={() => onPick(cat.id)}
             className="shrink-0 px-3.5 py-1.5 kt-13 font-semibold transition-all duration-200"
-            style={
-              on
+            style={{
+              ...(on
                 ? { background: m.c.button, color: m.c.buttonText, borderRadius: 999 }
-                : { background: m.cfg.theme.mode === 'dark' ? '#FFFFFF14' : '#0000000D', color: m.c.text, borderRadius: 999 }
-            }
+                : { background: m.c.dark ? '#FFFFFF14' : '#0000000D', color: m.c.text, borderRadius: 999 }),
+              ...textSize(m, 'categoryName', 13),
+            }}
           >
             {cat.name}
           </button>
@@ -1643,7 +1684,7 @@ function CategoryRail({
     <div
       ref={railRef}
       className="relative flex w-[76px] shrink-0 flex-col gap-1 overflow-y-auto border-e py-2 [scrollbar-width:none]"
-      style={{ borderColor: m.c.border, background: m.cfg.theme.mode === 'dark' ? '#00000026' : '#FFFFFF80' }}
+      style={{ borderColor: m.c.border, background: m.c.dark ? '#00000026' : '#FFFFFF80' }}
     >
       {m.categories.map((cat) => {
         const on = cat.id === active;
@@ -1672,7 +1713,7 @@ function CategoryRail({
             >
               <CategoryImage m={m} cat={cat} size={imageSize} radius={style === 'chips' ? 999 : Math.max(8, m.radius * 0.6)} />
             </span>
-            <span className={`line-clamp-2 w-full kt-10 leading-tight ${on ? 'font-bold' : ''}`} style={{ color: on ? m.c.button : m.c.text }}>
+            <span className={`line-clamp-2 w-full kt-10 leading-tight ${on ? 'font-bold' : ''}`} style={{ color: on ? m.c.button : m.c.text, ...textSize(m, 'categoryName', 10) }}>
               {cat.name}
             </span>
           </button>
@@ -1760,10 +1801,12 @@ export function CartPanel({ m }: { m: PreviewModel }) {
           </p>
         ) : (
           m.cart.map((l) => (
-            <div key={l.key} className="space-y-1 rounded-lg p-1.5" style={{ background: m.cfg.theme.mode === 'dark' ? '#FFFFFF0D' : '#0000000A' }}>
-              <div className="line-clamp-2 kt-11 font-semibold leading-tight">{l.product.name}</div>
+            <div key={l.key} className="space-y-1 rounded-lg p-1.5" style={{ background: m.c.dark ? '#FFFFFF0D' : '#0000000A' }}>
+              <div className="line-clamp-2 kt-11 font-semibold leading-tight" style={textSize(m, 'cartLines', 11)}>
+                {l.product.name}
+              </div>
               <div className="flex items-center justify-between gap-1">
-                <span className="kt-10 tabular-nums" style={{ color: m.c.primary }}>
+                <span className="kt-10 tabular-nums" style={{ color: m.c.primary, ...textSize(m, 'cartLines', 10) }}>
                   {m.money(l.unit * l.qty)}
                 </span>
                 <span className="kt-10 tabular-nums" style={{ color: m.c.mutedText }}>
@@ -2132,9 +2175,11 @@ export function ProductSheet({
           )}
           <div className="space-y-4 p-4">
             <div>
-              <h3 className="text-xl font-extrabold leading-tight">{product.name}</h3>
+              <h3 className="text-xl font-extrabold leading-tight" style={textSize(m, 'itemName', 20)}>
+                {product.name}
+              </h3>
               {product.description ? (
-                <p className="mt-1 text-sm" style={{ color: m.c.mutedText }}>
+                <p className="mt-1 text-sm" style={{ color: m.c.mutedText, ...textSize(m, 'itemDescription', 14) }}>
                   {product.description}
                 </p>
               ) : null}
@@ -2147,7 +2192,7 @@ export function ProductSheet({
                     <li
                       key={tag}
                       className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 kt-11 font-medium"
-                      style={{ background: m.cfg.theme.mode === 'dark' ? '#FFFFFF14' : '#0000000D' }}
+                      style={{ background: m.c.dark ? '#FFFFFF14' : '#0000000D' }}
                     >
                       <span aria-hidden>{DIETARY_EMOJI[tag]}</span>
                       {m.t(`diet.${tag}`)}
@@ -2166,7 +2211,9 @@ export function ProductSheet({
             {groups.map((g) => (
               <div key={g.id} className="space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-bold">{g.name}</span>
+                  <span className="text-sm font-bold" style={textSize(m, 'itemOptions', 14)}>
+                    {g.name}
+                  </span>
                   <span className="flex items-center gap-1">
                     {g.freeCount ? (
                       <span className="rounded-full px-2 py-0.5 kt-10 font-semibold" style={{ background: `${m.c.accent}1F`, color: m.c.accent }}>
@@ -2198,7 +2245,7 @@ export function ProductSheet({
                       type="button"
                       onClick={() => setNotes(on ? notes.filter((x) => x !== q) : [...notes, q])}
                       className="px-3 py-1 text-xs font-medium transition-colors duration-150"
-                      style={on ? { ...buttonStyle(m), borderRadius: 999 } : { background: '#0000000D', borderRadius: 999 }}
+                      style={{ ...(on ? { ...buttonStyle(m), borderRadius: 999 } : { background: '#0000000D', borderRadius: 999 }), ...textSize(m, 'itemOptions', 12) }}
                     >
                       {q}
                     </button>
@@ -2275,7 +2322,12 @@ export function OptionRow({ m, dish, group, option, first }: { m: PreviewModel; 
   );
   return (
     <div className="flex w-full items-center gap-2 px-3 py-2" style={{ borderTop: first ? undefined : `1px solid ${m.c.border}` }}>
-      <button type="button" onClick={() => dish.toggle(group.id, option.id)} className="flex min-w-0 flex-1 items-center gap-2.5 py-0.5 text-start text-sm">
+      <button
+        type="button"
+        onClick={() => dish.toggle(group.id, option.id)}
+        className="flex min-w-0 flex-1 items-center gap-2.5 py-0.5 text-start text-sm"
+        style={textSize(m, 'itemOptions', 14)}
+      >
         <span
           className="flex h-5 w-5 shrink-0 items-center justify-center transition-colors duration-150"
           style={{
@@ -2293,7 +2345,7 @@ export function OptionRow({ m, dish, group, option, first }: { m: PreviewModel; 
             {m.t('free')}
           </span>
         ) : option.price > 0 ? (
-          <span className="shrink-0 text-xs tabular-nums" style={{ color: m.c.mutedText }}>
+          <span className="shrink-0 text-xs tabular-nums" style={{ color: m.c.mutedText, ...textSize(m, 'itemOptions', 12) }}>
             +{m.money(option.price)}
           </span>
         ) : null}
@@ -2641,13 +2693,15 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
             <div key={l.key} className="flex items-center gap-3 p-3" style={{ borderColor: m.c.border }}>
               <ProductImage m={m} p={l.product} className="h-12 w-12 shrink-0" style={{ borderRadius: Math.min(m.radius, 12) }} />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-bold">{l.product.name}</div>
+                <div className="truncate text-sm font-bold" style={textSize(m, 'cartLines', 14)}>
+                  {l.product.name}
+                </div>
                 {l.extras.length > 0 ? (
-                  <div className="truncate kt-11" style={{ color: m.c.mutedText }}>
+                  <div className="truncate kt-11" style={{ color: m.c.mutedText, ...textSize(m, 'cartLines', 11) }}>
                     {l.extras.join(' · ')}
                   </div>
                 ) : null}
-                <div className="text-xs font-bold tabular-nums" style={{ color: m.c.primary }}>
+                <div className="text-xs font-bold tabular-nums" style={{ color: m.c.primary, ...textSize(m, 'cartLines', 12) }}>
                   {m.money(l.unit * l.qty)}
                 </div>
                 {m.pricing?.lines[l.key]?.promotionAgorot ? (
@@ -2908,7 +2962,7 @@ export function TipScreen({ m, steps: previewSteps, onDone }: { m: PreviewModel;
  * on the screen itself.
  */
 function PinpadScene({ m, muted = false }: { m: PreviewModel; muted?: boolean }) {
-  const dark = m.cfg.theme.mode === 'dark';
+  const dark = m.c.dark;
   const body = dark ? '#2A303B' : '#1F2937';
   return (
     <div className={`relative flex h-36 items-end justify-center gap-3 ${muted ? 'opacity-50 grayscale' : ''}`} dir="rtl" aria-hidden>
@@ -3233,10 +3287,12 @@ function RestCup({ tint }: { tint: string }) {
 function ClosedScreen({ m, reason, pause }: { m: PreviewModel; reason: KioskRestReason; pause: RestPause }) {
   const { cfg } = m;
   const words = kioskRestText(reason, cfg, pause, m.txt, new Date(m.nowMs));
-  const look = kioskRestLook(cfg.theme, m.c);
-  const messages = messagesFor(cfg, 'paused', ['closed', 'notice', 'banner'], m.nowMs);
   const image = cfg.screenImages?.paused;
-  const fill = look.from === look.to ? look.from : `linear-gradient(${look.diagonal ? '135deg' : '180deg'}, ${look.from}, ${look.to})`;
+  // "תמונת רקע" behind every screen and no picture of its own: the root's picture shows through (no fill).
+  const clear = wallpaperEverywhere(cfg.theme) && !image;
+  const look = clear ? kioskRestLookOverBackdrop(cfg.theme, m.c) : kioskRestLook(cfg.theme, m.c);
+  const messages = messagesFor(cfg, 'paused', ['closed', 'notice', 'banner'], m.nowMs);
+  const fill = clear ? 'transparent' : look.from === look.to ? look.from : `linear-gradient(${look.diagonal ? '135deg' : '180deg'}, ${look.from}, ${look.to})`;
   const ink = look.ink;
   const clock = words.backClock;
   const back =
@@ -3256,8 +3312,8 @@ function ClosedScreen({ m, reason, pause }: { m: PreviewModel; reason: KioskRest
           <div aria-hidden className="absolute inset-0" style={{ background: fill, opacity: 0.82 }} />
         </>
       ) : null}
-      {/* The style's backdrop pattern (tech), over its own colour. */}
-      <KioskBackdrop m={m} />
+      {/* The style's backdrop pattern (tech), over its own colour (the root's, over the picture). */}
+      {clear ? null : <KioskBackdrop m={m} />}
       {look.spots ? (
         <>
           <div aria-hidden className="pointer-events-none absolute -left-16 -top-16 h-72 w-72 rounded-full bg-white/15 blur-3xl" />

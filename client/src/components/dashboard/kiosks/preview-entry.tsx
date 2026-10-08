@@ -91,7 +91,7 @@ function useHold(action: () => void) {
 function KeyButton({ m, cap, page, h, gap, onKey }: { m: PreviewModel; cap: KioskKeyCap; page: KioskKeyPage; h: number; gap: number; onKey: (k: KioskKey) => void }) {
   const k = cap.key;
   const hold = useHold(() => onKey(k));
-  const dark = m.cfg.theme.mode === 'dark';
+  const dark = m.c.dark;
   const special = k.kind !== 'type' && k.kind !== 'space';
   const shiftOn = k.kind === 'shift' && page.shift;
   const style: CSSProperties = {
@@ -157,7 +157,7 @@ export function KioskKeyboard({ m, kb, onKey }: { m: PreviewModel; kb: KioskKeyb
   const page = pageOf(kb);
   const h = keyHeight(m);
   const gap = Math.max(4, Math.round(h * 0.11));
-  const dark = m.cfg.theme.mode === 'dark';
+  const dark = m.c.dark;
   return (
     <div
       className="flex w-full select-none flex-col"
@@ -182,7 +182,7 @@ export function KioskKeyboard({ m, kb, onKey }: { m: PreviewModel; kb: KioskKeyb
 function DigitKey({ m, d, h, onKey }: { m: PreviewModel; d: string; h: number; onKey: (k: KioskKey) => void }) {
   const back = d === 'BACKSPACE';
   const hold = useHold(() => onKey(KEY.backspace));
-  const dark = m.cfg.theme.mode === 'dark';
+  const dark = m.c.dark;
   return (
     <button
       type="button"
