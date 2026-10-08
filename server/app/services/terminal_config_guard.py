@@ -34,8 +34,8 @@ def _as_dict(value: Any) -> Dict[str, Any]:
 def charges_on_external_pinpad(machine: Any, merged: Dict[str, Any]) -> bool:
     """
     A kiosk, a till with no terminal of its own, a till told to charge on the network pinpad
-    (`nayaxEnabled`) or on a Z-Credit PinPad: its terminal is not its own to configure from
-    an inherited value.
+    (`nayaxEnabled`), on a Z-Credit PinPad, a SynqPay terminal or a Nayax C4 on its USB: its
+    terminal is not its own to configure from an inherited value.
     """
     # Real booleans only: a row that cannot say is a till with its own terminal, as before.
     if getattr(machine, "is_kiosk", False) is True:
@@ -44,8 +44,9 @@ def charges_on_external_pinpad(machine: Any, merged: Dict[str, Any]) -> bool:
         return True
     if merged.get("nayaxEnabled") is True:
         return True
-    # Z-Credit and SynqPay (docs/SPEC_SYNQPAY.md) are external terminals too.
-    return str(merged.get("paymentIntegration") or "").strip().lower() in ("zcredit", "synqpay")
+    # Z-Credit, SynqPay (docs/SPEC_SYNQPAY.md) and a Nayax C4 on the till's USB (`nayax_usb`)
+    # are external terminals too.
+    return str(merged.get("paymentIntegration") or "").strip().lower() in ("zcredit", "synqpay", "nayax_usb")
 
 
 def sources(layers: Sequence[Tuple[str, Any]]) -> Dict[str, str]:

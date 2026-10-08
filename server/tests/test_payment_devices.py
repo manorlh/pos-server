@@ -1063,3 +1063,121 @@ class TestDeviceHostRelink:
         assert (code, out["detail"]) == (409, "payment_device_kiosk")
         assert device_row(pd, d["id"]).config["host"] == "192.168.1.20"
         assert till_events(pd) == []
+
+
+# ── One USB terminal per till (`nayax_usb` beside a SynqPay device on USB) ─────
+
+
+SYNQ_USB = {"nickname": "Synq USB", "kind": "synqpay", "config": {"model": "rx5000", "connection": "usb"}}
+
+
+def put_terminal(w, till, **data):
+    return sync_router.machine_set_payment_terminal(
+        str(till.id), sync_router.PaymentTerminalIn(**data), machine=till,
+        actor=CatalogActor(pos_user_id=uuid.uuid4()), db=w.db,
+    )
+
+
+class TestOneUsbTerminal:
+    def assert_usb_refusal(self, exc, till, field):
+        from app.services import payment_integration as PI
+
+        assert exc.status_code == 422
+        assert exc.detail["code"] == "usb_terminal_second"
+        assert exc.detail["field"] == field
+        assert exc.detail["msg"].startswith(PI.ONE_USB_TERMINAL_HE)
+        assert exc.detail["machineId"] == str(till.id)
+
+    def test_a_usb_synqpay_device_beside_a_tills_usb_c4_is_refused(self, pd):
+        patch_shop(pd, multiPaymentDevices=True)
+        patch_machine(pd, pd.tablet, paymentIntegration="nayax_usb")
+        exc = refused(create, pd, SYNQ_USB)
+        self.assert_usb_refusal(exc, pd.tablet, "config.connection")
+        assert "Synq USB" in exc.detail["msg"]
+        assert listed(pd)["devices"] == []
+        # LAN / Z-Credit devices are fine beside it.
+        synq = create(pd, SYNQ)
+        create(pd, ZCREDIT)
+        create(pd, AGAMENTO)
+        # Turning the LAN SynqPay into a USB one is refused; it stays on the network.
+        exc = refused(update, pd, synq["id"], {"config": {"model": "dx8000", "connection": "usb"}})
+        self.assert_usb_refusal(exc, pd.tablet, "config.connection")
+        assert device_row(pd, synq["id"]).config["connection"] == "lan"
+        # With the switch off nothing collides.
+        patch_machine(pd, pd.tablet, multiPaymentDevices=False)
+        usb = create(pd, SYNQ_USB)
+        assert usb["config"]["connection"] == "usb"
+        # A device already on USB is not re-checked by an unrelated edit.
+        assert update(pd, usb["id"], {"nickname": "Synq USB 2"})["nickname"] == "Synq USB 2"
+
+    def test_a_tills_usb_c4_beside_a_usb_device_is_refused(self, pd):
+        usb = create(pd, SYNQ_USB)
+        lan = create(pd, AGAMENTO)
+        patch_shop(pd, multiPaymentDevices=True)
+        # The till's own layer: refused, nothing written.
+        exc = refused(patch_machine, pd, pd.tablet, paymentIntegration="nayax_usb")
+        self.assert_usb_refusal(exc, pd.tablet, "paymentIntegration")
+        assert "paymentIntegration" not in (pd.tablet.settings or {})
+        # The shop's layer reaches both tills (the F20 takes the external type as well).
+        exc = refused(patch_shop, pd, paymentIntegration="nayax_usb")
+        assert exc.detail["code"] == "usb_terminal_second"
+        assert "paymentIntegration" not in (pd.shop.settings or {})
+        # A fixed LAN device leaves no USB one to charge on: allowed.
+        patch_machine(pd, pd.tablet, paymentDeviceMode="fixed", fixedPaymentDeviceId=lan["id"])
+        patch_machine(pd, pd.tablet, paymentIntegration="nayax_usb")
+        assert pd.tablet.settings["paymentIntegration"] == "nayax_usb"
+        # Its group naming the USB device is refused.
+        exc = refused(patch_machine, pd, pd.tablet, paymentDeviceMode="group", paymentDeviceGroup=[usb["id"]])
+        self.assert_usb_refusal(exc, pd.tablet, "paymentDeviceMode")
+        assert pd.tablet.settings["paymentDeviceMode"] == "fixed"
+        # A group without it is fine.
+        patch_machine(pd, pd.tablet, paymentDeviceMode="group", paymentDeviceGroup=[lan["id"]])
+        # Switching the devices on above a till on USB with every device: refused.
+        patch_machine(pd, pd.f20, multiPaymentDevices=False, paymentIntegration="nayax_usb")
+        exc = refused(patch_machine, pd, pd.f20, multiPaymentDevices=True)
+        self.assert_usb_refusal(exc, pd.f20, "multiPaymentDevices")
+        # Unchanged values never block a save (the dashboard sends the whole form).
+        patch_machine(pd, pd.f20, multiPaymentDevices=False, paymentIntegration="nayax_usb", tipPresets=[10])
+
+    def test_an_area_or_a_company_write_is_checked_for_its_tills(self, pd):
+        create(pd, SYNQ_USB)
+        area = new_area(pd, pd.tablet)
+        patch_area(pd, area, multiPaymentDevices=True)
+        exc = refused(patch_area, pd, area, paymentIntegration="nayax_usb")
+        self.assert_usb_refusal(exc, pd.tablet, "paymentIntegration")
+        exc = refused(
+            settings_router.patch_company_settings,
+            company_id=str(pd.company.id), data=PosSettingsV1Patch(paymentIntegration="nayax_usb"), **_ctx(pd),
+        )
+        assert exc.detail["code"] == "usb_terminal_second"
+
+    def test_a_kiosk_has_no_devices_and_never_collides(self, pd):
+        as_kiosk(pd, pd.tablet)
+        patch_shop(pd, multiPaymentDevices=True)
+        pd.tablet.settings = {"paymentIntegration": "nayax_usb"}
+        pd.db.commit()
+        assert create(pd, SYNQ_USB)["config"]["connection"] == "usb"
+
+    def test_a_payment_device_is_never_a_usb_c4(self, pd):
+        assert PD.KINDS == ("zcredit_pinpad", "synqpay", "agamento_lan")
+        for kind in ("nayax_usb", "Nayax-USB"):
+            exc = refused(create, pd, {"nickname": "C4", "kind": kind, "config": {}})
+            assert (exc.status_code, exc.detail["code"], exc.detail["field"]) == (422, "kind_usb_terminal", "kind")
+        exc = refused(create, pd, {"nickname": "C4", "kind": "agamento_lan", "config": {"host": "192.168.1.9", "connection": "usb"}})
+        assert (exc.detail["code"], exc.detail["field"]) == ("kind_usb_terminal", "config.connection")
+        assert listed(pd)["devices"] == []
+
+    def test_the_tills_own_usb_choice_is_refused_beside_a_usb_device(self, pd, monkeypatch):
+        from app.services import payment_integration as PI
+
+        monkeypatch.setattr(settings_notify, "notify_machine_settings", lambda *a, **k: None)
+        create(pd, SYNQ_USB)
+        patch_shop(pd, multiPaymentDevices=True)
+        exc = refused(put_terminal, pd, pd.tablet, host="", connection="usb")
+        assert exc.status_code == 422
+        assert isinstance(exc.detail, str) and exc.detail.startswith(PI.ONE_USB_TERMINAL_HE)
+        assert "paymentIntegration" not in (pd.tablet.settings or {})
+        # Without the USB device in its choice the till may.
+        lan = create(pd, AGAMENTO)
+        patch_machine(pd, pd.tablet, paymentDeviceMode="fixed", fixedPaymentDeviceId=lan["id"])
+        assert put_terminal(pd, pd.tablet, connection="usb")["paymentIntegration"] == "nayax_usb"

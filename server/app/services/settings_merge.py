@@ -24,6 +24,9 @@ MANAGED_SETTING_KEYS = (
     # (app/services/payment_integration.py). The password is not a setting: it lives
     # encrypted apart (payment_secrets.py) and only the till's sync adds it.
     "paymentIntegration",
+    # `nayax_usb` ("Nayax — מסופון בחיבור USB"): the C4's USB ids ("VVVV:PPPP"); unset = the
+    # first CDC-ACM device on the till.
+    "nayaxUsbDevice",
     "zcreditTerminalNumber",
     "zcreditPinpadId",
     "zcreditMode",

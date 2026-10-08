@@ -6,14 +6,18 @@ import assert from 'node:assert/strict';
 
 import {
   cleanIntegration,
+  cleanNayaxUsbDevice,
   cleanPinpadId,
   cleanSynqpayConnection,
   cleanSynqpayUsbDevice,
+  FIELD_LABELS,
+  FORM_FIELDS,
   fieldPresent,
   formEffectiveIntegration,
   hasPaymentIntegrationErrors,
   inheritedLabel,
   integrationBadge,
+  INTEGRATION_LABELS,
   integrationOptions,
   isExternal,
   isSecretMask,
@@ -23,7 +27,9 @@ import {
   missingRequiredFields,
   normalizeMachineIntegration,
   paymentIntegrationErrorMessage,
+  PAYMENT_INTEGRATIONS,
   PI_TEXT,
+  REQUIRED_FIELDS,
   resolveFormIntegration,
   secretSavedLabel,
   spicyPathError,
@@ -632,5 +638,69 @@ describe('SynqPay', () => {
     assert.equal(badge.label, 'SynqPay');
     assert.equal(badge.tone, 'warn');
     assert.equal(badge.missing, 'חסר: כתובת IP של המסוף');
+  });
+});
+
+// ── A Nayax C4 on the till's USB (`nayax_usb`) ───────────────────────────────
+
+describe('Nayax on the till\'s USB (nayax_usb)', () => {
+  it('is a known, external, selectable value right after the network one', () => {
+    assert.equal(cleanIntegration(' Nayax-USB '), 'nayax_usb');
+    assert.equal(isExternal('nayax_usb'), true);
+    assert.equal(INTEGRATION_LABELS.nayax_usb, 'Nayax — מסופון בחיבור USB');
+    assert.equal(PAYMENT_INTEGRATIONS.indexOf('nayax_usb'), PAYMENT_INTEGRATIONS.indexOf('nayax_lan') + 1);
+    for (const device of [null, { hasBuiltinTerminal: true }, { hasBuiltinTerminal: false, hasNfc: false }]) {
+      const option = integrationOptions(device).find((o) => o.value === 'nayax_usb');
+      assert.ok(option);
+      assert.equal(option.selectable, true);
+      assert.equal(option.label, 'Nayax — מסופון בחיבור USB');
+    }
+  });
+
+  it('needs nothing and shows only the optional USB ids', () => {
+    assert.deepEqual(REQUIRED_FIELDS.nayax_usb, []);
+    assert.deepEqual(FORM_FIELDS.nayax_usb, ['nayaxUsbDevice']);
+    assert.equal(FIELD_LABELS.nayaxUsbDevice, 'מזהה USB (לא חובה)');
+    assert.match(PI_TEXT.nayaxUsbHint, /מסוף אחד לקופה/);
+    // A till on it, even a tablet, saves with nothing else filled in.
+    const errors = validatePaymentIntegration({ paymentIntegration: 'nayax_usb' }, {}, noSecrets, { hasBuiltinTerminal: false });
+    assert.deepEqual(errors, {});
+    assert.deepEqual(missingRequiredFields('nayax_usb', {}, {}, noSecrets), []);
+    // Inherited from the shop: the form shows its fields.
+    const r = resolveFormIntegration({ own: null, inherited: 'nayax_usb', hasBuiltinTerminal: false });
+    assert.deepEqual(r, { selected: 'auto', effective: 'nayax_usb', automatic: false, inherited: true });
+  });
+
+  it('takes the USB ids as VVVV:PPPP in hex, or nothing', () => {
+    assert.equal(cleanNayaxUsbDevice('0b00:0080'), '0B00:0080');
+    assert.equal(cleanNayaxUsbDevice(' 1a86:7523 '), '1A86:7523');
+    for (const bad of ['0b00-0080', 'B00:0080', '0B00:00800', 'COM3', '/dev/ttyACM0', 'GGGG:0080']) {
+      assert.equal(cleanNayaxUsbDevice(bad), null, bad);
+    }
+    const ok = validatePaymentIntegration({ paymentIntegration: 'nayax_usb', nayaxUsbDevice: '0b00:0080' }, {}, noSecrets);
+    assert.deepEqual(ok, {});
+    const blank = validatePaymentIntegration({ paymentIntegration: 'nayax_usb', nayaxUsbDevice: '' }, {}, noSecrets);
+    assert.deepEqual(blank, {});
+    const bad = validatePaymentIntegration({ paymentIntegration: 'nayax_usb', nayaxUsbDevice: 'COM3' }, {}, noSecrets);
+    assert.equal(bad.nayaxUsbDevice, PI_TEXT.nayaxUsbDeviceInvalid);
+    assert.equal(hasPaymentIntegrationErrors(bad), true);
+    // A bad value left under another type is still refused (the server checks every one sent).
+    const hidden = validatePaymentIntegration({ paymentIntegration: 'agamento', nayaxUsbDevice: 'x' }, {}, noSecrets);
+    assert.equal(hidden.nayaxUsbDevice, PI_TEXT.nayaxUsbDeviceInvalid);
+  });
+
+  it('shows on the machines list and in the one-USB refusal', () => {
+    const row = normalizeMachineIntegration({ paymentIntegration: 'nayax_usb', paymentIntegrationSource: 'machine' });
+    assert.equal(row.paymentIntegration, 'nayax_usb');
+    const badge = integrationBadge(row);
+    assert.ok(badge);
+    assert.equal(badge.label, 'Nayax USB');
+    assert.equal(badge.tone, 'neutral');
+    const err = (detail: unknown) => ({ response: { status: 422, data: { detail } } });
+    assert.equal(
+      paymentIntegrationErrorMessage(err({ code: 'usb_terminal_second', msg: 'מסוף USB אחד לקופה: x' })),
+      'מסוף USB אחד לקופה: x',
+    );
+    assert.equal(paymentIntegrationErrorMessage(err({ code: 'usb_terminal_second' })), PI_TEXT.oneUsbTerminal);
   });
 });

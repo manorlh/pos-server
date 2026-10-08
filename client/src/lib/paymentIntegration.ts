@@ -12,9 +12,9 @@ import { formatDateTime } from './format';
 
 // ── Values ───────────────────────────────────────────────────────────────────
 
-export type PaymentIntegration = 'auto' | 'agamento' | 'nayax_lan' | 'zcredit' | 'synqpay' | 'tap_to_pay';
+export type PaymentIntegration = 'auto' | 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | 'tap_to_pay';
 /** What a till actually charges on (never `auto`). */
-export type ResolvedIntegration = 'agamento' | 'nayax_lan' | 'zcredit' | 'synqpay';
+export type ResolvedIntegration = 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay';
 export type ZcreditMode = 'test' | 'production';
 export type SettingsLevelName = 'tenant' | 'company' | 'shop' | 'area' | 'machine';
 
@@ -22,13 +22,14 @@ export const PAYMENT_INTEGRATIONS: readonly PaymentIntegration[] = [
   'auto',
   'agamento',
   'nayax_lan',
+  'nayax_usb',
   'zcredit',
   'synqpay',
   'tap_to_pay',
 ];
 
 /** Charged on a terminal outside the till: all a till without one of its own can use. */
-export const EXTERNAL_INTEGRATIONS: readonly PaymentIntegration[] = ['nayax_lan', 'zcredit', 'synqpay', 'tap_to_pay'];
+export const EXTERNAL_INTEGRATIONS: readonly PaymentIntegration[] = ['nayax_lan', 'nayax_usb', 'zcredit', 'synqpay', 'tap_to_pay'];
 /** Shown as "בקרוב" and refused by the server on write. */
 export const RESERVED_INTEGRATIONS: readonly PaymentIntegration[] = ['tap_to_pay'];
 
@@ -36,6 +37,7 @@ export const INTEGRATION_LABELS: Record<PaymentIntegration, string> = {
   auto: 'אוטומטי',
   agamento: 'מובנה — Agamento במכשיר',
   nayax_lan: 'Nayax — מסופון ברשת',
+  nayax_usb: 'Nayax — מסופון בחיבור USB',
   zcredit: 'Z-Credit — מסופון חיצוני',
   synqpay: 'SynqPay — מסוף חיצוני',
   tap_to_pay: 'Tap to Pay במכשיר (iPOSpays)',
@@ -46,6 +48,7 @@ export const INTEGRATION_SHORT_LABELS: Record<PaymentIntegration, string> = {
   auto: 'אוטומטי',
   agamento: 'מובנה',
   nayax_lan: 'Nayax',
+  nayax_usb: 'Nayax USB',
   zcredit: 'Z-Credit',
   synqpay: 'SynqPay',
   tap_to_pay: 'Tap to Pay',
@@ -133,6 +136,19 @@ export function cleanSynqpayUsbDevice(value: string): string | null {
   return SYNQPAY_USB_RE.test(t) ? t : null;
 }
 
+// ── A Nayax C4 on the till's USB (`nayax_usb`) ─────────────────────────────────
+
+const NAYAX_USB_RE = /^[0-9A-F]{4}:[0-9A-F]{4}$/;
+
+/**
+ * `nayaxUsbDevice`: the C4's USB ids "VVVV:PPPP" (hex vendor:product), as the server stores it
+ * (upper case); null when it is not one. Blank on the form = the first CDC-ACM device.
+ */
+export function cleanNayaxUsbDevice(value: string): string | null {
+  const t = value.trim().toUpperCase();
+  return NAYAX_USB_RE.test(t) ? t : null;
+}
+
 export function isValidSynqpaySerial(value: string): boolean {
   return SYNQPAY_SERIAL_RE.test(value.trim());
 }
@@ -165,6 +181,7 @@ export type PaymentFieldKey =
   | 'nayaxDeviceHost'
   | 'nayaxDevicePort'
   | 'nayaxSpicyPath'
+  | 'nayaxUsbDevice'
   | 'zcreditTerminalNumber'
   | 'zcreditPassword'
   | 'zcreditPinpadId'
@@ -185,6 +202,7 @@ export const FIELD_LABELS: Record<PaymentFieldKey, string> = {
   nayaxDeviceHost: 'כתובת IP של המסופון',
   nayaxDevicePort: 'פורט',
   nayaxSpicyPath: 'נתיב SPICy',
+  nayaxUsbDevice: 'מזהה USB (לא חובה)',
   zcreditTerminalNumber: 'מספר מסוף',
   zcreditPassword: 'סיסמת מסוף',
   zcreditPinpadId: 'מזהה PinPad',
@@ -211,6 +229,8 @@ export const FIELD_LABELS: Record<PaymentFieldKey, string> = {
 export const REQUIRED_FIELDS: Record<Exclude<PaymentIntegration, 'auto'>, readonly PaymentFieldKey[]> = {
   agamento: [],
   nayax_lan: ['nayaxDeviceHost'],
+  // On the cable: no address; the USB ids are optional.
+  nayax_usb: [],
   zcredit: ['zcreditTerminalNumber', 'zcreditPassword', 'zcreditPinpadId', 'zcreditMode'],
   synqpay: ['synqpayDeviceModel', 'synqpayConnection', 'synqpayHost'],
   tap_to_pay: [],
@@ -221,6 +241,7 @@ export const FORM_FIELDS: Record<PaymentIntegration, readonly PaymentFieldKey[]>
   auto: [],
   agamento: [],
   nayax_lan: ['nayaxDeviceHost', 'nayaxDevicePort', 'nayaxSpicyPath'],
+  nayax_usb: ['nayaxUsbDevice'],
   zcredit: ['zcreditTerminalNumber', 'zcreditPassword', 'zcreditPinpadId', 'zcreditMode', 'zcreditKey'],
   synqpay: [
     'synqpayDeviceModel',
@@ -261,6 +282,10 @@ export const PI_TEXT = {
   agamentoHint: 'הקופה מחייבת במסוף האשראי המובנה שלה (Agamento). אין שדות להגדרה.',
   nayaxHint: 'מסופון Nayax (Nova C4) ברשת המקומית של העסק.',
   nayaxHttpHint: 'חיבור HTTP ללא הצפנה מוגדר בפרמטרים לקופות (pinpadAllowHttp)',
+  nayaxUsbHint: 'מסופון Nayax C4 בכבל USB לקופה — מסוף אחד לקופה; אין כתובת להזין',
+  nayaxUsbDeviceHint: 'ריק = ההתקן הראשון שמחובר לקופה (מומלץ). רק אם יש כמה התקנים: VID:PID בהקס, למשל 0B00:0080',
+  nayaxUsbDeviceInvalid: 'VVVV:PPPP בהקס (למשל 0B00:0080), או ריק לזיהוי אוטומטי',
+  oneUsbTerminal: 'בקופה מוגדר מסופון בחיבור USB — מסוף USB נוסף אינו נתמך (מסוף USB אחד לקופה)',
   hostPlaceholder: '192.168.1.50',
   hostHint: 'כתובת IPv4 או שם מארח, בלי http:// ובלי פורט',
   portHint: 'ברירת מחדל 8080',
@@ -589,6 +614,7 @@ export interface PaymentIntegrationForm {
   nayaxDeviceHost?: string | null;
   nayaxDevicePort?: string | number | null;
   nayaxSpicyPath?: string | null;
+  nayaxUsbDevice?: string | null;
   zcreditTerminalNumber?: string | null;
   zcreditPinpadId?: string | null;
   zcreditMode?: string | null;
@@ -746,6 +772,10 @@ export function validatePaymentIntegration(
       if (err) errors.nayaxSpicyPath = err;
     }
   }
+
+  // The C4's USB ids, whatever the type: the server validates every one sent.
+  const usbIds = text(form.nayaxUsbDevice);
+  if (usbIds !== null && cleanNayaxUsbDevice(usbIds) === null) errors.nayaxUsbDevice = PI_TEXT.nayaxUsbDeviceInvalid;
 
   // Z-Credit's values are checked whatever the type: the server validates every one sent
   // (a Nayax address it does not, so a leftover one under another type is left alone).
@@ -907,8 +937,8 @@ export function missingFieldsLabel(missing: readonly string[] | null | undefined
 
 /**
  * The Hebrew the server sent with a payment-integration refusal (422
- * `{detail: {code, msg}}`: `agamento_needs_builtin_terminal`, `secret_invalid`), or null
- * for any other error.
+ * `{detail: {code, msg}}`: `agamento_needs_builtin_terminal`, `secret_invalid`,
+ * `usb_terminal_second` — one USB terminal per till), or null for any other error.
  */
 export function paymentIntegrationErrorMessage(err: unknown): string | null {
   const detail = (err as { response?: { status?: number; data?: { detail?: unknown } } } | null)?.response?.data
@@ -918,6 +948,7 @@ export function paymentIntegrationErrorMessage(err: unknown): string | null {
   if (code === 'agamento_needs_builtin_terminal') {
     return typeof msg === 'string' && msg.trim() ? msg : PI_TEXT.agamentoNeedsBuiltin;
   }
+  if (code === 'usb_terminal_second') return typeof msg === 'string' && msg.trim() ? msg : PI_TEXT.oneUsbTerminal;
   if (code === 'secret_invalid') return typeof msg === 'string' && msg.trim() ? msg : PI_TEXT.secretInvalid;
   return null;
 }
@@ -938,7 +969,8 @@ export function normalizeMachineIntegration(raw: Record<string, unknown>): Requi
   const missingRaw = raw.paymentIntegrationMissing ?? raw.payment_integration_missing;
   const automatic = raw.paymentIntegrationAutomatic ?? raw.payment_integration_automatic;
   return {
-    paymentIntegration: v === 'agamento' || v === 'nayax_lan' || v === 'zcredit' || v === 'synqpay' ? v : null,
+    paymentIntegration:
+      v === 'agamento' || v === 'nayax_lan' || v === 'nayax_usb' || v === 'zcredit' || v === 'synqpay' ? v : null,
     paymentIntegrationSource: cleanLevel(raw.paymentIntegrationSource ?? raw.payment_integration_source),
     paymentIntegrationAutomatic: typeof automatic === 'boolean' ? automatic : null,
     paymentIntegrationMissing: Array.isArray(missingRaw)

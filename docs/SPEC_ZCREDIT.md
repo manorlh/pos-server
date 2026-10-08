@@ -17,6 +17,7 @@
 | `auto` (ברירת מחדל, וגם "לא נשמר") | אוטומטי | ההתנהגות של היום: קופה עם מסוף מובנה עובדת עם Agamento, ואם `nayaxEnabled` מסופון Nayax ברשת. טאבלט בלי מסוף (P18) עובד תמיד עם מסופון Nayax. |
 | `agamento` | מובנה — Agamento במכשיר | רק לקופה שיש לה מסוף מובנה. |
 | `nayax_lan` | Nayax — מסופון ברשת | הכתובת לפי `nayaxDeviceHost` / `nayaxDevicePort` / `nayaxSpicyPath`. |
+| `nayax_usb` | Nayax — מסופון בחיבור USB | מסופון Nayax C4 בכבל USB לקופה (פורט CDC-ACM משלו; אותן מסגרות TweezerComm כמו ברשת, במסגור לקו). אין כתובת. `nayaxUsbDevice` הרשות מזהה את ה-C4. מסוף אחד לקופה (ראו "מסוף USB אחד לקופה"). |
 | `zcredit` | Z-Credit — מסופון חיצוני | השדות `zcreditTerminalNumber`, `zcreditPinpadId`, `zcreditMode` והסיסמה (ראו "סודות"). |
 | `tap_to_pay` | Tap to Pay במכשיר (iPOSpays) | שמור לעתיד: מוצג "בקרוב", השרת דוחה כתיבה שלו, והקופה קוראת אותו כ-`auto`. |
 
@@ -50,6 +51,7 @@
 |---|---|---|
 | Agamento | — | |
 | Nayax | כתובת IP או שם מארח (`nayaxDeviceHost`) | פורט ברירת מחדל 8080, נתיב `/SPICy`. "HTTP ללא הצפנה" הוא פרמטר לקופות (`pinpadAllowHttp`). |
+| Nayax USB | — | `nayaxUsbDevice` רשות: `VVVV:PPPP` (vendor:product בהקס, 4+4 ספרות; נשמר באותיות גדולות), כמו `synqpayUsbDevice` אבל בלי `COMn`. ריק = התקן ה-CDC-ACM הראשון שמחובר לקופה. ערך אחר — 422. הגדרה מנוהלת (נשלחת לקופה), ו-`null` מחזיר לירושה. בקופה כזו אין "נדרשת כתובת IP למסופון" (`pinpadRequired` = false). |
 | Z-Credit | מספר מסוף (ספרות בלבד, עם האפסים המובילים), סיסמה, מזהה PinPad (עם או בלי הקידומת `PINPAD`; נשמר בלעדיה), מצב (בדיקה / ייצור) | השדה Key רשות. הוא שייך ל-WebCheckout, לא נשלח לקופה ולא משמש במסופון. |
 | Tap to Pay | — (שמור) | |
 
@@ -62,6 +64,32 @@
   - ממה השכבה יורשת;
   - אילו סודות שמורים ובאיזו רמה (אף פעם לא הערך);
   - בקופה גם את הסוג בפועל ואת השדות החסרים.
+
+### מסוף USB אחד לקופה (`nayax_usb`, 8.10.2026)
+
+- **ה-C4 בכבל הוא מסוף הקופה עצמה, ולא מכשיר תשלום.**
+  - "מכשירי תשלום" (קבוצה / מכשיר קבוע) נשארים רשת (Agamento ברשת), Z-Credit ו-SynqPay בלבד.
+  - סוג מכשיר `nayax_usb` (או דומה לו), או `agamento_lan` עם `connection: "usb"`, נדחים ב-422 `kind_usb_terminal`.
+- **אין מסוף USB שני ליד ה-C4.**
+  - קופה שהסוג שלה בפועל הוא `nayax_usb` (מכל רמה) לא יכולה לסלוק גם במכשיר SynqPay שמחובר ב-USB.
+  - "לסלוק במכשיר" פירושו: `multiPaymentDevices` פעיל, והמכשיר הוא המכשיר הקבוע שלה (במצב "fixed"), או שהוא בקבוצה שלה (קבוצה ריקה או חסרה = כל מכשירי החנות).
+  - מכשיר ברשת או Z-Credit ליד ה-C4 מותר. קיוסק לא מקבל מכשירי תשלום, ולכן לא נבדק.
+- **איפה נבדק** (422 `usb_terminal_second`, ההודעה "בקופה מוגדר מסופון בחיבור USB — מסוף USB נוסף אינו נתמך (מסוף USB אחד לקופה)", ואחריה שם המכשיר והקופה; גם `machineId` ו-`deviceId`):
+  - ב-PATCH של הגדרות בכל רמה (tenant עד machine), כשמשתנה `paymentIntegration`, `multiPaymentDevices`, `paymentDeviceMode`, `fixedPaymentDeviceId` או `paymentDeviceGroup`. נבדקות כל הקופות הפעילות שהשכבה מגיעה אליהן. ערך שנשלח שוב בלי שינוי לא נבדק.
+  - ביצירת מכשיר SynqPay ב-USB, ובעדכון שהופך מכשיר למכשיר USB (`field: "config.connection"`).
+  - ב-"חיבור USB" מהקופה (`PUT /sync/{m}/payment-terminal`, ראו למטה). שם ה-`detail` הוא ההודעה עצמה (מחרוזת), כי הקופה מציגה אותו.
+- **הקופה אוכפת את אותו כלל בעצמה** (`UsbTerminalRule.kt`): היא לא סולקת במכשיר USB ליד C4 ב-USB.
+- **SynqPay ב-USB של הקופה עצמה (`paymentIntegration = synqpay`, `synqpayConnection = usb`) יחד עם `nayax_usb`** לא אפשרי: לקופה יש ערך אינטגרציה אחד.
+- **מה לא נבדק:** העברת קופה לנקודת מכירה או לחנות אחרת. כאן הכלל של הקופה הוא הגיבוי.
+
+### הגדרת המסופון מהקופה (`PUT /sync/{m}/payment-terminal`)
+
+- אותה הרשאה כמו קודם: מנהל מחובר או הרשאת מנהל. נכתב לשכבת הקופה.
+- **`connection`:** `"lan"` (או חסר, כמו קודם) או `"usb"`. ערך אחר — 422 `connection_invalid`.
+- **`lan`:** הכתובת (`host` חובה, `port`, `path`) נכתבת כמו קודם, והתשובה לא השתנתה. אם בלי זה הקופה הייתה נשארת על `nayax_usb` (בשכבה שלה או בירושה), השכבה שלה עוברת ל-`paymentIntegration = nayax_lan`.
+- **`usb`:** נכתב `paymentIntegration = nayax_usb`, בלי כתובת (`host` ריק או חסר). כתובת רשת שכבר שמורה נשארת לשימוש אחר כך.
+  - `usbDevice` רשות: `VVVV:PPPP` נכתב ל-`nayaxUsbDevice`; `""` מוחק את הערך של הקופה; חסר משאיר אותו. ערך לא תקין — 422 `usb_device_invalid`.
+  - תשובה: `{"connection": "usb", "paymentIntegration": "nayax_usb", "usbDevice": "0B00:0080" | null}`.
 
 ### סודות (הסיסמה)
 

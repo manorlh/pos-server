@@ -487,7 +487,7 @@ class POSMachineResponse(POSMachineBase):
     #: It does, and no level gives it an address: the machines page asks for one.
     pinpad_address_missing: Optional[bool] = Field(None, alias="pinpadAddressMissing")
     # ── "סוג אינטגרציית אשראי" (app/services/payment_integration.py) ────────────
-    #: agamento | nayax_lan | zcredit: what the till charges on.
+    #: agamento | nayax_lan | nayax_usb | zcredit | synqpay: what the till charges on.
     payment_integration: Optional[str] = Field(None, alias="paymentIntegration")
     #: The level that chose it ("tenant" … "machine"); null = automatic.
     payment_integration_source: Optional[str] = Field(None, alias="paymentIntegrationSource")

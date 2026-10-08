@@ -239,7 +239,9 @@ export interface PosSettingsV1 {
    * terminal of its own charges on Agamento (or Nayax when `nayaxEnabled`), a tablet on
    * an external one. `auto` is never stored.
    */
-  paymentIntegration?: 'auto' | 'agamento' | 'nayax_lan' | 'zcredit' | 'synqpay' | 'tap_to_pay';
+  paymentIntegration?: 'auto' | 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | 'tap_to_pay';
+  /** `nayax_usb`: the C4's USB ids "VVVV:PPPP" (hex); unset = the first CDC-ACM device on the till. */
+  nayaxUsbDevice?: string;
   /** Z-Credit: the terminal number, digits with leading zeros kept. */
   zcreditTerminalNumber?: string;
   /** Z-Credit: the PinPad id, stored without the "PINPAD" prefix. */
@@ -446,6 +448,7 @@ export type PosSettingsPatch = Partial<
   desktopIdleReturnMinutes?: number | null;
   // "סוג אינטגרציית אשראי": `null` = inherit the level above's again (`auto` too, for the type).
   paymentIntegration?: PosSettingsV1['paymentIntegration'] | null;
+  nayaxUsbDevice?: string | null;
   zcreditTerminalNumber?: string | null;
   zcreditPinpadId?: string | null;
   zcreditMode?: 'test' | 'production' | null;
@@ -476,6 +479,7 @@ export type PosSettingsPatch = Partial<
 /** Settings keys of the payment integration whose PATCH takes `null` (= inherit again). */
 export type PaymentIntegrationSettingKey =
   | 'paymentIntegration'
+  | 'nayaxUsbDevice'
   | 'zcreditTerminalNumber'
   | 'zcreditPinpadId'
   | 'zcreditMode'
@@ -809,7 +813,7 @@ export interface PosMachine {
   /** It does, and no level gives it an address: "נדרשת כתובת IP למסופון". */
   pinpadAddressMissing?: boolean;
   /** "סוג אינטגרציית אשראי" the till charges on; null on an older server. */
-  paymentIntegration?: 'agamento' | 'nayax_lan' | 'zcredit' | 'synqpay' | null;
+  paymentIntegration?: 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | null;
   /** The level that chose it; null = automatic (hardware / `nayaxEnabled`). */
   paymentIntegrationSource?: SettingsLevel | null;
   paymentIntegrationAutomatic?: boolean | null;

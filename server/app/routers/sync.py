@@ -1101,14 +1101,49 @@ def machine_set_product_order(
 
 
 class PaymentTerminalIn(BaseModel):
-    """The till's Nayax pinpad on the network, as a manager typed it in at the till."""
+    """The till's Nayax pinpad, as a manager set it up at the till: on the network, or on its USB."""
 
-    #: An IPv4 address or a host name; validated in app/services/payment_terminal.py.
-    host: str = Field(..., max_length=300)
+    model_config = {"populate_by_name": True}
+
+    #: An IPv4 address or a host name; validated in app/services/payment_terminal.py. Needed on
+    #: the network only ("" or absent with `connection` "usb").
+    host: Optional[str] = Field(None, max_length=300)
     #: SPICy's port; absent = 8080.
     port: Optional[int] = Field(None, ge=1, le=65535)
     #: SPICy's path; absent = "/SPICy".
     path: Optional[str] = Field(None, max_length=200)
+    #: "lan" (absent: as before) or "usb" — "חיבור USB": a Nayax C4 on the till's USB cable.
+    connection: Optional[str] = Field(None, max_length=10)
+    #: With "usb": the C4's USB ids "VVVV:PPPP" (`nayaxUsbDevice`); "" removes the till's own
+    #: (the first CDC-ACM device); absent leaves it as it is.
+    usb_device: Optional[str] = Field(None, alias="usbDevice", max_length=20)
+
+
+#: `PaymentTerminalIn.connection`: absent = the network, as before the USB choice.
+PAYMENT_TERMINAL_CONNECTIONS = ("lan", "usb")
+
+
+def _till_integration(db: Session, machine: POSMachine, own_settings: Any) -> str:
+    """What [machine] charges on with [own_settings] as its own layer (payment_integration.resolve)."""
+    from app.services import payment_integration as PI
+
+    shop = db.query(Shop).filter(Shop.id == machine.shop_id).first() if machine.shop_id else None
+    company = db.query(Company).filter(Company.id == shop.company_id).first() if shop is not None and shop.company_id else None
+    tenant = (
+        db.query(Tenant).filter(Tenant.id == company.tenant_id).first()
+        if company is not None and company.tenant_id
+        else None
+    )
+    area = get_area(db, getattr(machine, "area_id", None)) if shop is not None else None
+    layers = [
+        (level, getattr(entity, "settings", None))
+        for level, entity in (("tenant", tenant), ("company", company), ("shop", shop), ("area", area))
+        if entity is not None
+    ]
+    layers.append(("machine", own_settings))
+    return PI.resolve(
+        layers, bool(getattr(machine, "has_builtin_terminal", True)), synqpay_device=PI.is_synqpay_device(machine)
+    ).integration
 
 
 @router.put("/{machine_id}/payment-terminal", dependencies=FISCAL_SYNC_PATH)
@@ -1120,27 +1155,65 @@ def machine_set_payment_terminal(
     db: Session = Depends(get_db),
 ):
     """
-    The address of the Nayax pinpad this till charges on, typed at the till: a till with
-    no card terminal of its own (a P18) asks for it before its first card payment.
-    Written to the till's own settings layer (`nayaxEnabled`, `nayaxDeviceHost`,
-    `nayaxDevicePort`, `nayaxSpicyPath`), where the dashboard's per-till settings show it
-    and can change it. A manager's write, gated like the till's other manager writes (a
-    signed-in manager, or a manager's grant). 422 with `host_invalid`, `host_required`,
-    `port_invalid` or `path_invalid` for an address the till must not be sent.
+    The Nayax pinpad this till charges on, set up at the till: a till with no card terminal
+    of its own (a P18) asks for it before its first card payment. A manager's write, gated
+    like the till's other manager writes (a signed-in manager, or a manager's grant), to the
+    till's own settings layer, where the dashboard's per-till settings show it and can change it.
+
+    * `connection` "lan" (or absent — as before): the address (`nayaxEnabled`, `nayaxDeviceHost`,
+      `nayaxDevicePort`, `nayaxSpicyPath`). A till that would still charge on a C4 on its USB
+      (`paymentIntegration` = `nayax_usb`, its own or inherited) is moved to `nayax_lan` on its
+      own layer. 422 with `host_invalid`, `host_required`, `port_invalid` or `path_invalid` for
+      an address the till must not be sent.
+    * `connection` "usb" ("חיבור USB"): `paymentIntegration` = `nayax_usb` on its own layer, no
+      address; `usbDevice` names the C4 (`nayaxUsbDevice`, 422 `usb_device_invalid`). One USB
+      terminal per till: 422 (the Hebrew reason as `detail`) while the till could also charge on
+      a SynqPay payment device on USB (app/services/payment_devices.py `usb_terminal_conflict`).
+    * Anything else: 422 `connection_invalid`.
     """
-    from app.services import payment_terminal, settings_notify
+    from app.services import payment_devices, payment_integration as PI, payment_terminal, settings_notify
     from app.services.settings_merge import patch_settings_json, utc_now
 
     _require_assigned_machine(machine)
+    connection = (body.connection or "lan").strip().lower()
+    if connection not in PAYMENT_TERMINAL_CONNECTIONS:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="connection_invalid")
+    if connection == "usb":
+        patch: Dict[str, Any] = {PI.KEY: PI.NAYAX_USB}
+        if body.usb_device is not None:
+            try:
+                patch[PI.NAYAX_USB_DEVICE] = PI.validate_nayax_usb_device(body.usb_device)
+            except ValueError:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="usb_device_invalid")
+        after = patch_settings_json(machine.settings, patch)
+        conflict = payment_devices.usb_terminal_conflict(db, [machine], layer=("machine", machine.id, after))
+        if conflict is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=payment_devices.usb_terminal_message(conflict),
+            )
+        machine.settings = after
+        machine.settings_updated_at = utc_now()
+        usb_device = after.get(PI.NAYAX_USB_DEVICE)
+        logger.info(
+            "payment terminal set from till %s: Nayax on USB (%s) (user %s, till user %s)",
+            machine.id, usb_device or "first CDC-ACM device", actor.user_id, actor.pos_user_id,
+        )
+        db.commit()
+        settings_notify.notify_machine_settings(db, machine, reason="payment_terminal")
+        return {"connection": "usb", "paymentIntegration": PI.NAYAX_USB, "usbDevice": usb_device}
+
     try:
         host = payment_terminal.clean_pinpad_host(body.host)
         port = payment_terminal.clean_pinpad_port(body.port)
         path = payment_terminal.clean_pinpad_path(body.path)
     except payment_terminal.PinpadAddressError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.code)
-    machine.settings = patch_settings_json(
-        machine.settings, payment_terminal.pinpad_settings_patch(host, port, path)
-    )
+    after = patch_settings_json(machine.settings, payment_terminal.pinpad_settings_patch(host, port, path))
+    # Back from the cable to the network: the address alone would not move a till on `nayax_usb`.
+    if _till_integration(db, machine, after) == PI.NAYAX_USB:
+        after = patch_settings_json(after, {PI.KEY: PI.NAYAX_LAN})
+    machine.settings = after
     machine.settings_updated_at = utc_now()
     # No SyncLog row: its entity types are a database enum, and a new one is a migration.
     # The write is the till's own layer, and the log names who made it.

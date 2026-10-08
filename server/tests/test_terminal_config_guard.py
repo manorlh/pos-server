@@ -55,6 +55,9 @@ def test_who_charges_on_an_external_pinpad():
     assert G.charges_on_external_pinpad(_M(builtin=False), {}) is True
     assert G.charges_on_external_pinpad(_M(), {"nayaxEnabled": True}) is True
     assert G.charges_on_external_pinpad(_M(), {"paymentIntegration": "zcredit"}) is True
+    # A Nayax C4 on the till's USB is an external terminal too.
+    assert G.charges_on_external_pinpad(_M(), {"paymentIntegration": "nayax_usb"}) is True
+    assert G.charges_on_external_pinpad(_M(), {"paymentIntegration": "Nayax_USB "}) is True
     assert G.charges_on_external_pinpad(_M(), {}) is False
 
 
@@ -115,6 +118,18 @@ def test_a_till_on_a_network_pinpad_is_guarded_too(w):
     _shop_sets(w, clearingServer="PELECARD", nayaxEnabled=True, nayaxDeviceHost="192.168.0.167")
     out = _pull(w, till)
     assert "clearingServer" not in out.settings
+
+
+def test_a_till_on_its_usb_c4_is_guarded_too(w):
+    till, other = w.tills
+    _shop_sets(w, clearingServer="PELECARD", expectedTerminalNumber="1807770", forceTerminalNumber=True)
+    till.settings = {"paymentIntegration": "nayax_usb"}
+    w.db.commit()
+    out = _pull(w, till)
+    assert "clearingServer" not in out.settings and "expectedTerminalNumber" not in out.settings
+    assert out.settings["forceTerminalNumber"] is False
+    # Its neighbour on its own terminal still inherits.
+    assert _pull(w, other).settings["clearingServer"] == "PELECARD"
 
 
 def test_a_p18_is_guarded_too(w):

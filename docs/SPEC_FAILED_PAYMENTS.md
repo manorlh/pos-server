@@ -30,7 +30,7 @@
 | `method` | אמצעי התשלום (`card` היום; `voucher` ואחרים אפשריים) |
 | `kind` | `sale` — מכירה · `keyed` — הקלדה ידנית · `payout` — החזר כספי לכרטיס (זיכוי) שנכשל |
 | `channel` | `till` — קופה · `kiosk` — קיוסק |
-| `terminalType`, `terminalId` | `agamento` / `nayax_lan` / `zcredit` / `synqpay`, ומספר המסוף |
+| `terminalType`, `terminalId` | `agamento` / `nayax_lan` / `nayax_usb` / `zcredit` / `synqpay`, ומספר המסוף |
 | `outcome` | התוצאה (§2.1) |
 | `reasonCode`, `reasonMessage` | הקוד ומילות המסוף (עד 300 תווים) |
 | `cardBrand`, `cardLast4` | המותג ו-4 הספרות האחרונות **בלבד** (§7) |

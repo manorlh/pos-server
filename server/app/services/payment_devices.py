@@ -15,6 +15,11 @@ till sends the transaction to one of them. The kinds:
 * `agamento_lan` — a Nayax handheld running only Agamento, reached over the LAN (TweezerComm
   over plain HTTP, port 8080, path /SPICy; optional MAC and terminal number); no secret.
 
+A Nayax C4 on a USB cable is never a device: it is a till's own terminal (`paymentIntegration`
+= `nayax_usb`, 422 `kind_usb_terminal` for such a kind), and a till on it may not also charge on
+a SynqPay device on USB — one USB terminal per till (`usb_terminal_conflict`, 422
+`usb_terminal_second`).
+
 A device belongs to its shop. Several devices may share one terminal number (nothing is unique
 about it). Which devices a till uses is a setting on the usual layers (shop = the default for its
 tills, area, till; refused on a tenant or company — they have no devices; absent = inherit):
@@ -172,6 +177,10 @@ MESSAGES_HE: Dict[str, str] = {
     "payment_device_kiosk": "קיוסק עובד עם המסופון שלו — אין לו מכשירי תשלום",
     "fixed_payment_device_required": "במצב 'מכשיר קבוע' יש לבחור את המכשיר",
     "payment_device_not_synqpay": "המכשיר אינו מסוף SynqPay",
+    # One USB terminal per till (the owner, 08.10.2026): `usb_terminal_conflict` below.
+    "kind_usb_terminal": "מסופון בחיבור USB הוא מסוף הקופה עצמה בלבד — לא אחד ממכשירי התשלום "
+    "(בוחרים אותו בסוג אינטגרציית האשראי של הקופה: Nayax — מסופון בחיבור USB)",
+    "usb_terminal_second": PI.ONE_USB_TERMINAL_HE,
 }
 
 
@@ -232,10 +241,21 @@ def clean_nickname(value: Any) -> str:
     return text
 
 
+#: A Nayax C4 on USB is the till's own terminal (`paymentIntegration` = `nayax_usb`), never a
+#: device: these spellings get a refusal that says where it is set instead.
+_USB_TERMINAL_KINDS = ("nayax_usb", "c4_usb", "agamento_usb", "usb")
+
+
+def _reads_usb(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().lower().replace("-", "_") in ("usb", "usb_serial", "serial")
+
+
 def clean_kind(value: Any) -> str:
     if _blank(value):
         raise PaymentDeviceError("kind_required", field="kind")
     text = str(value).strip().lower().replace("-", "_") if isinstance(value, str) else ""
+    if text in _USB_TERMINAL_KINDS:
+        raise PaymentDeviceError("kind_usb_terminal", field="kind")
     if text not in KINDS:
         raise PaymentDeviceError("kind_invalid", field="kind")
     return text
@@ -337,6 +357,9 @@ def split_address(text: str) -> Tuple[str, Optional[str], Optional[str], Optiona
 
 
 def _agamento_config(raw: Dict[str, Any]) -> Dict[str, Any]:
+    # An Agamento handheld is a device on the LAN only: a C4 on a USB cable is a till's own.
+    if _reads_usb(raw.get("connection")):
+        raise PaymentDeviceError("kind_usb_terminal", field="config.connection")
     host_raw = raw.get("host")
     if _blank(host_raw):
         raise PaymentDeviceError("host_required", field="config.host")
@@ -671,8 +694,10 @@ def create_device(db: Session, shop: Shop, body: Any, *, user_id: Any = None) ->
     active = clean_active(body.active)
     secrets = secret_patch(body)
     _check_nickname_free(db, shop.id, nickname)
+    ident = uuid.uuid4()
+    _check_usb_device(db, shop, ident, nickname, kind, config, sort_order)
     device = PaymentDevice(
-        id=uuid.uuid4(),
+        id=ident,
         tenant_id=shop.tenant_id,
         shop_id=shop.id,
         nickname=nickname,
@@ -707,6 +732,9 @@ def update_device(db: Session, shop: Shop, device: PaymentDevice, body: Any, *, 
     secrets = secret_patch(body)
     if nickname.casefold() != (device.nickname or "").casefold():
         _check_nickname_free(db, shop.id, nickname, except_id=device.id)
+    # Only a device that turns into a USB one is checked (a rename of one never blocks).
+    if not is_usb_device(device.kind, device.config):
+        _check_usb_device(db, shop, device.id, nickname, kind, config, sort_order)
 
     device.nickname = nickname
     device.kind = kind
@@ -931,12 +959,21 @@ def check_settings_patch(db: Session, level: str, entity: Any, patch: Dict[str, 
       not a kiosk's own layer (422 `payment_device_kiosk`);
     * every id a device of that shop — a till's: its shop's (422 `payment_device_not_in_shop`);
     * a layer whose own mode ends up "fixed" must have a fixed device, its own or one a layer
-      above gives (422 `fixed_payment_device_required`).
+      above gives (422 `fixed_payment_device_required`);
+    * one USB terminal per till, on every level: no till the layer reaches may end up on
+      `nayax_usb` with a SynqPay device on USB among the devices it charges on (422
+      `usb_terminal_second`, `check_usb_terminal_patch`).
 
     Only a *change* is checked: the dashboard sends the whole form on every save, so a value
     stored earlier round-trips unchanged without blocking an unrelated save. A `null` (inherit
     again) is never refused, except where it leaves a "fixed" mode without its device.
     """
+    _check_device_choice(db, level, entity, patch)
+    check_usb_terminal_patch(db, level, entity, patch)
+
+
+def _check_device_choice(db: Session, level: str, entity: Any, patch: Dict[str, Any]) -> None:
+    """`check_settings_patch`'s device-choice rules (all but the one-USB one)."""
     stored = _as_dict(getattr(entity, "settings", None))
     changed = [k for k in CHOICE_KEYS if k in patch and patch[k] != stored.get(k)]
     if not changed:
@@ -959,6 +996,182 @@ def check_settings_patch(db: Session, level: str, entity: Any, patch: Dict[str, 
         merged = deep_merge_settings(*_layers_above(db, level, entity), after)
         if not (isinstance(merged.get(FIXED_KEY), str) and merged[FIXED_KEY]):
             raise PaymentDeviceError("fixed_payment_device_required", field=FIXED_KEY)
+
+
+# ── One USB terminal per till (the owner, 08.10.2026) ─────────────────────────
+#
+# A Nayax C4 on the till's USB (`paymentIntegration` = `nayax_usb`) is the till's own terminal;
+# the only payment device that can be on a USB cable is a SynqPay one (`connection` "usb"). Two
+# CDC-ACM terminals on one till cannot work (the first found would take the other's frames), so a
+# till that resolves to `nayax_usb` must not have such a device among the devices it charges on:
+# with `multiPaymentDevices` on, its fixed device in mode "fixed", else its group (absent = every
+# device of its shop). Refused (422 `usb_terminal_second`) wherever that could start — a settings
+# PATCH on any level (`check_settings_patch`), a device created or turned into a USB one, and the
+# till's own "חיבור USB" (`PUT /sync/{m}/payment-terminal`). LAN / Z-Credit devices are fine.
+
+#: The settings whose change can put a USB device beside a till's own USB C4.
+USB_RULE_KEYS: Tuple[str, ...] = (PI.KEY, MULTI_KEY, MODE_KEY, FIXED_KEY, GROUP_KEY)
+USB_TERMINAL_CODE = "usb_terminal_second"
+
+
+def is_usb_device(kind: Any, config: Any) -> bool:
+    """A SynqPay device on a USB cable (the only kind of payment device that can be on one)."""
+    return kind == SYNQPAY and _reads_usb(_as_dict(config).get("connection"))
+
+
+def till_device_ids(merged: Dict[str, Any], device_ids: Sequence[str]) -> List[str]:
+    """
+    The devices a till may charge on, from its merged settings: none with the switch off; its
+    fixed device in mode "fixed"; else its group, else every device of its shop.
+    """
+    choice = till_choice(merged, device_ids)
+    if not choice["enabled"]:
+        return []
+    if choice["mode"] == MODE_FIXED and choice["fixedDeviceId"]:
+        return [choice["fixedDeviceId"]]
+    return list(choice["groupDeviceIds"] or [str(x) for x in device_ids])
+
+
+def usb_terminal_conflict(
+    db: Session,
+    machines: Sequence[Any],
+    *,
+    layer: Optional[Tuple[str, Any, Dict[str, Any]]] = None,
+    device: Optional[Any] = None,
+) -> Optional[Tuple[Any, Any]]:
+    """
+    The first `(till, device)` among [machines] (kiosks skipped: they have no devices) that breaks
+    the rule. [layer] `(level, entity id, settings)` stands for that layer's settings as a write
+    would leave them; [device] for a device as it is about to be saved (id, shop_id, kind, config,
+    nickname, sort_order), replacing the stored one with its id or added.
+    """
+    from app.models.company import Company
+    from app.models.shop_area import ShopArea
+    from app.models.tenant import Tenant
+
+    tills = [m for m in machines if m is not None and getattr(m, "shop_id", None) is not None]
+    kiosks = _kiosk_ids(db, [m.id for m in tills])
+    tills = [m for m in tills if _uuid(m.id) not in kiosks]
+    if not tills:
+        return None
+    shop_ids = list({_uuid(m.shop_id) for m in tills})
+    by_shop: Dict[uuid.UUID, List[Any]] = {}
+    for d in db.query(PaymentDevice).filter(PaymentDevice.shop_id.in_(shop_ids)).all():
+        by_shop.setdefault(_uuid(d.shop_id), []).append(d)
+    if device is not None:
+        sid = _uuid(device.shop_id)
+        by_shop[sid] = [d for d in by_shop.get(sid, []) if _uuid(d.id) != _uuid(device.id)] + [device]
+    if not any(is_usb_device(d.kind, d.config) for ds in by_shop.values() for d in ds):
+        return None
+
+    def load(model, ids):
+        wanted = [i for i in {_uuid(x) for x in ids} if i is not None]
+        return {_uuid(r.id): r for r in db.query(model).filter(model.id.in_(wanted)).all()} if wanted else {}
+
+    shops = load(Shop, shop_ids)
+    companies = load(Company, (s.company_id for s in shops.values()))
+    tenants = load(Tenant, (c.tenant_id for c in companies.values()))
+    areas = load(ShopArea, (getattr(m, "area_id", None) for m in tills))
+
+    def settings_of(level: str, entity: Any) -> Any:
+        if layer is not None and layer[0] == level and _uuid(layer[1]) == _uuid(entity.id):
+            return layer[2]
+        return getattr(entity, "settings", None)
+
+    for m in tills:
+        devices = sorted(by_shop.get(_uuid(m.shop_id), []), key=_order)
+        if not any(is_usb_device(d.kind, d.config) for d in devices):
+            continue
+        shop = shops.get(_uuid(m.shop_id))
+        company = companies.get(_uuid(shop.company_id)) if shop is not None else None
+        tenant = tenants.get(_uuid(company.tenant_id)) if company is not None else None
+        area = areas.get(_uuid(getattr(m, "area_id", None)))
+        layers = [
+            (level, settings_of(level, entity))
+            for level, entity in (("tenant", tenant), ("company", company), ("shop", shop), ("area", area), ("machine", m))
+            if entity is not None
+        ]
+        resolved = PI.resolve(
+            layers, bool(getattr(m, "has_builtin_terminal", True)), synqpay_device=PI.is_synqpay_device(m)
+        )
+        if resolved.integration != PI.NAYAX_USB:
+            continue
+        merged = deep_merge_settings(*(_as_dict(s) for _, s in layers))
+        chosen = set(till_device_ids(merged, [str(d.id) for d in devices]))
+        for d in devices:
+            if str(d.id) in chosen and is_usb_device(d.kind, d.config):
+                return m, d
+    return None
+
+
+def usb_terminal_message(conflict: Tuple[Any, Any]) -> str:
+    """The Hebrew refusal, naming the till and the device."""
+    machine, device = conflict
+    till = getattr(machine, "name", None) or "הקופה"
+    return f'{PI.ONE_USB_TERMINAL_HE}: מכשיר התשלום "{device.nickname}" (SynqPay בחיבור USB) זמין לקופה "{till}"'
+
+
+def usb_terminal_error(conflict: Tuple[Any, Any], *, field: Optional[str] = None) -> PaymentDeviceError:
+    """422 `usb_terminal_second` with the message, and which till and device collide."""
+    machine, device = conflict
+    err = PaymentDeviceError(USB_TERMINAL_CODE, field=field)
+    err.detail["msg"] = usb_terminal_message(conflict)
+    err.detail["machineId"] = str(machine.id)
+    err.detail["deviceId"] = str(device.id)
+    return err
+
+
+def _machines_in_scope(db: Session, level: str, entity: Any) -> List[Any]:
+    """The tills a write on [level] reaches (active ones; a till's own layer: that till)."""
+    if level == "machine":
+        return [entity]
+    query = db.query(POSMachine).filter(POSMachine.is_active.is_(True))
+    if level == "area":
+        query = query.filter(POSMachine.area_id == _uuid(entity.id))
+    elif level == "shop":
+        query = query.filter(POSMachine.shop_id == _uuid(entity.id))
+    elif level == "company":
+        shop_ids = [s.id for s in db.query(Shop).filter(Shop.company_id == _uuid(entity.id)).all()]
+        if not shop_ids:
+            return []
+        query = query.filter(POSMachine.shop_id.in_(shop_ids))
+    elif level == "tenant":
+        query = query.filter(POSMachine.tenant_id == _uuid(entity.id))
+    else:
+        return []
+    return query.all()
+
+
+def check_usb_terminal_patch(db: Session, level: str, entity: Any, patch: Dict[str, Any]) -> None:
+    """
+    A settings PATCH on [level] that changes the integration or the device choice: refused (422
+    `usb_terminal_second`, the field the first changed key) when it would leave a till it reaches
+    on `nayax_usb` with a SynqPay USB device to charge on. Unchanged values never block a save.
+    """
+    stored = _as_dict(getattr(entity, "settings", None))
+    changed = [k for k in USB_RULE_KEYS if k in patch and patch[k] != stored.get(k)]
+    if not changed:
+        return
+    after = patch_settings_json(stored, {k: patch[k] for k in USB_RULE_KEYS if k in patch})
+    conflict = usb_terminal_conflict(db, _machines_in_scope(db, level, entity), layer=(level, entity.id, after))
+    if conflict is not None:
+        raise usb_terminal_error(conflict, field=changed[0])
+
+
+def _check_usb_device(
+    db: Session, shop: Shop, ident: Any, nickname: str, kind: str, config: Dict[str, Any], sort_order: Any
+) -> None:
+    """A device about to be saved as a SynqPay one on USB: refused beside a till's own USB C4."""
+    if not is_usb_device(kind, config):
+        return
+    from types import SimpleNamespace
+
+    candidate = SimpleNamespace(
+        id=ident, shop_id=shop.id, nickname=nickname, kind=kind, config=config, sort_order=sort_order
+    )
+    conflict = usb_terminal_conflict(db, shop_tills(db, shop.id), device=candidate)
+    if conflict is not None:
+        raise usb_terminal_error(conflict, field="config.connection")
 
 
 # ── The till ─────────────────────────────────────────────────────────────────

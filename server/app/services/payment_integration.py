@@ -11,6 +11,13 @@ tills and one till (a tablet) can be set apart. The values:
 * `agamento` — "מובנה — Agamento במכשיר". Only for a till that has a terminal; refused
   on a till that has none (422 `agamento_needs_builtin_terminal`).
 * `nayax_lan` — "Nayax — מסופון ברשת" (the `nayax*` address keys).
+* `nayax_usb` — "Nayax — מסופון בחיבור USB": a Nayax C4 on the till's own USB cable (its own
+  CDC-ACM port, the same TweezerComm frames as on the network, framed for the line). No address
+  and nothing required; the optional `nayaxUsbDevice` ("VVVV:PPPP") names the C4 when the till
+  has several such devices (blank = the first CDC-ACM device). An external terminal, and one per
+  till: never one of the shop's payment devices ("מכשירי תשלום" stay LAN / Z-Credit / SynqPay),
+  and never beside a SynqPay device on USB the till could also charge on
+  (app/services/payment_devices.py `usb_terminal_conflict`).
 * `zcredit` — "Z-Credit — מסופון חיצוני" (`zcreditTerminalNumber`, `zcreditPinpadId`,
   `zcreditMode`, and the write-only `zcreditPassword`, app/services/payment_secrets.py).
 * `synqpay` — "SynqPay — מסוף חיצוני" (docs/SPEC_SYNQPAY.md): the `synqpay*` keys (device
@@ -38,21 +45,23 @@ KEY = "paymentIntegration"
 AUTO = "auto"
 AGAMENTO = "agamento"
 NAYAX_LAN = "nayax_lan"
+NAYAX_USB = "nayax_usb"
 ZCREDIT = "zcredit"
 SYNQPAY = "synqpay"
 TAP_TO_PAY = "tap_to_pay"
 
-INTEGRATIONS: Tuple[str, ...] = (AUTO, AGAMENTO, NAYAX_LAN, ZCREDIT, SYNQPAY, TAP_TO_PAY)
+INTEGRATIONS: Tuple[str, ...] = (AUTO, AGAMENTO, NAYAX_LAN, NAYAX_USB, ZCREDIT, SYNQPAY, TAP_TO_PAY)
 #: Shown as "בקרוב" and refused on write.
 RESERVED: Tuple[str, ...] = (TAP_TO_PAY,)
 #: Integrations that charge on a terminal outside the till: the only ones a till without
 #: a terminal of its own can use.
-EXTERNAL: Tuple[str, ...] = (NAYAX_LAN, ZCREDIT, SYNQPAY, TAP_TO_PAY)
+EXTERNAL: Tuple[str, ...] = (NAYAX_LAN, NAYAX_USB, ZCREDIT, SYNQPAY, TAP_TO_PAY)
 
 LABELS_HE: Dict[str, str] = {
     AUTO: "אוטומטי",
     AGAMENTO: "מובנה — Agamento במכשיר",
     NAYAX_LAN: "Nayax — מסופון ברשת",
+    NAYAX_USB: "Nayax — מסופון בחיבור USB",
     ZCREDIT: "Z-Credit — מסופון חיצוני",
     SYNQPAY: "SynqPay — מסוף חיצוני",
     TAP_TO_PAY: "Tap to Pay במכשיר (iPOSpays)",
@@ -104,10 +113,17 @@ SYNQPAY_SERIAL_DOCUMENTED: Tuple[str, ...] = ("rx5000",)
 _SYNQPAY_USB_DEVICE = re.compile(r"^(?:[0-9A-Fa-f]{4}:[0-9A-Fa-f]{4}|COM[0-9]{1,3})$")
 _SYNQPAY_SERIAL = re.compile(r"^[A-Za-z0-9-]{4,32}$")
 
+# ── A Nayax C4 on the till's USB (`nayax_usb`) ────────────────────────────────
+#: The C4's USB ids, "VVVV:PPPP" (hex vendor:product, upper case), when the till must pick it
+#: among several devices; unset / blank = the first CDC-ACM device attached.
+NAYAX_USB_DEVICE = "nayaxUsbDevice"
+_NAYAX_USB_DEVICE = re.compile(r"^[0-9A-F]{4}:[0-9A-F]{4}$")
+
 #: The settings keys this module owns, all managed (sent to the till) and all reset to
 #: inherited by an explicit `null` in a PATCH.
 SETTING_KEYS: Tuple[str, ...] = (
     KEY,
+    NAYAX_USB_DEVICE,
     ZCREDIT_TERMINAL_NUMBER,
     ZCREDIT_PINPAD_ID,
     ZCREDIT_MODE,
@@ -141,6 +157,8 @@ _PINPAD_ID = re.compile(r"^[A-Za-z0-9]{1,32}$")
 REQUIRED_FIELDS: Dict[str, Tuple[str, ...]] = {
     AGAMENTO: (),
     NAYAX_LAN: ("nayaxDeviceHost",),
+    # No address: the C4 is on the cable; `nayaxUsbDevice` is optional.
+    NAYAX_USB: (),
     ZCREDIT: (ZCREDIT_TERMINAL_NUMBER, ZCREDIT_PASSWORD, ZCREDIT_PINPAD_ID, ZCREDIT_MODE),
     # The host only on the network (lan): see missing_fields. No API key: the till pairs with
     # the terminal itself and sends the key up (SPEC_SYNQPAY.md §2.2) — a till with none yet is
@@ -151,6 +169,7 @@ REQUIRED_FIELDS: Dict[str, Tuple[str, ...]] = {
 
 FIELD_LABELS_HE: Dict[str, str] = {
     "nayaxDeviceHost": "כתובת IP של המסופון",
+    NAYAX_USB_DEVICE: "מזהה USB של המסופון",
     ZCREDIT_TERMINAL_NUMBER: "מספר מסוף",
     ZCREDIT_PASSWORD: "סיסמת מסוף",
     ZCREDIT_PINPAD_ID: "מזהה PinPad",
@@ -171,8 +190,13 @@ FIELD_LABELS_HE: Dict[str, str] = {
 NEEDS_BUILTIN_DETAIL = {
     "code": "agamento_needs_builtin_terminal",
     "msg": "לקופה הזו אין מסוף מובנה (למשל טאבלט P18): ניתן לבחור רק אינטגרציה חיצונית — "
-    "Nayax מסופון ברשת, Z-Credit מסופון חיצוני או SynqPay מסוף חיצוני.",
+    "Nayax מסופון ברשת, Nayax מסופון בחיבור USB, Z-Credit מסופון חיצוני או SynqPay מסוף חיצוני.",
 }
+
+#: One USB terminal per till (the owner, 08.10.2026): a till on `nayax_usb` may not also charge
+#: on a SynqPay payment device connected by USB (app/services/payment_devices.py). The same words
+#: as the till's own rule (UsbTerminalRule.kt), which refuses such a device at the counter too.
+ONE_USB_TERMINAL_HE = "בקופה מוגדר מסופון בחיבור USB — מסוף USB נוסף אינו נתמך (מסוף USB אחד לקופה)"
 
 
 # ── Values ───────────────────────────────────────────────────────────────────
@@ -314,6 +338,18 @@ def validate_synqpay_serial(value: Optional[str]) -> Optional[str]:
     return text
 
 
+def validate_nayax_usb_device(value: Optional[str]) -> Optional[str]:
+    """"VVVV:PPPP" (hex vendor:product, upper-cased); None/blank = the first CDC-ACM device."""
+    if value is None:
+        return None
+    text = str(value).strip().upper()
+    if text == "":
+        return None
+    if not _NAYAX_USB_DEVICE.match(text):
+        raise ValueError("nayaxUsbDevice must be VVVV:PPPP (hex vendor:product), or empty for the first USB device")
+    return text
+
+
 def synqpay_default_port(protocol: Optional[str], tls: Optional[bool]) -> int:
     """The documented ports: TCP 9000 / TLS 9443, HTTP 8000 / HTTPS 8443."""
     if (protocol or "tcp") == "http":
@@ -358,7 +394,7 @@ def check_machine_choice(machine: Any, patch: Dict[str, Any]) -> None:
 class Resolution:
     """What a till charges on, and why."""
 
-    #: One of AGAMENTO, NAYAX_LAN, ZCREDIT; never AUTO.
+    #: One of AGAMENTO, NAYAX_LAN, NAYAX_USB, ZCREDIT, SYNQPAY; never AUTO.
     integration: str
     #: The level the explicit choice comes from ("tenant" … "machine"); None = automatic.
     source: Optional[str] = None
@@ -462,7 +498,9 @@ def till_sync_fields(db: Any, machine: Any, tenant: Any, company: Any, shop: Any
     managed keys: `paymentIntegration` as the explicit choice down the layers (absent
     when automatic, so the till keeps deciding by its hardware as before), and, for a
     till on Z-Credit, `zcreditPassword` in the clear — its only way out of the server.
-    Keys mapped to None are to be removed from the sync's settings.
+    Keys mapped to None are to be removed from the sync's settings. `nayax_usb` has no
+    secret: the till gets the value and, when some layer names the C4, `nayaxUsbDevice`
+    (a managed key, merged like the rest).
     """
     from app.services import payment_secrets
 

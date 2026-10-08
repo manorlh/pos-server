@@ -204,10 +204,14 @@ class PosSettingsV1Patch(BaseModel):
     #: reports the result in its heartbeat. Unset = false; `null` in a PATCH = inherit.
     force_terminal_number: Optional[bool] = Field(None, alias="forceTerminalNumber")
     # ── "סוג אינטגרציית אשראי" (app/services/payment_integration.py) ──
-    #: auto | agamento | nayax_lan | zcredit (tap_to_pay is reserved and refused).
-    #: "auto" or `null` in a PATCH = inherit again; `agamento` on a till without a
-    #: terminal of its own is a 422 (`agamento_needs_builtin_terminal`).
+    #: auto | agamento | nayax_lan | nayax_usb | zcredit | synqpay (tap_to_pay is reserved and
+    #: refused). "auto" or `null` in a PATCH = inherit again; `agamento` on a till without a
+    #: terminal of its own is a 422 (`agamento_needs_builtin_terminal`); `nayax_usb` beside a
+    #: SynqPay payment device on USB is a 422 (`usb_terminal_second`, one USB terminal per till).
     payment_integration: Optional[str] = Field(None, alias="paymentIntegration")
+    #: `nayax_usb`: the C4's USB ids, "VVVV:PPPP" (hex, stored upper-case); "" or `null` = this
+    #: layer names none (the till takes the first CDC-ACM device, or the value inherited).
+    nayax_usb_device: Optional[str] = Field(None, alias="nayaxUsbDevice")
     #: Z-Credit's terminal number (digits, leading zeros kept), its PinPad id (with or
     #: without the "PINPAD" prefix; stored without) and "test" | "production".
     zcredit_terminal_number: Optional[str] = Field(None, alias="zcreditTerminalNumber")
@@ -281,6 +285,13 @@ class PosSettingsV1Patch(BaseModel):
         from app.services.payment_integration import validate_integration
 
         return validate_integration(v)
+
+    @field_validator("nayax_usb_device")
+    @classmethod
+    def _check_nayax_usb_device(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_nayax_usb_device
+
+        return validate_nayax_usb_device(v)
 
     @field_validator("zcredit_terminal_number")
     @classmethod

@@ -109,6 +109,7 @@ function inheritedFor(
     nayaxDeviceHost: inherited?.nayaxDeviceHost ?? null,
     nayaxDevicePort: inherited?.nayaxDevicePort ?? null,
     nayaxSpicyPath: inherited?.nayaxSpicyPath ?? null,
+    nayaxUsbDevice: inherited?.nayaxUsbDevice ?? null,
     zcreditTerminalNumber: inherited?.zcreditTerminalNumber ?? null,
     zcreditPinpadId: inherited?.zcreditPinpadId ?? null,
     zcreditMode: inherited?.zcreditMode ?? null,
@@ -254,6 +255,7 @@ export function PaymentIntegrationSection({
       | 'nayaxDeviceHost'
       | 'nayaxDevicePort'
       | 'nayaxSpicyPath'
+      | 'nayaxUsbDevice'
       | 'zcreditTerminalNumber'
       | 'zcreditPinpadId'
       | 'synqpayHost'
@@ -441,6 +443,13 @@ export function PaymentIntegrationSection({
             {textField('nayaxSpicyPath', { placeholder: NAYAX_DEFAULT_PATH, hint: PI_TEXT.pathHint, maxLength: 100 })}
           </div>
           <p className={HINT}>{PI_TEXT.nayaxHttpHint}</p>
+        </div>
+      ) : null}
+
+      {integration.effective === 'nayax_usb' ? (
+        <div className="space-y-3 rounded-lg border p-3">
+          <p className={HINT}>{PI_TEXT.nayaxUsbHint}</p>
+          {textField('nayaxUsbDevice', { placeholder: 'auto', hint: PI_TEXT.nayaxUsbDeviceHint, mono: true, maxLength: 9 })}
         </div>
       ) : null}
 

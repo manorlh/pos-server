@@ -250,7 +250,9 @@ def terminal_settings_for(db: Session, machines: List["POSMachine"]) -> Dict[Any
 
 def machine_terminal_fields(machine: "POSMachine", settings: TerminalSettings) -> Dict[str, Any]:
     """The terminal fields of a machine's list/detail response."""
-    required = pinpad_required(machine.has_builtin_terminal, settings.pinpad_enabled)
+    # A Nayax C4 on the till's USB (`nayax_usb`) is on the cable: no network address to ask for.
+    on_usb = getattr(settings.integration, "integration", None) == "nayax_usb"
+    required = pinpad_required(machine.has_builtin_terminal, settings.pinpad_enabled) and not on_usb
     return {
         "terminalNumber": machine.terminal_number,
         "terminalClearingServer": machine.terminal_clearing_server,

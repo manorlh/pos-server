@@ -88,7 +88,7 @@ class FailedPaymentAttempt(Base):
     kind = Column(String(32), nullable=False, default=KIND_SALE, server_default=KIND_SALE)
     #: till | kiosk.
     channel = Column(String(32), nullable=False, default="till", server_default="till")
-    #: agamento | nayax_lan | zcredit | synqpay, and the terminal's number.
+    #: agamento | nayax_lan | nayax_usb | zcredit | synqpay, and the terminal's number.
     terminal_type = Column(String(32), nullable=True)
     terminal_id = Column(String(64), nullable=True)
 

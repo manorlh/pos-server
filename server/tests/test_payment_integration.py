@@ -340,3 +340,90 @@ def test_a_new_shop_can_open_with_an_integration_type():
     assert ShopCreate(name="S", companyId=uuid.uuid4()).payment_integration is None
     with pytest.raises(ValidationError):
         ShopCreate(name="S", companyId=uuid.uuid4(), paymentIntegration="tap_to_pay")
+    assert ShopCreate(name="S", companyId=uuid.uuid4(), paymentIntegration="nayax_usb").payment_integration == "nayax_usb"
+
+
+# ── A Nayax C4 on the till's USB (`nayax_usb`) ───────────────────────────────
+
+
+def test_nayax_usb_is_an_external_choice_that_needs_nothing():
+    assert "nayax_usb" in PI.INTEGRATIONS and "nayax_usb" in PI.EXTERNAL
+    assert PI.LABELS_HE["nayax_usb"] == "Nayax — מסופון בחיבור USB"
+    assert PI.validate_integration(" Nayax-USB ") == "nayax_usb"
+    assert PosSettingsV1Patch(paymentIntegration="nayax_usb").payment_integration == "nayax_usb"
+    assert PI.REQUIRED_FIELDS["nayax_usb"] == ()
+    # Explicit, whatever `nayaxEnabled` says, and nothing missing: no address to ask for.
+    res = PI.resolve([("shop", {"paymentIntegration": "nayax_usb", "nayaxEnabled": True})], True)
+    assert (res.integration, res.source, res.explicit, res.missing) == ("nayax_usb", "shop", "nayax_usb", [])
+    # A tablet takes it from above, past an inherited built-in it does not have.
+    layers = [("company", {"paymentIntegration": "nayax_usb"}), ("shop", {"paymentIntegration": "agamento"})]
+    res = PI.resolve(layers, has_builtin_terminal=False)
+    assert (res.integration, res.source, res.missing) == ("nayax_usb", "company", [])
+
+
+@pytest.mark.parametrize("raw, clean", [("0b00:0080", "0B00:0080"), (" 1a86:7523 ", "1A86:7523"), ("", None), (None, None)])
+def test_the_c4s_usb_ids_are_vendor_and_product_in_hex(raw, clean):
+    assert PI.validate_nayax_usb_device(raw) == clean
+    assert PosSettingsV1Patch(nayaxUsbDevice=raw).nayax_usb_device == clean
+
+
+@pytest.mark.parametrize("raw", ["0b00-0080", "B00:0080", "0B00:00800", "COM3", "/dev/ttyACM0", "GGGG:0080", "0B00:0080:1"])
+def test_bad_usb_ids_are_refused(raw):
+    with pytest.raises(ValidationError):
+        PosSettingsV1Patch(nayaxUsbDevice=raw)
+
+
+def test_nayax_usb_reaches_the_till_with_and_without_the_usb_ids(w):
+    from app.services.settings_merge import MANAGED_SETTING_KEYS
+
+    assert "nayaxUsbDevice" in MANAGED_SETTING_KEYS and "nayaxUsbDevice" in PI.RESETTABLE_KEYS
+    till = w.tills[0]
+    _patch_machine(w, till, paymentIntegration="nayax_usb")
+    pulled = _pulled(w, till)
+    assert pulled["paymentIntegration"] == "nayax_usb"
+    assert "nayaxUsbDevice" not in pulled  # the first CDC-ACM device
+    _patch_machine(w, till, nayaxUsbDevice="0b00:0080")
+    assert till.settings["nayaxUsbDevice"] == "0B00:0080"
+    assert _pulled(w, till)["nayaxUsbDevice"] == "0B00:0080"
+    # The shop's ids reach its tills; "" on the till's own layer inherits them again.
+    _patch_shop(w, nayaxUsbDevice="1A86:7523")
+    assert _pulled(w, till)["nayaxUsbDevice"] == "0B00:0080"
+    _patch_machine(w, till, nayaxUsbDevice="")
+    assert "nayaxUsbDevice" not in till.settings
+    assert _pulled(w, till)["nayaxUsbDevice"] == "1A86:7523"
+    # `null` removes the shop's: nothing names the C4 any more.
+    _patch_shop(w, nayaxUsbDevice=None)
+    assert "nayaxUsbDevice" not in _pulled(w, till)
+    assert _pulled(w, till)["paymentIntegration"] == "nayax_usb"
+
+
+def test_a_tablet_on_nayax_usb_is_asked_for_no_address(w):
+    p18 = w.tills[0]
+    p18.device_model = "P18"
+    w.db.commit()
+    assert _row(w, p18)["pinpadAddressMissing"] is True
+    _patch_machine(w, p18, paymentIntegration="nayax_usb")
+    row = _row(w, p18)
+    assert (row["paymentIntegration"], row["paymentIntegrationSource"], row["paymentIntegrationMissing"]) == (
+        "nayax_usb", "machine", [],
+    )
+    assert (row["pinpadRequired"], row["pinpadAddressMissing"]) == (False, False)
+
+
+def test_the_context_offers_nayax_usb_even_on_a_tablet(w):
+    p18 = w.tills[0]
+    p18.device_model = "P18"
+    w.db.commit()
+    _patch_machine(w, p18, paymentIntegration="nayax_usb", nayaxUsbDevice="0B00:0080")
+    with patch("app.routers.machines._machine_for_read", return_value=p18):
+        ctx = pi_router.get_payment_integration_context(
+            level="machine", target_id=str(p18.id), current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db
+        )
+    options = {o["value"]: o for o in ctx["options"]}
+    assert options["nayax_usb"] == {
+        "value": "nayax_usb", "label": "Nayax — מסופון בחיבור USB", "selectable": True, "reason": None,
+    }
+    assert [o["value"] for o in ctx["options"]].index("nayax_usb") == 3  # right after the network one
+    assert ctx["requiredFields"]["nayax_usb"] == []
+    assert ctx["fieldLabels"]["nayaxUsbDevice"]
+    assert ctx["resolved"] == {"integration": "nayax_usb", "source": "machine", "automatic": False, "missing": []}
