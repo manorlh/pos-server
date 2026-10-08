@@ -146,6 +146,7 @@ def put_main_till(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="z_run_in_progress")
 
     tills = K.shop_machines(db, shop.id)
+    previous_main = MT.main_till_of_shop(db, shop.id)
     if body.machine_id is not None and str(body.machine_id) not in {str(m.id) for m in tills}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="machine_not_in_shop")
     chosen = next((m for m in tills if body.machine_id is not None and str(m.id) == str(body.machine_id)), None)
@@ -209,6 +210,14 @@ def put_main_till(
             status_code=refused.status_code,
             # The card's refusals are `{detail: {code, message}}`.
             content={"detail": {"code": refused.body.get("detail"), **{k: v for k, v in refused.body.items() if k != "detail"}}},
+        )
+    if previous_main is not None and chosen is not None and str(previous_main.id) != str(chosen.id):
+        # "השרת הוחלף — יש לבדוק תקינות נתונים" on every till of the shop (the owner).
+        from app.services.till_messages import send_server_switch_notice
+
+        send_server_switch_notice(
+            db, shop.id, MT.till_ref(chosen), MT.till_ref(previous_main),
+            getattr(current_user, "username", None) or getattr(current_user, "email", None),
         )
     out = _out(db, shop, current_user)
     targets = TP.notify_targets_for_scope(db, "shop", shop.id)

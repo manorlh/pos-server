@@ -456,3 +456,55 @@ def test_no_takeover_outside_the_lan_mode(w):
     with pytest.raises(HTTPException) as e:
         MT.take_over(w.db, t2)
     assert e.value.detail == "tables_not_lan"
+
+
+# ── "השרת הוחלף — יש לבדוק תקינות נתונים" (the owner, 08.10.2026) ────────────
+
+
+def _switch_notices(w):
+    from app.models.till_message import TillMessage, TillMessageReceipt
+    from app.services.till_messages import SERVER_SWITCH_TITLE
+
+    out = []
+    for m in w.db.query(TillMessage).filter(TillMessage.title == SERVER_SWITCH_TITLE).all():
+        tills = {str(r.machine_id) for r in w.db.query(TillMessageReceipt).filter(TillMessageReceipt.message_id == m.id)}
+        out.append((m, tills))
+    return out
+
+
+def test_moving_the_main_till_on_the_card_tells_every_till_to_check_the_data(w):
+    t1, t2 = w.tills
+    put(w, t1.id)
+    assert _switch_notices(w) == [], "naming the first main till is no switch"
+    put(w, t1.id)
+    assert _switch_notices(w) == [], "the same till again is no switch"
+    put(w, t2.id)
+    [(message, tills)] = _switch_notices(w)
+    assert tills == {str(t1.id), str(t2.id)}
+    assert message.display == "fullscreen" and message.created_by is None and message.expires_at is not None
+    assert t1.name in message.body and t2.name in message.body and "תקינות נתונים" in message.body
+
+
+def test_a_till_taking_over_tells_every_till_to_check_the_data(w):
+    from app.routers import tables as tables_router
+    from app.schemas.tables import TakeOverIn
+
+    t1, t2 = w.tills
+    set_param(w, "tablesMode", "shop", w.shop.id, LAN)
+    make_main(w, t1)
+    _heard(t1, 3600)
+    tables_router.take_over_host(str(t2.id), TakeOverIn(posUserName="מנהל"), BackgroundTasks(), machine=t2, db=w.db)
+    [(message, tills)] = _switch_notices(w)
+    assert tills == {str(t1.id), str(t2.id)}
+    assert "מנהל" in message.body
+    # Nothing moved (already the main till): no second notice.
+    tables_router.take_over_host(str(t2.id), TakeOverIn(posUserName="מנהל"), BackgroundTasks(), machine=t2, db=w.db)
+    assert len(_switch_notices(w)) == 1
+
+
+def test_the_notice_says_what_moved_who_moved_it_and_what_to_check():
+    from app.services.till_messages import server_switch_body
+
+    body = server_switch_body({"name": "קופה 2", "posNumber": "2"}, {"name": "קופה 1", "posNumber": "1"}, "דנה")
+    assert body.startswith("הקופה הראשית (שרת הסניף) הוחלפה מקופה 1 (#1) לקופה 2 (#2) על ידי דנה.")
+    assert "סנכרון רשת מקומית" in body
