@@ -155,6 +155,10 @@ from app.models.kds import (
 )
 # "הרשאות דשבורד": per dashboard user — sections, org scope, templates, audit.
 from app.models.dashboard_access import DashboardAccessAudit, DashboardAccessProfile, DashboardAccessTemplate
+# "שליטה חיה": blocks on items ("אזל" / "חסום"), the kiosks' quick hides, remote commands to devices.
+from app.models.sold_out import SoldOutMark
+from app.models.kiosk_live import KioskQuickHide
+from app.models.device_command import DeviceCommand, DeviceRemoteState
 
 __all__ = [
     "User", "UserRole",
@@ -239,4 +243,5 @@ __all__ = [
     "DashboardAccessAudit", "DashboardAccessProfile", "DashboardAccessTemplate",
     "TillRole", "TillRoleChange",
     "CashDrawerEvent", "CashMovement",
+    "SoldOutMark", "KioskQuickHide", "DeviceCommand", "DeviceRemoteState",
 ]

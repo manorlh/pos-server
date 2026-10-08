@@ -172,6 +172,9 @@ TIP_RESETTABLE_KEYS = (
     # "פתיחת פריטים אוטומטית אחרי Z": "ירושה" sends `null`.
     "autoReopenAfterZ",
     "autoReopenIgnoreStock",
+    # "אזל אוטומטי כשהמלאי מגיע ל-0" and the business day's start: "ירושה" sends `null`.
+    "autoSoldOutAtZero",
+    "businessDayStart",
     # "מכשירי תשלום": "לפי הסניף" / "ללא" send `null`.
     *payment_devices.SETTING_KEYS,
     # "חזרה אוטומטית לקיוסק" (Windows): "ירושה" sends `null`.

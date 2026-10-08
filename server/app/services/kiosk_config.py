@@ -2000,7 +2000,11 @@ def machine_layers(db: Session, machine) -> Layers:
 def effective_config(db: Session, machine) -> Dict[str, Any]:
     """What this kiosk gets: DEFAULTS ⊕ company ⊕ shop ⊕ machine (sanitised, repaired)."""
     layers = machine_layers(db, machine)
-    return resolve(layers.company, layers.shop, layers.machine)
+    # "שליטה מרחוק בקיוסקים": the shop's quick hides and the kiosk's banner, over its settings
+    # (app/services/kiosk_live.py) — every kiosk already applies both.
+    from app.services import kiosk_live
+
+    return kiosk_live.overlay(db, machine, resolve(layers.company, layers.shop, layers.machine))
 
 
 def effective_bundle(db: Session, machine) -> Dict[str, Any]:

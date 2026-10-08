@@ -117,6 +117,12 @@ class KioskDevice(Base):
     #: The kiosk's last reported status (`POST /sync/{id}/kiosk/sync`), cleaned.
     status = Column(KioskJSON, nullable=True)
     applied_config_version = Column(String(32), nullable=True)
+    #: "הודעה על המסך" from the dashboard's live panel: a banner over the kiosk's screens
+    #: without pausing it, until `banner_until` (null: until removed) — app/services/kiosk_live.py.
+    banner_message = Column(String(300), nullable=True)
+    banner_at = Column(DateTime(timezone=True), nullable=True)
+    banner_by = Column(String(200), nullable=True)
+    banner_until = Column(DateTime(timezone=True), nullable=True)
 
 
 class KioskOrder(Base):

@@ -70,6 +70,8 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
     ],
   },
   { id: 'stock', pages: ['/dashboard/stock'] },
+  // "חסימות ואזל": blocks are set from the stock, products and control-board screens.
+  { id: 'item_blocks', pages: [] },
   { id: 'vouchers', pages: ['/dashboard/vouchers'] },
   { id: 'prepaid_vouchers', pages: ['/dashboard/prepaid-vouchers'] },
   { id: 'promotions', pages: ['/dashboard/promotions'] },
@@ -79,6 +81,8 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'exception_alerts', pages: ['/dashboard/exception-alerts'] },
   { id: 'organization', pages: ['/dashboard/companies', '/dashboard/shops'] },
   { id: 'devices', pages: ['/dashboard/machines'] },
+  // "שליטה מרחוק בקופות וקיוסקים": tabs of the machines and kiosks pages.
+  { id: 'device_control', pages: [] },
   { id: 'tables', pages: ['/dashboard/tables'] },
   { id: 'kiosks', pages: ['/dashboard/kiosks', '/dashboard/kiosks/health'] },
   { id: 'till_design', pages: ['/dashboard/till-design'] },

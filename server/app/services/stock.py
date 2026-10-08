@@ -96,9 +96,26 @@ def apply_movement(
                 updated_at=utc_now(),
             )
         )
-    if (before > 0) != (before + Decimal(str(delta)) > 0):
+    after = before + Decimal(str(delta))
+    if (before > 0) != (after > 0):
         _wake_shop_on_crossing(db, shop_id, global_pid)
+        _auto_sold_out(db, tenant_id, shop_id, global_pid, ran_out=after <= 0)
     return True
+
+
+def _auto_sold_out(db: Session, tenant_id, shop_id, product_id, *, ran_out: bool) -> None:
+    """
+    The automatic "אזל" hook (app/services/sold_out.py `on_stock_crossing`): the stock the devices
+    sell from — the shop's, here — reached 0 (or came back) for a product that tracks stock.
+    """
+    tracked = db.query(Product.track_stock).filter(Product.id == product_id).scalar()
+    if not tracked:
+        return
+    from app.services import sold_out
+
+    sold_out.on_stock_crossing(
+        db, tenant_id=tenant_id, scope="shop", scope_id=shop_id, product_id=product_id, ran_out=ran_out,
+    )
 
 
 #: `reason` of the catalog signal a till gets when an item it sells runs out (or is back).

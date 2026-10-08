@@ -143,6 +143,13 @@ app.include_router(categories.router, prefix=_prefix)
 app.include_router(vouchers.router, prefix=_prefix)
 app.include_router(customers.router, prefix=_prefix)
 app.include_router(stock.router, prefix=_prefix)
+# "שליטה חיה בסניף": blocks on items ("אזל" / "חסום"), remote control of tills and kiosks.
+from app.routers import item_blocks as item_blocks_router  # noqa: E402
+from app.routers import device_commands as device_commands_router  # noqa: E402
+
+app.include_router(item_blocks_router.router, prefix=_prefix)
+app.include_router(device_commands_router.router, prefix=_prefix)
+app.include_router(device_commands_router.till_router, prefix=_prefix)
 app.include_router(tips.router, prefix=_prefix)
 app.include_router(tax_reports.router, prefix=_prefix)
 # After tax_reports: both mount under /reports, and the literal /reports/tax/...
@@ -301,6 +308,10 @@ from app.routers import kiosk_insights as kiosk_insights_router  # noqa: E402
 
 app.include_router(kiosk_insights_router.till_router, prefix=_prefix)
 app.include_router(kiosk_insights_router.router, prefix=_prefix)
+# "שליטה מרחוק בקיוסקים" (app/routers/kiosk_live.py): mounted before the kiosks' /{machine_id} routes.
+from app.routers import kiosk_live as kiosk_live_router  # noqa: E402
+
+app.include_router(kiosk_live_router.router, prefix=_prefix)
 app.include_router(kiosks_router.till_router, prefix=_prefix)
 app.include_router(kiosks_router.router, prefix=_prefix)
 # "עיצוב קופה" (app/routers/till_design.py, docs/SPEC_TILL_DESIGN.md): the till's design sync
