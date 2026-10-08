@@ -153,6 +153,7 @@ DISTRIBUTION_CONFLICT = "distribution_conflict"
 RECIPIENT_NOT_FOUND = "distribution_recipient_not_found"
 BATCH_ACTIVE = "distribution_batch_active"
 LAYOUT_INVALID = "distribution_layout_invalid"
+EXPIRY_PAST = "distribution_expiry_past"
 NO_VOUCHERS = "distribution_no_vouchers"
 LINK_INACTIVE = "distribution_link_inactive"
 RECIPIENT_REMOVED = "distribution_recipient_removed"
@@ -298,10 +299,28 @@ def _issue_token(r: VoucherDistributionRecipient, expires_at: datetime, now: dat
     return token
 
 
-def link_active(r: VoucherDistributionRecipient, now: datetime) -> bool:
+def effective_expiry(
+    r: VoucherDistributionRecipient, batch: Optional[PrepaidVoucherBatch], dist: Optional[VoucherDistribution],
+) -> Optional[datetime]:
+    """
+    When the link stops working. Stored at issue; but with no date of the distribution's own, a
+    link follows its batch: validity extended after sending → the links live on to its new end
+    + 7 days (never earlier than issued — shortening the batch never cuts a link sent).
+    """
+    stored = _utc(r.token_expires_at)
+    if batch is not None and batch.valid_until is not None and (dist is None or dist.link_expires_at is None):
+        follow = _utc(batch.valid_until) + LINK_GRACE
+        if stored is None or follow > stored:
+            return follow
+    return stored
+
+
+def link_active(r: VoucherDistributionRecipient, now: datetime, expires_at: Optional[datetime] = None) -> bool:
+    """Live: issued, not revoked, not removed or erased, not expired ([expires_at]: the effective expiry)."""
+    expires = _utc(expires_at) if expires_at is not None else _utc(r.token_expires_at)
     return bool(
         r.token_hash and r.token_revoked_at is None and r.deleted_at is None and r.anonymized_at is None
-        and (r.token_expires_at is None or _utc(r.token_expires_at) > now)
+        and (expires is None or expires > now)
     )
 
 
@@ -474,6 +493,9 @@ def update_settings(db: Session, user: User, batch: PrepaidVoucherBatch, body) -
             dist.layout = body.layout
     if "link_expires_at" in sent:
         value = _utc(body.link_expires_at)
+        if value is not None and value <= now:
+            # A date already past would kill every link sent at once — never by a typo.
+            raise _http(status.HTTP_400_BAD_REQUEST, EXPIRY_PAST)
         if value != _utc(dist.link_expires_at):
             dist.link_expires_at = value
             changed["linkExpiresAt"] = _iso(value)
@@ -827,7 +849,8 @@ def recipient_out(
     now: datetime,
 ) -> Dict[str, Any]:
     e164 = _phone_of(r)
-    link = link_of(r) if link_active(r, now) else None
+    expires = effective_expiry(r, batch, dist)
+    link = link_of(r) if link_active(r, now, expires) else None
     message = render_message(template_for(dist, r.kind), message_values(batch, r, serials, link, zone)) if link else None
     return {
         "id": str(r.id),
@@ -855,7 +878,7 @@ def recipient_out(
         "downloadCount": int(r.download_count or 0),
         "link": link,
         "linkActive": link is not None,
-        "linkExpiresAt": _iso(r.token_expires_at),
+        "linkExpiresAt": _iso(expires),
         "linkRevokedAt": _iso(r.token_revoked_at),
         "linkVersion": int(r.token_version or 0),
         "message": message,
@@ -1132,11 +1155,12 @@ def resolve_link(db: Session, token: str, now: datetime) -> Tuple[Optional[Vouch
         return r, "removed"
     if r.token_revoked_at is not None:
         return r, "revoked"
-    if r.token_expires_at is not None and _utc(r.token_expires_at) <= now:
-        return r, "expired"
     batch = db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == r.batch_id).first()
     if batch is None or batch.status == "cancelled":
         return r, "batch_cancelled"
+    expires = effective_expiry(r, batch, get_distribution(db, batch))
+    if expires is not None and expires <= now:
+        return r, "expired"
     return r, None
 
 
@@ -1218,8 +1242,8 @@ def landing_page(db: Session, batch: PrepaidVoucherBatch, r: VoucherDistribution
     pdf = html.escape(public_path(token) + "/pdf")
     if not vouchers:
         body = (
-            f"<h1>{html.escape(event)}</h1><p class='lead'>כל השוברים בקישור זה כבר מומשו או בוטלו.</p>"
-            "<p class='muted'>לשאלות פנו להפקה.</p>"
+            f"<h1>{html.escape(event)}</h1><p class='lead'>אין בקישור זה שוברים פעילים.</p>"
+            "<p class='muted'>ייתכן שכבר מומשו, בוטלו או הועברו. לשאלות פנו להפקה.</p>"
         )
         return _page(event, body, og=(f"שוברים — {event}", "קישור אישי לשוברים"))
     count = len(vouchers)
@@ -1294,6 +1318,7 @@ def export_csv(db: Session, batch: PrepaidVoucherBatch) -> bytes:
         .all()
     )
     held = assignments_of(db, [r.id for r in rows])
+    dist = get_distribution(db, batch)
 
     def when(moment: Optional[datetime]) -> str:
         moment = _utc(moment)
@@ -1320,7 +1345,7 @@ def export_csv(db: Session, batch: PrepaidVoucherBatch) -> bytes:
             r.group_no if r.group_no is not None else "", serials_text(serials, limit=1000), len(serials),
             _STATE_HE.get(recipient_state(r), r.status), when(r.sent_at), _VIA_HE.get(r.sent_via or "", ""),
             r.sent_by_name or "", when(r.delivered_at), when(r.read_at), when(r.failed_at), r.failure_reason or "",
-            when(r.opened_at), int(r.open_count or 0), int(r.download_count or 0), when(r.token_expires_at),
+            when(r.opened_at), int(r.open_count or 0), int(r.download_count or 0), when(effective_expiry(r, batch, dist)),
             when(r.token_revoked_at), when(r.deleted_at), when(r.anonymized_at),
         ])
     return ("﻿" + buf.getvalue()).encode("utf-8")

@@ -126,7 +126,9 @@ export function MessageSettings({ batch, overview }: { batch: PrepaidVoucherBatc
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="vd-expiry">{t('expiry')}</Label>
-            <Input id="vd-expiry" type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} />
+            {/* A past date would kill every link at once (the server refuses it too). */}
+            <Input id="vd-expiry" type="date" value={expiry} min={dayValue(new Date().toISOString())}
+              onChange={(e) => setExpiry(e.target.value)} />
             <p className="text-xs text-muted-foreground">
               {t('expiryHint', { date: formatDate(overview.defaultLinkExpiresAt) })}
             </p>

@@ -112,11 +112,14 @@ def token_of(item) -> str:
     return item["link"].rsplit("/", 1)[1]
 
 
-def request(*, ua="Mozilla/5.0 (Linux; Android 14) Chrome/129 Mobile", ip=None, method="GET"):
+def request(*, ua="Mozilla/5.0 (Linux; Android 14) Chrome/129 Mobile", ip=None, method="GET", fly_ip=None):
     ip = ip or f"10.{uuid.uuid4().int % 250}.{uuid.uuid4().int % 250}.{uuid.uuid4().int % 250}"
+    headers = [(b"user-agent", ua.encode())]
+    if fly_ip:
+        headers.append((b"fly-client-ip", fly_ip.encode()))
     return Request({
         "type": "http", "method": method, "path": "/", "query_string": b"",
-        "headers": [(b"user-agent", ua.encode())], "client": (ip, 1234),
+        "headers": headers, "client": (ip, 1234),
     })
 
 
@@ -232,6 +235,11 @@ class TestAssignment:
         do_import(w, batch, PEOPLE, mode="one")
         assert [i["serials"] for i in recipients(w, batch)["items"]] == [[1], [2], [3]]
 
+    def test_a_long_name_is_cut_never_refusing_the_list(self, w):
+        batch = make(w, count=1)
+        out = preview(w, batch, [{"name": "א" * 1000, "phone": "0501234567"}], mode="one")
+        assert out["rows"][0]["status"] == "ok" and len(out["rows"][0]["name"]) == VD.NAME_MAX
+
     def test_count_invalid(self, w):
         batch = make(w, count=3)
         out = preview(w, batch, [{"phone": "0501234567", "count": 0}, {"phone": "0521234567", "count": "x"}])
@@ -335,6 +343,31 @@ class TestLinks:
         at = datetime.fromisoformat(recipients(w, open_ended)["items"][0]["linkExpiresAt"])
         assert timedelta(days=59) < at - before <= timedelta(days=60, seconds=5)
 
+    def test_links_follow_the_batch_when_its_validity_is_extended(self, w, stub_pdf, monkeypatch):
+        from app.schemas.prepaid_voucher import PrepaidVoucherBatchUpdate
+
+        end = datetime.now(timezone.utc) + timedelta(days=2)
+        batch = make(w, count=1, valid_until=end)
+        do_import(w, batch, PEOPLE[:1], mode="one")
+        t = token_of(recipients(w, batch)["items"][0])
+        later = end + timedelta(days=30)
+        PR.update_prepaid_voucher_batch(batch["id"], PrepaidVoucherBatchUpdate(validUntil=later), **_ctx(w))
+        assert recipients(w, batch)["items"][0]["linkExpiresAt"][:10] == (later + VD.LINK_GRACE).date().isoformat()
+        # Past the old end + 7 days, the link still opens.
+        monkeypatch.setattr(VD, "_now", lambda: end + timedelta(days=10))
+        assert page(w, t).status_code == 200
+        # Shortening never cuts a link below what it was issued with (end + 7 days) …
+        PR.update_prepaid_voucher_batch(batch["id"], PrepaidVoucherBatchUpdate(validUntil=end - timedelta(days=1)), **_ctx(w))
+        assert page(w, t).status_code == 404  # day 10: past the issued end + 7
+        monkeypatch.setattr(VD, "_now", lambda: end + timedelta(days=6, hours=12))
+        assert page(w, t).status_code == 200  # within it, though the batch's own end + 7 has passed
+        # … and an explicit date of the distribution is fixed.
+        monkeypatch.setattr(VD, "_now", lambda: datetime.now(timezone.utc))
+        fixed = datetime.now(timezone.utc) + timedelta(days=3)
+        R.update_distribution(batch["id"], DistributionSettingsIn(linkExpiresAt=fixed), **_ctx(w))
+        monkeypatch.setattr(VD, "_now", lambda: fixed + timedelta(minutes=1))
+        assert page(w, t).status_code == 404
+
     def test_a_new_expiry_moves_every_live_link(self, w):
         batch = make(w, count=2)
         do_import(w, batch, PEOPLE[:2], mode="one")
@@ -373,6 +406,57 @@ class TestLinks:
         with pytest.raises(HTTPException) as e:
             page(w, VD.new_token(), ip=ip)
         assert e.value.status_code == 429
+
+    def test_behind_flys_proxy_each_client_has_its_own_limit(self, w):
+        # Every request reaches the API from Fly's proxy; the client is in Fly-Client-IP.
+        proxy = "172.16.0.1"
+        for _ in range(R.MISSES_PER_MINUTE):
+            assert page(w, VD.new_token(), ip=proxy, fly_ip="203.0.113.5").status_code == 404
+        assert page(w, VD.new_token(), ip=proxy, fly_ip="203.0.113.6").status_code == 404
+        with pytest.raises(HTTPException):
+            page(w, VD.new_token(), ip=proxy, fly_ip="203.0.113.5")
+
+    def test_a_ceiling_on_misses_for_the_whole_server(self, w, monkeypatch):
+        from app.middleware import rate_limit as RL
+
+        monkeypatch.setattr(R, "MISSES_PER_MINUTE_ALL", 3)
+        RL._buckets.pop("voucher_link_miss_all", None)
+        try:
+            for _ in range(3):
+                assert page(w, VD.new_token()).status_code == 404  # each from another address
+            with pytest.raises(HTTPException) as e:
+                page(w, VD.new_token())
+            assert e.value.status_code == 429
+        finally:
+            RL._buckets.pop("voucher_link_miss_all", None)
+
+    def test_the_token_never_reaches_the_logs(self, w, caplog):
+        import logging
+
+        token = VD.new_token()
+        for name in R.LOGGERS_WITH_PATHS:
+            assert any(isinstance(f, R.RedactVoucherLinks) for f in logging.getLogger(name).filters)
+        f = R.RedactVoucherLinks()
+        access = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d',
+                                   ("1.2.3.4:5", "GET", f"/api/v1/public/vouchers/{token}/pdf?download=1", "1.1", 200), None)
+        f.filter(access)
+        assert token not in access.getMessage() and "/public/vouchers/[link]/pdf?download=1" in access.getMessage()
+        done = logging.LogRecord("app.middleware.request_context", logging.INFO, "", 0, "request completed", None, None)
+        done.path = f"/api/v1/public/vouchers/{token}"
+        done.response_body = f"<a href='/api/v1/public/vouchers/{token}/pdf'>"
+        f.filter(done)
+        assert token not in done.path and token not in done.response_body
+        # Through the real logger, as the middleware logs it.
+        with caplog.at_level(logging.INFO, logger="app.middleware.request_context"):
+            logging.getLogger("app.middleware.request_context").info(
+                "request completed", extra={"path": f"/api/v1/public/vouchers/{token}"})
+        assert caplog.records and all(token not in getattr(r, "path", "") for r in caplog.records)
+
+    def test_a_past_expiry_is_refused(self, w):
+        batch = make(w, count=1)
+        past = datetime.now(timezone.utc) - timedelta(hours=1)
+        e = refused(R.update_distribution, batch["id"], DistributionSettingsIn(linkExpiresAt=past), **_ctx(w))
+        assert (e.status_code, e.detail) == (400, VD.EXPIRY_PAST)
 
     def test_reissue_kills_the_old_link(self, w, stub_pdf):
         batch = make(w, count=2)
@@ -455,8 +539,12 @@ class TestPdf:
         do_import(w, batch, PEOPLE[:1], mode="one")
         voucher_rows(w, batch)[0].status = "used"
         w.db.commit()
-        rid = recipients(w, batch)["items"][0]["id"]
-        assert refused(R.recipient_pdf, batch["id"], rid, purpose="download", **_ctx(w)).detail == VD.NO_VOUCHERS
+        item = recipients(w, batch)["items"][0]
+        assert refused(R.recipient_pdf, batch["id"], item["id"], purpose="download", **_ctx(w)).detail == VD.NO_VOUCHERS
+        # The link still opens, and says so without a voucher in it.
+        resp = pdf(w, token_of(item))
+        assert resp.status_code == 404 and "אין בקישור זה שוברים פעילים" in bytes(resp.body).decode()
+        assert stub_pdf == []
 
 
 # ── Messages ─────────────────────────────────────────────────────────────────

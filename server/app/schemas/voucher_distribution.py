@@ -16,9 +16,17 @@ class DistributionRowIn(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    name: Optional[str] = Field(None, max_length=NAME_MAX * 2)
+    #: Cut to NAME_MAX by the plan; a long cell never refuses the whole list.
+    name: Optional[str] = None
     #: As typed or as the spreadsheet cell held it (a number too).
     phone: Optional[Any] = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name(cls, value):
+        if value is None:
+            return None
+        return str(value)[: NAME_MAX * 2]
     #: Out-of-range or unreadable values are flagged per row by the plan, not refused (422) here.
     group: Optional[int] = None
     count: Optional[int] = None

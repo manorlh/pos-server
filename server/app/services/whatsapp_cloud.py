@@ -601,7 +601,7 @@ def send_one(db: Session, batch: PrepaidVoucherBatch, r: VoucherDistributionReci
     except HTTPException:
         raise CloudApiError("no_vouchers", "nothing left to send") from None
     serials = [a.serial for a in VD.assignments_of(db, [r.id])[r.id]]
-    link = VD.link_of(r) if VD.link_active(r, now) else None
+    link = VD.link_of(r) if VD.link_active(r, now, VD.effective_expiry(r, batch, VD.get_distribution(db, batch))) else None
     values = VD.message_values(batch, r, serials, link, VD._zone(db, batch))
     media_id = client.upload_media(data, filename)
     payload = template_payload(

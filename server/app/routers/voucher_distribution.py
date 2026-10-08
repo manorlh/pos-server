@@ -36,6 +36,7 @@ POST   /public/whatsapp/webhook/{config_id}    → message statuses (signed by t
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 from urllib.parse import quote
 
@@ -45,7 +46,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.middleware.auth import get_active_tenant_id, get_current_user
-from app.middleware.rate_limit import check_rate_limit, check_rate_limit_by_key
+from app.middleware.rate_limit import check_rate_limit_by_key
 from app.models.company import Company
 from app.models.prepaid_voucher import PrepaidVoucherBatch
 from app.models.user import User
@@ -63,6 +64,43 @@ from app.services import voucher_distribution as VD
 from app.services import whatsapp_cloud as WA
 
 logger = logging.getLogger(__name__)
+
+# ── The personal links stay out of the logs ───────────────────────────────────
+# The token is the whole secret of a link, and it travels in the path: the request log
+# ("request completed", app/middleware/request_context.py) and uvicorn's access log write every
+# path. Both loggers get this filter, so `/public/vouchers/<token>` is logged as
+# `/public/vouchers/[link]` (a body log, when switched on, is redacted the same way).
+_LINK_IN_TEXT = re.compile(r"(/public/vouchers/)[A-Za-z0-9_-]{8,}")
+_LINK_MARK = "/public/vouchers/"
+
+
+def redact_links(value):
+    """[value] with any personal link's token replaced; anything but text as it is."""
+    if isinstance(value, str) and _LINK_MARK in value:
+        return _LINK_IN_TEXT.sub(r"\1[link]", value)
+    if isinstance(value, bytes) and _LINK_MARK.encode() in value:
+        return redact_links(value.decode("utf-8", "replace"))
+    return value
+
+
+class RedactVoucherLinks(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = redact_links(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(redact_links(a) for a in record.args)
+        elif isinstance(record.args, dict):
+            record.args = {k: redact_links(v) for k, v in record.args.items()}
+        for key in ("path", "request_body", "response_body", "url"):
+            if key in record.__dict__:
+                record.__dict__[key] = redact_links(record.__dict__[key])
+        return True
+
+
+LOGGERS_WITH_PATHS = ("uvicorn.access", "app.middleware.request_context")
+for _name in LOGGERS_WITH_PATHS:
+    _logger = logging.getLogger(_name)
+    if not any(isinstance(f, RedactVoucherLinks) for f in _logger.filters):
+        _logger.addFilter(RedactVoucherLinks())
 
 router = APIRouter(tags=["voucher-distribution"])
 public_router = APIRouter(tags=["voucher-distribution-public"])
@@ -414,13 +452,16 @@ def put_whatsapp_config(
 # ── Public ────────────────────────────────────────────────────────────────────
 
 #: Per address: pages and PDFs a minute; a PDF is drawn on every request, so it is the tighter.
-PAGE_PER_MINUTE = 60
-PDF_PER_MINUTE = 20
+#: Generous enough for a mobile carrier's shared address (CGNAT) while a batch is being sent.
+PAGE_PER_MINUTE = 120
+PDF_PER_MINUTE = 60
 #: Per link: PDFs a minute (a forwarded link hammered from many addresses).
 PDF_PER_LINK_PER_MINUTE = 10
-#: Per address: unknown / dead links a minute before 429 — guessing is pointless at 160 bits,
-#: and this keeps it expensive anyway.
-MISSES_PER_MINUTE = 10
+#: Unknown / dead links a minute before 429 — per address, and for the whole server (the address
+#: comes from Fly's edge header, which a client could forge where there is no Fly in front).
+#: Guessing is pointless at 160 bits; this keeps it expensive anyway.
+MISSES_PER_MINUTE = 20
+MISSES_PER_MINUTE_ALL = 300
 
 _PUBLIC_HEADERS = {
     "Cache-Control": "no-store, private",
@@ -435,8 +476,13 @@ _PAGE_CSP = (
 
 
 def _client_ip(request: Request) -> Optional[str]:
-    # Fly's edge sets Fly-Client-IP; elsewhere the socket peer (X-Forwarded-For is spoofable).
+    # Fly's edge sets Fly-Client-IP (the API runs without --proxy-headers, so the socket peer
+    # there is Fly's proxy, shared by everyone); elsewhere the socket peer.
     return request.headers.get("fly-client-ip") or (request.client.host if request.client else None)
+
+
+def _limit(request: Request, key: str, per_minute: int) -> None:
+    check_rate_limit_by_key(f"{key}:{_client_ip(request) or 'unknown'}", per_minute, 60)
 
 
 def _resolve(request: Request, db: Session, token: str):
@@ -445,6 +491,7 @@ def _resolve(request: Request, db: Session, token: str):
     ua = request.headers.get("user-agent")
     r, why = VD.resolve_link(db, token, VD._now())
     if why is not None:
+        check_rate_limit_by_key("voucher_link_miss_all", MISSES_PER_MINUTE_ALL, 60)
         check_rate_limit_by_key(f"voucher_link_miss:{ip}", MISSES_PER_MINUTE, 60)
         if r is not None:
             VD.record_denied(db, r, why, ip=ip, user_agent=ua)
@@ -461,7 +508,7 @@ def _invalid() -> HTMLResponse:
 
 @public_router.get("/public/vouchers/{token}", response_class=HTMLResponse, include_in_schema=False)
 def public_voucher_page(token: str, request: Request, db: Session = Depends(get_db)):
-    check_rate_limit(request, "voucher_link_page", PAGE_PER_MINUTE, 60)
+    _limit(request, "voucher_link_page", PAGE_PER_MINUTE)
     r, batch = _resolve(request, db, token)
     if r is None:
         return _invalid()
@@ -479,7 +526,7 @@ def public_voucher_pdf(
     download: bool = Query(False),
     db: Session = Depends(get_db),
 ):
-    check_rate_limit(request, "voucher_link_pdf", PDF_PER_MINUTE, 60)
+    _limit(request, "voucher_link_pdf", PDF_PER_MINUTE)
     r, batch = _resolve(request, db, token)
     if r is None:
         return _invalid()
@@ -510,7 +557,7 @@ def whatsapp_webhook_verify(
     from app.models.voucher_distribution import WhatsAppCloudConfig
     from app.services.notifications import crypto
 
-    check_rate_limit(request, "whatsapp_webhook_verify", 30, 60)
+    _limit(request, "whatsapp_webhook_verify", 30)
     cid = PV._as_uuid(config_id)
     cfg = db.query(WhatsAppCloudConfig).filter(WhatsAppCloudConfig.id == cid).first() if cid else None
     expected = WA._secret(cfg, "verify_token_ciphertext")
