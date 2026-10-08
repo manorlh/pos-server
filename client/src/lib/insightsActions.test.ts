@@ -10,6 +10,7 @@ import {
   announcementText,
   anomalyActions,
   anomalyMessage,
+  checkFixedPrice,
   crossesMidnight,
   durationBody,
   endAnnouncementText,
@@ -118,6 +119,32 @@ describe('texts', () => {
       'מבצע: 1+1 — קנו 1 וקבלו 1 חינם על כל המוצרים',
     );
     assert.equal(endAnnouncementText(' שעה שמחה '), 'המבצע הסתיים: שעה שמחה');
+  });
+
+  it('a fixed price reads as the price, not the name twice', () => {
+    assert.equal(
+      announcementText({ name: 'קרואסון', type: 'fixed_price', config: { price: 9 } }, ['קרואסון']),
+      'מבצע: קרואסון — ₪9 ליחידה על קרואסון',
+    );
+  });
+});
+
+describe('checkFixedPrice', () => {
+  const pricing = { price: 5000, minPrice: 1000, floor: null };
+  it('the reviewer’s case: ₪5 off a ₪50 reference leaves −₪35 in the ₪10 shop — refused', () => {
+    const out = checkFixedPrice('5', pricing);
+    assert.deepEqual(out && [out.value, out.lowest, out.tooLow, out.refused], [500, -3500, true, true]);
+  });
+  it('under ₪1, at or above the price, or not a number', () => {
+    assert.equal(checkFixedPrice('0.5', { price: 1200, minPrice: 1200, floor: null })?.tooLow, true);
+    assert.equal(checkFixedPrice('12', { price: 1200, minPrice: 1200, floor: null }), null);
+    assert.equal(checkFixedPrice('abc', pricing), null);
+  });
+  it('the cost floor, and a fine price', () => {
+    assert.equal(checkFixedPrice('9', { price: 1200, minPrice: 1200, floor: 950 })?.belowCost, true);
+    assert.deepEqual(checkFixedPrice('9.9', { price: 1200, minPrice: 1200, floor: 950 }), {
+      value: 990, lowest: 990, belowCost: false, tooLow: false, refused: false,
+    });
   });
 });
 

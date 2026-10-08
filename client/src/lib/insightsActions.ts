@@ -140,6 +140,28 @@ export interface OfferView {
   belowCost: boolean;
 }
 
+/** No unit is ever sold under ₪1 (agorot) — the server's rule too. */
+export const MIN_UNIT_PRICE = 100;
+
+/**
+ * A fixed price typed in the sheet (shekels), checked as the server does: below the price,
+ * every shop's unit (`minPrice` less the same amount off) at least ₪1, and not under the
+ * cost's floor. Agorot in and out; null when it is not a number.
+ */
+export function checkFixedPrice(
+  input: string,
+  pricing: { price: number; minPrice: number; floor: number | null },
+): { value: number; lowest: number; belowCost: boolean; tooLow: boolean; refused: boolean } | null {
+  const shekels = parseFloat(input);
+  if (!Number.isFinite(shekels)) return null;
+  const value = Math.floor(Math.round(shekels * 1000) / 10);
+  if (value <= 0 || value >= pricing.price) return null;
+  const lowest = pricing.minPrice - (pricing.price - value);
+  const belowCost = pricing.floor !== null && lowest < pricing.floor;
+  const tooLow = lowest < MIN_UNIT_PRICE || value < MIN_UNIT_PRICE;
+  return { value, lowest, belowCost, tooLow, refused: belowCost || tooLow };
+}
+
 export function offerKey(o: { kind: string; value: number | null }): string {
   return `${o.kind}:${o.value ?? ''}`;
 }
@@ -183,7 +205,9 @@ export interface AnnouncedPromotion {
 export function announcementText(p: AnnouncedPromotion, productNames: string[] = []): string {
   const c = p.config ?? {};
   let offer = p.name;
-  if (p.type === 'discount') {
+  if (p.type === 'fixed_price') {
+    offer = `₪${trimNumber(c.price ?? 0)} ליחידה`;
+  } else if (p.type === 'discount') {
     offer = c.discountKind === 'amount' ? `₪${trimNumber(c.discountValue ?? 0)} הנחה ליחידה` : `${trimNumber(c.discountValue ?? 0)}% הנחה`;
   } else if (p.type === 'buy_x_get_y') {
     const pct = c.getDiscountPercent ?? 100;

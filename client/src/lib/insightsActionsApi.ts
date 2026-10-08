@@ -157,6 +157,10 @@ export interface Offer {
   lowestUnitPrice?: number;
   effectivePct: number;
   belowCost: boolean;
+  /** A unit at nothing, or under ₪1. */
+  tooLow?: boolean;
+  /** Not offered: under cost or under ₪1. */
+  refused?: boolean;
   floor?: number | null;
   marginAfterPct?: number | null;
   offenders?: { productId: string; name: string; floor: number; lowestUnitPrice: number }[];
@@ -178,6 +182,8 @@ export interface PromotionSuggestion {
   suggested: Offer | null;
   canCreate: boolean;
   canAnnounce: boolean;
+  /** The general item or an open-price item: no promotion on it. */
+  unsupported?: 'general' | 'open_price' | null;
   maxHours: number;
   maxUntilDays: number;
 }
@@ -256,10 +262,11 @@ export const createHappyHour = (body: HappyHourBody) =>
   api.post<QuickAction>('/insights/quick-actions/happy-hours', body).then((r) => r.data);
 
 /** The server's 400 detail for an offer below cost, when that is what it is. */
-export function belowCostDetail(err: unknown): { floor?: number | null; offenders?: Offer['offenders'] } | null {
+export function belowCostDetail(err: unknown): { code: string; floor?: number | null; offenders?: Offer['offenders'] } | null {
   const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
-  if (detail && typeof detail === 'object' && (detail as { code?: string }).code === 'quick_promo_below_cost') {
-    return detail as { floor?: number | null; offenders?: Offer['offenders'] };
+  const code = detail && typeof detail === 'object' ? (detail as { code?: string }).code : undefined;
+  if (code === 'quick_promo_below_cost' || code === 'quick_promo_below_minimum') {
+    return detail as { code: string; floor?: number | null; offenders?: Offer['offenders'] };
   }
   return null;
 }

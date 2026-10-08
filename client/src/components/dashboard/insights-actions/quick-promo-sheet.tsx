@@ -19,6 +19,7 @@ import { formatShortDateTime } from '@/lib/format';
 import {
   MESSAGE_MAX,
   addDays,
+  checkFixedPrice,
   announcementText,
   durationBody,
   offerKey,
@@ -69,7 +70,7 @@ function offerAsPromotion(name: string, offer: Offer) {
   if (offer.kind === 'second_half') {
     return { name, type: 'buy_x_get_y', config: { buyQuantity: 1, getQuantity: 1, getDiscountPercent: 50 } };
   }
-  if (offer.kind === 'fixed_price') return { name, type: 'fixed', config: {} };
+  if (offer.kind === 'fixed_price') return { name, type: 'fixed_price', config: { price: (offer.newPrice ?? offer.value ?? 0) / 100 } };
   return { name, type: 'discount', config: { discountKind: 'percent', discountValue: offer.value ?? 0 } };
 }
 
@@ -106,9 +107,17 @@ export function QuickPromoSheetBody({ scope, context, onDone, source }: QuickPro
   const selectedKey = picked ?? suggestedKey;
   let offer: Offer | undefined = options.find((o) => offerKey(o) === selectedKey);
   if (selectedKey === 'fixed_price:custom' && data?.price) {
-    const value = Math.round(parseFloat(fixedPrice) * 100);
-    offer = Number.isFinite(value) && value > 0 && value < data.price
-      ? { kind: 'fixed_price', value, newPrice: value, effectivePct: (1 - value / data.price) * 100, belowCost: data.floor != null && (data.minPrice ?? data.price) - (data.price - value) < data.floor }
+    const checked = checkFixedPrice(fixedPrice, { price: data.price, minPrice: data.minPrice ?? data.price, floor: data.floor });
+    offer = checked
+      ? {
+          kind: 'fixed_price',
+          value: checked.value,
+          newPrice: checked.value,
+          effectivePct: (1 - checked.value / data.price) * 100,
+          belowCost: checked.belowCost,
+          tooLow: checked.tooLow,
+          refused: checked.refused,
+        }
       : undefined;
   }
 
@@ -144,7 +153,13 @@ export function QuickPromoSheetBody({ scope, context, onDone, source }: QuickPro
     },
     onError: (err) => {
       const below = belowCostDetail(err);
-      toast.error(below ? t('belowCostError', { floor: agorot(below.floor ?? 0) }) : axiosErrorToToastMessage(err, tc('error')));
+      toast.error(
+        below
+          ? below.code === 'quick_promo_below_minimum'
+            ? t('tooLowError')
+            : t('belowCostError', { floor: agorot(below.floor ?? 0) })
+          : axiosErrorToToastMessage(err, tc('error')),
+      );
       setStep('form');
     },
   });
@@ -214,8 +229,8 @@ export function QuickPromoSheetBody({ scope, context, onDone, source }: QuickPro
         ? 'target'
         : !offer
           ? 'offer'
-          : offer.belowCost
-            ? 'belowCost'
+          : offer.refused || offer.belowCost
+            ? offer.tooLow ? 'tooLow' : 'belowCost'
             : !body
               ? 'duration'
               : null;
@@ -309,6 +324,8 @@ export function QuickPromoSheetBody({ scope, context, onDone, source }: QuickPro
       <SheetGroup label={t('offer')} hint={data ? (data.cost != null ? t('marginHint', { price: agorot(data.price), cost: agorot(data.cost), floor: agorot(data.floor) }) : data.subject.kind === 'product' ? t('noCostHint') : t('groupHint', { count: data.costedProducts ?? 0 })) : undefined}>
         {!subject ? (
           <p className="text-[15px] text-[#8E8E93]">{t('chooseFirst')}</p>
+        ) : data?.unsupported ? (
+          <p className="text-[15px] text-[#8E8E93]">{t(data.unsupported === 'general' ? 'unsupportedGeneral' : 'unsupportedOpenPrice')}</p>
         ) : suggestion.isPending ? (
           <p className="text-[15px] text-[#8E8E93]">{tc('loading')}</p>
         ) : (
@@ -322,7 +339,7 @@ export function QuickPromoSheetBody({ scope, context, onDone, source }: QuickPro
                     type="button"
                     role="radio"
                     aria-checked={on}
-                    disabled={o.belowCost}
+                    disabled={o.refused ?? o.belowCost}
                     onClick={() => setPicked(key)}
                     className="flex min-h-11 w-full items-center justify-between gap-3 py-1.5 text-start disabled:opacity-40"
                   >
@@ -332,7 +349,9 @@ export function QuickPromoSheetBody({ scope, context, onDone, source }: QuickPro
                         {key === suggestedKey ? <span className="ms-2 rounded-full bg-[#34C759]/15 px-2 py-0.5 text-[11px] font-semibold text-[#248A3D] dark:text-[#30D158]">{t('suggested')}</span> : null}
                       </span>
                       <span className="block text-[12px] text-[#8E8E93]">
-                        {o.belowCost
+                        {o.tooLow
+                          ? t('tooLow')
+                          : o.belowCost
                           ? t('belowCost')
                           : o.newPrice && data?.subject.kind === 'product'
                             ? t('newPrice', { price: agorot(o.newPrice) })
@@ -363,7 +382,9 @@ export function QuickPromoSheetBody({ scope, context, onDone, source }: QuickPro
                   />
                   <span className="text-[13px]">₪</span>
                 </div>
-                {selectedKey === 'fixed_price:custom' && offer?.belowCost ? <p className="pb-1 text-[12px] text-[#FF3B30]">{t('belowCost')}</p> : null}
+                {selectedKey === 'fixed_price:custom' && offer?.refused ? (
+                  <p className="pb-1 text-[12px] text-[#FF3B30]">{offer.tooLow ? t('tooLow') : t('belowCost')}</p>
+                ) : null}
               </li>
             ) : null}
           </ul>

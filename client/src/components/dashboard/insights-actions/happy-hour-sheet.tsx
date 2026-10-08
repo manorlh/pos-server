@@ -189,7 +189,7 @@ export function HappyHourSheetBody({ scope, context, onDone, initial }: HappyHou
 
   const problemKey = !canAct
     ? 'permission'
-    : happyHourProblem(draft) ?? (!subject ? 'subject' : !chosen ? 'target' : !offer ? 'offer' : offer.belowCost ? 'belowCost' : null);
+    : happyHourProblem(draft) ?? (!subject ? 'subject' : !chosen ? 'target' : !offer ? 'offer' : (offer.refused ?? offer.belowCost) ? 'belowCost' : null);
   const overlaps = picked?.overlaps ?? [];
 
   if (step === 'confirm' && offer && chosen) {
@@ -339,9 +339,9 @@ export function HappyHourSheetBody({ scope, context, onDone, initial }: HappyHou
                 type="button"
                 role="radio"
                 aria-checked={on}
-                disabled={o.belowCost}
+                disabled={o.refused ?? o.belowCost}
                 onClick={() => setOfferPicked(key)}
-                title={o.belowCost ? tp('belowCost') : undefined}
+                title={(o.refused ?? o.belowCost) ? (o.tooLow ? tp('tooLow') : tp('belowCost')) : undefined}
                 className={cn(
                   'min-h-9 rounded-full px-3 text-[15px] disabled:opacity-40',
                   on ? 'bg-[#007AFF] text-white dark:bg-[#0A84FF]' : 'bg-[#7676801F] dark:bg-[#7676803D]',
