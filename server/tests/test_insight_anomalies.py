@@ -331,6 +331,16 @@ class TestEndpoint:
         row = next(t for g in out["groups"] for t in g["tills"] if t["machineId"] == str(w.tills[2].id))
         assert row["flags"] == ["till_cash"] and row["cash"] == 7 * 5 * 5_000
 
+    def test_a_distributor_compares_only_the_tills_they_placed(self, w):
+        trading_week(w, quiet=w.tills[3])
+        other = User(id=uuid.uuid4(), role=UserRole.DISTRIBUTOR, tenant_id=w.tenant.id, email="d@x", username="dist")
+        w.db.add(other)
+        w.db.commit()
+        out = R.get_till_anomalies(window="period", p=params(days=7), **ctx(w, other))
+        assert out["cards"] == []
+        assert all(t["documents"] == 0 for g in out["groups"] for t in g["tills"])
+        assert not any(t["machineId"] == str(w.tills[3].id) for g in out["groups"] for t in g["tills"])
+
     def test_the_organization_thresholds_and_who_sets_them(self, w):
         quiet = w.tills[3]
         trading_week(w, quiet=quiet, quiet_sales=1)  # 1 sale a day vs 6: 17%

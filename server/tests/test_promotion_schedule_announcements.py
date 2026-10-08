@@ -257,6 +257,19 @@ class TestAnnouncement:
         assert out["announcement"]["enabled"] is False
         assert all(m.cancelled_at is not None for m in w.db.query(TillMessage).all())
 
+    def test_an_edit_by_someone_who_may_not_message_keeps_the_plan(self, w):
+        out = PR.create_promotion(promotion_in(w), BackgroundTasks(), **ctx(w, w.manager))
+        promo = w.db.get(Promotion, uuid.UUID(out["id"]))
+        planned = list(promo.announcement["startMessageIds"]) + list(promo.announcement["endMessageIds"])
+        # "restricted" holds promotions but not till messages: the edit goes through, the
+        # announcement stays exactly as planned.
+        PR.update_promotion(out["id"], promotion_in(w, name="שעה שמחה 2", announcement={"enabled": True, "endEnabled": True}),
+                            BackgroundTasks(), **ctx(w, w.restricted))
+        w.db.refresh(promo)
+        assert promo.name == "שעה שמחה 2"
+        assert promo.announcement["startMessageIds"] + promo.announcement["endMessageIds"] == planned
+        assert all(m.cancelled_at is None for m in messages(w, planned)) and w.db.query(TillMessage).count() == 2
+
     def test_the_whole_organization_is_announced_per_company(self, w):
         out = PR.create_promotion(promotion_in(w, scopes=[]), BackgroundTasks(), **ctx(w))
         promo = w.db.get(Promotion, uuid.UUID(out["id"]))

@@ -62,6 +62,11 @@ def scope_machines(db, scope: InsightScope) -> List[POSMachine]:
         query = query.filter(POSMachine.area_id.is_(None))
     elif scope.area_filter is not None:
         query = query.filter(POSMachine.area_id == scope.area_filter)
+    from app.models.user import UserRole
+
+    if scope.user is not None and scope.user.role == UserRole.DISTRIBUTOR:
+        # A distributor's tills are the ones they placed (the machines list's rule).
+        query = query.filter(POSMachine.distributor_id == scope.user.id)
     return query.all()
 
 

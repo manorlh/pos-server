@@ -20,8 +20,9 @@ scheduled again from the promotion as it is now; a start that went out is not re
 Pausing, switching it off or deleting the promotion takes a live banner down too.
 
 Who may: the till messages' writers, and — for a dashboard user with sections — the
-"הודעות לקופות" section at edit, as on its own page. Someone else editing the promotion
-never sends; withdrawing is always allowed.
+"הודעות לקופות" section at edit, as on its own page. Someone else editing a running, announced
+promotion leaves its announcement as planned (never dropped, never sent by them); pausing and
+deleting always withdraw it.
 """
 from __future__ import annotations
 
@@ -249,6 +250,11 @@ def plan(db: Session, user: User, promotion: Promotion, *, settings: Optional[Di
         if settings is not None:
             promotion.announcement = state
         return []
+    if state.get("enabled") and not promotion.is_paused and not may_message(db, user, sections):
+        # Someone who may not send till messages edited a running, announced promotion: its
+        # announcement stays as it was planned (never silently dropped, never re-sent by them).
+        promotion.announcement = state
+        return []
     tenant_id = promotion.tenant_id
     woken: List[POSMachine] = []
 
@@ -270,10 +276,6 @@ def plan(db: Session, user: User, promotion: Promotion, *, settings: Optional[Di
             woken += _take_down(db, user, tenant_id, m)
         state["startMessageIds"] = []
         state["startAt"] = None
-        promotion.announcement = state
-        return woken
-
-    if not may_message(db, user, sections):
         promotion.announcement = state
         return woken
 
