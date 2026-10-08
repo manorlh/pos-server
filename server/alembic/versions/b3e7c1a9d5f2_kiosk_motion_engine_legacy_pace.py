@@ -1,7 +1,7 @@
 """kiosk motion engine: the kiosks from before it keep their pace ("legacy")
 
 Revision ID: b3e7c1a9d5f2
-Revises: a6d2f8c4e0b7
+Revises: 7d2e4b9f1a63
 Create Date: 2026-10-08 12:00:00.000000
 
 "מנוע הנפשות" (app/services/kiosk_motion.py): a new kiosk gets Runner Standard — the spec's clearer,
@@ -23,7 +23,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "b3e7c1a9d5f2"
-down_revision: Union[str, Sequence[str], None] = "a6d2f8c4e0b7"
+down_revision: Union[str, Sequence[str], None] = "7d2e4b9f1a63"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

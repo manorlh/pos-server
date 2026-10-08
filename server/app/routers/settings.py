@@ -55,6 +55,7 @@ from app.models.pos_machine import POSMachine
 from app.routers.machines import _machine_for_read
 from app.services.terminal_status import machine_terminal_fields, terminal_settings_for
 from app.services import payment_integration, payment_secrets
+from app.services import payment_devices
 
 router = APIRouter(tags=["settings"])
 
@@ -171,6 +172,8 @@ TIP_RESETTABLE_KEYS = (
     # "פתיחת פריטים אוטומטית אחרי Z": "ירושה" sends `null`.
     "autoReopenAfterZ",
     "autoReopenIgnoreStock",
+    # "מכשירי תשלום": "לפי הסניף" / "ללא" send `null`.
+    *payment_devices.SETTING_KEYS,
 )
 
 
@@ -396,6 +399,7 @@ def patch_tenant_settings(
     _check_z_scope_write(current_user, data, tenant.settings)
     _guard_z_scope_change(db, data, tenant.settings, lambda: _tenant_tills(db, tenant.id), default="shop")
     patch = _build_patch(data, current_user)
+    payment_devices.check_settings_patch(db, "tenant", tenant, patch)
     secrets = _secret_patch(data)
     if not patch and not secrets:
         return EntitySettingsResponse(
@@ -466,6 +470,7 @@ def patch_company_settings(
 
     _refuse_tenant_only_keys(data)
     patch = _build_patch(data, current_user)
+    payment_devices.check_settings_patch(db, "company", company, patch)
     secrets = _secret_patch(data)
     if not patch and not secrets:
         return EntitySettingsResponse(
@@ -543,6 +548,7 @@ def patch_shop_settings(
 
     _refuse_tenant_only_keys(data)
     patch = _build_patch(data, current_user)
+    payment_devices.check_settings_patch(db, "shop", shop, patch)
     secrets = _secret_patch(data)
     if not patch and not secrets:
         return ShopSettingsResponse(
@@ -636,6 +642,7 @@ def patch_area_settings(
     _check_shop_settings_write(current_user, shop, db)
     _refuse_tenant_only_keys(data)
     patch = _build_patch(data, current_user)
+    payment_devices.check_settings_patch(db, "area", area, patch)
     secrets = _secret_patch(data)
     if not patch and not secrets:
         return AreaSettingsResponse(
@@ -727,6 +734,7 @@ def patch_machine_settings(
     patch = _build_patch(data, current_user)
     # A till without a terminal of its own (a P18) may only be given an external one.
     payment_integration.check_machine_choice(machine, patch)
+    payment_devices.check_settings_patch(db, "machine", machine, patch)
     secrets = _secret_patch(data)
     if not patch and not secrets:
         return MachineSettingsResponse(

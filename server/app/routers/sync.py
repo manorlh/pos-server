@@ -2221,6 +2221,19 @@ def get_settings_sync(
             effective.pop(key, None)
         else:
             effective[key] = value
+    # "מכשירי תשלום": the shop's devices that apply to this till (`paymentDevices`, a JSON
+    # string, inactive ones included), their secrets to a till without built-in clearing
+    # (`paymentDeviceSecrets`), and the default device only when it is one of them
+    # (app/services/payment_devices.py).
+    from app.services import payment_devices
+
+    for key, value in payment_devices.till_sync_fields(
+        db, machine, shop, effective.get(payment_devices.DEFAULT_KEY)
+    ).items():
+        if value is None:
+            effective.pop(key, None)
+        else:
+            effective[key] = value
     # "מצב הדרכה": the shop's flag, never a layer's setting (docs/SPEC_TRAINING_MODE.md).
     effective["trainingMode"] = bool(shop.training_mode)
     business_info = build_business_info(company, shop, all_settings)

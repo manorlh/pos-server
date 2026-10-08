@@ -5,6 +5,7 @@ with its terminal, and its report that the terminal refused the key it has.
 from __future__ import annotations
 
 import re
+import uuid
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -26,6 +27,9 @@ class SynqpayPairingIn(BaseModel):
 
     synqpay_api_key: Optional[str] = Field(None, alias="synqpayApiKey", repr=False)
     serial_number: Optional[str] = Field(None, alias="serialNumber")
+    #: "מכשירי תשלום": the key is that SynqPay device's (app/services/payment_devices.py), not
+    #: the till's own integration's. Absent = today's behaviour.
+    payment_device_id: Optional[uuid.UUID] = Field(None, alias="paymentDeviceId")
 
     def key_or_none(self) -> Optional[str]:
         """The key when it is one SynqPay hands out; None otherwise."""
@@ -54,3 +58,5 @@ class SynqpayKeyRejectedIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     detail: Optional[str] = Field(None, max_length=200)
+    #: The payment device whose key was refused; absent = the till's own integration's key.
+    payment_device_id: Optional[uuid.UUID] = Field(None, alias="paymentDeviceId")

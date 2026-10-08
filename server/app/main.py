@@ -246,6 +246,10 @@ app.include_router(payment_integration_router.router, prefix=_prefix)
 from app.routers import synqpay_pairing as synqpay_pairing_router  # noqa: E402
 
 app.include_router(synqpay_pairing_router.router, prefix=_prefix)
+# "מכשירי תשלום": a shop's card terminals for tills without one of their own.
+from app.routers import payment_devices as payment_devices_router  # noqa: E402
+
+app.include_router(payment_devices_router.router, prefix=_prefix)
 # "שירות הודעות ו-019" + "מועדון לקוחות" and its public sign-up (docs/SPEC_NOTIFICATIONS_CLUB.md).
 from app.routers import club as club_router, notifications as notifications_router  # noqa: E402
 

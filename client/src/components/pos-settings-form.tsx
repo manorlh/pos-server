@@ -20,6 +20,7 @@ import { AUTO_REOPEN_DEFAULT, AUTO_REOPEN_MODES, type AutoReopenMode } from '@/l
 import { TIP_PRESETS_MAX } from '@/lib/types';
 import type { PosSettingsPatch, PosSettingsV1, ResettableSwitchKey, SettingsLevel } from '@/lib/types';
 import { PaymentIntegrationSection } from '@/components/payment-integration-section';
+import { PaymentDevicesSettingsSection } from '@/components/dashboard/payment-devices/payment-devices-settings-section';
 
 /**
  * A patch, not plain settings, so a payment-option or sell-screen key can hold `null`
@@ -640,6 +641,16 @@ export function PosSettingsForm({
         onChange={onChange}
         inherited={inherited}
         showOverrideHints={showOverrideHints}
+        settingsLevel={settingsLevel}
+        entityId={entityId}
+      />
+
+      {/* "מכשירי תשלום": a shop's / a till's switch and default device (a till without
+          built-in clearing choosing between several payment devices). */}
+      <PaymentDevicesSettingsSection
+        value={value}
+        onChange={onChange}
+        inherited={inherited}
         settingsLevel={settingsLevel}
         entityId={entityId}
       />

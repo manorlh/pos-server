@@ -258,6 +258,13 @@ export interface PosSettingsV1 {
   /** USB serial: "" = detect, "VVVV:PPPP" (hex) or "COMn" (Windows). */
   synqpayUsbDevice?: string;
   synqpaySerialNumber?: string;
+  /**
+   * "מכשירי תשלום" (lib/paymentDevices.ts): a till without built-in clearing works with several
+   * payment devices of its shop. Unset = inherit (off when no level sets it).
+   */
+  multiPaymentDevices?: boolean;
+  /** The device preselected at card payment (a device id of the shop); shop / area / till only. */
+  defaultPaymentDeviceId?: string;
   outOfStockPolicy?: OutOfStockPolicy;
   /**
    * "פתיחת פריטים אוטומטית אחרי Z" (lib/availabilityReopen.ts, pos-server
@@ -388,10 +395,15 @@ export type PosSettingsPatch = Partial<
     | 'payOrder'
     | 'autoReopenAfterZ'
     | 'autoReopenIgnoreStock'
+    | 'multiPaymentDevices'
+    | 'defaultPaymentDeviceId'
     | ResettableSwitchKey
     | PaymentIntegrationSettingKey
   >
 > & {
+  /** "מכשירי תשלום": `null` = inherit the switch / the default device from the level above again. */
+  multiPaymentDevices?: boolean | null;
+  defaultPaymentDeviceId?: string | null;
   /** `null` = inherit "פתיחת פריטים אוטומטית אחרי Z" from the level above again. */
   autoReopenAfterZ?: AutoReopenMode | null;
   autoReopenIgnoreStock?: boolean | null;
