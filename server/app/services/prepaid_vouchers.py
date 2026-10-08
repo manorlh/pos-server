@@ -1427,6 +1427,18 @@ def _redemption_out(r: PrepaidVoucherRedemption, machine_names: Dict[str, str]) 
         "uses": r.uses,
         "discountAmount": _shekels_out(r.discount_amount),
         "flags": list(r.flags or []),
+        # The record (the production vouchers contract §5), ₪: null on a redemption made before it.
+        "accounting": getattr(r, "redemption_accounting", None),
+        "pricing": getattr(r, "pricing", None),
+        "value": _shekels_out(getattr(r, "value_agorot", None)),
+        "covered": _shekels_out(getattr(r, "covered_agorot", None)),
+        "topUp": _shekels_out(getattr(r, "top_up_agorot", None)),
+        "listValue": _shekels_out(getattr(r, "list_value_agorot", None)),
+        "units": list(getattr(r, "units", None) or []),
+        "typeName": getattr(r, "type_name", None),
+        "productionName": getattr(r, "production_name", None),
+        "offline": bool(getattr(r, "offline", False)),
+        "approvedBy": getattr(r, "approved_by_pos_user_name", None),
     }
 
 
@@ -2028,6 +2040,7 @@ def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
         ],
         forfeited=forfeited or None,
         redeemed_at=now,
+        **record_snapshot(db, machine, batch, voucher, wanted),
     )
     # A new dict (JSON columns only notice reassignment); ints stay ints, a weight "0.25".
     voucher.remaining = {pid: qty_out(q) for pid, q in left.items()}
@@ -2044,6 +2057,69 @@ def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
         db.rollback()
         raise _http(status.HTTP_409_CONFLICT, REQUEST_CONFLICT)
     return _redeem_out(db, machine, voucher, redemption, replayed=False)
+
+
+def _type_name_of(db: Session, batch: PrepaidVoucherBatch) -> Optional[str]:
+    if getattr(batch, "type_name", None):
+        return batch.type_name
+    if getattr(batch, "type_id", None) is None:
+        return None
+    return db.query(PrepaidVoucherType.name).filter(PrepaidVoucherType.id == batch.type_id).scalar()
+
+
+def _units_per_voucher(batch: PrepaidVoucherBatch) -> Decimal:
+    total = Decimal(0)
+    for i in batch.items:
+        q = qty(i.quantity)
+        total += q if q == q.to_integral_value() else Decimal(1)
+    return total
+
+
+def record_snapshot(
+    db: Session, machine: POSMachine, batch: PrepaidVoucherBatch, voucher: PrepaidVoucher, wanted: Dict[str, Decimal],
+) -> Dict[str, Any]:
+    """
+    The redemption record's snapshot (the production vouchers contract §5) for goods taken
+    through `/redeem` — today's tills: each unit's name and quantity at this till's price, the
+    list value, the value (a fixed voucher's value pro rata to the units, else the list value),
+    what the till booked (the `voucher` leg at the goods' price), the names to report by.
+    """
+    names = {str(i.product_id): i.product_name for i in batch.items}
+    till = _till_products(db, machine, list(wanted))
+    units: List[Dict[str, Any]] = []
+    list_total = 0
+    taken = Decimal(0)
+    for pid, q in wanted.items():
+        if not q:
+            continue
+        price = till.get(pid, {}).get("price")
+        unit_price = int((Decimal(str(price)) * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP)) if price is not None else 0
+        line = int((Decimal(unit_price) * q).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+        list_total += line
+        taken += q if q == q.to_integral_value() else Decimal(1)
+        units.append({
+            "productId": pid, "productName": names.get(pid), "groupKey": None, "groupName": None,
+            "quantity": qty_out(q), "listPriceAgorot": unit_price, "listValueAgorot": line,
+        })
+    pricing = getattr(batch, "pricing", None) or "cover"
+    value = list_total
+    if pricing == "fixed" and getattr(batch, "till_value", None):
+        per = _units_per_voucher(batch)
+        value = int((Decimal(int(batch.till_value)) * taken / per).quantize(Decimal(1), rounding=ROUND_HALF_UP)) if per else int(batch.till_value)
+    return {
+        "redemption_accounting": getattr(batch, "redemption_accounting", None) or "zero",
+        "pricing": pricing,
+        "value_agorot": value,
+        # Today's tills book the goods as the `voucher` tender at their price.
+        "covered_agorot": list_total,
+        "top_up_agorot": 0,
+        "list_value_agorot": list_total,
+        "units": units,
+        "serial": int(voucher.serial),
+        "type_name": _type_name_of(db, batch),
+        "production_name": getattr(batch, "customer_name", None),
+        "batch_name": batch.name,
+    }
 
 
 def reverse_redemption(db: Session, machine: POSMachine, redemption_id: str) -> Dict[str, Any]:

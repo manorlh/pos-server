@@ -610,6 +610,8 @@ class Row:
     units: Decimal = Decimal(0)
     value: int = 0
     basis: str = "list"
+    #: The accounting mode the redemption recorded (§5); None: before the record, the batch's.
+    accounting: Optional[str] = None
 
 
 def _units(items: Iterable[Dict[str, Any]]) -> Decimal:
@@ -644,7 +646,7 @@ def redemption_rows(
     R = PrepaidVoucherRedemption
     q = db.query(
         R.id, R.voucher_id, R.batch_id, R.machine_id, R.shop_id, R.pos_user_id, R.pos_user_name, R.redeemed_at,
-        R.items, R.uses, R.discount_amount, R.flags, R.transaction_id,
+        R.items, R.uses, R.discount_amount, R.flags, R.transaction_id, R.value_agorot, R.redemption_accounting,
     ).filter(R.batch_id.in_([b.id for b in batches]))
     q = _redemption_filter(q, scope, zone)
     if scope.state or scope.group is not None or scope.q:
@@ -676,7 +678,11 @@ def redemption_rows(
             flags=list(r.flags or []), transaction_id=r.transaction_id,
         )
         row.units = _units(row.items)
-        if PV.is_discount(b):
+        row.accounting = r.redemption_accounting
+        if r.value_agorot is not None and not PV.is_discount(b):
+            # The redemption's own record (§5): what it was worth when it was taken.
+            row.value, row.basis = int(r.value_agorot), "recorded"
+        elif PV.is_discount(b):
             row.value, row.basis = int(r.discount_amount or 0), "discount"
         elif (b.pricing or "cover") == "fixed" and b.till_value:
             per = unit_cache.get(row.batch_id)
@@ -699,7 +705,7 @@ def _values_by_mode(rows: Iterable[Row], batches: Dict[str, PrepaidVoucherBatch]
     out = {m: 0 for m in ACCOUNTING}
     for r in rows:
         b = batches[r.batch_id]
-        mode = "discount" if PV.is_discount(b) else (b.redemption_accounting or "zero")
+        mode = "discount" if PV.is_discount(b) else (r.accounting or b.redemption_accounting or "zero")
         out[mode if mode in out else "zero"] += r.value
     out["total"] = sum(out[m] for m in ACCOUNTING)
     return out
@@ -866,7 +872,7 @@ def redemptions_list(db: Session, user: User, tenant_id, scope: Scope, *, limit:
             "uses": r.uses,
             "value": r.value,
             "valueBasis": r.basis,
-            "accounting": "discount" if PV.is_discount(b) else (b.redemption_accounting or "zero"),
+            "accounting": "discount" if PV.is_discount(b) else (r.accounting or b.redemption_accounting or "zero"),
             "machineId": r.machine_id,
             "machineName": (machines.get(r.machine_id) or (None,))[0] if r.machine_id else None,
             "employeeId": r.employee_id,

@@ -359,7 +359,14 @@ class TestTillFigures:
         assert (row["name"], row["redemptions"], row["vouchers"], row["items"]) == ("Till 2", 3, 3, 2)
         assert row["value"] == {"discount": 2500 + 1000, "payment": 1500, "zero": 0, "total": 5000}
         bases = {r["batch"]["name"]: r["valueBasis"] for r in A.redemptions_list(w.db, w.admin, w.tenant.id, S())["items"]}
+        # Goods redemptions carry their own record (§5); a discount's value is its amount.
+        assert bases == {"מחירון": "recorded", "קבוע": "recorded", "הנחה": "discount"}
+        # A redemption made before the record: valued as before (list prices / the fixed value).
+        w.db.query(PrepaidVoucherRedemption).update({"value_agorot": None, "redemption_accounting": None})
+        w.db.commit()
+        bases = {r["batch"]["name"]: r["valueBasis"] for r in A.redemptions_list(w.db, w.admin, w.tenant.id, S())["items"]}
         assert bases == {"מחירון": "list", "קבוע": "fixed", "הנחה": "discount"}
+        assert A.tills_report(w.db, w.admin, w.tenant.id, S())["items"][0]["value"]["total"] == 5000
 
     def test_the_series_and_the_days(self, w):
         b = batch(w, name="א", count=3)

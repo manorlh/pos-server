@@ -150,6 +150,15 @@ class PrepaidVoucherType(Base):
     stacking = Column(String(24), nullable=False, default="single", server_default="single")
     #: "מספר שוברים מקסימלי בעסקה" — with `unlimited` / `distinct_batches` only; null: no maximum.
     max_vouchers_per_sale = Column(Integer, nullable=True)
+    #: "items" (a fixed list, `items`) or "groups" ([{key, name, minQty, maxQty, value (agorot | null),
+    #: allowRepeat, allItems, productIds, categoryIds, includeSubcategories, excludeProductIds,
+    #: excludeCategoryIds, sortOrder}] — the production vouchers contract §1). A batch's groups also
+    #: carry `frozenProductIds`, the catalog as it was at issue (`catalog_mode` frozen).
+    selection = Column(String(8), nullable=False, default="items", server_default="items")
+    groups = Column(JSON, nullable=True)
+    #: Units per voucher across the groups (3 for a meal, 1 for "one of several"); null: Σ the groups' max.
+    total_qty = Column(Integer, nullable=True)
+    catalog_mode = Column(String(8), nullable=False, default="frozen", server_default="frozen")
     promotion_policy = Column(String(16), nullable=False, default="exclude", server_default="exclude")
     uses_per_voucher = Column(Integer, nullable=False, default=1, server_default="1")
     max_uses_per_sale = Column(Integer, nullable=False, default=1, server_default="1")
@@ -316,6 +325,15 @@ class PrepaidVoucherBatch(Base):
     #: "מספר שוברים מקסימלי בעסקה" — with `unlimited` / `distinct_batches` only: the most
     #: vouchers one sale holds, this one included. Null: no maximum.
     max_vouchers_per_sale = Column(Integer, nullable=True)
+    #: "items" (a fixed list, `items`) or "groups" ([{key, name, minQty, maxQty, value (agorot | null),
+    #: allowRepeat, allItems, productIds, categoryIds, includeSubcategories, excludeProductIds,
+    #: excludeCategoryIds, sortOrder}] — the production vouchers contract §1). A batch's groups also
+    #: carry `frozenProductIds`, the catalog as it was at issue (`catalog_mode` frozen).
+    selection = Column(String(8), nullable=False, default="items", server_default="items")
+    groups = Column(JSON, nullable=True)
+    #: Units per voucher across the groups (3 for a meal, 1 for "one of several"); null: Σ the groups' max.
+    total_qty = Column(Integer, nullable=True)
+    catalog_mode = Column(String(8), nullable=False, default="frozen", server_default="frozen")
     #: A discount voucher on a line that has a promotion: `exclude` (never — the line is
     #: left out), `best` (the bigger of the two, never both) or `combine` (both).
     promotion_policy = Column(String(16), nullable=False, default="exclude", server_default="exclude")
@@ -475,6 +493,31 @@ class PrepaidVoucherRedemption(Base):
     #: fiscal and already issued, so it is recorded and flagged, never refused): `late`,
     #: `over_use`, `over_daily`, `over_sale`, `stacking`, `promotion`. Null: nothing.
     flags = Column(JSON, nullable=True)
+    # ── The redemption record (the production vouchers contract §5) ──
+    #: How it was booked (the batch's `redemption_accounting` then) and priced.
+    redemption_accounting = Column(String(16), nullable=True)
+    pricing = Column(String(8), nullable=True)
+    #: Agorot: what it was worth, what the voucher covered on the document (the tender / the
+    #: deduction; 0 for ₪0 lines), the customer's top-up, and the units' list / menu value.
+    value_agorot = Column(Integer, nullable=True)
+    covered_agorot = Column(Integer, nullable=True)
+    top_up_agorot = Column(Integer, nullable=True)
+    list_value_agorot = Column(Integer, nullable=True)
+    #: Per unit: {productId, productName, groupKey, groupName, quantity, listPriceAgorot,
+    #: listValueAgorot, valueAgorot, coveredAgorot, forced, reductionAgorot}.
+    units = Column(JSON, nullable=True)
+    #: Snapshot names: the voucher's number, its type, its production, its batch.
+    serial = Column(Integer, nullable=True)
+    type_name = Column(String(200), nullable=True)
+    production_name = Column(String(200), nullable=True)
+    batch_name = Column(String(200), nullable=True)
+    #: Redeemed without the cloud (an offline assignment, §7): the device's own id for it.
+    offline = Column(Boolean, nullable=False, default=False, server_default="false")
+    assignment_id = Column(UUID(as_uuid=True), nullable=True)
+    client_redemption_id = Column(String(100), nullable=True)
+    #: The manager who approved a forced discount (§6).
+    approved_by_pos_user_id = Column(String(100), nullable=True)
+    approved_by_pos_user_name = Column(String(200), nullable=True)
 
     voucher = relationship("PrepaidVoucher", back_populates="redemptions")
     machine = relationship("POSMachine")
@@ -526,6 +569,10 @@ class PrepaidVoucherReservation(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
     confirmed_at = Column(DateTime(timezone=True), nullable=True)
     released_at = Column(DateTime(timezone=True), nullable=True)
+    #: A goods voucher's hold (the production vouchers contract §3): the units, their values,
+    #: the accounting mode, pricing, top-up and approval the reserve answered — what the
+    #: confirm books when the basket did not change.
+    goods = Column(JSON, nullable=True)
 
     voucher = relationship("PrepaidVoucher")
 
@@ -575,6 +622,43 @@ class TransactionVoucherDiscount(Base):
     redemption_id = Column(UUID(as_uuid=True), nullable=True)
     type_name = Column(String(200), nullable=True)
     units = Column(JSON, nullable=True)
+
+
+class PrepaidVoucherOverrideAudit(Base):
+    """
+    One forced price reduction on a "לא מקבל הנחות" product (the production vouchers contract §6,
+    the spec's `VoucherDiscountOverrideAudit`): which unit, its list price and value, the
+    reduction, the policy and the type version that allowed it, who approved, where and when.
+    """
+
+    __tablename__ = "prepaid_voucher_override_audits"
+    __table_args__ = (
+        Index("ix_prepaid_voucher_override_audits_batch", "batch_id", "created_at"),
+        Index("ix_prepaid_voucher_override_audits_redemption", "redemption_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    redemption_id = Column(UUID(as_uuid=True), nullable=True)
+    voucher_id = Column(UUID(as_uuid=True), nullable=True)
+    batch_id = Column(UUID(as_uuid=True), nullable=False)
+    type_id = Column(UUID(as_uuid=True), nullable=True)
+    type_version = Column(Integer, nullable=True)
+    product_id = Column(String(100), nullable=True)
+    product_name = Column(String(255), nullable=True)
+    quantity = Column(Numeric(12, 3), nullable=True)
+    list_price_agorot = Column(Integer, nullable=False)
+    value_agorot = Column(Integer, nullable=False)
+    reduction_agorot = Column(Integer, nullable=False)
+    #: The reduction as basis points of the list price (2000 = 20%).
+    reduction_bp = Column(Integer, nullable=False)
+    policy = Column(String(16), nullable=False)
+    approved_by_pos_user_id = Column(String(100), nullable=True)
+    approved_by_pos_user_name = Column(String(200), nullable=True)
+    machine_id = Column(UUID(as_uuid=True), nullable=True)
+    pos_user_id = Column(String(100), nullable=True)
+    pos_user_name = Column(String(200), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 #: `prepaid_voucher_events.action`.

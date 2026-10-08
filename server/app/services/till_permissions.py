@@ -103,7 +103,7 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
     PermissionSpec("DISCOUNT", "הנחה (סל / שורה)", "sale",
                    "הנחת סל או הנחת שורה, וגם פתיחת ארוחת צוות / מנהל בשולחן. מעל האחוז שהוגדר נדרש אישור "
                    "של מי שמותר לו אחוז כזה.", limits=(_MAX_PERCENT,), scope="discount"),
-    PermissionSpec("VOUCHER_DISCOUNT_OVERRIDE", "אישור כפיית הנחה בשובר הפקה", "sale",
+    PermissionSpec("VOUCHER_DISCOUNT_OVERRIDE", "אישור כפיית הנחה בשובר", "sale",
                    "אישור הורדת מחיר של מוצר \"לא מקבל הנחות\" במימוש שובר הפקה, כשסוג השובר מגדיר "
                    "כפייה באישור מנהל — רק בהיקף ובתקרות שהוגדרו בו."),
     PermissionSpec("LINE_VOID", "ביטול שורה", "sale",
