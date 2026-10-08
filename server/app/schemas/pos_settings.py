@@ -215,6 +215,26 @@ class PosSettingsV1Patch(BaseModel):
     synqpay_usb_device: Optional[str] = Field(None, alias="synqpayUsbDevice")
     synqpay_serial_number: Optional[str] = Field(None, alias="synqpaySerialNumber")
     synqpay_api_key: Optional[str] = Field(None, alias="synqpayApiKey", exclude=True, repr=False)
+    #: "מכשירי תשלום" (app/services/payment_devices.py): a till without built-in clearing
+    #: works with several payment devices of its shop. Set on a shop for all its tills, on a
+    #: till to override it; `null` in a PATCH = inherit again.
+    multi_payment_devices: Optional[bool] = Field(None, alias="multiPaymentDevices")
+    #: The device preselected at card payment (a device id of that shop; on a till, one that
+    #: applies to it). Shop, area and till only (422 on a tenant / company); "" or `null` =
+    #: inherit again.
+    default_payment_device_id: Optional[str] = Field(None, alias="defaultPaymentDeviceId")
+
+    @field_validator("default_payment_device_id")
+    @classmethod
+    def _check_default_payment_device(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v.strip() == "":
+            return None
+        import uuid
+
+        try:
+            return str(uuid.UUID(v.strip()))
+        except ValueError:
+            raise ValueError("defaultPaymentDeviceId must be a payment device id") from None
 
     @field_validator("payment_integration")
     @classmethod

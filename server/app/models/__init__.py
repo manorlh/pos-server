@@ -111,6 +111,8 @@ from app.models.catalog_menu import (
     CatalogMenuSyncState,
 )
 from app.models.payment_secret import PaymentIntegrationSecret
+# "מכשירי תשלום": the card terminals a till without its own works with (app/services/payment_devices.py).
+from app.models.payment_device import PaymentDevice
 # The self-order kiosk (app/services/kiosk_control.py) — not the device lock `kioskMode`.
 from app.models.kiosk import (
     KioskCommand,
@@ -217,6 +219,7 @@ __all__ = [
     "CatalogMenu", "CatalogMenuAssignment", "CatalogMenuCategory", "CatalogMenuFallback",
     "CatalogMenuProduct", "CatalogMenuSyncState",
     "PaymentIntegrationSecret",
+    "PaymentDevice",
     "OutboxEvent",
     "Campaign", "CampaignRecipient", "DeliveryEvent", "Notification", "NotificationAttempt",
     "NotificationProviderConfig", "NotificationTemplate",

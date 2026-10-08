@@ -213,6 +213,7 @@ GET /machines/{machine_id}/document-prefix -> devices|reports:view
 POST /machines/{machine_id}/document-prefix/assign-free -> devices:edit
 GET /machines/{machine_id}/lan-server -> devices:view
 PUT /machines/{machine_id}/lan-server -> devices:edit
+GET /machines/{machine_id}/payment-devices -> till_settings|devices:view
 DELETE /machines/{machine_id}/reboot -> devices:edit
 POST /machines/{machine_id}/reboot -> devices:edit
 POST /machines/{machine_id}/replacement-code -> devices:edit
@@ -278,6 +279,8 @@ POST /pairing/machines/{machine_id}/assign -> devices:edit
 POST /pairing/sessions -> devices:edit
 GET /pairing/sessions/active -> devices:view
 DELETE /pairing/sessions/{session_id} -> devices:edit
+DELETE /payment-devices/{device_id} -> till_settings:edit
+PUT /payment-devices/{device_id} -> till_settings:edit
 GET /payment-integration/context -> till_settings|devices|organization:view
 GET /prepaid-vouchers/batches -> prepaid_vouchers:view
 POST /prepaid-vouchers/batches -> prepaid_vouchers:edit
@@ -391,6 +394,8 @@ POST /shops/{shop_id}/menu-broadcast -> products:edit
 GET /shops/{shop_id}/menu-broadcast/history -> products:view
 GET /shops/{shop_id}/menu-broadcast/preview -> products:view
 GET /shops/{shop_id}/next-register-number -> devices|organization:view
+GET /shops/{shop_id}/payment-devices -> till_settings|devices:view
+POST /shops/{shop_id}/payment-devices -> till_settings:edit
 GET /shops/{shop_id}/pos-users -> pos_users:view
 POST /shops/{shop_id}/pos-users -> pos_users:edit
 DELETE /shops/{shop_id}/pos-users/{pos_user_id} -> pos_users:edit

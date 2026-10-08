@@ -37,6 +37,11 @@ MANAGED_SETTING_KEYS = (
     "synqpayTls",
     "synqpayUsbDevice",
     "synqpaySerialNumber",
+    # "מכשירי תשלום" (app/services/payment_devices.py): whether a till without built-in
+    # clearing works with several devices, and the one preselected. The devices themselves
+    # (`paymentDevices`) and their secrets are added by the till's sync, not a layer.
+    "multiPaymentDevices",
+    "defaultPaymentDeviceId",
     "outOfStockPolicy",
     # "פתיחת פריטים אוטומטית אחרי Z" ("off" | "day" | "all") and whether it opens an item
     # that tracks stock and has none (app/services/availability_reopen.py). Sent to the
