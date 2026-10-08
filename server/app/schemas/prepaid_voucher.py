@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -989,6 +989,58 @@ class PrepaidApprovalIn(BaseModel):
     @classmethod
     def _uid(cls, value):
         return str(value) if isinstance(value, (int, float)) else value
+
+
+class PrepaidOfflineAssignIn(BaseModel):
+    """`machine` (a till) or `lan_host` (the shop's main till; the batch's single shop or `shopId`)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    target: str
+    machine_id: Optional[str] = Field(None, alias="machineId")
+    shop_id: Optional[str] = Field(None, alias="shopId")
+
+
+class PrepaidOfflineReleaseIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    force: bool = False
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+class PrepaidOfflineRedemptionIn(BaseModel):
+    """One redemption made without the cloud, as the device queued it (§7)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str = Field(..., min_length=1, max_length=100)
+    assignment_id: Optional[str] = Field(None, alias="assignmentId")
+    voucher_id: str = Field(..., alias="voucherId")
+    redeemed_at: Optional[datetime] = Field(None, alias="redeemedAt")
+    transaction_id: Optional[str] = Field(None, alias="transactionId", max_length=100)
+    sale_ref: Optional[str] = Field(None, alias="saleRef", max_length=100)
+    pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)
+    pos_user_name: Optional[str] = Field(None, alias="posUserName", max_length=200)
+    #: As §3's units: productId, productName, groupKey, groupName, quantity, values (agorot).
+    units: List[Dict[str, Any]] = Field(default_factory=list, max_length=200)
+    covered_agorot: int = Field(0, alias="coveredAgorot", ge=0)
+    top_up_agorot: int = Field(0, alias="topUpAgorot", ge=0)
+    redemption_accounting: Optional[str] = Field(None, alias="redemptionAccounting")
+    approval: Optional[PrepaidApprovalIn] = None
+    reversed_at: Optional[datetime] = Field(None, alias="reversedAt")
+
+    @field_validator("pos_user_id", mode="before")
+    @classmethod
+    def _uid(cls, value):
+        return str(value) if isinstance(value, (int, float)) else value
+
+
+class PrepaidOfflineSyncIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: What is left on the device after this call (release waits for 0).
+    pending: int = Field(0, ge=0)
+    redemptions: List[PrepaidOfflineRedemptionIn] = Field(default_factory=list, max_length=500)
 
 
 class PrepaidConfirmUnitIn(BaseModel):

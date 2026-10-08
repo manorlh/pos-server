@@ -452,6 +452,8 @@ class PrepaidVoucherRedemption(Base):
         Index("ix_prepaid_voucher_redemptions_batch_time", "batch_id", "redeemed_at"),
         Index("ix_prepaid_voucher_redemptions_machine_time", "machine_id", "redeemed_at"),
         Index("ix_prepaid_voucher_redemptions_voucher", "voucher_id"),
+        # An offline redemption is synced once, by the device's own id (§7).
+        Index("ux_prepaid_voucher_redemptions_client", "tenant_id", "client_redemption_id", unique=True),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -671,7 +673,47 @@ PREPAID_EVENT_ACTIONS = (
     "cancel_group",    # a whole group (a lost envelope) cancelled
     "cancel_voucher",
     "use_flagged",     # a discount voucher's use confirmed against the rules (see `flags`)
+    "offline_assign",          # assigned to a till / the shop's LAN host (§7)
+    "offline_release",         # released after the device synced everything
+    "offline_force_release",   # released with redemptions still on the device (a reason given)
 )
+
+
+class PrepaidVoucherOfflineAssignment(Base):
+    """
+    A batch assigned for redemption without the internet (the production vouchers contract §7): to
+    one till (`machine`) or to its shop's LAN host (`lan_host`, the shop's main till). While it is
+    active the cloud and every other machine refuse the batch's vouchers; the device downloads
+    them (code hashes, never codes) and syncs what it redeemed. One active assignment per batch.
+    """
+
+    __tablename__ = "prepaid_voucher_offline_assignments"
+    __table_args__ = (
+        Index("ix_prepaid_voucher_offline_assignments_batch", "batch_id", "status"),
+        Index("ix_prepaid_voucher_offline_assignments_machine", "machine_id", "status"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    batch_id = Column(UUID(as_uuid=True), nullable=False)
+    #: "machine" or "lan_host".
+    target = Column(String(16), nullable=False)
+    machine_id = Column(UUID(as_uuid=True), nullable=False)
+    shop_id = Column(UUID(as_uuid=True), nullable=True)
+    #: "active" / "released".
+    status = Column(String(16), nullable=False, default="active", server_default="active")
+    #: Bumped on every change the device must download again (the batch's terms, a cancelled voucher).
+    version = Column(Integer, nullable=False, default=1, server_default="1")
+    assigned_by = Column(UUID(as_uuid=True), nullable=True)
+    assigned_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_download_at = Column(DateTime(timezone=True), nullable=True)
+    last_sync_at = Column(DateTime(timezone=True), nullable=True)
+    #: What the device said it still had to send at its last sync.
+    last_sync_pending = Column(Integer, nullable=True)
+    released_at = Column(DateTime(timezone=True), nullable=True)
+    released_by = Column(UUID(as_uuid=True), nullable=True)
+    forced = Column(Boolean, nullable=False, default=False, server_default="false")
+    release_reason = Column(Text, nullable=True)
 
 
 class PrepaidVoucherEvent(Base):

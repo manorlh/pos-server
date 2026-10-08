@@ -63,6 +63,9 @@ from app.schemas.prepaid_voucher import (
     PrepaidVoucherGroupsIn,
     PrepaidVoucherLookupIn,
     PrepaidVoucherNoteIn,
+    PrepaidOfflineAssignIn,
+    PrepaidOfflineReleaseIn,
+    PrepaidOfflineSyncIn,
     PrepaidVoucherRedeemIn,
     PrepaidVoucherReserveIn,
     PrepaidVoucherTypeCreate,
@@ -211,6 +214,79 @@ def search_prepaid_vouchers(
 ):
     """One box over batches, vouchers, tills and employees, grouped."""
     return PVA.search(db, current_user, active_tenant_id, q)
+
+
+@router.post("/prepaid-vouchers/batches/{batch_id}/offline/assign")
+def assign_prepaid_batch_offline(
+    batch_id: str,
+    body: PrepaidOfflineAssignIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Assign the batch for redemption without the internet to a till or the shop's LAN host (§7)."""
+    from app.services import prepaid_voucher_offline as PVO
+
+    out = PVO.assign(db, current_user, active_tenant_id, batch_id, body.target, body.machine_id, body.shop_id)
+    db.commit()
+    return out
+
+
+@router.post("/prepaid-vouchers/batches/{batch_id}/offline/release")
+def release_prepaid_batch_offline(
+    batch_id: str,
+    body: PrepaidOfflineReleaseIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Release it once the device synced everything — or by force, with a reason (audited)."""
+    from app.services import prepaid_voucher_offline as PVO
+
+    out = PVO.release(db, current_user, active_tenant_id, batch_id, body.force, body.reason)
+    db.commit()
+    return out
+
+
+@router.get("/prepaid-vouchers/batches/{batch_id}/offline")
+def get_prepaid_batch_offline(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    from app.services import prepaid_voucher_offline as PVO
+
+    return PVO.history(db, current_user, active_tenant_id, batch_id)
+
+
+@router.get("/sync/{machine_id}/prepaid-vouchers/offline", dependencies=FISCAL_MACHINE_TOKEN)
+def download_prepaid_offline(
+    machine_id: str,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """What is assigned to this device: the batches' terms and their vouchers by code hash (§7)."""
+    from app.services import prepaid_voucher_offline as PVO
+
+    out = PVO.download(db, machine)
+    db.commit()
+    return out
+
+
+@router.post("/sync/{machine_id}/prepaid-vouchers/offline/sync", dependencies=FISCAL_MACHINE_TOKEN)
+def sync_prepaid_offline(
+    machine_id: str,
+    body: PrepaidOfflineSyncIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """What this device redeemed without the cloud; idempotent by its own id (§7)."""
+    from app.services import prepaid_voucher_offline as PVO
+
+    out = PVO.sync(db, machine, body)
+    db.commit()
+    return out
 
 
 @router.get("/prepaid-vouchers/analytics/tills")

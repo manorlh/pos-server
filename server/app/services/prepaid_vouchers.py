@@ -1569,6 +1569,11 @@ def refusal_reason(db: Session, machine: POSMachine, voucher: PrepaidVoucher, no
         return NOT_YET_VALID
     if batch.valid_until is not None and now > _utc(batch.valid_until):
         return EXPIRED
+    # Assigned for redemption without the internet (§7): only that device redeems it.
+    from app.services import prepaid_voucher_offline as PVO
+
+    if PVO.assigned_elsewhere(db, machine, batch) is not None:
+        return PVO.ASSIGNED_OFFLINE
     shop = db.query(Shop).filter(Shop.id == machine.shop_id).first() if machine.shop_id else None
     if shop is None or str(shop.company_id) not in _company_group(db, batch.company_id):
         return WRONG_SHOP
@@ -1857,6 +1862,10 @@ def till_view(
         reason = IN_USE
     elif uses is not None and uses["today"] <= 0:
         reason = DAILY_LIMIT
+    if reason == "prepaid_voucher_assigned_offline":
+        from app.services import prepaid_voucher_offline as PVO
+
+        message = PVO.ASSIGNED_TEXT.format(device=PVO.assigned_elsewhere(db, machine, batch) or "")
     if message is None:
         message = refusal_message(db, voucher, reason)
     till = _till_products(db, machine, [str(i.product_id) for i in batch.items])

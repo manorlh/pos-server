@@ -297,6 +297,9 @@ GET /prepaid-vouchers/batches/{batch_id}/file -> prepaid_vouchers:view
 GET /prepaid-vouchers/batches/{batch_id}/groups -> prepaid_vouchers:view
 POST /prepaid-vouchers/batches/{batch_id}/groups -> prepaid_vouchers:edit
 POST /prepaid-vouchers/batches/{batch_id}/groups/{group_no}/cancel -> prepaid_vouchers:edit
+GET /prepaid-vouchers/batches/{batch_id}/offline -> prepaid_vouchers:view
+POST /prepaid-vouchers/batches/{batch_id}/offline/assign -> prepaid_vouchers:edit
+POST /prepaid-vouchers/batches/{batch_id}/offline/release -> prepaid_vouchers:edit
 GET /prepaid-vouchers/batches/{batch_id}/report -> prepaid_vouchers:view
 GET /prepaid-vouchers/batches/{batch_id}/vouchers -> prepaid_vouchers:view
 POST /prepaid-vouchers/batches/{batch_id}/vouchers -> prepaid_vouchers:edit
