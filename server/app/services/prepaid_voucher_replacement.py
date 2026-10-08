@@ -11,8 +11,11 @@ A voucher lost, damaged or cancelled may be replaced by a manager, with a reason
   part of them the manager names (a package partly taken is never made whole again by itself);
 * a fixed-value voucher already redeemed in part is not replaced (`…_partly_valued`): its value left is
   counted from its own redemptions, so a new voucher would get the whole value again;
-* nothing is replaced while the original is held by an open sale (a reservation not yet confirmed or
-  released) — that sale is cleared first (§16: "אין … להנפיק חלופה לפני בירור תוצאת הפעולות");
+* nothing is replaced while a sale holds the original (`prepaid_voucher_in_use`), nor while a sale that
+  held it never ended — an expired reservation neither confirmed nor released, whose document may still
+  arrive (`…_replacement_held`; `force` after the sale was looked into, audited) — §16: "אין … להנפיק חלופה
+  לפני בירור תוצאת הפעולות"; nor while the batch is assigned to a device offline (that device would
+  redeem the original);
 * a voucher already used up has nothing to replace; a replacement can itself be replaced (the chain);
 * the settlement counts an original and its replacement as one voucher unless the agreement says
   otherwise (`replacementPolicy`, app/services/prepaid_voucher_settlement.py).
@@ -49,6 +52,12 @@ BATCH_CANCELLED = "prepaid_voucher_batch_cancelled"
 #: A fixed-value voucher already redeemed in part: what is left of its value is counted from its own
 #: redemptions (the core's `value_left`), so a new voucher would start from the whole value again.
 PARTLY_VALUED = "prepaid_voucher_replacement_partly_valued"
+#: A sale held the voucher and never ended (a reservation neither confirmed nor released, live or
+#: expired): its document may still reach the cloud and redeem the original. Cleared first, or `force`.
+HELD = "prepaid_voucher_replacement_held"
+#: The batch is assigned to a device for redemption without the internet: that device redeems the
+#: original and never learns of a replacement. Released first.
+ASSIGNED_OFFLINE = "prepaid_voucher_assigned_offline"
 
 REASON_TEXT = {"lost": "אבד", "damaged": "ניזוק", "cancelled": "בוטל", "other": "אחר"}
 
@@ -63,11 +72,21 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _grouped(voucher: PrepaidVoucher) -> bool:
+    """A voucher of a batch with groups keeps {"g:<key>": units, "total": units} (production_voucher_groups)."""
+    return "total" in (voucher.remaining or {})
+
+
 def _what_left(voucher: PrepaidVoucher, batch: PrepaidVoucherBatch) -> bool:
     PV = _pv()
+    if voucher.status == "used":
+        return False
     if PV.is_discount(batch):
         return int(voucher.uses_left or 0) > 0
-    return any(PV.qty(q) > 0 for q in (voucher.remaining or {}).values())
+    rem = voucher.remaining or {}
+    if _grouped(voucher):
+        return PV.qty(rem.get("total") or 0) > 0
+    return any(PV.qty(q) > 0 for q in rem.values())
 
 
 def replace_voucher(db: Session, user: User, tenant_id, voucher_id, body) -> Dict[str, Any]:
@@ -80,9 +99,14 @@ def replace_voucher(db: Session, user: User, tenant_id, voucher_id, body) -> Dic
     if len(reason) < 2:
         raise ACC.http(status.HTTP_400_BAD_REQUEST, BAD_REASON)
     original = PV.get_voucher(db, user, tenant_id, voucher_id)
-    # The batch first, then the voucher — the order the core's issue takes.
-    batch = db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == original.batch_id).with_for_update().first()
+    # The voucher first, then the batch (FOR NO KEY UPDATE: only its next serial changes) — the order a
+    # confirm takes (the voucher, then its batch's key for the audit row), so the two never deadlock.
     original = db.query(PrepaidVoucher).filter(PrepaidVoucher.id == original.id).with_for_update().first()
+    batch = (
+        db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == original.batch_id)
+        .with_for_update(key_share=True)  # Postgres: FOR NO KEY UPDATE
+        .first()
+    )
     if batch.status == "cancelled":
         raise ACC.http(status.HTTP_409_CONFLICT, BATCH_CANCELLED)
     if db.query(PrepaidVoucherReplacement.id).filter(PrepaidVoucherReplacement.original_voucher_id == original.id).first():
@@ -94,14 +118,19 @@ def replace_voucher(db: Session, user: User, tenant_id, voucher_id, body) -> Dic
     ).filter(PrepaidVoucherRedemption.voucher_id == original.id, PrepaidVoucherRedemption.reversed_at.is_(None)).first():
         raise ACC.http(status.HTTP_409_CONFLICT, PARTLY_VALUED)
     now = _now()
-    held = [
-        r for r in db.query(PrepaidVoucherReservation).filter(
-            PrepaidVoucherReservation.voucher_id == original.id, PrepaidVoucherReservation.status == "held"
-        )
-        if PV._reservation_live(r, now)
-    ]
-    if held:
+    from app.services import prepaid_voucher_offline as PVO
+
+    if PVO.active_of(db, batch.id) is not None:
+        raise ACC.http(status.HTTP_409_CONFLICT, ASSIGNED_OFFLINE)
+    held = db.query(PrepaidVoucherReservation).filter(
+        PrepaidVoucherReservation.voucher_id == original.id, PrepaidVoucherReservation.status == "held"
+    ).all()
+    live = [r for r in held if PV._reservation_live(r, now)]
+    if live:
         raise ACC.http(status.HTTP_409_CONFLICT, IN_USE)
+    if held and not getattr(body, "force", False):
+        # Expired, but the sale never ended: its document may still come and redeem the original.
+        raise ACC.http(status.HTTP_409_CONFLICT, HELD)
 
     discount = PV.is_discount(batch)
     left = {k: PV.qty(v) for k, v in (original.remaining or {}).items()}
@@ -114,6 +143,9 @@ def replace_voucher(db: Session, user: User, tenant_id, voucher_id, body) -> Dic
             uses = int(body.uses)
     else:
         uses = None
+        if body.items is not None and _grouped(original):
+            # A grouped voucher is replaced whole (what each group has left); a part only of a fixed list.
+            raise ACC.http(status.HTTP_400_BAD_REQUEST, BAD_ITEMS)
         if body.items is not None:
             given: Dict[str, Decimal] = {}
             for item in body.items:
@@ -147,7 +179,8 @@ def replace_voucher(db: Session, user: User, tenant_id, voucher_id, body) -> Dic
         replacement_voucher_id=replacement.id, reason_kind=body.reason_kind, reason=reason,
         original_status=before["status"],
         details={"originalSerial": int(original.serial), "replacementSerial": serial, "before": before,
-                 "given": {"remaining": remaining, "usesLeft": uses}},
+                 "given": {"remaining": remaining, "usesLeft": uses},
+                 "forcedPastHolds": [str(r.id) for r in held] or None},
         user_id=user.id, user_name=ACC.user_name(user), created_at=now,
     )
     db.add(link)
@@ -190,6 +223,7 @@ def replacement_out(link: PrepaidVoucherReplacement, original=None, replacement=
 def voucher_chain(db: Session, user: User, tenant_id, voucher_id) -> Dict[str, Any]:
     """The voucher's replacement links both ways: what it replaced, what replaced it, the whole chain."""
     PV = _pv()
+    ACC.require(db, user, ACC.CONTROLS_SECTION, "view", ACC.CONTROLS_FORBIDDEN)
     voucher = PV.get_voucher(db, user, tenant_id, voucher_id)
     R = PrepaidVoucherReplacement
     links = {str(r.original_voucher_id): r for r in db.query(R).filter(R.batch_id == voucher.batch_id)}

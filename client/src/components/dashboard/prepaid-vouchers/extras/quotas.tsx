@@ -78,7 +78,7 @@ export function QuotasSection() {
                       {q.note ? ` · ${q.note}` : ''}
                     </p>
                   </div>
-                  {editable ? (
+                  {editable && q.editable !== false ? (
                     <Button size="sm" variant="outline" onClick={() => setEditing(q)}><Pencil className="h-3.5 w-3.5" /> {t('edit')}</Button>
                   ) : null}
                 </div>

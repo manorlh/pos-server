@@ -73,7 +73,8 @@ class SettlementInvoiceIn(_In):
     invoice_date: date = Field(..., alias="invoiceDate")
     system: Optional[str] = Field(None, max_length=100)
     #: ₪, as the invoice says.
-    amount: Decimal = Field(..., ge=0, le=Decimal("100000000"))
+    #: ≤ ₪20,000,000 (stored in agorot, a 32-bit integer).
+    amount: Decimal = Field(..., ge=0, le=Decimal("20000000"))
     currency: str = "ILS"
     note: Optional[str] = Field(None, max_length=4000)
     gap_note: Optional[str] = Field(None, alias="gapNote", max_length=4000)
@@ -116,6 +117,8 @@ class ReplacementIn(_In):
     items: Optional[List[ReplacementItemIn]] = None
     #: A discount voucher's uses; absent: the original's uses left.
     uses: Optional[int] = Field(None, ge=1, le=1000)
+    #: Replace although a sale that held the original never ended (after looking into it; audited).
+    force: bool = False
 
 
 # ── Controls (§18.3 / §18.4 / §18.5) ──────────────────────────────────────────

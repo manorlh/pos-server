@@ -98,7 +98,16 @@ def audit(
     return ev
 
 
-def event_out(ev: PrepaidVoucherExtraEvent) -> Dict[str, Any]:
+def _redact(value: Any) -> Any:
+    """Every amount (`…Agorot`) out of an audit row's details — for whoever may not see production prices."""
+    if isinstance(value, dict):
+        return {k: (None if k.endswith("Agorot") else _redact(v)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact(v) for v in value]
+    return value
+
+
+def event_out(ev: PrepaidVoucherExtraEvent, *, prices: bool = True) -> Dict[str, Any]:
     from app.services.prepaid_vouchers import _iso
 
     return {
@@ -107,7 +116,7 @@ def event_out(ev: PrepaidVoucherExtraEvent) -> Dict[str, Any]:
         "refId": str(ev.ref_id) if ev.ref_id else None,
         "batchId": str(ev.batch_id) if ev.batch_id else None,
         "reason": ev.reason,
-        "details": ev.details,
+        "details": ev.details if prices else _redact(ev.details),
         "userName": ev.user_name,
         "at": _iso(ev.created_at),
     }

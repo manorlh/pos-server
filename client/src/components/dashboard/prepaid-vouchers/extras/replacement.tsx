@@ -18,7 +18,7 @@ import {
   type PrepaidVoucherRow,
 } from '@/lib/prepaidVouchersApi';
 import { fetchReplacements, replaceVoucher, type ReplaceResult } from '@/lib/prepaidVoucherExtrasApi';
-import { REPLACEMENT_REASONS, replaceable, replacementReady, type ReplacementReason } from '@/lib/prepaidVoucherExtras';
+import { REPLACEMENT_REASONS, errorCodeOf, replaceable, replacementReady, type ReplacementReason } from '@/lib/prepaidVoucherExtras';
 import { PAGE_PRESETS, type PagePresetId } from '@/components/dashboard/prepaid-vouchers/voucher-print';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -145,6 +145,9 @@ function ReplaceForm({ onDone }: { onDone: (r: ReplaceResult) => void }) {
   const [picked, setPicked] = useState<PrepaidVoucherRow | null>(null);
   const [kind, setKind] = useState<ReplacementReason>('lost');
   const [reason, setReason] = useState('');
+  // A sale that held the voucher never ended: after looking into it, the manager may replace it anyway.
+  const [held, setHeld] = useState(false);
+  const [force, setForce] = useState(false);
   useEffect(() => {
     const id = window.setTimeout(() => setDebounced(q.trim()), 350);
     return () => window.clearTimeout(id);
@@ -155,7 +158,7 @@ function ReplaceForm({ onDone }: { onDone: (r: ReplaceResult) => void }) {
     enabled: debounced.length >= 2,
   });
   const issue = useMutation({
-    mutationFn: () => replaceVoucher(picked!.id, { reasonKind: kind, reason: reason.trim() }),
+    mutationFn: () => replaceVoucher(picked!.id, { reasonKind: kind, reason: reason.trim(), force: held && force }),
     onSuccess: (r) => {
       toast.success(t('issuedToast', { serial: r.voucher.serial }));
       void qc.invalidateQueries({ queryKey: ['prepaid-controls'] });
@@ -163,9 +166,14 @@ function ReplaceForm({ onDone }: { onDone: (r: ReplaceResult) => void }) {
       void qc.invalidateQueries({ queryKey: ['prepaid-vouchers'] });
       setPicked(null);
       setReason('');
+      setHeld(false);
+      setForce(false);
       onDone(r);
     },
-    onError: (err) => toast.error(errorText(err)),
+    onError: (err) => {
+      if (errorCodeOf(err)?.code === 'prepaid_voucher_replacement_held') setHeld(true);
+      toast.error(errorText(err));
+    },
   });
 
   return (
@@ -182,7 +190,7 @@ function ReplaceForm({ onDone }: { onDone: (r: ReplaceResult) => void }) {
           <ul className="max-h-64 divide-y overflow-y-auto rounded-lg border">
             {found.data.items.map((v) => (
               <li key={v.id}>
-                <button type="button" onClick={() => setPicked(v)}
+                <button type="button" onClick={() => { setPicked(v); setHeld(false); setForce(false); }}
                   className="flex w-full flex-wrap items-center gap-2 px-3 py-2 text-start text-sm hover:bg-muted">
                   <span className="font-medium tabular-nums">#{v.serial}</span>
                   <span dir="ltr" className="font-mono text-xs text-muted-foreground">{v.displayCode}</span>
@@ -230,7 +238,13 @@ function ReplaceForm({ onDone }: { onDone: (r: ReplaceResult) => void }) {
                   placeholder={t('reasonPlaceholder')} />
               </div>
               <p className="text-xs text-muted-foreground">{t('warning')}</p>
-              <Button disabled={!replacementReady(kind, reason) || issue.isPending} onClick={() => issue.mutate()}>
+              {held ? (
+                <label className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-2 text-xs">
+                  <input type="checkbox" className="mt-0.5" checked={force} onChange={(e) => setForce(e.target.checked)} />
+                  <span>{t('forceHeld')}</span>
+                </label>
+              ) : null}
+              <Button disabled={!replacementReady(kind, reason) || issue.isPending || (held && !force)} onClick={() => issue.mutate()}>
                 {issue.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Repeat className="h-4 w-4" />}
                 {t('issue')}
               </Button>

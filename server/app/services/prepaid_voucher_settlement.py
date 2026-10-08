@@ -86,6 +86,9 @@ BATCH_NOT_IN_AGREEMENT = "prepaid_settlement_batch_not_in_agreement"
 DUPLICATE_INVOICE = "prepaid_settlement_invoice_duplicate"
 INVOICE_VOIDED = "prepaid_settlement_invoice_voided"
 CLOSED = "prepaid_settlement_closed"
+#: The basis, period, policies or batches of an agreement with a live invoice: what the invoice covered
+#: would change under it. Void the invoices first (or make a new agreement).
+HAS_INVOICES = "prepaid_settlement_has_invoices"
 REASON_REQUIRED = "prepaid_settlement_reason_required"
 PRICES_REQUIRED = "prepaid_settlement_prices_required"
 FILE_TOO_BIG = "prepaid_settlement_file_too_big"
@@ -345,7 +348,10 @@ def batch_figures(
         ):
             if str(vid) in vs:
                 vs[str(vid)].first_redeemed = _utc(first)
-        by_serial = {v.serial: v for v in vs.values()}
+        repl_ids = {str(r.replacement_voucher_id) for r in db.query(PrepaidVoucherReplacement.replacement_voucher_id)
+                    .filter(PrepaidVoucherReplacement.batch_id == b.id)}
+        # Replacements are handed over when issued, never in a delivery.
+        by_serial = {v.serial: v for v in vs.values() if v.id not in repl_ids}
         for d in deliveries.get(str(b.id), []):
             for s in range(int(d.serial_from), int(d.serial_to) + 1):
                 v = by_serial.get(s)
@@ -597,12 +603,38 @@ def _corrections(db: Session, agreement, figures: Sequence[BatchFigures], invoic
     return out
 
 
+def _cap_by_other_invoices(db: Session, a, batches, figures: Sequence[BatchFigures], rows: List[Dict[str, Any]]) -> None:
+    """
+    A batch another agreement already invoiced (a closed month, say): what this agreement may still invoice
+    is also capped by what the batch was charged over all time less every live invoice of it — the very
+    rule `add_invoice` enforces — so the balance shown is the balance the invoice form takes.
+    """
+    everywhere = invoiced_by_batch(db, a.tenant_id, [b.id for b in batches])
+    elsewhere = {k: n - next((f.invoiced for f in figures if str(f.batch.id) == k), 0) for k, (n, _amt) in everywhere.items()}
+    touched = [b for b in batches if elsewhere.get(str(b.id), 0) > 0]
+    if not touched:
+        return
+    ever = {str(f.batch.id): f for f in batch_figures(db, _all_time(a), touched)}
+    for r in rows:
+        key = r["batchId"]
+        if key not in ever:
+            continue
+        overall = ever[key].chargeable - everywhere.get(key, (0, 0))[0]
+        left = min(r["uninvoiced"], max(0, overall))
+        r["invoicedElsewhere"] = elsewhere[key]
+        if left != r["uninvoiced"]:
+            r["uninvoiced"] = left
+            price = r["productionPriceAgorot"]
+            r["uninvoicedAmountAgorot"] = left * int(price) if price is not None else None
+
+
 def agreement_out(db: Session, user: User, a: PrepaidSettlementAgreement, *, full: bool = True) -> Dict[str, Any]:
     PV = _pv()
     prices = ACC.prices_visible(db, user)
     batches = agreement_batches(db, a)
     figures = batch_figures(db, a, batches)
     rows = [_batch_row(f, prices) for f in figures]
+    _cap_by_other_invoices(db, a, batches, figures, rows)
     totals = _totals(rows, prices)
     invoices = (
         db.query(PrepaidSettlementInvoice)
@@ -733,8 +765,25 @@ def _validate(db: Session, user: User, a: PrepaidSettlementAgreement) -> None:
             raise ACC.http(status.HTTP_409_CONFLICT, f"{OVERLAP}:{clash[0]['agreementId']}")
 
 
+def _settlement_lock(db: Session, tenant_id) -> None:
+    """A transaction lock per tenant (Postgres) for agreement and invoice writes: two managers never both
+    pass the overlap or duplicate-number check."""
+    import hashlib
+
+    from sqlalchemy import text
+
+    try:
+        if db.get_bind().dialect.name != "postgresql":
+            return
+    except Exception:  # noqa: BLE001
+        return
+    key = int.from_bytes(hashlib.sha256(f"pv-settlement:{tenant_id}".encode()).digest()[:8], "big", signed=True)
+    db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": key})
+
+
 def create_agreement(db: Session, user: User, tenant_id, body) -> PrepaidSettlementAgreement:
     _require(db, user, "edit")
+    _settlement_lock(db, tenant_id)
     PV = _pv()
     if not PV._covers_company(db, user, body.company_id):
         raise ACC.http(status.HTTP_403_FORBIDDEN, PV.FORBIDDEN)
@@ -757,9 +806,22 @@ def create_agreement(db: Session, user: User, tenant_id, body) -> PrepaidSettlem
 
 def update_agreement(db: Session, user: User, tenant_id, agreement_id, body) -> PrepaidSettlementAgreement:
     _require(db, user, "edit")
+    _settlement_lock(db, tenant_id)
     a = get_agreement(db, user, tenant_id, agreement_id, lock=True)
     before = _state(a)
     fields = body.model_fields_set
+    terms = {"production_name", "event_name", "report_event_id", "batch_ids", "billing_basis", "period_from",
+             "period_to", "cancelled_policy", "replacement_policy"}
+    if fields & terms and db.query(PrepaidSettlementInvoice.id).filter(
+        PrepaidSettlementInvoice.agreement_id == a.id, PrepaidSettlementInvoice.voided_at.is_(None)
+    ).first():
+        changed = {
+            f for f in fields & terms
+            if (getattr(body, f) if f != "batch_ids" else ([str(b) for b in body.batch_ids] if body.batch_ids else None))
+            != (getattr(a, f) if f != "batch_ids" else (list(a.batch_ids) if a.batch_ids else None))
+        }
+        if changed:
+            raise ACC.http(status.HTTP_409_CONFLICT, HAS_INVOICES)
     simple = {
         "name": "name", "production_name": "production_name", "event_name": "event_name",
         "report_event_id": "report_event_id", "billing_basis": "billing_basis", "period_from": "period_from",
@@ -839,6 +901,7 @@ def add_invoice(db: Session, user: User, tenant_id, agreement_id, body) -> Prepa
     _require(db, user, "edit")
     if not ACC.prices_visible(db, user):
         raise ACC.http(status.HTTP_403_FORBIDDEN, PRICES_REQUIRED)
+    _settlement_lock(db, tenant_id)
     a = get_agreement(db, user, tenant_id, agreement_id, lock=True)
     if a.status != "active":
         raise ACC.http(status.HTTP_409_CONFLICT, CLOSED)
@@ -1013,8 +1076,17 @@ def _free_ranges(last: int, taken: Sequence[Tuple[int, int]]) -> List[Dict[str, 
     return out
 
 
+def _replacement_serials(db: Session, batch_id) -> Set[int]:
+    return {
+        int(s) for (s,) in db.query(PrepaidVoucher.serial).join(
+            PrepaidVoucherReplacement, PrepaidVoucherReplacement.replacement_voucher_id == PrepaidVoucher.id
+        ).filter(PrepaidVoucherReplacement.batch_id == batch_id)
+    }
+
+
 def list_deliveries(db: Session, user: User, tenant_id, batch_id) -> Dict[str, Any]:
     PV = _pv()
+    _require(db, user, "view")
     batch = PV.get_batch(db, user, tenant_id, batch_id)
     rows = (
         db.query(PrepaidVoucherDelivery)
@@ -1024,17 +1096,14 @@ def list_deliveries(db: Session, user: User, tenant_id, batch_id) -> Dict[str, A
     )
     live = [d for d in rows if d.voided_at is None]
     last = int(batch.next_serial or 1) - 1
-    replacement_serials = {
-        int(s) for (s,) in db.query(PrepaidVoucher.serial).join(
-            PrepaidVoucherReplacement, PrepaidVoucherReplacement.replacement_voucher_id == PrepaidVoucher.id
-        ).filter(PrepaidVoucherReplacement.batch_id == batch.id)
-    }
+    replacement_serials = _replacement_serials(db, batch.id)
     return {
         "batchId": str(batch.id),
         "lastSerial": last,
         "delivered": sum(int(d.count) for d in live if d.chargeable),
         "deliveredFree": sum(int(d.count) for d in live if not d.chargeable),
-        "undelivered": _free_ranges(last, [(int(d.serial_from), int(d.serial_to)) for d in live]),
+        "undelivered": _free_ranges(last, [(int(d.serial_from), int(d.serial_to)) for d in live]
+                                    + [(s, s) for s in replacement_serials]),
         # Replacements are handed over when issued; they are never part of a delivery.
         "replacementSerials": sorted(replacement_serials),
         "items": [delivery_out(d) for d in rows],
@@ -1043,6 +1112,7 @@ def list_deliveries(db: Session, user: User, tenant_id, batch_id) -> Dict[str, A
 
 def add_delivery(db: Session, user: User, tenant_id, batch_id, body) -> PrepaidVoucherDelivery:
     PV = _pv()
+    _require(db, user, "edit")
     batch = PV.get_batch(db, user, tenant_id, batch_id)
     db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == batch.id).with_for_update().first()
     last = int(batch.next_serial or 1) - 1
@@ -1058,9 +1128,13 @@ def add_delivery(db: Session, user: User, tenant_id, batch_id, body) -> PrepaidV
     when = _utc(body.delivered_at) or now
     if when > now + timedelta(minutes=10):
         raise ACC.http(status.HTTP_400_BAD_REQUEST, DELIVERY_FUTURE)
-    count = db.query(func.count(PrepaidVoucher.id)).filter(
-        PrepaidVoucher.batch_id == batch.id, PrepaidVoucher.serial >= lo, PrepaidVoucher.serial <= hi
-    ).scalar() or 0
+    # Replacements are handed over when issued: never part of a delivery's count.
+    repl = _replacement_serials(db, batch.id)
+    count = sum(
+        1 for (s,) in db.query(PrepaidVoucher.serial).filter(
+            PrepaidVoucher.batch_id == batch.id, PrepaidVoucher.serial >= lo, PrepaidVoucher.serial <= hi
+        ) if int(s) not in repl
+    )
     d = PrepaidVoucherDelivery(
         id=uuid.uuid4(), tenant_id=batch.tenant_id, batch_id=batch.id, serial_from=lo, serial_to=hi, count=int(count),
         chargeable=bool(body.chargeable), delivered_at=when, recipient=(body.recipient or "").strip() or None,
@@ -1078,6 +1152,7 @@ def add_delivery(db: Session, user: User, tenant_id, batch_id, body) -> PrepaidV
 
 def void_delivery(db: Session, user: User, tenant_id, delivery_id, reason: Optional[str]) -> PrepaidVoucherDelivery:
     PV = _pv()
+    _require(db, user, "edit")
     reason = (reason or "").strip()
     if not reason:
         raise ACC.http(status.HTTP_400_BAD_REQUEST, REASON_REQUIRED)

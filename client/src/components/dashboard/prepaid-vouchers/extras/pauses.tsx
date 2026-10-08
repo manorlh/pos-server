@@ -109,7 +109,7 @@ export function PausesSection() {
                   </p>
                 ) : null}
               </div>
-              {editable && p.active ? (
+              {editable && p.editable !== false && p.active ? (
                 <Button size="sm" variant="outline" onClick={() => setResuming(p)}><Play className="h-3.5 w-3.5" /> {t('resume')}</Button>
               ) : null}
             </li>

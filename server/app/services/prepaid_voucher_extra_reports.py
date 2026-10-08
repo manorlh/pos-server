@@ -85,6 +85,15 @@ def _in(moment, start, end) -> bool:
 # ── Settlement ────────────────────────────────────────────────────────────────
 
 
+def _sum_or_none(values) -> Optional[int]:
+    total = 0
+    for v in values:
+        if v is None:
+            return None
+        total += int(v)
+    return total
+
+
 def settlement_report(db: Session, user: User, tenant_id, scope) -> Dict[str, Any]:
     from app.services import prepaid_voucher_settlement as ST
     from app.services.prepaid_voucher_controls import test_batch_ids
@@ -106,9 +115,15 @@ def settlement_report(db: Session, user: User, tenant_id, scope) -> Dict[str, An
     if scope.events:
         agreements = [a for a in agreements if (a.event_name or "") in scope.events]
     rows = [ST.agreement_out(db, user, a, full=False) for a in agreements]
-    covered = set()
+    # The totals count each batch once — under the agreement made first — even where two active agreements
+    # came to share a batch issued after both (each agreement's own view warns of it).
+    covered: set = set()
+    unique: List[Dict[str, Any]] = []
     for a in agreements:
-        covered |= {str(b.id) for b in ST.agreement_batches(db, a)}
+        for r in ST.agreement_out(db, user, a)["batches"]:
+            if r["batchId"] not in covered:
+                covered.add(r["batchId"])
+                unique.append(r)
     tests = test_batch_ids(db, tenant_id)
     zone = PVA.zone_of(db, tenant_id)
     batches = PVA.scoped_batches(db, user, tenant_id, scope, zone=zone, by_redemption=False)
@@ -118,11 +133,12 @@ def settlement_report(db: Session, user: User, tenant_id, scope) -> Dict[str, An
         "pricesVisible": prices,
         "items": rows,
         "totals": {
-            "chargeable": sum(r["totals"]["chargeable"] or 0 for r in rows),
-            "amountAgorot": sum(r["totals"]["amountAgorot"] or 0 for r in rows) if prices else None,
-            "invoicesAmountAgorot": sum(r["totals"]["invoicesAmountAgorot"] or 0 for r in rows) if prices else None,
-            "uninvoiced": sum(r["totals"]["uninvoiced"] or 0 for r in rows),
-            "uninvoicedAmountAgorot": sum(r["totals"]["uninvoicedAmountAgorot"] or 0 for r in rows) if prices else None,
+            "chargeable": sum(r["chargeable"] for r in unique),
+            # Null when a batch has no production price (never a partial sum that looks whole).
+            "amountAgorot": _sum_or_none(r["amountAgorot"] for r in unique) if prices else None,
+            "invoicesAmountAgorot": _sum_or_none(r["totals"]["invoicesAmountAgorot"] for r in rows) if prices else None,
+            "uninvoiced": sum(r["uninvoiced"] for r in unique),
+            "uninvoicedAmountAgorot": _sum_or_none(r["uninvoicedAmountAgorot"] for r in unique) if prices else None,
         },
         # Batches under the filters that no active agreement covers (nothing is charged for them yet).
         "unassigned": [
@@ -166,8 +182,8 @@ def _override_rows(db: Session, batches: Dict[str, PrepaidVoucherBatch], start, 
         return None
     PV = _pv()
     try:
-        q = db.query(model).filter(getattr(model, "batch_id").in_([uuid.UUID(b) for b in batches]))
-        rows = q.all()
+        with db.begin_nested():  # a table not migrated yet must not abort the request's transaction
+            rows = db.query(model).filter(getattr(model, "batch_id").in_([uuid.UUID(b) for b in batches])).all()
     except Exception:  # noqa: BLE001 — a table not migrated yet: not recorded
         return None
     out = []

@@ -282,11 +282,23 @@ class TestInvoices:
         november = invoice(w, november, "NOV", 60, [(b["id"], 1)])
         assert november["totals"]["uninvoiced"] == 0
         patch(w, november, status="closed")
-        # An agreement over all time sees 3 charged, none on its own invoices — but every voucher was invoiced.
+        # An agreement over all time sees 3 charged, none on its own invoices — but every voucher was invoiced
+        # (by the other two): nothing is left, as the invoice form says too.
         ever = agreement(w, name="הכול")
-        assert ever["totals"]["uninvoiced"] == 3
+        row = ever["batches"][0]
+        assert (ever["totals"]["chargeable"], ever["totals"]["uninvoiced"], row["invoicedElsewhere"]) == (3, 0, 3)
         e = refused(invoice, w, ever, "ALL", 60, [(b["id"], 1)])
         assert e.detail == f"{ST.OVER_INVOICED}:{b['id']}:0"
+
+    def test_the_terms_are_fixed_once_an_invoice_is_linked(self, w, festival):
+        a = agreement(w)
+        a = invoice(w, a, "INV-1", 600, [(festival["id"], 10)])
+        e = refused(patch, w, a, billingBasis="delivery")
+        assert (e.status_code, e.detail) == (409, ST.HAS_INVOICES)
+        # The same value again, the name and the notes are fine.
+        assert patch(w, a, billingBasis="redemption", name="שם חדש", notes="x")["name"] == "שם חדש"
+        X.void_settlement_invoice(a["invoices"][0]["id"], ReasonIn(reason="בטעות"), **_ctx(w))
+        assert patch(w, a, billingBasis="delivery")["billingBasis"] == "delivery"
 
     def test_corrections_after_an_invoice(self, w):
         b = meal_batch(w, count=3)
@@ -378,6 +390,21 @@ class TestDeliveries:
         deliver(w, b, 1, 6)
         deliver(w, b, 7, 10, chargeable=False)
         assert agreement(w, billingBasis="delivery")["totals"]["chargeable"] == 6
+
+    def test_a_replacement_is_never_part_of_a_delivery(self, w):
+        b = meal_batch(w, count=3)
+        X.replace_prepaid_voucher(vouchers(w, b)[0]["id"], ReplacementIn(reasonKind="lost", reason="אבד"), **_ctx(w))
+        out = deliver(w, b, 1, 4)  # 4 is the replacement
+        assert (out["delivered"], out["replacementSerials"]) == (3, [4])
+        a = agreement(w, billingBasis="delivery")
+        assert a["totals"]["chargeable"] == 3  # the lost one and its replacement are one voucher
+
+    def test_deliveries_are_the_settlement_sections(self, w):
+        b = meal_batch(w, count=3)
+        cm = restricted(w, {"prepaid_vouchers": "edit", "prepaid_voucher_settlement": "view"})
+        e = refused(X.add_prepaid_voucher_delivery, b["id"], DeliveryIn(serialFrom=1, serialTo=2), **_ctx(w, cm))
+        assert e.status_code == 403
+        assert X.list_prepaid_voucher_deliveries(b["id"], **_ctx(w, cm))["delivered"] == 0
 
     def test_a_delivery_in_the_batchs_audit_trail(self, w):
         b = meal_batch(w, count=5)

@@ -15,7 +15,9 @@ tables only, nothing existing changes:
 * `prepaid_voucher_replacements` — a replacement voucher and its original;
 * `prepaid_redemption_pauses`, `prepaid_redemption_quotas` — paused redemptions and quotas;
 * `prepaid_voucher_test_batches` — batches of staff test vouchers;
-* `prepaid_voucher_extra_events` — their audit trail.
+* `prepaid_voucher_extra_events` — their audit trail;
+* on the core's `prepaid_voucher_reservations`: the index `ix_prepaid_voucher_reservations_batch_held`
+  (batch, status, expiry) — what a redemption quota counts at every check.
 
 Idempotent: a table the API already made (`create_all` at start-up) is left as it is and only its
 missing indexes are added. Offline (`--sql`): the plain statements.
@@ -214,6 +216,10 @@ def _tables():
 #: Every table this revision makes, in the order they are made.
 TABLES = tuple(name for name, _cols, _ix in _tables())
 
+#: On the core's table: a quota counts the holds of its batches still running at every redemption check.
+RESERVATIONS = 'prepaid_voucher_reservations'
+HELD_INDEX = ('ix_prepaid_voucher_reservations_batch_held', ['batch_id', 'status', 'expires_at'])
+
 
 def upgrade() -> None:
     offline = _offline()
@@ -226,11 +232,18 @@ def upgrade() -> None:
         for ix_name, ix_cols, unique in indexes:
             if ix_name not in have:
                 op.create_index(ix_name, name, ix_cols, unique=unique)
+    if offline or insp.has_table(RESERVATIONS):
+        have = set() if offline else {i['name'] for i in insp.get_indexes(RESERVATIONS)}
+        if HELD_INDEX[0] not in have:
+            op.create_index(HELD_INDEX[0], RESERVATIONS, HELD_INDEX[1])
 
 
 def downgrade() -> None:
     offline = _offline()
     insp = None if offline else sa.inspect(op.get_bind())
+    if offline or (insp.has_table(RESERVATIONS)
+                   and HELD_INDEX[0] in {i['name'] for i in insp.get_indexes(RESERVATIONS)}):
+        op.drop_index(HELD_INDEX[0], table_name=RESERVATIONS)
     for name in reversed(TABLES):
         if offline or insp.has_table(name):
             op.drop_table(name)

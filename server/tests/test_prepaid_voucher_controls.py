@@ -244,6 +244,26 @@ class TestScope:
         assert take(w, codes(w, b)[0])["ok"]
         assert X.list_prepaid_voucher_quotas(**_ctx(w))["items"][0]["companyId"] == str(other.id)
 
+    def test_a_tenant_wide_pause_is_lifted_by_whoever_could_make_it(self, w):
+        b = batch(w)
+        p = pause(w, "event", "פסטיבל הקיץ")  # the super admin, no company: every company
+        other, cm = self._other_company(w)
+        assert X.list_prepaid_voucher_pauses(active=True, current_user=cm, active_tenant_id=w.tenant.id,
+                                             db=w.db)["items"][0]["editable"] is False
+        e = refused(X.resume_prepaid_voucher_pause, p["id"], None, current_user=cm, active_tenant_id=w.tenant.id, db=w.db)
+        assert e.status_code == 403
+        assert look(w, codes(w, b)[0])["reason"] == CTL.PAUSED
+
+    def test_a_test_batch_takes_no_place_in_a_quota(self, w):
+        w.db.query(Shop).filter(Shop.id == w.shop.id).update({"training_mode": True})
+        w.db.commit()
+        real = batch(w, count=2)
+        quota(w, "production", "קייטרינג אלון", 1)
+        t = staff_batch(w)
+        assert take(w, codes(w, t)[0])["ok"]
+        assert take(w, codes(w, real)[0])["ok"]
+        assert refused(take, w, codes(w, real)[1]).detail == CTL.QUOTA_REACHED
+
     def test_the_audit_trail_of_what_one_manages(self, w):
         b = batch(w)
         pause(w, "batch", b["id"])
@@ -395,6 +415,43 @@ class TestReplacement:
         ), machine=till, db=w.db)
         e = refused(X.replace_prepaid_voucher, v["id"], ReplacementIn(reasonKind="lost", reason="אבד"), **_ctx(w))
         assert (e.status_code, e.detail) == (409, RPL.IN_USE)
+
+    def test_a_sale_that_held_it_and_never_ended(self, w):
+        from app.models.prepaid_voucher import PrepaidVoucherReservation
+
+        b = R.create_prepaid_voucher_batch(PrepaidVoucherBatchCreate(
+            name="הנחה", companyId=w.company.id, count=1, kind="order_discount", discountType="fixed", discountValue=10,
+        ), **_ctx(w))
+        v = vouchers(w, b)[0]
+        w.db.add(PrepaidVoucherReservation(
+            id=uuid.uuid4(), tenant_id=w.tenant.id, voucher_id=uuid.UUID(v["id"]), batch_id=uuid.UUID(b["id"]),
+            machine_id=w.tills[0].id, client_request_id="r1", sale_ref="s1", uses=1, status="held",
+            expires_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        ))
+        w.db.commit()
+        e = refused(X.replace_prepaid_voucher, v["id"], ReplacementIn(reasonKind="lost", reason="אבד"), **_ctx(w))
+        assert (e.status_code, e.detail) == (409, RPL.HELD)
+        out = X.replace_prepaid_voucher(v["id"], ReplacementIn(reasonKind="lost", reason="אבד, העסקה נבדקה", force=True),
+                                        **_ctx(w))
+        assert out["voucher"]["usesLeft"] == 1
+
+    def test_not_while_the_batch_is_assigned_offline(self, w):
+        from app.services import prepaid_voucher_offline as PVO
+
+        b = batch(w, count=1, offlineAllowed=True)
+        PVO.assign(w.db, w.admin, w.tenant.id, b["id"], "machine", str(w.tills[0].id))
+        w.db.commit()
+        e = refused(X.replace_prepaid_voucher, vouchers(w, b)[0]["id"], ReplacementIn(reasonKind="lost", reason="אבד"),
+                    **_ctx(w))
+        assert (e.status_code, e.detail) == (409, RPL.ASSIGNED_OFFLINE)
+
+    def test_what_is_left_on_a_grouped_or_used_voucher(self):
+        from types import SimpleNamespace
+
+        goods = SimpleNamespace(kind="items")
+        assert RPL._what_left(SimpleNamespace(status="partially_used", remaining={"g:a": 1, "g:b": 1, "total": 0}), goods) is False
+        assert RPL._what_left(SimpleNamespace(status="partially_used", remaining={"g:a": 0, "g:b": 1, "total": 1}), goods) is True
+        assert RPL._what_left(SimpleNamespace(status="used", remaining={"x": 1}), goods) is False
 
     def test_listed_with_the_batch(self, w):
         b = batch(w, count=1)
@@ -591,6 +648,8 @@ class TestMigration:
         with engine.begin() as conn:
             for t in ("tenants", "companies", "users", "report_events", "prepaid_voucher_batches", "prepaid_vouchers"):
                 conn.execute(sa.text(f"CREATE TABLE {t} (id CHAR(32) PRIMARY KEY)"))
+            conn.execute(sa.text("CREATE TABLE prepaid_voucher_reservations (id CHAR(32) PRIMARY KEY, batch_id CHAR(32), "
+                                 "status VARCHAR(16), expires_at TIMESTAMP)"))
             # One table already made by the API's create_all, without its index.
             conn.execute(sa.text("CREATE TABLE prepaid_voucher_deliveries (id CHAR(32) PRIMARY KEY, batch_id CHAR(32), "
                                  "delivered_at TIMESTAMP)"))
@@ -600,9 +659,11 @@ class TestMigration:
             insp = sa.inspect(conn)
             assert all(insp.has_table(t) for t in module.TABLES)
             assert "ix_prepaid_voucher_deliveries_batch" in {i["name"] for i in insp.get_indexes("prepaid_voucher_deliveries")}
+            assert module.HELD_INDEX[0] in {i["name"] for i in insp.get_indexes("prepaid_voucher_reservations")}
             with Operations.context(MigrationContext.configure(conn)):
                 module.downgrade()
             assert not any(sa.inspect(conn).has_table(t) for t in module.TABLES)
+            assert sa.inspect(conn).get_indexes("prepaid_voucher_reservations") == []
         buf = io.StringIO()
         offline = MigrationContext.configure(dialect_name="postgresql", opts={"as_sql": True, "output_buffer": buf})
         with Operations.context(offline):

@@ -351,7 +351,10 @@ export interface ReplaceResult {
   voucher: PrepaidVoucher;
 }
 
-export async function replaceVoucher(voucherId: string, body: { reasonKind: ReplacementReason; reason: string }): Promise<ReplaceResult> {
+export async function replaceVoucher(
+  voucherId: string,
+  body: { reasonKind: ReplacementReason; reason: string; force?: boolean },
+): Promise<ReplaceResult> {
   const { data } = await api.post<ReplaceResult>(`/prepaid-vouchers/vouchers/${voucherId}/replace`, body);
   return data;
 }
@@ -524,6 +527,8 @@ export interface Pause {
   resumedAt: string | null;
   resumedBy: string | null;
   resumeNote: string | null;
+  /** May this user resume it (the server's rules: what they could have made). */
+  editable?: boolean;
 }
 
 export interface Quota {
@@ -546,7 +551,9 @@ export interface Quota {
   warning: boolean;
   text: string;
   createdAt: string | null;
-  createdBy: string | null;
+  createdBy: string | null;
+  /** May this user change it (the server's rules). */
+  editable?: boolean;
 }
 
 export interface TestBatch {

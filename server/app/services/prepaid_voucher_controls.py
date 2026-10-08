@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 from fastapi import status
-from sqlalchemy import inspect as sa_inspect, or_, text
+from sqlalchemy import func, inspect as sa_inspect, or_, text
 from sqlalchemy.orm import Session
 
 from app.models.pos_machine import POSMachine
@@ -99,6 +99,10 @@ _TABLES = (
 )
 _READY: "weakref.WeakKeyDictionary[Any, bool]" = weakref.WeakKeyDictionary()
 _WARNED: List[bool] = []
+#: Far from its limit a quota is read without a lock (every lookup and reserve passes here); within
+#: this many of it, under its lock — more tills than this racing for one quota's last places at the
+#: same instant is not a festival.
+LOCK_NEAR = 20
 
 
 def _pv():
@@ -130,8 +134,9 @@ def tables_ready(db: Session) -> bool:
     except TypeError:
         pass
     try:
-        insp = sa_inspect(db.connection())
-        ok = all(insp.has_table(t) for t in _TABLES)
+        with db.begin_nested():  # never abort the caller's transaction (Postgres)
+            insp = sa_inspect(db.connection())
+            ok = all(insp.has_table(t) for t in _TABLES)
     except Exception:  # noqa: BLE001
         return False
     if ok:
@@ -186,16 +191,18 @@ def _scope_batch_ids(db: Session, tenant_id, company_id, kind: str, value: str) 
         tid = ACC.as_uuid(value)
         q = q.filter(B.type_id == (tid or uuid.uuid4()))
     elif kind == "production":
-        conds = [B.customer_name == value]
+        conds = [func.trim(B.customer_name) == value]
         if hasattr(B, "production_id") and ACC.as_uuid(value):
             conds.append(B.production_id == ACC.as_uuid(value))
         q = q.filter(or_(*conds))
     else:
-        conds = [B.event_name == value]
+        conds = [func.trim(B.event_name) == value]
         if hasattr(B, "report_event_id") and ACC.as_uuid(value):
             conds.append(B.report_event_id == ACC.as_uuid(value))
         q = q.filter(or_(*conds))
-    return [i for (i,) in q.all()]
+    tests = test_batch_ids(db, tenant_id)
+    # A staff test redemption never takes a real production's / event's places.
+    return [i for (i,) in q.all() if str(i) not in tests]
 
 
 # ── Test batches ──────────────────────────────────────────────────────────────
@@ -232,13 +239,15 @@ def _staff_denied(db: Session, machine: POSMachine) -> bool:
         from app.services import till_permissions as TP
         from app.services.till_roles import effective_for_pos_user
 
-        row = (
-            db.query(PosUser)
-            .join(PosUserSession, PosUserSession.pos_user_id == PosUser.id)
-            .filter(PosUserSession.machine_id == machine.id, PosUserSession.released_at.is_(None))
-            .order_by(PosUserSession.last_seen_at.desc())
-            .first()
-        )
+        # In a savepoint: a failed statement must not abort the redemption's own transaction (Postgres).
+        with db.begin_nested():
+            row = (
+                db.query(PosUser)
+                .join(PosUserSession, PosUserSession.pos_user_id == PosUser.id)
+                .filter(PosUserSession.machine_id == machine.id, PosUserSession.released_at.is_(None))
+                .order_by(PosUserSession.last_seen_at.desc())
+                .first()
+            )
         if row is None:
             return False
         return effective_for_pos_user(row).state(TEST_PERMISSION) == TP.DENY
@@ -307,11 +316,10 @@ def quota_used(
         rq = rq.filter(R.redeemed_at < end)
     used = rq.count()
     H = PrepaidVoucherReservation
-    hq = db.query(H).filter(H.batch_id.in_(ids), H.status == "held")
+    hq = db.query(H.id).filter(H.batch_id.in_(ids), H.status == "held", H.expires_at > now)
     if exclude_voucher_id is not None:
         hq = hq.filter(H.voucher_id != exclude_voucher_id)
-    held = sum(1 for h in hq if _utc(h.expires_at) and _utc(h.expires_at) > now)
-    return used + held
+    return used + hq.count()
 
 
 def _lock(db: Session, quotas: Iterable[PrepaidRedemptionQuota]) -> None:
@@ -338,10 +346,18 @@ def reached_quota(db: Session, batch: PrepaidVoucherBatch, voucher: Optional[Pre
     ]
     if not quotas:
         return None
-    if lock:
-        _lock(db, quotas)
+    exclude = getattr(voucher, "id", None)
     for q in sorted(quotas, key=lambda x: str(x.id)):
-        used = quota_used(db, q, now, exclude_voucher_id=getattr(voucher, "id", None))
+        used = quota_used(db, q, now, exclude_voucher_id=exclude)
+        if used is None:
+            continue
+        if used < int(q.max_redemptions) - LOCK_NEAR or not lock:
+            if used >= int(q.max_redemptions):
+                return q
+            continue
+        # Near the limit: count again under the quota's lock (in id order), so the last one goes to one till.
+        _lock(db, [q])
+        used = quota_used(db, q, now, exclude_voucher_id=exclude)
         if used is not None and used >= int(q.max_redemptions):
             return q
     return None
@@ -360,14 +376,15 @@ def refusal_reason(db: Session, machine: POSMachine, voucher: PrepaidVoucher, no
         return None
     now = now or _now()
     batch = voucher.batch
-    if is_test(db, batch.id):
+    test = is_test(db, batch.id)
+    if test:
         if not _training_till(db, machine):
             return TEST_ONLY
         if _staff_denied(db, machine):
             return TEST_NOT_PERMITTED
     if active_pause(db, batch, now) is not None:
         return PAUSED
-    if reached_quota(db, batch, voucher, now) is not None:
+    if not test and reached_quota(db, batch, voucher, now) is not None:
         return QUOTA_REACHED
     return None
 
@@ -514,6 +531,24 @@ def _visible(db: Session, user: User, row) -> bool:
     return str(db.query(Shop.company_id).filter(Shop.id == shop_id).scalar()) == str(row.company_id)
 
 
+def _may_change(db: Session, user: User, row) -> bool:
+    """Resuming a pause or changing a quota: what the user could have made (the rules of `_check_scope`)."""
+    from app.models.user import UserRole
+
+    PV = _pv()
+    if row.scope_kind == "batch":
+        b = db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == (ACC.as_uuid(row.scope_value) or uuid.uuid4())).first()
+        return b is not None and PV.may_manage(db, user, row.tenant_id, b)
+    if row.company_id is None:
+        return user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR)
+    return PV._covers_company(db, user, row.company_id)
+
+
+def _with_editable(db: Session, user: User, out: Dict[str, Any], row) -> Dict[str, Any]:
+    out["editable"] = ACC.allows(db, user, ACC.CONTROLS_SECTION, "edit") and _may_change(db, user, row)
+    return out
+
+
 def list_pauses(db: Session, user: User, tenant_id, *, active_only: bool = False) -> Dict[str, Any]:
     PV = _pv()
     PV._require_role(user)
@@ -526,7 +561,7 @@ def list_pauses(db: Session, user: User, tenant_id, *, active_only: bool = False
         .limit(500)
         .all()
     )
-    out = [pause_out(db, p, now) for p in rows if _visible(db, user, p)]
+    out = [_with_editable(db, user, pause_out(db, p, now), p) for p in rows if _visible(db, user, p)]
     if active_only:
         out = [p for p in out if p["active"]]
     return {"items": out, "editable": ACC.allows(db, user, ACC.CONTROLS_SECTION, "edit")}
@@ -566,6 +601,8 @@ def resume_pause(db: Session, user: User, tenant_id, pause_id, note: Optional[st
     ).first()
     if p is None or not _visible(db, user, p):
         raise ACC.http(status.HTTP_404_NOT_FOUND, PAUSE_NOT_FOUND)
+    if not _may_change(db, user, p):
+        raise ACC.http(status.HTTP_403_FORBIDDEN, PV.FORBIDDEN)
     if p.resumed_at is None:
         now = _now()
         p.resumed_at = now
@@ -624,7 +661,7 @@ def list_quotas(db: Session, user: User, tenant_id) -> Dict[str, Any]:
         .limit(500)
         .all()
     )
-    return {"items": [quota_out(db, q, now) for q in rows if _visible(db, user, q)],
+    return {"items": [_with_editable(db, user, quota_out(db, q, now), q) for q in rows if _visible(db, user, q)],
             "editable": ACC.allows(db, user, ACC.CONTROLS_SECTION, "edit")}
 
 
@@ -679,6 +716,8 @@ def update_quota(db: Session, user: User, tenant_id, quota_id, body) -> PrepaidR
     ).first()
     if q is None or not _visible(db, user, q):
         raise ACC.http(status.HTTP_404_NOT_FOUND, QUOTA_NOT_FOUND)
+    if not _may_change(db, user, q):
+        raise ACC.http(status.HTTP_403_FORBIDDEN, PV.FORBIDDEN)
     before = _quota_state(q)
     fields = body.model_fields_set
     if "max_redemptions" in fields and body.max_redemptions is not None:
@@ -736,6 +775,8 @@ def mark_test(db: Session, user: User, tenant_id, batch_id, note: Optional[str] 
     PV._require_role(user)
     ACC.require(db, user, ACC.CONTROLS_SECTION, "edit", ACC.CONTROLS_FORBIDDEN)
     batch = PV.get_batch(db, user, tenant_id, batch_id)
+    # The batch's row, so a redemption that starts now waits (its lock is the voucher's; the batch is read).
+    db.query(PrepaidVoucherBatch.id).filter(PrepaidVoucherBatch.id == batch.id).with_for_update().first()
     if is_test(db, batch.id):
         raise ACC.http(status.HTTP_409_CONFLICT, ALREADY_TEST)
     if _has_history(db, batch):
@@ -825,6 +866,7 @@ def list_test_batches(db: Session, user: User, tenant_id) -> Dict[str, Any]:
 
 def batch_status(db: Session, user: User, tenant_id, batch_id) -> Dict[str, Any]:
     PV = _pv()
+    ACC.require(db, user, ACC.CONTROLS_SECTION, "view", ACC.CONTROLS_FORBIDDEN)
     batch = PV.get_batch(db, user, tenant_id, batch_id)
     now = _now()
     if not tables_ready(db):
@@ -855,11 +897,11 @@ def events(db: Session, user: User, tenant_id, *, batch_id=None, limit: int = 20
     q = db.query(E).filter(E.tenant_id == tenant_id)
     if batch_id:
         q = q.filter(E.batch_id == (ACC.as_uuid(batch_id) or uuid.uuid4()))
-    rows = q.order_by(E.created_at.desc()).limit(max(1, min(int(limit), 1000))).all()
     if user.role not in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
         # Someone narrower sees what happened to the batches they manage only.
-        ids = {e.batch_id for e in rows if e.batch_id}
-        mine = {str(b.id) for b in db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id.in_(ids or {uuid.uuid4()}))
-                if PV.may_manage(db, user, tenant_id, b)}
-        rows = [e for e in rows if e.batch_id and str(e.batch_id) in mine]
-    return {"items": [ACC.event_out(e) for e in rows]}
+        mine = [b.id for b in db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.tenant_id == tenant_id)
+                if PV.may_manage(db, user, tenant_id, b)]
+        q = q.filter(E.batch_id.in_(mine or [uuid.uuid4()]))
+    rows = q.order_by(E.created_at.desc()).limit(max(1, min(int(limit), 1000))).all()
+    prices = ACC.prices_visible(db, user)
+    return {"items": [ACC.event_out(e, prices=prices) for e in rows]}
