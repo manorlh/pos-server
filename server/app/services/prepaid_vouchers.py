@@ -2451,8 +2451,10 @@ def reserve(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
             raise _http(status.HTTP_409_CONFLICT, RESERVATION_RELEASED)
 
     if not is_discount(batch):
-        # Goods are redeemed (a tender), never reserved.
-        raise _http(status.HTTP_409_CONFLICT, KIND_UNSUPPORTED)
+        # Goods: held for the sale with their units valued (the production vouchers contract §3).
+        from app.services import production_voucher_reserve as PVRG
+
+        return PVRG.reserve_goods(db, machine, body, voucher, prior, now, sale_ref)
     if not _supports(batch.kind, body.supported_kinds or ALL_KINDS):
         raise _http(status.HTTP_409_CONFLICT, KIND_UNSUPPORTED)
     reason = refusal_reason(db, machine, voucher, now)
@@ -2561,6 +2563,7 @@ def confirm(
     *,
     document_lines: Optional[List[Dict[str, Any]]] = None,
     any_till: bool = False,
+    units=None,
 ) -> Dict[str, Any]:
     """
     The sale was written: take the voucher's uses and record the use (a redemption row with
@@ -2579,6 +2582,11 @@ def confirm(
     batch = voucher.batch
     now = _now()
     amount_agorot = max(0, int(amount_agorot))
+    if getattr(r, "goods", None) is not None:
+        # A goods voucher's hold: its units come off the voucher, the redemption records them.
+        from app.services import production_voucher_reserve as PVRG
+
+        return PVRG.confirm_goods(db, machine, r, voucher, transaction_id, units)
 
     if r.status == "confirmed":
         if r.transaction_id and r.transaction_id != transaction_id:

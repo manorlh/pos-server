@@ -959,8 +959,63 @@ class PrepaidVoucherInSaleIn(BaseModel):
     max_vouchers_per_sale: Optional[int] = Field(None, alias="maxVouchersPerSale", ge=1, le=MAX_VOUCHERS_PER_SALE)
 
 
+class PrepaidReserveUnitIn(BaseModel):
+    """One unit of the basket a goods voucher is to cover (the production vouchers contract §3)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    ref: Optional[str] = Field(None, max_length=60)
+    product_id: str = Field(..., alias="productId", min_length=1, max_length=100)
+    product_name: Optional[str] = Field(None, alias="productName", max_length=255)
+    group_key: Optional[str] = Field(None, alias="groupKey", max_length=40)
+    quantity: Decimal = Field(Decimal("1"), gt=0, le=MAX_ITEM_QUANTITY)
+    #: The unit's net price before the voucher, and its list / menu value (agorot).
+    list_price_agorot: int = Field(0, alias="listPriceAgorot", ge=0)
+    list_value_agorot: Optional[int] = Field(None, alias="listValueAgorot", ge=0)
+    category_ids: List[str] = Field(default_factory=list, alias="categoryIds", max_length=20)
+    no_discount: bool = Field(False, alias="noDiscount")
+
+
+class PrepaidApprovalIn(BaseModel):
+    """The manager who approved a forced discount at the till (`VOUCHER_DISCOUNT_OVERRIDE`)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)
+    pos_user_name: Optional[str] = Field(None, alias="posUserName", max_length=200)
+    method: Optional[str] = Field(None, max_length=16)
+
+    @field_validator("pos_user_id", mode="before")
+    @classmethod
+    def _uid(cls, value):
+        return str(value) if isinstance(value, (int, float)) else value
+
+
+class PrepaidConfirmUnitIn(BaseModel):
+    """A unit as the document booked it, when the basket changed after the hold."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    ref: Optional[str] = Field(None, max_length=60)
+    product_id: str = Field(..., alias="productId", min_length=1, max_length=100)
+    product_name: Optional[str] = Field(None, alias="productName", max_length=255)
+    group_key: Optional[str] = Field(None, alias="groupKey", max_length=40)
+    quantity: Decimal = Field(Decimal("1"), gt=0, le=MAX_ITEM_QUANTITY)
+    value_agorot: Optional[int] = Field(None, alias="valueAgorot", ge=0)
+    covered_agorot: Optional[int] = Field(None, alias="coveredAgorot", ge=0)
+    list_value_agorot: Optional[int] = Field(None, alias="listValueAgorot", ge=0)
+
+
 class PrepaidVoucherReserveIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
+
+    #: Goods (§3): the units the voucher is to cover. A discount voucher sends `lines` instead.
+    units: Optional[List[PrepaidReserveUnitIn]] = Field(None, max_length=200)
+    #: A one-time voucher of a fixed list, part of it taken: the rest is given up.
+    forfeit_rest: bool = Field(False, alias="forfeitRest")
+    #: A manager's approval of a forced discount (a `manager` policy).
+    approval: Optional[PrepaidApprovalIn] = None
+    features: Optional[List[str]] = None
 
     code: str = Field(..., min_length=1, max_length=100)
     #: Makes a retry safe, and a renewal: the same id from the same till answers the
@@ -997,6 +1052,8 @@ class PrepaidVoucherConfirmIn(BaseModel):
     transaction_id: str = Field(..., alias="transactionId", min_length=1, max_length=100)
     amount_agorot: int = Field(..., alias="amountAgorot", ge=0)
     uses: Optional[int] = Field(None, ge=1, le=MAX_USES)
+    #: Goods: the units as the document booked them, when the basket changed after the hold.
+    units: Optional[List[PrepaidConfirmUnitIn]] = Field(None, max_length=200)
 
 
 PrepaidVoucherTypeCreate.model_rebuild()

@@ -167,6 +167,18 @@ def _voucher_discounts(db: Session, issuer, tx, refund_of) -> List[str]:
     except Exception:  # noqa: BLE001 — the document stands; the next push confirms again
         logger.exception("document %s: its voucher reservations were not confirmed", tx.id)
         warnings.append("voucherDiscounts: not confirmed now (error); confirmed on the next push")
+    # A production voucher's deduction that names its goods hold (reserve → confirm, the production
+    # vouchers contract §3): the document confirms it, even when the till's own confirm never landed.
+    for n, e in enumerate(entries):
+        rid = _promotion_uuid(e.reservation_id)
+        if e.kind != PRODUCTION_VOUCHER_DEDUCTION or rid is None:
+            continue
+        try:
+            with db.begin_nested():
+                _PV.confirm(db, issuer, str(rid), str(tx.id), int(_D(str(e.amount or 0)) * 100), any_till=True)
+        except Exception as exc:  # noqa: BLE001 — the document stands; the next push confirms again
+            detail = getattr(exc, "detail", None) or exc.__class__.__name__
+            warnings.append(f"voucherDiscounts[{n}]: the hold was not confirmed ({detail})")
     return warnings
 
 

@@ -733,7 +733,7 @@ def confirm_prepaid_reservation(
     document itself confirms it too when it reaches the cloud (the till's outbox). A breach
     found by the re-check is recorded in `flags`, never refused.
     """
-    out = PV.confirm(db, machine, reservation_id, body.transaction_id, body.amount_agorot, body.uses)
+    out = PV.confirm(db, machine, reservation_id, body.transaction_id, body.amount_agorot, body.uses, units=body.units)
     db.commit()
     return out
 

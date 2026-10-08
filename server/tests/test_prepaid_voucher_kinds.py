@@ -423,9 +423,12 @@ class TestReserve:
         other = codes(w, make(w, name="אחר"))[0]
         assert refused(reserve, w, other, lines, request_id="req-1").detail == PV.REQUEST_CONFLICT
 
-    def test_goods_are_redeemed_not_reserved(self, w):
+    def test_goods_are_held_by_their_units_not_by_basket_lines(self, w):
+        # Goods are reserved unit by unit (the production vouchers contract §3,
+        # tests/test_production_voucher_reserve.py); a discount's basket lines choose nothing.
         code = codes(w, make(w, kind="items"))[0]
-        assert refused(reserve, w, code, basket(("L1", w.hotdog, 1, 25))).detail == PV.KIND_UNSUPPORTED
+        e = refused(reserve, w, code, basket(("L1", w.hotdog, 1, 25)))
+        assert e.detail["code"] == "prepaid_voucher_nothing_chosen"
 
     def test_a_kind_the_client_did_not_declare(self, w):
         code = codes(w, make(w))[0]
