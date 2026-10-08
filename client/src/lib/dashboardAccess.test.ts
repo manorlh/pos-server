@@ -157,7 +157,7 @@ describe('levels and the dialog checklist', () => {
   });
 
   it('granted sections and where each leads', () => {
-    assert.deepEqual(grantedSections(ORG_MANAGER), ['reports', 'z', 'products']);
+    assert.deepEqual(grantedSections(ORG_MANAGER), ['reports', 'z', 'products', 'quick_actions']);
     assert.equal(sectionHome('reports'), '/dashboard/live-items');
     assert.equal(sectionHome('z'), '/dashboard/shifts');
   });

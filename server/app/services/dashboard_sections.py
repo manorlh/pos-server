@@ -151,10 +151,11 @@ SECTION_IDS: FrozenSet[str] = frozenset(s.id for s in SECTIONS)
 SECTION_BY_ID: Dict[str, Section] = {s.id: s for s in SECTIONS}
 
 #: "מנהל ארגון" — what a new dashboard user gets until the super admin opens more (the owner,
-#: 07.10.2026: "כברירת מחדל צריך להיות לו: דוחות, מוצרים וזדים").
+#: 07.10.2026: "כברירת מחדל צריך להיות לו: דוחות, מוצרים וזדים"; 09.10.2026 integration: plus the
+#: cockpit's "פעולות מהירות" at edit — the routes still check the role as well).
 ORG_MANAGER_TEMPLATE = "org_manager"
 ORG_MANAGER_LABEL = "מנהל ארגון"
-ORG_MANAGER_SECTIONS: Dict[str, str] = {"reports": VIEW, "products": EDIT, "z": VIEW}
+ORG_MANAGER_SECTIONS: Dict[str, str] = {"reports": VIEW, "products": EDIT, "z": VIEW, "quick_actions": EDIT}
 
 #: "גישה מלאה לפי תפקיד" — the role decides, as before profiles existed.
 FULL_TEMPLATE = "full"
@@ -370,6 +371,15 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/exception-alerts/*", S("exception_alerts")),
     (_GET, "/insights/kiosks", S("reports", "kiosks", level=VIEW)),
     ("PUT", "/insights/product-costs/{}", S("reports", "products", level=EDIT)),
+    # "פעולות מהירות" (the cockpit's and the insights' quick message, quick / ad-hoc promotion
+    # and happy hour): their own section at edit — a manager may act without the full
+    # promotions or till-messages pages. Reading them is a report.
+    (_GET, "/insights/quick-actions", S("reports", "quick_actions", level=VIEW)),
+    (_GET, "/insights/quick-actions/promotions/suggestion", S("quick_actions", "reports", level=VIEW)),
+    (_ALL, "/insights/quick-actions/messages*", S("quick_actions", level=EDIT)),
+    (_ALL, "/insights/quick-actions/promotions*", S("quick_actions", level=EDIT)),
+    (_ALL, "/insights/quick-actions/happy-hours*", S("quick_actions", level=EDIT)),
+    ("PUT", "/insights/anomaly-settings", S("reports")),
     (_GET, "/insights*", S("reports")),
     (_ALL, "/report-events*", S("reports")),
     # The control board's "שוברים" card: the redemptions in scope — a report, and the vouchers' own.

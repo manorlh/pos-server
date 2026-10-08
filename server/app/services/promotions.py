@@ -330,6 +330,8 @@ def duplicate_promotion(db: Session, user: User, tenant_id, promotion: Promotion
         max_applications=promotion.max_applications,
         priority=promotion.priority or 0,
         is_paused=True,
+        # The announcement's settings, not its messages: a paused copy announces nothing.
+        announcement={k: v for k, v in (promotion.announcement or {}).items() if k in ("enabled", "text", "endEnabled", "endText")} or None,
         updated_at=datetime.now(timezone.utc),
     )
     db.add(copy)
@@ -354,6 +356,12 @@ def _labels(db: Session, promotions: Iterable[Promotion]):
         for entry in _stored_scopes(p)
     ]
     return scope_labels(db, values) if values else {}
+
+
+def _announcement_out(promotion: Promotion) -> Dict[str, Any]:
+    from app.services.promotion_announcements import settings_out
+
+    return settings_out(promotion)
 
 
 def promotion_out(promotion: Promotion, today: date, labels, can_edit: bool) -> Dict[str, Any]:
@@ -381,6 +389,7 @@ def promotion_out(promotion: Promotion, today: date, labels, can_edit: bool) -> 
         "maxApplications": promotion.max_applications,
         "priority": promotion.priority or 0,
         "isPaused": bool(promotion.is_paused),
+        "announcement": _announcement_out(promotion),
         "status": promotion_status(promotion, today),
         "canEdit": can_edit,
         "createdAt": promotion.created_at.isoformat() if promotion.created_at else None,

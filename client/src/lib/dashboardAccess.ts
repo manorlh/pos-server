@@ -77,6 +77,7 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   },
   // The manager's own ("הניהול שלי"): they gate what the cockpit (the home page) offers.
   { id: 'cockpit', pages: [] },
+  // "פעולות מהירות": no page of its own — the quick message / promotion / happy hour sheets.
   { id: 'quick_actions', pages: [] },
   { id: 'item_blocks', pages: [] },
   { id: 'device_control', pages: [] },
@@ -110,11 +111,12 @@ export const SECTION_IDS: SectionId[] = DASHBOARD_SECTIONS.map((s) => s.id);
 /** "מנהל סניף / אירוע" and "מנהל אזור" — they run a place from the cockpit (server `MANAGER_TEMPLATES`). */
 export const MANAGER_TEMPLATES = ['branch_manager', 'area_manager'] as const;
 
-/** "מנהל ארגון" — what a new user gets until the super admin opens more. */
+/** "מנהל ארגון" — what a new user gets until the super admin opens more (server `ORG_MANAGER_SECTIONS`). */
 export const ORG_MANAGER_SECTIONS: Partial<Record<SectionId, AccessLevel>> = {
   reports: 'view',
   products: 'edit',
   z: 'view',
+  quick_actions: 'edit',
 };
 
 /** `GET /users/me` → `dashboardAccess`. `restricted` false = everything the role allows. */

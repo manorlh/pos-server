@@ -29,7 +29,18 @@ function ListHeader({ icon, color, title, hint }: { icon: React.ReactNode; color
   );
 }
 
-export function SlowSection({ data, deadDays, onDeadDays }: { data: SlowReport; deadDays: DeadDays; onDeadDays: (v: DeadDays) => void }) {
+export function SlowSection({
+  data,
+  deadDays,
+  onDeadDays,
+  renderActions,
+}: {
+  data: SlowReport;
+  deadDays: DeadDays;
+  onDeadDays: (v: DeadDays) => void;
+  /** One-tap actions under a product row (insights-actions: quick message / promotion and their result). */
+  renderActions?: (row: { productId: string | null; name: string }) => React.ReactNode;
+}) {
   const t = useTranslations('insights.slow');
   return (
     <div className="space-y-3">
@@ -51,7 +62,7 @@ export function SlowSection({ data, deadDays, onDeadDays }: { data: SlowReport; 
         ) : (
           <ul className="border-t border-[#3C3C4349] dark:border-[#54545899]">
             {data.dead.map((r, i) => (
-              <li key={r.key} className="relative flex items-center justify-between gap-3 px-4 py-2.5">
+              <li key={r.key} className="relative flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-4 py-2.5">
                 {i > 0 ? <RowDivider /> : null}
                 <div className="min-w-0">
                   <div className="truncate text-[15px] font-medium">{r.name}</div>
@@ -64,6 +75,7 @@ export function SlowSection({ data, deadDays, onDeadDays }: { data: SlowReport; 
                 <Chip color={r.action === 'sell_off_dont_reorder' ? IOS.red : IOS.orange}>
                   {r.action === 'sell_off_dont_reorder' ? t('actionSellOff') : t('actionDontReorder')}
                 </Chip>
+                {renderActions ? <div className="basis-full">{renderActions(r)}</div> : null}
               </li>
             ))}
           </ul>
@@ -78,7 +90,7 @@ export function SlowSection({ data, deadDays, onDeadDays }: { data: SlowReport; 
           ) : (
             <ul className="border-t border-[#3C3C4349] dark:border-[#54545899]">
               {data.slow.map((r, i) => (
-                <li key={r.key} className="relative flex items-center justify-between gap-3 px-4 py-2.5">
+                <li key={r.key} className="relative flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-4 py-2.5">
                   {i > 0 ? <RowDivider /> : null}
                   <div className="min-w-0">
                     <div className="truncate text-[15px] font-medium">{r.name}</div>
@@ -89,6 +101,7 @@ export function SlowSection({ data, deadDays, onDeadDays }: { data: SlowReport; 
                   <span className="shrink-0 text-[13px] text-[#8E8E93]">
                     {r.action === 'order_less' ? t('actionOrderLess') : t('actionPromote')}
                   </span>
+                  {renderActions ? <div className="basis-full">{renderActions(r)}</div> : null}
                 </li>
               ))}
             </ul>
@@ -101,7 +114,7 @@ export function SlowSection({ data, deadDays, onDeadDays }: { data: SlowReport; 
           ) : (
             <ul className="border-t border-[#3C3C4349] dark:border-[#54545899]">
               {data.declining.map((r, i) => (
-                <li key={r.key} className="relative flex items-center justify-between gap-3 px-4 py-2.5">
+                <li key={r.key} className="relative flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-4 py-2.5">
                   {i > 0 ? <RowDivider /> : null}
                   <div className="min-w-0">
                     <div className="truncate text-[15px] font-medium">{r.name}</div>
@@ -112,6 +125,7 @@ export function SlowSection({ data, deadDays, onDeadDays }: { data: SlowReport; 
                   <span className="shrink-0 text-[15px] font-semibold tabular-nums" dir="ltr">
                     {r.changePct !== null ? `${Math.round(r.changePct)}%` : '—'}
                   </span>
+                  {renderActions ? <div className="basis-full">{renderActions(r)}</div> : null}
                 </li>
               ))}
             </ul>

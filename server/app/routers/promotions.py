@@ -44,7 +44,9 @@ from app.middleware.auth import (
 from app.models.pos_machine import POSMachine
 from app.models.user import User
 from app.schemas.promotion import PromotionIn, PromotionPauseIn
+from app.services import promotion_announcements as PA
 from app.services import promotions as P
+from app.services import till_messages as TM
 from app.services.reports import resolve_report_window
 
 router = APIRouter(tags=["promotions"])
@@ -53,10 +55,14 @@ router = APIRouter(tags=["promotions"])
 COPY_SUFFIX = "(עותק)"
 
 
-def _changed(db: Session, tenant_id, background_tasks: BackgroundTasks) -> None:
+def _changed(db: Session, tenant_id, background_tasks: BackgroundTasks, woken=()) -> None:
+    """Commit; wake the tills for the promotions, and those an announcement reached now."""
     targets = P.notify_targets(db, tenant_id)
+    message_targets = TM.notify_targets(woken)
     db.commit()
     background_tasks.add_task(P.publish_promotions_notify, targets)
+    if message_targets:
+        background_tasks.add_task(TM.publish_message_notify, message_targets)
 
 
 @router.get("/promotions")
@@ -91,7 +97,8 @@ def create_promotion(
     db: Session = Depends(get_db),
 ):
     promotion = P.create_promotion(db, current_user, active_tenant_id, body)
-    _changed(db, active_tenant_id, background_tasks)
+    woken = PA.plan(db, current_user, promotion, settings=PA.clean_settings(body.announcement))
+    _changed(db, active_tenant_id, background_tasks, woken)
     return P.one_out(db, current_user, active_tenant_id, promotion)
 
 
@@ -106,7 +113,8 @@ def update_promotion(
 ):
     promotion = P.get_promotion(db, active_tenant_id, promotion_id)
     P.update_promotion(db, current_user, active_tenant_id, promotion, body)
-    _changed(db, active_tenant_id, background_tasks)
+    woken = PA.plan(db, current_user, promotion, settings=PA.clean_settings(body.announcement))
+    _changed(db, active_tenant_id, background_tasks, woken)
     return P.one_out(db, current_user, active_tenant_id, promotion)
 
 
@@ -122,7 +130,9 @@ def pause_promotion(
     """Pause (`paused: true`) or resume; idempotent."""
     promotion = P.get_promotion(db, active_tenant_id, promotion_id)
     P.set_paused(db, current_user, active_tenant_id, promotion, body.paused)
-    _changed(db, active_tenant_id, background_tasks)
+    # Activated: an announcement not yet out is planned; paused: it comes down.
+    woken = PA.plan(db, current_user, promotion)
+    _changed(db, active_tenant_id, background_tasks, woken)
     return P.one_out(db, current_user, active_tenant_id, promotion)
 
 
@@ -149,8 +159,10 @@ def delete_promotion(
     db: Session = Depends(get_db),
 ):
     promotion = P.get_promotion(db, active_tenant_id, promotion_id)
+    P._require_edit(db, current_user, active_tenant_id, promotion)
+    woken = PA.withdraw(db, current_user, promotion)
     P.delete_promotion(db, current_user, active_tenant_id, promotion)
-    _changed(db, active_tenant_id, background_tasks)
+    _changed(db, active_tenant_id, background_tasks, woken)
 
 
 @router.get("/reports/promotions")
