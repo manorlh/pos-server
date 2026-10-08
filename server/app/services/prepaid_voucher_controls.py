@@ -70,7 +70,7 @@ TEST_LABEL = "שובר בדיקה"
 TEXT = {
     PAUSED: "מימוש השוברים מושהה: {reason}",
     "paused_until": "מימוש השוברים מושהה עד {until}: {reason}",
-    QUOTA_REACHED: "הגעת למכסת המימושים של {scope} ({n} מימושים{period})",
+    QUOTA_REACHED: "הגעת למכסת המימושים של {scope} ({n}{period})",
     TEST_ONLY: "שובר בדיקה — ניתן לממש רק בקופת בדיקה",
     TEST_NOT_PERMITTED: "שובר בדיקה — לעובד המחובר אין הרשאת \"מימוש שובר בדיקה\"",
 }
@@ -98,6 +98,7 @@ _TABLES = (
     PrepaidVoucherTestBatch.__tablename__,
 )
 _READY: "weakref.WeakKeyDictionary[Any, bool]" = weakref.WeakKeyDictionary()
+_WARNED: List[bool] = []
 
 
 def _pv():
@@ -138,7 +139,8 @@ def tables_ready(db: Session) -> bool:
             _READY[engine] = True
         except TypeError:
             pass
-    else:
+    elif not _WARNED:
+        _WARNED.append(True)
         log.warning("prepaid voucher controls: tables missing (migration not run) — no pause / quota / test checks")
     return ok
 
@@ -394,7 +396,9 @@ def _scope_label(db: Session, kind: str, value: str, label: Optional[str]) -> st
 
 def quota_text(db: Session, q: PrepaidRedemptionQuota) -> str:
     scope = SCOPE_TEXT.get(q.scope_kind, "{label}").format(label=_scope_label(db, q.scope_kind, q.scope_value, q.scope_label))
-    return TEXT[QUOTA_REACHED].format(scope=scope, n=int(q.max_redemptions), period=PERIOD_TEXT.get(q.period, ""))
+    n = int(q.max_redemptions)
+    count = "מימוש אחד" if n == 1 else f"{n} מימושים"
+    return TEXT[QUOTA_REACHED].format(scope=scope, n=count, period=PERIOD_TEXT.get(q.period, ""))
 
 
 def pause_text(db: Session, p: PrepaidRedemptionPause, now: Optional[datetime] = None) -> str:
@@ -425,30 +429,43 @@ def refusal_message(db: Session, voucher: PrepaidVoucher, reason: Optional[str],
 
 
 def _check_scope(db: Session, user: User, tenant_id, kind: str, value: str, company_id) -> Dict[str, Any]:
-    """The scope a pause / quota names, checked: a batch the user manages, a type of the tenant."""
+    """
+    The scope a pause / quota names, checked against what [user] manages:
+
+    * a batch — one the user manages (its company is the pause's);
+    * a type — of the tenant, of a company the user covers;
+    * a production / an event (names) — of a company the user covers: the one given, else the user's
+      own company; tenant-wide (no company) only for the super admin / a distributor. A shop manager
+      pauses their own batches only.
+    """
+    from app.models.user import UserRole
+
     PV = _pv()
     if kind not in CONTROL_SCOPES:
         raise ACC.http(status.HTTP_400_BAD_REQUEST, BAD_SCOPE)
     value = str(value).strip()
     if not value:
         raise ACC.http(status.HTTP_400_BAD_REQUEST, BAD_SCOPE)
-    label = value
-    company = company_id
     if kind == "batch":
         batch = PV.get_batch(db, user, tenant_id, value)
-        label, company, value = batch.name, batch.company_id, str(batch.id)
-    elif kind == "type":
+        return {"value": str(batch.id), "label": batch.name, "company_id": batch.company_id}
+    company = ACC.as_uuid(company_id)
+    label = value
+    if kind == "type":
         t = db.query(PrepaidVoucherType).filter(
             PrepaidVoucherType.id == (ACC.as_uuid(value) or uuid.uuid4()), PrepaidVoucherType.tenant_id == tenant_id
         ).first()
         if t is None:
             raise ACC.http(status.HTTP_404_NOT_FOUND, BAD_SCOPE)
-        label, value = t.name, str(t.id)
-        company = company or t.company_id
-    if company is not None and not PV._covers_company(db, user, company):
-        if kind != "batch":
+        label, value, company = t.name, str(t.id), t.company_id
+    elif company is None and user.role not in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
+        company = getattr(user, "company_id", None)
+    if company is None:
+        if user.role not in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
             raise ACC.http(status.HTTP_403_FORBIDDEN, PV.FORBIDDEN)
-    return {"value": value, "label": label, "company_id": ACC.as_uuid(company)}
+    elif not PV._covers_company(db, user, company):
+        raise ACC.http(status.HTTP_403_FORBIDDEN, PV.FORBIDDEN)
+    return {"value": value, "label": label, "company_id": company}
 
 
 def _batch_names(db: Session, rows) -> Dict[str, str]:
@@ -480,9 +497,21 @@ def pause_out(db: Session, p: PrepaidRedemptionPause, now: Optional[datetime] = 
     }
 
 
-def _visible(db: Session, user: User, company_id) -> bool:
-    """A pause / quota of a company the user covers, or of no company (the scope's own batches decide)."""
-    return company_id is None or _pv()._covers_company(db, user, company_id) or user.shop_id is not None
+def _visible(db: Session, user: User, row) -> bool:
+    """A pause / quota the user may see: of a batch they manage, of a company they cover, or (no company)
+    tenant-wide — which applies to every company, so every manager sees it."""
+    PV = _pv()
+    if row.scope_kind == "batch":
+        b = db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == (ACC.as_uuid(row.scope_value) or uuid.uuid4())).first()
+        return b is not None and PV.may_manage(db, user, row.tenant_id, b)
+    if row.company_id is None:
+        return True
+    if PV._covers_company(db, user, row.company_id):
+        return True
+    shop_id = getattr(user, "shop_id", None)
+    if shop_id is None:
+        return False
+    return str(db.query(Shop.company_id).filter(Shop.id == shop_id).scalar()) == str(row.company_id)
 
 
 def list_pauses(db: Session, user: User, tenant_id, *, active_only: bool = False) -> Dict[str, Any]:
@@ -497,7 +526,7 @@ def list_pauses(db: Session, user: User, tenant_id, *, active_only: bool = False
         .limit(500)
         .all()
     )
-    out = [pause_out(db, p, now) for p in rows if _visible(db, user, p.company_id)]
+    out = [pause_out(db, p, now) for p in rows if _visible(db, user, p)]
     if active_only:
         out = [p for p in out if p["active"]]
     return {"items": out, "editable": ACC.allows(db, user, ACC.CONTROLS_SECTION, "edit")}
@@ -535,7 +564,7 @@ def resume_pause(db: Session, user: User, tenant_id, pause_id, note: Optional[st
     p = db.query(PrepaidRedemptionPause).filter(
         PrepaidRedemptionPause.id == (ACC.as_uuid(pause_id) or uuid.uuid4()), PrepaidRedemptionPause.tenant_id == tenant_id
     ).first()
-    if p is None:
+    if p is None or not _visible(db, user, p):
         raise ACC.http(status.HTTP_404_NOT_FOUND, PAUSE_NOT_FOUND)
     if p.resumed_at is None:
         now = _now()
@@ -595,7 +624,7 @@ def list_quotas(db: Session, user: User, tenant_id) -> Dict[str, Any]:
         .limit(500)
         .all()
     )
-    return {"items": [quota_out(db, q, now) for q in rows if _visible(db, user, q.company_id)],
+    return {"items": [quota_out(db, q, now) for q in rows if _visible(db, user, q)],
             "editable": ACC.allows(db, user, ACC.CONTROLS_SECTION, "edit")}
 
 
@@ -648,7 +677,7 @@ def update_quota(db: Session, user: User, tenant_id, quota_id, body) -> PrepaidR
     q = db.query(PrepaidRedemptionQuota).filter(
         PrepaidRedemptionQuota.id == (ACC.as_uuid(quota_id) or uuid.uuid4()), PrepaidRedemptionQuota.tenant_id == tenant_id
     ).first()
-    if q is None:
+    if q is None or not _visible(db, user, q):
         raise ACC.http(status.HTTP_404_NOT_FOUND, QUOTA_NOT_FOUND)
     before = _quota_state(q)
     fields = body.model_fields_set
@@ -821,8 +850,16 @@ def events(db: Session, user: User, tenant_id, *, batch_id=None, limit: int = 20
     PV = _pv()
     PV._require_role(user)
     ACC.require(db, user, ACC.CONTROLS_SECTION, "view", ACC.CONTROLS_FORBIDDEN)
+    from app.models.user import UserRole
+
     q = db.query(E).filter(E.tenant_id == tenant_id)
     if batch_id:
         q = q.filter(E.batch_id == (ACC.as_uuid(batch_id) or uuid.uuid4()))
     rows = q.order_by(E.created_at.desc()).limit(max(1, min(int(limit), 1000))).all()
+    if user.role not in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
+        # Someone narrower sees what happened to the batches they manage only.
+        ids = {e.batch_id for e in rows if e.batch_id}
+        mine = {str(b.id) for b in db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id.in_(ids or {uuid.uuid4()}))
+                if PV.may_manage(db, user, tenant_id, b)}
+        rows = [e for e in rows if e.batch_id and str(e.batch_id) in mine]
     return {"items": [ACC.event_out(e) for e in rows]}

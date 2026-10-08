@@ -263,6 +263,31 @@ class TestInvoices:
         e = refused(invoice, w, a, "INV-9", 60, [(festival["id"], 1)])
         assert (e.status_code, e.detail) == (409, ST.CLOSED)
 
+    def test_agreements_by_period_never_invoice_the_same_vouchers_twice(self, w):
+        b = meal_batch(w, count=3)
+        out = [redeem_all(w, c) for c in codes(w, b)]
+        old = datetime.now(timezone.utc) - timedelta(days=40)
+        for o in out[:2]:
+            w.db.query(PrepaidVoucherRedemption).filter(
+                PrepaidVoucherRedemption.id == uuid.UUID(o["redemptionId"])).update({"redeemed_at": old})
+        w.db.commit()
+        today = datetime.now(timezone.utc).date()
+        october = agreement(w, name="אוקטובר", periodTo=today - timedelta(days=20))
+        october = invoice(w, october, "OCT", 120, [(b["id"], 2)])
+        assert (october["totals"]["chargeable"], october["totals"]["uninvoiced"]) == (2, 0)
+        patch(w, october, status="closed")
+        november = agreement(w, name="נובמבר", periodFrom=today - timedelta(days=7))
+        # October's invoice is October's: November has its one voucher to invoice.
+        assert (november["totals"]["chargeable"], november["totals"]["invoiced"], november["totals"]["uninvoiced"]) == (1, 0, 1)
+        november = invoice(w, november, "NOV", 60, [(b["id"], 1)])
+        assert november["totals"]["uninvoiced"] == 0
+        patch(w, november, status="closed")
+        # An agreement over all time sees 3 charged, none on its own invoices — but every voucher was invoiced.
+        ever = agreement(w, name="הכול")
+        assert ever["totals"]["uninvoiced"] == 3
+        e = refused(invoice, w, ever, "ALL", 60, [(b["id"], 1)])
+        assert e.detail == f"{ST.OVER_INVOICED}:{b['id']}:0"
+
     def test_corrections_after_an_invoice(self, w):
         b = meal_batch(w, count=3)
         out = [redeem_all(w, c) for c in codes(w, b)[:2]]

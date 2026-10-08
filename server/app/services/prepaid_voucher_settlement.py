@@ -299,19 +299,22 @@ def _deliveries(db: Session, batch_ids: Sequence[uuid.UUID]) -> Dict[str, List[P
     return out
 
 
-def invoiced_by_batch(db: Session, tenant_id, batch_ids: Sequence[uuid.UUID]) -> Dict[str, Tuple[int, int]]:
-    """batch id → (vouchers, agorot) on every non-voided invoice of the tenant."""
+def invoiced_by_batch(db: Session, tenant_id, batch_ids: Sequence[uuid.UUID], agreement_id=None) -> Dict[str, Tuple[int, int]]:
+    """
+    batch id → (vouchers, agorot) on the non-voided invoices of [agreement_id] — or, without it, on every
+    non-voided invoice of the tenant (the guard against the same vouchers on two agreements' invoices).
+    """
     if not batch_ids:
         return {}
     L, I = PrepaidSettlementInvoiceLine, PrepaidSettlementInvoice
-    rows = (
+    q = (
         db.query(L.batch_id, func.sum(L.quantity), func.sum(L.amount))
         .join(I, I.id == L.invoice_id)
         .filter(I.tenant_id == tenant_id, I.voided_at.is_(None), L.batch_id.in_(batch_ids))
-        .group_by(L.batch_id)
-        .all()
     )
-    return {str(b): (int(q or 0), int(a or 0)) for b, q, a in rows}
+    if agreement_id is not None:
+        q = q.filter(I.agreement_id == agreement_id)
+    return {str(b): (int(n or 0), int(a or 0)) for b, n, a in q.group_by(L.batch_id).all()}
 
 
 def batch_figures(
@@ -326,7 +329,7 @@ def batch_figures(
     charge_replacements = (agreement.replacement_policy or "free") == "charge"
     ids = [b.id for b in batches]
     deliveries = _deliveries(db, ids)
-    invoiced = invoiced_by_batch(db, agreement.tenant_id, ids)
+    invoiced = invoiced_by_batch(db, agreement.tenant_id, ids, getattr(agreement, "id", None))
     R = PrepaidVoucherRedemption
     out: List[BatchFigures] = []
     for b in batches:
@@ -814,6 +817,20 @@ def candidates(db: Session, user: User, tenant_id, *, company_id, production_nam
 # ── Invoices ──────────────────────────────────────────────────────────────────
 
 
+class _AllTime:
+    """An agreement's terms with no period and no id — what its batches are charged over all time."""
+
+    def __init__(self, a: PrepaidSettlementAgreement):
+        self.tenant_id, self.id = a.tenant_id, None
+        self.billing_basis, self.cancelled_policy, self.replacement_policy = (
+            a.billing_basis, a.cancelled_policy, a.replacement_policy)
+        self.period_from = self.period_to = None
+
+
+def _all_time(a: PrepaidSettlementAgreement) -> "_AllTime":
+    return _AllTime(a)
+
+
 def add_invoice(db: Session, user: User, tenant_id, agreement_id, body) -> PrepaidSettlementInvoice:
     """
     Link an external invoice. Under the agreement's lock: each line's vouchers of a batch never more
@@ -847,10 +864,16 @@ def add_invoice(db: Session, user: User, tenant_id, agreement_id, body) -> Prepa
         db.query(PrepaidVoucherBatch.id).filter(
             PrepaidVoucherBatch.id.in_(sorted(batches[k].id for k in wanted))
         ).order_by(PrepaidVoucherBatch.id).with_for_update().all()
-        figures = {str(f.batch.id): f for f in batch_figures(db, a, [batches[k] for k in wanted])}
+        chosen = [batches[k] for k in wanted]
+        figures = {str(f.batch.id): f for f in batch_figures(db, a, chosen)}
+        # The same vouchers never twice, whatever agreement (and period) invoiced them: what is charged
+        # over all time, less every live invoice of the tenant for the batch.
+        ever = {str(f.batch.id): f for f in batch_figures(db, _all_time(a), chosen)}
+        everywhere = invoiced_by_batch(db, tenant_id, [b.id for b in chosen])
         for key, q in wanted.items():
-            f = figures[key]
-            left = f.chargeable - f.invoiced
+            here = figures[key].chargeable - figures[key].invoiced
+            overall = ever[key].chargeable - everywhere.get(key, (0, 0))[0]
+            left = min(here, overall)
             if q > left:
                 raise ACC.http(status.HTTP_409_CONFLICT, f"{OVER_INVOICED}:{key}:{max(0, left)}")
     inv = PrepaidSettlementInvoice(

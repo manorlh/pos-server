@@ -176,7 +176,7 @@ class TestQuota:
         assert take(w, codes(w, b)[1])["ok"]
         e = refused(take, w, codes(w, b)[2])
         assert e.detail == CTL.QUOTA_REACHED
-        assert look(w, codes(w, b)[2])["message"] == "הגעת למכסת המימושים של ההפקה \"קייטרינג אלון\" (1 מימושים ביום)"
+        assert look(w, codes(w, b)[2])["message"] == "הגעת למכסת המימושים של ההפקה \"קייטרינג אלון\" (מימוש אחד ביום)"
 
     def test_a_range_not_running_limits_nothing(self, w):
         b = batch(w, count=2)
@@ -191,6 +191,66 @@ class TestQuota:
         quota(w, "event", "פסטיבל הקיץ", 1)
         take(w, codes(w, other)[0])
         assert take(w, codes(w, b)[0])["ok"]
+
+
+class TestScope:
+    """A pause or a quota never reaches another company's batches, and a narrower manager never sees them."""
+
+    def _other_company(self, w):
+        from app.models.company import Company
+        from app.models.user import User, UserRole
+
+        other = Company(id=uuid.uuid4(), tenant_id=w.tenant.id, name="Other", vat_number="514141414")
+        w.db.add(other)
+        w.db.flush()
+        cm = User(id=uuid.uuid4(), role=UserRole.COMPANY_MANAGER, tenant_id=w.tenant.id, email="o@x", username="other",
+                  company_id=other.id)
+        w.db.add(cm)
+        w.db.flush()
+        from app.models.dashboard_access import DashboardAccessProfile
+
+        w.db.add(DashboardAccessProfile(user_id=cm.id, full_access=True, sections={}))
+        w.db.commit()
+        return other, cm
+
+    def test_a_company_manager_pauses_their_company_only(self, w):
+        b = batch(w)
+        other, cm = self._other_company(w)
+        # No company named: the manager's own — the batch of the first company keeps redeeming.
+        p = X.create_prepaid_voucher_pause(PauseIn(scopeKind="event", scopeValue="פסטיבל הקיץ", reason="תקלה"),
+                                           current_user=cm, active_tenant_id=w.tenant.id, db=w.db)
+        assert p["companyId"] == str(other.id)
+        assert take(w, codes(w, b)[0])["ok"]
+        e = refused(X.create_prepaid_voucher_pause, PauseIn(scopeKind="event", scopeValue="x", reason="תקלה",
+                                                             companyId=w.company.id),
+                    current_user=cm, active_tenant_id=w.tenant.id, db=w.db)
+        assert e.status_code == 403
+        assert refused(X.create_prepaid_voucher_pause, PauseIn(scopeKind="batch", scopeValue=b["id"], reason="תקלה"),
+                       current_user=cm, active_tenant_id=w.tenant.id, db=w.db).status_code in (403, 404)
+        # The super admin's pause of the first company is not the other manager's to see or resume
+        # (a tenant-wide one — no company — applies to every company, so everyone sees it).
+        mine = X.create_prepaid_voucher_pause(PauseIn(scopeKind="event", scopeValue="פסטיבל הקיץ", reason="תקלה",
+                                                      companyId=w.company.id), **_ctx(w))
+        seen = X.list_prepaid_voucher_pauses(active=False, current_user=cm, active_tenant_id=w.tenant.id, db=w.db)["items"]
+        assert [x["id"] for x in seen] == [p["id"]]
+        e = refused(X.resume_prepaid_voucher_pause, mine["id"], None, current_user=cm, active_tenant_id=w.tenant.id, db=w.db)
+        assert e.status_code == 404
+
+    def test_a_quota_of_another_company_does_not_count_here(self, w):
+        b = batch(w, count=2)
+        other, cm = self._other_company(w)
+        X.create_prepaid_voucher_quota(QuotaIn(scopeKind="production", scopeValue="קייטרינג אלון", maxRedemptions=0),
+                                       current_user=cm, active_tenant_id=w.tenant.id, db=w.db)
+        assert take(w, codes(w, b)[0])["ok"]
+        assert X.list_prepaid_voucher_quotas(**_ctx(w))["items"][0]["companyId"] == str(other.id)
+
+    def test_the_audit_trail_of_what_one_manages(self, w):
+        b = batch(w)
+        pause(w, "batch", b["id"])
+        other, cm = self._other_company(w)
+        assert X.prepaid_voucher_control_events(batch_id=None, limit=200, current_user=cm, active_tenant_id=w.tenant.id,
+                                                db=w.db)["items"] == []
+        assert [e["action"] for e in X.prepaid_voucher_control_events(batch_id=None, limit=200, **_ctx(w))["items"]] == ["pause"]
 
 
 # ── Staff test vouchers (§18.5) ───────────────────────────────────────────────
