@@ -18,6 +18,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -67,6 +68,10 @@ class ReportEvent(Base):
     confirm_note = Column(Text, nullable=True)
     #: The report as it was at confirmation. Later syncs or edits never change it.
     snapshot = Column(JSONB, nullable=True)
+
+    #: "מצב אירוע חי": the sales target typed on the live screen (₪, net), when no targets
+    #: module supplies one (app/services/report_events/targets.py). Not part of the report.
+    live_target = Column(Numeric(12, 2), nullable=True)
 
     machines = relationship(
         "ReportEventMachine",

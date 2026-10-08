@@ -1659,3 +1659,7 @@ def publish_transactions_synced(tenant_id: Optional[uuid.UUID], machine_id: uuid
     if not tenant_id:
         return
     ably_tx_synced(str(tenant_id), str(machine_id), count)
+    # "מצב אירוע חי": a tick to the live screens of the events this till is in (Ably only).
+    from app.services.report_events.live_push import notify_machine_synced
+
+    notify_machine_synced(tenant_id, machine_id, count)

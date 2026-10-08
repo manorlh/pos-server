@@ -342,12 +342,16 @@ GET /report-center/z-table -> reports|z:view
 GET /report-events -> reports:view
 POST /report-events -> reports:edit
 GET /report-events/compare -> reports:view
+GET /report-events/live/current -> reports:view
 GET /report-events/tills -> reports:view
 DELETE /report-events/{event_id} -> reports:edit
 GET /report-events/{event_id} -> reports:view
 PUT /report-events/{event_id} -> reports:edit
 POST /report-events/{event_id}/confirm -> reports:edit
 GET /report-events/{event_id}/export -> reports:view
+GET /report-events/{event_id}/live -> reports:view
+PUT /report-events/{event_id}/live-target -> reports:edit
+GET /report-events/{event_id}/live/push -> reports:view
 GET /report-events/{event_id}/readiness -> reports:view
 GET /report-events/{event_id}/report -> reports:view
 GET /reports/card-brands -> reports:view

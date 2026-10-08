@@ -344,6 +344,12 @@ from app.routers import cash_drawer as cash_drawer_router  # noqa: E402
 app.include_router(cash_drawer_router.till_router, prefix=_prefix)
 app.include_router(cash_drawer_router.router, prefix=_prefix)
 
+# ── Event and owner awareness (feat/event-live) ──
+# "מצב אירוע חי": the event's live screen (app/services/report_events/live.py).
+from app.routers import event_live as event_live_router  # noqa: E402
+
+app.include_router(event_live_router.router, prefix=_prefix)
+
 
 @app.on_event("startup")
 def seed_builtin_till_parameters():
