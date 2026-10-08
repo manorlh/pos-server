@@ -46,6 +46,7 @@ from app.schemas.reports import (
 )
 from app.schemas.offline_authorization import OfflineAuthorizationReportResponse
 from app.schemas.period_compare import EventOptionsResponse, PeriodCompareResponse, SideBySideResponse
+from app.schemas.voucher_board import VoucherBoardResponse
 from app.services import offline_authorizations
 from app.services.overview import build_overview
 from app.services.period_compare import (
@@ -56,6 +57,7 @@ from app.services.period_compare import (
     list_event_options,
     load_event_lens,
 )
+from app.services.voucher_board import build_voucher_board
 from app.schemas.live_items import LiveItemsResponse
 from app.services.live_items import (
     LIVE_ITEMS_DEFAULT,
@@ -634,6 +636,54 @@ def get_side_by_side_report(
         ids=ids if isinstance(ids, list) else [],
         company_id=company_id if isinstance(company_id, uuid.UUID) else None,
         granularity=granularity if isinstance(granularity, str) else None,
+    )
+
+
+
+@router.get(
+    "/prepaid-vouchers",
+    response_model=VoucherBoardResponse,
+    response_model_by_alias=True,
+)
+def get_voucher_board_report(
+    from_date: Optional[date] = Query(None, alias="from", description="Start day of the period. Defaults to `to`."),
+    to_date: Optional[date] = Query(None, alias="to", description="End day of the period (inclusive). Defaults to today."),
+    cmp_from: Optional[date] = Query(None, alias="cmpFrom", description="Start day of the period compared with."),
+    cmp_to: Optional[date] = Query(None, alias="cmpTo", description="End day of the period compared with (inclusive)."),
+    tz: Optional[str] = Query(None, description=_TZ_DESC),
+    company_id: Optional[uuid.UUID] = Query(
+        None, alias="companyId", description="Narrow to this company and its subsidiaries."
+    ),
+    shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
+    area_id: Optional[str] = Query(
+        None, alias="areaId", description="An area's id, or `none`: the tills standing in it now."
+    ),
+    machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    event_id: Optional[uuid.UUID] = Query(
+        None, alias="eventId", description="The period is this event (its window and tills)."
+    ),
+    cmp_event_id: Optional[uuid.UUID] = Query(None, alias="cmpEventId", description="Compare with this event."),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    שוברים: the prepaid vouchers redeemed in the scope over a period, by voucher name —
+    vouchers used, redemptions, units and value — against a compared period.
+
+    Dashboard-only (Clerk/user JWT), scoped by role like the overview; a reversed redemption
+    counts nowhere. Open to a user with "דוחות" or "שוברי הפקה" (app/services/dashboard_sections.py).
+    An event (`eventId`, `cmpEventId`) is its exact window and its tills.
+    """
+    current, previous = _periods(
+        db, current_user, active_tenant_id, from_date, to_date, cmp_from, cmp_to, event_id, cmp_event_id, tz,
+    )
+    return build_voucher_board(
+        db, current_user, active_tenant_id, current, previous,
+        company_id=company_id if isinstance(company_id, uuid.UUID) else None,
+        shop_id=shop_id if isinstance(shop_id, uuid.UUID) else None,
+        area_filter=parse_area_filter(area_id),
+        machine_id=machine_id if isinstance(machine_id, uuid.UUID) else None,
     )
 
 

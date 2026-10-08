@@ -367,6 +367,7 @@ GET /reports/modifier-sales -> reports|products:view
 GET /reports/offline-authorizations -> reports:view
 GET /reports/overview -> reports:view
 GET /reports/payment-methods -> reports:view
+GET /reports/prepaid-vouchers -> reports|prepaid_vouchers:view
 GET /reports/products -> reports:view
 GET /reports/promotions -> reports|promotions:view
 GET /reports/sales-by-area -> reports:view

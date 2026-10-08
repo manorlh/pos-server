@@ -318,6 +318,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     ("PUT", "/insights/product-costs/{}", S("reports", "products", level=EDIT)),
     (_GET, "/insights*", S("reports")),
     (_ALL, "/report-events*", S("reports")),
+    # The control board's "שוברים" card: the redemptions in scope — a report, and the vouchers' own.
+    (_GET, "/reports/prepaid-vouchers", S("reports", "prepaid_vouchers", level=VIEW)),
     (_GET, "/reports/discounts", S("reports", "promotions")),
     (_GET, "/reports/promotions", S("reports", "promotions")),
     (_GET, "/reports/upsells", S("reports", "products")),
