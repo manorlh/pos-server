@@ -9,6 +9,8 @@ file is now drawn here, the same in every browser:
 * each page is drawn with Pillow at 300 dpi — the QR by `segno`, the Code 128 line
   barcode by `barcode128`, Hebrew put into visual order by `python-bidi` (Pillow here has
   no libraqm, so it cannot do RTL itself; Hebrew needs no shaping, only ordering);
+* the text in Heebo, which ships with the server (app/assets/fonts, SIL OFL) — never in
+  Pillow's built-in face, which has no Hebrew and draws every letter as a box;
 * the pages are saved as one PDF at their real size in mm.
 
 Barcodes are drawn at a whole number of pixels per module (no resampling), so every bar
@@ -30,6 +32,7 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -52,6 +55,8 @@ from app.services.prepaid_vouchers import (
     qty_text,
 )
 
+logger = logging.getLogger(__name__)
+
 DPI = 300
 
 #: id → (width mm, height mm, cols, rows)
@@ -64,13 +69,26 @@ PRESETS = {
     "a4grid": (210.0, 297.0, 2, 4),
 }
 
+#: Heebo (SIL OFL 1.1, app/assets/fonts/LICENSE-Heebo.txt — the till's font too) ships with
+#: the server and is tried first: every voucher is Hebrew, and a server with no system fonts
+#: (the cloud's slim Docker image) used to fall back to Pillow's built-in face, which has no
+#: Hebrew — every letter and the "×" printed as a box ("שובר יוצא ג'יבריש", 08.10.2026).
+# (Not `resolve()`: on Windows that turns a short `subst` drive into the long path behind it.)
+FONT_DIR = Path(__file__).absolute().parent.parent / "assets" / "fonts"
+HEBREW_FONTS = {False: FONT_DIR / "Heebo-Regular.ttf", True: FONT_DIR / "Heebo-Bold.ttf"}
+#: What a face must draw for a voucher to be readable: a Hebrew letter, the geresh of
+#: "מס׳", the gershayim of "סה״כ", "×" of "2×" and "₪" of a discount.
+FONT_PROBE = "אש׳״×₪"
+
 _FONT_CANDIDATES = {
     False: [
+        str(HEBREW_FONTS[False]),
         "C:/Windows/Fonts/arial.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/dejavu/DejaVuSans.ttf",
     ],
     True: [
+        str(HEBREW_FONTS[True]),
         "C:/Windows/Fonts/arialbd.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
@@ -118,11 +136,42 @@ def _px(mm: float) -> int:
     return max(1, round(mm / 25.4 * DPI))
 
 
+def _glyph(font, ch: str) -> Tuple[Tuple[int, int], bytes]:
+    mask = font.getmask(ch)
+    return mask.size, bytes(mask)
+
+
+def missing_glyphs(font, text: str) -> List[str]:
+    """
+    The characters of [text] that [font] has no glyph for — the ones it would draw as its
+    `.notdef` box ("tofu"). Spaces and bidi marks draw nothing anyway and are skipped.
+    """
+    notdef = _glyph(font, "\U0010FFFD")  # a noncharacter: no font has it
+    seen: List[str] = []
+    for ch in dict.fromkeys(text or ""):
+        if ch.isspace() or ch in "\u200e\u200f\u200d\u200c":
+            continue
+        if _glyph(font, ch) == notdef:
+            seen.append(ch)
+    return seen
+
+
 @lru_cache(maxsize=64)
 def _font(size_px: int, bold: bool = False) -> ImageFont.FreeTypeFont:
     for path in _FONT_CANDIDATES[bold]:
-        if Path(path).is_file():
-            return ImageFont.truetype(path, size_px)
+        if not Path(path).is_file():
+            continue
+        font = ImageFont.truetype(path, size_px)
+        missing = missing_glyphs(font, FONT_PROBE)
+        if not missing:
+            return font
+        logger.warning("prepaid voucher font %s has no %s; trying the next one", path, "".join(missing))
+    # Never quietly: Pillow's own face has no Hebrew, so the voucher's every letter is a box.
+    logger.error(
+        "prepaid voucher PDF: no font with Hebrew found (tried %s) — Hebrew prints as boxes; "
+        "app/assets/fonts must ship with the server",
+        ", ".join(_FONT_CANDIDATES[bold]),
+    )
     return ImageFont.load_default(size_px)
 
 
