@@ -358,6 +358,10 @@ from app.routers import event_producers as event_producers_router, producer as p
 
 app.include_router(producer_router.router, prefix=_prefix)
 app.include_router(event_producers_router.router, prefix=_prefix)
+# "תחזית ואיוש": the forecast per shop and the tills to open (app/services/insights/staffing.py).
+from app.routers import forecast_staffing as forecast_staffing_router  # noqa: E402
+
+app.include_router(forecast_staffing_router.router, prefix=_prefix)
 
 
 @app.on_event("startup")

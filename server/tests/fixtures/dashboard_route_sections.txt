@@ -166,6 +166,7 @@ GET /insights/kpis -> reports:view
 GET /insights/menu-engineering -> reports:view
 PUT /insights/product-costs/{product_id} -> reports|products:edit
 GET /insights/products/slow -> reports:view
+GET /insights/staffing -> reports:view
 GET /insights/stock -> reports:view
 GET /insights/tables -> reports:view
 GET /insights/tables-live -> reports:view
