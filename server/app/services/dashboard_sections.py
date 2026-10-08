@@ -282,6 +282,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # "זיכוי באשראי מהענן (Z-Credit)": the same people as a remote credit.
     (_ALL, "/cloud-card-refunds*", S("reports", "z")),
     (_GET, "/failed-payments", S("reports", "z", level=VIEW)),
+    # "תשלום לא מוכרע": check on the terminal / decide (the people of a remote credit, by role).
+    (_ALL, "/failed-payments/*", S("reports", "z")),
     # ── Customers, club, messages ──
     (_ALL, "/club*", S("customers")),
     (_ALL, "/customers*", S("customers")),

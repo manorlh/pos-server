@@ -147,6 +147,9 @@ PUT /exceptions/rules -> till_settings:edit
 GET /exceptions/summary -> reports:view
 PATCH /exceptions/{exception_id} -> reports:edit
 GET /failed-payments -> reports|z:view
+POST /failed-payments/card-commands/{command_id}/cancel -> reports|z:edit
+GET /failed-payments/{attempt_id}/card-commands -> reports|z:view
+POST /failed-payments/{attempt_id}/card-commands -> reports|z:edit
 POST /images/branding -> branding:edit
 POST /images/media -> any_edit
 POST /images/upload -> any_edit

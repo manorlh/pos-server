@@ -113,6 +113,8 @@ from app.models.catalog_menu import (
 from app.models.payment_secret import PaymentIntegrationSecret
 # "מכשירי תשלום": the card terminals a till without its own works with (app/services/payment_devices.py).
 from app.models.payment_device import PaymentDevice
+# "תשלום לא מוכרע": a manager's command to a till about an unknown card (app/services/card_attempt_commands.py).
+from app.models.card_attempt_command import CardAttemptCommand
 # The self-order kiosk (app/services/kiosk_control.py) — not the device lock `kioskMode`.
 from app.models.kiosk import (
     KioskCommand,
@@ -220,6 +222,7 @@ __all__ = [
     "CatalogMenuProduct", "CatalogMenuSyncState",
     "PaymentIntegrationSecret",
     "PaymentDevice",
+    "CardAttemptCommand",
     "OutboxEvent",
     "Campaign", "CampaignRecipient", "DeliveryEvent", "Notification", "NotificationAttempt",
     "NotificationProviderConfig", "NotificationTemplate",
