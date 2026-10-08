@@ -211,7 +211,7 @@ describe('replacement, test batches, reports', () => {
     assert.equal(replaceable('active'), true);
     assert.equal(replaceable('partially_used'), true);
     assert.equal(replaceable('used'), false);
-    assert.equal(replaceable('cancelled'), false);
+    assert.equal(replaceable('cancelled'), true);
   });
 
   it('a test batch is named by its label', () => {

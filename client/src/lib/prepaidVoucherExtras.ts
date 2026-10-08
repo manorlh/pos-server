@@ -267,9 +267,12 @@ export function replacementReady(kind: string, reason: string): boolean {
   return (REPLACEMENT_REASONS as readonly string[]).includes(kind) && reason.trim().length >= 2;
 }
 
-/** A voucher that can be replaced: not cancelled and not used up (the server re-checks). */
+/**
+ * A voucher that can be replaced: anything not used up — a cancelled one too (cancelled by mistake,
+ * §16). The server re-checks what is left, and refuses one already replaced.
+ */
 export function replaceable(status: string | null | undefined): boolean {
-  return status === 'active' || status === 'partially_used';
+  return status === 'active' || status === 'partially_used' || status === 'cancelled';
 }
 
 // ── Test batches ─────────────────────────────────────────────────────────────
