@@ -23,6 +23,11 @@ export interface CockpitActionContext {
   productId?: string;
   machineId?: string;
   categoryId?: string;
+  /**
+   * A text the sheet starts with (always editable) — e.g. the line for a till that stands out
+   * ("הקופה שקטה יחסית…"), from the attention item that launched it. A sheet without text ignores it.
+   */
+  prefillText?: string;
 }
 
 /** Every quick action's sheet gets these; it calls `onDone` when finished (the sheet closes). */

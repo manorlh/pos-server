@@ -10,6 +10,7 @@ import {
   announcementText,
   anomalyActions,
   anomalyMessage,
+  anomalyPrefill,
   crossesMidnight,
   durationBody,
   endAnnouncementText,
@@ -89,6 +90,13 @@ describe('texts', () => {
     assert.match(anomalyMessage('till_cash'), /מגירה/);
     assert.match(anomalyMessage('till_low_sales'), /קופה/);
     assert.equal(anomalyMessage('other'), '');
+  });
+
+  it("the cockpit's prefill from an anomaly card's id", () => {
+    assert.equal(anomalyPrefill('till_cash:9f1c0e2a-0000-4000-8000-000000000001'), anomalyMessage('till_cash'));
+    assert.equal(anomalyPrefill('till_avg_ticket:m1'), anomalyMessage('till_avg_ticket'));
+    assert.equal(anomalyPrefill('slow:p1'), undefined);
+    assert.equal(anomalyPrefill(''), undefined);
   });
 
   it('offer labels and keys', () => {

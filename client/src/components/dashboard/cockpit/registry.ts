@@ -6,7 +6,8 @@
  * The integration contract (the coordinator's, 09.10.2026):
  *
  * * `CockpitScope` = `{ companyId?, shopId?, areaId?, machineId?, eventId? }`;
- * * `CockpitActionProps` = `{ scope, context?: { productId?, machineId?, categoryId? }, onDone }`;
+ * * `CockpitActionProps` = `{ scope, context?: { productId?, machineId?, categoryId?, prefillText? }, onDone }`
+ *   (`prefillText`: the text a sheet starts with, e.g. an anomaly's line for a till message);
  * * a quick action = `{ id, labelKey, icon, gate, Sheet }` (+ `bar`: in the quick-actions bar;
  *   + `ownDialog` when the sheet is a whole dialog of its own, like the insights' sheets);
  * * an attention provider = `{ id, gate, useItems(scope) → { items: AttentionItem[], loading } }`,

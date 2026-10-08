@@ -11,11 +11,13 @@
  *
  * The insights' feed speaks its own words: five severities (the cockpit has three), full
  * message keys for its buttons, `openMachine` for the till's own sheet. Mapped here, nothing
- * else changes on either side.
+ * else changes on either side. A message to a till that stands out starts with the anomaly's
+ * line (`prefillText`, as the insights page's own button does).
  */
 
 import { useMemo } from 'react';
 import { useAnomalyFeed } from '@/components/dashboard/insights-actions';
+import { anomalyPrefill } from '@/lib/insightsActions';
 import type {
   ActionContext,
   ActionScope,
@@ -61,13 +63,19 @@ const SEVERITY: Record<InsightSeverity, AttentionSeverity> = {
  * (`tillDetails`, labelled like the till alerts' "לקופה"); the others open the registered quick
  * action of the same id, labelled `controlBoard.cockpit.itemActions.<labelKey>`.
  */
-function cockpitAction(a: InsightAction): AttentionAction {
+function cockpitAction(itemId: string, a: InsightAction): AttentionAction {
   if (a.actionId === 'openMachine') {
     // registry.ts `TILL_DETAILS_ACTION` (not imported: the registry imports this file).
     return { labelKey: 'openTill', actionId: 'tillDetails', context: a.context };
   }
   // "הודעה לקופה" on a till's card; "הודעה מהירה" / "מבצע מהיר" on a product's.
-  const labelKey = a.labelKey.endsWith('.messageTill') ? 'messageTill' : a.actionId;
+  const tillMessage = a.labelKey.endsWith('.messageTill');
+  const labelKey = tillMessage ? 'messageTill' : a.actionId;
+  if (tillMessage && a.context.machineId) {
+    // The anomaly's line, by the card's id (`<type>:<machineId>`).
+    const prefillText = anomalyPrefill(itemId);
+    if (prefillText) return { labelKey, actionId: a.actionId, context: { ...a.context, prefillText } };
+  }
   return { labelKey, actionId: a.actionId, context: a.context };
 }
 
@@ -83,7 +91,7 @@ export function useAnomalyAttentionItems(scope: CockpitScope): { items: Attentio
           severity: SEVERITY[item.severity] ?? 'info',
           title: item.title,
           body: item.body || undefined,
-          actions: item.actions.map(cockpitAction),
+          actions: item.actions.map((a) => cockpitAction(item.id, a)),
         }),
       ),
     [feed.items],

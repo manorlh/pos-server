@@ -63,7 +63,11 @@ export function QuickMessageSheetBody({
   const [target, setTarget] = useState<string>('');
   const chosen = targets.find((o) => targetKey(o) === target) ?? targets[0];
   const [edited, setEdited] = useState<string | null>(null);
-  const prefill = initialText ?? (context?.productId ? (productName ? productPitch(productName, t('pitchLine')) : '') : '');
+  // A prefilled text: the caller's (the insights page), the context's (the cockpit's attention
+  // item — `prefillText`), else a product's pitch.
+  const prefill =
+    initialText ??
+    (context?.prefillText || (context?.productId ? (productName ? productPitch(productName, t('pitchLine')) : '') : ''));
   const text = edited ?? prefill;
   const [display, setDisplay] = useState<'banner' | 'fullscreen'>('banner');
   const [duration, setDuration] = useState<DurationChoice>('end_of_day');

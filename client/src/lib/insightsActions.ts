@@ -23,6 +23,8 @@ export interface ActionContext {
   productId?: string;
   machineId?: string;
   categoryId?: string;
+  /** The text a message sheet starts with (editable): the cockpit's `CockpitActionContext.prefillText`. */
+  prefillText?: string;
 }
 
 /** Every sheet's props (the cockpit mounts a sheet and unmounts it on `onDone`). */
@@ -130,6 +132,14 @@ export function anomalyMessage(type: string): string {
     default:
       return '';
   }
+}
+
+/**
+ * The prefilled line of a message launched from an anomaly card, by the card's id
+ * (`<type>:<machineId>`, server insights/anomalies.py); undefined when the type has none.
+ */
+export function anomalyPrefill(cardId: string): string | undefined {
+  return anomalyMessage(cardId.split(':')[0]) || undefined;
 }
 
 export interface OfferView {
