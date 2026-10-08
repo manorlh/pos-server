@@ -1,11 +1,17 @@
 /**
  * "מכשירי תשלום" — several card terminals for a till or tablet WITHOUT built-in clearing (a
- * P18, not an F20). Each device of a shop has a nickname; at card payment the cashier sends the
- * transaction to one of them: a Z-Credit PinPad, a SynqPay terminal, or a Nayax handheld running
- * Agamento on the LAN (HTTP, port 8080, /SPICy). The kiosk keeps its one pinpad.
+ * P18, not an F20). Each device of a shop has a nickname: a Z-Credit PinPad (its PinPad only —
+ * the terminal number and password are the branch's Z-Credit settings), a SynqPay terminal, or a
+ * Nayax handheld running Agamento on the LAN (HTTP, port 8080, /SPICy). The kiosk keeps its one
+ * pinpad. Several devices may share one terminal number.
+ *
+ * A device belongs to its shop. How a till picks one is a setting (shop = the default for its
+ * tills, area, till): "מכשיר קבוע" (`paymentDeviceMode` "fixed" + `fixedPaymentDeviceId`: every
+ * card goes there) or "קבוצת מכשירים לבחירה" ("group" + `paymentDeviceGroup`: the cashier picks;
+ * empty = every device of the shop). Unset everywhere = a group of every device.
  *
  * The server's rules are in pos-server app/services/payment_devices.py; the checks here mirror
- * them (same error codes, translated by the component from `paymentDevices.errors.<code>` in
+ * them (same error codes, translated by the components from `paymentDevices.errors.<code>` in
  * messages/he.json) so a save is not refused. Pure: only relative imports, so `npm test`
  * compiles it.
  */
@@ -37,7 +43,9 @@ export const SORT_ORDER_MAX = 9999;
 
 /** The settings keys (managed, on the shop / area / till layers). */
 export const MULTI_KEY = 'multiPaymentDevices';
-export const DEFAULT_KEY = 'defaultPaymentDeviceId';
+export const MODE_KEY = 'paymentDeviceMode';
+export const FIXED_KEY = 'fixedPaymentDeviceId';
+export const GROUP_KEY = 'paymentDeviceGroup';
 
 export function cleanKind(value: unknown): PaymentDeviceKind | null {
   if (typeof value !== 'string') return null;
@@ -45,21 +53,20 @@ export function cleanKind(value: unknown): PaymentDeviceKind | null {
   return (PAYMENT_DEVICE_KINDS as readonly string[]).includes(t) ? (t as PaymentDeviceKind) : null;
 }
 
-/** The secrets each kind uses (write-only; the server drops any other). */
-export const KIND_SECRETS: Record<PaymentDeviceKind, readonly DeviceSecretKey[]> = {
-  zcredit_pinpad: ['zcreditPassword'],
-  synqpay: ['synqpayApiKey'],
-  agamento_lan: [],
-};
+/** The only device secret: SynqPay's API key (a Z-Credit pinpad's password is the branch's). */
+export type DeviceSecretKey = 'synqpayApiKey';
+
+/** Which kinds take an optional terminal number of their own. */
+export function kindHasTerminalNumber(kind: PaymentDeviceKind): boolean {
+  return kind === 'agamento_lan' || kind === 'synqpay';
+}
 
 // ── Server shapes (GET /shops/{id}/payment-devices, GET /machines/{id}/payment-devices) ──
-
-export type DeviceSecretKey = 'zcreditPassword' | 'synqpayApiKey';
 
 export interface DeviceSecretStatus {
   set: boolean;
   updatedAt?: string | null;
-  /** SynqPay's key: `till_pairing` (a till paired) or `dashboard` (typed). */
+  /** `till_pairing` (a till paired) or `dashboard` (typed). */
   origin?: string | null;
   pairedAt?: string | null;
   pairedByMachineName?: string | null;
@@ -78,11 +85,21 @@ export interface PaymentDevice {
   active: boolean;
   sortOrder: number;
   config: PaymentDeviceConfig;
-  /** The shop's tills that use it; empty = all of them. */
-  machineIds: string[];
   createdAt?: string | null;
   updatedAt?: string | null;
   secrets: Partial<Record<DeviceSecretKey, DeviceSecretStatus>>;
+}
+
+export type PaymentDeviceMode = 'fixed' | 'group';
+
+/** How a till picks a device now, from its merged layers (the server's `till_choice`). */
+export interface TillChoice {
+  enabled: boolean;
+  mode: PaymentDeviceMode;
+  /** The fixed device when it is one of the shop's. */
+  fixedDeviceId: string | null;
+  /** The group, filtered to the shop's devices; null = every device of the shop. */
+  groupDeviceIds: string[] | null;
 }
 
 export interface PaymentDeviceMachine {
@@ -91,18 +108,25 @@ export interface PaymentDeviceMachine {
   posNumber?: string | null;
   /** A till with clearing of its own (an F20): the feature does not apply to it. */
   hasBuiltinTerminal: boolean;
+  choice: TillChoice;
+  /** The till's own layer sets the switch or its device choice (else it follows the shop). */
+  ownChoice: boolean;
 }
 
 export interface ShopPaymentDevices {
   shopId: string;
   devices: PaymentDevice[];
+  /** The shop's non-kiosk tills, each with how it picks a device now. */
   machines: PaymentDeviceMachine[];
   /** The shop's own switch; null = it inherits. */
   multiPaymentDevices: boolean | null;
   /** What the shop inherits from its company / tenant; null = nobody sets it (off). */
   multiPaymentDevicesInherited: boolean | null;
   multiPaymentDevicesInheritedSource: 'tenant' | 'company' | null;
-  defaultPaymentDeviceId: string | null;
+  /** The shop's own choice — the default for its tills; null = not set. */
+  paymentDeviceMode: PaymentDeviceMode | null;
+  fixedPaymentDeviceId: string | null;
+  paymentDeviceGroup: string[] | null;
   canEdit: boolean;
 }
 
@@ -111,19 +135,17 @@ export interface MachinePaymentDevices {
   shopId: string | null;
   hasBuiltinTerminal: boolean;
   isKiosk: boolean;
-  /** The devices of its shop that apply to it. */
+  /** Its shop's devices (none for a kiosk). */
   devices: PaymentDevice[];
 }
 
-/** POST / PUT body. A secret: string = set, null = remove, absent = keep. */
+/** POST / PUT body. The secret: string = set, null = remove, absent = keep. */
 export interface PaymentDeviceInput {
   nickname: string;
   kind: PaymentDeviceKind;
   config: PaymentDeviceConfig;
-  machineIds: string[];
   active: boolean;
   sortOrder: number;
-  zcreditPassword?: string | null;
   synqpayApiKey?: string | null;
 }
 
@@ -132,7 +154,7 @@ export interface PaymentDeviceInput {
 export interface PaymentDeviceForm {
   nickname: string;
   kind: PaymentDeviceKind;
-  // agamento_lan (and SynqPay's host / port)
+  // agamento_lan (and SynqPay's host / port); the terminal number for both
   host: string;
   port: string;
   path: string;
@@ -141,7 +163,6 @@ export interface PaymentDeviceForm {
   terminalNumber: string;
   // zcredit_pinpad
   pinpadId: string;
-  mode: '' | 'test' | 'production';
   // synqpay
   model: string;
   connection: '' | 'lan' | 'usb';
@@ -149,15 +170,11 @@ export interface PaymentDeviceForm {
   tls: boolean;
   usbDevice: string;
   serialNumber: string;
-  // where and how
-  machineIds: string[];
   active: boolean;
   sortOrder: string;
-  /** Typed secrets ('' = untouched: keep what is stored). */
-  zcreditPassword: string;
+  /** Typed key ('' = untouched: keep what is stored). */
   synqpayApiKey: string;
-  /** Remove the stored secret on save. */
-  removeZcreditPassword: boolean;
+  /** Remove the stored key on save. */
   removeSynqpayApiKey: boolean;
 }
 
@@ -172,19 +189,15 @@ export function emptyDeviceForm(kind: PaymentDeviceKind = 'agamento_lan'): Payme
     mac: '',
     terminalNumber: '',
     pinpadId: '',
-    mode: '',
     model: '',
     connection: '',
     protocol: 'tcp',
     tls: false,
     usbDevice: '',
     serialNumber: '',
-    machineIds: [],
     active: true,
     sortOrder: '0',
-    zcreditPassword: '',
     synqpayApiKey: '',
-    removeZcreditPassword: false,
     removeSynqpayApiKey: false,
   };
 }
@@ -194,7 +207,7 @@ function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-/** The form for a stored device (secrets never come back: they stay blank = keep). */
+/** The form for a stored device (the secret never comes back: it stays blank = keep). */
 export function deviceForm(device: PaymentDevice): PaymentDeviceForm {
   const c = device.config ?? {};
   const kind = cleanKind(device.kind) ?? 'agamento_lan';
@@ -208,16 +221,14 @@ export function deviceForm(device: PaymentDevice): PaymentDeviceForm {
     path: kind === 'agamento_lan' && str(c.path) === AGAMENTO_DEFAULT_PATH ? '' : str(c.path),
     https: c.https === true,
     mac: str(c.mac),
-    terminalNumber: str(c.terminalNumber),
+    terminalNumber: kindHasTerminalNumber(kind) ? str(c.terminalNumber) : '',
     pinpadId: str(c.pinpadId),
-    mode: c.mode === 'test' || c.mode === 'production' ? c.mode : '',
     model: str(c.model),
     connection: c.connection === 'lan' || c.connection === 'usb' ? c.connection : '',
     protocol: c.protocol === 'http' ? 'http' : 'tcp',
     tls: c.tls === true,
     usbDevice: str(c.usbDevice),
     serialNumber: str(c.serialNumber),
-    machineIds: [...(device.machineIds ?? [])],
     active: device.active !== false,
     sortOrder: String(device.sortOrder ?? 0),
   };
@@ -299,7 +310,6 @@ export type DeviceErrorCode =
   | 'terminal_number_invalid'
   | 'pinpad_required'
   | 'pinpad_invalid'
-  | 'mode_invalid'
   | 'model_required'
   | 'model_invalid'
   | 'connection_required'
@@ -308,7 +318,6 @@ export type DeviceErrorCode =
   | 'usb_device_invalid'
   | 'serial_invalid'
   | 'sort_order_invalid'
-  | 'machine_not_in_shop'
   | 'secret_invalid'
   | 'synqpay_key_invalid';
 
@@ -321,15 +330,12 @@ export type DeviceFormField =
   | 'mac'
   | 'terminalNumber'
   | 'pinpadId'
-  | 'mode'
   | 'model'
   | 'connection'
   | 'protocol'
   | 'usbDevice'
   | 'serialNumber'
   | 'sortOrder'
-  | 'machineIds'
-  | 'zcreditPassword'
   | 'synqpayApiKey';
 
 export type DeviceFormErrors = Partial<Record<DeviceFormField, DeviceErrorCode>>;
@@ -337,8 +343,6 @@ export type DeviceFormErrors = Partial<Record<DeviceFormField, DeviceErrorCode>>
 export interface ValidateContext {
   /** The other devices' nicknames in the shop (not the one edited). */
   otherNicknames?: readonly string[];
-  /** The shop's tills; a chosen id outside them is refused. */
-  machineIds?: readonly string[];
 }
 
 /** Field → error code for the dialog; empty = valid. Mirrors the server's checks. */
@@ -356,8 +360,11 @@ export function validateDeviceForm(form: PaymentDeviceForm, ctx: ValidateContext
     return errors;
   }
 
+  // Optional, and never unique: several devices may share one terminal number.
   const terminal = form.terminalNumber.trim();
-  if (terminal && !isValidTerminalNumber(terminal)) errors.terminalNumber = 'terminal_number_invalid';
+  if (kindHasTerminalNumber(kind) && terminal && !isValidTerminalNumber(terminal)) {
+    errors.terminalNumber = 'terminal_number_invalid';
+  }
 
   if (kind === 'agamento_lan') {
     const typed = form.host.trim();
@@ -374,8 +381,6 @@ export function validateDeviceForm(form: PaymentDeviceForm, ctx: ValidateContext
   } else if (kind === 'zcredit_pinpad') {
     if (!form.pinpadId.trim()) errors.pinpadId = 'pinpad_required';
     else if (cleanPinpadId(form.pinpadId) === null) errors.pinpadId = 'pinpad_invalid';
-    if (form.mode && form.mode !== 'test' && form.mode !== 'production') errors.mode = 'mode_invalid';
-    if (isTypedSecret(form.zcreditPassword) && !secretOk(form.zcreditPassword)) errors.zcreditPassword = 'secret_invalid';
   } else {
     if (!form.model.trim()) errors.model = 'model_required';
     else if (cleanSynqpayModel(form.model) === null) errors.model = 'model_invalid';
@@ -398,9 +403,6 @@ export function validateDeviceForm(form: PaymentDeviceForm, ctx: ValidateContext
 
   const order = form.sortOrder.trim();
   if (order !== '' && !(/^\d{1,4}$/.test(order) && Number(order) <= SORT_ORDER_MAX)) errors.sortOrder = 'sort_order_invalid';
-  if (ctx.machineIds && form.machineIds.some((id) => !ctx.machineIds!.includes(id))) {
-    errors.machineIds = 'machine_not_in_shop';
-  }
   return errors;
 }
 
@@ -410,10 +412,10 @@ export function hasDeviceErrors(errors: DeviceFormErrors): boolean {
 
 /**
  * The POST / PUT body from a valid form: the kind's config only (an address typed as a URL
- * split), the tills that still exist, and only the secrets to change — a typed one, or `null`
- * when "remove" was chosen; nothing for "keep".
+ * split; a pinpad's PinPad alone), and the key only to change — a typed one, or `null` when
+ * "remove" was chosen; nothing for "keep".
  */
-export function deviceInput(form: PaymentDeviceForm, opts: { machineIds?: readonly string[] } = {}): PaymentDeviceInput {
+export function deviceInput(form: PaymentDeviceForm): PaymentDeviceInput {
   const kind = cleanKind(form.kind) ?? 'agamento_lan';
   const config: PaymentDeviceConfig = {};
   const terminal = form.terminalNumber.trim();
@@ -429,8 +431,6 @@ export function deviceInput(form: PaymentDeviceForm, opts: { machineIds?: readon
     if (terminal) config.terminalNumber = terminal;
   } else if (kind === 'zcredit_pinpad') {
     config.pinpadId = cleanPinpadId(form.pinpadId) ?? form.pinpadId.trim();
-    if (terminal) config.terminalNumber = terminal;
-    if (form.mode) config.mode = form.mode;
   } else {
     config.model = (cleanSynqpayModel(form.model) ?? form.model.trim()) as SynqpayModel;
     const connection = cleanSynqpayConnection(form.connection) ?? 'lan';
@@ -445,21 +445,14 @@ export function deviceInput(form: PaymentDeviceForm, opts: { machineIds?: readon
     if (form.serialNumber.trim()) config.serialNumber = form.serialNumber.trim();
     if (terminal) config.terminalNumber = terminal;
   }
-  const known = opts.machineIds;
-  const machineIds = [...new Set(form.machineIds)].filter((id) => !known || known.includes(id));
   const order = Number(form.sortOrder.trim() || '0');
   const out: PaymentDeviceInput = {
     nickname: form.nickname.split(/\s+/).filter(Boolean).join(' '),
     kind,
     config,
-    machineIds,
     active: form.active,
     sortOrder: Number.isInteger(order) ? order : 0,
   };
-  if (kind === 'zcredit_pinpad') {
-    if (isTypedSecret(form.zcreditPassword)) out.zcreditPassword = form.zcreditPassword.trim();
-    else if (form.removeZcreditPassword) out.zcreditPassword = null;
-  }
   if (kind === 'synqpay') {
     if (isTypedSecret(form.synqpayApiKey)) out.synqpayApiKey = form.synqpayApiKey.trim();
     else if (form.removeSynqpayApiKey) out.synqpayApiKey = null;
@@ -481,53 +474,26 @@ export function sortDevices<T extends Pick<PaymentDevice, 'sortOrder' | 'nicknam
   });
 }
 
-/** For every till of the shop (no list), or for the tills listed. */
-export function appliesTo(device: Pick<PaymentDevice, 'machineIds'>, machineId: string): boolean {
-  const ids = device.machineIds ?? [];
-  return ids.length === 0 || ids.some((id) => id.toLowerCase() === machineId.toLowerCase());
-}
-
-/** The devices a till may default to (they apply to it), in the till's order. */
-export function defaultDeviceChoices(devices: readonly PaymentDevice[], machineId?: string | null): PaymentDevice[] {
-  return sortDevices(machineId ? devices.filter((d) => appliesTo(d, machineId)) : devices);
-}
-
 /**
  * A short, language-neutral description of where the device is: "192.168.1.20:8080",
- * "PinPad 123456 · 0882…", "Ingenico DX8000 · 192.168.1.40:9000", "Ingenico DX8000 · USB".
+ * "PinPad 123456", "Ingenico DX8000 · 192.168.1.40:9000", "Ingenico DX8000 · USB"; a terminal
+ * number of its own after " · #".
  */
 export function connectionSummary(device: Pick<PaymentDevice, 'kind' | 'config'>): string {
   const c = device.config ?? {};
+  const terminal = kindHasTerminalNumber(device.kind) && str(c.terminalNumber) ? ` · #${str(c.terminalNumber)}` : '';
   if (device.kind === 'agamento_lan') {
     const port = str(c.port) || String(AGAMENTO_DEFAULT_PORT);
     const path = str(c.path);
     const scheme = c.https === true ? 'https://' : '';
-    return `${scheme}${str(c.host)}:${port}${path && path !== AGAMENTO_DEFAULT_PATH ? path : ''}`;
+    return `${scheme}${str(c.host)}:${port}${path && path !== AGAMENTO_DEFAULT_PATH ? path : ''}${terminal}`;
   }
-  if (device.kind === 'zcredit_pinpad') {
-    const parts = [`PinPad ${str(c.pinpadId)}`];
-    if (str(c.terminalNumber)) parts.push(str(c.terminalNumber));
-    return parts.join(' · ');
-  }
+  if (device.kind === 'zcredit_pinpad') return `PinPad ${str(c.pinpadId)}`;
   const model = cleanSynqpayModel(c.model);
   const name = model ? SYNQPAY_MODEL_LABELS[model] : str(c.model) || 'SynqPay';
-  if (c.connection === 'usb') return `${name} · USB`;
+  if (c.connection === 'usb') return `${name} · USB${terminal}`;
   const port = str(c.port);
-  return `${name} · ${str(c.host)}${port ? `:${port}` : ''}`;
-}
-
-/**
- * The names of the tills a device is for, in the shop's order; null = every till of the shop
- * (no list). Ids no longer the shop's tills are skipped.
- */
-export function deviceTillNames(
-  device: Pick<PaymentDevice, 'machineIds'>,
-  machines: readonly Pick<PaymentDeviceMachine, 'id' | 'name'>[],
-): string[] | null {
-  const ids = device.machineIds ?? [];
-  if (ids.length === 0) return null;
-  const wanted = new Set(ids.map((id) => id.toLowerCase()));
-  return machines.filter((m) => wanted.has(m.id.toLowerCase())).map((m) => m.name);
+  return `${name} · ${str(c.host)}${port ? `:${port}` : ''}${terminal}`;
 }
 
 // ── The switch (`multiPaymentDevices`) ────────────────────────────────────────
@@ -550,6 +516,131 @@ export function effectiveSwitch(own: unknown, inherited: unknown): boolean {
   return inherited === true;
 }
 
+// ── How a till picks its device (mode / fixed / group) ────────────────────────
+
+/** The "אופן בחירת המכשיר" control: as the level above, a fixed device, or a group. */
+export type ModeChoice = 'inherit' | PaymentDeviceMode;
+
+export function cleanMode(value: unknown): PaymentDeviceMode | null {
+  return value === 'fixed' || value === 'group' ? value : null;
+}
+
+export function modeChoiceOf(value: unknown): ModeChoice {
+  return cleanMode(value) ?? 'inherit';
+}
+
+/** A stored / sent group as ids (lower case, once each); null when not a list (= not set). */
+export function cleanGroup(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: string[] = [];
+  for (const v of value) {
+    if (typeof v !== 'string' || !v.trim()) continue;
+    const id = v.trim().toLowerCase();
+    if (!out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+/** One layer's own device choice, as edited. `null` = this layer does not set it. */
+export interface DeviceChoiceDraft {
+  mode: PaymentDeviceMode | null;
+  fixedId: string | null;
+  group: string[] | null;
+}
+
+export function choiceDraftOf(settings: { [key: string]: unknown } | null | undefined): DeviceChoiceDraft {
+  const s = settings ?? {};
+  return {
+    mode: cleanMode(s[MODE_KEY]),
+    fixedId: typeof s[FIXED_KEY] === 'string' && s[FIXED_KEY] ? (s[FIXED_KEY] as string) : null,
+    group: cleanGroup(s[GROUP_KEY]),
+  };
+}
+
+/**
+ * The draft after picking a mode: "as the level above" clears the layer's whole choice; a fixed
+ * device drops this layer's group, a group drops its fixed device (neither is read then).
+ */
+export function withModeChoice(draft: DeviceChoiceDraft, choice: ModeChoice): DeviceChoiceDraft {
+  if (choice === 'inherit') return { mode: null, fixedId: null, group: null };
+  if (choice === 'fixed') return { ...draft, mode: 'fixed', group: null };
+  return { ...draft, mode: 'group', fixedId: null };
+}
+
+/**
+ * A device ticked on / off in the group. The group starts from what is shown (this layer's own,
+ * else the one inherited, else nothing = every device) and keeps the devices' order.
+ */
+export function toggleGroup(
+  shown: readonly string[] | null,
+  id: string,
+  on: boolean,
+  order: readonly string[],
+): string[] {
+  const set = new Set((shown ?? []).map((x) => x.toLowerCase()));
+  if (on) set.add(id.toLowerCase());
+  else set.delete(id.toLowerCase());
+  return order.map((x) => x.toLowerCase()).filter((x) => set.has(x));
+}
+
+/** The settings PATCH keys of a draft (`null` = inherit again). */
+export function choicePatch(draft: DeviceChoiceDraft): {
+  paymentDeviceMode: PaymentDeviceMode | null;
+  fixedPaymentDeviceId: string | null;
+  paymentDeviceGroup: string[] | null;
+} {
+  return { paymentDeviceMode: draft.mode, fixedPaymentDeviceId: draft.fixedId, paymentDeviceGroup: draft.group };
+}
+
+export function sameChoice(a: DeviceChoiceDraft, b: DeviceChoiceDraft): boolean {
+  const g = (x: string[] | null) => (x === null ? 'null' : x.join(','));
+  return a.mode === b.mode && a.fixedId === b.fixedId && g(a.group) === g(b.group);
+}
+
+export type ChoiceErrorCode = 'fixed_payment_device_required' | 'payment_device_not_in_shop';
+
+/**
+ * What the server would refuse: a "fixed" mode with no device (own, or [inheritedFixedId] from
+ * above), or an id that is not one of the shop's devices ([deviceIds]). Null = fine.
+ */
+export function choiceError(
+  draft: DeviceChoiceDraft,
+  inheritedFixedId: string | null | undefined,
+  deviceIds: readonly string[],
+): ChoiceErrorCode | null {
+  const ids = new Set(deviceIds.map((x) => x.toLowerCase()));
+  if (draft.fixedId && !ids.has(draft.fixedId.toLowerCase())) return 'payment_device_not_in_shop';
+  if ((draft.group ?? []).some((g) => !ids.has(g.toLowerCase()))) return 'payment_device_not_in_shop';
+  if (draft.mode === 'fixed' && !draft.fixedId && !inheritedFixedId) return 'fixed_payment_device_required';
+  return null;
+}
+
+/** How a till's summary line reads (`TillChoice` with its hardware). */
+export type TillSummaryState = 'builtin' | 'off' | 'fixed' | 'fixed_missing' | 'group_all' | 'group';
+
+export interface TillSummary {
+  state: TillSummaryState;
+  /** The devices it uses, in the till's order (fixed: one; group: the group's). */
+  devices: PaymentDevice[];
+}
+
+export function tillSummary(
+  machine: Pick<PaymentDeviceMachine, 'hasBuiltinTerminal' | 'choice'>,
+  devices: readonly PaymentDevice[],
+): TillSummary {
+  if (machine.hasBuiltinTerminal) return { state: 'builtin', devices: [] };
+  const c = machine.choice;
+  if (!c?.enabled) return { state: 'off', devices: [] };
+  const byId = new Map(devices.map((d) => [d.id.toLowerCase(), d]));
+  if (c.mode === 'fixed') {
+    const d = c.fixedDeviceId ? byId.get(c.fixedDeviceId.toLowerCase()) : undefined;
+    return d ? { state: 'fixed', devices: [d] } : { state: 'fixed_missing', devices: [] };
+  }
+  if (!c.groupDeviceIds || c.groupDeviceIds.length === 0) return { state: 'group_all', devices: sortDevices(devices) };
+  const wanted = new Set(c.groupDeviceIds.map((x) => x.toLowerCase()));
+  return { state: 'group', devices: sortDevices(devices.filter((d) => wanted.has(d.id.toLowerCase()))) };
+}
+
 // ── Server answers ───────────────────────────────────────────────────────────
 
 export interface DeviceServerError {
@@ -563,9 +654,7 @@ export interface DeviceServerError {
 const SERVER_FIELDS: Record<string, DeviceFormField> = {
   nickname: 'nickname',
   kind: 'kind',
-  machineIds: 'machineIds',
   sortOrder: 'sortOrder',
-  zcreditPassword: 'zcreditPassword',
   synqpayApiKey: 'synqpayApiKey',
   'config.host': 'host',
   'config.port': 'port',
@@ -573,7 +662,6 @@ const SERVER_FIELDS: Record<string, DeviceFormField> = {
   'config.mac': 'mac',
   'config.terminalNumber': 'terminalNumber',
   'config.pinpadId': 'pinpadId',
-  'config.mode': 'mode',
   'config.model': 'model',
   'config.connection': 'connection',
   'config.protocol': 'protocol',

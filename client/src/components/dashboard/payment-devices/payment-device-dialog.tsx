@@ -2,9 +2,10 @@
 
 /**
  * Add / edit one payment device of a shop ("מכשירי תשלום"): its nickname, its kind (Agamento on
- * the LAN, a Z-Credit PinPad, a SynqPay terminal) and that kind's fields, its write-only secret
- * ("מוגדר" once stored — replace or remove, never shown), which tills use it (none chosen = every
- * till of the shop; a till with built-in clearing is marked as not concerned), active, order.
+ * the LAN, a Z-Credit PinPad, a SynqPay terminal) and that kind's fields, SynqPay's write-only key
+ * ("מוגדר" once stored — replace or remove, never shown), active, order. A Z-Credit pinpad is its
+ * PinPad only: the terminal number and password are the branch's Z-Credit settings. Which tills
+ * use the device is not here: it is the shop's / each till's choice (a fixed device or a group).
  * The checks are lib/paymentDevices.ts, the server's own (same codes).
  */
 
@@ -23,7 +24,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
 import { SimpleSelect } from '@/components/dashboard/kitchen-printers/printer-dialog';
 import {
   NICKNAME_MAX,
@@ -67,12 +67,11 @@ export function PaymentDeviceDialog({
   const [submitted, setSubmitted] = useState(false);
   const set = (patch: Partial<PaymentDeviceForm>) => setForm((f) => ({ ...f, ...patch }));
 
-  const machineIds = useMemo(() => page.machines.map((m) => m.id), [page.machines]);
   const otherNicknames = useMemo(
     () => page.devices.filter((d) => d.id !== device?.id).map((d) => d.nickname),
     [page.devices, device?.id],
   );
-  const errors: DeviceFormErrors = validateDeviceForm(form, { otherNicknames, machineIds });
+  const errors: DeviceFormErrors = validateDeviceForm(form, { otherNicknames });
   const shown: DeviceFormErrors = submitted ? errors : {};
   const errorOf = (field: DeviceFormField): string | null => {
     const code = shown[field] ?? (serverError?.field === field ? serverError.code : null);
@@ -88,8 +87,7 @@ export function PaymentDeviceDialog({
   const submit = () => {
     setSubmitted(true);
     if (hasDeviceErrors(errors)) return;
-    // Only the tills that still exist; a till kept from before but gone is dropped.
-    onSave(deviceInput(form, { machineIds }));
+    onSave(deviceInput(form));
   };
 
   const fieldError = (field: DeviceFormField) => {
@@ -97,11 +95,21 @@ export function PaymentDeviceDialog({
     return msg ? <p className="text-xs text-destructive">{msg}</p> : null;
   };
 
-  const tillOptions = page.machines.map((m) => ({
-    id: m.id,
-    label: m.name,
-    hint: m.hasBuiltinTerminal ? t('fields.builtinMark') : null,
-  }));
+  /** "מספר מסוף (אופציונלי…)": Agamento and SynqPay only; may repeat across devices. */
+  const terminalField = (id: string) => (
+    <div className="space-y-1">
+      <Label htmlFor={id}>{t('fields.terminalNumber')}</Label>
+      <Input
+        id={id}
+        dir="ltr"
+        inputMode="numeric"
+        value={form.terminalNumber}
+        onChange={(e) => set({ terminalNumber: e.target.value.replace(/\D/g, '').slice(0, 20) })}
+        aria-invalid={!!errorOf('terminalNumber') || undefined}
+      />
+      {fieldError('terminalNumber') ?? <p className="text-xs text-muted-foreground">{t('fields.terminalNumberHint')}</p>}
+    </div>
+  );
 
   return (
     <Dialog open onOpenChange={(next) => !next && onClose()}>
@@ -190,28 +198,14 @@ export function PaymentDeviceDialog({
                   {fieldError('mac') ?? <p className="text-xs text-muted-foreground">{t('fields.macHint')}</p>}
                 </div>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1">
-                  <Label htmlFor="pd-terminal">{t('fields.terminalNumber')}</Label>
-                  <Input
-                    id="pd-terminal"
-                    dir="ltr"
-                    inputMode="numeric"
-                    value={form.terminalNumber}
-                    onChange={(e) => set({ terminalNumber: e.target.value.replace(/\D/g, '').slice(0, 20) })}
-                  />
-                  {fieldError('terminalNumber') ?? (
-                    <p className="text-xs text-muted-foreground">{t('fields.terminalNumberHint')}</p>
-                  )}
-                </div>
-                <label className="flex items-center gap-2 self-center text-sm">
-                  <Switch checked={form.https} onCheckedChange={(v) => set({ https: v })} />
-                  <span>
-                    {t('fields.https')}
-                    <span className="block text-xs text-muted-foreground">{t('fields.httpsHint')}</span>
-                  </span>
-                </label>
-              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <Switch checked={form.https} onCheckedChange={(v) => set({ https: v })} />
+                <span>
+                  {t('fields.https')}
+                  <span className="block text-xs text-muted-foreground">{t('fields.httpsHint')}</span>
+                </span>
+              </label>
+              {terminalField('pd-terminal')}
             </>
           )}
 
@@ -229,45 +223,8 @@ export function PaymentDeviceDialog({
                 />
                 {fieldError('pinpadId') ?? <p className="text-xs text-muted-foreground">{t('fields.pinpadHint')}</p>}
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1">
-                  <Label htmlFor="pd-zterminal">{t('fields.terminalNumber')}</Label>
-                  <Input
-                    id="pd-zterminal"
-                    dir="ltr"
-                    inputMode="numeric"
-                    value={form.terminalNumber}
-                    onChange={(e) => set({ terminalNumber: e.target.value.replace(/\D/g, '').slice(0, 20) })}
-                  />
-                  {fieldError('terminalNumber') ?? (
-                    <p className="text-xs text-muted-foreground">{t('fields.zcreditTerminalHint')}</p>
-                  )}
-                </div>
-                <div className="space-y-1">
-                  <Label>{t('fields.mode')}</Label>
-                  <SimpleSelect
-                    value={form.mode || 'inherit'}
-                    onChange={(v) => set({ mode: v === 'test' || v === 'production' ? v : '' })}
-                    options={[
-                      { value: 'inherit', label: t('fields.modeInherit') },
-                      { value: 'test', label: t('fields.modeTest') },
-                      { value: 'production', label: t('fields.modeProduction') },
-                    ]}
-                    ariaLabel={t('fields.mode')}
-                  />
-                </div>
-              </div>
-              <SecretField
-                id="pd-zpassword"
-                label={t('fields.zcreditPassword')}
-                hint={t('fields.zcreditPasswordHint')}
-                status={device?.kind === 'zcredit_pinpad' ? device.secrets?.zcreditPassword : undefined}
-                value={form.zcreditPassword}
-                remove={form.removeZcreditPassword}
-                onValue={(v) => set({ zcreditPassword: v })}
-                onRemove={(r) => set({ removeZcreditPassword: r, zcreditPassword: '' })}
-                error={errorOf('zcreditPassword')}
-              />
+              {/* The terminal number and password are the branch's, shared by all its pinpads. */}
+              <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">{t('zcreditBranchNote')}</p>
             </>
           )}
 
@@ -369,19 +326,7 @@ export function PaymentDeviceDialog({
                   {fieldError('serialNumber') ?? <p className="text-xs text-muted-foreground">{t('fields.serialHint')}</p>}
                 </div>
               </div>
-              <div className="space-y-1">
-                <Label htmlFor="pd-sterminal">{t('fields.terminalNumber')}</Label>
-                <Input
-                  id="pd-sterminal"
-                  dir="ltr"
-                  inputMode="numeric"
-                  value={form.terminalNumber}
-                  onChange={(e) => set({ terminalNumber: e.target.value.replace(/\D/g, '').slice(0, 20) })}
-                />
-                {fieldError('terminalNumber') ?? (
-                  <p className="text-xs text-muted-foreground">{t('fields.terminalNumberHint')}</p>
-                )}
-              </div>
+              {terminalField('pd-sterminal')}
               <SecretField
                 id="pd-skey"
                 label={t('fields.synqpayApiKey')}
@@ -396,19 +341,6 @@ export function PaymentDeviceDialog({
               />
             </>
           )}
-
-          <div className="space-y-1">
-            <EntityMultiSelect
-              label={t('fields.tills')}
-              options={tillOptions}
-              selected={form.machineIds.filter((id) => machineIds.includes(id))}
-              onChange={(next) => set({ machineIds: next })}
-              allLabel={t('fields.tillsAll')}
-              clearLabel={t('fields.tillsClear')}
-              emptyLabel={t('fields.tillsEmpty')}
-            />
-            {fieldError('machineIds') ?? <p className="text-xs text-muted-foreground">{t('fields.tillsHint')}</p>}
-          </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="flex items-center gap-2 text-sm">
