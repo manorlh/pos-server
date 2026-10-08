@@ -174,6 +174,8 @@ TIP_RESETTABLE_KEYS = (
     "autoReopenIgnoreStock",
     # "מכשירי תשלום": "לפי הסניף" / "ללא" send `null`.
     *payment_devices.SETTING_KEYS,
+    # "חזרה אוטומטית לקיוסק" (Windows): "ירושה" sends `null`.
+    "desktopIdleReturnMinutes",
 )
 
 

@@ -1,8 +1,10 @@
 /**
  * Staff on the kiosk (never in a customer's way, never during a payment):
- *  - a long press (2 s) in the top-right corner (detected by the kiosk's root, nothing drawn over it) → a shop manager's PIN (checked offline against the
+ *  - a long press (2 s) in the top-right corner (detected by the kiosk's root, nothing drawn over it) → the PIN of a
+ *    manager whose role allows "יציאה מנעילת קופה (קיוסק)" (KIOSK_UNLOCK, checked offline against the
  *    synced POS users) → "ניהול הקיוסק": status, payment and unresolved charges, printer, sync,
- *    media, today's orders (re-print a bon / a receipt — never a charge), the Zs, pause, exit;
+ *    media, today's orders (re-print a bon / a receipt — never a charge), the Zs, pause, and — for a
+ *    manager who also holds DESKTOP_EXIT — "יציאה לשולחן העבודה" and "יציאה מהתוכנה";
  *  - six taps in the top-left corner + the technician code (1995 unless the cloud set one) →
  *    "בדיקות ומידע קיוסק": assignment, network, printer test and choice, a read-only pinpad check,
  *    updates, remote support (TeamViewer QuickSupport when installed);
@@ -20,7 +22,8 @@ import { TERMINAL_CHECK_BYPASS_WARNING } from '../../core/terminalCheckBypass';
 import { kiosk } from '../bridge';
 import { t } from '../i18n';
 import { updateLine } from '../roles/updateText';
-import { DesktopExitButton, DesktopExitMenuButton, DesktopExitPad } from '../desktop/DesktopExit';
+import { DESKTOP_EXIT_LABEL, DesktopExitButton, DesktopExitMenuButton, DesktopExitPad } from '../desktop/DesktopExit';
+import { PERMISSION_LABEL } from '../../core/desktopExit';
 
 export function StaffLayer({
   m,
@@ -188,6 +191,7 @@ function useNote(): [string | null, (r: { ok: boolean; message?: string }) => vo
 function AdminScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onClose: () => void; onDesktopExit: () => void }) {
   const [info, setInfo] = useState<AdminInfo | null>(null);
   const [note, show] = useNote();
+  const [exiting, setExiting] = useState(false);
   const refresh = () => void kiosk.adminInfo().then(setInfo).catch(() => undefined);
   useEffect(refresh, []);
   const act = async (a: Parameters<typeof kiosk.adminAction>[0]) => {
@@ -300,12 +304,35 @@ function AdminScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onClose: 
           </div>
         ))}
       </Panel>
-      <div className="flex flex-wrap gap-2">
-        <DesktopExitMenuButton onOpen={onDesktopExit} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold" style={{ background: `${m.c.button}1A`, color: m.c.button, borderRadius: 8 }} />
-        <Btn m={m} danger onClick={() => act({ type: 'exitKiosk' })}>
-          יציאה מהקיוסק (סגירת התוכנה)
-        </Btn>
-      </div>
+      {/* Leaving the kiosk: the manager who opened this menu, if their role holds DESKTOP_EXIT —
+          no second code; otherwise another manager's code on the pad (the desktop only). */}
+      {info.desktopExit?.allowed ? (
+        <div className="flex flex-wrap gap-2">
+          <DesktopExitMenuButton
+            label={DESKTOP_EXIT_LABEL}
+            disabled={exiting}
+            onOpen={async () => {
+              setExiting(true);
+              const r = await kiosk.adminAction({ type: 'desktopExit' }).catch((e: unknown) => ({ ok: false, message: String(e) }));
+              setExiting(false);
+              if (r.ok) onClose();
+              else show(r);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold disabled:opacity-40"
+            style={{ background: `${m.c.button}1A`, color: m.c.button, borderRadius: 8 }}
+          />
+          <Btn m={m} danger onClick={() => act({ type: 'exitKiosk' })}>
+            יציאה מהקיוסק (סגירת התוכנה)
+          </Btn>
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          <div className="text-xs" style={{ color: m.c.mutedText }}>
+            {info.desktopExit?.reason ?? `נדרשת הרשאת "${PERMISSION_LABEL}"`} — יציאה מהתוכנה אינה זמינה.
+          </div>
+          <DesktopExitMenuButton onOpen={onDesktopExit} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold" style={{ background: `${m.c.button}1A`, color: m.c.button, borderRadius: 8 }} />
+        </div>
+      )}
     </Shell>
   );
 }

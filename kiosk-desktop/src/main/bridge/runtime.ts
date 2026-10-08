@@ -783,7 +783,7 @@ export class BridgeRuntime extends EventEmitter implements BridgeHost {
         return ok(s.adminInfo());
       case 'POST /admin/unlock':
         if (!s) return needKiosk();
-        return ok(s.adminUnlock(typeof b.pin === 'string' ? b.pin.slice(0, 12) : ''));
+        return ok(await s.adminUnlock(typeof b.pin === 'string' ? b.pin.slice(0, 12) : ''));
       case 'POST /admin/action': {
         if (!s) return needKiosk();
         const type = b.type as AdminAction['type'];

@@ -9,7 +9,9 @@
  *    "חזרה לקיוסק" (`--return-to-kiosk`) are offered.
  *  - Back, without a code: the tray, the shortcut (a second launch reaches the running app), the
  *    taskbar button (a restore), or by itself after `idleMinutes` with nobody at the keyboard or
- *    mouse. Kiosk mode and full screen come back; the tray goes away.
+ *    mouse — the cloud's setting "חזרה אוטומטית לקיוסק" (`desktopIdleReturnMinutes`, default 10,
+ *    0 = never), kiosk.json only when the cloud sent none. Kiosk mode and full screen come back;
+ *    the tray goes away.
  *  - Keys: the app holds no system-wide hook (no Alt+Tab / Win block — the window's own
  *    before-input-event filter only guards its own page), so nothing is released or re-armed; the
  *    lockdown proper is Windows' (Assigned Access / Shell Launcher, README).
@@ -55,11 +57,19 @@ export interface DesktopDoors {
 export class DesktopMode {
   private since: number | null = null;
   private timer: NodeJS.Timeout | null = null;
+  private readonly minutes: () => number;
 
+  /**
+   * `idleMinutes`: the minutes, or where to read them each time — the cloud's setting
+   * `desktopIdleReturnMinutes` (KioskService.desktopIdleReturnMinutes), so a change made on the
+   * dashboard while the device is out applies at once.
+   */
   constructor(
     private readonly doors: DesktopDoors,
-    private readonly idleMinutes: number = IDLE_RETURN_MINUTES,
-  ) {}
+    idleMinutes: number | (() => number) = IDLE_RETURN_MINUTES,
+  ) {
+    this.minutes = typeof idleMinutes === 'function' ? idleMinutes : () => idleMinutes;
+  }
 
   /** On the desktop now. */
   get active(): boolean {
@@ -131,7 +141,7 @@ export class DesktopMode {
   /** One look at the idle time (every 30 s while out). */
   idleTick(): void {
     if (this.since === null) return;
-    if (shouldAutoReturn({ systemIdleSec: this.doors.systemIdleSec(), exitedAtMs: this.since, nowMs: this.now(), limitMinutes: this.idleMinutes })) this.back('idle');
+    if (shouldAutoReturn({ systemIdleSec: this.doors.systemIdleSec(), exitedAtMs: this.since, nowMs: this.now(), limitMinutes: this.minutes() })) this.back('idle');
   }
 
   stop(): void {
@@ -141,7 +151,7 @@ export class DesktopMode {
 
   private watchIdle() {
     if (this.timer) clearInterval(this.timer);
-    if (!(this.idleMinutes > 0)) return;
+    // Always while out: the minutes may be turned on (or changed) from the cloud meanwhile.
     this.timer = setInterval(() => this.idleTick(), 30_000);
     this.timer.unref?.();
   }
