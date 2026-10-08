@@ -21,9 +21,9 @@ POST /sync/{m}/synqpay/key-rejected  → the terminal refused the key this till 
                                        dashboard ("המפתח נדחה במסוף") until a new key replaces it.
 
 Both take an optional `paymentDeviceId` ("מכשירי תשלום", app/services/payment_devices.py): the
-key is then that SynqPay device's — a device of the till's shop that applies to it (404
-`payment_device_not_found`, 409 `payment_device_not_synqpay` / `payment_device_not_for_machine`)
-— stored on the device, not on the till's layer, without the `not_synqpay` check.
+key is then that SynqPay device's — a device of the till's shop (404 `payment_device_not_found`,
+409 `payment_device_not_synqpay`) — stored on the device, not on the till's layer, without the
+`not_synqpay` check.
 """
 from __future__ import annotations
 
@@ -143,7 +143,7 @@ def _store_device_pairing(db: Session, machine: POSMachine, body: SynqpayPairing
     """
     "מכשירי תשלום": the key a till paired with one of its shop's SynqPay devices — stored as that
     device's secret (with the pairing audit), whatever the till's own integration is (no
-    `not_synqpay`). The device must be the till's shop's, a SynqPay one, and apply to the till.
+    `not_synqpay`). The device must be the till's shop's and a SynqPay one.
     The shop's tills are told: the device may serve several of them.
     """
     device = PD.device_for_till(db, machine, body.payment_device_id)

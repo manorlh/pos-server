@@ -6,22 +6,25 @@ What each class pins:
 
 * **Config** — each kind keeps exactly its fields, normalised as the till reads them (defaults
   filled in, empty values left out), and refuses a bad one with a machine-readable code and the
-  field; an address typed as a URL is split.
-* **CRUD** — nickname rules (trimmed, 1–40, unique in the shop whatever its case), tills of the
-  shop only, sort order, partial PUT, a kind change, deletion clearing every default naming it,
-  the shop's stamp moved and its tills told.
-* **Secrets** — write-only (mask keeps, null removes), encrypted apart, dropped for a kind that
-  does not use them, never in any dashboard answer.
+  field; an address typed as a URL is split. A Z-Credit pinpad is its PinPad only: the terminal
+  number, mode and password are the branch's (dropped when sent).
+* **CRUD** — nickname rules (trimmed, 1–40, unique in the shop whatever its case), sort order,
+  partial PUT, a kind change, several devices on one terminal number, deletion clearing every
+  fixed device / group naming it, deactivation clearing nothing, the shop's stamp moved and its
+  tills told.
+* **Secrets** — SynqPay's key only: write-only (mask keeps, null removes), encrypted apart,
+  dropped for another kind, never in any dashboard answer.
 * **Permissions** — the shop's managers; another shop's manager and a cashier are refused.
-* **Settings keys** — `multiPaymentDevices` managed and resettable; `defaultPaymentDeviceId`
-  only a device of that shop (that applies to the till), refused on a tenant / company, checked
-  only when it changes.
-* **The till's sync** — the exact contract: JSON strings, the applicability filter, inactive
-  devices included, secrets only to a till without built-in clearing, nothing to a kiosk, and a
-  watermark that moves so a delta pull is not "unchanged".
+* **The till's device choice** — `paymentDeviceMode` / `fixedPaymentDeviceId` /
+  `paymentDeviceGroup` on the shop, an area, a till; devices of that shop only; a "fixed" mode
+  needs its device (its own or from above); refused on a tenant / company / kiosk; checked only
+  when it changes; the per-till summary on the dashboard.
+* **The till's sync** — the exact contract: JSON strings (the group too), all the shop's
+  devices, the mode / fixed / group as merged, the terminal number unguarded, secrets only to a
+  till without built-in clearing, nothing to a kiosk, and a watermark that moves.
 * **SynqPay pairing per device** — the key stored on the device with its audit, the checks, the
   rejection report; without `paymentDeviceId` nothing changes.
-* **The migration** — a unique revision on the single head.
+* **The migrations** — unique revisions on the single head.
 
 Runs on the in-memory SQLite world of tests/test_shop_areas.py.
 """
@@ -31,7 +34,7 @@ import json
 import pathlib
 import re
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
@@ -50,21 +53,16 @@ from app.schemas.payment_devices import PaymentDeviceIn
 from app.schemas.pos_settings import PosSettingsV1Patch
 from app.schemas.synqpay_pairing import SynqpayKeyRejectedIn, SynqpayPairingIn
 from app.services import payment_devices as PD
+from app.services import payment_secrets as PS
 from app.services import settings_notify
 from app.services.settings_merge import MANAGED_SETTING_KEYS
 from test_shop_areas import _ctx, refused, w  # noqa: F401
 
-PASSWORD = "s3cret-Pass!"
 KEY = "1234abcd"
 SERIAL = "244RKR528387"
 
 AGAMENTO = {"nickname": "Nayax bar", "kind": "agamento_lan", "config": {"host": "192.168.1.20"}}
-ZCREDIT = {
-    "nickname": "Z pinpad",
-    "kind": "zcredit_pinpad",
-    "config": {"pinpadId": "PINPAD123456"},
-    "zcreditPassword": PASSWORD,
-}
+ZCREDIT = {"nickname": "Z pinpad", "kind": "zcredit_pinpad", "config": {"pinpadId": "PINPAD123456"}}
 SYNQ = {
     "nickname": "Synq",
     "kind": "synqpay",
@@ -153,6 +151,20 @@ def patch_machine(w, till, **data):
         )
 
 
+def patch_area(w, area, **data):
+    return settings_router.patch_area_settings(area_id=str(area.id), data=PosSettingsV1Patch(**data), **_ctx(w))
+
+
+def new_area(w, till=None):
+    area = ShopArea(id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=w.shop.id, name=f"Area {uuid.uuid4().hex[:4]}")
+    w.db.add(area)
+    w.db.flush()
+    if till is not None:
+        till.area_id = area.id
+    w.db.commit()
+    return area
+
+
 def as_kiosk(w, till):
     w.db.add(KioskDevice(machine_id=till.id, tenant_id=w.tenant.id, shop_id=till.shop_id, name="kiosk"))
     w.db.commit()
@@ -219,18 +231,20 @@ class TestConfig:
         assert e.value.detail["code"] == code and e.value.detail["field"] == field
         assert e.value.detail["msg"]
 
-    def test_zcredit(self):
+    def test_zcredit_is_its_pinpad_only(self):
         assert PD.clean_config("zcredit_pinpad", {"pinpadId": "PINPAD123456"}) == {"pinpadId": "123456"}
+        # The terminal number, mode (even a bad one) and anything else are the branch's: dropped.
         assert PD.clean_config(
-            "zcredit_pinpad", {"pinpadId": "abc9", "terminalNumber": "0882123", "mode": "TEST", "host": "x"}
-        ) == {"pinpadId": "abc9", "terminalNumber": "0882123", "mode": "test"}
+            "zcredit_pinpad", {"pinpadId": "abc9", "terminalNumber": "0882123", "mode": "nonsense", "host": "x"}
+        ) == {"pinpadId": "abc9"}
+        assert PD.till_config("zcredit_pinpad", {"pinpadId": "abc9", "terminalNumber": "1", "mode": "test"}) == {
+            "pinpadId": "abc9"
+        }
 
     @pytest.mark.parametrize("raw,code", [
         ({}, "pinpad_required"),
         ({"pinpadId": "PINPAD"}, "pinpad_invalid"),
         ({"pinpadId": "12-3"}, "pinpad_invalid"),
-        ({"pinpadId": "1", "mode": "live"}, "mode_invalid"),
-        ({"pinpadId": "1", "terminalNumber": "x"}, "terminal_number_invalid"),
     ])
     def test_zcredit_refusals(self, raw, code):
         with pytest.raises(PD.PaymentDeviceError) as e:
@@ -295,17 +309,25 @@ class TestCrud:
     def test_create_answers_the_dashboard_shape(self, pd):
         out = create(pd, AGAMENTO)
         assert set(out) == {
-            "id", "nickname", "kind", "active", "sortOrder", "config", "shopId", "machineIds",
-            "createdAt", "updatedAt", "secrets",
+            "id", "nickname", "kind", "active", "sortOrder", "config", "shopId", "createdAt", "updatedAt", "secrets",
         }
         assert out["nickname"] == "Nayax bar" and out["kind"] == "agamento_lan"
-        assert out["active"] is True and out["sortOrder"] == 0 and out["machineIds"] == []
+        assert out["active"] is True and out["sortOrder"] == 0
         assert out["config"] == {"host": "192.168.1.20", "port": 8080, "path": "/SPICy", "https": False}
         assert out["shopId"] == str(pd.shop.id)
-        assert out["secrets"]["zcreditPassword"]["set"] is False
-        assert out["secrets"]["synqpayApiKey"]["set"] is False
+        assert set(out["secrets"]) == {"synqpayApiKey"} and out["secrets"]["synqpayApiKey"]["set"] is False
         row = device_row(pd, out["id"])
         assert row.tenant_id == pd.tenant.id and row.shop_id == pd.shop.id
+
+    def test_the_tills_and_a_pinpads_password_are_not_the_devices(self, pd):
+        """`machineIds`, `zcreditPassword` (and a pinpad's number / mode) sent are ignored."""
+        out = create(pd, {
+            **ZCREDIT, "machineIds": [str(pd.tablet.id)], "zcreditPassword": "pw",
+            "config": {"pinpadId": "PINPAD1", "terminalNumber": "0882", "mode": "test"},
+        })
+        assert "machineIds" not in out and out["config"] == {"pinpadId": "1"}
+        assert device_secrets(pd, out["id"]) == []
+        assert not hasattr(device_row(pd, out["id"]), "machine_ids")
 
     def test_nickname_rules(self, pd):
         assert create(pd, {**AGAMENTO, "nickname": "  Bar   one "})["nickname"] == "Bar one"
@@ -327,25 +349,15 @@ class TestCrud:
         # Its own nickname in another case is fine.
         assert update(pd, first["id"], {"nickname": "BAR"})["nickname"] == "BAR"
 
-    def test_machine_ids_are_the_shops_tills(self, pd):
-        out = create(pd, {**AGAMENTO, "machineIds": [str(pd.tablet.id), str(pd.tablet.id).upper()]})
-        assert out["machineIds"] == [str(pd.tablet.id)]
-        e = refused(create, pd, {**AGAMENTO, "nickname": "x", "machineIds": [str(pd.other_till.id)]})
-        assert (code_of(e), e.detail["field"]) == ("machine_not_in_shop", "machineIds")
-        e = refused(create, pd, {**AGAMENTO, "nickname": "x", "machineIds": ["nope"]})
-        assert code_of(e) == "machine_ids_invalid"
-        e = refused(create, pd, {**AGAMENTO, "nickname": "x", "machineIds": [str(uuid.uuid4())]})
-        assert code_of(e) == "machine_not_in_shop"
-        as_kiosk(pd, pd.f20)
-        e = refused(create, pd, {**AGAMENTO, "nickname": "x", "machineIds": [str(pd.f20.id)]})
-        assert code_of(e) == "machine_is_kiosk"
-
-    def test_a_till_that_moved_away_is_dropped_not_refused(self, pd):
-        out = create(pd, {**AGAMENTO, "machineIds": [str(pd.tablet.id), str(pd.f20.id)]})
-        pd.f20.shop_id = pd.other_shop.id
-        pd.db.commit()
-        again = update(pd, out["id"], {"machineIds": out["machineIds"]})
-        assert again["machineIds"] == [str(pd.tablet.id)]
+    def test_several_devices_share_one_terminal_number(self, pd):
+        """"כל המכשירים יכולים להיות עם אותו מספר מסוף": nothing is unique about it."""
+        a = create(pd, {**AGAMENTO, "config": {"host": "10.0.0.1", "terminalNumber": "1234567"}})
+        b = create(pd, {**AGAMENTO, "nickname": "Nayax 2", "config": {"host": "10.0.0.2", "terminalNumber": "1234567"}})
+        s = create(pd, {**SYNQ, "config": {**SYNQ["config"], "terminalNumber": "1234567"}})
+        assert {d["config"]["terminalNumber"] for d in (a, b, s)} == {"1234567"}
+        assert update(pd, b["id"], {"config": {"host": "10.0.0.3", "terminalNumber": "1234567"}})["config"]["host"] == "10.0.0.3"
+        devices = json.loads(pulled(pd, pd.tablet).settings["paymentDevices"])
+        assert [d["config"].get("terminalNumber") for d in devices] == ["1234567"] * 3
 
     def test_sort_order_and_active(self, pd):
         assert create(pd, {**AGAMENTO, "sortOrder": 9999, "active": False})["sortOrder"] == 9999
@@ -356,58 +368,62 @@ class TestCrud:
         assert code_of(e) == "active_invalid"
 
     def test_put_changes_only_what_it_sends(self, pd):
-        out = create(pd, {**AGAMENTO, "machineIds": [str(pd.tablet.id)], "sortOrder": 3})
+        out = create(pd, {**AGAMENTO, "sortOrder": 3})
         again = update(pd, out["id"], {"active": False})
         assert again["active"] is False
-        assert (again["nickname"], again["config"], again["machineIds"], again["sortOrder"]) == (
-            out["nickname"], out["config"], out["machineIds"], 3,
-        )
+        assert (again["nickname"], again["config"], again["sortOrder"]) == (out["nickname"], out["config"], 3)
         again = update(pd, out["id"], {"config": {"host": "10.0.0.7", "port": 8090}})
         assert again["config"] == {"host": "10.0.0.7", "port": 8090, "path": "/SPICy", "https": False}
-        assert update(pd, out["id"], {"machineIds": []})["machineIds"] == []
 
-    def test_a_kind_change_validates_the_new_kind_and_drops_the_old_secrets(self, pd):
-        out = create(pd, ZCREDIT)
+    def test_a_kind_change_validates_the_new_kind_and_drops_the_old_secret(self, pd):
+        out = create(pd, {**SYNQ, "synqpayApiKey": KEY})
         assert len(device_secrets(pd, out["id"])) == 1
         e = refused(update, pd, out["id"], {"kind": "agamento_lan"})
         assert (code_of(e), e.detail["field"]) == ("host_required", "config.host")
-        assert device_row(pd, out["id"]).kind == "zcredit_pinpad"
+        assert device_row(pd, out["id"]).kind == "synqpay"
         again = update(pd, out["id"], {"kind": "agamento_lan", "config": {"host": "10.0.0.8"}})
-        assert again["kind"] == "agamento_lan"
-        assert again["config"]["host"] == "10.0.0.8"
+        assert again["kind"] == "agamento_lan" and again["config"]["host"] == "10.0.0.8"
         assert device_secrets(pd, out["id"]) == []
-        assert again["secrets"]["zcreditPassword"]["set"] is False
+        assert again["secrets"]["synqpayApiKey"]["set"] is False
 
-    def test_delete_takes_its_secrets_and_every_default_naming_it(self, pd):
+    def test_delete_clears_every_fixed_device_and_group_naming_it(self, pd):
         keep = create(pd, {**AGAMENTO, "nickname": "keep"})
         gone = create(pd, ZCREDIT)
-        area = ShopArea(id=uuid.uuid4(), tenant_id=pd.tenant.id, shop_id=pd.shop.id, name="Bar",
-                        settings={"defaultPaymentDeviceId": gone["id"]})
-        pd.db.add(area)
-        pd.shop.settings = {"defaultPaymentDeviceId": gone["id"], "multiPaymentDevices": True}
-        pd.tablet.settings = {"defaultPaymentDeviceId": gone["id"], "globalTaxRate": 17}
-        pd.f20.settings = {"defaultPaymentDeviceId": keep["id"]}
+        area = new_area(pd)
+        area.settings = {"paymentDeviceGroup": [gone["id"]], "paymentDeviceMode": "group"}
+        pd.shop.settings = {
+            "multiPaymentDevices": True, "paymentDeviceMode": "fixed", "fixedPaymentDeviceId": gone["id"],
+            "paymentDeviceGroup": [keep["id"], gone["id"]],
+        }
+        pd.tablet.settings = {"fixedPaymentDeviceId": gone["id"], "paymentDeviceMode": "fixed", "globalTaxRate": 17}
+        pd.f20.settings = {"fixedPaymentDeviceId": keep["id"], "paymentDeviceMode": "fixed"}
+        pd.other_till.settings = {"paymentDeviceGroup": [gone["id"]]}  # another shop's till: untouched
         pd.db.commit()
         assert delete(pd, gone["id"]).status_code == 204
         pd.db.expire_all()
         assert device_row(pd, gone["id"]) is None
         assert device_secrets(pd, gone["id"]) == []
-        assert pd.shop.settings == {"multiPaymentDevices": True}
-        assert pd.db.get(ShopArea, area.id).settings == {}
+        # The fixed device and its "fixed" mode go; the group keeps the others.
+        assert pd.shop.settings == {"multiPaymentDevices": True, "paymentDeviceGroup": [keep["id"]]}
+        # A group left empty is removed (the layer inherits again), not "every device".
+        assert pd.db.get(ShopArea, area.id).settings == {"paymentDeviceMode": "group"}
+        assert pd.db.get(ShopArea, area.id).settings_updated_at is not None
         assert pd.tablet.settings == {"globalTaxRate": 17}
-        assert pd.f20.settings == {"defaultPaymentDeviceId": keep["id"]}
+        assert pd.tablet.settings_updated_at is not None
+        assert pd.f20.settings == {"fixedPaymentDeviceId": keep["id"], "paymentDeviceMode": "fixed"}
+        assert pd.other_till.settings == {"paymentDeviceGroup": [gone["id"]]}
         assert [d["id"] for d in listed(pd)["devices"]] == [keep["id"]]
         assert refused(delete, pd, gone["id"]).status_code == 404
 
-    def test_narrowing_the_tills_clears_a_dropped_tills_default(self, pd):
+    def test_deactivating_clears_nothing(self, pd):
         out = create(pd, AGAMENTO)
-        pd.tablet.settings = {"defaultPaymentDeviceId": out["id"]}
-        pd.f20.settings = {"defaultPaymentDeviceId": out["id"]}
-        pd.db.commit()
-        update(pd, out["id"], {"machineIds": [str(pd.tablet.id)]})
+        patch_shop(pd, paymentDeviceMode="fixed", fixedPaymentDeviceId=out["id"])
+        update(pd, out["id"], {"active": False})
         pd.db.expire_all()
-        assert pd.tablet.settings == {"defaultPaymentDeviceId": out["id"]}
-        assert pd.f20.settings == {}
+        assert pd.shop.settings["fixedPaymentDeviceId"] == out["id"]
+        settings = pulled(pd, pd.tablet).settings
+        assert settings["fixedPaymentDeviceId"] == out["id"]
+        assert json.loads(settings["paymentDevices"])[0]["active"] is False
 
     def test_every_write_moves_the_shops_stamp_and_tells_its_tills(self, pd):
         old = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -424,10 +440,10 @@ class TestCrud:
             return stamp > old and pd.shop_notified == [(str(pd.shop.id), PD.NOTIFY_REASON)]
 
         reset()
-        out = create(pd, ZCREDIT)
+        out = create(pd, SYNQ)
         assert moved()
         reset()
-        update(pd, out["id"], {"zcreditPassword": "another"})
+        update(pd, out["id"], {"synqpayApiKey": "another1"})
         assert moved()
         reset()
         delete(pd, out["id"])
@@ -446,6 +462,7 @@ class TestCrud:
         assert page["multiPaymentDevices"] is False
         assert page["multiPaymentDevicesInherited"] is True
         assert page["multiPaymentDevicesInheritedSource"] == "company"
+        assert (page["paymentDeviceMode"], page["fixedPaymentDeviceId"], page["paymentDeviceGroup"]) == (None, None, None)
         assert page["canEdit"] is True
         machines = {m["id"]: m for m in page["machines"]}
         assert set(machines) == {str(pd.tablet.id), str(pd.f20.id)}
@@ -455,13 +472,17 @@ class TestCrud:
         as_kiosk(pd, pd.f20)
         assert [m["id"] for m in listed(pd)["machines"]] == [str(pd.tablet.id)]
 
-    def test_the_tills_own_view(self, pd):
-        everyone = create(pd, {**AGAMENTO, "nickname": "all"})
-        create(pd, {**AGAMENTO, "nickname": "f20 only", "machineIds": [str(pd.f20.id)]})
+    def test_the_tills_own_view_is_its_shops_devices(self, pd):
+        a = create(pd, {**AGAMENTO, "nickname": "a"})
+        b = create(pd, {**AGAMENTO, "nickname": "b", "active": False})
+        create(pd, {**AGAMENTO, "nickname": "north"}, shop=pd.other_shop)
         out = R.machine_payment_devices(pd.tablet.id, **_ctx(pd))
         assert out["shopId"] == str(pd.shop.id)
         assert out["hasBuiltinTerminal"] is False and out["isKiosk"] is False
-        assert [d["id"] for d in out["devices"]] == [everyone["id"]]
+        assert [d["id"] for d in out["devices"]] == [a["id"], b["id"]]
+        as_kiosk(pd, pd.tablet)
+        out = R.machine_payment_devices(pd.tablet.id, **_ctx(pd))
+        assert out["isKiosk"] is True and out["devices"] == []
 
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
@@ -469,45 +490,55 @@ class TestCrud:
 
 class TestSecrets:
     def test_stored_encrypted_and_never_answered(self, pd):
-        out = create(pd, ZCREDIT)
-        assert out["secrets"]["zcreditPassword"]["set"] is True
+        out = create(pd, {**SYNQ, "synqpayApiKey": KEY})
+        assert out["secrets"]["synqpayApiKey"]["set"] is True
         rows = device_secrets(pd, out["id"])
-        assert [(r.key, r.level, r.origin) for r in rows] == [("zcreditPassword", "payment_device", "dashboard")]
-        assert PASSWORD not in rows[0].ciphertext
+        assert [(r.key, r.level, r.origin) for r in rows] == [("synqpayApiKey", "payment_device", "dashboard")]
+        assert KEY not in rows[0].ciphertext
         for answer in (out, listed(pd), R.machine_payment_devices(pd.tablet.id, **_ctx(pd))):
-            assert PASSWORD not in json.dumps(answer, default=str)
-        assert PASSWORD not in json.dumps(device_row(pd, out["id"]).config)
+            assert KEY not in json.dumps(answer, default=str)
 
     def test_mask_keeps_null_removes_value_replaces(self, pd):
-        out = create(pd, ZCREDIT)
+        out = create(pd, {**SYNQ, "synqpayApiKey": KEY})
         before = device_secrets(pd, out["id"])[0].ciphertext
-        update(pd, out["id"], {"zcreditPassword": "••••"})
+        update(pd, out["id"], {"synqpayApiKey": "••••"})
         assert device_secrets(pd, out["id"])[0].ciphertext == before
-        update(pd, out["id"], {"zcreditPassword": "new-one"})
+        update(pd, out["id"], {"synqpayApiKey": "newone99"})
         assert device_secrets(pd, out["id"])[0].ciphertext != before
-        assert update(pd, out["id"], {"zcreditPassword": None})["secrets"]["zcreditPassword"]["set"] is False
+        assert update(pd, out["id"], {"synqpayApiKey": None})["secrets"]["synqpayApiKey"]["set"] is False
         assert device_secrets(pd, out["id"]) == []
 
     def test_a_secret_the_kind_does_not_use_is_dropped(self, pd):
-        out = create(pd, {**AGAMENTO, "zcreditPassword": PASSWORD, "synqpayApiKey": KEY})
+        assert device_secrets(pd, create(pd, {**AGAMENTO, "synqpayApiKey": KEY})["id"]) == []
+        assert device_secrets(pd, create(pd, {**ZCREDIT, "synqpayApiKey": KEY})["id"]) == []
+
+    def test_a_pinpads_old_password_is_never_sent_and_goes_on_its_next_save(self, pd):
+        out = create(pd, ZCREDIT)
+        row = PaymentIntegrationSecret(
+            id=uuid.uuid4(), level="payment_device", entity_id=uuid.UUID(out["id"]), key="zcreditPassword",
+            ciphertext=PS.encrypt("old-pw"), tenant_id=pd.tenant.id,
+        )
+        pd.db.add(row)
+        pd.db.commit()
+        assert "paymentDeviceSecrets" not in pulled(pd, pd.tablet).settings
+        assert "old-pw" not in json.dumps(listed(pd), default=str)
+        update(pd, out["id"], {"active": True})
         assert device_secrets(pd, out["id"]) == []
-        z = create(pd, {**ZCREDIT, "nickname": "z2", "synqpayApiKey": KEY})
-        assert [r.key for r in device_secrets(pd, z["id"])] == ["zcreditPassword"]
 
     def test_a_bad_secret_is_refused_without_echoing_it(self, pd):
         e = refused(create, pd, {**SYNQ, "synqpayApiKey": "bad key!"})
         assert (code_of(e), e.detail["field"]) == ("synqpay_key_invalid", "synqpayApiKey")
         assert "bad key!" not in json.dumps(e.detail)
-        e = refused(create, pd, {**ZCREDIT, "zcreditPassword": "a\nb"})
+        e = refused(create, pd, {**SYNQ, "synqpayApiKey": "a\nb"})
         assert code_of(e) == "secret_invalid" and "a\nb" not in json.dumps(e.detail)
-        e = refused(create, pd, {**ZCREDIT, "zcreditPassword": 12345})
+        e = refused(create, pd, {**SYNQ, "synqpayApiKey": 12345})
         assert code_of(e) == "secret_invalid"
         assert pd.db.query(PaymentDevice).count() == 0
 
     def test_the_schema_never_prints_a_secret(self):
-        parsed = body({**ZCREDIT, "synqpayApiKey": KEY})
-        assert PASSWORD not in repr(parsed) and KEY not in repr(parsed)
-        assert "zcreditPassword" not in parsed.model_dump(by_alias=True)
+        parsed = body({**SYNQ, "synqpayApiKey": KEY})
+        assert KEY not in repr(parsed)
+        assert "synqpayApiKey" not in parsed.model_dump(by_alias=True)
 
 
 # ── Permissions ───────────────────────────────────────────────────────────────
@@ -536,17 +567,21 @@ class TestPermissions:
         assert refused(R.list_payment_devices, uuid.uuid4(), **_ctx(pd)).status_code == 404
 
 
-# ── Settings keys ─────────────────────────────────────────────────────────────
+# ── The till's device choice (settings keys) ──────────────────────────────────
 
 
-class TestSettingsKeys:
+class TestDeviceChoice:
     def test_managed_and_resettable(self):
-        assert {"multiPaymentDevices", "defaultPaymentDeviceId"} <= set(MANAGED_SETTING_KEYS)
-        assert {"multiPaymentDevices", "defaultPaymentDeviceId"} <= set(settings_router.TIP_RESETTABLE_KEYS)
+        keys = {"multiPaymentDevices", "paymentDeviceMode", "fixedPaymentDeviceId", "paymentDeviceGroup"}
+        assert keys <= set(MANAGED_SETTING_KEYS)
+        assert keys <= set(settings_router.TIP_RESETTABLE_KEYS)
+        assert "defaultPaymentDeviceId" not in MANAGED_SETTING_KEYS
+        # An old client's default device is ignored, not stored.
+        assert "defaultPaymentDeviceId" not in PosSettingsV1Patch(defaultPaymentDeviceId=str(uuid.uuid4())).model_dump(by_alias=True, exclude_unset=True)
 
     def test_the_switch_at_the_shop_and_the_till(self, pd):
+        create(pd, AGAMENTO)
         patch_shop(pd, multiPaymentDevices=True)
-        assert pd.shop.settings["multiPaymentDevices"] is True
         assert pulled(pd, pd.tablet).settings["multiPaymentDevices"] is True
         patch_machine(pd, pd.tablet, multiPaymentDevices=False)
         assert pulled(pd, pd.tablet).settings["multiPaymentDevices"] is False
@@ -554,69 +589,113 @@ class TestSettingsKeys:
         patch_machine(pd, pd.tablet, multiPaymentDevices=None)
         assert "multiPaymentDevices" not in (pd.tablet.settings or {})
         assert pulled(pd, pd.tablet).settings["multiPaymentDevices"] is True
-        patch_shop(pd, multiPaymentDevices=None)
-        assert "multiPaymentDevices" not in pulled(pd, pd.tablet).settings
 
-    def test_the_default_device_is_a_device_of_that_shop(self, pd):
+    def test_shop_default_and_till_override(self, pd):
+        a = create(pd, {**AGAMENTO, "nickname": "a"})
+        b = create(pd, {**AGAMENTO, "nickname": "b"})
+        patch_shop(pd, paymentDeviceMode="group", paymentDeviceGroup=[b["id"].upper(), a["id"], b["id"]])
+        assert pd.shop.settings["paymentDeviceGroup"] == [b["id"], a["id"]]
+        patch_machine(pd, pd.tablet, paymentDeviceMode="fixed", fixedPaymentDeviceId=a["id"])
+        tablet = pulled(pd, pd.tablet).settings
+        f20 = pulled(pd, pd.f20).settings
+        assert (tablet["paymentDeviceMode"], tablet["fixedPaymentDeviceId"]) == ("fixed", a["id"])
+        assert f20["paymentDeviceMode"] == "group" and json.loads(f20["paymentDeviceGroup"]) == [b["id"], a["id"]]
+        # Back to the shop's.
+        patch_machine(pd, pd.tablet, paymentDeviceMode=None, fixedPaymentDeviceId=None)
+        assert pulled(pd, pd.tablet).settings["paymentDeviceMode"] == "group"
+        # `[]` on a till: every device of the shop, over the shop's group.
+        patch_machine(pd, pd.f20, paymentDeviceGroup=[])
+        assert pd.f20.settings["paymentDeviceGroup"] == []
+        assert "paymentDeviceGroup" not in pulled(pd, pd.f20).settings
+
+    def test_only_devices_of_that_shop(self, pd):
         mine = create(pd, AGAMENTO)
         theirs = create(pd, AGAMENTO, shop=pd.other_shop)
-        patch_shop(pd, defaultPaymentDeviceId=mine["id"].upper())
-        assert pd.shop.settings["defaultPaymentDeviceId"] == mine["id"]
-        for value in (theirs["id"], str(uuid.uuid4())):
-            e = refused(patch_shop, pd, defaultPaymentDeviceId=value)
-            assert (e.status_code, code_of(e), e.detail["field"]) == (422, "payment_device_not_in_shop", "defaultPaymentDeviceId")
-        patch_shop(pd, defaultPaymentDeviceId="")
-        assert "defaultPaymentDeviceId" not in pd.shop.settings
-        with pytest.raises(ValidationError):
-            PosSettingsV1Patch(defaultPaymentDeviceId="not-an-id")
-
-    def test_at_a_till_it_must_apply_to_the_till(self, pd):
-        f20_only = create(pd, {**AGAMENTO, "machineIds": [str(pd.f20.id)]})
-        everyone = create(pd, {**AGAMENTO, "nickname": "all"})
-        e = refused(patch_machine, pd, pd.tablet, defaultPaymentDeviceId=f20_only["id"])
-        assert code_of(e) == "payment_device_not_for_machine"
-        patch_machine(pd, pd.tablet, defaultPaymentDeviceId=everyone["id"])
-        patch_machine(pd, pd.f20, defaultPaymentDeviceId=f20_only["id"])
-        assert pd.f20.settings["defaultPaymentDeviceId"] == f20_only["id"]
-        e = refused(patch_machine, pd, pd.other_till, defaultPaymentDeviceId=everyone["id"])
+        for data, field in (
+            ({"fixedPaymentDeviceId": theirs["id"]}, "fixedPaymentDeviceId"),
+            ({"fixedPaymentDeviceId": str(uuid.uuid4())}, "fixedPaymentDeviceId"),
+            ({"paymentDeviceGroup": [mine["id"], theirs["id"]]}, "paymentDeviceGroup"),
+        ):
+            e = refused(patch_shop, pd, **data)
+            assert (e.status_code, code_of(e), e.detail["field"]) == (422, "payment_device_not_in_shop", field)
+            e = refused(patch_machine, pd, pd.tablet, **data)
+            assert code_of(e) == "payment_device_not_in_shop"
+        e = refused(patch_machine, pd, pd.other_till, fixedPaymentDeviceId=mine["id"])
         assert code_of(e) == "payment_device_not_in_shop"
+        with pytest.raises(ValidationError):
+            PosSettingsV1Patch(paymentDeviceGroup=["not-an-id"])
+        with pytest.raises(ValidationError):
+            PosSettingsV1Patch(paymentDeviceMode="default")
+        with pytest.raises(ValidationError):
+            PosSettingsV1Patch(fixedPaymentDeviceId="nope")
 
-    def test_at_an_area_a_device_of_its_shop(self, pd):
-        out = create(pd, AGAMENTO)
-        area = ShopArea(id=uuid.uuid4(), tenant_id=pd.tenant.id, shop_id=pd.shop.id, name="Bar")
-        pd.db.add(area)
-        pd.db.commit()
-        settings_router.patch_area_settings(
-            area_id=str(area.id), data=PosSettingsV1Patch(defaultPaymentDeviceId=out["id"]), **_ctx(pd)
-        )
-        assert pd.db.get(ShopArea, area.id).settings["defaultPaymentDeviceId"] == out["id"]
+    def test_a_fixed_mode_needs_its_device(self, pd):
+        a = create(pd, AGAMENTO)
+        e = refused(patch_shop, pd, paymentDeviceMode="fixed")
+        assert (code_of(e), e.detail["field"]) == ("fixed_payment_device_required", "fixedPaymentDeviceId")
+        e = refused(patch_machine, pd, pd.tablet, paymentDeviceMode="fixed")
+        assert code_of(e) == "fixed_payment_device_required"
+        # A till may take the shop's fixed device; an area's counts too.
+        patch_shop(pd, fixedPaymentDeviceId=a["id"])
+        patch_machine(pd, pd.tablet, paymentDeviceMode="fixed")
+        assert pulled(pd, pd.tablet).settings["fixedPaymentDeviceId"] == a["id"]
+        area = new_area(pd, pd.f20)
+        patch_area(pd, area, paymentDeviceMode="fixed")
+        assert pulled(pd, pd.f20).settings["paymentDeviceMode"] == "fixed"
+        # Removing the own device under an own "fixed" mode, with none above, is refused.
+        patch_machine(pd, pd.other_till, multiPaymentDevices=True)  # another shop: nothing above
+        b = create(pd, AGAMENTO, shop=pd.other_shop)
+        patch_machine(pd, pd.other_till, paymentDeviceMode="fixed", fixedPaymentDeviceId=b["id"])
+        e = refused(patch_machine, pd, pd.other_till, fixedPaymentDeviceId=None)
+        assert code_of(e) == "fixed_payment_device_required"
 
-    def test_refused_above_the_shop(self, pd):
+    def test_refused_above_the_shop_and_on_a_kiosk(self, pd):
         out = create(pd, AGAMENTO)
-        e = refused(
-            settings_router.patch_company_settings,
-            company_id=str(pd.company.id), data=PosSettingsV1Patch(defaultPaymentDeviceId=out["id"]), **_ctx(pd),
-        )
-        assert code_of(e) == "payment_device_level_invalid"
-        e = refused(
-            settings_router.patch_tenant_settings,
-            tenant_id=str(pd.tenant.id), data=PosSettingsV1Patch(defaultPaymentDeviceId=out["id"]),
-            current_user=pd.admin, db=pd.db,
-        )
-        assert code_of(e) == "payment_device_level_invalid"
+        for data in ({"fixedPaymentDeviceId": out["id"]}, {"paymentDeviceMode": "group"}, {"paymentDeviceGroup": [out["id"]]}):
+            e = refused(
+                settings_router.patch_company_settings,
+                company_id=str(pd.company.id), data=PosSettingsV1Patch(**data), **_ctx(pd),
+            )
+            assert code_of(e) == "payment_device_level_invalid"
+            e = refused(
+                settings_router.patch_tenant_settings,
+                tenant_id=str(pd.tenant.id), data=PosSettingsV1Patch(**data), current_user=pd.admin, db=pd.db,
+            )
+            assert code_of(e) == "payment_device_level_invalid"
         # The switch itself may be set there (the generic form).
         settings_router.patch_company_settings(
             company_id=str(pd.company.id), data=PosSettingsV1Patch(multiPaymentDevices=True), **_ctx(pd)
         )
-        assert pd.company.settings["multiPaymentDevices"] is True
+        as_kiosk(pd, pd.f20)
+        e = refused(patch_machine, pd, pd.f20, paymentDeviceMode="group")
+        assert code_of(e) == "payment_device_kiosk"
 
     def test_a_stored_value_round_trips_unchecked(self, pd):
         """The dialog sends the whole form: a value stored earlier must not block an unrelated save."""
         stale = create(pd, AGAMENTO, shop=pd.other_shop)
-        pd.tablet.settings = {"defaultPaymentDeviceId": stale["id"]}
+        pd.tablet.settings = {"paymentDeviceMode": "fixed", "fixedPaymentDeviceId": stale["id"], "paymentDeviceGroup": [stale["id"]]}
         pd.db.commit()
-        patch_machine(pd, pd.tablet, defaultPaymentDeviceId=stale["id"], globalTaxRate=17)
+        patch_machine(
+            pd, pd.tablet, paymentDeviceMode="fixed", fixedPaymentDeviceId=stale["id"],
+            paymentDeviceGroup=[stale["id"]], globalTaxRate=17,
+        )
         assert pd.tablet.settings["globalTaxRate"] == 17
+
+    def test_the_per_till_summary(self, pd):
+        a = create(pd, {**AGAMENTO, "nickname": "a"})
+        b = create(pd, {**AGAMENTO, "nickname": "b"})
+        patch_shop(pd, multiPaymentDevices=True, paymentDeviceMode="group", paymentDeviceGroup=[b["id"]])
+        patch_machine(pd, pd.tablet, paymentDeviceMode="fixed", fixedPaymentDeviceId=a["id"])
+        machines = {m["id"]: m for m in listed(pd)["machines"]}
+        tablet, f20 = machines[str(pd.tablet.id)], machines[str(pd.f20.id)]
+        assert tablet["choice"] == {"enabled": True, "mode": "fixed", "fixedDeviceId": a["id"], "groupDeviceIds": [b["id"]]}
+        assert tablet["ownChoice"] is True
+        assert f20["choice"] == {"enabled": True, "mode": "group", "fixedDeviceId": None, "groupDeviceIds": [b["id"]]}
+        assert f20["ownChoice"] is False and f20["hasBuiltinTerminal"] is True
+        page = listed(pd)
+        assert (page["paymentDeviceMode"], page["paymentDeviceGroup"]) == ("group", [b["id"]])
+        # Nothing set: a group of every device.
+        assert PD.till_choice({}, [a["id"]]) == {"enabled": False, "mode": "group", "fixedDeviceId": None, "groupDeviceIds": None}
 
 
 # ── The till's sync ───────────────────────────────────────────────────────────
@@ -624,19 +703,23 @@ class TestSettingsKeys:
 
 class TestTillSync:
     def test_nothing_without_devices(self, pd):
+        patch_shop(pd, expectedTerminalNumber="1234567")
         settings = pulled(pd, pd.tablet).settings
-        for key in ("paymentDevices", "paymentDeviceSecrets", "defaultPaymentDeviceId"):
+        for key in ("paymentDevices", "paymentDeviceSecrets", "paymentDeviceMode", "fixedPaymentDeviceId",
+                    "paymentDeviceGroup", "paymentDevicesTerminalNumber", "defaultPaymentDeviceId"):
             assert key not in settings
 
     def test_the_exact_contract(self, pd):
-        z = create(pd, {**ZCREDIT, "sortOrder": 1, "config": {"pinpadId": "PINPAD123456", "mode": "production"}})
+        z = create(pd, {**ZCREDIT, "sortOrder": 1})
         a = create(pd, {"nickname": "Nayax", "kind": "agamento_lan", "sortOrder": 1,
                         "config": {"host": "192.168.1.20", "mac": "AA:BB:CC:DD:EE:FF", "terminalNumber": "1234567"}})
         s = create(pd, {**SYNQ, "active": False, "sortOrder": 0, "synqpayApiKey": KEY})
+        create(pd, {**AGAMENTO, "nickname": "north"}, shop=pd.other_shop)
+        patch_shop(pd, paymentDeviceMode="group", paymentDeviceGroup=[z["id"], a["id"]])
         settings = pulled(pd, pd.tablet).settings
         assert isinstance(settings["paymentDevices"], str)
         devices = json.loads(settings["paymentDevices"])
-        # By sort order, then nickname; the inactive one included.
+        # All the shop's, by sort order then nickname; the inactive one included.
         assert [d["id"] for d in devices] == [s["id"], a["id"], z["id"]]
         assert devices[0] == {
             "id": s["id"], "nickname": "Synq", "kind": "synqpay", "active": False, "sortOrder": 0,
@@ -649,61 +732,82 @@ class TestTillSync:
         }
         assert devices[2] == {
             "id": z["id"], "nickname": "Z pinpad", "kind": "zcredit_pinpad", "active": True, "sortOrder": 1,
-            "config": {"pinpadId": "123456", "mode": "production"},
+            "config": {"pinpadId": "123456"},
         }
-        assert isinstance(settings["paymentDeviceSecrets"], str)
-        assert json.loads(settings["paymentDeviceSecrets"]) == {
-            z["id"]: {"zcreditPassword": PASSWORD},
-            s["id"]: {"synqpayApiKey": KEY},
-        }
+        assert json.loads(settings["paymentDeviceSecrets"]) == {s["id"]: {"synqpayApiKey": KEY}}
+        assert settings["paymentDeviceMode"] == "group"
+        assert isinstance(settings["paymentDeviceGroup"], str)
+        assert json.loads(settings["paymentDeviceGroup"]) == [z["id"], a["id"]]
+        assert "fixedPaymentDeviceId" not in settings
         # Hebrew stays readable (ensure_ascii=False).
         update(pd, a["id"], {"nickname": "מסופון בר"})
         assert "מסופון בר" in pulled(pd, pd.tablet).settings["paymentDevices"]
 
-    def test_only_the_devices_that_apply_to_the_till(self, pd):
-        everyone = create(pd, {**AGAMENTO, "nickname": "all"})
-        f20_only = create(pd, {**AGAMENTO, "nickname": "f20", "machineIds": [str(pd.f20.id)]})
-        create(pd, {**AGAMENTO, "nickname": "north"}, shop=pd.other_shop)
-        ids = lambda till: [d["id"] for d in json.loads(pulled(pd, till).settings["paymentDevices"])]  # noqa: E731
-        assert ids(pd.tablet) == [everyone["id"]]
-        assert ids(pd.f20) == [everyone["id"], f20_only["id"]]
-        assert len(ids(pd.other_till)) == 1
+    def test_mode_fixed_and_group_as_merged(self, pd):
+        a = create(pd, {**AGAMENTO, "nickname": "a"})
+        b = create(pd, {**AGAMENTO, "nickname": "b"})
+        settings = pulled(pd, pd.tablet).settings
+        # Nothing set: no mode, no group (a group of all), no fixed device.
+        assert "paymentDeviceMode" not in settings and "paymentDeviceGroup" not in settings
+        patch_shop(pd, paymentDeviceMode="fixed", fixedPaymentDeviceId=b["id"])
+        settings = pulled(pd, pd.tablet).settings
+        assert (settings["paymentDeviceMode"], settings["fixedPaymentDeviceId"]) == ("fixed", b["id"])
+        # A fixed device or group naming what is not the shop's device is left out / filtered.
+        pd.shop.settings = {**pd.shop.settings, "fixedPaymentDeviceId": str(uuid.uuid4()),
+                            "paymentDeviceGroup": [str(uuid.uuid4()), a["id"]]}
+        pd.db.commit()
+        settings = pulled(pd, pd.tablet).settings
+        assert "fixedPaymentDeviceId" not in settings
+        assert json.loads(settings["paymentDeviceGroup"]) == [a["id"]]
+        pd.shop.settings = {**pd.shop.settings, "paymentDeviceGroup": [str(uuid.uuid4())]}
+        pd.db.commit()
+        assert "paymentDeviceGroup" not in pulled(pd, pd.tablet).settings
+
+    def test_the_terminal_number_is_merged_and_unguarded(self, pd):
+        create(pd, AGAMENTO)
+        patch_shop(pd, expectedTerminalNumber="1234567")
+        tablet = pulled(pd, pd.tablet).settings
+        # The guard keeps an inherited number off a tablet's terminal config…
+        assert "expectedTerminalNumber" not in tablet
+        # …but the devices' card lock reads it.
+        assert tablet["paymentDevicesTerminalNumber"] == "1234567"
+        assert pulled(pd, pd.f20).settings["expectedTerminalNumber"] == "1234567"
+        assert pulled(pd, pd.f20).settings["paymentDevicesTerminalNumber"] == "1234567"
+        # The deepest layer wins; "" at a layer means no number there.
+        patch_machine(pd, pd.tablet, expectedTerminalNumber="7654321")
+        assert pulled(pd, pd.tablet).settings["paymentDevicesTerminalNumber"] == "7654321"
+        patch_machine(pd, pd.tablet, expectedTerminalNumber="")
+        assert "paymentDevicesTerminalNumber" not in pulled(pd, pd.tablet).settings
 
     def test_secrets_only_to_a_till_without_built_in_clearing(self, pd):
-        create(pd, ZCREDIT)
+        create(pd, {**SYNQ, "synqpayApiKey": KEY})
         f20 = pulled(pd, pd.f20).settings
         assert "paymentDevices" in f20 and "paymentDeviceSecrets" not in f20
-        assert PASSWORD not in json.dumps(f20, default=str)
+        assert KEY not in json.dumps(f20, default=str)
         assert "paymentDeviceSecrets" in pulled(pd, pd.tablet).settings
 
     def test_a_kiosk_gets_nothing(self, pd):
-        create(pd, ZCREDIT)
+        a = create(pd, {**SYNQ, "synqpayApiKey": KEY})
+        patch_shop(pd, paymentDeviceMode="fixed", fixedPaymentDeviceId=a["id"], expectedTerminalNumber="1")
         as_kiosk(pd, pd.tablet)
         settings = pulled(pd, pd.tablet).settings
-        assert "paymentDevices" not in settings and "paymentDeviceSecrets" not in settings
-
-    def test_the_default_only_when_it_is_one_of_the_tills_devices(self, pd):
-        everyone = create(pd, {**AGAMENTO, "nickname": "all"})
-        f20_only = create(pd, {**AGAMENTO, "nickname": "f20", "machineIds": [str(pd.f20.id)]})
-        patch_shop(pd, defaultPaymentDeviceId=f20_only["id"])
-        assert pulled(pd, pd.f20).settings["defaultPaymentDeviceId"] == f20_only["id"]
-        assert "defaultPaymentDeviceId" not in pulled(pd, pd.tablet).settings
-        patch_machine(pd, pd.tablet, defaultPaymentDeviceId=everyone["id"])
-        assert pulled(pd, pd.tablet).settings["defaultPaymentDeviceId"] == everyone["id"]
+        for key in ("paymentDevices", "paymentDeviceSecrets", "paymentDeviceMode", "fixedPaymentDeviceId",
+                    "paymentDeviceGroup", "paymentDevicesTerminalNumber"):
+            assert key not in settings
 
     def test_a_change_moves_the_watermark(self, pd):
         first = pulled(pd, pd.tablet)
         since = first.settings_updated_at.isoformat()
         assert pulled(pd, pd.tablet, since=since).sync_type == "unchanged"
-        out = create(pd, ZCREDIT)
+        out = create(pd, SYNQ)
         after = pulled(pd, pd.tablet, since=since)
         assert after.sync_type == "delta" and "paymentDevices" in after.settings
         since = after.settings_updated_at.isoformat()
         assert pulled(pd, pd.tablet, since=since).sync_type == "unchanged"
-        update(pd, out["id"], {"zcreditPassword": "changed"})
+        update(pd, out["id"], {"synqpayApiKey": "changed1"})
         again = pulled(pd, pd.tablet, since=since)
         assert again.sync_type == "delta"
-        assert json.loads(again.settings["paymentDeviceSecrets"])[out["id"]]["zcreditPassword"] == "changed"
+        assert json.loads(again.settings["paymentDeviceSecrets"])[out["id"]]["synqpayApiKey"] == "changed1"
         since = again.settings_updated_at.isoformat()
         delete(pd, out["id"])
         gone = pulled(pd, pd.tablet, since=since)
@@ -757,7 +861,7 @@ class TestSynqpayPairing:
         pair(pd, pd.tablet, device_id=s["id"])
         assert device_row(pd, s["id"]).config["serialNumber"] == "OWN-1234"
 
-    def test_the_device_must_be_the_tills_synqpay(self, pd):
+    def test_the_device_must_be_the_shops_synqpay(self, pd):
         theirs = create(pd, SYNQ, shop=pd.other_shop)
         e = refused(pair, pd, pd.tablet, device_id=theirs["id"])
         assert (e.status_code, code_of(e)) == (404, "payment_device_not_found")
@@ -766,12 +870,10 @@ class TestSynqpayPairing:
         nayax = create(pd, AGAMENTO)
         e = refused(pair, pd, pd.tablet, device_id=nayax["id"])
         assert (e.status_code, code_of(e)) == (409, "payment_device_not_synqpay")
-        f20_only = create(pd, {**SYNQ, "nickname": "f20", "machineIds": [str(pd.f20.id)]})
-        e = refused(pair, pd, pd.tablet, device_id=f20_only["id"])
-        assert (e.status_code, code_of(e)) == (409, "payment_device_not_for_machine")
-        e = refused(pair, pd, pd.tablet, device_id=f20_only["id"], key="bad key")
+        mine = create(pd, {**SYNQ, "nickname": "mine"})
+        e = refused(pair, pd, pd.tablet, device_id=mine["id"], key="bad key")
         assert code_of(e) == "secret_invalid"
-        assert device_secrets(pd, f20_only["id"]) == []
+        assert device_secrets(pd, mine["id"]) == []
 
     def test_without_a_device_nothing_changes(self, pd):
         create(pd, SYNQ)
@@ -795,33 +897,53 @@ class TestSynqpayPairing:
         assert refused(reject, pd, pd.tablet, theirs["id"]).status_code == 404
 
 
-# ── The migration ─────────────────────────────────────────────────────────────
+# ── The migrations ────────────────────────────────────────────────────────────
 
 
-class TestMigration:
-    REVISION = "7d2e4b9f1a63"
+VERSIONS = pathlib.Path(__file__).absolute().parents[1] / "alembic" / "versions"
 
-    def test_a_unique_revision_on_the_single_head(self):
+
+def _declaring(revision: str):
+    return [
+        p.name for p in VERSIONS.glob("*.py")
+        if re.search(rf"^revision(?::\s*str)?\s*=\s*['\"]{revision}['\"]", p.read_text(encoding="utf-8"), re.M)
+    ]
+
+
+class TestMigrations:
+    TABLE = "7d2e4b9f1a63"
+    CHOICE = "3b8f6d2a9c41"
+
+    def test_unique_revisions_on_the_single_head(self):
         from alembic.config import Config
         from alembic.script import ScriptDirectory
 
-        root = pathlib.Path(__file__).absolute().parents[1]
-        versions = root / "alembic" / "versions"
-        declaring = [
-            p.name for p in versions.glob("*.py")
-            if re.search(rf"^revision(?::\s*str)?\s*=\s*['\"]{self.REVISION}['\"]", p.read_text(encoding="utf-8"), re.M)
-        ]
-        assert declaring == [f"{self.REVISION}_payment_devices.py"]
+        assert _declaring(self.TABLE) == [f"{self.TABLE}_payment_devices.py"]
+        assert _declaring(self.CHOICE) == [f"{self.CHOICE}_payment_device_choice.py"]
+        root = VERSIONS.parents[1]
         config = Config(str(root / "alembic.ini"))
         config.set_main_option("script_location", str(root / "alembic"))
         script = ScriptDirectory.from_config(config)
         heads = script.get_heads()
         assert len(heads) == 1
-        assert self.REVISION in {r.revision for r in script.walk_revisions("base", heads[0])}
-        assert script.get_revision(self.REVISION).down_revision == "a6d2f8c4e0b7"
+        line = {r.revision for r in script.walk_revisions("base", heads[0])}
+        assert {self.TABLE, self.CHOICE} <= line
+        assert script.get_revision(self.TABLE).down_revision == "a6d2f8c4e0b7"
+        assert script.get_revision(self.CHOICE).down_revision == self.TABLE
 
     def test_idempotent_create(self):
-        text = (pathlib.Path(__file__).absolute().parents[1] / "alembic" / "versions"
-                / f"{self.REVISION}_payment_devices.py").read_text(encoding="utf-8")
+        text = (VERSIONS / f"{self.TABLE}_payment_devices.py").read_text(encoding="utf-8")
         assert "has_table(TABLE)" in text and "uq_payment_devices_shop_nickname" in text
         assert "ck_payment_devices_kind" in text
+
+    def test_the_choice_migration_does_what_the_owner_decided(self):
+        text = (VERSIONS / f"{self.CHOICE}_payment_device_choice.py").read_text(encoding="utf-8")
+        # Looks before it writes.
+        assert "has_table" in text and "'machine_ids' in columns" in text
+        assert "drop_column(TABLE, 'machine_ids')" in text
+        assert "level = 'payment_device' AND key = 'zcreditPassword'" in text
+        assert "config - 'terminalNumber' - 'mode'" in text
+        assert "defaultPaymentDeviceId" in text
+        for table in ("tenants", "companies", "shops", "shop_areas", "pos_machines"):
+            assert f"'{table}'" in text
+        assert "paymentDeviceGroup" in text and "settings_updated_at = now()" in text

@@ -6,15 +6,17 @@ Dashboard (user JWT). Reading: whoever may read the shop; writing: whoever may w
 shop's settings (`_check_shop_settings_write` — the same people as its payment integration):
 
 GET    /shops/{shop_id}/payment-devices    → `{devices, machines, multiPaymentDevices, …}`: the
-                                             devices (secrets only as `{set}`), the shop's tills
-                                             with `hasBuiltinTerminal`, the shop's own switch and
-                                             what it inherits
+                                             devices (the secret only as `{set}`), the shop's
+                                             non-kiosk tills with `hasBuiltinTerminal` and how
+                                             each picks a device now (`choice`), the shop's own
+                                             switch / mode / fixed device / group
 POST   /shops/{shop_id}/payment-devices    → create (201)
 PUT    /payment-devices/{id}               → change the fields sent
-DELETE /payment-devices/{id}               → delete (204); every `defaultPaymentDeviceId` naming
-                                             it is cleared in the same transaction
-GET    /machines/{machine_id}/payment-devices → the devices that apply to one till, its hardware
-                                             (the till's settings dialog)
+DELETE /payment-devices/{id}               → delete (204); every `fixedPaymentDeviceId` and
+                                             `paymentDeviceGroup` naming it (shop, areas, tills)
+                                             is cleared in the same transaction
+GET    /machines/{machine_id}/payment-devices → its shop's devices (none for a kiosk), its
+                                             hardware (the till's settings dialog)
 
 Every write moves the shop's settings stamp and tells the shop's tills to pull (Ably
 `settings`, reason `payment_devices_updated`). The till's side is in the settings sync

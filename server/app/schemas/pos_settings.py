@@ -219,14 +219,20 @@ class PosSettingsV1Patch(BaseModel):
     #: works with several payment devices of its shop. Set on a shop for all its tills, on a
     #: till to override it; `null` in a PATCH = inherit again.
     multi_payment_devices: Optional[bool] = Field(None, alias="multiPaymentDevices")
-    #: The device preselected at card payment (a device id of that shop; on a till, one that
-    #: applies to it). Shop, area and till only (422 on a tenant / company); "" or `null` =
-    #: inherit again.
-    default_payment_device_id: Optional[str] = Field(None, alias="defaultPaymentDeviceId")
+    #: How a till picks its device: "fixed" ("מכשיר קבוע", `fixedPaymentDeviceId`) or "group"
+    #: ("קבוצת מכשירים לבחירה", `paymentDeviceGroup`). Shop (the default for its tills), area
+    #: and till only (422 on a tenant / company, and on a kiosk); `null` = inherit again; unset
+    #: everywhere = a group of all the shop's devices.
+    payment_device_mode: Optional[Literal["fixed", "group"]] = Field(None, alias="paymentDeviceMode")
+    #: The fixed device (a device id of that shop). "" or `null` = inherit again.
+    fixed_payment_device_id: Optional[str] = Field(None, alias="fixedPaymentDeviceId")
+    #: The devices a till chooses from (device ids of that shop); `[]` = every device of the
+    #: shop; `null` = inherit again.
+    payment_device_group: Optional[List[str]] = Field(None, alias="paymentDeviceGroup")
 
-    @field_validator("default_payment_device_id")
+    @field_validator("fixed_payment_device_id")
     @classmethod
-    def _check_default_payment_device(cls, v: Optional[str]) -> Optional[str]:
+    def _check_fixed_payment_device(cls, v: Optional[str]) -> Optional[str]:
         if v is None or v.strip() == "":
             return None
         import uuid
@@ -234,7 +240,26 @@ class PosSettingsV1Patch(BaseModel):
         try:
             return str(uuid.UUID(v.strip()))
         except ValueError:
-            raise ValueError("defaultPaymentDeviceId must be a payment device id") from None
+            raise ValueError("fixedPaymentDeviceId must be a payment device id") from None
+
+    @field_validator("payment_device_group")
+    @classmethod
+    def _check_payment_device_group(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return None
+        import uuid
+
+        out: List[str] = []
+        for item in v:
+            try:
+                ident = str(uuid.UUID(str(item).strip()))
+            except ValueError:
+                raise ValueError("paymentDeviceGroup must be a list of payment device ids") from None
+            if ident not in out:
+                out.append(ident)
+        if len(out) > 200:
+            raise ValueError("paymentDeviceGroup: at most 200 devices")
+        return out
 
     @field_validator("payment_integration")
     @classmethod
