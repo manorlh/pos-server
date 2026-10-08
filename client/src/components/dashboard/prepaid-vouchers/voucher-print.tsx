@@ -1,24 +1,26 @@
 'use client';
 
 /**
- * The printed prepaid voucher ("שובר הפקה") — one markup for the on-screen preview, the
- * ticket/card printer and the PDF file, so the three can never disagree.
+ * The printed prepaid voucher ("שובר הפקה") in the dashboard — the on-screen preview and the
+ * browser's print. Each voucher is an SVG drawn from lib/voucherLayout.ts, the port of the
+ * server's app/services/prepaid_voucher_layout.py: the server's PDF (Pillow) runs the very same
+ * layout, measured in the very same fonts (Heebo, Geist Mono — public/fonts/voucher, the
+ * server's app/assets/fonts), and a shared golden fixture pins the two, so the preview, the
+ * print and the PDF file can never disagree.
  *
- * * **Print** goes through a print-only frame with its own `@page` (the page size picked:
- *   an 80×50 ticket, a 54×86 card, A6 … one voucher per page, or an A4 sheet of eight to
- *   cut), so a ticket printer driver gets exactly its media size.
- * * **PDF** is a real .pdf file made in the browser: each page is rendered by the browser
- *   (so Hebrew is shaped and laid out right-to-left exactly as on screen and on paper),
- *   rasterised at ~300 dpi and placed on a page of the same size with jsPDF. Text in
- *   the file is therefore an image — fine for printing, not for copy-paste.
+ * * **Print** goes through a print-only frame with its own `@page` (the page size picked: an
+ *   80×50 ticket, a 54×86 card, A6 … one voucher per page, or an A4 sheet of eight to cut), so
+ *   a ticket printer driver gets exactly its media size.
+ * * **PDF / ZIP** files are drawn by the server (the page asks for them).
  *
  * The barcode — a QR, or a Code 128 line barcode when the batch asks for one (`barcodeType`) —
- * carries only `PV:<code>`. Under it: the code itself when the batch says so (`showCode`), then
- * the serial (and the group, in a run made in groups). The validity dates are printed when set;
- * the goods (or a discount's benefit) unless the batch hides them (`showItems: false`).
- * The server draws the same card into its PDF (app/services/prepaid_voucher_pdf.py).
+ * carries only `PV:<code>`. Under it: the code in monospace when the batch says so (`showCode`),
+ * then the short service number ("מס׳ 0008", and the group in a run made in groups). The goods
+ * (or a discount's benefit) in a framed box unless the batch hides them (`showItems: false`);
+ * "נוצר על ידי Runner Systems" at the bottom unless `showCredit: false`. Pure black throughout.
  */
 
+import { useEffect, useState } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QRCodeSVG } from 'qrcode.react';
 import { formatDate, isoDate } from '@/lib/format';
@@ -26,6 +28,7 @@ import type { PrepaidVoucher, PrepaidVoucherBatch } from '@/lib/prepaidVouchersA
 import { cardContents, isDiscountKind } from '@/lib/prepaidVoucherBenefit';
 import { quantityText } from '@/lib/prepaidVoucherProducts';
 import { code128Bars } from '@/lib/barcode128';
+import { VOUCHER_TEXT, layoutCard, type CardContent, type Measure, type VoucherOp } from '@/lib/voucherLayout';
 
 export type PagePresetId = 'ticket80x50' | 'card86x54' | 'card54x86' | 'ticket80x120' | 'a6' | 'a4grid' | 'custom';
 
@@ -67,15 +70,7 @@ export function geometryOf(layout: PrintLayout): Geometry {
   const p = PAGE_PRESETS.find((x) => x.id === layout.preset) ?? PAGE_PRESETS[0];
   const cols = p.cols ?? 1;
   const rows = p.rows ?? 1;
-  return {
-    pageW: p.w,
-    pageH: p.h,
-    cols,
-    rows,
-    cardW: p.w / cols,
-    cardH: p.h / rows,
-    cutLines: cols * rows > 1,
-  };
+  return { pageW: p.w, pageH: p.h, cols, rows, cardW: p.w / cols, cardH: p.h / rows, cutLines: cols * rows > 1 };
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -86,227 +81,254 @@ function mm(n: number): string {
   return `${Math.round(n * 100) / 100}mm`;
 }
 
-export interface VoucherLabels {
-  serial: (n: string) => string;
-  splitAllowed: string;
-  oneTime: string;
-  /** "קבוצה 3", after the serial in a run made in groups. */
-  group?: (g: number) => string;
-  /** "בתוקף עד 14/08/2026" and the like; dates already formatted. */
-  validUntil?: (until: string) => string;
-  validFrom?: (since: string) => string;
-  validBetween?: (since: string, until: string) => string;
-  /** A discount voucher's uses, instead of "one-time / in parts" ("שימוש אחד" / "3 שימושים"). */
-  usesOne?: string;
-  usesMany?: (n: number) => string;
-  /** Goods that cover paid options / a meal's upcharges too: "כולל תוספות" (§7.14). */
-  includeExtras?: string;
+// ── Fonts: the server's, served from public/fonts/voucher ─────────────────────
+
+const SANS = 'R2M Voucher Sans';
+const MONO = 'R2M Voucher Mono';
+const SANS_STACK = `"${SANS}", Heebo, Arial, sans-serif`;
+const MONO_STACK = `"${MONO}", Consolas, "Courier New", monospace`;
+const FONT_FILES = [
+  { family: SANS, file: 'Heebo-Regular.ttf', weight: '400', format: 'truetype' },
+  { family: SANS, file: 'Heebo-Bold.ttf', weight: '700', format: 'truetype' },
+  { family: MONO, file: 'GeistMono-latin.woff2', weight: '100 900', format: 'woff2' },
+];
+
+function fontUrl(file: string): string {
+  return `${window.location.origin}/fonts/voucher/${file}`;
 }
 
+/** The @font-face rules a print frame needs (it does not share the page's fonts). */
+function fontFaceCss(): string {
+  return FONT_FILES.map(
+    (f) => `@font-face { font-family: "${f.family}"; src: url("${fontUrl(f.file)}") format("${f.format}"); font-weight: ${f.weight}; }`,
+  ).join('\n');
+}
+
+let fontsLoading: Promise<void> | null = null;
+
+/** Loads the voucher's fonts into this document once: the layout measures text in them. */
+export function ensureVoucherFonts(): Promise<void> {
+  if (!fontsLoading) {
+    fontsLoading = Promise.all(
+      FONT_FILES.map(async (f) => {
+        const face = new FontFace(f.family, `url("${fontUrl(f.file)}") format("${f.format}")`, { weight: f.weight });
+        await face.load();
+        document.fonts.add(face);
+      }),
+    ).then(() => undefined);
+    fontsLoading.catch(() => {
+      fontsLoading = null;
+    });
+  }
+  return fontsLoading;
+}
+
+let measureCtx: CanvasRenderingContext2D | null = null;
+const widths = new Map<string, number>();
+
+/** Text width in mm, measured by the browser in the voucher's fonts (as the server measures in its). */
+export const browserMeasure: Measure = (text, size, bold, mono) => {
+  const key = `${mono ? 'm' : bold ? 'b' : 'r'}|${text}`;
+  let ref = widths.get(key);
+  if (ref === undefined) {
+    measureCtx ??= document.createElement('canvas').getContext('2d');
+    if (!measureCtx) return text.length * size * 0.5;
+    measureCtx.font = `${bold || mono ? 700 : 400} 100px "${mono ? MONO : SANS}"`;
+    ref = measureCtx.measureText(text).width;
+    widths.set(key, ref);
+  }
+  return (ref / 100) * size;
+};
+
+/** True once the fonts are in: before that the preview shows a placeholder, not a mis-measured card. */
+export function useVoucherFonts(): boolean {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let live = true;
+    ensureVoucherFonts().then(
+      () => live && setReady(true),
+      () => live && setReady(true), // offline / blocked: the fallback faces, still a voucher
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+  return ready;
+}
+
+// ── What a voucher says (the server's `card_content`) ─────────────────────────
+
 /** The small print: goods one-time / in parts, a discount voucher its uses (as the server's PDF). */
-export function termsLine(batch: PrepaidVoucherBatch, labels: VoucherLabels): string {
+export function termsLine(batch: PrepaidVoucherBatch): string {
   if (isDiscountKind(batch.kind)) {
     const n = batch.usesPerVoucher ?? 1;
-    if (n === 1 && labels.usesOne) return labels.usesOne;
-    if (n > 1 && labels.usesMany) return labels.usesMany(n);
+    return n === 1 ? VOUCHER_TEXT.usesOne : VOUCHER_TEXT.usesMany.replace('{n}', String(n));
   }
-  const terms = batch.splitAllowed ? labels.splitAllowed : labels.oneTime;
-  return batch.includeExtras && labels.includeExtras ? `${terms} · ${labels.includeExtras}` : terms;
+  const terms = batch.splitAllowed ? VOUCHER_TEXT.splitAllowed : VOUCHER_TEXT.oneTime;
+  return batch.includeExtras ? `${terms} · ${VOUCHER_TEXT.includeExtras}` : terms;
 }
 
 function day(iso: string | null | undefined): string | null {
   return isoDate(iso) ? formatDate(iso) : null;
 }
 
-/** The validity line printed on the voucher, or null without dates (or without the labels). */
-export function validityLine(batch: Pick<PrepaidVoucherBatch, 'validFrom' | 'validUntil'>, labels: VoucherLabels): string | null {
+/** The validity line printed on the voucher, or null without dates. */
+export function validityLine(batch: Pick<PrepaidVoucherBatch, 'validFrom' | 'validUntil'>): string | null {
   const since = day(batch.validFrom);
   const until = day(batch.validUntil);
-  if (since && until) return labels.validBetween?.(since, until) ?? null;
-  if (until) return labels.validUntil?.(until) ?? null;
-  if (since) return labels.validFrom?.(since) ?? null;
+  if (since && until) return VOUCHER_TEXT.validBetween.replace('{since}', since).replace('{until}', until);
+  if (until) return VOUCHER_TEXT.validUntil.replace('{until}', until);
+  if (since) return VOUCHER_TEXT.validFrom.replace('{since}', since);
   return null;
 }
 
 type CardVoucher = Pick<PrepaidVoucher, 'serial' | 'displayCode' | 'qrPayload'> & { groupNo?: number | null };
 
-/** What is printed under the barcode, top to bottom: the code when the batch shows it, then the serial (and group). */
-export function underBarcodeLines(
-  batch: Pick<PrepaidVoucherBatch, 'showCode'>,
-  voucher: CardVoucher,
-  labels: VoucherLabels,
-): { text: string; code: boolean }[] {
-  const lines: { text: string; code: boolean }[] = [];
-  if (batch.showCode) lines.push({ text: voucher.displayCode, code: true });
-  let serial = labels.serial(String(voucher.serial).padStart(4, '0'));
-  if (voucher.groupNo && labels.group) serial += ` · ${labels.group(voucher.groupNo)}`;
-  lines.push({ text: serial, code: false });
-  return lines;
+/** The short service number under the barcode: "מס׳ 0008", "מס׳ 0021 · קבוצה 3". */
+export function serialLine(voucher: CardVoucher): string {
+  let serial = VOUCHER_TEXT.serial.replace('{n}', String(voucher.serial).padStart(4, '0'));
+  if (voucher.groupNo) serial += ` · ${VOUCHER_TEXT.group.replace('{g}', String(voucher.groupNo))}`;
+  return serial;
 }
 
-/** A Code 128 symbol as an SVG of [width]×[height] mm, bars at whole module widths of the viewBox. */
-function Code128Svg({ value, width, height }: { value: string; width: number; height: number }) {
+export function cardContentOf(batch: PrepaidVoucherBatch, voucher: CardVoucher, logo: boolean): CardContent {
+  const { benefit, items } = cardContents(batch);
+  return {
+    title: batch.eventName || batch.name,
+    terms: termsLine(batch),
+    serial: serialLine(voucher),
+    barcode: batch.barcodeType ?? 'qr',
+    logo,
+    benefit,
+    items: items.map((i) => [quantityText(i.quantity, i.weighed, i.unitLabel), i.name, !!i.weighed]),
+    freeText: batch.freeText,
+    validity: validityLine(batch),
+    code: batch.showCode ? voucher.displayCode : null,
+    credit: batch.showCredit === false ? null : VOUCHER_TEXT.credit,
+    moreItems: VOUCHER_TEXT.moreItems,
+  };
+}
+
+// ── Drawing the operations ────────────────────────────────────────────────────
+
+function anchorOf(op: Extract<VoucherOp, { op: 'text' }>): 'start' | 'middle' | 'end' {
+  if (op.align === 'center') return 'middle';
+  // With direction rtl, "start" is the right edge.
+  if (op.align === 'right') return op.rtl ? 'start' : 'end';
+  return op.rtl ? 'end' : 'start';
+}
+
+function Code128Svg({ value, x, y, w, h }: { value: string; x: number; y: number; w: number; h: number }) {
   const { bars, width: modules } = code128Bars(value);
   return (
-    <svg
-      viewBox={`0 0 ${modules} 10`}
-      preserveAspectRatio="none"
-      shapeRendering="crispEdges"
-      style={{ width: mm(width), height: mm(height), display: 'block' }}
-      aria-hidden
-    >
+    <svg x={x} y={y} width={w} height={h} viewBox={`0 0 ${modules} 10`} preserveAspectRatio="none" shapeRendering="crispEdges">
       <rect x={0} y={0} width={modules} height={10} fill="#fff" />
-      {bars.map(([x, bw]) => (
-        <rect key={x} x={x} y={0} width={bw} height={10} fill="#000" />
+      {bars.map(([bx, bw]) => (
+        <rect key={bx} x={bx} y={0} width={bw} height={10} fill="#000" />
       ))}
     </svg>
   );
 }
 
-/** One voucher, sized `cardW`×`cardH` mm. Inline styles only: it is printed outside the app's CSS. */
-function VoucherCard({
-  batch,
-  voucher,
-  g,
-  logoSrc,
-  labels,
-}: {
-  batch: PrepaidVoucherBatch;
-  voucher: CardVoucher;
-  g: Geometry;
-  logoSrc: string | null;
-  labels: VoucherLabels;
-}) {
-  const w = g.cardW;
-  const h = g.cardH;
-  const linear = batch.barcodeType === 'code128';
-  // A line barcode needs the card's width: it always sits across the bottom.
-  const landscape = w >= h * 1.15 && !linear;
-  const s = Math.min(w, h) / 50; // 1 at a 50 mm short side
-  const pad = 2.6 * s;
-  // A discount voucher prints what it gives ("₪30 הנחה על כל ההזמנה") instead of goods;
-  // "הצגת הפריטים על השובר" off (`showItems: false`): neither.
-  const { benefit, items } = cardContents(batch);
-  const n = items.length;
-  const itemFont = 3.1 * s * (n > 4 ? Math.max(0.55, Math.sqrt(4 / n)) : 1);
-  const under = underBarcodeLines(batch, voucher, labels);
-  const underH = under.reduce((sum, l) => sum + (l.code ? 2.6 : 2.4) * s * 1.25, 0.6 * s);
-  const validity = validityLine(batch, labels);
-  const qrSide = landscape
-    ? Math.min(h - 2 * pad - underH, w * 0.42)
-    : Math.min(w - 2 * pad, h * 0.38);
-  const barW = w - 2 * pad;
-  const barH = Math.min(Math.max(8, h * 0.2), 16);
-
-  const title = batch.eventName || batch.name;
-  const text = (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: mm(1.1 * s), minWidth: 0, flex: 1, overflow: 'hidden', alignSelf: 'stretch' }}>
-      {logoSrc ? (
-        // A plain <img>: this markup is printed and rasterised outside Next's image pipeline.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={logoSrc}
-          alt=""
-          style={{
-            maxHeight: mm((landscape ? 9 : 12) * s),
-            maxWidth: '100%',
-            objectFit: 'contain',
-            alignSelf: landscape ? 'flex-start' : 'center',
-            display: 'block',
-          }}
-        />
-      ) : null}
-      <div style={{ fontWeight: 700, fontSize: mm(4 * s), lineHeight: 1.15, textAlign: landscape ? 'start' : 'center' }}>
-        {title}
-      </div>
-      {benefit ? (
-        <div style={{ fontWeight: 700, fontSize: mm(3.3 * s), lineHeight: 1.2, textAlign: landscape ? 'start' : 'center' }}>
-          {benefit}
-        </div>
-      ) : null}
-      <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: mm(itemFont), lineHeight: 1.25, display: n ? undefined : 'none' }}>
-        {items.map((i) => (
-          <li key={i.productId} style={{ display: 'flex', gap: mm(1.2 * s) }}>
-            <span style={{ fontWeight: 700, minWidth: mm(4 * s), direction: i.weighed ? 'rtl' : 'ltr', textAlign: 'end' }}>
-              {/* "2×", or by weight "0.5 ק״ג" (§7.14) — as the server's PDF. */}
-              {quantityText(i.quantity, i.weighed, i.unitLabel)}
-            </span>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.name}</span>
-          </li>
-        ))}
-      </ul>
-      {batch.freeText ? (
-        // Its own lines kept, long ones wrapped to the card (as the server's PDF).
-        <div style={{ fontSize: mm(2.5 * s), lineHeight: 1.2, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', textAlign: landscape ? 'start' : 'center' }}>
-          {batch.freeText}
-        </div>
-      ) : null}
-      {validity ? (
-        <div style={{ fontSize: mm(2.3 * s), fontWeight: 700, textAlign: landscape ? 'start' : 'center' }}>{validity}</div>
-      ) : null}
-      <div style={{ fontSize: mm(2.1 * s), color: '#444', textAlign: landscape ? 'start' : 'center' }}>
-        {termsLine(batch, labels)}
-      </div>
-    </div>
-  );
-  const qr = (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: mm(0.6 * s), flexShrink: 0 }}>
-      {linear ? (
-        <Code128Svg value={voucher.qrPayload} width={barW} height={barH} />
-      ) : (
-        <div style={{ width: mm(qrSide), height: mm(qrSide), background: '#fff' }}>
-          <QRCodeSVG value={voucher.qrPayload} size={256} level="M" marginSize={2} style={{ width: '100%', height: '100%', display: 'block' }} />
-        </div>
-      )}
-      {/* The code only when the batch asks for it (`showCode`, off by default: a printed
-          code is one more way to copy a voucher); then the serial, and the group. */}
-      {under.map((l) =>
-        l.code ? (
-          <div key="code" dir="ltr" style={{ fontSize: mm(2.6 * s), fontWeight: 700, fontFamily: 'Consolas, "Courier New", monospace', letterSpacing: '0.04em' }}>
-            {l.text}
-          </div>
-        ) : (
-          <div key="serial" style={{ fontSize: mm(2.2 * s), fontWeight: 700 }}>{l.text}</div>
-        ),
-      )}
-    </div>
-  );
-
+/** One voucher as an SVG of its size in mm. Attributes only: it is printed outside the app's CSS. */
+function VoucherSvg({
+  w, h, ops, payload, logoSrc, cutLines,
+}: { w: number; h: number; ops: VoucherOp[]; payload: string; logoSrc: string | null; cutLines: boolean }) {
   return (
-    <div
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
       className="pv-card"
-      dir="rtl"
-      style={{
-        width: mm(w),
-        height: mm(h),
-        boxSizing: 'border-box',
-        padding: mm(pad),
-        display: 'flex',
-        flexDirection: landscape ? 'row' : 'column',
-        alignItems: landscape ? 'stretch' : 'center',
-        gap: mm(2 * s),
-        overflow: 'hidden',
-        background: '#fff',
-        color: '#000',
-        fontFamily: 'Arial, "Segoe UI", "Noto Sans Hebrew", sans-serif',
-        outline: g.cutLines ? '0.2mm dashed #999' : undefined,
-        outlineOffset: g.cutLines ? '-0.1mm' : undefined,
-      }}
+      width={mm(w)}
+      height={mm(h)}
+      viewBox={`0 0 ${w} ${h}`}
+      style={{ display: 'block', background: '#fff' }}
     >
-      {text}
-      {qr}
-    </div>
+      <rect x={0} y={0} width={w} height={h} fill="#fff" />
+      {ops.map((op, i) => {
+        switch (op.op) {
+          case 'text':
+            return (
+              <text
+                key={i}
+                x={op.x}
+                y={op.y}
+                fontSize={op.size}
+                fontFamily={op.mono ? MONO_STACK : SANS_STACK}
+                fontWeight={op.bold || op.mono ? 700 : 400}
+                fill="#000"
+                direction={op.rtl ? 'rtl' : 'ltr'}
+                unicodeBidi="embed"
+                textAnchor={anchorOf(op)}
+              >
+                {op.text}
+              </text>
+            );
+          case 'box':
+            // Pillow strokes inside the rectangle; an SVG stroke is centred on it.
+            return (
+              <rect
+                key={i}
+                x={op.x + op.stroke / 2}
+                y={op.y + op.stroke / 2}
+                width={op.w - op.stroke}
+                height={op.h - op.stroke}
+                rx={Math.max(0, op.radius - op.stroke / 2)}
+                fill="none"
+                stroke="#000"
+                strokeWidth={op.stroke}
+              />
+            );
+          case 'qr':
+            return <QRCodeSVG key={i} value={payload} size={op.side} x={op.x} y={op.y} level="M" marginSize={2} />;
+          case 'code128':
+            return <Code128Svg key={i} value={payload} x={op.x} y={op.y} w={op.w} h={op.h} />;
+          case 'logo':
+            return logoSrc ? (
+              <image
+                key={i}
+                href={logoSrc}
+                x={op.x}
+                y={op.y}
+                width={op.w}
+                height={op.h}
+                preserveAspectRatio={op.align === 'right' ? 'xMaxYMid meet' : 'xMidYMid meet'}
+              />
+            ) : null;
+          default:
+            return null;
+        }
+      })}
+      {cutLines ? (
+        <rect x={0.1} y={0.1} width={w - 0.2} height={h - 0.2} fill="none" stroke="#000" strokeWidth={0.2} strokeDasharray="1.2 1.2" />
+      ) : null}
+    </svg>
   );
 }
 
+type CardGeometry = Pick<Geometry, 'cardW' | 'cardH' | 'cutLines'>;
+
+function VoucherCard({
+  batch, voucher, g, logoSrc, measure = browserMeasure,
+}: { batch: PrepaidVoucherBatch; voucher: CardVoucher; g: CardGeometry; logoSrc: string | null; measure?: Measure }) {
+  const ops = layoutCard(g.cardW, g.cardH, cardContentOf(batch, voucher, !!logoSrc), measure);
+  return <VoucherSvg w={g.cardW} h={g.cardH} ops={ops} payload={voucher.qrPayload} logoSrc={logoSrc} cutLines={g.cutLines} />;
+}
+
+/** One voucher as SVG markup, laid out with [measure] (the browser's by default; the fonts loaded). */
+export function voucherCardMarkup(
+  batch: PrepaidVoucherBatch, voucher: CardVoucher, g: CardGeometry, logoSrc: string | null, measure: Measure = browserMeasure,
+): string {
+  return renderToStaticMarkup(<VoucherCard batch={batch} voucher={voucher} g={g} logoSrc={logoSrc} measure={measure} />);
+}
+
 export function voucherCss(g: Geometry): string {
-  return `@page { size: ${mm(g.pageW)} ${mm(g.pageH)}; margin: 0; }
+  return `${fontFaceCss()}
+@page { size: ${mm(g.pageW)} ${mm(g.pageH)}; margin: 0; }
 html, body { margin: 0; padding: 0; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .pv-page { width: ${mm(g.pageW)}; height: ${mm(g.pageH)}; display: grid; overflow: hidden; background: #fff;
   grid-template-columns: repeat(${g.cols}, ${mm(g.cardW)}); grid-template-rows: repeat(${g.rows}, ${mm(g.cardH)});
-  break-after: page; page-break-after: always; }
-.pv-page:last-child { break-after: auto; page-break-after: auto; }
-.pv-card * { box-sizing: border-box; }`;
+  direction: rtl; break-after: page; page-break-after: always; }
+.pv-page:last-child { break-after: auto; page-break-after: auto; }`;
 }
 
 type PrintableVoucher = Pick<PrepaidVoucher, 'id' | 'serial' | 'displayCode' | 'qrPayload'> & { groupNo?: number | null };
@@ -318,43 +340,34 @@ function pagesOf<T>(items: T[], perPage: number): T[][] {
   return out;
 }
 
-export function voucherPageHtml(
-  batch: PrepaidVoucherBatch,
-  vouchers: PrintableVoucher[],
-  g: Geometry,
-  logoSrc: string | null,
-  labels: VoucherLabels,
-): string {
+export function voucherPageHtml(batch: PrepaidVoucherBatch, vouchers: PrintableVoucher[], g: Geometry, logoSrc: string | null): string {
   return renderToStaticMarkup(
     <div className="pv-page">
       {vouchers.map((v) => (
-        <VoucherCard key={v.id} batch={batch} voucher={v} g={g} logoSrc={logoSrc} labels={labels} />
+        <VoucherCard key={v.id} batch={batch} voucher={v} g={g} logoSrc={logoSrc} />
       ))}
     </div>,
   );
 }
 
-/** On-screen preview of one voucher, at its printed size. */
+/** On-screen preview of one voucher, at its printed size — the same SVG the print sends. */
 export function VoucherPreview({
-  batch,
-  voucher,
-  layout,
-  labels,
-}: {
-  batch: PrepaidVoucherBatch;
-  voucher: PrintableVoucher;
-  layout: PrintLayout;
-  labels: VoucherLabels;
-}) {
-  const g = geometryOf(layout);
+  batch, voucher, layout,
+}: { batch: PrepaidVoucherBatch; voucher: PrintableVoucher; layout: PrintLayout }) {
+  const ready = useVoucherFonts();
+  const g = { ...geometryOf(layout), cutLines: false };
   return (
-    <div className="inline-block bg-white shadow-sm ring-1 ring-foreground/10">
-      <VoucherCard batch={batch} voucher={voucher} g={{ ...g, cutLines: false }} logoSrc={batch.logoUrl} labels={labels} />
+    <div className="inline-block bg-white shadow-sm ring-1 ring-foreground/10" dir="rtl">
+      {ready ? (
+        <VoucherCard batch={batch} voucher={voucher} g={g} logoSrc={batch.logoUrl} />
+      ) : (
+        <div style={{ width: mm(g.cardW), height: mm(g.cardH) }} aria-busy="true" />
+      )}
     </div>
   );
 }
 
-/** The logo as a data URL, so print and PDF never wait for (or lose) a network image. */
+/** The logo as a data URL, so print never waits for (or loses) a network image. */
 async function logoDataUrl(url: string | null): Promise<string | null> {
   if (!url) return null;
   try {
@@ -372,22 +385,18 @@ async function logoDataUrl(url: string | null): Promise<string | null> {
   }
 }
 
-function safeFileName(name: string): string {
-  return name.replace(/[\\/:*?"<>|]+/g, '_').trim() || 'vouchers';
-}
-
-/** Print through a frame of its own, waiting for its images before opening the dialog. */
+/** Print through a frame of its own, waiting for its fonts and images before opening the dialog. */
 export async function printVouchers(
   batch: PrepaidVoucherBatch,
   vouchers: PrintableVoucher[],
   layout: PrintLayout,
-  labels: VoucherLabels,
   title: string,
 ): Promise<void> {
   const g = geometryOf(layout);
+  await ensureVoucherFonts().catch(() => undefined);
   const logo = await logoDataUrl(batch.logoUrl);
   const body = pagesOf(vouchers, g.cols * g.rows)
-    .map((page) => voucherPageHtml(batch, page, g, logo, labels))
+    .map((page) => voucherPageHtml(batch, page, g, logo))
     .join('');
   const frame = document.createElement('iframe');
   frame.setAttribute('aria-hidden', 'true');
@@ -406,11 +415,12 @@ export async function printVouchers(
   );
   doc.close();
   await Promise.race([
-    Promise.all(
-      Array.from(doc.images).map((img) =>
+    Promise.all([
+      ...FONT_FILES.map((f) => doc.fonts.load(`${f.weight === '700' ? 700 : 400} 10px "${f.family}"`).catch(() => [])),
+      ...Array.from(doc.images).map((img) =>
         img.complete ? Promise.resolve() : new Promise<void>((r) => { img.onload = img.onerror = () => r(); }),
       ),
-    ),
+    ]).then(() => doc.fonts.ready),
     new Promise((r) => window.setTimeout(r, 5000)),
   ]);
   const parentTitle = document.title;
@@ -435,59 +445,4 @@ export async function printVouchers(
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-}
-
-/**
- * A real .pdf of the vouchers, one page per page of the layout, downloaded as
- * `<fileName>.pdf`. `onProgress(done, total)` after each page.
- */
-export async function exportVouchersPdf(
-  batch: PrepaidVoucherBatch,
-  vouchers: PrintableVoucher[],
-  layout: PrintLayout,
-  labels: VoucherLabels,
-  fileName: string,
-  onProgress?: (done: number, total: number) => void,
-): Promise<void> {
-  const [{ jsPDF }, { toJpeg }] = await Promise.all([import('jspdf'), import('html-to-image')]);
-  const g = geometryOf(layout);
-  const logo = await logoDataUrl(batch.logoUrl);
-  const pages = pagesOf(vouchers, g.cols * g.rows);
-
-  const host = document.createElement('div');
-  host.setAttribute('aria-hidden', 'true');
-  Object.assign(host.style, { position: 'fixed', top: '0', left: '-10000px', zIndex: '-1', background: '#fff' });
-  host.dir = 'rtl';
-  const style = document.createElement('style');
-  style.textContent = voucherCss(g).replace(/@page[^}]*}/, '');
-  host.appendChild(style);
-  const slot = document.createElement('div');
-  host.appendChild(slot);
-  document.body.appendChild(host);
-
-  const orientation = g.pageW > g.pageH ? 'landscape' : 'portrait';
-  const pdf = new jsPDF({ unit: 'mm', format: [g.pageW, g.pageH], orientation, compress: true });
-  // ~300 dpi: 96 css px per inch × 3.125.
-  const pixelRatio = 3.125;
-  try {
-    for (let i = 0; i < pages.length; i++) {
-      slot.innerHTML = voucherPageHtml(batch, pages[i], g, logo, labels);
-      const node = slot.firstElementChild as HTMLElement;
-      await Promise.all(
-        Array.from(node.querySelectorAll('img')).map((img) =>
-          img.complete ? Promise.resolve() : new Promise<void>((r) => { img.onload = img.onerror = () => r(); }),
-        ),
-      );
-      const data = await toJpeg(node, { pixelRatio, quality: 0.92, backgroundColor: '#ffffff', skipFonts: true, cacheBust: false });
-      if (i > 0) pdf.addPage([g.pageW, g.pageH], orientation);
-      pdf.addImage(data, 'JPEG', 0, 0, g.pageW, g.pageH, undefined, 'FAST');
-      onProgress?.(i + 1, pages.length);
-      // Let the page breathe now and then during a long batch (not every page: a
-      // background tab clamps timers to a second).
-      if (i % 10 === 9) await new Promise((r) => window.setTimeout(r, 0));
-    }
-    pdf.save(`${safeFileName(fileName)}.pdf`);
-  } finally {
-    host.remove();
-  }
 }

@@ -18,6 +18,9 @@ and every QR cell is the same width on paper — what a scanner needs.
 
 Layouts match the dashboard's print presets (`voucher-print.tsx`): an 80×50 ticket, a
 card either way round, an 80×120 ticket, A6, an A4 sheet of eight to cut, or custom.
+Each voucher is laid out by app/services/prepaid_voucher_layout.py — the very algorithm the
+dashboard's card runs (client/src/lib/voucherLayout.ts, pinned by a shared golden fixture),
+so the file and the browser's print show the same voucher.
 Text is part of the image — fine for printing, not for copy-paste.
 
 Production in groups (docs/SPEC_VOUCHER_PRODUCTION.md): [render_groups_zip] makes a PDF
@@ -45,6 +48,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherBatch
 from app.services import barcode128, local_media
+from app.services import prepaid_voucher_layout as L
 from app.services import prepaid_voucher_rules as RULES
 from app.services.prepaid_vouchers import (
     DEFAULT_WEIGHT_UNIT,
@@ -68,8 +72,6 @@ PRESETS = {
     "a6": (105.0, 148.0, 1, 1),
     "a4grid": (210.0, 297.0, 2, 4),
 }
-#: The free text ("טקסט חופשי (מודפס)") at most — fewer when the voucher has less room.
-FREE_TEXT_MAX_LINES = 12
 
 #: Heebo (SIL OFL 1.1, app/assets/fonts/LICENSE-Heebo.txt — the till's font too) ships with
 #: the server and is tried first: every voucher is Hebrew, and a server with no system fonts
@@ -96,7 +98,11 @@ _FONT_CANDIDATES = {
         "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
     ],
 }
-#: A monospaced face for the code under the barcode: "0" / "O" and "8" / "B" told apart.
+#: The code under the barcode, in monospace ("0" / "O" and "8" / "B" told apart): Geist Mono
+#: (SIL OFL 1.1, app/assets/fonts/LICENSE-GeistMono.txt), bold — the dashboard's too.
+MONO_FONT = FONT_DIR / "GeistMono-latin.woff2"
+MONO_WEIGHT = 700
+#: If it cannot be read (a FreeType without WOFF2), these, then Heebo Bold.
 _MONO_CANDIDATES = [
     "C:/Windows/Fonts/consolab.ttf",
     "C:/Windows/Fonts/courbd.ttf",
@@ -179,10 +185,37 @@ def _font(size_px: int, bold: bool = False) -> ImageFont.FreeTypeFont:
 
 @lru_cache(maxsize=16)
 def _mono(size_px: int) -> ImageFont.FreeTypeFont:
+    try:
+        font = ImageFont.truetype(str(MONO_FONT), size_px)
+        font.set_variation_by_axes([MONO_WEIGHT])
+        return font
+    except Exception as exc:  # noqa: BLE001 — a code in another face beats no voucher
+        logger.warning("prepaid voucher mono font %s unusable (%s); falling back", MONO_FONT, exc)
     for path in _MONO_CANDIDATES:
         if Path(path).is_file():
             return ImageFont.truetype(path, size_px)
     return _font(size_px, bold=True)
+
+
+#: Text is measured at this size and scaled: the same widths at every size, as the browser's.
+_REF_PX = 400
+
+
+@lru_cache(maxsize=4096)
+def _ref_width(text: str, bold: bool, mono: bool) -> float:
+    font = _mono(_REF_PX) if mono else _font(_REF_PX, bold)
+    return float(font.getlength(text))
+
+
+def measure(text: str, size_mm: float, bold: bool, mono: bool) -> float:
+    """[text]'s width in mm at [size_mm] — the layout's measure (prepaid_voucher_layout)."""
+    return _ref_width(text, bold, mono) / _REF_PX * size_mm
+
+
+def clear_font_caches() -> None:
+    _font.cache_clear()
+    _mono.cache_clear()
+    _ref_width.cache_clear()
 
 
 def _visual(text: str) -> str:
@@ -267,8 +300,13 @@ def _code128_image(payload: str, max_w: int, height: int) -> Image.Image:
 
 @dataclass(frozen=True)
 class Labels:
-    serial: str = "שובר מס׳ {n}"
+    #: The short service number, prominent under the barcode ("מס׳ 0008").
+    serial: str = "מס׳ {n}"
     group: str = "קבוצה {g}"
+    #: The last row of a list of goods too long for the card.
+    more_items: str = "ועוד {n} פריטים"
+    #: The credit line at the bottom (`show_credit`).
+    credit: str = "נוצר על ידי Runner Systems"
     split_allowed: str = "ניתן לממש בחלקים"
     one_time: str = "מימוש חד-פעמי"
     valid_until: str = "בתוקף עד {until}"
@@ -304,6 +342,8 @@ class PrintOptions:
     #: "הצגת הפריטים על השובר": the goods lines (a discount voucher: what it gives). Off:
     #: title, free text, validity, barcode, code and serial only.
     show_items: bool = True
+    #: "נוצר על ידי Runner Systems" at the bottom of the voucher.
+    show_credit: bool = True
 
 
 def options_for(batch: PrepaidVoucherBatch, zone=None, labels: Labels = Labels()) -> PrintOptions:
@@ -312,6 +352,7 @@ def options_for(batch: PrepaidVoucherBatch, zone=None, labels: Labels = Labels()
         show_code=bool(getattr(batch, "show_code", False)),
         validity=validity_text(batch, zone, labels),
         show_items=getattr(batch, "show_items", None) is not False,
+        show_credit=getattr(batch, "show_credit", None) is not False,
     )
 
 
@@ -437,6 +478,65 @@ def _flatten(img: Image.Image) -> Image.Image:
 # ── A voucher ─────────────────────────────────────────────────────────────────
 
 
+def card_content(
+    batch: PrepaidVoucherBatch, voucher: PrepaidVoucher, opts: PrintOptions, labels: Labels = Labels(),
+    *, logo: bool = False,
+) -> L.CardContent:
+    """The voucher's texts for the shared layout — what the dashboard's card says too."""
+    benefit, items = card_contents(batch, opts)
+    under = under_barcode_lines(voucher, opts, labels)
+    return L.CardContent(
+        title=batch.event_name or batch.name,
+        terms=terms_line(batch, labels),
+        serial=under[-1],
+        barcode=opts.barcode_type or "qr",
+        logo=logo,
+        benefit=benefit,
+        items=[(_qty_label(i), i.product_name, bool(getattr(i, "weighed", False))) for i in items],
+        free_text=batch.free_text,
+        validity=opts.validity,
+        code=under[0] if opts.show_code else None,
+        credit=labels.credit if opts.show_credit else None,
+        more_items=labels.more_items,
+    )
+
+
+_ANCHOR = {"right": "rs", "center": "ms", "left": "ls"}
+
+
+def _draw_ops(card: Image.Image, ops, payload: str, logo: Optional[Image.Image]) -> None:
+    """Draws the layout's operations (mm, baselines) at DPI — black on white, nothing grey."""
+    d = ImageDraw.Draw(card)
+    k = DPI / 25.4
+    for op in ops:
+        kind = op["op"]
+        if kind == "text":
+            size = max(1, round(op["size"] * k))
+            font = _mono(size) if op["mono"] else _font(size, op["bold"])
+            text = _visual(op["text"]) if op["rtl"] else op["text"]
+            d.text((op["x"] * k, op["y"] * k), text, font=font, fill="black", anchor=_ANCHOR[op["align"]])
+        elif kind == "box":
+            x0, y0 = op["x"] * k, op["y"] * k
+            d.rounded_rectangle(
+                [x0, y0, x0 + op["w"] * k, y0 + op["h"] * k], radius=op["radius"] * k,
+                outline="black", width=max(1, round(op["stroke"] * k)),
+            )
+        elif kind == "qr":
+            side = round(op["side"] * k)
+            img = _qr_image(payload, side)
+            card.paste(img, (round(op["x"] * k + (side - img.width) / 2), round(op["y"] * k + (side - img.height) / 2)))
+        elif kind == "code128":
+            w, h = round(op["w"] * k), round(op["h"] * k)
+            img = _code128_image(payload, w, h)
+            card.paste(img, (round(op["x"] * k + (w - img.width) / 2), round(op["y"] * k)))
+        elif kind == "logo" and logo is not None:
+            bw, bh = op["w"] * k, op["h"] * k
+            scale = min(bw / logo.width, bh / logo.height)
+            lg = logo.resize((max(1, int(logo.width * scale)), max(1, int(logo.height * scale))), Image.LANCZOS)
+            x = op["x"] * k + (bw - lg.width if op["align"] == "right" else (bw - lg.width) / 2)
+            card.paste(lg, (round(x), round(op["y"] * k + (bh - lg.height) / 2)))
+
+
 def _draw_card(
     batch: PrepaidVoucherBatch,
     voucher: PrepaidVoucher,
@@ -447,143 +547,24 @@ def _draw_card(
     cut_lines: bool,
     opts: PrintOptions = PrintOptions(),
 ) -> Image.Image:
-    W, H = _px(w_mm), _px(h_mm)
-    card = Image.new("RGB", (W, H), "white")
-    d = ImageDraw.Draw(card)
-    s = min(w_mm, h_mm) / 50.0  # 1 at a 50 mm short side
-    pad = _px(2.6 * s)
-    gap = _px(2 * s)
-    linear = opts.barcode_type == "code128"
-    # A line barcode needs the card's width: it always sits across the bottom.
-    landscape = w_mm >= h_mm * 1.15 and not linear
-
-    f_serial = _font(_px(2.4 * s), bold=True)
-    f_code = _mono(_px(2.6 * s))
-    under = under_barcode_lines(voucher, opts, labels)
-    # The code (first, when shown) is Latin and drawn as is; the serial line is Hebrew.
-    is_code = [opts.show_code and i == 0 for i in range(len(under))]
-    line_fonts = [f_code if code else f_serial for code in is_code]
-    under_h = sum(int(f.size * 1.25) for f in line_fonts) + _px(0.6 * s)
-
-    # The barcode block: the barcode, then the lines under it.
-    if linear:
-        bar_h = int(min(max(_px(8), H * 0.2), _px(16)))
-        code_img = _code128_image(qr_payload(voucher.code), W - 2 * pad, bar_h)
-        block_w, block_h = code_img.width, bar_h + under_h
-    else:
-        if landscape:
-            side = int(min(H - 2 * pad - under_h, W * 0.42))
-        else:
-            side = int(min(W - 2 * pad, H * 0.38))
-        code_img = _qr_image(qr_payload(voucher.code), side)
-        block_w, block_h = code_img.width, code_img.height + under_h
-
-    if landscape:
-        # QR on the left, text on the right (RTL: the text column starts at the right edge).
-        bx, by = pad, max(pad, (H - block_h) // 2)
-        text_left, text_right, text_top, text_bottom = pad + block_w + gap, W - pad, pad, H - pad
-    else:
-        bx, by = (W - block_w) // 2, H - pad - block_h
-        text_left, text_right, text_top, text_bottom = pad, W - pad, pad, by - gap
-    card.paste(code_img, (bx, by))
-    cx = bx + block_w // 2
-    ly = by + code_img.height + _px(0.6 * s)
-    for text, font, code in zip(under, line_fonts, is_code):
-        d.text((cx, ly), text if code else _visual(text), font=font, fill="black", anchor="mt")
-        ly += int(font.size * 1.25)
-
-    # The text column, right-aligned.
-    text_w = text_right - text_left
-    y = text_top
-    if logo is not None:
-        max_logo_h = _px((9 if landscape else 12) * s)
-        lw, lh = logo.size
-        scale = min(max_logo_h / lh, text_w / lw)
-        lg = logo.resize((max(1, int(lw * scale)), max(1, int(lh * scale))), Image.LANCZOS)
-        lx = text_right - lg.width if landscape else text_left + (text_w - lg.width) // 2
-        card.paste(lg, (lx, y))
-        y += lg.height + _px(1.1 * s)
-
-    def line(text: str, font, *, center: bool = False) -> None:
-        nonlocal y
-        if y + font.size > text_bottom:
-            return
-        if center:
-            d.text((text_left + text_w // 2, y), text, font=font, fill="black", anchor="ma")
-        else:
-            d.text((text_right, y), text, font=font, fill="black", anchor="ra")
-        y += int(font.size * 1.22)
-
-    center = not landscape
-    title_font = _font(_px(4 * s), bold=True)
-    for t in _wrap(d, batch.event_name or batch.name, title_font, text_w, 2):
-        line(t, title_font, center=center)
-    y += _px(0.6 * s)
-
-    # The bottom of the column is kept for the validity and the terms, and for the first
-    # lines of the free text, so a long list of goods never pushes them off the voucher.
-    valid_font = _font(_px(2.3 * s), bold=True)
-    small = _font(_px(2.1 * s))
-    free_font = _font(_px(2.5 * s))
-    free_step = int(free_font.size * 1.22)
-    footer_h = (int(valid_font.size * 1.22) if opts.validity else 0) + int(small.size * 1.22)
-    free_lines = _wrap(d, batch.free_text, free_font, text_w, FREE_TEXT_MAX_LINES) if batch.free_text else []
-    goods_bottom = text_bottom - footer_h - min(len(free_lines), 2) * free_step
-
-    # A discount voucher says what it gives ("₪30 הנחה על כל ההזמנה") instead of goods;
-    # "הצגת הפריטים על השובר" off: neither.
-    benefit, items = card_contents(batch, opts)
-    if benefit:
-        bf = _font(_px(3.3 * s), bold=True)
-        for t in _wrap(d, benefit, bf, text_w, 3):
-            line(t, bf, center=center)
-    n = len(items)
-    item_size = 3.1 * s * (max(0.55, (4 / n) ** 0.5) if n > 4 else 1)
-    item_font = _font(_px(item_size))
-    qty_font = _font(_px(item_size), bold=True)
-    for it in items:
-        if y + item_font.size > goods_bottom:
-            break
-        amount = _qty_label(it)
-        qty_w = int(d.textlength(amount, font=qty_font))
-        name = _fit(d, it.product_name, item_font, text_w - qty_w - _px(1.2 * s))
-        if center:
-            name_w = int(d.textlength(name, font=item_font))
-            total = qty_w + _px(1.2 * s) + name_w
-            right = text_left + (text_w + total) // 2
-        else:
-            right = text_right
-        d.text((right, y), amount, font=qty_font, fill="black", anchor="ra")
-        d.text((right - qty_w - _px(1.2 * s), y), name, font=item_font, fill="black", anchor="ra")
-        y += int(item_font.size * 1.25)
-    if items or benefit:
-        y += _px(0.6 * s)
-
-    # The free text: its own lines kept, long ones wrapped to the column — as many as the
-    # space above the validity holds, the last one cut with "…" when there is more.
-    if free_lines:
-        room = max(0, (text_bottom - footer_h - y) // free_step)
-        if room < len(free_lines):
-            free_lines = _wrap(d, batch.free_text, free_font, text_w, room) if room else []
-        for t in free_lines:
-            line(t, free_font, center=center)
-    if opts.validity:
-        line(_visual(opts.validity), valid_font, center=center)
-    line(_visual(terms_line(batch, labels)), small, center=center)
-
+    """One voucher, laid out by prepaid_voucher_layout (the dashboard's card is the same)."""
+    card = Image.new("RGB", (_px(w_mm), _px(h_mm)), "white")
+    content = card_content(batch, voucher, opts, labels, logo=logo is not None)
+    _draw_ops(card, L.layout(w_mm, h_mm, content, measure), qr_payload(voucher.code), logo)
     if cut_lines:
-        _cut_lines(d, W, H)
+        _cut_lines(ImageDraw.Draw(card), card.width, card.height)
     return card
 
 
 def _cut_lines(d: ImageDraw.ImageDraw, W: int, H: int) -> None:
-    dash, step, col = _px(1.2), _px(2.4), (153, 153, 153)
+    """Dashed cut lines around a voucher of a sheet — black, like everything on it."""
+    dash, step = _px(1.2), _px(2.4)
     for x in range(0, W, step):
-        d.line([(x, 0), (min(x + dash, W - 1), 0)], fill=col, width=2)
-        d.line([(x, H - 1), (min(x + dash, W - 1), H - 1)], fill=col, width=2)
+        d.line([(x, 0), (min(x + dash, W - 1), 0)], fill="black", width=1)
+        d.line([(x, H - 1), (min(x + dash, W - 1), H - 1)], fill="black", width=1)
     for yy in range(0, H, step):
-        d.line([(0, yy), (0, min(yy + dash, H - 1))], fill=col, width=2)
-        d.line([(W - 1, yy), (W - 1, min(yy + dash, H - 1))], fill=col, width=2)
+        d.line([(0, yy), (0, min(yy + dash, H - 1))], fill="black", width=1)
+        d.line([(W - 1, yy), (W - 1, min(yy + dash, H - 1))], fill="black", width=1)
 
 
 # ── A group's cover sheet ─────────────────────────────────────────────────────

@@ -14,13 +14,20 @@ What each class pins:
 * **Free text** — editable after creation (and cleared); several lines, Hebrew, long lines
   wrapped inside the card, in every layout (the 80 mm tickets included), never pushing the
   validity and the terms off the voucher.
+* **The design** ("שיהיה מקצועי") — one layout (app/services/prepaid_voucher_layout.py) that the
+  dashboard runs too (client/src/lib/voucherLayout.ts): the golden fixture
+  tests/fixtures/prepaid_voucher_layout.json pins its operations for both; the code in Geist
+  Mono; everything drawn in black; "נוצר על ידי Runner Systems" (`show_credit`) on by default,
+  off per batch, in the same migration as `show_items`.
 
 Runs on the in-memory SQLite world of tests/shift_world.py (fixtures of test_prepaid_vouchers).
 """
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
+import os
 import pathlib
 import re
 import uuid
@@ -34,6 +41,7 @@ from PIL import ImageDraw
 from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherBatch, PrepaidVoucherBatchItem
 from app.routers import prepaid_vouchers as R
 from app.schemas.prepaid_voucher import PrepaidVoucherBatchCreate, PrepaidVoucherBatchUpdate
+from app.services import prepaid_voucher_layout as L
 from app.services import prepaid_voucher_pdf as PDF
 from test_prepaid_vouchers import _ctx, w  # noqa: F401 — `w` is the fixture
 
@@ -50,6 +58,7 @@ class Drawn:
     font: Any
     box: Tuple[int, int, int, int]
     size: Tuple[int, int]
+    fill: Any = None
 
 
 @pytest.fixture
@@ -59,7 +68,7 @@ def drawn(monkeypatch) -> List[Drawn]:
     real = ImageDraw.ImageDraw.text
 
     def text(self, xy, text, fill=None, font=None, anchor=None, *args, **kwargs):
-        calls.append(Drawn(text, font, self.textbbox(xy, text, font=font, anchor=anchor), self.im.size))
+        calls.append(Drawn(text, font, self.textbbox(xy, text, font=font, anchor=anchor), self.im.size, fill))
         return real(self, xy, text, fill, font, anchor, *args, **kwargs)
 
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", text)
@@ -74,18 +83,17 @@ def heebo_only(monkeypatch):
         True: [str(PDF.HEBREW_FONTS[True]), "/nonexistent/arialbd.ttf"],
     })
     monkeypatch.setattr(PDF, "_MONO_CANDIDATES", ["/nonexistent/consolab.ttf"])
-    PDF._font.cache_clear()
-    PDF._mono.cache_clear()
+    PDF.clear_font_caches()
     yield
-    PDF._font.cache_clear()
-    PDF._mono.cache_clear()
+    PDF.clear_font_caches()
 
 
-def batch_obj(*, show_items=True, free_text=FREE, items=(("נקניקייה", 1), ("שתייה קלה", 2), ("צ׳יפס", 1)),
+def batch_obj(*, show_items=True, show_credit=True, free_text=FREE, items=(("נקניקייה", 1), ("שתייה קלה", 2), ("צ׳יפס", 1)),
               kind="items", **kw):
     b = PrepaidVoucherBatch(
         name="הפקה — מזון", event_name="פסטיבל הקיץ", kind=kind, split_allowed=False, free_text=free_text,
-        valid_until=datetime(2026, 8, 14, 20, tzinfo=timezone.utc), show_code=True, show_items=show_items, **kw,
+        valid_until=datetime(2026, 8, 14, 20, tzinfo=timezone.utc), show_code=True, show_items=show_items,
+        show_credit=show_credit, **kw,
     )
     b.items = [
         PrepaidVoucherBatchItem(product_id=uuid.uuid4(), product_name=n, quantity=q, sort_order=i)
@@ -139,7 +147,7 @@ class TestHebrewFont:
         monkeypatch.setattr(PDF, "_FONT_CANDIDATES", {False: ["/nonexistent/a.ttf"], True: ["/nonexistent/b.ttf"]})
         # An earlier test's alembic env.py (fileConfig) disables every existing logger.
         monkeypatch.setattr(PDF.logger, "disabled", False)
-        PDF._font.cache_clear()
+        PDF.clear_font_caches()
         try:
             with caplog.at_level(logging.ERROR, logger=PDF.logger.name):
                 font = PDF._font(40)
@@ -148,7 +156,7 @@ class TestHebrewFont:
             assert "ש" in missing and "×" in missing
             assert not set("0123456789") & set(missing)
         finally:
-            PDF._font.cache_clear()
+            PDF.clear_font_caches()
 
     def test_heebo_has_every_character_a_voucher_prints(self, heebo_only):
         for bold in (False, True):
@@ -164,11 +172,12 @@ class TestHebrewFont:
         assert data[:4] == b"%PDF"
         assert len(drawn) > 15
         for call in drawn:
-            assert pathlib.Path(call.font.path).name.startswith("Heebo"), call.text
+            # Heebo, or Geist Mono for the code under the barcode — both ship with the server.
+            assert pathlib.Path(call.font.path).name.startswith(("Heebo", "GeistMono")), call.text
             assert PDF.missing_glyphs(call.font, call.text) == [], call.text
         out = texts(drawn)
         # The line beside the serial, the item lines with their "×", the title.
-        assert PDF._visual("שובר מס׳ 0008") in out
+        assert PDF._visual("מס׳ 0008") in out
         assert "2×" in out and shows(drawn, "פסטיבל הקיץ")
 
     def test_every_layout_and_a_discount_voucher_too(self, heebo_only, drawn):
@@ -226,7 +235,7 @@ class TestShowItems:
         assert shows(drawn, "פסטיבל הקיץ") and shows(drawn, "יש להציג את השובר בקופה")
         out = texts(drawn)
         assert PDF._visual("בתוקף עד 14/08/2026") in out
-        assert PDF._visual("שובר מס׳ 0008") in out and "ABCD-EFGH-2345-6789" in out
+        assert PDF._visual("מס׳ 0008") in out and "ABCD-EFGH-2345-6789" in out
         drawn.clear()
         card(batch_obj(show_items=True))
         assert shows(drawn, "נקניקייה") and shows(drawn, "שתייה קלה") and "2×" in texts(drawn)
@@ -287,8 +296,10 @@ class TestShowItems:
             with Operations.context(MigrationContext.configure(conn)):
                 module.upgrade()
                 module.upgrade()  # idempotent
-            assert "show_items" in {c["name"] for c in sa.inspect(conn).get_columns("prepaid_voucher_batches")}
-            assert conn.execute(sa.text("SELECT show_items FROM prepaid_voucher_batches")).scalar() in (1, True)
+            columns = {c["name"] for c in sa.inspect(conn).get_columns("prepaid_voucher_batches")}
+            assert {"show_items", "show_credit"} <= columns
+            row_ = conn.execute(sa.text("SELECT show_items, show_credit FROM prepaid_voucher_batches")).one()
+            assert all(v in (1, True) for v in row_)
         # Offline (`alembic upgrade --sql`): the plain statement, no database looked at.
         import io
 
@@ -296,7 +307,8 @@ class TestShowItems:
         offline = MigrationContext.configure(dialect_name="postgresql", opts={"as_sql": True, "output_buffer": buf})
         with Operations.context(offline):
             module.upgrade()
-        assert "ALTER TABLE prepaid_voucher_batches ADD COLUMN show_items BOOLEAN DEFAULT true NOT NULL" in buf.getvalue()
+        for column in ("show_items", "show_credit"):
+            assert f"ALTER TABLE prepaid_voucher_batches ADD COLUMN {column} BOOLEAN DEFAULT true NOT NULL" in buf.getvalue()
 
 
 # ── Free text ─────────────────────────────────────────────────────────────────
@@ -342,5 +354,144 @@ class TestFreeText:
     def test_many_goods_still_leave_room_for_it(self, drawn):
         goods = tuple((f"מוצר {chr(0x05d0 + i)}", 1) for i in range(12))
         card(batch_obj(items=goods))
+        assert shows(drawn, "ועוד פריטים")  # the rest summed up, not cut off the card
         assert PDF._visual("יש להציג את השובר בקופה") in texts(drawn)
         assert PDF._visual("בתוקף עד 14/08/2026") in texts(drawn)
+
+
+# ── The design ────────────────────────────────────────────────────────────────
+
+GOLDEN = ROOT / "tests" / "fixtures" / "prepaid_voucher_layout.json"
+GOODS = [["1×", "נקניקייה בלחמניה", False], ["2×", "שתייה קלה", False], ["0.5 ק\"ג", "זיתים", True]]
+BASE = {
+    "title": "פסטיבל הקיץ 2026",
+    "terms": "מימוש חד-פעמי",
+    "serial": "מס׳ 0008 · קבוצה 3",
+    "items": GOODS,
+    "freeText": "יש להציג את השובר בקופה.\nלא ניתן להמיר בכסף ולא ניתן לפצל בין כמה קופות שונות במתחם.",
+    "validity": "בתוקף עד 14/08/2026",
+    "code": "ABCD-EFGH-2345-6789",
+    "credit": "נוצר על ידי Runner Systems",
+}
+#: The inputs in the dashboard's words (camelCase): src/lib/voucherLayout.test.ts runs the same.
+CASES = [
+    {"name": "ticket 80x50, goods", "w": 80, "h": 50, "content": BASE},
+    {"name": "card 54x86, logo", "w": 54, "h": 86, "content": {**BASE, "logo": True}},
+    {"name": "card 86x54, discount", "w": 86, "h": 54,
+     "content": {**BASE, "items": [], "benefit": "₪30 הנחה על כל ההזמנה בקנייה מעל ₪100", "terms": "3 שימושים"}},
+    {"name": "ticket 80x120, Code 128, many goods", "w": 80, "h": 120,
+     "content": {**BASE, "barcode": "code128",
+                 "items": [[f"{1 + i % 3}×", f"מוצר מספר {i + 1} עם שם ארוך מאוד", False] for i in range(20)]}},
+    {"name": "A6, goods hidden, long free text", "w": 105, "h": 148,
+     "content": {**BASE, "items": [], "freeText": "\n".join(f"שורה {i} של הטקסט החופשי" for i in range(1, 20))}},
+    {"name": "A4 sheet cell, no credit, no code, no validity", "w": 105, "h": 74.25,
+     "content": {**BASE, "credit": None, "code": None, "validity": None}},
+    {"name": "custom 30x30", "w": 30, "h": 30, "content": BASE},
+]
+
+
+def _content(d) -> L.CardContent:
+    return L.CardContent(
+        title=d["title"], terms=d["terms"], serial=d["serial"], barcode=d.get("barcode", "qr"),
+        logo=bool(d.get("logo")), benefit=d.get("benefit"), items=[tuple(i) for i in d.get("items") or []],
+        free_text=d.get("freeText"), validity=d.get("validity"), code=d.get("code"), credit=d.get("credit"),
+    )
+
+
+def _labels() -> dict:
+    lb = PDF.Labels()
+    return {
+        "serial": lb.serial, "group": lb.group, "splitAllowed": lb.split_allowed, "oneTime": lb.one_time,
+        "validUntil": lb.valid_until, "validFrom": lb.valid_from, "validBetween": lb.valid_between,
+        "usesOne": lb.uses_one, "usesMany": lb.uses_many, "includeExtras": lb.include_extras,
+        "moreItems": lb.more_items, "credit": lb.credit,
+    }
+
+
+class TestDesign:
+    def test_the_golden_layout_both_renderers_run(self):
+        """
+        The layout's operations for fixed voucher texts and a fixed measure. The dashboard's
+        src/lib/voucherLayout.test.ts checks its port against the same file: a change to the
+        design is made in both and regenerated here (UPDATE_PREPAID_VOUCHER_LAYOUT=1).
+        """
+        data = {
+            "labels": _labels(),
+            "cases": [
+                {**case, "ops": L.layout(case["w"], case["h"], _content(case["content"]), L.fake_measure)}
+                for case in CASES
+            ],
+        }
+        if os.environ.get("UPDATE_PREPAID_VOUCHER_LAYOUT"):
+            GOLDEN.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        assert json.loads(GOLDEN.read_text(encoding="utf-8")) == json.loads(json.dumps(data, ensure_ascii=False))
+
+    def test_the_design_in_operations(self):
+        ops = L.layout(80, 50, _content(BASE), L.fake_measure)
+        kinds = [o["op"] for o in ops]
+        assert kinds.count("qr") == 1 and kinds.count("box") == 1
+        text = {o["text"]: o for o in ops if o["op"] == "text"}
+        # The service number prominent, the code in monospace, the credit at the very bottom.
+        assert text[BASE["serial"]]["bold"] and text[BASE["serial"]]["size"] > text[BASE["code"]]["size"]
+        assert text[BASE["code"]]["mono"] and not text[BASE["code"]]["rtl"]
+        credit = text[BASE["credit"]]
+        assert credit["y"] == max(o["y"] for o in ops if o["op"] == "text")
+        # The goods sit inside the box; the title above it; the QR on the left of a wide card.
+        box = next(o for o in ops if o["op"] == "box")
+        qr = next(o for o in ops if o["op"] == "qr")
+        assert box["y"] < text["1×"]["y"] < box["y"] + box["h"]
+        assert text[BASE["title"]]["y"] < box["y"]
+        assert qr["x"] + qr["side"] < box["x"]
+        # A weighed quantity is RTL text ("0.5 ק״ג"); "2×" is not.
+        assert text['0.5 ק"ג']["rtl"] and not text["2×"]["rtl"]
+
+    def test_a_tall_card_puts_the_barcode_under_the_text(self):
+        ops = L.layout(54, 86, _content(BASE), L.fake_measure)
+        qr = next(o for o in ops if o["op"] == "qr")
+        last_text_above = max(o["y"] for o in ops if o["op"] == "text" and o["y"] < qr["y"])
+        assert last_text_above < qr["y"]
+        assert 86 * L.QR_PORTRAIT_MIN - 0.01 <= qr["side"] <= 86 * L.QR_PORTRAIT_MAX + 0.01
+
+    def test_everything_is_drawn_black(self, drawn):
+        card(batch_obj())
+        assert drawn and {c.fill for c in drawn} == {"black"}
+
+    def test_the_code_is_in_geist_mono_bold(self):
+        PDF.clear_font_caches()
+        font = PDF._mono(60)
+        assert pathlib.Path(font.path).name == "GeistMono-latin.woff2"
+        assert PDF.missing_glyphs(font, "ABCDEFGHJKMNPQRSTUVWXYZ23456789-") == []
+        licence = (PDF.FONT_DIR / "LICENSE-GeistMono.txt").read_text(encoding="utf-8")
+        assert "SIL OPEN FONT LICENSE" in licence
+
+    def test_the_dashboard_ships_the_same_fonts(self):
+        public = ROOT.parent / "client" / "public" / "fonts" / "voucher"
+        for name in ("Heebo-Regular.ttf", "Heebo-Bold.ttf", "GeistMono-latin.woff2"):
+            assert (public / name).read_bytes() == (PDF.FONT_DIR / name).read_bytes(), name
+
+    def test_the_credit_line_is_on_by_default_and_off_per_batch(self, w, drawn):
+        assert make(w)["showCredit"] is True
+        off = make(w, showCredit=False)
+        assert off["showCredit"] is False and PDF.options_for(row(w, off["id"])).show_credit is False
+        out = R.update_prepaid_voucher_batch(off["id"], PrepaidVoucherBatchUpdate(showCredit=None), **_ctx(w))
+        assert out["showCredit"] is False
+        out = R.update_prepaid_voucher_batch(off["id"], PrepaidVoucherBatchUpdate(showCredit=True), **_ctx(w))
+        assert out["showCredit"] is True
+        events = R.prepaid_voucher_events(off["id"], **_ctx(w))["items"]
+        assert events[0]["details"]["fields"] == ["show_credit"]
+        card(batch_obj())
+        assert shows(drawn, "נוצר על ידי") and "Runner Systems" in texts(drawn)
+        drawn.clear()
+        card(batch_obj(show_credit=False))
+        assert not shows(drawn, "נוצר על ידי") and "Runner Systems" not in texts(drawn)
+
+    @pytest.mark.parametrize("barcode", ["qr", "code128"])
+    def test_every_layout_keeps_its_text_on_the_card(self, drawn, barcode):
+        for preset in list(PDF.PRESETS) + ["custom"]:
+            drawn.clear()
+            b = batch_obj(barcode_type=barcode, items=tuple((f"מוצר {i}", 1) for i in range(9)))
+            image = card(b, preset, 60, 40)
+            W, H = image.size
+            for call in drawn:
+                x0, y0, x1, y1 = call.box
+                assert 0 <= x0 and x1 <= W and 0 <= y0 and y1 <= H, (preset, barcode, call.text)

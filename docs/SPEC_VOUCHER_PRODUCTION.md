@@ -38,7 +38,7 @@
 * כשהיא דלוקה, מתחת לברקוד: `ABCD-EFGH-2345-6789` (גופן קבוע-רוחב), ומתחתיו "שובר מס׳ 0021 · קבוצה 3".
 * בדשבורד אפשר לחפש שובר לפי הקוד (או 4+ תווים ממנו) — לטלפון מלקוח / לשובר קרוע.
 
-### 2.1 הצגת הפריטים, טקסט חופשי וגופן (08.10.2026)
+### 2.1 הצגת הפריטים, טקסט חופשי, גופן ועיצוב (08.10.2026)
 
 * **"הצגת הפריטים על השובר"** (`show_items`, מיגרציה `6b1e9d4f2a87`) — הגדרה לכל סדרה, **דלוקה כברירת מחדל** (וכל סדרה
   קיימת). כבויה: השובר מודפס בלי שורות הפריטים (ובשובר הנחה — בלי שורת ההטבה); כותרת, טקסט חופשי, תוקף, ברקוד, קוד ומס׳ שובר
@@ -50,6 +50,16 @@
 * **גופן** — ה-PDF של השרת מצויר ב-Heebo שמגיע עם השרת (`server/app/assets/fonts`, SIL OFL 1.1). שרת בלי גופני מערכת (Docker
   slim בענן) צייר קודם בגופן המובנה של Pillow, שאין בו עברית — כל אות ו-"×" יצאו ריבועים ("שובר יוצא ג'יבריש"). אין גופן עם
   עברית → שגיאה ביומן, לא שתיקה. בדיקות: `server/tests/test_prepaid_voucher_print.py`.
+* **עיצוב השובר** — פריסה אחת לשני המנועים: `server/app/services/prepaid_voucher_layout.py` (PDF בשרת, Pillow)
+  ו-`client/src/lib/voucherLayout.ts` (הדשבורד מצייר SVG — תצוגה מקדימה, הדפסה מהדפדפן), באותם גופנים (Heebo, וקוד השובר
+  ב-Geist Mono — `server/app/assets/fonts`, `client/public/fonts/voucher`). קובץ golden משותף
+  (`server/tests/fixtures/prepaid_voucher_layout.json`) נועל ששניהם מפיקים אותן פעולות ציור. מלמעלה: לוגו (רשות), כותרת
+  גדולה, מסגרת עם הפריטים והכמויות (או ההטבה), טקסט חופשי, תוקף מודגש, תנאים; למטה QR או Code 128 גדול עם שוליים שקטים,
+  הקוד בגופן קבוע-רוחב, ומספר שירות בולט ("מס׳ 0008 · קבוצה 3"). רשימה ארוכה מתכווצת ואז מסתיימת ב"ועוד N פריטים". הכול
+  שחור מלא (מדפסות תרמיות). כרטיס רחב: QR משמאל וטקסט מימין; כרטיס גבוה ו-Code 128: הברקוד למטה. בדף יצירת סדרה — תצוגה
+  מקדימה חיה.
+* **"נוצר על ידי Runner Systems"** (`show_credit`, באותה מיגרציה `6b1e9d4f2a87`) — שורה קטנה בתחתית כל שובר, **דלוקה כברירת
+  מחדל** (וכל סדרה קיימת); תיבת סימון בטופס הסדרה ובדף הסדרה. צילומי כל הפורמטים: `P:\specsoucher-shots`.
 
 ## 3. סריקה בקופה בלי לחיצה
 
@@ -114,8 +124,8 @@
 
 | קריאה | מה |
 |---|---|
-| `POST /prepaid-vouchers/batches` | + `groupSize`, `showCode`, `showItems` (ברירת מחדל true), `barcodeType` (`qr`/`code128`), `customerName`, `orderRef` |
-| `PATCH /prepaid-vouchers/batches/{id}` | + `showCode`, `showItems`, `barcodeType`, `customerName`, `orderRef` (null לא מאפס הגדרת הדפסה), `freeText` |
+| `POST /prepaid-vouchers/batches` | + `groupSize`, `showCode`, `showItems`, `showCredit` (שניהם ברירת מחדל true), `barcodeType` (`qr`/`code128`), `customerName`, `orderRef` |
+| `PATCH /prepaid-vouchers/batches/{id}` | + `showCode`, `showItems`, `showCredit`, `barcodeType`, `customerName`, `orderRef` (null לא מאפס הגדרת הדפסה), `freeText` |
 | `POST …/{id}/vouchers` | + `groupSize` (ברירת מחדל: גודל הקבוצה של הסדרה) |
 | `GET …/{id}/vouchers` | + `group`, `code` |
 | `GET …/{id}/file` | `format` = `pdf` / `zip` / `groups` / `csv`, `group`, `covers` |
@@ -124,7 +134,7 @@
 | `GET …/{id}/events` | יומן הפעולות |
 | `POST …/{id}/cancel`, `POST /prepaid-vouchers/vouchers/{id}/cancel` | + `{reason}` רשות (ליומן) |
 
-תשובת הסדרה: + `groupSize`, `groupCount`, `showCode`, `showItems`, `barcodeType`, `customerName`, `orderRef`; שובר: + `groupNo`.
+תשובת הסדרה: + `groupSize`, `groupCount`, `showCode`, `showItems`, `showCredit`, `barcodeType`, `customerName`, `orderRef`; שובר: + `groupNo`.
 ממשק הקופה (`/sync/{m}/prepaid-vouchers/lookup`, `…/redeem`) לא השתנה בשלב הזה — סוגי השובר הוסיפו לו שדות וקריאות (§7.9).
 
 ## 6. בדיקות

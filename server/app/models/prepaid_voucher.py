@@ -94,6 +94,9 @@ class PrepaidVoucherBatch(Base):
     #: voucher. Off: title, free text, validity, barcode, code and serial only — the till
     #: still knows what the voucher is worth. On by default, and every batch before it.
     show_items = Column(Boolean, nullable=False, default=True, server_default="true")
+    #: "נוצר על ידי Runner Systems" in small print at the bottom of the voucher. On by
+    #: default, and every batch before it.
+    show_credit = Column(Boolean, nullable=False, default=True, server_default="true")
     #: `qr` (2D, any camera / imager) or `code128` (a line barcode, for 1D laser scanners).
     barcode_type = Column(String(16), nullable=False, default="qr", server_default="qr")
     #: Who ordered the run ("קייטרינג אלון") and their order number — cover sheets, manifest.

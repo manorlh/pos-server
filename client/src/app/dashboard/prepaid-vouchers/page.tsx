@@ -11,7 +11,7 @@
  * ledger; the server decides who may see which batch (app/services/prepaid_vouchers.py).
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -75,7 +75,6 @@ import {
   printVouchers,
   type PagePresetId,
   type PrintLayout,
-  type VoucherLabels,
 } from '@/components/dashboard/prepaid-vouchers/voucher-print';
 import { PrepaidBatchReportView } from '@/components/dashboard/prepaid-vouchers/batch-report';
 import { VoucherNote, VoucherNoteButton } from '@/components/dashboard/prepaid-vouchers/voucher-note';
@@ -127,27 +126,6 @@ function useErrorText() {
     }
     return axiosErrorToToastMessage(err, tc('error'));
   };
-}
-
-function useCardLabels(): VoucherLabels {
-  const t = useTranslations('prepaidVouchers.card');
-  const tk = useTranslations('prepaidVouchers.kinds');
-  const tcr = useTranslations('prepaidVouchers.create');
-  return useMemo(
-    () => ({
-      serial: (n: string) => t('serial', { n }),
-      splitAllowed: t('splitAllowed'),
-      oneTime: t('oneTime'),
-      group: (g: number) => t('group', { g }),
-      validUntil: (until: string) => t('validUntil', { until }),
-      validFrom: (since: string) => t('validFrom', { since }),
-      validBetween: (since: string, until: string) => t('validBetween', { since, until }),
-      usesOne: tk('usesOne'),
-      usesMany: (n: number) => tk('usesMany', { n }),
-      includeExtras: tcr('includeExtras'),
-    }),
-    [t, tk, tcr],
-  );
 }
 
 /** "100 קבוצות של 10 …" — what a run of [count] in groups of [size] comes out as; null when not grouped. */
@@ -279,6 +257,8 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   const [showCode, setShowCode] = useState(false);
   // "הצגת הפריטים על השובר": on by default; off prints the voucher without its goods / benefit.
   const [showItems, setShowItems] = useState(true);
+  // "נוצר על ידי Runner Systems" at the bottom of the voucher: on by default.
+  const [showCredit, setShowCredit] = useState(true);
   const [barcodeType, setBarcodeType] = useState<PrepaidBarcodeType>('qr');
   const [customerName, setCustomerName] = useState('');
   const [orderRef, setOrderRef] = useState('');
@@ -336,6 +316,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
     setGroupCustom('');
     setShowCode(false);
     setShowItems(true);
+    setShowCredit(true);
     setBarcodeType('qr');
     setCustomerName('');
     setOrderRef('');
@@ -371,6 +352,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
         groupSize,
         showCode,
         showItems,
+        showCredit,
         barcodeType,
         customerName: customerName.trim() || null,
         orderRef: orderRef.trim() || null,
@@ -400,6 +382,29 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
     },
     onError: (err) => toast.error(errorText(err)),
   });
+
+  // The voucher as it will print, while the form is being filled (the same SVG as the batch screen's).
+  const draft: PrepaidVoucherBatch = {
+    id: 'draft', name: name.trim() || t('title'), eventName: eventName.trim() || null, logoUrl,
+    freeText: freeText.trim() || null, validFrom: dayBoundIso(validFrom, false), validUntil: dayBoundIso(validUntil, true),
+    splitAllowed: discount ? false : splitAllowed, status: 'active', companyId, companyName: null, shopIds: null, shops: [],
+    items: discount ? [] : items.map((i) => ({
+      productId: i.product.id, name: i.product.name, quantity: i.quantity, weighed: i.product.isWeighed, unitLabel: i.product.unitLabel,
+    })),
+    stats: { total: 0, active: 0, partiallyUsed: 0, used: 0, cancelled: 0 }, createdAt: null, cancelledAt: null,
+    showCode, showItems, showCredit, barcodeType, includeExtras: !discount && includeExtras, kind,
+    discountType: discount ? terms.discountType : null, discountValue: discount ? decimal(terms.value) : null,
+    minPurchase: kind === 'order_discount' ? decimal(terms.minPurchase) : null,
+    maxDiscount: kind === 'order_discount' && terms.discountType === 'percent' ? decimal(terms.maxDiscount) : null,
+    maxUnits: kind === 'item_discount' ? parseInt(terms.maxUnits, 10) || 1 : null,
+    targets: kind === 'item_discount'
+      ? { productIds: terms.products.map((x) => x.id), categoryIds: terms.categoryIds, names: terms.products.map((x) => x.name) }
+      : null,
+    usesPerVoucher: parseInt(rules.usesPerVoucher, 10) || 1,
+  };
+  const draftVoucher = {
+    id: 'draft', serial: 1, displayCode: 'XXXX-XXXX-XXXX-XXXX', qrPayload: 'PV:SAMPLE', groupNo: groupSize ? 1 : null,
+  };
 
   const addItem = (p: PrepaidProductOption) =>
     setItems((cur) => (cur.some((i) => i.product.id === p.id) ? cur : [...cur, { product: p, quantity: 1 }]));
@@ -553,6 +558,11 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
             </div>
             <BarcodeTypePicker value={barcodeType} onChange={setBarcodeType} />
           </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" className="h-4 w-4 accent-primary" checked={showCredit}
+              onChange={(e) => setShowCredit(e.target.checked)} />
+            {t('showCredit')}
+          </label>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
@@ -642,6 +652,12 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
                 emptyLabel={t('noShops')}
                 disabled={!companyId}
               />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label>{t('preview')}</Label>
+            <div className="overflow-x-auto rounded-lg border bg-muted/30 p-2">
+              <VoucherPreview batch={draft} voucher={draftVoucher} layout={{ preset: 'ticket80x50' }} />
             </div>
           </div>
         </div>
@@ -825,7 +841,6 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
   const t = useTranslations('prepaidVouchers');
   const tk = useTranslations('prepaidVouchers.kinds');
   const errorText = useErrorText();
-  const labels = useCardLabels();
   const qc = useQueryClient();
   const termsText = useBatchTermsText()(batch);
   const discount = isDiscountKind(batch.kind);
@@ -881,7 +896,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
   // Print settings: only what the next print looks like changes (the code under the barcode,
   // the goods on the voucher, the barcode).
   const saveSettings = useMutation({
-    mutationFn: (body: { showCode?: boolean; showItems?: boolean; barcodeType?: PrepaidBarcodeType }) =>
+    mutationFn: (body: { showCode?: boolean; showItems?: boolean; showCredit?: boolean; barcodeType?: PrepaidBarcodeType }) =>
       updatePrepaidBatch(batch.id, body),
     onSuccess: () => { toast.success(t('production.settingsSaved')); refresh(); },
     onError: (err) => toast.error(errorText(err)),
@@ -958,7 +973,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
         toast.error(t('nothingToPrint'));
         return;
       }
-      await printVouchers(batch, all, layout, labels, fileBase);
+      await printVouchers(batch, all, layout, fileBase);
     } catch (err) {
       toast.error(errorText(err));
     } finally {
@@ -972,7 +987,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
     try {
       // A single voucher on a sheet layout still gets a page of its own.
       const one: PrintLayout = layout.preset === 'a4grid' ? { preset: 'a6' } : layout;
-      if (kind === 'print') await printVouchers(batch, [v], one, labels, name);
+      if (kind === 'print') await printVouchers(batch, [v], one, name);
       else await serverFile('pdf', one, `${name}.pdf`, v.id);
     } catch (err) {
       toast.error(errorText(err));
@@ -1081,6 +1096,12 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
               <Switch checked={batch.showItems !== false} disabled={saveSettings.isPending || cancelled}
                 onCheckedChange={(v) => saveSettings.mutate({ showItems: !!v })} aria-label={t('create.showItems')} />
             </div>
+            <label className="flex items-center gap-2 self-center text-sm">
+              <input type="checkbox" className="h-4 w-4 accent-primary" checked={batch.showCredit !== false}
+                disabled={saveSettings.isPending || cancelled}
+                onChange={(e) => saveSettings.mutate({ showCredit: e.target.checked })} />
+              {t('create.showCredit')}
+            </label>
           </div>
           <div className="space-y-1">
             <Label htmlFor="pv-free-text-edit">{t('create.freeText')}</Label>
@@ -1106,7 +1127,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
           {narrowLine ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('production.code128Narrow')}</p> : null}
           <div className="overflow-x-auto py-1">
             {/* The free text as being typed: the preview shows what saving it will print. */}
-            <VoucherPreview batch={{ ...batch, freeText: freeText.trim() || null }} voucher={sample} layout={layout} labels={labels} />
+            <VoucherPreview batch={{ ...batch, freeText: freeText.trim() || null }} voucher={sample} layout={layout} />
           </div>
           <p className="text-xs text-muted-foreground">{t('printHint')}</p>
           <div className="flex flex-wrap gap-2">

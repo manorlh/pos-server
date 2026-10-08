@@ -97,6 +97,8 @@ export interface PrepaidVoucherBatch extends PrepaidBatchTerms {
   showCode?: boolean;
   /** "הצגת הפריטים על השובר": print the goods (a discount: what it gives). Absent: true. */
   showItems?: boolean;
+  /** "נוצר על ידי Runner Systems" at the bottom of the voucher. Absent: true. */
+  showCredit?: boolean;
   barcodeType?: PrepaidBarcodeType;
   customerName?: string | null;
   orderRef?: string | null;
@@ -178,6 +180,8 @@ export interface PrepaidBatchCreate {
   showCode?: boolean;
   /** "הצגת הפריטים על השובר" (default true). */
   showItems?: boolean;
+  /** "נוצר על ידי Runner Systems" (default true). */
+  showCredit?: boolean;
   barcodeType?: PrepaidBarcodeType;
   customerName?: string | null;
   orderRef?: string | null;
@@ -226,7 +230,7 @@ export async function updatePrepaidBatch(
   id: string,
   body: Partial<Pick<
     PrepaidBatchCreate,
-    | 'name' | 'eventName' | 'logoUrl' | 'freeText' | 'validFrom' | 'validUntil' | 'showCode' | 'showItems' | 'barcodeType'
+    | 'name' | 'eventName' | 'logoUrl' | 'freeText' | 'validFrom' | 'validUntil' | 'showCode' | 'showItems' | 'showCredit' | 'barcodeType'
     | 'customerName' | 'orderRef'
   >> & PrepaidBatchRulesUpdate,
 ): Promise<PrepaidVoucherBatch> {

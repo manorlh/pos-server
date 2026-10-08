@@ -265,12 +265,12 @@ class TestCodeUnderBarcode:
     def test_what_is_printed_under_the_barcode(self, w):
         batch = make(w, count=12, group_size=10)
         v = PrepaidVoucher(serial=11, group_no=2, code="ABCDEFGH23456789")
-        assert PDF.under_barcode_lines(v, PDF.PrintOptions(show_code=False)) == ["שובר מס׳ 0011 · קבוצה 2"]
+        assert PDF.under_barcode_lines(v, PDF.PrintOptions(show_code=False)) == ["מס׳ 0011 · קבוצה 2"]
         assert PDF.under_barcode_lines(v, PDF.PrintOptions(show_code=True)) == [
-            "ABCD-EFGH-2345-6789", "שובר מס׳ 0011 · קבוצה 2",
+            "ABCD-EFGH-2345-6789", "מס׳ 0011 · קבוצה 2",
         ]
         plain = PrepaidVoucher(serial=3, group_no=None, code="ABCDEFGH23456789")
-        assert PDF.under_barcode_lines(plain, PDF.PrintOptions()) == ["שובר מס׳ 0003"]
+        assert PDF.under_barcode_lines(plain, PDF.PrintOptions()) == ["מס׳ 0003"]
         assert batch["groupSize"] == 10
 
     def test_it_reaches_the_paper(self, w):

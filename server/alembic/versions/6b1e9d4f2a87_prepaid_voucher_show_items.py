@@ -1,15 +1,18 @@
-"""prepaid vouchers: "הצגת הפריטים על השובר" — a batch may print its vouchers without the goods
+"""prepaid vouchers: what the paper shows — the goods ("הצגת הפריטים על השובר") and the credit line
 
 Revision ID: 6b1e9d4f2a87
 Revises: 8c4a2f6e1b93
 Create Date: 2026-10-08
 
-The owner: "דינמי — תאפשר לא להציג אילו פריטים". `prepaid_voucher_batches.show_items`: print
-the goods (a discount voucher: what it gives) on the voucher. Off: title, free text, validity,
-barcode, code and serial only. Every existing batch: true — printed as before.
+Two per-batch print switches on `prepaid_voucher_batches`, both true for every existing batch
+(printed as before / with the new credit line):
 
-Idempotent: the column is added only when missing (a dev database may have it from a
-previous run).
+* `show_items` — the owner: "דינמי — תאפשר לא להציג אילו פריטים". Print the goods (a discount
+  voucher: what it gives). Off: title, free text, validity, barcode, code and serial only.
+* `show_credit` — "נוצר על ידי Runner Systems" in small print at the bottom of the voucher.
+
+Idempotent: each column is added only when missing (a dev database may have it from a
+previous run); offline (`--sql`) the plain statements.
 """
 from typing import Sequence, Union
 
@@ -22,23 +25,28 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 TABLE = 'prepaid_voucher_batches'
-COLUMN = 'show_items'
+COLUMNS = ('show_items', 'show_credit')
 
 
 def _offline() -> bool:
     return bool(op.get_context().as_sql)
 
 
-def _has_column(bind) -> bool:
-    return COLUMN in {c['name'] for c in sa.inspect(bind).get_columns(TABLE)}
+def _existing() -> set:
+    if _offline():
+        return set()
+    return {c['name'] for c in sa.inspect(op.get_bind()).get_columns(TABLE)}
 
 
 def upgrade() -> None:
-    # Offline (`--sql`) there is no database to look at: the plain statement.
-    if _offline() or not _has_column(op.get_bind()):
-        op.add_column(TABLE, sa.Column(COLUMN, sa.Boolean(), nullable=False, server_default=sa.true()))
+    existing = _existing()
+    for name in COLUMNS:
+        if name not in existing:
+            op.add_column(TABLE, sa.Column(name, sa.Boolean(), nullable=False, server_default=sa.true()))
 
 
 def downgrade() -> None:
-    if _offline() or _has_column(op.get_bind()):
-        op.drop_column(TABLE, COLUMN)
+    existing = set(COLUMNS) if _offline() else _existing()
+    for name in reversed(COLUMNS):
+        if name in existing:
+            op.drop_column(TABLE, name)
