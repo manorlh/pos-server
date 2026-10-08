@@ -57,12 +57,14 @@
     "reconciliation": "דוח התאמה",
     "transmissions": "שידורים",
     "sections": {
+      "mine": "הניהול שלי",
       "overview": "סקירה",
       "catalog": "קטלוג",
       "reports": "דוחות",
       "organization": "ארגון",
       "settings": "הגדרות"
     },
+    "cockpit": "הניהול שלי",
     "overview": "סקירה כללית",
     "liveItems": "מכירות לפי פריט — חי",
     "tillMessages": "הודעות לקופות",
@@ -845,6 +847,10 @@
       "hint": "הדף שנפתח בכל כניסה למערכת — בטלפון ובמחשב.",
       "label": "דף פתיחה",
       "saved": "דף הפתיחה נשמר",
+      "simpleMode": "תצוגת מנהל פשוטה",
+      "simpleModeHint": "תפריט קצר: הניהול שלי, דוחות עיקריים וההגדרות שמותר לך לשנות.",
+      "simpleModeDefaultOn": "מופעלת כברירת מחדל לתפקיד שלך.",
+      "simpleSaved": "התצוגה עודכנה",
       "saveFailed": "לא ניתן לשמור את דף הפתיחה",
       "notAllowed": "אין לך הרשאה לדף הזה — הכניסה תיפתח בלוח הבקרה.",
       "pages": {
@@ -1102,6 +1108,67 @@
       "overview": "סקירה",
       "tills": "קופות",
       "alerts": "התראות"
+    },
+    "cockpit": {
+      "quickActions": "פעולות מהירות",
+      "devices": "הקופות",
+      "hasAlerts": "יש התראות",
+      "actions": {
+        "tillMessage": "הודעה לקופות",
+        "failedPayments": "תשלומים לא מוכרעים",
+        "quickMessage": "הודעה מהירה",
+        "quickPromo": "מבצע מהיר",
+        "blockItem": "חסום / אזל",
+        "deviceControl": "שליטה בקופות וקיוסקים",
+        "liveEvent": "מצב אירוע חי",
+        "vouchers": "שוברים",
+        "stockUpdate": "עדכון מלאי"
+      },
+      "itemActions": {
+        "openTill": "לקופה",
+        "review": "לבדיקה"
+      },
+      "feed": {
+        "title": "דורש תשומת לב",
+        "count": "{count, plural, one {פריט אחד} other {# פריטים}}",
+        "allGood": "הכל תקין — אין כרגע מה לטפל בו.",
+        "more": "{count, plural, one {עוד פריט} other {עוד # פריטים}}",
+        "less": "הצג פחות",
+        "lastSeen": "עדכון אחרון {ago}",
+        "till": {
+          "unsynced": "{till} לא מחוברת ויש בה {count, plural, =0 {מכירות שלא נשלחו} one {מכירה שלא נשלחה} other {# מכירות שלא נשלחו}}",
+          "offline": "{till} לא מחוברת והמשמרת פתוחה",
+          "flags": "{till} — יש מה לבדוק"
+        },
+        "failedPayment": "תשלום באשראי לא מוכרע · {amount}"
+      },
+      "scope": {
+        "label": "מה מנהלים",
+        "shop": "סניף",
+        "event": "אירוע",
+        "advanced": "מתקדם: חברה, נקודת מכירה, קופה"
+      },
+      "tillMessage": {
+        "to": {
+          "machine": "לקופה {name}",
+          "area": "לכל הקופות בנקודת המכירה",
+          "shop": "לכל הקופות בסניף {name}",
+          "company": "לכל הקופות בחברה {name}"
+        },
+        "pickScope": "בחרו סניף כדי לשלוח הודעה לקופות שלו.",
+        "titleLabel": "כותרת",
+        "titlePlaceholder": "כותרת (לא חובה)",
+        "bodyLabel": "ההודעה",
+        "bodyPlaceholder": "מה הקופאים צריכים לדעת?",
+        "send": "שליחה לקופות",
+        "sent": "ההודעה נשלחה לקופות",
+        "failed": "לא ניתן לשלוח את ההודעה"
+      },
+      "failedPayments": {
+        "hint": "תשלומים שהקופה לא הצליחה לסגור ואולי חויבו. ההכרעה — במסך העסקאות.",
+        "none": "אין תשלומים לא מוכרעים.",
+        "decide": "להכרעה במסך העסקאות"
+      }
     },
     "home": {
       "label": "תצוגת דף הבית",
@@ -15070,6 +15137,12 @@
       "reports": "דוחות",
       "z": "זדים ומשמרות",
       "products": "מוצרים וקטלוג",
+      "cockpit": "הניהול שלי",
+      "quick_actions": "פעולות מהירות",
+      "item_blocks": "חסימות ואזל",
+      "device_control": "שליטה מרחוק בקופות וקיוסקים",
+      "live_event": "מצב אירוע חי",
+      "alerts": "התראות",
       "stock": "מלאי",
       "vouchers": "שוברים",
       "prepaid_vouchers": "שוברי הפקה",

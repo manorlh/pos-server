@@ -79,6 +79,27 @@ SECTIONS: Tuple[Section, ...] = (
             "/dashboard/menus", "/dashboard/assortment",
         ),
     ),
+    # ── The manager's own (the cockpit, "הניהול שלי") — the owner, 09.10.2026: "תבנה קבוצת הרשאות
+    # לזה". The cockpit is the home page (open to everyone signed in); these sections gate what it
+    # offers: its quick actions, blocks, remote control, the live event and the alerts.
+    Section(
+        "cockpit", "הניהול שלי",
+        "מסך הניהול של הסניף או האירוע: הנתונים, מה דורש תשומת לב, הקופות והפעולות המהירות.",
+        (),
+    ),
+    Section(
+        "quick_actions", "פעולות מהירות",
+        "הודעה מהירה לקופות, מבצע מהיר והאפי האוור — מהמסך הראשי או מהתובנות, בלי עריכת מבצעים מלאה.",
+        (),
+    ),
+    Section("item_blocks", "חסימות ואזל", "סימון פריט כאזל או חסום, בסניף, בנקודת מכירה או בקופה.", ()),
+    Section(
+        "device_control", "שליטה מרחוק בקופות וקיוסקים",
+        "מצב הקופות והקיוסקים, ופעולות מרחוק עליהם.",
+        (),
+    ),
+    Section("live_event", "מצב אירוע חי", "מסך האירוע בזמן אמת.", ()),
+    Section("alerts", "התראות", "התראות על חריגות ותקלות (הרשמה להתראות בטלפון — של המשתמש עצמו).", ()),
     Section("stock", "מלאי", "רמות מלאי, קבלת סחורה, ספירה ותיקונים.", ("/dashboard/stock",)),
     Section("vouchers", "שוברים", "שוברי הנחה בקטלוג.", ("/dashboard/vouchers",)),
     Section("prepaid_vouchers", "שוברי הפקה", "שוברים לצוותי הפקה, מומשים בקופות ב-QR.", ("/dashboard/prepaid-vouchers",)),
@@ -139,9 +160,39 @@ ORG_MANAGER_SECTIONS: Dict[str, str] = {"reports": VIEW, "products": EDIT, "z": 
 FULL_TEMPLATE = "full"
 FULL_LABEL = "גישה מלאה לפי תפקיד"
 
+#: "מנהל סניף / אירוע" — runs a shop or an event from the cockpit: sees its reports, Zs, the live
+#: event, the alerts, the vouchers and the promotions; acts through the quick actions, blocks and
+#: sold-outs, remote control, till messages, kiosks and stock. Never users, accounting, branding,
+#: till settings, organization or till users.
+BRANCH_MANAGER_TEMPLATE = "branch_manager"
+BRANCH_MANAGER_LABEL = "מנהל סניף / אירוע"
+BRANCH_MANAGER_SECTIONS: Dict[str, str] = {
+    "cockpit": VIEW,
+    "reports": VIEW,
+    "z": VIEW,
+    "live_event": VIEW,
+    "alerts": VIEW,
+    "prepaid_vouchers": VIEW,
+    "promotions": VIEW,
+    "quick_actions": EDIT,
+    "item_blocks": EDIT,
+    "device_control": EDIT,
+    "till_messages": EDIT,
+    "kiosks": EDIT,
+    "stock": EDIT,
+}
+#: "מנהל אזור" — the same, for a user whose org scope is an area (a shop's points of sale).
+AREA_MANAGER_TEMPLATE = "area_manager"
+AREA_MANAGER_LABEL = "מנהל אזור"
+AREA_MANAGER_SECTIONS: Dict[str, str] = dict(BRANCH_MANAGER_SECTIONS)
+#: The templates of a manager who runs a place from the cockpit: "תצוגת מנהל פשוטה" by default.
+MANAGER_TEMPLATES = (BRANCH_MANAGER_TEMPLATE, AREA_MANAGER_TEMPLATE)
+
 BUILTIN_TEMPLATES = {
     ORG_MANAGER_TEMPLATE: {"label": ORG_MANAGER_LABEL, "sections": ORG_MANAGER_SECTIONS, "fullAccess": False},
     FULL_TEMPLATE: {"label": FULL_LABEL, "sections": {}, "fullAccess": True},
+    BRANCH_MANAGER_TEMPLATE: {"label": BRANCH_MANAGER_LABEL, "sections": BRANCH_MANAGER_SECTIONS, "fullAccess": False},
+    AREA_MANAGER_TEMPLATE: {"label": AREA_MANAGER_LABEL, "sections": AREA_MANAGER_SECTIONS, "fullAccess": False},
 }
 
 
@@ -252,7 +303,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/attendance/shifts/{}", S("attendance", "z", level=VIEW)),
     (_ALL, "/attendance/*", S("attendance")),
     # ── Catalog ──
-    (_GET, "/availability/reopens", S("products")),
+    # "חסימות ואזל": a product's sold-out / blocked state, also for a manager without the catalog.
+    (_GET, "/availability/reopens", S("products", "item_blocks")),
     (_ALL, "/catalog-import/*", S("products")),
     (_ALL, "/catalog-menus*", S("products")),
     (_ALL, "/catalog/*", S("products")),
@@ -260,7 +312,9 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/demo-menu/*", S("products")),
     (_GET, "/menu-broadcast/*", S("products")),
     (_ALL, "/menu/*", S("products")),
-    ("POST", "/products/availability-summary", S("products", level=VIEW)),
+    ("POST", "/products/availability-summary", S("products", "item_blocks", level=VIEW)),
+    (_GET, "/products/{}/availability", S("products", "item_blocks", level=VIEW)),
+    (_ALL, "/products/{}/availability/*", S("products", "item_blocks")),
     ("POST", "/products/shop-scope/preview", S("products", level=VIEW)),
     (_ALL, "/products/{}/kitchen-printers*", S("products", "printers")),
     (_ALL, "/products*", S("products")),

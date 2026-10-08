@@ -26,6 +26,9 @@ interface InternalUser extends UserCapabilities {
   hasTillPin?: boolean;
   /** "דף פתיחה": where a sign-in lands (kept on the server, `preferences.homePage`). */
   homePage: HomePageId;
+  /** "תצוגת מנהל פשוטה": the short manager menu (the server's default for the role / template). */
+  simpleMode: boolean;
+  simpleModeDefault: boolean;
 }
 
 export interface TenantSummary {
@@ -122,6 +125,8 @@ export const useAuth = create<AuthState>((set) => ({
           dashboardAccess: parseDashboardAccess(data.dashboardAccess),
           // An older server sends no preferences: the board.
           homePage: parseHomePage(data.preferences?.homePage),
+          simpleMode: data.preferences?.simpleMode === true,
+          simpleModeDefault: data.preferences?.simpleModeDefault === true,
         },
         tenants,
         activeTenantId,

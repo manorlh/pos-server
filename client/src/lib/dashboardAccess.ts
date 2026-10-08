@@ -15,6 +15,12 @@ export type SectionId =
   | 'reports'
   | 'z'
   | 'products'
+  | 'cockpit'
+  | 'quick_actions'
+  | 'item_blocks'
+  | 'device_control'
+  | 'live_event'
+  | 'alerts'
   | 'stock'
   | 'vouchers'
   | 'prepaid_vouchers'
@@ -69,6 +75,13 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
       '/dashboard/menus', '/dashboard/assortment',
     ],
   },
+  // The manager's own ("הניהול שלי"): they gate what the cockpit (the home page) offers.
+  { id: 'cockpit', pages: [] },
+  { id: 'quick_actions', pages: [] },
+  { id: 'item_blocks', pages: [] },
+  { id: 'device_control', pages: [] },
+  { id: 'live_event', pages: [] },
+  { id: 'alerts', pages: [] },
   { id: 'stock', pages: ['/dashboard/stock'] },
   { id: 'vouchers', pages: ['/dashboard/vouchers'] },
   { id: 'prepaid_vouchers', pages: ['/dashboard/prepaid-vouchers'] },
@@ -93,6 +106,9 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
 ];
 
 export const SECTION_IDS: SectionId[] = DASHBOARD_SECTIONS.map((s) => s.id);
+
+/** "מנהל סניף / אירוע" and "מנהל אזור" — they run a place from the cockpit (server `MANAGER_TEMPLATES`). */
+export const MANAGER_TEMPLATES = ['branch_manager', 'area_manager'] as const;
 
 /** "מנהל ארגון" — what a new user gets until the super admin opens more. */
 export const ORG_MANAGER_SECTIONS: Partial<Record<SectionId, AccessLevel>> = {

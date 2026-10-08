@@ -362,6 +362,40 @@ export const NAV_SECTIONS: NavSection[] = [
  * The entry a path belongs to. Exact match wins; otherwise the longest declared
  * prefix. `/dashboard` never prefix-matches, or it would claim every route.
  */
+/**
+ * "תצוגת מנהל פשוטה": the menu of a manager who runs one place (a shop, an area, an event) —
+ * the owner: "לתת יוזר למנהל, בלי מיליון לשוניות". Three groups: הניהול שלי (the cockpit, the
+ * home page), a short list of reports, and the settings they may change. Every entry still
+ * passes the same gates as the full menu (roles, "הרשאות", "הרשאות דשבורד"); the full menu
+ * stays for owners and admins, and behind the profile's switch.
+ */
+export const SIMPLE_NAV_SECTIONS: NavSection[] = [
+  {
+    id: 'mine',
+    labelKey: 'sections.mine',
+    items: [{ href: '/dashboard', labelKey: 'cockpit', icon: LayoutDashboard }],
+  },
+  {
+    id: 'simpleReports',
+    labelKey: 'sections.reports',
+    items: [
+      { href: '/dashboard/transactions', labelKey: 'transactions', icon: Receipt },
+      { href: '/dashboard/z-reports', labelKey: 'zReports', icon: FileText },
+      { href: '/dashboard/live-items', labelKey: 'liveItems', icon: Activity },
+    ],
+  },
+  {
+    id: 'simpleSettings',
+    labelKey: 'sections.settings',
+    items: [
+      { href: '/dashboard/till-messages', labelKey: 'tillMessages', icon: Megaphone, gate: 'settingsWrite' },
+      { href: '/dashboard/stock', labelKey: 'stock', icon: Boxes },
+      { href: '/dashboard/kiosks', labelKey: 'kiosks', icon: MonitorSmartphone, gate: 'settingsWrite' },
+      { href: '/dashboard/profile', labelKey: 'profile', icon: User },
+    ],
+  },
+];
+
 export function findNavEntry(pathname: string | null | undefined): NavItem | undefined {
   if (!pathname) return undefined;
   const all = NAV_SECTIONS.flatMap((section) => section.items);

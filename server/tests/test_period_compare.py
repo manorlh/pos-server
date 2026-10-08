@@ -338,9 +338,12 @@ class TestSideBySide:
 
 class TestHomePagePreference:
     def test_the_default_is_the_board_and_me_says_so(self, w):
-        assert UP.read_preferences(w.admin) == {"homePage": "board"}
+        assert UP.read_preferences(w.admin, w.db) == {"homePage": "board", "simpleMode": False, "simpleModeDefault": False}
         me = users_router.get_current_user_info(current_user=w.manager, db=w.db)
-        assert me.model_dump(by_alias=True)["preferences"] == {"homePage": "board"}
+        # A shop manager runs one place: the simple manager view by default.
+        assert me.model_dump(by_alias=True)["preferences"] == {
+            "homePage": "board", "simpleMode": True, "simpleModeDefault": True,
+        }
 
     def test_set_read_back_and_reset(self, w):
         out = users_router.update_my_preferences(
@@ -348,7 +351,7 @@ class TestHomePagePreference:
         )
         assert out.home_page == "compare" and out.home_pages[0] == "board"
         w.db.expire_all()
-        assert users_router.get_my_preferences(current_user=w.manager).home_page == "compare"
+        assert users_router.get_my_preferences(current_user=w.manager, db=w.db).home_page == "compare"
         back = users_router.update_my_preferences(
             UserPreferencesUpdate(homePage=None), current_user=w.manager, db=w.db
         )
@@ -362,8 +365,9 @@ class TestHomePagePreference:
         assert e.value.status_code == 422
         with pytest.raises(ValidationError):
             UserPreferencesUpdate.model_validate({"homePage": "board", "theme": "dark"})
-        w.manager.preferences = {"homePage": "gone"}
-        assert UP.read_preferences(w.manager) == {"homePage": "board"}
+        w.manager.preferences = {"homePage": "gone", "simpleMode": "yes"}
+        assert UP.read_preferences(w.manager)["homePage"] == "board"
+        assert UP.read_preferences(w.manager)["simpleMode"] is True  # the role's default
 
     def test_the_preference_is_the_callers_own_and_the_comparisons_are_reports(self):
         from app.services.dashboard_sections import rule_for

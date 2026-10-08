@@ -40,6 +40,15 @@ export default function ProfilePage() {
   const { hidden } = useRoleAccess();
   const homePage: HomePageId = internalUser?.homePage ?? 'board';
   const homeOptions = HOME_PAGES.filter((p) => p.id === homePage || homePageAllowed(p.id, access, hidden));
+  const simpleMode = internalUser?.simpleMode ?? false;
+  const saveSimple = useMutation({
+    mutationFn: (on: boolean) => updateMyPreferences({ simpleMode: on }),
+    onSuccess: async () => {
+      toast.success(th('simpleSaved'));
+      await fetchUser();
+    },
+    onError: (err) => toast.error(axiosErrorToToastMessage(err, th('saveFailed'))),
+  });
   const saveHome = useMutation({
     mutationFn: (id: HomePageId) => updateMyPreferences({ homePage: id }),
     onSuccess: async () => {
@@ -195,6 +204,23 @@ export default function ProfilePage() {
           {!homePageAllowed(homePage, access, hidden) ? (
             <p className="text-xs text-muted-foreground">{th('notAllowed')}</p>
           ) : null}
+          <label className="flex min-h-11 items-center justify-between gap-3 border-t pt-3 text-sm">
+            <span>
+              <span className="block font-medium">{th('simpleMode')}</span>
+              <span className="block text-xs text-muted-foreground">
+                {th('simpleModeHint')}
+                {internalUser?.simpleModeDefault ? ` ${th('simpleModeDefaultOn')}` : ''}
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              role="switch"
+              className="size-5 shrink-0 accent-primary"
+              checked={simpleMode}
+              disabled={saveSimple.isPending}
+              onChange={(e) => saveSimple.mutate(e.target.checked)}
+            />
+          </label>
         </CardContent>
       </Card>
 

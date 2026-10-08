@@ -170,9 +170,11 @@ export async function fetchVoucherBoard(
 export interface MyPreferences {
   homePage: string;
   homePages: string[];
+  simpleMode: boolean;
+  simpleModeDefault: boolean;
 }
 
-export async function updateMyPreferences(body: { homePage: string | null }): Promise<MyPreferences> {
+export async function updateMyPreferences(body: { homePage?: string | null; simpleMode?: boolean | null }): Promise<MyPreferences> {
   const { data } = await api.put<MyPreferences>('/users/me/preferences', body);
   return data;
 }
