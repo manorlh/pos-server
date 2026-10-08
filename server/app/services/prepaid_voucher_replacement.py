@@ -9,6 +9,8 @@ A voucher lost, damaged or cancelled may be replaced by a manager, with a reason
   so it inherits every condition of the original: type and version, prices, validity, shops,
   stacking, accounting; and what the original had **left**: its remaining goods / uses, or an explicit
   part of them the manager names (a package partly taken is never made whole again by itself);
+* a fixed-value voucher already redeemed in part is not replaced (`…_partly_valued`): its value left is
+  counted from its own redemptions, so a new voucher would get the whole value again;
 * nothing is replaced while the original is held by an open sale (a reservation not yet confirmed or
   released) — that sale is cleared first (§16: "אין … להנפיק חלופה לפני בירור תוצאת הפעולות");
 * a voucher already used up has nothing to replace; a replacement can itself be replaced (the chain);
@@ -28,7 +30,12 @@ from typing import Any, Dict, List, Optional
 from fastapi import status
 from sqlalchemy.orm import Session
 
-from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherBatch, PrepaidVoucherReservation
+from app.models.prepaid_voucher import (
+    PrepaidVoucher,
+    PrepaidVoucherBatch,
+    PrepaidVoucherRedemption,
+    PrepaidVoucherReservation,
+)
 from app.models.prepaid_voucher_extras import REPLACEMENT_REASONS, PrepaidVoucherReplacement
 from app.models.user import User
 from app.services import prepaid_voucher_extras_access as ACC
@@ -39,6 +46,9 @@ BAD_REASON = "prepaid_voucher_replacement_bad_reason"
 BAD_ITEMS = "prepaid_voucher_replacement_bad_items"
 IN_USE = "prepaid_voucher_in_use"
 BATCH_CANCELLED = "prepaid_voucher_batch_cancelled"
+#: A fixed-value voucher already redeemed in part: what is left of its value is counted from its own
+#: redemptions (the core's `value_left`), so a new voucher would start from the whole value again.
+PARTLY_VALUED = "prepaid_voucher_replacement_partly_valued"
 
 REASON_TEXT = {"lost": "אבד", "damaged": "ניזוק", "cancelled": "בוטל", "other": "אחר"}
 
@@ -79,6 +89,10 @@ def replace_voucher(db: Session, user: User, tenant_id, voucher_id, body) -> Dic
         raise ACC.http(status.HTTP_409_CONFLICT, ALREADY_REPLACED)
     if not _what_left(original, batch):
         raise ACC.http(status.HTTP_409_CONFLICT, NOTHING_TO_REPLACE)
+    if (getattr(batch, "pricing", None) or "cover") == "fixed" and getattr(batch, "till_value", None) and db.query(
+        PrepaidVoucherRedemption.id
+    ).filter(PrepaidVoucherRedemption.voucher_id == original.id, PrepaidVoucherRedemption.reversed_at.is_(None)).first():
+        raise ACC.http(status.HTTP_409_CONFLICT, PARTLY_VALUED)
     now = _now()
     held = [
         r for r in db.query(PrepaidVoucherReservation).filter(

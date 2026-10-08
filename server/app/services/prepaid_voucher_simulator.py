@@ -20,9 +20,10 @@ golden-pinned engine; `prepaid_voucher_rules` for discount kinds):
 5. **Booking** — what the document would show in the voucher's accounting mode (deduction / tender / ₪0).
 6. **Now** — for a batch: whether it is paused, at its quota, or a test batch.
 
-Until the core lands voucher groups, a type's goods list is the groups: each product a part of its
-own with its quantity (min = max, or min 0 when the voucher may be redeemed in parts). The
-production price is never part of a simulation.
+A type / batch with groups (`selection` groups) is simulated by its groups (a batch's frozen lists, a
+type's selection against the catalog of now, each group's fixed value per unit); a fixed list makes each
+product a part of its own with its quantity (min = max, or min 0 when the voucher may be redeemed in
+parts). The production price is never part of a simulation.
 """
 from __future__ import annotations
 
@@ -226,14 +227,34 @@ def _simulate_goods(db: Session, terms, body, products, price_of, accounting: st
     split = bool(getattr(terms, "split_allowed", False))
     groups: List[PR.Group] = []
     caps: List[PR.GroupCap] = []
-    for it in terms.items:
-        q = PV.qty(it.quantity)
-        n = int(q) if q == q.to_integral_value() else 1
-        key = str(it.product_id)
-        groups.append(PR.Group(key=key, name=it.product_name, min_qty=0 if split else n, max_qty=n, remaining=n,
-                               product_ids=(key,), allow_repeat=True))
-        caps.append(PR.GroupCap(key=key, product_ids=(key,), remaining=n))
-    total = sum(g.max_qty for g in groups)
+    group_values: Dict[str, Optional[int]] = {}
+    stored = list(getattr(terms, "groups", None) or [])
+    if (getattr(terms, "selection", None) or "items") == "groups" and stored:
+        # The type's / batch's groups (the core's production_voucher_groups): a batch's frozen list,
+        # a type's selection against the catalog of now.
+        from app.services import production_voucher_groups as PG
+
+        catalog = PG.catalog_of(db, terms.tenant_id, terms.company_id)
+        for g in stored:
+            ids = (PG.eligible(db, terms, g, catalog) if g.get("frozenProductIds") is not None
+                   else PR.eligible_products(PG.selection_of(g), catalog))
+            n = int(g.get("maxQty") or 1)
+            groups.append(PR.Group(key=g["key"], name=g.get("name") or "", min_qty=int(g.get("minQty") or 0), max_qty=n,
+                                   remaining=n, product_ids=tuple(ids), allow_repeat=bool(g.get("allowRepeat", True)),
+                                   excluded_ids=tuple(g.get("excludeProductIds") or ())))
+            caps.append(PR.GroupCap(key=g["key"], product_ids=tuple(ids), remaining=n))
+            group_values[g["key"]] = g.get("valueAgorot")
+        total = PG.total_max(stored, getattr(terms, "total_qty", None))
+    else:
+        # A fixed list: each product a part of its own, with its quantity.
+        for it in terms.items:
+            q = PV.qty(it.quantity)
+            n = int(q) if q == q.to_integral_value() else 1
+            key = str(it.product_id)
+            groups.append(PR.Group(key=key, name=it.product_name, min_qty=0 if split else n, max_qty=n, remaining=n,
+                                   product_ids=(key,), allow_repeat=True))
+            caps.append(PR.GroupCap(key=key, product_ids=(key,), remaining=n))
+        total = sum(g.max_qty for g in groups)
     # Which products can still be handed over (the redemption's own re-check).
     related = PV._related_companies(db, terms.company_id)
     group_set = PV._company_group(db, terms.company_id)
@@ -289,7 +310,7 @@ def _simulate_goods(db: Session, terms, body, products, price_of, accounting: st
         lists = [int(u["listPriceAgorot"]) for u in taken]
         if pricing == "fixed" and value is not None:
             share = PR.fixed_share(int(value), len(taken), total) if split else int(value)
-            values = PR.split_value(share, [(lp, None) for lp in lists])
+            values = PR.split_value(share, [(lp, group_values.get(u.get("groupKey"))) for u, lp in zip(taken, lists)])
             if values is None:
                 refusal = refusal or PR.Refusal(PR.VALUE_MISMATCH, PR.TEXT[PR.VALUE_MISMATCH])
                 values = lists

@@ -291,6 +291,13 @@ class TestReplacement:
         ev = R.prepaid_voucher_events(b["id"], **_ctx(w))["items"]
         assert any(e["action"] == "replace_voucher" and "ניזוק" in (e["reason"] or "") for e in ev)
 
+    def test_a_fixed_value_voucher_redeemed_in_part_is_not_replaced(self, w):
+        b = batch(w, count=1, tillValue=80, pricing="fixed")
+        v = vouchers(w, b)[0]
+        take(w, v["code"])
+        e = refused(X.replace_prepaid_voucher, v["id"], ReplacementIn(reasonKind="damaged", reason="נקרע"), **_ctx(w))
+        assert (e.status_code, e.detail) == (409, RPL.PARTLY_VALUED)
+
     def test_an_explicit_part_never_more(self, w):
         b = batch(w, count=1)
         v = vouchers(w, b)[0]
@@ -395,6 +402,17 @@ class TestSimulator:
         hot = next(u for u in out["units"] if u["productId"] == str(w.hotdog.id))
         assert hot["forced"] and hot["reductionAgorot"] > 0
 
+    def test_groups_with_a_value_each(self, w):
+        t = make_type(w, code="grp", selection="groups", tillValue=80, totalQty=2, items=[], redemptionAccounting="payment",
+                      groups=[{"name": "מנה", "minQty": 1, "maxQty": 1, "productIds": [w.hotdog.id], "value": 50},
+                              {"name": "שתייה", "minQty": 1, "maxQty": 1, "productIds": [w.drink.id], "value": 30}])
+        out = sim(w, t, [(w.hotdog, 1), (w.drink, 1)])
+        assert out["ok"] and [(u["groupName"], u["valueAgorot"]) for u in out["units"]] == [("מנה", 5000), ("שתייה", 3000)]
+        out = sim(w, t, [(w.drink, 2)])
+        assert out["ok"] is False
+        assert [u["status"] for u in out["units"]] == ["assigned", PR.UNIT_GROUP_FULL]
+        assert out["refusal"]["code"] == PR.PACKAGE_INCOMPLETE
+
     def test_a_discount_voucher(self, w):
         b = R.create_prepaid_voucher_batch(PrepaidVoucherBatchCreate(
             name="הנחה", companyId=w.company.id, count=1, kind="order_discount", discountType="fixed", discountValue=10,
@@ -430,15 +448,30 @@ class TestReports:
         out = X.prepaid_voucher_exceptions_report(scope=PVA.Scope(), **_ctx(w))
         assert out["counts"] == {"reversed": 1, "over_use": 1, "cancelled": 1, "replaced": 1}
         assert {i["kindText"] for i in out["items"]} >= {"מימוש שבוטל", "שובר שבוטל", "שובר שהוחלף בשובר חלופי"}
-        assert out["overridesRecorded"] is False
+        assert out["overridesRecorded"] is True
         # A till filter keeps only what happened at a till.
         out = X.prepaid_voucher_exceptions_report(scope=PVA.make_scope(machine_id=[str(w.tills[0].id)]), **_ctx(w))
         assert set(out["counts"]) == {"reversed", "over_use"}
 
-    def test_overrides_not_recorded_yet(self, w):
-        batch(w)
+    def test_overrides_from_the_cores_audit(self, w):
+        from app.models.prepaid_voucher import PrepaidVoucherOverrideAudit
+
+        b = batch(w)
+        v = vouchers(w, b)[0]
+        w.db.add(PrepaidVoucherOverrideAudit(
+            id=uuid.uuid4(), tenant_id=w.tenant.id, batch_id=uuid.UUID(b["id"]), voucher_id=uuid.UUID(v["id"]),
+            product_id=str(w.hotdog.id), product_name="נקניקייה", list_price_agorot=2500, value_agorot=2000,
+            reduction_agorot=500, reduction_bp=2000, policy="manager", approved_by_pos_user_name="רון",
+            machine_id=w.tills[0].id, pos_user_name="דנה",
+        ))
+        w.db.commit()
         out = X.prepaid_voucher_overrides_report(scope=PVA.Scope(), **_ctx(w))
-        assert (out["recorded"], out["items"], out["totals"]) == (False, [], None)
+        assert out["recorded"] is True
+        row = out["items"][0]
+        assert (row["productName"], row["reductionAgorot"], row["reductionBp"], row["approvedBy"], row["preset"],
+                row["machineName"]) == ("נקניקייה", 500, 2000, "רון", False, "Till 1")
+        assert out["totals"] == {"units": 1, "reductionAgorot": 500, "preset": 0, "approved": 1}
+        assert X.prepaid_voucher_exceptions_report(scope=PVA.Scope(), **_ctx(w))["counts"] == {"override": 1}
 
     def test_catalog(self, w):
         w.drink.no_discount = True
@@ -493,7 +526,7 @@ class TestMigration:
         from alembic.runtime.migration import MigrationContext
 
         module = self._module()
-        assert module.down_revision == "8b5e2f4c9a17"
+        assert module.down_revision == "c8e1f5a3b702"
         engine = sa.create_engine("sqlite://")
         with engine.begin() as conn:
             for t in ("tenants", "companies", "users", "report_events", "prepaid_voucher_batches", "prepaid_vouchers"):
