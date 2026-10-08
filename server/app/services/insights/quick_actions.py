@@ -31,15 +31,18 @@ from fastapi import HTTPException, status
 from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
 
+from app.models.category import Category
 from app.models.insight_quick_action import QUICK_ACTION_TARGETS, InsightQuickAction
 from app.models.pos_machine import POSMachine
-from app.models.product import Product
+from app.models.product import CatalogLevel, Product
 from app.models.product_cost import ProductCost
-from app.models.promotion import TransactionPromotion
+from app.models.promotion import Promotion, TransactionPromotion
 from app.models.shop_product_override import ShopProductOverride
 from app.models.transaction import Transaction
 from app.models.transaction_item import TransactionItem
 from app.models.user import User, UserRole
+from app.services import promotion_announcements as PA
+from app.services import promotion_schedule as PS
 from app.services import promotions as P
 from app.services import till_messages as TM
 from app.services.reports import ReportWindow, _is_refund_condition, build_scoped_transaction_query
@@ -58,7 +61,10 @@ MAX_HOURS = 12
 MAX_UNTIL_DAYS = 30
 TEXT_MAX = 500
 DEFAULT_COLOR = "amber"
-SOURCES = ("slow", "dead", "declining", "anomaly", "manual")
+SOURCES = ("slow", "dead", "declining", "anomaly", "adhoc", "happy_hour", "manual")
+#: A happy hour runs this many weeks unless told (1–12).
+HAPPY_HOUR_WEEKS = 4
+MAX_HAPPY_HOUR_WEEKS = 12
 
 #: The offers a quick promotion makes.
 OFFER_KINDS = ("percent", "second_half", "fixed_price")
@@ -72,6 +78,9 @@ DEFAULT_VAT_RATE = 0.18
 #: 4xx details.
 NOT_FOUND = "quick_action_not_found"
 PRODUCT_NOT_FOUND = "quick_action_product_not_found"
+CATEGORY_NOT_FOUND = "quick_action_category_not_found"
+BAD_SUBJECT = "quick_promo_bad_subject"
+BAD_SCHEDULE = "quick_promo_bad_schedule"
 NO_TILLS = "quick_action_no_tills"
 BAD_TARGET = "quick_action_bad_target"
 BAD_DURATION = "quick_action_bad_duration"
@@ -389,6 +398,179 @@ def offer_label(offer: Dict[str, Any]) -> str:
     return f"₪{offer['newPrice'] / 100:g} ליחידה"
 
 
+# ── What a promotion is on: a product, a category, the whole basket ───────────
+
+
+@dataclass
+class Subject:
+    """"מבצע מזדמן": one product, a category (and its sub-categories), or everything."""
+
+    kind: str  # product | category | all
+    product: Optional[Product] = None
+    category: Optional[Category] = None
+
+    @property
+    def name(self) -> str:
+        if self.product is not None:
+            return self.product.name
+        if self.category is not None:
+            return self.category.name
+        return "כל המוצרים"
+
+    def group(self) -> Dict[str, Any]:
+        """The promotion's target group (the promotions' schema)."""
+        if self.product is not None:
+            return {"productIds": [str(self.product.id)]}
+        if self.category is not None:
+            return {"categoryIds": [str(self.category.id)]}
+        return {"all": True}
+
+
+def subject_of(db: Session, tenant_id, body: Dict[str, Any]) -> Subject:
+    """`productId`, else `categoryId`, else `all: true`."""
+    if body.get("productId"):
+        return Subject("product", product=global_product(db, tenant_id, body["productId"]))
+    if body.get("categoryId"):
+        ident = _uuid(body["categoryId"])
+        category = db.get(Category, ident) if ident is not None else None
+        if category is None or category.tenant_id != tenant_id:
+            raise _bad(CATEGORY_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+        return Subject("category", category=category)
+    if body.get("all") is True:
+        return Subject("all")
+    raise _bad(BAD_SUBJECT)
+
+
+def _category_ids(db: Session, tenant_id, root: uuid.UUID) -> List[uuid.UUID]:
+    """The category and every sub-category under it (as the tills expand it)."""
+    children: Dict[uuid.UUID, List[uuid.UUID]] = {}
+    for cid, parent in db.query(Category.id, Category.parent_id).filter(Category.tenant_id == tenant_id).all():
+        if parent is not None:
+            children.setdefault(parent, []).append(cid)
+    out, stack = [], [root]
+    while stack:
+        current = stack.pop()
+        if current in out:
+            continue
+        out.append(current)
+        stack.extend(children.get(current, []))
+    return out
+
+
+@dataclass(frozen=True)
+class Item:
+    product_id: uuid.UUID
+    name: str
+    pricing: Pricing
+
+
+def group_items(db: Session, tenant_id, subject: Subject, shop_ids: Set[uuid.UUID]) -> List[Item]:
+    """
+    The products to check an offer on. A product: itself (cost known or not). A category or
+    the whole basket: its global products **with a known cost** — one without cannot be
+    shown to be below it — priced at the lowest price among the target's shops.
+    """
+    if subject.product is not None:
+        return [Item(subject.product.id, subject.product.name, product_pricing(db, tenant_id, subject.product, shop_ids))]
+    query = (
+        db.query(Product, ProductCost.cost)
+        .join(ProductCost, and_(ProductCost.product_id == Product.id, ProductCost.tenant_id == tenant_id))
+        .filter(
+            Product.tenant_id == tenant_id,
+            Product.catalog_level == CatalogLevel.GLOBAL,
+            Product.pos_machine_id.is_(None),
+            Product.is_general.is_(False),
+        )
+    )
+    if subject.category is not None:
+        query = query.filter(Product.category_id.in_(_category_ids(db, tenant_id, subject.category.id)))
+    rows = query.all()
+    if not rows:
+        return []
+    overrides: Dict[Tuple[uuid.UUID, uuid.UUID], int] = {}
+    if shop_ids:
+        for r in db.query(ShopProductOverride.global_product_id, ShopProductOverride.shop_id, ShopProductOverride.price).filter(
+            ShopProductOverride.global_product_id.in_([p.id for p, _ in rows]),
+            ShopProductOverride.shop_id.in_(list(shop_ids)),
+            ShopProductOverride.price.isnot(None),
+        ):
+            overrides[(r.global_product_id, r.shop_id)] = to_agorot(r.price)
+    items = []
+    for product, cost in rows:
+        base = to_agorot(product.price)
+        prices = [overrides.get((product.id, s), base) for s in shop_ids] or [base]
+        rate = float(product.tax_rate) / 100.0 if product.tax_rate is not None else DEFAULT_VAT_RATE
+        items.append(Item(product.id, product.name, Pricing(price=base, min_price=min(prices), cost=to_agorot(cost), vat_rate=rate)))
+    return items
+
+
+def check_group(subject: Subject, kind: str, value, items: Sequence[Item]) -> Dict[str, Any]:
+    """An offer over the subject's products: a product's own check, or every costed product's."""
+    if subject.product is not None:
+        return check_offer(kind, value, items[0].pricing)
+    if kind == "fixed_price":
+        raise _bad(BAD_OFFER)  # one price for a whole group means nothing
+    probe = Pricing(price=10_000, min_price=10_000, cost=None)
+    head = check_offer(kind, value, probe)
+    offenders = []
+    for item in items:
+        checked = check_offer(kind, value, item.pricing)
+        if checked["belowCost"]:
+            offenders.append({"productId": str(item.product_id), "name": item.name, "floor": checked["floor"],
+                              "lowestUnitPrice": checked["lowestUnitPrice"]})
+    return {
+        "kind": kind,
+        "value": head["value"],
+        "effectivePct": head["effectivePct"],
+        "belowCost": bool(offenders),
+        "offenders": offenders[:5],
+        "offendersCount": len(offenders),
+        "checked": len(items),
+    }
+
+
+def suggest_group(subject: Subject, items: Sequence[Item]) -> Optional[Dict[str, Any]]:
+    """A product: `suggest_offer`. A group: the largest % that keeps half of every costed margin."""
+    if subject.product is not None:
+        return suggest_offer(items[0].pricing)
+    if not items:
+        return check_group(subject, "percent", DEFAULT_PERCENT, items)
+    margins = [i.pricing.margin_pct for i in items]
+    if any(m is None or m <= 0 for m in margins):
+        return None
+    for pct in sorted(PERCENT_CHOICES, reverse=True):
+        if all(pct <= m * KEEP_MARGIN_SHARE for m in margins):
+            return check_group(subject, "percent", pct, items)
+    for pct in (10, 5):
+        offer = check_group(subject, "percent", pct, items)
+        if not offer["belowCost"]:
+            return offer
+    return None
+
+
+def group_options(subject: Subject, items: Sequence[Item]) -> List[Dict[str, Any]]:
+    if subject.product is not None:
+        return offer_options(items[0].pricing)
+    return [check_group(subject, "percent", pct, items) for pct in PERCENT_CHOICES] + [check_group(subject, "second_half", None, items)]
+
+
+def promotion_body(subject: Subject, offer: Dict[str, Any], items: Sequence[Item]) -> Tuple[str, Dict[str, Any]]:
+    """The promotion type and config for an offer on the subject."""
+    if subject.product is not None:
+        return promotion_config(subject.product.id, offer, items[0].pricing)
+    target = subject.group()
+    if offer["kind"] == "percent":
+        return "discount", {"target": target, "discountKind": "percent", "discountValue": offer["value"]}
+    return "buy_x_get_y", {"target": target, "buyQuantity": 1, "getQuantity": 1, "getDiscountPercent": 50}
+
+
+def _below_cost(offer: Dict[str, Any]) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={
+        "code": BELOW_COST, "floor": offer.get("floor"), "lowestUnitPrice": offer.get("lowestUnitPrice"),
+        "offenders": offer.get("offenders"),
+    })
+
+
 # ── Writes ────────────────────────────────────────────────────────────────────
 
 
@@ -396,6 +578,7 @@ def _action(
     db: Session, user: User, tenant_id, *, kind: str, product: Optional[Product], target: Target,
     params: Dict[str, Any], source: Optional[str], starts_at: datetime, ends_at: Optional[datetime],
     till_message_ids: Optional[List[str]] = None, promotion_id: Optional[uuid.UUID] = None,
+    category: Optional[Category] = None,
 ) -> InsightQuickAction:
     action = InsightQuickAction(
         id=uuid.uuid4(),
@@ -403,6 +586,8 @@ def _action(
         kind=kind,
         product_id=product.id if product is not None else None,
         product_name=product.name if product is not None else None,
+        category_id=category.id if category is not None else None,
+        category_name=category.name if category is not None else None,
         target_level=target.level,
         target_id=target.id,
         target_name=(target.name or None),
@@ -476,33 +661,42 @@ def _day_start_hour(body: Dict[str, Any]) -> int:
     return value if isinstance(value, int) and 0 <= value <= 8 else 4
 
 
-def create_quick_promotion(db: Session, user: User, tenant_id, body: Dict[str, Any]) -> InsightQuickAction:
+def _create_promotion(db: Session, user: User, tenant_id, fields: Dict[str, Any]) -> Promotion:
+    from app.schemas.promotion import PromotionIn
+
+    return P.create_promotion(db, user, tenant_id, PromotionIn.model_validate(fields))
+
+
+def create_quick_promotion(db: Session, user: User, tenant_id, body: Dict[str, Any]) -> Tuple[InsightQuickAction, List[POSMachine]]:
     """
-    A promotion on one product for the target's tills, ending by itself, never below cost.
-    `body`: productId, targetLevel, targetId, offer {kind, value}, duration, source?.
+    A promotion for the target's tills, ending by itself, never below cost: on a product
+    (a slow mover's "מבצע מהיר"), or — "מבצע מזדמן" — on any product, a category or the
+    whole basket. `body`: productId | categoryId | all, targetLevel, targetId, offer {kind,
+    value}, duration, announce? {enabled, text, endEnabled, endText}, source?.
+    Returns the action and the tills an announcement reached now.
     """
     if user.role not in PROMOTION_ROLES:
         raise _bad(P.FORBIDDEN, status.HTTP_403_FORBIDDEN)
-    product = global_product(db, tenant_id, body.get("productId"))
+    subject = subject_of(db, tenant_id, body)
     target = resolve_target(db, user, tenant_id, body.get("targetLevel"), body.get("targetId"))
     if not target.machines:
         raise _bad(NO_TILLS)
-    pricing = product_pricing(db, tenant_id, product, target.shop_ids)
+    announce = PA.clean_settings(body.get("announce"))
+    if announce and announce.get("enabled"):
+        PA.require_messaging(db, user)
+    items = group_items(db, tenant_id, subject, target.shop_ids)
     raw_offer = body.get("offer") or {}
-    offer = check_offer(raw_offer.get("kind"), raw_offer.get("value"), pricing)
+    offer = check_group(subject, raw_offer.get("kind"), raw_offer.get("value"), items)
     if offer["belowCost"]:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={
-            "code": BELOW_COST, "floor": offer["floor"], "lowestUnitPrice": offer["lowestUnitPrice"],
-        })
+        raise _below_cost(offer)
     now = _now()
     _tz_name, tz = _zone(db, tenant_id)
     window = resolve_window(now, tz, body.get("duration") or {}, day_start_hour=_day_start_hour(body))
-    promo_type, config = promotion_config(product.id, offer, pricing)
-    label = offer_label(offer)
-    from app.schemas.promotion import PromotionIn
-
-    promotion_in = PromotionIn.model_validate({
-        "name": f"מבצע מהיר · {product.name} · {label}"[:120],
+    promo_type, config = promotion_body(subject, offer, items)
+    label = offer_label(offer) if subject.product is not None or offer["kind"] != "fixed_price" else ""
+    title = "מבצע מהיר" if body.get("source") in ("slow", "dead", "declining") else "מבצע מזדמן"
+    promotion = _create_promotion(db, user, tenant_id, {
+        "name": f"{title} · {subject.name} · {label}"[:120],
         "description": f"הופעל מהתובנות ע״י {_who(user) or '—'}",
         "type": promo_type,
         "config": config,
@@ -513,17 +707,192 @@ def create_quick_promotion(db: Session, user: User, tenant_id, body: Dict[str, A
         "endTime": window.end_time,
         "priority": 0,
     })
-    promotion = P.create_promotion(db, user, tenant_id, promotion_in)
-    return _action(
-        db, user, tenant_id, kind="promotion", product=product, target=target,
+    woken = PA.plan(db, user, promotion, settings=announce, now=now) if announce else []
+    pricing = items[0].pricing if subject.product is not None else None
+    action = _action(
+        db, user, tenant_id, kind="promotion", product=subject.product, category=subject.category, target=target,
         params={
-            "offer": offer, "label": label, "price": pricing.price, "minPrice": pricing.min_price,
-            "cost": pricing.cost, "vatRate": pricing.vat_rate, "duration": body.get("duration") or {"kind": "end_of_day"},
+            "subject": subject.kind, "offer": offer, "label": label,
+            "price": pricing.price if pricing else None, "minPrice": pricing.min_price if pricing else None,
+            "cost": pricing.cost if pricing else None, "vatRate": pricing.vat_rate if pricing else None,
+            "duration": body.get("duration") or {"kind": "end_of_day"},
             "promotionName": promotion.name, "validFrom": window.valid_from.isoformat(),
             "validTo": window.valid_to.isoformat(), "startTime": window.start_time, "endTime": window.end_time,
+            "announce": PA.settings_out(promotion) if announce else None,
         },
-        source=body.get("source"), starts_at=now, ends_at=window.ends_at, promotion_id=promotion.id,
+        source=body.get("source") or "adhoc", starts_at=now, ends_at=window.ends_at, promotion_id=promotion.id,
     )
+    return action, woken
+
+
+# ── Happy hour (docs/SPEC_INSIGHTS.md §10.3) ──────────────────────────────────
+
+WEEKDAY_SHORT = ("א׳", "ב׳", "ג׳", "ד׳", "ה׳", "ו׳", "ש׳")
+
+
+def _days_label(days: Sequence[int]) -> str:
+    return ", ".join(WEEKDAY_SHORT[d] for d in sorted(set(days)))
+
+
+def _hour_windows(db: Session, tenant_id, now: datetime) -> List[Promotion]:
+    """The tenant's running and coming promotions that have an hour window (other happy hours)."""
+    from app.services.promotions import tenant_today
+
+    today = tenant_today(db, tenant_id)
+    return (
+        db.query(Promotion)
+        .filter(
+            Promotion.tenant_id == tenant_id,
+            Promotion.is_paused.is_(False),
+            Promotion.start_time.isnot(None),
+            (Promotion.valid_to.is_(None)) | (Promotion.valid_to >= today),
+        )
+        .all()
+    )
+
+
+def schedule_overlaps(db: Session, tenant_id, schedule: PS.Schedule, tz, now: datetime) -> List[Dict[str, Any]]:
+    """The promotions with an hour window that run at the same time as `schedule`."""
+    out = []
+    for promotion in _hour_windows(db, tenant_id, now):
+        hit = PS.overlaps(schedule, PS.Schedule.of(promotion), tz, now=now)
+        if hit is not None:
+            out.append({"id": str(promotion.id), "name": promotion.name, "at": hit[0].isoformat(),
+                        "weekdays": promotion.weekdays, "startTime": promotion.start_time, "endTime": promotion.end_time})
+    return out
+
+
+def happy_hour_suggestions(ctx, heatmap: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    The weakest weekday × hour slots of the heat map (each ≥ 40% under its hour's usual, over
+    open days only) as happy-hour windows: one weekday, an hour window, four weeks from
+    today. Hours after midnight run on the calendar day they fall on (the promotions' rule),
+    so a weak 01:00 of Friday's business day is Saturday 01:00. Each says which other
+    hour-window promotions it would overlap.
+    """
+    tz = PS_zone(ctx.clock.tz_name)
+    now = ctx.clock.now
+    today = now.astimezone(tz).date()
+    spans = []
+    for slot in heatmap.get("weak") or []:
+        lo, hi = int(slot["fromHour"]), int(slot["toHour"])
+        if hi <= lo:
+            hi += 24
+        spans.append((int(slot["weekday"]), lo, hi, slot))
+    out = []
+    merged = PS.merge_spans((w, lo, hi) for w, lo, hi, _ in spans)
+    for weekday, lo, hi in merged:
+        source = [s for w, a, b, s in spans if w == weekday and lo <= a < hi]
+        promo_weekday = (weekday + 1) % 7 if lo < ctx.clock.day_start_hour else weekday
+        start_hour = lo % 24
+        end_hour = hi % 24
+        schedule = PS.schedule_of_slot([promo_weekday], start_hour, end_hour, today, HAPPY_HOUR_WEEKS)
+        deviation = min((s.get("deviationPct") or 0) for s in source) if source else None
+        out.append({
+            "id": f"{weekday}-{lo}",
+            "weekday": weekday,
+            "weekdays": [promo_weekday],
+            "fromHour": start_hour,
+            "toHour": end_hour,
+            "startTime": schedule.start_time,
+            "endTime": schedule.end_time,
+            "deviationPct": deviation,
+            "gapPerWeek": sum(int(s.get("gapPerWeek") or 0) for s in source),
+            "typicalNet": sum(int(s.get("typicalNet") or 0) for s in source),
+            "usual": sum(int(s.get("usual") or 0) for s in source),
+            "overlaps": schedule_overlaps(ctx.db, ctx.scope.tenant_id, schedule, tz, now),
+        })
+    out.sort(key=lambda s: -s["gapPerWeek"])
+    return {"suggestions": out[:6], "weeks": HAPPY_HOUR_WEEKS, "maxWeeks": MAX_HAPPY_HOUR_WEEKS}
+
+
+def PS_zone(name: str):
+    from app.services.reports import _load_zoneinfo
+
+    return _load_zoneinfo(name)
+
+
+def _hhmm(value: Any) -> str:
+    text = str(value or "").strip()[:5]
+    try:
+        hour, minute = (int(x) for x in text.split(":"))
+    except (TypeError, ValueError):
+        raise _bad(BAD_SCHEDULE)
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise _bad(BAD_SCHEDULE)
+    return f"{hour:02d}:{minute:02d}"
+
+
+def create_happy_hour(db: Session, user: User, tenant_id, body: Dict[str, Any]) -> Tuple[InsightQuickAction, List[POSMachine]]:
+    """
+    "Happy hour מתוזמן": a promotion on these weekdays in this hour window, for `weeks` weeks
+    from today, on a category or the whole basket (or one product), never below cost.
+    `body`: weekdays [0..6], startTime, endTime, weeks?, offer, categoryId | all | productId,
+    targetLevel, targetId, announce?. Returns the action (its `params.overlaps`: the other
+    hour-window promotions it runs alongside — a warning, not a refusal) and the tills woken.
+    """
+    if user.role not in PROMOTION_ROLES:
+        raise _bad(P.FORBIDDEN, status.HTTP_403_FORBIDDEN)
+    try:
+        days = sorted({int(d) for d in body.get("weekdays") or []})
+    except (TypeError, ValueError):
+        raise _bad(BAD_SCHEDULE)
+    if not days or any(d < 0 or d > 6 for d in days):
+        raise _bad(BAD_SCHEDULE)
+    start, end = _hhmm(body.get("startTime")), _hhmm(body.get("endTime"))
+    if start == end:
+        raise _bad(BAD_SCHEDULE)
+    weeks = body.get("weeks", HAPPY_HOUR_WEEKS)
+    if not isinstance(weeks, int) or not 1 <= weeks <= MAX_HAPPY_HOUR_WEEKS:
+        raise _bad(BAD_SCHEDULE)
+    subject = subject_of(db, tenant_id, body)
+    target = resolve_target(db, user, tenant_id, body.get("targetLevel"), body.get("targetId"))
+    if not target.machines:
+        raise _bad(NO_TILLS)
+    announce = PA.clean_settings(body.get("announce"))
+    if announce and announce.get("enabled"):
+        PA.require_messaging(db, user)
+    items = group_items(db, tenant_id, subject, target.shop_ids)
+    raw_offer = body.get("offer") or {}
+    offer = check_group(subject, raw_offer.get("kind"), raw_offer.get("value"), items)
+    if offer["belowCost"]:
+        raise _below_cost(offer)
+    now = _now()
+    _tz_name, tz = _zone(db, tenant_id)
+    today = now.astimezone(tz).date()
+    schedule = PS.Schedule(valid_from=today, valid_to=today + timedelta(days=7 * weeks - 1),
+                           weekdays=tuple(days), start_time=start, end_time=end)
+    overlapping = schedule_overlaps(db, tenant_id, schedule, tz, now)
+    promo_type, config = promotion_body(subject, offer, items)
+    label = offer_label(offer) if offer["kind"] != "fixed_price" or subject.product is not None else ""
+    promotion = _create_promotion(db, user, tenant_id, {
+        "name": f"Happy hour · {_days_label(days)} {start}–{end} · {subject.name} · {label}"[:120],
+        "description": f"הופעל מהתובנות ע״י {_who(user) or '—'}",
+        "type": promo_type,
+        "config": config,
+        "scopes": target.promotion_scopes(),
+        "validFrom": schedule.valid_from.isoformat(),
+        "validTo": schedule.valid_to.isoformat(),
+        "weekdays": days,
+        "startTime": start,
+        "endTime": end,
+        "priority": 0,
+    })
+    woken = PA.plan(db, user, promotion, settings=announce, now=now) if announce else []
+    nxt = PS.current_or_next(schedule, tz, now)
+    action = _action(
+        db, user, tenant_id, kind="promotion", product=subject.product, category=subject.category, target=target,
+        params={
+            "subject": subject.kind, "offer": offer, "label": label, "happyHour": True,
+            "weekdays": days, "startTime": start, "endTime": end, "weeks": weeks,
+            "validFrom": schedule.valid_from.isoformat(), "validTo": schedule.valid_to.isoformat(),
+            "nextStart": nxt[0].isoformat() if nxt else None, "overlaps": overlapping,
+            "promotionName": promotion.name,
+            "announce": PA.settings_out(promotion) if announce else None,
+        },
+        source="happy_hour", starts_at=now, ends_at=PS.final_end(schedule, tz), promotion_id=promotion.id,
+    )
+    return action, woken
 
 
 def get_action(db: Session, tenant_id, action_id, kind: str) -> InsightQuickAction:
@@ -557,11 +926,12 @@ def cancel_quick_message(db: Session, user: User, tenant_id, action_id) -> Tuple
     return action, machines
 
 
-def cancel_quick_promotion(db: Session, user: User, tenant_id, action_id) -> InsightQuickAction:
-    """"בטל מבצע": pause the promotion now (kept for the reports); idempotent."""
+def cancel_quick_promotion(db: Session, user: User, tenant_id, action_id) -> Tuple[InsightQuickAction, List[POSMachine]]:
+    """"בטל מבצע": pause the promotion now (kept for the reports), its announcement down; idempotent."""
     if user.role not in PROMOTION_ROLES:
         raise _bad(P.FORBIDDEN, status.HTTP_403_FORBIDDEN)
     action = get_action(db, tenant_id, action_id, "promotion")
+    woken: List[POSMachine] = []
     if action.promotion_id is not None:
         try:
             promotion = P.get_promotion(db, tenant_id, action.promotion_id)
@@ -569,8 +939,9 @@ def cancel_quick_promotion(db: Session, user: User, tenant_id, action_id) -> Ins
             promotion = None  # deleted on the promotions page since: nothing left to stop
         if promotion is not None:
             P.set_paused(db, user, tenant_id, promotion, True)
+            woken = PA.plan(db, user, promotion)
     _cancelled(db, user, action)
-    return action
+    return action, woken
 
 
 def _cancelled(db: Session, user: User, action: InsightQuickAction) -> None:
@@ -584,25 +955,36 @@ def _cancelled(db: Session, user: User, action: InsightQuickAction) -> None:
 # ── Reads: the suggestion, the list and the result ────────────────────────────
 
 
-def promotion_suggestion(db: Session, user: User, tenant_id, product_id, target_level=None, target_id=None) -> Dict[str, Any]:
-    """The product's price and cost, the offers, the suggested one, and whether the user may create it."""
-    product = global_product(db, tenant_id, product_id)
+def promotion_suggestion(db: Session, user: User, tenant_id, body: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    For a product, a category or the whole basket (`productId` | `categoryId` | `all`): the
+    price and cost (a product), the offers and whether each keeps every unit above cost, the
+    suggested one, and whether the user may create it.
+    """
+    subject = subject_of(db, tenant_id, body)
     shop_ids: Set[uuid.UUID] = set()
-    if target_level and target_id:
-        shop_ids = resolve_target(db, user, tenant_id, target_level, target_id).shop_ids
-    pricing = product_pricing(db, tenant_id, product, shop_ids)
-    suggested = suggest_offer(pricing)
+    if body.get("targetLevel") and body.get("targetId"):
+        shop_ids = resolve_target(db, user, tenant_id, body["targetLevel"], body["targetId"]).shop_ids
+    items = group_items(db, tenant_id, subject, shop_ids)
+    pricing = items[0].pricing if subject.product is not None else None
     return {
-        "product": {"id": str(product.id), "name": product.name},
-        "price": pricing.price,
-        "minPrice": pricing.min_price,
-        "cost": pricing.cost,
-        "vatRate": pricing.vat_rate,
-        "floor": pricing.floor,
-        "marginPct": None if pricing.margin_pct is None else round(pricing.margin_pct, 1),
-        "options": offer_options(pricing),
-        "suggested": suggested,
+        "subject": {
+            "kind": subject.kind,
+            "id": str((subject.product or subject.category).id) if subject.kind != "all" else None,
+            "name": subject.name,
+        },
+        "product": {"id": str(subject.product.id), "name": subject.product.name} if subject.product is not None else None,
+        "price": pricing.price if pricing else None,
+        "minPrice": pricing.min_price if pricing else None,
+        "cost": pricing.cost if pricing else None,
+        "vatRate": pricing.vat_rate if pricing else None,
+        "floor": pricing.floor if pricing else None,
+        "marginPct": None if pricing is None or pricing.margin_pct is None else round(pricing.margin_pct, 1),
+        "costedProducts": len(items) if subject.product is None else None,
+        "options": group_options(subject, items),
+        "suggested": suggest_group(subject, items),
         "canCreate": user.role in PROMOTION_ROLES,
+        "canAnnounce": PA.may_message(db, user),
         "maxHours": MAX_HOURS,
         "maxUntilDays": MAX_UNTIL_DAYS,
     }
@@ -617,11 +999,24 @@ def _status(action: InsightQuickAction, now: datetime) -> str:
     return "active"
 
 
-def _product_sums(db: Session, user: User, tenant_id, action: InsightQuickAction, windows: Dict[str, Tuple[datetime, datetime]]) -> Dict[str, Dict[str, Any]]:
-    """The product's units and net on the action's tills, per window — one grouped query."""
+def _subject_products(db: Session, tenant_id, action: InsightQuickAction) -> Optional[List[uuid.UUID]]:
+    """What the result counts: the product, the category's products, or (None) every sale."""
+    if action.product_id is not None:
+        return [action.product_id]
+    if action.category_id is not None:
+        cats = _category_ids(db, tenant_id, action.category_id)
+        return [r[0] for r in db.query(Product.id).filter(Product.tenant_id == tenant_id, Product.category_id.in_(cats)).all()]
+    if action.kind == "promotion" and (action.params or {}).get("subject") == "all":
+        return None
+    return []
+
+
+def _product_sums(db: Session, user: User, tenant_id, action: InsightQuickAction,
+                  windows: Dict[str, Tuple[datetime, datetime]], products: Optional[List[uuid.UUID]]) -> Dict[str, Dict[str, Any]]:
+    """The subject's units and net on the action's tills, per window — one grouped query."""
     empty = {name: {"units": 0.0, "net": 0} for name in windows}
     ids = [_uuid(m) for m in action.machine_ids or [] if _uuid(m) is not None]
-    if not ids or action.product_id is None:
+    if not ids or products == []:
         return empty
     start = min(s for s, _ in windows.values())
     end = max(e for _, e in windows.values())
@@ -646,14 +1041,15 @@ def _product_sums(db: Session, user: User, tenant_id, action: InsightQuickAction
             func.coalesce(func.sum(case((sale, TransactionItem.quantity), (ref, -TransactionItem.quantity), else_=0)), 0).label(f"{name}__units"),
             func.coalesce(func.sum(case((sale, TransactionItem.total_price - disc), (ref, -TransactionItem.total_price), else_=0)), 0).label(f"{name}__net"),
         ]
-    row = (
+    query = (
         db.query(*columns)
         .select_from(TransactionItem)
         .join(tx, tx.c.tx_id == TransactionItem.transaction_id)
         .outerjoin(Product, Product.id == TransactionItem.product_id)
-        .filter(key == action.product_id)
-        .one()
     )
+    if products is not None:
+        query = query.filter(key.in_(products))
+    row = query.one()
     return {
         name: {"units": round(float(getattr(row, f"{name}__units") or 0), 3), "net": to_agorot(getattr(row, f"{name}__net"))}
         for name in windows
@@ -661,14 +1057,15 @@ def _product_sums(db: Session, user: User, tenant_id, action: InsightQuickAction
 
 
 def _change(a: float, b: float) -> Optional[float]:
+    """The change from b to a in %; None when there was nothing before to compare with."""
     if b == 0:
-        return None if a == 0 else None
+        return None
     return round((a - b) / abs(b) * 100, 1)
 
 
 def action_result(db: Session, user: User, tenant_id, action: InsightQuickAction, now: datetime) -> Optional[Dict[str, Any]]:
     """
-    The product's sales on the action's tills since it started (to its end, its cancellation
+    The subject's sales on the action's tills since it started (to its end, its cancellation
     or now) against the same length of time just before it, and the same hours a week before.
     `dataArrived`: a document of those tills has been received since it started.
     """
@@ -690,13 +1087,14 @@ def action_result(db: Session, user: User, tenant_id, action: InsightQuickAction
         "dataArrived": last_doc is not None,
         "lastDocumentAt": _utc(last_doc).isoformat() if last_doc is not None else None,
     }
-    if action.product_id is None or span.total_seconds() <= 0:
+    products = _subject_products(db, tenant_id, action)
+    if products == [] or span.total_seconds() <= 0:
         return out
     sums = _product_sums(db, user, tenant_id, action, {
         "since": (start, end),
         "before": (start - span, start),
         "lastWeek": (start - timedelta(days=7), end - timedelta(days=7)),
-    })
+    }, products)
     out.update(sums)
     out["changePct"] = _change(sums["since"]["units"], sums["before"]["units"])
     out["changePctLastWeek"] = _change(sums["since"]["units"], sums["lastWeek"]["units"])
@@ -719,6 +1117,8 @@ def action_out(action: InsightQuickAction, now: datetime, result: Optional[Dict[
         "status": _status(action, now),
         "productId": str(action.product_id) if action.product_id else None,
         "productName": action.product_name,
+        "categoryId": str(action.category_id) if action.category_id else None,
+        "categoryName": action.category_name,
         "target": {"level": action.target_level, "id": str(action.target_id), "name": action.target_name},
         "tills": len(action.machine_ids or []),
         "machineIds": list(action.machine_ids or []),

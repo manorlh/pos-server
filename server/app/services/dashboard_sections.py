@@ -321,6 +321,7 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/insights/quick-actions/messages*", S("till_messages")),
     (_GET, "/insights/quick-actions/promotions/suggestion", S("promotions", "reports", level=VIEW)),
     (_ALL, "/insights/quick-actions/promotions*", S("promotions")),
+    (_ALL, "/insights/quick-actions/happy-hours*", S("promotions")),
     ("PUT", "/insights/anomaly-settings", S("reports")),
     (_GET, "/insights*", S("reports")),
     (_ALL, "/report-events*", S("reports")),

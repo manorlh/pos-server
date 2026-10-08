@@ -163,6 +163,7 @@ GET /insights/baskets -> reports:view
 GET /insights/cashiers -> reports:view
 GET /insights/customers -> reports:view
 GET /insights/forecast -> reports:view
+GET /insights/happy-hours/suggestions -> reports:view
 GET /insights/heatmap -> reports:view
 GET /insights/kiosks -> reports|kiosks:view
 GET /insights/kpis -> reports:view
@@ -170,6 +171,7 @@ GET /insights/menu-engineering -> reports:view
 PUT /insights/product-costs/{product_id} -> reports|products:edit
 GET /insights/products/slow -> reports:view
 GET /insights/quick-actions -> reports:view
+POST /insights/quick-actions/happy-hours -> promotions:edit
 POST /insights/quick-actions/messages -> till_messages:edit
 POST /insights/quick-actions/messages/{action_id}/cancel -> till_messages:edit
 POST /insights/quick-actions/promotions -> promotions:edit

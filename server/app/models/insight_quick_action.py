@@ -4,7 +4,8 @@ tap, about a product that barely sells or a till that stands out — and the log
 
 * `insight_quick_actions` — one row per action: a quick message to the tills' cashiers (a
   non-blocking banner, through the till messages, `till_message_ids`) or a quick promotion
-  (through the promotions, `promotion_id`), its target (a company, shop, area, till or a
+  (through the promotions, `promotion_id`) — on a product, a category or the whole basket
+  ("מבצע מזדמן", a happy hour) — its target (a company, shop, area, till or a
   report event) and the tills it reached (`machine_ids`), when it started and when it ends
   by itself, and who did it. A cancellation ("בטל מבצע") stamps `cancelled_at`.
 
@@ -39,6 +40,10 @@ class InsightQuickAction(Base):
     #: The global product it is about; null for a message about a till (an anomaly).
     product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     product_name = Column(String(255), nullable=True)
+    #: An ad-hoc promotion or a happy hour on a category ("מבצע מזדמן"); both null with no
+    #: product either: the whole basket.
+    category_id = Column(UUID(as_uuid=True), ForeignKey("categories.id", ondelete="SET NULL"), nullable=True)
+    category_name = Column(String(255), nullable=True)
     #: company | shop | area | machine | event
     target_level = Column(String(16), nullable=False)
     target_id = Column(UUID(as_uuid=True), nullable=False)
@@ -51,7 +56,7 @@ class InsightQuickAction(Base):
     promotion_id = Column(UUID(as_uuid=True), nullable=True)
     #: What was chosen: the text, the offer, the duration, the price and cost it was judged by.
     params = Column(JSON, nullable=True)
-    #: Why: "slow" | "dead" | "declining" | "anomaly" | "manual".
+    #: Why: "slow" | "dead" | "declining" | "anomaly" | "adhoc" | "happy_hour" | "manual".
     source = Column(String(32), nullable=True)
     starts_at = Column(DateTime(timezone=True), nullable=False)
     #: When it ends by itself (null: until cancelled).

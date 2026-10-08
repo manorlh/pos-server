@@ -40,6 +40,11 @@ POST /insights/quick-actions/messages            → "הודעה מהירה": a 
 POST /insights/quick-actions/messages/{id}/cancel
 POST /insights/quick-actions/promotions          → "מבצע מהיר": a promotion, never below cost
 POST /insights/quick-actions/promotions/{id}/cancel → "בטל מבצע"
+GET  /insights/happy-hours/suggestions           → weak weekday × hour slots as happy hours
+POST /insights/quick-actions/happy-hours         → "Happy hour מתוזמן": weekdays × an hour window
+
+A quick promotion may be on a product, a category or the whole basket ("מבצע מזדמן"), and
+any of them may announce itself to the cashiers (`announce`, app/services/promotion_announcements.py).
 
 `eventId` on any read: the scope is a report event (docs/SPEC_EVENTS.md) — its tills, its
 window, its business days.
@@ -334,17 +339,24 @@ def list_quick_actions(
 
 @router.get("/quick-actions/promotions/suggestion")
 def get_promotion_suggestion(
-    product_id: uuid.UUID = Query(..., alias="productId"),
+    product_id: Optional[uuid.UUID] = Query(None, alias="productId"),
+    category_id: Optional[uuid.UUID] = Query(None, alias="categoryId"),
+    all_products: bool = Query(False, alias="all", description="The whole basket (a happy hour, an ad-hoc promotion)."),
     target_level: Optional[str] = Query(None, alias="targetLevel"),
     target_id: Optional[uuid.UUID] = Query(None, alias="targetId"),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """The product's price (lowest in the target) and cost, the offers and the suggested one."""
-    level = target_level if isinstance(target_level, str) else None
-    tid = target_id if isinstance(target_id, uuid.UUID) else None
-    return Q.promotion_suggestion(db, current_user, active_tenant_id, product_id, level, tid)
+    """A product's price (lowest in the target) and cost — or a category's / everything's costed products — the offers, the suggested one."""
+    body = {
+        "productId": product_id if isinstance(product_id, uuid.UUID) else None,
+        "categoryId": category_id if isinstance(category_id, uuid.UUID) else None,
+        "all": all_products is True,
+        "targetLevel": target_level if isinstance(target_level, str) else None,
+        "targetId": target_id if isinstance(target_id, uuid.UUID) else None,
+    }
+    return Q.promotion_suggestion(db, current_user, active_tenant_id, body)
 
 
 @router.post("/quick-actions/messages", status_code=status.HTTP_201_CREATED)
@@ -379,23 +391,27 @@ def cancel_quick_message(
     return Q.action_out(action, Q._now())
 
 
-def _promotions_changed(db: Session, tenant_id, background_tasks: BackgroundTasks) -> None:
+def _promotions_changed(db: Session, tenant_id, background_tasks: BackgroundTasks, woken=()) -> None:
+    """Commit; wake the tills for the promotions, and those an announcement reached now."""
     targets = P.notify_targets(db, tenant_id)
+    message_targets = TM.notify_targets(woken)
     db.commit()
     background_tasks.add_task(P.publish_promotions_notify, targets)
+    if message_targets:
+        background_tasks.add_task(TM.publish_message_notify, message_targets)
 
 
 @router.post("/quick-actions/promotions", status_code=status.HTTP_201_CREATED)
 def post_quick_promotion(
     background_tasks: BackgroundTasks,
-    body: Dict[str, Any] = Body(..., description="productId, targetLevel, targetId, offer {kind, value}, duration, source?"),
+    body: Dict[str, Any] = Body(..., description="productId | categoryId | all, targetLevel, targetId, offer {kind, value}, duration, announce?, source?"),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """"מבצע מהיר": a promotion on the product for the target's tills, ending by itself."""
-    action = Q.create_quick_promotion(db, current_user, active_tenant_id, body)
-    _promotions_changed(db, active_tenant_id, background_tasks)
+    """"מבצע מהיר" / "מבצע מזדמן": a promotion for the target's tills, ending by itself, never below cost."""
+    action, woken = Q.create_quick_promotion(db, current_user, active_tenant_id, body)
+    _promotions_changed(db, active_tenant_id, background_tasks, woken)
     return Q.action_out(action, Q._now())
 
 
@@ -408,6 +424,35 @@ def cancel_quick_promotion(
     db: Session = Depends(get_db),
 ):
     """"בטל מבצע": the promotion is paused now (the tills drop it on their next pull)."""
-    action = Q.cancel_quick_promotion(db, current_user, active_tenant_id, action_id)
-    _promotions_changed(db, active_tenant_id, background_tasks)
+    action, woken = Q.cancel_quick_promotion(db, current_user, active_tenant_id, action_id)
+    _promotions_changed(db, active_tenant_id, background_tasks, woken)
+    return Q.action_out(action, Q._now())
+
+
+# ── Happy hour ────────────────────────────────────────────────────────────────
+
+
+@router.get("/happy-hours/suggestions")
+def get_happy_hour_suggestions(
+    p: InsightParams = Depends(insight_params),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The weakest weekday × hour slots of the period as happy-hour windows, with what they overlap."""
+    ctx = build_context(db, current_user, active_tenant_id, p)
+    return {**S.meta_block(ctx), **Q.happy_hour_suggestions(ctx, S.heatmap(ctx))}
+
+
+@router.post("/quick-actions/happy-hours", status_code=status.HTTP_201_CREATED)
+def post_happy_hour(
+    background_tasks: BackgroundTasks,
+    body: Dict[str, Any] = Body(..., description="weekdays, startTime, endTime, weeks?, offer, categoryId | all | productId, targetLevel, targetId, announce?"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"Happy hour מתוזמן": a weekly promotion in an hour window, for some weeks from today."""
+    action, woken = Q.create_happy_hour(db, current_user, active_tenant_id, body)
+    _promotions_changed(db, active_tenant_id, background_tasks, woken)
     return Q.action_out(action, Q._now())

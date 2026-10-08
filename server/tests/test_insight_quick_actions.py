@@ -305,10 +305,10 @@ class TestQuickPromotion:
         with pytest.raises(HTTPException):
             R.post_quick_promotion(BackgroundTasks(), body=promo_body(w, productId=str(w.cake.id), offer={"kind": "percent", "value": 5}), **ctx(w))
         assert w.db.query(Promotion).count() == 0 and w.db.query(InsightQuickAction).count() == 0
-        suggestion = R.get_promotion_suggestion(w.cake.id, "shop", w.shop.id, **ctx(w))
+        suggestion = R.get_promotion_suggestion(product_id=w.cake.id, category_id=None, all_products=False, target_level="shop", target_id=w.shop.id, **ctx(w))
         assert suggestion["price"] == 1850 and suggestion["floor"] == 1770 and suggestion["suggested"] is None
         # Coffee: ₪12, cost ₪4 — 20% keeps over half the margin.
-        plain = R.get_promotion_suggestion(w.coffee.id, None, None, **ctx(w))
+        plain = R.get_promotion_suggestion(product_id=w.coffee.id, category_id=None, all_products=False, target_level=None, target_id=None, **ctx(w))
         assert plain["suggested"]["value"] == 20.0 and plain["canCreate"] is True
 
     def test_who_may_promote(self, w):

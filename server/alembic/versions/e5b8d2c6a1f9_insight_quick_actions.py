@@ -1,4 +1,4 @@
-"""insight_quick_actions: the insights' one-tap actions (quick message / quick promotion) and their log
+"""insight_quick_actions + promotions.announcement: the insights' one-tap actions and "הודעה לעובדים"
 
 Revision ID: e5b8d2c6a1f9
 Revises: 6b1e9d4f2a87
@@ -6,12 +6,16 @@ Create Date: 2026-10-09
 
 * `insight_quick_actions` — "פעולות מהירות" from the insights (docs/SPEC_INSIGHTS.md §10): a
   quick message to the tills (a non-blocking banner through `till_messages`) or a quick
-  promotion (through `promotions`) about a product that barely sells, or a message to a till
-  that stands out; its target, the tills it reached, when it ends by itself, who did it and
-  whether it was cancelled. The audit of these actions and the anchor of their result.
+  promotion (through `promotions`) on a product, a category or the whole basket ("מבצע
+  מזדמן", a happy hour), or a message to a till that stands out; its target, the tills it
+  reached, when it ends by itself, who did it and whether it was cancelled. The audit of
+  these actions and the anchor of their result.
+* `promotions.announcement` — "שלח הודעה לעובדים" (app/services/promotion_announcements.py):
+  the settings and the till messages a promotion planned at its start and its end. Null
+  for every existing promotion: never asked for.
 
 Idempotent: the auto-reloading API runs `create_all` at startup, so the table may exist
-before this runs — then only the indexes that are missing are added.
+before this runs — then only what is missing (indexes, the column) is added.
 """
 from typing import Sequence, Union
 
@@ -38,11 +42,12 @@ def _offline() -> bool:
 
 def upgrade() -> None:
     if _offline():
-        has_table, existing = False, set()
+        has_table, existing, promo_columns = False, set(), set()
     else:
         inspector = sa.inspect(op.get_bind())
         has_table = inspector.has_table(TABLE)
         existing = {i['name'] for i in inspector.get_indexes(TABLE)} if has_table else set()
+        promo_columns = {c['name'] for c in inspector.get_columns('promotions')}
 
     if not has_table:
         op.create_table(
@@ -52,6 +57,8 @@ def upgrade() -> None:
             sa.Column('kind', sa.String(16), nullable=False),
             sa.Column('product_id', UUID, sa.ForeignKey('products.id', ondelete='SET NULL'), nullable=True),
             sa.Column('product_name', sa.String(255), nullable=True),
+            sa.Column('category_id', UUID, sa.ForeignKey('categories.id', ondelete='SET NULL'), nullable=True),
+            sa.Column('category_name', sa.String(255), nullable=True),
             sa.Column('target_level', sa.String(16), nullable=False),
             sa.Column('target_id', UUID, nullable=False),
             sa.Column('target_name', sa.String(255), nullable=True),
@@ -73,9 +80,16 @@ def upgrade() -> None:
         if name not in existing:
             op.create_index(name, TABLE, columns)
 
+    if 'announcement' not in promo_columns:
+        op.add_column('promotions', sa.Column('announcement', sa.JSON(), nullable=True))
+
 
 def downgrade() -> None:
-    if not _offline() and not sa.inspect(op.get_bind()).has_table(TABLE):
+    offline = _offline()
+    inspector = None if offline else sa.inspect(op.get_bind())
+    if offline or 'announcement' in {c['name'] for c in inspector.get_columns('promotions')}:
+        op.drop_column('promotions', 'announcement')
+    if not offline and not inspector.has_table(TABLE):
         return
     for name, _columns in reversed(INDEXES):
         op.drop_index(name, table_name=TABLE)
