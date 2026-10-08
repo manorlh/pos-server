@@ -59,6 +59,7 @@ import { documentWire, Ledger, type AppliedPromotionRow, type DocDraft } from '.
 import { TillZService } from './fiscal/tillZService';
 import { FINAL_OUTCOMES, kioskSection, lanCloseReport, lanOutcomeMessage, planLanClose, type LanCloseOutcome, type LanCloseRequest } from './fiscal/shopZPart';
 import { MediaStore, type Downloader, type VariantMaker } from './media/mediaStore';
+import { NayaxUsbProvider } from './payment/nayaxUsb';
 import { PayService } from './payment/payService';
 import { identifyPinpad, localPrivateIpv4, PinpadRelocator, readArpTable, sweepPort } from './payment/pinpadRelocator';
 import { pinpadAddressOf } from '../core/nayax';
@@ -2419,6 +2420,13 @@ export class KioskService extends EventEmitter {
         // Read-only: getStatus, never a charge.
         const p = this.pay.current;
         if (!p) return { ok: false, message: 'לא הוגדר מסופון' };
+        // "בדיקת מסופון USB": getStatus + getRetailerInfo, the raw replies and the framing (nayaxUsb.ts).
+        if (p instanceof NayaxUsbProvider) {
+          if (this.pay.cardInFlight) return { ok: false, message: 'עסקה במסופון — נסו שוב בסיומה' };
+          const c = await p.diagnose();
+          const raw = c.replies.map((x) => `${x.method}: ${x.raw.slice(0, 2_000)}`).join('\n');
+          return { ok: c.answered, message: `${c.answered ? 'המסופון ענה על הכבל' : 'המסופון לא ענה על הכבל'}\nFraming: ${c.framing}\n${raw}` };
+        }
         const r = await p.check();
         return { ok: r.ok, message: r.ok ? 'המסופון עונה' : (r.detail ?? 'אין תשובה') };
       }

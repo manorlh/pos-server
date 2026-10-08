@@ -187,7 +187,7 @@ export function BridgeWindow() {
       >
         {v.card ? (
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-            <Row k="סוג" v={v.card.kind === 'nayax_lan' ? 'Nayax LAN' : v.card.kind === 'synqpay' ? 'SynqPay' : v.card.kind} />
+            <Row k="סוג" v={v.card.kind === 'nayax_lan' ? 'Nayax LAN' : v.card.kind === 'nayax_usb' ? 'Nayax USB' : v.card.kind === 'synqpay' ? 'SynqPay' : v.card.kind} />
             <Row k="כתובת" v={v.card.address} ltr />
             <Row k="מצב" v={v.card.ready ? 'מוכן' : (v.card.reason ?? v.card.state)} />
             <Row k="ממתינים לבירור" v={v.card.unresolved} />

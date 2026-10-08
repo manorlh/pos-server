@@ -2,6 +2,9 @@
  * The Nayax network pinpad ("nayax_lan") as a PaymentProvider: the till's TweezerComm frames
  * (core/nayax.ts) over the pinned HTTP transport (pinpadHttp.ts), the till's card meta, and the
  * card-recovery lookup by vuid (core/cardRecovery.ts).
+ *
+ * What is TweezerComm and not HTTP (the sale, the acknowledgement, the lookups, the abort, the
+ * day's batch) is NayaxTweezerProvider, shared with the C4 on the kiosk's USB (nayaxUsb.ts).
  */
 
 import { resolveAttempt, type CallFn } from '../../core/cardRecovery';
@@ -25,7 +28,7 @@ import {
   type PinpadAddress,
 } from '../../core/nayax';
 import { postFrame, tlsRefused, type PinStore } from './pinpadHttp';
-import type { ApprovedCard, PaymentProvider, ProviderContext, ProviderFactory, Resolution, SaleResult, TransmitResult } from './provider';
+import type { ApprovedCard, PaymentProvider, ProviderContext, ProviderFactory, ProviderKind, Resolution, SaleResult, TransmitResult } from './provider';
 
 const HTTP_MEMORY_MS = 24 * 3_600_000;
 
@@ -72,69 +75,27 @@ function approvedCard(vuid: string, reply: ParsedReply, chargedAgorot: number, p
   };
 }
 
-export class NayaxLanProvider implements PaymentProvider {
-  readonly kind = 'nayax_lan' as const;
-  private readonly pins: PinStore;
+/**
+ * A Nayax terminal spoken to in TweezerComm (core/nayax.ts), whatever carries the frames ([call]):
+ * HTTP to the network pinpad (NayaxLanProvider) or the C4's own USB (nayaxUsb.ts). The money rules
+ * live here once: one sale frame, never re-sent; "ackTransaction" before anything is written; a
+ * lost answer settled by the vuid (core/cardRecovery.ts); an abort only before an answer.
+ */
+export abstract class NayaxTweezerProvider implements PaymentProvider {
+  abstract readonly kind: ProviderKind;
+  abstract describe(): { kind: ProviderKind; address: string | null };
+
+  /** One frame to the terminal, once (a transport error is `ok: false`, never a retry). */
+  protected abstract call: CallFn;
 
   constructor(
-    private readonly address: PinpadAddress,
-    private readonly ctx: ProviderContext,
+    protected readonly ctx: ProviderContext,
     /** The clock for the acknowledgement's ten seconds and the lookups' pauses (tests pass their own). */
-    private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
-  ) {
-    this.pins = {
-      get: (hp) => ctx.getValue(`pinpad.pin:${hp}`),
-      set: (hp, pin) => ctx.setValue(`pinpad.pin:${hp}`, pin),
-    };
-  }
-
-  describe() {
-    return { kind: this.kind, address: pinpadUrl(this.address) };
-  }
+    protected readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+  ) {}
 
   newReference(): string {
     return vuidOf(this.ctx.machineId, this.ctx.nextSequence('vuid'));
-  }
-
-  /** Which scheme to use now (pinpadSchemePlan): https, http, or detect. */
-  private plan(): 'https' | 'http' | 'detect' | 'refused' {
-    const allowHttp = parameterOn(this.ctx.parameter('pinpadAllowHttp')) && privateIpv4(this.address.host);
-    const hp = `${this.address.host}:${this.address.port}`;
-    if (!this.address.tls) return allowHttp ? 'http' : 'refused';
-    if (this.pins.get(hp) || !allowHttp) return 'https';
-    const remembered = this.ctx.getValue(`pinpad.scheme:${hp}`);
-    const at = remembered?.startsWith('http@') ? Number(remembered.slice(5)) : NaN;
-    if (Number.isFinite(at) && Date.now() - at < HTTP_MEMORY_MS) return 'http';
-    return 'detect';
-  }
-
-  /** One frame to the pinpad. A sale frame is never sent twice: detection uses getStatus only. */
-  private call: CallFn = async (frame, timeoutMs) => {
-    const plan = this.plan();
-    if (plan === 'refused') return { ok: false, error: 'http_not_allowed' };
-    const https: PinpadAddress = { ...this.address, tls: true };
-    const http: PinpadAddress = { ...this.address, tls: false };
-    try {
-      if (plan === 'http') return this.ok(await postFrame(http, frame, timeoutMs, null));
-      if (plan === 'https') return this.ok(await postFrame(https, frame, timeoutMs, this.pins));
-      // detect: getStatus over HTTPS; only a TLS-level refusal tries HTTP (getStatus), and only then the frame.
-      try {
-        await postFrame(https, statusFrame(), TIMEOUTS.status, this.pins);
-        return this.ok(await postFrame(https, frame, timeoutMs, this.pins));
-      } catch (e) {
-        if (!tlsRefused(e)) throw e;
-        await postFrame(http, statusFrame(), TIMEOUTS.status, null);
-        this.ctx.setValue(`pinpad.scheme:${this.address.host}:${this.address.port}`, `http@${Date.now()}`);
-        return this.ok(await postFrame(http, frame, timeoutMs, null));
-      }
-    } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
-    }
-  };
-
-  private ok(r: { status: number; body: string }) {
-    if (r.status < 200 || r.status >= 300) return { ok: false as const, error: `HTTP ${r.status}` };
-    return { ok: true as const, body: r.body };
   }
 
   async check(timeoutMs: number = TIMEOUTS.status) {
@@ -201,6 +162,69 @@ export class NayaxLanProvider implements PaymentProvider {
       amountAgorot: strictInt(res.amount ?? res.totalAmount),
       raw: r.body,
     };
+  }
+}
+
+export class NayaxLanProvider extends NayaxTweezerProvider {
+  readonly kind = 'nayax_lan' as const;
+  private readonly pins: PinStore;
+
+  constructor(
+    private readonly address: PinpadAddress,
+    ctx: ProviderContext,
+    /** The clock for the acknowledgement's ten seconds and the lookups' pauses (tests pass their own). */
+    sleep?: (ms: number) => Promise<void>,
+  ) {
+    super(ctx, sleep);
+    this.pins = {
+      get: (hp) => ctx.getValue(`pinpad.pin:${hp}`),
+      set: (hp, pin) => ctx.setValue(`pinpad.pin:${hp}`, pin),
+    };
+  }
+
+  describe() {
+    return { kind: this.kind, address: pinpadUrl(this.address) };
+  }
+
+  /** Which scheme to use now (pinpadSchemePlan): https, http, or detect. */
+  private plan(): 'https' | 'http' | 'detect' | 'refused' {
+    const allowHttp = parameterOn(this.ctx.parameter('pinpadAllowHttp')) && privateIpv4(this.address.host);
+    const hp = `${this.address.host}:${this.address.port}`;
+    if (!this.address.tls) return allowHttp ? 'http' : 'refused';
+    if (this.pins.get(hp) || !allowHttp) return 'https';
+    const remembered = this.ctx.getValue(`pinpad.scheme:${hp}`);
+    const at = remembered?.startsWith('http@') ? Number(remembered.slice(5)) : NaN;
+    if (Number.isFinite(at) && Date.now() - at < HTTP_MEMORY_MS) return 'http';
+    return 'detect';
+  }
+
+  /** One frame to the pinpad. A sale frame is never sent twice: detection uses getStatus only. */
+  protected call: CallFn = async (frame, timeoutMs) => {
+    const plan = this.plan();
+    if (plan === 'refused') return { ok: false, error: 'http_not_allowed' };
+    const https: PinpadAddress = { ...this.address, tls: true };
+    const http: PinpadAddress = { ...this.address, tls: false };
+    try {
+      if (plan === 'http') return this.ok(await postFrame(http, frame, timeoutMs, null));
+      if (plan === 'https') return this.ok(await postFrame(https, frame, timeoutMs, this.pins));
+      // detect: getStatus over HTTPS; only a TLS-level refusal tries HTTP (getStatus), and only then the frame.
+      try {
+        await postFrame(https, statusFrame(), TIMEOUTS.status, this.pins);
+        return this.ok(await postFrame(https, frame, timeoutMs, this.pins));
+      } catch (e) {
+        if (!tlsRefused(e)) throw e;
+        await postFrame(http, statusFrame(), TIMEOUTS.status, null);
+        this.ctx.setValue(`pinpad.scheme:${this.address.host}:${this.address.port}`, `http@${Date.now()}`);
+        return this.ok(await postFrame(http, frame, timeoutMs, null));
+      }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  };
+
+  private ok(r: { status: number; body: string }) {
+    if (r.status < 200 || r.status >= 300) return { ok: false as const, error: `HTTP ${r.status}` };
+    return { ok: true as const, body: r.body };
   }
 }
 

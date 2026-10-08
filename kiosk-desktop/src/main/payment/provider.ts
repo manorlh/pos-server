@@ -11,13 +11,14 @@
  *  - `abort` stops a charge before the card is presented (never after an answer);
  *  - `check` is a cheap "are you there" with no card.
  *
- * Providers: `nayax_lan` (nayaxProvider.ts, TweezerComm over HTTP to the pinpad); SynqPay is
- * plugged in the same way (payment/synqpay/).
+ * Providers: `nayax_lan` (nayaxProvider.ts, TweezerComm over HTTP to the pinpad), `nayax_usb`
+ * (nayaxUsb.ts, the same TweezerComm on the C4's own USB); SynqPay is plugged in the same way
+ * (payment/synqpay/).
  */
 
 import type { CardBrand } from '../../core/nayax';
 
-export type ProviderKind = 'nayax_lan' | 'synqpay' | (string & {});
+export type ProviderKind = 'nayax_lan' | 'nayax_usb' | 'synqpay' | (string & {});
 
 export interface SaleRequest {
   amountAgorot: number;
@@ -88,6 +89,8 @@ export interface PaymentProvider {
   abort(reference: string): Promise<void>;
   /** The day's batch to the acquirer (Nayax doPeriodic), when the terminal has one. */
   transmit?(): Promise<TransmitResult>;
+  /** Replaced by another terminal: let go of what it holds (the C4's COM port opens once at a time). */
+  dispose?(): void;
 }
 
 /** A provider factory, by the cloud settings: null when this kind is not configured here. */

@@ -500,7 +500,8 @@ function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onCl
   };
   return (
     <Shell m={m} title="בדיקות ומידע קיוסק" onClose={onClose}>
-      {note ? <div className="rounded-lg bg-black/5 p-2 text-center text-xs font-semibold">{note}</div> : null}
+      {/* Several lines at times ("בדיקת מסופון USB": the raw replies and the framing). */}
+      {note ? <div className="whitespace-pre-wrap break-words rounded-lg bg-black/5 p-2 text-center text-xs font-semibold">{note}</div> : null}
       {!info ? (
         <div>…</div>
       ) : (
@@ -559,7 +560,7 @@ function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onCl
             </div>
             {info.terminal.numberCheckBypass ? <div className="text-xs font-semibold text-amber-700">{TERMINAL_CHECK_BYPASS_WARNING}</div> : null}
             <Btn m={m} onClick={() => act({ type: 'pinpadCheck' })}>
-              בדיקת מסופון
+              {info.terminal.kind === 'nayax_usb' ? 'בדיקת מסופון USB' : 'בדיקת מסופון'}
             </Btn>
           </Panel>
           <Panel m={m} title="עדכונים">

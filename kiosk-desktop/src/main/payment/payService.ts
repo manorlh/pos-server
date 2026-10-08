@@ -70,6 +70,14 @@ export class PayService {
       p && this.provider && p.kind === this.provider.kind && p.describe().address === this.provider.describe().address &&
       (p.configured !== false) === (this.provider.configured !== false);
     if (!same) {
+      // The terminal it replaces lets go of what it holds (a COM port opens once at a time).
+      if (this.provider && this.provider !== p) {
+        try {
+          this.provider.dispose?.();
+        } catch {
+          /* closing */
+        }
+      }
       this.provider = p;
       this.monitor.failures = 0;
       this.monitor.lastCheckAtMs = null;

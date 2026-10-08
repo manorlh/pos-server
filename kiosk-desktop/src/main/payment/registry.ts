@@ -7,8 +7,10 @@
  */
 
 import { nayaxLanFactory } from './nayaxProvider';
+// A Nayax C4 on the kiosk's USB: null unless `paymentIntegration` = `nayax_usb` (nayaxUsb.ts).
+import { nayaxUsbFactory } from './nayaxUsb';
 import type { ProviderFactory } from './provider';
 // SynqPay (pos-server docs/SPEC_SYNQPAY.md): null unless `paymentIntegration` = `synqpay`.
 import { synqpayFactory } from './synqpay';
 
-export const PROVIDERS: ProviderFactory[] = [nayaxLanFactory, synqpayFactory];
+export const PROVIDERS: ProviderFactory[] = [nayaxLanFactory, nayaxUsbFactory, synqpayFactory];
