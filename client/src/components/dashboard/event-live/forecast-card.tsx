@@ -23,11 +23,19 @@ import {
   type StaffingReport,
 } from '@/lib/staffing';
 import { fetchStaffing } from '@/lib/staffingApi';
-import { formatCurrency, formatShortDate } from '@/lib/format';
+import { formatShortDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { CockpitProps } from './types';
 
 const REFRESH_MS = 5 * 60_000;
+
+const WHOLE = new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 });
+
+/** A forecast is never precise to the agora: whole shekels. */
+function wholeShekels(agorot: number | null): string {
+  const value = shekels(agorot);
+  return value === null ? '—' : WHOLE.format(value);
+}
 
 function TillsBar({ h, max, compact }: { h: StaffingHour; max: number; compact: boolean }) {
   const t = useTranslations('forecastStaffing');
@@ -42,8 +50,8 @@ function TillsBar({ h, max, compact }: { h: StaffingHour; max: number; compact: 
           />
         ))}
       </span>
-      <span className="w-14 shrink-0 text-end font-semibold tabular-nums">{t('tills', { n: h.tills })}</span>
-      {compact ? null : <span className="hidden w-24 shrink-0 text-end tabular-nums opacity-70 sm:inline">{formatCurrency(shekels(h.net))}</span>}
+      <span className="w-20 shrink-0 whitespace-nowrap text-end font-semibold tabular-nums">{t('tills', { n: h.tills })}</span>
+      {compact ? null : <span className="hidden w-20 shrink-0 text-end tabular-nums opacity-70 sm:inline">{wholeShekels(h.net)}</span>}
     </li>
   );
 }
@@ -106,11 +114,11 @@ export function ForecastCard({
               <p className="text-sm">{t('notEnoughHistory')}</p>
             ) : (
               <>
-                <p className="text-3xl font-bold tabular-nums">{formatCurrency(shekels(shop.tomorrow.net))}</p>
+                <p className="text-3xl font-bold tabular-nums">{wholeShekels(shop.tomorrow.net)}</p>
                 <p className="text-sm opacity-70">
                   {[
                     shop.tomorrow.low !== null && shop.tomorrow.high !== null
-                      ? t('band', { low: formatCurrency(shekels(shop.tomorrow.low)), high: formatCurrency(shekels(shop.tomorrow.high)) })
+                      ? t('band', { low: wholeShekels(shop.tomorrow.low), high: wholeShekels(shop.tomorrow.high) })
                       : null,
                     t(`confidence.${shop.tomorrow.confidence}`),
                     shop.trendFactor && shop.trendFactor !== 1 ? t('trend', { pct: Math.round((shop.trendFactor - 1) * 100) }) : null,

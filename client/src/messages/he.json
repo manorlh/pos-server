@@ -14982,7 +14982,7 @@
     "exitFullscreen": "יציאה ממסך מלא",
     "phase": {
       "upcoming": "עוד לא התחיל",
-      "live": "בשידור חי",
+      "live": "פעיל עכשיו",
       "ended": "הסתיים"
     },
     "total": "סה״כ עד עכשיו",
@@ -15030,7 +15030,7 @@
     "itemsEvent": "כל האירוע",
     "noItems": "אין עדיין פריטים",
     "tills": "קופות",
-    "offlineCount": "{n} לא מחוברות",
+    "offlineCount": "{n, plural, one {קופה אחת לא מחוברת} other {# לא מחוברות}}",
     "allOnline": "כולן מחוברות",
     "online": "מחוברת",
     "offline": "לא מחוברת",
@@ -15223,7 +15223,7 @@
     "nextHours": "השעות הקרובות",
     "pace": "קצב היום {pct}% מהרגיל",
     "tomorrowHours": "מחר לפי שעה",
-    "tills": "{n, plural, =0 {—} one {קופה} other {# קופות}}",
+    "tills": "{n, plural, =0 {—} one {קופה אחת} other {# קופות}}",
     "tillsAria": "{n} קופות פתוחות",
     "notes": {
       "short": "בשעות השיא צריך יותר קופות ממה שיש בסניף",
