@@ -524,7 +524,8 @@ export class BridgeRuntime extends EventEmitter implements BridgeHost {
     const s = this.svc;
     if (!s) return null;
     if (s.pay.cardInFlight) return 'תשלום באשראי בתהליך';
-    if (s.pay.blocked()) return 'תשלום באשראי ממתין לבירור';
+    // Any unresolved card, whatever "חסימת אשראי…" says: its attempt lives in this machine's data.
+    if (s.pay.unresolved()) return 'תשלום באשראי ממתין לבירור';
     if (s.outbox.count() > 0) return 'יש בגשר מסמכים של הקיוסק הקודם שעוד לא נשלחו לענן';
     return null;
   }
