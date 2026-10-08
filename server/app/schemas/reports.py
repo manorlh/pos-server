@@ -117,8 +117,11 @@ class CashierSalesRow(BaseModel):
     card_net: float = Field(..., alias="cardNet")
     other_net: float = Field(..., alias="otherNet")
     #: Net of the `exchange` legs of mixed baskets (docs/SHIFTS_API.md §1.2a): not money
-    #: taken, and zero over complete baskets, so cash + card + other + exchange = net.
+    #: taken, and zero over complete baskets, so cash + card + other + exchange +
+    #: productionVoucher = net.
     exchange_net: float = Field(0.0, alias="exchangeNet")
+    #: "שוברי הפקה": what production vouchers paid for (the `voucher` / `production_voucher` legs).
+    production_voucher_net: float = Field(0.0, alias="productionVoucherNet")
 
     tips: float
 
@@ -159,8 +162,10 @@ class SalesByAreaRow(BaseModel):
     card: float = 0.0
     other: float = 0.0
     #: Net of the `exchange` legs of mixed baskets (docs/SHIFTS_API.md §1.2a); zero over
-    #: complete baskets, so cash + card + other + exchange = net.
+    #: complete baskets, so cash + card + other + exchange + productionVoucher = net.
     exchange: float = 0.0
+    #: "שוברי הפקה".
+    production_voucher: float = Field(0.0, alias="productionVoucher")
     tips: float = 0.0
 
 

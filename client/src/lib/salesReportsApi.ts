@@ -14,7 +14,8 @@ export interface PaymentMethodRow {
   machineId?: string | null;
   machineName?: string | null;
   method: string;
-  bucket: 'cash' | 'card' | 'exchange' | 'other';
+  /** `production_voucher`: "שוברי הפקה" (the `voucher` / `production_voucher` legs). */
+  bucket: 'cash' | 'card' | 'exchange' | 'production_voucher' | 'other';
   amount: number;
   documents: number;
 }

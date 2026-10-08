@@ -39,7 +39,7 @@ import {
 } from '@/components/ui/table';
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 
-const MONEY_COLS = ['gross', 'discounts', 'net', 'refunds', 'cash', 'card', 'other', 'tips'] as const;
+const MONEY_COLS = ['gross', 'discounts', 'net', 'refunds', 'cash', 'card', 'productionVoucher', 'other', 'tips'] as const;
 const COLS = 2 + MONEY_COLS.length;
 
 export default function SalesByAreaPage() {

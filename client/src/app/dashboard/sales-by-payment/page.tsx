@@ -35,7 +35,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
-const BAR = { cash: 'bg-emerald-500', card: 'bg-blue-500', exchange: 'bg-slate-400', other: 'bg-amber-500' };
+const BAR = { cash: 'bg-emerald-500', card: 'bg-blue-500', exchange: 'bg-slate-400', production_voucher: 'bg-violet-500', other: 'bg-amber-500' };
 
 export default function SalesByPaymentPage() {
   const t = useTranslations('paymentReport');

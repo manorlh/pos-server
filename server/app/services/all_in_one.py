@@ -94,6 +94,7 @@ def _money_row(bucket: Dict[str, float]) -> Dict[str, Any]:
         "card": _r(bucket["card_net"]),
         "other": _r(bucket["other_net"]),
         "exchange": _r(bucket["exchange_net"]),
+        "productionVoucher": _r(bucket["production_voucher_net"]),
         "tips": _r(bucket["tips"]),
     }
 
@@ -108,7 +109,7 @@ def _sum_rows(rows: Iterable[Dict[str, Any]], fields: Sequence[str]) -> Dict[str
 
 MONEY_FIELDS = (
     "documents", "salesCount", "refundsCount", "gross", "discounts", "refunds", "net",
-    "cash", "card", "other", "exchange", "tips",
+    "cash", "card", "other", "exchange", "productionVoucher", "tips",
 )
 
 

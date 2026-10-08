@@ -91,6 +91,13 @@ class TestTheOtherFilters:
         assert _list(w, method="card") == {"2"}
         assert _list(w, method="refunds") == {"3"}
 
+    def test_voucher_finds_every_production_voucher_code(self, w):
+        t1 = w.tills[0]
+        w.doc(t1, None, "30.00", method="mixed", legs=[("voucher", "20.00"), ("cash", "10.00")], number="5")
+        w.doc(t1, None, "15.00", method="production_voucher", number="6")
+        w.db.flush()
+        assert _list(w, method="voucher") == {"5", "6"}
+
 
 class TestScope:
     def test_a_shop_manager_sees_only_their_shop(self, w):

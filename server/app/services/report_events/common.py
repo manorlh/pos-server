@@ -52,6 +52,7 @@ def chunks(values: Sequence[Any], size: int = CHUNK) -> Iterable[Sequence[Any]]:
 
 
 def tender_bucket(method: Optional[str]) -> str:
+    """The event report's tender bucket; a production voucher is "other" here (no voucher figure yet)."""
     m = (method or "").strip().lower()
     if m in ("cash", "card"):
         return m

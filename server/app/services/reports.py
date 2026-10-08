@@ -673,7 +673,7 @@ def _empty_cashier_row(**kwargs) -> CashierSalesRow:
         cashier_id=None, cashier_name=None, worker_number=None,
         document_count=0, sales_count=0, refunds_count=0,
         gross=0.0, discounts=0.0, refunds=0.0, net=0.0, average_basket=0.0,
-        cash_net=0.0, card_net=0.0, other_net=0.0, exchange_net=0.0, tips=0.0,
+        cash_net=0.0, card_net=0.0, other_net=0.0, exchange_net=0.0, production_voucher_net=0.0, tips=0.0,
     )
     base.update(kwargs)
     return CashierSalesRow(**base)
@@ -684,6 +684,7 @@ def _new_sales_bucket() -> Dict[str, float]:
         "gross": 0.0, "discounts": 0.0, "refunds": 0.0, "tips": 0.0,
         "sales_count": 0, "refunds_count": 0,
         "cash_net": 0.0, "card_net": 0.0, "other_net": 0.0, "exchange_net": 0.0,
+        "production_voucher_net": 0.0,
     }
 
 
@@ -814,6 +815,7 @@ def build_cashier_sales_report(
                 card_net=b["card_net"],
                 other_net=b["other_net"],
                 exchange_net=b["exchange_net"],
+                production_voucher_net=b["production_voucher_net"],
                 tips=b["tips"],
             )
         )
@@ -838,6 +840,7 @@ def build_cashier_sales_report(
         card_net=sum(r.card_net for r in out_rows),
         other_net=sum(r.other_net for r in out_rows),
         exchange_net=sum(r.exchange_net for r in out_rows),
+        production_voucher_net=sum(r.production_voucher_net for r in out_rows),
         tips=sum(r.tips for r in out_rows),
     )
     return CashierSalesReportResponse(
@@ -902,6 +905,7 @@ def build_sales_by_area_report(
             card=_cents(bucket["card_net"]),
             other=_cents(bucket["other_net"]),
             exchange=_cents(bucket["exchange_net"]),
+            production_voucher=_cents(bucket["production_voucher_net"]),
             tips=_cents(bucket["tips"]),
         )
 
@@ -931,7 +935,7 @@ def build_sales_by_area_report(
         transactions_count=sum(r.transactions_count for r in rows),
         **{
             f: total(f)
-            for f in ("gross", "discounts", "net", "refunds", "cash", "card", "other", "tips")
+            for f in ("gross", "discounts", "net", "refunds", "cash", "card", "other", "production_voucher", "tips")
         },
     )
     return SalesByAreaResponse(
@@ -1013,8 +1017,9 @@ def build_tips_range_report(
         # rather than guessing a leg. That is the honest answer: only the till knows
         # which tender the tip went on, and it says so in `tip_payment_method`.
         method = normalize_tender(r.tip_method or r.payment_method)
-        if method == "exchange":
-            # A document settled by `exchange` alone took no money a tip could ride on.
+        if method not in ("cash", "card"):
+            # A document settled by `exchange` alone took no money a tip could ride on, and a
+            # production voucher pays for goods, never a tip: either is "other" here.
             method = "other"
 
         by_method[method]["amount"] += tips

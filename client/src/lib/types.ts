@@ -2533,10 +2533,12 @@ export interface CashierSalesRow {
   /** gross - discounts - refunds */
   net: number;
   averageBasket: number;
-  /** cashNet + cardNet + otherNet === net. */
+  /** cashNet + cardNet + productionVoucherNet + otherNet === net. */
   cashNet: number;
   cardNet: number;
   otherNet: number;
+  /** "שוברי הפקה": what production vouchers paid (absent from an older server: 0). */
+  productionVoucherNet?: number;
   tips: number;
 }
 
@@ -2816,6 +2818,8 @@ export interface SalesByAreaRow {
   cash: Money;
   card: Money;
   other: Money;
+  /** "שוברי הפקה". */
+  productionVoucher?: Money;
   tips: Money;
 }
 

@@ -40,7 +40,8 @@ CENT = Decimal("0.01")
 #: Tenders by their bucket on paper; anything else is "other" (`exchange` has its own line).
 _CASH = {"cash"}
 _CARD = {"card", "credit"}
-_VOUCHER = {"voucher", "vouchers"}
+#: "שוברי הפקה": every code a production voucher leg goes by (services/tenders.py).
+_VOUCHER = {"voucher", "vouchers", "production_voucher"}
 _EXCHANGE = "exchange"
 
 
@@ -218,7 +219,7 @@ def _payment_rows(z: ZReport) -> List[Optional[dict]]:
     return [
         row("מזומן", money(b["cash"])),
         row("אשראי", money(b["card"])),
-        row("שוברים", money(b["voucher"])),
+        row("שוברי הפקה", money(b["voucher"])),
         row("אחר", money(b["other"])),
         # Only on a Z with mixed baskets: an offset, never money anyone took.
         row("קיזוז החלפה", money(b["exchange"])) if b["exchange"] != 0 else None,

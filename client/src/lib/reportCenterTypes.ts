@@ -32,6 +32,8 @@ export interface TransactionExportRow {
   card: string;
   other: string;
   exchange: string;
+  /** "שוברי הפקה" (absent from an older server). */
+  productionVoucher?: string;
   legs: number;
   cardBrands: string[];
   cardLast4: string[];
@@ -180,6 +182,8 @@ export interface MoneyRow {
   card: number;
   other: number;
   exchange: number;
+  /** "שוברי הפקה" (absent from an older server). */
+  productionVoucher?: number;
   tips: number;
 }
 

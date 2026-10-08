@@ -63,7 +63,9 @@ TENDER_LABELS = {
     "cash": "מזומן",
     "card": "כרטיס אשראי",
     "exchange": "קיזוז החלפה",
-    "voucher": "שובר",
+    "voucher": "שובר הפקה",
+    "vouchers": "שובר הפקה",
+    "production_voucher": "שובר הפקה",
     "mixed": "משולב",
     "other": "אחר",
 }
