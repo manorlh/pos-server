@@ -131,7 +131,8 @@ class TargetMenuIn(_Body):
 
 
 class TargetAssignmentsIn(_Body):
-    level: Literal["company", "shop", "area", "machine"]
+    #: "group": a device group ("קבוצת מכשירים", app/models/machine_group.py).
+    level: Literal["company", "shop", "area", "group", "machine"]
     target_id: uuid.UUID = Field(alias="targetId")
     menus: List[TargetMenuIn] = Field(default_factory=list, max_length=MENUS_PER_TARGET_MAX)
     #: "catalog" — "הקטלוג המלא"; "none" — "לא למכור"; null — inherit from the level above.

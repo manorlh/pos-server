@@ -60,6 +60,7 @@ from app.models.transaction_item import TransactionItem
 from app.models.user import User, UserRole
 from app.schemas.catalog_menu import MenuIn, TargetAssignmentsIn
 from app.services import catalog_menu_rules as R
+from app.services import machine_groups
 
 logger = logging.getLogger(__name__)
 
@@ -261,12 +262,17 @@ def company_chain(db: Session, company_id) -> List[uuid.UUID]:
 
 
 def chain_for(
-    db: Session, shop: Optional[Shop], *, area_id=None, machine_id=None, company_id=None,
+    db: Session, shop: Optional[Shop], *, area_id=None, machine_id=None, company_id=None, group_ids: Sequence = (),
 ) -> List[Target]:
-    """Most specific first: the till, its point of sale, its shop, its company and above."""
+    """
+    Most specific first: the till, its device groups ("קבוצות מכשירים", by name — the first that
+    sets a fallback gives it), its point of sale, its shop, its company and above.
+    """
     out: List[Target] = []
     if machine_id is not None:
         out.append(Target("machine", machine_id))
+    for gid in group_ids:
+        out.append(Target("group", gid))
     if area_id is not None:
         out.append(Target("area", area_id))
     if shop is not None:
@@ -277,11 +283,16 @@ def chain_for(
     return out
 
 
-def chain_for_machine(db: Session, machine: POSMachine) -> List[Target]:
+def chain_for_machine(db: Session, machine: POSMachine, groups: Optional[Sequence] = None) -> List[Target]:
+    """The till's chain; [groups]: its device groups when the caller has them already."""
     shop = db.query(Shop).filter(Shop.id == machine.shop_id).first() if machine.shop_id else None
     if shop is None:
         return [Target("machine", machine.id)] if machine.id is not None else []
-    return chain_for(db, shop, area_id=getattr(machine, "area_id", None), machine_id=machine.id)
+    if groups is None:
+        groups = machine_groups.groups_of_machine(db, machine)
+    return chain_for(
+        db, shop, area_id=getattr(machine, "area_id", None), machine_id=machine.id, group_ids=[g.id for g in groups],
+    )
 
 
 # ── The data: menus and their assignments for a set of targets ───────────────
@@ -383,6 +394,8 @@ def _data(db: Session, tenant_id, targets: Optional[Sequence[Target]]) -> Dict[s
                 {
                     "menuId": str(r.menu_id), "level": r.level, "targetId": str(r.target_id),
                     "priority": r.priority or 0, "targetName": names.get((r.level, str(r.target_id))),
+                    # Between a till's device groups at one priority, the most recently updated wins.
+                    **({"updatedAt": _iso(r.updated_at or r.created_at)} if r.level == "group" else {}),
                 }
                 for r in rows
             ),
@@ -421,11 +434,14 @@ def block_of(
     *,
     local_ids: Optional[Dict[str, str]] = None,
     updated_at: Optional[datetime] = None,
+    groups: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
     """
     The `catalogMenus` block of a till standing in `chain`, from `data` (live or a
     publication's): only what is assigned along the chain, each assignment with its level
-    and depth, the fallback of the most specific level that sets one, and no names.
+    and depth (a device group's with its `updatedAt`, the tie-break between groups), the
+    fallback of the most specific level that sets one, and no names — but the till's own
+    device groups (`groups`), when it is in any.
     """
     data = data or _empty_data()
     local_ids = local_ids or {}
@@ -435,10 +451,13 @@ def block_of(
         hit = where.get((a.get("level"), a.get("targetId")))
         if hit is None:
             continue
-        assignments.append({
+        entry = {
             "menuId": a["menuId"], "level": a["level"], "depth": hit[1].depth, "priority": a.get("priority") or 0,
-        })
-    assignments.sort(key=lambda a: (-R.rank(a), -a["priority"], a["menuId"]))
+        }
+        if a.get("level") == "group" and a.get("updatedAt"):
+            entry["updatedAt"] = a["updatedAt"]
+        assignments.append(entry)
+    assignments.sort(key=lambda a: (-R.rank(a), -a["priority"], -R.updated_ms(a), a["menuId"]))
     menus_data = data.get("menus") or {}
     menus = []
     for mid in sorted({a["menuId"] for a in assignments}):
@@ -463,12 +482,15 @@ def block_of(
         hit = where.get((f.get("level"), f.get("targetId")))
         if hit is not None and (best is None or hit[0] < best):
             best, fallback = hit[0], f.get("mode") or FALLBACK_CATALOG
-    return {
+    block = {
         "updatedAt": _iso(updated_at),
         "fallback": fallback,
         "menus": menus,
         "assignments": assignments,
     }
+    if groups:
+        block["groups"] = list(groups)
+    return block
 
 
 def _local_ids(db: Session, machine_id, data: Dict[str, Any]) -> Dict[str, str]:
@@ -491,10 +513,12 @@ def block_for_machine(db: Session, machine: POSMachine) -> Dict[str, Any]:
     """The live `catalogMenus` block of a till (whatever its shop's review mode)."""
     if machine.tenant_id is None or not tables_ready(db):
         return block_of(None, [])
-    chain = chain_for_machine(db, machine)
+    groups = machine_groups.groups_of_machine(db, machine)
+    chain = chain_for_machine(db, machine, groups)
     data = _data(db, machine.tenant_id, chain)
     return block_of(
         data, chain, local_ids=_local_ids(db, machine.id, data), updated_at=changed_at(db, machine.tenant_id),
+        groups=machine_groups.wire(groups),
     )
 
 
@@ -511,9 +535,15 @@ def snapshot_block(db: Session, shop: Shop) -> Optional[Dict[str, Any]]:
     targets += [
         Target("area", a) for (a,) in db.query(ShopArea.id).filter(ShopArea.shop_id == shop.id).all()
     ]
-    targets += [
-        Target("machine", m) for (m,) in db.query(POSMachine.id).filter(POSMachine.shop_id == shop.id).all()
-    ]
+    machine_ids = [m for (m,) in db.query(POSMachine.id).filter(POSMachine.shop_id == shop.id).all()]
+    targets += [Target("machine", m) for m in machine_ids]
+    # The device groups its tills are in (a group may reach other shops too).
+    seen_groups = set()
+    for groups in machine_groups.groups_of_machines(db, machine_ids).values():
+        for g in groups:
+            if g.id not in seen_groups:
+                seen_groups.add(g.id)
+                targets.append(Target("group", g.id))
     data = _data(db, shop.tenant_id, targets)
     if not data["assignments"] and not data["fallbacks"]:
         return None
@@ -541,8 +571,12 @@ def block_for_pull(db: Session, machine: POSMachine, since: Optional[datetime], 
         if not fresh and not (moved is not None and moved > _utc(since)):
             return None
         data = (publication.snapshot or {}).get("catalogMenus") or _empty_data()
-        chain = chain_for_machine(db, machine)
-        return block_of(data, chain, local_ids=_local_ids(db, machine.id, data), updated_at=stamp)
+        groups = machine_groups.groups_of_machine(db, machine)
+        chain = chain_for_machine(db, machine, groups)
+        return block_of(
+            data, chain, local_ids=_local_ids(db, machine.id, data), updated_at=stamp,
+            groups=machine_groups.wire(groups),
+        )
     live_since = getattr(review_pull, "live_since", since) if review_pull is not None else since
     if live_since is not None:
         cut = _utc(live_since)
@@ -618,7 +652,10 @@ def _target_names(db: Session, rows: Iterable[Tuple[str, Any]]) -> Dict[Tuple[st
         if u is not None:
             by_level.setdefault(level, set()).add(u)
     out: Dict[Tuple[str, str], str] = {}
-    models = {"company": Company, "shop": Shop, "area": ShopArea, "machine": POSMachine}
+    models = {
+        "company": Company, "shop": Shop, "area": ShopArea, "machine": POSMachine,
+        "group": machine_groups.MachineGroup,
+    }
     for level, ids in by_level.items():
         model = models.get(level)
         if model is None:
@@ -823,6 +860,8 @@ def _target_companies(db: Session, level: str, entity) -> Set[str]:
     """The target's company and every company above it (what a menu must be placed on)."""
     if level == "company":
         company_id = entity.id
+    elif level == "group":
+        company_id = entity.company_id
     elif level == "shop":
         company_id = entity.company_id
     elif level == "area":
@@ -834,13 +873,31 @@ def _target_companies(db: Session, level: str, entity) -> Set[str]:
     return {str(c) for c in company_chain(db, company_id)}
 
 
-def set_target(db: Session, user: User, tenant_id, body: TargetAssignmentsIn) -> None:
-    """Replace the menus assigned at one company / shop / point of sale / till, and its fallback."""
-    from app.services.menu import _require_writer
+def resolve_menu_target(db: Session, user: User, tenant_id, level: str, target_id):
+    """
+    The company / shop / point of sale / till (the till messages' targets, with their visibility)
+    — or a device group ("קבוצת מכשירים"), whose company the user must be allowed to write.
+    """
     from app.services.till_messages import resolve_target
 
+    if level != "group":
+        return resolve_target(db, user, tenant_id, level, target_id)
+    if not machine_groups.ready(db):
+        raise _bad(machine_groups.NOT_FOUND, status.HTTP_404_NOT_FOUND)
+    group = machine_groups._group(db, tenant_id, target_id)
+    from app.services.menu import may_write_company
+
+    if not may_write_company(db, user, tenant_id, group.company_id):
+        raise _bad(FORBIDDEN, status.HTTP_403_FORBIDDEN)
+    return group
+
+
+def set_target(db: Session, user: User, tenant_id, body: TargetAssignmentsIn) -> None:
+    """Replace the menus assigned at one company / shop / point of sale / device group / till, and its fallback."""
+    from app.services.menu import _require_writer
+
     _require_writer(user)
-    entity = resolve_target(db, user, tenant_id, body.level, body.target_id)
+    entity = resolve_menu_target(db, user, tenant_id, body.level, body.target_id)
     reach = _target_companies(db, body.level, entity)
     visible = _visible_companies(db, user)
     wanted = [m.menu_id for m in body.menus]
@@ -991,6 +1048,26 @@ def targets_overview(
             "parentId": str(m.area_id) if m.area_id else str(m.shop_id),
             "shopId": str(m.shop_id), "isKiosk": str(m.id) in kiosks, "canEdit": writer,
         })
+    # "קבוצות מכשירים": under their company, with their tills.
+    if machine_groups.ready(db) and companies:
+        from app.services.menu import may_write_company
+
+        groups = (
+            db.query(machine_groups.MachineGroup)
+            .filter(
+                machine_groups.MachineGroup.tenant_id == tenant_id,
+                machine_groups.MachineGroup.company_id.in_([c.id for c in companies]),
+            )
+            .order_by(machine_groups.MachineGroup.sort_order, machine_groups.MachineGroup.name)
+            .all()
+        )
+        members = machine_groups._members(db, [g.id for g in groups])
+        for g in groups:
+            targets.append({
+                "level": "group", "id": str(g.id), "name": g.name, "parentId": str(g.company_id),
+                "machineIds": [str(m.id) for m in members.get(str(g.id), [])],
+                "canEdit": writer and may_write_company(db, user, tenant_id, g.company_id),
+            })
     ids = [uuid.UUID(t["id"]) for t in targets]
     assignments = (
         db.query(CatalogMenuAssignment)
@@ -1057,6 +1134,7 @@ def now_overview(
         if shop_ids else []
     )
     kiosks = _kiosk_ids(db, [m.id for m in machines])
+    groups_of = machine_groups.groups_of_machines(db, [m.id for m in machines])
     rows: List[Dict[str, Any]] = []
 
     def both(data, chain) -> Dict[str, Any]:
@@ -1080,8 +1158,14 @@ def now_overview(
                 "level": "area", "id": str(a.id), "name": a.name, "parentId": str(s.id), "source": source,
                 **both(data, [Target("area", a.id), *base]),
             })
+        reach = {str(t.id) for t in base if t.level == "company"}
         for m in [m for m in machines if m.shop_id == s.id]:
-            own = [Target("machine", m.id)] + ([Target("area", m.area_id)] if m.area_id else [])
+            own = (
+                [Target("machine", m.id)]
+                # Its device groups — of its own company or one above, as the till's pull has them.
+                + [Target("group", g.id) for g in groups_of.get(str(m.id), []) if str(g.company_id) in reach]
+                + ([Target("area", m.area_id)] if m.area_id else [])
+            )
             rows.append({
                 "level": "machine", "id": str(m.id), "name": m.name, "posNumber": m.pos_number,
                 "parentId": str(m.area_id) if m.area_id else str(s.id), "isKiosk": str(m.id) in kiosks,
@@ -1120,17 +1204,19 @@ def simulate(
     the local moment `at`, why, when that changes next, and — with a menu — what it sells
     there: in order, at what price and from where, blocked items marked.
     """
-    from app.services.till_messages import resolve_target
-
     if level not in ASSIGNMENT_LEVELS:
         raise _bad(NOT_FOUND, status.HTTP_404_NOT_FOUND)
-    entity = resolve_target(db, user, tenant_id, level, target_id)
+    entity = resolve_menu_target(db, user, tenant_id, level, target_id)
     local = local_moment(db, tenant_id, at)
     if level == "machine":
         shop = db.query(Shop).filter(Shop.id == entity.shop_id).first() if entity.shop_id else None
-        chain = chain_for(db, shop, area_id=entity.area_id, machine_id=entity.id) if shop else [Target("machine", entity.id)]
+        chain = chain_for_machine(db, entity) if shop else [Target("machine", entity.id)]
         if surface is None:
             surface = R.SURFACE_KIOSK if str(entity.id) in _kiosk_ids(db, [entity.id]) else R.SURFACE_POS
+    elif level == "group":
+        # A device group as its tills see it from its own company (their shops add their own levels).
+        shop = None
+        chain = [Target("group", entity.id)] + chain_for(db, None, company_id=entity.company_id)
     elif level == "area":
         shop = db.query(Shop).filter(Shop.id == entity.shop_id).first()
         chain = chain_for(db, shop, area_id=entity.id)

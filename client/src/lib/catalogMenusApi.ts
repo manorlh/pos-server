@@ -126,12 +126,17 @@ export interface MenuTarget {
   level: MenuLevel;
   id: string;
   name: string;
-  /** A till: its point of sale, else its shop; a point of sale: its shop; a shop: its company; a company: the one above. */
+  /**
+   * A till: its point of sale, else its shop; a point of sale: its shop; a shop or a device
+   * group: its company; a company: the one above.
+   */
   parentId: string | null;
   canEdit: boolean;
   posNumber?: string | null;
   shopId?: string;
   isKiosk?: boolean;
+  /** A device group ("קבוצת מכשירים"): its tills. */
+  machineIds?: string[];
 }
 
 export interface MenuTargetAssignment {

@@ -199,6 +199,11 @@ GET /kitchen-stations -> printers|kds:view
 POST /kitchen-stations -> printers|kds:edit
 DELETE /kitchen-stations/{station_id} -> printers|kds:edit
 PUT /kitchen-stations/{station_id} -> printers|kds:edit
+GET /machine-groups -> devices|products:view
+POST /machine-groups -> devices|products:edit
+DELETE /machine-groups/{group_id} -> devices|products:edit
+PATCH /machine-groups/{group_id} -> devices|products:edit
+PUT /machine-groups/{group_id}/machines -> devices|products:edit
 GET /machines -> reference
 POST /machines/close-day -> z:edit
 GET /machines/document-prefix-conflicts -> devices|reports:view

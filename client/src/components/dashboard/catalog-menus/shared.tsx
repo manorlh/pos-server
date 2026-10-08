@@ -49,13 +49,15 @@ export function useMenuErrorText(): (err: unknown) => string {
   );
 }
 
-/** "חברה" / "חברת אם" / "סניף" / "נקודת מכירה" / "קופה". */
+/** "חברה" / "חברת אם" / "סניף" / "נקודת מכירה" / "קבוצת מכשירים" / "קופה". */
 export function useLevelLabel(): (level: MenuLevel | string | null | undefined, depth?: number | null) => string {
   const t = useTranslations('catalogMenus.level');
   return useCallback(
     (level, depth) => {
       if (level === 'company' && depth && depth > 0) return depth > 1 ? t('companyAboveN', { n: depth }) : t('companyAbove');
-      if (level === 'company' || level === 'shop' || level === 'area' || level === 'machine') return t(level);
+      if (level === 'company' || level === 'shop' || level === 'area' || level === 'group' || level === 'machine') {
+        return t(level);
+      }
       return '—';
     },
     [t],

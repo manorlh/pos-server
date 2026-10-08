@@ -15,8 +15,9 @@ Everything here works on the `catalogMenus` block exactly as the catalog pull ca
                  "schedule": {"always", "days": [0..6] | null, "ranges": [["HH:MM", "HH:MM"]],
                               "from": "YYYY-MM-DD" | null, "to": "YYYY-MM-DD" | null},
                  "categories": [{"id", "all": bool}], "products": [{"id", "price"?}]}],
-      "assignments": [{"menuId", "level": "machine" | "area" | "shop" | "company",
-                       "depth": int, "priority": int}]
+      "assignments": [{"menuId", "level": "machine" | "group" | "area" | "shop" | "company",
+                       "depth": int, "priority": int, "updatedAt"?: ISO-8601 (a group's)}],
+      "groups": [{"id", "name"}]  (the till's own device groups — "קבוצות מכשירים")
     }
 
 **When** (`schedule_active`) — on the local wall clock (the shop's): a weekday (0 = Sunday)
@@ -29,8 +30,10 @@ starts, and the repeated hour is in a range twice.
 
 **Which** (`resolve`) — among the assigned menus that are active now and offered on this
 surface (`pos` — the sell screen; `kiosk` — the self-order kiosk): the most specific level
-wins (till > point of sale > shop > the till's company > the company above it…); within a
-level the higher priority; then the name, then the id — so two tills never disagree. None
+wins (till > device group > point of sale > shop > the till's company > the company above
+it…); within a level the higher priority; between the device groups a till belongs to, at the
+same priority, the most recently updated assignment (`updatedAt`, sent for a group's only);
+then the name, then the id — so two tills never disagree. None
 active: the fallback ("catalog" — the catalog as without menus; "none" — nothing to sell).
 
 **What** (`apply`) — the menu over the till's catalog: the menu's categories in its order
@@ -43,7 +46,7 @@ stays in the list, blocked, exactly as without menus.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -58,8 +61,9 @@ MODE_NONE = "none"
 PRICE_MENU = "menu"
 PRICE_CATALOG = "catalog"
 
-#: The levels, most specific first; a company's `depth` is how far above the till's own.
-LEVEL_RANK = {"machine": 3, "area": 2, "shop": 1, "company": 0}
+#: The levels, most specific first; a company's `depth` is how far above the till's own. A device
+#: group ("קבוצת מכשירים") stands between the till and its point of sale.
+LEVEL_RANK = {"machine": 4, "group": 3, "area": 2, "shop": 1, "company": 0}
 
 
 # ── Reading the block ────────────────────────────────────────────────────────
@@ -177,6 +181,28 @@ def _priority(assignment: Dict[str, Any]) -> int:
         return 0
 
 
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def updated_ms(assignment: Dict[str, Any]) -> int:
+    """
+    The assignment's `updatedAt` in whole milliseconds since the epoch (what the till and the
+    dashboard can both read exactly) — what breaks a tie between two device groups at one priority:
+    the most recently updated wins. Absent, unreadable or without a zone: 0 (every level but the
+    group's carries none, so their order is as before: the name, then the id).
+    """
+    value = assignment.get("updatedAt")
+    if not isinstance(value, str) or not value:
+        return 0
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    if moment.tzinfo is None:
+        return 0
+    return (moment - _EPOCH) // timedelta(milliseconds=1)
+
+
 def fallback_of(block: Optional[Dict[str, Any]]) -> str:
     mode = (block or {}).get("fallback")
     return MODE_NONE if mode == MODE_NONE else MODE_CATALOG
@@ -198,14 +224,14 @@ def resolve(block: Optional[Dict[str, Any]], at: datetime, surface: str = SURFAC
             continue
         if not schedule_active(m.get("schedule"), at):
             continue
-        candidates.append((-rank(a), -_priority(a), m.get("name") or "", m.get("id") or "", a, m))
+        candidates.append((-rank(a), -_priority(a), -updated_ms(a), m.get("name") or "", m.get("id") or "", a, m))
     if not candidates:
         return {
             "mode": fallback_of(block), "menuId": None, "menuName": None,
             "level": None, "depth": None, "priority": None,
         }
-    candidates.sort(key=lambda c: c[:4])
-    _, _, _, _, a, m = candidates[0]
+    candidates.sort(key=lambda c: c[:5])
+    _, _, _, _, _, a, m = candidates[0]
     return {
         "mode": MODE_MENU,
         "menuId": m.get("id"),

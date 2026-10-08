@@ -68,7 +68,7 @@ from test_shop_areas import _ctx, refused, w  # noqa: F401
 GOLDEN = Path(__file__).parent / "fixtures" / "catalog_menus_golden.json"
 #: The file's SHA-256 (line endings read as LF) — the same constant in pos-android's
 #: CatalogMenusTest. Change the fixtures in both repositories, and both constants, together.
-GOLDEN_SHA256 = "7170719785b59a7785790b0c5a4242871f9cba2906aa8efdb31c7c6ff2809bea"
+GOLDEN_SHA256 = "a1ffee3234e1f7efd74d7db25c196d5f3c29ade7e3ee62c6ebb73d9a865ca594"
 #: pos-android beside pos-server (as on the developers' machines): the two copies must be equal.
 SIBLING = Path(__file__).resolve().parents[3] / "pos-android" / "app" / "src" / "test" / "resources" / GOLDEN.name
 
