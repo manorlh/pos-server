@@ -357,10 +357,8 @@ def z_row(z: ZReport, z_type: str, out_item) -> Dict[str, Any]:
         "shiftCount": z.shift_count,
         "machineCount": z.machine_count,
         "grossSales": _money(out_item.gross_sales),
-        # Discounts without the production vouchers' deductions ("שוברי הפקה", apart).
-        "discountsTotal": _money(
-            (_dec(z.discounts_total) - _dec(deductions)) if z.discounts_total is not None and deductions else z.discounts_total
-        ),
+        # Without production vouchers' deductions (as stored, as the till's X); those apart.
+        "discountsTotal": _money(z.discounts_total),
         "productionVoucherDeductionsTotal": _money(deductions),
         "lineDiscountsTotal": _money(line_discounts),
         "promotionDiscountsTotal": _money(promo_discounts),

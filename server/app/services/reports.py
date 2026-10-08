@@ -539,7 +539,8 @@ def build_product_sales_report(
     ).subquery()
 
     is_refund = tx_sub.c.is_refund
-    qty = TransactionItem.quantity
+    # A production voucher's ₪0 memo line (`zero` mode) is no unit sold — as on the till (§4.3).
+    qty = case((TransactionItem.voucher_memo_value.isnot(None), 0), else_=TransactionItem.quantity)
     line_gross = TransactionItem.total_price
     # The line's own discount and its promotions' share: both are this product's.
     line_discount = func.coalesce(TransactionItem.discount, 0) + func.coalesce(TransactionItem.promotion_discount, 0) + func.coalesce(TransactionItem.voucher_discount, 0)
@@ -824,7 +825,7 @@ def build_cashier_sales_report(
                 document_count=sales_count + int(b["refunds_count"]),
                 sales_count=sales_count,
                 refunds_count=int(b["refunds_count"]),
-                gross=b["gross"],
+                gross=b["gross"] - b["voucher_deductions"],
                 discounts=b["discounts"] - b["voucher_deductions"],
                 production_voucher_deductions=b["voucher_deductions"],
                 refunds=b["refunds"],
@@ -856,9 +857,7 @@ def build_cashier_sales_report(
         production_voucher_deductions=total_deductions,
         refunds=sum(r.refunds for r in out_rows),
         net=sum(r.net for r in out_rows),
-        average_basket=(
-            (total_gross - total_discounts - total_deductions) / total_sales_count if total_sales_count else 0.0
-        ),
+        average_basket=(total_gross - total_discounts) / total_sales_count if total_sales_count else 0.0,
         cash_net=sum(r.cash_net for r in out_rows),
         card_net=sum(r.card_net for r in out_rows),
         other_net=sum(r.other_net for r in out_rows),
@@ -920,7 +919,7 @@ def build_sales_by_area_report(
             area_name=area.name if area is not None else None,
             archived=bool(area is not None and area.archived_at is not None),
             transactions_count=int(bucket["sales_count"]) + int(bucket["refunds_count"]),
-            gross=_cents(bucket["gross"]),
+            gross=_cents(bucket["gross"] - bucket["voucher_deductions"]),
             discounts=_cents(bucket["discounts"] - bucket["voucher_deductions"]),
             production_voucher_deductions=_cents(bucket["voucher_deductions"]),
             refunds=_cents(bucket["refunds"]),

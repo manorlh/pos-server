@@ -170,12 +170,9 @@ def _sales_rows(z: ZReport) -> List[Optional[dict]]:
     rows: List[Optional[dict]] = []
     if sales is not None and discounts is not None:
         rows.append(row("מכירות ברוטו", money(sales + discounts)))
-        # A production voucher's deduction is inside the documents' discount, but it is no
-        # discount: "קיזוז שוברי הפקה", apart (the production vouchers contract §4.1).
-        deductions = _dec((z.header or {}).get("productionVoucherDeductionsTotal")) or ZERO
-        rows.append(row("הנחות", credit(discounts - deductions)))
-        if deductions:
-            rows.append(row("קיזוז שוברי הפקה", credit(deductions)))
+        # A production voucher's deduction is in neither the gross nor the discounts (as the
+        # till's X): it has its own section, "שוברי הפקה".
+        rows.append(row("הנחות", credit(discounts)))
         # Item discounts are already inside the lines (and so inside the gross above):
         # shown for information, not taken off again.
         line_discounts = _dec((z.header or {}).get("lineDiscountsTotal"))
@@ -199,6 +196,17 @@ def _sales_rows(z: ZReport) -> List[Optional[dict]]:
 
 #: An exempt dealer's Z, in place of the VAT split (docs/SPEC_BUSINESS_TYPE.md).
 EXEMPT_NO_VAT = "עוסק פטור — ללא מע״מ"
+
+
+def _voucher_sections(z) -> List[dict]:
+    """
+    "שוברי הפקה": what production vouchers booked as a document deduction took off — in neither
+    the gross nor the discounts above, as on the till's X (the production vouchers contract §4.1).
+    """
+    deductions = _dec((z.header or {}).get("productionVoucherDeductionsTotal"))
+    if not deductions:
+        return []
+    return [section("שוברי הפקה", [row("קיזוז שוברי הפקה", credit(deductions))])]
 
 
 def _vat_rows(z: ZReport, dealer_type: Optional[str] = None) -> List[Optional[dict]]:
@@ -676,6 +684,7 @@ def build_print_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] =
         section("מכירות", _sales_rows(z)),
         section("מע״מ", _vat_rows(z)),
         section("אמצעי תשלום", _payment_rows(z)),
+        *_voucher_sections(z),
         section("תשר", _tips_rows(z)),
         section("קופה", _cash_rows(z)),
     ]
@@ -779,6 +788,7 @@ def build_summary_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime]
         section("מכירות", _sales_rows(z)),
         section("מע״מ", _vat_rows(z)),
         section("אמצעי תשלום", _payment_rows(z)),
+        *_voucher_sections(z),
         section("תשר", _tips_rows(z)),
         section("קופה", _cash_rows(z)),
     ]
@@ -864,6 +874,7 @@ def build_till_document(
         section("מכירות", _sales_rows(view)),  # type: ignore[arg-type]
         section("מע״מ", _vat_rows(view, (z.header or {}).get("dealerType"))),  # type: ignore[arg-type]
         section("אמצעי תשלום", _payment_rows(view)),  # type: ignore[arg-type]
+        *_voucher_sections(view),  # type: ignore[arg-type]
         section("תשר", _tips_rows(view)),  # type: ignore[arg-type]
         section("קופה", _cash_rows(view)),  # type: ignore[arg-type]
     ]

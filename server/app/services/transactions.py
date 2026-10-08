@@ -708,6 +708,8 @@ def _serialize_tx_for_upsert(
         "basket_discount": getattr(tx, "basket_discount", None),
         "basket_discount_percent": getattr(tx, "basket_discount_percent", None),
         "basket_discount_kind": getattr(tx, "basket_discount_kind", None),
+        # Production vouchers' ₪0 memo document (§4.3): out of the counts, as on the till.
+        "voucher_memo": bool(getattr(tx, "voucher_memo", False)),
         # A staff / managers' table meal: its kind, whose meal, why (app/services/table_policies.py).
         "meal_kind": getattr(tx, "meal_kind", None),
         "meal_employee_id": getattr(tx, "meal_employee_id", None),
@@ -1185,6 +1187,10 @@ def upsert_transactions(
                         promotion_id=_promotion_uuid(it.promotion_id),
                         # Discount vouchers' share (docs/SPEC_VOUCHER_PRODUCTION.md §7).
                         voucher_discount=getattr(it, "voucher_discount", None),
+                        # Production vouchers: the deduction's share, a ₪0 memo line's value.
+                        prepaid_deduction=getattr(it, "prepaid_deduction", None),
+                        voucher_memo_value=getattr(it, "voucher_memo_value_agorot", None),
+                        voucher_redemption_id=getattr(it, "voucher_redemption_id", None),
                         # What the dish was ordered with (docs/SPEC_MENU_MODIFIERS.md).
                         details=_menu.clean_details(it.details),
                         upsell_rule_id=_promotion_uuid(it.upsell_rule_id),

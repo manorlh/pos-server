@@ -104,13 +104,13 @@ class CashierSalesRow(BaseModel):
     sales_count: int = Field(..., alias="salesCount")
     refunds_count: int = Field(..., alias="refundsCount")
 
+    #: Gross and discounts without production vouchers' deductions (as the till's X).
     gross: float
-    #: The documents' discounts — without production vouchers' deductions (apart, below).
     discounts: float
-    #: "שוברי הפקה": what production vouchers booked as a document deduction took off.
+    #: "שוברי הפקה": what production vouchers booked as a document deduction took off — apart.
     production_voucher_deductions: float = Field(0.0, alias="productionVoucherDeductions")
     refunds: float
-    #: gross - discounts - productionVoucherDeductions - refunds
+    #: gross - discounts - refunds
     net: float
     average_basket: float = Field(..., alias="averageBasket")
 

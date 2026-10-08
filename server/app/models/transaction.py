@@ -127,6 +127,9 @@ class Transaction(Base):
     basket_discount = Column(Numeric(12, 2), nullable=True)
     basket_discount_percent = Column(Numeric(6, 2), nullable=True)
     basket_discount_kind = Column(String(16), nullable=True)
+    #: A document made only of production vouchers' ₪0 memo lines (`zero` mode): out of the
+    #: Z's and the daily aggregates' document counts, as on the till.
+    voucher_memo = Column(Boolean, nullable=False, default=False, server_default="false")
     #: A meal at a staff or managers' table (app/services/table_policies.py): `staff` /
     #: `managers`, whose meal it was (a staff table's employee, as the till named them),
     #: and why (a managers' table's reason). The approving manager is `approved_by_*`.

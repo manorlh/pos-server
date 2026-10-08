@@ -85,8 +85,8 @@ def _money_row(bucket: Dict[str, float]) -> Dict[str, Any]:
         "documents": sales + refunds,
         "salesCount": sales,
         "refundsCount": refunds,
-        "gross": _r(bucket["gross"]),
-        # Without production vouchers' deductions ("שוברי הפקה", apart).
+        # Gross and discounts without production vouchers' deductions (as the till's X), those apart.
+        "gross": _r(bucket["gross"] - bucket["voucher_deductions"]),
         "discounts": _r(bucket["discounts"] - bucket["voucher_deductions"]),
         "productionVoucherDeductions": _r(bucket["voucher_deductions"]),
         "refunds": _r(bucket["refunds"]),

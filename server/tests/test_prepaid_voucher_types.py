@@ -500,7 +500,9 @@ class TestFeatures:
         w.db.query(PrepaidVoucherType).filter(PrepaidVoucherType.id == row.type_id).update({"origin": "legacy"})
         w.db.commit()
         assert PV.required_features(w.db, row) == []
-        assert look(w, first_code(w, b))["redeemable"] is True
+        out = look(w, first_code(w, b))
+        # The till falls back to `payment` when the lookup names no mode: a legacy batch says `zero`.
+        assert (out["redeemable"], out["redemptionAccounting"]) == (True, "zero")
         # … until the owner turns it into a deduction.
         row.redemption_accounting = "discount"
         w.db.commit()

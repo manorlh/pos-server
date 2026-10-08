@@ -91,9 +91,11 @@ class TestStored:
 
 class TestReports:
     def test_the_cashier_report(self, booked):
+        # The till's X for the same sale: gross ₪10 (the ₪40 the voucher covered is no sale of the
+        # till's), discounts ₪5, net ₪5 — and "שוברי הפקה" ₪40 apart.
         out = reports_router.get_cashier_sales_report(**report_args(area_id=None), **_ctx(booked)).totals
-        assert (out.gross, out.discounts, out.production_voucher_deductions, out.net) == (50.0, 5.0, 40.0, 5.0)
-        assert out.gross - out.discounts - out.production_voucher_deductions - out.refunds == out.net
+        assert (out.gross, out.discounts, out.production_voucher_deductions, out.net) == (10.0, 5.0, 40.0, 5.0)
+        assert out.gross - out.discounts - out.refunds == out.net
 
     def test_the_area_report(self, booked):
         w = booked
@@ -101,7 +103,7 @@ class TestReports:
             shop_id=w.shop.id, date_from=TODAY, date_to=TODAY, from_date=None, to_date=None, from_hour=None,
             to_hour=None, tz="Asia/Jerusalem", **_ctx(w),
         ).totals
-        assert (out.discounts, out.production_voucher_deductions, out.net) == (5.0, 40.0, 5.0)
+        assert (out.gross, out.discounts, out.production_voucher_deductions, out.net) == (10.0, 5.0, 40.0, 5.0)
 
     def test_the_discounts_report(self, booked):
         out = promotions_router.get_discounts_report(
@@ -114,19 +116,23 @@ class TestReports:
     def test_the_shift_totals_and_the_z_document(self, booked):
         w = booked
         totals = compute_totals(w.db, [w.booked_shift.id])
-        assert (totals.discounts_total, totals.production_voucher_deductions_total) == (Decimal("45.00"), Decimal("40.00"))
+        # As the till's X: the deduction in neither the gross nor the discounts; the net the same.
+        assert (totals.gross_sales, totals.discounts_total, totals.net_sales) == (Decimal("10.00"), Decimal("5.00"), Decimal("5.00"))
+        assert totals.production_voucher_deductions_total == Decimal("40.00")
         assert totals.voucher_discounts_total == Decimal("0")
 
         class Z:
             total_sales = Decimal("5.00")
             total_refunds = Decimal("0")
-            discounts_total = Decimal("45.00")
+            discounts_total = Decimal("5.00")
             transactions_count = 1
             header = {"productionVoucherDeductionsTotal": "40.00"}
 
         rows = {r["label"]: r["value"] for r in z_print._sales_rows(Z()) if r}
-        assert (rows["מכירות ברוטו"], rows["הנחות"], rows["קיזוז שוברי הפקה"], rows["סה״כ נטו"]) == (
-            "₪50.00", "-₪5.00", "-₪40.00", "₪5.00")
+        assert (rows["מכירות ברוטו"], rows["הנחות"], rows["סה״כ נטו"]) == ("₪10.00", "-₪5.00", "₪5.00")
+        (vouchers,) = z_print._voucher_sections(Z())
+        assert (vouchers["title"], vouchers["rows"]) == ("שוברי הפקה", [{"label": "קיזוז שוברי הפקה", "value": "-₪40.00", "emphasis": False}])
+        assert z_print._voucher_sections(type("Z0", (), {"header": {}})()) == []
 
 
 def test_the_document_copy(booked):
@@ -195,3 +201,71 @@ def test_the_migration():
     sql = buf.getvalue()
     assert "ALTER TABLE transaction_voucher_discounts ALTER COLUMN kind TYPE VARCHAR(32)" in sql
     assert "ADD COLUMN redemption_id UUID" in sql and "ADD COLUMN units JSON" in sql
+
+
+class TestMemoLines:
+    """`zero` mode (§4.3): ₪0 lines with the value as a memo — no unit sold, a memo-only document no document."""
+
+    def test_out_of_the_counts_as_on_the_till(self, w):
+        from app.models.transaction_item import TransactionItem
+
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        memo = TransactionIn.model_validate({
+            "id": str(uuid.uuid4()), "transactionNumber": "8101", "status": "completed", "documentType": 320,
+            "totalAmount": "0.00", "documentDiscount": "0", "paymentMethod": "cash", "payments": [],
+            "createdAt": NOW.isoformat(), "updatedAt": NOW.isoformat(), "shiftId": str(shift.id), "businessDate": str(TODAY),
+            "voucherMemo": True,
+            "items": [{"id": str(uuid.uuid4()), "productId": str(w.hotdog.id), "productName": "נקניקייה", "quantity": 2,
+                       "unitPrice": "0", "totalPrice": "0", "voucherMemoValueAgorot": 5000, "voucherRedemptionId": "r-1"}],
+        })
+        sold = TransactionIn.model_validate({
+            "id": str(uuid.uuid4()), "transactionNumber": "8102", "status": "completed", "documentType": 320,
+            "totalAmount": "25.00", "documentDiscount": "0", "paymentMethod": "cash",
+            "payments": [{"id": str(uuid.uuid4()), "method": "cash", "amount": "25.00"}],
+            "createdAt": NOW.isoformat(), "updatedAt": NOW.isoformat(), "shiftId": str(shift.id), "businessDate": str(TODAY),
+            "items": [{"id": str(uuid.uuid4()), "productId": str(w.hotdog.id), "productName": "נקניקייה", "quantity": 1,
+                       "unitPrice": "25.00", "totalPrice": "25.00"}],
+        })
+        assert [r.status for r in upsert_transactions(w.db, till, [memo, sold])] == ["accepted", "accepted"]
+        w.db.commit()
+        line = w.db.query(TransactionItem).filter(TransactionItem.voucher_memo_value.isnot(None)).one()
+        assert (line.voucher_memo_value, line.voucher_redemption_id) == (5000, "r-1")
+        totals = compute_totals(w.db, [shift.id])
+        assert (totals.transactions_count, totals.sales_count, totals.voucher_memo_documents) == (1, 1, 1)
+        products = reports_router.get_product_sales_report(
+            **report_args(), cashier_id=None, limit=50, area_id=None, meals="components", **_ctx(w))
+        row = next(r for r in products.rows if r.product_name == "נקניקייה")
+        assert row.units_sold == 1.0  # the memo line's 2 are no sale
+
+
+def test_the_memo_migration():
+    import importlib.util
+    import io
+    import pathlib
+
+    import sqlalchemy as sa
+    from alembic.operations import Operations
+    from alembic.runtime.migration import MigrationContext
+
+    path = pathlib.Path(__file__).absolute().parents[1] / "alembic" / "versions" / "e2b6d9f41c83_production_voucher_memo_lines.py"
+    spec = importlib.util.spec_from_file_location("migration_e2b6d9f41c83", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.down_revision == "c8e1f5a3b702"
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as conn:
+        conn.execute(sa.text("CREATE TABLE transactions (id CHAR(32) PRIMARY KEY)"))
+        conn.execute(sa.text("CREATE TABLE transaction_items (id CHAR(32) PRIMARY KEY)"))
+        conn.execute(sa.text("INSERT INTO transactions VALUES ('t1')"))
+        with Operations.context(MigrationContext.configure(conn)):
+            module.upgrade()
+            module.upgrade()  # idempotent
+        assert {"prepaid_deduction", "voucher_memo_value", "voucher_redemption_id"} <= {
+            c["name"] for c in sa.inspect(conn).get_columns("transaction_items")}
+        assert conn.execute(sa.text("SELECT voucher_memo FROM transactions")).one()[0] in (0, False)
+    buf = io.StringIO()
+    offline = MigrationContext.configure(dialect_name="postgresql", opts={"as_sql": True, "output_buffer": buf})
+    with Operations.context(offline):
+        module.upgrade()
+    assert "ALTER TABLE transactions ADD COLUMN voucher_memo BOOLEAN DEFAULT false NOT NULL" in buf.getvalue()

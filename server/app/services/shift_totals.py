@@ -83,10 +83,12 @@ class DocumentTotals:
     #: reported beside it — never a tender.
     voucher_discounts_total: Decimal = ZERO
     #: Σ what production vouchers booked as a document deduction took off the sales ("קיזוז
-    #: שוברי הפקה", `transaction_voucher_discounts.kind` production_voucher): inside
-    #: `discounts_total` (the documents' discount, filed as issued), but never "a discount" —
-    #: a management view shows `discounts_total` less it, and it as "שוברי הפקה".
+    #: שוברי הפקה", `transaction_voucher_discounts.kind` production_voucher). As on the till's
+    #: X: in neither the gross nor `discounts_total` (the net is the same) — its own section.
+    #: The uniform file still files the documents' whole discount, as issued.
     production_voucher_deductions_total: Decimal = ZERO
+    #: Documents made only of production vouchers' ₪0 memo lines (`zero` mode): out of the counts.
+    voucher_memo_documents: int = 0
     payment_breakdown: Dict[str, Decimal] = field(default_factory=dict)
     total_tips: Decimal = ZERO
     total_cash_tips: Decimal = ZERO
@@ -152,7 +154,10 @@ class DocumentTotals:
 
     @property
     def gross_sales(self) -> Decimal:
-        """Σ totalAmount of the sales, before document discounts (the till's X figure)."""
+        """
+        Σ totalAmount of the sales before their discounts, less production vouchers' deductions
+        (the till's X figure: a voucher-covered line is no sale of this till's).
+        """
         return self.total_sales + self.discounts_total
 
     @property
@@ -387,7 +392,25 @@ def _totals_of(db: Session, documents: List[Transaction]) -> DocumentTotals:
             .scalar()
         )
         totals.production_voucher_deductions_total = _dec(deduction_sum)
+        deduction_of = {
+            tid: _dec(amount)
+            for tid, amount in db.query(
+                TransactionVoucherDiscount.transaction_id,
+                _func.coalesce(_func.sum(_func.abs(TransactionVoucherDiscount.discount_amount)), 0),
+            )
+            .filter(
+                TransactionVoucherDiscount.transaction_id.in_(sale_ids),
+                TransactionVoucherDiscount.kind == PRODUCTION_VOUCHER_DEDUCTION,
+            )
+            .group_by(TransactionVoucherDiscount.transaction_id)
+        }
+    else:
+        deduction_of = {}
     for doc in counted:
+        if getattr(doc, "voucher_memo", False):
+            # ₪0 memo lines only (`zero` mode): the till counts no document, no sale (§4.3).
+            totals.voucher_memo_documents += 1
+            continue
         totals.transactions_count += 1
         refund = is_refund_document(
             document_type=doc.document_type,
@@ -406,7 +429,8 @@ def _totals_of(db: Session, documents: List[Transaction]) -> DocumentTotals:
         else:
             totals.sales_count += 1
             totals.total_sales += collected
-            totals.discounts_total += _dec(doc.document_discount)
+            # Without a production voucher's deduction — as the till's X ("שוברי הפקה", apart).
+            totals.discounts_total += _dec(doc.document_discount) - deduction_of.get(doc.id, ZERO)
 
         legs = legs_by_doc.get(doc.id)
         if legs:

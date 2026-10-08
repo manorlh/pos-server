@@ -203,6 +203,11 @@ class TransactionItemIn(BaseModel):
     #: §7), an amount; inside `documentDiscount` like `promotionDiscount`, never in
     #: `totalPrice`, never a tender. Optional.
     voucher_discount: Optional[Decimal] = Field(None, alias="voucherDiscount")
+    #: Production vouchers: a deduction's share of the line (inside `documentDiscount`), and a
+    #: ₪0 memo line's value (agorot) with its redemption (the contract's §4.1 / §4.3). Optional.
+    prepaid_deduction: Optional[Decimal] = Field(None, alias="prepaidDeduction")
+    voucher_memo_value_agorot: Optional[int] = Field(None, alias="voucherMemoValueAgorot", ge=0)
+    voucher_redemption_id: Optional[str] = Field(None, alias="voucherRedemptionId", max_length=100)
     #: What the dish was ordered with (docs/SPEC_MENU_MODIFIERS.md §3.8): modifiers, notes,
     #: allergies, seat, course, a meal's components. Optional; never checked against the
     #: menu — anything that is not an object, or too big, is dropped and the line kept.
@@ -414,6 +419,8 @@ class TransactionIn(BaseModel):
     promotions: List[TransactionPromotionIn] = Field(default_factory=list)
     #: The discount vouchers on this sale (docs/SPEC_VOUCHER_PRODUCTION.md §7). Optional.
     voucher_discounts: List[TransactionVoucherDiscountIn] = Field(default_factory=list, alias="voucherDiscounts")
+    #: A document made only of production vouchers' ₪0 memo lines (§4.3).
+    voucher_memo: bool = Field(False, alias="voucherMemo")
 
     class Config:
         populate_by_name = True
