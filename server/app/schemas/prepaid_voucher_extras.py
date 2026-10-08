@@ -155,13 +155,13 @@ class QuotaUpdate(_In):
     reason: Optional[str] = Field(None, max_length=1000)
 
 
-class TestBatchIn(PrepaidVoucherBatchCreate):
+class StaffTestBatchIn(PrepaidVoucherBatchCreate):
     """A new batch of staff test vouchers: the batch form's body, and an optional note."""
 
     test_note: Optional[str] = Field(None, alias="testNote", max_length=1000)
 
 
-class TestMarkIn(_In):
+class StaffTestMarkIn(_In):
     note: Optional[str] = Field(None, max_length=1000)
 
 

@@ -64,8 +64,8 @@ from app.schemas.prepaid_voucher_extras import (
     SettlementInvoiceIn,
     SettlementInvoiceUpdate,
     SimulateIn,
-    TestBatchIn,
-    TestMarkIn,
+    StaffTestBatchIn,
+    StaffTestMarkIn,
 )
 from app.services import prepaid_voucher_analytics as PVA
 from app.services import prepaid_voucher_controls as CTL
@@ -418,7 +418,7 @@ def list_prepaid_voucher_test_batches(
 
 @router.post("/prepaid-vouchers/controls/test-batches", status_code=status.HTTP_201_CREATED)
 def create_prepaid_voucher_test_batch(
-    body: TestBatchIn,
+    body: StaffTestBatchIn,
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -434,7 +434,7 @@ def create_prepaid_voucher_test_batch(
 @router.post("/prepaid-vouchers/controls/test-batches/{batch_id}")
 def mark_prepaid_voucher_test_batch(
     batch_id: str,
-    body: Optional[TestMarkIn] = None,
+    body: Optional[StaffTestMarkIn] = None,
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
