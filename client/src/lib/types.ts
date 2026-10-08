@@ -20,7 +20,9 @@ export type UserRole =
   | 'company_manager'
   | 'shop_manager'
   | 'shift_supervisor'
-  | 'cashier';
+  | 'cashier'
+  // "עמדת מפיק" (feat/event-live): an event's producer — the producer portal only.
+  | 'producer_view';
 
 export interface User {
   id: string;
