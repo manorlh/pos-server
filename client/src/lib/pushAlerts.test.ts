@@ -101,11 +101,14 @@ describe('the attention feed', () => {
     assert.equal(items[0].body, 'מרכז · קופה לא מחוברת · 18:00');
     assert.deepEqual(items[0].actions.map((a) => a.actionId), ['ack', 'open']);
     assert.deepEqual(attentionItems({ ...feed, canAcknowledge: false }, () => '').map((i) => i.actions.length), [1, 1]);
+    assert.deepEqual(attentionItems({ ...feed, canOpenLog: false }, () => '').map((i) => i.actions.map((x) => x.actionId)), [['ack'], ['ack']]);
   });
 
   it('leads a target to the live screen, anything else to its page', () => {
     assert.equal(alertHref({ kind: 'target_reached', code: 'c', details: { eventId: 'e9' } }), '/dashboard/live-event/e9');
     assert.equal(alertHref({ kind: 'refund', code: 'c', details: null }), '/x/c');
+    assert.equal(alertHref({ kind: 'refund', code: 'c', details: null }, false), null);
+    assert.equal(alertHref({ kind: 'target_reached', code: 'c', details: { eventId: 'e9' } }, false), '/dashboard/live-event/e9');
   });
 
   it('colours the history', () => {

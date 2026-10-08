@@ -78,6 +78,8 @@ export interface AlertsFeed {
   alerts: FeedAlert[];
   open: number;
   canAcknowledge?: boolean;
+  /** An alert's own page is the exceptions log's — only with its section. */
+  canOpenLog?: boolean;
 }
 
 export interface HistoryRow {
@@ -201,11 +203,14 @@ export interface AttentionItem {
   actions: { labelKey: string; actionId: 'ack' | 'open'; context: Record<string, unknown> }[];
 }
 
-/** Where an alert leads: an event's live screen for a target, else the entry's page (`/x/<code>`). */
-export function alertHref(a: Pick<FeedAlert, 'kind' | 'code' | 'details'>): string {
+/**
+ * Where an alert leads: an event's live screen for a target, else the entry's page (`/x/<code>`)
+ * — that one only for someone who may read the exceptions log (`canOpenLog`); else nowhere (null).
+ */
+export function alertHref(a: Pick<FeedAlert, 'kind' | 'code' | 'details'>, canOpenLog = true): string | null {
   const eventId = a.details && typeof a.details.eventId === 'string' ? a.details.eventId : null;
   if (a.kind === 'target_reached' && eventId) return `/dashboard/live-event/${eventId}`;
-  return a.code ? `/x/${a.code}` : '/dashboard/alerts';
+  return canOpenLog && a.code ? `/x/${a.code}` : null;
 }
 
 /** The open alerts, newest first, as the cockpit's attention feed (the ack action only when allowed). */
@@ -218,7 +223,8 @@ export function attentionItems(feed: AlertsFeed, formatTime: (iso: string) => st
       const till = a.machineName ?? (a.posNumber ? `קופה ${a.posNumber}` : null);
       const actions: AttentionItem['actions'] = [];
       if (feed.canAcknowledge !== false) actions.push({ labelKey: 'actions.ack', actionId: 'ack', context: { entryId: a.id } });
-      actions.push({ labelKey: 'actions.open', actionId: 'open', context: { href: alertHref(a) } });
+      const href = alertHref(a, feed.canOpenLog !== false);
+      if (href) actions.push({ labelKey: 'actions.open', actionId: 'open', context: { href } });
       return {
         id: a.id,
         severity: a.severity,

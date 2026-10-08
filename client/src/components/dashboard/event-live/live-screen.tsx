@@ -367,7 +367,7 @@ function ChartPanel({ live, bucket, onBucket }: { live: EventLive; bucket: LiveB
 function ItemsPanel({ live }: { live: EventLive }) {
   const t = useTranslations('eventLive');
   const [scope, setScope] = useState<'lastHour' | 'event'>('lastHour');
-  const rows = live.items[scope].length || scope === 'event' ? live.items[scope] : live.items.event;
+  const rows = live.items[scope];
   return (
     <Panel className="xl:col-span-4">
       <div className="mb-3 flex items-center justify-between gap-2">

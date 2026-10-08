@@ -2,7 +2,8 @@
 "קופה לא מחוברת" — a till that went offline while trading, for the exceptions log and the
 phone (push) alerts.
 
-A till (fiscal, active, not a kiosk — kiosks have `kiosk_offline`) with an OPEN shift whose
+A till (fiscal, active, not a kiosk — kiosks have `kiosk_offline`) with an OPEN shift (opened
+in the last 18 hours — one forgotten open overnight is not trading) whose
 last heartbeat is older than the exceptions rule's minutes (`till_offline.offlineMinutes`,
 default 10; the rule can be switched off per company / shop / till like every exception rule)
 gets one `audit_exceptions` row per outage: `till_offline:<machine>:<last heartbeat>`,
@@ -38,6 +39,8 @@ DEFAULT_MINUTES = 10
 #: Never alert on a heartbeat older than this: a till switched off for days with a shift left
 #: open is a shift problem, not news.
 LOOKBACK = timedelta(hours=12)
+#: Nor for a shift opened longer ago than this (forgotten open overnight: not trading now).
+SHIFT_MAX_AGE = timedelta(hours=18)
 
 
 def _utc(value: Optional[datetime]) -> Optional[datetime]:
@@ -117,6 +120,7 @@ def scan(db: Session, *, now: Optional[datetime] = None) -> int:
         .join(Shift, Shift.machine_id == POSMachine.id)
         .filter(
             Shift.status == ShiftStatus.OPEN,
+            Shift.opened_at > now - SHIFT_MAX_AGE,
             POSMachine.is_active.is_(True),
             POSMachine.is_fiscal.is_(True),
             POSMachine.last_heartbeat_at.isnot(None),

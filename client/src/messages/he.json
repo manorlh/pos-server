@@ -3641,7 +3641,8 @@
       "company_manager": "מנהל חברה",
       "shop_manager": "מנהל סניף",
       "shift_supervisor": "אחמ\"ש",
-      "cashier": "קופאי"
+      "cashier": "קופאי",
+      "producer_view": "מפיק (צפייה באירוע)"
     },
     "roleHints": {
       "shift_supervisor": "מאשר זיכויים, הנחות וסגירת משמרת בקופה. אין לו הרשאות ניהול בדשבורד."

@@ -411,3 +411,28 @@ def test_the_alerts_feed_is_scoped_and_acknowledged_in_place(w, monkeypatch):
         cashier = user(w, UserRole.CASHIER, w.shop)
         with pytest.raises(HTTPException):
             R.acknowledge_alert(center.id, {}, current_user=cashier, active_tenant_id=w.tenant.id, db=w.db)
+
+
+def test_a_tap_opens_the_log_only_for_who_may_read_it(w):
+    from app.models.dashboard_access import DashboardAccessProfile
+
+    alerts_only = user(w, UserRole.SHOP_MANAGER, w.shop)
+    w.db.add(DashboardAccessProfile(user_id=alerts_only.id, full_access=False, sections={"alerts": "view"}))
+    w.db.flush()
+    phone = device(w, alerts_only)
+    P.save_preferences(w.db, alerts_only, w.tenant.id, {})
+    admin_phone = device(w, w.admin)
+    P.save_preferences(w.db, w.admin, w.tenant.id, {})
+    run(w, entry(w, "till_offline"))
+    by_endpoint = {c.endpoint: c for c in w.push.calls}
+    mine = json.loads(W.decrypt(by_endpoint[phone.endpoint].content, phone._key, phone._auth))
+    theirs = json.loads(W.decrypt(by_endpoint[admin_phone.endpoint].content, admin_phone._key, admin_phone._auth))
+    assert mine["url"] == "/dashboard/alerts" and theirs["url"].startswith("/x/")
+
+
+def test_a_shift_forgotten_open_overnight_is_not_trading(w):
+    till = w.tills[0]
+    w.shift(till, 1, status=ShiftStatus.OPEN, opened_at=NOW - timedelta(hours=20))
+    till.last_heartbeat_at = NOW - timedelta(minutes=30)
+    w.db.flush()
+    assert TW.scan(w.db, now=NOW) == 0

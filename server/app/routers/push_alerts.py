@@ -246,7 +246,7 @@ def list_alerts(
     _staff(current_user)
     q = scoped(db, current_user, active_tenant_id)
     if q is None:
-        return {"alerts": [], "open": 0}
+        return {"alerts": [], "open": 0, "canAcknowledge": False, "canOpenLog": False}
     kinds = sorted({k for c in P.CATEGORIES for k in c.kinds})
     q = q.filter(ExceptionLogEntry.kind.in_(kinds), ExceptionLogEntry.occurred_at >= _now() - timedelta(days=days))
     if company_id is not None:
@@ -282,6 +282,8 @@ def list_alerts(
         "alerts": out,
         "open": sum(1 for r in rows if r.acknowledged_at is None),
         "canAcknowledge": current_user.role not in NO_ACK_ROLES,
+        # An alert's own page is the exceptions log's (`/x/<code>`): only with that section.
+        "canOpenLog": P.may_open_log(db, current_user),
     }
 
 

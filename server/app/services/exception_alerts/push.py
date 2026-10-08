@@ -384,7 +384,17 @@ def _names(db: Session, entry: ExceptionLogEntry) -> Tuple[Optional[str], Option
     return names(db, entry)
 
 
-def payload_for(db: Session, entry: ExceptionLogEntry, tzinfo) -> Dict[str, Any]:
+def may_open_log(db: Session, user: Any) -> bool:
+    """Whether a tap may lead to the entry's page (`/x/<code>`, the exceptions log's section)."""
+    from app.services import dashboard_access
+
+    if user is None:
+        return False
+    access = dashboard_access.effective_access(db, user)
+    return access.allows("reports", "view") or access.allows("exception_alerts", "view")
+
+
+def payload_for(db: Session, entry: ExceptionLogEntry, tzinfo, *, open_log: bool = True) -> Dict[str, Any]:
     """What the phone shows: title (type · till), body (shop · what · time), where a tap leads."""
     category = category_of(entry)
     shop, till = _names(db, entry)
@@ -394,9 +404,13 @@ def payload_for(db: Session, entry: ExceptionLogEntry, tzinfo) -> Dict[str, Any]
     title = " · ".join(p for p in (CATEGORY_BY_KEY[category].label if category else label_of(entry.kind), till) if p)
     body = " · ".join(p for p in (shop, summary or what, local.strftime("%H:%M")) if p)
     details = entry.details if isinstance(entry.details, dict) else {}
-    url = f"/dashboard/live-event/{details['eventId']}" if entry.kind == "target_reached" and details.get("eventId") else (
-        f"/x/{entry.short_code}" if entry.short_code else "/dashboard/alerts"
-    )
+    if entry.kind == "target_reached" and details.get("eventId"):
+        url = f"/dashboard/live-event/{details['eventId']}"
+    elif open_log and entry.short_code:
+        url = f"/x/{entry.short_code}"
+    else:
+        url = "/dashboard/alerts"
+
     return {
         "title": title[:120],
         "body": body[:240],
@@ -610,7 +624,8 @@ def process_entry(db: Session, entry: ExceptionLogEntry, *, now: datetime, tzinf
         elif E.rate_limited(db, rule, now):
             status, reason = ST_SUPPRESSED_RATE, f"{rule.rate_limit_minutes}m"
         out.extend(_deliver(
-            db, rule=rule, kind=DISPATCH_ALERT, devices=devices, payload=payload_for(db, entry, tzinfo),
+            db, rule=rule, kind=DISPATCH_ALERT, devices=devices,
+            payload=payload_for(db, entry, tzinfo, open_log=may_open_log(db, owner)),
             status=status, reason=reason, dedupe_prefix=f"alert:{entry.id}:{rule.id}", now=now, entry=entry,
         ))
     return out
@@ -646,7 +661,9 @@ def flush_rule(db: Session, rule: ExceptionAlertRule, now: datetime) -> int:
         db.flush()
         return 0
     if len(entries) == 1:
-        payload = payload_for(db, entries[0], tzinfo)
+        from app.models.user import User
+
+        payload = payload_for(db, entries[0], tzinfo, open_log=may_open_log(db, db.get(User, rule.owner_user_id)))
     else:
         payload = digest_payload(
             len(entries), [CATEGORY_BY_KEY[c].label for c in (category_of(e) for e in entries) if c],

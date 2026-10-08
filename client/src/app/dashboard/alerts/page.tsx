@@ -104,9 +104,15 @@ export default function AlertsPage() {
                   </Muted>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
-                  <Link href={alertHref(a)} aria-label={t('openAlert')} className="flex size-10 items-center justify-center rounded-lg text-[#007AFF] hover:bg-[#007AFF]/10">
-                    <ExternalLink className="size-4" aria-hidden />
-                  </Link>
+                  {alertHref(a, feed.data?.canOpenLog !== false) ? (
+                    <Link
+                      href={alertHref(a, feed.data?.canOpenLog !== false) ?? '/dashboard/alerts'}
+                      aria-label={t('openAlert')}
+                      className="flex size-10 items-center justify-center rounded-lg text-[#007AFF] hover:bg-[#007AFF]/10"
+                    >
+                      <ExternalLink className="size-4" aria-hidden />
+                    </Link>
+                  ) : null}
                   {feed.data?.canAcknowledge !== false ? (
                     <Button
                       variant="ghost"
