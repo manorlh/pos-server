@@ -144,7 +144,16 @@ export class PayService {
     this.emit();
     input.onSent?.();
     try {
-      const result = await provider.sale({ amountAgorot: input.amountAgorot, reference, payments: attempt.payments, onProgress: input.onProgress });
+      const result = await provider.sale({
+        amountAgorot: input.amountAgorot,
+        reference,
+        payments: attempt.payments,
+        onProgress: input.onProgress,
+        // Answered (its acknowledgement may still be on its way): a cancel now sends nothing.
+        onAnswered: () => {
+          if (this.inFlight?.reference === reference) this.inFlight.answered = true;
+        },
+      });
       this.inFlight.answered = true;
       this.lastCardAnswerAtMs = Date.now();
       if (result.answer === 'APPROVED') return { kind: 'approved', card: result.card, recovered: false };

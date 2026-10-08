@@ -5,6 +5,7 @@
  */
 
 import { resolveAttempt, type CallFn } from '../../core/cardRecovery';
+import { acknowledgeApproval } from '../../core/terminalAck';
 import {
   abortFrame,
   cardAnswerOf,
@@ -78,6 +79,8 @@ export class NayaxLanProvider implements PaymentProvider {
   constructor(
     private readonly address: PinpadAddress,
     private readonly ctx: ProviderContext,
+    /** The clock for the acknowledgement's ten seconds and the lookups' pauses (tests pass their own). */
+    private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
   ) {
     this.pins = {
       get: (hp) => ctx.getValue(`pinpad.pin:${hp}`),
@@ -139,20 +142,32 @@ export class NayaxLanProvider implements PaymentProvider {
     return r.ok ? { ok: true, detail: null } : { ok: false, detail: r.error };
   }
 
-  async sale(req: { amountAgorot: number; reference: string; payments: number; onProgress?: (m: string) => void }): Promise<SaleResult> {
+  async sale(req: { amountAgorot: number; reference: string; payments: number; onProgress?: (m: string) => void; onAnswered?: () => void }): Promise<SaleResult> {
     req.onProgress?.('הצמד, הכנס או העבר את הכרטיס');
     const r = await this.call(saleFrame(req.amountAgorot, req.reference, req.payments), TIMEOUTS.sale);
     if (!r.ok) return { answer: 'UNKNOWN', message: `אין תשובה מהמסוף: ${r.error}`, raw: null };
+    req.onAnswered?.();
     const reply = parseReply(r.body);
     const outcome = saleOutcome(reply);
     const answer = cardAnswerOf(outcome);
-    if (answer === 'APPROVED') return { answer, card: approvedCard(req.reference, reply, req.amountAgorot, req.payments, false), raw: r.body };
+    if (answer === 'APPROVED') {
+      // "ackTransaction" (core/terminalAck.ts): acknowledged at once, before anything is written —
+      // the terminal cancels an approval nobody acknowledges within ten seconds.
+      const ack = await acknowledgeApproval({ vuid: req.reference, amountAgorot: req.amountAgorot, result: reply.result }, this.call, this.sleep);
+      if (ack.kind === 'final') return { answer, card: approvedCard(req.reference, reply, req.amountAgorot, req.payments, false), raw: r.body };
+      if (ack.kind === 'approved') {
+        const found = parseReply(ack.body);
+        return { answer: 'APPROVED', card: approvedCard(req.reference, found, req.amountAgorot, req.payments, true), raw: ack.body };
+      }
+      if (ack.kind === 'not_charged') return { answer: 'DECLINED', message: ack.message, raw: r.body, statusCode: null };
+      return { answer: 'UNKNOWN', message: ack.message, raw: r.body };
+    }
     if (answer === 'DECLINED') return { answer, message: reply.statusMessage ?? outcome, raw: r.body, statusCode: reply.statusCode };
     return { answer: 'UNKNOWN', message: reply.statusMessage ?? outcome, raw: r.body };
   }
 
   async resolve(attempt: { reference: string; amountAgorot: number; terminalTip: boolean }): Promise<Resolution> {
-    const s = await resolveAttempt({ vuid: attempt.reference, amountAgorot: attempt.amountAgorot, terminalTip: attempt.terminalTip }, this.call, (ms) => new Promise((r) => setTimeout(r, ms)));
+    const s = await resolveAttempt({ vuid: attempt.reference, amountAgorot: attempt.amountAgorot, terminalTip: attempt.terminalTip }, this.call, this.sleep);
     if (s.kind === 'approved') {
       const reply = parseReply(s.body);
       const payments = strictInt(reply.result?.creditPayments) ?? 1;
