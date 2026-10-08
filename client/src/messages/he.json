@@ -15041,7 +15041,7 @@
       "free": "{free} שוברים פנויים לחלוקה מתוך {total}. שובר שמומש או בוטל לא נשלח.",
       "preview": "תצוגה מקדימה",
       "confirm": "אישור ושמירת {n, plural, one {נמען אחד} other {# נמענים}}",
-      "summary": "{ok} שורות תקינות · {errors} עם שגיאה · {warnings} עם אזהרה · {assigned} שוברים יחולקו · {left} יישארו פנויים",
+      "summary": "{ok, plural, one {שורה תקינה אחת} other {# שורות תקינות}} · {errors} עם שגיאה · {warnings} עם אזהרה · {assigned, plural, one {שובר אחד יחולק} other {# שוברים יחולקו}} · {left} יישארו פנויים",
       "errorsSkipped": "שורות עם שגיאה לא יישמרו ולא יקבלו שוברים. אפשר לתקן את הקובץ ולטעון שוב.",
       "col": {
         "name": "שם",
@@ -15052,8 +15052,8 @@
         "status": "מצב"
       },
       "ok": "תקין · {n, plural, one {שובר אחד} other {# שוברים}}",
-      "moreRows": "ועוד {n} שורות (יישמרו גם הן).",
-      "imported": "נשמרו {n} נמענים{skipped, plural, =0 {} other { · # שורות דולגו}}"
+      "moreRows": "ועוד {n, plural, one {שורה אחת} other {# שורות}} שלא מוצגות כאן — יטופלו באותו אופן.",
+      "imported": "{n, plural, one {נשמר נמען אחד} other {נשמרו # נמענים}}{skipped, plural, =0 {} one { · שורה אחת דולגה} other { · # שורות דולגו}}"
     },
     "queue": {
       "title": "תור השליחה",
@@ -15087,7 +15087,7 @@
         "person": "נמענים",
         "group": "שליחות לקבוצות"
       },
-      "showRemoved": "הצגת שהוסרו",
+      "showRemoved": "הצגת נמענים שהוסרו",
       "refresh": "רענון",
       "exportCsv": "ייצוא CSV",
       "noRows": "אין שורות להצגה.",
@@ -15181,8 +15181,8 @@
       "phoneOptional": "רשות",
       "nameOptional": "רשות",
       "create": "יצירת {n, plural, one {שורת שליחה אחת} other {# שורות שליחה}} בתור",
-      "created": "נוצרו {n} שורות שליחה לקבוצות",
-      "someSkipped": "{n} קבוצות דולגו: {why}"
+      "created": "{n, plural, one {נוצרה שורת שליחה אחת} other {נוצרו # שורות שליחה}} לקבוצות",
+      "someSkipped": "{n, plural, one {קבוצה אחת דולגה} other {# קבוצות דולגו}}: {why}"
     },
     "api": {
       "title": "WhatsApp Business API (אוטומטי, רשות)",
@@ -15231,7 +15231,7 @@
       "eraseAll": "מחיקת פרטי כל הנמענים",
       "eraseConfirm": "למחוק את השמות והטלפונים של כל הנמענים באצווה? לא ניתן לשחזר.",
       "eraseWhenOver": "זמין אחרי שהאצווה מסתיימת.",
-      "erased": "נמחקו הפרטים של {n} נמענים",
+      "erased": "{n, plural, one {נמחקו הפרטים של נמען אחד} other {נמחקו הפרטים של # נמענים}}",
       "empty": "אין עדיין פעולות.",
       "by": "על ידי {name}",
       "fromLink": "מהקישור",
