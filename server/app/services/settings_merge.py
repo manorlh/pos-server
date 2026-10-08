@@ -78,6 +78,9 @@ MANAGED_SETTING_KEYS = (
     "clearingServer",
     # Whether the till writes the expected terminal number into its Agamento.
     "forceTerminalNumber",
+    # "חזרה אוטומטית לקיוסק" (R2M POS for Windows, app/services/desktop_idle_return.py):
+    # the idle minutes on the desktop before the device is back in full screen; 0 = never.
+    "desktopIdleReturnMinutes",
 )
 
 #: White-label keys. Written at any layer, but only by BRANDING_WRITE_ROLES

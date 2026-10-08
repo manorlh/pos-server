@@ -171,6 +171,8 @@ TIP_RESETTABLE_KEYS = (
     # "פתיחת פריטים אוטומטית אחרי Z": "ירושה" sends `null`.
     "autoReopenAfterZ",
     "autoReopenIgnoreStock",
+    # "חזרה אוטומטית לקיוסק" (Windows): "ירושה" sends `null`.
+    "desktopIdleReturnMinutes",
 )
 
 

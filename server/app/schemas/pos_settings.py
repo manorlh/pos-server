@@ -157,6 +157,20 @@ class PosSettingsV1Patch(BaseModel):
         if len(set(v)) != len(v):
             raise ValueError("tip percentages must not repeat")
         return v
+    #: "חזרה אוטומטית לקיוסק" (app/services/desktop_idle_return.py): R2M POS for Windows back in
+    #: full screen after this many idle minutes on the desktop; 0 = never; unset = 10; `null` in
+    #: a PATCH resets the layer to inherit (TIP_RESETTABLE_KEYS in app/routers/settings.py).
+    desktop_idle_return_minutes: Optional[int] = Field(None, alias="desktopIdleReturnMinutes")
+
+    @field_validator("desktop_idle_return_minutes", mode="before")
+    @classmethod
+    def _check_desktop_idle_return(cls, v: Any) -> Optional[int]:
+        if v is None:
+            return None
+        from app.services.desktop_idle_return import clean_minutes
+
+        return clean_minutes(v)
+
     receipt_printer_name: Optional[str] = Field(None, alias="receiptPrinterName")
     drawer_printer_name: Optional[str] = Field(None, alias="drawerPrinterName")
     business_info: Optional[Dict[str, Any]] = Field(None, alias="businessInfo")
