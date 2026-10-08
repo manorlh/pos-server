@@ -57,6 +57,7 @@ export function LandingCatalog({ m, onCategory }: { m: PreviewModel; onCategory?
                 id={current?.id ?? HOME}
                 fx={m.transitions.categorySwitch}
                 ms={m.transitions.categoryMs}
+                ease={m.transitions.categoryEase}
                 order={(id) => (id === HOME ? -1 : m.categories.findIndex((c) => c.id === id))}
                 className="overflow-x-clip [overflow-clip-margin:12px]"
                 render={(id) => {

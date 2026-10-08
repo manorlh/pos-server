@@ -87,12 +87,14 @@ import {
   type TransitionSpec,
   typeScaleFactor,
 } from '@/lib/kioskConfig';
+import type { ResolvedMotionEngine } from '@/lib/kioskMotionEngine';
 import type { LivePayPhase, PreviewScreen } from '@/kiosk-shared/types';
 import { attractStackOrder, welcomeOf, welcomeTopHeight, WelcomeBlock } from '@/kiosk-shared/layouts/welcome';
 import { CategoryVisual } from '@/kiosk-shared/layouts/icons';
 import { lineOptionsOf, useDishSheet, type DishSheet } from './preview-dish';
 import { layoutOf, reachLow } from '@/lib/kioskLayout';
 import { KioskSwap, MOTION_CSS, itemEnter, sheetEnter } from './preview-motion';
+import { ERROR_COLOR, FEEDBACK_CSS, SuccessMark, badgePop, engineRoot, errorFx, revealIn, successFx } from './preview-feedback';
 import { EntryHeader, EntryWindow } from './preview-entry';
 import { PREVIEW_FOOTER_PX, TickerSlot } from './preview-ticker';
 
@@ -304,8 +306,10 @@ export interface PreviewModel {
   service: 'take_away' | 'eat_in';
   setService: (s: 'take_away' | 'eat_in') => void;
   motion: MotionSpec;
-  /** "הנפשות ומעברים": the transitions as played (transitionSpec — all off with reduce motion). */
+  /** "הנפשות ומעברים": the transitions as played (engineTransitionSpec — the engine's events). */
   transitions: TransitionSpec;
+  /** "מנוע הנפשות": every event as played (lib/kioskMotionEngine.ts) — the press, the success, the error… */
+  engine?: ResolvedMotionEngine;
   /** The product just added (its + shows a ✓ for a moment). */
   justAddedId: string | null;
   /** Grows on every add: re-keys the count badge so it bounces. */
@@ -397,15 +401,19 @@ export function statusLinePx(m: Pick<PreviewModel, 'cfg' | 'c'>): number {
 
 /**
  * What the kiosk's root takes from the chrome: tabular figures for every price and count, and the
- * press (`.k-press`: every button sinks to `--k-press` while held — PREVIEW_CSS).
+ * press (`.k-press`: every button sinks to `--k-press` while held — PREVIEW_CSS). With the motion
+ * engine (`m.engine`): its press on the dishes and the main buttons and the badge's pop, as CSS
+ * custom properties and classes (preview-feedback.tsx engineRoot).
  */
-export function chromeRoot(m: Pick<PreviewModel, 'cfg' | 'c' | 'light'>): { className: string; style: CSSProperties } {
+export function chromeRoot(m: Pick<PreviewModel, 'cfg' | 'c' | 'light' | 'engine'>): { className: string; style: CSSProperties } {
   const ch = chromeOf(m);
   const style: CSSProperties = {};
   if (ch.tabularFigures) style.fontVariantNumeric = 'tabular-nums';
   if (ch.pressScale !== null) (style as Record<string, string>)['--k-press'] = String(ch.pressScale);
+  const fx = m.engine ? engineRoot(m.engine, m.c) : null;
+  if (fx) Object.assign(style, fx.style);
   // "אפקטים" light: `.k-light` drops every shadow and blur (PREVIEW_CSS).
-  const className = [ch.pressScale !== null ? 'k-press' : '', m.light ? 'k-light' : ''].filter(Boolean).join(' ');
+  const className = [ch.pressScale !== null ? 'k-press' : '', m.light ? 'k-light' : '', fx?.className ?? ''].filter(Boolean).join(' ');
   return { className, style };
 }
 
@@ -756,7 +764,8 @@ export function BigButton({ m, children, onClick, variant = 'primary', className
     <button
       type="button"
       onClick={onClick}
-      className={`flex w-full items-center justify-center gap-2 px-4 py-3 kt-15 font-bold transition-transform duration-150 active:scale-[0.98] ${disabledLook ? 'opacity-50' : ''} ${className}`}
+      // `k-tap`: the motion engine's press (preview-feedback.tsx), over today's when it is there.
+      className={`k-tap ${variant === 'primary' ? 'k-tap-solid' : ''} relative flex w-full items-center justify-center gap-2 px-4 py-3 kt-15 font-bold transition-transform duration-150 active:scale-[0.98] ${disabledLook ? 'opacity-50' : ''} ${className}`}
       style={buttonStyle(m, variant)}
     >
       {children}
@@ -1016,7 +1025,7 @@ export function AttractCta({
         type="button"
         aria-label={m.txt('attractCta')}
         className={cn(
-          'absolute z-20 flex items-center justify-center overflow-hidden px-4',
+          'k-tap k-tap-solid absolute z-20 flex items-center justify-center overflow-hidden px-4',
           animation === 'pulse' && 'kiosk-cta-pulse',
           animation === 'bounce' && 'kiosk-cta-bounce',
           draggable && 'cursor-grab touch-none active:cursor-grabbing',
@@ -1449,7 +1458,7 @@ export function ServiceScreen({ m }: { m: PreviewModel }) {
                       setPicked(type);
                       m.setService(type);
                     }}
-                    className="flex flex-col items-center justify-center gap-2 text-center transition-colors duration-200 active:scale-95"
+                    className="k-tap relative flex flex-col items-center justify-center gap-2 text-center transition-colors duration-200 active:scale-95"
                     style={{ ...fill(on), minHeight: Math.round(tile * 0.85), padding: narrow ? 10 : 18, borderRadius: Math.max(14, m.radius) }}
                   >
                     <span
@@ -1512,7 +1521,7 @@ export function ProductCard({ m, p }: { m: PreviewModel; p: PProduct }) {
       type="button"
       disabled={p.soldOut}
       onClick={() => m.openProduct(p)}
-      className="group relative flex w-full flex-col overflow-hidden text-start transition-transform duration-150 active:scale-[0.98] disabled:cursor-not-allowed"
+      className="k-tap group relative flex w-full flex-col overflow-hidden text-start transition-transform duration-150 active:scale-[0.98] disabled:cursor-not-allowed"
       style={cardStyle(m)}
     >
       <div className="relative w-full overflow-hidden" style={{ aspectRatio: m.ratio }}>
@@ -1707,6 +1716,8 @@ export function CartBar({ m }: { m: PreviewModel }) {
   const bounce = m.motion.bounce > 0;
   // The basket button bounces as the dish lands (or at the tap, "קפיצת כפתור הסל"); the class alternates to replay it.
   const barBounce = m.transitions.addToCart !== 'none' && bounce && m.cartBump > 0 ? (m.cartBump % 2 ? 'kiosk-bar-bounce-a' : 'kiosk-bar-bounce-b') : '';
+  // The count's pop: the engine's cartBadge (its time, curve, kind), else the add's bounce.
+  const pop = badgePop(m);
   return (
     <div className={cn('relative', barBounce)}>
       <AddGlow m={m} radius={m.btnRadius} />
@@ -1718,8 +1729,8 @@ export function CartBar({ m }: { m: PreviewModel }) {
         <CartTarget
           register={m.setCartTarget}
           key={m.cartBump}
-          className={`flex h-6 min-w-6 items-center justify-center rounded-full bg-white/25 px-1.5 text-xs tabular-nums ${bounce ? 'kiosk-bounce' : ''}`}
-          style={{ ['--k-bounce' as string]: String(m.motion.bounce || 1) } as CSSProperties}
+          className={cn('flex h-6 min-w-6 items-center justify-center rounded-full bg-white/25 px-1.5 text-xs tabular-nums', pop.className)}
+          style={pop.style}
         >
           {count}
         </CartTarget>
@@ -1735,7 +1746,7 @@ export function CartBar({ m }: { m: PreviewModel }) {
 /** The side order panel (cartStyle = panel, wide frame) on the end side. */
 export function CartPanel({ m }: { m: PreviewModel }) {
   const count = cartCount(m.cart);
-  const bounce = m.motion.bounce > 0;
+  const pop = badgePop(m, count > 0);
   return (
     <div className="flex w-[132px] shrink-0 flex-col border-s" style={{ borderColor: m.c.border, background: m.c.surface }}>
       <CartTarget
@@ -1747,8 +1758,8 @@ export function CartPanel({ m }: { m: PreviewModel }) {
         <span className="truncate text-xs font-extrabold">{m.txt('cartTitle')}</span>
         <span
           key={m.cartBump}
-          className={`flex h-5 min-w-5 items-center justify-center rounded-full px-1 kt-10 font-bold tabular-nums ${bounce && count > 0 ? 'kiosk-bounce' : ''}`}
-          style={{ background: m.c.button, color: m.c.buttonText, ['--k-bounce' as string]: String(m.motion.bounce || 1) } as CSSProperties}
+          className={cn('flex h-5 min-w-5 items-center justify-center rounded-full px-1 kt-10 font-bold tabular-nums', pop.className)}
+          style={{ background: m.c.button, color: m.c.buttonText, ...pop.style }}
         >
           {count}
         </span>
@@ -1783,7 +1794,7 @@ export function CartPanel({ m }: { m: PreviewModel }) {
         </div>
         <button
           type="button"
-          className={`w-full px-2 py-2 kt-11 font-bold ${count === 0 ? 'opacity-50' : ''}`}
+          className={`k-tap k-tap-solid relative w-full px-2 py-2 kt-11 font-bold ${count === 0 ? 'opacity-50' : ''}`}
           style={buttonStyle(m)}
           onClick={() => count > 0 && m.go(m.cfg.general.skipCart === 'off' ? 'cart' : 'pay')}
         >
@@ -1877,6 +1888,7 @@ function CategorySwap({ m, current }: { m: PreviewModel; current: string | null 
       id={current ?? ''}
       fx={m.transitions.categorySwitch}
       ms={m.transitions.categoryMs}
+      ease={m.transitions.categoryEase}
       order={(id) => m.categories.findIndex((c) => c.id === id)}
       className="overflow-x-clip [overflow-clip-margin:12px]"
       render={(id) => {
@@ -2080,6 +2092,20 @@ export function ProductSheet({
   const [note, setNote] = useState('');
   // A group not answered (fewer than its minimum picked): nothing goes in the order yet.
   const missing = !dish.valid;
+  // "בחירה חסרה" (spec §4, the motion engine's error): a tap on the add with a required group not
+  // answered scrolls to it, shakes it gently and says what is missing — until it is answered.
+  const err = errorFx(m.engine);
+  const [tried, setTried] = useState(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const groupEls = useRef(new Map<string, HTMLDivElement>());
+  const firstLacking = groups.find((g) => dish.lacking(g.id)) ?? null;
+  const nudge = () => {
+    // No engine: as before (the add only looks disabled).
+    if (!err) return;
+    setTried((n) => n + 1);
+    const el = firstLacking ? groupEls.current.get(firstLacking.id) : undefined;
+    if (el && scrollRef.current) revealIn(scrollRef.current, el, !m.engine?.error.reduced);
+  };
   const unit = dish.unitAgorot / 100;
   const quick = quickNotes ?? [m.t('quickNote1'), m.t('quickNote2'), m.t('quickNote3')];
   const showDietary = cfg.general.showDietary;
@@ -2123,7 +2149,7 @@ export function ProductSheet({
         ) : (
           <div className="absolute inset-x-0 top-2 z-10 mx-auto h-1.5 w-10 rounded-full bg-white/80 shadow" />
         )}
-        <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none]">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none]">
           {/* In the accessible mode the dish shows in the display half (kiosk-shared/layouts/reach.tsx). */}
           {reachLow(m.cfg, m.reach?.toggled ?? false) ? null : (
             <div ref={pictureRef} className="w-full" style={{ aspectRatio: m.ratio }}>
@@ -2163,31 +2189,60 @@ export function ProductSheet({
                 </div>
               ) : null}
             </div>
-            {groups.map((g) => (
-              <div key={g.id} className="space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-bold">{g.name}</span>
-                  <span className="flex items-center gap-1">
-                    {g.freeCount ? (
-                      <span className="rounded-full px-2 py-0.5 kt-10 font-semibold" style={{ background: `${m.c.accent}1F`, color: m.c.accent }}>
-                        {m.t('freeChoices', { n: g.freeCount })}
+            {groups.map((g) => {
+              // Missing after a tap on the add: said in words (never by motion alone, spec §14) until answered.
+              const lacking = tried > 0 && dish.lacking(g.id);
+              const shake = lacking && g.id === firstLacking?.id;
+              return (
+                <div
+                  key={g.id}
+                  data-group={g.id}
+                  ref={(el) => {
+                    if (el) groupEls.current.set(g.id, el);
+                    else groupEls.current.delete(g.id);
+                  }}
+                  className="space-y-1.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-bold">{g.name}</span>
+                    <span className="flex items-center gap-1">
+                      {g.freeCount ? (
+                        <span className="rounded-full px-2 py-0.5 kt-10 font-semibold" style={{ background: `${m.c.accent}1F`, color: m.c.accent }}>
+                          {m.t('freeChoices', { n: g.freeCount })}
+                        </span>
+                      ) : null}
+                      <span
+                        className="rounded-full px-2 py-0.5 kt-10 font-semibold"
+                        style={
+                          lacking
+                            ? { background: `${ERROR_COLOR}1A`, color: ERROR_COLOR }
+                            : g.min > 0
+                              ? { background: `${m.c.button}1A`, color: m.c.button }
+                              : { background: '#0000000D', color: m.c.mutedText }
+                        }
+                      >
+                        {g.min > 0 ? m.t('required') : g.max ? m.t('chooseUpTo', { n: g.max }) : m.t('optional')}
                       </span>
-                    ) : null}
-                    <span
-                      className="rounded-full px-2 py-0.5 kt-10 font-semibold"
-                      style={g.min > 0 ? { background: `${m.c.button}1A`, color: m.c.button } : { background: '#0000000D', color: m.c.mutedText }}
-                    >
-                      {g.min > 0 ? m.t('required') : g.max ? m.t('chooseUpTo', { n: g.max }) : m.t('optional')}
                     </span>
-                  </span>
+                  </div>
+                  {lacking ? (
+                    <p role="alert" data-missing={g.id} className="kt-13 font-semibold" style={{ color: ERROR_COLOR }}>
+                      {m.t('requiredMissing', { name: g.name })}
+                    </p>
+                  ) : null}
+                  <div
+                    // Re-keyed by each tap on the add, so the shake plays again.
+                    key={shake ? `nudge-${tried}` : 'rows'}
+                    className={cn('overflow-hidden', lacking && 'k-err-on', shake && err?.className)}
+                    style={{ ...cardStyle(m), boxShadow: 'none', border: `1px solid ${m.c.border}`, ...(shake ? err?.style : null) }}
+                  >
+                    {g.options.map((o, i) => (
+                      <OptionRow key={o.id} m={m} dish={dish} group={g} option={o} first={i === 0} />
+                    ))}
+                  </div>
                 </div>
-                <div className="overflow-hidden" style={{ ...cardStyle(m), boxShadow: 'none', border: `1px solid ${m.c.border}` }}>
-                  {g.options.map((o, i) => (
-                    <OptionRow key={o.id} m={m} dish={dish} group={g} option={o} first={i === 0} />
-                  ))}
-                </div>
-              </div>
-            ))}
+              );
+            })}
             {cfg.general.quickNotesEnabled && quick.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
                 {quick.map((q) => {
@@ -2223,7 +2278,7 @@ export function ProductSheet({
             m={m}
             disabledLook={missing}
             onClick={(e) => {
-              if (missing) return;
+              if (missing) return nudge();
               const typed = note.trim();
               onAdd(
                 {
@@ -2976,6 +3031,12 @@ export function WaitLogo({ m }: { m: PreviewModel }) {
 }
 
 function LivePay({ m, live }: { m: PreviewModel; live: NonNullable<KioskLive['pay']> }) {
+  const payErr = errorFx(m.engine);
+  // The explanation's words and buttons fade in over the error's time (never with no engine: as before).
+  const payFade =
+    payErr && m.engine && m.engine.error.durationMs > 0
+      ? { className: 'k-mfade', style: { '--m-fade-ms': `${m.engine.error.durationMs}ms`, '--m-fade-delay': `${Math.round(m.engine.error.durationMs * 0.3)}ms` } as CSSProperties }
+      : null;
   const spinner = (
     <span
       aria-hidden
@@ -3001,17 +3062,19 @@ function LivePay({ m, live }: { m: PreviewModel; live: NonNullable<KioskLive['pa
             </div>
           </div>
         ) : live.phase === 'declined' || live.phase === 'blocked' ? (
-          <div className="flex w-full flex-col items-center gap-3 p-4" style={cardStyle(m)}>
+          // "תשלום נכשל" (spec §4): the explanation shakes gently as it comes (the engine's error),
+          // its words and "נסה שוב" fading in — the buttons take a tap at once all the same.
+          <div key={live.phase} className={cn('flex w-full flex-col items-center gap-3 p-4', payErr?.className)} style={{ ...cardStyle(m), ...payErr?.style }}>
             <span className="flex h-12 w-12 items-center justify-center rounded-full" style={{ background: '#FEE2E2', color: '#B91C1C' }}>
               <X className="h-7 w-7" />
             </span>
             <div className="text-lg font-extrabold">{live.phase === 'declined' ? m.t('payDeclined') : m.t('payBlockedTitle')}</div>
             {live.message ? (
-              <div className="text-sm" style={{ color: m.c.mutedText }}>
+              <div className={cn('text-sm', payFade?.className)} style={{ ...payFade?.style, color: m.c.mutedText }}>
                 {live.message}
               </div>
             ) : null}
-            <div className="grid w-full grid-cols-2 gap-2">
+            <div className={cn('grid w-full grid-cols-2 gap-2', payFade?.className)} style={payFade?.style}>
               <BigButton m={m} variant="soft" onClick={live.onBack}>
                 {m.t('payBack')}
               </BigButton>
@@ -3093,23 +3156,32 @@ export function SuccessScreen({ m }: { m: PreviewModel }) {
   // The real kiosk: the question only while it is still asked; what happened to the receipt after.
   const receipt = live ? (live.receipt === 'ask' ? 'ask' : live.receipt === 'printing' || live.receipt === 'printed' ? 'always' : 'never') : cfg.payment.receiptPolicy;
   const outlined = chromeOf(m).outline !== null;
+  // A style with an outline (tech): the check in the accent, ringed — never a blob of it.
+  const markColors: CSSProperties = outlined ? { background: `${m.c.accent}1F`, color: m.c.accent, border: `1px solid ${m.c.accent}` } : { background: m.c.accent, color: '#fff' };
+  // "מנוע הנפשות" (success): the ✓ drawn, the number zooming in, confetti by kind; no engine — today's pop.
+  const fx = successFx(m.engine);
   return (
     <ScreenBody m={m}>
       <div className="flex min-h-full flex-col items-center gap-3 p-5 text-center">
         <ScreenImage m={m} k="success" height={80} />
-        <span
-          className={cn('kiosk-pop mt-2 flex h-16 w-16 items-center justify-center rounded-full', !outlined && 'shadow-lg')}
-          // A style with an outline (tech): the check in the accent, ringed — never a blob of it.
-          style={outlined ? { background: `${m.c.accent}1F`, color: m.c.accent, border: `1px solid ${m.c.accent}` } : { background: m.c.accent, color: '#fff' }}
-        >
-          <Check className="h-9 w-9" strokeWidth={3} />
-        </span>
+        {fx ? (
+          <SuccessMark fx={fx} colors={markColors} outlined={outlined} tones={[m.c.primary, m.c.accent, m.c.button, '#FBBF24']} />
+        ) : (
+          <span className={cn('kiosk-pop mt-2 flex h-16 w-16 items-center justify-center rounded-full', !outlined && 'shadow-lg')} style={markColors}>
+            <Check className="h-9 w-9" strokeWidth={3} />
+          </span>
+        )}
         <h2 className="text-xl font-extrabold">{m.txt('successTitle')}</h2>
         <div className="w-full space-y-1 p-4" style={cardStyle(m)}>
           <div className="text-xs font-semibold" style={{ color: m.c.mutedText }}>
             {m.txt('pickupLabel')}
           </div>
-          <div className="text-6xl font-black tabular-nums" dir="ltr" style={{ color: m.c.primary, fontFamily: chromeOf(m).monoFigures ? MONO_FIGURES_STACK : undefined }}>
+          <div
+            data-pickup
+            className={cn('text-6xl font-black tabular-nums', fx?.number.className)}
+            dir="ltr"
+            style={{ ...fx?.number.style, color: m.c.primary, fontFamily: chromeOf(m).monoFigures ? MONO_FIGURES_STACK : undefined }}
+          >
             {label}
           </div>
         </div>
@@ -3333,7 +3405,7 @@ ${MOTION_CSS}
 .kiosk-pulse { animation: kioskPulse 2.4s ease-in-out infinite; }
 .kiosk-pop { animation: kioskPop 0.5s cubic-bezier(.2,.9,.3,1.2) both; }
 .kiosk-nudge { animation: kioskNudge 1.4s ease-in-out infinite; }
-.kiosk-bounce { animation: kioskBounce 0.45s cubic-bezier(.3,1.6,.5,1) both; }
+.kiosk-bounce { animation: kioskBounce var(--k-bounce-ms, 0.45s) var(--k-bounce-ease, cubic-bezier(.3,1.6,.5,1)) var(--k-bounce-delay, 0ms) var(--k-bounce-n, 1) both; }
 @keyframes kioskRestBreathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
 @keyframes kioskRestRing { 0% { transform: scale(1); opacity: 0.16; } 100% { transform: scale(1.32); opacity: 0; } }
 @keyframes kioskSteam { 0% { transform: translateY(0.6px); opacity: 0; } 50% { opacity: 0.9; } 100% { transform: translateY(-1.6px); opacity: 0; } }
@@ -3352,4 +3424,5 @@ ${MOTION_CSS}
 .k-light [class*="backdrop-blur"] { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
 .k-light .blur-2xl, .k-light .blur-3xl, .k-light .k-scan, .k-light .k-add-glow { display: none; }
 @media (prefers-reduced-motion: reduce) { .k-scan, .k-add-glow { display: none; } }
+${FEEDBACK_CSS}
 `;

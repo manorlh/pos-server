@@ -5,10 +5,11 @@
  * "רוצים להפוך לארוחה?" (layout.mealUpsell).
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Check, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { sheetEnter } from '@/components/dashboard/kiosks/preview-motion';
+import { ERROR_COLOR, errorFx, revealIn } from '@/components/dashboard/kiosks/preview-feedback';
 import { BigButton, OptionRow, ProductImage, Stepper, cardStyle, type PGroup, type PLine, type PMeal, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { initialPicks, lineOptionsOf, menuGroupOfP, useDishSheet } from '@/components/dashboard/kiosks/preview-dish';
 import { reachLow } from '@/lib/kioskLayout';
@@ -35,6 +36,10 @@ export function StepsProductSheet({
   const [step, setStep] = useState(0);
   const [qty, setQty] = useState(1);
   const [error, setError] = useState(false);
+  // "בחירה חסרה" (the motion engine's error): each refused tap shakes the step's choices again.
+  const err = errorFx(m.engine);
+  const [tries, setTries] = useState(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
   // The choices priced as the till prices them (lib/kioskMoney.ts): free ones, quantities, "מעט / הרבה / בצד".
   const dish = useDishSheet(product, groups);
   const total = groups.length + 1;
@@ -42,13 +47,30 @@ export function StepsProductSheet({
   const group = groups[at] ?? null;
   const unit = dish.unitAgorot / 100;
   const lacking = (g: PGroup) => dish.lacking(g.id);
+  const refuse = () => {
+    setError(true);
+    if (!err) return;
+    setTries((n) => n + 1);
+    const box = scrollRef.current;
+    const first = box?.firstElementChild;
+    if (box && first instanceof HTMLElement) revealIn(box, first, !m.engine?.error.reduced);
+  };
+  // The message stays until the step is answered (with the engine; before it, until a tap on a choice).
+  const showError = error && (!err || (group !== null && lacking(group)));
   const next = () => {
-    if (group && lacking(group)) return setError(true);
+    if (group && lacking(group)) return refuse();
+    setError(false);
     setStep(at + 1);
   };
   const add = (e: React.MouseEvent<HTMLButtonElement>) => {
     const bad = groups.findIndex(lacking);
-    if (bad >= 0) return setStep(bad);
+    if (bad >= 0) {
+      if (err) {
+        setError(true);
+        setTries((n) => n + 1);
+      }
+      return setStep(bad);
+    }
     onAdd(
       {
         key: `${product.id}-${Date.now()}`,
@@ -95,23 +117,31 @@ export function StepsProductSheet({
             </span>
           </div>
         ) : null}
-        <div className="min-h-0 flex-1 overflow-y-auto p-3 [scrollbar-width:none]">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-3 [scrollbar-width:none]">
           {group ? (
             <>
-              {error ? (
-                <p className="mb-2 kt-13 font-semibold" style={{ color: '#DC2626' }}>
-                  {m.t('required')}
+              {showError ? (
+                <p role="alert" className="mb-2 kt-13 font-semibold" style={{ color: ERROR_COLOR }}>
+                  {err ? m.t('requiredMissing', { name: group.name }) : m.t('required')}
                 </p>
               ) : null}
               {/* A group with quantities or "מעט / הרבה / בצד" takes the sheet's rows (their controls). */}
               {group.allowQuantity || group.allowPre ? (
-                <div className="overflow-hidden" style={{ ...cardStyle(m), boxShadow: 'none', border: `1px solid ${m.c.border}` }}>
+                <div
+                  key={showError && err ? `nudge-${tries}` : 'rows'}
+                  className={cn('overflow-hidden', showError && err && cn('k-err-on', err.className))}
+                  style={{ ...cardStyle(m), boxShadow: 'none', border: `1px solid ${m.c.border}`, ...(showError && err ? err.style : null) }}
+                >
                   {group.options.map((o, i) => (
                     <OptionRow key={o.id} m={m} dish={dish} group={group} option={o} first={i === 0} />
                   ))}
                 </div>
               ) : (
-              <div className="grid grid-cols-2 gap-2">
+              <div
+                key={showError && err ? `nudge-${tries}` : 'tiles'}
+                className={cn('grid grid-cols-2 gap-2', showError && err?.className)}
+                style={showError && err ? err.style : undefined}
+              >
                 {group.options.map((o) => {
                   const on = dish.isOn(group.id, o.id);
                   const free = on && dish.freeOf(group.id, o.id);
@@ -120,7 +150,8 @@ export function StepsProductSheet({
                       key={o.id}
                       type="button"
                       onClick={() => {
-                        setError(false);
+                        // With the engine the message goes once the step is answered (showError).
+                        if (!err) setError(false);
                         dish.toggle(group.id, o.id);
                       }}
                       className="flex flex-col items-center justify-center gap-0.5 px-2 text-center transition-transform duration-150 active:scale-[0.97]"
@@ -180,7 +211,14 @@ export function StepsProductSheet({
                 {kt(m, 'guidedNext', { name: groups[at + 1]?.name ?? m.t('total') })}
               </BigButton>
               {group.min === 0 ? (
-                <BigButton m={m} variant="soft" onClick={() => setStep(at + 1)}>
+                <BigButton
+                  m={m}
+                  variant="soft"
+                  onClick={() => {
+                    setError(false);
+                    setStep(at + 1);
+                  }}
+                >
                   {kt(m, 'guidedSkip')}
                 </BigButton>
               ) : null}
@@ -264,8 +302,20 @@ export function MealSheet({
   const total = slots.length + 1;
   const at = Math.min(step, slots.length);
   const slot = slots[at] ?? null;
+  // "בחירה חסרה" (the motion engine's error): each refused tap shakes the slot's choices again.
+  const err = errorFx(m.engine);
+  const [tries, setTries] = useState(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const refuse = () => {
+    setError(true);
+    if (!err) return;
+    setTries((n) => n + 1);
+    const box = scrollRef.current;
+    const first = box?.firstElementChild;
+    if (box && first instanceof HTMLElement) revealIn(box, first, !m.engine?.error.reduced);
+  };
   const next = () => {
-    if (slot && problem(at)) return setError(true);
+    if (slot && problem(at)) return refuse();
     setError(false);
     setStep(at + 1);
   };
@@ -273,6 +323,7 @@ export function MealSheet({
     const bad = slots.findIndex((_, i) => problem(i));
     if (bad >= 0) {
       setError(true);
+      if (err) setTries((n) => n + 1);
       return setStep(bad);
     }
     onAdd(
@@ -327,13 +378,17 @@ export function MealSheet({
             ))}
           </span>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-3 [scrollbar-width:none]">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-3 [scrollbar-width:none]">
           {slot ? (
             <>
-              <p className="mb-2 kt-13 font-semibold" style={{ color: error ? '#DC2626' : m.c.mutedText }}>
+              <p role={error ? 'alert' : undefined} className="mb-2 kt-13 font-semibold" style={{ color: error && (!err || problem(at)) ? ERROR_COLOR : m.c.mutedText }}>
                 {slot.minSelect > 0 ? m.t('required') : m.t('optional')} · {m.t('chooseUpTo', { n: slot.maxSelect })}
               </p>
-              <div className="grid grid-cols-2 gap-2">
+              <div
+                key={error && err ? `nudge-${tries}` : 'tiles'}
+                className={cn('grid grid-cols-2 gap-2', error && err && problem(at) && err.className)}
+                style={error && err && problem(at) ? err.style : undefined}
+              >
                 {meal.slots[at].choices.map((c) => {
                   const list = chosen[slot.id] ?? [];
                   const count = list.filter((x) => x === c.product.id).length;
@@ -344,7 +399,8 @@ export function MealSheet({
                       type="button"
                       disabled={c.product.soldOut}
                       onClick={() => {
-                        setError(false);
+                        // With the engine the red stays until the slot is answered.
+                        if (!err) setError(false);
                         setChosen((prev) => ({ ...prev, [slot.id]: mealPick(slot, prev[slot.id] ?? [], c.product.id) }));
                       }}
                       className="relative flex flex-col items-center justify-center gap-1 px-2 py-2 text-center transition-transform duration-150 active:scale-[0.97] disabled:opacity-40"
@@ -400,7 +456,14 @@ export function MealSheet({
                 {kt(m, 'guidedNext', { name: slots[at + 1]?.name ?? m.t('total') })}
               </BigButton>
               {slot.minSelect === 0 ? (
-                <BigButton m={m} variant="soft" onClick={() => setStep(at + 1)}>
+                <BigButton
+                  m={m}
+                  variant="soft"
+                  onClick={() => {
+                    setError(false);
+                    setStep(at + 1);
+                  }}
+                >
                   {kt(m, 'guidedSkip')}
                 </BigButton>
               ) : null}

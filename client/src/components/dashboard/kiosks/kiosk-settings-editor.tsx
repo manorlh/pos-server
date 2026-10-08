@@ -88,7 +88,7 @@ const SECTIONS: { key: SectionKey; screen: PreviewScreen; paths: string[] }[] = 
   { key: 'appearance', screen: 'catalog', paths: ['theme', 'layout', 'screenImages'] },
   // "טקסטים": every customer text, per screen and language (section-texts.tsx).
   { key: 'texts', screen: 'attract', paths: ['texts', 'textsByLang'] },
-  // "הנפשות ומעברים": one choice per transition, each with "הצג" in the preview.
+  // "הנפשות": the Motion Engine — the pace, every event's own motion, each with "הצג" (section-motion.tsx).
   { key: 'motion', screen: 'catalog', paths: ['motion'] },
   { key: 'attract', screen: 'attract', paths: ['attract'] },
   { key: 'catalog', screen: 'catalog', paths: ['catalog'] },
@@ -295,6 +295,8 @@ function EditorBody({
       setShowPreview(true);
       previewControls.current?.play(demo);
     },
+    dirty,
+    openReview: () => setReviewOpen(true),
   };
 
   const pickSection = (key: SectionKey) => {

@@ -1366,11 +1366,12 @@ describe('"יצאתי לנוח… תכף אשוב": the closed screen (the till\
 describe('"הנפשות ומעברים" — the transitions (the server kiosk_config.py UI_PRESET_MOTION, the till KioskTransitions)', () => {
   it('the defaults are the wolt style, and every style animates the category and pops its dishes in', () => {
     // The style's keys, and "אפקטים" (the device's, not a style's): auto.
-    assert.deepEqual(KIOSK_DEFAULTS.motion, { ...KIOSK_UI_PRESET_MOTION.wolt, effects: 'auto' });
+    // "מנוע הנפשות" (kioskMotionEngine.ts): Runner Standard, the speed by `speed`, no event of its own.
+    assert.deepEqual(KIOSK_DEFAULTS.motion, { ...KIOSK_UI_PRESET_MOTION.wolt, effects: 'auto', preset: 'standard', globalSpeed: null, speedMultiplier: 1, events: {} });
     assert.deepEqual([...PRESET_MOTION_KEYS], ['categorySwitch', 'itemsEnter', 'screenChange', 'sheet', 'addToCart', 'speed']);
     for (const style of UI_STYLES) {
       const c = resolveKioskConfig({ theme: { uiStyle: style } });
-      assert.deepEqual(c.motion, { ...KIOSK_UI_PRESET_MOTION[style], effects: 'auto' }, style);
+      assert.deepEqual(c.motion, { ...KIOSK_UI_PRESET_MOTION[style], effects: 'auto', preset: 'standard', globalSpeed: null, speedMultiplier: 1, events: {} }, style);
       assert.deepEqual(validateKioskConfig(c), [], style);
       const t = transitionSpec(c.motion, c.general);
       assert.notEqual(t.categorySwitch, 'none', style);
@@ -1386,6 +1387,7 @@ describe('"הנפשות ומעברים" — the transitions (the server kiosk_co
     const kiosk = { motion: { categorySwitch: 'push' } };
     assert.deepEqual(resolveKioskConfig(company, shop, kiosk).motion, {
       categorySwitch: 'push', itemsEnter: 'flip', screenChange: 'fade', sheet: 'fade', addToCart: 'fly', speed: 'fast', effects: 'auto',
+      preset: 'standard', globalSpeed: null, speedMultiplier: 1, events: {},
     });
     // The editor: rebased on the level's style, reset goes back to it, a draft following it saves nothing.
     const parents = { motion: { speed: 'fast' } };
@@ -2008,7 +2010,7 @@ describe('"טכנולוגי" — the tech style (the server UI_PRESETS["tech"], 
       [c.attract.cta.size, c.attract.cta.icon, c.attract.cta.animation, c.attract.cta.shadow, c.attract.cta.borderWidth],
       ['l', 'arrow', 'none', false, 0],
     );
-    assert.deepEqual(c.motion, { categorySwitch: 'fade', itemsEnter: 'cascade', screenChange: 'fade', sheet: 'scale', addToCart: 'fly', speed: 'normal', effects: 'auto' });
+    assert.deepEqual(c.motion, { categorySwitch: 'fade', itemsEnter: 'cascade', screenChange: 'fade', sheet: 'scale', addToCart: 'fly', speed: 'normal', effects: 'auto', preset: 'standard', globalSpeed: null, speedMultiplier: 1, events: {} });
     // The brand colour stays the business's: the style follows it.
     assert.equal(resolveTech({ theme: { uiStyle: 'tech' } }, { theme: { primaryColor: '#3B82F6' } }).theme.primaryColor, '#3B82F6');
   });
@@ -2216,9 +2218,11 @@ describe('"הנפשות ומעברים" — the shared motion golden (kiosk_moti
     // No other curve, and no old time, left in the transitions' CSS.
     const curves = new Set(css.match(/cubic-bezier\([^)]*\)/g) ?? []);
     for (const c of curves) assert.fail(`a literal curve in MOTION_CSS: ${c}`);
-    assert.ok(css.includes('.k-anim { animation-duration: var(--k-ms, 220ms); animation-timing-function: ${EASE_ENTER};'));
-    assert.ok(css.includes('.k-leave.k-anim { animation-fill-mode: forwards; animation-timing-function: ${EASE_EXIT}; }'));
-    assert.ok(css.includes('.k-anim.k-push-in, .k-leave.k-anim.k-push-out { animation-timing-function: ${EASE_STRIP}; }'));
+    // Each the default of `--k-ease` ("מנוע הנפשות": an event's own curve, set only when not "auto").
+    assert.ok(css.includes('.k-anim { animation-duration: var(--k-ms, 220ms); animation-timing-function: var(--k-ease, ${EASE_ENTER});'));
+    assert.ok(css.includes('.k-leave.k-anim { animation-fill-mode: forwards; animation-timing-function: var(--k-ease, ${EASE_EXIT}); }'));
+    assert.ok(css.includes('.k-anim.k-push-in, .k-leave.k-anim.k-push-out { animation-timing-function: var(--k-ease, ${EASE_STRIP}); }'));
+    assert.ok(css.includes("@property --k-ease { syntax: '*'; inherits: false; }"));
   });
 
   it('every example resolves to the golden times — full and light, every speed', () => {
