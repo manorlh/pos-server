@@ -12,7 +12,9 @@ Production vouchers — the redemption controls of the spec's §18 (the contract
   whose shop is in training mode ("מצב הדרכה": its documents never reach revenue, Z or stock);
   anywhere else `prepaid_voucher_test_only`, "שובר בדיקה — ניתן לממש רק בקופת בדיקה". A test batch
   is out of every settlement and the commercial reports; its type name says "שובר בדיקה" (receipt,
-  paper, lookup). Which till users may redeem one is the till permission `VOUCHER_TEST_REDEEM`.
+  paper, lookup). Which till users may redeem one is the till permission `VOUCHER_TEST_REDEEM`: the
+  till asks for it; the cloud refuses (`prepaid_voucher_test_not_permitted`) when the user signed in
+  at that till (`pos_user_sessions`) is denied it.
 
 **The hook.** The core's redemption check (`prepaid_vouchers.refusal_reason`) ends by calling
 [refusal_reason] here, and `prepaid_vouchers.refusal_message` asks [refusal_message] for these
@@ -58,8 +60,11 @@ log = logging.getLogger(__name__)
 PAUSED = "prepaid_voucher_paused"
 QUOTA_REACHED = "prepaid_voucher_quota_reached"
 TEST_ONLY = "prepaid_voucher_test_only"
+TEST_NOT_PERMITTED = "prepaid_voucher_test_not_permitted"
 #: What the core's `refusal_message` hands over to [refusal_message].
-REFUSALS = (TEST_ONLY, PAUSED, QUOTA_REACHED)
+REFUSALS = (TEST_ONLY, TEST_NOT_PERMITTED, PAUSED, QUOTA_REACHED)
+#: The till permission that redeems a test voucher (app/services/till_permissions.py).
+TEST_PERMISSION = "VOUCHER_TEST_REDEEM"
 
 TEST_LABEL = "שובר בדיקה"
 TEXT = {
@@ -67,6 +72,7 @@ TEXT = {
     "paused_until": "מימוש השוברים מושהה עד {until}: {reason}",
     QUOTA_REACHED: "הגעת למכסת המימושים של {scope} ({n} מימושים{period})",
     TEST_ONLY: "שובר בדיקה — ניתן לממש רק בקופת בדיקה",
+    TEST_NOT_PERMITTED: "שובר בדיקה — לעובד המחובר אין הרשאת \"מימוש שובר בדיקה\"",
 }
 SCOPE_TEXT = {
     "production": "ההפקה \"{label}\"",
@@ -211,6 +217,34 @@ def _training_till(db: Session, machine: POSMachine) -> bool:
     return bool(db.query(Shop.training_mode).filter(Shop.id == machine.shop_id).scalar())
 
 
+def _staff_denied(db: Session, machine: POSMachine) -> bool:
+    """
+    Whether the till user signed in at [machine] right now may not redeem a test voucher
+    (`VOUCHER_TEST_REDEEM` denied). Known only when the cloud tracks who is signed in there
+    (`pos_user_sessions`); otherwise the till's own permission check stands alone. "Approval"
+    passes here — the till asks a manager for it.
+    """
+    try:
+        from app.models.pos_user import PosUser
+        from app.models.pos_user_session import PosUserSession
+        from app.services import till_permissions as TP
+        from app.services.till_roles import effective_for_pos_user
+
+        row = (
+            db.query(PosUser)
+            .join(PosUserSession, PosUserSession.pos_user_id == PosUser.id)
+            .filter(PosUserSession.machine_id == machine.id, PosUserSession.released_at.is_(None))
+            .order_by(PosUserSession.last_seen_at.desc())
+            .first()
+        )
+        if row is None:
+            return False
+        return effective_for_pos_user(row).state(TEST_PERMISSION) == TP.DENY
+    except Exception:  # noqa: BLE001 — never let this check break a redemption
+        log.exception("prepaid voucher controls: the signed-in user's test permission could not be read")
+        return False
+
+
 # ── Pauses ────────────────────────────────────────────────────────────────────
 
 
@@ -324,8 +358,11 @@ def refusal_reason(db: Session, machine: POSMachine, voucher: PrepaidVoucher, no
         return None
     now = now or _now()
     batch = voucher.batch
-    if is_test(db, batch.id) and not _training_till(db, machine):
-        return TEST_ONLY
+    if is_test(db, batch.id):
+        if not _training_till(db, machine):
+            return TEST_ONLY
+        if _staff_denied(db, machine):
+            return TEST_NOT_PERMITTED
     if active_pause(db, batch, now) is not None:
         return PAUSED
     if reached_quota(db, batch, voucher, now) is not None:
@@ -370,8 +407,8 @@ def pause_text(db: Session, p: PrepaidRedemptionPause, now: Optional[datetime] =
 def refusal_message(db: Session, voucher: PrepaidVoucher, reason: Optional[str], now: Optional[datetime] = None) -> Optional[str]:
     """The Hebrew for one of [REFUSALS] (`prepaid_vouchers.refusal_message` asks)."""
     now = now or _now()
-    if reason == TEST_ONLY:
-        return TEXT[TEST_ONLY]
+    if reason in (TEST_ONLY, TEST_NOT_PERMITTED):
+        return TEXT[reason]
     if not tables_ready(db) or voucher is None:
         return None
     batch = voucher.batch

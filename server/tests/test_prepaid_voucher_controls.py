@@ -217,6 +217,31 @@ class TestTestVouchers:
         w.db.commit()
         assert take(w, codes(w, b)[0])["ok"]
 
+    def test_the_signed_in_user_needs_the_permission(self, w):
+        from app.models.pos_user import PosUser, PosUserRole
+        from app.models.pos_user_session import PosUserSession
+        from app.services import till_permissions as TP
+
+        b = staff_batch(w)
+        w.db.query(Shop).filter(Shop.id == w.shop.id).update({"training_mode": True})
+        pu = PosUser(id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=w.shop.id, username="dana", pin_hash="x",
+                     role=PosUserRole.CASHIER, permission_overrides={"states": {CTL.TEST_PERMISSION: TP.DENY}})
+        w.db.add(pu)
+        w.db.flush()
+        w.db.add(PosUserSession(id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=w.shop.id, pos_user_id=pu.id,
+                                machine_id=w.tills[0].id))
+        w.db.commit()
+        out = look(w, codes(w, b)[0])
+        assert (out["reason"], out["message"]) == (CTL.TEST_NOT_PERMITTED,
+                                                   "שובר בדיקה — לעובד המחובר אין הרשאת \"מימוש שובר בדיקה\"")
+        # A cashier without an override needs a manager's approval at the till — the cloud lets it through.
+        pu.permission_overrides = None
+        w.db.commit()
+        assert take(w, codes(w, b)[0])["ok"]
+        # Another till, nobody signed in there: the till's own check stands alone.
+        assert take(w, codes(w, b)[1], till=w.tills[1])["ok"]
+        assert TP.legacy_effective("cashier").state(CTL.TEST_PERMISSION) == TP.APPROVAL
+
     def test_out_of_every_settlement(self, w):
         real = batch(w, count=2)
         b = staff_batch(w)
