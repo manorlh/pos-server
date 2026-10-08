@@ -53,6 +53,9 @@ _WORST = {"error": 4, "warn": 3, "unknown": 2, "info": 1, "ok": 0, "off": 0}
 
 TERMINAL_STATES = ("ready", "unreachable", "not_ready", "not_configured", "none", "busy", "unknown")
 PRINTER_STATES = ("ok", "no_paper", "offline", "error", "unavailable", "overheated", "none", "unknown")
+#: The kiosk's USB printer as Android sees it (pos-android UsbPrinterAuto.healthState): "needs_approval" —
+#: attached, Android's approval missing (after a restart, above all: the owner, 08.10.2026).
+USB_STATES = ("ready", "needs_approval", "several", "missing", "none", "unknown")
 LINK_MODES = ("lan", "cloud", "none")
 NETWORK_ROUTES = ("wifi", "ethernet", "cellular", "unknown")
 PLATFORMS = ("android", "windows", "web")  # "web": the browser kiosk at /k (docs/SPEC_KIOSK.md §27)
@@ -139,7 +142,7 @@ def clean_health(raw: Any) -> Dict[str, Any]:
             out[key] = clean
 
     block("terminal", {"state": TERMINAL_STATES, "checkedAt": "time", "address": 60, "model": 40})
-    block("printer", {"state": PRINTER_STATES, "name": 60, "checkedAt": "time"})
+    block("printer", {"state": PRINTER_STATES, "name": 60, "checkedAt": "time", "usb": USB_STATES})
     block("tillLink", {"mode": LINK_MODES, "host": 60, "ok": "bool", "at": "time"})
     block("kds", {"ok": "bool", "at": "time", "pending": "int"})
     block("network", {"online": "bool", "since": "time", "route": NETWORK_ROUTES})
@@ -214,7 +217,8 @@ def printer_part(summary: Dict[str, Any], health: Dict[str, Any], machine: POSMa
     unprinted = summary.get("unprintedBons") or 0
     orders = summary.get("unprintedOrders") or []
     state = reported.get("state") or summary.get("printerStatus") or machine.printer_status
-    common = dict(name=reported.get("name"), checkedAt=reported.get("checkedAt"), unprinted=unprinted or len(orders) or None)
+    common = dict(name=reported.get("name"), checkedAt=reported.get("checkedAt"), unprinted=unprinted or len(orders) or None,
+                  usb=reported.get("usb"))
     alerts = _alerts_of(summary, "printer")
     hard = [a for a in alerts if a.get("reason") in ("no_paper", "offline", "unavailable", "error", "usb_detached", "overheated")]
     if hard:
@@ -223,6 +227,9 @@ def printer_part(summary: Dict[str, Any], health: Dict[str, Any], machine: POSMa
         return _part("printer", "error", state, **common)
     if orders or unprinted:
         return _part("printer", "warn", "unprinted", **common)
+    # The USB printer attached and Android's approval missing ("אשר מדפסת" in the kiosk's manager corner).
+    if reported.get("usb") == "needs_approval":
+        return _part("printer", "warn", "usb_permission", **common)
     if alerts:
         return _part("printer", "warn", str(alerts[0].get("reason")), text=alerts[0].get("text"), **common)
     if state == "ok" or summary.get("bonPrinter") == "ok":

@@ -9315,6 +9315,8 @@
         "unavailable": "לא זמינה",
         "error": "תקלה",
         "usb_detached": "USB מנותק",
+        "usb_permission": "מדפסת USB ממתינה לאישור — \"אשר מדפסת\" בפינת המנהל",
+        "usb_several": "כמה מדפסות USB — לא נקבעה אחת",
         "overheated": "התחממות יתר",
         "unprinted": "בונים שלא הודפסו",
         "ok": "תקינה",

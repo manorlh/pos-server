@@ -495,6 +495,19 @@ class TestHealth:
         }
         assert KC.clean_status({"flowState": "attract", "health": raw})["health"]["screen"] == "catalog"
 
+    def test_the_usb_printer_waiting_for_androids_approval_is_reported(self, w):
+        """A kiosk restarted with its USB printer attached: Android's approval is missing until staff
+        tap "אשר מדפסת" (pos-android UsbPrinters.askAtKioskStart) — the cloud's health says so."""
+        assert H.clean_health({"printer": {"state": "ok", "usb": "needs_approval"}})["printer"] == {"state": "ok", "usb": "needs_approval"}
+        assert H.clean_health({"printer": {"state": "ok", "usb": "melting"}})["printer"]["usb"] == "unknown"
+        kiosk_sync(w, {**GOOD, "health": {**GOOD["health"], "printer": {"state": "ok", "usb": "needs_approval"}}})
+        rows, _ = health(w)
+        p = part(rows["קיוסק רויאל"], "printer")
+        assert (p["level"], p["code"], p["detail"]["usb"]) == ("warn", "usb_permission", "needs_approval")
+        kiosk_sync(w, {**GOOD, "health": {**GOOD["health"], "printer": {"state": "ok", "usb": "ready"}}})
+        rows, _ = health(w)
+        assert part(rows["קיוסק רויאל"], "printer")["code"] == "ok"
+
     def test_a_healthy_kiosk_and_an_offline_one(self, w):
         kiosk_sync(w, GOOD)
         kiosk_sync(w, {**GOOD, "health": {**GOOD["health"], "platform": "windows"}}, now=NOW - timedelta(minutes=10), machine=w.north_kiosk)

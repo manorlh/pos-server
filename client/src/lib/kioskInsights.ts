@@ -468,7 +468,7 @@ export type HealthOverall = (typeof OVERALL_STATES)[number];
 export const PART_CODES: Record<HealthPartKey, readonly string[]> = {
   app: ['disabled', 'offline', 'paused', 'closed', 'setup', 'no_payment', 'config_pending', 'running'],
   terminal: ['card_lock', 'card_unknown', 'ready', 'busy', 'unreachable', 'not_ready', 'not_configured', 'none', 'not_reported'],
-  printer: ['no_paper', 'offline', 'unavailable', 'error', 'usb_detached', 'overheated', 'unprinted', 'ok', 'none', 'not_reported'],
+  printer: ['no_paper', 'offline', 'unavailable', 'error', 'usb_detached', 'usb_permission', 'usb_several', 'overheated', 'unprinted', 'ok', 'none', 'not_reported'],
   tillLink: ['not_reported', 'none', 'down', 'lan', 'cloud', 'ok'],
   kds: ['bon', 'no_screens', 'screens_offline', 'down', 'ok'],
   media: ['not_reported', 'missing', 'ready', 'loading'],
