@@ -387,7 +387,10 @@ class TestHomePagePreference:
         config = Config(str(root / "alembic.ini"))
         config.set_main_option("script_location", str(root / "alembic"))
         script = ScriptDirectory.from_config(config)
-        assert script.get_heads() == ["6d818753b5ec"]
+        # One head, with this migration on its chain (later branches chain after it at merge).
+        heads = script.get_heads()
+        assert len(heads) == 1
+        assert "6d818753b5ec" in {r.revision for r in script.walk_revisions("base", heads[0])}
         assert script.get_revision("6d818753b5ec").down_revision == "6b1e9d4f2a87"
 
 

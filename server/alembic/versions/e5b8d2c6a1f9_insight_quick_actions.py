@@ -1,8 +1,12 @@
 """insight_quick_actions + promotions.announcement: the insights' one-tap actions and "הודעה לעובדים"
 
 Revision ID: e5b8d2c6a1f9
-Revises: 6b1e9d4f2a87
+Revises: 6d818753b5ec
 Create Date: 2026-10-09
+
+Re-chained at the integration merge (integration/fri, 09.10.2026): written on 6b1e9d4f2a87,
+now after feat/home-board's 6d818753b5ec (users.preferences) so the chain stays linear. The two
+touch different tables; the upgrade itself is unchanged.
 
 * `insight_quick_actions` — "פעולות מהירות" from the insights (docs/SPEC_INSIGHTS.md §10): a
   quick message to the tills (a non-blocking banner through `till_messages`) or a quick
@@ -24,7 +28,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = 'e5b8d2c6a1f9'
-down_revision: Union[str, Sequence[str], None] = '6b1e9d4f2a87'
+down_revision: Union[str, Sequence[str], None] = '6d818753b5ec'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
