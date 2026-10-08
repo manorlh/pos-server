@@ -10,3 +10,6 @@ export { KioskControlSheet, KioskControlPanel, useKioskLive } from './kiosk-cont
 export { useLiveControlItems } from './use-live-control-items';
 export { LiveControlBoardChips, LiveControlBlocksCard } from './board-chips';
 export type { LiveControlContext, LiveControlScope, LiveControlSheetProps } from './types';
+export { StockUpdateSheet, invalidateStock, useStockRoot } from './stock-update-sheet';
+export { StockNodePicker, useStockTree, shopOfNode, treeNodes } from './stock-node-picker';
+export { LiveControlBoardStrip, TargetsProgressList, useStockAlertsOf, useTargetsProgress } from './board-strip';
