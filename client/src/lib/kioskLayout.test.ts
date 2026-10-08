@@ -25,12 +25,23 @@ import {
   LAYOUT_TEMPLATES_READY,
   LAYOUT_VOCABULARY,
   attractStackOrderIds,
+  addPathOnTap,
+  basketDocked,
+  basketFloats,
   basketKindOf,
   catalogKindOf,
   guidedBar,
+  heroShown,
+  itemViewOf,
   layoutValueReady,
+  LAYOUT_CATALOGS_READY,
   LAYOUT_VALUES_READY,
+  listColumns,
+  mealViewOf,
   railMeasures,
+  shelfCardDp,
+  storyHeightDp,
+  wallColumns,
   reachLow,
   rebaseLayout,
   switchLayoutTemplate,
@@ -41,7 +52,7 @@ import { KIOSK_ICON_DATA } from './kioskIconData';
 import { KIOSK_TEXT_REGISTRY_DATA } from './kioskTextRegistryData';
 import { KIOSK_TEXTS, configuredText, defaultText, isKioskTextKey, kioskTextOf, textShownUnder, validateKioskTexts, webTextOverride } from './kioskTexts';
 
-const TEMPLATES_SHA256 = '0edfa5f4f70d2cfd5fa5776d7c169edac3ecb35b2cdafaec945181782ff52752';
+const TEMPLATES_SHA256 = 'bf83cc7ab875bec0e3411b0e927fb1b5ef013c9d09e72927f48bb975867324b1';
 const ICONS_SHA256 = '75ac9c79776f320370b5c73429009e4daa77a13bf3d90fbdccd8b94dd5c64fa6';
 const REGISTRY_SHA256 = '604e2b58954849c25cb1883a74705114ae56d12e0f60003a0d892acec56ee5a6';
 
@@ -177,8 +188,60 @@ describe('the layout in the editor and on the screens', () => {
         assert.ok(layoutValueReady(key as never, v), `${template}: ${key}=${String(v)}`);
       }
     }
-    assert.equal(layoutValueReady('template', 'wall'), false);
+    // Phase 2: every template is drawn; the service / name screens' variants are still to come.
+    for (const template of Object.keys(KIOSK_LAYOUT_TEMPLATES)) assert.equal(layoutValueReady('template', template), true, template);
     assert.equal(layoutValueReady('reach', 'low'), true);
+    assert.equal(layoutValueReady('service', 'rows'), false);
+    assert.equal(layoutValueReady('name', 'avatar'), false);
+  });
+
+  it('phase 2: the five templates draw their own catalog, basket, dish window and meal', () => {
+    const of = (template: string) => resolveKioskConfig({ layout: { template } });
+    assert.deepEqual(LAYOUT_CATALOGS_READY, LAYOUT_VOCABULARY.catalog);
+    assert.equal(catalogKindOf(of('cafe')), 'shelves');
+    assert.equal(catalogKindOf(of('combo')), 'top');
+    assert.equal(catalogKindOf(of('list')), 'list');
+    assert.equal(catalogKindOf(of('magazine')), 'magazine');
+    assert.equal(catalogKindOf(of('wall')), 'wall');
+    assert.equal(basketKindOf(of('cafe'), 785), 'fab');
+    assert.equal(basketKindOf(of('list'), 785), 'drawer');
+    assert.equal(basketKindOf(of('wall'), 785), 'receipt');
+    assert.equal(basketKindOf(of('combo'), 785), 'summary');
+    assert.equal(itemViewOf(of('list')), 'inline');
+    assert.equal(itemViewOf(of('wall')), 'popover');
+    assert.equal(itemViewOf(of('cafe')), 'full');
+    assert.equal(mealViewOf(of('combo')), 'tray');
+    assert.equal(mealViewOf(of('standard')), 'sheet');
+    // The list turns the search on; the wall adds on a tap.
+    assert.equal(of('list').general.searchEnabled, true);
+    assert.equal(of('wall').layout.quickAdd, 'always');
+    for (const k of ['bar', 'fab', 'drawer']) assert.ok(basketFloats(k) && !basketDocked(k), k);
+    for (const k of ['summary', 'receipt']) assert.ok(basketDocked(k) && !basketFloats(k), k);
+    assert.ok(!basketFloats('panel') && !basketDocked('panel'));
+  });
+
+  it('phase 2: the featured banner, quickAdd always and the measures — the till’s numbers', () => {
+    const cafe = resolveKioskConfig({ layout: { template: 'cafe' } });
+    assert.equal(heroShown(cafe, 3), true);
+    assert.equal(heroShown(cafe, 0), false);
+    assert.equal(heroShown(resolveKioskConfig({ layout: { template: 'cafe', hero: 'off' } }), 3), false);
+    assert.equal(heroShown(resolveKioskConfig({ layout: { template: 'tabs', hero: 'auto' } }), 1), true);
+    assert.equal(heroShown(resolveKioskConfig({ layout: { template: 'fastfood', hero: 'manual' } }), 2), false);
+    assert.equal(addPathOnTap('sheet', 'always', false, true), 'direct');
+    assert.equal(addPathOnTap('sheet', 'always', false, false), 'sheet');
+    assert.equal(addPathOnTap('sheet', 'always', true, true), 'sheet');
+    assert.equal(addPathOnTap('sheet', 'no_required', false, true), 'sheet');
+    assert.equal(addPathOnTap('none', 'always', false, true), 'none');
+    // KioskLayoutPhase2Test, number for number.
+    assert.deepEqual(['m', 's', 'l'].map((s) => shelfCardDp(785, s as 'm')), [304, 217, 436]);
+    assert.equal(shelfCardDp(200, 's'), 150);
+    assert.equal(shelfCardDp(2000, 'l'), 460);
+    assert.deepEqual([listColumns(785), listColumns(1280)], [1, 2]);
+    assert.deepEqual(['m', 's', 'l'].map((s) => storyHeightDp(1200, s as 'm')), [936, 744, 1080]);
+    assert.equal(storyHeightDp(300, 'm'), 320);
+    assert.deepEqual(['m', 's', 'l'].map((s) => wallColumns(785, s as 'm')), [3, 4, 2]);
+    assert.equal(wallColumns(420, 'm'), 2);
+    assert.equal(wallColumns(1280, 'm'), 5);
   });
 
   it('the welcome block first unless moved, nowhere when off', () => {

@@ -123,8 +123,8 @@ LAYOUT_TEMPLATES: Dict[str, Dict[str, Any]] = {
                         "quickAdd": "always"}},
 }
 
-#: The templates the current clients draw (the dashboard offers only these); phase 2 adds the rest.
-LAYOUT_TEMPLATES_READY = ("standard", "guided", "tabs", "landing", "fastfood")
+#: The templates the clients draw (the dashboard offers only these): all ten since phase 2.
+LAYOUT_TEMPLATES_READY = ("standard", "guided", "tabs", "landing", "fastfood", "cafe", "combo", "list", "magazine", "wall")
 
 #: What an older kiosk (no `layout`) reads: theme.categoryLayout / cartStyle written from the layout.
 LAYOUT_BACK_COMPAT: Dict[str, Dict[str, str]] = {

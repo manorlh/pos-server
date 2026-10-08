@@ -13641,7 +13641,7 @@
         "hero": { "off": "בלי", "manual": "ידני", "auto": "מתחלף" },
         "card": { "tile": "אריח", "row": "שורה", "plate": "צלחת", "bleed": "תמונה מלאה", "button": "כפתור", "outlined": "מסגרת" },
         "flow": { "free": "חופשי", "guided": "מודרך" },
-        "itemView": { "sheet": "חלון תחתון", "full": "מסך מלא", "modal": "חלון במרכז", "inline": "בתוך הרשימה", "steps": "שלב אחרי שלב", "popover": "בועה" },
+        "itemView": { "sheet": "חלון תחתון", "full": "מסך מלא", "modal": "חלון במרכז", "inline": "חלון קומפקטי (רשימה)", "steps": "שלב אחרי שלב", "popover": "חלון קומפקטי (בועה)" },
         "quickAdd": { "off": "לא", "no_required": "כשאין חובה לבחור", "always": "תמיד" },
         "mealView": { "sheet": "חלון", "steps": "שלבים", "tray": "מגש" },
         "mealUpsell": { "off": "לא", "first": "לפני ההתאמה", "after": "אחרי ההתאמה" },

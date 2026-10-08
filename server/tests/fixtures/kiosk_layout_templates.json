@@ -248,7 +248,12 @@
     "guided",
     "tabs",
     "landing",
-    "fastfood"
+    "fastfood",
+    "cafe",
+    "combo",
+    "list",
+    "magazine",
+    "wall"
   ],
   "backCompat": {
     "categoryLayout": {
