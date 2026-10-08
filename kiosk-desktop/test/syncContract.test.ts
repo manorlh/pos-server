@@ -93,7 +93,7 @@ describe('the cloud’s recorded answers, through the real service', () => {
       expect(v.phase).toBe('kiosk');
       expect(v.machine).toMatchObject({ machineId: me.machineId, posNumber: me.posNumber, shopName: me.shopName });
       const catalog = recorded('GET_sync_id_catalog').body as { products: Array<Record<string, unknown>> };
-      const sellable = catalog.products.filter((p) => p.inStock !== false && p.salesChannel !== 'pos_only');
+      const sellable = catalog.products.filter((p) => p.inStock !== false && p.salesChannel !== 'pos_only' && p.requiresManagerApproval !== true);
       expect(v.catalog.products.length).toBe(sellable.length);
       expect(v.catalog.products.every((p) => p.imageUrl === null || p.imageUrl.startsWith('kiosk://'))).toBe(true); // never a network URL
       const kiosk = recorded('POST_sync_id_kiosk_sync').body;

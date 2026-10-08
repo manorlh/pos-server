@@ -403,6 +403,8 @@ export async function fetchKioskSourceCatalog(machineId: string): Promise<KioskS
       onTill: boolean;
       /** "היכן הפריט נמכר" (lib/productChannel.ts); pos_only is not on the kiosk. */
       salesChannel?: string;
+      /** "מחייב אישור מנהל במכירה", resolved by the server (its category's too): never on a kiosk. */
+      requiresManagerApproval?: boolean;
       description?: string | null;
       dietaryTags?: unknown;
     }>;
@@ -416,8 +418,8 @@ export async function fetchKioskSourceCatalog(machineId: string): Promise<KioskS
     machineName: data.machineName,
     categories: categories.map((c) => ({ id: String(c.id), name: c.name, sortOrder: c.sortOrder ?? 0 })),
     products: (data.products ?? [])
-      // "קופות בלבד" is left out, as the kiosk itself leaves it out.
-      .filter((p) => p.onTill !== false && p.salesChannel !== 'pos_only')
+      // "קופות בלבד" is left out, as the kiosk itself leaves it out — and so is "מחייב אישור מנהל במכירה".
+      .filter((p) => p.onTill !== false && p.salesChannel !== 'pos_only' && p.requiresManagerApproval !== true)
       .map((p) => ({
         id: String(p.productId),
         name: p.name,

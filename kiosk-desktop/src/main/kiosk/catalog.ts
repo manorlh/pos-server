@@ -3,6 +3,8 @@
  * rules the Android kiosk applies (pos-android domain/KioskCatalogView.kt, KioskPresentation.kt):
  *
  *  - only what a kiosk sells: not delisted (`inStock`), not "קופות בלבד" (`salesChannel` pos_only),
+ *    not "מחייב אישור מנהל במכירה" (itself or a category above it — client/src/lib/restrictedItems.ts;
+ *    such a category disappears with everything beneath it: nobody at a kiosk types a manager's code),
  *    on this till's list when the machine catalog is "selected", in an active category;
  *  - "אזל" = not available (`isAvailable` false);
  *  - modifier groups by the menu links (a product's own list, [] = none, else its category's), with
@@ -17,6 +19,7 @@
  */
 
 import { mealsOf, menuGroupOf, type MealSlot, type MenuGroup } from '@dash-lib/kioskMoney';
+import { isRestrictedProduct, restrictedCategoryIds, type RestrictedCategoryRow } from '@dash-lib/restrictedItems';
 import type { MediaRefIn } from '../../core/mediaPlan';
 import { ofShekels } from '../../core/money';
 
@@ -127,11 +130,26 @@ export function moneyGroupOf(g: KGroup): MenuGroup {
   };
 }
 
+/** The restricted categories of a catalog payload ("מחייב אישור מנהל במכירה", the tree resolved). */
+function restrictedOf(categories: Row[]): Set<string> {
+  return restrictedCategoryIds(categories.filter((c) => c.deleted !== true).map((c) => c as unknown as RestrictedCategoryRow));
+}
+
+/** A product row restricted by its own flag or its category's. */
+function restrictedRow(p: Row, restricted: ReadonlySet<string>): boolean {
+  return isRestrictedProduct(
+    { categoryId: typeof p.categoryId === 'string' ? p.categoryId : null, requiresManagerApproval: p.requiresManagerApproval === true },
+    restricted,
+  );
+}
+
 /** Is this product sold on a kiosk at all. */
 export function sellableOnKiosk(p: Row, machineCatalogMode: string | null | undefined): boolean {
   if (p.deleted === true) return false;
   if (p.inStock === false) return false;
   if (p.salesChannel === 'pos_only') return false;
+  // "מחייב אישור מנהל במכירה" — its own flag here; its category's in buildKioskCatalog / catalogMedia.
+  if (p.requiresManagerApproval === true) return false;
   if (machineCatalogMode === 'selected' && p.inMachineCatalog === false) return false;
   return true;
 }
@@ -142,7 +160,8 @@ export function buildKioskCatalog(
   localImage: (url: string | null, size: 'card' | 'large') => string | null,
 ): KioskCatalogData {
   const mode = catalog.machineCatalog?.mode ?? 'all';
-  const activeCats = catalog.categories.filter((c) => c.isActive !== false && c.deleted !== true);
+  const restricted = restrictedOf(catalog.categories);
+  const activeCats = catalog.categories.filter((c) => c.isActive !== false && c.deleted !== true && !restricted.has(String(c.id)));
   const catIds = new Set(activeCats.map((c) => String(c.id)));
   const order = (list: unknown): string[] => (Array.isArray(list) ? list.filter((x): x is string => typeof x === 'string') : []);
   const catOrder = order(settings.categoryOrder);
@@ -158,7 +177,7 @@ export function buildKioskCatalog(
 
   const mealIds = new Set(Object.keys(((catalog.menu ?? {}) as { meals?: Record<string, unknown> }).meals ?? {}));
   const products: KProduct[] = catalog.products
-    .filter((p) => sellableOnKiosk(p, mode) && typeof p.categoryId === 'string' && catIds.has(p.categoryId))
+    .filter((p) => sellableOnKiosk(p, mode) && typeof p.categoryId === 'string' && catIds.has(p.categoryId) && !restrictedRow(p, restricted))
     .slice()
     .sort((a, b) => rank(prodOrder, String(a.id)) - rank(prodOrder, String(b.id)) || String(a.name ?? '').localeCompare(String(b.name ?? ''), 'he'))
     .map((p) => {
@@ -243,14 +262,15 @@ export function catalogMedia(
   hidden: { categories: string[]; products: string[] },
 ): MediaRefIn[] {
   const mode = catalog.machineCatalog?.mode ?? 'all';
+  const restricted = restrictedOf(catalog.categories);
   const out: MediaRefIn[] = [];
   const http = (u: unknown): u is string => typeof u === 'string' && /^https?:\/\//i.test(u);
   for (const c of catalog.categories) {
-    if (c.isActive === false || hidden.categories.includes(String(c.id))) continue;
+    if (c.isActive === false || hidden.categories.includes(String(c.id)) || restricted.has(String(c.id))) continue;
     if (http(c.imageUrl)) out.push({ url: c.imageUrl, kind: 'image', sha256: null, bytes: null });
   }
   for (const p of catalog.products) {
-    if (!sellableOnKiosk(p, mode) || hidden.products.includes(String(p.id))) continue;
+    if (!sellableOnKiosk(p, mode) || hidden.products.includes(String(p.id)) || restrictedRow(p, restricted)) continue;
     if (http(p.imageUrl)) out.push({ url: p.imageUrl, kind: 'image', sha256: null, bytes: null });
   }
   return out;

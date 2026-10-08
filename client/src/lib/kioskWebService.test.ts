@@ -565,6 +565,26 @@ describe('the API and the catalog', () => {
     assert.deepEqual([cat.products[0].allergens, cat.products[0].allergenCodes], [['חלב'], ['milk']]);
   });
 
+  it('never shows what needs a manager\'s code: the product, or a category with everything beneath it', () => {
+    const cat = buildWebCatalog({
+      products: [
+        { id: 'cola', categoryId: 'drinks', name: 'קולה', price: 8 },
+        { id: 'cigars', categoryId: 'drinks', name: 'סיגרים', price: 90, requiresManagerApproval: true },
+        { id: 'beer', categoryId: 'alcohol', name: 'בירה', price: 25 },
+        { id: 'merlot', categoryId: 'wine', name: 'מרלו', price: 120 },
+      ],
+      categories: [
+        { id: 'drinks', name: 'שתייה' },
+        { id: 'alcohol', name: 'אלכוהול', parentId: 'drinks', requiresManagerApproval: true },
+        { id: 'wine', name: 'יין', parentId: 'alcohol' },
+      ],
+      menu: null,
+      machineCatalog: null,
+    }, {});
+    assert.deepEqual(cat.products.map((p) => p.id), ['cola']);
+    assert.deepEqual(cat.categories.map((c) => c.id), ['drinks']);
+  });
+
   it('lists the media a config holds for the service worker', () => {
     const urls = configMediaUrls({ theme: { logo: { url: 'https://x/l.png', kind: 'image' } }, attract: { slides: [{ media: { url: 'https://x/v.mp4', kind: 'video' } }, { media: { url: 'blob:x', kind: 'image' } }] } });
     assert.deepEqual(urls.sort(), ['https://x/l.png', 'https://x/v.mp4']);

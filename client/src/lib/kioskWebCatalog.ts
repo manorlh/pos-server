@@ -4,8 +4,9 @@
  * src/main/kiosk/catalog.ts (and the Android kiosk's KioskCatalogView.kt):
  *
  *  - only what a kiosk sells: not deleted, not delisted (`inStock`), not "קופות בלבד"
- *    (`salesChannel` pos_only), on this till's list when the machine catalog is "selected", in an
- *    active category; "אזל" = not available;
+ *    (`salesChannel` pos_only), not "מחייב אישור מנהל במכירה" (itself or a category above it,
+ *    lib/restrictedItems.ts — such a category disappears with everything beneath it), on this till's
+ *    list when the machine catalog is "selected", in an active category; "אזל" = not available;
  *  - modifier groups by the menu links (a product's own list, [] = none, else its category's), with
  *    the rules that price them (free choices, quantities, "מעט / הרבה / בצד") and the meals' slots —
  *    read by the shared money rules (lib/kioskMoney.ts, the Android till's, ported once);
@@ -20,6 +21,7 @@
  */
 
 import { agorotOfShekels, mealsOf, menuGroupOf, type MealSlot } from './kioskMoney';
+import { isRestrictedProduct, restrictedCategoryIds, type RestrictedCategoryRow } from './restrictedItems';
 
 export const ALLERGEN_HE: Record<string, string> = {
   gluten: 'גלוטן',
@@ -143,6 +145,8 @@ export function sellableOnKiosk(p: Row, machineCatalogMode: string | null | unde
   if (p.deleted === true) return false;
   if (p.inStock === false) return false;
   if (p.salesChannel === 'pos_only') return false;
+  // "מחייב אישור מנהל במכירה": nobody at a kiosk can type a manager's code (its category: buildWebCatalog).
+  if (p.requiresManagerApproval === true) return false;
   if (machineCatalogMode === 'selected' && p.inMachineCatalog === false) return false;
   return true;
 }
@@ -156,7 +160,13 @@ export interface CatalogIn {
 
 export function buildWebCatalog(catalog: CatalogIn, settings: Record<string, unknown>): WebCatalog {
   const mode = catalog.machineCatalog?.mode ?? 'all';
-  const activeCats = catalog.categories.filter((c) => c.isActive !== false && c.deleted !== true);
+  // "מחייב אישור מנהל במכירה", resolved over every category the catalog sent (lib/restrictedItems.ts).
+  const restricted = restrictedCategoryIds(
+    catalog.categories.filter((c) => c.deleted !== true).map((c) => c as unknown as RestrictedCategoryRow),
+  );
+  const activeCats = catalog.categories.filter(
+    (c) => c.isActive !== false && c.deleted !== true && !restricted.has(String(c.id)),
+  );
   const catIds = new Set(activeCats.map((c) => String(c.id)));
   const order = (list: unknown): string[] => (Array.isArray(list) ? list.filter((x): x is string => typeof x === 'string') : []);
   const catOrder = order(settings.categoryOrder);
@@ -178,7 +188,13 @@ export function buildWebCatalog(catalog: CatalogIn, settings: Record<string, unk
   const menu = catalog.menu ?? {};
   const mealIds = new Set(Object.keys(((menu as { meals?: Record<string, unknown> }).meals ?? {}) as Record<string, unknown>));
   const products: WebProduct[] = catalog.products
-    .filter((p) => sellableOnKiosk(p, mode) && typeof p.categoryId === 'string' && catIds.has(p.categoryId))
+    .filter(
+      (p) =>
+        sellableOnKiosk(p, mode) &&
+        typeof p.categoryId === 'string' &&
+        catIds.has(p.categoryId) &&
+        !isRestrictedProduct({ categoryId: p.categoryId, requiresManagerApproval: p.requiresManagerApproval === true }, restricted),
+    )
     .slice()
     .sort((a, b) => rank(prodOrder, String(a.id)) - rank(prodOrder, String(b.id)) || String(a.name ?? '').localeCompare(String(b.name ?? ''), 'he'))
     .map((p) => {
