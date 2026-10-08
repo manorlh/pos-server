@@ -27,6 +27,7 @@ import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { Card, InsightsSurface, Muted, SectionHeader, Segmented, SkeletonCard } from '@/components/dashboard/insights/ios';
 import { EventFormDialog } from '@/components/dashboard/events/event-form-dialog';
 import { StatusChip, money } from '@/components/dashboard/events/event-parts';
+import { LiveEventLink } from '@/components/dashboard/event-live/live-event-link';
 import { Button } from '@/components/ui/button';
 
 const WRITE_ROLES = new Set(['super_admin', 'distributor', 'company_manager', 'shop_manager']);
@@ -200,6 +201,7 @@ export default function EventsPage() {
                           </Button>
                         </>
                       ) : null}
+                      <LiveEventLink eventId={e.id} />
                       <Link
                         href={`/dashboard/events/${e.id}`}
                         className="flex items-center gap-0.5 rounded-lg px-2 py-1 text-[15px] font-medium text-[#007AFF] hover:bg-[#007AFF]/10"

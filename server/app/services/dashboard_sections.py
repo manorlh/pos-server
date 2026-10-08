@@ -124,6 +124,17 @@ SECTIONS: Tuple[Section, ...] = (
         "accounting", "הנהלת חשבונות", "ייצוא להנהלת חשבונות ומיפוי חשבונות.",
         ("/dashboard/accounting-export", "/dashboard/accounting-settings"),
     ),
+    # feat/event-live
+    Section(
+        "live_event", "מצב אירוע חי",
+        "מסך גדול לאירוע: מכירות בזמן אמת מול היעד, קצב, פריטים, קופות, מטבח ושוברים. עריכה: יעד המכירות של האירוע.",
+        ("/dashboard/live-event",),
+    ),
+    Section(
+        "alerts", "התראות",
+        "היסטוריית ההתראות לטלפון (Push) של המשתמש וטיפול בהן. ההרשמה וההעדפות האישיות פתוחות לכל משתמש.",
+        ("/dashboard/alerts",),
+    ),
 )
 
 SECTION_IDS: FrozenSet[str] = frozenset(s.id for s in SECTIONS)
@@ -317,6 +328,9 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/insights/kiosks", S("reports", "kiosks", level=VIEW)),
     ("PUT", "/insights/product-costs/{}", S("reports", "products", level=EDIT)),
     (_GET, "/insights*", S("reports")),
+    # "מצב אירוע חי" (feat/event-live): the screen reads are view; setting its target is edit.
+    (_ALL, "/report-events/live/*", S("live_event")),
+    (_ALL, "/report-events/{}/live*", S("live_event")),
     (_ALL, "/report-events*", S("reports")),
     (_GET, "/reports/discounts", S("reports", "promotions")),
     (_GET, "/reports/promotions", S("reports", "promotions")),

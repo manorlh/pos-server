@@ -35,7 +35,10 @@ export type SectionId =
   | 'attendance'
   | 'users'
   | 'branding'
-  | 'accounting';
+  | 'accounting'
+  // feat/event-live
+  | 'live_event'
+  | 'alerts';
 
 export interface DashboardSection {
   id: SectionId;
@@ -90,6 +93,9 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'users', pages: ['/dashboard/users'] },
   { id: 'branding', pages: ['/dashboard/branding'] },
   { id: 'accounting', pages: ['/dashboard/accounting-export', '/dashboard/accounting-settings'] },
+  // feat/event-live: "מצב אירוע חי" and "התראות" (the phone alerts' history).
+  { id: 'live_event', pages: ['/dashboard/live-event'] },
+  { id: 'alerts', pages: ['/dashboard/alerts'] },
 ];
 
 export const SECTION_IDS: SectionId[] = DASHBOARD_SECTIONS.map((s) => s.id);

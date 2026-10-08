@@ -43,6 +43,7 @@ import { EventExceptions, EventShifts, EventTills } from '@/components/dashboard
 import { EventItems, EventSegments } from '@/components/dashboard/events/event-items';
 import { EventReconcile } from '@/components/dashboard/events/event-reconcile';
 import { EventSection, ReconcileChip, StatusChip } from '@/components/dashboard/events/event-parts';
+import { LiveEventLink } from '@/components/dashboard/event-live/live-event-link';
 import { Button } from '@/components/ui/button';
 
 const WRITE_ROLES = new Set(['super_admin', 'distributor', 'company_manager', 'shop_manager']);
@@ -176,6 +177,7 @@ export default function EventReportPage({ params }: { params: Promise<{ id: stri
           </p>
         </div>
         <div className="flex flex-wrap gap-2 print:hidden">
+          <LiveEventLink eventId={event.id} className="h-8 rounded-lg border border-[#FF3B30]/40 px-2.5 text-sm" />
           <Button variant="outline" size="sm" onClick={() => void query.refetch()} disabled={query.isFetching || report.frozen} aria-label={t('refresh')}>
             <RefreshCw className={cn('h-4 w-4', query.isFetching && 'animate-spin')} aria-hidden />
           </Button>

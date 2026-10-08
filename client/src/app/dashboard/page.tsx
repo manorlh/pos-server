@@ -78,6 +78,7 @@ import { BoardHourly } from '@/components/dashboard/control-board/board-hourly';
 import { BoardTenders } from '@/components/dashboard/control-board/board-tenders';
 import { BoardAlerts, type BoardAlert } from '@/components/dashboard/control-board/board-alerts';
 import { BoardItems } from '@/components/dashboard/control-board/board-items';
+import { LiveEventLink } from '@/components/dashboard/event-live/live-event-link';
 
 const REFRESH_MS = 30_000;
 /** A past day does not change by the second; it is read again after this. */
@@ -519,6 +520,8 @@ export default function DashboardPage() {
             <BarChart3 className="size-4 text-cb-muted" aria-hidden />
             {t('compareBoard')}
           </Link>
+          {/* feat/event-live: "מצב אירוע חי" (opens the only live event, else the picker). */}
+          <LiveEventLink className={chip} />
           {canMessageTills ? (
             <Link href="/dashboard/till-messages" className={chip}>
               <Megaphone className="size-4 text-cb-muted" aria-hidden />
