@@ -10,7 +10,7 @@ import { EventEmitter } from 'node:events';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import bcrypt from 'bcryptjs';
-import { kioskPayMethods, resolveKioskConfig, type PaymentMethod } from '@dash-lib/kioskConfig';
+import { kioskPayMethods, resolveKioskConfig, singleCardPayMethods, type PaymentMethod } from '@dash-lib/kioskConfig';
 import { orderCode, orderDue, type OpenOrder, type VoucherLeg, type WebLineOption, type WebOrderLine } from '@dash-lib/kioskWebOrders';
 import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type OptionPick } from '@dash-lib/kioskMoney';
 import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, type KioskOrder, type PickupRules } from '../core/kioskOrders';
@@ -1344,9 +1344,13 @@ export class KioskService extends EventEmitter {
 
   /* ------------------------------------------------ "מזומן בקופה" and vouchers */
 
-  /** What this kiosk can take now, of the methods configured (payment.methods). */
+  /**
+   * What this kiosk can take now, of the methods configured (payment.methods). One card per
+   * document here (DocDraft.card): "פיצול תשלום בכרטיסים" (split_card) is never offered
+   * (singleCardPayMethods) — and never usable.
+   */
   private payView(kiosk: boolean): KioskView['pay'] {
-    const methods = kiosk ? kioskPayMethods(this.config().payment.methods) : (['card'] as PaymentMethod[]);
+    const methods = kiosk ? singleCardPayMethods(this.config().payment.methods) : (['card'] as PaymentMethod[]);
     const state = this.pay.monitor.state;
     // Off in advance only with no terminal set up (or the cloud's lock on an unresolved card):
     // a terminal that did not answer its check is tried on the press.
@@ -1357,7 +1361,9 @@ export class KioskService extends EventEmitter {
         : state === 'unconfigured'
           ? 'לא הוגדר מסופון אשראי לקיוסק'
           : 'מסופון האשראי לא זמין כרגע';
-    const usable = methods.filter((m) => (m === 'card' ? this.fiscalRole && cardOff === null : m === 'voucher' ? !this.offlineNow : this.fiscalRole));
+    const usable = methods.filter((m) =>
+      m === 'card' ? this.fiscalRole && cardOff === null : m === 'voucher' ? !this.offlineNow : m === 'cash_at_till' ? this.fiscalRole : false,
+    );
     return { methods, usable, cardOff };
   }
 

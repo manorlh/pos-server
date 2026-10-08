@@ -155,6 +155,9 @@ describe('the browser side of the bridge (pure)', () => {
     assert.equal(asksPayMethod(['card', 'cash_at_till'], true), true);
     assert.equal(asksPayMethod(['card', 'cash_at_till'], false), true);
     assert.equal(asksPayMethod(['card'], false), false);
+    // "פיצול תשלום בכרטיסים": never through the bridge (one card per document on Windows).
+    assert.deepEqual(usableMethods(['split_card', 'card'], true, true), ['card']);
+    assert.equal(webSells(['split_card'], true), false);
   });
 
   it('the bridge’s part merged into the kiosk’s status: its shift, its card orders, its terminal', () => {

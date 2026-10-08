@@ -202,6 +202,8 @@ def test_defaults_are_valid_and_complete():
         "cashAtTillExpiryMin": 30, "cashAtTillKitchenBeforePay": False,
         # "לוגו במסך התשלום": its own upload; none by default — nothing shows.
         "waitLogo": {"media": None, "style": "plain"},
+        # "פיצול תשלום בכרטיסים" (§23.7): its options; the method itself is off (not in `methods`).
+        "splitCard": {"counts": [2, 3, 4], "otherAmount": True, "minPerCardAgorot": 1000},
     }
     assert cfg["printing"] == {
         "bonMode": "routing", "bonPrinterId": None, "bonCopies": 1, "receiptPrinterId": None,

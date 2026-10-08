@@ -202,6 +202,29 @@ describe('the honest pay methods', () => {
     assert.equal(webSells(['cash_at_till']), true);
   });
 
+  it('never "פיצול תשלום בכרטיסים" (split_card): one card per document here', async () => {
+    assert.deepEqual(usableMethods(['card', 'split_card', 'cash_at_till'], true, true), ['card', 'cash_at_till']);
+    assert.equal(webSells(['split_card']), false);
+    const { cloud, svc } = await paired();
+    cloud.handlers['POST sync/m1/kiosk/sync'] = () => ({
+      status: 200,
+      body: { kiosk: true, configVersion: 'v2', config: { payment: { methods: ['split_card', 'cash_at_till', 'voucher'] } }, state: {} },
+    });
+    await svc.kioskSync();
+    assert.deepEqual(svc.view().pay.methods, ['cash_at_till', 'voucher']);
+    assert.deepEqual(svc.view().pay.usable, ['cash_at_till', 'voucher']);
+    assert.equal(svc.view().state.noPayment, false);
+    // Only it and a voucher: as a method this kiosk does not know — the card beside the voucher, and no sale here without the bridge.
+    cloud.handlers['POST sync/m1/kiosk/sync'] = () => ({
+      status: 200,
+      body: { kiosk: true, configVersion: 'v3', config: { payment: { methods: ['voucher', 'split_card'] } }, state: {} },
+    });
+    await svc.kioskSync();
+    assert.deepEqual(svc.view().pay.methods, ['card', 'voucher']);
+    assert.ok(!svc.view().pay.usable.includes('split_card'));
+    assert.equal(svc.view().state.noPayment, true);
+  });
+
   it('rests on "התשלום אינו זמין" when the kiosk takes only the card', async () => {
     const { cloud, svc } = await paired();
     cloud.handlers['POST sync/m1/kiosk/sync'] = () => ({ status: 200, body: { kiosk: true, configVersion: 'v2', config: { payment: { methods: ['card'] } }, state: {} } });

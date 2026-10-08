@@ -86,6 +86,39 @@ describe('what this kiosk can take now', () => {
       svc.stop();
     }
   });
+
+  it('never "פיצול תשלום בכרטיסים" (split_card): one card per document here', () => {
+    const { fetchFn } = fakeCloud();
+    const svc = kiosk(fetchFn, { methods: ['split_card', 'cash_at_till', 'card', 'voucher'] });
+    try {
+      const pay = svc.view().pay;
+      expect(pay.methods).toEqual(['cash_at_till', 'card', 'voucher']);
+      expect(pay.usable).not.toContain('split_card');
+      expect(pay.usable).toEqual(['cash_at_till', 'voucher']);
+    } finally {
+      svc.stop();
+    }
+  });
+
+  it('only split_card and a voucher: as a method it does not know — the card beside the voucher', () => {
+    const { fetchFn } = fakeCloud();
+    const svc = kiosk(fetchFn, { methods: ['voucher', 'split_card'] });
+    try {
+      const pay = svc.view().pay;
+      expect(pay.methods).toEqual(['card', 'voucher']);
+      expect(pay.usable).not.toContain('split_card');
+      expect(pay.usable).toEqual(['voucher']);
+    } finally {
+      svc.stop();
+    }
+    const alone = kiosk(fakeCloud().fetchFn, { methods: ['split_card'] });
+    try {
+      expect(alone.view().pay.methods).toEqual(['card']);
+      expect(alone.view().pay.usable).toEqual([]);
+    } finally {
+      alone.stop();
+    }
+  });
 });
 
 describe('"מזומן בקופה": the open order to the tills', () => {

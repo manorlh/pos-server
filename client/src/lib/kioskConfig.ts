@@ -126,11 +126,19 @@ export const CHECKOUT_STEPS: CheckoutStep[] = ['tip', 'details', 'payMethod'];
  * "איך תרצו לשלם?" (docs/SPEC_KIOSK.md §23): the card on the external pinpad; a prepaid voucher
  * (redeemed online, the rest by another method); cash at the till (no document on the kiosk — a
  * slip, and a till takes the money). Bare "cash" is refused (`cash_not_supported`).
+ * "split_card" — "פיצול תשלום בכרטיסים" (§23.7): the order on several cards, each its own charge on
+ * the terminal, one sale with several card tenders (`payment.splitCard`). The Android kiosk only:
+ * the Windows and browser kiosks hold one card per document and never offer it (`singleCardPayMethods`).
  */
-export type PaymentMethod = 'card' | 'voucher' | 'cash_at_till';
-export const PAYMENT_METHODS: PaymentMethod[] = ['card', 'voucher', 'cash_at_till'];
+export type PaymentMethod = 'card' | 'voucher' | 'cash_at_till' | 'split_card';
+export const PAYMENT_METHODS: PaymentMethod[] = ['card', 'voucher', 'cash_at_till', 'split_card'];
 /** What can pay what a voucher leaves: a voucher is never the only method. */
-export const REMAINDER_METHODS: PaymentMethod[] = ['card', 'cash_at_till'];
+export const REMAINDER_METHODS: PaymentMethod[] = ['card', 'cash_at_till', 'split_card'];
+/** The methods only a kiosk that holds several card legs on one document takes (the Android kiosk). */
+export const MULTI_CARD_METHODS: PaymentMethod[] = ['split_card'];
+/** "פיצול תשלום בכרטיסים": the numbers of equal cards it may offer; the least per card (agorot, ₪1–₪1000). */
+export const SPLIT_CARD_COUNTS = [2, 3, 4] as const;
+export const SPLIT_CARD_MIN_PER_CARD = { min: 100, max: 100000 } as const;
 /**
  * "הגדלת מכירה" on the kiosk: the rules are the menu's (place "kiosk", lib/kioskUpsell.ts,
  * docs/SPEC_KIOSK.md §21); the kiosk keeps only its cap — the windows in one order.
@@ -525,6 +533,22 @@ export interface KioskPayment {
    * gives the effective one). Optional on the wire: a server before it sends none — the defaults.
    */
   stepModes?: Partial<Record<StepModeKey, CustomerFieldMode>>;
+  /**
+   * "פיצול תשלום בכרטיסים" (split_card): what it offers. Optional on the wire: a server before it
+   * sends none — the defaults.
+   */
+  splitCard?: KioskSplitCard;
+}
+
+/**
+ * "פיצול תשלום בכרטיסים" (payment.splitCard, the server's kiosk_config): `counts` — 2 / 3 / 4 equal
+ * cards (the remainder agorot on card 1), unique, sorted, empty only with `otherAmount`;
+ * `otherAmount` — "סכום אחר", an amount per card; `minPerCardAgorot` — the least one card pays.
+ */
+export interface KioskSplitCard {
+  counts: number[];
+  otherAmount: boolean;
+  minPerCardAgorot: number;
 }
 
 /**
@@ -954,6 +978,7 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     cashAtTillKitchenBeforePay: false,
     waitLogo: { media: null, style: 'plain' },
     stepModes: { ...STEP_MODE_DEFAULTS },
+    splitCard: { counts: [2, 3, 4], otherAmount: true, minPerCardAgorot: 1000 },
   },
   printing: {
     bonMode: 'routing',
@@ -1431,6 +1456,10 @@ export function repairKioskConfig(cfg: KioskConfig, opts: { kdsAvailable?: boole
   // "איך תרצו לשלם?" is always the last step, right before the payment.
   payment.checkoutSteps = [...(payment.checkoutSteps ?? []).filter((st) => st !== 'payMethod'), 'payMethod'];
   if (payment.tipEnabled && (payment.tipPresets ?? []).length === 0) payment.tipPresets = [...KIOSK_DEFAULTS.payment.tipPresets];
+  // "פיצול תשלום בכרטיסים" left with nothing to offer by two levels' changes: the default numbers.
+  if (payment.splitCard && (payment.splitCard.counts ?? []).length === 0 && !payment.splitCard.otherAmount) {
+    payment.splitCard.counts = [...(KIOSK_DEFAULTS.payment.splitCard?.counts ?? [])];
+  }
   if (hours.enabled && (hours.ranges ?? []).length === 0) hours.enabled = false;
   // "התראות לקופות": a chosen list left empty by a parent's change goes to the main till.
   for (const kind of ALERT_KINDS) {
@@ -1834,6 +1863,20 @@ export function validateKioskConfig(
   }
   if (pay.cashAtTillExpiryMin !== undefined && (!isInt(pay.cashAtTillExpiryMin) || pay.cashAtTillExpiryMin < 5 || pay.cashAtTillExpiryMin > 240)) {
     e.push({ path: 'payment.cashAtTillExpiryMin', code: 'range', params: { min: 5, max: 240 } });
+  }
+  // "פיצול תשלום בכרטיסים": 2 / 3 / 4 each once, the least per card ₪1–₪1000, and something to offer.
+  if (pay.splitCard !== undefined) {
+    const split = pay.splitCard;
+    if (!isDict(split)) e.push({ path: 'payment.splitCard', code: 'enum' });
+    else {
+      const counts: unknown = split.counts;
+      if (!Array.isArray(counts) || counts.some((n) => !(SPLIT_CARD_COUNTS as readonly unknown[]).includes(n))) {
+        e.push({ path: 'payment.splitCard.counts', code: 'enum' });
+      } else if (!uniq(counts)) e.push({ path: 'payment.splitCard.counts', code: 'duplicate' });
+      else if (counts.length === 0 && split.otherAmount === false) e.push({ path: 'payment.splitCard.counts', code: 'splitCardNoOption' });
+      if (typeof split.otherAmount !== 'boolean') e.push({ path: 'payment.splitCard.otherAmount', code: 'enum' });
+      checkRange(e, 'payment.splitCard.minPerCardAgorot', split.minPerCardAgorot, SPLIT_CARD_MIN_PER_CARD);
+    }
   }
   if (pay.tipPresets.length > L.tipPresetsMax) {
     e.push({ path: 'payment.tipPresets', code: 'tooMany', params: { max: L.tipPresetsMax } });
@@ -2261,6 +2304,7 @@ export function checkoutStepOrder(steps: readonly unknown[] | null | undefined):
 /**
  * `payment.methods` as a kiosk takes it (the till's KioskPayMethod.parseList, the cloud's repair):
  * the known ones in order, each once; a voucher never alone (the card beside it); none → the card.
+ * "split_card" is kept where it stands (it pays what a voucher leaves, as the card does).
  */
 export function kioskPayMethods(methods: readonly unknown[] | null | undefined): PaymentMethod[] {
   const out: PaymentMethod[] = [];
@@ -2268,6 +2312,16 @@ export function kioskPayMethods(methods: readonly unknown[] | null | undefined):
     if ((PAYMENT_METHODS as readonly unknown[]).includes(m) && !out.includes(m as PaymentMethod)) out.push(m as PaymentMethod);
   }
   return out.some((m) => (REMAINDER_METHODS as readonly string[]).includes(m)) ? out : ['card', ...out];
+}
+
+/**
+ * `payment.methods` as a kiosk that holds ONE card per document takes them (the Windows kiosk, the
+ * browser kiosk and its bridge): the methods of several card legs (MULTI_CARD_METHODS — split_card)
+ * are never offered there — dropped as a method it does not know, so a voucher left alone gets the
+ * card beside it and nothing at all → the card (kioskPayMethods).
+ */
+export function singleCardPayMethods(methods: readonly unknown[] | null | undefined): PaymentMethod[] {
+  return kioskPayMethods(kioskPayMethods(methods).filter((m) => !MULTI_CARD_METHODS.includes(m)));
 }
 
 /** "איך תרצו לשלם?" is asked: more than one method — or the only one is not the card (cash at the till alone). */

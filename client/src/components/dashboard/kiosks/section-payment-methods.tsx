@@ -3,18 +3,35 @@
 /**
  * "אמצעי תשלום" and "תשלום בקופה" in the kiosk editor (docs/SPEC_KIOSK.md §23): which methods the
  * kiosk takes and in which order its "איך תרצו לשלם?" screen shows them (payment.methods), and
- * how an order paid at the till behaves (payment.cashAtTillExpiryMin, cashAtTillKitchenBeforePay).
+ * how an order paid at the till behaves (payment.cashAtTillExpiryMin, cashAtTillKitchenBeforePay),
+ * and what "פיצול תשלום בכרטיסים" offers (payment.splitCard — the Android kiosk only).
  */
 
 import { useTranslations } from 'next-intl';
-import { Banknote, CreditCard, Ticket } from 'lucide-react';
+import { Banknote, CreditCard, Ticket, WalletCards } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { PAYMENT_METHODS, kioskAsksPayMethod, moveItem, type PaymentMethod } from '@/lib/kioskConfig';
+import {
+  KIOSK_DEFAULTS,
+  PAYMENT_METHODS,
+  SPLIT_CARD_COUNTS,
+  SPLIT_CARD_MIN_PER_CARD,
+  kioskAsksPayMethod,
+  moveItem,
+  type PaymentMethod,
+} from '@/lib/kioskConfig';
 import { useKioskField } from './editor-context';
 import { FieldShell, MoveButtons, NumberInput, SwitchField } from './fields';
 
-const ICONS: Record<PaymentMethod, typeof CreditCard> = { card: CreditCard, voucher: Ticket, cash_at_till: Banknote };
+const ICONS: Record<PaymentMethod, typeof CreditCard> = { card: CreditCard, voucher: Ticket, cash_at_till: Banknote, split_card: WalletCards };
+/** Each method's name and line under it (kiosks.payment). */
+const LABEL: Record<PaymentMethod, string> = { card: 'methodCard', voucher: 'methodVoucher', cash_at_till: 'methodCash', split_card: 'methodSplitCard' };
+const HINT: Record<PaymentMethod, string> = {
+  card: 'methodCardHint',
+  voucher: 'methodVoucherHint',
+  cash_at_till: 'methodCashHint',
+  split_card: 'methodSplitCardHint',
+};
 
 /** The methods: on / off each, the ones on in the order the customer sees them. */
 export function PaymentMethodsField() {
@@ -23,8 +40,8 @@ export function PaymentMethodsField() {
   const f = useKioskField<string[]>('payment.methods');
   const on = (Array.isArray(f.value) ? f.value : []).filter((m): m is PaymentMethod => (PAYMENT_METHODS as readonly string[]).includes(m));
   const rows: PaymentMethod[] = [...on, ...PAYMENT_METHODS.filter((m) => !on.includes(m))];
-  const label = (m: PaymentMethod) => (m === 'card' ? t('methodCard') : m === 'voucher' ? t('methodVoucher') : t('methodCash'));
-  const hint = (m: PaymentMethod) => (m === 'card' ? t('methodCardHint') : m === 'voucher' ? t('methodVoucherHint') : t('methodCashHint'));
+  const label = (m: PaymentMethod) => t(LABEL[m]);
+  const hint = (m: PaymentMethod) => t(HINT[m]);
   return (
     <FieldShell path="payment.methods" label={tf('payment.methods')} hint={t('methodsHint')}>
       <ol className="divide-y overflow-hidden rounded-xl border">
@@ -88,6 +105,59 @@ export function CashAtTillFields() {
         />
       </FieldShell>
       <SwitchField path="payment.cashAtTillKitchenBeforePay" label={tf('payment.cashAtTillKitchenBeforePay')} hint={t('cashAtTillKitchenHint')} />
+    </>
+  );
+}
+
+/**
+ * "פיצול תשלום בכרטיסים" (payment.splitCard): 2 / 3 / 4 equal cards, "סכום אחר", the least per card;
+ * only while the method is on. The Android kiosk only — the Windows and browser kiosks hold one card
+ * per document and never offer it.
+ */
+export function SplitCardFields() {
+  const t = useTranslations('kiosks.payment');
+  const methods = useKioskField<string[]>('payment.methods');
+  const counts = useKioskField<number[]>('payment.splitCard.counts');
+  const min = useKioskField<number>('payment.splitCard.minPerCardAgorot');
+  if (!(Array.isArray(methods.value) && methods.value.includes('split_card'))) {
+    return <p className="text-sm text-muted-foreground">{t('splitCardOff')}</p>;
+  }
+  const on = Array.isArray(counts.value) ? counts.value : [];
+  const lo = SPLIT_CARD_MIN_PER_CARD.min / 100;
+  const hi = SPLIT_CARD_MIN_PER_CARD.max / 100;
+  return (
+    <>
+      <p className="text-sm text-muted-foreground">{t('splitCardHint')}</p>
+      <FieldShell path="payment.splitCard.counts" label={t('splitCardCounts')} hint={t('splitCardCountsHint')}>
+        <div className="flex flex-wrap gap-4">
+          {SPLIT_CARD_COUNTS.map((n) => (
+            <label key={n} className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-primary"
+                checked={on.includes(n)}
+                disabled={counts.disabled}
+                onChange={(e) => counts.set(e.target.checked ? [...on.filter((x) => x !== n), n].sort((a, b) => a - b) : on.filter((x) => x !== n))}
+              />
+              {t('splitCardCount', { n })}
+            </label>
+          ))}
+        </div>
+      </FieldShell>
+      <SwitchField path="payment.splitCard.otherAmount" label={t('splitCardOther')} hint={t('splitCardOtherHint')} />
+      <FieldShell path="payment.splitCard.minPerCardAgorot" label={t('splitCardMin')} hint={t('splitCardMinHint', { min: lo, max: hi })}>
+        <NumberInput
+          value={Number.isFinite(min.value) ? min.value / 100 : NaN}
+          min={lo}
+          max={hi}
+          step={1}
+          disabled={min.disabled}
+          suffix="₪"
+          ariaLabel={t('splitCardMin')}
+          onChange={(n) => min.set(Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) * 100 : (KIOSK_DEFAULTS.payment.splitCard?.minPerCardAgorot ?? 1000))}
+        />
+      </FieldShell>
+      <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">{t('splitCardAndroidOnly')}</p>
     </>
   );
 }
