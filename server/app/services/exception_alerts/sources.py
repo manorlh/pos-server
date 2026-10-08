@@ -555,6 +555,27 @@ def _stock_alert(ctx: Ctx, a) -> Optional[EntrySpec]:
     )
 
 
+def _target_hit(ctx: Ctx, h) -> Optional[EntrySpec]:
+    return EntrySpec(
+        source="sales_target",
+        source_id=str(h.id),
+        dedupe_key=f"sales_target:{h.id}",
+        kind="target_reached",
+        severity="low",
+        occurred_at=_utc(h.reached_at),
+        tenant_id=h.tenant_id,
+        company_id=h.company_id,
+        shop_id=h.shop_id,
+        area_id=h.area_id,
+        pos_user_id=h.pos_user_id,
+        pos_user_name=ctx.pos_user_name(h.pos_user_id) if h.pos_user_id else None,
+        amount=h.actual,
+        threshold=h.amount,
+        summary=f"{h.label or 'יעד'} הושג: ₪{h.actual} מתוך ₪{h.amount}",
+        details={"targetId": str(h.target_id), "periodKey": h.period_key},
+    )
+
+
 def _one(fn: Callable[[Ctx, Any], Optional[EntrySpec]]) -> Callable[[Ctx, Any], List[EntrySpec]]:
     def wrapped(ctx: Ctx, row: Any) -> List[EntrySpec]:
         spec = fn(ctx, row)
@@ -577,6 +598,7 @@ SOURCES: Tuple[Source, ...] = (
            lambda t: loaded(t, "action") in ("enabled", "disabled", "dropped"), _one(_training)),
     Source("till_parameter", "app.models.till_parameter:TillParameterChange", _param_wants, _one(_till_parameter)),
     Source("stock_alert", "app.models.stock_setting:StockAlert", lambda a: loaded(a, "cleared_at") is None, _one(_stock_alert)),
+    Source("sales_target", "app.models.sales_target:SalesTargetHit", lambda h: True, _one(_target_hit)),
 )
 
 _BY_NAME = {s.name: s for s in SOURCES}

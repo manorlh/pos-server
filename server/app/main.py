@@ -152,6 +152,11 @@ app.include_router(item_blocks_router.router, prefix=_prefix)
 from app.routers import stock_live as stock_live_router  # noqa: E402
 
 app.include_router(stock_live_router.router, prefix=_prefix)
+# "יעדים ותחרות" (app/routers/targets.py): targets, progress, the till's leaderboard.
+from app.routers import targets as targets_router  # noqa: E402
+
+app.include_router(targets_router.router, prefix=_prefix)
+app.include_router(targets_router.till_router, prefix=_prefix)
 app.include_router(device_commands_router.router, prefix=_prefix)
 app.include_router(device_commands_router.till_router, prefix=_prefix)
 app.include_router(tips.router, prefix=_prefix)

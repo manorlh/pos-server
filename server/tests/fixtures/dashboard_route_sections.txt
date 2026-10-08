@@ -523,6 +523,7 @@ POST /sync/{machine_id}/kiosk/sync -> till
 GET /sync/{machine_id}/kiosk/technician -> till
 POST /sync/{machine_id}/kiosks/{kiosk_machine_id}/commands -> till
 GET /sync/{machine_id}/last-close -> till
+GET /sync/{machine_id}/leaderboard -> till
 PUT /sync/{machine_id}/machine-catalog -> till
 GET /sync/{machine_id}/parameters -> till
 PUT /sync/{machine_id}/payment-terminal -> till
@@ -600,6 +601,11 @@ PATCH /tables/zones/{zone_id} -> tables:edit
 POST /tables/zones/{zone_id}/archive -> tables:edit
 POST /tables/zones/{zone_id}/bulk -> tables:edit
 PUT /tables/zones/{zone_id}/positions -> tables:edit
+GET /targets -> reports:view
+POST /targets -> reports:edit
+GET /targets/progress -> reports:view
+DELETE /targets/{target_id} -> reports:edit
+PUT /targets/{target_id} -> reports:edit
 POST /tenants -> organization:edit
 GET /tenants/mine -> self
 PATCH /tenants/{tenant_id} -> organization:edit

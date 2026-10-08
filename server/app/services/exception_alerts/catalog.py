@@ -98,6 +98,8 @@ KINDS: Tuple[Kind, ...] = (
     # Stock locations (app/services/stock_alerts.py): a product low or out at a location.
     Kind("stock_low", "מלאי נמוך", "low", "stock_alert", link="none"),
     Kind("stock_out", "אזל מהמלאי", "medium", "stock_alert", link="none"),
+    # "יעדים ותחרות" (app/services/sales_targets.py): a target reached — good news, once per period.
+    Kind("target_reached", "יעד מכירות הושג", "low", "sales_target", amount=True),
 )
 
 # "מגירת מזומן" (the drawer spec §10–§11, app/services/cash_drawer_exceptions.py): opening after

@@ -161,6 +161,8 @@ from app.models.kiosk_live import KioskQuickHide
 from app.models.device_command import DeviceCommand, DeviceRemoteState
 # Stock locations: managed levels, low-stock alerts, the daily reset (app/services/stock_locations.py).
 from app.models.stock_setting import StockAlert, StockLevelSetting, StockReset, StockResetItem
+# "יעדים ותחרות" (app/services/sales_targets.py).
+from app.models.sales_target import SalesTarget, SalesTargetHit
 
 __all__ = [
     "User", "UserRole",
@@ -247,4 +249,5 @@ __all__ = [
     "CashDrawerEvent", "CashMovement",
     "SoldOutMark", "KioskQuickHide", "DeviceCommand", "DeviceRemoteState",
     "StockAlert", "StockLevelSetting", "StockReset", "StockResetItem",
+    "SalesTarget", "SalesTargetHit",
 ]

@@ -367,6 +367,16 @@ def start_background_worker(session_factory: Callable[[], Session], *, interval:
                 logger.exception("daily stock reset pass failed")
             finally:
                 db.close()
+            # The same minute's other live pass: "יעד הושג" even when nobody looks at the board.
+            db = session_factory()
+            try:
+                from app.services import sales_targets
+
+                sales_targets.evaluate_due(db)
+            except Exception:  # noqa: BLE001
+                logger.exception("sales targets pass failed")
+            finally:
+                db.close()
 
     _stop.clear()
     _thread = threading.Thread(target=loop, name="stock-daily-reset", daemon=True)
