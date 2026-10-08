@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Banknote, Check, CreditCard, Ticket, Trash2 } from 'lucide-react';
+import { Banknote, Check, CreditCard, Ticket, Trash2, WalletCards } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { checkoutBar, MONO_FIGURES_STACK, type CheckoutStep, type KioskTextKey, type PaymentMethod } from '@/lib/kioskConfig';
 import { BigButton, LiveBack, cardStyle, chromeOf, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
@@ -64,9 +64,27 @@ export interface KioskLivePayMethod {
   skip?: { method: PaymentMethod; onSkip: () => void } | null;
 }
 
-const ICONS: Record<PaymentMethod, typeof CreditCard> = { card: CreditCard, voucher: Ticket, cash_at_till: Banknote };
-const LABEL: Record<PaymentMethod, KioskTextKey> = { card: 'payCardLabel', voucher: 'payVoucherLabel', cash_at_till: 'payCashLabel' };
-const SUB: Record<PaymentMethod, KioskTextKey> = { card: 'payCardSub', voucher: 'payVoucherSub', cash_at_till: 'payCashSub' };
+const ICONS: Record<PaymentMethod, typeof CreditCard> = { card: CreditCard, voucher: Ticket, cash_at_till: Banknote, split_card: WalletCards };
+type TextMethod = Exclude<PaymentMethod, 'split_card'>;
+const LABEL: Record<TextMethod, KioskTextKey> = { card: 'payCardLabel', voucher: 'payVoucherLabel', cash_at_till: 'payCashLabel' };
+const SUB: Record<TextMethod, KioskTextKey> = { card: 'payCardSub', voucher: 'payVoucherSub', cash_at_till: 'payCashSub' };
+/**
+ * "פיצול תשלום בכרטיסים" has no kiosk text of its own yet (the text registry is pinned with the
+ * Android kiosk): plain words. Only the Android kiosk offers it — the hosts of these screens hold
+ * one card per document and leave it out (singleCardPayMethods); the words are here for a host that
+ * would draw it.
+ */
+const PLAIN: Record<'split_card', { label: string; sub: string }> = {
+  split_card: { label: 'פיצול בין כרטיסים', sub: 'תשלום בכמה כרטיסי אשראי' },
+};
+
+/** A tile's name and its line under it, in the business's words where it has them. */
+function methodLabel(m: PreviewModel, method: PaymentMethod): string {
+  return method === 'split_card' ? PLAIN[method].label : m.txt(LABEL[method]);
+}
+function methodSub(m: PreviewModel, method: PaymentMethod): string {
+  return method === 'split_card' ? PLAIN[method].sub : m.txt(SUB[method]);
+}
 
 /** A kiosk text with its placeholders ("{amount}", "{number}"), the business's words first. */
 export function payText(m: PreviewModel, key: KioskTextKey, values: Record<string, string | number>): string {
@@ -126,9 +144,9 @@ export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePay
           <Icon className="h-6 w-6" />
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="text-lg font-extrabold leading-tight">{m.txt(LABEL[t.method])}</span>
+          <span className="text-lg font-extrabold leading-tight">{methodLabel(m, t.method)}</span>
           <span className="kt-13" style={{ color: m.c.mutedText }}>
-            {t.off ?? m.txt(SUB[t.method])}
+            {t.off ?? methodSub(m, t.method)}
           </span>
         </span>
       </button>
@@ -176,7 +194,7 @@ export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePay
             {/* "רשות": passed with the default method. */}
             {live.skip && !asking ? (
               <BigButton m={m} variant="soft" onClick={() => !live.busy && live.skip?.onSkip()} disabledLook={live.busy}>
-                {m.txt('entryContinue')} · {m.txt(LABEL[live.skip.method])}
+                {m.txt('entryContinue')} · {methodLabel(m, live.skip.method)}
               </BigButton>
             ) : null}
             {live.extra}

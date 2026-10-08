@@ -1839,7 +1839,7 @@ describe('"אפשר לבטל גם כפתור ברוכים הבאים": the attra
 describe('"איך תרצו לשלם?" — card, voucher, cash at the till (docs/SPEC_KIOSK.md §23)', () => {
   const codes = (c: KioskConfig) => validateKioskConfig(c).map((e) => `${e.path}:${e.code}`);
   it('the methods: card, voucher and cash at the till; a voucher never alone; bare cash refused', () => {
-    assert.deepEqual(PAYMENT_METHODS, ['card', 'voucher', 'cash_at_till']);
+    assert.deepEqual(PAYMENT_METHODS, ['card', 'voucher', 'cash_at_till', 'split_card']);
     assert.deepEqual(KIOSK_DEFAULTS.payment.methods, ['card']);
     assert.equal(KIOSK_DEFAULTS.payment.cashAtTillExpiryMin, 30);
     assert.equal(KIOSK_DEFAULTS.payment.cashAtTillKitchenBeforePay, false);
@@ -1892,6 +1892,92 @@ describe('"איך תרצו לשלם?" — card, voucher, cash at the till (docs/
     assert.equal(he.kiosks.builtin.payMethodTitle, 'איך תרצו לשלם?');
     assert.equal(he.kiosks.builtin.cashSlipTitle, 'לתשלום בקופה');
     assert.equal(he.kiosks.builtin.cashSlipFooter, 'ההזמנה תוכן לאחר התשלום');
+  });
+});
+
+import {
+  MULTI_CARD_METHODS,
+  REMAINDER_METHODS,
+  SPLIT_CARD_COUNTS,
+  SPLIT_CARD_MIN_PER_CARD,
+  singleCardPayMethods,
+  stepMode as stepModeOf,
+} from './kioskConfig';
+
+describe('"פיצול תשלום בכרטיסים" — split_card and payment.splitCard (docs/SPEC_KIOSK.md §23.7, the server kiosk_config)', () => {
+  const codes = (c: KioskConfig) => validateKioskConfig(c).map((e) => `${e.path}:${e.code}`);
+  it('a method off by default, placed like the others, that pays what a voucher leaves', () => {
+    assert.ok(PAYMENT_METHODS.includes('split_card') && REMAINDER_METHODS.includes('split_card'));
+    assert.deepEqual(MULTI_CARD_METHODS, ['split_card']);
+    assert.deepEqual(KIOSK_DEFAULTS.payment.methods, ['card']);
+    for (const methods of [['split_card'], ['voucher', 'split_card'], ['cash_at_till', 'split_card', 'card']]) {
+      const c = resolveKioskConfig({ payment: { methods } });
+      assert.deepEqual(c.payment.methods, methods, methods.join());
+      assert.deepEqual(validateKioskConfig(c), [], methods.join());
+    }
+    // Kept where it stands — never dropped, never the card prepended beside it.
+    assert.deepEqual(kioskPayMethods(['voucher', 'split_card']), ['voucher', 'split_card']);
+    assert.deepEqual(kioskPayMethods(['split_card', 'bitcoin', 'split_card']), ['split_card']);
+    // Alone it is not the card: "איך תרצו לשלם?" is asked; passed ("רשות") with the card when offered, else the first that pays.
+    assert.equal(kioskAsksPayMethod(['split_card']), true);
+    assert.equal(stepModeOf(resolveKioskConfig({ payment: { methods: ['split_card'] } }), 'payMethod'), 'required');
+    assert.deepEqual(payMethodAsk(['split_card'], ['split_card'], 'optional'), { asks: true, optional: true, fallback: 'split_card' });
+    assert.deepEqual(payMethodAsk(['split_card', 'card'], ['split_card', 'card'], 'optional'), { asks: true, optional: true, fallback: 'card' });
+    assert.deepEqual(payMethodAsk(['voucher', 'split_card'], ['voucher', 'split_card'], 'required'), { asks: true, optional: false, fallback: 'split_card' });
+  });
+
+  it('a kiosk of one card per document (Windows, the browser) never offers it', () => {
+    assert.deepEqual(singleCardPayMethods(['card', 'split_card', 'cash_at_till']), ['card', 'cash_at_till']);
+    assert.deepEqual(singleCardPayMethods(['split_card', 'cash_at_till']), ['cash_at_till']);
+    // As a method it does not know: a voucher left alone gets the card beside it; nothing at all → the card.
+    assert.deepEqual(singleCardPayMethods(['voucher', 'split_card']), ['card', 'voucher']);
+    assert.deepEqual(singleCardPayMethods(['split_card']), ['card']);
+    assert.deepEqual(singleCardPayMethods(['cash_at_till', 'voucher', 'card']), ['cash_at_till', 'voucher', 'card']);
+  });
+
+  it('its options: the defaults, the ranges, sorted counts and something to offer', () => {
+    assert.deepEqual(KIOSK_DEFAULTS.payment.splitCard, { counts: [2, 3, 4], otherAmount: true, minPerCardAgorot: 1000 });
+    assert.deepEqual([...SPLIT_CARD_COUNTS], [2, 3, 4]);
+    assert.deepEqual(SPLIT_CARD_MIN_PER_CARD, { min: 100, max: 100000 });
+    // A config that never had the key (a server before it): the defaults.
+    assert.deepEqual(resolveKioskConfig({ payment: { methods: ['split_card'] } }).payment.splitCard, KIOSK_DEFAULTS.payment.splitCard);
+    // A level that saves part of it keeps what it saved, the rest inherited.
+    assert.deepEqual(resolveKioskConfig({ payment: { splitCard: { counts: [3], minPerCardAgorot: 2500 } } }).payment.splitCard, {
+      counts: [3],
+      otherAmount: true,
+      minPerCardAgorot: 2500,
+    });
+    assert.deepEqual(validateKioskConfig(resolveKioskConfig({ payment: { splitCard: { counts: [], otherAmount: true, minPerCardAgorot: 100 } } })), []);
+    assert.deepEqual(validateKioskConfig(resolveKioskConfig({ payment: { splitCard: { counts: [2], otherAmount: false, minPerCardAgorot: 100000 } } })), []);
+    assert.deepEqual(codes(cfg({ payment: { splitCard: { counts: [1] } } })), ['payment.splitCard.counts:enum']);
+    assert.deepEqual(codes(cfg({ payment: { splitCard: { counts: [5] } } })), ['payment.splitCard.counts:enum']);
+    assert.deepEqual(codes(cfg({ payment: { splitCard: { counts: ['2'] } } })), ['payment.splitCard.counts:enum']);
+    assert.deepEqual(codes(cfg({ payment: { splitCard: { counts: [2, 2] } } })), ['payment.splitCard.counts:duplicate']);
+    assert.deepEqual(codes(cfg({ payment: { splitCard: { minPerCardAgorot: 99 } } })), ['payment.splitCard.minPerCardAgorot:range']);
+    assert.deepEqual(codes(cfg({ payment: { splitCard: { minPerCardAgorot: 100001 } } })), ['payment.splitCard.minPerCardAgorot:range']);
+    assert.deepEqual(codes(cfg({ payment: { splitCard: { minPerCardAgorot: 150.5 } } })), ['payment.splitCard.minPerCardAgorot:range']);
+    assert.deepEqual(codes(cfg({ payment: { splitCard: { otherAmount: 'yes' } } })), ['payment.splitCard.otherAmount:enum']);
+    // Nothing to offer: no number of cards and no "סכום אחר".
+    assert.deepEqual(codes(cfg({ payment: { splitCard: { counts: [], otherAmount: false } } })), ['payment.splitCard.counts:splitCardNoOption']);
+    // …repaired in what a kiosk gets (two levels' changes): the default numbers.
+    assert.deepEqual(resolveKioskConfig({ payment: { splitCard: { counts: [] } } }, { payment: { splitCard: { otherAmount: false } } }).payment.splitCard, {
+      counts: [2, 3, 4],
+      otherAmount: false,
+      minPerCardAgorot: 1000,
+    });
+    assert.deepEqual(repairKioskConfig(cfg({ payment: { splitCard: { counts: [4], otherAmount: false } } })).payment.splitCard?.counts, [4]);
+  });
+
+  it('every word of the dashboard is in he.json', () => {
+    const he = JSON.parse(readFileSync(join(process.cwd(), 'src', 'messages', 'he.json'), 'utf8'));
+    for (const k of ['methodSplitCard', 'methodSplitCardHint', 'splitCardTitle', 'splitCardOff', 'splitCardHint', 'splitCardCounts', 'splitCardCount', 'splitCardOther', 'splitCardMin', 'splitCardAndroidOnly']) {
+      assert.equal(typeof he.kiosks.payment[k], 'string', k);
+    }
+    assert.equal(he.kiosks.payment.methodSplitCard, 'פיצול תשלום בכרטיסים');
+    assert.equal(he.kiosks.payment.splitCardAndroidOnly, 'בקיוסק אנדרואיד בלבד — בקיוסק Windows ובקיוסק דפדפן האפשרות לא מוצגת');
+    assert.equal(typeof he.kiosks.validation.splitCardNoOption, 'string');
+    assert.equal(typeof he.kiosks.validation.server.splitCardNoOption, 'string');
+    for (const k of ['counts', 'otherAmount', 'minPerCardAgorot']) assert.equal(typeof he.kiosks.fields.payment.splitCard[k], 'string', k);
   });
 });
 

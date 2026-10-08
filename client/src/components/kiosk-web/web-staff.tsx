@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react';
 import { Download, Expand, LogOut, RefreshCw, RotateCw, X } from 'lucide-react';
 import type { PreviewModel } from '@/kiosk-shared';
 import { formatTime } from '@/lib/format';
+import type { PaymentMethod } from '@/lib/kioskConfig';
 import type { WebKioskService, WebKioskView } from '@/lib/kioskWebService';
 import { orderDue, orderNeedsUpload } from '@/lib/kioskWebOrders';
 import { isStandalone, useInstallPrompt } from './web-shell';
@@ -27,6 +28,8 @@ export const WINDOW_MS = 3_000;
 export const DEFAULT_CODE = '1995';
 const MAX_FAILURES = 5;
 const LOCKOUT_MS = 5 * 60_000;
+/** "אמצעי תשלום כאן": what this browser takes (split_card never — one card per document here). */
+const USABLE_LABEL: Record<PaymentMethod, string> = { cash_at_till: 'מזומן בקופה', card: 'אשראי (גשר)', voucher: 'שובר', split_card: 'פיצול בין כרטיסים' };
 const SCHEME = 'pbkdf2-sha256';
 const SALT_PREFIX = 'r2m-kiosk-technician:';
 
@@ -173,7 +176,7 @@ export function WebStaff({ m, view, svc, onClose }: { m: PreviewModel; view: Web
               <span>הזמנות שממתינות לענן</span>
               <span className="font-semibold">{view.staff.pendingOrders}</span>
               <span>אמצעי תשלום כאן</span>
-              <span className="font-semibold">{view.pay.usable.length > 0 ? view.pay.usable.map((x) => (x === 'cash_at_till' ? 'מזומן בקופה' : x === 'card' ? 'אשראי (גשר)' : 'שובר')).join(' · ') : 'אין — הפעילו "מזומן בקופה" או גשר ל-Windows'}</span>
+              <span className="font-semibold">{view.pay.usable.length > 0 ? view.pay.usable.map((x) => USABLE_LABEL[x]).join(' · ') : 'אין — הפעילו "מזומן בקופה" או גשר ל-Windows'}</span>
               <span>אחסון</span>
               <span className="font-semibold" dir="ltr">
                 {view.staff.storage}

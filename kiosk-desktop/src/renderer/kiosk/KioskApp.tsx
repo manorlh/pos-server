@@ -29,6 +29,7 @@ import {
   resolveThemeColors,
   stepMode,
   payMethodAsk,
+  MULTI_CARD_METHODS,
   tickerBandPx,
   typeScaleFactor,
   typeWeights,
@@ -164,7 +165,11 @@ export function KioskApp({ view }: { view: KioskView }) {
   const cfgIn = cfg as unknown as FlowConfigIn;
   // "איך תרצו לשלם?" (payment.methods, stepModes.payMethod — payMethodAsk): what this kiosk can take now
   // (the card through its terminal, a voucher online, cash at the till), asked by the step's mode.
-  const payInfo = view.pay ?? { methods: ['card'] as PaymentMethod[], usable: (view.state.noPayment ? [] : ['card']) as PaymentMethod[], cardOff: null };
+  // One card per document on these screens: "פיצול תשלום בכרטיסים" (split_card) is never a tile here,
+  // whatever the host sends (the service already leaves it out — singleCardPayMethods).
+  const payHost = view.pay ?? { methods: ['card'] as PaymentMethod[], usable: (view.state.noPayment ? [] : ['card']) as PaymentMethod[], cardOff: null };
+  const oneCard = (list: PaymentMethod[]) => list.filter((m) => !MULTI_CARD_METHODS.includes(m));
+  const payInfo = { ...payHost, methods: oneCard(payHost.methods), usable: oneCard(payHost.usable) };
   const payAsk = payMethodAsk(payInfo.methods, payInfo.usable, stepMode(cfg, 'payMethod'));
   const asksPay = payAsk.asks;
   const fallbackMethod: 'card' | 'cash_at_till' = payAsk.fallback === 'cash_at_till' ? 'cash_at_till' : 'card';

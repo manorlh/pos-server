@@ -20,7 +20,7 @@
  * drive it with a fake fetch and a memory store.
  */
 
-import { kioskPayMethods, resolveKioskConfig, type KioskConfig, type PaymentMethod } from './kioskConfig';
+import { resolveKioskConfig, singleCardPayMethods, type KioskConfig, type PaymentMethod } from './kioskConfig';
 import { KioskApi, pairWithCode, tokenRevoked, type ApiReply, type FetchFn, type KioskCredentials } from './kioskWebApi';
 import { applyCatalogPull, buildWebCatalog, configMediaUrls, sizedImage, type CatalogIn, type WebCatalog, type WebGroup } from './kioskWebCatalog';
 import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type MenuGroup, type OptionPick } from './kioskMoney';
@@ -101,7 +101,7 @@ export interface WebKioskView {
     offlineSince: number | null;
   };
   pay: {
-    /** As configured (`payment.methods`, kioskPayMethods). */
+    /** As configured (`payment.methods`), as a kiosk of one card per document takes them (singleCardPayMethods: never split_card). */
     methods: PaymentMethod[];
     /** What this browser can take: the card only through a paired bridge (§28); a voucher only online. */
     usable: PaymentMethod[];
@@ -432,7 +432,8 @@ export class WebKioskService {
         if (url) categoryImages[id] = url;
       }
     }
-    const methods = cfg ? kioskPayMethods(cfg.payment.methods) : (['card'] as PaymentMethod[]);
+    // One card per document here (and through the bridge): never "split_card" (singleCardPayMethods).
+    const methods = cfg ? singleCardPayMethods(cfg.payment.methods) : (['card'] as PaymentMethod[]);
     const bs = this.bridgeState();
     const cardReady = this.cardReady();
     const paused = this.pausedState();

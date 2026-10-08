@@ -21,7 +21,7 @@ import {
 } from '@/lib/kioskConfig';
 import { useKioskField } from './editor-context';
 import { FieldShell, MediaField, MoveButtons, NumberInput, SectionCard, SegmentField, SwitchField } from './fields';
-import { CashAtTillFields, PayMethodStepRow, PaymentMethodsField } from './section-payment-methods';
+import { CashAtTillFields, PayMethodStepRow, PaymentMethodsField, SplitCardFields } from './section-payment-methods';
 import { StepModesCard } from './section-step-modes';
 
 /**
@@ -210,6 +210,10 @@ export function PaymentSection() {
 
       <SectionCard title={t('cashAtTillTitle')} paths={['payment.cashAtTillExpiryMin', 'payment.cashAtTillKitchenBeforePay']}>
         <CashAtTillFields />
+      </SectionCard>
+
+      <SectionCard title={t('splitCardTitle')} paths={['payment.splitCard.counts', 'payment.splitCard.otherAmount', 'payment.splitCard.minPerCardAgorot']}>
+        <SplitCardFields />
       </SectionCard>
 
       <SectionCard title={t('tipTitle')} paths={['payment.tipEnabled', 'payment.tipPresets', 'payment.tipOther']}>

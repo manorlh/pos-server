@@ -251,9 +251,16 @@ MESSAGE_STYLES = ("info", "promo", "warning", "success")
 #: "card" on the external pinpad; "voucher" — a prepaid voucher redeemed online, the rest by
 #: another method; "cash_at_till" — no document on the kiosk: a slip, and the till takes the
 #: money (§23). Bare "cash" is refused (`cash_not_supported`): a kiosk has no cash hardware.
-PAYMENT_METHODS = ("card", "voucher", "cash_at_till")
+#: "split_card" — "פיצול תשלום בכרטיסים" (§23.7): the order paid on several cards, each its own
+#: charge on the terminal, one sale with several card tenders. The Android kiosk only: the Windows
+#: and browser kiosks hold one card per document and never offer it. Off unless listed.
+PAYMENT_METHODS = ("card", "voucher", "cash_at_till", "split_card")
 #: The methods that can pay what a voucher leaves: a voucher alone is never enough.
-REMAINDER_METHODS = ("card", "cash_at_till")
+REMAINDER_METHODS = ("card", "cash_at_till", "split_card")
+#: "פיצול תשלום בכרטיסים" (`payment.splitCard`): the numbers of equal cards it may offer (stored
+#: sorted), and the least one card may pay, in agorot (₪1–₪1000).
+SPLIT_CARD_COUNTS = (2, 3, 4)
+SPLIT_CARD_MIN_PER_CARD = (100, 100000)
 CASH_AT_TILL_EXPIRY_MIN = (5, 240)
 RECEIPT_POLICIES = ("always", "ask", "never")
 CUSTOMER_FIELD_MODES = ("off", "optional", "required")
@@ -464,6 +471,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # "לוגו במסך התשלום": its own upload (POST /kiosks/media), shown at the top of the screens
         # that wait for the payment; no picture — nothing shows.
         "waitLogo": {"media": None, "style": "plain"},
+        # "פיצול תשלום בכרטיסים" (split_card, the Android kiosk only): 2 / 3 / 4 equal cards (the
+        # remainder agorot on card 1) and "סכום אחר" (an amount per card), each card at least this.
+        "splitCard": {"counts": [2, 3, 4], "otherAmount": True, "minPerCardAgorot": 1000},
     },
     # "הגדלת מכירה": the menu's rules for the kiosk (§21); at most `maxShown` windows in one order.
     "upsell": {"maxShown": 2},
@@ -874,10 +884,12 @@ class Media(Node):
 
 
 class UList(Node):
-    """A list (replaced whole by a layer). `unique` refuses duplicates."""
+    """A list (replaced whole by a layer). `unique` refuses duplicates; `sort` stores it sorted."""
 
-    def __init__(self, item: Node, *, min_len: int = 0, max_len: int = ID_LIST_MAX, unique: bool = False):
+    def __init__(self, item: Node, *, min_len: int = 0, max_len: int = ID_LIST_MAX, unique: bool = False,
+                 sort: bool = False):
         self.item, self.min_len, self.max_len, self.unique = item, min_len, max_len, unique
+        self.sort = sort
 
     def check(self, value, path, errors):
         if not isinstance(value, list):
@@ -902,7 +914,7 @@ class UList(Node):
             out.append(cleaned)
         if len(errors) > before:
             return _INVALID
-        return out
+        return sorted(out) if self.sort else out
 
 
 class Obj(Node):
@@ -1280,6 +1292,15 @@ SCHEMA = Obj({
             "media": Media(("image",), nullable=True),
             "style": Enum(WAIT_LOGO_STYLES),
         }),
+        # "פיצול תשלום בכרטיסים": `counts` may be empty only with `otherAmount` (`_cross_field`).
+        "splitCard": Obj({
+            "counts": UList(
+                Int(min(SPLIT_CARD_COUNTS), max(SPLIT_CARD_COUNTS)),
+                max_len=len(SPLIT_CARD_COUNTS), unique=True, sort=True,
+            ),
+            "otherAmount": Bool(),
+            "minPerCardAgorot": Int(*SPLIT_CARD_MIN_PER_CARD),
+        }),
     }),
     "upsell": Obj({
         "maxShown": Int(1, UPSELL_MAX_SHOWN),
@@ -1413,6 +1434,10 @@ def limits() -> Dict[str, Any]:
         "payment": {
             "tipPresets": {"min": 1, "max": 50, "maxCount": TIP_PRESETS_MAX},
             "minOrderAgorot": {"min": 0, "max": MIN_ORDER_MAX},
+            "splitCard": {
+                "counts": list(SPLIT_CARD_COUNTS),
+                "minPerCardAgorot": {"min": SPLIT_CARD_MIN_PER_CARD[0], "max": SPLIT_CARD_MIN_PER_CARD[1]},
+            },
         },
         "printing": {"bonCopies": {"min": 1, "max": 3}},
         "pickup": {"start": {"min": 1}, "max": {"max": 9999}, "prefixMax": PICKUP_PREFIX_MAX,
@@ -1547,9 +1572,18 @@ def _cross_field(cfg: Dict[str, Any], errors: List[Issue]) -> None:
                 errors.append(Issue(
                     _index("payment.methods", i), "invalid_value", f"must be one of: {', '.join(PAYMENT_METHODS)}"
                 ))
-        # A voucher pays what it covers; the rest needs card or the till (§23).
+        # A voucher pays what it covers; the rest needs card, the till or a split (§23).
         if "voucher" in methods and not any(m in REMAINDER_METHODS for m in methods):
-            errors.append(Issue("payment.methods", "voucher_needs_method", "voucher needs card or cash_at_till too"))
+            errors.append(Issue(
+                "payment.methods", "voucher_needs_method", "voucher needs card, cash_at_till or split_card too"
+            ))
+
+    # "פיצול תשלום בכרטיסים": something to offer — a number of cards, or "סכום אחר".
+    split = _get(cfg, "payment", "splitCard")
+    if isinstance(split, dict) and split.get("counts") == [] and split.get("otherAmount") is False:
+        errors.append(Issue(
+            "payment.splitCard.counts", "splitCardNoOption", "split_card needs a number of cards or otherAmount"
+        ))
 
     if _get(cfg, "payment", "tipEnabled") is True and _get(cfg, "payment", "tipPresets") == []:
         errors.append(Issue("payment.tipPresets", "too_few", "at least one preset when tips are on"))
@@ -1815,6 +1849,10 @@ def repair(cfg: Dict[str, Any]) -> Dict[str, Any]:
     payment["checkoutSteps"] = steps + ["payMethod"]
     if payment.get("tipEnabled") and not payment.get("tipPresets"):
         payment["tipPresets"] = list(DEFAULT_CONFIG["payment"]["tipPresets"])
+    # "פיצול תשלום בכרטיסים" left with nothing to offer by two levels' changes: the default numbers.
+    split = payment.get("splitCard")
+    if isinstance(split, dict) and not split.get("counts") and not split.get("otherAmount"):
+        split["counts"] = list(DEFAULT_CONFIG["payment"]["splitCard"]["counts"])
     if cfg["hours"].get("enabled") and not cfg["hours"].get("ranges"):
         cfg["hours"]["enabled"] = False
     for kind in ALERT_KINDS:

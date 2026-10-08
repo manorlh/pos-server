@@ -9,8 +9,8 @@ docs/SPEC_KIOSK.md §23):
   holding it), and its vouchers go back — as they do when a till cancels it with a reason;
 * a prepaid voucher redeemed on the kiosk pays part of it (pending), the till takes the rest;
   a redemption is never on two orders, never another machine's, never one given back;
-* the config: card / voucher / cash_at_till, a voucher never alone, bare cash still refused,
-  "איך תרצו לשלם?" always the last step;
+* the config: card / voucher / cash_at_till / split_card, a voucher never alone, bare cash still
+  refused, "איך תרצו לשלם?" always the last step; split_card's options (payment.splitCard);
 * the cloud prices the basket again (base, a menu's price, choices by their group's rules, a
   meal's upcharges): a new order it prices differently is refused with the lines while the
   kiosk says its customer waits, and taken with the cloud's verdict on it otherwise.
@@ -410,7 +410,7 @@ def test_a_voucher_is_never_counted_twice_nor_anothers(w):
 
 
 def test_the_methods_and_the_choice_step(w):
-    assert C.PAYMENT_METHODS == ("card", "voucher", "cash_at_till")
+    assert C.PAYMENT_METHODS == ("card", "voucher", "cash_at_till", "split_card")
     _c, errors = C.validate_layer({"payment": {"methods": ["card", "voucher", "cash_at_till"]}})
     assert errors == []
     assert C.validate_config(C.resolve({"payment": {"methods": ["cash_at_till", "voucher"]}})) == []
@@ -430,6 +430,82 @@ def test_the_methods_and_the_choice_step(w):
     assert got["payment.cashAtTillExpiryMin"] == "out_of_range" and "payment.cashAtTillKitchenBeforePay" in got
     for key in ("payMethodTitle", "payCashLabel", "remainingToPay", "voucherOffline", "cashSlipTitle", "cashSlipFooter", "cashSlipPending", "cashDoneTitle", "stepPayMethod"):
         assert key in C.TEXT_KEYS
+
+
+def test_split_card_is_a_method_off_by_default_that_pays_what_a_voucher_leaves(w):
+    """"פיצול תשלום בכרטיסים" (§23.7): listed like the others, in any place; never on by itself."""
+    assert "split_card" in C.PAYMENT_METHODS and "split_card" in C.REMAINDER_METHODS
+    assert C.DEFAULT_CONFIG["payment"]["methods"] == ["card"]
+    assert C.limits()["enums"]["paymentMethods"][-1] == "split_card"
+    # Its place in the list is the tile's place; alone, or beside a voucher, it is enough.
+    for methods in (["split_card"], ["voucher", "split_card"], ["cash_at_till", "split_card", "card"]):
+        assert C.validate_config(C.resolve({"payment": {"methods": methods}})) == [], methods
+        assert C.resolve({"payment": {"methods": methods}})["payment"]["methods"] == methods
+    # Alone it is not the card: "איך תרצו לשלם?" is asked.
+    assert C.step_mode(C.resolve({"payment": {"methods": ["split_card"]}}), "payMethod") == "required"
+
+
+def test_split_card_options_defaults_ranges_and_something_to_offer(w):
+    defaults = {"counts": [2, 3, 4], "otherAmount": True, "minPerCardAgorot": 1000}
+    assert C.DEFAULT_CONFIG["payment"]["splitCard"] == defaults
+    # A config that never had the key resolves to the defaults.
+    assert C.resolve({"payment": {"methods": ["card", "split_card"]}})["payment"]["splitCard"] == defaults
+    assert C.limits()["payment"]["splitCard"] == {"counts": [2, 3, 4], "minPerCardAgorot": {"min": 100, "max": 100000}}
+    # A layer: the counts stored sorted, each once; a partial object merges over the parent's.
+    cleaned, errors = C.validate_layer({"payment": {"splitCard": {"counts": [4, 2]}}})
+    assert errors == [] and cleaned == {"payment": {"splitCard": {"counts": [2, 4]}}}
+    assert C.resolve(cleaned)["payment"]["splitCard"] == {"counts": [2, 4], "otherAmount": True, "minPerCardAgorot": 1000}
+    # Only "סכום אחר": no equal numbers at all.
+    only_other = {"payment": {"splitCard": {"counts": [], "otherAmount": True, "minPerCardAgorot": 100}}}
+    assert C.validate_config(C.merge(C.default_config(), only_other)) == []
+
+    def codes(layer):
+        _c, errs = C.validate_layer(layer)
+        return {e.path: e.code for e in errs}
+
+    assert codes({"payment": {"splitCard": {"counts": [1]}}}) == {"payment.splitCard.counts[0]": "out_of_range"}
+    assert codes({"payment": {"splitCard": {"counts": [5]}}}) == {"payment.splitCard.counts[0]": "out_of_range"}
+    assert codes({"payment": {"splitCard": {"counts": [2, 2]}}}) == {"payment.splitCard.counts[1]": "duplicate"}
+    assert codes({"payment": {"splitCard": {"counts": ["2"]}}}) == {"payment.splitCard.counts[0]": "invalid_type"}
+    assert codes({"payment": {"splitCard": {"minPerCardAgorot": 99}}}) == {"payment.splitCard.minPerCardAgorot": "out_of_range"}
+    assert codes({"payment": {"splitCard": {"minPerCardAgorot": 100001}}}) == {"payment.splitCard.minPerCardAgorot": "out_of_range"}
+    assert codes({"payment": {"splitCard": {"otherAmount": "yes"}}}) == {"payment.splitCard.otherAmount": "invalid_type"}
+    assert codes({"payment": {"splitCard": {"cards": [2]}}}) == {"payment.splitCard.cards": "unknown_key"}
+    assert codes({"payment": {"splitCard": {"counts": [2], "otherAmount": False, "minPerCardAgorot": 100000}}}) == {}
+    # Nothing to offer: no number of cards and no "סכום אחר".
+    nothing = {"payment": {"splitCard": {"counts": [], "otherAmount": False}}}
+    got = {e.path: e.code for e in C.validate_config(C.merge(C.default_config(), nothing))}
+    assert got == {"payment.splitCard.counts": "splitCardNoOption"}
+    # …and what a kiosk gets is repaired when two levels' changes leave it so.
+    assert C.resolve({"payment": {"splitCard": {"counts": []}}}, {"payment": {"splitCard": {"otherAmount": False}}})[
+        "payment"]["splitCard"] == {"counts": [2, 3, 4], "otherAmount": False, "minPerCardAgorot": 1000}
+
+
+def test_split_card_saved_on_a_kiosk_keeps_what_it_saved(w):
+    def put(overrides):
+        KR.put_settings(
+            body=KioskSettingsIn(overrides=overrides),
+            level="machine", scope_id=w.kiosk.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+        )
+        w.db.commit()
+
+    # Before anything is saved: off, the defaults.
+    got = C.effective_config(w.db, w.kiosk)["payment"]
+    assert "split_card" not in got["methods"] and got["splitCard"]["counts"] == [2, 3, 4]
+    put({"payment": {"methods": ["voucher", "split_card"], "splitCard": {"counts": [3, 2], "otherAmount": False, "minPerCardAgorot": 2500}}})
+    stored = C.layer_row(w.db, "machine", w.kiosk.id).overrides["payment"]
+    assert stored["methods"] == ["voucher", "split_card"]
+    assert stored["splitCard"] == {"counts": [2, 3], "otherAmount": False, "minPerCardAgorot": 2500}
+    got = C.effective_config(w.db, w.kiosk)["payment"]
+    assert got["methods"] == ["voucher", "split_card"] and got["splitCard"] == stored["splitCard"]
+    # Refused whole: nothing to offer.
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as refused:
+        put({"payment": {"methods": ["card", "split_card"], "splitCard": {"counts": [], "otherAmount": False}}})
+    assert refused.value.status_code == 422
+    assert {(e["path"], e["code"]) for e in refused.value.detail["errors"]} == {("payment.splitCard.counts", "splitCardNoOption")}
+    assert C.effective_config(w.db, w.kiosk)["payment"]["splitCard"]["counts"] == [2, 3]
 
 
 def test_the_dashboard_sees_where_an_order_stands_and_open_ones_are_not_sales(w):
