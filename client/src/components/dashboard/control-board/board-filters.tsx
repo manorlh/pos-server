@@ -186,41 +186,64 @@ function useScopeOptions({ areas, areaId }: ScopeFilterProps) {
   };
 }
 
-/** Company, shop, point of sale, till: four boxes in a row (or a column, in the sheet). */
-export function ScopeBoxes({ className, ...props }: ScopeFilterProps & { className?: string }) {
+export type ScopeField = 'company' | 'shop' | 'area' | 'machine';
+const ALL_FIELDS: ScopeField[] = ['company', 'shop', 'area', 'machine'];
+
+/**
+ * Company, shop, point of sale, till: four boxes in a row (or a column, in the sheet) — or only
+ * `fields` (the cockpit: the shop up front, the rest under "מתקדם").
+ */
+export function ScopeBoxes({
+  className,
+  fields = ALL_FIELDS,
+  boxClassName,
+  ...props
+}: ScopeFilterProps & { className?: string; fields?: ScopeField[]; boxClassName?: string }) {
   const t = useTranslations('controlBoard.filters');
   const scope = useScope();
   const o = useScopeOptions(props);
   const f = useBoardFilters(props.board);
   return (
     <div className={cn('grid gap-3', className)}>
-      <FilterBox
-        label={t('company')}
-        value={o.values.company}
-        options={o.companies}
-        onChange={(v) => f.setCompany(v || null)}
-      />
-      <FilterBox
-        label={t('shop')}
-        value={o.values.shop}
-        options={o.shops}
-        onChange={(v) => f.setShop(v || null)}
-      />
-      <FilterBox
-        label={t('area')}
-        value={o.values.area}
-        options={o.areas}
-        onChange={(v) => f.setArea(v || null)}
-        disabled={!scope.shopId || o.noAreas}
-        display={o.noAreas ? t('noAreas') : undefined}
-      />
-      <FilterBox
-        label={t('machine')}
-        value={o.values.machine}
-        options={o.machines}
-        onChange={(v) => f.setMachine(v || null)}
-        disabled={o.machines.length <= 1 && !scope.machineId}
-      />
+      {fields.includes('company') ? (
+        <FilterBox
+          label={t('company')}
+          value={o.values.company}
+          options={o.companies}
+          onChange={(v) => f.setCompany(v || null)}
+          className={boxClassName}
+        />
+      ) : null}
+      {fields.includes('shop') ? (
+        <FilterBox
+          label={t('shop')}
+          value={o.values.shop}
+          options={o.shops}
+          onChange={(v) => f.setShop(v || null)}
+          className={boxClassName}
+        />
+      ) : null}
+      {fields.includes('area') ? (
+        <FilterBox
+          label={t('area')}
+          value={o.values.area}
+          options={o.areas}
+          onChange={(v) => f.setArea(v || null)}
+          disabled={!scope.shopId || o.noAreas}
+          display={o.noAreas ? t('noAreas') : undefined}
+          className={boxClassName}
+        />
+      ) : null}
+      {fields.includes('machine') ? (
+        <FilterBox
+          label={t('machine')}
+          value={o.values.machine}
+          options={o.machines}
+          onChange={(v) => f.setMachine(v || null)}
+          disabled={o.machines.length <= 1 && !scope.machineId}
+          className={boxClassName}
+        />
+      ) : null}
     </div>
   );
 }

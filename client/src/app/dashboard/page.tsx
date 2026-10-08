@@ -93,11 +93,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { OverviewTree } from '@/components/dashboard/overview/overview-tree';
 import { TillDetails, TillDetailsTitle } from '@/components/dashboard/overview/till-details';
 import { Wordmark, boardSurface, useSystemDark } from '@/components/dashboard/control-board/board-ui';
-import { DayBoxes, PhoneFilterBar, ScopeBoxes, useDayNames } from '@/components/dashboard/control-board/board-filters';
+import { useDayNames } from '@/components/dashboard/control-board/board-filters';
 import { BoardKpis } from '@/components/dashboard/control-board/board-kpis';
 import { BoardHourly } from '@/components/dashboard/control-board/board-hourly';
 import { BoardTenders } from '@/components/dashboard/control-board/board-tenders';
-import { BoardAlerts, type BoardAlert } from '@/components/dashboard/control-board/board-alerts';
+import type { BoardAlert } from '@/components/dashboard/control-board/board-alerts';
+import { AttentionFeed, CockpitProvider, DevicesStrip, QuickActionsBar } from '@/components/dashboard/cockpit/cockpit';
+import { CockpitScopeHeader } from '@/components/dashboard/cockpit/scope-header';
+import type { CockpitScope } from '@/components/dashboard/cockpit/registry';
 import { BoardItems } from '@/components/dashboard/control-board/board-items';
 import { BoardVouchers } from '@/components/dashboard/control-board/board-vouchers';
 import { HomeTabs } from '@/components/dashboard/control-board/home-tabs';
@@ -510,6 +513,18 @@ export default function DashboardPage() {
   const labelB = eventId ? (vsEventId ? (vsEvent?.name ?? '…') : null) : dayB ? names.compared(dayA, dayB, board.cmp) : null;
   const salesLoading = eventId ? evReport.isPending : ovA.isPending;
 
+  // ── The cockpit's scope (its actions and its feed) ──────────────────────────
+  const cockpitScope = useMemo<CockpitScope>(
+    () => ({
+      companyId: effective.companyId ?? undefined,
+      shopId: effective.shopId ?? undefined,
+      areaId: effective.machineId ? undefined : (areaId ?? undefined),
+      machineId: effective.machineId ?? undefined,
+      eventId: eventId ?? undefined,
+    }),
+    [areaId, effective.companyId, effective.machineId, effective.shopId, eventId],
+  );
+
   // ── Writing the event to the URL ─────────────────────────────────────────────
   const pickEvent = (e: { id: string; shopId: string; companyId?: string | null } | null) => {
     if (!e) {
@@ -619,9 +634,6 @@ export default function DashboardPage() {
           <Wordmark className="text-xl" />
           <div className="flex min-w-0 items-center gap-2">
             {updated}
-            {view === 'board' && !eventId ? (
-              <DayBoxes board={board} today={today} dayA={dayA} dayB={dayB} className="hidden w-[30rem] grid-cols-2 lg:grid" />
-            ) : null}
             <Link
               href="/dashboard/profile"
               aria-label={t('profile')}
@@ -648,33 +660,19 @@ export default function DashboardPage() {
         <HomeTabs view={view} canCompare={compareAllowed} canInsights={insightsAllowed} />
 
         {view === 'board' ? (
-          <>
-            {/* ── Filters ── */}
-            <PhoneFilterBar
-              board={board}
-              today={today}
-              dayA={dayA}
-              dayB={dayB}
-              areas={areas}
-              areaId={areaId}
-              dark={dark}
-              eventLine={
-                eventId
-                  ? [tEvent('chip', { name: labelA }), labelB ? tEvent('versus', { name: labelB }) : null].filter(Boolean).join(' · ')
-                  : null
-              }
-              eventSlot={eventPickers}
-            />
-            <div className="hidden space-y-3 md:block">
-              <ScopeBoxes board={board} areas={areas} areaId={areaId} className="grid-cols-2 xl:grid-cols-4" />
-              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                {eventId ? null : (
-                  <DayBoxes board={board} today={today} dayA={dayA} dayB={dayB} className="col-span-2 grid-cols-2 lg:hidden" />
-                )}
-                {eventPickers}
-              </div>
-            </div>
-          </>
+          /* ── 1. The cockpit's scope: a shop or an event, and the day; the rest under "מתקדם" ── */
+          <CockpitScopeHeader
+            board={board}
+            today={today}
+            dayA={dayA}
+            dayB={dayB}
+            areas={areas}
+            areaId={areaId}
+            eventId={eventId}
+            canPickEvent={salesAllowed}
+            eventPickers={eventPickers}
+            onClearEvent={() => pickEvent(null)}
+          />
         ) : null}
 
         {/* ── Shortcuts the old overview had ── */}
@@ -717,7 +715,7 @@ export default function DashboardPage() {
               eventsLoading={eventsLoading}
             />
           ) : (
-          <>
+          <CockpitProvider scope={cockpitScope} dark={dark} onOpenTill={setSelectedId}>
           {!salesAllowed ? (
             /* ── Without "דוחות": the tills' state only ── */
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-cb-line bg-cb-card p-4 text-sm shadow-[var(--cb-shadow)]">
@@ -753,35 +751,33 @@ export default function DashboardPage() {
               showSales={salesAllowed}
             />
 
-            {/* ── By the hour, tenders, alerts — Phone: chart, tenders, alerts. Wide: alerts | chart | tenders, as the mockup. ── */}
+            {/* ── 3. "דורש תשומת לב": one prioritised feed, each item's actions in place ── */}
+            <div id="cb-alerts" className="scroll-mt-4">
+              <AttentionFeed />
+            </div>
+
+            {/* ── 4. Quick actions ── */}
+            <QuickActionsBar />
+
+            {/* ── 5. The devices: each till's light and its sales; a tap opens its sheet ── */}
+            <DevicesStrip
+              tills={allTills}
+              loading={structureLoading || machines.isPending}
+              showMoney={salesAllowed && !eventId}
+            />
+
+            {/* ── 6. Cards: by the hour and the tenders ── */}
             {salesAllowed ? (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.7fr)_minmax(0,1fr)]">
+              <div className="grid grid-cols-1 gap-4 md:gap-5 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
                 <BoardHourly
-                  className="order-1 md:col-span-2 lg:order-2 lg:col-span-1"
                   points={points}
                   labelA={labelA}
                   labelB={labelB}
                   loading={eventId ? evReport.isPending : hrA.isPending}
                 />
-                <BoardTenders
-                  className="order-2 lg:order-3"
-                  a={figA}
-                  b={figB}
-                  labelA={labelA}
-                  labelB={labelB}
-                  loading={salesLoading}
-                />
-                <BoardAlerts
-                  id="cb-alerts"
-                  className="order-3 lg:order-1"
-                  alerts={alerts}
-                  loading={structureLoading || machines.isPending}
-                  onOpen={setSelectedId}
-                />
+                <BoardTenders a={figA} b={figB} labelA={labelA} labelB={labelB} loading={salesLoading} />
               </div>
-            ) : (
-              <BoardAlerts id="cb-alerts" alerts={alerts} loading={structureLoading || machines.isPending} onOpen={setSelectedId} />
-            )}
+            ) : null}
 
             {/* Company › shop › point of sale › till */}
             <section id="cb-tills" aria-label={t('tills.title')} className="scroll-mt-4 space-y-3">
@@ -918,7 +914,7 @@ export default function DashboardPage() {
               ) : null}
             </DialogContent>
           </Dialog>
-          </>
+          </CockpitProvider>
           )}
         </ScopeGate>
       </div>
