@@ -52,6 +52,7 @@ import { InsightFeed } from '@/components/dashboard/insights/insight-feed';
 import { OpenTablesWidget } from '@/components/dashboard/insights/open-tables-widget';
 import { KioskInsightsLinkCard } from '@/components/dashboard/kiosk-insights/link-card';
 import { ForecastSection } from '@/components/dashboard/insights/forecast-section';
+import { ForecastCard } from '@/components/dashboard/event-live/forecast-card';
 import { TrendsSection } from '@/components/dashboard/insights/trends-section';
 import { HeatmapSection } from '@/components/dashboard/insights/heatmap-section';
 import { MenuSection } from '@/components/dashboard/insights/menu-section';
@@ -357,6 +358,10 @@ export default function InsightsPage() {
       <Section id="forecast" title={t('sections.forecast')} query={forecast}>
         {(data) => <ForecastSection data={data} />}
       </Section>
+      {/* feat/event-live: "תחזית ואיוש" per shop — the next hours, tomorrow by the hour, the tills to open. */}
+      <div className="mt-5">
+        <ForecastCard scope={{ companyId: params.companyId, shopId: params.shopId, areaId: params.areaId, machineId: params.machineId }} />
+      </div>
       <Section id="trends" title={t('sections.trends')} query={trends}>
         {(data) => <TrendsSection data={data} />}
       </Section>

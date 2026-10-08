@@ -79,6 +79,7 @@ import { BoardTenders } from '@/components/dashboard/control-board/board-tenders
 import { BoardAlerts, type BoardAlert } from '@/components/dashboard/control-board/board-alerts';
 import { BoardItems } from '@/components/dashboard/control-board/board-items';
 import { LiveEventLink } from '@/components/dashboard/event-live/live-event-link';
+import { ForecastCard } from '@/components/dashboard/event-live/forecast-card';
 
 const REFRESH_MS = 30_000;
 /** A past day does not change by the second; it is read again after this. */
@@ -582,6 +583,9 @@ export default function DashboardPage() {
                 onOpen={setSelectedId}
               />
             </div>
+
+            {/* feat/event-live: "תחזית ואיוש" — tomorrow and the next hours, with the tills to open. */}
+            <ForecastCard compact surface="board" scope={{ companyId: effective.companyId, shopId: effective.shopId, areaId, machineId: effective.machineId }} />
 
             {/* Company › shop › point of sale › till */}
             <section id="cb-tills" aria-label={t('tills.title')} className="scroll-mt-4 space-y-3">
