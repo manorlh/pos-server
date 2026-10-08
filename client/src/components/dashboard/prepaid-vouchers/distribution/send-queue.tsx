@@ -246,6 +246,10 @@ export function SendQueue({ batch, overview }: { batch: PrepaidVoucherBatch; ove
     setBusy(r.id);
     try {
       saveBlob(await fetchRecipientPdf(batch.id, r.id, 'download'), pdfName(batch, r));
+      // Attached by hand: offer the mark, it is not assumed.
+      if (isSendable(r) && !r.deletedAt && (r.state === 'pending' || r.state === 'failed')) {
+        toast.info(t('downloaded'), { action: { label: t('markSent'), onClick: () => sent.mutate({ r, via: 'download' }) } });
+      }
     } catch (err) {
       toast.error(errorText(err));
     } finally {
