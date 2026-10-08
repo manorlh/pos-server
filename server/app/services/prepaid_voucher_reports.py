@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -43,8 +44,9 @@ def _utc(moment: Optional[datetime]) -> Optional[datetime]:
     return moment.replace(tzinfo=timezone.utc)
 
 
-def _units(rows) -> int:
-    return sum(int((r or {}).get("quantity") or 0) for r in (rows or []))
+def _units(rows) -> Decimal:
+    """Goods units of redemption rows; a weighed item's weight counts as its units (0.5 ק״ג → 0.5)."""
+    return sum((PV.qty((r or {}).get("quantity") or 0) for r in (rows or [])), Decimal(0))
 
 
 class _Bucket:
@@ -52,19 +54,21 @@ class _Bucket:
 
     def __init__(self) -> None:
         self.redemptions = 0
-        self.units = 0
+        self.units = Decimal(0)
         self.vouchers: set = set()
         self.agorot = 0
 
     def add(self, r: PrepaidVoucherRedemption) -> None:
         self.redemptions += 1
         # A discount voucher's use counts its uses; goods count their units.
-        self.units += int(r.uses) if r.uses else _units(r.items)
+        self.units += Decimal(int(r.uses)) if r.uses else _units(r.items)
         self.agorot += int(r.discount_amount or 0)
         self.vouchers.add(str(r.voucher_id))
 
     def out(self, money: bool = False) -> Dict[str, Any]:
-        out: Dict[str, Any] = {"redemptions": self.redemptions, "vouchers": len(self.vouchers), "units": self.units}
+        out: Dict[str, Any] = {
+            "redemptions": self.redemptions, "vouchers": len(self.vouchers), "units": PV.qty_out(self.units),
+        }
         if money:
             # A discount batch: the ₪ its uses took off.
             out["amount"] = round(self.agorot / 100, 2)
@@ -74,12 +78,15 @@ class _Bucket:
 def _usage(db: Session, batch, stats: Dict[str, int], products, redemptions) -> Dict[str, Any]:
     """Issued / used / remaining / void, and the ₪ given — see the module docstring."""
     if not PV.is_discount(batch):
+        def total(*keys):
+            return PV.qty_out(sum((PV.qty(p[k]) for p in products for k in keys), Decimal(0)))
+
         return {
             "unit": "units",
-            "issued": sum(p["issued"] for p in products),
-            "used": sum(p["taken"] for p in products),
-            "remaining": sum(p["outstanding"] for p in products),
-            "void": sum(p["void"] + p["forfeited"] for p in products),
+            "issued": total("issued"),
+            "used": total("taken"),
+            "remaining": total("outstanding"),
+            "void": total("void", "forfeited"),
             "benefit": None,
             "flagged": 0,
             "held": 0,
@@ -126,15 +133,17 @@ def batch_report(db: Session, user: User, tenant_id, batch_id, tz: Optional[str]
     # ── Goods ────────────────────────────────────────────────────────────────
     order = [str(i.product_id) for i in batch.items]
     names = {str(i.product_id): i.product_name for i in batch.items}
-    per_voucher = {str(i.product_id): int(i.quantity) for i in batch.items}
-    outstanding: Dict[str, int] = defaultdict(int)
-    void: Dict[str, int] = defaultdict(int)
+    per_voucher = {str(i.product_id): PV.qty(i.quantity) for i in batch.items}
+    weighed = {str(i.product_id): bool(getattr(i, "weighed", False)) for i in batch.items}
+    units = {str(i.product_id): getattr(i, "unit_label", None) for i in batch.items}
+    outstanding: Dict[str, Decimal] = defaultdict(Decimal)
+    void: Dict[str, Decimal] = defaultdict(Decimal)
     for status_, remaining in db.query(PrepaidVoucher.status, PrepaidVoucher.remaining).filter(
         PrepaidVoucher.batch_id == batch.id
     ):
         target = void if status_ == "cancelled" else outstanding
         for pid, q in (remaining or {}).items():
-            target[str(pid)] += int(q or 0)
+            target[str(pid)] += PV.qty(q or 0)
 
     redemptions: List[PrepaidVoucherRedemption] = (
         db.query(PrepaidVoucherRedemption)
@@ -145,24 +154,28 @@ def batch_report(db: Session, user: User, tenant_id, batch_id, tz: Optional[str]
         .order_by(PrepaidVoucherRedemption.redeemed_at)
         .all()
     )
-    taken: Dict[str, int] = defaultdict(int)
-    forfeited: Dict[str, int] = defaultdict(int)
+    taken: Dict[str, Decimal] = defaultdict(Decimal)
+    forfeited: Dict[str, Decimal] = defaultdict(Decimal)
     for r in redemptions:
         for row in r.items or []:
-            taken[str(row.get("productId"))] += int(row.get("quantity") or 0)
+            taken[str(row.get("productId"))] += PV.qty(row.get("quantity") or 0)
         for row in r.forfeited or []:
-            forfeited[str(row.get("productId"))] += int(row.get("quantity") or 0)
+            forfeited[str(row.get("productId"))] += PV.qty(row.get("quantity") or 0)
 
+    zero = Decimal(0)
     products = [
         {
             "productId": pid,
             "name": names.get(pid),
-            "perVoucher": per_voucher.get(pid, 0),
-            "issued": per_voucher.get(pid, 0) * int(stats.get("total", 0)),
-            "taken": taken.get(pid, 0),
-            "forfeited": forfeited.get(pid, 0),
-            "outstanding": outstanding.get(pid, 0),
-            "void": void.get(pid, 0),
+            "perVoucher": PV.qty_out(per_voucher.get(pid, zero)),
+            "issued": PV.qty_out(per_voucher.get(pid, zero) * int(stats.get("total", 0))),
+            "taken": PV.qty_out(taken.get(pid, zero)),
+            "forfeited": PV.qty_out(forfeited.get(pid, zero)),
+            "outstanding": PV.qty_out(outstanding.get(pid, zero)),
+            "void": PV.qty_out(void.get(pid, zero)),
+            # Sold by weight: every figure of the row is in [unitLabel] (ק״ג).
+            "weighed": weighed.get(pid, False),
+            "unitLabel": units.get(pid),
         }
         for pid in order
     ]
@@ -171,7 +184,7 @@ def batch_report(db: Session, user: User, tenant_id, batch_id, tz: Optional[str]
     total = _Bucket()
     by_hour: Dict[int, _Bucket] = defaultdict(_Bucket)
     by_day: Dict[str, _Bucket] = defaultdict(_Bucket)
-    day_products: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    day_products: Dict[str, Dict[str, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
     by_shop: Dict[str, _Bucket] = defaultdict(_Bucket)
     by_till: Dict[str, _Bucket] = defaultdict(_Bucket)
     by_employee: Dict[str, _Bucket] = defaultdict(_Bucket)
@@ -186,7 +199,7 @@ def batch_report(db: Session, user: User, tenant_id, batch_id, tz: Optional[str]
             day = local.date().isoformat()
             by_day[day].add(r)
             for row in r.items or []:
-                day_products[day][str(row.get("productId"))] += int(row.get("quantity") or 0)
+                day_products[day][str(row.get("productId"))] += PV.qty(row.get("quantity") or 0)
         shop_key = str(r.shop_id) if r.shop_id else ""
         by_shop[shop_key].add(r)
         till_key = str(r.machine_id) if r.machine_id else ""
@@ -234,7 +247,7 @@ def batch_report(db: Session, user: User, tenant_id, batch_id, tz: Optional[str]
                 "date": d,
                 **by_day[d].out(money),
                 "products": [
-                    {"productId": pid, "name": names.get(pid), "quantity": day_products[d].get(pid, 0)}
+                    {"productId": pid, "name": names.get(pid), "quantity": PV.qty_out(day_products[d].get(pid, zero))}
                     for pid in order
                 ],
             }

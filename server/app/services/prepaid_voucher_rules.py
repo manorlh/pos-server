@@ -37,8 +37,17 @@ promotion policy, per line:
 A product that takes no discount ("לא מקבל הנחות") is never discounted. An order discount
 is fixed (× the uses taken) or a percent of the base (capped by `max_discount`), never more
 than the base, shared over the lines in proportion (largest remainder, ties by line order).
-An item discount is per whole unit — fixed (up to the unit's price) or a percent — on the
-most valuable units first, at most `max_units` × uses units.
+An item discount is per unit — fixed (up to the unit's price) or a percent — on the most
+valuable units first, at most `max_units` × uses units.
+
+**Every product type** (docs/SPEC_VOUCHER_PRODUCTION.md §7.14): a line is its actual price
+(shop / menu price, with its options and a meal's upcharges, after its line discount and
+promotion). A product sold by weight (`weighed`) is discounted per unit of its measure
+(a kg) **pro rata**: 0.75 kg takes 0.75 of a kg's discount, and `max_units` counts its
+measure — 1 unit = 1 kg (a fraction of one when that is all there is). A whole unit of a
+product sold by the piece needs a whole unit of room under `max_units`. The general item
+("פריט כללי", `general`) has no identity: an item discount never takes it (not even by its
+category); an order discount takes it like any line.
 """
 from __future__ import annotations
 
@@ -145,6 +154,10 @@ class BasketLine:
     voucher: int = 0
     #: False: "לא מקבל הנחות".
     discountable: bool = True
+    #: Sold by weight or measure: [quantity] is a decimal (kg), discounted pro rata.
+    weighed: bool = False
+    #: The general item ("פריט כללי"): never an item discount's, an order discount's like any line.
+    general: bool = False
 
 
 @dataclass
@@ -163,13 +176,39 @@ class DiscountResult:
 def _targets(benefit: Benefit, line: BasketLine) -> bool:
     if benefit.kind == "order_discount":
         return True
+    if line.general:
+        return False  # no identity: never an item discount's, not even by its category
     return bool(set(line.product_ids) & benefit.product_ids) or bool(set(line.category_ids) & benefit.category_ids)
 
 
 def _whole_units(quantity: float) -> int:
-    """The line's whole units; 0 for a weighed line of a fraction (an item discount is per unit)."""
+    """The line's whole units; 0 for a fraction of a product sold by the piece (an item discount is per unit)."""
     q = round(quantity)
     return int(q) if q >= 1 and abs(quantity - q) < 1e-9 else 0
+
+
+#: A unit in thousandths: a weighed line's quantity (kg) is counted in grams.
+MILLI = 1000
+
+
+def _milli(quantity: float) -> int:
+    """
+    [quantity] in thousandths of a unit (0.734 kg → 734): the double product rounded half up,
+    exactly as the till's `Math.round(quantity * 1000)` (never Python's round-half-even).
+    """
+    return int(Decimal(float(quantity) * MILLI).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
+def _unit_off(benefit: Benefit, unit: int) -> int:
+    """What the discount takes off one whole unit whose net price is [unit]."""
+    if benefit.discount_type == "fixed":
+        return min(benefit.value, unit)
+    return unit * benefit.value // BASIS
+
+
+def _has_units(line: BasketLine) -> bool:
+    """Something an item discount can count: a whole unit, or any weight of a weighed product."""
+    return _milli(line.quantity) >= 1 if line.weighed else _whole_units(line.quantity) >= 1
 
 
 def _order_shares(benefit: Benefit, active: List[Tuple[BasketLine, int]], uses: int, base: int) -> Dict[str, int]:
@@ -195,24 +234,50 @@ def _order_shares(benefit: Benefit, active: List[Tuple[BasketLine, int]], uses: 
 
 
 def _item_shares(benefit: Benefit, active: List[Tuple[BasketLine, int]], uses: int) -> Dict[str, int]:
-    units: List[Tuple[int, int]] = []  # (discount of one unit, position in active)
+    """
+    Per unit, the most valuable first, at most `max_units` × uses units. Units are counted in
+    thousandths ([MILLI]) so a weighed line's kg are units too: its whole kg, then what is
+    left of a kg (its discount pro rata, half up). A unit sold by the piece needs a whole
+    unit of room; a weighed slot takes what room is left, pro rata.
+    """
+    # (what this slot takes off, position in active, its size in thousandths, a whole unit's discount)
+    slots: List[Tuple[int, int, int, int]] = []
     for pos, (line, net) in enumerate(active):
-        q = _whole_units(line.quantity)
-        if q < 1:
-            continue
-        unit = (2 * net + q) // (2 * q)  # the unit's net price, half up
-        if benefit.discount_type == "fixed":
-            off = min(benefit.value, unit)
+        if line.weighed:
+            mq = _milli(line.quantity)
+            if mq < 1:
+                continue
+            unit = (2 * net * MILLI + mq) // (2 * mq)  # the net price of one kg, half up
+            off = _unit_off(benefit, unit)
+            if off <= 0:
+                continue
+            whole, rest = divmod(mq, MILLI)
+            slots.extend([(off, pos, MILLI, off)] * whole)
+            if rest:
+                slots.append(((off * rest + MILLI // 2) // MILLI, pos, rest, off))
         else:
-            off = unit * benefit.value // BASIS
-        if off > 0:
-            units.extend([(off, pos)] * q)
-    units.sort(key=lambda u: (-u[0], u[1]))
-    limit = len(units) if benefit.max_units is None else max(0, benefit.max_units * uses)
+            q = _whole_units(line.quantity)
+            if q < 1:
+                continue
+            unit = (2 * net + q) // (2 * q)  # the unit's net price, half up
+            off = _unit_off(benefit, unit)
+            if off > 0:
+                slots.extend([(off, pos, MILLI, off)] * q)
+    slots.sort(key=lambda s: (-s[0], s[1]))
+    room = None if benefit.max_units is None else max(0, benefit.max_units * uses) * MILLI
     shares: Dict[str, int] = {}
-    for off, pos in units[:limit]:
-        line_id = active[pos][0].id
-        shares[line_id] = shares.get(line_id, 0) + off
+    for take, pos, size, per_unit in slots:
+        line = active[pos][0]
+        if room is not None:
+            if room <= 0:
+                break
+            if size > room:
+                if not line.weighed:
+                    continue  # a whole unit needs a whole unit of room
+                take, size = (per_unit * room + MILLI // 2) // MILLI, room
+            room -= size
+        if take > 0:
+            shares[line.id] = shares.get(line.id, 0) + take
     for line, net in active:
         if shares.get(line.id, 0) > net:
             shares[line.id] = net
@@ -236,8 +301,8 @@ def discount_for(benefit: Benefit, lines: Sequence[BasketLine], uses: int = 1) -
         if promoted and policy == "exclude":
             skipped[line.id] = SKIP_PROMOTED
             continue
-        if benefit.kind == "item_discount" and _whole_units(line.quantity) < 1:
-            continue  # a weighed fraction has no unit to discount
+        if benefit.kind == "item_discount" and not _has_units(line):
+            continue  # a fraction of a product sold by the piece has no unit to discount
         promotion = 0 if (promoted and policy == "best") else line.promotion
         net = line.gross - line.line_discount - promotion - line.voucher
         if net > 0:
