@@ -15013,6 +15013,8 @@
       "prepaid_vouchers": "שוברי הפקה",
       "prepaid_voucher_prices": "מחירי הפקה בשוברים",
       "voucher_discount_override": "כפיית הנחה בשוברי הפקה",
+      "prepaid_voucher_settlement": "התחשבנות שוברי הפקה",
+      "prepaid_voucher_controls": "בקרת מימוש שוברי הפקה",
       "promotions": "מבצעים",
       "customers": "לקוחות ומועדון",
       "notifications": "הודעות SMS",

@@ -20,6 +20,8 @@ export type SectionId =
   | 'prepaid_vouchers'
   | 'prepaid_voucher_prices'
   | 'voucher_discount_override'
+  | 'prepaid_voucher_settlement'
+  | 'prepaid_voucher_controls'
   | 'promotions'
   | 'customers'
   | 'notifications'
@@ -78,6 +80,10 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'prepaid_voucher_prices', pages: [] },
   // No page of its own: setting an override policy in the voucher type / batch forms.
   { id: 'voucher_discount_override', pages: [] },
+  // No page of its own: the "התחשבנות" tab and the commercial reports inside the prepaid vouchers page.
+  { id: 'prepaid_voucher_settlement', pages: [] },
+  // No page of its own: pauses, quotas, test batches and replacement vouchers inside the prepaid vouchers page.
+  { id: 'prepaid_voucher_controls', pages: [] },
   { id: 'promotions', pages: ['/dashboard/promotions'] },
   { id: 'customers', pages: ['/dashboard/club'] },
   { id: 'notifications', pages: ['/dashboard/notifications'] },

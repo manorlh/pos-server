@@ -94,6 +94,20 @@ SECTIONS: Tuple[Section, ...] = (
         "האישור בקופה הוא הרשאת הקופה VOUCHER_DISCOUNT_OVERRIDE.",
         (),
     ),
+    # Production vouchers after redemption (app/services/prepaid_voucher_settlement.py, …_controls.py).
+    Section(
+        "prepaid_voucher_settlement", "התחשבנות שוברי הפקה",
+        "לשונית \"התחשבנות\" ודוחות מסחריים בשוברי הפקה: הסכמים עם ההפקה, כמויות לחיוב ואסמכתאות של "
+        "חשבוניות חיצוניות. צפייה: רואה (הסכומים — עם \"מחירי הפקה בשוברים\"); עריכה: הסכמים, קישור "
+        "חשבוניות והסבר לפער.",
+        (),
+    ),
+    Section(
+        "prepaid_voucher_controls", "בקרת מימוש שוברי הפקה",
+        "השהיית מימושים, מכסות מימוש, אצוות בדיקה לצוות ושובר חלופי. צפייה: רואה; עריכה: משהה, "
+        "קובע מכסות, מנפיק שוברי בדיקה ושוברים חלופיים.",
+        (),
+    ),
     Section("promotions", "מבצעים", "הגדרת מבצעים לקופות.", ("/dashboard/promotions",)),
     Section("customers", "לקוחות ומועדון", "מועדון לקוחות, חברים ולקוחות.", ("/dashboard/club",)),
     Section("notifications", "הודעות SMS", "יומן הודעות, תבניות וחשבון 019.", ("/dashboard/notifications",)),
@@ -278,6 +292,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/products*", S("products")),
     (_GET, "/vouchers*", S("vouchers", "products", level=VIEW)),
     (_ALL, "/vouchers*", S("vouchers")),
+    # The simulator only previews a redemption (helper, §18.1): a read.
+    ("POST", "/prepaid-vouchers/simulate", S("prepaid_vouchers", level=VIEW)),
     (_ALL, "/prepaid-vouchers/*", S("prepaid_vouchers")),
     (_ALL, "/promotions*", S("promotions")),
     # ── Z and shifts ──

@@ -1611,7 +1611,10 @@ def refusal_reason(db: Session, machine: POSMachine, voucher: PrepaidVoucher, no
         return WRONG_SHOP
     if batch.shop_ids and str(shop.id) not in set(map(str, batch.shop_ids)):
         return WRONG_SHOP
-    return None
+    # §18 hook (helper, app/services/prepaid_voucher_controls.py): test voucher, paused, quota reached.
+    from app.services.prepaid_voucher_controls import refusal_reason as controls_refusal
+
+    return controls_refusal(db, machine, voucher, now)
 
 
 def _till_products(db: Session, machine: POSMachine, product_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
@@ -1779,6 +1782,10 @@ def refusal_message(db: Session, voucher: PrepaidVoucher, reason: Optional[str],
     used the voucher up and when (the tenant's clock), the date it expired. None: no words of
     the cloud's own (the till's own text for the reason).
     """
+    from app.services import prepaid_voucher_controls as controls  # §18 hook (helper): its refusals' words
+
+    if reason in controls.REFUSALS:
+        return controls.refusal_message(db, voucher, reason, now)
     if reason not in (USED, WRONG_SHOP, CANCELLED, EXPIRED, NOT_YET_VALID):
         return None
     if reason == WRONG_SHOP:
