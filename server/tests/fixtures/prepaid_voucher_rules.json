@@ -2111,5 +2111,2970 @@
       "kind": "items",
       "text": null
     }
+  ],
+  "eligibility": [
+    {
+      "name": "a category with its sub-categories",
+      "mode": "live",
+      "selection": {
+        "allItems": false,
+        "productIds": [],
+        "categoryIds": [
+          "drinks"
+        ],
+        "includeSubcategories": true,
+        "excludeProductIds": [],
+        "excludeCategoryIds": []
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "cola",
+          "water",
+          "sprite",
+          "lager",
+          "ipa"
+        ]
+      }
+    },
+    {
+      "name": "without sub-categories a parent takes only its own products",
+      "mode": "live",
+      "selection": {
+        "allItems": false,
+        "productIds": [],
+        "categoryIds": [
+          "drinks"
+        ],
+        "includeSubcategories": false,
+        "excludeProductIds": [],
+        "excludeCategoryIds": []
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": []
+      }
+    },
+    {
+      "name": "categories and products together, each product once",
+      "mode": "live",
+      "selection": {
+        "allItems": false,
+        "productIds": [
+          "water",
+          "burger"
+        ],
+        "categoryIds": [
+          "soft"
+        ],
+        "includeSubcategories": true,
+        "excludeProductIds": [],
+        "excludeCategoryIds": []
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "cola",
+          "water",
+          "sprite",
+          "burger"
+        ]
+      }
+    },
+    {
+      "name": "an exclusion wins over a product chosen by name",
+      "mode": "live",
+      "selection": {
+        "allItems": false,
+        "productIds": [
+          "cola"
+        ],
+        "categoryIds": [
+          "soft"
+        ],
+        "includeSubcategories": true,
+        "excludeProductIds": [
+          "cola"
+        ],
+        "excludeCategoryIds": []
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "water",
+          "sprite"
+        ]
+      }
+    },
+    {
+      "name": "an excluded category takes its sub-categories",
+      "mode": "live",
+      "selection": {
+        "allItems": true,
+        "productIds": [],
+        "categoryIds": [],
+        "includeSubcategories": true,
+        "excludeProductIds": [],
+        "excludeCategoryIds": [
+          "drinks"
+        ]
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "burger",
+          "schnitzel",
+          "fries",
+          "rings",
+          "cake"
+        ]
+      }
+    },
+    {
+      "name": "everything but one",
+      "mode": "live",
+      "selection": {
+        "allItems": true,
+        "productIds": [],
+        "categoryIds": [],
+        "includeSubcategories": true,
+        "excludeProductIds": [
+          "cake"
+        ],
+        "excludeCategoryIds": []
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "cola",
+          "water",
+          "sprite",
+          "lager",
+          "ipa",
+          "burger",
+          "schnitzel",
+          "fries",
+          "rings"
+        ]
+      }
+    },
+    {
+      "name": "a product the catalog does not have is not taken",
+      "mode": "live",
+      "selection": {
+        "allItems": false,
+        "productIds": [
+          "nope",
+          "fries"
+        ],
+        "categoryIds": [],
+        "includeSubcategories": true,
+        "excludeProductIds": [],
+        "excludeCategoryIds": []
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "fries"
+        ]
+      }
+    },
+    {
+      "name": "frozen at issue: a new product does not join, a moved one stays, a deleted one goes",
+      "mode": "frozen",
+      "selection": {
+        "allItems": false,
+        "productIds": [
+          "rings"
+        ],
+        "categoryIds": [
+          "soft"
+        ],
+        "includeSubcategories": true,
+        "excludeProductIds": [],
+        "excludeCategoryIds": []
+      },
+      "catalogAtIssue": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ],
+          [
+            "sprite",
+            "sides"
+          ],
+          [
+            "zero",
+            "soft"
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "cola",
+          "water",
+          "sprite"
+        ]
+      }
+    },
+    {
+      "name": "updating: the categories as they are now",
+      "mode": "live",
+      "selection": {
+        "allItems": false,
+        "productIds": [
+          "rings"
+        ],
+        "categoryIds": [
+          "soft"
+        ],
+        "includeSubcategories": true,
+        "excludeProductIds": [],
+        "excludeCategoryIds": []
+      },
+      "catalogAtIssue": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ],
+          [
+            "sprite",
+            "sides"
+          ],
+          [
+            "zero",
+            "soft"
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "cola",
+          "water",
+          "zero"
+        ]
+      }
+    }
+  ],
+  "assignment": [
+    {
+      "name": "one of each: every match is clear",
+      "groups": [
+        {
+          "key": "main",
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "side",
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "drink",
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "remaining": 1
+        }
+      ],
+      "totalRemaining": 3,
+      "units": [
+        [
+          "u1",
+          "burger"
+        ],
+        [
+          "u2",
+          "fries"
+        ],
+        [
+          "u3",
+          "cola"
+        ]
+      ],
+      "expect": {
+        "assigned": {
+          "u1": "main",
+          "u2": "side",
+          "u3": "drink"
+        },
+        "unassigned": [],
+        "ambiguous": []
+      }
+    },
+    {
+      "name": "three drinks: one is the drink, two have no room",
+      "groups": [
+        {
+          "key": "main",
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "side",
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "drink",
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "remaining": 1
+        }
+      ],
+      "totalRemaining": 3,
+      "units": [
+        [
+          "u1",
+          "cola"
+        ],
+        [
+          "u2",
+          "water"
+        ],
+        [
+          "u3",
+          "sprite"
+        ]
+      ],
+      "expect": {
+        "assigned": {
+          "u1": "drink"
+        },
+        "unassigned": [
+          {
+            "ref": "u2",
+            "reason": "group_full"
+          },
+          {
+            "ref": "u3",
+            "reason": "group_full"
+          }
+        ],
+        "ambiguous": []
+      }
+    },
+    {
+      "name": "a line of three is three units",
+      "groups": [
+        {
+          "key": "main",
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "side",
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "drink",
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "remaining": 1
+        }
+      ],
+      "totalRemaining": 3,
+      "units": [
+        [
+          "u1",
+          "burger"
+        ],
+        [
+          "u2",
+          "burger"
+        ],
+        [
+          "u3",
+          "burger"
+        ]
+      ],
+      "expect": {
+        "assigned": {
+          "u1": "main"
+        },
+        "unassigned": [
+          {
+            "ref": "u2",
+            "reason": "group_full"
+          },
+          {
+            "ref": "u3",
+            "reason": "group_full"
+          }
+        ],
+        "ambiguous": []
+      }
+    },
+    {
+      "name": "not on the voucher",
+      "groups": [
+        {
+          "key": "main",
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "side",
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "drink",
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "remaining": 1
+        }
+      ],
+      "totalRemaining": 3,
+      "units": [
+        [
+          "u1",
+          "cake"
+        ]
+      ],
+      "expect": {
+        "assigned": {},
+        "unassigned": [
+          {
+            "ref": "u1",
+            "reason": "not_eligible"
+          }
+        ],
+        "ambiguous": []
+      }
+    },
+    {
+      "name": "a product two groups take is the cashier's choice",
+      "totalRemaining": 3,
+      "groups": [
+        {
+          "key": "a",
+          "productIds": [
+            "cola",
+            "water"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "b",
+          "productIds": [
+            "water",
+            "cake"
+          ],
+          "remaining": 1
+        }
+      ],
+      "units": [
+        [
+          "u1",
+          "water"
+        ],
+        [
+          "u2",
+          "cola"
+        ],
+        [
+          "u3",
+          "cake"
+        ]
+      ],
+      "expect": {
+        "assigned": {
+          "u2": "a",
+          "u3": "b"
+        },
+        "unassigned": [],
+        "ambiguous": [
+          {
+            "ref": "u1",
+            "groupKeys": [
+              "a",
+              "b"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "one of several: the first takes the voucher",
+      "totalRemaining": 1,
+      "groups": [
+        {
+          "key": "drink",
+          "productIds": [
+            "cola",
+            "water"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "dessert",
+          "productIds": [
+            "cake"
+          ],
+          "remaining": 1
+        }
+      ],
+      "units": [
+        [
+          "u1",
+          "cola"
+        ],
+        [
+          "u2",
+          "cake"
+        ]
+      ],
+      "expect": {
+        "assigned": {
+          "u1": "drink"
+        },
+        "unassigned": [
+          {
+            "ref": "u2",
+            "reason": "total_full"
+          }
+        ],
+        "ambiguous": []
+      }
+    }
+  ],
+  "selection": [
+    {
+      "name": "a whole meal",
+      "groups": [
+        {
+          "key": "main",
+          "name": "מנה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "side",
+          "name": "תוספת",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "ipa"
+          ]
+        }
+      ],
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": true,
+      "typeName": "שובר ארוחה",
+      "chosen": [
+        [
+          "burger",
+          "main",
+          1
+        ],
+        [
+          "fries",
+          "side",
+          1
+        ],
+        [
+          "cola",
+          "drink",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": null
+      }
+    },
+    {
+      "name": "three drinks instead of a meal",
+      "groups": [
+        {
+          "key": "main",
+          "name": "מנה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "side",
+          "name": "תוספת",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "ipa"
+          ]
+        }
+      ],
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": true,
+      "typeName": "שובר ארוחה",
+      "chosen": [
+        [
+          "cola",
+          "drink",
+          1
+        ],
+        [
+          "water",
+          "drink",
+          1
+        ],
+        [
+          "sprite",
+          "drink",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_group_over",
+          "text": "ניתן לבחור פריט אחד בלבד מ\"משקה\"",
+          "groupKey": "drink"
+        }
+      }
+    },
+    {
+      "name": "a meal without its drink",
+      "groups": [
+        {
+          "key": "main",
+          "name": "מנה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "side",
+          "name": "תוספת",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "ipa"
+          ]
+        }
+      ],
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": true,
+      "typeName": "שובר ארוחה",
+      "chosen": [
+        [
+          "burger",
+          "main",
+          1
+        ],
+        [
+          "fries",
+          "side",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_package_incomplete",
+          "text": "חסר משקה להשלמת שובר ארוחה",
+          "groupKey": "drink"
+        }
+      }
+    },
+    {
+      "name": "part of a meal when the type allows parts",
+      "groups": [
+        {
+          "key": "main",
+          "name": "מנה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "side",
+          "name": "תוספת",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "ipa"
+          ]
+        }
+      ],
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": false,
+      "typeName": "שובר ארוחה",
+      "chosen": [
+        [
+          "burger",
+          "main",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": null
+      }
+    },
+    {
+      "name": "a side as the drink",
+      "groups": [
+        {
+          "key": "main",
+          "name": "מנה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "side",
+          "name": "תוספת",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "ipa"
+          ]
+        }
+      ],
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": true,
+      "typeName": "שובר ארוחה",
+      "chosen": [
+        [
+          "burger",
+          "main",
+          1
+        ],
+        [
+          "fries",
+          "side",
+          1
+        ],
+        [
+          "rings",
+          "drink",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_item_not_on_voucher",
+          "text": "הפריט אינו כלול בשובר זה",
+          "groupKey": "drink"
+        }
+      }
+    },
+    {
+      "name": "an excluded product",
+      "groups": [
+        {
+          "key": "main",
+          "name": "מנה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "side",
+          "name": "תוספת",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "ipa"
+          ]
+        }
+      ],
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": true,
+      "typeName": "שובר ארוחה",
+      "chosen": [
+        [
+          "burger",
+          "main",
+          1
+        ],
+        [
+          "fries",
+          "side",
+          1
+        ],
+        [
+          "ipa",
+          "drink",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_item_excluded",
+          "text": "הפריט הוחרג משובר זה",
+          "groupKey": "drink"
+        }
+      }
+    },
+    {
+      "name": "one of several: two chosen",
+      "groups": [
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "dessert",
+          "name": "קינוח",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cake"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        }
+      ],
+      "totalMax": 1,
+      "totalRemaining": 1,
+      "wholeAtOnce": false,
+      "typeName": "שובר משקה או קינוח",
+      "chosen": [
+        [
+          "cola",
+          "drink",
+          1
+        ],
+        [
+          "cake",
+          "dessert",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_total_over",
+          "text": "ניתן לבחור פריט אחד בלבד בשובר זה",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "one of several: one chosen",
+      "groups": [
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "dessert",
+          "name": "קינוח",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cake"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        }
+      ],
+      "totalMax": 1,
+      "totalRemaining": 1,
+      "wholeAtOnce": true,
+      "typeName": "שובר משקה או קינוח",
+      "chosen": [
+        [
+          "cake",
+          "dessert",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": null
+      }
+    },
+    {
+      "name": "the same drink twice where it is not allowed",
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": false,
+      "typeName": null,
+      "groups": [
+        {
+          "key": "drinks",
+          "name": "שתייה",
+          "minQty": 0,
+          "maxQty": 3,
+          "remaining": 3,
+          "productIds": [
+            "cola",
+            "water"
+          ],
+          "allowRepeat": false,
+          "excludedIds": []
+        }
+      ],
+      "chosen": [
+        [
+          "cola",
+          "drinks",
+          2
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_repeat_not_allowed",
+          "text": "אי אפשר לבחור את אותו פריט פעמיים בשתייה",
+          "groupKey": "drinks"
+        }
+      }
+    },
+    {
+      "name": "two of a group with room for two",
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": false,
+      "typeName": null,
+      "groups": [
+        {
+          "key": "drinks",
+          "name": "שתייה",
+          "minQty": 0,
+          "maxQty": 3,
+          "remaining": 2,
+          "productIds": [
+            "cola",
+            "water"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        }
+      ],
+      "chosen": [
+        [
+          "cola",
+          "drinks",
+          3
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_group_over",
+          "text": "ניתן לבחור עד 2 פריטים מ\"שתייה\"",
+          "groupKey": "drinks"
+        }
+      }
+    },
+    {
+      "name": "nothing chosen",
+      "groups": [
+        {
+          "key": "main",
+          "name": "מנה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "side",
+          "name": "תוספת",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "ipa"
+          ]
+        }
+      ],
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": true,
+      "typeName": null,
+      "chosen": [],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_nothing_chosen",
+          "text": "לא נבחר פריט למימוש",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "a package without a type name",
+      "groups": [
+        {
+          "key": "main",
+          "name": "מנה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "side",
+          "name": "תוספת",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "ipa"
+          ]
+        }
+      ],
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": true,
+      "typeName": null,
+      "chosen": [
+        [
+          "burger",
+          "main",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_package_incomplete",
+          "text": "חסר תוספת להשלמת השובר",
+          "groupKey": "side"
+        }
+      }
+    }
+  ],
+  "splitValue": [
+    {
+      "name": "by list price, exactly",
+      "totalAgorot": 8000,
+      "units": [
+        [
+          5000,
+          null
+        ],
+        [
+          1500,
+          null
+        ],
+        [
+          1500,
+          null
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": [
+          5000,
+          1500,
+          1500
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "by list price, rounded to the agora",
+      "totalAgorot": 8000,
+      "units": [
+        [
+          4590,
+          null
+        ],
+        [
+          1290,
+          null
+        ],
+        [
+          1190,
+          null
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": [
+          5194,
+          1460,
+          1346
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "every component with its value",
+      "totalAgorot": 8000,
+      "units": [
+        [
+          4590,
+          5000
+        ],
+        [
+          1290,
+          1500
+        ],
+        [
+          1190,
+          1500
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": [
+          5000,
+          1500,
+          1500
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "one component fixed, the rest by price",
+      "totalAgorot": 8000,
+      "units": [
+        [
+          4590,
+          5000
+        ],
+        [
+          1290,
+          null
+        ],
+        [
+          1190,
+          null
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": [
+          5000,
+          1560,
+          1440
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "a ₪0 unit beside priced ones takes nothing",
+      "totalAgorot": 1000,
+      "units": [
+        [
+          0,
+          null
+        ],
+        [
+          500,
+          null
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": [
+          0,
+          1000
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "all ₪0: equally",
+      "totalAgorot": 1000,
+      "units": [
+        [
+          0,
+          null
+        ],
+        [
+          0,
+          null
+        ],
+        [
+          0,
+          null
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": [
+          334,
+          333,
+          333
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "components above the value",
+      "totalAgorot": 1000,
+      "units": [
+        [
+          500,
+          800
+        ],
+        [
+          500,
+          800
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": null,
+        "refusal": "prepaid_voucher_value_mismatch"
+      }
+    },
+    {
+      "name": "every unit fixed below the value: the rest by the fixed values",
+      "totalAgorot": 1000,
+      "units": [
+        [
+          0,
+          300
+        ],
+        [
+          0,
+          200
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": [
+          600,
+          400
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "ties go to the first",
+      "totalAgorot": 100,
+      "units": [
+        [
+          100,
+          null
+        ],
+        [
+          100,
+          null
+        ],
+        [
+          100,
+          null
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": [
+          34,
+          33,
+          33
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "nothing to split",
+      "totalAgorot": 500,
+      "units": [],
+      "expect": {
+        "valuesAgorot": [],
+        "refusal": null
+      }
+    }
+  ],
+  "fixedShare": [
+    {
+      "name": "a third of a meal",
+      "valueLeftAgorot": 8000,
+      "unitsNow": 1,
+      "unitsLeft": 3,
+      "expect": {
+        "shareAgorot": 2667
+      }
+    },
+    {
+      "name": "the last part takes the rest",
+      "valueLeftAgorot": 8000,
+      "unitsNow": 3,
+      "unitsLeft": 3,
+      "expect": {
+        "shareAgorot": 8000
+      }
+    },
+    {
+      "name": "half up",
+      "valueLeftAgorot": 1001,
+      "unitsNow": 1,
+      "unitsLeft": 2,
+      "expect": {
+        "shareAgorot": 501
+      }
+    },
+    {
+      "name": "small",
+      "valueLeftAgorot": 5,
+      "unitsNow": 1,
+      "unitsLeft": 3,
+      "expect": {
+        "shareAgorot": 2
+      }
+    }
+  ],
+  "cover": [
+    {
+      "name": "up to the value, the rest a top-up",
+      "valueLeftAgorot": 8000,
+      "unitsNetAgorot": [
+        4590,
+        4590
+      ],
+      "allowTopUp": true,
+      "expect": {
+        "coveredAgorot": 8000,
+        "topUpAgorot": 1180,
+        "perUnitAgorot": [
+          4000,
+          4000
+        ],
+        "note": "נדרשת השלמה של ₪11.80",
+        "refusal": null
+      }
+    },
+    {
+      "name": "a top-up the type does not allow",
+      "valueLeftAgorot": 8000,
+      "unitsNetAgorot": [
+        4590,
+        4590
+      ],
+      "allowTopUp": false,
+      "expect": {
+        "coveredAgorot": 8000,
+        "topUpAgorot": 1180,
+        "perUnitAgorot": [
+          4000,
+          4000
+        ],
+        "note": null,
+        "refusal": {
+          "code": "prepaid_voucher_top_up_not_allowed",
+          "text": "נדרשת השלמה של ₪11.80 — סוג השובר אינו מאפשר השלמה",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "less than the value: nothing left for later",
+      "valueLeftAgorot": 8000,
+      "unitsNetAgorot": [
+        3000,
+        2000
+      ],
+      "allowTopUp": true,
+      "expect": {
+        "coveredAgorot": 5000,
+        "topUpAgorot": 0,
+        "perUnitAgorot": [
+          3000,
+          2000
+        ],
+        "note": null,
+        "refusal": null
+      }
+    },
+    {
+      "name": "no value: the goods whatever they cost",
+      "valueLeftAgorot": null,
+      "unitsNetAgorot": [
+        3000,
+        2000
+      ],
+      "allowTopUp": false,
+      "expect": {
+        "coveredAgorot": 5000,
+        "topUpAgorot": 0,
+        "perUnitAgorot": [
+          3000,
+          2000
+        ],
+        "note": null,
+        "refusal": null
+      }
+    },
+    {
+      "name": "covered by price, to the agora",
+      "valueLeftAgorot": 999,
+      "unitsNetAgorot": [
+        500,
+        500,
+        500
+      ],
+      "allowTopUp": true,
+      "expect": {
+        "coveredAgorot": 999,
+        "topUpAgorot": 501,
+        "perUnitAgorot": [
+          333,
+          333,
+          333
+        ],
+        "note": "נדרשת השלמה של ₪5.01",
+        "refusal": null
+      }
+    }
+  ],
+  "override": [
+    {
+      "name": "a product that takes discounts is no override",
+      "policy": {
+        "mode": "honour",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": false,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": false
+          }
+        ],
+        "needsApproval": false,
+        "refusal": null
+      }
+    },
+    {
+      "name": "honour: a product that takes no discounts is not lowered",
+      "policy": {
+        "mode": "honour",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": {
+          "code": "prepaid_voucher_discount_blocked",
+          "text": "הפריט חסום להנחות וסוג השובר אינו מאפשר כפייה",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "at its list price: nothing to override",
+      "policy": {
+        "mode": "honour",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 3000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 0,
+            "forced": false
+          }
+        ],
+        "needsApproval": false,
+        "refusal": null
+      }
+    },
+    {
+      "name": "above its list price: nothing to override",
+      "policy": {
+        "mode": "honour",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 3000,
+          "valueAgorot": 3500
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 0,
+            "forced": false
+          }
+        ],
+        "needsApproval": false,
+        "refusal": null
+      }
+    },
+    {
+      "name": "auto: forced",
+      "policy": {
+        "mode": "auto",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": null
+      }
+    },
+    {
+      "name": "auto: over the per-unit amount",
+      "policy": {
+        "mode": "auto",
+        "maxAmountAgorot": 500,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": {
+          "code": "prepaid_voucher_override_cap",
+          "text": "ההפחתה חורגת מתקרת הכפייה שהוגדרה בשובר",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "auto: over the per-unit percent",
+      "policy": {
+        "mode": "auto",
+        "maxAmountAgorot": null,
+        "maxPercentBp": 2000,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": {
+          "code": "prepaid_voucher_override_cap",
+          "text": "ההפחתה חורגת מתקרת הכפייה שהוגדרה בשובר",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "auto: at the per-unit percent",
+      "policy": {
+        "mode": "auto",
+        "maxAmountAgorot": null,
+        "maxPercentBp": 2500,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": null
+      }
+    },
+    {
+      "name": "auto: over the voucher's total",
+      "policy": {
+        "mode": "auto",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": 1500,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        },
+        {
+          "ref": "u2",
+          "productId": "schnitzel",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          },
+          {
+            "ref": "u2",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": {
+          "code": "prepaid_voucher_override_cap",
+          "text": "ההפחתה חורגת מתקרת הכפייה שהוגדרה בשובר",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "auto: outside its scope",
+      "policy": {
+        "mode": "auto",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": {
+          "productIds": [],
+          "categoryIds": [
+            "beer"
+          ]
+        }
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": {
+          "code": "prepaid_voucher_discount_blocked",
+          "text": "הפריט חסום להנחות ואינו בהיקף הכפייה של סוג השובר",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "auto: in its scope by a parent category",
+      "policy": {
+        "mode": "auto",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": {
+          "productIds": [],
+          "categoryIds": [
+            "food"
+          ]
+        }
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": null
+      }
+    },
+    {
+      "name": "manager: asked for",
+      "policy": {
+        "mode": "manager",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": true,
+        "refusal": {
+          "code": "prepaid_voucher_approval_needed",
+          "text": "נדרש אישור מנהל להנחה שהוגדרה בשובר",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "manager: approved",
+      "policy": {
+        "mode": "manager",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": true,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": true,
+        "refusal": null
+      }
+    },
+    {
+      "name": "manager: a cap before the approval",
+      "policy": {
+        "mode": "manager",
+        "maxAmountAgorot": 100,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": {
+          "code": "prepaid_voucher_override_cap",
+          "text": "ההפחתה חורגת מתקרת הכפייה שהוגדרה בשובר",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "a free product",
+      "policy": {
+        "mode": "honour",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "cake",
+          "categoryIds": [],
+          "noDiscount": true,
+          "listPriceAgorot": 0,
+          "valueAgorot": 0
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 0,
+            "forced": false
+          }
+        ],
+        "needsApproval": false,
+        "refusal": null
+      }
+    }
   ]
 }

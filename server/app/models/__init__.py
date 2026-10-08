@@ -75,6 +75,9 @@ from app.models.prepaid_voucher import (
     PrepaidVoucherEvent,
     PrepaidVoucherRedemption,
     PrepaidVoucherReservation,
+    PrepaidVoucherType,
+    PrepaidVoucherTypeEvent,
+    PrepaidVoucherTypeItem,
     TransactionVoucherDiscount,
 )
 from app.models.promotion import Promotion, TransactionPromotion

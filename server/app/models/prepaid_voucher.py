@@ -53,6 +53,162 @@ PREPAID_VOUCHER_KINDS = ("items", "order_discount", "item_discount")
 PREPAID_RESERVATION_STATUSES = ("held", "confirmed", "released")
 
 
+#: `prepaid_voucher_types.pricing` (the spec's §5): `fixed` — the redeemed goods come to the
+#: voucher's till value; `cover` — list prices, the voucher pays up to its value.
+PREPAID_TYPE_PRICINGS = ("fixed", "cover")
+#: `discount_block_policy` (the spec's §7): a product that takes no discounts ("לא מקבל הנחות")
+#: is never lowered (`honour`), lowered within the caps (`auto`), or with a manager (`manager`).
+PREPAID_DISCOUNT_BLOCK_POLICIES = ("honour", "auto", "manager")
+#: `redemption_accounting` — how the till books a redemption (the owner, 08.10.2026):
+#: `discount` "קיזוז מהחשבונית (כמו הנחה)" — a document-level deduction through the document
+#: discount (items ₪50, voucher −₪40: the document is ₪10, VAT on ₪10, no voucher leg); the
+#: default for new vouchers. `payment` "אמצעי תשלום (חייב במע״מ)" — the `production_voucher`
+#: tender, full VAT, in the Z like any tender. `zero` "₪0 עם הצגת שווי" — ₪0 lines with the
+#: value as a memo, outside the totals; every batch made before types.
+PREPAID_REDEMPTION_ACCOUNTING = ("discount", "payment", "zero")
+#: Where a type came from: `manual` (the types screen), `batch` (made with a batch that named
+#: no type — one batch's own terms), `legacy` (a batch made before types, migrated).
+PREPAID_TYPE_ORIGINS = ("manual", "batch", "legacy")
+
+
+class PrepaidVoucherType(Base):
+    """
+    "סוג שובר" (the spec's §2–3): the business template a batch is issued from — "שובר ארוחה",
+    "שובר משקה". What a voucher gives, its value at the till and its price to the production,
+    how it is priced and recorded. A batch copies all of it when issued (with the type's
+    `version`), so a later change never touches vouchers already handed out. Every batch has
+    one (§19.1): a batch made before types got a `legacy` type of its own.
+    """
+
+    __tablename__ = "prepaid_voucher_types"
+    __table_args__ = (
+        CheckConstraint("pricing IN ('fixed', 'cover')", name="ck_prepaid_voucher_types_pricing"),
+        CheckConstraint(
+            "discount_block_policy IN ('honour', 'auto', 'manager')",
+            name="ck_prepaid_voucher_types_discount_block_policy",
+        ),
+        CheckConstraint(
+            "redemption_accounting IN ('discount', 'payment', 'zero')",
+            name="ck_prepaid_voucher_types_redemption_accounting",
+        ),
+        CheckConstraint(
+            "kind IN ('items', 'order_discount', 'item_discount')", name="ck_prepaid_voucher_types_kind"
+        ),
+        Index("ix_prepaid_voucher_types_company", "tenant_id", "company_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
+    #: "MEAL", "DRINK" — short, unique among the company's active manual types.
+    code = Column(String(32), nullable=True)
+    name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    origin = Column(String(16), nullable=False, default="manual", server_default="manual")
+    #: Off: no new batches from it; its batches are untouched.
+    active = Column(Boolean, nullable=False, default=True, server_default="true")
+    #: Bumped by every change of its terms; a batch keeps the version it was issued with.
+    version = Column(Integer, nullable=False, default=1, server_default="1")
+
+    kind = Column(String(16), nullable=False, default="items", server_default="items")
+    #: "שווי בקופה" and "מחיר מכירה להפקה" — each for the whole voucher, in agorot, independent.
+    till_value = Column(Integer, nullable=True)
+    production_price = Column(Integer, nullable=True)
+    pricing = Column(String(8), nullable=False, default="fixed", server_default="fixed")
+    #: `cover`: the customer may pay what the goods cost above the value ("השלמת תשלום").
+    allow_top_up = Column(Boolean, nullable=False, default=True, server_default="true")
+    #: How the till books a redemption — `discount` (default) / `payment` / `zero`, see
+    #: PREPAID_REDEMPTION_ACCOUNTING. Copied to a batch, editable there, recorded per redemption.
+    redemption_accounting = Column(String(16), nullable=False, default="discount", server_default="discount")
+    #: "הצג תוקף על השובר" — off: the paper leaves out the validity and the terms line under it
+    #: (still enforced at redemption).
+    show_validity = Column(Boolean, nullable=False, default=True, server_default="true")
+    #: Products that take no discounts (§7): `honour` / `auto` / `manager`, with optional caps —
+    #: agorot off one unit, basis points off one unit, agorot off one voucher's redemption — and
+    #: scope (`{"productIds", "categoryIds"}`; null: every product of the voucher).
+    discount_block_policy = Column(String(16), nullable=False, default="honour", server_default="honour")
+    override_max_amount = Column(Integer, nullable=True)
+    override_max_percent = Column(Integer, nullable=True)
+    override_max_total = Column(Integer, nullable=True)
+    override_scope = Column(JSON, nullable=True)
+    #: "מימוש ללא אינטרנט": its batches may be assigned to a till / the shop's LAN host.
+    offline_allowed = Column(Boolean, nullable=False, default=False, server_default="false")
+    split_allowed = Column(Boolean, nullable=False, default=False, server_default="false")
+    include_extras = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: Print the till value on the voucher ("שווי השובר: ₪80"). The production price never is.
+    print_till_value = Column(Boolean, nullable=False, default=False, server_default="false")
+
+    # Discount kinds' terms — as on a batch (docs/SPEC_VOUCHER_PRODUCTION.md §7).
+    discount_type = Column(String(8), nullable=True)
+    discount_value = Column(Integer, nullable=True)
+    min_purchase = Column(Integer, nullable=True)
+    max_discount = Column(Integer, nullable=True)
+    max_units = Column(Integer, nullable=True)
+    targets = Column(JSON, nullable=True)
+    stacking = Column(String(24), nullable=False, default="single", server_default="single")
+    promotion_policy = Column(String(16), nullable=False, default="exclude", server_default="exclude")
+    uses_per_voucher = Column(Integer, nullable=False, default=1, server_default="1")
+    max_uses_per_sale = Column(Integer, nullable=False, default=1, server_default="1")
+    max_uses_per_day = Column(Integer, nullable=True)
+
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    items = relationship(
+        "PrepaidVoucherTypeItem",
+        back_populates="type",
+        cascade="all, delete-orphan",
+        order_by="PrepaidVoucherTypeItem.sort_order",
+    )
+
+
+class PrepaidVoucherTypeItem(Base):
+    """A type's goods: what each voucher of it gives ("מנה + תוספת + משקה")."""
+
+    __tablename__ = "prepaid_voucher_type_items"
+    __table_args__ = (
+        UniqueConstraint("type_id", "product_id", name="uq_prepaid_voucher_type_items_product"),
+        CheckConstraint("quantity > 0", name="ck_prepaid_voucher_type_items_quantity"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    type_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("prepaid_voucher_types.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id"), nullable=False)
+    product_name = Column(String(255), nullable=False)
+    quantity = Column(Numeric(10, 3), nullable=False)
+    weighed = Column(Boolean, nullable=False, default=False, server_default="false")
+    unit_label = Column(String(16), nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+
+    type = relationship("PrepaidVoucherType", back_populates="items")
+
+
+class PrepaidVoucherTypeEvent(Base):
+    """A type's audit trail: who made or changed it, when, and what changed (before → after)."""
+
+    __tablename__ = "prepaid_voucher_type_events"
+    __table_args__ = (Index("ix_prepaid_voucher_type_events_type", "type_id", "created_at"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    type_id = Column(
+        UUID(as_uuid=True), ForeignKey("prepaid_voucher_types.id", ondelete="CASCADE"), nullable=False
+    )
+    #: create / update / activate / deactivate
+    action = Column(String(32), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    user_name = Column(String(200), nullable=True)
+    #: {"fields": [...], "before": {...}, "after": {...}, "version": n}
+    details = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class PrepaidVoucherBatch(Base):
     __tablename__ = "prepaid_voucher_batches"
     __table_args__ = (
@@ -68,6 +224,32 @@ class PrepaidVoucherBatch(Base):
     #: The shops whose tills may redeem, as a list of shop id strings. Null: every shop
     #: of the company.
     shop_ids = Column(JSON, nullable=True)
+
+    # ── Its type (the spec's §2), copied when issued: a later change of the type never
+    # touches the batch. Every batch has one (§19.1).
+    type_id = Column(UUID(as_uuid=True), ForeignKey("prepaid_voucher_types.id"), nullable=False, index=True)
+    type_version = Column(Integer, nullable=False, default=1, server_default="1")
+    type_code = Column(String(32), nullable=True)
+    type_name = Column(String(200), nullable=True)
+    #: Agorot, from the type: "שווי בקופה" and "מחיר מכירה להפקה" (never printed, never shown
+    #: to a cashier; the dashboard shows it only with the `prepaid_voucher_prices` section).
+    till_value = Column(Integer, nullable=True)
+    production_price = Column(Integer, nullable=True)
+    #: Every batch made before types: `cover` with no value and `zero` accounting (₪0 lines with
+    #: the value shown) — editable on the batch; each redemption records the mode it used.
+    pricing = Column(String(8), nullable=False, default="cover", server_default="cover")
+    allow_top_up = Column(Boolean, nullable=False, default=True, server_default="true")
+    redemption_accounting = Column(String(16), nullable=False, default="zero", server_default="zero")
+    #: "הצג תוקף על השובר" — off: the paper leaves out the validity and the terms line under it
+    #: (still enforced at redemption).
+    show_validity = Column(Boolean, nullable=False, default=True, server_default="true")
+    discount_block_policy = Column(String(16), nullable=False, default="honour", server_default="honour")
+    override_max_amount = Column(Integer, nullable=True)
+    override_max_percent = Column(Integer, nullable=True)
+    override_max_total = Column(Integer, nullable=True)
+    override_scope = Column(JSON, nullable=True)
+    offline_allowed = Column(Boolean, nullable=False, default=False, server_default="false")
+    print_till_value = Column(Boolean, nullable=False, default=False, server_default="false")
 
     name = Column(String(200), nullable=False)
     event_name = Column(String(200), nullable=True)

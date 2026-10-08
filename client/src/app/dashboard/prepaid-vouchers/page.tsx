@@ -22,12 +22,10 @@ import {
   History,
   ImagePlus,
   Loader2,
-  Minus,
   Plus,
   Printer,
   Search,
   TicketCheck,
-  X,
 } from 'lucide-react';
 import { fetchCompanies, fetchShops, uploadBrandingImage } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
@@ -42,10 +40,10 @@ import {
   fetchPrepaidBatches,
   fetchPrepaidVoucher,
   fetchPrepaidVouchers,
-  searchPrepaidProducts,
+  fetchPrepaidTypes,
   updatePrepaidBatch,
   type PrepaidBarcodeType,
-  type PrepaidProductOption,
+  type PrepaidRedemptionAccounting,
   type PrepaidVoucher,
   type PrepaidVoucherBatch,
   type PrepaidVoucherStatus,
@@ -58,9 +56,17 @@ import {
   issueTotals,
   type BatchFilters,
 } from '@/lib/prepaidBatchForm';
-import { clampQuantity, DEFAULT_WEIGHT_UNIT, itemText, quantityNumberText, quantityStep } from '@/lib/prepaidVoucherProducts';
-import { PrepaidProductPickList } from '@/components/dashboard/prepaid-vouchers/product-pick-list';
-import { discountDraftErrors, isDiscountKind, type PrepaidVoucherKind } from '@/lib/prepaidVoucherBenefit';
+import { DEFAULT_WEIGHT_UNIT, itemText, quantityNumberText } from '@/lib/prepaidVoucherProducts';
+import { GoodsEditor, type DraftItem } from '@/components/dashboard/prepaid-vouchers/goods-editor';
+import {
+  PrepaidTypesView,
+  ToggleFields,
+  TypeSummary,
+  policyBody,
+  policyState,
+  type PolicyState,
+} from '@/components/dashboard/prepaid-vouchers/voucher-types';
+import { discountDraftErrors, isDiscountKind, moneyText, type PrepaidVoucherKind } from '@/lib/prepaidVoucherBenefit';
 import {
   BatchRulesCard,
   DEFAULT_RULES,
@@ -213,32 +219,12 @@ function BarcodeTypePicker({ value, onChange, disabled }: {
  * A weight typed as text ("0.5"), taken when the field is left or Enter is pressed — so "0." can be
  * typed. Keyed by its value where it is used: a +/- or a commit starts it afresh.
  */
-function WeightInput({ value, label, onCommit }: { value: number; label: string; onCommit: (q: number) => void }) {
-  const [text, setText] = useState(String(value));
-  const commit = () => {
-    const q = Number(text.replace(',', '.'));
-    if (Number.isFinite(q) && q > 0) onCommit(q);
-    else setText(String(value));
-  };
-  return (
-    <Input inputMode="decimal" aria-label={label} className="h-8 w-20 text-center tabular-nums" value={text}
-      onChange={(e) => setText(e.target.value)} onBlur={commit}
-      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } }} />
-  );
-}
-
-interface DraftItem {
-  product: PrepaidProductOption;
-  quantity: number;
-}
-
 function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onCreated: (b: PrepaidVoucherBatch) => void;
 }) {
   const t = useTranslations('prepaidVouchers.create');
-  const te = useTranslations('prepaidVouchers.eligibility');
   const tc = useTranslations('common');
   const errorText = useErrorText();
   const qc = useQueryClient();
@@ -256,8 +242,18 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   const [splitAllowed, setSplitAllowed] = useState(false);
   const [count, setCount] = useState('50');
   const [items, setItems] = useState<DraftItem[]>([]);
-  const [search, setSearch] = useState('');
-  const [debounced, setDebounced] = useState('');
+  // The type it is issued from (the spec's §2); '' — the form says it all (a type of its own).
+  const [typeId, setTypeId] = useState('');
+  // Without a type: its value at the till and price to the production (₪, optional).
+  const [tillValue, setTillValue] = useState('');
+  const [productionPrice, setProductionPrice] = useState('');
+  // The three toggles, set at setup (a type brings its own).
+  // How the till books a redemption: a document deduction by default.
+  const [accounting, setAccounting] = useState<PrepaidRedemptionAccounting>('discount');
+  // "הצג תוקף על השובר": on by default.
+  const [showValidity, setShowValidity] = useState(true);
+  const [offlineAllowed, setOfflineAllowed] = useState(false);
+  const [policy, setPolicy] = useState<PolicyState>(policyState());
   // Production (docs/SPEC_VOUCHER_PRODUCTION.md): groups, the code under the barcode, the barcode, who ordered.
   const [groupMode, setGroupMode] = useState<GroupMode>('none');
   const [groupCustom, setGroupCustom] = useState('');
@@ -275,8 +271,16 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   const [rules, setRules] = useState<RulesState>(DEFAULT_RULES);
   // Goods: "כולל תוספות" — paid options and a meal's upcharges covered too (§7.14). Off by default.
   const [includeExtras, setIncludeExtras] = useState(false);
-  const discount = isDiscountKind(kind);
-  const termErrors = discountDraftErrors({
+  // The company's active types (its own and its parents').
+  const types = useQuery({
+    queryKey: ['prepaid-voucher-types', companyId, 'active'],
+    queryFn: () => fetchPrepaidTypes({ companyId, includeInactive: false }),
+    enabled: open && !!companyId,
+  });
+  const chosen = typeId ? (types.data?.items ?? []).find((x) => x.id === typeId) ?? null : null;
+  const pricesVisible = !!types.data?.pricesVisible;
+  const discount = isDiscountKind(chosen ? chosen.kind : kind);
+  const termErrors = chosen ? [] : discountDraftErrors({
     kind,
     discountType: terms.discountType,
     value: terms.value,
@@ -290,22 +294,11 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   });
   const planText = useGroupPlanText();
 
-  useEffect(() => {
-    const id = window.setTimeout(() => setDebounced(search), 300);
-    return () => window.clearTimeout(id);
-  }, [search]);
-
   const companies = useQuery({ queryKey: ['companies'], queryFn: fetchCompanies, enabled: open });
   useEffect(() => {
     if (!companyId && companies.data?.length === 1) setCompanyId(companies.data[0].id);
   }, [companies.data, companyId]);
   const shops = useQuery({ queryKey: ['shops', companyId], queryFn: () => fetchShops(companyId), enabled: open && !!companyId });
-  // Every product, each with whether it can go on and why not; a till's own product depends on the shops.
-  const products = useQuery({
-    queryKey: ['prepaid-voucher-products', companyId, debounced, 'items', shopIds],
-    queryFn: () => searchPrepaidProducts(debounced, companyId, { purpose: 'items', shopIds }),
-    enabled: open && !!companyId,
-  });
 
   const reset = () => {
     setName('');
@@ -318,7 +311,13 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
     setSplitAllowed(false);
     setCount('50');
     setItems([]);
-    setSearch('');
+    setTypeId('');
+    setTillValue('');
+    setProductionPrice('');
+    setAccounting('discount');
+    setShowValidity(true);
+    setOfflineAllowed(false);
+    setPolicy(policyState());
     setGroupMode('none');
     setGroupCustom('');
     setShowCode(false);
@@ -339,26 +338,46 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   const plan = groupOk ? planText(n, groupSize) : null;
   // What is still missing, said in words under the button (not just a disabled button).
   const problems = batchFormProblems({
-    name, companyId, discount, itemCount: items.length, termErrors: termErrors.length, count: n, groupOk, validFrom, validUntil,
+    name, companyId, discount, itemCount: chosen ? Math.max(1, chosen.items.length) : items.length,
+    termErrors: termErrors.length, count: n, groupOk, validFrom, validUntil,
   });
   const canCreate = problems.length === 0;
   // "100 שוברים … זכאות ל-300 יחידות" — what the run entitles to in all, before it is issued.
-  const totals = discount ? null : issueTotals(n, items.map((i) => ({
-    quantity: i.quantity, weighed: i.product.isWeighed, unitLabel: i.product.unitLabel,
-  })), DEFAULT_WEIGHT_UNIT);
+  const totals = discount ? null : issueTotals(n, chosen
+    ? chosen.items.map((i) => ({ quantity: i.quantity, weighed: i.weighed, unitLabel: i.unitLabel }))
+    : items.map((i) => ({ quantity: i.quantity, weighed: i.product.isWeighed, unitLabel: i.product.unitLabel })),
+  DEFAULT_WEIGHT_UNIT);
   const decimal = (v: string) => (v.trim() ? Number(v) : null);
 
+  const common = {
+    name: name.trim(),
+    companyId,
+    shopIds: shopIds.length ? shopIds : null,
+    eventName: eventName.trim() || null,
+    logoUrl,
+    freeText: freeText.trim() || null,
+    validFrom: dayBoundIso(validFrom, false),
+    validUntil: dayBoundIso(validUntil, true),
+    count: n,
+    groupSize,
+    showCode,
+    showItems,
+    showCredit,
+    showValidity,
+    barcodeType,
+    customerName: customerName.trim() || null,
+    orderRef: orderRef.trim() || null,
+  };
   const create = useMutation({
-    mutationFn: () =>
-      createPrepaidBatch({
-        name: name.trim(),
-        companyId,
-        shopIds: shopIds.length ? shopIds : null,
-        eventName: eventName.trim() || null,
-        logoUrl,
-        freeText: freeText.trim() || null,
-        validFrom: dayBoundIso(validFrom, false),
-        validUntil: dayBoundIso(validUntil, true),
+    mutationFn: () => chosen
+      ? createPrepaidBatch({ ...common, typeId: chosen.id, splitAllowed: false, items: [] })
+      : createPrepaidBatch({
+        ...common,
+        tillValue: decimal(tillValue),
+        productionPrice: pricesVisible ? decimal(productionPrice) : null,
+        redemptionAccounting: discount ? 'discount' : accounting,
+        offlineAllowed,
+        discountBlockPolicy: discount ? { mode: 'honour' } : policyBody(policy),
         splitAllowed: discount ? false : splitAllowed,
         items: discount ? [] : items.map((i) => ({ productId: i.product.id, quantity: i.quantity })),
         includeExtras: discount ? false : includeExtras,
@@ -398,7 +417,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   });
 
   // The voucher as it will print, while the form is being filled (the same SVG as the batch screen's).
-  const draft: PrepaidVoucherBatch = {
+  const manualDraft: PrepaidVoucherBatch = {
     id: 'draft', name: name.trim() || t('title'), eventName: eventName.trim() || null, logoUrl,
     freeText: freeText.trim() || null, validFrom: dayBoundIso(validFrom, false), validUntil: dayBoundIso(validUntil, true),
     splitAllowed: discount ? false : splitAllowed, status: 'active', companyId, companyName: null, shopIds: null, shops: [],
@@ -415,16 +434,21 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
       ? { productIds: terms.products.map((x) => x.id), categoryIds: terms.categoryIds, names: terms.products.map((x) => x.name) }
       : null,
     usesPerVoucher: parseInt(rules.usesPerVoucher, 10) || 1,
+    tillValue: decimal(tillValue), pricing: tillValue.trim() ? 'fixed' : 'cover',
   };
+  const draft: PrepaidVoucherBatch = chosen
+    ? {
+        ...manualDraft, kind: chosen.kind, items: chosen.items, includeExtras: chosen.includeExtras,
+        splitAllowed: chosen.splitAllowed, discountType: chosen.discountType, discountValue: chosen.discountValue,
+        minPurchase: chosen.minPurchase, maxDiscount: chosen.maxDiscount, maxUnits: chosen.maxUnits, targets: chosen.targets,
+        usesPerVoucher: chosen.usesPerVoucher, benefitText: chosen.benefitText,
+        typeName: chosen.origin === 'manual' ? chosen.name : null, tillValue: chosen.tillValue, pricing: chosen.pricing,
+        printTillValue: chosen.printTillValue,
+      }
+    : manualDraft;
   const draftVoucher = {
     id: 'draft', serial: 1, displayCode: 'XXXX-XXXX-XXXX-XXXX', qrPayload: 'PV:SAMPLE', groupNo: groupSize ? 1 : null,
   };
-
-  const addItem = (p: PrepaidProductOption) =>
-    setItems((cur) => (cur.some((i) => i.product.id === p.id) ? cur : [...cur, { product: p, quantity: 1 }]));
-  // By weight to the gram ("0.5 ק״ג"), by the piece a whole unit (the cloud checks the same).
-  const setQty = (id: string, q: number) =>
-    setItems((cur) => cur.map((i) => (i.product.id === id ? { ...i, quantity: clampQuantity(q, i.product.isWeighed) } : i)));
 
   const uploadLogo = async (file: File | undefined) => {
     if (!file) return;
@@ -457,63 +481,22 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
             </div>
           </div>
 
+          <div className="space-y-1">
+            <Label>{t('type')}</Label>
+            <select className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30"
+              value={typeId} onChange={(e) => setTypeId(e.target.value)} disabled={!companyId} aria-label={t('type')}>
+              <option value="">{t('typeNone')}</option>
+              {(types.data?.items ?? []).map((x) => (
+                <option key={x.id} value={x.id}>{x.code ? `${x.name} (${x.code})` : x.name}</option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">{companyId ? t('typeHint') : t('pickCompany')}</p>
+          </div>
+          {chosen ? <TypeSummary type={chosen} /> : (<>
           <KindPicker value={kind} onChange={setKind} />
           {discount ? <DiscountTermsFields kind={kind} companyId={companyId} shopIds={shopIds} value={terms} onChange={setTerms} errors={termErrors} /> : null}
 
-          {!discount ? (
-            <div className="space-y-2">
-              <Label>{t('items')}</Label>
-              {items.length ? (
-                <ul className="divide-y rounded-lg border">
-                  {items.map((i) => (
-                    <li key={i.product.id} className="flex items-center gap-2 px-3 py-2 text-sm">
-                      <span className="min-w-0 flex-1 truncate">{i.product.name}</span>
-                      <Button type="button" size="icon-sm" variant="outline" aria-label={t('less')}
-                        onClick={() => setQty(i.product.id, i.quantity - quantityStep(i.product.isWeighed))}>
-                        <Minus className="h-3.5 w-3.5" />
-                      </Button>
-                      {i.product.isWeighed ? (
-                        // Sold by weight: a decimal of its unit ("0.5 ק״ג").
-                        <span className="flex items-center gap-1" title={t('weightHint')}>
-                          <WeightInput key={i.quantity} value={i.quantity} label={t('weightQty', { unit: i.product.unitLabel || DEFAULT_WEIGHT_UNIT })}
-                            onCommit={(q) => setQty(i.product.id, q)} />
-                          <span className="text-xs text-muted-foreground">{i.product.unitLabel || DEFAULT_WEIGHT_UNIT}</span>
-                        </span>
-                      ) : (
-                        <span className="w-6 text-center tabular-nums">{i.quantity}</span>
-                      )}
-                      <Button type="button" size="icon-sm" variant="outline" aria-label={t('more')}
-                        onClick={() => setQty(i.product.id, i.quantity + quantityStep(i.product.isWeighed))}>
-                        <Plus className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button type="button" size="icon-sm" variant="ghost" aria-label={t('remove')}
-                        onClick={() => setItems((cur) => cur.filter((x) => x.product.id !== i.product.id))}>
-                        <X className="h-3.5 w-3.5" />
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-xs text-muted-foreground">{t('itemsEmpty')}</p>
-              )}
-              <div className="relative">
-                <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground ltr:left-2.5 rtl:right-2.5" aria-hidden />
-                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('searchProducts')} className="ps-8" />
-              </div>
-              <div className="max-h-48 overflow-y-auto rounded-lg border">
-                <PrepaidProductPickList
-                  products={products.data}
-                  purpose="items"
-                  chosen={new Set(items.map((i) => i.product.id))}
-                  onPick={addItem}
-                  pending={!!companyId && products.isPending}
-                  pendingText={tc('loading')}
-                  emptyText={companyId ? t('noProducts') : t('pickCompany')}
-                />
-              </div>
-              <p className="text-xs text-muted-foreground">{te('searchHint')}</p>
-            </div>
-          ) : null}
+          {!discount ? <GoodsEditor companyId={companyId} shopIds={shopIds} items={items} onChange={setItems} enabled={open} /> : null}
 
           {!discount ? (
             <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
@@ -525,12 +508,40 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
             </div>
           ) : null}
 
+          {!discount ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="pv-till-value">{t('tillValue')}</Label>
+                <Input id="pv-till-value" inputMode="decimal" value={tillValue} onChange={(e) => setTillValue(e.target.value)}
+                  placeholder={t('tillValuePlaceholder')} />
+                <p className="text-xs text-muted-foreground">{tillValue.trim() ? t('tillValueFixed') : t('tillValueNone')}</p>
+              </div>
+              {pricesVisible ? (
+                <div className="space-y-1">
+                  <Label htmlFor="pv-production-price">{t('productionPrice')}</Label>
+                  <Input id="pv-production-price" inputMode="decimal" value={productionPrice} onChange={(e) => setProductionPrice(e.target.value)} />
+                  <p className="text-xs text-muted-foreground">{t('productionPriceHint')}</p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {!discount ? (
+            <div className="rounded-lg border p-3">
+              <ToggleFields
+                accounting={accounting} onAccounting={setAccounting}
+                offlineAllowed={offlineAllowed} onOfflineAllowed={setOfflineAllowed}
+                policy={policy} onPolicy={setPolicy} overrideEditable={!!types.data?.overrideEditable}
+              />
+            </div>
+          ) : null}
+          </>)}
+
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <Label htmlFor="pv-count">{t('count')}</Label>
               <Input id="pv-count" type="number" min={1} max={5000} value={count} onChange={(e) => setCount(e.target.value)} />
             </div>
-            {!discount ? (
+            {!discount && !chosen ? (
               <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
                 <div className="min-w-0">
                   <p className="text-sm font-medium">{splitAllowed ? t('splitOn') : t('splitOff')}</p>
@@ -541,9 +552,11 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
             ) : null}
           </div>
 
-          <div className="rounded-lg border p-3">
-            <RulesFields kind={kind} value={rules} onChange={setRules} />
-          </div>
+          {!chosen ? (
+            <div className="rounded-lg border p-3">
+              <RulesFields kind={kind} value={rules} onChange={setRules} />
+            </div>
+          ) : null}
 
           <div className="space-y-2 rounded-lg border p-3">
             <GroupSizePicker mode={groupMode} custom={groupCustom} onMode={setGroupMode} onCustom={setGroupCustom} idPrefix="pv-create" />
@@ -576,6 +589,11 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
             <input type="checkbox" className="h-4 w-4 accent-primary" checked={showCredit}
               onChange={(e) => setShowCredit(e.target.checked)} />
             {t('showCredit')}
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" className="h-4 w-4 accent-primary" checked={showValidity}
+              onChange={(e) => setShowValidity(e.target.checked)} />
+            {t('showValidity')}
           </label>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -923,7 +941,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
   // Print settings: only what the next print looks like changes (the code under the barcode,
   // the goods on the voucher, the barcode).
   const saveSettings = useMutation({
-    mutationFn: (body: { showCode?: boolean; showItems?: boolean; showCredit?: boolean; barcodeType?: PrepaidBarcodeType }) =>
+    mutationFn: (body: { showCode?: boolean; showItems?: boolean; showCredit?: boolean; showValidity?: boolean; printTillValue?: boolean; barcodeType?: PrepaidBarcodeType }) =>
       updatePrepaidBatch(batch.id, body),
     onSuccess: () => { toast.success(t('production.settingsSaved')); refresh(); },
     onError: (err) => toast.error(errorText(err)),
@@ -1068,6 +1086,23 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
             {' · '}
             {batch.shops.length ? batch.shops.map((s) => s.name).join(', ') : t('allShopsOf', { company: batch.companyName ?? '' })}
           </p>
+          {batch.type ? (
+            <p className="text-xs text-muted-foreground">
+              {[
+                batch.type.origin === 'manual' && batch.type.name
+                  ? t('typeLine', { name: batch.type.name, code: batch.type.code ?? '', version: batch.type.version })
+                  : t('typeOwn'),
+                batch.type.currentVersion && batch.type.currentVersion > batch.type.version
+                  ? t('typeNewer', { n: batch.type.currentVersion }) : null,
+                !discount && batch.tillValue != null ? t('tillValueIs', { v: moneyText(Math.round(batch.tillValue * 100)) }) : null,
+                !discount && batch.pricesVisible && batch.productionPrice != null
+                  ? t('productionPriceIs', { v: moneyText(Math.round(batch.productionPrice * 100)) }) : null,
+                !discount ? t(`pricingShort.${batch.pricing ?? 'cover'}`) : null,
+                !discount ? t(`accountingShort.${batch.redemptionAccounting ?? 'zero'}`) : null,
+                batch.offlineAllowed ? t('offlineShort') : null,
+              ].filter(Boolean).join(' · ')}
+            </p>
+          ) : null}
           {batch.customerName || batch.orderRef ? (
             <p className="text-xs text-muted-foreground">
               {[
@@ -1083,6 +1118,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
       </div>
 
       <StatsBar b={batch} />
+      {!discount && !cancelled ? <BatchToggles batch={batch} onSaved={refresh} /> : null}
 
       <div className="flex gap-1 print:hidden" role="tablist" aria-label={t('viewLabel')}>
         {(['vouchers', 'groups', 'report'] as const).map((v) => (
@@ -1129,6 +1165,20 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
                 onChange={(e) => saveSettings.mutate({ showCredit: e.target.checked })} />
               {t('create.showCredit')}
             </label>
+            <label className="flex items-center gap-2 self-center text-sm">
+              <input type="checkbox" className="h-4 w-4 accent-primary" checked={batch.showValidity !== false}
+                disabled={saveSettings.isPending || cancelled}
+                onChange={(e) => saveSettings.mutate({ showValidity: e.target.checked })} />
+              {t('create.showValidity')}
+            </label>
+            {!discount && batch.tillValue != null ? (
+              <label className="flex items-center gap-2 self-center text-sm">
+                <input type="checkbox" className="h-4 w-4 accent-primary" checked={!!batch.printTillValue}
+                  disabled={saveSettings.isPending || cancelled}
+                  onChange={(e) => saveSettings.mutate({ printTillValue: e.target.checked })} />
+                {t('printTillValue')}
+              </label>
+            ) : null}
           </div>
           <div className="space-y-1">
             <Label htmlFor="pv-free-text-edit">{t('create.freeText')}</Label>
@@ -1357,11 +1407,52 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+/**
+ * The three toggles on an issued batch — editable after issue (each redemption records the mode it
+ * used): "נכנס כאמצעי תשלום ולסה״כ הכללי", "מימוש ללא אינטרנט" and the discount-block policy.
+ */
+function BatchToggles({ batch, onSaved }: { batch: PrepaidVoucherBatch; onSaved: () => void }) {
+  const t = useTranslations('prepaidVouchers');
+  const errorText = useErrorText();
+  const types = useQuery({
+    queryKey: ['prepaid-voucher-types', 'flags'],
+    queryFn: () => fetchPrepaidTypes({ includeInactive: false }),
+  });
+  const [policy, setPolicy] = useState<PolicyState>(policyState(batch.discountBlockPolicy));
+  const save = useMutation({
+    mutationFn: (body: Parameters<typeof updatePrepaidBatch>[1]) => updatePrepaidBatch(batch.id, body),
+    onSuccess: () => { toast.success(t('production.settingsSaved')); onSaved(); },
+    onError: (err) => toast.error(errorText(err)),
+  });
+  const policyChanged = JSON.stringify(policyBody(policy)) !== JSON.stringify(policyBody(policyState(batch.discountBlockPolicy)));
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t('togglesTitle')}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-muted-foreground">{t('togglesHint')}</p>
+        <ToggleFields
+          accounting={batch.redemptionAccounting ?? 'zero'} onAccounting={(v) => save.mutate({ redemptionAccounting: v })}
+          offlineAllowed={!!batch.offlineAllowed} onOfflineAllowed={(v) => save.mutate({ offlineAllowed: v })}
+          policy={policy} onPolicy={setPolicy} overrideEditable={!!types.data?.overrideEditable} disabled={save.isPending}
+        />
+        {policyChanged ? (
+          <Button size="sm" onClick={() => save.mutate({ discountBlockPolicy: policyBody(policy) })} disabled={save.isPending}>
+            {t('togglesSavePolicy')}
+          </Button>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function PrepaidVouchersPage() {
   const t = useTranslations('prepaidVouchers');
   const errorText = useErrorText();
   const [creating, setCreating] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [tab, setTab] = useState<'batches' | 'types'>('batches');
 
   const batches = useQuery({ queryKey: ['prepaid-voucher-batches'], queryFn: fetchPrepaidBatches });
   const selected = batches.data?.find((b) => b.id === selectedId) ?? null;
@@ -1377,14 +1468,26 @@ export default function PrepaidVouchersPage() {
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-sm text-muted-foreground">{t('subtitle')}</p>
         </div>
-        {!selected ? (
+        {!selected && tab === 'batches' ? (
           <Button onClick={() => setCreating(true)}>
             <Plus className="h-4 w-4" /> {t('new')}
           </Button>
         ) : null}
       </div>
 
-      {selected ? (
+      {!selected ? (
+        <div className="flex gap-1" role="tablist" aria-label={t('tabs.label')}>
+          {(['batches', 'types'] as const).map((v) => (
+            <Button key={v} role="tab" aria-selected={tab === v} size="sm" variant={tab === v ? 'default' : 'outline'} onClick={() => setTab(v)}>
+              {t(`tabs.${v}`)}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+
+      {!selected && tab === 'types' ? (
+        <PrepaidTypesView />
+      ) : selected ? (
         <BatchDetail key={selected.id} batch={selected} onBack={() => setSelectedId(null)} />
       ) : batches.isPending ? (
         <div className="space-y-2">

@@ -104,6 +104,154 @@ export interface PrepaidVoucherBatch extends PrepaidBatchTerms {
   orderRef?: string | null;
   /** Goods: "כולל תוספות" — paid options and a meal's upcharges are covered too (§7.14). */
   includeExtras?: boolean;
+  // ── Its type (the spec's §2) and the two prices (§5), as issued ──
+  type?: PrepaidTypeRef | null;
+  /** The type's name as printed above the title (a manual type's; null for a batch's own). */
+  typeName?: string | null;
+  /** ₪ — the whole voucher's value at the till; null: the goods, whatever they cost. */
+  tillValue?: number | null;
+  /** ₪ — only with the `prepaid_voucher_prices` section (else null, `pricesVisible` false). */
+  productionPrice?: number | null;
+  pricesVisible?: boolean;
+  pricing?: PrepaidPricing;
+  allowTopUp?: boolean;
+  /** How the till books a redemption (editable after issue; each redemption records it). */
+  redemptionAccounting?: PrepaidRedemptionAccounting;
+  /** "הצג תוקף על השובר" (absent: shown). */
+  showValidity?: boolean;
+  discountBlockPolicy?: PrepaidOverridePolicy;
+  /** "מימוש ללא אינטרנט". */
+  offlineAllowed?: boolean;
+  printTillValue?: boolean;
+}
+
+export type PrepaidPricing = 'fixed' | 'cover';
+/**
+ * discount — "קיזוז מהחשבונית (כמו הנחה)" (a document deduction, the default);
+ * payment — "אמצעי תשלום (חייב במע״מ)" (the production_voucher tender);
+ * zero — "₪0 עם הצגת שווי" (legacy batches).
+ */
+export type PrepaidRedemptionAccounting = 'discount' | 'payment' | 'zero';
+export const PREPAID_REDEMPTION_ACCOUNTING: PrepaidRedemptionAccounting[] = ['discount', 'payment', 'zero'];
+export type PrepaidOverrideMode = 'honour' | 'auto' | 'manager';
+
+/** Products that take no discounts (§7): honour / force automatically / with a manager. ₪ and %. */
+export interface PrepaidOverridePolicy {
+  mode: PrepaidOverrideMode;
+  maxAmount?: number | null;
+  maxPercent?: number | null;
+  maxTotal?: number | null;
+  scope?: { productIds: string[]; categoryIds: string[] } | null;
+}
+export type PrepaidTypeOrigin = 'manual' | 'batch' | 'legacy';
+
+export interface PrepaidTypeRef {
+  id: string;
+  code: string | null;
+  name: string | null;
+  /** The version the batch was issued with, and the type's current one. */
+  version: number;
+  currentVersion: number | null;
+  origin: PrepaidTypeOrigin | null;
+}
+
+/** "סוג שובר" — the template batches are issued from. Money in ₪. */
+export interface PrepaidVoucherType extends PrepaidBatchTerms {
+  id: string;
+  companyId: string;
+  companyName: string | null;
+  code: string | null;
+  name: string;
+  description: string | null;
+  origin: PrepaidTypeOrigin;
+  active: boolean;
+  version: number;
+  items: PrepaidBatchItem[];
+  tillValue: number | null;
+  productionPrice: number | null;
+  pricesVisible: boolean;
+  pricing: PrepaidPricing;
+  allowTopUp: boolean;
+  redemptionAccounting: PrepaidRedemptionAccounting;
+  showValidity: boolean;
+  discountBlockPolicy: PrepaidOverridePolicy;
+  offlineAllowed: boolean;
+  splitAllowed: boolean;
+  includeExtras: boolean;
+  printTillValue: boolean;
+  batchCount: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface PrepaidTypeBody {
+  companyId?: string;
+  name?: string;
+  code?: string | null;
+  description?: string | null;
+  active?: boolean;
+  kind?: PrepaidVoucherKind;
+  items?: { productId: string; quantity: number }[];
+  tillValue?: number | null;
+  productionPrice?: number | null;
+  pricing?: PrepaidPricing;
+  allowTopUp?: boolean;
+  redemptionAccounting?: PrepaidRedemptionAccounting;
+  showValidity?: boolean;
+  discountBlockPolicy?: PrepaidOverridePolicy;
+  offlineAllowed?: boolean;
+  splitAllowed?: boolean;
+  includeExtras?: boolean;
+  printTillValue?: boolean;
+  discountType?: PrepaidDiscountType | null;
+  discountValue?: number | null;
+  minPurchase?: number | null;
+  maxDiscount?: number | null;
+  maxUnits?: number | null;
+  targets?: { productIds: string[]; categoryIds: string[] } | null;
+  stacking?: PrepaidStacking;
+  promotionPolicy?: PrepaidPromotionPolicy;
+  usesPerVoucher?: number;
+  maxUsesPerSale?: number;
+  maxUsesPerDay?: number | null;
+}
+
+export interface PrepaidTypeEvent {
+  id: string;
+  action: 'create' | 'update' | 'activate' | 'deactivate';
+  userName: string | null;
+  createdAt: string | null;
+  details: { fields?: string[]; version?: number } | null;
+}
+
+/** The types, and whether this user sees (and sets) production prices at all. */
+export async function fetchPrepaidTypes(
+  opts: { companyId?: string; includeInactive?: boolean; includeOneOff?: boolean } = {},
+): Promise<{ items: PrepaidVoucherType[]; pricesVisible: boolean; pricesEditable: boolean; overrideEditable: boolean }> {
+  const { data } = await api.get<{ items: PrepaidVoucherType[]; pricesVisible: boolean; pricesEditable: boolean; overrideEditable: boolean }>(
+    '/prepaid-vouchers/types', { params: opts },
+  );
+  return data;
+}
+
+export async function fetchPrepaidType(id: string): Promise<PrepaidVoucherType> {
+  const { data } = await api.get<PrepaidVoucherType>(`/prepaid-vouchers/types/${id}`);
+  return data;
+}
+
+export async function createPrepaidType(body: PrepaidTypeBody): Promise<PrepaidVoucherType> {
+  const { data } = await api.post<PrepaidVoucherType>('/prepaid-vouchers/types', body);
+  return data;
+}
+
+export async function updatePrepaidType(id: string, body: PrepaidTypeBody): Promise<PrepaidVoucherType> {
+  const { data } = await api.patch<PrepaidVoucherType>(`/prepaid-vouchers/types/${id}`, body);
+  return data;
+}
+
+export async function fetchPrepaidTypeEvents(id: string): Promise<PrepaidTypeEvent[]> {
+  const { data } = await api.get<{ items: PrepaidTypeEvent[] }>(`/prepaid-vouchers/types/${id}/events`);
+  return data.items;
 }
 
 /** QR (any camera / 2D imager) or a Code 128 line barcode (1D laser scanners). */
@@ -164,6 +312,17 @@ export interface PrepaidVoucher {
 export interface PrepaidBatchCreate {
   name: string;
   companyId: string;
+  /** The type it is issued from: what it gives, its terms and prices are the type's. */
+  typeId?: string | null;
+  /** Without a type: its prices (₪) and how it is priced / recorded. */
+  tillValue?: number | null;
+  productionPrice?: number | null;
+  pricing?: PrepaidPricing;
+  redemptionAccounting?: PrepaidRedemptionAccounting;
+  showValidity?: boolean;
+  discountBlockPolicy?: PrepaidOverridePolicy;
+  offlineAllowed?: boolean;
+  printTillValue?: boolean;
   shopIds: string[] | null;
   eventName: string | null;
   logoUrl: string | null;
@@ -230,7 +389,8 @@ export async function updatePrepaidBatch(
   id: string,
   body: Partial<Pick<
     PrepaidBatchCreate,
-    | 'name' | 'eventName' | 'logoUrl' | 'freeText' | 'validFrom' | 'validUntil' | 'showCode' | 'showItems' | 'showCredit' | 'barcodeType'
+    | 'name' | 'eventName' | 'logoUrl' | 'freeText' | 'validFrom' | 'validUntil' | 'showCode' | 'showItems' | 'showCredit' | 'printTillValue' | 'redemptionAccounting' | 'showValidity' | 'discountBlockPolicy'
+    | 'offlineAllowed' | 'barcodeType'
     | 'customerName' | 'orderRef'
   >> & PrepaidBatchRulesUpdate,
 ): Promise<PrepaidVoucherBatch> {

@@ -207,6 +207,8 @@ class TestLegacy:
         "REFUND", "DISCOUNT", "OTH", "CATALOG_WRITE", "TRANSMIT", "TABLE_CANCEL", "TABLE_UNLOCK", "REPRINT",
         "TABLE_VOID", "TABLE_RESTORE", "USER_SESSION_RELEASE", "KIOSK_UNLOCK", "KIOSK_CONTROL",
         "ATTENDANCE_MANAGE", "CARD_UNRESOLVED",
+        # New with production vouchers (no older behaviour to keep): a senior approves an override.
+        "VOUCHER_DISCOUNT_OVERRIDE",
     }
 
     def test_a_legacy_cashier_needs_approval_for_exactly_what_a_cashier_did(self):
