@@ -227,7 +227,9 @@ def upgrade() -> None:
     if dialect == 'postgresql':
         nullable = True
         if insp is not None:
-            nullable = next(c for c in insp.get_columns(BATCHES) if c['name'] == 'type_id')['nullable']
+            # A fresh inspector: `insp` cached the batches' columns before `type_id` was added above.
+            fresh = sa.inspect(op.get_bind()).get_columns(BATCHES)
+            nullable = next((c for c in fresh if c['name'] == 'type_id'), {'nullable': True})['nullable']
         if nullable:
             op.alter_column(BATCHES, 'type_id', existing_type=_uuid(), nullable=False)
         fks = set() if insp is None else {fk['name'] for fk in insp.get_foreign_keys(BATCHES)}
