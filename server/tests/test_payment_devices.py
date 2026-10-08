@@ -947,3 +947,117 @@ class TestMigrations:
         for table in ("tenants", "companies", "shops", "shop_areas", "pos_machines"):
             assert f"'{table}'" in text
         assert "paymentDeviceGroup" in text and "settings_updated_at = now()" in text
+
+
+# ── An Agamento handheld that moved (the till's relink) ──────────────────────
+
+
+def relink(w, till, device_id, **data):
+    from app.schemas.payment_devices import PaymentDeviceHostIn
+
+    out = R.machine_set_payment_device_host(
+        machine_id=str(till.id), device_id=str(device_id), body=PaymentDeviceHostIn.model_validate(data),
+        machine=till, db=w.db,
+    )
+    if hasattr(out, "status_code"):  # a refusal: `{detail: code, message}`, as pinpad-host
+        return out.status_code, json.loads(out.body)
+    return 200, out
+
+
+def till_events(w):
+    from app.models.audit_exception import TillEvent
+
+    w.db.expire_all()
+    return w.db.query(TillEvent).filter(TillEvent.event_type == PD.DEVICE_HOST_EVENT).all()
+
+
+class TestDeviceHostRelink:
+    NAYAX = {
+        "nickname": "Nayax bar", "kind": "agamento_lan",
+        "config": {"host": "192.168.1.20", "path": "/SPICy2", "https": True, "mac": "aa:bb:cc:dd:ee:ff",
+                   "terminalNumber": "1234567"},
+    }
+
+    def test_the_till_moves_its_shops_handheld(self, pd):
+        d = create(pd, self.NAYAX)
+        pd.shop.settings_updated_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        pd.db.commit()
+        pd.shop_notified.clear()
+        code, out = relink(pd, pd.tablet, d["id"], host="192.168.1.77", reason="relocated",
+                           terminalNumber="01234567", previousHost="192.168.1.20", serial="SN-1")
+        assert code == 200
+        assert out == {
+            "deviceId": d["id"], "host": "192.168.1.77", "port": 8080, "previousHost": "192.168.1.20",
+            "reason": "relocated", "terminalMatches": True, "unchanged": False,
+        }
+        # Only the address moved; the rest of the device is kept.
+        assert device_row(pd, d["id"]).config == {
+            "host": "192.168.1.77", "port": 8080, "path": "/SPICy2", "https": True,
+            "mac": "aa:bb:cc:dd:ee:ff", "terminalNumber": "1234567",
+        }
+        assert pd.shop_notified == [(str(pd.shop.id), PD.NOTIFY_REASON)]
+        stamp = pd.shop.settings_updated_at
+        assert (stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)) > datetime(2026, 1, 1, tzinfo=timezone.utc)
+        (event,) = till_events(pd)
+        assert event.machine_id == pd.tablet.id and event.shop_id == pd.shop.id
+        assert event.details["deviceId"] == d["id"] and event.details["deviceNickname"] == "Nayax bar"
+        assert (event.details["from"], event.details["to"], event.details["reason"]) == ("192.168.1.20", "192.168.1.77", "relocated")
+        # Every till of the shop gets the new address.
+        devices = json.loads(pulled(pd, pd.f20).settings["paymentDevices"])
+        assert devices[0]["config"]["host"] == "192.168.1.77"
+
+    def test_the_same_address_is_answered_unchanged(self, pd):
+        d = create(pd, self.NAYAX)
+        pd.shop_notified.clear()
+        code, out = relink(pd, pd.tablet, d["id"], host="192.168.1.20", terminalNumber="1234567")
+        assert code == 200 and out["unchanged"] is True
+        assert till_events(pd) == [] and pd.shop_notified == []
+
+    def test_a_port_and_the_tills_spellings(self, pd):
+        d = create(pd, self.NAYAX)
+        code, out = relink(pd, pd.tablet, d["id"], host="192.168.1.30", port=8081, terminal="1234567", **{"from": "x"})
+        assert code == 200 and out["port"] == 8081
+        assert device_row(pd, d["id"]).config["port"] == 8081
+        assert till_events(pd)[0].details["tillPreviousHost"] == "x"
+
+    def test_a_move_by_itself_must_name_the_same_terminal(self, pd):
+        d = create(pd, self.NAYAX)
+        code, out = relink(pd, pd.tablet, d["id"], host="192.168.1.30")
+        assert (code, out["detail"]) == (422, "terminal_number_required") and out["message"]
+        code, out = relink(pd, pd.tablet, d["id"], host="192.168.1.30", terminalNumber="7654321")
+        assert (code, out["detail"]) == (409, "terminal_mismatch")
+        assert device_row(pd, d["id"]).config["host"] == "192.168.1.20"
+        # A technician's pick needs no terminal number.
+        code, out = relink(pd, pd.tablet, d["id"], host="192.168.1.31", reason="technician")
+        assert code == 200 and out["terminalMatches"] is None
+
+    def test_without_its_own_number_the_tills_expected_one_counts(self, pd):
+        d = create(pd, AGAMENTO)
+        code, _ = relink(pd, pd.tablet, d["id"], host="192.168.1.40", terminalNumber="999")
+        assert code == 200  # nothing set anywhere: no check
+        patch_shop(pd, expectedTerminalNumber="1234567")
+        code, out = relink(pd, pd.tablet, d["id"], host="192.168.1.41", terminalNumber="999")
+        assert (code, out["detail"]) == (409, "terminal_mismatch")
+        code, _ = relink(pd, pd.tablet, d["id"], host="192.168.1.41", terminalNumber="1234567")
+        assert code == 200
+
+    def test_refusals(self, pd):
+        d = create(pd, self.NAYAX)
+        theirs = create(pd, self.NAYAX, shop=pd.other_shop)
+        synq = create(pd, SYNQ)
+        for device_id, data, expected in (
+            (theirs["id"], {"host": "192.168.1.9", "reason": "technician"}, (404, "payment_device_not_found")),
+            (str(uuid.uuid4()), {"host": "192.168.1.9", "reason": "technician"}, (404, "payment_device_not_found")),
+            ("nope", {"host": "192.168.1.9", "reason": "technician"}, (404, "payment_device_not_found")),
+            (synq["id"], {"host": "192.168.1.9", "reason": "technician"}, (409, "payment_device_not_agamento_lan")),
+            (d["id"], {"host": "8.8.8.8", "reason": "technician"}, (422, "host_not_private")),
+            (d["id"], {"host": "http://192.168.1.9", "reason": "technician"}, (422, "host_invalid")),
+            (d["id"], {"host": "192.168.1.9", "reason": "guess"}, (422, "reason_invalid")),
+        ):
+            code, out = relink(pd, pd.tablet, device_id, **data)
+            assert (code, out["detail"]) == expected, (device_id, data)
+        as_kiosk(pd, pd.f20)
+        code, out = relink(pd, pd.f20, d["id"], host="192.168.1.9", reason="technician")
+        assert (code, out["detail"]) == (409, "payment_device_kiosk")
+        assert device_row(pd, d["id"]).config["host"] == "192.168.1.20"
+        assert till_events(pd) == []

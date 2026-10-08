@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class PaymentDeviceIn(BaseModel):
@@ -34,3 +34,31 @@ class PaymentDeviceIn(BaseModel):
     active: Optional[Any] = None
     sort_order: Optional[Any] = Field(None, alias="sortOrder")
     synqpay_api_key: Optional[Any] = Field(None, alias="synqpayApiKey", exclude=True, repr=False)
+
+
+class PaymentDeviceHostIn(BaseModel):
+    """
+    `PUT /sync/{machine_id}/payment-devices/{device_id}/host` — an Agamento LAN handheld found by
+    the till at a new address (app/services/payment_devices.py `relink_device_host`). The fields
+    of the till's `PinpadHostRequest` (`PUT /sync/{m}/pinpad-host`); `terminal` and `from` are
+    read as `terminalNumber` and `previousHost`.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    host: str = Field(..., max_length=300)
+    #: SPICy's port; absent = unchanged.
+    port: Optional[int] = Field(None, ge=1, le=65535)
+    #: "relocated" (found by the till itself, the default) | "technician" (picked by hand).
+    reason: Optional[str] = Field(None, max_length=16)
+    #: The terminal number the handheld at [host] said it is (`getRetailerInfo`).
+    terminal_number: Optional[str] = Field(
+        None, validation_alias=AliasChoices("terminalNumber", "terminal", "terminal_number"), max_length=20
+    )
+    serial: Optional[str] = Field(None, max_length=60)
+    #: The address the till used before, as it held it.
+    previous_host: Optional[str] = Field(
+        None, validation_alias=AliasChoices("previousHost", "from", "previous_host"), max_length=300
+    )
+    #: The handheld's MAC when Android let the till read it (a hint only).
+    mac: Optional[str] = Field(None, max_length=32)

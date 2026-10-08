@@ -1075,6 +1075,170 @@ def store_device_pairing(
     return row
 
 
+# ── "קישור מחדש": an Agamento handheld that moved on the LAN ──────────────────
+
+#: The till event that records each move (`till_events.event_type`, 32 characters at most).
+DEVICE_HOST_EVENT = "payment_device_host_set"
+
+
+class DeviceRelinkRefused(Exception):
+    """A move the cloud does not make. [code] is the API's `detail`, [status_code] its status."""
+
+    def __init__(self, status_code: int, code: str, message: str):
+        super().__init__(code)
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+
+
+def _merged_expected_terminal(db: Session, machine: Any) -> Optional[str]:
+    """The till's `expectedTerminalNumber` merged over ALL its layers (as `paymentDevicesTerminalNumber`)."""
+    from app.models.company import Company
+    from app.models.tenant import Tenant
+    from app.services.areas import get_area
+    from app.services.settings_merge import merge_all_settings_layers
+
+    shop = db.query(Shop).filter(Shop.id == machine.shop_id).first() if machine.shop_id else None
+    company = db.query(Company).filter(Company.id == shop.company_id).first() if shop is not None else None
+    if company is None:
+        return None
+    tenant = db.query(Tenant).filter(Tenant.id == company.tenant_id).first() if company.tenant_id else None
+    area = get_area(db, getattr(machine, "area_id", None))
+    merged = merge_all_settings_layers(company, shop, tenant, machine, area)
+    value = merged.get(EXPECTED_TERMINAL_KEY)
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def relink_device_host(
+    db: Session,
+    machine: Any,
+    device_id: Any,
+    *,
+    host: Any,
+    port: Any = None,
+    reason: str = "relocated",
+    terminal_number: Optional[str] = None,
+    serial: Optional[str] = None,
+    previous_host: Optional[str] = None,
+    mac: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """
+    `PUT /sync/{machine_id}/payment-devices/{device_id}/host` — an Agamento LAN handheld of the
+    till's shop, found by the till at a new address (its read-only sweep, as the kiosk's
+    PinpadRelinker), or picked on the technician screen. The rules of `relink_pinpad`
+    (app/services/payment_terminal.py), for a device instead of the till's own pinpad:
+
+    * a device of the till's shop (404 `payment_device_not_found`), an `agamento_lan` one
+      (409 `payment_device_not_agamento_lan`); never from a kiosk (409 `payment_device_kiosk`);
+    * a private IPv4 address (422 `host_invalid` / `host_not_private` / `port_invalid`);
+    * a move the till made by itself (`relocated`) names the terminal it found there, and it must
+      be the device's own terminal number — else the till's merged expected one — when one is set
+      (422 `terminal_number_required`, 409 `terminal_mismatch`): never another business's pinpad.
+
+    Only `config.host` (and `config.port` when given) change; path, https, MAC and terminal number
+    stay. The same address again is answered `unchanged` with nothing written. A move is a till
+    event (`payment_device_host_set`, naming the device) and a log line; the shop's stamp moves.
+    The caller commits and notifies the shop's tills.
+    """
+    import ipaddress
+
+    from app.models.audit_exception import TillEvent
+    from app.services.payment_terminal import (
+        RELINK_REASONS,
+        RELINK_RELOCATED,
+        clean_pinpad_port,
+        same_terminal,
+    )
+
+    reason = (reason or RELINK_RELOCATED).strip()
+    if reason not in RELINK_REASONS:
+        raise DeviceRelinkRefused(422, "reason_invalid", "סיבה לא מוכרת")
+    if bool(getattr(machine, "is_kiosk", False)):
+        raise DeviceRelinkRefused(409, "payment_device_kiosk", MESSAGES_HE["payment_device_kiosk"])
+    device = get_device(db, device_id)
+    if device is None or getattr(machine, "shop_id", None) is None or _uuid(device.shop_id) != _uuid(machine.shop_id):
+        raise DeviceRelinkRefused(404, "payment_device_not_found", MESSAGES_HE["payment_device_not_found"])
+    if device.kind != AGAMENTO_LAN:
+        raise DeviceRelinkRefused(409, "payment_device_not_agamento_lan", "המכשיר אינו מסופון Agamento ברשת")
+    try:
+        clean_host = clean_pinpad_host(host)
+        clean_port = clean_pinpad_port(port) if port is not None else None
+    except PinpadAddressError as exc:
+        raise DeviceRelinkRefused(422, exc.code, "כתובת המכשיר אינה תקינה") from None
+    try:
+        private = ipaddress.IPv4Address(clean_host).is_private
+    except ValueError:
+        private = False
+    if not private:
+        raise DeviceRelinkRefused(422, "host_not_private", "המכשיר חייב להיות בכתובת IP פרטית ברשת המקומית")
+
+    config = _as_dict(device.config)
+    current = config.get("host")
+    current_port = config.get("port") if isinstance(config.get("port"), int) else DEFAULT_PORT
+    own_terminal = config.get("terminalNumber") if isinstance(config.get("terminalNumber"), str) else None
+    expected = own_terminal or _merged_expected_terminal(db, machine)
+    number = (terminal_number or "").strip() or None
+    if reason == RELINK_RELOCATED:
+        if number is None:
+            raise DeviceRelinkRefused(422, "terminal_number_required", "חסר מספר המסוף שנמצא בכתובת החדשה")
+        if expected is not None and not same_terminal(expected, number):
+            raise DeviceRelinkRefused(
+                409, "terminal_mismatch",
+                f"המסופון שנמצא (מסוף {number}) אינו המסוף של המכשיר \"{device.nickname}\" ({expected})",
+            )
+    unchanged = current == clean_host and (clean_port is None or clean_port == current_port)
+    out = {
+        "deviceId": str(device.id),
+        "host": clean_host,
+        "port": clean_port if clean_port is not None else current_port,
+        "previousHost": current,
+        "reason": reason,
+        "terminalMatches": same_terminal(expected, number) if expected is not None and number is not None else None,
+        "unchanged": unchanged,
+    }
+    if unchanged:
+        return out
+    moment = now or datetime.now(timezone.utc)
+    config["host"] = clean_host
+    if clean_port is not None:
+        config["port"] = clean_port
+    device.config = config
+    device.updated_at = moment
+    shop = db.query(Shop).filter(Shop.id == device.shop_id).first()
+    if shop is not None:
+        touch_shop(shop)
+    db.add(TillEvent(
+        id=uuid.uuid4(),
+        tenant_id=machine.tenant_id,
+        machine_id=machine.id,
+        shop_id=machine.shop_id,
+        area_id=getattr(machine, "area_id", None),
+        event_type=DEVICE_HOST_EVENT,
+        occurred_at=moment,
+        details={
+            "deviceId": str(device.id),
+            "deviceNickname": device.nickname,
+            "from": current,
+            "fromPort": current_port,
+            "to": clean_host,
+            "toPort": out["port"],
+            "reason": reason,
+            "terminalNumber": number,
+            "expectedTerminalNumber": expected,
+            "serial": (serial or "").strip()[:60] or None,
+            "mac": (mac or "").strip()[:32] or None,
+            "tillPreviousHost": (previous_host or "").strip()[:300] or None,
+        },
+    ))
+    logger.info(
+        "payment device %s (%s) moved %s:%s -> %s:%s by till %s (%s, terminal %s, expected %s)",
+        device.id, device.nickname, current, current_port, clean_host, out["port"], machine.id, reason, number, expected,
+    )
+    db.flush()
+    return out
+
+
 def mark_device_key_rejected(db: Session, device: PaymentDevice, machine: Any, *, now: Optional[datetime] = None):
     """The device refused its key, as [machine] reported: marked once. None when it has no key."""
     row = _secret_rows(db, [device.id]).get(_uuid(device.id), {}).get(PS.SYNQPAY_API_KEY)
