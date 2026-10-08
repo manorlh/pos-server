@@ -966,7 +966,8 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     methods: ['card'],
     tipEnabled: false,
     tipPresets: [10, 12, 15],
-    receiptPolicy: 'ask',
+    // The owner, 08.10.2026: the receipt prints by itself; "ask" / "never" by choice.
+    receiptPolicy: 'always',
     customerName: 'optional',
     customerPhone: 'off',
     minOrderAgorot: 0,

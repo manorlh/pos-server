@@ -445,7 +445,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "methods": ["card"],
         "tipEnabled": False,
         "tipPresets": [10, 12, 15],
-        "receiptPolicy": "ask",
+        # The owner, 08.10.2026: the receipt prints by itself ("תמיד"); "לשאול" / "לא" by choice.
+        "receiptPolicy": "always",
         "customerName": "optional",
         "customerPhone": "off",
         # The table number: asked of an eat-in order only. (`general.askTableNumber`, the older

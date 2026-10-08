@@ -190,7 +190,7 @@ def test_defaults_are_valid_and_complete():
     assert C.validate_config(cfg) == []
     assert cfg["general"]["fulfillmentMode"] == "BON"
     assert cfg["payment"] == {
-        "methods": ["card"], "tipEnabled": False, "tipPresets": [10, 12, 15], "receiptPolicy": "ask",
+        "methods": ["card"], "tipEnabled": False, "tipPresets": [10, 12, 15], "receiptPolicy": "always",
         "customerName": "optional", "customerPhone": "off", "tableNumber": "off", "detailsStep": "before_pay", "minOrderAgorot": 0,
         "tipOther": True, "checkoutSteps": ["tip", "details", "payMethod"],
         # "חובה / רשות / כבוי" per step (docs/SPEC_KIOSK_INSIGHTS.md §4).
