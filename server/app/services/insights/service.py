@@ -595,7 +595,9 @@ def anomalies(ctx: InsightsContext, window: str = "period") -> dict:
     return out
 
 
-ANOMALY_SETTINGS_ROLES = (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR, UserRole.COMPANY_MANAGER)
+#: The thresholds are the whole organization's (every company of the tenant): its super admin's.
+#: A company's own managers set an event's thresholds on the event.
+ANOMALY_SETTINGS_ROLES = (UserRole.SUPER_ADMIN,)
 
 
 def anomaly_settings(db: Session, user: User, tenant_id) -> dict:

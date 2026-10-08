@@ -56,7 +56,7 @@ DELETE /catalog-menus/{menu_id} -> products:edit
 GET /catalog-menus/{menu_id} -> products:view
 PUT /catalog-menus/{menu_id} -> products:edit
 POST /catalog/push -> products:edit
-GET /categories -> products:view
+GET /categories -> products|quick_actions|promotions:view
 POST /categories -> products:edit
 PUT /categories/reorder -> products:edit
 DELETE /categories/{category_id} -> products:edit
@@ -318,12 +318,12 @@ DELETE /printers/{printer_id} -> printers:edit
 PUT /printers/{printer_id} -> printers:edit
 POST /printers/{printer_id}/test -> printers:edit
 GET /printers/{printer_id}/test-jobs -> printers:view
-GET /products -> products:view
+GET /products -> products|quick_actions|promotions:view
 POST /products -> products:edit
 POST /products/availability-summary -> products:view
 POST /products/shop-scope/preview -> products:view
 DELETE /products/{product_id} -> products:edit
-GET /products/{product_id} -> products:view
+GET /products/{product_id} -> products|quick_actions|promotions:view
 PUT /products/{product_id} -> products:edit
 GET /products/{product_id}/availability -> products:view
 PUT /products/{product_id}/availability/areas/{area_id} -> products:edit

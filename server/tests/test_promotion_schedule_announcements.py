@@ -32,6 +32,7 @@ from app.models.dashboard_access import DashboardAccessProfile
 from app.models.product import Product
 from app.models.product_cost import ProductCost
 from app.models.promotion import Promotion
+from app.models.shop_product_override import ShopProductOverride
 from app.models.till_message import TillMessage
 from app.models.user import User, UserRole
 from app.routers import insights as R
@@ -213,16 +214,63 @@ class TestAnnouncement:
         assert start.schedule_kind == "now" and start.sent_at is not None and start.body == "מבצע על השתייה!"
         assert TM._utc(start.expires_at) == utc(2026, 9, 30, 21)  # to the end of its last day
         assert promo.announcement["endMessageIds"] == []
-        # Edited: the start went out already — not repeated; the end is now asked for.
-        PR.update_promotion(out["id"], promotion_in(w, weekdays=None, startTime=None, endTime=None, validTo="2026-09-29",
+        # Edited without changing what the start says: it went out already — not repeated;
+        # the end is now asked for.
+        PR.update_promotion(out["id"], promotion_in(w, weekdays=None, startTime=None, endTime=None, validTo="2026-09-30",
                                                     announcement={"enabled": True, "text": "מבצע על השתייה!", "endEnabled": True}),
                             BackgroundTasks(), **ctx(w, w.manager))
         w.db.refresh(promo)
         assert promo.announcement["startMessageIds"] == [str(start.id)]
         (end,) = messages(w, promo.announcement["endMessageIds"])
-        assert TM._utc(end.send_at) == utc(2026, 9, 29, 21)
+        assert TM._utc(end.send_at) == utc(2026, 9, 30, 21)
         assert w.db.query(TillMessage).count() == 2
 
+    def test_a_change_of_what_it_says_takes_the_sent_start_down_and_sends_it_again(self, w):
+        body = promotion_in(w, weekdays=None, startTime=None, endTime=None, validTo="2026-09-30",
+                            announcement={"enabled": True, "text": "מבצע על השתייה!", "endEnabled": True})
+        out = PR.create_promotion(body, BackgroundTasks(), **ctx(w, w.manager))
+        promo = w.db.get(Promotion, uuid.UUID(out["id"]))
+        (start,) = messages(w, promo.announcement["startMessageIds"])
+        (end,) = messages(w, promo.announcement["endMessageIds"])
+        # The dates change: the live banner says the wrong thing — down, and sent again; the
+        # planned end moves with it.
+        PR.update_promotion(out["id"], promotion_in(w, weekdays=None, startTime=None, endTime=None, validTo="2026-09-29",
+                                                    announcement={"enabled": True, "text": "מבצע על השתייה!", "endEnabled": True}),
+                            BackgroundTasks(), **ctx(w, w.manager))
+        w.db.refresh(promo)
+        w.db.refresh(start)
+        w.db.refresh(end)
+        assert start.cancelled_at is not None and end.cancelled_at is not None
+        (again,) = messages(w, promo.announcement["startMessageIds"])
+        assert again.id != start.id and again.sent_at is not None and TM._utc(again.expires_at) == utc(2026, 9, 29, 21)
+        (new_end,) = messages(w, promo.announcement["endMessageIds"])
+        assert TM._utc(new_end.send_at) == utc(2026, 9, 29, 21)
+        # The text changes: the same again.
+        PR.update_promotion(out["id"], promotion_in(w, weekdays=None, startTime=None, endTime=None, validTo="2026-09-29",
+                                                    announcement={"enabled": True, "text": "20% על כל השתייה", "endEnabled": True}),
+                            BackgroundTasks(), **ctx(w, w.manager))
+        w.db.refresh(promo)
+        w.db.refresh(again)
+        assert again.cancelled_at is not None
+        (third,) = messages(w, promo.announcement["startMessageIds"])
+        assert third.body == "20% על כל השתייה" and third.cancelled_at is None
+
+    def test_an_end_message_that_already_showed_comes_down_on_a_replan(self, w, monkeypatch):
+        body = promotion_in(w, weekdays=None, startTime=None, endTime=None, validTo="2026-09-27",
+                            announcement={"enabled": True, "text": "היום בלבד", "endEnabled": True})
+        out = PR.create_promotion(body, BackgroundTasks(), **ctx(w, w.manager))
+        promo = w.db.get(Promotion, uuid.UUID(out["id"]))
+        (end,) = messages(w, promo.announcement["endMessageIds"])
+        # The promotion ended at midnight; the tills fetched the "ended" banner.
+        later = utc(2026, 9, 27, 21, 30)
+        for module in (TM, PA):
+            monkeypatch.setattr(module, "_now", lambda: later)
+        TM.banners_for_machine(w.db, w.tills[0])
+        w.db.refresh(end)
+        assert end.sent_at is not None and end.cancelled_at is None
+        PR.pause_promotion(out["id"], _pause(True), BackgroundTasks(), **ctx(w, w.manager))
+        w.db.refresh(end)
+        assert end.cancelled_at is not None
     def test_pause_takes_it_down_resume_announces_again_delete_withdraws(self, w):
         out = PR.create_promotion(promotion_in(w), BackgroundTasks(), **ctx(w, w.manager))
         promo = w.db.get(Promotion, uuid.UUID(out["id"]))
@@ -297,12 +345,18 @@ def adhoc(w, **kw):
 
 class TestAdHoc:
     def test_a_category_checked_product_by_product(self, w):
-        # 30% would put the wine (₪40, floor ₪29.50) at ₪28.
+        # The shop sells the wine at ₪36 (its own price): 20% is ₪28.80, under its ₪29.50 floor.
+        w.db.add(ShopProductOverride(id=uuid.uuid4(), shop_id=w.shop.id, global_product_id=w.wine.id, price=Decimal("36.00")))
+        w.db.commit()
         with pytest.raises(HTTPException) as below:
-            R.post_quick_promotion(BackgroundTasks(), body=adhoc(w, offer={"kind": "percent", "value": 30}), **ctx(w, w.manager))
+            R.post_quick_promotion(BackgroundTasks(), body=adhoc(w), **ctx(w, w.manager))
         assert below.value.detail["code"] == Q.BELOW_COST
         assert [o["name"] for o in below.value.detail["offenders"]] == ["יין"]
-        out = R.post_quick_promotion(BackgroundTasks(), body=adhoc(w), **ctx(w, w.manager))
+        # Only the menu's percentages on this route.
+        with pytest.raises(HTTPException) as odd:
+            R.post_quick_promotion(BackgroundTasks(), body=adhoc(w, offer={"kind": "percent", "value": 30}), **ctx(w, w.manager))
+        assert odd.value.detail == Q.BAD_OFFER
+        out = R.post_quick_promotion(BackgroundTasks(), body=adhoc(w, offer={"kind": "percent", "value": 15}), **ctx(w, w.manager))
         assert out["categoryId"] == str(w.drinks.id) and out["productId"] is None
         promo = w.db.query(Promotion).one()
         assert promo.config["target"]["categoryIds"] == [str(w.drinks.id)] and promo.name.startswith("מבצע מזדמן · שתייה")
@@ -385,9 +439,11 @@ class TestHappyHour:
         assert refused.value.status_code == 403
 
     def test_suggestions_from_the_weak_slots(self, w):
+        from app.services.insights.data import InsightScope
+
         fake = SimpleNamespace(
             clock=SimpleNamespace(tz_name="Asia/Jerusalem", now=NOW, day_start_hour=4),
-            db=w.db, scope=SimpleNamespace(tenant_id=w.tenant.id),
+            db=w.db, scope=InsightScope(user=w.admin, tenant_id=w.tenant.id, shop_id=w.shop.id),
         )
         heatmap = {"weak": [
             {"weekday": 2, "fromHour": 15, "toHour": 16, "deviationPct": -45, "gapPerWeek": 4_000, "typicalNet": 2_000, "usual": 6_000},
@@ -403,3 +459,22 @@ class TestHappyHour:
         R.post_happy_hour(BackgroundTasks(), body=happy(w, weekdays=[2], startTime="17:00", endTime="19:00"), **ctx(w, w.manager))
         again = Q.happy_hour_suggestions(fake, heatmap)["suggestions"][0]
         assert [o["startTime"] for o in again["overlaps"]] == ["17:00"]
+
+
+class TestWeakWindows:
+    def test_slots_either_side_of_04_00_are_never_merged_and_land_on_their_calendar_day(self):
+        # Business Tuesday (2): 01:00–04:00 is Wednesday's small hours; 04:00–06:00 is the
+        # next business day's start — in the heat map's Tuesday row only by the hour number.
+        weak = [
+            {"weekday": 2, "fromHour": 1, "toHour": 4},
+            {"weekday": 2, "fromHour": 4, "toHour": 6},
+            {"weekday": 2, "fromHour": 22, "toHour": 0},
+            {"weekday": 2, "fromHour": 0, "toHour": 1},
+        ]
+        out = {(w["calendarWeekday"], w["fromHour"], w["toHour"]) for w in Q.weak_windows(weak, 4)}
+        # 04–06 stays Tuesday's; 22:00 → 04:00 (22–00, 00–01, 01–04 touch) is one window from Tuesday night.
+        assert out == {(2, 4, 6), (2, 22, 4)}
+
+    def test_a_window_after_midnight_alone_moves_to_the_next_calendar_day(self):
+        (w,) = Q.weak_windows([{"weekday": 6, "fromHour": 2, "toHour": 3}], 4)
+        assert (w["weekday"], w["calendarWeekday"], w["fromHour"], w["toHour"]) == (6, 0, 2, 3)

@@ -345,10 +345,13 @@ class TestEndpoint:
         quiet = w.tills[3]
         trading_week(w, quiet=quiet, quiet_sales=1)  # 1 sale a day vs 6: 17%
         assert str(quiet.id) in cards_of(R.get_till_anomalies(window="period", p=params(days=7), **ctx(w)), "till_low_sales")
-        with pytest.raises(HTTPException) as refused:
-            R.put_anomaly_settings(thresholds={"lowSalesPct": 10}, **ctx(w, w.manager))
-        assert refused.value.status_code == 403
-        saved = R.put_anomaly_settings(thresholds={"lowSalesPct": 10}, **ctx(w, w.company_manager))
+        # Organization-wide: the super admin's, not one company's manager's.
+        for who in (w.manager, w.company_manager):
+            with pytest.raises(HTTPException) as refused:
+                R.put_anomaly_settings(thresholds={"lowSalesPct": 10}, **ctx(w, who))
+            assert refused.value.status_code == 403
+        assert R.get_anomaly_settings(**ctx(w, w.company_manager))["canEdit"] is False
+        saved = R.put_anomaly_settings(thresholds={"lowSalesPct": 10}, **ctx(w))
         assert saved["thresholds"]["lowSalesPct"] == 10 and saved["stored"] == {"lowSalesPct": 10}
         assert cards_of(R.get_till_anomalies(window="period", p=params(days=7), **ctx(w)), "till_low_sales") == {}
         assert R.get_anomaly_settings(**ctx(w, w.manager))["canEdit"] is False
@@ -407,6 +410,25 @@ class TestEventScope:
         with pytest.raises(HTTPException) as refused:
             R.get_till_anomalies(window="period", p=params(event_id=e.id), **ctx(w, north))
         assert refused.value.status_code in (403, 404)
+
+    def test_a_distributor_sees_only_their_tills_of_an_event(self, w):
+        day = TODAY - timedelta(days=1)
+        e = event(w, w.tills, at(day, 10), at(day, 20))
+        for till in w.tills:
+            w.shift(till, None, business_date=day, opened_at=at(day, 10))
+            for k in range(25 if till is not w.tills[3] else 0):
+                sale(w, till, at(day, 10, k * 2), 40)
+        d = User(id=uuid.uuid4(), role=UserRole.DISTRIBUTOR, tenant_id=w.tenant.id, email="d2@x", username="dist2")
+        w.db.add(d)
+        w.db.flush()
+        for till in w.tills[:3]:
+            till.distributor_id = d.id  # Till 4 (the idle one) is another distributor's
+        w.db.commit()
+        everyone = R.get_till_anomalies(window="period", p=params(event_id=e.id), **ctx(w))
+        assert str(w.tills[3].id) in cards_of(everyone, "till_low_sales")
+        theirs = R.get_till_anomalies(window="period", p=params(event_id=e.id), **ctx(w, d))
+        names = {t["name"] for g in theirs["groups"] for t in g["tills"]}
+        assert names == {"Till 1", "Till 2", "Till 3"} and theirs["cards"] == []
 
     def test_an_event_that_has_not_started_reads_nothing(self, w):
         e = event(w, w.tills[:2], NOW + timedelta(days=2), NOW + timedelta(days=2, hours=5))

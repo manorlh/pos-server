@@ -45,10 +45,22 @@ def _peer_scope(db, scope: InsightScope) -> InsightScope:
 
 
 def scope_machines(db, scope: InsightScope) -> List[POSMachine]:
-    """The tills compared: the event's, else the fiscal active tills of the scope's shops (and area)."""
+    """
+    The tills compared: the event's, else the fiscal active tills of the scope's shops (and
+    area) — for a distributor, only the tills they placed (the machines list's rule), on
+    either path, so another distributor's till is never named, timed or judged.
+    """
+    from app.models.user import UserRole
+
+    distributor = scope.user is not None and scope.user.role == UserRole.DISTRIBUTOR
     if scope.machine_ids is not None:
         ids = list(scope.machine_ids)
-        return db.query(POSMachine).filter(POSMachine.id.in_(ids), POSMachine.tenant_id == scope.tenant_id).all() if ids else []
+        if not ids:
+            return []
+        query = db.query(POSMachine).filter(POSMachine.id.in_(ids), POSMachine.tenant_id == scope.tenant_id)
+        if distributor:
+            query = query.filter(POSMachine.distributor_id == scope.user.id)
+        return query.all()
     shops = scope_shops(db, scope)
     if not shops:
         return []
@@ -62,10 +74,7 @@ def scope_machines(db, scope: InsightScope) -> List[POSMachine]:
         query = query.filter(POSMachine.area_id.is_(None))
     elif scope.area_filter is not None:
         query = query.filter(POSMachine.area_id == scope.area_filter)
-    from app.models.user import UserRole
-
-    if scope.user is not None and scope.user.role == UserRole.DISTRIBUTOR:
-        # A distributor's tills are the ones they placed (the machines list's rule).
+    if distributor:
         query = query.filter(POSMachine.distributor_id == scope.user.id)
     return query.all()
 
@@ -117,8 +126,11 @@ def load_till_stats(
         listed = {m.id for m in machines}
         extra = [r[0] for r in query.with_entities(Transaction.machine_id).distinct().all() if r[0] not in listed]
         if extra:
+            from app.models.user import UserRole
+
+            mine_only = scope.user is not None and scope.user.role == UserRole.DISTRIBUTOR
             for m in db.query(POSMachine).filter(POSMachine.id.in_(extra)).all():
-                if m.is_fiscal is not False:
+                if m.is_fiscal is not False and (not mine_only or m.distributor_id == scope.user.id):
                     by_id[str(m.id)] = m
     if not by_id:
         return []

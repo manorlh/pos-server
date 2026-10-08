@@ -33,7 +33,7 @@ Till anomalies and quick actions (docs/SPEC_INSIGHTS.md §10):
 GET  /insights/anomalies                         → each till against its peers (`window`:
                                                    period | today): cards and the figures
 GET  /insights/anomaly-settings                  → the organization's thresholds
-PUT  /insights/anomaly-settings                  → … replaced (company managers and up)
+PUT  /insights/anomaly-settings                  → … replaced (super admin)
 GET  /insights/quick-actions                     → recent quick actions with their result
 GET  /insights/quick-actions/promotions/suggestion → a product's price, cost and offers
 POST /insights/quick-actions/messages            → "הודעה מהירה": a banner to the tills
@@ -316,7 +316,7 @@ def put_anomaly_settings(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """Replace the organization's anomaly thresholds (super admin, distributor, company manager)."""
+    """Replace the organization's anomaly thresholds (the super admin: they hold for every company)."""
     return S.set_anomaly_settings(db, current_user, active_tenant_id, thresholds)
 
 
@@ -384,11 +384,12 @@ def cancel_quick_message(
     db: Session = Depends(get_db),
 ):
     """Take the quick message down now; idempotent."""
-    action, machines = Q.cancel_quick_message(db, current_user, active_tenant_id, action_id)
-    targets = TM.notify_targets(machines)
+    done = Q.cancel_quick_message(db, current_user, active_tenant_id, action_id)
+    targets = TM.notify_targets(done.woken)
     db.commit()
     background_tasks.add_task(TM.publish_message_notify, targets)
-    return Q.action_out(action, Q._now())
+    # Some of an event's tills may be another's: those messages stay, and the answer says so.
+    return {**Q.action_out(done.action, Q._now()), "partial": done.skipped > 0, "skipped": done.skipped}
 
 
 def _promotions_changed(db: Session, tenant_id, background_tasks: BackgroundTasks, woken=()) -> None:
@@ -424,9 +425,9 @@ def cancel_quick_promotion(
     db: Session = Depends(get_db),
 ):
     """"בטל מבצע": the promotion is paused now (the tills drop it on their next pull)."""
-    action, woken = Q.cancel_quick_promotion(db, current_user, active_tenant_id, action_id)
-    _promotions_changed(db, active_tenant_id, background_tasks, woken)
-    return Q.action_out(action, Q._now())
+    done = Q.cancel_quick_promotion(db, current_user, active_tenant_id, action_id)
+    _promotions_changed(db, active_tenant_id, background_tasks, done.woken)
+    return Q.action_out(done.action, Q._now())
 
 
 # ── Happy hour ────────────────────────────────────────────────────────────────

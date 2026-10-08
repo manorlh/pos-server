@@ -234,6 +234,27 @@ def _send(db: Session, user: User, promotion: Promotion, *, text: str, color: st
     return ids, woken
 
 
+def _signature(db: Session, promotion: Promotion, state: Dict[str, Any]) -> str:
+    """What an announcement says and where: a change of any of it means it is sent again."""
+    import hashlib
+    import json
+
+    payload = {
+        "name": promotion.name,
+        "type": promotion.promo_type,
+        "config": promotion.config,
+        "targets": sorted(targets(db, promotion)),
+        "validFrom": promotion.valid_from,
+        "validTo": promotion.valid_to,
+        "weekdays": sorted(promotion.weekdays or []),
+        "startTime": promotion.start_time,
+        "endTime": promotion.end_time,
+        "text": state.get("text"),
+    }
+    raw = json.dumps(payload, sort_keys=True, default=str, ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
 def plan(db: Session, user: User, promotion: Promotion, *, settings: Optional[Dict[str, Any]] = None,
          now: Optional[datetime] = None, sections: Sequence[str] = PAGE_SECTIONS) -> List[POSMachine]:
     """
@@ -263,9 +284,17 @@ def plan(db: Session, user: User, promotion: Promotion, *, settings: Optional[Di
     for m in starts:
         if m.sent_at is None:
             _take_down(db, user, tenant_id, m)  # not gone out yet: it is planned again below
+    # The end message is planned afresh from the promotion as it is now — one already showing
+    # ("המבצע הסתיים") comes down too.
     for m in _messages(db, tenant_id, state.get("endMessageIds")):
-        if m.sent_at is None:
-            _take_down(db, user, tenant_id, m)
+        woken += _take_down(db, user, tenant_id, m)
+    # What a start that went out said no longer holds (its tills, dates, hours, offer or
+    # text changed): it comes down and is sent again below.
+    signature = _signature(db, promotion, state)
+    if went_out and state.get("signature") not in (None, signature):
+        for m in went_out:
+            woken += _take_down(db, user, tenant_id, m)
+        went_out = []
     state["startMessageIds"] = [str(m.id) for m in went_out]
     state["endMessageIds"] = []
     state["endAt"] = None
@@ -276,8 +305,10 @@ def plan(db: Session, user: User, promotion: Promotion, *, settings: Optional[Di
             woken += _take_down(db, user, tenant_id, m)
         state["startMessageIds"] = []
         state["startAt"] = None
+        state["signature"] = None
         promotion.announcement = state
         return woken
+    state["signature"] = signature
 
     from app.services.reports import _load_zoneinfo, resolve_report_timezone
 
