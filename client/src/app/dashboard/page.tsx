@@ -78,6 +78,7 @@ import { BoardHourly } from '@/components/dashboard/control-board/board-hourly';
 import { BoardTenders } from '@/components/dashboard/control-board/board-tenders';
 import { BoardAlerts, type BoardAlert } from '@/components/dashboard/control-board/board-alerts';
 import { BoardItems } from '@/components/dashboard/control-board/board-items';
+import { BoardInsightsBlock, BoardTabs } from '@/components/dashboard/insights-actions';
 
 const REFRESH_MS = 30_000;
 /** A past day does not change by the second; it is read again after this. */
@@ -468,6 +469,9 @@ export default function DashboardPage() {
       )}
     >
       <div className="mx-auto max-w-[1400px] space-y-4 md:space-y-5">
+        {/* insights-actions: "לוח בקרה | השוואות | תובנות" */}
+        <BoardTabs active="board" className="max-w-md" />
+
         {/* Header (wide screens; a phone has the wordmark in its top bar) */}
         <header className="hidden items-center justify-between gap-4 md:flex">
           <Wordmark className="text-xl" />
@@ -674,6 +678,17 @@ export default function DashboardPage() {
               comparing={!!dayB}
               loading={itA.isPending}
               href={`/dashboard/live-items${scopeQuery}`}
+            />
+
+            {/* insights-actions: today's till anomalies + slow items, with one-tap actions */}
+            <BoardInsightsBlock
+              scope={{
+                companyId: effective.companyId ?? undefined,
+                shopId: effective.shopId ?? undefined,
+                areaId: effective.machineId ? undefined : (areaId ?? undefined),
+                machineId: effective.machineId ?? undefined,
+              }}
+              onOpenTill={setSelectedId}
             />
           </div>
 
