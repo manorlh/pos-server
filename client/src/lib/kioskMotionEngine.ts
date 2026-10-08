@@ -409,11 +409,20 @@ export const MOTION_LEGACY_DURATIONS: Partial<Record<MotionEventKey, Partial<Rec
 /** The staggered entry's gap by the cards' kind, as a share of the event's staggerMs. */
 export const MOTION_STAGGER_FACTORS: Partial<Record<MotionType, number>> = { staggeredEntry: 1, fadeScale: 0.5, slideIn: 0.75, flip: 0.875, fadeIn: 0.5 };
 
-/** The light profile: the screens and windows fade, no cascade, the moving extras give way. */
+/**
+ * The light profile: the screens and windows fade, no cascade, the moving extras give way — but a
+ * change of screen stays clearly seen (the owner on a light-profile kiosk, 08.10.2026: "המעבר ממסך
+ * ראשי לתפריט בקיוסק לא מונפש"): a sliding kind stays a short slide (screenShiftPx, fading in as it
+ * comes), none shorter than screenMinMs unless its time is set — in every preset, "legacy" too.
+ */
 export const MOTION_LIGHT = {
   fadeEvents: ['categorySwitch', 'pageTransition', 'modalOpen', 'cartOpen', 'upsell', 'homeReturn'] as readonly MotionEventKey[],
   noneEvents: ['itemsEnter'] as readonly MotionEventKey[],
   replace: { confetti: 'drawCheck', parallaxLight: 'floating', skeletonShimmer: 'none' } as Partial<Record<MotionType, MotionType>>,
+  screenEvents: ['pageTransition', 'cartOpen', 'homeReturn'] as readonly MotionEventKey[],
+  slideKinds: ['slideIn', 'swipeTransition'] as readonly MotionType[],
+  screenShiftPx: 40,
+  screenMinMs: 400,
 };
 /** Reduced motion's fade for the events that take something away. */
 export const MOTION_LEAVING_EVENTS: readonly MotionEventKey[] = ['remove', 'soldOut'];
@@ -547,9 +556,14 @@ export function resolveMotionEvent(
     : MOTION_STANDARD[event].animationType;
   if (!p.enabled) kind = 'none';
   const k = globalMultiplier(m, profile);
+  let distance = Math.trunc(p.distancePx);
+  const lightScreen = profile === 'light' && !reduce && kind !== 'none' && MOTION_LIGHT.screenEvents.includes(event);
   if (profile === 'light' && !reduce && kind !== 'none') {
     if (MOTION_LIGHT.noneEvents.includes(event)) kind = 'none';
-    else if (MOTION_LIGHT.fadeEvents.includes(event)) kind = 'fadeIn';
+    else if (lightScreen && MOTION_LIGHT.slideKinds.includes(kind)) {
+      kind = 'slideIn';
+      if (!(distance > 0 && distance <= MOTION_LIGHT.screenShiftPx)) distance = MOTION_LIGHT.screenShiftPx;
+    } else if (MOTION_LIGHT.fadeEvents.includes(event)) kind = 'fadeIn';
     else {
       kind = MOTION_LIGHT.replace[kind] ?? kind;
       if (!(MOTION_EVENT_TYPES[event] as readonly string[]).includes(kind)) kind = 'none';
@@ -557,7 +571,8 @@ export function resolveMotionEvent(
   }
   let baseMs = base.durationMs;
   if (preset === 'legacy') baseMs = MOTION_LEGACY_DURATIONS[event]?.[kind] ?? baseMs;
-  const duration = resolveDuration(k, baseMs, explicit.durationMs);
+  let duration = resolveDuration(k, baseMs, explicit.durationMs);
+  if (lightScreen && explicit.durationMs === undefined) duration = Math.max(duration, MOTION_LIGHT.screenMinMs);
   let staggerBase = base.staggerMs;
   if (event === 'itemsEnter') staggerBase = roundHalfUp(staggerBase * (MOTION_STAGGER_FACTORS[kind] ?? 1));
   const stagger = resolveDuration(k, staggerBase, explicit.staggerMs);
@@ -571,7 +586,7 @@ export function resolveMotionEvent(
     intensity: Math.trunc(p.intensity),
     scaleFrom: p.scaleFrom,
     scaleTo: p.scaleTo,
-    distancePx: Math.trunc(p.distancePx),
+    distancePx: distance,
     easing: p.easing,
     repeat: Math.trunc(p.repeat),
     repeatDelayMs: resolveDuration(k, base.repeatDelayMs, explicit.repeatDelayMs),

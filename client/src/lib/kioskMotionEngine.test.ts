@@ -140,9 +140,12 @@ describe('the presets (spec §8)', () => {
 });
 
 describe('migration: the older choices map onto the engine', () => {
-  it('"legacy" plays the old transition table exactly (kiosk_motion_timings.json)', () => {
+  it('"legacy" plays the old transition table exactly (kiosk_motion_timings.json), a screen on a weak device now seen', () => {
     for (const ex of oldGold.examples as Array<{ motion: Record<string, string>; light?: boolean; transitions: Record<string, number> }>) {
       const r = resolveMotionEngine({ ...ex.motion, preset: 'legacy' }, { profile: ex.light ? 'light' : 'full' });
+      // The one change on purpose (the owner on the HIT kiosk, 08.10.2026): the light profile's screen change is seen.
+      const expect = { ...ex.transitions };
+      if (ex.light && expect.screenMs > 0) expect.screenMs = Math.max(expect.screenMs, MOTION_LIGHT.screenMinMs);
       const it2 = r.itemsEnter;
       const delay = (i: number) => (it2.animationType === 'none' || it2.staggerMs <= 0 || i <= 0 ? 0 : Math.min(Math.min(i, 11) * it2.staggerMs, it2.staggerCapMs));
       assert.deepEqual(
@@ -155,7 +158,7 @@ describe('migration: the older choices map onto the engine', () => {
           sheetMs: r.modalOpen.durationMs,
           gridEnterMs: it2.animationType === 'none' ? 0 : delay(11) + it2.durationMs,
         },
-        ex.transitions,
+        expect,
         JSON.stringify(ex.motion),
       );
     }
@@ -205,13 +208,34 @@ describe('reduced motion and the light profile (spec §14, §15)', () => {
     assert.equal(r.idle.animationType, 'none');
   });
 
-  it('the light profile: the screens fade, no cascade, the celebration plain, no slower than fast', () => {
+  it('the light profile: the category and windows fade, no cascade, the celebration plain, no slower than fast', () => {
     const r = resolveMotionEngine({ preset: 'slow', events: { success: { animationType: 'confetti' } } }, { profile: 'light' });
-    assert.equal(r.pageTransition.animationType, 'fadeIn');
+    assert.equal(r.categorySwitch.animationType, 'fadeIn');
+    assert.equal(r.modalOpen.animationType, 'fadeIn');
     assert.equal(r.itemsEnter.animationType, 'none');
     assert.equal(r.success.animationType, 'drawCheck');
     assert.equal(r.loading.animationType, 'none');
     assert.equal(r.pageTransition.durationMs, 600); // Slow's 800 at the fast pace
+  });
+
+  it('the light profile keeps a change of screen seen: attract → service → menu, the cart, home (the owner, 08.10.2026)', () => {
+    for (const preset of ['standard', 'slow', 'fast', 'custom', 'legacy'] as const) {
+      for (const screenChange of ['slide', 'fade', 'zoom']) {
+        const r = resolveMotionEngine({ preset, screenChange, speed: 'fast' }, { profile: 'light' });
+        for (const e of MOTION_LIGHT.screenEvents) {
+          const s = r[e];
+          assert.ok(s.animationType === 'slideIn' || s.animationType === 'fadeIn', `${preset} ${screenChange} ${e} ${s.animationType}`);
+          assert.ok(s.durationMs >= MOTION_LIGHT.screenMinMs, `${preset} ${screenChange} ${e} ${s.durationMs}`);
+          if (s.animationType === 'slideIn') assert.ok(s.distancePx > 0 && s.distancePx <= MOTION_LIGHT.screenShiftPx, `${preset} ${e}`);
+        }
+      }
+    }
+    const std = resolveMotionEngine({ preset: 'standard' }, { profile: 'light' }).pageTransition;
+    assert.deepEqual([std.animationType, std.durationMs, std.distancePx], ['slideIn', 488, 40]);
+    // A time set on purpose is kept; "none" stays none; the full profile is untouched.
+    assert.equal(resolveMotionEngine({ events: { pageTransition: { durationMs: 250 } } }, { profile: 'light' }).pageTransition.durationMs, 250);
+    assert.equal(resolveMotionEngine({ preset: 'legacy', screenChange: 'none' }, { profile: 'light' }).pageTransition.durationMs, 0);
+    assert.equal(resolveMotionEngine({ preset: 'legacy', screenChange: 'slide' }).pageTransition.durationMs, 220);
   });
 });
 

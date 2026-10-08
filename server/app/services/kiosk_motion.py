@@ -27,8 +27,9 @@ tests/fixtures/kiosk_motion_engine.json, byte-identical in pos-android):
      set explicitly (resolve_duration: an override ignores the multiplier); dwell times (holdMs,
      autoAdvanceDelayMs) are never scaled;
   5. the light render profile (a weak device, `motion.effects`) — the cheaper kind of each event at
-     no slower than the fast pace; then reduced motion (`general.reduceMotion`) — each event's
-     `reducedMotionFallback` (fade / highlight / colour / none), never a big movement.
+     no slower than the fast pace, a change of screen still clearly seen (LIGHT_SCREEN_EVENTS); then
+     reduced motion (`general.reduceMotion`) — each event's `reducedMotionFallback` (fade /
+     highlight / colour / none), never a big movement.
 
 Pure: no database, no imports from kiosk_config (which builds its schema from these tables).
 """
@@ -341,6 +342,15 @@ STAGGER_FACTORS: Dict[str, float] = {"staggeredEntry": 1.0, "fadeScale": 0.5, "s
 LIGHT_FADE_EVENTS: Tuple[str, ...] = ("categorySwitch", "pageTransition", "modalOpen", "cartOpen", "upsell", "homeReturn")
 LIGHT_NONE_EVENTS: Tuple[str, ...] = ("itemsEnter",)
 LIGHT_REPLACE: Dict[str, str] = {"confetti": "drawCheck", "parallaxLight": "floating", "skeletonShimmer": "none"}
+#: ... but a change of screen stays clearly seen (the owner, 08.10.2026, on a light-profile kiosk:
+#: "המעבר ממסך ראשי לתפריט בקיוסק לא מונפש" — the light fade of 135 ms went unseen): a sliding kind
+#: stays a slide, short (LIGHT_SCREEN_SHIFT_PX, the new screen fading in as it comes — a layer's
+#: translation and alpha only), and none is shorter than LIGHT_SCREEN_MIN_MS unless its time is set.
+#: In every preset, "legacy" too.
+LIGHT_SCREEN_EVENTS: Tuple[str, ...] = ("pageTransition", "cartOpen", "homeReturn")
+LIGHT_SLIDE_KINDS: Tuple[str, ...] = ("slideIn", "swipeTransition")
+LIGHT_SCREEN_SHIFT_PX = 40
+LIGHT_SCREEN_MIN_MS = 400
 
 #: Reduced motion's fade for the events that take something away.
 LEAVING_EVENTS: Tuple[str, ...] = ("remove", "soldOut")
@@ -442,9 +452,14 @@ def resolve_event(
     if not p["enabled"]:
         kind = "none"
     k = global_multiplier(m, profile)
+    distance = int(p["distancePx"])
+    light_screen = profile == "light" and not reduce_motion and kind != "none" and event in LIGHT_SCREEN_EVENTS
     if profile == "light" and not reduce_motion and kind != "none":
         if event in LIGHT_NONE_EVENTS:
             kind = "none"
+        elif light_screen and kind in LIGHT_SLIDE_KINDS:
+            kind = "slideIn"
+            distance = distance if 0 < distance <= LIGHT_SCREEN_SHIFT_PX else LIGHT_SCREEN_SHIFT_PX
         elif event in LIGHT_FADE_EVENTS:
             kind = "fadeIn"
         else:
@@ -455,6 +470,8 @@ def resolve_event(
     if preset == "legacy" and event in LEGACY_DURATIONS:
         base_ms = LEGACY_DURATIONS[event].get(kind, base_ms)
     duration = resolve_duration(k, base_ms, explicit.get("durationMs"))
+    if light_screen and "durationMs" not in explicit:
+        duration = max(duration, LIGHT_SCREEN_MIN_MS)
     stagger_base = base["staggerMs"]
     if event == "itemsEnter":
         stagger_base = round_half_up(stagger_base * STAGGER_FACTORS.get(kind, 1.0))
@@ -469,7 +486,7 @@ def resolve_event(
         "intensity": int(p["intensity"]),
         "scaleFrom": float(p["scaleFrom"]),
         "scaleTo": float(p["scaleTo"]),
-        "distancePx": int(p["distancePx"]),
+        "distancePx": distance,
         "easing": p["easing"],
         "repeat": int(p["repeat"]),
         "repeatDelayMs": resolve_duration(k, base["repeatDelayMs"], explicit.get("repeatDelayMs")),

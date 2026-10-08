@@ -52,6 +52,8 @@ def test_the_golden_is_the_engines_own_tables():
     assert GOLD["legacyDurations"] == M.LEGACY_DURATIONS and GOLD["staggerFactors"] == M.STAGGER_FACTORS
     assert GOLD["light"] == {
         "fadeEvents": list(M.LIGHT_FADE_EVENTS), "noneEvents": list(M.LIGHT_NONE_EVENTS), "replace": M.LIGHT_REPLACE,
+        "screenEvents": list(M.LIGHT_SCREEN_EVENTS), "slideKinds": list(M.LIGHT_SLIDE_KINDS),
+        "screenShiftPx": M.LIGHT_SCREEN_SHIFT_PX, "screenMinMs": M.LIGHT_SCREEN_MIN_MS,
     }
     assert (GOLD["lightMaxMultiplier"], GOLD["reducedFactor"], GOLD["removeMinHoldMs"]) == (0.75, 0.5, 3000)
     for case in GOLD["cases"]:
@@ -128,8 +130,15 @@ def test_every_presets_values_are_valid_event_values():
 
 
 def test_legacy_plays_exactly_the_old_transition_table():
-    """kiosk_motion_timings.json (before the engine): "legacy" gives every transition its old time."""
+    """
+    kiosk_motion_timings.json (before the engine): "legacy" gives every transition its old time — but
+    for one change on purpose: on a weak device (the light profile) a change of screen is now seen
+    (LIGHT_SCREEN_MIN_MS; the owner on the HIT kiosk, 08.10.2026).
+    """
     for ex in OLD_GOLD["examples"]:
+        expect = dict(ex["transitions"])
+        if ex.get("light") and expect["screenMs"] > 0:
+            expect["screenMs"] = max(expect["screenMs"], M.LIGHT_SCREEN_MIN_MS)
         motion = dict(ex["motion"], preset="legacy")
         r = M.resolve_all(motion, profile="light" if ex.get("light") else "full")
         it = r["itemsEnter"]
@@ -147,7 +156,7 @@ def test_legacy_plays_exactly_the_old_transition_table():
             "screenMs": r["pageTransition"]["durationMs"],
             "sheetMs": r["modalOpen"]["durationMs"],
             "gridEnterMs": 0 if it["animationType"] == "none" else delay(11) + it["durationMs"],
-        } == ex["transitions"], ex["motion"]
+        } == expect, ex["motion"]
     # The lively pop-and-fly, ~560 ms at normal speed, the total counting in 360.
     legacy = M.resolve_all({"preset": "legacy", "addToCart": "fly", "speed": "normal"})
     assert legacy["addToCart"]["durationMs"] == 560 and legacy["priceChange"]["durationMs"] == 360
@@ -156,6 +165,40 @@ def test_legacy_plays_exactly_the_old_transition_table():
     assert reduced["pageTransition"]["animationType"] == reduced["categorySwitch"]["animationType"] == "none"
     assert reduced["modalOpen"]["animationType"] == "none"
     assert (reduced["addToCart"]["animationType"], reduced["addToCart"]["durationMs"]) == ("fadeIn", 280)
+
+
+def test_the_light_profile_keeps_a_change_of_screen_seen():
+    """
+    The owner on the HIT kiosk (light profile), 08.10.2026: "המעבר ממסך ראשי לתפריט בקיוסק לא מונפש".
+    Attract → service → menu is pageTransition, the cart cartOpen, back home homeReturn: on a weak
+    device each is still played — a short slide (a layer's translation and alpha) or a fade — and
+    never shorter than LIGHT_SCREEN_MIN_MS, in every preset and every older screen choice.
+    """
+    for preset in M.PRESETS:
+        for screen in ("slide", "fade", "zoom"):
+            r = M.resolve_all({"preset": preset, "screenChange": screen, "speed": "fast"}, profile="light")
+            for e in M.LIGHT_SCREEN_EVENTS:
+                s = r[e]
+                assert s["animationType"] in ("slideIn", "fadeIn"), (preset, screen, e, s["animationType"])
+                assert s["durationMs"] >= M.LIGHT_SCREEN_MIN_MS, (preset, screen, e, s["durationMs"])
+                if s["animationType"] == "slideIn":
+                    assert 0 < s["distancePx"] <= M.LIGHT_SCREEN_SHIFT_PX, (preset, screen, e)
+            # The rest of the light profile is as before: the category and the windows fade, fast.
+            assert r["categorySwitch"]["animationType"] == r["modalOpen"]["animationType"] == "fadeIn"
+            assert r["itemsEnter"]["animationType"] == "none"
+    std = M.resolve_all({"preset": "standard"}, profile="light")
+    assert (std["pageTransition"]["animationType"], std["pageTransition"]["durationMs"], std["pageTransition"]["distancePx"]) == ("slideIn", 488, 40)
+    legacy = M.resolve_all({"preset": "legacy", "screenChange": "slide"}, profile="light")
+    assert (legacy["pageTransition"]["animationType"], legacy["pageTransition"]["durationMs"]) == ("slideIn", 400)
+    # A time set on purpose is kept; so is "none" (no screen change at all); reduced motion keeps its fade.
+    own = M.resolve_all({"events": {"pageTransition": {"durationMs": 250}}}, profile="light")
+    assert own["pageTransition"]["durationMs"] == 250
+    off = M.resolve_all({"preset": "legacy", "screenChange": "none"}, profile="light")
+    assert off["pageTransition"]["animationType"] == "none" and off["pageTransition"]["durationMs"] == 0
+    reduced = M.resolve_all({"preset": "standard"}, reduce_motion=True, profile="light")
+    assert (reduced["pageTransition"]["animationType"], reduced["pageTransition"]["distancePx"]) == ("fadeIn", 0)
+    # The full profile is untouched.
+    assert M.resolve_all({"preset": "legacy", "screenChange": "slide"})["pageTransition"]["durationMs"] == 220
 
 
 def test_older_choices_give_their_events_kinds_and_speed():
