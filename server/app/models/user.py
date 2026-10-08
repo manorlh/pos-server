@@ -1,8 +1,8 @@
 import uuid
 import enum
 
-from sqlalchemy import Column, String, Boolean, ForeignKey, Enum as SQLEnum, DateTime, Integer
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import JSON, Column, String, Boolean, ForeignKey, Enum as SQLEnum, DateTime, Integer
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -55,6 +55,10 @@ class User(Base):
     def has_till_pin(self) -> bool:
         """Whether this person can authorise anything at a till. Never the hash."""
         return bool(self.till_pin_hash)
+
+    #: What this person chose for themselves in their profile (`{"homePage": "board"}`),
+    #: read and written only through app/services/user_preferences.py. Null = the defaults.
+    preferences = Column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

@@ -353,10 +353,12 @@ GET /report-events/{event_id}/report -> reports:view
 GET /reports/card-brands -> reports:view
 GET /reports/cash-variance -> reports:view
 GET /reports/cashiers -> reports:view
+GET /reports/compare -> reports:view
 GET /reports/day-summary -> reports:view
 GET /reports/departments -> reports:view
 GET /reports/discounts -> reports|promotions:view
 GET /reports/document-sequence -> reports:view
+GET /reports/event-options -> reports:view
 GET /reports/hourly -> reports:view
 GET /reports/live-items -> reports:view
 GET /reports/meal-sales -> reports|products:view
@@ -368,6 +370,7 @@ GET /reports/payment-methods -> reports:view
 GET /reports/products -> reports:view
 GET /reports/promotions -> reports|promotions:view
 GET /reports/sales-by-area -> reports:view
+GET /reports/side-by-side -> reports:view
 GET /reports/tax/openformat -> reports:view
 GET /reports/tax/openformat/preview -> reports:view
 GET /reports/tips -> reports:view
@@ -604,6 +607,8 @@ POST /transmit-requests/{request_id}/cancel -> z:edit
 GET /users -> users:view
 POST /users -> users:edit
 GET /users/me -> self
+GET /users/me/preferences -> self
+PUT /users/me/preferences -> self
 DELETE /users/me/till-pin -> self
 PUT /users/me/till-pin -> self
 DELETE /users/{user_id} -> users:edit
