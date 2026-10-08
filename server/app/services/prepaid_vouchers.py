@@ -744,6 +744,10 @@ def _issue(
 ) -> List[PrepaidVoucher]:
     discount = is_discount(batch)
     remaining = {} if discount else {str(i.product_id): qty_out(i.quantity) for i in batch.items}
+    if not discount and (getattr(batch, "selection", None) or "items") == "groups":
+        from app.services import production_voucher_groups as PG
+
+        remaining = PG.initial_remaining(batch.groups or [], batch.total_qty)
     uses = int(batch.uses_per_voucher or 1) if discount else None
     codes = _unique_codes(db, count)
     start = int(batch.next_serial or 1)
@@ -899,6 +903,10 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
         max_vouchers_per_sale=(
             terms.get("max_vouchers_per_sale") if (terms.get("stacking") or "unlimited") != "single" else None
         ),
+        # Groups (§1): a package / "one of several"; the catalog is expanded below when frozen.
+        selection="groups" if not discount and (terms.get("selection") or "items") == "groups" else "items",
+        total_qty=terms.get("total_qty") if not discount else None,
+        catalog_mode=terms.get("catalog_mode") or "frozen",
         promotion_policy=terms.get("promotion_policy") or "exclude",
         uses_per_voucher=int(terms.get("uses_per_voucher") or 1) if discount else 1,
         max_uses_per_sale=int(terms.get("max_uses_per_sale") or 1) if discount else 1,
@@ -934,6 +942,13 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
         )
         for n, (item, p) in enumerate(zip(items_in, products))
     ]
+    if batch.selection == "groups":
+        from app.services import production_voucher_groups as PG
+
+        stored = terms.get("groups") or []
+        PG.validate(db, tenant_id, company.id, stored)
+        # `frozen`: the catalog as it is now — a product added to a category later does not join.
+        batch.groups = PG.freeze(db, tenant_id, company.id, stored) if batch.catalog_mode == "frozen" else stored
     db.add(batch)
     db.flush()
     issued = _issue(db, batch, body.count, batch.group_size)
@@ -1346,6 +1361,12 @@ def _shekels_out(agorot_value: Optional[int]) -> Optional[float]:
     return None if agorot_value is None else round(int(agorot_value) / 100, 2)
 
 
+def _groups_out(groups):
+    from app.services import production_voucher_groups as PG
+
+    return PG.out_shekels(groups)
+
+
 def _max_per_sale(batch) -> Optional[int]:
     """"מספר שוברים מקסימלי בעסקה" — none with "שובר אחד בעסקה"; None: no maximum."""
     n = getattr(batch, "max_vouchers_per_sale", None)
@@ -1376,6 +1397,11 @@ def terms_out(batch: PrepaidVoucherBatch) -> Dict[str, Any]:
         ),
         "stacking": batch.stacking or "single",
         "maxVouchersPerSale": _max_per_sale(batch),
+        # Groups (§1): the value of each in ₪; the frozen expansion stays on the server.
+        "selection": getattr(batch, "selection", None) or "items",
+        "groups": _groups_out(getattr(batch, "groups", None)),
+        "totalQty": getattr(batch, "total_qty", None),
+        "catalogMode": getattr(batch, "catalog_mode", None) or "frozen",
         "promotionPolicy": batch.promotion_policy or "exclude",
         "usesPerVoucher": int(batch.uses_per_voucher or 1),
         "maxUsesPerSale": int(batch.max_uses_per_sale or 1),
@@ -1758,6 +1784,14 @@ def _benefit_rules(db: Session, batch: PrepaidVoucherBatch) -> RULES.Benefit:
     return RULES.Benefit(**{**base.__dict__, "category_ids": frozenset(cats)})
 
 
+def _groups_view(db: Session, machine: POSMachine, batch: PrepaidVoucherBatch, voucher: PrepaidVoucher) -> Dict[str, Any]:
+    if is_discount(batch):
+        return {"selection": "items"}
+    from app.services import production_voucher_groups as PG
+
+    return PG.till_view(db, machine, batch, voucher)
+
+
 def required_features(db: Session, batch: PrepaidVoucherBatch) -> List[str]:
     """
     What a client must say it can do (`features`) to redeem [batch]'s goods as its terms say.
@@ -1783,6 +1817,9 @@ def required_features(db: Session, batch: PrepaidVoucherBatch) -> List[str]:
             need.append("accounting")
     if (getattr(batch, "discount_block_policy", None) or "honour") != "honour":
         need.append("override")
+    if (getattr(batch, "selection", None) or "items") == "groups":
+        # A package / "one of several" is chosen unit by unit and held (§3).
+        need += [f for f in ("groups", "reserve_goods") if f not in need]
     return need
 
 
@@ -1887,6 +1924,8 @@ def till_view(
         "discountBlockPolicy": _policy_out(batch, agorot=True),
         "offline": {"allowed": bool(getattr(batch, "offline_allowed", False)), "assignedMachineId": None,
                     "assignedKind": None},
+        # Groups (§2): each with what is left and its products (the till's ids too); "items" else.
+        **_groups_view(db, machine, batch, voucher),
         "message": message,
         "benefit": benefit_for_till(db, machine, batch),
         "usesLeft": voucher.uses_left,
@@ -1988,6 +2027,9 @@ def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
         # A discount is never taken as goods (nor as a tender): reserve → confirm.
         raise _http(status.HTTP_409_CONFLICT, KIND_UNSUPPORTED)
     if missing_features(db, batch, getattr(body, "features", None)):
+        raise _http(status.HTTP_409_CONFLICT, UPDATE_REQUIRED)
+    if (getattr(batch, "selection", None) or "items") == "groups":
+        # Groups are redeemed through reserve → confirm (§3), never the immediate redeem.
         raise _http(status.HTTP_409_CONFLICT, UPDATE_REQUIRED)
     sale_ref = (getattr(body, "sale_ref", None) or "").strip() or None
     if sale_ref:

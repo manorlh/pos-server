@@ -57,6 +57,8 @@ TERM_FIELDS = (
     "split_allowed", "include_extras", "print_till_value", "discount_type", "discount_value",
     "min_purchase", "max_discount", "max_units", "targets", "stacking", "max_vouchers_per_sale", "promotion_policy",
     "uses_per_voucher", "max_uses_per_sale", "max_uses_per_day", "offline_allowed",
+    # Groups (the production vouchers contract §1).
+    "selection", "groups", "total_qty", "catalog_mode",
 )
 #: The discount-block policy's columns (from the schema's nested `discount_block_policy`).
 POLICY_FIELDS = (
@@ -222,6 +224,10 @@ def stored_terms(body, *, fields: Iterable[str] = TERM_FIELDS) -> Dict[str, Any]
         v = getattr(body, f)
         if f in _MONEY or f == "discount_value":
             v = _agorot(v)  # ₪ → agorot; a percent → basis points (× 100 both)
+        if f == "groups":
+            from app.services import production_voucher_groups as PG
+
+            v = PG.stored(v)
         out[f] = v
     return out
 
@@ -293,6 +299,9 @@ def create_type(db: Session, user: User, tenant_id, body, *, origin: str = "manu
         _require_prices(db, user)
     terms = stored_terms(body)
     kind = terms.get("kind") or "items"
+    from app.services import production_voucher_groups as PG
+
+    PG.validate(db, tenant_id, company.id, terms.get("groups"))
     products = PV._validate_products(db, tenant_id, company.id, body.items or [])
     targets = (
         PV._validate_targets(db, tenant_id, company.id, body.targets)
@@ -365,12 +374,17 @@ def update_type(db: Session, user: User, tenant_id, type_id, body) -> PrepaidVou
         PV._validate_targets(db, tenant_id, t.company_id, merged.targets)
         if t.kind == "item_discount" and merged.targets is not None else None
     )
+    from app.services import production_voucher_groups as PG
+
     for f in TERM_FIELDS:
         if f in ("kind", "targets"):
             continue
         v = getattr(merged, f)
         if f in _MONEY or f == "discount_value":
             v = _agorot(v)
+        if f == "groups":
+            v = PG.stored(v)
+            PG.validate(db, tenant_id, t.company_id, v)
         setattr(t, f, v)
     t.targets = targets
     if "discount_block_policy" in given:

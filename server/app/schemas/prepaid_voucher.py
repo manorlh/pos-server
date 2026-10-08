@@ -33,6 +33,10 @@ MAX_USES = 1000
 #: "מספר שוברים מקסימלי בעסקה" — the most a sale may hold.
 MAX_VOUCHERS_PER_SALE = 50
 MAX_TARGETS = 200
+#: Groups per voucher type ("מנה", "שתייה", "קינוח" …).
+MAX_GROUPS = 20
+SELECTIONS = ("items", "groups")
+CATALOG_MODES = ("frozen", "live")
 
 
 def _choice(value, allowed, field_name):
@@ -62,6 +66,42 @@ def _shekels(value, field_name):
 def agorot(amount: Optional[Decimal]) -> Optional[int]:
     """₪ → whole agorot (the till's and the rules' unit)."""
     return None if amount is None else int((amount * 100).to_integral_value(rounding=ROUND_HALF_UP))
+
+
+class PrepaidGroupIn(BaseModel):
+    """One group of a voucher type (the production vouchers contract §1). Money in ₪."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    key: Optional[str] = Field(None, max_length=40)
+    name: str = Field(..., min_length=1, max_length=80)
+    min_qty: int = Field(0, alias="minQty", ge=0, le=MAX_ITEM_QUANTITY)
+    max_qty: int = Field(1, alias="maxQty", ge=1, le=MAX_ITEM_QUANTITY)
+    #: ₪ per unit of the group (a fixed voucher's split); null: by the list prices.
+    value: Optional[Decimal] = None
+    allow_repeat: bool = Field(True, alias="allowRepeat")
+    all_items: bool = Field(False, alias="allItems")
+    product_ids: List[uuid.UUID] = Field(default_factory=list, alias="productIds", max_length=500)
+    category_ids: List[uuid.UUID] = Field(default_factory=list, alias="categoryIds", max_length=200)
+    include_subcategories: bool = Field(True, alias="includeSubcategories")
+    exclude_product_ids: List[uuid.UUID] = Field(default_factory=list, alias="excludeProductIds", max_length=500)
+    exclude_category_ids: List[uuid.UUID] = Field(default_factory=list, alias="excludeCategoryIds", max_length=200)
+    sort_order: int = Field(0, alias="sortOrder")
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def _check(self):
+        if self.min_qty > self.max_qty:
+            raise ValueError(f"group {self.name}: minQty above maxQty")
+        if not (self.all_items or self.product_ids or self.category_ids):
+            raise ValueError(f"group {self.name}: choose products, categories or every item")
+        if self.value is not None and self.value < 0:
+            raise ValueError(f"group {self.name}: a negative value")
+        return self
 
 
 class PrepaidVoucherTargetsIn(BaseModel):
@@ -141,6 +181,33 @@ def _check_terms(m) -> None:
     """
     if getattr(m, "stacking", None) == "single":
         m.max_vouchers_per_sale = None  # "שובר אחד בעסקה" is its own maximum
+    selection = getattr(m, "selection", None) or "items"
+    if selection not in SELECTIONS:
+        raise ValueError("selection must be items or groups")
+    if (getattr(m, "catalog_mode", None) or "frozen") not in CATALOG_MODES:
+        raise ValueError("catalogMode must be frozen or live")
+    if m.kind not in DISCOUNT_KINDS and selection == "groups":
+        # A package or "one of several": the groups say what it gives (§1), no fixed list.
+        groups = list(getattr(m, "groups", None) or [])
+        if not groups:
+            raise ValueError("at least one group")
+        def _g(g, name, alias):
+            return g.get(alias) if isinstance(g, dict) else getattr(g, name)
+        least = sum(int(_g(g, "min_qty", "minQty") or 0) for g in groups)
+        most = sum(int(_g(g, "max_qty", "maxQty") or 0) for g in groups)
+        total = getattr(m, "total_qty", None)
+        if total is not None and not (least <= total <= most):
+            raise ValueError(f"totalQty must be between {least} and {most}")
+        m.items = []
+        m.discount_type = m.discount_value = m.min_purchase = m.max_discount = None
+        m.targets = None
+        m.max_units = None
+        return
+    if hasattr(m, "groups"):
+        m.groups = None
+        m.total_qty = None
+        if hasattr(m, "selection"):
+            m.selection = "items"
     if m.kind not in DISCOUNT_KINDS:
         if not m.items:
             raise ValueError("at least one item")
@@ -297,6 +364,13 @@ class PrepaidVoucherTypeCreate(BaseModel):
     stacking: str = "unlimited"
     #: "מספר שוברים מקסימלי בעסקה" — with unlimited / distinct_batches; null: no maximum.
     max_vouchers_per_sale: Optional[int] = Field(None, alias="maxVouchersPerSale", ge=1, le=MAX_VOUCHERS_PER_SALE)
+    #: "items" (a fixed list) or "groups" (the production vouchers contract §1): a package, one of several.
+    selection: str = "items"
+    groups: Optional[List["PrepaidGroupIn"]] = Field(None, max_length=MAX_GROUPS)
+    #: Units per voucher across the groups; null: Σ the groups' max.
+    total_qty: Optional[int] = Field(None, alias="totalQty", ge=1, le=MAX_ITEM_QUANTITY * MAX_GROUPS)
+    #: "frozen" (the catalog as it is at issue, the default) or "live" (the categories at redemption).
+    catalog_mode: str = Field("frozen", alias="catalogMode")
     promotion_policy: str = Field("exclude", alias="promotionPolicy")
     uses_per_voucher: int = Field(1, alias="usesPerVoucher", ge=1, le=MAX_USES)
     max_uses_per_sale: int = Field(1, alias="maxUsesPerSale", ge=1, le=MAX_USES)
@@ -395,6 +469,10 @@ class PrepaidVoucherTypeUpdate(BaseModel):
     stacking: Optional[str] = None
     #: Null clears the maximum.
     max_vouchers_per_sale: Optional[int] = Field(None, alias="maxVouchersPerSale", ge=1, le=MAX_VOUCHERS_PER_SALE)
+    selection: Optional[str] = None
+    groups: Optional[List["PrepaidGroupIn"]] = Field(None, max_length=MAX_GROUPS)
+    total_qty: Optional[int] = Field(None, alias="totalQty", ge=1, le=MAX_ITEM_QUANTITY * MAX_GROUPS)
+    catalog_mode: Optional[str] = Field(None, alias="catalogMode")
     promotion_policy: Optional[str] = Field(None, alias="promotionPolicy")
     uses_per_voucher: Optional[int] = Field(None, alias="usesPerVoucher", ge=1, le=MAX_USES)
     max_uses_per_sale: Optional[int] = Field(None, alias="maxUsesPerSale", ge=1, le=MAX_USES)
@@ -497,6 +575,13 @@ class PrepaidVoucherBatchCreate(BaseModel):
     stacking: str = "unlimited"
     #: "מספר שוברים מקסימלי בעסקה" — with unlimited / distinct_batches; null: no maximum.
     max_vouchers_per_sale: Optional[int] = Field(None, alias="maxVouchersPerSale", ge=1, le=MAX_VOUCHERS_PER_SALE)
+    #: "items" (a fixed list) or "groups" (the production vouchers contract §1): a package, one of several.
+    selection: str = "items"
+    groups: Optional[List["PrepaidGroupIn"]] = Field(None, max_length=MAX_GROUPS)
+    #: Units per voucher across the groups; null: Σ the groups' max.
+    total_qty: Optional[int] = Field(None, alias="totalQty", ge=1, le=MAX_ITEM_QUANTITY * MAX_GROUPS)
+    #: "frozen" (the catalog as it is at issue, the default) or "live" (the categories at redemption).
+    catalog_mode: str = Field("frozen", alias="catalogMode")
     #: Discount kinds: "exclude" (default), "best", "combine".
     promotion_policy: str = Field("exclude", alias="promotionPolicy")
     #: Discount kinds: uses per voucher, per sale, and (optional) per day.
@@ -912,3 +997,8 @@ class PrepaidVoucherConfirmIn(BaseModel):
     transaction_id: str = Field(..., alias="transactionId", min_length=1, max_length=100)
     amount_agorot: int = Field(..., alias="amountAgorot", ge=0)
     uses: Optional[int] = Field(None, ge=1, le=MAX_USES)
+
+
+PrepaidVoucherTypeCreate.model_rebuild()
+PrepaidVoucherTypeUpdate.model_rebuild()
+PrepaidVoucherBatchCreate.model_rebuild()
