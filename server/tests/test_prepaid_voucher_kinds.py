@@ -126,6 +126,8 @@ def make(w, kind="order_discount", count=2, **terms):
         body.setdefault("targets", {"productIds": [w.coffee.id]})
     else:
         body.setdefault("items", [{"productId": w.hotdog.id, "quantity": 1}])
+        # What today's tills book (the `voucher` tender at list prices): no `features` needed.
+        body.setdefault("redemptionAccounting", "payment")
     return R.create_prepaid_voucher_batch(PrepaidVoucherBatchCreate(**body), **_ctx(w))
 
 

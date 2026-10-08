@@ -75,6 +75,7 @@ from app.models.prepaid_voucher import (
     PrepaidVoucherEvent,
     PrepaidVoucherRedemption,
     PrepaidVoucherReservation,
+    PrepaidVoucherType,
 )
 from app.models.product import CatalogLevel, Product
 from app.models.shop import Shop
@@ -145,6 +146,11 @@ PROMOTION_BETTER = RULES.PROMOTION_BETTER
 
 #: Said to a client that cannot apply a discount voucher (it shows `message` as is).
 KIND_UNSUPPORTED_MESSAGE = "זהו שובר הנחה — לא ניתן לממש אותו בעמדה זו. יש להציג אותו בקופה."
+#: A voucher whose terms this client cannot book as they say (the contract's §2 `features`).
+UPDATE_REQUIRED = "prepaid_voucher_update_required"
+UPDATE_REQUIRED_MESSAGE = "יש לעדכן את גרסת הקופה כדי לממש שובר מסוג זה"
+#: What a client may say it can do, beyond today's goods redemption.
+FEATURES = ("accounting", "override", "groups", "production_voucher", "reserve_goods", "offline")
 #: How long a discount voucher stays held for an open sale without the till asking again.
 RESERVATION_TTL = timedelta(minutes=15)
 #: Every kind a client may say it supports; one that says nothing supports goods only.
@@ -1740,6 +1746,39 @@ def _benefit_rules(db: Session, batch: PrepaidVoucherBatch) -> RULES.Benefit:
     return RULES.Benefit(**{**base.__dict__, "category_ids": frozenset(cats)})
 
 
+def required_features(db: Session, batch: PrepaidVoucherBatch) -> List[str]:
+    """
+    What a client must say it can do (`features`) to redeem [batch]'s goods as its terms say.
+    Today's tills book every goods redemption as the `voucher` tender at the goods' list prices:
+    right for `payment` + `cover` with no value and the policy honoured — and, by the owner's
+    decision (the contract's §11), for a batch printed before types (`legacy`, `zero`), which
+    stays redeemable exactly as before. Anything else needs `accounting` (a document deduction,
+    ₪0 lines, a fixed value) and a forced discount needs `override`. A discount voucher needs
+    nothing here (its kind is `supportedKinds`').
+    """
+    if is_discount(batch):
+        return []
+    need: List[str] = []
+    plain = (getattr(batch, "pricing", None) or "cover") == "cover" and getattr(batch, "till_value", None) is None
+    accounting = getattr(batch, "redemption_accounting", None) or "zero"
+    if not plain or accounting == "discount":
+        need.append("accounting")
+    elif accounting == "zero":
+        origin = None
+        if getattr(batch, "type_id", None) is not None:
+            origin = db.query(PrepaidVoucherType.origin).filter(PrepaidVoucherType.id == batch.type_id).scalar()
+        if origin != "legacy":
+            need.append("accounting")
+    if (getattr(batch, "discount_block_policy", None) or "honour") != "honour":
+        need.append("override")
+    return need
+
+
+def missing_features(db: Session, batch: PrepaidVoucherBatch, features: Optional[Iterable[str]]) -> List[str]:
+    have = {str(f).strip().lower() for f in (features or ())}
+    return [f for f in required_features(db, batch) if f not in have]
+
+
 def till_view(
     db: Session,
     machine: POSMachine,
@@ -1747,6 +1786,8 @@ def till_view(
     supported_kinds: Optional[Iterable[str]] = ALL_KINDS,
     *,
     exclude_reservation=None,
+    features: Optional[Iterable[str]] = None,
+    check_features: bool = False,
 ) -> Dict[str, Any]:
     batch = voucher.batch
     reason = refusal_reason(db, machine, voucher)
@@ -1755,6 +1796,10 @@ def till_view(
         # A client that cannot apply a discount (the web / Windows kiosks today) never
         # treats one as goods: it is not redeemable there, and the customer is told why.
         reason, message = KIND_UNSUPPORTED, KIND_UNSUPPORTED_MESSAGE
+    if reason is None and check_features and missing_features(db, batch, features):
+        # Terms this client would book wrongly (a deduction as a tender, a fixed value at
+        # list prices): not here — the till must be updated first.
+        reason, message = UPDATE_REQUIRED, UPDATE_REQUIRED_MESSAGE
     uses = (
         uses_open(db, voucher, exclude_id=exclude_reservation)
         if is_discount(batch) and reason is None else None
@@ -1842,10 +1887,11 @@ def till_view(
 
 
 def lookup(
-    db: Session, machine: POSMachine, raw_code: str, supported_kinds: Optional[Iterable[str]] = None
+    db: Session, machine: POSMachine, raw_code: str, supported_kinds: Optional[Iterable[str]] = None,
+    *, features: Optional[Iterable[str]] = None,
 ) -> Dict[str, Any]:
     voucher = _locate(db, machine, raw_code, lock=False)
-    return till_view(db, machine, voucher, supported_kinds)
+    return till_view(db, machine, voucher, supported_kinds, features=features, check_features=True)
 
 
 #: What the redemption re-checks: the product lost its identity (the general item) or left
@@ -1929,6 +1975,8 @@ def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
     if is_discount(batch):
         # A discount is never taken as goods (nor as a tender): reserve → confirm.
         raise _http(status.HTTP_409_CONFLICT, KIND_UNSUPPORTED)
+    if missing_features(db, batch, getattr(body, "features", None)):
+        raise _http(status.HTTP_409_CONFLICT, UPDATE_REQUIRED)
     sale_ref = (getattr(body, "sale_ref", None) or "").strip() or None
     if sale_ref:
         refusal = RULES.stacking_refusal(_vouchers_in_sale(db, machine, sale_ref), _in_sale(voucher))

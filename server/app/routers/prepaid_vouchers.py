@@ -638,10 +638,11 @@ def lookup_prepaid_voucher(
     product ids, and whether it can be redeemed here now (`redeemable`, else `reason`).
     A discount voucher: its kind, terms (`benefit`) and uses. A client that does not list
     the kind in `supportedKinds` gets it as not redeemable (`prepaid_voucher_kind_unsupported`,
-    with a Hebrew `message`). 404 `prepaid_voucher_not_found` for an unknown code or
-    another tenant's.
+    with a Hebrew `message`). A voucher whose terms need what the client did not list in
+    `features` reads as `prepaid_voucher_update_required`. 404 `prepaid_voucher_not_found` for
+    an unknown code or another tenant's.
     """
-    return PV.lookup(db, machine, body.code, body.supported_kinds)
+    return PV.lookup(db, machine, body.code, body.supported_kinds, features=body.features)
 
 
 @router.post("/sync/{machine_id}/prepaid-vouchers/redeem", dependencies=FISCAL_MACHINE_TOKEN)

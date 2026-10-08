@@ -757,6 +757,19 @@ class PrepaidVoucherLookupIn(BaseModel):
     #: web and Windows kiosks today): goods only, so a discount voucher reads as not
     #: redeemable here (`prepaid_voucher_kind_unsupported`, with a Hebrew `message`).
     supported_kinds: Optional[List[str]] = Field(None, alias="supportedKinds")
+    #: What this client can do beyond today's goods redemption (the contract's §2): "accounting"
+    #: (books all three `redemptionAccounting` modes and the cloud's value), "override", "groups",
+    #: "production_voucher", "reserve_goods", "offline". Absent: none (every client before them).
+    features: Optional[List[str]] = None
+
+    @field_validator("features", mode="before")
+    @classmethod
+    def _features(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            return []
+        return [str(v).strip().lower() for v in value if isinstance(v, str) and v.strip()][:20]
 
     @field_validator("supported_kinds", mode="before")
     @classmethod
@@ -795,6 +808,19 @@ class PrepaidVoucherRedeemIn(BaseModel):
     #: The till's open sale (basket) the voucher pays towards — how the cloud sees the
     #: other vouchers of the same sale (stacking). Absent from older clients.
     sale_ref: Optional[str] = Field(None, alias="saleRef", max_length=100)
+    #: What this client can do beyond today's goods redemption (the contract's §2): "accounting"
+    #: (books all three `redemptionAccounting` modes and the cloud's value), "override", "groups",
+    #: "production_voucher", "reserve_goods", "offline". Absent: none (every client before them).
+    features: Optional[List[str]] = None
+
+    @field_validator("features", mode="before")
+    @classmethod
+    def _features(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            return []
+        return [str(v).strip().lower() for v in value if isinstance(v, str) and v.strip()][:20]
 
     @field_validator("pos_user_id", mode="before")
     @classmethod

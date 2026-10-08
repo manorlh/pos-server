@@ -452,7 +452,7 @@ export function KioskApp({ view }: { view: KioskView }) {
         return;
       }
       const error =
-        r.kind === 'offline' ? screenText('voucherOffline') : r.kind === 'no_match' ? screenText('voucherNoMatch') : r.kind === 'forfeit' ? null : voucherReason(r.reason);
+        r.kind === 'offline' ? screenText('voucherOffline') : r.kind === 'no_match' ? screenText('voucherNoMatch') : r.kind === 'forfeit' ? null : voucherReason(r.reason, r.message);
       if (r.kind !== 'offline') voucherAttempt.current = r.kind === 'forfeit' ? voucherAttempt.current : null;
       setTill((p) => ({ ...p, busy: false, note: null, error, forfeit: r.kind === 'forfeit' ? code : null }));
     },

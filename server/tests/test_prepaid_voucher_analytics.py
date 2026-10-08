@@ -61,7 +61,8 @@ def codes(w, b):
 
 
 def take(w, code, *, till=None, when=None, items=None):
-    out = redeem(w, code, items or [(w.hotdog, 1)], till=till)
+    # A till that books every accounting mode (the contract's §2 `features`).
+    out = redeem(w, code, items or [(w.hotdog, 1)], till=till, features=["accounting", "override"])
     if when is not None:
         w.db.query(PrepaidVoucherRedemption).filter(PrepaidVoucherRedemption.id == uuid.UUID(out["redemptionId"])).update(
             {"redeemed_at": when})

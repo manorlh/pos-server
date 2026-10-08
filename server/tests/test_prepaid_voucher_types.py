@@ -38,6 +38,8 @@ from app.schemas.prepaid_voucher import (
 from app.services import prepaid_voucher_pdf as PDF
 from app.services import prepaid_voucher_types as PVT
 from test_prepaid_vouchers import _ctx, first_code, lookup, refused, w  # noqa: F401 — `w` is the fixture
+from app.schemas.prepaid_voucher import PrepaidVoucherLookupIn, PrepaidVoucherRedeemIn
+from app.services import prepaid_vouchers as PV
 
 ROOT = pathlib.Path(__file__).absolute().parents[1]
 
@@ -451,4 +453,65 @@ class TestMaxPerSaleMigration:
         sql = buf.getvalue()
         assert "ALTER TABLE prepaid_voucher_types ADD COLUMN max_vouchers_per_sale INTEGER" in sql
         assert "ALTER TABLE prepaid_voucher_batches ADD COLUMN max_vouchers_per_sale INTEGER" in sql
+
+
+def look(w, code, features=None):
+    till = w.tills[0]
+    return R.lookup_prepaid_voucher(str(till.id), PrepaidVoucherLookupIn(code=code, features=features), machine=till, db=w.db)
+
+
+def take(w, code, features=None, request_id="r1"):
+    till = w.tills[0]
+    body = PrepaidVoucherRedeemIn(code=code, items=[{"productId": str(w.hotdog.id), "quantity": 1},
+                                                    {"productId": str(w.drink.id), "quantity": 1}],
+                                  clientRequestId=request_id, features=features)
+    return R.redeem_prepaid_voucher(str(till.id), body, machine=till, db=w.db)
+
+
+class TestFeatures:
+    """A till that would book a voucher's terms wrongly is told to update (the contract's §2)."""
+
+    def test_a_new_type_needs_a_till_that_books_its_accounting(self, w):
+        b = batch_from(w, make_type(w)["id"])  # discount, fixed ₪80
+        out = look(w, first_code(w, b))
+        assert (out["redeemable"], out["reason"], out["message"]) == (
+            False, PV.UPDATE_REQUIRED, "יש לעדכן את גרסת הקופה כדי לממש שובר מסוג זה")
+        assert refused(take, w, first_code(w, b)).detail == PV.UPDATE_REQUIRED
+        assert look(w, first_code(w, b), ["accounting"])["redeemable"] is True
+        assert take(w, first_code(w, b), ["accounting"])["replayed"] is False
+
+    @pytest.mark.parametrize("terms, need", [
+        ({"redemptionAccounting": "payment", "pricing": "cover", "tillValue": None}, []),
+        ({"redemptionAccounting": "payment", "pricing": "fixed", "tillValue": 80}, ["accounting"]),
+        ({"redemptionAccounting": "payment", "pricing": "cover", "tillValue": 50}, ["accounting"]),
+        ({"redemptionAccounting": "discount", "pricing": "cover", "tillValue": None}, ["accounting"]),
+        ({"redemptionAccounting": "zero", "pricing": "cover", "tillValue": None}, ["accounting"]),
+        ({"redemptionAccounting": "payment", "pricing": "cover", "tillValue": None,
+          "discountBlockPolicy": {"mode": "auto"}}, ["override"]),
+    ])
+    def test_what_each_set_of_terms_needs(self, w, terms, need):
+        t = make_type(w, productionPrice=None, **terms)
+        row = w.db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == batch_from(w, t["id"])["id"]).one()
+        assert PV.required_features(w.db, row) == need
+
+    def test_a_batch_printed_before_types_stays_redeemable_as_before(self, w):
+        b = batch_from(w, make_type(w, redemptionAccounting="zero", pricing="cover", tillValue=None)["id"])
+        row = w.db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == b["id"]).one()
+        w.db.query(PrepaidVoucherType).filter(PrepaidVoucherType.id == row.type_id).update({"origin": "legacy"})
+        w.db.commit()
+        assert PV.required_features(w.db, row) == []
+        assert look(w, first_code(w, b))["redeemable"] is True
+        # … until the owner turns it into a deduction.
+        row.redemption_accounting = "discount"
+        w.db.commit()
+        assert look(w, first_code(w, b))["reason"] == PV.UPDATE_REQUIRED
+
+    def test_a_discount_voucher_needs_only_its_kind(self, w):
+        from app.schemas.prepaid_voucher import PrepaidVoucherBatchCreate
+
+        b = R.create_prepaid_voucher_batch(PrepaidVoucherBatchCreate(
+            name="הנחה", companyId=w.company.id, count=1, kind="order_discount", discountType="fixed", discountValue=10,
+        ), **_ctx(w))
+        row = w.db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == b["id"]).one()
+        assert PV.required_features(w.db, row) == []
 
