@@ -13,6 +13,8 @@ import { useQuery } from '@tanstack/react-query';
 import { fetchDistribution } from '@/lib/voucherDistributionApi';
 import type { PrepaidVoucherBatch } from '@/lib/prepaidVouchersApi';
 import { RECIPIENT_STATES } from '@/lib/voucherDistribution';
+import { canAccess } from '@/lib/dashboardAccess';
+import { useDashboardAccess } from '@/lib/dashboardAccessApi';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ApiPanel } from './api-panel';
@@ -26,8 +28,11 @@ import { StateBadge, keys, useDistributionError } from './shared';
 export function VoucherDistributionView({ batch }: { batch: PrepaidVoucherBatch }) {
   const t = useTranslations('voucherDistribution');
   const errorText = useDistributionError();
-  const overview = useQuery({ queryKey: keys.overview(batch.id), queryFn: () => fetchDistribution(batch.id) });
+  // The lists hold phone numbers: the server serves them to edit on "שוברי הפקה" only.
+  const mayEdit = canAccess(useDashboardAccess(), 'prepaid_vouchers', 'edit');
+  const overview = useQuery({ queryKey: keys.overview(batch.id), queryFn: () => fetchDistribution(batch.id), enabled: mayEdit });
 
+  if (!mayEdit) return <p className="rounded-lg border p-4 text-sm text-muted-foreground">{t('needsEdit')}</p>;
   if (overview.isLoading) return <Skeleton className="h-64 w-full" />;
   if (overview.isError || !overview.data) {
     return <p className="text-sm text-destructive">{errorText(overview.error)}</p>;
