@@ -8,7 +8,7 @@ by a profile's points of sale / devices (app/services/stock_scope.py). A node is
 (company · shop · area · machine).
 
 GET  /stock/tree                 ?level=&targetId=           the picker under a node
-GET  /stock/quick                ?level=&targetId=&categoryId=&q=
+GET  /stock/quick                ?level=&targetId=&categoryId=&q=&productId=
 POST /stock/update               {level, targetId, productId, op, quantity, note?}
 POST /stock/transfer             {productId, from:{level,targetId}, to:{level,targetId}, quantity, note?}
 GET  /stock/movements            ?productId=&level=&targetId=
@@ -151,12 +151,13 @@ def get_quick(
     target_id: uuid.UUID = Query(..., alias="targetId"),
     category_id: Optional[uuid.UUID] = Query(None, alias="categoryId"),
     q: Optional[str] = Query(None, max_length=100),
+    product_id: Optional[uuid.UUID] = Query(None, alias="productId"),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
     path = _path(db, current_user, active_tenant_id, level, target_id)
-    return svc.quick_view(db, current_user, active_tenant_id, path, category_id=category_id, q=q)
+    return svc.quick_view(db, current_user, active_tenant_id, path, category_id=category_id, q=q, product_id=product_id)
 
 
 @router.post("/update")

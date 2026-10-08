@@ -209,6 +209,10 @@ class TestTotalsAndTransfers:
         row = next(r for r in view["rows"] if r["productId"] == str(s.P.id))
         assert row["total"] == 3 and row["updateTarget"]["level"] == "area"
 
+    def test_the_update_sheet_asks_for_one_product(self, s):
+        view = stock_admin.quick_view(s.db, s.users.admin, s.tid, L.path_of(s.db, "shop", s.h_shop.id), product_id=s.P.id)
+        assert [r["productId"] for r in view["rows"]] == [str(s.P.id)]
+
     def test_a_transfer_moves_units_and_never_makes_any(self, s):
         _levels(s, ["shop", "area"])
         _set(s, s.shop_loc, 10)

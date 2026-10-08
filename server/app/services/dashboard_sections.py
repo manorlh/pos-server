@@ -63,7 +63,7 @@ SECTIONS: Tuple[Section, ...] = (
             "/dashboard/sales-by-payment", "/dashboard/card-brands", "/dashboard/promotions-report",
             "/dashboard/menu-reports", "/dashboard/hourly-sales", "/dashboard/department-sales",
             "/dashboard/document-sequence", "/dashboard/cash-variance", "/dashboard/exceptions",
-            "/dashboard/exceptions-log", "/dashboard/cash-drawer", "/dashboard/tax-reports",
+            "/dashboard/exceptions-log", "/dashboard/cash-drawer", "/dashboard/tax-reports", "/dashboard/targets",
         ),
     ),
     Section(

@@ -131,7 +131,9 @@ def _locations_under(db: Session, path: Path, shops: Sequence[Shop]) -> List[Tup
     return out
 
 
-def _products(db: Session, shops: Sequence[Shop], *, category_id: Any = None, q: Optional[str] = None, limit: int = 400) -> List[Product]:
+def _products(
+    db: Session, shops: Sequence[Shop], *, category_id: Any = None, q: Optional[str] = None, product_id: Any = None, limit: int = 400,
+) -> List[Product]:
     if not shops:
         return []
     query = (
@@ -146,6 +148,8 @@ def _products(db: Session, shops: Sequence[Shop], *, category_id: Any = None, q:
     )
     if category_id is not None:
         query = query.filter(Product.category_id == category_id)
+    if product_id is not None:
+        query = query.filter(Product.id == product_id)
     if q:
         like = f"%{q.strip()}%"
         query = query.filter(or_(Product.name.ilike(like), Product.sku.ilike(like), Product.barcode.ilike(like)))
@@ -160,6 +164,7 @@ def quick_view(
     *,
     category_id: Any = None,
     q: Optional[str] = None,
+    product_id: Any = None,
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """
@@ -173,7 +178,7 @@ def quick_view(
     now = now or utc_now()
     scope = stock_scope.scope_of(db, user)
     shops = shops_under(db, path)
-    products = _products(db, shops, category_id=category_id, q=q)
+    products = _products(db, shops, category_id=category_id, q=q, product_id=product_id)
     locations = [(loc, p) for loc, p in _locations_under(db, path, shops) if scope.covers_path(p)]
     ids = [p.id for p in products]
     clauses = [and_(StockLevel.level == loc.level, StockLevel.target_id == loc.target_id) for loc, _ in locations]
