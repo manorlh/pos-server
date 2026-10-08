@@ -483,3 +483,15 @@ class TestEvents:
         # 2 + 1 + 3 sold, 1 refunded; 10 a line, the refund's line back.
         assert coffee.qty == 5.0 and coffee.previous_qty == 0.0
         assert compare(w).top_items == []
+
+
+def test_the_dashboard_offers_the_same_opening_pages():
+    """client/src/lib/homePage.ts lists exactly the server's HOME_PAGES, in order."""
+    import pathlib
+    import re
+
+    source = (pathlib.Path(__file__).parents[2] / "client" / "src" / "lib" / "homePage.ts").read_text(encoding="utf-8")
+    block = source[source.index("export const HOME_PAGES"):]
+    block = block[: block.index("];")]
+    assert tuple(re.findall(r"id: '([a-z_]+)'", block)) == UP.HOME_PAGES
+    assert UP.DEFAULT_HOME_PAGE == "board"

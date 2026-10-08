@@ -69,6 +69,7 @@ export function BoardKpis({
   tills,
   liveLoading,
   versusTitle,
+  showSales = true,
 }: {
   a: SalesFigures;
   /** The compared day's figures; null with no comparison. */
@@ -80,8 +81,21 @@ export function BoardKpis({
   liveLoading: boolean;
   /** "מול ראשון שעבר", for the change's tooltip. */
   versusTitle: string;
+  /** False for a user without "דוחות": only the tills that are up. */
+  showSales?: boolean;
 }) {
   const t = useTranslations('controlBoard.kpi');
+  const tillsCard = (
+    <KpiCard
+      label={t('activeTills')}
+      icon={MonitorSmartphone}
+      tone="green"
+      loading={liveLoading}
+      value={t('activeTillsValue', { online: tills.online, total: tills.total })}
+      detail={t('openShifts', { count: tills.openShifts })}
+    />
+  );
+  if (!showSales) return <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">{tillsCard}</div>;
 
   const vs = (va: number, vb: number, format: (n: number) => string, invert = false) =>
     b && !compareLoading ? (
@@ -121,14 +135,7 @@ export function BoardKpis({
         compare={vs(avgA, b ? averageTicket(b) : 0, shortMoney)}
         detail={a.tips > 0 ? t('tips', { amount: formatCurrency(a.tips) }) : null}
       />
-      <KpiCard
-        label={t('activeTills')}
-        icon={MonitorSmartphone}
-        tone="green"
-        loading={liveLoading}
-        value={t('activeTillsValue', { online: tills.online, total: tills.total })}
-        detail={t('openShifts', { count: tills.openShifts })}
-      />
+      {tillsCard}
     </div>
   );
 }

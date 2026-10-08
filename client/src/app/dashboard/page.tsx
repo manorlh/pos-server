@@ -26,8 +26,17 @@
  *   in one place and offline in another;
  * * the app-update rollout, optional: a role that may not read it gets no update chips.
  *
- * The fuller day-against-day board (sellers, hour by hour, open tables, card brands)
- * stays at /dashboard/compare, linked from here.
+ * Two views, one segmented control ("לוח בקרה | השוואות", `?view=compare`): the board, and
+ * the comparisons (compare-view.tsx — period against period, side by side; the old
+ * /dashboard/compare comes there).
+ *
+ * * **אירוע** — an event (`?event=`, docs/SPEC_EVENTS.md) replaces the day: its window and
+ *   its tills (`GET /reports/compare?eventId=`), against another event (`?vsEvent=`);
+ * * **שוברים** — the prepaid vouchers redeemed in the scope (`GET /reports/prepaid-vouchers`),
+ *   for users with reports or vouchers; hidden when nothing was redeemed;
+ * * **without "דוחות"** (or with the board hidden from the role) the board still opens — every
+ *   sign-in lands here — and shows what the user may see: the tills' state, built from the
+ *   look-ups (lib/boardStructure.ts), with no money anywhere.
  */
 
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
@@ -37,9 +46,20 @@ import { useTranslations } from 'next-intl';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
-import { Activity, BarChart3, Bell, LayoutDashboard, Megaphone, Monitor, RefreshCw, Search, UserRound, X } from 'lucide-react';
+import { Activity, Bell, LayoutDashboard, Lock, Megaphone, Monitor, RefreshCw, Search, UserRound, X } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { fetchAppReleaseRollout, fetchLiveItems, fetchMachines, fetchOverview } from '@/lib/api';
+import { fetchPeriodCompare, fetchVoucherBoard } from '@/lib/compareApi';
+import { narrowToTills } from '@/lib/boardStructure';
+import {
+  compareQuery,
+  curvePoints,
+  defaultVs,
+  parseCompareParams,
+  toHourPoints,
+  toSalesFigures,
+  type HomeView,
+} from '@/lib/periodCompare';
 import { fetchHourlyReport } from '@/lib/salesReportsApi';
 import { usePageScope, useScopeQuery } from '@/lib/scope';
 import { formatTime } from '@/lib/format';
@@ -52,6 +72,7 @@ import {
 } from '@/lib/overview';
 import {
   BOARD_PARAM,
+  ZERO_FIGURES,
   alertTills,
   boardDays,
   compareItems,
@@ -78,6 +99,13 @@ import { BoardHourly } from '@/components/dashboard/control-board/board-hourly';
 import { BoardTenders } from '@/components/dashboard/control-board/board-tenders';
 import { BoardAlerts, type BoardAlert } from '@/components/dashboard/control-board/board-alerts';
 import { BoardItems } from '@/components/dashboard/control-board/board-items';
+import { BoardVouchers } from '@/components/dashboard/control-board/board-vouchers';
+import { HomeTabs } from '@/components/dashboard/control-board/home-tabs';
+import { CompareView } from '@/components/dashboard/control-board/compare-view';
+import { EventPicker, useEventWhen } from '@/components/dashboard/control-board/event-picker';
+import { useBoardEvent, useHomeAccess } from '@/components/dashboard/control-board/use-home-access';
+import { ShowMoneyProvider } from '@/components/dashboard/overview/money-visibility';
+import { useLimitedStructure } from '@/components/dashboard/control-board/use-limited-structure';
 
 const REFRESH_MS = 30_000;
 /** A past day does not change by the second; it is read again after this. */
@@ -235,6 +263,21 @@ export default function DashboardPage() {
   const canMessageTills =
     role === 'super_admin' || role === 'distributor' || role === 'company_manager' || role === 'shop_manager';
 
+  // ── Who may see what ─────────────────────────────────────────────────────────
+  // Every sign-in lands here; the figures need "דוחות" (and the board not hidden from the
+  // role). Without them the board shows the tills' state only.
+  const { salesAllowed, compareAllowed, insightsAllowed, vouchersAllowed } = useHomeAccess();
+  const cmp = useMemo(() => parseCompareParams((key) => searchParams.get(key)), [searchParams]);
+  const view: HomeView = compareAllowed ? cmp.view : 'board';
+
+  // ── The event ("אירוע"): its window and tills replace the day ────────────────
+  const { options: events, optionsLoading: eventsLoading, eventId, event, vsEventId, vsEvent, eventTills } =
+    useBoardEvent(salesAllowed, cmp);
+  const eventWhen = useEventWhen();
+  const tEvent = useTranslations('controlBoard.event');
+  /** The board's days (overview, hourly, items) — not with an event, nor in the comparisons. */
+  const dayMode = salesAllowed && !eventId && view === 'board';
+
   // ── The point of sale: the URL's, once it is known to be the chosen shop's ──────
   const shopAreas = useShopAreas(effective.shopId);
   const areas = shopAreas.data ?? NO_AREAS;
@@ -267,6 +310,8 @@ export default function DashboardPage() {
   const ovA = useQuery({
     queryKey: ['overview', { ...base, date: dayA }],
     queryFn: () => fetchOverview({ ...base, date: dayA }),
+    // The tree's structure too (with an event, its money is hidden).
+    enabled: salesAllowed && view === 'board',
     placeholderData: keepPreviousData,
     refetchInterval: liveA,
     refetchOnWindowFocus: isToday,
@@ -275,7 +320,7 @@ export default function DashboardPage() {
   const ovB = useQuery({
     queryKey: ['overview', { ...base, date: dayB }],
     queryFn: () => fetchOverview({ ...base, date: dayB ?? undefined }),
-    enabled: !!dayB,
+    enabled: dayMode && !!dayB,
     placeholderData: keepPreviousData,
     staleTime: PAST_DAY_STALE_MS,
   });
@@ -283,6 +328,7 @@ export default function DashboardPage() {
   const hrA = useQuery({
     queryKey: ['cb-hourly', hourlyParams(dayA)],
     queryFn: () => fetchHourlyReport(hourlyParams(dayA)),
+    enabled: dayMode,
     placeholderData: keepPreviousData,
     refetchInterval: liveA,
     staleTime: isToday ? undefined : PAST_DAY_STALE_MS,
@@ -290,7 +336,7 @@ export default function DashboardPage() {
   const hrB = useQuery({
     queryKey: ['cb-hourly', hourlyParams(dayB ?? '')],
     queryFn: () => fetchHourlyReport(hourlyParams(dayB ?? '')),
-    enabled: !!dayB,
+    enabled: dayMode && !!dayB,
     placeholderData: keepPreviousData,
     staleTime: PAST_DAY_STALE_MS,
   });
@@ -298,6 +344,7 @@ export default function DashboardPage() {
   const itA = useQuery({
     queryKey: ['cb-items', itemParams(dayA)],
     queryFn: () => fetchLiveItems(itemParams(dayA)),
+    enabled: dayMode,
     placeholderData: keepPreviousData,
     refetchInterval: liveA,
     staleTime: isToday ? undefined : PAST_DAY_STALE_MS,
@@ -305,9 +352,34 @@ export default function DashboardPage() {
   const itB = useQuery({
     queryKey: ['cb-items', itemParams(dayB ?? '')],
     queryFn: () => fetchLiveItems(itemParams(dayB ?? '')),
-    enabled: !!dayB,
+    enabled: dayMode && !!dayB,
     placeholderData: keepPreviousData,
     staleTime: PAST_DAY_STALE_MS,
+  });
+  // An event: its figures, hours and best sellers in one request (and another event's).
+  const eventParams = {
+    ...narrow,
+    eventId: eventId ?? undefined,
+    cmpEventId: vsEventId ?? undefined,
+  };
+  const evReport = useQuery({
+    queryKey: ['board-event', eventParams],
+    queryFn: () => fetchPeriodCompare({ ...eventParams, items: BEST_SELLERS }),
+    enabled: !!eventId && view === 'board',
+    placeholderData: keepPreviousData,
+    refetchInterval: event && new Date(event.endsAt).getTime() > now ? REFRESH_MS * 2 : false,
+  });
+  // "שוברים": the day (or the event) and what it is compared with.
+  const voucherParams = eventId
+    ? eventParams
+    : { ...narrow, from: dayA, to: dayA, ...(dayB ? { cmpFrom: dayB, cmpTo: dayB } : {}) };
+  const vouchers = useQuery({
+    queryKey: ['voucher-board', voucherParams],
+    queryFn: () => fetchVoucherBoard(voucherParams),
+    enabled: vouchersAllowed && view === 'board',
+    placeholderData: keepPreviousData,
+    refetchInterval: liveA,
+    retry: false,
   });
   // Same cache entry as the scope provider's list: refreshing it here refreshes the filters too.
   const machines = useQuery<PosMachine[]>({
@@ -338,12 +410,17 @@ export default function DashboardPage() {
     open: {},
   });
 
+  // The structure: the overview's — or, without "דוחות", the look-ups' (no money).
+  const limitedStructure = useLimitedStructure(!salesAllowed, effective.shopId, effective.machineId, areas);
   const tree = useMemo(() => {
     const byId = new Map((machines.data ?? []).map((m) => [m.id, m]));
     const rolloutById = new Map((rollout.data ?? []).map((r) => [r.machineId, r]));
-    const built = buildOverviewTree(ovA.data?.companies ?? [], byId, rolloutById, now);
+    const structure = salesAllowed ? (ovA.data?.companies ?? []) : limitedStructure;
+    const scoped = eventTills === null ? structure : narrowToTills(structure, eventTills ? eventTills.split(',') : []);
+    const built = buildOverviewTree(scoped, byId, rolloutById, now);
     return narrowToArea(built, effective.machineId ? null : areaId, !!effective.machineId);
-  }, [areaId, effective.machineId, machines.data, now, ovA.data?.companies, rollout.data]);
+  }, [areaId, effective.machineId, eventTills, limitedStructure, machines.data, now, ovA.data?.companies, rollout.data, salesAllowed]);
+  const structureLoading = salesAllowed ? ovA.isPending : scope.shopsLoading || scope.machinesLoading;
 
   const registerLabel = useCallback((n: number) => tMachines('registerLabel', { number: n }), [tMachines]);
   const visible = useMemo(
@@ -405,20 +482,84 @@ export default function DashboardPage() {
     areaId: effective.machineId ? null : areaId,
     machineId: effective.machineId,
   };
-  const figA = scopeFigures(ovA.data, figureScope);
-  const figB = dayB ? scopeFigures(ovB.data, figureScope) : null;
+  const ev = evReport.data;
+  const figA = eventId ? (ev ? toSalesFigures(ev.current) : ZERO_FIGURES) : scopeFigures(ovA.data, figureScope);
+  const figB = eventId
+    ? ev?.previous && vsEventId
+      ? toSalesFigures(ev.previous)
+      : null
+    : dayB
+      ? scopeFigures(ovB.data, figureScope)
+      : null;
   const nowHour = isToday ? new Date(now).getHours() : null;
   // Cheap enough per render (a day has 24 hours and 200 items at most).
-  const points = mergeHourly(hrA.data?.byHour ?? [], dayB ? (hrB.data?.byHour ?? []) : null, nowHour);
-  const items = compareItems(itA.data?.rows ?? [], dayB ? (itB.data?.rows ?? []) : null, BEST_SELLERS);
-  const labelA = names.relative(dayA);
-  const labelB = dayB ? names.compared(dayA, dayB, board.cmp) : null;
+  const points = eventId
+    ? toHourPoints(curvePoints(ev?.series ?? [], false))
+    : mergeHourly(hrA.data?.byHour ?? [], dayB ? (hrB.data?.byHour ?? []) : null, nowHour);
+  const items = eventId
+    ? (ev?.topItems ?? []).map((i) => ({
+        key: i.key,
+        name: i.name ?? '—',
+        qtyA: i.qty,
+        netA: i.net,
+        qtyB: i.previousQty ?? 0,
+        netB: i.previousNet ?? 0,
+      }))
+    : compareItems(itA.data?.rows ?? [], dayB ? (itB.data?.rows ?? []) : null, BEST_SELLERS);
+  const labelA = event ? event.name : eventId ? '…' : names.relative(dayA);
+  const labelB = eventId ? (vsEventId ? (vsEvent?.name ?? '…') : null) : dayB ? names.compared(dayA, dayB, board.cmp) : null;
+  const salesLoading = eventId ? evReport.isPending : ovA.isPending;
+
+  // ── Writing the event to the URL ─────────────────────────────────────────────
+  const pickEvent = (e: { id: string; shopId: string; companyId?: string | null } | null) => {
+    if (!e) {
+      setScope(selection, 'push', compareQuery({ period: cmp.period, event: null, vsEvent: null, vs: defaultVs(cmp.period) }));
+      return;
+    }
+    // An event is one shop's: the scope moves to it; the point of sale and the till go.
+    setScope(
+      { companyId: e.companyId ?? selection.companyId, shopId: e.shopId, machineId: null },
+      'push',
+      { ...compareQuery({ period: cmp.period, event: e.id, vsEvent: null, vs: 'none' }), [BOARD_PARAM.area]: null },
+    );
+  };
+  const pickVsEvent = (e: { id: string } | null) =>
+    setScope(selection, 'push', compareQuery({ period: cmp.period, vs: e ? 'event' : 'none', vsEvent: e?.id ?? null }));
+  const eventPickers = salesAllowed ? (
+    <>
+      <EventPicker
+        value={eventId}
+        events={events}
+        loading={eventsLoading}
+        onChange={pickEvent}
+        label={tEvent('label')}
+        title={tEvent('pick')}
+        dark={dark}
+      />
+      {eventId ? (
+        <EventPicker
+          value={vsEventId}
+          events={events}
+          loading={eventsLoading}
+          onChange={pickVsEvent}
+          label={t('filters.compare')}
+          title={tEvent('pickCompare')}
+          excludeId={eventId}
+          dark={dark}
+        />
+      ) : null}
+    </>
+  ) : null;
 
   // ── Refresh ──────────────────────────────────────────────────────────────────
-  const updatedAt = Math.max(ovA.dataUpdatedAt || 0, machines.dataUpdatedAt || 0);
-  const refreshing = ovA.isFetching || machines.isFetching || hrA.isFetching;
+  const updatedAt = Math.max(ovA.dataUpdatedAt || 0, evReport.dataUpdatedAt || 0, machines.dataUpdatedAt || 0);
+  const refreshing = ovA.isFetching || machines.isFetching || hrA.isFetching || evReport.isFetching;
   const refreshAll = () => {
-    for (const q of [ovA, ovB, hrA, hrB, itA, itB, machines, rollout]) void q.refetch();
+    // Only what has run: `refetch` ignores `enabled`, and a query this view (or this user)
+    // does not run must stay off.
+    for (const q of [ovA, ovB, hrA, hrB, itA, itB, evReport, vouchers, machines, rollout]) {
+      if (q.isFetched || q.isFetching) void q.refetch();
+    }
   };
 
   const updated = (
@@ -455,7 +596,12 @@ export default function DashboardPage() {
   );
 
   const scopeName = scope.machine?.name ?? areas.find((a) => a.id === areaId)?.name ?? scope.shop?.name ?? scope.company?.name;
-  const subtitle = [scopeName, labelA, labelB ? t('compare.versus', { day: labelB }) : null].filter(Boolean).join(' · ');
+  const subtitle =
+    view === 'compare'
+      ? scopeName ?? ''
+      : [scopeName, labelA, event ? eventWhen(event) : null, labelB ? t('compare.versus', { day: labelB }) : null]
+          .filter(Boolean)
+          .join(' · ');
   const chip =
     'inline-flex min-h-11 items-center gap-1.5 rounded-full border border-cb-line bg-cb-card px-3 text-sm text-cb-ink hover:bg-cb-soft';
 
@@ -473,7 +619,9 @@ export default function DashboardPage() {
           <Wordmark className="text-xl" />
           <div className="flex min-w-0 items-center gap-2">
             {updated}
-            <DayBoxes board={board} today={today} dayA={dayA} dayB={dayB} className="hidden w-[30rem] grid-cols-2 lg:grid" />
+            {view === 'board' && !eventId ? (
+              <DayBoxes board={board} today={today} dayA={dayA} dayB={dayB} className="hidden w-[30rem] grid-cols-2 lg:grid" />
+            ) : null}
             <Link
               href="/dashboard/profile"
               aria-label={t('profile')}
@@ -488,54 +636,103 @@ export default function DashboardPage() {
         {/* Title */}
         <div id="cb-overview" className="flex scroll-mt-4 items-end justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-[28px] font-bold leading-tight tracking-tight text-cb-ink md:text-[32px]">{t('title')}</h1>
+            <h1 className="text-[28px] font-bold leading-tight tracking-tight text-cb-ink md:text-[32px]">
+              {view === 'compare' ? t('compareView.title') : t('title')}
+            </h1>
             <p className="truncate text-sm text-cb-muted">{subtitle}</p>
           </div>
           <div className="md:hidden">{updated}</div>
         </div>
 
-        {/* Filters */}
-        <PhoneFilterBar
-          board={board}
-          today={today}
-          dayA={dayA}
-          dayB={dayB}
-          areas={areas}
-          areaId={areaId}
-          dark={dark}
-        />
-        <div className="hidden space-y-3 md:block">
-          <ScopeBoxes board={board} areas={areas} areaId={areaId} className="grid-cols-2 xl:grid-cols-4" />
-          <DayBoxes board={board} today={today} dayA={dayA} dayB={dayB} className="grid-cols-2 lg:hidden" />
-        </div>
+        {/* ── The two views: "לוח בקרה | השוואות" ── */}
+        <HomeTabs view={view} canCompare={compareAllowed} canInsights={insightsAllowed} />
 
-        {/* Shortcuts the old overview had */}
+        {view === 'board' ? (
+          <>
+            {/* ── Filters ── */}
+            <PhoneFilterBar
+              board={board}
+              today={today}
+              dayA={dayA}
+              dayB={dayB}
+              areas={areas}
+              areaId={areaId}
+              dark={dark}
+              eventLine={
+                eventId
+                  ? [tEvent('chip', { name: labelA }), labelB ? tEvent('versus', { name: labelB }) : null].filter(Boolean).join(' · ')
+                  : null
+              }
+              eventSlot={eventPickers}
+            />
+            <div className="hidden space-y-3 md:block">
+              <ScopeBoxes board={board} areas={areas} areaId={areaId} className="grid-cols-2 xl:grid-cols-4" />
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                {eventId ? null : (
+                  <DayBoxes board={board} today={today} dayA={dayA} dayB={dayB} className="col-span-2 grid-cols-2 lg:hidden" />
+                )}
+                {eventPickers}
+              </div>
+            </div>
+          </>
+        ) : null}
+
+        {/* ── Shortcuts the old overview had ── */}
         <div className="flex flex-wrap gap-2">
-          <Link href={`/dashboard/live-items${scopeQuery}`} className={chip}>
-            <Activity className="size-4 text-cb-muted" aria-hidden />
-            {tO('liveItems')}
-          </Link>
-          <Link href="/dashboard/compare" className={chip}>
-            <BarChart3 className="size-4 text-cb-muted" aria-hidden />
-            {t('compareBoard')}
-          </Link>
+          {salesAllowed ? (
+            <Link href={`/dashboard/live-items${scopeQuery}`} className={chip}>
+              <Activity className="size-4 text-cb-muted" aria-hidden />
+              {tO('liveItems')}
+            </Link>
+          ) : null}
           {canMessageTills ? (
             <Link href="/dashboard/till-messages" className={chip}>
               <Megaphone className="size-4 text-cb-muted" aria-hidden />
               {tO('tillMessages')}
             </Link>
           ) : null}
-          <ExceptionsTodayChip
-            companyId={effective.companyId ?? undefined}
-            shopId={effective.shopId ?? undefined}
-            machineId={effective.machineId ?? undefined}
-          />
+          {salesAllowed ? (
+            <ExceptionsTodayChip
+              companyId={effective.companyId ?? undefined}
+              shopId={effective.shopId ?? undefined}
+              machineId={effective.machineId ?? undefined}
+            />
+          ) : null}
         </div>
 
         <ScopeGate resolution={resolution}>
-          {ovA.isError && !ovA.data ? (
+          {view === 'compare' ? (
+            /* ── השוואות ── */
+            <CompareView
+              params={cmp}
+              board={board}
+              today={today}
+              scopeParams={narrow}
+              areas={areas}
+              areaId={areaId}
+              dark={dark}
+              canSeeVouchers={vouchersAllowed}
+              now={now}
+              events={events}
+              eventsLoading={eventsLoading}
+            />
+          ) : (
+          <>
+          {!salesAllowed ? (
+            /* ── Without "דוחות": the tills' state only ── */
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-cb-line bg-cb-card p-4 text-sm shadow-[var(--cb-shadow)]">
+              <span className="flex min-w-0 items-center gap-2 text-cb-muted">
+                <Lock className="size-4 shrink-0" aria-hidden />
+                {t('limited.hint')}
+              </span>
+              <Link href="/dashboard/profile" className="font-medium text-cb-blue-ink hover:underline">
+                {t('limited.myAccess')}
+              </Link>
+            </div>
+          ) : null}
+          {(eventId ? evReport.isError && !evReport.data : ovA.isError && !ovA.data) ? (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-cb-red/30 bg-cb-red/8 p-4 text-sm text-cb-red-ink">
-              <span>{t('loadError')}</span>
+              <span>{eventId ? tEvent('notFound') : t('loadError')}</span>
               <Button variant="outline" size="sm" onClick={refreshAll}>
                 {t('retry')}
               </Button>
@@ -543,42 +740,48 @@ export default function DashboardPage() {
           ) : null}
 
           <div className="space-y-4 md:space-y-5">
+            {/* ── Headline figures ── */}
             <BoardKpis
               a={figA}
               b={figB}
-              isToday={isToday}
-              salesLoading={ovA.isPending}
-              compareLoading={!!dayB && (ovB.isPending || ovB.isPlaceholderData)}
+              isToday={isToday && !eventId}
+              salesLoading={salesLoading}
+              compareLoading={eventId ? evReport.isPlaceholderData : !!dayB && (ovB.isPending || ovB.isPlaceholderData)}
               tills={tillStats}
-              liveLoading={ovA.isPending || machines.isPending}
+              liveLoading={structureLoading || machines.isPending}
               versusTitle={labelB ? t('compare.versus', { day: labelB }) : ''}
+              showSales={salesAllowed}
             />
 
-            {/* Phone: chart, tenders, alerts. Wide: alerts | chart | tenders, as the mockup. */}
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.7fr)_minmax(0,1fr)]">
-              <BoardHourly
-                className="order-1 md:col-span-2 lg:order-2 lg:col-span-1"
-                points={points}
-                labelA={labelA}
-                labelB={labelB}
-                loading={hrA.isPending}
-              />
-              <BoardTenders
-                className="order-2 lg:order-3"
-                a={figA}
-                b={figB}
-                labelA={labelA}
-                labelB={labelB}
-                loading={ovA.isPending}
-              />
-              <BoardAlerts
-                id="cb-alerts"
-                className="order-3 lg:order-1"
-                alerts={alerts}
-                loading={ovA.isPending || machines.isPending}
-                onOpen={setSelectedId}
-              />
-            </div>
+            {/* ── By the hour, tenders, alerts — Phone: chart, tenders, alerts. Wide: alerts | chart | tenders, as the mockup. ── */}
+            {salesAllowed ? (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.7fr)_minmax(0,1fr)]">
+                <BoardHourly
+                  className="order-1 md:col-span-2 lg:order-2 lg:col-span-1"
+                  points={points}
+                  labelA={labelA}
+                  labelB={labelB}
+                  loading={eventId ? evReport.isPending : hrA.isPending}
+                />
+                <BoardTenders
+                  className="order-2 lg:order-3"
+                  a={figA}
+                  b={figB}
+                  labelA={labelA}
+                  labelB={labelB}
+                  loading={salesLoading}
+                />
+                <BoardAlerts
+                  id="cb-alerts"
+                  className="order-3 lg:order-1"
+                  alerts={alerts}
+                  loading={structureLoading || machines.isPending}
+                  onOpen={setSelectedId}
+                />
+              </div>
+            ) : (
+              <BoardAlerts id="cb-alerts" alerts={alerts} loading={structureLoading || machines.isPending} onOpen={setSelectedId} />
+            )}
 
             {/* Company › shop › point of sale › till */}
             <section id="cb-tills" aria-label={t('tills.title')} className="scroll-mt-4 space-y-3">
@@ -641,7 +844,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {ovA.isPending ? (
+              {structureLoading ? (
                 <div className="space-y-2">
                   <Skeleton className="h-16 w-full rounded-2xl bg-cb-card" />
                   <Skeleton className="h-14 w-full rounded-2xl bg-cb-card" />
@@ -657,24 +860,35 @@ export default function DashboardPage() {
                   <p className="mt-1 text-sm text-cb-muted">{tO('emptyHint')}</p>
                 </div>
               ) : (
-                <OverviewTree
-                  companies={visible}
-                  isExpanded={isExpanded}
-                  onToggleShop={toggleShop}
-                  selectedId={selectedId}
-                  onSelect={setSelectedId}
-                  singleShop={singleShop}
-                  totals={totals}
-                />
+                // The day's money, never another period's: hidden with an event, and without "דוחות".
+                <ShowMoneyProvider value={salesAllowed && !eventId}>
+                  <OverviewTree
+                    companies={visible}
+                    isExpanded={isExpanded}
+                    onToggleShop={toggleShop}
+                    selectedId={selectedId}
+                    onSelect={setSelectedId}
+                    singleShop={singleShop}
+                    totals={totals}
+                  />
+                </ShowMoneyProvider>
               )}
             </section>
 
-            <BoardItems
-              items={items}
-              comparing={!!dayB}
-              loading={itA.isPending}
-              href={`/dashboard/live-items${scopeQuery}`}
-            />
+            {/* ── שוברים ── */}
+            {vouchersAllowed ? (
+              <BoardVouchers report={vouchers.data} loading={vouchers.isPending && vouchers.fetchStatus !== 'idle'} labelB={labelB} />
+            ) : null}
+
+            {/* ── Best sellers ── */}
+            {salesAllowed ? (
+              <BoardItems
+                items={items}
+                comparing={!!labelB}
+                loading={eventId ? evReport.isPending : itA.isPending}
+                href={`/dashboard/live-items${scopeQuery}`}
+              />
+            ) : null}
           </div>
 
           {/* A till's details: a drawer at the end edge on a wide screen, a bottom sheet on a phone. */}
@@ -693,21 +907,23 @@ export default function DashboardPage() {
               )}
             >
               {selected ? (
-                <>
+                <ShowMoneyProvider value={salesAllowed && !eventId}>
                   <DialogHeader>
                     <DialogTitle>
                       <TillDetailsTitle till={selected.till} />
                     </DialogTitle>
                   </DialogHeader>
                   <TillDetails till={selected.till} shopId={selected.shopId} companyId={selected.companyId} />
-                </>
+                </ShowMoneyProvider>
               ) : null}
             </DialogContent>
           </Dialog>
+          </>
+          )}
         </ScopeGate>
       </div>
 
-      <PhoneTabs alerts={alerts.length} />
+      {view === 'board' ? <PhoneTabs alerts={alerts.length} /> : null}
     </div>
   );
 }

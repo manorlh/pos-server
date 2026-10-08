@@ -6,6 +6,7 @@ import { create } from 'zustand';
 import { api } from './api';
 import type { UserCapabilities, UserRole } from './types';
 import { parseDashboardAccess } from './dashboardAccess';
+import { parseHomePage, type HomePageId } from './homePage';
 
 /**
  * `role` is the server's enum, not a free string, so a typo in a comparison at a
@@ -23,6 +24,8 @@ interface InternalUser extends UserCapabilities {
   shopId?: string;
   /** Whether this person holds a till PIN. Never the PIN or its hash. */
   hasTillPin?: boolean;
+  /** "דף פתיחה": where a sign-in lands (kept on the server, `preferences.homePage`). */
+  homePage: HomePageId;
 }
 
 export interface TenantSummary {
@@ -117,6 +120,8 @@ export const useAuth = create<AuthState>((set) => ({
           // "הרשאות דשבורד": absent (an older server) reads as unrestricted — the server
           // still enforces whatever it enforces; the menu just does not narrow.
           dashboardAccess: parseDashboardAccess(data.dashboardAccess),
+          // An older server sends no preferences: the board.
+          homePage: parseHomePage(data.preferences?.homePage),
         },
         tenants,
         activeTenantId,

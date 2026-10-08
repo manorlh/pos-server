@@ -15,6 +15,10 @@ import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { useAuth } from '@/lib/auth';
 import { usePageScope } from '@/lib/scope';
+import { updateMyPreferences } from '@/lib/compareApi';
+import { useRoleAccess } from '@/lib/accessApi';
+import { useDashboardAccess } from '@/lib/dashboardAccessApi';
+import { HOME_PAGES, homePageAllowed, type HomePageId } from '@/lib/homePage';
 
 export default function ProfilePage() {
   const t = useTranslations('profile');
@@ -28,7 +32,22 @@ export default function ProfilePage() {
   const { user: clerkUser } = useUser();
   const { user: internalUser, clearUser, fetchUser } = useAuth();
   const tp = useTranslations('tillPin');
+  const th = useTranslations('profile.homePage');
   const [pinOpen, setPinOpen] = useState(false);
+
+  // "דף פתיחה": where every sign-in lands — kept on the server, on the user.
+  const access = useDashboardAccess();
+  const { hidden } = useRoleAccess();
+  const homePage: HomePageId = internalUser?.homePage ?? 'board';
+  const homeOptions = HOME_PAGES.filter((p) => p.id === homePage || homePageAllowed(p.id, access, hidden));
+  const saveHome = useMutation({
+    mutationFn: (id: HomePageId) => updateMyPreferences({ homePage: id }),
+    onSuccess: async () => {
+      toast.success(th('saved'));
+      await fetchUser();
+    },
+    onError: (err) => toast.error(axiosErrorToToastMessage(err, th('saveFailed'))),
+  });
 
   const hasPin = internalUser?.hasTillPin ?? false;
   // A PIN is only worth offering to someone who could actually authorise something
@@ -150,6 +169,33 @@ export default function ProfilePage() {
             ) : null}
           </CardFooter>
         ) : null}
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{th('title')}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <p className="text-sm text-muted-foreground">{th('hint')}</p>
+          <label className="flex flex-col gap-1.5 text-sm sm:max-w-xs">
+            <span className="font-medium">{th('label')}</span>
+            <select
+              value={homePage}
+              disabled={saveHome.isPending}
+              onChange={(e) => saveHome.mutate(e.target.value as HomePageId)}
+              className="h-11 rounded-md border border-input bg-background px-3 text-base sm:h-10 sm:text-sm"
+            >
+              {homeOptions.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {th(`pages.${p.id}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {!homePageAllowed(homePage, access, hidden) ? (
+            <p className="text-xs text-muted-foreground">{th('notAllowed')}</p>
+          ) : null}
+        </CardContent>
       </Card>
 
       {/* "הרשאות דשבורד": what this user may open, and from which part of the organization. */}

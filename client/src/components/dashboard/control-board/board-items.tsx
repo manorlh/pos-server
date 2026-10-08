@@ -18,6 +18,7 @@ export function BoardItems({
   comparing,
   loading,
   href,
+  emptyText,
   className,
 }: {
   items: ComparedItem[];
@@ -25,6 +26,8 @@ export function BoardItems({
   loading: boolean;
   /** The live items page, in the same scope. */
   href: string;
+  /** "Nothing sold" in the period's words (a range is not "this day"). */
+  emptyText?: string;
   className?: string;
 }) {
   const t = useTranslations('controlBoard.items');
@@ -53,7 +56,7 @@ export function BoardItems({
           <Skeleton className="h-10 w-full bg-cb-soft" />
         </div>
       ) : items.length === 0 ? (
-        <p className="py-6 text-center text-sm text-cb-muted">{t('empty')}</p>
+        <p className="py-6 text-center text-sm text-cb-muted">{emptyText ?? t('empty')}</p>
       ) : (
         <ol className="grid gap-x-8 md:grid-cols-2">
           {items.map((it, i) => (

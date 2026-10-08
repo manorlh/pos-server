@@ -19,6 +19,7 @@ import { formatDistanceToNowStrict } from 'date-fns';
 import { he } from 'date-fns/locale';
 import { Building2, ChevronDown, ChevronLeft, CreditCard, Download, MapPin, Store } from 'lucide-react';
 import { formatCurrency, formatQuantity } from '@/lib/format';
+import { useShowMoney } from './money-visibility';
 import { cn } from '@/lib/utils';
 import {
   groupTillsByArea,
@@ -175,6 +176,7 @@ function TillRow({
 }) {
   const t = useTranslations('dashboard.overview.till');
   const tB = useTranslations('controlBoard.tills');
+  const money = useShowMoney();
   const m = till.live;
   const name = till.sales.name;
   const reg = till.registerNumber !== null ? String(till.registerNumber).padStart(2, '0') : '—';
@@ -214,10 +216,14 @@ function TillRow({
           <p className="truncate font-medium text-cb-ink">{name}</p>
           {/* A phone has no columns for these: one quiet line under the name. */}
           <p className="truncate text-xs text-cb-muted md:hidden">
-            <span className="font-semibold tabular-nums text-cb-ink">{formatCurrency(till.sales.salesToday)}</span>
-            {' · '}
-            {tB('txCount', { count: till.sales.salesCount })}
-            {synced ? ` · ${tB('syncAgo', { ago: synced })}` : ''}
+            {money ? (
+              <>
+                <span className="font-semibold tabular-nums text-cb-ink">{formatCurrency(till.sales.salesToday)}</span>
+                {' · '}
+                {tB('txCount', { count: till.sales.salesCount })}
+              </>
+            ) : null}
+            {synced ? `${money ? ' · ' : ''}${tB('syncAgo', { ago: synced })}` : ''}
           </p>
           <TillChips till={till} />
         </div>
@@ -231,8 +237,8 @@ function TillRow({
           ) : null}
         </div>
 
-        <span className="hidden font-semibold tabular-nums text-cb-ink md:block">{formatCurrency(till.sales.salesToday)}</span>
-        <span className="hidden tabular-nums text-cb-ink md:block">{formatQuantity(till.sales.salesCount)}</span>
+        <span className="hidden font-semibold tabular-nums text-cb-ink md:block">{money ? formatCurrency(till.sales.salesToday) : '—'}</span>
+        <span className="hidden tabular-nums text-cb-ink md:block">{money ? formatQuantity(till.sales.salesCount) : '—'}</span>
         <span className="hidden text-xs text-cb-muted md:block" title={seen ? t('lastSeen', { ago: seen }) : undefined}>
           {synced ?? '—'}
         </span>
@@ -268,16 +274,18 @@ function HeaderRow() {
 /** A point of sale inside a shop: its name, its tills and what it took. */
 function AreaHeader({ area, tills }: { area: OverviewArea; tills: number }) {
   const t = useTranslations('dashboard.overview');
+  const money = useShowMoney();
   return (
     <div className="flex min-h-11 items-center gap-2 bg-cb-soft/60 px-4 py-1.5 text-sm md:px-5">
       <MapPin className="h-3.5 w-3.5 shrink-0 text-cb-muted" aria-hidden />
       <div className="min-w-0 flex-1">
         <span className="block truncate font-medium text-cb-ink">{area.name}</span>
         <span className="text-[11px] text-cb-muted">
-          {t('area.tills', { count: tills })} · {t('documents', { count: area.documentsToday })}
+          {t('area.tills', { count: tills })}
+          {money ? ` · ${t('documents', { count: area.documentsToday })}` : ''}
         </span>
       </div>
-      <span className="shrink-0 font-semibold tabular-nums text-cb-ink">{formatCurrency(area.salesToday)}</span>
+      {money ? <span className="shrink-0 font-semibold tabular-nums text-cb-ink">{formatCurrency(area.salesToday)}</span> : null}
     </div>
   );
 }
@@ -303,6 +311,7 @@ function ShopSection({
 }) {
   const t = useTranslations('dashboard.overview');
   const tB = useTranslations('controlBoard.tills');
+  const money = useShowMoney();
   const bodyId = `overview-shop-${shop.sales.id}`;
   const open = single || expanded;
 
@@ -310,7 +319,7 @@ function ShopSection({
     <div className="flex flex-wrap gap-x-2 text-xs text-cb-muted">
       <span>{t('shop.tillsOnline', { online: shop.online, total })}</span>
       {shop.openShifts > 0 ? <span>· {t('shop.openShifts', { count: shop.openShifts })}</span> : null}
-      <span>· {t('documents', { count: shop.sales.documentsToday })}</span>
+      {money ? <span>· {t('documents', { count: shop.sales.documentsToday })}</span> : null}
       {single ? <span className="md:hidden">· {tB('showing', { shown: shop.tills.length, total })}</span> : null}
     </div>
   );
@@ -363,7 +372,7 @@ function ShopSection({
               {meta}
             </div>
             <span className="shrink-0 text-end">
-              <span className="block font-semibold tabular-nums text-cb-ink">{formatCurrency(shop.sales.salesToday)}</span>
+              {money ? <span className="block font-semibold tabular-nums text-cb-ink">{formatCurrency(shop.sales.salesToday)}</span> : null}
               {shop.tills.length !== total ? (
                 <span className="block text-[11px] text-cb-muted">{tB('showing', { shown: shop.tills.length, total })}</span>
               ) : null}
@@ -437,6 +446,7 @@ export function OverviewTree({
   totals?: Map<string, number>;
 }) {
   const t = useTranslations('dashboard.overview');
+  const money = useShowMoney();
   return (
     <div className="space-y-5">
       {companies.map((company) => (
@@ -452,12 +462,14 @@ export function OverviewTree({
               >
                 {company.sales.name}
               </Link>
-              <span className="ms-auto shrink-0 text-end text-sm font-semibold tabular-nums text-cb-muted">
-                {formatCurrency(company.sales.salesToday)}
-                <span className="block text-[11px] font-normal">
-                  {t('documents', { count: company.sales.documentsToday })}
+              {money ? (
+                <span className="ms-auto shrink-0 text-end text-sm font-semibold tabular-nums text-cb-muted">
+                  {formatCurrency(company.sales.salesToday)}
+                  <span className="block text-[11px] font-normal">
+                    {t('documents', { count: company.sales.documentsToday })}
+                  </span>
                 </span>
-              </span>
+              ) : null}
             </div>
           )}
           <div className="space-y-3">

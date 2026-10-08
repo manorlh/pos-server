@@ -179,9 +179,24 @@ export function levelForPath(pathname: string | null | undefined): AccessLevel {
   return editPages.some((page) => pathname === page || pathname.startsWith(`${page}/`)) ? 'edit' : 'view';
 }
 
+/**
+ * The home page — the control board — is everyone's: every sign-in lands on it, and a user
+ * without "דוחות" sees on it what they may see (the tills' state) instead of the figures.
+ */
+export const HOME_PATH = '/dashboard';
+
+export function isHomePath(pathname: string | null | undefined): boolean {
+  return pathname === HOME_PATH || pathname === `${HOME_PATH}/`;
+}
+
+/** Whether the board may show sales figures (the overview, the comparisons): "דוחות" at view. */
+export function canSeeSales(access: DashboardAccess): boolean {
+  return canAccess(access, 'reports', 'view');
+}
+
 /** Whether a menu entry (by its href) is shown: its section must be granted at the page's level. */
 export function navHrefAllowed(access: DashboardAccess, href: string): boolean {
-  if (!access.restricted) return true;
+  if (!access.restricted || isHomePath(href)) return true;
   const section = sectionForPath(href);
   return section === undefined || canAccess(access, section, levelForPath(href));
 }
@@ -195,16 +210,16 @@ export function filterNavByAccess<S extends { items: { href: string }[] }>(secti
 }
 
 /**
- * What a page shows: the page, "אין לך הרשאה" for a section not granted — or, for the home
- * page of a user without reports, the summary of what they may open ("מה אני רשאי לראות").
+ * What a page shows: the page, or "אין לך הרשאה" for a section not granted. The home page is
+ * always shown — the board itself leaves out what the user may not see (`canSeeSales`).
  */
-export type PageAccess = 'ok' | 'denied' | 'summary';
+export type PageAccess = 'ok' | 'denied';
 
 export function pageAccess(access: DashboardAccess, pathname: string | null | undefined): PageAccess {
-  if (!access.restricted) return 'ok';
+  if (!access.restricted || isHomePath(pathname)) return 'ok';
   const section = sectionForPath(pathname);
   if (section === undefined || canAccess(access, section, levelForPath(pathname))) return 'ok';
-  return pathname === '/dashboard' || pathname === '/dashboard/' ? 'summary' : 'denied';
+  return 'denied';
 }
 
 /** The first page this user may open — where the summary card's links lead. */
