@@ -353,6 +353,11 @@ app.include_router(event_live_router.router, prefix=_prefix)
 from app.routers import push_alerts as push_alerts_router  # noqa: E402
 
 app.include_router(push_alerts_router.router, prefix=_prefix)
+# "עמדת מפיק": the producer's read-only portal, and the owner's side on the event.
+from app.routers import event_producers as event_producers_router, producer as producer_router  # noqa: E402
+
+app.include_router(producer_router.router, prefix=_prefix)
+app.include_router(event_producers_router.router, prefix=_prefix)
 
 
 @app.on_event("startup")

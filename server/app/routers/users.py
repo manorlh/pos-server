@@ -32,6 +32,8 @@ ROLE_LEVEL = {
     UserRole.COMPANY_MANAGER: 4,
     UserRole.DISTRIBUTOR: 5,
     UserRole.SUPER_ADMIN: 6,
+    # "עמדת מפיק": outside the staff ladder — invited from an event, never made here.
+    UserRole.PRODUCER_VIEW: 0,
 }
 
 #: Roles that may read the staff list at all. A dashboard cashier is a shop *viewer*
@@ -45,7 +47,7 @@ USER_READ_ROLES = {
 }
 
 CREATABLE_ROLES = {
-    UserRole.SUPER_ADMIN: {r for r in UserRole if r != UserRole.MERCHANT_ADMIN},
+    UserRole.SUPER_ADMIN: {r for r in UserRole if r not in (UserRole.MERCHANT_ADMIN, UserRole.PRODUCER_VIEW)},
     UserRole.DISTRIBUTOR: {
         UserRole.COMPANY_MANAGER,
         UserRole.SHOP_MANAGER, UserRole.SHIFT_SUPERVISOR, UserRole.CASHIER,

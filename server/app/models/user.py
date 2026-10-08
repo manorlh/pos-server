@@ -20,6 +20,11 @@ class UserRole(str, enum.Enum):
     #: at all; its whole purpose is at the register, through elevation.
     SHIFT_SUPERVISOR = "shift_supervisor"
     CASHIER = "cashier"
+    #: "עמדת מפיק": an event's customer / producer — read-only, and only the events granted to
+    #: them (`producer_event_grants`): their sales, their production's vouchers, the settlement
+    #: when the owner opens it. Nothing else in the business; enforced in `get_current_user`
+    #: (app/services/dashboard_access.py) and by every /producer route.
+    PRODUCER_VIEW = "producer_view"
 
 
 class User(Base):

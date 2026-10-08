@@ -203,6 +203,9 @@ def S(*sections: str, level: Optional[str] = None) -> RouteRule:
 
 
 SELF = RouteRule("self")
+#: "עמדת מפיק": the producer's own routes — the only ones a PRODUCER_VIEW user may use
+#: (app/services/dashboard_access.py `enforce_route`), and every one checks the event grant.
+PRODUCER = RouteRule("producer")
 REFERENCE = RouteRule("reference")
 TILL = RouteRule("till")
 SUPER_ADMIN = RouteRule("super_admin")
@@ -215,6 +218,8 @@ _GET = "GET"
 #: (methods, path pattern, rule). Patterns are the route's path after the API prefix: `{}` is
 #: one path parameter, `*` is anything (including nothing). First match wins.
 ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
+    # ── "עמדת מפיק" (feat/event-live): the producer's read-only portal ──
+    (_ALL, "/producer/*", PRODUCER),
     # ── The caller themselves ──
     (_ALL, "/users/me", SELF),
     (_ALL, "/users/me/*", SELF),
