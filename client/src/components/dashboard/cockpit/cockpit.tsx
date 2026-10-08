@@ -76,12 +76,17 @@ export function CockpitProvider({
   const value = useMemo(() => ({ scope, open }), [open, scope]);
   const action = opened ? allowed.find((a) => a.id === opened.actionId) : undefined;
   const Sheet = action?.Sheet ?? null;
+  // A sheet that is its own dialog (`ownDialog`) is mounted as it is — never a dialog in a dialog.
+  const hosted = !!Sheet && !action?.ownDialog;
   return (
     <CockpitContext.Provider value={value}>
       {children}
-      <Dialog open={!!Sheet} onOpenChange={(o) => (o ? null : setOpened(null))}>
+      {action?.ownDialog && Sheet ? (
+        <Sheet scope={scope} context={opened?.context} onDone={() => setOpened(null)} />
+      ) : null}
+      <Dialog open={hosted} onOpenChange={(o) => (o ? null : setOpened(null))}>
         <DialogContent className={cn(boardSurface(dark), 'bg-cb-card text-cb-ink sm:max-w-lg')}>
-          {action && Sheet ? (
+          {hosted && action && Sheet ? (
             <>
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2 text-lg font-semibold">

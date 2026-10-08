@@ -42,6 +42,11 @@ export interface CockpitAction {
   gate: CockpitGate;
   /** The bottom sheet it opens in place; null = a slot not built yet (not shown). */
   Sheet: ComponentType<CockpitActionProps> | null;
+  /**
+   * The sheet is a whole dialog of its own (its title, its footer — the insights' iOS sheets):
+   * the cockpit mounts it as it is, without wrapping it in its own dialog.
+   */
+  ownDialog?: boolean;
   /** In the quick-actions bar (else only from an item's buttons). */
   bar: boolean;
 }

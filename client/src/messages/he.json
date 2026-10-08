@@ -1118,6 +1118,7 @@
         "failedPayments": "תשלומים לא מוכרעים",
         "quickMessage": "הודעה מהירה",
         "quickPromo": "מבצע מהיר",
+        "happyHour": "Happy hour",
         "blockItem": "חסום / אזל",
         "deviceControl": "שליטה בקופות וקיוסקים",
         "liveEvent": "מצב אירוע חי",
@@ -1126,7 +1127,10 @@
       },
       "itemActions": {
         "openTill": "לקופה",
-        "review": "לבדיקה"
+        "review": "לבדיקה",
+        "messageTill": "הודעה לקופה",
+        "quickMessage": "הודעה מהירה",
+        "quickPromo": "מבצע מהיר"
       },
       "feed": {
         "title": "דורש תשומת לב",
