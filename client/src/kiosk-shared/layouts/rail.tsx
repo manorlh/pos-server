@@ -7,12 +7,13 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { basketKindOf, layoutOf, productColumns, railMeasures } from '@/lib/kioskLayout';
+import { basketDocked, basketKindOf, layoutOf, productColumns, railMeasures } from '@/lib/kioskLayout';
 import { KioskSwap } from '@/components/dashboard/kiosks/preview-motion';
-import { CartBar, CartPanel, CatalogHeader, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
+import { CartPanel, CatalogHeader, textSize, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { TickerSlot, PREVIEW_FOOTER_PX } from '@/components/dashboard/kiosks/preview-ticker';
 import { CategoryVisual } from './icons';
-import { DP_PER_PX, Empty, LayoutDishCard, OrderSummaryBar, SectionTitle, cartCounts, widthDpOf } from './parts';
+import { DockedBasket, FloatingBasket } from './baskets';
+import { DP_PER_PX, Empty, LayoutDishCard, SectionTitle, cartCounts, widthDpOf } from './parts';
 import { itemEnter } from '@/components/dashboard/kiosks/preview-motion';
 import { cn } from '@/lib/utils';
 
@@ -101,7 +102,7 @@ export function RailCatalog({ m, onCategory }: { m: PreviewModel; onCategory?: (
                 <span className="transition-transform duration-200" style={{ transform: on ? 'scale(1.04)' : 'scale(0.96)' }}>
                   <CategoryVisual m={m} cat={cat} mode={layout.categoryIcons ?? 'photo'} size={imageSize} on={on} />
                 </span>
-                <span className={cn('line-clamp-2 w-full leading-tight', itemH >= 100 ? 'kt-13' : 'kt-11', on ? 'font-extrabold' : 'font-semibold')} style={{ color: on ? m.c.primary : m.c.text }}>
+                <span className={cn('line-clamp-2 w-full leading-tight', itemH >= 100 ? 'kt-13' : 'kt-11', on ? 'font-extrabold' : 'font-semibold')} style={{ color: on ? m.c.primary : m.c.text, ...textSize(m, 'categoryName', itemH >= 100 ? 13 : 11) }}>
                   {cat.name}
                 </span>
               </button>
@@ -138,17 +139,12 @@ export function RailCatalog({ m, onCategory }: { m: PreviewModel; onCategory?: (
               ))
             )}
           </div>
-          {basket === 'bar' && !m.panel ? (
-            <div className="shrink-0 p-2" style={{ background: `linear-gradient(to top, ${m.c.background}, ${m.c.background}00)` }}>
-              <CartBar m={m} />
-            </div>
-          ) : null}
+          <FloatingBasket m={m} kind={basket} />
         </div>
         {m.panel && basket === 'panel' ? <CartPanel m={m} /> : null}
       </div>
-      <TickerSlot m={m} screen="catalog" position="bottom" gapBelow={basket === 'summary' ? 0 : m.live ? 0 : PREVIEW_FOOTER_PX} />
-      {basket === 'summary' ? <OrderSummaryBar m={m} /> : null}
-      {basket === 'summary' && !m.live ? <div className="shrink-0" style={{ height: PREVIEW_FOOTER_PX, background: m.cfg.theme.mode === 'dark' ? m.c.surface : '#14161A' }} /> : null}
+      <TickerSlot m={m} screen="catalog" position="bottom" gapBelow={basketDocked(basket) ? 0 : m.live ? 0 : PREVIEW_FOOTER_PX} />
+      <DockedBasket m={m} kind={basket} />
     </div>
   );
 }

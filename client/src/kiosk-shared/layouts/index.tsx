@@ -4,25 +4,32 @@
  * for the menu screen, the dish's window and the frame of the ordering screens, and get the layout's
  * (config `layout`) — or today's screens, for `standard` and for anything this build does not draw.
  *
- * A new layout (phase 2: shelves, list, magazine, wall, the service / name variants) adds its screen
- * to the tables below and its name to LAYOUT_CATALOGS_READY / LAYOUT_TEMPLATES_READY (lib/kioskLayout.ts);
- * no other layout is touched.
+ * A new layout adds its screen to the tables below and its name to LAYOUT_CATALOGS_READY /
+ * LAYOUT_TEMPLATES_READY (lib/kioskLayout.ts); no other layout is touched. Phase 2 added the shelves
+ * (cafe), the list, the magazine and the wall, the compact dish window (inline / popover), the meal's
+ * tray (combo) and the fab / drawer / receipt baskets; the service / name screens' variants are still
+ * today's screens.
  */
 
 import { useContext, useEffect, useState, type ComponentType, type ReactNode } from 'react';
-import { catalogKindOf, itemViewOf, layoutOf, type LayoutCatalog } from '@/lib/kioskLayout';
+import { catalogKindOf, itemViewOf, layoutOf, mealViewOf, type LayoutCatalog } from '@/lib/kioskLayout';
 import { CatalogScreen, ProductSheet, type PGroup, type PLine, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { MealChooser, MealSheet, StepsProductSheet } from './item';
 import { ReachDishContext } from './reach';
 import { guidedCheckout, LandingCatalog, serviceStepOf } from './landing';
 import { GuidedBar, LayoutActionsContext } from './parts';
+import { ListCatalog } from './list';
+import { MagazineCatalog } from './magazine';
 import { RailCatalog } from './rail';
+import { ShelvesCatalog } from './shelves';
 import { TabsCatalog } from './tabs';
+import { WallCatalog } from './wall';
 
 export { CategoryVisual, KioskIconSvg } from './icons';
 export { ReachFrame, ReachSheets, ReachToggle, REACH_STRIP_PX, reachOn } from './reach';
 export { WelcomeBlock } from './welcome';
 export { GuidedBar, OrderSummaryBar, kt } from './parts';
+export { DockedBasket, FloatingBasket, ReceiptBasket } from './baskets';
 
 interface CatalogProps {
   m: PreviewModel;
@@ -38,11 +45,19 @@ function LandingEntry({ m, onCategory }: CatalogProps) {
   return <LandingCatalog m={m} onCategory={onCategory} />;
 }
 
+function ShelvesEntry({ m }: CatalogProps) {
+  return <ShelvesCatalog m={m} />;
+}
+
 /** The catalogs by layout.catalog. */
 const CATALOGS: Partial<Record<LayoutCatalog, ComponentType<CatalogProps>>> = {
   rail: RailEntry,
   top: TabsCatalog,
   landing: LandingEntry,
+  shelves: ShelvesEntry,
+  list: ListCatalog,
+  magazine: MagazineCatalog,
+  wall: WallCatalog,
 };
 
 /** The menu screen: the layout's catalog (today's, for standard), with "רוצים להפוך לארוחה?" over it. */
@@ -98,14 +113,19 @@ interface SheetProps {
   quickNotes?: string[];
 }
 
-/** The dish's window as layout.itemView says: one group at a time (steps), the whole screen, a smaller window, today's. */
+/**
+ * The dish's window as layout.itemView says: one group at a time (steps), the whole screen, a smaller
+ * window, the compact one (inline — the list, popover — the wall), today's.
+ */
 export function LayoutProductSheet(props: SheetProps) {
-  // A meal (the real kiosk's menu.meals): its window, a slot at a time, priced with its components.
+  // A meal (the real kiosk's menu.meals): its window, a slot at a time, priced with its components —
+  // drawn as a tray filling up where layout.mealView says so (combo).
   const meal = props.m.mealOf?.(props.product) ?? null;
-  if (meal) return <MealSheet m={props.m} product={props.product} meal={meal} onClose={props.onClose} onAdd={props.onAdd} />;
+  if (meal) return <MealSheet m={props.m} product={props.product} meal={meal} onClose={props.onClose} onAdd={props.onAdd} tray={mealViewOf(props.m.cfg) === 'tray'} />;
   const view = itemViewOf(props.m.cfg);
   if (view === 'steps') return <StepsProductSheet {...props} />;
-  return <ProductSheet {...props} variant={view === 'full' ? 'full' : view === 'modal' ? 'modal' : 'sheet'} />;
+  const variant = view === 'full' ? 'full' : view === 'modal' ? 'modal' : view === 'inline' || view === 'popover' ? 'compact' : 'sheet';
+  return <ProductSheet {...props} variant={variant} />;
 }
 
 /**

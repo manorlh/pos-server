@@ -19,6 +19,7 @@ import {
   cardStyle,
   cartCount,
   cartTotal,
+  textSize,
   type PProduct,
   type PreviewModel,
 } from '@/components/dashboard/kiosks/preview-screens';
@@ -121,7 +122,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
       </span>
     );
   const price = (
-    <span className="kt-15 font-extrabold tabular-nums" style={{ color: p.soldOut ? m.c.mutedText : card === 'plate' ? m.c.primary : m.c.text, textDecoration: p.soldOut ? 'line-through' : undefined }}>
+    <span className="kt-15 font-extrabold tabular-nums" style={{ color: p.soldOut ? m.c.mutedText : card === 'plate' ? m.c.primary : m.c.text, textDecoration: p.soldOut ? 'line-through' : undefined, ...textSize(m, 'productPrice', 15) }}>
       {m.money(p.price)}
     </span>
   );
@@ -143,9 +144,11 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
           {soldTag}
         </div>
         <div className="min-w-0 flex-1 space-y-0.5">
-          <div className="line-clamp-2 kt-15 font-bold leading-snug">{p.name}</div>
+          <div className="line-clamp-2 kt-15 font-bold leading-snug" style={textSize(m, 'productName', 15)}>
+            {p.name}
+          </div>
           {m.cfg.theme.showDescriptions && p.description ? (
-            <div className="line-clamp-2 kt-11 leading-snug" style={{ color: m.c.mutedText }}>
+            <div className="line-clamp-2 kt-11 leading-snug" style={{ color: m.c.mutedText, ...textSize(m, 'productDescription', 11) }}>
               {p.description}
             </div>
           ) : null}
@@ -186,7 +189,9 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
           {soldTag}
           {plus(42 * u, 'absolute bottom-0 end-0')}
         </div>
-        <div className="mt-1 line-clamp-2 kt-15 font-bold leading-snug">{p.name}</div>
+        <div className="mt-1 line-clamp-2 kt-15 font-bold leading-snug" style={textSize(m, 'productName', 15)}>
+          {p.name}
+        </div>
         <div className="mt-0.5">{price}</div>
       </button>
     );
@@ -206,9 +211,11 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
         {plus(34 * u, 'absolute bottom-2 end-2')}
       </div>
       <div className="space-y-0.5 p-2.5">
-        <div className="line-clamp-2 kt-13 font-bold leading-snug">{p.name}</div>
+        <div className="line-clamp-2 kt-13 font-bold leading-snug" style={textSize(m, 'productName', 13)}>
+          {p.name}
+        </div>
         {m.cfg.theme.showDescriptions && p.description ? (
-          <div className="line-clamp-2 kt-11 leading-snug" style={{ color: m.c.mutedText }}>
+          <div className="line-clamp-2 kt-11 leading-snug" style={{ color: m.c.mutedText, ...textSize(m, 'productDescription', 11) }}>
             {p.description}
           </div>
         ) : null}
@@ -234,7 +241,7 @@ export function OrderSummaryBar({ m }: { m: PreviewModel }) {
   const u = unitOf(m);
   const count = cartCount(m.cart);
   const empty = count === 0;
-  const bar = m.cfg.theme.mode === 'dark' ? m.c.surface : '#14161A';
+  const bar = m.c.dark ? m.c.surface : '#14161A';
   const toBasket = () => !empty && m.go(m.cfg.general.skipCart === 'off' ? 'cart' : 'pay');
   const bounce = m.motion.bounce > 0;
   return (
@@ -271,6 +278,7 @@ export function OrderSummaryBar({ m }: { m: PreviewModel }) {
           borderRadius: m.btnRadius,
           background: empty ? 'rgba(255,255,255,0.16)' : m.c.accent,
           color: empty ? 'rgba(255,255,255,0.5)' : contrastText(m.c.accent),
+          ...textSize(m, 'buttons', 15),
         }}
       >
         {kt(m, 'basketPay')}
@@ -319,7 +327,7 @@ export function GuidedBasketButton({ m }: { m: PreviewModel }) {
         type="button"
         onClick={() => m.go(m.cfg.general.skipCart === 'off' ? 'cart' : 'pay')}
         className="flex w-full items-center justify-center gap-2 px-4 kt-15 font-bold shadow-lg transition-transform duration-150 active:scale-[0.98]"
-        style={{ minHeight: 50 * u, borderRadius: m.btnRadius, background: m.c.button, color: m.c.buttonText }}
+        style={{ minHeight: 50 * u, borderRadius: m.btnRadius, background: m.c.button, color: m.c.buttonText, ...textSize(m, 'buttons', 15) }}
       >
         <CartTarget register={m.setCartTarget} key={m.cartBump} className={m.motion.bounce > 0 ? 'kiosk-bounce' : undefined}>
           {kt(m, 'guidedToBasket', { count, total: m.money(cartTotal(m.cart)) })}
