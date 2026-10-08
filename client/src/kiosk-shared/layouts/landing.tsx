@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
 import { basketDocked, basketKindOf, layoutOf, landingColumnsFor, productColumns } from '@/lib/kioskLayout';
 import { checkoutStepsNow } from '@/lib/kioskConfig';
 import { KioskSwap, itemEnter } from '@/components/dashboard/kiosks/preview-motion';
-import { CartPanel, CatalogHeader, cardStyle, serviceAsked, serviceOnAttractOf, type PCategory, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
+import { CartPanel, CatalogHeader, cardStyle, serviceAsked, serviceOnAttractOf, textSize, type PCategory, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { detailsFields } from '@/components/dashboard/kiosks/preview-entry';
 import { TickerSlot, PREVIEW_FOOTER_PX } from '@/components/dashboard/kiosks/preview-ticker';
 import { CategoryVisual } from './icons';
@@ -109,7 +109,9 @@ function LandingHome({ m, onEnter }: { m: PreviewModel; onEnter: (id: string) =>
                 style={{ ...cardStyle(m), minHeight: icon + 60 * u, paddingTop: 12 * u, paddingBottom: 12 * u }}
               >
                 <CategoryVisual m={m} cat={cat} mode={layout.categoryIcons ?? 'duotone'} size={icon} />
-                <span className="line-clamp-2 kt-15 font-bold leading-tight">{cat.name}</span>
+                <span className="line-clamp-2 kt-15 font-bold leading-tight" style={textSize(m, 'categoryName', 15)}>
+                  {cat.name}
+                </span>
                 {layout.landingShowCounts ? (
                   <span className="kt-11" style={{ color: m.c.mutedText }}>
                     {itemsCount(m, cat.products.length)}
@@ -171,8 +173,9 @@ function CategoryPage({ m, cat, onEnter }: { m: PreviewModel; cat: PCategory; on
                 style={{
                   minHeight: 38 * u,
                   borderRadius: 999,
-                  background: on ? m.c.button : m.cfg.theme.mode === 'dark' ? '#FFFFFF14' : '#0000000D',
+                  background: on ? m.c.button : m.c.dark ? '#FFFFFF14' : '#0000000D',
                   color: on ? m.c.buttonText : m.c.text,
+                  ...textSize(m, 'categoryName', 13),
                 }}
               >
                 {other.name}

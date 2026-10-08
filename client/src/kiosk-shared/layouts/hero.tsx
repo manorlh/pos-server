@@ -8,7 +8,7 @@
 import { useEffect, useRef } from 'react';
 import { Check, Plus, Sparkles } from 'lucide-react';
 import { HERO_TURN_MS, layoutOf, shelfCardDp } from '@/lib/kioskLayout';
-import { ProductImage, cardStyle, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
+import { ProductImage, cardStyle, textSize, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { DP_PER_PX, cartCounts, kt, unitOf, useTapDish, widthDpOf } from './parts';
 
 export function HeroBanner({ m }: { m: PreviewModel }) {
@@ -76,8 +76,12 @@ function HeroCard({ m, p, width, inCart }: { m: PreviewModel; p: PProduct; width
       </div>
       <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 px-3 py-2" style={{ background: 'rgba(17,17,17,0.8)', color: '#fff' }}>
         <span className="min-w-0 flex-1">
-          <span className="block truncate kt-15 font-bold">{p.name}</span>
-          <span className="block kt-13 font-extrabold tabular-nums">{m.money(p.price)}</span>
+          <span className="block truncate kt-15 font-bold" style={textSize(m, 'productName', 15)}>
+            {p.name}
+          </span>
+          <span className="block kt-13 font-extrabold tabular-nums" style={textSize(m, 'productPrice', 13)}>
+            {m.money(p.price)}
+          </span>
         </span>
         <span
           role="button"

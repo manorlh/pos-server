@@ -11,7 +11,7 @@ import { Check, Plus, Search, X } from 'lucide-react';
 import { contrastText } from '@/lib/kioskConfig';
 import { listColumns } from '@/lib/kioskLayout';
 import { EntryWindow } from '@/components/dashboard/kiosks/preview-entry';
-import { ProductImage, cardStyle, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
+import { ProductImage, cardStyle, textSize, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { CategoryChips, PhaseFrame, useSectionSpy } from './frame';
 import { Empty, SectionTitle, cartCounts, kt, unitOf, useTapDish, widthDpOf } from './parts';
 
@@ -131,14 +131,16 @@ function ListLine({ m, p, inCart }: { m: PreviewModel; p: PProduct; inCart: numb
         </span>
       ) : null}
       <span className="min-w-0 flex-1">
-        <span className="block truncate kt-13 font-bold">{p.name}</span>
+        <span className="block truncate kt-13 font-bold" style={textSize(m, 'productName', 13)}>
+          {p.name}
+        </span>
         {m.cfg.theme.showDescriptions ? (
-          <span className="block truncate kt-11" style={{ color: m.c.mutedText, minHeight: '1.25em' }}>
+          <span className="block truncate kt-11" style={{ color: m.c.mutedText, minHeight: '1.25em', ...textSize(m, 'productDescription', 11) }}>
             {p.soldOut ? m.t('soldOut') : p.description ?? ''}
           </span>
         ) : null}
       </span>
-      <span className="shrink-0 kt-13 font-extrabold tabular-nums" style={{ color: p.soldOut ? m.c.mutedText : m.c.text, textDecoration: p.soldOut ? 'line-through' : undefined }}>
+      <span className="shrink-0 kt-13 font-extrabold tabular-nums" style={{ color: p.soldOut ? m.c.mutedText : m.c.text, textDecoration: p.soldOut ? 'line-through' : undefined, ...textSize(m, 'productPrice', 13) }}>
         {m.money(p.price)}
       </span>
       {p.soldOut ? null : (

@@ -21,6 +21,7 @@ import {
   Stepper,
   basketTotal,
   cartCount,
+  textSize,
   type PLine,
   type PreviewModel,
 } from '@/components/dashboard/kiosks/preview-screens';
@@ -44,7 +45,7 @@ export function FloatingBasket({ m, kind }: { m: PreviewModel; kind: BasketKind 
 /** The basket docked under the menu (the order bar, the receipt), and the strip "POWERED BY" keeps under it in the preview. */
 export function DockedBasket({ m, kind }: { m: PreviewModel; kind: BasketKind | 'guided' }) {
   if (!basketDocked(kind)) return null;
-  const strip = kind === 'summary' ? (m.cfg.theme.mode === 'dark' ? m.c.surface : '#14161A') : m.c.surface;
+  const strip = kind === 'summary' ? (m.c.dark ? m.c.surface : '#14161A') : m.c.surface;
   return (
     <>
       {kind === 'summary' ? <OrderSummaryBar m={m} /> : <ReceiptBasket m={m} />}
@@ -144,7 +145,7 @@ export function DrawerBasket({ m }: { m: PreviewModel }) {
             </div>
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3 [scrollbar-width:none]">
               {m.cart.map((l) => (
-                <div key={l.key} className="space-y-1.5 rounded-xl p-2" style={{ background: m.cfg.theme.mode === 'dark' ? '#FFFFFF0D' : '#0000000A' }}>
+                <div key={l.key} className="space-y-1.5 rounded-xl p-2" style={{ background: m.c.dark ? '#FFFFFF0D' : '#0000000A', ...textSize(m, 'cartLines', 13) }}>
                   <div className="flex items-start gap-2">
                     <span className="line-clamp-2 min-w-0 flex-1 kt-13 font-semibold leading-tight">{l.product.name}</span>
                     <span className="shrink-0 kt-13 font-bold tabular-nums">{m.money(l.unit * l.qty)}</span>
@@ -221,7 +222,7 @@ export function ReceiptBasket({ m }: { m: PreviewModel }) {
       {!empty ? (
         <div ref={list} className="overflow-y-auto border-t border-dashed [scrollbar-width:none]" style={{ maxHeight: lineH * RECEIPT_LINES, borderColor: m.c.border }}>
           {m.cart.map((l) => (
-            <div key={l.key} className="flex items-center gap-2 kt-13" style={{ minHeight: lineH }}>
+            <div key={l.key} className="flex items-center gap-2 kt-13" style={{ minHeight: lineH, ...textSize(m, 'cartLines', 13) }}>
               <span className="w-7 shrink-0 font-bold tabular-nums" style={{ color: m.c.primary }}>
                 {l.qty}×
               </span>
@@ -248,7 +249,7 @@ export function ReceiptBasket({ m }: { m: PreviewModel }) {
           disabled={empty}
           onClick={() => m.go('pay')}
           className="min-w-0 flex-1 px-4 kt-15 font-extrabold transition-transform duration-150 active:scale-[0.98] disabled:opacity-50"
-          style={{ minHeight: 46 * u, borderRadius: m.btnRadius, background: m.c.button, color: m.c.buttonText }}
+          style={{ minHeight: 46 * u, borderRadius: m.btnRadius, background: m.c.button, color: m.c.buttonText, ...textSize(m, 'buttons', 15) }}
           data-text-key="basketPay"
         >
           {kt(m, 'basketPay')}

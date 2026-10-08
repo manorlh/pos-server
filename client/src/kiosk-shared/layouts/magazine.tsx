@@ -11,7 +11,7 @@ import { Check, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { layoutOf, storyHeightDp } from '@/lib/kioskLayout';
 import { KioskSwap } from '@/components/dashboard/kiosks/preview-motion';
-import { DietaryChips, ProductImage, cardStyle, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
+import { DietaryChips, ProductImage, cardStyle, textSize, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { CategoryChips, PhaseFrame, useSectionSpy } from './frame';
 import { DP_PER_PX, Empty, cartCounts, kt, unitOf, useTapDish } from './parts';
 
@@ -115,15 +115,17 @@ function StoryPage({ m, p, label, height, inCart }: { m: PreviewModel; p: PProdu
             {label}
           </div>
         ) : null}
-        <div className="line-clamp-2 text-xl font-extrabold leading-tight">{p.name}</div>
+        <div className="line-clamp-2 text-xl font-extrabold leading-tight" style={textSize(m, 'productName', 20)}>
+          {p.name}
+        </div>
         {m.cfg.theme.showDescriptions && p.description ? (
-          <div className="line-clamp-3 kt-13" style={{ color: m.c.mutedText }}>
+          <div className="line-clamp-3 kt-13" style={{ color: m.c.mutedText, ...textSize(m, 'productDescription', 13) }}>
             {p.description}
           </div>
         ) : null}
         <DietaryChips m={m} tags={p.dietaryTags} />
         <div className="flex items-center gap-3 pt-1.5">
-          <span className="min-w-0 flex-1 truncate text-xl font-extrabold tabular-nums" style={{ color: p.soldOut ? m.c.mutedText : m.c.primary, textDecoration: p.soldOut ? 'line-through' : undefined }}>
+          <span className="min-w-0 flex-1 truncate text-xl font-extrabold tabular-nums" style={{ color: p.soldOut ? m.c.mutedText : m.c.primary, textDecoration: p.soldOut ? 'line-through' : undefined, ...textSize(m, 'productPrice', 20) }}>
             {m.money(p.price)}
           </span>
           {p.soldOut ? null : (
@@ -134,7 +136,7 @@ function StoryPage({ m, p, label, height, inCart }: { m: PreviewModel; p: PProdu
                 tap(p, true, pic(e.currentTarget));
               }}
               className="flex shrink-0 items-center gap-1.5 px-5 kt-15 font-bold shadow-md transition-transform duration-150 active:scale-95"
-              style={{ minHeight: 48 * u, borderRadius: m.btnRadius, background: added ? m.c.accent : m.c.button, color: m.c.buttonText }}
+              style={{ minHeight: 48 * u, borderRadius: m.btnRadius, background: added ? m.c.accent : m.c.button, color: m.c.buttonText, ...textSize(m, 'buttons', 15) }}
               data-text-key="quickAdd"
             >
               {added ? <Check className="h-5 w-5" /> : <Plus className="h-5 w-5" />}

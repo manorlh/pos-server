@@ -9,7 +9,7 @@ import { useState } from 'react';
 import { Check, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { sheetEnter } from '@/components/dashboard/kiosks/preview-motion';
-import { BigButton, OptionRow, ProductImage, Stepper, cardStyle, type PGroup, type PLine, type PMeal, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
+import { BigButton, OptionRow, ProductImage, Stepper, cardStyle, textSize, type PGroup, type PLine, type PMeal, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { initialPicks, lineOptionsOf, menuGroupOfP, useDishSheet } from '@/components/dashboard/kiosks/preview-dish';
 import { reachLow } from '@/lib/kioskLayout';
 import { chosenOptions, mealPick, mealSlotProblem, mealUnitAgorot, optionText, type MealSlot } from '@/lib/kioskMoney';
@@ -74,7 +74,9 @@ export function StepsProductSheet({
             <ProductImage m={m} p={product} className="h-full w-full" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="line-clamp-2 text-lg font-extrabold leading-tight">{product.name}</div>
+            <div className="line-clamp-2 text-lg font-extrabold leading-tight" style={textSize(m, 'itemName', 18)}>
+              {product.name}
+            </div>
             <div className="kt-13 font-bold tabular-nums" style={{ color: m.c.primary }}>
               {m.money(unit * qty)}
             </div>
@@ -131,7 +133,7 @@ export function StepsProductSheet({
                         border: `${on ? 2 : 1.5}px solid ${on ? m.c.primary : m.c.border}`,
                       }}
                     >
-                      <span className="flex items-center gap-1.5 kt-15 font-bold">
+                      <span className="flex items-center gap-1.5 kt-15 font-bold" style={textSize(m, 'itemOptions', 15)}>
                         {on ? (
                           <span className="flex h-5 w-5 items-center justify-center rounded-full" style={{ background: m.c.primary, color: m.c.buttonText }}>
                             <Check className="h-3 w-3" />
@@ -306,7 +308,9 @@ export function MealSheet({
             <ProductImage m={m} p={product} className="h-full w-full" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="line-clamp-2 text-lg font-extrabold leading-tight">{product.name}</div>
+            <div className="line-clamp-2 text-lg font-extrabold leading-tight" style={textSize(m, 'itemName', 18)}>
+              {product.name}
+            </div>
             <div className="kt-13 font-bold tabular-nums" style={{ color: m.c.primary }}>
               {m.money((unitAgorot * qty) / 100)}
             </div>
@@ -396,7 +400,9 @@ export function MealSheet({
                       <span className="overflow-hidden" style={{ width: 48 * u, height: 48 * u, borderRadius: 12 }}>
                         <ProductImage m={m} p={c.product} className="h-full w-full" />
                       </span>
-                      <span className="line-clamp-2 kt-13 font-bold leading-tight">{c.product.name}</span>
+                      <span className="line-clamp-2 kt-13 font-bold leading-tight" style={textSize(m, 'itemOptions', 13)}>
+                        {c.product.name}
+                      </span>
                       {c.upchargeAgorot > 0 ? (
                         <span className="kt-11 tabular-nums" style={{ color: m.c.mutedText }}>
                           +{m.money(c.upchargeAgorot / 100)}

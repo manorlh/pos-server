@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { basketDocked, basketKindOf, layoutOf, productColumns, railMeasures } from '@/lib/kioskLayout';
 import { KioskSwap } from '@/components/dashboard/kiosks/preview-motion';
-import { CartPanel, CatalogHeader, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
+import { CartPanel, CatalogHeader, textSize, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { TickerSlot, PREVIEW_FOOTER_PX } from '@/components/dashboard/kiosks/preview-ticker';
 import { CategoryVisual } from './icons';
 import { DockedBasket, FloatingBasket } from './baskets';
@@ -102,7 +102,7 @@ export function RailCatalog({ m, onCategory }: { m: PreviewModel; onCategory?: (
                 <span className="transition-transform duration-200" style={{ transform: on ? 'scale(1.04)' : 'scale(0.96)' }}>
                   <CategoryVisual m={m} cat={cat} mode={layout.categoryIcons ?? 'photo'} size={imageSize} on={on} />
                 </span>
-                <span className={cn('line-clamp-2 w-full leading-tight', itemH >= 100 ? 'kt-13' : 'kt-11', on ? 'font-extrabold' : 'font-semibold')} style={{ color: on ? m.c.primary : m.c.text }}>
+                <span className={cn('line-clamp-2 w-full leading-tight', itemH >= 100 ? 'kt-13' : 'kt-11', on ? 'font-extrabold' : 'font-semibold')} style={{ color: on ? m.c.primary : m.c.text, ...textSize(m, 'categoryName', itemH >= 100 ? 13 : 11) }}>
                   {cat.name}
                 </span>
               </button>

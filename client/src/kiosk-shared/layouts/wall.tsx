@@ -14,7 +14,7 @@ import { contrastText } from '@/lib/kioskConfig';
 import { kioskIcon } from '@/lib/kioskIcons';
 import { layoutOf, wallColumns } from '@/lib/kioskLayout';
 import { KioskSwap, itemEnter } from '@/components/dashboard/kiosks/preview-motion';
-import { cardStyle, type PCategory, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
+import { cardStyle, textSize, type PCategory, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { categoryIconId } from './icons';
 import { CategoryChips, PhaseFrame, useSectionSpy } from './frame';
 import { Empty, SectionTitle, cartCounts, unitOf, useTapDish, widthDpOf } from './parts';
@@ -22,7 +22,7 @@ import { Empty, SectionTitle, cartCounts, unitOf, useTapDish, widthDpOf } from '
 /** A category's colour on the wall: its icon's hue (else the brand colour). */
 function tintOf(m: PreviewModel, cat: PCategory): string {
   const hue = kioskIcon(categoryIconId(m, cat))?.hue;
-  return hue === undefined ? m.c.primary : `hsl(${hue} 62% ${m.cfg.theme.mode === 'dark' ? 45 : 55}%)`;
+  return hue === undefined ? m.c.primary : `hsl(${hue} 62% ${m.c.dark ? 45 : 55}%)`;
 }
 
 export function WallCatalog({ m, activeCategory, onCategory }: { m: PreviewModel; activeCategory: string | null; onCategory: (id: string) => void }) {
@@ -111,10 +111,10 @@ function WallButton({ m, p, tint, inCart }: { m: PreviewModel; p: PProduct; tint
       style={{ ...cardStyle(m), minHeight: 96 * u, background: added ? m.c.accent : cardStyle(m).background, color: ink }}
     >
       <span className="absolute inset-x-0 top-0 h-1.5" style={{ background: tint }} />
-      <span className="line-clamp-2 kt-15 font-bold leading-tight" style={{ minHeight: '2.5em' }}>
+      <span className="line-clamp-2 kt-15 font-bold leading-tight" style={{ minHeight: '2.5em', ...textSize(m, 'productName', 15) }}>
         {p.name}
       </span>
-      <span className="mt-1 kt-15 font-extrabold tabular-nums" style={{ color: added ? ink : m.c.primary }}>
+      <span className="mt-1 kt-15 font-extrabold tabular-nums" style={{ color: added ? ink : m.c.primary, ...textSize(m, 'productPrice', 15) }}>
         {p.soldOut ? m.t('soldOut') : m.money(p.price)}
       </span>
       {inCart > 0 && !added ? (

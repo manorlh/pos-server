@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { basketDocked, basketKindOf, heroShown, layoutOf } from '@/lib/kioskLayout';
 import { KioskSwap, itemEnter } from '@/components/dashboard/kiosks/preview-motion';
-import { CartPanel, CatalogHeader, type PCategory, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
+import { CartPanel, CatalogHeader, textSize, type PCategory, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { TickerSlot, PREVIEW_FOOTER_PX } from '@/components/dashboard/kiosks/preview-ticker';
 import { DockedBasket, FloatingBasket } from './baskets';
 import { HeroBanner } from './hero';
@@ -147,6 +147,7 @@ export function IconChip({ m, cat, on, onPick }: { m: PreviewModel; cat: PCatego
         background: on ? m.c.button : m.c.surface,
         color: fg,
         border: on ? '1px solid transparent' : `1px solid ${m.c.border}`,
+        ...textSize(m, 'categoryName', 13),
       }}
     >
       {mode === 'line' || mode === 'filled' || mode === 'duotone' ? (
