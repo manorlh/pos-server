@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.middleware.auth import get_active_tenant_id, get_current_user, get_pos_machine_for_sync_path
+from app.middleware.auth import FISCAL_SYNC_PATH, get_active_tenant_id, get_current_user, get_pos_machine_for_sync_path
 from app.models.device_command import DEVICE_ACTIONS, DeviceCommand
 from app.models.pos_machine import POSMachine
 from app.models.shop import Shop
@@ -183,7 +183,7 @@ def till_pull(
     return out
 
 
-@till_router.post("/{machine_id}/device-commands/unlocked")
+@till_router.post("/{machine_id}/device-commands/unlocked", dependencies=FISCAL_SYNC_PATH)
 def till_unlocked(
     machine_id: str,
     body: UnlockedIn,
@@ -196,7 +196,7 @@ def till_unlocked(
     return {"state": svc.state_out(svc.state_of(db, machine.id)), "command": svc.command_out(row)}
 
 
-@till_router.post("/{machine_id}/device-commands/{command_id}/ack")
+@till_router.post("/{machine_id}/device-commands/{command_id}/ack", dependencies=FISCAL_SYNC_PATH)
 def till_ack(
     machine_id: str,
     command_id: str,

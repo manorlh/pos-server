@@ -440,6 +440,8 @@ _PRODUCT_LIVE = frozenset({
     "stockQuantity", "inMachineCatalog", "createdAt", "updatedAt",
     # The deciding lock, laid over live with the levels it comes from (SPEC_AVAILABILITY).
     "availabilityLock",
+    # "אזל" / "חסום": the floor of the day, never part of a publication (app/services/sold_out.py).
+    "lockAvailable", "blocks",
 })
 _CATEGORY_LIVE = frozenset({"createdAt", "updatedAt", "activeLock"})
 
@@ -684,6 +686,10 @@ def _products_for_till(
     items = machine_catalog.catalog_items(db, machine.id) if ids else {}
     moved = getattr(machine, "area_changed_at", None)
     moved = S._aware_utc(moved) if isinstance(moved, datetime) else None
+    # "אזל" / "חסום" — live, as on a till pulling the live catalog (S._serialize_merged_product).
+    from app.services import sold_out
+
+    blocks_by = sold_out.blocks_for_machine(db, machine, ids, since=since) if ids else {}
 
     out: List[Dict[str, Any]] = []
     for key, published in sorted(rows.items(), key=lambda kv: ((kv[1].get("name") or ""), kv[0])):
@@ -704,8 +710,13 @@ def _products_for_till(
             eff = max([s for s in stamps if s is not None], default=_now())
         if moved is not None and moved > eff:
             eff = moved
+        blocks = blocks_by.get(key)
+        blocked_at = S._aware_utc(getattr(blocks, "changed_at", None))
+        if blocked_at is not None and blocked_at > S._aware_utc(eff):
+            eff = blocked_at
         if since is not None and S._aware_utc(eff) <= S._aware_utc(since):
             continue
+        active_blocks = list(getattr(blocks, "active", None) or [])
 
         gate = gates.get(key) or {}
         listed = bool(published.get("shopListed", True))
@@ -736,7 +747,9 @@ def _products_for_till(
         elif g is not None:
             row["imageUrl"] = g.image_url
         row["inStock"] = bool(listed and base_in_stock)
-        row["isAvailable"] = bool(listed and resolved.available)
+        row["lockAvailable"] = bool(listed and resolved.available)
+        row["isAvailable"] = row["lockAvailable"] and not active_blocks
+        row["blocks"] = [sold_out.block_out(b) for b in active_blocks]
         # The lock that decides, live like the levels it comes from (docs/SPEC_AVAILABILITY.md).
         row["availabilityLock"] = availability.lock_info(
             levels,
@@ -892,6 +905,8 @@ def _dropped(
             row["shopListed"] = False
             row["inStock"] = False
             row["isAvailable"] = False
+            row["lockAvailable"] = False
+            row["blocks"] = []
             row["availabilityLock"] = None
             row["inMachineCatalog"] = bool(item is not None and item.is_included)
             row["updatedAt"] = stamp
