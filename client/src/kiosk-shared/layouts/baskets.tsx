@@ -9,7 +9,8 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Minus, Plus, ShoppingBag, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { contrastText } from '@/lib/kioskConfig';
+import { EASE_ENTER, contrastText } from '@/lib/kioskConfig';
+import { motionActive, motionCurve } from '@/lib/kioskMotionEngine';
 import { RECEIPT_LINES, basketDocked, type BasketKind } from '@/lib/kioskLayout';
 import { sheetEnter } from '@/components/dashboard/kiosks/preview-motion';
 import { PREVIEW_FOOTER_PX } from '@/components/dashboard/kiosks/preview-ticker';
@@ -81,7 +82,7 @@ export function FabBasket({ m }: { m: PreviewModel }) {
       <button
         type="button"
         onClick={() => toBasket(m)}
-        className="absolute bottom-3 end-3 z-10 flex items-center gap-2.5 py-1.5 pe-4 ps-1.5 shadow-lg transition-transform duration-150 animate-in slide-in-from-bottom-4 active:scale-95"
+        className="k-tap k-tap-solid absolute bottom-3 end-3 z-10 flex items-center gap-2.5 py-1.5 pe-4 ps-1.5 shadow-lg transition-transform duration-150 animate-in slide-in-from-bottom-4 active:scale-95"
         style={{ minHeight: 56 * u, borderRadius: 999, background: m.c.button, color: m.c.buttonText }}
       >
         <span className="relative flex shrink-0 items-center justify-center rounded-full" style={{ width: 44 * u, height: 44 * u, background: 'rgba(255,255,255,0.18)' }}>
@@ -117,6 +118,10 @@ export function DrawerBasket({ m }: { m: PreviewModel }) {
   if (count === 0) return null;
   const u = unitOf(m);
   const enter = sheetEnter(m.transitions);
+  const drawer = m.engine?.cartOpen;
+  const drawerMs = drawer ? (motionActive(drawer) ? drawer.durationMs : 0) : m.cfg.general.reduceMotion ? 0 : 300;
+  const drawerSlides = !drawer || (!drawer.reduced && (drawer.animationType === 'slideIn' || drawer.animationType === 'swipeTransition'));
+  const drawerEase = drawer ? motionCurve(drawer.easing, EASE_ENTER) : undefined;
   return (
     <>
       <div className="shrink-0 p-2" style={{ background: `linear-gradient(to top, ${m.c.background}, ${m.c.background}00)` }}>
@@ -134,8 +139,12 @@ export function DrawerBasket({ m }: { m: PreviewModel }) {
         <div className="absolute inset-0 z-30 flex justify-end">
           <button type="button" aria-label={m.t('close')} className={cn('absolute inset-0 bg-black/40', enter.scrim)} style={enter.style} onClick={() => setOpen(false)} />
           <div
-            className={cn('relative flex h-full w-[84%] max-w-[320px] flex-col shadow-2xl', !m.cfg.general.reduceMotion && 'animate-in slide-in-from-left duration-300')}
-            style={{ background: m.c.surface, color: m.c.text }}
+            // "פתיחת סל" (the motion engine's cartOpen): its time and curve; a fade when it is reduced or a fading kind.
+            className={cn(
+              'relative flex h-full w-[84%] max-w-[320px] flex-col shadow-2xl',
+              drawerMs > 0 && (drawerSlides ? 'animate-in slide-in-from-left' : 'animate-in fade-in'),
+            )}
+            style={{ background: m.c.surface, color: m.c.text, animationDuration: `${drawerMs}ms`, animationTimingFunction: drawerEase }}
           >
             <div className="flex items-center gap-2 border-b px-3 py-3" style={{ borderColor: m.c.border }}>
               <span className="min-w-0 flex-1 truncate text-lg font-extrabold">{m.txt('cartTitle')}</span>
@@ -248,7 +257,7 @@ export function ReceiptBasket({ m }: { m: PreviewModel }) {
           type="button"
           disabled={empty}
           onClick={() => m.go('pay')}
-          className="min-w-0 flex-1 px-4 kt-15 font-extrabold transition-transform duration-150 active:scale-[0.98] disabled:opacity-50"
+          className="k-tap k-tap-solid relative min-w-0 flex-1 px-4 kt-15 font-extrabold transition-transform duration-150 active:scale-[0.98] disabled:opacity-50"
           style={{ minHeight: 46 * u, borderRadius: m.btnRadius, background: m.c.button, color: m.c.buttonText, ...textSize(m, 'buttons', 15) }}
           data-text-key="basketPay"
         >

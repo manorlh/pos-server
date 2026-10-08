@@ -69,6 +69,7 @@ export function WallCatalog({ m, activeCategory, onCategory }: { m: PreviewModel
             id={current.id}
             fx={m.transitions.categorySwitch}
             ms={m.transitions.categoryMs}
+            ease={m.transitions.categoryEase}
             order={(id) => m.categories.findIndex((c) => c.id === id)}
             className="overflow-x-clip [overflow-clip-margin:12px]"
             render={(id) => {
@@ -107,7 +108,7 @@ function WallButton({ m, p, tint, inCart }: { m: PreviewModel; p: PProduct; tint
       data-pic
       disabled={p.soldOut}
       onClick={(e) => tap(p, false, e.currentTarget.getBoundingClientRect())}
-      className="relative flex w-full flex-col items-center justify-center overflow-hidden px-2 pb-3 pt-5 text-center transition-transform duration-150 active:scale-[0.97] disabled:opacity-45"
+      className="k-tap relative flex w-full flex-col items-center justify-center overflow-hidden px-2 pb-3 pt-5 text-center transition-transform duration-150 active:scale-[0.97] disabled:opacity-45"
       style={{ ...cardStyle(m), minHeight: 96 * u, background: added ? m.c.accent : cardStyle(m).background, color: ink }}
     >
       <span className="absolute inset-x-0 top-0 h-1.5" style={{ background: tint }} />

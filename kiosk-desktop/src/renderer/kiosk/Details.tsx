@@ -79,6 +79,7 @@ export function DetailsScreen({
       id={step}
       fx={m.transitions.screenChange}
       ms={m.transitions.screenMs}
+      ease={m.transitions.screenEase}
       order={(s) => steps.indexOf(s)}
       className="h-full"
       slotClassName="h-full"

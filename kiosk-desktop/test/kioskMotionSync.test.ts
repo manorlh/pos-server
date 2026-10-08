@@ -35,12 +35,15 @@ const on = { reduceMotion: false };
 
 describe('the Windows kiosk plays the till\'s motion table', () => {
   it('the curves in the CSS: arrivals, departures, the push as one strip, the pop', () => {
-    expect(MOTION_CSS).toContain(`.k-anim { animation-duration: var(--k-ms, 220ms); animation-timing-function: ${bezier(gold.curves.arrive)};`);
-    expect(MOTION_CSS).toContain(`.k-leave.k-anim { animation-fill-mode: forwards; animation-timing-function: ${bezier(gold.curves.leave)}; }`);
-    expect(MOTION_CSS).toContain(`.k-anim.k-push-in, .k-leave.k-anim.k-push-out { animation-timing-function: ${bezier(gold.curves.strip)}; }`);
+    // Each the default of `--k-ease` (an event's own curve, "מנוע הנפשות"): with none set, exactly the golden one.
+    expect(MOTION_CSS).toContain(`.k-anim { animation-duration: var(--k-ms, 220ms); animation-timing-function: var(--k-ease, ${bezier(gold.curves.arrive)});`);
+    expect(MOTION_CSS).toContain(`.k-leave.k-anim { animation-fill-mode: forwards; animation-timing-function: var(--k-ease, ${bezier(gold.curves.leave)}); }`);
+    expect(MOTION_CSS).toContain(`.k-anim.k-push-in, .k-leave.k-anim.k-push-out { animation-timing-function: var(--k-ease, ${bezier(gold.curves.strip)}); }`);
     expect(MOTION_CSS).toContain(`animation-timing-function: ${bezier(gold.curves.popRise)}; } 60%`);
     expect(MOTION_CSS).toContain(`animation-timing-function: ${bezier(gold.curves.popSettle)}; } 100%`);
-    expect(MOTION_CSS).toContain(`.k-item-rise { animation-name: kItemRise; animation-timing-function: ${bezier(gold.curves.arrive)}; }`);
+    expect(MOTION_CSS).toContain(`.k-item-rise { animation-name: kItemRise; animation-timing-function: var(--k-ease, ${bezier(gold.curves.arrive)}); }`);
+    // The event's curve never leaks into what is inside (a screen's into its category's swap or window).
+    expect(MOTION_CSS).toContain("@property --k-ease { syntax: '*'; inherits: false; }");
     // Every curve in the transitions' CSS is one of the golden ones.
     const known = new Set(Object.values(gold.curves as Record<string, number[]>).map(bezier));
     for (const c of MOTION_CSS.match(/cubic-bezier\([^)]*\)/g) ?? []) expect(known, c).toContain(c);

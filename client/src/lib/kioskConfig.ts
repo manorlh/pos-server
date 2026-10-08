@@ -23,6 +23,27 @@ import {
 } from './kioskLayout';
 import { validateKioskTexts, isKioskTextKey, type KioskTextsByLang } from './kioskTexts';
 import { validateCategoryIconIds } from './kioskIcons';
+import {
+  MOTION_EVENTS,
+  MOTION_GLOBAL_SPEEDS,
+  MOTION_MULTIPLIER_MAX,
+  MOTION_MULTIPLIER_MIN,
+  MOTION_PARAMS,
+  MOTION_PRESETS,
+  motionActive,
+  motionCurve,
+  motionParamOk,
+  motionParamRange,
+  resolveMotionEngine,
+  type MotionEventKey,
+  type MotionEventsConfig,
+  type MotionGlobalSpeed,
+  type MotionParam,
+  type MotionPreset,
+  type MotionType,
+  type ResolvedMotion,
+  type ResolvedMotionEngine,
+} from './kioskMotionEngine';
 
 /* ------------------------------------------------------------------ types */
 
@@ -650,6 +671,16 @@ export interface KioskMotionSettings {
   speed: MotionSpeed;
   /** "אפקטים": everything, the cheaper variant of each, or the device decides (MotionEffects). */
   effects: MotionEffects;
+  /**
+   * "מנוע הנפשות" (lib/kioskMotionEngine.ts): every event's base timings — Runner Standard / Slow /
+   * Fast, custom, or "legacy" (the pace before the engine). Absent in a config stored before it.
+   */
+  preset?: MotionPreset;
+  /** slow 1.30 · normal 1 · fast 0.75 · custom (speedMultiplier); null — the older `speed`. */
+  globalSpeed?: MotionGlobalSpeed | null;
+  speedMultiplier?: number;
+  /** Each event's own values, only what a level sets (an override of the preset). */
+  events?: MotionEventsConfig;
 }
 
 /**
@@ -942,7 +973,11 @@ export const KIOSK_DEFAULTS: KioskConfig = {
   success: { message: '', image: null },
   // The "wolt" style's (KIOSK_UI_PRESET_MOTION): the category slides in, its dishes pop in one after another.
   // "אפקטים": the device decides.
-  motion: { categorySwitch: 'slide', itemsEnter: 'cascade', screenChange: 'slide', sheet: 'scale', addToCart: 'fly', speed: 'normal', effects: 'auto' },
+  motion: {
+    categorySwitch: 'slide', itemsEnter: 'cascade', screenChange: 'slide', sheet: 'scale', addToCart: 'fly', speed: 'normal', effects: 'auto',
+    // "מנוע הנפשות": Runner Standard for a new kiosk, the speed by `speed`, no event of its own.
+    preset: 'standard', globalSpeed: null, speedMultiplier: 1, events: {},
+  },
   // "כיתוב רץ": off; once on, on the menu and the basket, under the header, slowly.
   ticker: {
     enabled: false,
@@ -1900,6 +1935,7 @@ export function validateKioskConfig(
       checkEnum(e, 'motion.addToCart', mo.addToCart, ADD_TO_CART_FX);
       checkEnum(e, 'motion.speed', mo.speed, MOTION_SPEEDS);
       checkEnum(e, 'motion.effects', mo.effects, MOTION_EFFECTS);
+      validateMotionEngine(e, mo);
     }
   }
 
@@ -2904,6 +2940,14 @@ export interface TransitionSpec {
   sheetMs: number;
   /** The add's kind as played (reduce motion: "none" — motionSpec then gives the short fade). */
   addToCart: AddToCartFx;
+  /**
+   * "מנוע הנפשות": an event's own curve (CSS) when its easing is not "auto" (engineTransitionSpec);
+   * absent — each kind's own curve (the golden KioskEase), exactly as before the engine.
+   */
+  categoryEase?: string;
+  itemEase?: string;
+  screenEase?: string;
+  sheetEase?: string;
 }
 
 export const NO_TRANSITIONS: TransitionSpec = {
@@ -2960,6 +3004,147 @@ export function staggerDelayMs(spec: Pick<TransitionSpec, 'staggerMs' | 'itemsEn
 /** The whole entrance of a grid (the last card's delay and its own time). */
 export function gridEnterMs(spec: Pick<TransitionSpec, 'staggerMs' | 'itemsEnter' | 'itemMs' | 'staggerCapMs'>): number {
   return spec.itemsEnter === 'none' ? 0 : staggerDelayMs(spec, STAGGER_MAX_CARDS - 1) + spec.itemMs;
+}
+
+/* ------------------------------------------- "מנוע הנפשות" (kioskMotionEngine.ts) */
+
+/** The engine's keys of `motion`: each known, each event's values in its range (the server's rules, the same paths). */
+function validateMotionEngine(e: KioskValidationError[], mo: Record<string, unknown>): void {
+  if (mo.preset !== undefined) checkEnum(e, 'motion.preset', mo.preset, MOTION_PRESETS);
+  if (mo.globalSpeed !== undefined && mo.globalSpeed !== null) checkEnum(e, 'motion.globalSpeed', mo.globalSpeed, MOTION_GLOBAL_SPEEDS);
+  const k = mo.speedMultiplier;
+  if (k !== undefined && (typeof k !== 'number' || !Number.isFinite(k) || k < MOTION_MULTIPLIER_MIN || k > MOTION_MULTIPLIER_MAX)) {
+    e.push({ path: 'motion.speedMultiplier', code: 'range', params: { min: MOTION_MULTIPLIER_MIN, max: MOTION_MULTIPLIER_MAX } });
+  }
+  if (mo.events === undefined || mo.events === null) return;
+  if (!isDict(mo.events)) {
+    e.push({ path: 'motion.events', code: 'enum' });
+    return;
+  }
+  for (const [event, values] of Object.entries(mo.events)) {
+    const p = `motion.events.${event}`;
+    if (!(MOTION_EVENTS as readonly string[]).includes(event)) {
+      e.push({ path: p, code: 'unknownKey' });
+      continue;
+    }
+    if (values === null || values === undefined) continue;
+    if (!isDict(values)) {
+      e.push({ path: p, code: 'enum' });
+      continue;
+    }
+    for (const [param, v] of Object.entries(values)) {
+      if (v === null || v === undefined) continue;
+      if (!(param in MOTION_PARAMS)) {
+        e.push({ path: `${p}.${param}`, code: 'unknownKey' });
+        continue;
+      }
+      if (motionParamOk(event as MotionEventKey, param as MotionParam, v)) continue;
+      const range = motionParamRange(event as MotionEventKey, param as MotionParam);
+      e.push(range && typeof v === 'number' ? { path: `${p}.${param}`, code: 'range', params: range } : { path: `${p}.${param}`, code: 'enum' });
+    }
+  }
+}
+
+/** The engine's events as a config plays them (its `motion`, reduce motion, the render profile). */
+export function kioskMotionEngine(
+  motion: Partial<KioskMotionSettings> | null | undefined,
+  general: Pick<KioskGeneral, 'reduceMotion'>,
+  profile: KioskRenderProfile = 'full',
+): ResolvedMotionEngine {
+  return resolveMotionEngine(motion ?? {}, { reduceMotion: !!general.reduceMotion, profile });
+}
+
+const SWAP_FX: Partial<Record<MotionType, CategorySwitchFx>> = { slideIn: 'slide', fadeIn: 'fade', fadeScale: 'fade_scale', swipeTransition: 'push', crossfade: 'fade' };
+
+/**
+ * The web kiosks' transitions from the engine (the screens' KioskSwap / itemEnter / sheetEnter
+ * classes): each event's kind as its CSS effect and its resolved time. The engine's light profile
+ * and reduced motion are already in it (a reduced fade is a fade; a highlight swaps at once).
+ */
+export function engineTransitionSpec(engine: ResolvedMotionEngine): TransitionSpec {
+  const swap = (e: 'categorySwitch' | 'pageTransition'): CategorySwitchFx | ScreenChangeFx => {
+    const s = engine[e];
+    if (!motionActive(s)) return 'none';
+    if (s.animationType === 'fadeScale') return e === 'pageTransition' && s.scaleFrom <= 0.93 ? 'zoom' : 'fade_scale';
+    return SWAP_FX[s.animationType] ?? 'fade';
+  };
+  const items = engine.itemsEnter;
+  const itemsFx: ItemsEnterFx = !motionActive(items)
+    ? 'none'
+    : ({ staggeredEntry: 'cascade', fadeScale: 'pop', slideIn: 'rise', flip: 'flip', fadeIn: 'pop' } as Partial<Record<MotionType, ItemsEnterFx>>)[items.animationType] ?? 'cascade';
+  const sheetS = engine.modalOpen;
+  const sheet: SheetFx = !motionActive(sheetS)
+    ? 'none'
+    : ({ slideIn: 'slide_up', fadeScale: 'scale', fadeIn: 'fade', expand: 'scale', morph: 'scale' } as Partial<Record<MotionType, SheetFx>>)[sheetS.animationType] ?? 'scale';
+  const add = engine.addToCart;
+  const categorySwitch = swap('categorySwitch') as CategorySwitchFx;
+  const screenChange = swap('pageTransition') as ScreenChangeFx;
+  const out: TransitionSpec = {
+    categorySwitch,
+    categoryMs: categorySwitch === 'none' ? 0 : engine.categorySwitch.durationMs,
+    itemsEnter: itemsFx,
+    itemMs: itemsFx === 'none' ? 0 : items.durationMs,
+    staggerMs: itemsFx === 'none' ? 0 : items.staggerMs,
+    staggerCapMs: itemsFx === 'none' ? 0 : items.staggerCapMs,
+    screenChange,
+    screenMs: screenChange === 'none' ? 0 : engine.pageTransition.durationMs,
+    sheet,
+    sheetMs: sheet === 'none' ? 0 : sheetS.durationMs,
+    addToCart: add.reduced || !motionActive(add) ? 'none' : add.animationType === 'flyToCart' ? 'fly' : 'bounce',
+  };
+  // Each event's own curve, only when it sets one (the CSS keeps the kinds' curves for "auto").
+  const ease = (s: ResolvedMotion): string | undefined => engineEase(s);
+  const categoryEase = ease(engine.categorySwitch);
+  const itemEase = ease(items);
+  const screenEase = ease(engine.pageTransition);
+  const sheetEase = ease(sheetS);
+  if (categoryEase) out.categoryEase = categoryEase;
+  if (itemEase) out.itemEase = itemEase;
+  if (screenEase) out.screenEase = screenEase;
+  if (sheetEase) out.sheetEase = sheetEase;
+  return out;
+}
+
+/** An event's own curve as CSS, or undefined for "auto" (the kind's own curve) and a reduced fallback (a plain fade). */
+export function engineEase(spec: Pick<ResolvedMotion, 'easing' | 'reduced'>): string | undefined {
+  if (spec.reduced || spec.easing === 'auto') return undefined;
+  const css = motionCurve(spec.easing, '');
+  return css || undefined;
+}
+
+/**
+ * The add-to-cart motion from the engine (the till's KioskMotion.of(engine)): the size of the pop,
+ * the arc and the badge by `theme.animation` × the event's intensity; the time is the engine's —
+ * the pop a quarter of the add (as 160 of 560 ms), the flight the rest; the badge and the total by
+ * their own events. Reduced motion: the copy fades where the dish was, nothing bounces or counts.
+ */
+export function engineMotionSpec(engine: ResolvedMotionEngine, theme: Pick<KioskTheme, 'animation'>): MotionSpec {
+  const add = engine.addToCart;
+  const off: MotionSpec = { popMs: 0, popScale: 1, flyMs: 0, arcDp: 0, fadeMs: 0, bounce: 0, countUpMs: 0 };
+  if (add.animationType === 'none' && !add.reduced) return off;
+  const badge = engine.cartBadge;
+  const price = engine.priceChange;
+  const countUpMs = motionActive(price) && !price.reduced && (price.animationType === 'countUp' || price.animationType === 'priceHighlight') ? price.durationMs : 0;
+  if (add.reduced) return { ...off, fadeMs: add.animationType === 'none' ? 0 : add.durationMs };
+  const lively = theme.animation === 'lively';
+  const shape = lively ? ADD_LIVELY : ADD_SUBTLE;
+  const k = add.intensity / 100;
+  const peak = motionActive(badge) && !badge.reduced ? 1 + (badge.scaleTo - 1) * (lively ? 1 : 0.48) * (badge.intensity / 100) : 0;
+  if (add.animationType !== 'flyToCart') {
+    // "קפיצה": no copy flies, the basket button bounces harder (1.4 lively, 1.28 subtle at the defaults).
+    return { ...off, bounce: peak > 0 ? 1 + (peak - 1) * (lively ? 1.6 : 7 / 3) : 0, countUpMs };
+  }
+  const total = add.durationMs;
+  const popMs = Math.round(total * (160 / 560));
+  return {
+    popMs,
+    popScale: 1 + (shape.popScale - 1) * k,
+    flyMs: total - popMs,
+    arcDp: add.distancePx > 0 ? add.distancePx : shape.arcDp * k,
+    fadeMs: 0,
+    bounce: peak,
+    countUpMs,
+  };
 }
 
 /**

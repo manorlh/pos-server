@@ -23,6 +23,7 @@ import {
   type PProduct,
   type PreviewModel,
 } from '@/components/dashboard/kiosks/preview-screens';
+import { badgePop } from '@/components/dashboard/kiosks/preview-feedback';
 
 /** A layout's word: the registry's text (as the business set it, in the screen's language), placeholders filled. */
 export function kt(m: PreviewModel, key: string, values?: Record<string, string | number>): string {
@@ -137,7 +138,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
         data-dish={p.id}
         disabled={p.soldOut}
         onClick={open}
-        className="relative flex w-full items-center gap-3 p-2.5 text-start transition-transform duration-150 active:scale-[0.99] disabled:opacity-50"
+        className="k-tap relative flex w-full items-center gap-3 p-2.5 text-start transition-transform duration-150 active:scale-[0.99] disabled:opacity-50"
         style={{ ...cardStyle(m), background: inCart > 0 ? `${m.c.primary}0F` : cardStyle(m).background, minHeight: 84 * u }}
       >
         <div data-pic className="relative shrink-0 overflow-hidden" style={{ width: 68 * u, height: 68 * u, borderRadius: Math.min(m.radius, 14) }}>
@@ -179,7 +180,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
         data-dish={p.id}
         disabled={p.soldOut}
         onClick={open}
-        className="relative flex w-full flex-col items-center p-2.5 text-center transition-transform duration-150 active:scale-[0.98] disabled:opacity-50"
+        className="k-tap relative flex w-full flex-col items-center p-2.5 text-center transition-transform duration-150 active:scale-[0.98] disabled:opacity-50"
         style={cardStyle(m)}
       >
         <div className="relative w-full" style={{ aspectRatio: '1 / 1' }}>
@@ -203,7 +204,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
       data-dish={p.id}
       disabled={p.soldOut}
       onClick={open}
-      className="group relative flex w-full flex-col overflow-hidden text-start transition-transform duration-150 active:scale-[0.98] disabled:opacity-60"
+      className="k-tap group relative flex w-full flex-col overflow-hidden text-start transition-transform duration-150 active:scale-[0.98] disabled:opacity-60"
       style={cardStyle(m)}
     >
       <div data-pic className="relative w-full overflow-hidden" style={{ aspectRatio: m.ratio }}>
@@ -244,15 +245,16 @@ export function OrderSummaryBar({ m }: { m: PreviewModel }) {
   const empty = count === 0;
   const bar = m.c.dark ? m.c.surface : '#14161A';
   const toBasket = () => !empty && m.go(m.cfg.general.skipCart === 'off' ? 'cart' : 'pay');
-  const bounce = m.motion.bounce > 0;
+  // The count's pop: the engine's cartBadge, else the add's bounce.
+  const pop = badgePop(m, !empty);
   return (
     <div className="flex shrink-0 items-center gap-2 px-3" style={{ background: bar, minHeight: 64 * u, color: '#fff' }}>
       <button type="button" className="flex min-w-0 flex-1 items-center gap-2.5 py-2 text-start" onClick={toBasket} disabled={empty}>
         <CartTarget
           register={m.setCartTarget}
           key={m.cartBump}
-          className={cn('flex shrink-0 items-center justify-center rounded-full font-bold tabular-nums', bounce && !empty && 'kiosk-bounce')}
-          style={{ width: 38 * u, height: 38 * u, background: 'rgba(255,255,255,0.14)', ['--k-bounce' as string]: String(m.motion.bounce || 1) } as CSSProperties}
+          className={cn('flex shrink-0 items-center justify-center rounded-full font-bold tabular-nums', pop.className)}
+          style={{ width: 38 * u, height: 38 * u, background: 'rgba(255,255,255,0.14)', ...pop.style } as CSSProperties}
         >
           {empty ? <ShoppingBag className="h-1/2 w-1/2" /> : count}
         </CartTarget>
@@ -272,7 +274,7 @@ export function OrderSummaryBar({ m }: { m: PreviewModel }) {
         type="button"
         disabled={empty}
         onClick={() => m.go('pay')}
-        className="shrink-0 px-5 kt-15 font-extrabold transition-transform duration-150 active:scale-95"
+        className="k-tap k-tap-solid relative shrink-0 px-5 kt-15 font-extrabold transition-transform duration-150 active:scale-95"
         style={{
           minHeight: 46 * u,
           minWidth: 120 * u,
@@ -322,15 +324,16 @@ export function GuidedBasketButton({ m }: { m: PreviewModel }) {
   const count = cartCount(m.cart);
   if (count === 0) return null;
   const u = unitOf(m);
+  const pop = badgePop(m);
   return (
     <div className="shrink-0 p-2.5" style={{ background: `linear-gradient(to top, ${m.c.background}, ${m.c.background}00)` }}>
       <button
         type="button"
         onClick={() => m.go(m.cfg.general.skipCart === 'off' ? 'cart' : 'pay')}
-        className="flex w-full items-center justify-center gap-2 px-4 kt-15 font-bold shadow-lg transition-transform duration-150 active:scale-[0.98]"
+        className="k-tap k-tap-solid relative flex w-full items-center justify-center gap-2 px-4 kt-15 font-bold shadow-lg transition-transform duration-150 active:scale-[0.98]"
         style={{ minHeight: 50 * u, borderRadius: m.btnRadius, background: m.c.button, color: m.c.buttonText, ...textSize(m, 'buttons', 15) }}
       >
-        <CartTarget register={m.setCartTarget} key={m.cartBump} className={m.motion.bounce > 0 ? 'kiosk-bounce' : undefined}>
+        <CartTarget register={m.setCartTarget} key={m.cartBump} className={pop.className} style={m.engine ? pop.style : undefined}>
           {kt(m, 'guidedToBasket', { count, total: m.money(cartTotal(m.cart)) })}
         </CartTarget>
       </button>

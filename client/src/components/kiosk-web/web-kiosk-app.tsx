@@ -33,10 +33,10 @@ import {
   kioskCatalogView,
   kioskOpenAt,
   messagePlacement,
-  motionSpec,
-  profileMotion,
+  engineMotionSpec,
+  engineTransitionSpec,
+  kioskMotionEngine,
   resolveThemeColors,
-  transitionSpec,
   stepMode,
   payMethodAsk,
   tickerBandPx,
@@ -76,6 +76,8 @@ import {
   orderMealOf,
   orderOptionsOf,
   screenOrder,
+  screenSwap,
+  AddedToast,
   type EntryStep,
   type Flight,
   type KioskLive,
@@ -632,9 +634,12 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   const side = cfg.theme.categoryLayout !== 'top';
   // "אפקטים": the config's profile, or this device's (prefers-reduced-motion, a slow first-frames probe).
   const profile = useKioskRenderProfile(cfg.motion.effects);
-  const played = profileMotion(cfg.motion, profile);
-  const motion = motionSpec(cfg.theme, cfg.general, played);
-  const transitions = transitionSpec(played, cfg.general);
+  // "מנוע הנפשות": every event resolved once — the preset, the speed, the events' own values, this profile.
+  const engine = useMemo(() => kioskMotionEngine(cfg.motion, cfg.general, profile), [cfg.motion, cfg.general, profile]);
+  const motion = engineMotionSpec(engine, cfg.theme);
+  const transitions = engineTransitionSpec(engine);
+  // The screen change towards this screen: back home by homeReturn, into the basket by cartOpen, else pageTransition.
+  const swap = screenSwap(transitions, engine, flow.screen === 'confirm' ? 'catalog' : flow.screen);
   const colors = resolveThemeColors(cfg.theme);
   // "גודל מוצרים" (layout.productSize) moves the density's columns.
   const cols = productColumns(catalogColumns(cfg.theme.gridDensity, wide, panel, side), layoutOf(cfg).productSize, size.w);
@@ -759,6 +764,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     },
     motion,
     transitions,
+    engine,
     justAddedId: justAdded,
     cartBump,
     setCartTarget,
@@ -918,7 +924,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     '--font-weight-black': String(weights.black),
   } as CSSProperties;
   const light = profile === 'light';
-  const chrome = useMemo(() => chromeRoot({ cfg, c: colors, light }), [cfg, colors, light]);
+  // The style's chrome, and the motion engine's press and badge (CSS custom properties on the root).
+  const chrome = useMemo(() => chromeRoot({ cfg, c: colors, light, engine }), [cfg, colors, light, engine]);
   const onAttractService = serviceOnAttract(cfgIn);
   const placed = pay.placed;
 
@@ -973,10 +980,10 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
         {/* "שורת מצב" (tech): the state, the order's number and the time, over the screens. */}
         <KioskStatusBar m={m} screen={flow.screen} pickup={flow.screen === 'success' ? (cardPay?.pickupLabel ?? placed?.order.pickupLabel ?? null) : null} />
         <ReachFrame m={m} screen={screen === 'confirm' ? 'catalog' : screen} dish={product} category={activeCategory}>
+          {/* "מנוע הנפשות": back home by homeReturn (a fade, never a sharp reset), into the basket by cartOpen. */}
           <KioskSwap
             id={screen === 'confirm' ? 'catalog' : screen}
-            fx={transitions.screenChange}
-            ms={transitions.screenMs}
+            {...swap}
             order={screenOrder}
             className="h-full"
             slotClassName="h-full"
@@ -1072,6 +1079,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       {flights.map((f) => (
         <Flyer key={f.id} flight={f} motion={motion} dp={1} surface={colors.surface} text={colors.text} containerRef={screenRef} targetRef={cartTargetRef} onDone={removeFlight} />
       ))}
+      {/* "נוסף להזמנה" as the badge pops (the engine's toast); the add itself is in the basket already. */}
+      {screen === 'catalog' || screen === 'cart' ? <AddedToast m={m} bottom={FOOTER_PX + 88} /> : null}
       <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0.5 z-10 text-center text-[10px] font-medium tracking-[0.12em]" style={{ color: colors.mutedText, opacity: 0.55 }}>
         {words.t('poweredBy')}
       </div>
