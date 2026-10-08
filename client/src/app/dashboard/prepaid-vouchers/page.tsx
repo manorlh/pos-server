@@ -51,6 +51,13 @@ import {
   type PrepaidVoucherStatus,
 } from '@/lib/prepaidVouchersApi';
 import { groupPlan, groupSizeOf, serialRange, type GroupMode } from '@/lib/prepaidVoucherGroups';
+import {
+  NO_BATCH_FILTERS,
+  batchFormProblems,
+  filterBatches,
+  issueTotals,
+  type BatchFilters,
+} from '@/lib/prepaidBatchForm';
 import { clampQuantity, DEFAULT_WEIGHT_UNIT, itemText, quantityNumberText, quantityStep } from '@/lib/prepaidVoucherProducts';
 import { PrepaidProductPickList } from '@/components/dashboard/prepaid-vouchers/product-pick-list';
 import { discountDraftErrors, isDiscountKind, type PrepaidVoucherKind } from '@/lib/prepaidVoucherBenefit';
@@ -330,8 +337,15 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   const groupSize = groupSizeOf(groupMode, groupCustom);
   const groupOk = groupMode === 'none' || groupSize !== null;
   const plan = groupOk ? planText(n, groupSize) : null;
-  const canCreate = name.trim() && companyId && (discount ? termErrors.length === 0 : items.length > 0) &&
-    n >= 1 && n <= 5000 && groupOk && (!validFrom || !validUntil || validFrom <= validUntil);
+  // What is still missing, said in words under the button (not just a disabled button).
+  const problems = batchFormProblems({
+    name, companyId, discount, itemCount: items.length, termErrors: termErrors.length, count: n, groupOk, validFrom, validUntil,
+  });
+  const canCreate = problems.length === 0;
+  // "100 שוברים … זכאות ל-300 יחידות" — what the run entitles to in all, before it is issued.
+  const totals = discount ? null : issueTotals(n, items.map((i) => ({
+    quantity: i.quantity, weighed: i.product.isWeighed, unitLabel: i.product.unitLabel,
+  })), DEFAULT_WEIGHT_UNIT);
   const decimal = (v: string) => (v.trim() ? Number(v) : null);
 
   const create = useMutation({
@@ -660,6 +674,19 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
               <VoucherPreview batch={draft} voucher={draftVoucher} layout={{ preset: 'ticket80x50' }} />
             </div>
           </div>
+        </div>
+        <div className="space-y-1 text-sm" aria-live="polite">
+          {totals && totals.units + totals.weights.length > 0 && Number.isFinite(n) && n > 0 ? (
+            <p className="font-medium">
+              {t('totals', { count: n, units: totals.units })}
+              {totals.weights.map((x) => ` ${t('totalsWeight', { quantity: quantityNumberText(x.quantity), unit: x.unit })}`).join('')}
+            </p>
+          ) : null}
+          {problems.length ? (
+            <p className="text-xs text-muted-foreground">
+              {t('missing', { list: problems.map((p) => t(`problem.${p}`)).join(', ') })}
+            </p>
+          ) : null}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>{tc('cancel')}</Button>
@@ -1338,6 +1365,10 @@ export default function PrepaidVouchersPage() {
 
   const batches = useQuery({ queryKey: ['prepaid-voucher-batches'], queryFn: fetchPrepaidBatches });
   const selected = batches.data?.find((b) => b.id === selectedId) ?? null;
+  // The list's filters (the spec's §10.1): words over name / event / customer / order, status, kind, company.
+  const [filters, setFilters] = useState<BatchFilters>(NO_BATCH_FILTERS);
+  const shown = filterBatches(batches.data ?? [], filters);
+  const companies = Array.from(new Map((batches.data ?? []).map((b) => [b.companyId, b.companyName ?? b.companyId])));
 
   return (
     <div className="space-y-4">
@@ -1368,11 +1399,40 @@ export default function PrepaidVouchersPage() {
       ) : (batches.data ?? []).length === 0 ? (
         <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">{t('empty')}</p>
       ) : (
-        <ul className="space-y-2">
-          {batches.data!.map((b) => (
-            <BatchCard key={b.id} b={b} onOpen={() => setSelectedId(b.id)} />
-          ))}
-        </ul>
+        <>
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="relative min-w-48 flex-1">
+              <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground ltr:left-2.5 rtl:right-2.5" aria-hidden />
+              <Input value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                placeholder={t('filters.search')} aria-label={t('filters.search')} className="ps-8" />
+            </div>
+            <select className="h-9 rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30" aria-label={t('filters.statusLabel')}
+              value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value as BatchFilters['status'] })}>
+              {(['all', 'active', 'cancelled'] as const).map((s) => <option key={s} value={s}>{t(`filters.status.${s}`)}</option>)}
+            </select>
+            <select className="h-9 rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30" aria-label={t('filters.kindLabel')}
+              value={filters.kind} onChange={(e) => setFilters({ ...filters, kind: e.target.value as BatchFilters['kind'] })}>
+              {(['all', 'items', 'discount'] as const).map((k) => <option key={k} value={k}>{t(`filters.kind.${k}`)}</option>)}
+            </select>
+            {companies.length > 1 ? (
+              <select className="h-9 rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30" aria-label={t('filters.companyLabel')}
+                value={filters.companyId} onChange={(e) => setFilters({ ...filters, companyId: e.target.value })}>
+                <option value="">{t('filters.allCompanies')}</option>
+                {companies.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
+            ) : null}
+            <span className="text-xs text-muted-foreground">{t('filters.count', { shown: shown.length, total: batches.data!.length })}</span>
+          </div>
+          {shown.length ? (
+            <ul className="space-y-2">
+              {shown.map((b) => (
+                <BatchCard key={b.id} b={b} onOpen={() => setSelectedId(b.id)} />
+              ))}
+            </ul>
+          ) : (
+            <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">{t('filters.none')}</p>
+          )}
+        </>
       )}
 
       <CreateBatchDialog open={creating} onOpenChange={setCreating} onCreated={(b) => setSelectedId(b.id)} />

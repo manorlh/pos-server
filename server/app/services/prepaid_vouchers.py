@@ -1549,6 +1549,60 @@ def benefit_for_till(db: Session, machine: POSMachine, batch: PrepaidVoucherBatc
     }
 
 
+#: The till's words for a refusal (the spec's §11: "השובר מומש כבר בקופה 12 בשעה 22:14",
+#: "השובר אינו תקף בנקודת המכירה הזאת"), with where / when it happened when the cloud knows.
+REFUSAL_TEXT = {
+    "used_at": "השובר מומש כבר בקופה {till} בשעה {time}",
+    "used_on": "השובר מומש כבר בקופה {till} ב-{date} בשעה {time}",
+    "used": "השובר מומש כבר במלואו",
+    "wrong_shop": "השובר אינו תקף בנקודת המכירה הזאת",
+    "cancelled": "השובר בוטל",
+    "expired": "תוקף השובר הסתיים ב-{date}",
+    "not_yet": "השובר יהיה בתוקף מ-{date}",
+}
+
+
+def refusal_message(db: Session, voucher: PrepaidVoucher, reason: Optional[str], now: Optional[datetime] = None) -> Optional[str]:
+    """
+    The words for [reason] the till shows the cashier, with the facts the cloud has: which till
+    used the voucher up and when (the tenant's clock), the date it expired. None: no words of
+    the cloud's own (the till's own text for the reason).
+    """
+    if reason not in (USED, WRONG_SHOP, CANCELLED, EXPIRED, NOT_YET_VALID):
+        return None
+    if reason == WRONG_SHOP:
+        return REFUSAL_TEXT["wrong_shop"]
+    if reason == CANCELLED:
+        return REFUSAL_TEXT["cancelled"]
+    from app.services.reports import _load_zoneinfo, resolve_report_timezone
+
+    zone = _load_zoneinfo(resolve_report_timezone(db, voucher.tenant_id, None))
+    batch = voucher.batch
+    if reason == EXPIRED and batch.valid_until is not None:
+        return REFUSAL_TEXT["expired"].format(date=_utc(batch.valid_until).astimezone(zone).strftime("%d/%m/%Y"))
+    if reason == NOT_YET_VALID and batch.valid_from is not None:
+        return REFUSAL_TEXT["not_yet"].format(date=_utc(batch.valid_from).astimezone(zone).strftime("%d/%m/%Y"))
+    if reason != USED:
+        return None
+    last = (
+        db.query(PrepaidVoucherRedemption)
+        .filter(PrepaidVoucherRedemption.voucher_id == voucher.id, PrepaidVoucherRedemption.reversed_at.is_(None))
+        .order_by(PrepaidVoucherRedemption.redeemed_at.desc())
+        .first()
+    )
+    if last is None or last.redeemed_at is None:
+        return REFUSAL_TEXT["used"]
+    till = None
+    if last.machine_id is not None:
+        till = db.query(POSMachine.name).filter(POSMachine.id == last.machine_id).scalar()
+    if not till:
+        return REFUSAL_TEXT["used"]
+    when = _utc(last.redeemed_at).astimezone(zone)
+    today = (now or _now()).astimezone(zone).date()
+    key = "used_at" if when.date() == today else "used_on"
+    return REFUSAL_TEXT[key].format(till=till, time=when.strftime("%H:%M"), date=when.strftime("%d/%m"))
+
+
 def _benefit_rules(db: Session, batch: PrepaidVoucherBatch) -> RULES.Benefit:
     """The batch's [RULES.Benefit] with its categories expanded, for the cloud's own check."""
     base = RULES.benefit_of(batch)
@@ -1579,6 +1633,8 @@ def till_view(
         reason = IN_USE
     elif uses is not None and uses["today"] <= 0:
         reason = DAILY_LIMIT
+    if message is None:
+        message = refusal_message(db, voucher, reason)
     till = _till_products(db, machine, [str(i.product_id) for i in batch.items])
     unusable = _goods_unusable(db, batch) if not is_discount(batch) else {}
     items = []

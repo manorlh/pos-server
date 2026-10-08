@@ -65,7 +65,7 @@ export const LIVE: Record<string, string> = {
   'voucher.prepaid_voucher_cancelled': 'השובר בוטל',
   'voucher.prepaid_voucher_expired': 'תוקף השובר פג',
   'voucher.prepaid_voucher_not_yet_valid': 'השובר עדיין לא בתוקף',
-  'voucher.prepaid_voucher_wrong_shop': 'השובר אינו תקף בסניף הזה',
+  'voucher.prepaid_voucher_wrong_shop': 'השובר אינו תקף בנקודת המכירה הזאת',
   'voucher.prepaid_voucher_partial_not_allowed': 'שובר חד-פעמי: יש לממש את כולו בבת אחת',
   'voucher.prepaid_voucher_insufficient': 'לא נשאר בשובר מספיק',
   'voucher.prepaid_voucher_item_not_on_voucher': 'הפריט אינו כלול בשובר',
