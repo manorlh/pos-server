@@ -23,9 +23,10 @@ import {
   ImagePlus,
   Loader2,
   Plus,
+  FileSpreadsheet,
   Printer,
-  Search,
   TicketCheck,
+  X,
 } from 'lucide-react';
 import { fetchCompanies, fetchShops, uploadBrandingImage } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
@@ -37,9 +38,9 @@ import {
   createPrepaidBatch,
   downloadPrepaidVouchersFile,
   fetchAllPrepaidVouchers,
+  fetchFilteredPrepaidBatches,
   fetchPrepaidBatches,
-  fetchPrepaidVoucher,
-  fetchPrepaidVouchers,
+  fetchPrepaidVoucherRows,
   fetchPrepaidTypes,
   updatePrepaidBatch,
   type PrepaidBarcodeType,
@@ -49,13 +50,24 @@ import {
   type PrepaidVoucherStatus,
 } from '@/lib/prepaidVouchersApi';
 import { groupPlan, groupSizeOf, serialRange, type GroupMode } from '@/lib/prepaidVoucherGroups';
+import { batchFormProblems, issueTotals } from '@/lib/prepaidBatchForm';
 import {
-  NO_BATCH_FILTERS,
-  batchFormProblems,
-  filterBatches,
-  issueTotals,
-  type BatchFilters,
-} from '@/lib/prepaidBatchForm';
+  BATCH_SORTS,
+  EMPTY_FILTERS,
+  VOUCHER_STATES,
+  VOUCHER_VIEWS,
+  activeFilterCount,
+  filtersToQuery,
+  rateText,
+  type VoucherFilters,
+  type VoucherView,
+} from '@/lib/prepaidVoucherFilters';
+import { downloadExcel } from '@/lib/excelExport';
+import { fetchAllPages } from '@/lib/fetchAllPages';
+import { STATE_STYLE, VoucherRowsTable, voucherSheet } from '@/components/dashboard/prepaid-vouchers/all-vouchers';
+import { MultiPicker, VoucherFilterBar, useVoucherFacets, useVoucherPageState } from '@/components/dashboard/prepaid-vouchers/voucher-filters';
+import { TillsReport } from '@/components/dashboard/prepaid-vouchers/tills-report';
+import { VoucherSearch, type SearchPick } from '@/components/dashboard/prepaid-vouchers/voucher-search';
 import { DEFAULT_WEIGHT_UNIT, itemText, quantityNumberText } from '@/lib/prepaidVoucherProducts';
 import { GoodsEditor, type DraftItem } from '@/components/dashboard/prepaid-vouchers/goods-editor';
 import {
@@ -82,7 +94,7 @@ import {
 } from '@/components/dashboard/prepaid-vouchers/voucher-terms';
 import { PrepaidBatchGroupsView } from '@/components/dashboard/prepaid-vouchers/batch-groups';
 import { cn } from '@/lib/utils';
-import { formatDate, formatDateTime, isoDate } from '@/lib/format';
+import { formatDate, isoDate } from '@/lib/format';
 import {
   PAGE_PRESETS,
   VoucherPreview,
@@ -93,6 +105,7 @@ import {
 } from '@/components/dashboard/prepaid-vouchers/voucher-print';
 import { PrepaidBatchReportView } from '@/components/dashboard/prepaid-vouchers/batch-report';
 import { VoucherNote, VoucherNoteButton } from '@/components/dashboard/prepaid-vouchers/voucher-note';
+import { RedemptionHistory } from '@/components/dashboard/prepaid-vouchers/redemption-history';
 import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -109,10 +122,6 @@ const LAYOUT_KEY = 'prepaidVouchers.layout';
 
 function day(iso: string | null | undefined): string {
   return isoDate(iso) ? formatDate(iso) : '';
-}
-
-function time(iso: string | null | undefined): string {
-  return isoDate(iso) ? formatDateTime(iso) : '';
 }
 
 /** `yyyy-mm-dd` from a date input → the start / end of that day, local time, as ISO. */
@@ -751,34 +760,53 @@ function contentsText(b: PrepaidVoucherBatch, benefit: string | null): string {
   return benefit ?? b.items.map((i) => itemText(i)).join(' + ');
 }
 
+function validityText(b: PrepaidVoucherBatch, t: (k: string, v?: Record<string, string>) => string): string {
+  if (b.validFrom && b.validUntil) return t('row.validity', { from: day(b.validFrom), to: day(b.validUntil) });
+  if (b.validUntil) return t('row.validUntil', { date: day(b.validUntil) });
+  if (b.validFrom) return t('row.validFrom', { date: day(b.validFrom) });
+  return t('row.noValidity');
+}
+
 function BatchCard({ b, onOpen }: { b: PrepaidVoucherBatch; onOpen: () => void }) {
   const t = useTranslations('prepaidVouchers');
+  const ts = useTranslations('prepaidVouchers.scope');
   const termsText = useBatchTermsText()(b);
   const discount = isDiscountKind(b.kind);
+  const f = b.figures;
+  const statusKey = b.state
+    ? (['cancelled', 'not_started', 'expired', 'fully_redeemed'] as const).find((k) => b.state![k]) ?? 'active'
+    : null;
   return (
     <li>
       <button type="button" onClick={onOpen} className="w-full space-y-2 rounded-xl bg-card p-3 text-start ring-1 ring-foreground/10 hover:ring-foreground/25">
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
-            <p className="truncate font-semibold">{b.eventName || b.name}</p>
-            <p className="truncate text-xs text-muted-foreground">
-              {b.eventName ? `${b.name} · ` : ''}
-              {contentsText(b, termsText.benefit)}
+            <p className="truncate font-semibold">
+              {b.customerName ? t('row.forWhom', { name: b.customerName }) : <span className="text-muted-foreground">{t('row.noCustomer')}</span>}
             </p>
+            <p className="truncate text-sm">{b.eventName ? `${b.eventName} · ${b.name}` : b.name}</p>
+            <p className="truncate text-xs text-muted-foreground">{contentsText(b, termsText.benefit)}</p>
           </div>
           <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px]',
             discount ? 'bg-violet-100 text-violet-900 dark:bg-violet-950/40 dark:text-violet-300' : 'bg-muted')}>
             {termsText.kind}
           </span>
           <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px]', b.status === 'cancelled' ? STATUS_STYLE.cancelled : STATUS_STYLE.active)}>
-            {t(`batchStatus.${b.status}`)}
+            {statusKey ? ts(`batchStatuses.${statusKey}`) : t(`batchStatus.${b.status}`)}
           </span>
         </div>
+        {f ? (
+          <p className="flex flex-wrap gap-x-3 text-xs">
+            <span>{t('row.issued', { n: f.issued })}</span>
+            <span className="font-medium">{t('row.redeemed', { n: f.redeemed })} {t('row.rate', { rate: rateText(f.rate) })}</span>
+            <span>{t('row.open', { n: f.open })}</span>
+            <span className="text-muted-foreground">{validityText(b, t)}</span>
+          </p>
+        ) : null}
         <StatsBar b={b} />
         <p className="text-xs text-muted-foreground">
           {termsText.uses ?? (b.splitAllowed ? t('card.splitAllowed') : t('card.oneTime'))}
           {!discount && b.includeExtras ? ` · ${t('create.includeExtras')}` : ''}
-          {b.validUntil ? ` · ${t('validUntil', { date: day(b.validUntil) })}` : ''}
           {' · '}
           {b.shops.length ? b.shops.map((s) => s.name).join(', ') : t('allShopsOf', { company: b.companyName ?? '' })}
         </p>
@@ -837,57 +865,11 @@ function LayoutPicker({ layout, onChange }: { layout: PrintLayout; onChange: (l:
   );
 }
 
-function RedemptionHistory({ voucherId }: { voucherId: string }) {
-  const t = useTranslations('prepaidVouchers.history');
-  const tk = useTranslations('prepaidVouchers.kinds');
-  const q = useQuery({ queryKey: ['prepaid-voucher', voucherId], queryFn: () => fetchPrepaidVoucher(voucherId) });
-  // A discount voucher's use: its uses and the ₪ it took off (a discount on the sale, not a tender).
-  const discountUseText = (r: { uses?: number | null; discountAmount?: number | null }) =>
-    tk('historyUse', {
-      uses: (r.uses ?? 1) === 1 ? tk('usesOne') : tk('usesMany', { n: r.uses ?? 1 }),
-      amount: `₪${(r.discountAmount ?? 0).toFixed(2)}`,
-    });
-  if (q.isPending) return <Skeleton className="h-10 w-full" />;
-  const rows = q.data?.redemptions ?? [];
-  if (!rows.length) return <p className="text-xs text-muted-foreground">{t('empty')}</p>;
-  // A weighed item reads by its unit ("0.3 ק״ג זיתים"), as the voucher's own items say.
-  const byProduct = new Map((q.data?.items ?? []).map((i) => [i.productId, i]));
-  const lineText = (i: { productId: string; name: string | null; quantity: number }) => {
-    const item = byProduct.get(i.productId);
-    return itemText({ name: i.name ?? '', quantity: i.quantity, weighed: item?.weighed, unitLabel: item?.unitLabel });
-  };
-  return (
-    <ul className="space-y-1 text-xs">
-      {rows.map((r) => (
-        <li key={r.id} className={cn('rounded border px-2 py-1', r.reversedAt && 'opacity-60')}>
-          {r.reversedAt ? (
-            <span className="me-1 rounded bg-muted px-1 font-medium">{t('reversed')}</span>
-          ) : null}
-          <span className={cn('font-medium', r.reversedAt && 'line-through')}>{time(r.redeemedAt)}</span>
-          {' · '}
-          {r.machineName ?? t('unknownTill')}
-          {r.posUserName ? ` · ${r.posUserName}` : ''}
-          {' — '}
-          {r.uses ? discountUseText(r) : r.items.map(lineText).join(', ')}
-          {(r.flags ?? []).map((f) => (
-            <span key={f} className="ms-1 rounded bg-amber-100 px-1 text-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
-              {tk.has(`flag.${f}`) ? tk(`flag.${f}`) : f}
-            </span>
-          ))}
-          {r.forfeited.length ? (
-            <span className="text-destructive">
-              {' '}({t('forfeited', { items: r.forfeited.map(lineText).join(', ') })})
-            </span>
-          ) : null}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: () => void }) {
   const t = useTranslations('prepaidVouchers');
   const tk = useTranslations('prepaidVouchers.kinds');
+  const ta = useTranslations('prepaidVouchers.allVouchers');
+  const ts = useTranslations('prepaidVouchers.scope');
   const errorText = useErrorText();
   const qc = useQueryClient();
   const termsText = useBatchTermsText()(batch);
@@ -904,35 +886,37 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
     }
   };
 
-  const [statusFilter, setStatusFilter] = useState<'all' | PrepaidVoucherStatus>('all');
-  const [serialText, setSerialText] = useState('');
+  // The vouchers' filters (the shared model, lib/prepaidVoucherFilters.ts): state, group, words,
+  // redeemed between, at which till, by whom — filtered and paged on the server.
+  const [vf, setVf] = useState<VoucherFilters>(EMPTY_FILTERS);
+  const setFilter = (next: VoucherFilters) => { setVf(next); setOffset(0); };
+  const [exporting, setExporting] = useState(false);
+  const facets = useVoucherFacets();
   const [offset, setOffset] = useState(0);
   const [openHistory, setOpenHistory] = useState<string | null>(null);
   const [editingNote, setEditingNote] = useState<string | null>(null);
   const [view, setView] = useState<'vouchers' | 'groups' | 'report'>('vouchers');
   const [addCount, setAddCount] = useState('10');
   const [busy, setBusy] = useState<string | null>(null);
-  const [groupText, setGroupText] = useState('');
-  const [codeText, setCodeText] = useState('');
   const [assignMode, setAssignMode] = useState<GroupMode>('10');
   const [assignCustom, setAssignCustom] = useState('');
   const planText = useGroupPlanText();
-  const serial = parseInt(serialText, 10);
-  const groupNo = parseInt(groupText, 10);
-  const codeQuery = codeText.replace(/[^0-9a-z]/gi, '').length >= 4 ? codeText.trim() : '';
-
+  const voucherQuery = filtersToQuery({ ...vf, batchId: [batch.id] });
   const list = useQuery({
-    queryKey: ['prepaid-vouchers', batch.id, statusFilter, serialText, offset, groupText, codeQuery],
-    queryFn: () =>
-      fetchPrepaidVouchers(batch.id, {
-        status: statusFilter === 'all' ? undefined : statusFilter,
-        serial: Number.isFinite(serial) && serial > 0 ? serial : undefined,
-        group: Number.isFinite(groupNo) && groupNo > 0 ? groupNo : undefined,
-        code: codeQuery || undefined,
-        limit: PAGE_SIZE,
-        offset,
-      }),
+    queryKey: ['prepaid-vouchers', batch.id, voucherQuery.toString(), offset],
+    queryFn: () => fetchPrepaidVoucherRows(voucherQuery, PAGE_SIZE, offset),
   });
+  const exportVouchers = async () => {
+    setExporting(true);
+    try {
+      const rows = await fetchAllPages((page, size) => fetchPrepaidVoucherRows(voucherQuery, size, (page - 1) * size), { pageSize: 1000 });
+      await downloadExcel([voucherSheet(rows, ta, ts)], `${fileBase} — ${ta('sheet')}`);
+    } catch (err) {
+      toast.error(errorText(err));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['prepaid-voucher-batches'] });
@@ -1061,7 +1045,6 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
   const cancelled = batch.status === 'cancelled';
   const grouped = (batch.groupCount ?? 0) > 0;
   const narrowLine = batch.barcodeType === 'code128' && geometryOf(layout).cardW < 70;
-  const statuses: ('all' | PrepaidVoucherStatus)[] = ['all', 'active', 'partially_used', 'used', 'cancelled'];
 
   return (
     <div className="space-y-4">
@@ -1293,40 +1276,52 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
       ) : null}
 
       <div className="space-y-2">
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="space-y-1">
-            <Label>{t('filterStatus')}</Label>
-            <Select
-              value={statusFilter}
-              onValueChange={(v) => { if (v) { setStatusFilter(v as typeof statusFilter); setOffset(0); } }}
-              items={statuses.map((s) => ({ value: s, label: t(`status.${s}`) }))}
-            >
-              <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {statuses.map((s) => (
-                  <SelectItem key={s} value={s} label={t(`status.${s}`)}>{t(`status.${s}`)}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="pv-serial">{t('serialSearch')}</Label>
-            <Input id="pv-serial" inputMode="numeric" className="h-9 w-28" value={serialText}
-              onChange={(e) => { setSerialText(e.target.value.replace(/\D/g, '')); setOffset(0); }} />
-          </div>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+          <label className="block space-y-1 lg:col-span-2">
+            <span className="block text-xs font-medium text-muted-foreground">{ts('qVouchers')}</span>
+            <Input dir="auto" className="h-9" value={vf.q} placeholder="#12 · ABCD-EFGH-…"
+              onChange={(e) => setFilter({ ...vf, q: e.target.value })} />
+          </label>
+          <label className="block space-y-1">
+            <span className="block text-xs font-medium text-muted-foreground">{ts('state')}</span>
+            <select className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30" value={vf.state}
+              onChange={(e) => setFilter({ ...vf, state: e.target.value as VoucherFilters['state'] })}>
+              <option value="">{ts('stateAll')}</option>
+              {VOUCHER_STATES.map((s) => <option key={s} value={s}>{ts(`states.${s}`)}</option>)}
+            </select>
+          </label>
           {grouped ? (
-            <div className="space-y-1">
-              <Label htmlFor="pv-group">{t('groupFilter')}</Label>
-              <Input id="pv-group" inputMode="numeric" className="h-9 w-24" value={groupText} placeholder={t('groupAll')}
-                onChange={(e) => { setGroupText(e.target.value.replace(/\D/g, '')); setOffset(0); }} />
-            </div>
+            <label className="block space-y-1">
+              <span className="block text-xs font-medium text-muted-foreground">{t('groupFilter')}</span>
+              <Input inputMode="numeric" className="h-9" value={vf.group} placeholder={t('groupAll')}
+                onChange={(e) => setFilter({ ...vf, group: e.target.value.replace(/\D/g, '') })} />
+            </label>
           ) : null}
-          <div className="space-y-1">
-            <Label htmlFor="pv-code">{t('codeSearch')}</Label>
-            <Input id="pv-code" dir="ltr" className="h-9 w-48 font-mono" value={codeText} placeholder="ABCD-EFGH-…"
-              onChange={(e) => { setCodeText(e.target.value); setOffset(0); }} />
-          </div>
+          <MultiPicker label={ts('till')} allLabel={ts('tillAll')} value={vf.machineId} onChange={(v) => setFilter({ ...vf, machineId: v })}
+            options={(facets.data?.tills ?? []).map((x) => ({ id: x.id, label: x.name ?? x.id, hint: x.shopName }))} />
+          <MultiPicker label={ts('employee')} allLabel={ts('employeeAll')} value={vf.employee} onChange={(v) => setFilter({ ...vf, employee: v })}
+            options={(facets.data?.employees ?? []).map((x) => ({ id: x.id, label: x.name }))} />
+          <label className="block space-y-1 lg:col-span-2">
+            <span className="block text-xs font-medium text-muted-foreground">{ts('redeemed')}</span>
+            <span className="flex items-center gap-1">
+              <Input type="date" aria-label={`${ts('redeemed')} — ${ts('fromLabel')}`} className="h-9 min-w-0" value={vf.from}
+                onChange={(e) => setFilter({ ...vf, from: e.target.value })} />
+              <span className="text-xs text-muted-foreground">–</span>
+              <Input type="date" aria-label={`${ts('redeemed')} — ${ts('toLabel')}`} className="h-9 min-w-0" value={vf.to}
+                onChange={(e) => setFilter({ ...vf, to: e.target.value })} />
+            </span>
+          </label>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {activeFilterCount(vf) ? (
+            <Button size="sm" variant="ghost" onClick={() => setFilter(EMPTY_FILTERS)}>
+              <X className="h-4 w-4" /> {ts('clearAll')}
+            </Button>
+          ) : null}
           <span className="ms-auto text-xs text-muted-foreground">{list.data ? t('count', { n: list.data.total }) : null}</span>
+          <Button size="sm" variant="outline" onClick={() => void exportVouchers()} disabled={exporting || !list.data?.total}>
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />} {ta('export')}
+          </Button>
         </div>
 
         {list.isPending ? (
@@ -1342,7 +1337,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
                   {v.groupNo ? (
                     <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] tabular-nums">{t('groupBadge', { g: v.groupNo })}</span>
                   ) : null}
-                  <span className={cn('rounded-full px-2 py-0.5 text-[11px]', STATUS_STYLE[v.status])}>{t(`status.${v.status}`)}</span>
+                  <span className={cn('rounded-full px-2 py-0.5 text-[11px]', STATE_STYLE[v.state])}>{ts(`states.${v.state}`)}</span>
                   <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                     {v.usesLeft != null
                       ? tk('usesLeft', { left: v.usesLeft, total: v.usesPerVoucher ?? batch.usesPerVoucher ?? 1 })
@@ -1453,46 +1448,76 @@ function BatchToggles({ batch, onSaved }: { batch: PrepaidVoucherBatch; onSaved:
 
 export default function PrepaidVouchersPage() {
   const t = useTranslations('prepaidVouchers');
+  const ts = useTranslations('prepaidVouchers.scope');
   const errorText = useErrorText();
   const [creating, setCreating] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [tab, setTab] = useState<'batches' | 'types'>('batches');
+  // The view, the sort and every filter live in the URL (lib/prepaidVoucherFilters.ts): a filtered
+  // view is a link, and the views share one set of filters.
+  const [page, setPage] = useVoucherPageState();
+  const { view, sort, filters } = page;
+  const setView = (v: VoucherView) => setPage({ ...page, view: v });
+  const setFilters = (f: VoucherFilters) => setPage({ ...page, filters: f });
+  const facets = useVoucherFacets();
 
   const batches = useQuery({ queryKey: ['prepaid-voucher-batches'], queryFn: fetchPrepaidBatches });
   const selected = batches.data?.find((b) => b.id === selectedId) ?? null;
-  // The list's filters (the spec's §10.1): words over name / event / customer / order, status, kind, company.
-  const [filters, setFilters] = useState<BatchFilters>(NO_BATCH_FILTERS);
-  const shown = filterBatches(batches.data ?? [], filters);
-  const companies = Array.from(new Map((batches.data ?? []).map((b) => [b.companyId, b.companyName ?? b.companyId])));
+  const listQuery = filtersToQuery(filters, ['state', 'group']);
+  const shown = useQuery({
+    queryKey: ['prepaid-voucher-batches', 'filtered', listQuery.toString(), sort],
+    queryFn: () => fetchFilteredPrepaidBatches(listQuery, sort),
+    enabled: view === 'batches' && !selectedId,
+  });
+
+  const onPick = (p: SearchPick) => {
+    if (p.kind === 'batch') {
+      setSelectedId(p.batch.id);
+      return;
+    }
+    setSelectedId(null);
+    if (p.kind === 'voucher') setPage({ ...page, view: 'vouchers', filters: { ...EMPTY_FILTERS, q: p.code } });
+    else if (p.kind === 'till') setPage({ ...page, view: 'tills', filters: { ...filters, machineId: [p.id] } });
+    else setPage({ ...page, view: 'tills', filters: { ...filters, employee: [p.id] } });
+  };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-sm text-muted-foreground">{t('subtitle')}</p>
         </div>
-        {!selected && tab === 'batches' ? (
+        {!selected && view === 'batches' ? (
           <Button onClick={() => setCreating(true)}>
             <Plus className="h-4 w-4" /> {t('new')}
           </Button>
         ) : null}
       </div>
 
+      {!selected ? <VoucherSearch onPick={onPick} /> : null}
+
       {!selected ? (
-        <div className="flex gap-1" role="tablist" aria-label={t('tabs.label')}>
-          {(['batches', 'types'] as const).map((v) => (
-            <Button key={v} role="tab" aria-selected={tab === v} size="sm" variant={tab === v ? 'default' : 'outline'} onClick={() => setTab(v)}>
+        <div className="flex flex-wrap gap-1" role="tablist" aria-label={t('tabs.label')}>
+          {VOUCHER_VIEWS.map((v) => (
+            <Button key={v} role="tab" aria-selected={view === v} size="sm" variant={view === v ? 'default' : 'outline'} onClick={() => setView(v)}>
               {t(`tabs.${v}`)}
             </Button>
           ))}
         </div>
       ) : null}
 
-      {!selected && tab === 'types' ? (
-        <PrepaidTypesView />
-      ) : selected ? (
+      {!selected && view !== 'types' ? (
+        <VoucherFilterBar view={view} value={filters} onChange={setFilters} facets={facets.data} />
+      ) : null}
+
+      {selected ? (
         <BatchDetail key={selected.id} batch={selected} onBack={() => setSelectedId(null)} />
+      ) : view === 'types' ? (
+        <PrepaidTypesView />
+      ) : view === 'vouchers' ? (
+        <VoucherRowsTable filters={filters} onQuery={(q) => setFilters({ ...filters, q })} />
+      ) : view === 'tills' ? (
+        <TillsReport filters={filters} />
       ) : batches.isPending ? (
         <div className="space-y-2">
           <Skeleton className="h-24 w-full rounded-xl" />
@@ -1509,30 +1534,27 @@ export default function PrepaidVouchersPage() {
         <>
           <div className="flex flex-wrap items-end gap-2">
             <div className="relative min-w-48 flex-1">
-              <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground ltr:left-2.5 rtl:right-2.5" aria-hidden />
-              <Input value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                placeholder={t('filters.search')} aria-label={t('filters.search')} className="ps-8" />
+              <Input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })}
+                placeholder={ts('qBatches')} aria-label={ts('qBatches')} dir="auto" />
             </div>
-            <select className="h-9 rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30" aria-label={t('filters.statusLabel')}
-              value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value as BatchFilters['status'] })}>
-              {(['all', 'active', 'cancelled'] as const).map((s) => <option key={s} value={s}>{t(`filters.status.${s}`)}</option>)}
-            </select>
-            <select className="h-9 rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30" aria-label={t('filters.kindLabel')}
-              value={filters.kind} onChange={(e) => setFilters({ ...filters, kind: e.target.value as BatchFilters['kind'] })}>
-              {(['all', 'items', 'discount'] as const).map((k) => <option key={k} value={k}>{t(`filters.kind.${k}`)}</option>)}
-            </select>
-            {companies.length > 1 ? (
-              <select className="h-9 rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30" aria-label={t('filters.companyLabel')}
-                value={filters.companyId} onChange={(e) => setFilters({ ...filters, companyId: e.target.value })}>
-                <option value="">{t('filters.allCompanies')}</option>
-                {companies.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+            <label className="flex items-center gap-1 text-xs text-muted-foreground">
+              {ts('sort')}
+              <select className="h-9 rounded-lg border border-input bg-transparent px-2 text-sm text-foreground dark:bg-input/30"
+                value={sort} onChange={(e) => setPage({ ...page, sort: e.target.value as typeof sort })}>
+                {BATCH_SORTS.map((s) => <option key={s} value={s}>{ts(`sorts.${s}`)}</option>)}
               </select>
-            ) : null}
-            <span className="text-xs text-muted-foreground">{t('filters.count', { shown: shown.length, total: batches.data!.length })}</span>
+            </label>
+            <span className="text-xs text-muted-foreground">
+              {shown.data ? ts('count', { shown: shown.data.total, total: batches.data!.length }) : null}
+            </span>
           </div>
-          {shown.length ? (
+          {shown.isPending ? (
+            <Skeleton className="h-24 w-full rounded-xl" />
+          ) : shown.isError ? (
+            <p className="text-sm text-destructive">{errorText(shown.error)}</p>
+          ) : shown.data!.items.length ? (
             <ul className="space-y-2">
-              {shown.map((b) => (
+              {shown.data!.items.map((b) => (
                 <BatchCard key={b.id} b={b} onOpen={() => setSelectedId(b.id)} />
               ))}
             </ul>

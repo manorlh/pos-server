@@ -70,6 +70,7 @@ from app.schemas.prepaid_voucher import (
 )
 from app.services import prepaid_vouchers as PV
 from app.services import prepaid_voucher_reports as PVR
+from app.services import prepaid_voucher_analytics as PVA
 
 # Display devices are not tills (app/services/display_devices.py).
 from app.middleware.auth import FISCAL_MACHINE_TOKEN
@@ -114,14 +115,127 @@ def list_prepaid_voucher_categories(
     return {"items": PV.eligible_categories(db, current_user, active_tenant_id, company_id)}
 
 
+def voucher_scope(
+    customer: Optional[List[str]] = Query(None, description="For whom: the production (until then the batch's customer)"),
+    event: Optional[List[str]] = Query(None),
+    type_id: Optional[List[str]] = Query(None, alias="typeId"),
+    kind: Optional[str] = Query(None, description="items | discount"),
+    batch_id: Optional[List[str]] = Query(None, alias="batchId"),
+    shop_id: Optional[List[str]] = Query(None, alias="shopId"),
+    company_id: Optional[str] = Query(None, alias="companyId"),
+    accounting: Optional[str] = Query(None, description="discount | payment | zero"),
+    pricing: Optional[str] = Query(None, description="fixed | cover"),
+    override: Optional[str] = Query(None, description="yes | no: a discount-block policy other than honour"),
+    offline: Optional[str] = Query(None, description="yes | no: offline redemption allowed"),
+    value_min: Optional[str] = Query(None, alias="valueMin"),
+    value_max: Optional[str] = Query(None, alias="valueMax"),
+    price_min: Optional[str] = Query(None, alias="priceMin", description="Production price (₪) — only with the prices section"),
+    price_max: Optional[str] = Query(None, alias="priceMax"),
+    created_by: Optional[str] = Query(None, alias="createdBy"),
+    issued_from: Optional[str] = Query(None, alias="issuedFrom"),
+    issued_to: Optional[str] = Query(None, alias="issuedTo"),
+    valid_on: Optional[str] = Query(None, alias="validOn"),
+    batch_status: Optional[str] = Query(None, alias="batchStatus"),
+    date_from: Optional[str] = Query(None, alias="from", description="Redeemed from (the tenant's day)"),
+    date_to: Optional[str] = Query(None, alias="to"),
+    machine_id: Optional[List[str]] = Query(None, alias="machineId"),
+    employee: Optional[List[str]] = Query(None),
+    state: Optional[str] = Query(None, description="open | partial | redeemed | cancelled | expired"),
+    group: Optional[int] = Query(None, ge=1),
+    q: Optional[str] = Query(None, max_length=100),
+) -> "PVA.Scope":
+    """The vouchers' one filter model (app/services/prepaid_voucher_analytics.py)."""
+    return PVA.make_scope(
+        customer=customer, event=event, type_id=type_id, kind=kind, batch_id=batch_id, shop_id=shop_id,
+        company_id=company_id, accounting=accounting, pricing=pricing, override=override, offline=offline,
+        value_min=value_min, value_max=value_max, price_min=price_min, price_max=price_max, created_by=created_by,
+        issued_from=issued_from, issued_to=issued_to, valid_on=valid_on, batch_status=batch_status,
+        date_from=date_from, date_to=date_to, machine_id=machine_id, employee=employee, state=state, group=group, q=q,
+    )
+
+
+def _scope(value) -> "PVA.Scope":
+    """The dependency's value; an empty filter for a direct call that left it out."""
+    return value if isinstance(value, PVA.Scope) else PVA.Scope()
+
+
 @router.get("/prepaid-vouchers/batches")
 def list_prepaid_voucher_batches(
     include_cancelled: bool = Query(True, alias="includeCancelled"),
+    sort: str = Query("newest", description="newest | customer | event | redeemed"),
+    scope: PVA.Scope = Depends(voucher_scope),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    return {"items": PV.list_batches(db, current_user, active_tenant_id, include_cancelled=include_cancelled)}
+    """
+    The batches under the filters (every one without), each with its figures — issued,
+    redeemed (in full or in part), open, the redemption rate — and its status flags.
+    """
+    out = PVA.list_batches(db, current_user, active_tenant_id, _scope(scope), sort=_given(sort) or "newest")
+    if _given(include_cancelled) is False:
+        out["items"] = [b for b in out["items"] if b["status"] == "active"]
+        out["total"] = len(out["items"])
+    return out
+
+
+@router.get("/prepaid-vouchers/vouchers")
+def list_all_prepaid_vouchers(
+    limit: int = Query(100, ge=1, le=PVA.PAGE_MAX),
+    offset: int = Query(0, ge=0),
+    scope: PVA.Scope = Depends(voucher_scope),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"כל השוברים": vouchers across every batch (or one, `batchId`) under the filters, a page at a time."""
+    return PVA.list_vouchers(db, current_user, active_tenant_id, _scope(scope), limit=limit, offset=offset)
+
+
+@router.get("/prepaid-vouchers/facets")
+def prepaid_voucher_facets(
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """What the filters offer: for whom, events, types, batches, shops, tills, employees, creators."""
+    return PVA.facets(db, current_user, active_tenant_id)
+
+
+@router.get("/prepaid-vouchers/search")
+def search_prepaid_vouchers(
+    q: str = Query(..., min_length=1, max_length=100),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """One box over batches, vouchers, tills and employees, grouped."""
+    return PVA.search(db, current_user, active_tenant_id, q)
+
+
+@router.get("/prepaid-vouchers/analytics/tills")
+def prepaid_voucher_tills_report(
+    bucket: str = Query("day", description="hour | day"),
+    scope: PVA.Scope = Depends(voucher_scope),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"מימושים לפי קופה": one row per till."""
+    return PVA.tills_report(db, current_user, active_tenant_id, _scope(scope), bucket=_given(bucket) or "day")
+
+
+@router.get("/prepaid-vouchers/analytics/redemptions")
+def prepaid_voucher_redemptions(
+    limit: int = Query(100, ge=1, le=PVA.PAGE_MAX),
+    offset: int = Query(0, ge=0),
+    scope: PVA.Scope = Depends(voucher_scope),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The redemptions under the filters, newest first (a till's: `machineId`)."""
+    return PVA.redemptions_list(db, current_user, active_tenant_id, _scope(scope), limit=limit, offset=offset)
 
 
 # ── Voucher types (the spec's §2–3) ───────────────────────────────────────────

@@ -5,6 +5,7 @@
  * Unrelated to `/vouchers` (gift-voucher templates) and to item tickets.
  */
 import { api } from './api';
+import type { BatchSort, VoucherState } from './prepaidVoucherFilters';
 import type {
   PrepaidDiscountType,
   PrepaidPromotionPolicy,
@@ -125,6 +126,30 @@ export interface PrepaidVoucherBatch extends PrepaidBatchTerms {
   /** "מימוש ללא אינטרנט". */
   offlineAllowed?: boolean;
   printTillValue?: boolean;
+  /** The list's figures (GET /prepaid-vouchers/batches): issued, redeemed, open, the rate. */
+  figures?: PrepaidBatchFigures;
+  /** Every status the list filters by, at once. */
+  state?: PrepaidBatchState;
+}
+
+export interface PrepaidBatchFigures {
+  issued: number;
+  /** Redeemed in full or in part. */
+  redeemed: number;
+  fullyRedeemed: number;
+  open: number;
+  cancelled: number;
+  /** Redeemed of the vouchers not cancelled (0–1); null: none. */
+  rate: number | null;
+}
+
+export interface PrepaidBatchState {
+  active: boolean;
+  not_started: boolean;
+  expired: boolean;
+  cancelled: boolean;
+  fully_redeemed: boolean;
+  has_open: boolean;
 }
 
 export type PrepaidPricing = 'fixed' | 'cover';
@@ -679,3 +704,162 @@ export async function downloadPrepaidVouchersFile(
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+// ── The filter model: lists, search and the till report (server: prepaid_voucher_analytics.py) ──
+
+/** A batch as a voucher / redemption row names it. */
+export interface PrepaidBatchRef {
+  id: string;
+  name: string;
+  eventName: string | null;
+  customerName: string | null;
+  typeName: string | null;
+  kind: PrepaidVoucherKind;
+  validFrom: string | null;
+  validUntil: string | null;
+  status: 'active' | 'cancelled';
+  redemptionAccounting: PrepaidRedemptionAccounting | null;
+}
+
+/** A voucher in "כל השוברים" (or a batch's table): its state and its batch. */
+export interface PrepaidVoucherRow extends PrepaidVoucher {
+  state: VoucherState;
+  batch: PrepaidBatchRef;
+}
+
+export interface PrepaidFacets {
+  customers: { value: string; batches: number }[];
+  events: { value: string; batches: number }[];
+  types: { id: string; name: string }[];
+  batches: { id: string; name: string; customerName: string | null; eventName: string | null }[];
+  shops: { id: string; name: string; companyId: string }[];
+  tills: { id: string; name: string | null; shopName: string | null }[];
+  employees: { id: string; name: string }[];
+  creators: { id: string; name: string }[];
+  pricesVisible: boolean;
+}
+
+export interface PrepaidSearchResult {
+  batches: PrepaidBatchRef[];
+  vouchers: { id: string; serial: number; displayCode: string; state: VoucherState; batch: PrepaidBatchRef }[];
+  tills: { id: string; name: string | null; shopName: string | null; redemptions: number }[];
+  employees: { id: string; name: string; redemptions: number }[];
+}
+
+/** Agorot per accounting mode: a deduction, a payment, memo value — never "a discount". */
+export interface PrepaidValueByMode {
+  discount: number;
+  payment: number;
+  zero: number;
+  total: number;
+}
+
+export interface PrepaidSeriesPoint {
+  /** The hour (0–23) or the day (yyyy-mm-dd). */
+  key: number | string;
+  redemptions: number;
+  vouchers: number;
+  items: number;
+  /** Agorot. */
+  value: number;
+}
+
+export interface PrepaidTillRow {
+  machineId: string | null;
+  name: string | null;
+  shopId: string | null;
+  shopName: string | null;
+  redemptions: number;
+  vouchers: number;
+  items: number;
+  value: PrepaidValueByMode;
+  flagged: number;
+  /** Not recorded yet (reserve → confirm, the override audit, offline sync): null, never 0. */
+  topUp: number | null;
+  refusals: number | null;
+  overrides: number | null;
+  offlinePending: number | null;
+}
+
+export interface PrepaidTillReport {
+  items: PrepaidTillRow[];
+  totals: { redemptions: number; vouchers: number; items: number; value: PrepaidValueByMode };
+  series: PrepaidSeriesPoint[];
+  bucket: 'hour' | 'day';
+}
+
+export interface PrepaidRedemptionRow {
+  id: string;
+  redeemedAt: string | null;
+  voucherId: string;
+  serial: number | null;
+  displayCode: string | null;
+  batch: PrepaidBatchRef;
+  items: { productId: string; name: string | null; quantity: number }[];
+  units: number;
+  uses: number | null;
+  /** Agorot, and how it was valued: the voucher's fixed value, list prices, a discount's amount. */
+  value: number;
+  valueBasis: 'fixed' | 'list' | 'discount';
+  accounting: PrepaidRedemptionAccounting;
+  machineId: string | null;
+  machineName: string | null;
+  employeeId: string | null;
+  employeeName: string | null;
+  transactionId: string | null;
+  flags: string[];
+}
+
+function withQuery(path: string, query: URLSearchParams, extra: Record<string, string | number | undefined> = {}): string {
+  const p = new URLSearchParams(query);
+  for (const [k, v] of Object.entries(extra)) if (v !== undefined && v !== '') p.set(k, String(v));
+  const s = p.toString();
+  return s ? `${path}?${s}` : path;
+}
+
+/** The batch list under the filters (the server filters; the figures come with each batch). */
+export async function fetchFilteredPrepaidBatches(query: URLSearchParams, sort: BatchSort = 'newest'): Promise<{ items: PrepaidVoucherBatch[]; total: number }> {
+  const { data } = await api.get<{ items: PrepaidVoucherBatch[]; total: number }>(
+    withQuery('/prepaid-vouchers/batches', query, { sort: sort === 'newest' ? undefined : sort }),
+  );
+  return { items: data.items ?? [], total: data.total ?? (data.items ?? []).length };
+}
+
+/** "כל השוברים" (or one batch's, with `batchId` in [query]), a page at a time. */
+export async function fetchPrepaidVoucherRows(
+  query: URLSearchParams,
+  limit: number,
+  offset: number,
+): Promise<{ total: number; items: PrepaidVoucherRow[] }> {
+  const { data } = await api.get<{ total: number; items: PrepaidVoucherRow[] }>(
+    withQuery('/prepaid-vouchers/vouchers', query, { limit, offset }),
+  );
+  return data;
+}
+
+export async function fetchPrepaidFacets(): Promise<PrepaidFacets> {
+  const { data } = await api.get<PrepaidFacets>('/prepaid-vouchers/facets');
+  return data;
+}
+
+export async function searchPrepaid(q: string): Promise<PrepaidSearchResult> {
+  const { data } = await api.get<PrepaidSearchResult>(withQuery('/prepaid-vouchers/search', new URLSearchParams({ q })));
+  return data;
+}
+
+export async function fetchPrepaidTillReport(query: URLSearchParams, bucket: 'hour' | 'day'): Promise<PrepaidTillReport> {
+  const { data } = await api.get<PrepaidTillReport>(withQuery('/prepaid-vouchers/analytics/tills', query, { bucket }));
+  return data;
+}
+
+export async function fetchPrepaidRedemptions(
+  query: URLSearchParams,
+  limit: number,
+  offset: number,
+): Promise<{ total: number; items: PrepaidRedemptionRow[] }> {
+  const { data } = await api.get<{ total: number; items: PrepaidRedemptionRow[] }>(
+    withQuery('/prepaid-vouchers/analytics/redemptions', query, { limit, offset }),
+  );
+  return data;
+}
+

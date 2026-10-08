@@ -220,6 +220,8 @@ class PrepaidVoucherBatch(Base):
         CheckConstraint(
             "kind IN ('items', 'order_discount', 'item_discount')", name="ck_prepaid_voucher_batches_kind"
         ),
+        # The batch list and the reports read a tenant's batches by issue date.
+        Index("ix_prepaid_voucher_batches_tenant_created", "tenant_id", "created_at"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -379,6 +381,8 @@ class PrepaidVoucher(Base):
             name="ck_prepaid_vouchers_status",
         ),
         Index("ix_prepaid_vouchers_batch_group", "batch_id", "group_no"),
+        # The vouchers' state filters ("פתוחים", "מומשו") per batch.
+        Index("ix_prepaid_vouchers_batch_status", "batch_id", "status"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -426,6 +430,10 @@ class PrepaidVoucherRedemption(Base):
         UniqueConstraint(
             "machine_id", "client_request_id", name="uq_prepaid_voucher_redemptions_request"
         ),
+        # The reports: redemptions of the batches in scope by time, per till, per voucher.
+        Index("ix_prepaid_voucher_redemptions_batch_time", "batch_id", "redeemed_at"),
+        Index("ix_prepaid_voucher_redemptions_machine_time", "machine_id", "redeemed_at"),
+        Index("ix_prepaid_voucher_redemptions_voucher", "voucher_id"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
