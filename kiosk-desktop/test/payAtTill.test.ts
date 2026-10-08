@@ -36,7 +36,7 @@ function fakeCloud() {
   return { sent, answers, fetchFn };
 }
 
-function kiosk(fetchFn: typeof fetch, payment: Record<string, unknown>) {
+function kiosk(fetchFn: typeof fetch, payment: Record<string, unknown>, printing: Record<string, unknown> = {}) {
   const svc = new KioskService({ dataDir: mkdtempSync(path.join(os.tmpdir(), 'kd-till-')), appVersion: '0.3.0', deviceInfo: { platform: 'windows' }, transport: noPrinter, fetch: fetchFn, downloader: async () => { throw new Error('no media'); } });
   svc.cloud.setCredentials({ serverUrl: 'http://localhost:8001', accessToken: 't', machineId: MACHINE, machineCode: null, tenantId: null, shopId: null, mqttClientId: null, realtimeChannel: null, pairedAt: '' });
   svc.api.setBase('http://localhost:8001');
@@ -54,7 +54,7 @@ function kiosk(fetchFn: typeof fetch, payment: Record<string, unknown>) {
   });
   // 1+1 on drinks: the order carries each line's share, as the till will charge it.
   svc.cloud.setPromotions([{ id: 'promo-1', name: '1+1 שתייה', type: 'buy_x_get_y', priority: 0, config: { target: { categoryIds: ['c-drinks'] }, buyQuantity: 1, getQuantity: 1 } }], null);
-  svc.cloud.setKioskSnapshot({ kiosk: true, configVersion: 'v1', operator: { id: `kiosk:${MACHINE}`, name: 'קיוסק Windows' }, config: { payment: { tipEnabled: true, ...payment }, pickup: { scope: 'kiosk', prefix: 'K', start: 1, max: 99 } } });
+  svc.cloud.setKioskSnapshot({ kiosk: true, configVersion: 'v1', operator: { id: `kiosk:${MACHINE}`, name: 'קיוסק Windows' }, config: { payment: { tipEnabled: true, ...payment }, pickup: { scope: 'kiosk', prefix: 'K', start: 1, max: 99 }, printing } });
   return svc;
 }
 
@@ -142,7 +142,8 @@ describe('"מזומן בקופה": the open order to the tills', () => {
       body: { accepted: [], rejected: ((b?.orders ?? []) as Array<{ localId: string }>).map((o) => ({ localId: o.localId, reason: 'price_changed', lines: [{ key: 'L1', productId: 'p-burger', name: 'המבורגר', fromAgorot: 4200, toAgorot: 4500, reason: 'price' }] })) },
     });
     answers['GET sync/m/catalog'] = () => ({ status: 200, body: { syncType: 'delta', serverTime: 'y', products: [], categories: [] } });
-    const svc = kiosk(fetchFn, { methods: ['cash_at_till'], cashAtTillKitchenBeforePay: true });
+    // "בון מטבח במדפסת הקיוסק" on: the bon "ממתין לתשלום בקופה" prints here (off — the default — the till prints it).
+    const svc = kiosk(fetchFn, { methods: ['cash_at_till'], cashAtTillKitchenBeforePay: true }, { bonOnKiosk: true });
     try {
       const r = await svc.placeOpenOrder({ ...basket(5200), vouchers: [] });
       expect(r).toEqual({ ok: false, reason: 'changed', changes: [{ kind: 'repriced', productId: 'p-burger', name: 'המבורגר', key: 'L1', from: 4200, to: 4500 }] });

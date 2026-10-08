@@ -51,3 +51,54 @@ def effective_mode(product: Any) -> str:
     if own is not None:
         return own
     return category_mode(getattr(product, "category", None))
+
+
+# ── "שוברי פריט" — the device's level above the product (the owner, 07.10.2026) ─────────
+#
+# A till parameter (company → shop → point of sale → till, `till_parameters`), read by the till,
+# the Android kiosk and the Windows kiosk (their parameters sync): "לפי הפריט" — each product's own
+# mode, as before; "כבוי" — this device prints no item tickets; or one mode that replaces the
+# product's for every product whose tickets are on (a product with tickets off never gets them
+# from here). The devices' rule: pos-android domain/ItemTicket.kt `ItemTicketPrinting.modeFor`,
+# kiosk-desktop core/itemTickets.ts — pinned by kiosk-desktop/test/fixtures/item_ticket_cases.json.
+
+DEVICE_PARAMETER_KEY = "itemTicketMode"
+DEVICE_BY_PRODUCT = "לפי הפריט"
+DEVICE_OFF = "כבוי"
+DEVICE_PER_UNIT = "שובר לכל יחידה"
+DEVICE_PER_LINE = "שובר לכל פריט"
+DEVICE_PER_SALE = "שובר אחד לעסקה"
+DEVICE_OPTIONS = (DEVICE_BY_PRODUCT, DEVICE_OFF, DEVICE_PER_UNIT, DEVICE_PER_LINE, DEVICE_PER_SALE)
+#: The parameter's word → the mode it puts on a product whose tickets are on (None: the product's own).
+DEVICE_MODES = {
+    DEVICE_BY_PRODUCT: None, DEVICE_OFF: OFF, DEVICE_PER_UNIT: PER_UNIT, DEVICE_PER_LINE: PER_LINE, DEVICE_PER_SALE: PER_SALE,
+}
+
+
+def device_mode(product_mode: Optional[str], setting: Optional[str]) -> str:
+    """A product's mode on a device whose "שוברי פריט" is `setting` (unknown or unset: by the product)."""
+    mode = normalize(product_mode) or OFF
+    word = (setting or "").strip()
+    if word == DEVICE_OFF:
+        return OFF
+    override = DEVICE_MODES.get(word)
+    return mode if override is None or mode == OFF else override
+
+
+ITEM_TICKET_PARAMETER_SPECS = (
+    dict(
+        key=DEVICE_PARAMETER_KEY,
+        label="שוברי פריט",
+        value_type="enum",
+        enum_options=DEVICE_OPTIONS,
+        default_value=DEVICE_BY_PRODUCT,
+        description=(
+            "שוברי הפריט (\"שוברים\") שהמכשיר מדפיס אחרי מכירה — מעל הגדרת הפריט. "
+            f"«{DEVICE_BY_PRODUCT}» (ברירת המחדל) — כל מוצר לפי ההגדרה שלו או של המחלקה שלו, כמו קודם; "
+            f"«{DEVICE_OFF}» — הקופה / הקיוסק הזה לא מדפיס שוברי פריט בכלל; "
+            f"«{DEVICE_PER_UNIT}», «{DEVICE_PER_LINE}», «{DEVICE_PER_SALE}» — במקום ההגדרה של המוצר, לכל מוצר "
+            "שהשוברים שלו פועלים (מוצר ששוברים כבויים בו לא מקבל שובר מכאן). חל על הקופה, על הקיוסק באנדרואיד "
+            "ועל הקיוסק ב-Windows. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+)

@@ -471,6 +471,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # An unprinted bon prints again by itself when the printer comes back — once, and only
         # when younger than this many minutes (docs/SPEC_KIOSK.md §16.8); 0: never by itself.
         "bonAutoRetryMin": 10,
+        # "בון מטבח במדפסת הקיוסק" (docs/SPEC_KIOSK.md §5, the owner 07.10.2026): may the kiosk's own
+        # printer take its kitchen bon — when it has no kitchen printer (its USB printer, §14), and the
+        # routing's share for "this till"? Off by default, so every kiosk — an existing one too — gets
+        # it off: the bon never prints on the kiosk; a kitchen printer that does not answer keeps it in
+        # its queue and the staff's alert. `bonMode: "single"` with a named printer is unchanged.
+        "bonOnKiosk": False,
     },
     "pickup": {"scope": "kiosk", "prefix": "", "start": 1, "max": 999},
     "timers": {"inactivitySec": 60, "warningSec": 20, "successSec": 12, "attractSlideSec": 8},
@@ -1207,6 +1213,7 @@ SCHEMA = Obj({
         "receiptPrinterId": PRINTER_ID,
         "pickupSlip": Bool(),
         "bonAutoRetryMin": Int(0, 120),
+        "bonOnKiosk": Bool(),
     }),
     "pickup": Obj({
         "scope": Enum(PICKUP_SCOPES),

@@ -73,6 +73,26 @@ export interface ReceiptInput {
   card: { brand: CardBrand; last4: string | null; authNum: string | null; payments: number | null; firstPaymentAgorot: number | null } | null;
   footer: [string | null, string | null];
   logoUrl: string | null;
+  /** Where it was issued — the shop, the till's number and name ([placeLine]); absent: no line. */
+  place?: { shopName: string | null; posNumber: string | null; deviceName: string | null } | null;
+}
+
+/**
+ * The place line every printed document carries under the business (the owner, 07.10.2026):
+ * "סניף הרצליה · קופה 3 · קיוסק רויאל". A shop already named "סניף …" is not prefixed again; a
+ * till named as the shop or as its number says it once; nothing known — null. The same rule as
+ * pos-android domain/Receipt.kt ReceiptPlace and the cloud's print_documents.place_line, pinned by
+ * test/fixtures/receipt_place_cases.json (the same bytes in both repos).
+ */
+export function placeLine(shopName: string | null | undefined, posNumber: string | null | undefined, deviceName: string | null | undefined): string | null {
+  const shopRaw = (shopName ?? '').trim() || null;
+  const shop = shopRaw === null ? null : shopRaw.startsWith('סניף') ? shopRaw : `סניף ${shopRaw}`;
+  const number = (posNumber ?? '').trim();
+  const till = number ? `קופה ${number}` : null;
+  let device = (deviceName ?? '').trim() || null;
+  if (device !== null && (device === shopRaw || device === shop || device === till)) device = null;
+  const line = [shop, till, device].filter((p): p is string => !!p).join(' · ');
+  return line || null;
 }
 
 export const DEFAULT_FOOTER: [string, string] = ['ראנר מערכות קופות ממוחשבות', 'טלפון: 054-2666669'];
@@ -124,6 +144,9 @@ export function receiptDoc(r: ReceiptInput): ReceiptDoc {
   const city = [nonBlank(b.companyCity), nonBlank(b.companyZip)].filter(Boolean).join(' ');
   if (city) ops.push({ t: 'text', text: city, style: 'small', align: 'center' });
   if (nonBlank(b.phone)) ops.push({ t: 'text', text: `טלפון: ${b.phone!.trim()}`, style: 'small', align: 'center' });
+  // "סניף הרצליה · קופה 3 · קיוסק רויאל" — where it was issued, on the copies too.
+  const issued = r.place ? placeLine(r.place.shopName, r.place.posNumber, r.place.deviceName) : null;
+  if (issued) ops.push({ t: 'text', text: issued, style: 'small', align: 'center' });
   ops.push({ t: 'divider', gap: 8 });
   ops.push({ t: 'text', text: documentTitleFor(r.documentType), style: 'heading', align: 'center' });
   ops.push({ t: 'text', text: r.copy === 'copy' ? 'העתק' : 'מקור', style: 'small', align: 'center' });
@@ -275,6 +298,54 @@ export function slipDoc(input: { businessName: string | null; pickupLabel: strin
   };
 }
 
+/* ------------------------------------------------------- an item ticket */
+
+/** An item ticket ("שובר", pos-android hardware/printer/ItemTicketRenderer.kt), drawn at 384 and scaled. */
+export interface TicketDoc {
+  kind: 'ticket';
+  businessName: string;
+  /** The shop, under the business when it is not the same name. */
+  shopName: string | null;
+  /** "שובר", or "שובר ⁦2/5⁩" when the sale prints several. */
+  title: string;
+  /** One item: its name and its quantity big; several: a row each. */
+  items: Array<{ name: string; qty: string }>;
+  /** The time, the till ("קופה: … · מס' קופה: …"), the sale's number. */
+  foot: string[];
+}
+
+export function ticketDoc(input: {
+  businessName: string | null;
+  shopName: string | null;
+  machineName: string | null;
+  posNumber: string | null;
+  transactionNumber: string | null;
+  issuedAt: Date;
+  items: Array<{ name: string; quantity: number; unitLabel?: string | null; entry?: number | null; entries?: number | null }>;
+  index: number;
+  count: number;
+}): TicketDoc {
+  const business = nonBlank(input.businessName) ?? nonBlank(input.shopName) ?? 'POS';
+  const shop = nonBlank(input.shopName);
+  const qty = (i: { quantity: number; unitLabel?: string | null }) =>
+    nonBlank(i.unitLabel ?? null) ? `${receiptQty(i.quantity)} ${i.unitLabel!.trim()}` : receiptQty(i.quantity);
+  const till = [
+    nonBlank(input.machineName) ? `קופה: ${input.machineName!.trim()}` : null,
+    nonBlank(input.posNumber) ? `מס' קופה: ${ltr(input.posNumber!.trim())}` : null,
+  ].filter(Boolean).join('  ·  ');
+  return {
+    kind: 'ticket',
+    businessName: business,
+    shopName: shop && shop !== business ? shop : null,
+    title: input.count > 1 ? `שובר ${ltr(`${input.index}/${input.count}`)}` : 'שובר',
+    items: input.items.map((i) => ({
+      name: i.name,
+      qty: i.entry && i.entries ? `כניסה ${ltr(`${i.entry}/${i.entries}`)}` : ltr(`× ${qty(i)}`),
+    })),
+    foot: [stamp(input.issuedAt), ...(till ? [till] : []), ...(nonBlank(input.transactionNumber) ? [`עסקה ${ltr(`#${input.transactionNumber!.trim()}`)}`] : [])],
+  };
+}
+
 /* ------------------------------------------------------------ the Z */
 
 export type ZOp =
@@ -362,4 +433,4 @@ export function zDoc(z: Record<string, unknown>, opts: { business: BusinessInfo;
   return { kind: 'z', logoUrl: opts.logoUrl, ops };
 }
 
-export type PrintDoc = ReceiptDoc | BonDoc | SlipDoc | ZDoc;
+export type PrintDoc = ReceiptDoc | BonDoc | SlipDoc | ZDoc | TicketDoc;

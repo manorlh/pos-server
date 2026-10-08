@@ -1,0 +1,26 @@
+{
+  "about": "Where a kiosk's kitchen bon goes (printing.bonOnKiosk, off by default; pos-server docs/SPEC_KIOSK.md §5). The same bytes in pos-android app/src/test/resources and pos-server kiosk-desktop/test/fixtures; Android domain/KioskOrders.kt KioskBon.route + ownShare + isOwnPrinter, kiosk-desktop core/kioskBonRoute.ts. single: one named bon printer (bonMode single); singleOwn: that printer is the kiosk's own (its USB port or head, hosted by it, or a receipt printer set to it alone — the Windows kiosk prints everything on its own); kitchenPrinters: the kitchen printers that may take the kiosk's orders; ownPrinter: the kiosk has a printer of its own that would take it (Android: its USB printer; Windows: always).",
+  "cases": [
+    { "name": "a named kitchen printer, setting off: unchanged", "single": true, "singleOwn": false, "bonOnKiosk": false, "kitchenPrinters": 0, "ownPrinter": true, "route": "single", "ownShare": false },
+    { "name": "a named kitchen printer, setting on", "single": true, "singleOwn": false, "bonOnKiosk": true, "kitchenPrinters": 2, "ownPrinter": true, "route": "single", "ownShare": false },
+    { "name": "the named printer is the kiosk's own, setting off (the Royal kiosk): no bon on it", "single": true, "singleOwn": true, "bonOnKiosk": false, "kitchenPrinters": 0, "ownPrinter": true, "route": "none", "ownShare": false },
+    { "name": "the named printer is the kiosk's own, setting off, kitchen printers: the routing", "single": true, "singleOwn": true, "bonOnKiosk": false, "kitchenPrinters": 1, "ownPrinter": true, "route": "kitchen", "ownShare": false },
+    { "name": "the named printer is the kiosk's own, setting on: as before", "single": true, "singleOwn": true, "bonOnKiosk": true, "kitchenPrinters": 0, "ownPrinter": true, "route": "single", "ownShare": false },
+    { "name": "kitchen printers, setting off: they take it, nothing on the kiosk", "single": false, "singleOwn": false, "bonOnKiosk": false, "kitchenPrinters": 2, "ownPrinter": true, "route": "kitchen", "ownShare": false },
+    { "name": "kitchen printers, setting on: as before (the till copy may print on the kiosk)", "single": false, "singleOwn": false, "bonOnKiosk": true, "kitchenPrinters": 1, "ownPrinter": true, "route": "kitchen", "ownShare": true },
+    { "name": "no kitchen printer, setting off (the default): no bon on the kiosk", "single": false, "singleOwn": false, "bonOnKiosk": false, "kitchenPrinters": 0, "ownPrinter": true, "route": "none", "ownShare": false },
+    { "name": "no kitchen printer, setting off, no printer of its own", "single": false, "singleOwn": false, "bonOnKiosk": false, "kitchenPrinters": 0, "ownPrinter": false, "route": "none", "ownShare": false },
+    { "name": "no kitchen printer, setting on: the kiosk's own printer (as before)", "single": false, "singleOwn": false, "bonOnKiosk": true, "kitchenPrinters": 0, "ownPrinter": true, "route": "own", "ownShare": false },
+    { "name": "no kitchen printer, setting on, no printer of its own: the routing says none takes it", "single": false, "singleOwn": false, "bonOnKiosk": true, "kitchenPrinters": 0, "ownPrinter": false, "route": "kitchen", "ownShare": true }
+  ],
+  "ownPrinter": [
+    { "name": "a USB printer: on the kiosk's own port", "type": "usb", "purpose": "receipt", "isHost": false, "scope": "machine", "own": true },
+    { "name": "the kiosk's head", "type": "till", "purpose": "kitchen", "isHost": false, "scope": null, "own": true },
+    { "name": "a cloud printer the kiosk hosts", "type": "cloud", "purpose": "kitchen", "isHost": true, "scope": "shop", "own": true },
+    { "name": "a receipt printer set to the kiosk alone", "type": "network", "purpose": "receipt", "isHost": false, "scope": "machine", "own": true },
+    { "name": "the shop's receipt printer", "type": "network", "purpose": "receipt", "isHost": false, "scope": "shop", "own": false },
+    { "name": "a kitchen printer narrowed to the kiosk", "type": "network", "purpose": "kitchen", "isHost": false, "scope": "machine", "own": false },
+    { "name": "a network kitchen printer the kiosk serves as print server", "type": "network", "purpose": "kitchen", "isHost": true, "scope": "shop", "own": false },
+    { "name": "a cloud printer another till hosts", "type": "cloud", "purpose": "kitchen", "isHost": false, "scope": "shop", "own": false }
+  ]
+}
