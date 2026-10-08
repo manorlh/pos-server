@@ -93,6 +93,12 @@ class Product(Base):
     # a spend threshold). Enforced on the till; the cloud only carries the flag.
     no_discount = Column(Boolean, default=False, nullable=False, server_default="false")
 
+    # "מחייב אישור מנהל במכירה": the till asks a manager's code before the product enters a
+    # sale (permission SELL_RESTRICTED_ITEMS), and kiosks never show it. Inherited from the
+    # category and every category above it (app/services/restricted_items.py); the cloud only
+    # carries the flags, the till decides.
+    requires_manager_approval = Column(Boolean, default=False, nullable=False, server_default="false")
+
     # "היכן הפריט נמכר" (docs/SPEC_PRODUCT_CHANNELS.md, app/services/sales_channel.py):
     # all (קופות וקיוסק) / kiosk_only / pos_only. The till hides kiosk_only from its sell
     # screen and the kiosk hides pos_only; the cloud only carries the code.

@@ -158,6 +158,7 @@ def _copy_category_to_machine(
             existing.color = global_cat.color
             existing.is_active = global_cat.is_active
             existing.sort_order = global_cat.sort_order
+            existing.requires_manager_approval = bool(global_cat.requires_manager_approval)
             db.flush()
         return existing
 
@@ -173,6 +174,7 @@ def _copy_category_to_machine(
         image_url=global_cat.image_url,
         is_active=global_cat.is_active,
         sort_order=global_cat.sort_order,
+        requires_manager_approval=bool(global_cat.requires_manager_approval),
     )
     db.add(local)
     db.flush()

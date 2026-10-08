@@ -529,6 +529,8 @@ def machine_create_cloud_product(
         is_weighed=data.is_weighed,
         unit_label=data.unit_label,
         no_discount=data.no_discount,
+        # "מחייב אישור מנהל במכירה" is the dashboard's to set, never a till's (restricted_items.py).
+        requires_manager_approval=False,
         dietary_tags=data.dietary_tags or None,
         # "היכן הפריט נמכר" from the till's product dialog (app/services/sales_channel.py).
         sales_channel=data.sales_channel,
@@ -595,6 +597,8 @@ def machine_update_cloud_product(
     # rather than counted as a change to the chain's master record.
     general_item.check_general_item_update(product, updates)
     updates.pop("is_general", None)
+    # "מחייב אישור מנהל במכירה": the dashboard's alone — a till that echoes it changes nothing.
+    updates.pop("requires_manager_approval", None)
     if "is_listed" in updates and not updates["is_listed"]:
         general_item.refuse_general_item_unlist(product)
     # The item-ticket ("שובר") mode set from the till's catalog screen: written on the
@@ -799,6 +803,8 @@ def machine_create_cloud_category(
         color=data.color,
         image_url=data.image_url,
         parent_id=data.parent_id,
+        # "מחייב אישור מנהל במכירה" is the dashboard's to set, never a till's.
+        requires_manager_approval=False,
         is_active=data.is_active,
         sort_order=data.sort_order,
     )

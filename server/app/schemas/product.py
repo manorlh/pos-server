@@ -196,6 +196,9 @@ class ProductBase(BaseModel):
     unit_label: Optional[str] = Field(None, max_length=16, alias="unitLabel")
     # "לא מקבל הנחות": no line discount, no basket-discount share, no promotion at the till.
     no_discount: bool = Field(False, alias="noDiscount")
+    # "מחייב אישור מנהל במכירה" (app/services/restricted_items.py): a manager's code at the
+    # till, never on a kiosk. Its category (or one above it) may restrict it too.
+    requires_manager_approval: bool = Field(False, alias="requiresManagerApproval")
     # "סימוני תזונה" (app/services/dietary.py): codes, cleaned and ordered; omitted: none.
     dietary_tags: Optional[List[str]] = Field(None, alias="dietaryTags")
     # "היכן הפריט נמכר" (app/services/sales_channel.py); omitted: קופות וקיוסק.
@@ -276,6 +279,8 @@ class ProductUpdate(BaseModel):
     is_weighed: Optional[bool] = Field(None, alias="isWeighed")
     unit_label: Optional[str] = Field(None, max_length=16, alias="unitLabel")
     no_discount: Optional[bool] = Field(None, alias="noDiscount")
+    # "מחייב אישור מנהל במכירה": omitted (or null) — left as it is.
+    requires_manager_approval: Optional[bool] = Field(None, alias="requiresManagerApproval")
     # "סימוני תזונה": omitted — left as they are; `[]` or null clears.
     dietary_tags: Optional[List[str]] = Field(None, alias="dietaryTags")
     # "היכן הפריט נמכר": omitted (or null) — left as it is.
@@ -331,6 +336,9 @@ class ProductUpdate(BaseModel):
         # so no handler's `model_dump(exclude_unset=True)` ever writes a null into it.
         if self.sales_channel is None:
             self.__pydantic_fields_set__.discard("sales_channel")
+        # The same for "מחייב אישור מנהל במכירה" (NOT NULL too).
+        if self.requires_manager_approval is None:
+            self.__pydantic_fields_set__.discard("requires_manager_approval")
         return self
 
     class Config:
@@ -368,6 +376,8 @@ class ProductResponse(BaseModel):
     is_weighed: bool = Field(False, alias="isWeighed")
     unit_label: Optional[str] = Field(None, alias="unitLabel")
     no_discount: bool = Field(False, alias="noDiscount")
+    # "מחייב אישור מנהל במכירה", the product's own flag (its categories may add to it).
+    requires_manager_approval: bool = Field(False, alias="requiresManagerApproval")
     # "סימוני תזונה", in the fixed order; [] when none.
     dietary_tags: List[str] = Field(default_factory=list, alias="dietaryTags")
     # "היכן הפריט נמכר": all / kiosk_only / pos_only.
@@ -407,7 +417,7 @@ class ProductResponse(BaseModel):
     def _channel_out(cls, v):
         return channels.out(v)
 
-    @field_validator("allergen_alert", mode="before")
+    @field_validator("allergen_alert", "requires_manager_approval", mode="before")
     @classmethod
     def _flag_off(cls, v):
         return bool(v)

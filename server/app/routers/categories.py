@@ -216,6 +216,8 @@ def create_category(
         parent_id=data.parent_id,
         voucher_id=data.voucher_id,
         ticket_mode=item_ticket.normalize(data.ticket_mode),
+        # "מחייב אישור מנהל במכירה" (app/services/restricted_items.py).
+        requires_manager_approval=data.requires_manager_approval,
         is_active=data.is_active,
         sort_order=data.sort_order,
     )

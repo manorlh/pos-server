@@ -211,7 +211,9 @@ class TestLegacy:
 
     def test_a_legacy_cashier_needs_approval_for_exactly_what_a_cashier_did(self):
         eff = TP.legacy_effective("cashier")
-        assert {c for c, s in eff.states.items() if s == P} == self.SENIOR
+        # Plus what was added after roles and asks a manager of a cashier (SELL_RESTRICTED_ITEMS:
+        # "מחייב אישור מנהל במכירה" did not exist before roles).
+        assert {c for c, s in eff.states.items() if s == P} == self.SENIOR | {"SELL_RESTRICTED_ITEMS"}
         # Everything else was open to everyone ("כרגע אין הרשאות, כולם יכולים לעשות הכל"),
         # except approving others and leaving the Windows kiosk, which were a manager's alone.
         assert {c for c, s in eff.states.items() if s == D} == {"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT"}

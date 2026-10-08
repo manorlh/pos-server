@@ -128,6 +128,9 @@ def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[s
         "unitLabel": p.unit_label,
         # "לא מקבל הנחות": the till gives it no line, basket or promotion discount.
         "noDiscount": bool(getattr(p, "no_discount", False)),
+        # "מחייב אישור מנהל במכירה", the product's own flag: the till adds its categories'
+        # (app/services/restricted_items.py) and a kiosk leaves it out.
+        "requiresManagerApproval": bool(getattr(p, "requires_manager_approval", False)),
         # The menu layer (docs/SPEC_MENU_MODIFIERS.md): allergen codes, and the course
         # its table lines fire in (null: the category's).
         "allergens": list(getattr(p, "allergens", None) or []),
@@ -265,6 +268,8 @@ def _serialize_merged_product(
         "unitLabel": global_p.unit_label,
         # "לא מקבל הנחות", from the global row like the rest of what the product is.
         "noDiscount": bool(getattr(global_p, "no_discount", False)),
+        # "מחייב אישור מנהל במכירה", from the global row like the rest of what the product is.
+        "requiresManagerApproval": bool(getattr(global_p, "requires_manager_approval", False)),
         # What the dish contains and its course, from the global row like the rest of
         # what the product is (docs/SPEC_MENU_MODIFIERS.md).
         "allergens": list(getattr(global_p, "allergens", None) or []),
@@ -332,6 +337,9 @@ def _serialize_category(
         "ticketMode": item_ticket.category_mode(c),
         # The course its products fire in by default (docs/SPEC_MENU_MODIFIERS.md §8).
         "courseId": str(c.course_id) if getattr(c, "course_id", None) else None,
+        # "מחייב אישור מנהל במכירה": the category's own flag; the till applies it to every
+        # product beneath it (its tree is parentId).
+        "requiresManagerApproval": bool(getattr(c, "requires_manager_approval", False)),
         "isActive": category_availability.resolve_rows(c, activity),
         # The switch-off that decides it, for a Z the till closes offline
         # (docs/SPEC_AVAILABILITY.md); null when active, or switched off by the tenant.

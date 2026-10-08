@@ -20,7 +20,11 @@ class TillEventIn(BaseModel):
     id: uuid.UUID
     #: `desktop_exit`: R2M POS for Windows left to the desktop by a manager's code (DESKTOP_EXIT),
     #: or back (`details.action` exit | return) — kept for the record, no exception rule.
-    type: Literal["drawer_open", "line_void", "basket_cancel", "basket_completed", "reprint", "forced_z_close", "desktop_exit"]
+    #: `restricted_item`: a product that needs a manager's code ("מחייב אישור מנהל במכירה") added to a
+    #: sale — details names the product and who approved it (app/services/restricted_items.py).
+    #: Kept for the record, no exception rule.
+    type: Literal["drawer_open", "line_void", "basket_cancel", "basket_completed", "reprint", "forced_z_close", "desktop_exit",
+                  "restricted_item"]
     occurred_at: datetime = Field(..., alias="occurredAt")
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)

@@ -463,6 +463,8 @@ def create_product(
         is_weighed=data.is_weighed,
         unit_label=data.unit_label,
         no_discount=data.no_discount,
+        # "מחייב אישור מנהל במכירה" (app/services/restricted_items.py).
+        requires_manager_approval=data.requires_manager_approval,
         # "סימוני תזונה", already cleaned by the schema (app/services/dietary.py).
         dietary_tags=data.dietary_tags or None,
         # "היכן הפריט נמכר", validated by the schema (app/services/sales_channel.py).
