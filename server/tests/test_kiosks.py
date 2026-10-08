@@ -204,7 +204,9 @@ def test_defaults_are_valid_and_complete():
         "waitLogo": {"media": None, "style": "plain"},
     }
     assert cfg["printing"] == {
-        "bonMode": "routing", "bonPrinterId": None, "bonCopies": 1, "receiptPrinterId": None, "pickupSlip": True,
+        "bonMode": "routing", "bonPrinterId": None, "bonCopies": 1, "receiptPrinterId": None,
+        # One paper (the owner, 08.10.2026): no separate number slip; the number is on the receipt.
+        "pickupSlip": False, "orderNumberOnReceipt": True,
         # An unprinted bon prints again by itself when the printer is back, within this many minutes (§16.8).
         "bonAutoRetryMin": 10,
         # "בון מטבח במדפסת הקיוסק" (§5): off — the kiosk never prints the kitchen bon on its own printer.
@@ -263,7 +265,7 @@ def test_routes_and_the_422_shape_over_http(monkeypatch):
     app.dependency_overrides[get_current_machine_admin] = lambda: admin
     app.dependency_overrides[get_active_tenant_id] = lambda: uuid.uuid4()
     client = TestClient(app)
-    assert client.get("/api/v1/kiosks/defaults").json()["defaults"]["printing"]["pickupSlip"] is True
+    assert client.get("/api/v1/kiosks/defaults").json()["defaults"]["printing"]["pickupSlip"] is False
     res = client.put(
         f"/api/v1/kiosks/settings?level=company&id={company_id}",
         json={"overrides": {"theme": {"cornerRadius": 41}}},
@@ -1061,6 +1063,36 @@ def test_bon_on_kiosk_is_off_for_every_kiosk_until_a_level_turns_it_on():
     assert errors == [] and C.resolve(on, inherit)["printing"]["bonOnKiosk"] is True
     _c, errors = C.validate_layer({"printing": {"bonOnKiosk": "yes"}})
     assert paths(errors) == {"printing.bonOnKiosk": "invalid_type"}
+
+
+def test_one_paper_the_order_number_on_the_receipt_and_no_separate_slip_by_default():
+    """The owner, 08.10.2026: "ברירת מחדל הדפסת חשבונית ללא המספר הזמנה. בחשבונית יכול להופיע מספר
+    הזמנה" — the separate number slip (`printing.pickupSlip`) is off by default, the receipt prints the
+    order number (`printing.orderNumberOnReceipt`, on). A level that saved the slip keeps it."""
+    assert C.DEFAULT_CONFIG["printing"]["pickupSlip"] is False
+    assert C.DEFAULT_CONFIG["printing"]["orderNumberOnReceipt"] is True
+    # An existing kiosk whose layers never had either key (the Royal kiosk's machine layer).
+    existing = {"printing": {"bonMode": "single", "bonPrinterId": str(uuid.uuid4()), "receiptPrinterId": None, "bonAutoRetryMin": 0}}
+    cleaned, errors = C.validate_layer(existing)
+    assert errors == []
+    cfg = C.resolve({}, {}, cleaned)
+    assert cfg["printing"]["pickupSlip"] is False and cfg["printing"]["orderNumberOnReceipt"] is True
+    assert C.validate_config(cfg) == []
+    # A saved config keeps what it saved: the slip on, the number off the receipt.
+    saved, errors = C.validate_layer({"printing": {"pickupSlip": True, "orderNumberOnReceipt": False}})
+    assert errors == []
+    kept = C.resolve({}, saved, {})
+    assert kept["printing"]["pickupSlip"] is True and kept["printing"]["orderNumberOnReceipt"] is False
+    # A kiosk below may change it again; null inherits.
+    assert C.resolve({}, saved, {"printing": {"pickupSlip": False}})["printing"]["pickupSlip"] is False
+    inherit, errors = C.validate_layer({"printing": {"orderNumberOnReceipt": None}})
+    assert errors == [] and C.resolve(saved, inherit)["printing"]["orderNumberOnReceipt"] is False
+    _c, errors = C.validate_layer({"printing": {"orderNumberOnReceipt": "yes", "pickupSlip": 1}})
+    assert paths(errors) == {"printing.orderNumberOnReceipt": "invalid_type", "printing.pickupSlip": "invalid_type"}
+    # The new key moves the version, so every kiosk takes the new config.
+    before = json.loads(json.dumps(cfg))
+    before["printing"].pop("orderNumberOnReceipt")
+    assert C.config_version(before) != C.config_version(cfg)
 
 
 def test_the_default_style_is_the_look_kiosks_had():

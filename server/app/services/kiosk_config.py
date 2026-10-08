@@ -495,9 +495,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "bonPrinterId": None,
         "bonCopies": 1,
         "receiptPrinterId": None,
-        # The small customer slip with the pickup number, on the receipt printer —
-        # independent of `payment.receiptPolicy`.
-        "pickupSlip": True,
+        # "פתק מספר הזמנה נפרד": the small customer slip with the pickup number, on the receipt
+        # printer — independent of `payment.receiptPolicy`. Off by default (the owner, 08.10.2026:
+        # "one paper" — the number goes on the receipt instead, `orderNumberOnReceipt`); a layer
+        # that saved it keeps what it saved.
+        "pickupSlip": False,
+        # "מספר הזמנה על החשבונית": the kiosk's receipt prints the order (pickup) number, large,
+        # near the top ("מספר הזמנה A-1"). On by default.
+        "orderNumberOnReceipt": True,
         # An unprinted bon prints again by itself when the printer comes back — once, and only
         # when younger than this many minutes (docs/SPEC_KIOSK.md §16.8); 0: never by itself.
         "bonAutoRetryMin": 10,
@@ -1325,6 +1330,7 @@ SCHEMA = Obj({
         "bonCopies": Int(1, 3),
         "receiptPrinterId": PRINTER_ID,
         "pickupSlip": Bool(),
+        "orderNumberOnReceipt": Bool(),
         "bonAutoRetryMin": Int(0, 120),
         "bonOnKiosk": Bool(),
     }),

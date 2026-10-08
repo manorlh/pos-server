@@ -237,6 +237,62 @@ def _uncounted_shifts(z: ZReport) -> int:
     return sum(int(s.get("uncountedShiftCount") or 0) for s in _sections_of(z))
 
 
+#: "טיפ באשראי משולם מהמזומן" on paper, at the bottom of the drawer block. The screens say
+#: "טיפים באשראי ששולמו מהמגירה"; 80 mm keeps labels within LABEL_MAX.
+CARD_TIPS_FROM_DRAWER_LABEL = "טיפ אשראי ששולם מהמגירה"
+DRAWER_CASH_LABEL = "מזומן במגירה"
+
+
+def _section_drawer_cash(s: dict) -> Optional[Decimal]:
+    """A section's drawer cash: as frozen, else (no card tips paid out) its cash + cash tips."""
+    if s.get("drawerCash") is not None:
+        return _dec(s.get("drawerCash"))
+    cash = _dec(s.get("cashSalesNet"))
+    if cash is None:
+        cash = _dec(s.get("totalCash"))
+    return None if cash is None else cash + (_dec(s.get("totalCashTips")) or ZERO)
+
+
+def drawer_tips_of(z: ZReport) -> Optional[Dict[str, Optional[Decimal]]]:
+    """
+    The card tips a Z's tills paid out of their drawers and the drawer cash ("מזומן
+    במגירה"): `{"cardTipsFromDrawer", "drawerCash"}`, or None when no included close froze
+    the figure (the parameter was off, kiosks, older Zs) — then nothing new is shown.
+
+    As the Z froze them on its header at build time; else (a Z stored as a till printed it,
+    a till's own section read as a Z) from its sections: Σ of their `cardTipsFromDrawer`
+    and of their drawer cash.
+    """
+    header = getattr(z, "header", None) or {}
+    if header.get("cardTipsFromDrawer") is not None:
+        return {"cardTipsFromDrawer": _dec(header.get("cardTipsFromDrawer")), "drawerCash": _dec(header.get("drawerCash"))}
+    sections = _sections_of(z)
+    if not any(s.get("cardTipsFromDrawer") is not None for s in sections):
+        return None
+    paid_out = sum((_dec(s.get("cardTipsFromDrawer")) or ZERO for s in sections), ZERO)
+    drawer = [_section_drawer_cash(s) for s in sections]
+    return {
+        "cardTipsFromDrawer": paid_out,
+        "drawerCash": None if any(d is None for d in drawer) else sum(drawer, ZERO),
+    }
+
+
+def _section_drawer_tips(s: dict) -> Optional[Dict[str, Optional[Decimal]]]:
+    """One till's section: its frozen card tips paid from the drawer, None without them."""
+    if s.get("cardTipsFromDrawer") is None:
+        return None
+    return {"cardTipsFromDrawer": _dec(s.get("cardTipsFromDrawer")), "drawerCash": _section_drawer_cash(s)}
+
+
+def _drawer_tips_rows(tips: Optional[Dict[str, Optional[Decimal]]]) -> List[Optional[dict]]:
+    if tips is None:
+        return []
+    return [
+        row(CARD_TIPS_FROM_DRAWER_LABEL, money(tips["cardTipsFromDrawer"])),
+        row(DRAWER_CASH_LABEL, money(tips["drawerCash"]), emphasis=True),
+    ]
+
+
 def _cash_rows(z: ZReport) -> List[Optional[dict]]:
     adjustments = None
     sections = _sections_of(z)
@@ -255,6 +311,8 @@ def _cash_rows(z: ZReport) -> List[Optional[dict]]:
         row("מזומן שנספר", counted),
         # Withheld, not a balanced zero, when any drawer was not counted.
         row("הפרש", "לא חושב" if withheld or z.discrepancy is None else signed(z.discrepancy), emphasis=True),
+        # Card tips paid to staff from the drawer, and what it holds: at the bottom.
+        *_drawer_tips_rows(drawer_tips_of(z)),
     ]
 
 
@@ -413,6 +471,7 @@ def _till_section(s: dict) -> dict:
             row("אשראי", money(s.get("totalCard"))),
             row("מזומן צפוי", money(s.get("expectedCash"))),
             row("הפרש", "לא נספר" if uncounted else signed(s.get("overShort"))),
+            *_drawer_tips_rows(_section_drawer_tips(s)),
             row("ממתינות לשידור", str(pending), emphasis=True) if pending else None,
             row("אופליין שנדחה", f"{declined_count} · {money(declined_amount)}", emphasis=True)
             if declined_count

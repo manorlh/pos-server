@@ -1798,6 +1798,8 @@ export class KioskService extends EventEmitter {
         logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null,
         // "סניף הרצליה · קופה 3 · קיוסק רויאל": the machine as the cloud names it (machines/me).
         place: this.placeOfMachine(),
+        // "מספר הזמנה A-1" on the receipt (`printing.orderNumberOnReceipt`, on by default): one paper.
+        orderNumber: this.config().printing.orderNumberOnReceipt ? o.pickupLabel ?? null : null,
       }),
     );
   }

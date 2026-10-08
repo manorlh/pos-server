@@ -93,7 +93,10 @@ class ShiftCloseIn(BaseModel):
     #: Every document of the shift. 409 until each one is on the cloud.
     transaction_ids: List[uuid.UUID] = Field(default_factory=list, alias="transactionIds")
     last_transaction_number: Optional[str] = Field(None, alias="lastTransactionNumber", max_length=100)
-    #: The till's own X figures. Stored for audit and compared; never used for a Z.
+    #: The till's own X figures. Stored for audit and compared; never used for a Z's sales.
+    #: One key feeds the drawer: `cardTipsFromDrawer` (card tips paid to staff out of the
+    #: drawer, present only when that till parameter was on), which a Z's expected cash
+    #: subtracts (app/services/z_builder.py `card_tips_from_drawer`); it is not compared.
     till: Optional[Dict[str, Any]] = None
     close_request_id: Optional[uuid.UUID] = Field(None, alias="closeRequestId")
     #: A training shift's close ("מצב הדרכה"): quarantined, answered like a real close.

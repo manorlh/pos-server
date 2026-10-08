@@ -19,6 +19,7 @@ import { use, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { zShowsExempt } from '@/lib/dealerType';
+import { hasDrawerTips } from '@/lib/drawerTips';
 import { NumberPill } from '@/components/dashboard/number-pill';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, FileBarChart, FileDown, Printer } from 'lucide-react';
@@ -285,6 +286,13 @@ function TillCard({
             <MoneyRow label={t('discrepancy')}>
               <OverShort value={uncounted ? null : s.overShort} uncountedLabel={t('discrepancyWithheld')} />
             </MoneyRow>
+            {/* "טיפ באשראי משולם מהמזומן": card tips paid from the drawer, and what it holds. */}
+            {hasDrawerTips(s.cardTipsFromDrawer) ? (
+              <>
+                <MoneyRow label={t('cardTipsFromDrawer')} value={s.cardTipsFromDrawer} />
+                <MoneyRow label={t('drawerCash')} value={s.drawerCash} strong />
+              </>
+            ) : null}
           </div>
         </div>
         {offline ? (
@@ -549,6 +557,12 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
               <MoneyRow label={t('discrepancy')}>
                 <OverShort value={z.discrepancy} uncountedLabel={t('discrepancyWithheld')} />
               </MoneyRow>
+              {hasDrawerTips(z.cardTipsFromDrawer) ? (
+                <>
+                  <MoneyRow label={t('cardTipsFromDrawer')} value={z.cardTipsFromDrawer} />
+                  <MoneyRow label={t('drawerCash')} value={z.drawerCash} strong />
+                </>
+              ) : null}
               {withheld ? <p className="text-muted-foreground pt-1 text-xs">{t('cashWithheldHint')}</p> : null}
             </CardContent>
           </Card>

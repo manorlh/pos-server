@@ -112,7 +112,8 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
                    "זיכוי מסמך או החזר בסל (כולל החזר מזומן). מעל הסכום שהוגדר נדרש אישור.",
                    limits=(_MAX_AMOUNT,), scope="refund"),
     PermissionSpec("REPRINT", "הדפסה חוזרת", "sale",
-                   "הדפסה חוזרת של חשבון / בונים בשולחן.", scope="table:reprint"),
+                   "הדפסה חוזרת של חשבון / בונים בשולחן, ובקיוסק (פינת המנהל): שובר פריט, העתק חשבונית ובון למטבח.",
+                   scope="table:reprint"),
     # ── שולחנות ──
     PermissionSpec("TABLES.USE", "מודול שולחנות", "tables",
                    "כניסה למסך השולחנות, פתיחת שולחן ועבודה עליו."),

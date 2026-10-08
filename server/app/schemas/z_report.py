@@ -72,6 +72,14 @@ class ZReportOut(BaseModel):
     #: the drawers between shifts, part of `expectedCash`. Null on a Z built before it
     #: was stored, and on a legacy Z.
     between_shift_adjustments: Optional[Decimal] = Field(None, alias="betweenShiftAdjustments")
+    #: "טיפ באשראי משולם מהמזומן" (till parameter `cashDrawer.cardTipsFromDrawer`): the card
+    #: tips the tills paid staff in cash out of their drawers, as each shift's close froze
+    #: them — already out of `expectedCash`. Tips are no revenue: sales, VAT and the tips
+    #: totals are untouched. Null when no included close carried the figure.
+    card_tips_from_drawer: Optional[Decimal] = Field(None, alias="cardTipsFromDrawer")
+    #: "מזומן במגירה": cash sales (net of cash refunds) + cash tips − `cardTipsFromDrawer`.
+    #: Null with it.
+    drawer_cash: Optional[Decimal] = Field(None, alias="drawerCash")
     #: Σ of the per-till `offline` blocks: offline-approved card sales that went through an
     #: authorization run, and those of them the acquirer declined. Null on a Z built before
     #: the block was stored, and on a legacy Z.

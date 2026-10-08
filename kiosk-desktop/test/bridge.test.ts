@@ -623,14 +623,15 @@ describe('a card payment through the bridge (the Windows kiosk’s ledger and ca
     expect(doc).toMatchObject({ status: 'completed', documentType: 320, number: 1, prefix: '7' });
     expect(doc.card).toMatchObject({ last4: '4242', authNum: '0123456' });
     expect(h.pinpad.asked).toEqual(['sale']);
-    await until(() => printed.length >= 1);
-    // The customer's slip; no kitchen bon on the kiosk's own printer — "בון מטבח במדפסת הקיוסק" is off
-    // by default (core/kioskBonRoute.ts; on, it prints as before: kioskPrinting.test.ts).
-    expect(svc.printQueue.jobsFor(orderId, 'slip')).toHaveLength(1);
+    // One paper (the owner, 08.10.2026): no separate number slip by default — the number is on the
+    // receipt; no kitchen bon on the kiosk's own printer — "בון מטבח במדפסת הקיוסק" is off by default
+    // (core/kioskBonRoute.ts; on, it prints as before: kioskPrinting.test.ts).
+    expect(svc.printQueue.jobsFor(orderId, 'slip')).toHaveLength(0);
     expect(svc.printQueue.jobsFor(orderId, 'bon')).toHaveLength(0);
     expect(svc.orders.get(orderId)).toMatchObject({ bonStatus: 'none' });
     expect((await agent.receiptChoice(orderId, true)).kind).toBe('ok');
     expect(svc.printQueue.jobsFor(orderId, 'receipt')).toHaveLength(1);
+    await until(() => printed.length >= 1);
     // The document reaches the cloud as this machine's (the bridge's sync).
     await svc.sync.flush();
     await until(() => h.cloud.sent.find((c) => c.path === `sync/${MACHINE}/transactions`));

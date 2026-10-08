@@ -624,10 +624,14 @@ class TestDrawerParams:
         keys = {p.key: p for p in BUILTIN_PARAMETERS}
         for key in (CD.REQUIRE_REASON_KEY, CD.ALLOW_AFTER_CLOSE_KEY, CD.BLIND_COUNT_KEY, CD.MAX_MANUAL_OPENS_KEY,
                     CD.ALERT_OPENS_MINUTES_KEY, CD.CASH_OUT_ALERT_AMOUNT_KEY, CD.VARIANCE_ALERT_AMOUNT_KEY,
-                    CD.DENIED_UI_KEY):
+                    CD.DENIED_UI_KEY, CD.CARD_TIPS_FROM_DRAWER_KEY):
             assert key in keys, key
+            assert key in CD.LEVEL_KEYS, key
         assert keys[CD.REQUIRE_REASON_KEY].default_value is True
         assert keys[CD.BLIND_COUNT_KEY].default_value is False
+        # "טיפ באשראי משולם מהמזומן": off unless a level turns it on.
+        assert keys[CD.CARD_TIPS_FROM_DRAWER_KEY].default_value is False
+        assert keys[CD.CARD_TIPS_FROM_DRAWER_KEY].value_type == "boolean"
         assert keys[CD.MAX_MANUAL_OPENS_KEY].default_value == 0
         # The existing hardware switch is the editor's first row, not a duplicate.
         assert CD.LEVEL_KEYS[0] == "cashDrawer"
@@ -654,6 +658,20 @@ class TestDrawerParams:
 
         actions = [c.action for c in w.db.query(TillParameterChange).all()]
         assert actions.count("set") == 4 and actions.count("clear") == 1
+
+    def test_card_tips_from_the_drawer_is_on_the_card_and_set_per_till(self, w):
+        from app.services.till_parameters import till_parameters_for_machine
+
+        key = "cashDrawer.cardTipsFromDrawer"
+        view = R.put_drawer_params(
+            str(w.company.id), R.DrawerParamsIn(scopeType="machine", scopeId=w.tills[0].id, values={key: True}),
+            **ctx(w, None),
+        )
+        listed = {p["key"]: p for p in view["parameters"]}
+        assert listed[key]["label"] == "טיפ באשראי משולם מהמזומן"
+        assert listed[key]["valueType"] == "boolean" and listed[key]["defaultValue"] is False
+        assert till_parameters_for_machine(w.db, w.tills[0]).parameters[key] is True
+        assert till_parameters_for_machine(w.db, w.tills[1]).parameters[key] is False
 
     def test_who_may_set_which_level(self, w):
         body = R.DrawerParamsIn(scopeType="company", scopeId=w.company.id, values={"cashDrawer.blindCount": True})

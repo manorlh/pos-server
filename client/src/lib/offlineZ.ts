@@ -28,6 +28,8 @@ const ORDER = [
   'expectedCash',
   'countedCash',
   'overShort',
+  'cardTipsFromDrawer',
+  'drawerCash',
 ];
 
 export function sortedDiscrepancies(list: ZOfflineDiscrepancy[] | null | undefined): ZOfflineDiscrepancy[] {

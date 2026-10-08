@@ -72,7 +72,7 @@
 4. **ראש הבון:** "הזמנה A-17 · דנה · שולחן 5", פס לקחת/לשבת, מספר המסמך קטן, שם הקיוסק.
 5. **כנות:** `queued` / `sent` ("נשלח למדפסת") / `failed` ("לא הודפס"). `printed` שמור למדפסת שמאשרת נייר — אין כזו היום, ולכן הקיוסק לעולם לא מדווח "הודפס" על "נשלח".
 6. **תשלום נשמר בכשל הדפסה:** מצב `paid_print_failed`, התראה לצוות, הדפסה חוזרת מהניהול — אין חיוב שני.
-7. **פתק ללקוח** (`printing.pickupSlip`): מספר האיסוף גדול על מדפסת הקבלות של הקיוסק, בשפת הלקוח, בלי קשר למדיניות הקבלה.
+7. **מספר הזמנה על החשבונית** (`printing.orderNumberOnReceipt`, מופעל כברירת מחדל): החשבונית של הקיוסק מודפסת עם "מספר הזמנה A-1" גדול בראשה — נייר אחד (הבעלים, 08.10.2026). **פתק מספר הזמנה נפרד** (`printing.pickupSlip`, כבוי כברירת מחדל; קונפיגורציה שנשמרה שומרת את מה ששמרה): מספר האיסוף גדול על מדפסת הקבלות של הקיוסק, בשפת הלקוח, בלי קשר למדיניות הקבלה.
 8. **קבלה:** `receiptPolicy` — תמיד / לשאול ("להדפיס קבלה?" במסך ההצלחה; בלי תשובה = לא) / אף פעם; על מדפסת הקבלות של הקיוסק או מדפסת חשבוניות של הסניף (`receiptPrinterId`). לקוח לעולם לא נשאל איזו מדפסת.
 
 ### מספרי איסוף
@@ -105,7 +105,7 @@
 | `messages` | עד 30: banner / notice / closed, כותרת, גוף, תמונה, מסכים, סגנון, מוצר מקושר, תאריכי תוקף |
 | `hours` | טווחים לפי ימים, כולל אחרי חצות |
 | `payment` | `methods` (card; cash — P2), `tipEnabled` (כבוי), `tipPresets`, `receiptPolicy`, `customerName` / `customerPhone` (off/optional/required), `minOrderAgorot` |
-| `printing` | `bonMode`, `bonPrinterId`, `bonCopies`, `receiptPrinterId`, `pickupSlip`, `bonAutoRetryMin`, `bonOnKiosk` (§29) |
+| `printing` | `bonMode`, `bonPrinterId`, `bonCopies`, `receiptPrinterId`, `pickupSlip` (ברירת מחדל: כבוי), `orderNumberOnReceipt` (ברירת מחדל: מופעל), `bonAutoRetryMin`, `bonOnKiosk` (§29) |
 | `pickup` | `scope`, `prefix`, `start`, `max` |
 | `timers` | `inactivitySec`, `warningSec`, `successSec`, `attractSlideSec` |
 | `club` | `enabled`, `joinUrl` (QR בלבד; דף ההרשמה של סוכן ה-SMS/מועדון), `title`, `body` |
@@ -1596,7 +1596,8 @@ op `usb` — תורי ההדפסה (Win32_Printer), התקני מדפסת USB נ
   ב-`KioskBonService.bonRoute` — גם לניהול הקיוסק ולתשלום בקופה); `core/kioskBonRoute.ts` בקיוסק Windows ובגשר
   (שם כל דף יוצא במדפסת שלו: כבוי — אין בון בכלל). מקרים משותפים: `kiosk_bon_route.json` (אותם בתים
   ב-pos-android ובכאן).
-- **דשבורד:** "מה מודפס בקיוסק" בראש "הדפסה" — "פתק מספר הזמנה ללקוח" (`pickupSlip`: המספר, למשל A-4, ללקוח)
+- **דשבורד:** "מה מודפס בקיוסק" בראש "הדפסה" — "מספר הזמנה על החשבונית" (`orderNumberOnReceipt`, מופעל),
+  "פתק מספר הזמנה נפרד" (`pickupSlip`: המספר, למשל A-4, בפתק משלו; כבוי — 08.10.2026: נייר אחד)
   ו"בון מטבח במדפסת הקיוסק" (לצוות המטבח), שורת הסבר לכל אחד.
 - **"A-4" בפתק השני:** הפתק השני ברויאל היה בון המטבח ("הזמנה A-4" בראשו): מספר האיסוף — קידומת `A`
   (`pickup.prefix` ברמת הקיוסק) והמספר הרביעי של היום בקיוסק — אותו מספר שבפתק הלקוח.

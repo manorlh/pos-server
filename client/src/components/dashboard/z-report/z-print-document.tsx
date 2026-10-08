@@ -23,6 +23,7 @@ import { useTranslations } from 'next-intl';
 import { formatCurrency, formatDate, formatDateTime, moneyValue } from '@/lib/format';
 import type { Money, ZReportDetail, ZReportMachineSection } from '@/lib/types';
 import { numberLabelKey, zShowsExempt } from '@/lib/dealerType';
+import { hasDrawerTips } from '@/lib/drawerTips';
 import {
   hasBetweenShiftAdjustments,
   usePaymentMethodLabel,
@@ -189,6 +190,13 @@ function TillSection({ s, dealerType }: { s: ZReportMachineSection; dealerType?:
             value={uncounted ? t('notCounted', { count: s.uncountedShiftCount ?? 0 }) : formatCurrency(s.countedCash)}
           />
           <Row label={t('overShort')} value={uncounted ? t('withheld') : signedMoney(s.overShort)} />
+          {/* "טיפ באשראי משולם מהמזומן": card tips paid from the drawer, and what it holds. */}
+          {hasDrawerTips(s.cardTipsFromDrawer) ? (
+            <>
+              <Row label={t('cardTipsFromDrawer')} value={formatCurrency(s.cardTipsFromDrawer)} />
+              <Row label={t('drawerCash')} value={formatCurrency(s.drawerCash)} />
+            </>
+          ) : null}
           {(s.reconstructedShiftCount ?? 0) > 0 ? (
             <Row label={t('reconstructedShifts')} value={s.reconstructedShiftCount} />
           ) : null}
@@ -333,6 +341,12 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
               label={t('overShort')}
               value={withheld || z.discrepancy == null ? t('withheld') : signedMoney(z.discrepancy)}
             />
+            {hasDrawerTips(z.cardTipsFromDrawer) ? (
+              <>
+                <Row label={t('cardTipsFromDrawer')} value={formatCurrency(z.cardTipsFromDrawer)} />
+                <Row label={t('drawerCash')} value={formatCurrency(z.drawerCash)} />
+              </>
+            ) : null}
           </tbody>
         </table>
       </Section>
