@@ -122,6 +122,11 @@ export interface PProduct {
    * otherwise, or unknown, its window opens, as a tap on the card does.
    */
   addPath?: AddPath;
+  /**
+   * The real kiosk: the options' defaults answer every choice it requires (lib/kioskMoney.ts
+   * dishOnDefaults) — quickAdd "always" (the wall) puts it in on them with one tap. Never a meal.
+   */
+  defaultsAnswer?: boolean;
 }
 
 export interface PCategory {

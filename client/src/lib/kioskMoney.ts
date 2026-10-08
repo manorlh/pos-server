@@ -274,6 +274,19 @@ export function dishUnitAgorot(baseAgorot: number, chosen: readonly Pick<ChosenO
   return baseAgorot + chosen.reduce((s, o) => s + o.chargedAgorot, 0);
 }
 
+/**
+ * The dish on its options' defaults (DishDraft.start), when they answer every group it requires
+ * (DishDraft.isValid): its choices, priced, and one unit's price — else null. What quickAdd
+ * "always" (the wall of buttons) puts in with one tap; a choice with no default opens the window
+ * (the Android kiosk's KioskViewModel.quickAdd with KioskLayouts.addPathOnTap).
+ */
+export function dishOnDefaults(baseAgorot: number, groups: readonly MenuGroup[]): { chosen: ChosenOption[]; unitAgorot: number } | null {
+  const picks = Object.fromEntries(groups.map((g) => [g.id, defaultPicks(g)]));
+  if (!picksValid(groups, picks)) return null;
+  const chosen = chosenOptions(groups, picks);
+  return { chosen, unitAgorot: dishUnitAgorot(baseAgorot, chosen) };
+}
+
 /** "+ גבינה", "בלי בצל", "הרבה גבינה ×2" — the cart's wording (LineModifier.displayText). */
 export function optionText(o: Pick<ChosenOption, 'kind' | 'name' | 'pre' | 'qty'>): string {
   const withPre = o.pre === null ? o.name : o.pre === 'side' ? `${o.name} ${PRE_HE.side}` : `${PRE_HE[o.pre]} ${o.name}`;
