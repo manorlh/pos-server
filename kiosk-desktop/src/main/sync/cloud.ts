@@ -2,7 +2,8 @@
  * The cloud's last word, kept on the kiosk (SQLite `kv`), so the kiosk starts as a kiosk with no
  * network at all: the pairing credentials, machines/me, settings (+ business info), till
  * parameters, the catalog (+ menu), the kiosk snapshot (`kiosk/sync`), the heartbeat's facts
- * (zMode, lastTillZNumber…) and the shop's POS users (manager PINs, bcrypt, for the admin).
+ * (zMode, lastTillZNumber…) and the shop's POS users (PINs as bcrypt hashes, their shop and effective
+ * permissions — for the admin and "יציאה לשולחן העבודה", checked offline).
  */
 
 import type { Kv } from '../db/schema';
@@ -73,7 +74,19 @@ export interface PosUser {
   pinHash: string;
   role: string;
   isActive: boolean;
+  /** The user's shop (the roster is this machine's shop's; core/desktopExit.ts checks it). */
+  shopId?: string | null;
+  /**
+   * "תפקידים והרשאות": the user's effective permissions as the cloud resolved them (code → allow |
+   * approval | deny) — absent from an older server (the legacy `role` answers then).
+   */
+  permissions?: Record<string, string> | null;
+  tillRoleKey?: string | null;
+  tillRoleName?: string | null;
 }
+
+/** The roster's shape kept here; a copy from before it (no shop, no permissions) is pulled again in full. */
+const POS_USERS_SHAPE = '2';
 
 /** A secret store (Electron safeStorage) for the machine token; plain in Node tools. */
 export interface SecretBox {
@@ -95,6 +108,7 @@ const K = {
   beat: 'cloud.heartbeat',
   users: 'cloud.posUsers',
   usersAt: 'cloud.posUsersAt',
+  usersShape: 'cloud.posUsersShape',
   promotions: 'cloud.promotions',
   promotionsEtag: 'cloud.promotionsEtag',
 } as const;
@@ -239,7 +253,9 @@ export class CloudStore {
     return this.read<PosUser[]>(K.users) ?? [];
   }
 
+  /** The delta's start — none (a full pull) while the copy kept is of an older shape. */
   posUsersAt(): string | null {
+    if (this.kv.get(K.usersShape) !== POS_USERS_SHAPE) return null;
     return this.kv.get(K.usersAt);
   }
 
@@ -253,12 +269,28 @@ export class CloudStore {
         pinHash: String(u.pinHash ?? ''),
         role: String(u.role ?? ''),
         isActive: u.isActive !== false,
+        shopId: typeof u.shopId === 'string' ? u.shopId : null,
+        permissions: permissionsOf(u.permissions),
+        tillRoleKey: typeof u.tillRoleKey === 'string' ? u.tillRoleKey : null,
+        tillRoleName: typeof u.tillRoleName === 'string' ? u.tillRoleName : null,
       }),
     );
-    const next = body.syncType === 'full' ? rows : upsert(this.posUsers() as unknown as Array<Record<string, unknown>>, rows as unknown as Array<Record<string, unknown>>) as unknown as PosUser[];
+    const full = body.syncType === 'full';
+    const next = full ? rows : upsert(this.posUsers() as unknown as Array<Record<string, unknown>>, rows as unknown as Array<Record<string, unknown>>) as unknown as PosUser[];
     this.write(K.users, next);
     if (typeof body.serverTime === 'string') this.kv.set(K.usersAt, body.serverTime);
+    if (full) this.kv.set(K.usersShape, POS_USERS_SHAPE);
   }
+}
+
+/** `{code: state}` with the states the cloud uses; anything else dropped (null when nothing is left). */
+function permissionsOf(v: unknown): Record<string, string> | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const out: Record<string, string> = {};
+  for (const [code, state] of Object.entries(v as Record<string, unknown>)) {
+    if (state === 'allow' || state === 'approval' || state === 'deny') out[code] = state;
+  }
+  return Object.keys(out).length > 0 ? out : null;
 }
 
 function asRows(v: unknown): Array<Record<string, unknown>> {

@@ -10,7 +10,7 @@ import { Check, Plus, ShoppingBag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { contrastText } from '@/lib/kioskConfig';
 import { kioskTextOf } from '@/lib/kioskTexts';
-import { cardKindOf, guidedBar, layoutOf, productColumns, type GuidedBarItem, type GuidedStep } from '@/lib/kioskLayout';
+import { cardKindOf, guidedBar, layoutOf, productColumns, tapPathOf, type GuidedBarItem, type GuidedStep } from '@/lib/kioskLayout';
 import {
   CartTarget,
   CountUp,
@@ -65,7 +65,8 @@ export const LayoutActionsContext = createContext<LayoutActions>({});
 /**
  * A dish tapped in a layout (`plus`: its "+"): "רוצים להפוך לארוחה?" first when the layout asks it and
  * the dish has meals; straight in when nothing must be chosen and the layout adds on a tap (or the
- * "+"); else its window — the Android kiosk's KioskLayoutModel.tapItem.
+ * "+") — with quickAdd "always" also a dish its defaults answer, on them (the host's quickAdd); else
+ * its window — the Android kiosk's KioskLayoutModel.tapItem.
  */
 export function useTapDish(m: PreviewModel): (p: PProduct, plus: boolean, from: DOMRect | null) => void {
   const actions = useContext(LayoutActionsContext);
@@ -73,7 +74,7 @@ export function useTapDish(m: PreviewModel): (p: PProduct, plus: boolean, from: 
     if (p.soldOut) return;
     const l = layoutOf(m.cfg);
     if (l.mealUpsell === 'first' && actions.askMeal && (m.mealOptions?.(p).length ?? 0) > 0) return actions.askMeal(p, from);
-    if ((plus || l.quickAdd !== 'off') && p.addPath === 'direct' && m.quickAdd) return m.quickAdd(p, from);
+    if (m.quickAdd && tapPathOf(p, l.quickAdd, plus, !!m.mealOf?.(p)) === 'direct') return m.quickAdd(p, from);
     m.openProduct(p);
   };
 }

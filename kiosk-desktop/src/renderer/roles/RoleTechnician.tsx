@@ -13,6 +13,7 @@ import type { TechnicianInfo } from '../../shared/bridge';
 import type { ShellView } from '../../shared/roles';
 import { kiosk } from '../bridge';
 import { updateLine } from './updateText';
+import { DesktopExitMenuButton, DesktopExitPad } from '../desktop/DesktopExit';
 
 /** The hidden corner: put it anywhere a role screen fills the window. */
 export function useTechnicianCorner(): [boolean, (open: boolean) => void, (e: React.PointerEvent) => void] {
@@ -32,6 +33,7 @@ export function RoleTechnician({ shellView, onClose }: { shellView: ShellView; o
   const [info, setInfo] = useState<TechnicianInfo | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [exitOpen, setExitOpen] = useState(false);
   const refresh = () => void kiosk.technicianInfo().then(setInfo).catch(() => undefined);
   useEffect(() => {
     if (unlocked) refresh();
@@ -147,12 +149,15 @@ export function RoleTechnician({ shellView, onClose }: { shellView: ShellView; o
                 ))}
               </div>
             </div>
+            {/* "יציאה לשולחן העבודה": a manager's code (DESKTOP_EXIT), not the technician's. */}
+            <DesktopExitMenuButton onOpen={() => setExitOpen(true)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-neutral-900 py-2 text-sm font-bold text-white" />
             <button type="button" className="w-full rounded-xl bg-red-600 py-2 text-sm font-bold text-white" onClick={() => act({ type: 'unpair' })}>
               ניתוק המכשיר מהענן
             </button>
           </>
         )}
       </div>
+      {exitOpen ? <DesktopExitPad onClose={() => setExitOpen(false)} onExited={() => onClose()} /> : null}
     </div>
   );
 }

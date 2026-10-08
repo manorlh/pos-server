@@ -90,6 +90,7 @@ import {
   type PreviewModel,
   type PreviewScreen,
   GuidedFrame,
+  defaultsLine,
   LayoutCatalog,
   LayoutProductSheet,
   ReachFrame,
@@ -290,6 +291,11 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
 
   const view2 = useMemo(() => kioskCatalogView(view.catalog.categories, view.catalog.products, cfg), [view.catalog, cfg]);
   const required = useCallback((id: string) => (view.catalog.groups[id] ?? []).some((g) => g.min > 0), [view.catalog.groups]);
+  // quickAdd "always" (the wall): the dishes whose options' defaults answer what they require (never a meal).
+  const answered = useCallback(
+    (p: WebKioskView['catalog']['products'][number]) => !p.meal && defaultsLine(p, pGroupsOf(view.catalog.groups[p.id] ?? [])) !== null,
+    [view.catalog.groups],
+  );
   const catalogImages = useMemo(() => Object.fromEntries(view.catalog.categories.map((c) => [c.id, c.imageUrl])), [view.catalog.categories]);
   const categories: PCategory[] = useMemo(
     () =>
@@ -301,11 +307,11 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
           { categoryImages: Object.fromEntries(Object.entries(view.catalog.categoryImages).map(([k, url]) => [k, { url, kind: 'image' as const, sha256: null, bytes: null }])) },
           catalogImages,
         ),
-        products: row.products.map((x) => toP(x.product, x.soldOut, required(x.product.id))),
+        products: row.products.map((x) => toP(x.product, x.soldOut, required(x.product.id), answered(x.product))),
       })),
-    [view2, view.catalog.categoryImages, catalogImages, required],
+    [view2, view.catalog.categoryImages, catalogImages, required, answered],
   );
-  const featured = useMemo(() => view2.featured.map((x) => toP(x.product, x.soldOut, required(x.product.id))), [view2, required]);
+  const featured = useMemo(() => view2.featured.map((x) => toP(x.product, x.soldOut, required(x.product.id), answered(x.product))), [view2, required, answered]);
   const allProducts = useMemo(() => categories.flatMap((c) => c.products), [categories]);
   const product = productId ? (allProducts.find((p) => p.id === productId) ?? null) : null;
   /** Every product the kiosk sells (a meal's component may sit in no category shown). */
@@ -768,6 +774,14 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     light: profile === 'light',
     live,
     quickAdd: (p, from) => {
+      // quickAdd "always" (the wall): a dish with a required choice goes in on its options' defaults — a
+      // line of its own, as the window adds it; a choice with no default opens the window.
+      if (p.addPath !== 'direct') {
+        const d = defaultsLine(p, groupsOf(p.id));
+        if (!d) return setProductId(p.id);
+        addLine({ key: defaultsLineKey(p.id), product: p, qty: 1, unit: d.unitAgorot / 100, unitAgorot: d.unitAgorot, extras: d.texts, options: d.options }, from);
+        return;
+      }
       const plain = (l: PLine) => l.product.id === p.id && l.extras.length === 0 && !l.note && (l.options?.length ?? 0) === 0;
       addLine({ key: `${p.id}-plain`, product: p, qty: 1, unit: p.price, unitAgorot: p.priceAgorot, extras: [], options: [] }, from, plain);
     },
@@ -1167,9 +1181,17 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   );
 }
 
-function toP(p: WebKioskView['catalog']['products'][number], soldOut: boolean, requiredChoice: boolean): PProduct {
+/** A line's key for a dish put in on its defaults (each tap a line of its own, as the window adds). */
+let defaultsLineSeq = 0;
+function defaultsLineKey(productId: string): string {
+  defaultsLineSeq += 1;
+  return `${productId}-defaults-${defaultsLineSeq}`;
+}
+
+function toP(p: WebKioskView['catalog']['products'][number], soldOut: boolean, requiredChoice: boolean, defaultsAnswer = false): PProduct {
   return {
     addPath: kioskAddPath(soldOut, p.meal, requiredChoice),
+    defaultsAnswer: requiredChoice && defaultsAnswer,
     id: p.id,
     name: p.name,
     price: p.price,

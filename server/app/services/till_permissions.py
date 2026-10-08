@@ -48,9 +48,12 @@ STATE_LABELS = {ALLOW: "מותר", APPROVAL: "דורש אישור מנהל", DEN
 DEVICE_TILL = "till"
 DEVICE_TABLET = "tablet"
 DEVICE_MOBILE = "mobile"
-DEVICES: Tuple[str, ...] = (DEVICE_TILL, DEVICE_TABLET, DEVICE_MOBILE)
-DEVICE_LABELS = {DEVICE_TILL: "קופה", DEVICE_TABLET: "טאבלט", DEVICE_MOBILE: "קופה ניידת"}
-_ALL = DEVICES
+#: R2M POS for Windows (kiosk-desktop: the Windows kiosk now, the Windows till later).
+DEVICE_WINDOWS = "windows"
+DEVICES: Tuple[str, ...] = (DEVICE_TILL, DEVICE_TABLET, DEVICE_MOBILE, DEVICE_WINDOWS)
+DEVICE_LABELS = {DEVICE_TILL: "קופה", DEVICE_TABLET: "טאבלט", DEVICE_MOBILE: "קופה ניידת", DEVICE_WINDOWS: "Windows"}
+#: The Android devices every permission concerned before Windows had one of its own.
+_ALL = (DEVICE_TILL, DEVICE_TABLET, DEVICE_MOBILE)
 _FIXED = (DEVICE_TILL, DEVICE_TABLET)
 
 GROUPS: Tuple[Tuple[str, str], ...] = (
@@ -181,6 +184,12 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
                    scope="kiosk:control"),
     PermissionSpec("KIOSK_UNLOCK", "יציאה מנעילת קופה (קיוסק)", "admin",
                    "יציאה ממצב נעילה לתחזוקה.", scope="kiosk:unlock"),
+    # Checked on the Windows device itself, offline, against the synced roster (kiosk-desktop
+    # core/desktopExit.ts) — no elevation scope: nothing asks the cloud for it.
+    PermissionSpec("DESKTOP_EXIT", "יציאה לשולחן העבודה (Windows)", "admin",
+                   "במחשב Windows (קיוסק / קופה): יציאה ממסך מלא לשולחן העבודה בקוד מנהל, לא בזמן הזמנה או "
+                   "תשלום. החזרה — מהאייקון ליד השעון או מקיצור הדרך \"חזרה לקיוסק\", בלי קוד. כל יציאה נרשמת.",
+                   devices=(DEVICE_WINDOWS,)),
 )
 # fmt: on
 
@@ -239,8 +248,9 @@ LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
     "REPRINT", "TABLE_VOID", "TABLE_RESTORE", "USER_SESSION_RELEASE", "KIOSK_UNLOCK",
     "KIOSK_CONTROL", "ATTENDANCE_MANAGE", "CARD_UNRESOLVED",
 })
-#: Approving for others was a shop manager's alone.
-LEGACY_CASHIER_DENIED: FrozenSet[str] = frozenset({"CASH_DRAWER.APPROVE_OPEN"})
+#: Approving for others was a shop manager's alone — and so was leaving the Windows kiosk
+#: (its admin, with "יציאה מהתוכנה", opened for a shop manager's PIN only).
+LEGACY_CASHIER_DENIED: FrozenSet[str] = frozenset({"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT"})
 
 
 def _matrix(**states: str) -> Dict[str, str]:
@@ -292,6 +302,9 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "CARD_UNRESOLVED":                   (P, P, A, A),
     "KIOSK_CONTROL":                     (D, P, A, A),
     "KIOSK_UNLOCK":                      (D, P, P, A),
+    # The owner (08.10.2026): managers, not cashiers. "approval" means nothing here — the
+    # Windows pad already asks for a manager's own code.
+    "DESKTOP_EXIT":                      (D, D, D, A),
 }
 # fmt: on
 

@@ -586,6 +586,23 @@ export function addPathOnTap(path: 'direct' | 'sheet' | 'none', quickAdd: Layout
   return path === 'sheet' && quickAdd === 'always' && !meal && defaultsComplete ? 'direct' : path;
 }
 
+/**
+ * What a tap on a dish's card does in a layout (`plus`: its "+"): straight in ('direct') when the
+ * layout adds on a tap (or it is the "+") and the dish needs no choice — with quickAdd "always" also
+ * a dish its defaults answer (`defaultsAnswer`, never a meal) — else its window ('sheet'); a sold-out
+ * one nothing. The Android kiosk's KioskLayoutModel.tapItem / KioskViewModel.quickAdd.
+ */
+export function tapPathOf(
+  p: { addPath?: 'direct' | 'sheet' | 'none'; defaultsAnswer?: boolean; soldOut?: boolean },
+  quickAdd: LayoutQuickAdd,
+  plus: boolean,
+  meal: boolean,
+): 'direct' | 'sheet' | 'none' {
+  if (p.soldOut || p.addPath === 'none') return 'none';
+  if (!plus && quickAdd === 'off') return 'sheet';
+  return addPathOnTap(p.addPath ?? 'sheet', quickAdd, meal, p.defaultsAnswer === true);
+}
+
 /** shelves: a card's width (dp) so a shelf shows about 2.4 of them at "m" — the till's KioskLayouts.shelfCardDp. */
 export function shelfCardDp(widthDp: number, size: LayoutProductSize | null | undefined): number {
   const acrossTenths = size === 's' ? 33 : size === 'l' ? 17 : 24;
