@@ -144,6 +144,30 @@ export type TypeWeight = 'light' | 'regular' | 'bold';
 /** The basket while ordering: the floating bar, or a side panel on a wide screen. */
 export type CartStyle = 'bar' | 'panel';
 export type AnimationLevel = 'subtle' | 'lively';
+/**
+ * "רקע הקיוסק": where the background picture shows — behind every screen (the owner: "שבאמת יהיה בכל
+ * המסכים"), or only on the rest screens (attract, the closed screens) as before.
+ */
+export type BackgroundScope = 'all' | 'rest';
+export const BACKGROUND_SCOPES: BackgroundScope[] = ['all', 'rest'];
+/**
+ * "גודל טקסט" per element, in percent over `typeScale` (80–150 by 10; 100 = as drawn today): the
+ * dish's name, description and price on the cards, the categories, the dish's window (its name,
+ * description and choices), the basket's lines and the main buttons. The till's KioskTextSizes.
+ */
+export const TEXT_SIZE_KEYS = [
+  'productName',
+  'productDescription',
+  'productPrice',
+  'categoryName',
+  'itemName',
+  'itemDescription',
+  'itemOptions',
+  'cartLines',
+  'buttons',
+] as const;
+export type TextSizeKey = (typeof TEXT_SIZE_KEYS)[number];
+export type KioskTextSizes = Record<TextSizeKey, number>;
 
 export interface KioskTheme {
   mode: ThemeMode;
@@ -156,6 +180,10 @@ export interface KioskTheme {
   buttonColor: string | null;
   buttonTextColor: string | null;
   backgroundImage: MediaRef | null;
+  /** "שקיפות הרקע": how strongly the background colour veils the picture, 0–90 % (wallpaperScrim). */
+  backgroundOverlay: number;
+  /** "all": the picture behind every screen; "rest": only the rest screens. */
+  backgroundScope: BackgroundScope;
   logo: MediaRef | null;
   cornerRadius: number;
   cardStyle: CardStyle;
@@ -170,6 +198,8 @@ export interface KioskTheme {
   cartStyle: CartStyle;
   animation: AnimationLevel;
   showDescriptions: boolean;
+  /** "גודל טקסט" per element (TEXT_SIZE_KEYS), over typeScale. */
+  textSizes: KioskTextSizes;
 }
 
 export const TEXT_KEYS = [
@@ -722,6 +752,8 @@ export const LANGUAGES: KioskLanguage[] = ['he', 'en', 'ar', 'ru'];
 /** The ranges validation enforces — the server's own (GET /kiosks/defaults → limits). */
 export const KIOSK_LIMITS = {
   cornerRadius: { min: 0, max: 40 },
+  backgroundOverlay: { min: 0, max: 90 },
+  textSize: { min: 80, max: 150, step: 10 },
   textMax: 200,
   playlistMax: 20,
   playlistDuration: { min: 2, max: 120 },
@@ -791,6 +823,9 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     buttonColor: null,
     buttonTextColor: null,
     backgroundImage: null,
+    // "רקע הקיוסק": the picture veiled at 70 % (the attract screen at half), behind every screen.
+    backgroundOverlay: 70,
+    backgroundScope: 'all',
     logo: null,
     cornerRadius: 20,
     cardStyle: 'elevated',
@@ -805,6 +840,18 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     cartStyle: 'bar',
     animation: 'lively',
     showDescriptions: true,
+    // "גודל טקסט": every element as drawn today.
+    textSizes: {
+      productName: 100,
+      productDescription: 100,
+      productPrice: 100,
+      categoryName: 100,
+      itemName: 100,
+      itemDescription: 100,
+      itemOptions: 100,
+      cartLines: 100,
+      buttons: 100,
+    },
   },
   texts: {},
   screenImages: {},
@@ -1599,6 +1646,21 @@ export function validateKioskConfig(
     if (th[key] !== null && !isHexColor(th[key])) e.push({ path: `theme.${key}`, code: 'color' });
   }
   checkMedia(e, 'theme.backgroundImage', th.backgroundImage, ['image']);
+  checkRange(e, 'theme.backgroundOverlay', th.backgroundOverlay, L.backgroundOverlay);
+  checkEnum(e, 'theme.backgroundScope', th.backgroundScope, BACKGROUND_SCOPES);
+  if (th.textSizes === null || typeof th.textSizes !== 'object' || Array.isArray(th.textSizes)) {
+    e.push({ path: 'theme.textSizes', code: 'enum' });
+  } else {
+    for (const [key, value] of Object.entries(th.textSizes)) {
+      if (!(TEXT_SIZE_KEYS as readonly string[]).includes(key)) {
+        e.push({ path: `theme.textSizes.${key}`, code: 'unknownKey', params: { key } });
+      } else if (!isInt(value) || value < L.textSize.min || value > L.textSize.max) {
+        e.push({ path: `theme.textSizes.${key}`, code: 'range', params: { min: L.textSize.min, max: L.textSize.max } });
+      } else if (value % L.textSize.step !== 0) {
+        e.push({ path: `theme.textSizes.${key}`, code: 'enum' });
+      }
+    }
+  }
   checkMedia(e, 'theme.logo', th.logo, ['image']);
   checkRange(e, 'theme.cornerRadius', th.cornerRadius, L.cornerRadius);
   checkEnum(e, 'theme.cardStyle', th.cardStyle, ['elevated', 'outlined', 'flat']);
@@ -2031,6 +2093,8 @@ export function contrastText(bg: string): string {
 }
 
 export interface ResolvedThemeColors {
+  /** The kiosk is dark: its background decides (the mode where none is set) — kioskThemeColors. */
+  dark: boolean;
   background: string;
   surface: string;
   text: string;
@@ -2042,14 +2106,46 @@ export interface ResolvedThemeColors {
   buttonText: string;
 }
 
-/** The colours a kiosk paints with: the theme's, or the mode's default where null. */
+/** The least contrast the words keep on the background and on the cards (WCAG large text). */
+export const THEME_MIN_CONTRAST = 3;
+/** How much white lifts a dark background into the card drawn from it. */
+export const DERIVED_SURFACE_LIFT = 0.08;
+
+/** Dark when white words read better on `c` than near-black (#111111) ones — the till's KioskThemeColors.isDark. */
+export function isDarkColor(c: string): boolean {
+  return contrastRatio('#FFFFFF', c) >= contrastRatio('#111111', c);
+}
+
+/**
+ * "רקע הקיוסק": the colours a kiosk paints with once the business picked its own background (the
+ * till's KioskThemeColors, the same rules — the shared golden kiosk_theme_colors_golden.json). A
+ * style's preset names its own text and surface (tech: light words on near-black panels), so a light
+ * background picked on a dark style would leave light words on it. The background decides dark or
+ * light; words that do not read on it (3:1) become the mode's own, and a card the words do not read
+ * on becomes one drawn from the background. Nothing set, and every preset as it is, keep their colours.
+ */
+export function kioskThemeColors(
+  theme: Pick<KioskTheme, 'mode' | 'backgroundColor' | 'surfaceColor' | 'textColor'>,
+): { dark: boolean; background: string; surface: string; text: string } {
+  const own = (c: string | null | undefined) => (isHexColor(c) ? c.toUpperCase() : null);
+  const ownBackground = own(theme.backgroundColor);
+  const background = ownBackground ?? (theme.mode === 'dark' ? '#0E1116' : '#F5F6F8');
+  const dark = ownBackground !== null ? isDarkColor(background) : theme.mode === 'dark';
+  const modeText = dark ? '#F3F4F6' : '#111827';
+  const ownText = own(theme.textColor) ?? modeText;
+  const text = contrastRatio(ownText, background) >= THEME_MIN_CONTRAST ? ownText : modeText;
+  const ownSurface = own(theme.surfaceColor) ?? (dark ? '#1A1E26' : '#FFFFFF');
+  const surface =
+    contrastRatio(text, ownSurface) >= THEME_MIN_CONTRAST ? ownSurface : dark ? mixHex(background, '#FFFFFF', DERIVED_SURFACE_LIFT) : '#FFFFFF';
+  return { dark, background, surface, text };
+}
+
+/** The colours a kiosk paints with: the theme's, or the mode's default where null — always readable (kioskThemeColors). */
 export function resolveThemeColors(theme: KioskTheme): ResolvedThemeColors {
-  const dark = theme.mode === 'dark';
-  const background = theme.backgroundColor ?? (dark ? '#0E1116' : '#F5F6F8');
-  const surface = theme.surfaceColor ?? (dark ? '#1A1E26' : '#FFFFFF');
-  const text = theme.textColor ?? (dark ? '#F3F4F6' : '#111827');
+  const { dark, background, surface, text } = kioskThemeColors(theme);
   const button = theme.buttonColor ?? theme.primaryColor;
   return {
+    dark,
     background,
     surface,
     text,
@@ -2060,6 +2156,40 @@ export function resolveThemeColors(theme: KioskTheme): ResolvedThemeColors {
     button,
     buttonText: theme.buttonTextColor ?? contrastText(button),
   };
+}
+
+/* ------------------------------------------- "רקע הקיוסק" and "גודל טקסט" */
+
+/** The rest screens: where the picture shows with `backgroundScope` "rest" (and, as before, the closed screens' own). */
+export const REST_SCREENS = ['attract', 'paused', 'closed', 'setup', 'no_payment', 'noPayment', 'offline'] as const;
+
+/** The background colour's alpha over the picture on a screen (0…0.9): the attract screen, the showcase, at half. */
+export function wallpaperScrim(overlayPct: number, attract: boolean): number {
+  const pct = Math.min(KIOSK_LIMITS.backgroundOverlay.max, Math.max(KIOSK_LIMITS.backgroundOverlay.min, Number.isFinite(overlayPct) ? overlayPct : 70));
+  return (attract ? pct / 2 : pct) / 100;
+}
+
+/** The picture behind every screen: set, and for all screens (the screens then leave their background clear). */
+export function wallpaperEverywhere(theme: Pick<KioskTheme, 'backgroundImage' | 'backgroundScope'>): boolean {
+  return !!theme.backgroundImage?.url && (theme.backgroundScope ?? 'all') === 'all';
+}
+
+/** Whether `screen` shows the background picture (behind every screen, or only on the rest screens). */
+export function wallpaperOn(theme: Pick<KioskTheme, 'backgroundImage' | 'backgroundScope'>, screen: string): boolean {
+  if (!theme.backgroundImage?.url) return false;
+  return (theme.backgroundScope ?? 'all') === 'all' || (REST_SCREENS as readonly string[]).includes(screen);
+}
+
+/** A size as the kiosk takes it: clamped to 80–150, to the nearest step; not a number — 100 (the till's KioskTextSizes.clean). */
+export function cleanTextSize(v: unknown): number {
+  const { min, max, step } = KIOSK_LIMITS.textSize;
+  if (typeof v !== 'number' || !Number.isFinite(v)) return 100;
+  return Math.min(max, Math.max(min, Math.round(v / step) * step));
+}
+
+/** "גודל טקסט" of an element as a factor over the kiosk's own size (1 = as drawn today). */
+export function textSizeFactor(theme: Pick<KioskTheme, 'textSizes'>, key: TextSizeKey): number {
+  return cleanTextSize(theme.textSizes?.[key]) / 100;
 }
 
 /** The button corner radius in px for a shape (pill = fully round). */
@@ -3228,14 +3358,27 @@ export function kioskRestLook(
       const text = mixHex(colors.text, colors.text, 0);
       return { from: bg, to: bg, diagonal: false, glow: p, ink: text, title: contrastRatio(p, bg) >= REST_LARGE_TEXT_CONTRAST ? p : text, spots: false };
     }
-    case 'tech': {
-      const bg = mixHex(colors.background, colors.background, 0);
-      const text = mixHex(colors.text, colors.text, 0);
-      return { from: bg, to: bg, diagonal: false, glow: null, ink: text, title: contrastRatio(p, bg) >= REST_LARGE_TEXT_CONTRAST ? p : text, spots: false };
-    }
+    case 'tech':
+      return kioskRestLookOverBackdrop(theme, colors);
     default:
       return fill(p, mixHex(mixHex(p, theme.accentColor, 0.5), '#000000', 0.18), true, true);
   }
+}
+
+/**
+ * The closed screen over the kiosk's own background — tech's look, and every style's while "תמונת
+ * רקע" shows behind every screen (the closed screens then let it through): no fill of their own, the
+ * words in the kiosk's text colour, the title in the brand colour where it reads (the till's
+ * KioskRestLook.overBackdrop).
+ */
+export function kioskRestLookOverBackdrop(
+  theme: Pick<KioskTheme, 'primaryColor'>,
+  colors: Pick<ResolvedThemeColors, 'background' | 'text'>,
+): KioskRestLook {
+  const p = mixHex(theme.primaryColor, theme.primaryColor, 0);
+  const bg = mixHex(colors.background, colors.background, 0);
+  const text = mixHex(colors.text, colors.text, 0);
+  return { from: bg, to: bg, diagonal: false, glow: null, ink: text, title: contrastRatio(p, bg) >= REST_LARGE_TEXT_CONTRAST ? p : text, spots: false };
 }
 
 /* ------------------------------------------------ "טכנולוגי": the chrome */

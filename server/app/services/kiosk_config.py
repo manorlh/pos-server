@@ -133,6 +133,19 @@ SOLD_OUT_MODES = ("disable", "hide")
 #: (app releases of platform "kiosk_web", updated from the cloud without an APK install).
 RENDERERS = ("native", "web")
 THEME_MODES = ("light", "dark")
+#: "רקע הקיוסק": where the background picture shows — behind every screen (the owner's request,
+#: the default) or only on the rest screens (attract, the closed screens) as before.
+BACKGROUND_SCOPES = ("all", "rest")
+#: The background colour's veil over the picture, in percent (the attract screen at half).
+BACKGROUND_OVERLAY_MIN, BACKGROUND_OVERLAY_MAX, BACKGROUND_OVERLAY_DEFAULT = 0, 90, 70
+#: "גודל טקסט" per element, in percent over `typeScale` (80–150 by 10; 100 = as drawn today) —
+#: the dashboard's TEXT_SIZE_KEYS and the till's KioskTextSizes; the shared golden
+#: tests/fixtures/kiosk_theme_colors_golden.json pins them for all three.
+TEXT_SIZE_KEYS = (
+    "productName", "productDescription", "productPrice", "categoryName",
+    "itemName", "itemDescription", "itemOptions", "cartLines", "buttons",
+)
+TEXT_SIZE_MIN, TEXT_SIZE_MAX, TEXT_SIZE_STEP, TEXT_SIZE_DEFAULT = 80, 150, 10, 100
 CARD_STYLES = ("elevated", "outlined", "flat")
 BUTTON_SHAPES = ("pill", "rounded", "square")
 GRID_DENSITIES = ("compact", "comfortable", "large")
@@ -349,6 +362,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "buttonColor": None,
         "buttonTextColor": None,
         "backgroundImage": None,
+        # "רקע הקיוסק": the picture veiled at 70 % (the attract screen at half), behind every screen.
+        "backgroundOverlay": BACKGROUND_OVERLAY_DEFAULT,
+        "backgroundScope": "all",
         "logo": None,
         "cornerRadius": 20,
         "cardStyle": "elevated",
@@ -363,6 +379,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "cartStyle": "bar",
         "animation": "lively",
         "showDescriptions": True,
+        # "גודל טקסט": every element as drawn today.
+        "textSizes": {key: TEXT_SIZE_DEFAULT for key in TEXT_SIZE_KEYS},
     },
     "texts": {},
     "screenImages": {},
@@ -708,8 +726,8 @@ class Bool(Node):
 
 
 class Int(Node):
-    def __init__(self, lo: int, hi: int, nullable: bool = False):
-        self.lo, self.hi, self.nullable = lo, hi, nullable
+    def __init__(self, lo: int, hi: int, nullable: bool = False, step: int = 1):
+        self.lo, self.hi, self.nullable, self.step = lo, hi, nullable, step
 
     def check(self, value, path, errors):
         if value is None and self.nullable:
@@ -718,6 +736,8 @@ class Int(Node):
             return _fail(errors, path, "invalid_type", "must be an integer")
         if not self.lo <= value <= self.hi:
             return _fail(errors, path, "out_of_range", f"must be between {self.lo} and {self.hi}")
+        if self.step > 1 and (value - self.lo) % self.step:
+            return _fail(errors, path, "invalid_step", f"must be in steps of {self.step}")
         return value
 
 
@@ -1080,6 +1100,8 @@ SCHEMA = Obj({
         "buttonColor": Color(nullable=True),
         "buttonTextColor": Color(nullable=True),
         "backgroundImage": Media(("image",), nullable=True),
+        "backgroundOverlay": Int(BACKGROUND_OVERLAY_MIN, BACKGROUND_OVERLAY_MAX),
+        "backgroundScope": Enum(BACKGROUND_SCOPES),
         "logo": Media(("image",), nullable=True),
         "cornerRadius": Int(0, 40),
         "cardStyle": Enum(CARD_STYLES),
@@ -1094,6 +1116,7 @@ SCHEMA = Obj({
         "cartStyle": Enum(CART_STYLES),
         "animation": Enum(ANIMATIONS),
         "showDescriptions": Bool(),
+        "textSizes": Obj({key: Int(TEXT_SIZE_MIN, TEXT_SIZE_MAX, step=TEXT_SIZE_STEP) for key in TEXT_SIZE_KEYS}),
     }),
     # The first language's texts: the keys of before, and every text of the registry (kiosk_layout.py).
     "texts": Map(Str(TEXT_MAX), keys=TEXT_KEYS + tuple(k for k in layouts.text_keys() if k not in TEXT_KEYS)),
@@ -1276,7 +1299,11 @@ SCHEMA = Obj({
 def limits() -> Dict[str, Any]:
     """The ranges and vocabularies validation uses, for the dashboard's form (`GET /kiosks/defaults`)."""
     return {
-        "theme": {"cornerRadius": {"min": 0, "max": 40}},
+        "theme": {
+            "cornerRadius": {"min": 0, "max": 40},
+            "backgroundOverlay": {"min": BACKGROUND_OVERLAY_MIN, "max": BACKGROUND_OVERLAY_MAX},
+            "textSize": {"min": TEXT_SIZE_MIN, "max": TEXT_SIZE_MAX, "step": TEXT_SIZE_STEP, "keys": list(TEXT_SIZE_KEYS)},
+        },
         "timers": {
             "inactivitySec": {"min": 15, "max": 600},
             "warningSec": {"min": 5, "max": 120, "lessThan": "inactivitySec"},
@@ -1324,6 +1351,7 @@ def limits() -> Dict[str, Any]:
             "soldOutMode": list(SOLD_OUT_MODES),
             "renderer": list(RENDERERS),
             "themeMode": list(THEME_MODES),
+            "backgroundScope": list(BACKGROUND_SCOPES),
             "cardStyle": list(CARD_STYLES),
             "buttonShape": list(BUTTON_SHAPES),
             "gridDensity": list(GRID_DENSITIES),
