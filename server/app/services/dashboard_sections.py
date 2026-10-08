@@ -325,6 +325,11 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # its SMS alert rules hold staff phone numbers and send messages — their own section.
     (_ALL, "/exception-log*", S("reports", "exception_alerts")),
     (_ALL, "/exception-alerts/*", S("exception_alerts")),
+    # "התראות" (feat/event-live): the alerts feed and my history are the section; my own devices
+    # and preferences are mine (the router refuses a producer).
+    (_ALL, "/push/alerts*", S("alerts")),
+    (_GET, "/push/history", S("alerts")),
+    (_ALL, "/push/*", SELF),
     (_GET, "/insights/kiosks", S("reports", "kiosks", level=VIEW)),
     ("PUT", "/insights/product-costs/{}", S("reports", "products", level=EDIT)),
     (_GET, "/insights*", S("reports")),

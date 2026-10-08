@@ -349,6 +349,10 @@ app.include_router(cash_drawer_router.router, prefix=_prefix)
 from app.routers import event_live as event_live_router  # noqa: E402
 
 app.include_router(event_live_router.router, prefix=_prefix)
+# "התראות לטלפון": Web Push on the exception alerts (app/services/exception_alerts/push.py).
+from app.routers import push_alerts as push_alerts_router  # noqa: E402
+
+app.include_router(push_alerts_router.router, prefix=_prefix)
 
 
 @app.on_event("startup")

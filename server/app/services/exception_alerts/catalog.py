@@ -77,6 +77,7 @@ KINDS: Tuple[Kind, ...] = (
     Kind("card_decision_override", "הכרעת אשראי בניגוד לבדיקה במסוף", "high", "audit_exception", amount=True),
     Kind("till_replaced", "הוחלפה קופה", "medium", "audit_exception"),
     Kind("kiosk_offline", "קיוסק לא מחובר", "high", "audit_exception"),
+    Kind("till_offline", "קופה לא מחוברת", "high", "audit_exception"),
     # Listed by the exception rules as planned; nothing reports them yet.
     Kind("price_override", "שינוי מחיר ידני", "medium", "audit_exception", amount=True, link="document"),
     Kind("card_failures", "כשלי חיוב באשראי", "medium", "audit_exception"),
@@ -95,6 +96,10 @@ KINDS: Tuple[Kind, ...] = (
     Kind("training_mode", "מצב הדרכה הופעל / כובה", "medium", "training"),
     Kind("training_dropped", "מסמכי הדרכה מקופה שלא במצב הדרכה", "high", "training"),
     Kind("terminal_check_bypass", "עקיפת בדיקת מספר מסוף הופעלה", "high", "till_parameter"),
+    # "התראות לטלפון" (feat/event-live) — recorded through app/services/exception_alerts/external.py:
+    # a till far below its peers (the insights' anomaly rules report it), an event's target reached.
+    Kind("till_low_sales", "קופה כמעט לא מוכרת", "medium", "insight", link="none"),
+    Kind("target_reached", "יעד מכירות הושג", "low", "event", amount=True),
 )
 
 # "מגירת מזומן" (the drawer spec §10–§11, app/services/cash_drawer_exceptions.py): opening after
