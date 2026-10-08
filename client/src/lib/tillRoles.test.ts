@@ -8,6 +8,7 @@ import {
   groupPermissions,
   matrixPayload,
   nextState,
+  onlyDeviceLabel,
   overridesDraft,
   overridesPayload,
   parseLimit,
@@ -73,6 +74,19 @@ test('permissions are grouped in catalogue order and empty groups are dropped', 
   const groups = groupPermissions(catalogue);
   assert.deepEqual(groups.map((g) => g.key), ['sale', 'drawer']);
   assert.deepEqual(groups[0].permissions.map((p) => p.code), ['SELL', 'REFUND']);
+});
+
+test('a permission for one kind of device only says which ("Windows" for DESKTOP_EXIT)', () => {
+  const devices = [
+    { key: 'till', label: 'קופה' },
+    { key: 'tablet', label: 'טאבלט' },
+    { key: 'mobile', label: 'קופה ניידת' },
+    { key: 'windows', label: 'Windows' },
+  ];
+  assert.equal(onlyDeviceLabel({ devices: ['windows'] }, { devices }), 'Windows');
+  assert.equal(onlyDeviceLabel({ devices: ['till', 'tablet'] }, { devices }), null);
+  assert.equal(onlyDeviceLabel({ devices: [] }, { devices }), null);
+  assert.equal(onlyDeviceLabel({ devices: ['toaster'] }, { devices }), null);
 });
 
 test('the template of a custom role is the built-in it came from, else the cashier', () => {

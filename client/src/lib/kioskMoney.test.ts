@@ -20,6 +20,7 @@ import {
   cyclePre,
   defaultMealChoices,
   defaultPicks,
+  dishOnDefaults,
   dishUnitAgorot,
   evaluatePromotions,
   mealPick,
@@ -213,5 +214,36 @@ describe('money and reading the cloud', () => {
     assert.equal(p.weekdays, null);
     assert.equal(p.maxApplications, null);
     assert.deepEqual(p.rule, { type: 'discount', target: { all: true, productIds: [], categoryIds: [], excludeProductIds: [], excludeCategoryIds: [] }, discount: { kind: 'amount', agorot: 250 } });
+  });
+});
+
+describe('quickAdd "always" (the wall): a dish on its defaults', () => {
+  // As the till's pull sends a group (server menu_block: every option says whether it is the default).
+  const doneness = menuGroupOf({
+    id: 'g-done', name: 'מידת עשייה', kind: 'choice', minSelect: 1, maxSelect: 1,
+    options: [{ id: 'o-rare', name: 'Rare', price: 0, isDefault: false }, { id: 'o-medium', name: 'Medium', price: 2, isDefault: true }],
+  })!;
+  const extras = menuGroupOf({
+    id: 'g-extra', name: 'תוספות', kind: 'addon', minSelect: 0, maxSelect: 3, freeCount: 1,
+    options: [{ id: 'o-cheese', name: 'גבינה', price: 5, isDefault: true }, { id: 'o-egg', name: 'ביצה', price: 4, isDefault: false }],
+  })!;
+  const sauce = menuGroupOf({
+    id: 'g-sauce', name: 'רוטב', kind: 'choice', minSelect: 1, maxSelect: 1,
+    options: [{ id: 'o-bbq', name: 'ברביקיו', price: 0 }, { id: 'o-garlic', name: 'שום', price: 0 }],
+  })!;
+
+  it('goes in on its defaults, priced as the window prices them (a free choice free)', () => {
+    const d = dishOnDefaults(5200, [doneness, extras]);
+    assert.ok(d);
+    assert.deepEqual(d.chosen.map((o) => [o.optionId, o.chargedAgorot]), [['o-medium', 200], ['o-cheese', 0]]);
+    assert.equal(d.unitAgorot, 5400);
+    assert.equal(d.unitAgorot, dishUnitAgorot(5200, chosenOptions([doneness, extras], { 'g-done': defaultPicks(doneness), 'g-extra': defaultPicks(extras) })));
+  });
+
+  it('a required choice with no default leaves it to its window; nothing required — plain', () => {
+    assert.equal(dishOnDefaults(5200, [doneness, sauce]), null);
+    assert.deepEqual(dishOnDefaults(1200, []), { chosen: [], unitAgorot: 1200 });
+    const none = menuGroupOf({ id: 'g-none', name: 'x', kind: 'addon', minSelect: 0, maxSelect: 2, options: [{ id: 'a', name: 'a', price: 1 }] })!;
+    assert.deepEqual(dishOnDefaults(1000, [none]), { chosen: [], unitAgorot: 1000 });
   });
 });

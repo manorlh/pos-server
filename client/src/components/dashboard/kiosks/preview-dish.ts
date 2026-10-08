@@ -12,6 +12,7 @@ import {
   chosenOptions,
   cyclePre,
   defaultPicks,
+  dishOnDefaults,
   dishUnitAgorot,
   optionText,
   pickCharges,
@@ -64,6 +65,17 @@ export function initialPicks(groups: readonly PGroup[]): Record<string, OptionPi
       return [g.id, g.min > 0 && g.options[0] ? [{ optionId: g.options[0].id, qty: 1, pre: null }] : []];
     }),
   );
+}
+
+/**
+ * A dish's line on its options' defaults (quickAdd "always" — the wall of buttons, one tap): one
+ * unit's price, the choices as the document names them and the cart's words; null when a group it
+ * requires has no default (its window opens instead). The real kiosks only (their options say
+ * which is the default).
+ */
+export function defaultsLine(product: Pick<PProduct, 'price' | 'priceAgorot'>, groups: readonly PGroup[]): { unitAgorot: number; options: NonNullable<PLine['options']>; texts: string[] } | null {
+  const d = dishOnDefaults(product.priceAgorot ?? Math.round(product.price * 100), groups.map(menuGroupOfP));
+  return d ? { unitAgorot: d.unitAgorot, options: lineOptionsOf(d.chosen), texts: d.chosen.map(optionText) } : null;
 }
 
 /** One unit of a basket line, in agorot (the sheet's exact figure when it set one). */

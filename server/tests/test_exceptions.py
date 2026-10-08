@@ -324,6 +324,22 @@ class TestTillEvents:
         event(w, w.tills[0], "drawer_open", event_id=ident)
         assert refused(event, w, w.tills[1], "drawer_open", event_id=ident).status_code == 409
 
+    def test_the_windows_app_left_to_the_desktop_is_recorded_not_an_exception(self, w):
+        """kiosk-desktop: who left to the desktop and when (DESKTOP_EXIT), and the way back."""
+        from app.models.audit_exception import TillEvent
+
+        ident = uuid.uuid4()
+        details = {"action": "exit", "userName": "דנה כהן", "roleName": "מנהל", "screen": "attract"}
+        assert event(w, w.tills[0], "desktop_exit", event_id=ident, user="pu-7", details=details).status == "accepted"
+        assert event(w, w.tills[0], "desktop_exit", event_id=ident, user="pu-7", details=details).status == "duplicate"
+        event(w, w.tills[0], "desktop_exit", user="pu-7", details={"action": "return", "via": "tray", "exitId": str(ident)})
+        rows = w.db.query(TillEvent).filter(TillEvent.event_type == "desktop_exit").order_by(TillEvent.occurred_at).all()
+        assert len(rows) == 2
+        stored = w.db.get(TillEvent, ident)
+        assert stored.pos_user_id == "pu-7" and stored.details["userName"] == "דנה כהן"
+        assert stored.machine_id == w.tills[0].id and stored.shop_id == w.shop.id
+        assert found(w) == []
+
 
 # ── Idempotency ──────────────────────────────────────────────────────────────
 

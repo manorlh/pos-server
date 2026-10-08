@@ -19,6 +19,7 @@ import {
   draftFromRoles,
   groupPermissions,
   matrixPayload,
+  onlyDeviceLabel,
   parseLimit,
   setCell,
   setLimit,
@@ -194,7 +195,14 @@ function Matrix({
                 {g.permissions.map((p) => (
                   <tr key={p.code} className="border-b last:border-0 align-top">
                     <td className="sticky start-0 z-10 max-w-[18rem] bg-card p-2">
-                      <div className="font-medium">{p.label}</div>
+                      <div className="font-medium">
+                        {p.label}
+                        {onlyDeviceLabel(p, catalogue) ? (
+                          <Badge variant="outline" className="ms-1.5 align-middle text-[10px]">
+                            {t('onlyOn', { device: onlyDeviceLabel(p, catalogue) ?? '' })}
+                          </Badge>
+                        ) : null}
+                      </div>
                       <div className="text-xs text-muted-foreground">{p.description}</div>
                       <div className="mt-0.5 font-mono text-[10px] text-muted-foreground" dir="ltr">
                         {p.code}

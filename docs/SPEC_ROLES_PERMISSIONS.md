@@ -54,9 +54,10 @@
 | | `CASH_DRAWER.OPEN_AFTER_CLOSE` | פתיחה לאחר סגירה / Z | |
 | | `CASH_DRAWER.VIEW_LOG` / `VIEW_CASH_MOVEMENTS` | לוג פתיחות / תנועות מזומן | |
 | ניהול | `CATALOG_WRITE`, `ATTENDANCE_MANAGE`, `USER_SESSION_RELEASE`, `CARD_UNRESOLVED`, `KIOSK_CONTROL`, `KIOSK_UNLOCK` | | ה-scopes הקיימים של `TillAuthority` |
+| | `DESKTOP_EXIT` | יציאה לשולחן העבודה (Windows) | מנהל בלבד (מלצר / קופאי / אחמ״ש: אסור; "קופאי — הרשאות קודמות": אסור, כמו קודם). נבדק במחשב עצמו, גם בלי אינטרנט (kiosk-desktop `core/desktopExit.ts`); בלי scope |
 
 לכל הרשאה בקטלוג: קוד, שם עברי, קבוצה, תיאור, **סוגי מכשיר** (`till` / `tablet` / `mobile` — הרשאות המגירה
-רק לקופה ולטאבלט), ספים, וה-scope של elevation שהיא עונה עליו. **קודים הם חוזה** (בשרת, בקופה, בשורות
+רק לקופה ולטאבלט; `windows` — R2M POS ל-Windows), ספים, וה-scope של elevation שהיא עונה עליו. **קודים הם חוזה** (בשרת, בקופה, בשורות
 התפקידים): מוסיפים — לא משנים ולא ממחזרים.
 
 ### 2.2 תפקידים וירושה

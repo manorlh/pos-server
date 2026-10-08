@@ -1,0 +1,34 @@
+{
+  "events": [
+    {
+      "id": "7d1f3a52-4c2b-4e8a-9b61-0f2d3c4b5a69",
+      "type": "desktop_exit",
+      "occurredAt": "2026-10-08T21:14:05.000Z",
+      "shiftId": "5b0c7e1d-1111-4222-8333-444455556666",
+      "posUserId": "mgr",
+      "details": {
+        "action": "exit",
+        "permission": "DESKTOP_EXIT",
+        "userName": "מנהלת סניף",
+        "roleName": "מנהל",
+        "screen": "attract",
+        "deviceRole": "kiosk",
+        "appVersion": "0.3.0"
+      }
+    },
+    {
+      "id": "a3e9c1b7-2d4f-4a6b-8c0e-1f2a3b4c5d6e",
+      "type": "desktop_exit",
+      "occurredAt": "2026-10-08T21:26:39.000Z",
+      "shiftId": "5b0c7e1d-1111-4222-8333-444455556666",
+      "posUserId": "mgr",
+      "details": {
+        "action": "return",
+        "exitId": "7d1f3a52-4c2b-4e8a-9b61-0f2d3c4b5a69",
+        "userName": "מנהלת סניף",
+        "via": "tray",
+        "awaySeconds": 754
+      }
+    }
+  ]
+}

@@ -117,6 +117,18 @@ export function isPermState(value: unknown): value is PermState {
   return typeof value === 'string' && (PERM_STATES as string[]).includes(value);
 }
 
+/**
+ * The one kind of device a permission is for, when it is for one only — "Windows" for
+ * `DESKTOP_EXIT` (יציאה לשולחן העבודה): the matrix says so under its name. Null otherwise.
+ */
+export function onlyDeviceLabel(
+  permission: Pick<CataloguePermission, 'devices'>,
+  catalogue: Pick<PermissionCatalogue, 'devices'>,
+): string | null {
+  if (permission.devices.length !== 1) return null;
+  return catalogue.devices.find((d) => d.key === permission.devices[0])?.label ?? null;
+}
+
 /** The catalogue's permissions under their groups, in the catalogue's order. */
 export function groupPermissions(
   catalogue: Pick<PermissionCatalogue, 'groups' | 'permissions'>,

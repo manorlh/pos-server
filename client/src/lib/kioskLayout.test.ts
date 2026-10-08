@@ -41,6 +41,7 @@ import {
   railMeasures,
   shelfCardDp,
   storyHeightDp,
+  tapPathOf,
   wallColumns,
   reachLow,
   rebaseLayout,
@@ -232,6 +233,16 @@ describe('the layout in the editor and on the screens', () => {
     assert.equal(addPathOnTap('sheet', 'always', true, true), 'sheet');
     assert.equal(addPathOnTap('sheet', 'no_required', false, true), 'sheet');
     assert.equal(addPathOnTap('none', 'always', false, true), 'none');
+    // A tap in a layout (useTapDish — the Android kiosk's tapItem): the wall adds a dish its defaults answer.
+    const answered = { addPath: 'sheet' as const, defaultsAnswer: true };
+    assert.equal(tapPathOf(answered, 'always', false, false), 'direct');
+    assert.equal(tapPathOf(answered, 'always', false, true), 'sheet');
+    assert.equal(tapPathOf({ addPath: 'sheet' }, 'always', false, false), 'sheet');
+    assert.equal(tapPathOf(answered, 'no_required', false, false), 'sheet');
+    assert.equal(tapPathOf({ addPath: 'direct' }, 'off', false, false), 'sheet');
+    assert.equal(tapPathOf({ addPath: 'direct' }, 'off', true, false), 'direct');
+    assert.equal(tapPathOf({ addPath: 'direct' }, 'no_required', false, false), 'direct');
+    assert.equal(tapPathOf({ addPath: 'direct', soldOut: true }, 'always', true, false), 'none');
     // KioskLayoutPhase2Test, number for number.
     assert.deepEqual(['m', 's', 'l'].map((s) => shelfCardDp(785, s as 'm')), [304, 217, 436]);
     assert.equal(shelfCardDp(200, 's'), 150);

@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import type { AppRole, ShellBridge, ShellEvents, ShellView } from '../../shared/roles';
 import { boardDemo } from '@dash-lib/kdsScreenDemo';
 import { kdsDemo } from './kds/kdsDemo';
+import { decideExit, displayName, NO_LOCK, type ExitLock, type RosterUser } from '../../core/desktopExit';
 
 function demoRole(): AppRole {
   const r = new URLSearchParams(window.location.search).get('role') ?? '';
@@ -36,12 +37,25 @@ function webShell(): ShellBridge {
   const board = boardDemo((v) => fire('board', v), role === 'order_status_board');
   // The kitchen screen: a demo kitchen (kds/kdsDemo.ts — `&kds=expo|manager`, `&offline=1`, `&empty=1`).
   const kds = kdsDemo((v) => fire('kds', v), role === 'kds');
+  // "יציאה לשולחן העבודה" in the demo: the real rules (core/desktopExit.ts) over a demo roster —
+  // the manager's code is 1234, the cashier's 5678 (no permission); nothing leaves the browser.
+  let exitLock: ExitLock = NO_LOCK;
+  const demoUsers: RosterUser[] = [
+    { id: 'demo-mgr', username: 'manager', firstName: 'מנהלת', lastName: 'הדגמה', pinHash: '$2b$demo$1234', role: 'shop_manager', isActive: true, permissions: { DESKTOP_EXIT: 'allow' } },
+    { id: 'demo-cash', username: 'cashier', firstName: 'קופאי', lastName: 'הדגמה', pinHash: '$2b$demo$5678', role: 'cashier', isActive: true, permissions: { DESKTOP_EXIT: 'deny' } },
+  ];
   return {
     view: async () => view,
     board: async () => board.view(),
     kds: async () => kds.view(),
     kdsAction: (a) => kds.action(a),
     activity: () => undefined,
+    desktopExit: async (pin) => {
+      const d = await decideExit({ users: demoUsers, shopId: null, pin, lock: exitLock, nowMs: Date.now(), activity: null, compare: async (p, h) => h === `$2b$demo$${p}` });
+      exitLock = d.lock;
+      if (d.outcome !== 'granted') return { ok: false, outcome: d.outcome, message: d.message, triesLeft: d.triesLeft, lockedForMs: d.lockedForMs };
+      return { ok: true, outcome: 'granted', message: null, name: d.user ? displayName(d.user) : null };
+    },
     on: (event, fn) => {
       const set = listeners.get(event) ?? new Set();
       listeners.set(event, set);
