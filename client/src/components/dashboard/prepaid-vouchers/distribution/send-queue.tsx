@@ -132,14 +132,18 @@ export function SendQueue({ batch, overview }: { batch: PrepaidVoucherBatch; ove
   });
   const items = useMemo(() => list.data?.items ?? [], [list.data]);
   const counts = list.data?.counts ?? overview.counts;
+  // The queue walks the whole list in its order, whatever the table below is filtered to (a row
+  // marked sent stays in the spotlight even while the table shows only "ממתין").
+  const everyone = useQuery({ queryKey: [...keys.recipients(batch.id), 'queue'], queryFn: () => fetchRecipients(batch.id) });
+  const all = useMemo(() => everyone.data?.items ?? [], [everyone.data]);
 
   const [queue, dispatch] = useReducer(queueReducer, EMPTY_QUEUE);
   // Rows marked sent here count as sent before the list is read again.
   const queueRows = useMemo(
-    () => items.filter((i) => !i.deletedAt).map((i) => (queue.sentNow.includes(i.id) && (i.state === 'pending' || i.state === 'failed') ? { ...i, state: 'sent' as const } : i)),
-    [items, queue.sentNow],
+    () => all.filter((i) => !i.deletedAt).map((i) => (queue.sentNow.includes(i.id) && (i.state === 'pending' || i.state === 'failed') ? { ...i, state: 'sent' as const } : i)),
+    [all, queue.sentNow],
   );
-  const current = items.find((i) => i.id === queue.currentId) ?? null;
+  const current = all.find((i) => i.id === queue.currentId) ?? items.find((i) => i.id === queue.currentId) ?? null;
   const progress = queueProgress(queueRows);
 
   // Feature-detected after mount (no `navigator` on the server render).
@@ -153,7 +157,7 @@ export function SendQueue({ batch, overview }: { batch: PrepaidVoucherBatch; ove
   useEffect(() => {
     if (!canShare || !currentId || !currentReady || prepared?.id === currentId) return;
     let alive = true;
-    const r = items.find((i) => i.id === currentId);
+    const r = all.find((i) => i.id === currentId);
     if (!r) return;
     fetchRecipientPdf(batch.id, currentId, 'share')
       .then((blob) => {

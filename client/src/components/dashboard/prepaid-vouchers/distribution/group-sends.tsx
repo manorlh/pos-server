@@ -89,7 +89,9 @@ export function GroupSends({ batch }: { batch: PrepaidVoucherBatch }) {
                       </td>
                       <td className="p-2 tabular-nums">
                         {g.group}
-                        <span className="block text-xs text-muted-foreground" dir="ltr">{serialsText([g.fromSerial, g.toSerial].filter((v, i, a) => a.indexOf(v) === i))}</span>
+                        <span className="block text-xs text-muted-foreground" dir="ltr">
+                          {g.fromSerial === g.toSerial ? serialsText([g.fromSerial]) : `${serialsText([g.fromSerial])}-${serialsText([g.toSerial])}`}
+                        </span>
                       </td>
                       <td className="p-2 tabular-nums">{t('freeOf', { free: g.free, total: g.total })}</td>
                       <td className="p-2">
