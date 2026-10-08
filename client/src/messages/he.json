@@ -2985,7 +2985,9 @@
       "cancelled_cashier": "בוטלה ע״י הקופאי",
       "no_answer": "אין תשובה מהמסוף — לא חויב",
       "terminal_error": "תקלת מסוף",
-      "card_locked": "אשראי נעול"
+      "card_locked": "אשראי נעול",
+      "unresolved": "לא הוכרע",
+      "approved_late": "אושר בבדיקה"
     },
     "method": {
       "card": "אשראי",
@@ -3016,6 +3018,49 @@
       "cashier": "קופאי"
     },
     "openTransaction": "פתח את המסמך",
+    "unresolvedBadge": "לא הוכרע",
+    "unresolvedExplain": "תוצאת התשלום באשראי לא ידועה — ייתכן שהלקוח חויב. בדקו במסוף או הכריעו כאן; המסמכים בקופה ממתינים עד ההכרעה.",
+    "unresolvedCount": "לא הוכרעו",
+    "approvedLateCount": "אושרו בבדיקה (לא נספרים)",
+    "approvedLateHint": "נמצא שחויב בבדיקה והמכירה הושלמה — לא נכלל בעסקאות שלא הושלמו.",
+    "cardCommand": {
+      "check": "בדוק במסוף",
+      "markApproved": "סמן כאושר",
+      "markNotApproved": "סמן כלא אושר",
+      "cancel": "בטל את הפקודה",
+      "confirmCheck": "לשלוח לקופה בקשה לבדוק את התשלום במסוף?",
+      "confirmApproved": "לסמן את התשלום כאושר? הקופה תשלים את המסמכים הממתינים (הלקוח חויב).",
+      "confirmNotApproved": "לסמן את התשלום כלא אושר? הקופה תבטל את המסמכים הממתינים (הלקוח לא חויב).",
+      "confirmCancel": "לבטל את הפקודה שנשלחה לקופה?",
+      "sent": "{action} — נשלח לקופה…",
+      "delivered": "{action} — הקופה קיבלה, ממתין לתשובה…",
+      "answered": "{action} — {status}",
+      "ended": "{action} — {status}",
+      "by": "ע״י {name}, {at}",
+      "answeredAt": "תשובה: {at}",
+      "sentOk": "הפקודה נשלחה לקופה",
+      "cancelledOk": "הפקודה בוטלה",
+      "action": {
+        "check": "בדיקה במסוף",
+        "mark_approved": "סימון כאושר",
+        "mark_not_approved": "סימון כלא אושר"
+      },
+      "status": {
+        "pending": "נשלח לקופה",
+        "done": "בוצע",
+        "failed": "נכשל",
+        "not_found": "לא נמצא בקופה",
+        "busy": "הקופה עסוקה — נסו שוב",
+        "expired": "פג תוקף — הקופה לא ענתה",
+        "cancelled": "בוטל"
+      },
+      "result": {
+        "approved": "אושר",
+        "not_charged": "לא חויב",
+        "unknown": "עדיין לא ידוע"
+      },
+      "noVuid": "לתשלום אין מזהה עסקה במסוף — יש להכריע בקופה עצמה."
+    },
     "export": {
       "shop": "סניף",
       "kind": "סוג",

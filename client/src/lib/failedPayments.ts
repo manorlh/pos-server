@@ -17,8 +17,15 @@ export const FAILED_OUTCOMES = [
   'no_answer',
   'terminal_error',
   'card_locked',
+  // "לא הוכרע": the card's result is not known yet — possibly charged; the till's documents wait.
+  'unresolved',
+  // "אושר בבדיקה": found charged on a check, the sale completed — NOT a failed payment.
+  'approved_late',
 ] as const;
 export type FailedOutcome = (typeof FAILED_OUTCOMES)[number];
+
+/** Outcomes that are not a failed / not-completed payment: in no count or total. */
+export const NOT_FAILED_OUTCOMES: readonly string[] = ['approved_late'];
 
 /** The tenders a paying document may have had ("שולם בהמשך במזומן / באשראי …"). */
 export const PAID_LATER_METHODS = ['cash', 'card', 'voucher', 'mixed'] as const;
@@ -63,15 +70,55 @@ export interface FailedPaymentAttempt {
   paidByTransactionNumber?: string | null;
   paidByMethod?: string | null;
   paidAt?: string | null;
+  /** An unresolved attempt's latest manager command to its till; null when none. */
+  cardCommand?: CardCommand | null;
 }
 
 export interface FailedPaymentSummary {
-  /** kind sale + keyed. */
+  /** kind sale + keyed — `approved_late` in none of these. */
   count: number;
   totalAgorot: number;
   payoutCount: number;
   payoutTotalAgorot: number;
   paidLaterCount: number;
+  /** "לא הוכרע", also in the figures above (an open attempt). Absent on an older server. */
+  unresolvedCount?: number;
+  unresolvedTotalAgorot?: number;
+  /** "אושר בבדיקה": counted apart only. */
+  approvedLateCount?: number;
+}
+
+// ── "תשלום לא מוכרע": the manager's commands (pos-server app/services/card_attempt_commands.py) ──
+
+export type CardCommandAction = 'check' | 'mark_approved' | 'mark_not_approved';
+export const CARD_COMMAND_ACTIONS: readonly CardCommandAction[] = ['check', 'mark_approved', 'mark_not_approved'];
+export type CardCommandStatus = 'pending' | 'done' | 'failed' | 'not_found' | 'busy' | 'expired' | 'cancelled';
+export const CARD_COMMAND_STATUSES: readonly CardCommandStatus[] = [
+  'pending',
+  'done',
+  'failed',
+  'not_found',
+  'busy',
+  'expired',
+  'cancelled',
+];
+export type CardCommandResult = 'approved' | 'not_charged' | 'unknown';
+
+export interface CardCommand {
+  id: string;
+  attemptId?: string | null;
+  machineId: string;
+  vuid?: string | null;
+  action: CardCommandAction | string;
+  status: CardCommandStatus | string;
+  requestedByName?: string | null;
+  requestedAt?: string | null;
+  expiresAt?: string | null;
+  deliveredAt?: string | null;
+  answeredAt?: string | null;
+  resultOutcome?: CardCommandResult | string | null;
+  resultMessage?: string | null;
+  cancelledByName?: string | null;
 }
 
 export interface CancelledSale {
@@ -164,10 +211,86 @@ export function reasonText(a: Pick<FailedPaymentAttempt, 'reasonCode' | 'reasonM
   return parts.length ? parts.join(' · ') : null;
 }
 
+/** A failed or not-completed attempt — not one found charged later (`approved_late`). */
+export function isFailedAttempt(a: Pick<FailedPaymentAttempt, 'outcome'>): boolean {
+  return !NOT_FAILED_OUTCOMES.includes(a.outcome ?? '');
+}
+
+export function isUnresolved(a: Pick<FailedPaymentAttempt, 'outcome'>): boolean {
+  return a.outcome === 'unresolved';
+}
+
+/** The list's order: the unresolved first (possibly charged, the till waits), then newest first. */
+export function sortAttempts<T extends Pick<FailedPaymentAttempt, 'outcome' | 'occurredAt' | 'id'>>(items: readonly T[]): T[] {
+  return [...items].sort((a, b) => {
+    const ua = isUnresolved(a) ? 0 : 1;
+    const ub = isUnresolved(b) ? 0 : 1;
+    if (ua !== ub) return ua - ub;
+    if (a.occurredAt !== b.occurredAt) return a.occurredAt < b.occurredAt ? 1 : -1;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+}
+
+/** Who may send a command (the people of a remote credit; the server checks the till too). */
+export const CARD_COMMAND_ROLES: readonly string[] = ['super_admin', 'distributor', 'company_manager', 'shop_manager'];
+
+export interface CardCommandActions {
+  check: boolean;
+  markApproved: boolean;
+  markNotApproved: boolean;
+  /** Withdraw the pending command. */
+  cancel: boolean;
+}
+
+/**
+ * What a user may do on a row: only an unresolved attempt with a vuid; while a command waits
+ * for the till, only withdraw it. Nothing for someone outside CARD_COMMAND_ROLES.
+ */
+export function cardCommandActions(
+  a: Pick<FailedPaymentAttempt, 'outcome' | 'vuid' | 'cardCommand'>,
+  role: string | null | undefined,
+): CardCommandActions {
+  const none = { check: false, markApproved: false, markNotApproved: false, cancel: false };
+  if (!role || !CARD_COMMAND_ROLES.includes(role) || !isUnresolved(a)) return none;
+  if (a.cardCommand?.status === 'pending') return { ...none, cancel: true };
+  if (!(a.vuid ?? '').trim()) return none;
+  return { check: true, markApproved: true, markNotApproved: true, cancel: false };
+}
+
+/**
+ * How the row's command reads: `sent` ("נשלח לקופה…") while pending, `delivered` once the till
+ * took it, `answered` with the till's answer, `ended` (expired / withdrawn), or `none`.
+ */
+export type CardCommandPhase = 'none' | 'sent' | 'delivered' | 'answered' | 'ended';
+
+export function cardCommandPhase(cmd: CardCommand | null | undefined): CardCommandPhase {
+  if (!cmd) return 'none';
+  if (cmd.status === 'pending') return cmd.deliveredAt ? 'delivered' : 'sent';
+  if (cmd.status === 'expired' || cmd.status === 'cancelled') return 'ended';
+  return 'answered';
+}
+
 /** The summary of a list of attempts — sales (sale + keyed) and payouts apart, as the server's. */
 export function summarize(items: FailedPaymentAttempt[]): FailedPaymentSummary {
-  const out: FailedPaymentSummary = { count: 0, totalAgorot: 0, payoutCount: 0, payoutTotalAgorot: 0, paidLaterCount: 0 };
+  const out: FailedPaymentSummary = {
+    count: 0,
+    totalAgorot: 0,
+    payoutCount: 0,
+    payoutTotalAgorot: 0,
+    paidLaterCount: 0,
+    unresolvedCount: 0,
+    unresolvedTotalAgorot: 0,
+    approvedLateCount: 0,
+  };
   for (const a of items) {
+    if (!isFailedAttempt(a)) {
+      out.approvedLateCount = (out.approvedLateCount ?? 0) + 1;
+      continue;
+    }
+    if (isUnresolved(a)) {
+      out.unresolvedCount = (out.unresolvedCount ?? 0) + 1;
+      out.unresolvedTotalAgorot = (out.unresolvedTotalAgorot ?? 0) + (Number(a.amountAgorot) || 0);
+    }
     if (isPayout(a)) {
       out.payoutCount += 1;
       out.payoutTotalAgorot += Number(a.amountAgorot) || 0;

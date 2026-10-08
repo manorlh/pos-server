@@ -22,6 +22,7 @@ import {
 } from '@/lib/failedPayments';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AttemptBadges, CardText, OutcomeText, PaidLaterText, useFailedPaymentLabels } from './parts';
+import { CardCommandPanel, UnresolvedBadge } from './card-command-panel';
 
 /** Enough for any shift or Z; the list page pages through more. */
 const SECTION_PAGE_SIZE = 500;
@@ -81,9 +82,11 @@ export function FailedPaymentsSection({
                     {a.employeeName ? <span>· {a.employeeName}</span> : null}
                   </div>
                   <OutcomeText a={a} />
+                  <UnresolvedBadge a={a} />
                   {a.paidByTransactionId || a.paidByMethod ? (
                     <div className="text-xs"><PaidLaterText a={a} /></div>
                   ) : null}
+                  <CardCommandPanel a={a} compact />
                 </div>
                 <span className="font-medium tabular-nums whitespace-nowrap">
                   {money(a.amountAgorot)}

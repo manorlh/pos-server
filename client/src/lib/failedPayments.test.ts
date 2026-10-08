@@ -15,6 +15,11 @@ import {
   summarize,
   tillLabel,
   wasPaidLater,
+  cardCommandActions,
+  cardCommandPhase,
+  isFailedAttempt,
+  isUnresolved,
+  sortAttempts,
   type FailedPaymentAttempt,
   type FailedPaymentsResponse,
 } from './failedPayments';
@@ -57,7 +62,88 @@ describe('summarize', () => {
       attempt({ kind: 'keyed', amountAgorot: 2500 }),
       attempt({ kind: 'payout', amountAgorot: 7000, outcome: 'terminal_error' }),
     ]);
-    assert.deepEqual(s, { count: 2, totalAgorot: 16500, payoutCount: 1, payoutTotalAgorot: 7000, paidLaterCount: 1 });
+    assert.deepEqual(s, {
+      count: 2,
+      totalAgorot: 16500,
+      payoutCount: 1,
+      payoutTotalAgorot: 7000,
+      paidLaterCount: 1,
+      unresolvedCount: 0,
+      unresolvedTotalAgorot: 0,
+      approvedLateCount: 0,
+    });
+  });
+
+  it('counts "לא הוכרע" in the figures and apart; "אושר בבדיקה" in none of them', () => {
+    const s = summarize([
+      attempt({ outcome: 'unresolved', amountAgorot: 5000 }),
+      attempt({ outcome: 'approved_late', amountAgorot: 9900, paidByTransactionId: 't1', paidByMethod: 'card' }),
+      attempt({ amountAgorot: 1000 }),
+    ]);
+    assert.equal(s.count, 2);
+    assert.equal(s.totalAgorot, 6000);
+    assert.equal(s.paidLaterCount, 0);
+    assert.equal(s.unresolvedCount, 1);
+    assert.equal(s.unresolvedTotalAgorot, 5000);
+    assert.equal(s.approvedLateCount, 1);
+  });
+});
+
+describe('"תשלום לא מוכרע"', () => {
+  it('the new outcomes are known; approved_late is not a failure', () => {
+    assert.equal(outcomeKey('unresolved'), 'unresolved');
+    assert.equal(outcomeKey('approved_late'), 'approved_late');
+    assert.equal(isFailedAttempt({ outcome: 'approved_late' }), false);
+    assert.equal(isFailedAttempt({ outcome: 'unresolved' }), true);
+    assert.equal(isUnresolved({ outcome: 'unresolved' }), true);
+  });
+
+  it('the unresolved first, then newest first', () => {
+    const rows = sortAttempts([
+      attempt({ id: 'new', occurredAt: '2026-10-07T13:00:00Z' }),
+      attempt({ id: 'stuck', outcome: 'unresolved', occurredAt: '2026-10-07T09:00:00Z' }),
+      attempt({ id: 'old', occurredAt: '2026-10-07T08:00:00Z' }),
+    ]);
+    assert.deepEqual(rows.map((r) => r.id), ['stuck', 'new', 'old']);
+  });
+
+  it('who may act, and on what', () => {
+    const stuck = attempt({ outcome: 'unresolved', vuid: 'V1' });
+    assert.deepEqual(cardCommandActions(stuck, 'shop_manager'), {
+      check: true,
+      markApproved: true,
+      markNotApproved: true,
+      cancel: false,
+    });
+    const none = { check: false, markApproved: false, markNotApproved: false, cancel: false };
+    assert.deepEqual(cardCommandActions(stuck, 'cashier'), none);
+    assert.deepEqual(cardCommandActions(stuck, null), none);
+    assert.deepEqual(cardCommandActions(attempt({ vuid: 'V1' }), 'super_admin'), none);
+    assert.deepEqual(cardCommandActions(attempt({ outcome: 'unresolved' }), 'super_admin'), none);
+    const waiting = attempt({
+      outcome: 'unresolved',
+      vuid: 'V1',
+      cardCommand: { id: 'c1', machineId: 'm1', action: 'check', status: 'pending' },
+    });
+    assert.deepEqual(cardCommandActions(waiting, 'company_manager'), { ...none, cancel: true });
+    const answered = attempt({
+      outcome: 'unresolved',
+      vuid: 'V1',
+      cardCommand: { id: 'c1', machineId: 'm1', action: 'check', status: 'done', resultOutcome: 'unknown' },
+    });
+    assert.equal(cardCommandActions(answered, 'distributor').check, true);
+  });
+
+  it('the command phase', () => {
+    assert.equal(cardCommandPhase(null), 'none');
+    assert.equal(cardCommandPhase({ id: 'c', machineId: 'm', action: 'check', status: 'pending' }), 'sent');
+    assert.equal(
+      cardCommandPhase({ id: 'c', machineId: 'm', action: 'check', status: 'pending', deliveredAt: '2026-10-08T10:00:00Z' }),
+      'delivered',
+    );
+    assert.equal(cardCommandPhase({ id: 'c', machineId: 'm', action: 'check', status: 'busy' }), 'answered');
+    assert.equal(cardCommandPhase({ id: 'c', machineId: 'm', action: 'check', status: 'expired' }), 'ended');
+    assert.equal(cardCommandPhase({ id: 'c', machineId: 'm', action: 'check', status: 'cancelled' }), 'ended');
   });
 });
 
