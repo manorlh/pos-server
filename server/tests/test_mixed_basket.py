@@ -187,7 +187,8 @@ class TestTheExchangeTender:
         assert payment_type_code("exchange") == 6
         assert payment_type_code("card") == 3
         assert payment_type_code("cash") == 1
-        assert payment_type_code("voucher") == 1
+        # A prepaid / production voucher is תווי קנייה (test_open_format_vouchers.py).
+        assert payment_type_code("voucher") == 5
 
 
 # ── Baskets on the X and the Z ────────────────────────────────────────────────

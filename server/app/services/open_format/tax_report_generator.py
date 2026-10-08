@@ -830,10 +830,24 @@ def build_d110_record(
     return record[:339]
 
 
-#: D120 field 1306 (אמצעי תשלום) for the tenders this system files by name.
-#: 3 = כרטיס אשראי; 6 = תלוש החלפה — the `exchange` leg that settles the sale half of a
-#: mixed basket against its credit half (docs/SHIFTS_API.md §1.2a). Anything else is 1.
-PAYMENT_TYPE_CODES = {"card": 3, "exchange": 6}
+#: D120 field 1306 (סוג אמצעי התשלום, מבנה אחיד 1.31 §4.5: 1 מזומן, 2 המחאה, 3 כרטיס
+#: אשראי, 4 העברה בנקאית, 5 תווי קנייה, 6 תלוש החלפה, 7 שטר, 8 הוראת קבע, 9 אחר) for the
+#: tenders this system files by name:
+#:
+#: * 3 = כרטיס אשראי — `card`.
+#: * 5 = תווי קנייה — a prepaid / production voucher ("שובר הפקה") paying for the goods on it:
+#:   `voucher`, the leg every till and kiosk order writes for a redemption since the tender
+#:   first shipped (pos-android `PaymentMethod.VOUCHER`, `CheckoutViewModel.applyVoucher`;
+#:   a kiosk order's voucher reaches the till's document the same way), `vouchers` (the
+#:   alias the Z already counts as a voucher, `z_print._VOUCHER`), and `production_voucher`
+#:   (the contract's tender code for the `payment` accounting mode). No till or kiosk writes
+#:   `voucher` for anything else: a return is a credit note (330) whose legs mirror the
+#:   original's, and a mixed basket's offset is `exchange`.
+#: * 6 = תלוש החלפה — the `exchange` leg that settles the sale half of a mixed basket
+#:   against its credit half (docs/SHIFTS_API.md §1.2a).
+#:
+#: Anything else is 1 (unchanged: mapping a new tender string is a filing decision).
+PAYMENT_TYPE_CODES = {"card": 3, "voucher": 5, "vouchers": 5, "production_voucher": 5, "exchange": 6}
 
 #: D120 field 1313 (קוד החברה הסולקת): "1-ישראכרט, 2-כאל, 3-דיינרס, 4-אמריקן אקספרס,
 #: 6-לאומי כארד" — by the acquirer the till read off the terminal (`card_brands.ACQUIRERS`).
@@ -897,10 +911,11 @@ def build_d120_record(
     single-tender document produces exactly the record it produced before split
     tender existed, to the byte.
 
-    The payment-type code (field 1306) is `payment_type_code`: card → 3, `exchange` →
-    6, everything else → 1. The מבנה אחיד field has further codes (cheque, bank
-    transfer, vouchers) and this system stores whatever tender string the till sends,
-    but mapping new strings onto tax codes is a filing decision, not a refactor, and a
+    The payment-type code (field 1306) is `payment_type_code`: card → 3, a prepaid /
+    production voucher (`voucher`, `vouchers`, `production_voucher`) → 5 (תווי קנייה),
+    `exchange` → 6, everything else → 1. The מבנה אחיד field has further codes (cheque,
+    bank transfer) and this system stores whatever tender string the till sends, but
+    mapping new strings onto tax codes is a filing decision, not a refactor, and a
     wrong code is not something the merchant finds out about from us. Unrecognised
     tenders keep landing on 1 exactly as they did before.
 

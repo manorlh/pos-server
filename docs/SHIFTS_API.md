@@ -393,7 +393,8 @@ What the server does with them:
   summary tender (so a basket's tip rides on its cash or card, not on the exchange).
 - **Settling originals per line** (below, "A credit note settles its original").
 - **OpenFormat**: an `exchange` leg is D120 payment type **6** (תלוש החלפה); card stays 3,
-  anything else 1. Each D110 line of a 330 names its base document (1256 type, 1257 number,
+  a prepaid / production voucher leg (`voucher`, `vouchers`, `production_voucher`) is **5**
+  (תווי קנייה), anything else 1. Each D110 line of a 330 names its base document (1256 type, 1257 number,
   1274 branch): the receipt of its `refundOfItemId` line, else the document's
   `refundOfTransactionId` — resolved within the tenant **even when the original is outside
   the export window**. A catalogue return names none.
