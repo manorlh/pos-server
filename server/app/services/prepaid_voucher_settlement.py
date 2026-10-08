@@ -85,6 +85,7 @@ OVER_INVOICED = "prepaid_settlement_over_invoiced"
 BATCH_NOT_IN_AGREEMENT = "prepaid_settlement_batch_not_in_agreement"
 DUPLICATE_INVOICE = "prepaid_settlement_invoice_duplicate"
 INVOICE_VOIDED = "prepaid_settlement_invoice_voided"
+CLOSED = "prepaid_settlement_closed"
 REASON_REQUIRED = "prepaid_settlement_reason_required"
 PRICES_REQUIRED = "prepaid_settlement_prices_required"
 FILE_TOO_BIG = "prepaid_settlement_file_too_big"
@@ -822,6 +823,8 @@ def add_invoice(db: Session, user: User, tenant_id, agreement_id, body) -> Prepa
     if not ACC.prices_visible(db, user):
         raise ACC.http(status.HTTP_403_FORBIDDEN, PRICES_REQUIRED)
     a = get_agreement(db, user, tenant_id, agreement_id, lock=True)
+    if a.status != "active":
+        raise ACC.http(status.HTTP_409_CONFLICT, CLOSED)
     if (body.currency or "ILS").upper() != "ILS":
         raise ACC.http(status.HTTP_400_BAD_REQUEST, CURRENCY)
     number = body.number.strip()
@@ -840,6 +843,10 @@ def add_invoice(db: Session, user: User, tenant_id, agreement_id, body) -> Prepa
             raise ACC.http(status.HTTP_400_BAD_REQUEST, f"{BATCH_NOT_IN_AGREEMENT}:{key}")
         wanted[key] = wanted.get(key, 0) + int(line.quantity)
     if wanted:
+        # Each batch's row too, in a fixed order: another agreement's invoice never races this one.
+        db.query(PrepaidVoucherBatch.id).filter(
+            PrepaidVoucherBatch.id.in_(sorted(batches[k].id for k in wanted))
+        ).order_by(PrepaidVoucherBatch.id).with_for_update().all()
         figures = {str(f.batch.id): f for f in batch_figures(db, a, [batches[k] for k in wanted])}
         for key, q in wanted.items():
             f = figures[key]

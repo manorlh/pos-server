@@ -395,6 +395,14 @@ class TestSimulator:
         hot = next(u for u in out["units"] if u["productId"] == str(w.hotdog.id))
         assert hot["forced"] and hot["reductionAgorot"] > 0
 
+    def test_a_discount_voucher(self, w):
+        b = R.create_prepaid_voucher_batch(PrepaidVoucherBatchCreate(
+            name="הנחה", companyId=w.company.id, count=1, kind="order_discount", discountType="fixed", discountValue=10,
+        ), **_ctx(w))
+        out = sim(w, b, [(w.hotdog, 1), (w.drink, 1)], is_batch=True)
+        assert (out["ok"], out["kind"], out["totals"]["coveredAgorot"]) == (True, "order_discount", 1000)
+        assert sum(u["deductionAgorot"] for u in out["units"]) == 1000
+
     def test_a_batch_says_whether_it_is_paused(self, w):
         b = batch(w, count=1)
         pause(w, "batch", b["id"])

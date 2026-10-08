@@ -257,6 +257,12 @@ class TestInvoices:
         body = SettlementInvoiceIn(number="Y", invoiceDate=date(2026, 10, 9), amount=1, currency="USD")
         assert refused(X.add_settlement_invoice, a["id"], body, **_ctx(w)).detail == ST.CURRENCY
 
+    def test_a_closed_agreement_takes_no_invoice(self, w, festival):
+        a = agreement(w)
+        patch(w, a, status="closed")
+        e = refused(invoice, w, a, "INV-9", 60, [(festival["id"], 1)])
+        assert (e.status_code, e.detail) == (409, ST.CLOSED)
+
     def test_corrections_after_an_invoice(self, w):
         b = meal_batch(w, count=3)
         out = [redeem_all(w, c) for c in codes(w, b)[:2]]

@@ -194,7 +194,9 @@ def _simulate_discount(db: Session, terms, body, products, price_of) -> Dict[str
             id=f"l{n + 1}", product_ids=(str(p.id),), category_ids=(str(p.category_id),) if p.category_id else (),
             quantity=float(line.quantity), gross=int(round(unit * float(line.quantity))),
             promotion=_agorot(line.promotion) if line.promotion else 0,
-            **({"no_discount": bool(p.no_discount)} if "no_discount" in RULES.BasketLine.__dataclass_fields__ else {}),
+            discountable=not bool(getattr(p, "no_discount", False)),
+            weighed=bool(getattr(p, "is_weighed", False)),
+            general=bool(getattr(p, "is_general", False)),
         ))
     result = RULES.discount_for(benefit, lines, 1)
     shares = dict(result.shares)
