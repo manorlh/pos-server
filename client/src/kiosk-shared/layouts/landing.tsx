@@ -9,14 +9,15 @@
 import { useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { basketKindOf, layoutOf, landingColumnsFor, productColumns } from '@/lib/kioskLayout';
+import { basketDocked, basketKindOf, layoutOf, landingColumnsFor, productColumns } from '@/lib/kioskLayout';
 import { checkoutStepsNow } from '@/lib/kioskConfig';
 import { KioskSwap, itemEnter } from '@/components/dashboard/kiosks/preview-motion';
-import { CartBar, CartPanel, CatalogHeader, cardStyle, serviceAsked, serviceOnAttractOf, type PCategory, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
+import { CartPanel, CatalogHeader, cardStyle, serviceAsked, serviceOnAttractOf, type PCategory, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { detailsFields } from '@/components/dashboard/kiosks/preview-entry';
 import { TickerSlot, PREVIEW_FOOTER_PX } from '@/components/dashboard/kiosks/preview-ticker';
 import { CategoryVisual } from './icons';
-import { DP_PER_PX, Empty, GuidedBar, GuidedBasketButton, LayoutDishCard, OrderSummaryBar, cartCounts, itemsCount, kt, unitOf, widthDpOf } from './parts';
+import { DockedBasket, FloatingBasket } from './baskets';
+import { DP_PER_PX, Empty, GuidedBar, GuidedBasketButton, LayoutDishCard, cartCounts, itemsCount, kt, unitOf, widthDpOf } from './parts';
 
 const HOME = '\u0000home';
 
@@ -66,18 +67,13 @@ export function LandingCatalog({ m, onCategory }: { m: PreviewModel; onCategory?
               />
             )}
           </div>
-          {basket === 'bar' && !m.panel ? (
-            <div className="shrink-0 p-2" style={{ background: `linear-gradient(to top, ${m.c.background}, ${m.c.background}00)` }}>
-              <CartBar m={m} />
-            </div>
-          ) : null}
+          <FloatingBasket m={m} kind={basket} />
           {basket === 'guided' ? <GuidedBasketButton m={m} /> : null}
         </div>
         {m.panel && basket === 'panel' ? <CartPanel m={m} /> : null}
       </div>
-      <TickerSlot m={m} screen="catalog" position="bottom" gapBelow={basket === 'summary' ? 0 : m.live ? 0 : PREVIEW_FOOTER_PX} />
-      {basket === 'summary' ? <OrderSummaryBar m={m} /> : null}
-      {basket === 'summary' && !m.live ? <div className="shrink-0" style={{ height: PREVIEW_FOOTER_PX, background: m.cfg.theme.mode === 'dark' ? m.c.surface : '#14161A' }} /> : null}
+      <TickerSlot m={m} screen="catalog" position="bottom" gapBelow={basketDocked(basket) ? 0 : m.live ? 0 : PREVIEW_FOOTER_PX} />
+      <DockedBasket m={m} kind={basket} />
     </div>
   );
 }

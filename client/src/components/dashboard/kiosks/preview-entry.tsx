@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { ArrowBigUp, ArrowLeft, ChevronRight, Delete, HandCoins, Hash, MessageSquareText, Pencil, Phone, UserRound, X } from 'lucide-react';
+import { ArrowBigUp, ArrowLeft, ChevronRight, Delete, HandCoins, Hash, MessageSquareText, Pencil, Phone, Search, UserRound, X } from 'lucide-react';
 import { contrastText, type KioskConfig } from '@/lib/kioskConfig';
 import {
   BOTTOM_ROW,
@@ -229,7 +229,7 @@ export function DigitsPad({ m, onKey }: { m: PreviewModel; onKey: (k: KioskKey) 
 
 /* --------------------------------------------------------------- the window */
 
-const STEP_ICONS = { person: UserRound, phone: Phone, table: Hash, note: MessageSquareText, tip: HandCoins } as const;
+const STEP_ICONS = { person: UserRound, phone: Phone, table: Hash, note: MessageSquareText, tip: HandCoins, search: Search } as const;
 
 /** One question in the window. */
 export interface EntryStep {
