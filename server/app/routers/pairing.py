@@ -18,6 +18,7 @@ from app.models.company import Company
 from app.models.user import User
 from app.middleware.auth import get_current_distributor, get_active_tenant_id, ensure_same_tenant
 from app.services import access, device_profile, display_devices
+from app.services import work_config as WC
 from app.services.pairing import (
     AdoptionRefused,
     PairingAssignmentError,
@@ -85,6 +86,16 @@ def generate_pairing_code(
     if web_refused is not None:
         return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=web_refused)
     kiosk_options, kds_options = display_devices.pairing_options(device_role, options)
+    # "תצורת עבודה" (docs/SPEC_DEVICE_WORK_CONFIG.md): checked now, as for a new device of that
+    # role in that shop — the same refusals the device page answers, while the dialog is open.
+    try:
+        work_config = WC.check_pairing_request(
+            db, current_user, shop_id=shop_id, role=device_role, platform=body.platform,
+            plan=body.work_config.plan() if body.work_config is not None else None,
+        )
+    except WC.WorkConfigRefused as refused:
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
 
     try:
         pairing_code = create_pairing_code(
@@ -99,6 +110,7 @@ def generate_pairing_code(
             # "Android / Windows": the device that redeems it must be one (422 otherwise).
             platform=body.platform or display_devices.PLATFORM_ANDROID,
             kds_options=kds_options,
+            work_config=work_config,
         )
     except PairingAssignmentError as exc:
         raise HTTPException(

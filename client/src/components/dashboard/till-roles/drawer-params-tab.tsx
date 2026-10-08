@@ -63,10 +63,13 @@ export function DrawerParamsTab({
   companyId,
   shopId,
   canEdit: canEditCompany,
+  sectionAllowsEdit,
 }: {
   companyId: string;
   shopId: string | null;
   canEdit: boolean;
+  /** "הרשאות דשבורד": the drawer's parameters are "הגדרות קופות" — edit there, or read only. */
+  sectionAllowsEdit: boolean;
 }) {
   const t = useTranslations('tillRoles.drawer');
   const { machines } = useScope();
@@ -111,12 +114,28 @@ export function DrawerParamsTab({
         <p className="text-xs text-muted-foreground">{t('hint')}</p>
       </div>
       {!shopId ? <p className="text-xs text-muted-foreground">{t('pickShop')}</p> : null}
-      <LevelCard key={`${level.type}:${level.id}`} companyId={companyId} level={level} canEditCompany={canEditCompany} />
+      <LevelCard
+        key={`${level.type}:${level.id}`}
+        companyId={companyId}
+        level={level}
+        canEditCompany={canEditCompany}
+        sectionAllowsEdit={sectionAllowsEdit}
+      />
     </div>
   );
 }
 
-function LevelCard({ companyId, level, canEditCompany }: { companyId: string; level: Level; canEditCompany: boolean }) {
+function LevelCard({
+  companyId,
+  level,
+  canEditCompany,
+  sectionAllowsEdit,
+}: {
+  companyId: string;
+  level: Level;
+  canEditCompany: boolean;
+  sectionAllowsEdit: boolean;
+}) {
   const t = useTranslations('tillRoles.drawer');
   const tr = useTranslations('tillRoles');
   const qc = useQueryClient();
@@ -151,7 +170,7 @@ function LevelCard({ companyId, level, canEditCompany }: { companyId: string; le
   if (view.isLoading) return <Skeleton className="h-64 w-full" />;
   if (!view.data) return <p className="text-sm text-destructive">{tr('loadError')}</p>;
   const data = view.data;
-  const canEdit = data.canEdit || (level.type === 'company' && canEditCompany);
+  const canEdit = sectionAllowsEdit && (data.canEdit || (level.type === 'company' && canEditCompany));
   const shown = (key: string) => (key in edits ? edits[key] : toText(data.own[key]));
   const describe = (p: DrawerParam, value: unknown) =>
     value === undefined || value === null

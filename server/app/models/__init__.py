@@ -58,7 +58,16 @@ from app.models.audit_exception import AuditException, ExceptionRuleValue, TillE
 from app.models.failed_payment import FailedPaymentAttempt
 # "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the dashboard asks a till to issue a credit.
 from app.models.remote_credit import RemoteCreditEvent, RemoteCreditRequest
+# "זיכוי באשראי מהענן (Z-Credit)" (docs/SPEC_REMOTE_CREDIT.md §11): the cloud refunds the card.
+from app.models.cloud_card_refund import CloudCardRefund, CloudCardRefundEvent
 from app.models.document_refusal import DocumentRefusal
+# "יומן חריגות" + "התראות SMS על חריגות" (app/services/exception_alerts).
+from app.models.exception_alerts import (
+    ExceptionAlertDispatch,
+    ExceptionAlertRule,
+    ExceptionAlertRuleChange,
+    ExceptionLogEntry,
+)
 from app.models.prepaid_voucher import (
     PrepaidVoucher,
     PrepaidVoucherBatch,
@@ -140,6 +149,8 @@ from app.models.kds import (
     FulfillmentGroup, KdsDevice, KdsRouteOverride, KdsShopState, KdsStationSetting, KitchenAction,
     KitchenChange, KitchenDispatch, KitchenOrder, KitchenTask,
 )
+# "הרשאות דשבורד": per dashboard user — sections, org scope, templates, audit.
+from app.models.dashboard_access import DashboardAccessAudit, DashboardAccessProfile, DashboardAccessTemplate
 
 __all__ = [
     "User", "UserRole",
@@ -215,8 +226,11 @@ __all__ = [
     "KioskSettings", "KioskDevice", "KioskOrder", "KioskPickupCounter", "KioskPickupAllocation", "KioskCommand",
     "KioskSession", "KioskEvent", "DeviceBatteryAlert", "KioskWebDeviceStatus",
     "RemoteCreditRequest", "RemoteCreditEvent",
+    "CloudCardRefund", "CloudCardRefundEvent",
     "DocumentRefusal",
+    "ExceptionLogEntry", "ExceptionAlertRule", "ExceptionAlertDispatch", "ExceptionAlertRuleChange",
     "TillDesignSettings",
+    "DashboardAccessAudit", "DashboardAccessProfile", "DashboardAccessTemplate",
     "TillRole", "TillRoleChange",
     "CashDrawerEvent", "CashMovement",
 ]

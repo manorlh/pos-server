@@ -63,7 +63,7 @@ from app.schemas.kitchen_printers import (
     ProductRouteIn,
 )
 from app.services.areas import as_utc
-from app.services.company_hierarchy import user_covers_company
+from app.services.company_hierarchy import user_covers_shop
 
 #: The till parameters this module reads (and lets a shop's managers set).
 ON_SALE_KEY = "kitchenTicketsOnSale"
@@ -130,7 +130,7 @@ def can_edit(db: Session, user: User, shop: Shop) -> bool:
     if user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
         return True
     if user.role == UserRole.COMPANY_MANAGER:
-        return bool(user_covers_company(db, user, shop.company_id))
+        return bool(user_covers_shop(db, user, shop))
     return user.shop_id is not None and str(user.shop_id) == str(shop.id)
 
 
@@ -306,6 +306,15 @@ def printer_applies_to(printer: KitchenPrinter, machine: POSMachine) -> bool:
     if printer.area_id is not None:
         return machine.area_id is not None and str(printer.area_id) == str(machine.area_id)
     return True
+
+
+def printer_scope(printer: KitchenPrinter) -> str:
+    """Where a printer is set: "machine" (one till), "area" (a point of sale) or "shop"."""
+    if printer.machine_id is not None:
+        return "machine"
+    if printer.area_id is not None:
+        return "area"
+    return "shop"
 
 
 def tills_using(db: Session, printer: KitchenPrinter) -> List[POSMachine]:
@@ -1217,6 +1226,10 @@ def printer_for_till(
         #: bills and receipts there when asked, and opens its drawer (`cashDrawer`).
         "purpose": printer.purpose or "kitchen",
         "cashDrawer": bool(printer.cash_drawer),
+        #: Where the shop set it: "machine" (this very till), "area" or "shop". A receipt printer
+        #: assigned to the till wins over one the shop shares (the till's receiptPrinterRank;
+        #: the owner, 07.10.2026 — the Royal kiosk's receipt went to the shop's printer).
+        "scope": printer_scope(printer),
         "type": printer.connection_type,
         "host": printer.host,
         "port": printer.port,

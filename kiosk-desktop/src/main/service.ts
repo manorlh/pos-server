@@ -17,7 +17,9 @@ import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, ty
 import { OfflineTracker } from '../core/kioskHealth';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
 import { ofShekels } from '../core/money';
-import { bonDoc, receiptDoc, slipDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine } from '../core/printDocs';
+import { bonDoc, receiptDoc, slipDoc, ticketDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine } from '../core/printDocs';
+import { BON_NOT_ON_KIOSK, windowsBonRoute } from '../core/kioskBonRoute';
+import { ITEM_TICKET_PARAM, itemTicketSetting, itemTicketsPrint, resolveTicketMode, splitItemTickets, ticketModeFor } from '../core/itemTickets';
 import { DRAWER_KICK } from '../core/escpos';
 import { kitchenOptions, kitchenOptionText, MAX_LINE_QTY, optionCharged, saleDocumentType, saleTotals, tipToCharge, unitAgorot, vatRateOf, type SaleLine, type SaleOption } from '../core/sale';
 import { autoCloseMayRun, zModeOf } from '../core/tillZ';
@@ -37,12 +39,16 @@ import { TillZService } from './fiscal/tillZService';
 import { FINAL_OUTCOMES, kioskSection, lanCloseReport, lanOutcomeMessage, planLanClose, type LanCloseOutcome, type LanCloseRequest } from './fiscal/shopZPart';
 import { MediaStore, type Downloader, type VariantMaker } from './media/mediaStore';
 import { PayService } from './payment/payService';
+import { identifyPinpad, localPrivateIpv4, PinpadRelocator, readArpTable, sweepPort } from './payment/pinpadRelocator';
+import { pinpadAddressOf } from '../core/nayax';
+import type { PinpadIdentity } from '../core/pinpadRelocation';
 import { PROVIDERS } from './payment/registry';
 import { mergeLocalKey, PAIRING_TEXT, PairingSession, uploadOutcome, type LocalSynqKey, type PairingUpload } from './payment/synqpay/pairing';
 import type { SynqPayProvider } from './payment/synqpay/provider';
 import type { PaymentProvider, ProviderContext, ProviderFactory } from './payment/provider';
 import { PrintQueue, type PageRenderer } from './printer/printQueue';
-import { DefaultTransport, guessQueue, type PrinterTarget, type Transport } from './printer/transports';
+import { DefaultTransport, type PrinterTarget, type Transport } from './printer/transports';
+import { resolvePrinterTarget, targetText, usbStatusText, UsbPrinterWatch, type PrinterResolution } from './printer/usbPrinters';
 import { allocatePickup, OrderStore } from './kiosk/orders';
 import { PayAtTill, type VoucherResult } from './kiosk/payAtTill';
 import { kdsSaleRelease, releasesToKds } from './kiosk/kdsRelease';
@@ -113,9 +119,14 @@ export interface ServiceOptions {
    * the cloud's media itself — only the receipt's logo is kept here.
    */
   bridge?: boolean;
+  /**
+   * The USB printers as last seen (printer/usbPrinters.ts) — the bridge's own, shared, so the
+   * printers are looked at once; by default this service keeps its own.
+   */
+  usbWatch?: UsbPrinterWatch;
 }
 
-/** The kiosk's own local settings (not the cloud's): the printer, the zoom. */
+/** The kiosk's own local settings (not the cloud's): the printer (an empty Windows queue: "אוטומטי"), the zoom. */
 export interface LocalSettings {
   printer: PrinterTarget;
   zoom: number | null;
@@ -150,11 +161,17 @@ export class KioskService extends EventEmitter {
   /** "מזומן בקופה" and vouchers (kiosk/payAtTill.ts). */
   readonly payAtTill: PayAtTill;
   readonly sync: SyncEngine;
+  /** The pinpad that moved (a DHCP change), found again by its identity — ARP first (payment/pinpadRelocator.ts). */
+  readonly relocator: PinpadRelocator;
   /** The cloud's word on the basket a moment ago (core/basketCheck.ts), until the catalog catches up. */
   private cloudBasket: CloudOverrides | null = null;
   /** "סוללה חלשה": the battery as the screen last read it (null: never — a PC on mains reports none). */
   private batteryNow: { percent: number | null; charging: boolean } | null = null;
   private readonly transport: Transport;
+  /** The USB printer plugged in, for "אוטומטי" (printer/usbPrinters.ts). */
+  readonly usbWatch: UsbPrinterWatch;
+  private readonly ownsUsbWatch: boolean;
+  private readonly offUsbWatch: () => void;
   private readonly log: (m: string) => void;
   private readonly platform: PlatformHooks;
   private readonly providers: ProviderFactory[];
@@ -208,7 +225,10 @@ export class KioskService extends EventEmitter {
     this.media = new MediaStore(this.db, path.join(opts.dataDir, 'media'), opts.downloader, opts.variantMaker, this.log);
     this.pay = new PayService(this.db, this.log);
     this.transport = opts.transport ?? new DefaultTransport(this.log);
-    this.printQueue = new PrintQueue(this.db, this.transport, () => this.localSettings().printer, opts.renderer ?? null, this.log);
+    this.ownsUsbWatch = !opts.usbWatch;
+    this.usbWatch = opts.usbWatch ?? new UsbPrinterWatch(this.transport, this.log, () => this.printQueue.busy);
+    this.offUsbWatch = this.usbWatch.onChange(() => this.dirty());
+    this.printQueue = new PrintQueue(this.db, this.transport, () => this.printerResolution().target, opts.renderer ?? null, this.log);
     this.orders = new OrderStore(this.db);
     this.funnel = new FunnelStore(this.kv);
     this.payAtTill = new PayAtTill({ kv: this.kv, api: this.api, machineId: () => this.machineId, operator: () => this.operator(), log: this.log });
@@ -226,6 +246,17 @@ export class KioskService extends EventEmitter {
       log: this.log,
     });
     this.sync = new SyncEngine(this.api, this.cloud, this.ledger, this.outbox, this.remoteHooks(), opts.appVersion);
+    this.relocator = new PinpadRelocator({
+      now: () => Date.now(),
+      kvGet: (k) => this.kv.get(k),
+      kvSet: (k, v) => (v === null ? this.kv.delete(k) : this.kv.set(k, v)),
+      readArp: readArpTable,
+      localIpv4: localPrivateIpv4,
+      sweep: sweepPort,
+      identify: (host, port) => identifyPinpad(host, port, this.pinpadHere()?.path ?? '/SPICy'),
+      save: (host, port, id, previous) => this.savePinpadHost(host, port, id, previous),
+      log: this.log,
+    });
     this.media.onChange(() => this.dirty());
     this.pay.onChange(() => this.dirty());
     this.printQueue.onChange(() => this.dirty());
@@ -237,6 +268,60 @@ export class KioskService extends EventEmitter {
 
   get machineId(): string | null {
     return this.cloud.credentials()?.machineId ?? null;
+  }
+
+  /** The kiosk's Nayax LAN pinpad as the cloud settings place it; null on any other terminal. */
+  private pinpadHere(): { host: string; port: number; path: string } | null {
+    if (this.pay.describe().kind !== 'nayax_lan') return null;
+    const s = (this.cloud.settings().settings ?? {}) as Record<string, unknown>;
+    const port = s.nayaxDevicePort === undefined || s.nayaxDevicePort === null ? null : String(s.nayaxDevicePort);
+    const a = pinpadAddressOf(s.nayaxDeviceHost as string | null, port, s.nayaxSpicyPath as string | null);
+    return a ? { host: a.host, port: a.port, path: a.path } : null;
+  }
+
+  /**
+   * The pinpad found at a new address: saved in the cloud (`PUT /sync/{id}/pinpad-host` — this
+   * machine's host only, the same terminal), then the settings pulled so the provider follows.
+   */
+  private async savePinpadHost(host: string, port: number, id: PinpadIdentity, previous: string): Promise<'ok' | 'offline' | 'refused'> {
+    const mid = this.machineId;
+    if (!mid) return 'offline';
+    const here = this.pinpadHere();
+    const r = await this.api.put(`sync/${mid}/pinpad-host`, {
+      host,
+      port: here && here.port === port ? undefined : port,
+      reason: 'relocated',
+      terminalNumber: id.terminal ?? undefined,
+      serial: id.serial ?? undefined,
+      previousHost: previous,
+      mac: id.mac ?? id.arpMac ?? undefined,
+    });
+    if (r.kind === 'offline') return 'offline';
+    if (r.kind === 'refused') {
+      this.log(`pinpad-host refused: ${r.status} ${r.detail ?? ''}`);
+      return 'refused';
+    }
+    await this.sync.pullSettings().catch(() => undefined);
+    this.applyProvider();
+    this.dirty();
+    return 'ok';
+  }
+
+  /** The relocator's look, on the 30-second tick: never during a payment (it asks again before moving). */
+  private async relocateTick(): Promise<void> {
+    const here = this.pinpadHere();
+    const m = this.pay.monitor;
+    const answering = m.state === 'unreachable' ? false : m.state === 'ready' && m.lastOkAtMs !== null ? true : null;
+    const s = (this.cloud.settings().settings ?? {}) as Record<string, unknown>;
+    const expected = typeof s.expectedTerminalNumber === 'string' && s.expectedTerminalNumber.trim() ? s.expectedTerminalNumber.trim() : null;
+    await this.relocator.tick({
+      configured: here ? { host: here.host, port: here.port } : null,
+      answering: here ? answering : null,
+      lastOkAtMs: m.lastOkAtMs,
+      inPayment: () => this.flow.busy || this.pay.cardInFlight,
+      online: !this.offlineNow,
+      expectedTerminal: expected,
+    });
   }
 
   get paired(): boolean {
@@ -256,6 +341,8 @@ export class KioskService extends EventEmitter {
     this.timers.push(setInterval(() => void this.tick10(), 10_000));
     this.timers.push(setInterval(() => void this.tick30(), 30_000));
     this.timers.push(setInterval(() => this.tick5(), 5_000));
+    // The USB printer plugged in, looked at now and every 15 s ("אוטומטי").
+    if (this.ownsUsbWatch) this.usbWatch.start();
     void this.printQueue.work();
   }
 
@@ -264,6 +351,8 @@ export class KioskService extends EventEmitter {
     if (this.emitTimer) clearTimeout(this.emitTimer);
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
+    this.offUsbWatch();
+    if (this.ownsUsbWatch) this.usbWatch.stop();
     this.sync.stop();
     this.transport.dispose();
     this.db.close();
@@ -306,13 +395,18 @@ export class KioskService extends EventEmitter {
     this.dirty();
   }
 
-  /** The spooler queue, found once when none is chosen (SNBC / BTP, else Generic / Text Only). */
-  private async ensurePrinterQueue() {
-    const s = this.localSettings();
-    if (s.printer.transport !== 'spooler' || s.printer.queueName) return;
-    const list = await this.transport.list().catch(() => []);
-    const name = guessQueue(list.map((p) => p.name));
-    if (name) this.setLocalSettings({ printer: { transport: 'spooler', queueName: name } });
+  /**
+   * Where a page goes now: the printer set wins; "אוטומטי" (no Windows queue named) — the USB printer
+   * plugged in, else a queue guessed by name (SNBC / BTP, then Generic / Text Only). Never saved:
+   * the next printer plugged in is found again.
+   */
+  printerResolution(): PrinterResolution {
+    return resolvePrinterTarget(this.localSettings().printer, this.usbWatch.current());
+  }
+
+  /** Look at the printers now (a test page, the technician's screen), not 15 s later. */
+  private async lookForPrinter() {
+    await this.usbWatch.refresh();
   }
 
   /* ---------------------------------------------------------------- views */
@@ -1204,6 +1298,8 @@ export class KioskService extends EventEmitter {
       this.printQueue.enqueue('slip', orderId, slipDoc({ businessName: this.business().companyName, pickupLabel: pickup.label, service: order.serviceType, itemCount: order.itemCount, totalAgorot: order.totalAgorot + order.tipAgorot }));
     }
     if (policy === 'always') this.printReceipt(orderId, false);
+    // "שוברים": the sale's item tickets right after the slip and the receipt, on the same printer.
+    this.printItemTickets(orderId);
     this.orders.update(orderId, (o) => ({ ...o, receiptStatus: receiptAfterApproval(policy, false) }));
     void me;
     void this.sync.flush();
@@ -1323,8 +1419,9 @@ export class KioskService extends EventEmitter {
       rejected: null,
     };
     // "שלח למטבח לפני תשלום": this kiosk's own printer has the bon ("ממתין לתשלום בקופה") — once the
-    // cloud has not refused the order (it may be offline: the bon prints all the same).
-    const kitchenFirst = cfg.payment.cashAtTillKitchenBeforePay && order.fulfillmentMode === 'BON';
+    // cloud has not refused the order (it may be offline: the bon prints all the same). With "בון מטבח
+    // במדפסת הקיוסק" off it never prints here: the till that takes the money prints it.
+    const kitchenFirst = cfg.payment.cashAtTillKitchenBeforePay && order.fulfillmentMode === 'BON' && windowsBonRoute(cfg.printing) !== 'none';
     order.kitchenSent = kitchenFirst;
     const placed = await this.payAtTill.place(order);
     if (placed.rejected === PRICE_CHANGED) {
@@ -1599,13 +1696,13 @@ export class KioskService extends EventEmitter {
 
   /** "הדפסת בדיקה". */
   async printTest(): Promise<string> {
-    await this.ensurePrinterQueue();
+    await this.lookForPrinter();
     return this.printQueue.enqueue('test', null, slipDoc({ businessName: 'בדיקת מדפסת', pickupLabel: 'TEST', service: 'take_away', itemCount: 0, totalAgorot: 0 }));
   }
 
   /** The cash drawer's kick through the receipt printer (its RJ11 port). */
   async openDrawer(): Promise<void> {
-    await this.transport.send(this.localSettings().printer, DRAWER_KICK);
+    await this.transport.send(this.printerResolution().target, DRAWER_KICK);
   }
 
   /* ------------------------------------------------------------- printing */
@@ -1662,8 +1759,67 @@ export class KioskService extends EventEmitter {
         card: doc.card ? { brand: doc.card.brand, last4: doc.card.last4, authNum: doc.card.authNum, payments: doc.card.payments, firstPaymentAgorot: doc.card.firstPaymentAgorot } : null,
         footer,
         logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null,
+        // "סניף הרצליה · קופה 3 · קיוסק רויאל": the machine as the cloud names it (machines/me).
+        place: this.placeOfMachine(),
       }),
     );
+  }
+
+  /** The shop, the till's number and name, as `machines/me` says them (the documents' place line). */
+  private placeOfMachine(): { shopName: string | null; posNumber: string | null; deviceName: string | null } {
+    const me = this.cloud.machine();
+    return { shopName: me?.shopName ?? null, posNumber: me?.posNumber ?? null, deviceName: me?.machineName ?? null };
+  }
+
+  /**
+   * "שוברים" — the sale's item tickets on this kiosk's printer, by the till's rules
+   * (core/itemTickets.ts): each product's ticket mode from the catalog it syncs, "שוברי פריט" from
+   * its parameters; not for a credit note. Queued like any page: a failure is the printer's light
+   * and a retry, never the payment's.
+   */
+  printItemTickets(orderId: string): number {
+    const o = this.orders.get(orderId);
+    const doc = o?.transactionId ? this.ledger.doc(o.transactionId) : null;
+    if (!o || !doc || doc.status !== 'completed') return 0;
+    const setting = itemTicketSetting(this.cloud.parameters()[ITEM_TICKET_PARAM]);
+    if (!itemTicketsPrint(doc.documentType, true, setting)) return 0;
+    const catalog = this.cloud.catalog();
+    const products = new Map(catalog.products.map((p) => [String(p.id), p] as const));
+    const categories = new Map(catalog.categories.map((c) => [String(c.id), c] as const));
+    const tickets = splitItemTickets(
+      doc.lines.map((l) => {
+        const p = products.get(l.productId) ?? {};
+        const category = typeof p.categoryId === 'string' ? categories.get(p.categoryId) : undefined;
+        const entries = typeof p.ticketEntries === 'number' && p.ticketEntries > 1 ? p.ticketEntries : 1;
+        return {
+          productId: l.productId,
+          name: l.name,
+          quantity: l.qty,
+          unitLabel: p.isWeighed === true && typeof p.unitLabel === 'string' ? p.unitLabel : null,
+          mode: ticketModeFor(resolveTicketMode(p.ticketMode, category?.ticketMode), setting),
+          entries,
+        };
+      }),
+    );
+    const place = this.placeOfMachine();
+    tickets.forEach((items, i) => {
+      this.printQueue.enqueue(
+        'ticket',
+        orderId,
+        ticketDoc({
+          businessName: this.business().companyName,
+          shopName: place.shopName,
+          machineName: place.deviceName,
+          posNumber: place.posNumber,
+          transactionNumber: o.transactionNumber,
+          issuedAt: new Date(doc.createdAt),
+          items,
+          index: i + 1,
+          count: tickets.length,
+        }),
+      );
+    });
+    return tickets.length;
   }
 
   /**
@@ -1684,8 +1840,14 @@ export class KioskService extends EventEmitter {
     }
     const doc = o.transactionId ? this.ledger.doc(o.transactionId) : null;
     if (!doc) return;
-    this.orders.update(orderId, (x) => ({ ...x, bonRequestedAtMs: x.bonRequestedAtMs ?? Date.now(), bonStatus: 'queued' })); // write-ahead
     const cfg = this.config();
+    // "בון מטבח במדפסת הקיוסק" (off by default): every page this kiosk prints is on its own printer,
+    // so off it prints no bon — said on the order, never a staff alert (core/kioskBonRoute.ts).
+    if (windowsBonRoute(cfg.printing) === 'none') {
+      this.orders.update(orderId, (x) => ({ ...x, bonStatus: 'none', bonDetail: BON_NOT_ON_KIOSK }));
+      return;
+    }
+    this.orders.update(orderId, (x) => ({ ...x, bonRequestedAtMs: x.bonRequestedAtMs ?? Date.now(), bonStatus: 'queued' })); // write-ahead
     const copies = Math.max(1, Math.min(3, cfg.printing.bonCopies || 1));
     const me = this.cloud.machine();
     const ids: string[] = [];
@@ -1818,6 +1980,8 @@ export class KioskService extends EventEmitter {
     const op = this.operator();
     // The main till's shop Z part: a payment waited out, an answer the cloud did not take yet.
     if (this.shopZPart) await this.runShopZPart();
+    // The pinpad that moved (a DHCP change): looked for by who it is, "לפי המאק" first (PinpadRelocator).
+    if (this.fiscalRole && !this.opts.bridge) await this.relocateTick().catch(() => undefined);
     // "סגירה יחד עם ה-Z הסניפי": carried out first, on an idle tick (KioskRepository.autoCloseTick).
     const closeRequest = this.kv.get(SHOP_Z_CLOSE_REQUEST);
     if (mayRun && closeRequest && !this.opts.bridge) {
@@ -1937,7 +2101,7 @@ export class KioskService extends EventEmitter {
   adminInfo(): AdminInfo {
     const shift = this.ledger.currentShift();
     const media = this.media.getStatus();
-    const s = this.localSettings();
+    const printer = this.printerResolution();
     return {
       operator: this.paired ? this.operator() : null,
       shift: { open: !!shift, number: shift?.sequence_number ?? null, openedAt: shift?.opened_at ?? null },
@@ -1952,10 +2116,12 @@ export class KioskService extends EventEmitter {
         numberCheckBypass: this.parameterOn(TERMINAL_CHECK_BYPASS_KEY),
       },
       printer: {
-        target: s.printer.transport === 'tcp' ? `TCP ${s.printer.host}:${s.printer.port ?? 9100}` : s.printer.transport === 'spooler' ? `Windows: ${s.printer.queueName ?? '—'}` : '—',
+        target: targetText(printer),
         health: this.printQueue.health(),
         lastError: this.printQueue.lastFailure?.error ?? null,
         queues: [],
+        usb: usbStatusText(this.usbWatch.pick()),
+        auto: printer.auto,
       },
       sync: {
         lastBeatOkAt: this.sync.status.lastBeatOkAt,
@@ -1996,7 +2162,7 @@ export class KioskService extends EventEmitter {
         this.printReceipt(a.orderId, true);
         return { ok: true };
       case 'testPrint':
-        await this.ensurePrinterQueue();
+        await this.lookForPrinter();
         this.printQueue.enqueue('test', null, slipDoc({ businessName: 'בדיקת מדפסת', pickupLabel: 'TEST', service: 'take_away', itemCount: 0, totalAgorot: 0 }));
         return { ok: true };
       case 'retryPrints':
@@ -2047,8 +2213,9 @@ export class KioskService extends EventEmitter {
   }
 
   async technicianInfo(): Promise<TechnicianInfo> {
+    const scan = await this.usbWatch.refresh();
     const admin = this.adminInfo();
-    const queues = await this.transport.list().catch(() => []);
+    const queues = scan?.queues ?? (await this.transport.list().catch(() => []));
     const me = this.cloud.machine();
     // The updater's own state — opening the screen never starts a download ("בדוק עכשיו" does).
     const u = this.platform.updateStatus?.() ?? null;
@@ -2075,7 +2242,9 @@ export class KioskService extends EventEmitter {
       case 'printerTest':
         return this.adminAction({ type: 'testPrint' });
       case 'setPrinter':
-        this.setLocalSettings({ printer: a.transport === 'tcp' ? { transport: 'tcp', host: a.host ?? null, port: a.port ?? 9100 } : { transport: 'spooler', queueName: a.queueName ?? null } });
+        // A Windows queue with no name: "אוטומטי" — the USB printer plugged in (printer/usbPrinters.ts).
+        this.setLocalSettings({ printer: a.transport === 'tcp' ? { transport: 'tcp', host: a.host ?? null, port: a.port ?? 9100 } : { transport: 'spooler', queueName: a.queueName?.trim() || null } });
+        void this.usbWatch.refresh();
         return { ok: true };
       case 'pinpadCheck': {
         // Read-only: getStatus, never a charge.

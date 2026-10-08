@@ -61,6 +61,11 @@ export interface UserCapabilities {
    * PIN would buy them nothing, so the profile page says so instead of offering it.
    */
   tillScopes?: string[];
+  /**
+   * "הרשאות דשבורד": the sections this user may open (lib/dashboardAccess.ts). The server
+   * enforces the same grant on every route; this only decides the menu and the pages.
+   */
+  dashboardAccess?: import('./dashboardAccess').DashboardAccess;
 }
 
 /** `GET /users/me` — the caller's own record plus its capabilities. */
@@ -1395,6 +1400,12 @@ export interface TransactionPayment {
   cardIssuer?: string | null;
   /** "ללא החזר כספי" (docs/SPEC_REMOTE_CREDIT.md): no money moved on this leg. */
   noMoneyMovement?: boolean;
+  /**
+   * The acquirer's reply as the till stored it: `result.provider` says Z-Credit (a cloud card
+   * refund may be offered, SPEC_REMOTE_CREDIT.md §11); `cloudCardRefundId` marks a credit
+   * note's leg that records one.
+   */
+  nayaxMeta?: Record<string, unknown> | null;
 }
 
 /** Another document of the same mixed basket (same `basketId`). */
@@ -1572,6 +1583,11 @@ export interface Shift {
   zNumber?: number | null;
   machineName?: string | null;
   shopName?: string | null;
+  /**
+   * The till's register number in the shift's shop ("קופה 2"); null once the till moved to
+   * another shop. Absent from a server that predates it (lib/shiftsPage shiftRegisterNumber).
+   */
+  posNumber?: string | null;
   /**
    * The area the till was in when the cloud created this shift. Stamped, never
    * updated: moving the till later does not move its past shifts.
@@ -2363,7 +2379,7 @@ export interface PosUser {
   workerNumber?: string | null;
   role: PosUserRole;
   isActive: boolean;
-  /** "תפקידים והרשאות": the till role (null = not assigned yet: the legacy role of ole). */
+  /** "תפקידים והרשאות": the till role (null = not assigned yet: the legacy role of `role`). */
   tillRoleId?: string | null;
   tillRoleName?: string | null;
   permissionOverrides?: Record<string, unknown> | null;

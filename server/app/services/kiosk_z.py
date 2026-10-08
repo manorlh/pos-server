@@ -84,6 +84,9 @@ FAILURE_TEXTS = {
     "till_z_disabled": "הקיוסק לא מפיק Z משלו",
     "z_run_in_progress": "יש Z סניפי בתהליך שכולל את הקיוסק",
     "shift_of_another_machine": "משמרת של מכשיר אחר",
+    # "אל תאפשר לסגור Z על 0" (z_builder.EMPTY_Z): the kiosk's shifts had nothing a Z could report.
+    "empty_z": "אין מסמכים — אין צורך ב-Z",
+    "nothing_to_report": "אין משמרות שממתינות ל-Z — אין צורך ב-Z",
 }
 
 
@@ -202,9 +205,24 @@ def _held_state(code: Optional[str], flow: Optional[str]) -> Optional[str]:
     return None
 
 
+def _failure_code(code: Optional[str], message: Optional[str]) -> Optional[str]:
+    """
+    The refusal's own code: an older till acks a refusal it has no word for as `http_409`
+    with the cloud's detail as the message ("empty_z") — that detail is the reason.
+    """
+    head = code.split(":")[0] if code else None
+    if head in FAILURE_TEXTS:
+        return head
+    said = message.strip().split(":")[0] if isinstance(message, str) and message.strip() else None
+    if head and head.startswith("http_") and said in FAILURE_TEXTS:
+        return said
+    return head
+
+
 def _failure_text(code: Optional[str], message: Optional[str]) -> Optional[str]:
-    if code and code.split(":")[0] in FAILURE_TEXTS:
-        return FAILURE_TEXTS[code.split(":")[0]]
+    known = _failure_code(code, message)
+    if known in FAILURE_TEXTS:
+        return FAILURE_TEXTS[known]
     return (message or code or None) and str(message or code)[:300]
 
 
@@ -461,6 +479,84 @@ def till_z_answer_extra(db: Session, machine: POSMachine, body: Any) -> Dict[str
     if target is None:
         return {}
     return {"printOn": "controller", "printOnMachineId": target["machineId"], "printOnName": target["name"]}
+
+
+# ── The command's outcome (`kiosk_commands`) ─────────────────────────────────
+
+#: A command row still waiting for the kiosk.
+COMMAND_REQUESTED = "requested"
+
+
+def command_outcome(action: str, req: Any) -> Optional[tuple]:
+    """
+    `(status, detail)` of a "הפקת Z" / "סגירת משמרת" command once its request has ended —
+    `applied` with what it came to, or `refused` with why, in the screens' words — or None
+    while it is still pending (or unknown). A Z that was not made is a refusal: the kiosk
+    had nothing a Z could report ("אין מסמכים — אין צורך ב-Z"), or no shift waited for one.
+    """
+    if req is None:
+        return None
+    from app.models.shift_close_request import PENDING_CLOSE_REQUEST_STATUSES
+    from app.models.till_z_request import PENDING_TILL_Z_STATUSES
+
+    status_value = getattr(req, "status", None)
+    if action == ACTION_TILL_Z:
+        if status_value in PENDING_TILL_Z_STATUSES:
+            return None
+        if status_value == "completed":
+            if getattr(req, "z_report_id", None) is not None:
+                z = getattr(req, "z_report", None)
+                number = getattr(z, "machine_sequence_number", None) if z is not None else None
+                return "applied", (f"Z מס׳ {number} הופק" if number is not None else "ה-Z הופק")
+            return "refused", FAILURE_TEXTS.get(_failure_code(req.error_code, req.error_message) or "nothing_to_report",
+                                                FAILURE_TEXTS["nothing_to_report"])
+    else:
+        if status_value in PENDING_CLOSE_REQUEST_STATUSES:
+            return None
+        if status_value == "completed":
+            return "applied", "המשמרת נסגרה"
+    if status_value in ("expired", "cancelled"):
+        return "refused", STATE_TEXTS[status_value]
+    return "refused", (_failure_text(req.error_code, req.error_message) or "נכשל")[:300]
+
+
+def settle_commands(
+    db: Session, *, request_ids: Optional[Iterable[Any]] = None, kiosk_machine_id: Any = None,
+) -> int:
+    """
+    The audit rows of "הפקת Z" / "סגירת משמרת" still `requested` whose request has ended get
+    the kiosk's outcome (`command_outcome`) — a remote Z the kiosk answered "empty_z" reads
+    "refused · אין מסמכים — אין צורך ב-Z", never "requested" forever. Called where a request
+    ends (`till_z`: the Z, the ack, expiry, cancel) and on every read of the command list, so
+    a row that missed one is settled the next time anyone looks. Flushes; the caller commits.
+    """
+    from app.models.kiosk import KioskCommand
+    from app.models.shift_close_request import ShiftCloseRequest
+    from app.models.till_z_request import TillZRequest
+
+    q = db.query(KioskCommand).filter(
+        KioskCommand.status == COMMAND_REQUESTED,
+        KioskCommand.request_id.isnot(None),
+        KioskCommand.action.in_((ACTION_TILL_Z, ACTION_CLOSE_SHIFT)),
+    )
+    if request_ids is not None:
+        ids = [r for r in request_ids if r is not None]
+        if not ids:
+            return 0
+        q = q.filter(KioskCommand.request_id.in_(ids))
+    if kiosk_machine_id is not None:
+        q = q.filter(KioskCommand.kiosk_machine_id == kiosk_machine_id)
+    changed = 0
+    for row in q.all():
+        model = TillZRequest if row.action == ACTION_TILL_Z else ShiftCloseRequest
+        outcome = command_outcome(row.action, db.get(model, row.request_id))
+        if outcome is None:
+            continue
+        row.status, row.detail = outcome[0], outcome[1]
+        changed += 1
+    if changed:
+        db.flush()
+    return changed
 
 
 def kiosk_machine_ids(db: Session, machine_ids: Iterable[Any]) -> List[uuid.UUID]:

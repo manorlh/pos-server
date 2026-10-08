@@ -23,6 +23,51 @@ describe('the kiosk flow (a port of the till’s KioskFlow.kt)', () => {
     expect(reduce(s, { type: 'back' }, r).screen).toBe('attract');
   });
 
+  it('"לקחת / לשבת" on the attract screen: a tap elsewhere (or a scan) starts nothing — the service is never a step too', () => {
+    const r = rules({ serviceOnAttract: true });
+    expect(reduce(INITIAL_FLOW, { type: 'start' }, r)).toBe(INITIAL_FLOW);
+    expect(backAction(INITIAL_FLOW, r)).toBe('none');
+    expect(run(r, { type: 'start' }, { type: 'startWith', service: 'eat_in' })).toMatchObject({ screen: 'catalog', service: 'eat_in' });
+    // After the start button (the default): the service step as always.
+    expect(run(rules(), { type: 'start' }).screen).toBe('service');
+    // From the config: two services placed on the attract screen; one service starts as always.
+    const cfg = (serviceTypes: string[], servicePlacement: string) => ({
+      general: { serviceTypes, skipCart: 'off', askTableNumber: false, servicePlacement },
+      payment: { customerName: 'off', customerPhone: 'off', tipEnabled: false },
+    });
+    expect(run(rulesOf(cfg(['take_away', 'eat_in'], 'attract'), false), { type: 'start' }).screen).toBe('attract');
+    expect(run(rulesOf(cfg(['take_away', 'eat_in'], 'after_start'), false), { type: 'start' }).screen).toBe('service');
+    expect(run(rulesOf(cfg(['eat_in'], 'attract'), false), { type: 'start' })).toMatchObject({ screen: 'catalog', service: 'eat_in' });
+  });
+
+  it('"לקחת / לשבת" on the attract screen: no way from there reaches the service step', () => {
+    const events: KioskEvent[] = [
+      { type: 'start' }, { type: 'startWith', service: 'take_away' }, { type: 'startWith', service: 'eat_in' }, { type: 'itemAdded' },
+      { type: 'openCart' }, { type: 'backToCatalog' }, { type: 'checkout' }, { type: 'detailsDone' }, { type: 'back' }, { type: 'reset' },
+      { type: 'paymentStarted' }, { type: 'paymentDeclined' }, { type: 'paymentApproved' }, { type: 'successDone' },
+    ];
+    for (const detailsStep of ['after_service', 'before_cart', 'before_pay', 'after_pay'] as const) {
+      for (const asks of [false, true]) {
+        const r = rules({ serviceOnAttract: true, detailsStep, asksDetails: () => asks });
+        let seen = new Map<string, KioskFlowState>([[JSON.stringify(INITIAL_FLOW), INITIAL_FLOW]]);
+        for (let depth = 0; depth < 5; depth++) {
+          const next = new Map(seen);
+          for (const s of seen.values()) for (const e of events) next.set(JSON.stringify(reduce(s, e, r)), reduce(s, e, r));
+          seen = next;
+        }
+        expect([...seen.values()].some((s) => s.screen === 'service'), `${detailsStep} / ${asks}`).toBe(false);
+        expect([...seen.values()].some((s) => s.screen === 'catalog')).toBe(true);
+      }
+    }
+    // Back from the details asked right after the service: the attract screen — even one reached from a service screen.
+    const r = rules({ serviceOnAttract: true, detailsStep: 'after_service', asksDetails: () => true });
+    const details = run(r, { type: 'startWith', service: 'take_away' });
+    expect(details.screen).toBe('details');
+    expect(reduce(details, { type: 'back' }, r).screen).toBe('attract');
+    expect(reduce({ ...details, cameFrom: 'service' }, { type: 'back' }, r).screen).toBe('attract');
+    expect(reduce({ ...details, cameFrom: 'service' }, { type: 'back' }, { ...r, serviceOnAttract: false }).screen).toBe('service');
+  });
+
   it('skip cart: direct → payment at once; confirm → a short confirmation', () => {
     expect(run(rules({ skipCart: 'direct' }), { type: 'start' }, { type: 'chooseService', service: 'take_away' }, { type: 'itemAdded' }).screen).toBe('pay');
     expect(run(rules({ skipCart: 'confirm' }), { type: 'start' }, { type: 'chooseService', service: 'take_away' }, { type: 'itemAdded' }).screen).toBe('confirm');

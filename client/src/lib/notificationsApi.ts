@@ -59,7 +59,7 @@ export type NotificationState = (typeof NOTIFICATION_STATES)[number];
 
 export const NOTIFICATION_CATEGORIES = ['service', 'authentication', 'marketing', 'internal_operations'] as const;
 
-export const NOTIFICATION_EVENTS = ['OrderReady', 'OtpCode', 'ClubWelcome', 'EquipmentAlert', 'Campaign'] as const;
+export const NOTIFICATION_EVENTS = ['OrderReady', 'OtpCode', 'ClubWelcome', 'EquipmentAlert', 'ExceptionAlert', 'Campaign'] as const;
 
 /** A message can be cancelled only while it waits (server `cancel`). */
 export const CANCELLABLE_STATES: readonly string[] = ['queued', 'failed_retryable'];

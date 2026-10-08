@@ -12,7 +12,7 @@
  * The 1-bit threshold and the ESC/POS bytes are the main process's (core/escpos.ts).
  */
 
-import type { BonDoc, PrintDoc, ReceiptDoc, SlipDoc, ZDoc } from '../../core/printDocs';
+import type { BonDoc, PrintDoc, ReceiptDoc, SlipDoc, TicketDoc, ZDoc } from '../../core/printDocs';
 
 const FONT = '"Roboto", "Noto Sans Hebrew", Arial, sans-serif';
 const W = 384;
@@ -246,13 +246,98 @@ function drawSlipAt384(doc: SlipDoc): HTMLCanvasElement {
   font(ctx, plain.length <= 4 ? 120 : 84, 'bold');
   ctx.fillText(doc.label, W / 2, y);
   y += 46;
-  font(ctx, 30, 'bold');
-  ctx.fillText(doc.service, W / 2, y);
-  y += 38;
+  // "ללא סוג שירות": no service line.
+  if (doc.service) {
+    font(ctx, 30, 'bold');
+    ctx.fillText(doc.service, W / 2, y);
+    y += 38;
+  }
   font(ctx, 22);
   ctx.fillText(doc.summary, W / 2, y);
   y += 34;
   ctx.fillText(doc.footer, W / 2, y);
+  return c;
+}
+
+/* ------------------------------------------------------- an item ticket */
+
+/** "שובר" (ItemTicketRenderer): the item and its quantity as large as the paper allows; the rest small. */
+function drawTicketAt384(doc: TicketDoc): HTMLCanvasElement {
+  const box = W - 2 * PAD;
+  const run = (ctx: Ctx, draw: boolean): number => {
+    let y = 6;
+    const centred = (text: string, size: number, bold = false) => {
+      font(ctx, size, bold ? 'bold' : 'normal');
+      for (const row of wrap(ctx, text, box)) {
+        y += size + 6;
+        if (draw) {
+          ctx.textAlign = 'center';
+          ctx.fillText(row, W / 2, y);
+        }
+      }
+    };
+    const divider = () => {
+      y += 10;
+      if (draw) {
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(PAD, y);
+        ctx.lineTo(W - PAD, y);
+        ctx.stroke();
+      }
+      y += 6;
+    };
+    const fit = (text: string, max: number, min: number) => {
+      const longest = text.split(/\s+/).reduce((a, b) => (b.length > a.length ? b : a), '');
+      let size = max;
+      for (; size > min; size -= 2) {
+        font(ctx, size, 'bold');
+        if (ctx.measureText(longest).width <= box) break;
+      }
+      return size;
+    };
+    centred(doc.businessName, 26, true);
+    if (doc.shopName) centred(doc.shopName, 20);
+    centred(doc.title, 22, true);
+    divider();
+    if (doc.items.length === 1) {
+      const item = doc.items[0];
+      y += 4;
+      centred(item.name, fit(item.name, 52, 34), true);
+      y += 6;
+      centred(item.qty, item.qty.startsWith('כניסה') ? 48 : 60, true);
+      y += 6;
+    } else {
+      for (const item of doc.items) {
+        font(ctx, 38, 'bold');
+        const qWidth = ctx.measureText(item.qty).width;
+        font(ctx, 34, 'bold');
+        const rows = wrap(ctx, item.name, box - qWidth - 14);
+        y += 8;
+        rows.forEach((row, i) => {
+          y += 34 + 6;
+          if (draw) {
+            font(ctx, 34, 'bold');
+            ctx.textAlign = 'right';
+            ctx.fillText(row, W - PAD, y);
+            if (i === 0) {
+              font(ctx, 38, 'bold');
+              ctx.textAlign = 'left';
+              ctx.fillText(item.qty, PAD, y);
+            }
+          }
+        });
+      }
+      y += 6;
+    }
+    divider();
+    for (const f of doc.foot) centred(f, 20);
+    return Math.max(120, y + 18);
+  };
+  const probe = canvas(W, 10);
+  const h = run(probe.ctx, false);
+  const { c, ctx } = canvas(W, h);
+  run(ctx, true);
   return c;
 }
 
@@ -344,7 +429,8 @@ function drawBon(doc: BonDoc, w: number): HTMLCanvasElement {
     centred(doc.title, fitSize(doc.title, 56, 30), true);
     centred(doc.sub, 24, true);
     if (doc.notice) band(doc.notice, fitSize(doc.notice, 38, 24), true);
-    band(doc.dining === 'take_away' ? 'לקחת' : 'לשבת', 40, doc.dining === 'take_away');
+    // "ללא סוג שירות": no band.
+    if (doc.dining) band(doc.dining === 'take_away' ? 'לקחת' : 'לשבת', 40, doc.dining === 'take_away');
     divider();
     for (const l of doc.lines) {
       y += 8 * s;
@@ -427,6 +513,7 @@ export async function renderDoc(doc: PrintDoc, widthDots: number): Promise<{ wid
   if (doc.kind === 'bon') page = drawBon(doc, widthDots);
   else if (doc.kind === 'receipt') page = scaled(await drawReceiptAt384(doc), widthDots);
   else if (doc.kind === 'slip') page = scaled(drawSlipAt384(doc), widthDots);
+  else if (doc.kind === 'ticket') page = scaled(drawTicketAt384(doc), widthDots);
   else page = scaled(await drawZAt384(doc), widthDots);
   const data = page.getContext('2d')!.getImageData(0, 0, page.width, page.height).data;
   return { width: page.width, height: page.height, rgba: new Uint8Array(data.buffer.slice(0)) };

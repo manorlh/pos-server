@@ -8,13 +8,17 @@
  *
  * Roles belong to a company. The company's managers (and up) define them; a shop's
  * managers read them and assign their own shop's users. The server decides both
- * (`canEdit`, and the assignment endpoint's own check).
+ * (`canEdit`, and the assignment endpoint's own check). "הרשאות דשבורד" narrows it further:
+ * the page is the "קופאים (POS)" section (editing roles and assigning users needs it at edit),
+ * and the drawer's parameters are "הגדרות קופות" (edit there to change them).
  */
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/lib/auth';
+import { canAccess } from '@/lib/dashboardAccess';
+import { useDashboardAccess } from '@/lib/dashboardAccessApi';
 import { usePageScope } from '@/lib/scope';
 import { fetchPermissionCatalogue, fetchTillRoles } from '@/lib/tillRolesApi';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
@@ -29,7 +33,9 @@ type Tab = 'matrix' | 'users' | 'drawer' | 'audit';
 
 function RolesBody({ companyId, shopId }: { companyId: string; shopId: string | null }) {
   const t = useTranslations('tillRoles');
-  const canAssign = useAuth((s) => s.user?.canManagePosUsers === true);
+  const access = useDashboardAccess();
+  const posUsersEdit = canAccess(access, 'pos_users', 'edit');
+  const canAssign = useAuth((s) => s.user?.canManagePosUsers === true) && posUsersEdit;
   const [tab, setTab] = useState<Tab>('matrix');
   const catalogue = useQuery({ queryKey: ['till-permission-catalogue'], queryFn: fetchPermissionCatalogue, staleTime: 3_600_000 });
   const roles = useQuery({ queryKey: ['till-roles', companyId], queryFn: () => fetchTillRoles(companyId) });
@@ -43,6 +49,7 @@ function RolesBody({ companyId, shopId }: { companyId: string; shopId: string | 
       </p>
     );
   }
+  const data = { ...roles.data, canEdit: roles.data.canEdit && posUsersEdit };
   const tabs: Array<{ id: Tab; label: string }> = [
     { id: 'matrix', label: t('tabs.matrix') },
     { id: 'users', label: t('tabs.users') },
@@ -53,11 +60,16 @@ function RolesBody({ companyId, shopId }: { companyId: string; shopId: string | 
     <div className="space-y-4">
       <TabBar tabs={tabs} value={tab} onChange={setTab} label={t('tabs.label')} />
       {tab === 'matrix' ? (
-        <MatrixTab companyId={companyId} catalogue={catalogue.data} data={roles.data} />
+        <MatrixTab companyId={companyId} catalogue={catalogue.data} data={data} />
       ) : tab === 'users' ? (
-        <UsersTab companyId={companyId} shopId={shopId} catalogue={catalogue.data} data={roles.data} canAssign={canAssign} />
+        <UsersTab companyId={companyId} shopId={shopId} catalogue={catalogue.data} data={data} canAssign={canAssign} />
       ) : tab === 'drawer' ? (
-        <DrawerParamsTab companyId={companyId} shopId={shopId} canEdit={roles.data.canEdit} />
+        <DrawerParamsTab
+          companyId={companyId}
+          shopId={shopId}
+          canEdit={roles.data.canEdit}
+          sectionAllowsEdit={canAccess(access, 'till_settings', 'edit')}
+        />
       ) : (
         <AuditTab companyId={companyId} catalogue={catalogue.data} />
       )}

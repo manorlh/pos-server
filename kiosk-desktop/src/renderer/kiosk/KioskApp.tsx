@@ -6,6 +6,7 @@
  * network.
  */
 
+import { layoutOf, productColumns } from '@dash-lib/kioskLayout';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { Pencil } from 'lucide-react';
 import {
@@ -23,6 +24,7 @@ import {
   kioskOpenAt,
   messagePlacement,
   motionSpec,
+  profileMotion,
   resolveThemeColors,
   transitionSpec,
   stepMode,
@@ -44,6 +46,8 @@ import {
   ConfirmSheet,
   EntryWindow,
   Flyer,
+  KioskBackdrop,
+  KioskStatusBar,
   KioskSwap,
   MessageOverlay,
   PausedScreen,
@@ -53,6 +57,8 @@ import {
   SuccessScreen,
   TickerFrame,
   cardStyle,
+  chromeRoot,
+  statusLinePx,
   basketPricing,
   CashAtTillDone,
   lineUnitAgorot,
@@ -76,6 +82,7 @@ import {
   ReachSheets,
   ReachToggle,
   REACH_STRIP_PX,
+  useKioskRenderProfile,
 } from '@kiosk-shared/index';
 import { configuredText, kioskTextOf, webTextOverride } from '@dash-lib/kioskTexts';
 import { localDateTimeOf, promotionsOf } from '@dash-lib/kioskMoney';
@@ -91,6 +98,7 @@ import {
   reduce,
   rulesOf,
   serviceOnAttract,
+  orderServiceOf,
   successDone,
   wire,
   type FlowConfigIn,
@@ -339,7 +347,7 @@ export function KioskApp({ view }: { view: KioskView }) {
       // The unit prices and the total the customer saw: never charged if they moved (core/basketCheck.ts).
       expectedTotalAgorot: pricingRef.current.totalAgorot,
       lines: cartRef.current.map((l) => ({ key: l.key, productId: l.product.id, qty: l.qty, unitAgorot: lineUnitAgorot(l), options: orderOptionsOf(l), meal: orderMealOf(l), notes: l.note ? [l.note] : [] })),
-      service: flowRef.current.service ?? 'take_away',
+      service: orderServiceOf(flowRef.current.service, cfgIn),
       customerName: details.name.trim() || null,
       customerPhone: details.phone.trim() || null,
       tableRef: details.table.trim() || null,
@@ -347,7 +355,7 @@ export function KioskApp({ view }: { view: KioskView }) {
       tipPct: details.tipAgorot === null ? details.tipPct : null,
       tipAgorot: details.tipAgorot,
     }),
-    [details],
+    [details, cfgIn],
   );
 
   const startPayment = useCallback(async () => {
@@ -485,11 +493,15 @@ export function KioskApp({ view }: { view: KioskView }) {
   const wide = size.w >= 600;
   const panel = cartPanelShown(cfg.theme, size.w);
   const side = cfg.theme.categoryLayout !== 'top';
-  const motion = motionSpec(cfg.theme, cfg.general, cfg.motion);
-  // "הנפשות ומעברים": the dashboard's choices, all off with reduce motion.
-  const transitions = transitionSpec(cfg.motion, cfg.general);
+  // "אפקטים": the config's profile, or this device's (prefers-reduced-motion, a slow first-frames probe).
+  const profile = useKioskRenderProfile(cfg.motion.effects);
+  const played = profileMotion(cfg.motion, profile);
+  const motion = motionSpec(cfg.theme, cfg.general, played);
+  // "הנפשות ומעברים": the dashboard's choices (the light profile's cheaper ones), all off with reduce motion.
+  const transitions = transitionSpec(played, cfg.general);
   const colors = resolveThemeColors(cfg.theme);
-  const cols = catalogColumns(cfg.theme.gridDensity, wide, panel, side);
+  // "גודל מוצרים" (layout.productSize) moves the density's columns.
+  const cols = productColumns(catalogColumns(cfg.theme.gridDensity, wide, panel, side), layoutOf(cfg).productSize, size.w);
   const rules = { ...rulesOf(cfgIn, cart.length === 0), asksPayMethod: asksPay };
   const back = () => {
     const a = backAction(flow, rules);
@@ -555,7 +567,10 @@ export function KioskApp({ view }: { view: KioskView }) {
   };
 
   // "כיתוב רץ" on the attract screen: its start button and the rest are laid out on what the strip leaves.
-  const band = flow.screen === 'attract' ? tickerBandPx(cfg, 'attract', new Date(nowMs), FOOTER_PX) : { top: 0, bottom: 0 };
+  // The style's status line (tech) takes its height off the top of every screen.
+  const statusPx = statusLinePx({ cfg, c: colors });
+  const ticker = flow.screen === 'attract' ? tickerBandPx(cfg, 'attract', new Date(nowMs), FOOTER_PX) : { top: 0, bottom: 0 };
+  const band = { top: ticker.top + statusPx, bottom: ticker.bottom };
   const attractSize = { w: size.w, h: size.h - band.top - band.bottom };
   const attractBox = ctaBox(cfg.attract.cta, attractSize.w, attractSize.h);
   /** The start button's box over the whole window (below a strip at the top). */
@@ -604,6 +619,7 @@ export function KioskApp({ view }: { view: KioskView }) {
     panel,
     screen: band.top + band.bottom > 0 ? attractSize : size,
     ctaBox: attractBox,
+    light: profile === 'light',
     live,
   };
   live.noteField = (value, onChange) => <NoteField m={m} value={value} onOpen={() => setEntry(noteEntry(m, value, onChange))} />;
@@ -722,6 +738,7 @@ export function KioskApp({ view }: { view: KioskView }) {
       setProductId(p.id);
     },
     start: () => dispatch({ type: 'start' }),
+    serviceOnAttract: serviceOnAttract(cfgIn),
     touch: () => setLastTouch(Date.now()),
     // A voucher scanned on "איך תרצו לשלם?" is redeemed there.
     onVoucher: atPayMethod && voucherOffered && !till.busy ? (code) => void redeem(code) : null,
@@ -758,13 +775,14 @@ export function KioskApp({ view }: { view: KioskView }) {
   } as CSSProperties;
   const bgImage = cfg.theme.backgroundImage?.url;
   const onAttractService = serviceOnAttract(cfgIn);
+  const chrome = chromeRoot(m);
 
   return (
     <div
       ref={screenRef}
       dir="rtl"
-      className={`k-root relative h-screen w-screen overflow-hidden select-none ${cfg.general.reduceMotion ? 'k-reduce' : ''}`}
-      style={{ ...rootVars, background: colors.background, color: colors.text, fontFamily: m.font }}
+      className={`k-root relative h-screen w-screen overflow-hidden select-none ${cfg.general.reduceMotion ? 'k-reduce' : ''} ${chrome.className}`}
+      style={{ ...rootVars, ...chrome.style, background: colors.background, color: colors.text, fontFamily: m.font }}
       onPointerDownCapture={(e) => {
         setLastTouch(Date.now());
         // "ניהול הקיוסק": a 2 s press in the physical top-right corner (nothing drawn over it).
@@ -805,8 +823,18 @@ export function KioskApp({ view }: { view: KioskView }) {
           <div className="absolute inset-0" style={{ background: screen === 'attract' ? `${colors.background}66` : `${colors.background}D9` }} />
         </>
       ) : null}
+      {/* The style's backdrop pattern (tech): behind every screen. */}
+      <KioskBackdrop m={m} />
       {/* The ordering screens end above "POWERED BY R2M POS", so their bottom buttons never sit under it. */}
-      <div className="relative h-full" style={resting ? undefined : { paddingBottom: FOOTER_PX + (cfg.layout?.reachToggle ? REACH_STRIP_PX : 0) }}>
+      <div
+        className="relative h-full"
+        style={{
+          ...(resting ? {} : { paddingBottom: FOOTER_PX + (cfg.layout?.reachToggle ? REACH_STRIP_PX : 0) }),
+          ...(statusPx > 0 ? { paddingTop: statusPx } : {}),
+        }}
+      >
+        {/* "שורת מצב" (tech): the state, the order's number and the time, over the screens. */}
+        <KioskStatusBar m={m} screen={screen} pickup={live.success?.pickupLabel ?? till.placed?.pickupLabel ?? null} />
         {/* "נגיש" (layout.reach): the screens in the bottom half under a display (kiosk-shared/layouts). */}
         <ReachFrame m={m} screen={screen === 'confirm' ? 'catalog' : screen} dish={product} category={activeCategory}>
         {/* "מעבר בין מסכים": the dashboard's transition; the leaving screen is frozen and takes no taps. */}

@@ -11,9 +11,9 @@ const on = { reduceMotion: false };
 
 describe('the transitions on the Windows kiosk', () => {
   it('a config with no motion (an older cloud) still animates as its style says', () => {
-    for (const style of ['ios', 'wolt', 'classic', 'minimal_dark'] as const) {
+    for (const style of ['ios', 'wolt', 'classic', 'minimal_dark', 'tech'] as const) {
       const cfg = resolveKioskConfig({ theme: { uiStyle: style } });
-      expect(cfg.motion).toEqual(KIOSK_UI_PRESET_MOTION[style]);
+      expect(cfg.motion).toEqual({ ...KIOSK_UI_PRESET_MOTION[style], effects: 'auto' });
       const t = transitionSpec(cfg.motion, cfg.general);
       expect(t.categoryMs).toBeGreaterThan(0);
       expect(['pop', 'cascade']).toContain(t.itemsEnter);
@@ -35,7 +35,7 @@ describe('the transitions on the Windows kiosk', () => {
 
   it('windows: their class and time, nothing with "none" or reduce motion', () => {
     expect(sheetEnter(transitionSpec({ sheet: 'scale' }, on)).panel).toBe('k-anim k-sheet-scale');
-    expect(sheetEnter(transitionSpec({ sheet: 'slide_up', speed: 'fast' }, on)).style).toEqual({ '--k-ms': '294ms' });
+    expect(sheetEnter(transitionSpec({ sheet: 'slide_up', speed: 'fast' }, on)).style).toEqual({ '--k-ms': '195ms' });
     expect(sheetEnter(transitionSpec({ sheet: 'none' }, on))).toEqual({ panel: '', scrim: '', style: {} });
     expect(sheetEnter(transitionSpec({ sheet: 'fade' }, { reduceMotion: true })).panel).toBe('');
   });

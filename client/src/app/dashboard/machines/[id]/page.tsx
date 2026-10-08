@@ -67,6 +67,7 @@ import { TillResetButton } from '@/components/dashboard/machines/till-reset-dial
 import { TillReplacements } from '@/components/dashboard/machines/till-replacements';
 import { DeviceManagementCard } from '@/components/dashboard/machines/device-management';
 import { MachineLanServerCard } from '@/components/dashboard/machines/machine-lan-server-card';
+import { WorkConfigCard } from '@/components/dashboard/machines/work-config';
 import { tillResetTone, type TillResetRecord } from '@/lib/tillReset';
 import { IndependentTillBadge } from '@/components/dashboard/independent-till-badge';
 import { LatestTillZRequest } from '@/components/dashboard/till-z/till-z-request';
@@ -626,6 +627,10 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
 
       {/* "עדכון שקט": device owner / silent updates, how to turn it on (adb or QR), "הפעל מחדש". */}
       <DeviceManagementCard machine={machine} />
+
+      {/* "תצורת עבודה" (docs/SPEC_DEVICE_WORK_CONFIG.md): how the device works, each value with
+          where it comes from — set on the device or inherited from the shop / company. */}
+      {machine.shopId ? <WorkConfigCard machineId={machine.id} /> : null}
 
       {/* "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3): never the shop's local server. */}
       {!display ? <MachineLanServerCard machineId={machine.id} shopId={machine.shopId} /> : null}

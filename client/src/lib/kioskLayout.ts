@@ -24,6 +24,8 @@ export type LayoutCatalog = 'rail' | 'top' | 'landing' | 'list' | 'shelves' | 'm
 export type LayoutCategoryIcons = 'photo' | 'line' | 'filled' | 'duotone' | 'emoji' | 'none';
 export type LayoutRailSize = 's' | 'm' | 'l';
 export type LayoutLandingColumns = 2 | 3 | 4;
+/** "גודל מוצרים": the dishes' cards — s smaller (a column more), m as today, l larger (a column fewer). */
+export type LayoutProductSize = 's' | 'm' | 'l';
 export type LayoutHero = 'off' | 'manual' | 'auto';
 export type LayoutCard = 'tile' | 'row' | 'plate' | 'bleed' | 'button' | 'outlined';
 export type LayoutFlow = 'free' | 'guided';
@@ -41,6 +43,7 @@ export const LAYOUT_CATALOGS: LayoutCatalog[] = ['rail', 'top', 'landing', 'list
 export const LAYOUT_CATEGORY_ICONS: LayoutCategoryIcons[] = ['photo', 'line', 'filled', 'duotone', 'emoji', 'none'];
 export const LAYOUT_RAIL_SIZES: LayoutRailSize[] = ['s', 'm', 'l'];
 export const LAYOUT_LANDING_COLUMNS: LayoutLandingColumns[] = [2, 3, 4];
+export const LAYOUT_PRODUCT_SIZES: LayoutProductSize[] = ['s', 'm', 'l'];
 export const LAYOUT_HEROES: LayoutHero[] = ['off', 'manual', 'auto'];
 export const LAYOUT_CARDS: LayoutCard[] = ['tile', 'row', 'plate', 'bleed', 'button', 'outlined'];
 export const LAYOUT_FLOWS: LayoutFlow[] = ['free', 'guided'];
@@ -60,6 +63,7 @@ export const LAYOUT_VOCABULARY = {
   categoryIcons: LAYOUT_CATEGORY_ICONS,
   railSize: LAYOUT_RAIL_SIZES,
   landingColumns: LAYOUT_LANDING_COLUMNS,
+  productSize: LAYOUT_PRODUCT_SIZES,
   hero: LAYOUT_HEROES,
   card: LAYOUT_CARDS,
   flow: LAYOUT_FLOWS,
@@ -84,6 +88,8 @@ export interface KioskLayout {
   railSize: LayoutRailSize;
   /** landing: the tiles' columns. */
   landingColumns: LayoutLandingColumns;
+  /** "גודל מוצרים": the dishes' cards in every catalog (productColumns) — m as today. */
+  productSize: LayoutProductSize;
   /** landing: "8 מנות" under each tile. */
   landingShowCounts: boolean;
   /** shelves / top: a banner of catalog.featuredProductIds (manual — it never turns by itself). */
@@ -123,6 +129,7 @@ export const KIOSK_LAYOUT_DEFAULTS: KioskLayout = {
   categoryIcons: null,
   railSize: 'm',
   landingColumns: 3,
+  productSize: 'm',
   landingShowCounts: true,
   hero: 'off',
   magazineFeed: false,
@@ -431,6 +438,7 @@ export function validateLayout(cfg: Pick<KioskConfig, 'layout' | 'attract'>): La
       checkIn(out, p('categoryIcons'), l.categoryIcons, LAYOUT_CATEGORY_ICONS, true);
       checkIn(out, p('railSize'), l.railSize, LAYOUT_RAIL_SIZES);
       checkIn(out, p('landingColumns'), l.landingColumns, LAYOUT_LANDING_COLUMNS);
+      checkIn(out, p('productSize'), l.productSize, LAYOUT_PRODUCT_SIZES);
       checkIn(out, p('hero'), l.hero, LAYOUT_HEROES);
       checkIn(out, p('card'), l.card, LAYOUT_CARDS, true);
       checkIn(out, p('flow'), l.flow, LAYOUT_FLOWS);
@@ -570,6 +578,19 @@ export function railMeasures(size: LayoutRailSize, widthDp: number, availableDp:
   const width = Math.round(Math.min(Math.max(widthDp * share, 84), widthDp * 0.3));
   const imageDp = Math.max(36, Math.min(width - 20, itemDp - 40));
   return { itemDp, widthDp: width, imageDp };
+}
+
+/**
+ * "גודל מוצרים" on a catalog's dish grid: `base` — the columns the layout gives at "m" (today) —
+ * moved by the size: s a column more (smaller cards), l a column fewer (larger) but never under two
+ * tiles across from a 400 dp grid (one under it); rows (`row` cards) keep theirs. The Android
+ * kiosk's KioskLayouts.productColumns, number for number.
+ */
+export function productColumns(base: number, size: LayoutProductSize | null | undefined, widthDp: number, rows = false): number {
+  if (rows) return base;
+  if (size === 's') return base + 1;
+  if (size === 'l') return Math.max(Math.min(base, widthDp >= 400 ? 2 : 1), base - 1);
+  return base;
 }
 
 /** landing: the tiles' columns on a screen `widthDp` wide (never more than fit 120 dp tiles). */

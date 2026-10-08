@@ -1371,13 +1371,13 @@ def history(db: Session, shop: Shop, limit: int = 50) -> List[Dict[str, Any]]:
 
 def check_read(db: Session, user: User, shop: Shop) -> None:
     """Those in charge of the shop: the super admin, a distributor, its company's managers, its own."""
-    from app.services.company_hierarchy import user_covers_company
+    from app.services.company_hierarchy import user_covers_shop
     from app.services.permission_matrix import SHOP_SCOPED_ROLES
 
     role = getattr(user, "role", None)
     if role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
         return
-    if role == UserRole.COMPANY_MANAGER and user_covers_company(db, user, shop.company_id):
+    if role == UserRole.COMPANY_MANAGER and user_covers_shop(db, user, shop):
         return
     if role in SHOP_SCOPED_ROLES and str(getattr(user, "shop_id", None)) == str(shop.id):
         return
@@ -1397,13 +1397,13 @@ def shops_in_scope(
     db: Session, user: User, tenant_id, *, company_id=None, shop_id=None
 ) -> List[Shop]:
     """The active shops of the tenant this user sees, narrowed to a company (and its subsidiaries) or a shop."""
-    from app.services.company_hierarchy import company_scope_ids, descendant_company_ids
+    from app.services.company_hierarchy import descendant_company_ids, visible_shop_ids
     from app.services.permission_matrix import SHOP_SCOPED_ROLES
 
     q = db.query(Shop).filter(Shop.tenant_id == tenant_id)
     role = getattr(user, "role", None)
     if role == UserRole.COMPANY_MANAGER:
-        q = q.filter(Shop.company_id.in_(company_scope_ids(db, user)))
+        q = q.filter(Shop.id.in_(visible_shop_ids(db, user)))
     elif role in SHOP_SCOPED_ROLES:
         q = q.filter(Shop.id == user.shop_id)
     elif role not in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):

@@ -49,6 +49,12 @@ export const KIOSK_RENDERERS: readonly KioskRenderer[] = ['native', 'web'];
 export interface KioskGeneral {
   fulfillmentMode: FulfillmentMode;
   serviceTypes: ServiceType[];
+  /**
+   * "סוג שירות": `types` (default) — as `serviceTypes` says: asked with two, else every order is
+   * the one; `none` — "ללא סוג שירות": never asked, and no service word anywhere for the order
+   * (screens, slip, bon, receipt, KDS); `serviceTypes` stays as it was, for the day it is back.
+   */
+  serviceMode: ServiceMode;
   askTableNumber: boolean;
   languages: KioskLanguage[];
   skipCart: SkipCartMode;
@@ -79,6 +85,8 @@ export interface KioskGeneral {
   serviceSelect: ServiceSelect;
 }
 
+export type ServiceMode = 'types' | 'none';
+export const SERVICE_MODES: ServiceMode[] = ['types', 'none'];
 export type ServicePlacement = 'after_start' | 'attract';
 export const SERVICE_PLACEMENTS: ServicePlacement[] = ['after_start', 'attract'];
 export type ServiceSelect = 'confirm' | 'instant';
@@ -129,8 +137,8 @@ export type ImageRatio = '1:1' | '4:3' | '16:9';
 export type CategoryStyle = 'chips' | 'tabs' | 'images';
 /** The categories: a rail on the start side (right in RTL), or the strip across the top. */
 export type CategoryLayout = 'side' | 'top';
-/** "סגנון ממשק" — see KIOSK_UI_PRESETS. */
-export type UiStyle = 'ios' | 'wolt' | 'classic' | 'minimal_dark';
+/** "סגנון ממשק" — see KIOSK_UI_PRESETS ("tech": "טכנולוגי", its chrome in kioskChrome). */
+export type UiStyle = 'ios' | 'wolt' | 'classic' | 'minimal_dark' | 'tech';
 export type TypeScale = 'normal' | 'large' | 'xlarge';
 export type TypeWeight = 'light' | 'regular' | 'bold';
 /** The basket while ordering: the floating bar, or a side panel on a wide screen. */
@@ -456,6 +464,12 @@ export interface KioskPayment {
   /** "שלח למטבח לפני תשלום": the bon of an order to pay at the till prints at once (off: once paid). */
   cashAtTillKitchenBeforePay: boolean;
   /**
+   * "לוגו במסך התשלום": its own picture (POST /kiosks/media), at the top of the screens that wait
+   * for the payment — as it is ("plain", a transparent PNG) or on a rounded light plate ("plate").
+   * No picture: nothing shows. Optional on the wire: a server before it sends none.
+   */
+  waitLogo?: KioskWaitLogo;
+  /**
    * "חובה / רשות / כבוי" for the steps that are not a customer field (STEP_MODE_KEYS; `stepMode`
    * gives the effective one). Optional on the wire: a server before it sends none — the defaults.
    */
@@ -480,6 +494,21 @@ export const STEP_MODE_DEFAULTS: Record<StepModeKey, CustomerFieldMode> = {
   upsellCheckout: 'optional',
 };
 
+export type WaitLogoStyle = 'plain' | 'plate';
+export const WAIT_LOGO_STYLES: WaitLogoStyle[] = ['plain', 'plate'];
+export interface KioskWaitLogo {
+  media: MediaRef | null;
+  style: WaitLogoStyle;
+}
+
+/** The payment-wait logo to draw, or null: none uploaded (or a config from before it). */
+export function waitLogoOf(payment: { waitLogo?: Partial<KioskWaitLogo> | null } | null | undefined): { url: string; plate: boolean } | null {
+  const w = payment?.waitLogo;
+  const url = w?.media?.url;
+  if (!url) return null;
+  return { url, plate: w?.style === 'plate' };
+}
+
 export type BonMode = 'routing' | 'single';
 
 export interface KioskPrinting {
@@ -491,6 +520,12 @@ export interface KioskPrinting {
   pickupSlip: boolean;
   /** An unprinted bon prints again by itself when the printer comes back, if younger than this (min); 0: never. */
   bonAutoRetryMin: number;
+  /**
+   * "בון מטבח במדפסת הקיוסק" (off by default, the server's kiosk_config.py): the kiosk's own printer
+   * may take its kitchen bon — when it has no kitchen printer, or the one bon printer named is its
+   * own. Off: the bon never prints on the kiosk (a kitchen printer that does not answer keeps it).
+   */
+  bonOnKiosk: boolean;
 }
 
 export type PickupScope = 'kiosk' | 'shop';
@@ -561,6 +596,14 @@ export const SCREEN_CHANGE_FX: ScreenChangeFx[] = ['slide', 'fade', 'zoom', 'non
 export const SHEET_FX: SheetFx[] = ['slide_up', 'scale', 'fade', 'none'];
 export const ADD_TO_CART_FX: AddToCartFx[] = ['fly', 'bounce', 'none'];
 export const MOTION_SPEEDS: MotionSpeed[] = ['fast', 'normal', 'relaxed'];
+/**
+ * "אפקטים" (`motion.effects`; the server's MOTION_EFFECTS, the till's KioskPerfRules.EFFECTS):
+ * "auto" — the device decides (the till by its strength; the web kiosks by prefers-reduced-motion
+ * and a short slow-frame probe), "full" — every effect, "light" — the cheaper variant of each
+ * (kioskRenderProfile, lightenMotion). Not a style's choice: no preset sets it.
+ */
+export type MotionEffects = 'auto' | 'full' | 'light';
+export const MOTION_EFFECTS: MotionEffects[] = ['auto', 'full', 'light'];
 
 export interface KioskMotionSettings {
   /** The dishes' grid when the customer picks another category (one category at a time). */
@@ -573,8 +616,10 @@ export interface KioskMotionSettings {
   sheet: SheetFx;
   /** "fly": the pop-and-fly into the basket; "bounce": only the basket button bounces. */
   addToCart: AddToCartFx;
-  /** Scales every duration above (fast 0.7, normal 1, relaxed 1.35). */
+  /** Scales every duration above (fast 0.75, normal 1, relaxed 1.35). */
   speed: MotionSpeed;
+  /** "אפקטים": everything, the cheaper variant of each, or the device decides (MotionEffects). */
+  effects: MotionEffects;
 }
 
 /**
@@ -716,6 +761,7 @@ export const KIOSK_DEFAULTS: KioskConfig = {
   general: {
     fulfillmentMode: 'BON',
     serviceTypes: ['take_away', 'eat_in'],
+    serviceMode: 'types',
     askTableNumber: false,
     languages: ['he'],
     skipCart: 'off',
@@ -823,6 +869,7 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     checkoutSteps: ['tip', 'details', 'payMethod'],
     cashAtTillExpiryMin: 30,
     cashAtTillKitchenBeforePay: false,
+    waitLogo: { media: null, style: 'plain' },
     stepModes: { ...STEP_MODE_DEFAULTS },
   },
   printing: {
@@ -832,6 +879,7 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     receiptPrinterId: null,
     pickupSlip: true,
     bonAutoRetryMin: 10,
+    bonOnKiosk: false,
   },
   pickup: { scope: 'kiosk', prefix: '', start: 1, max: 999 },
   timers: { inactivitySec: 60, warningSec: 20, successSec: 12, attractSlideSec: 8 },
@@ -846,7 +894,8 @@ export const KIOSK_DEFAULTS: KioskConfig = {
   upsell: { maxShown: 2 },
   success: { message: '', image: null },
   // The "wolt" style's (KIOSK_UI_PRESET_MOTION): the category slides in, its dishes pop in one after another.
-  motion: { categorySwitch: 'slide', itemsEnter: 'cascade', screenChange: 'slide', sheet: 'scale', addToCart: 'fly', speed: 'normal' },
+  // "אפקטים": the device decides.
+  motion: { categorySwitch: 'slide', itemsEnter: 'cascade', screenChange: 'slide', sheet: 'scale', addToCart: 'fly', speed: 'normal', effects: 'auto' },
   // "כיתוב רץ": off; once on, on the menu and the basket, under the header, slowly.
   ticker: {
     enabled: false,
@@ -1072,7 +1121,7 @@ export function stripNulls(layer: unknown): KioskLayer {
 
 /* ------------------------------------------------------- "סגנון ממשק" */
 
-export const UI_STYLES: UiStyle[] = ['ios', 'wolt', 'classic', 'minimal_dark'];
+export const UI_STYLES: UiStyle[] = ['ios', 'wolt', 'classic', 'minimal_dark', 'tech'];
 
 /** The theme keys a preset decides (unless a layer sets them). */
 export const PRESET_THEME_KEYS = [
@@ -1144,6 +1193,19 @@ export const KIOSK_UI_PRESETS: Record<UiStyle, UiPreset> = {
     typeScale: 'normal', typeWeight: 'light',
     cartStyle: 'bar', animation: 'subtle', showDescriptions: true,
   },
+  // "טכנולוגי": near-black, one electric accent (the brand colour; dark words on it everywhere),
+  // a semi-tone surface for the panels, 1 dp outlines instead of shadows, sharp corners. Its grid,
+  // status line, figures and micro-motion are its chrome (kioskChrome).
+  tech: {
+    mode: 'dark', font: 'heebo',
+    primaryColor: '#22E1FF', accentColor: '#22E1FF',
+    backgroundColor: '#0B0F14', surfaceColor: '#111821', textColor: '#E6EDF3',
+    cornerRadius: 10, cardStyle: 'outlined', buttonShape: 'rounded',
+    gridDensity: 'comfortable', imageRatio: '4:3',
+    categoryStyle: 'tabs', categoryLayout: 'side',
+    typeScale: 'normal', typeWeight: 'regular',
+    cartStyle: 'bar', animation: 'subtle', showDescriptions: true,
+  },
 };
 
 /** The attract button keys a style decides (unless a layer sets them). */
@@ -1184,10 +1246,18 @@ export const KIOSK_UI_PRESET_CTA: Record<UiStyle, UiPresetCta> = {
     shadow: false, icon: 'arrow', iconPosition: 'end', animation: 'glow',
     borderColor: '#C9A227', borderWidth: 1,
   },
+  // Crisp and still: the attract screen's idle motion is the style's scan line (kioskChrome).
+  tech: {
+    size: 'l', position: 'bottom_center', fontSize: 22, fontWeight: 'bold',
+    shadow: false, icon: 'arrow', iconPosition: 'end', animation: 'none',
+    borderColor: null, borderWidth: 0,
+  },
 };
 
-/** The "הנפשות ומעברים" keys a style decides (unless a layer sets them): all of them. */
+/** The "הנפשות ומעברים" keys a style decides (unless a layer sets them): all but "אפקטים" (the device's). */
 export const PRESET_MOTION_KEYS = ['categorySwitch', 'itemsEnter', 'screenChange', 'sheet', 'addToCart', 'speed'] as const;
+export type PresetMotionKey = (typeof PRESET_MOTION_KEYS)[number];
+export type UiPresetMotion = Pick<KioskMotionSettings, PresetMotionKey>;
 
 /**
  * Each style's transitions — the server's UI_PRESET_MOTION and the till's KioskMotionConfig.PRESETS.
@@ -1195,11 +1265,13 @@ export const PRESET_MOTION_KEYS = ['categorySwitch', 'itemsEnter', 'screenChange
  * add-to-cart stays the pop-and-fly everywhere (docs/SPEC_KIOSK.md §18), at normal speed (the owner: slow
  * enough to see the motion).
  */
-export const KIOSK_UI_PRESET_MOTION: Record<UiStyle, KioskMotionSettings> = {
+export const KIOSK_UI_PRESET_MOTION: Record<UiStyle, UiPresetMotion> = {
   ios: { categorySwitch: 'slide', itemsEnter: 'pop', screenChange: 'slide', sheet: 'slide_up', addToCart: 'fly', speed: 'normal' },
   wolt: { categorySwitch: 'slide', itemsEnter: 'cascade', screenChange: 'slide', sheet: 'scale', addToCart: 'fly', speed: 'normal' },
   classic: { categorySwitch: 'push', itemsEnter: 'pop', screenChange: 'fade', sheet: 'scale', addToCart: 'fly', speed: 'normal' },
   minimal_dark: { categorySwitch: 'fade_scale', itemsEnter: 'cascade', screenChange: 'fade', sheet: 'fade', addToCart: 'fly', speed: 'normal' },
+  // Crisp and cheap: opacity for the screens and the category, the cards in one after another.
+  tech: { categorySwitch: 'fade', itemsEnter: 'cascade', screenChange: 'fade', sheet: 'scale', addToCart: 'fly', speed: 'normal' },
 };
 
 /** Where a style decides values: the theme's keys, the attract button's and the transitions. */
@@ -1509,6 +1581,7 @@ export function validateKioskConfig(
   checkEnum(e, 'general.skipCart', g.skipCart, ['off', 'direct', 'confirm']);
   checkEnum(e, 'general.soldOutMode', g.soldOutMode, ['disable', 'hide']);
   checkEnum(e, 'general.renderer', g.renderer, KIOSK_RENDERERS);
+  checkEnum(e, 'general.serviceMode', g.serviceMode, SERVICE_MODES);
   checkEnum(e, 'general.servicePlacement', g.servicePlacement, SERVICE_PLACEMENTS);
   checkEnum(e, 'general.serviceSelect', g.serviceSelect, SERVICE_SELECTS);
   for (const key of ['askTableNumber', 'upsellEnabled', 'searchEnabled', 'notesEnabled', 'quickNotesEnabled', 'showAllergens', 'showDietary', 'reduceMotion', 'offlineSound', 'blockWhenOffline', 'offlineNotice'] as const) {
@@ -1668,6 +1741,10 @@ export function validateKioskConfig(
     e.push({ path: 'payment.tipPresets', code: 'range', params: { min: L.tipPreset.min, max: L.tipPreset.max } });
   }
   checkEnum(e, 'payment.receiptPolicy', pay.receiptPolicy, ['always', 'ask', 'never']);
+  if (pay.waitLogo !== undefined) {
+    checkMedia(e, 'payment.waitLogo.media', pay.waitLogo?.media ?? null, ['image']);
+    checkEnum(e, 'payment.waitLogo.style', pay.waitLogo?.style, WAIT_LOGO_STYLES);
+  }
   checkEnum(e, 'payment.customerName', pay.customerName, ['off', 'optional', 'required']);
   checkEnum(e, 'payment.customerPhone', pay.customerPhone, ['off', 'optional', 'required']);
   if (!isInt(pay.minOrderAgorot) || pay.minOrderAgorot < 0) e.push({ path: 'payment.minOrderAgorot', code: 'nonNegative' });
@@ -1701,6 +1778,7 @@ export function validateKioskConfig(
   checkRange(e, 'printing.bonCopies', pr.bonCopies, L.bonCopies);
   if (typeof pr.pickupSlip !== 'boolean') e.push({ path: 'printing.pickupSlip', code: 'enum' });
   checkRange(e, 'printing.bonAutoRetryMin', pr.bonAutoRetryMin, { min: 0, max: 120 });
+  if (typeof pr.bonOnKiosk !== 'boolean') e.push({ path: 'printing.bonOnKiosk', code: 'enum' });
 
   const pk = cfg.pickup;
   checkEnum(e, 'pickup.scope', pk.scope, ['kiosk', 'shop']);
@@ -1759,6 +1837,7 @@ export function validateKioskConfig(
       checkEnum(e, 'motion.sheet', mo.sheet, SHEET_FX);
       checkEnum(e, 'motion.addToCart', mo.addToCart, ADD_TO_CART_FX);
       checkEnum(e, 'motion.speed', mo.speed, MOTION_SPEEDS);
+      checkEnum(e, 'motion.effects', mo.effects, MOTION_EFFECTS);
     }
   }
 
@@ -2065,7 +2144,7 @@ export function kioskTipAsked(payment: Pick<KioskPayment, 'tipEnabled' | 'tipPre
 }
 
 export interface StepModeConfigIn {
-  general: Partial<Pick<KioskGeneral, 'serviceTypes' | 'upsellEnabled'>>;
+  general: Partial<Pick<KioskGeneral, 'serviceTypes' | 'serviceMode' | 'upsellEnabled'>>;
   payment: Partial<Pick<KioskPayment, 'tipEnabled' | 'tipPresets' | 'tipOther' | 'methods' | 'stepModes' | 'customerName' | 'customerPhone' | 'tableNumber'>>;
 }
 
@@ -2083,11 +2162,44 @@ export function stepMode(cfg: StepModeConfigIn, key: StepModeKey | 'customerName
   }
   const own = pay.stepModes?.[key];
   const mode = valid(own) ? own : STEP_MODE_DEFAULTS[key];
-  if (key === 'service' && (cfg.general?.serviceTypes?.length ?? 2) <= 1) return 'off';
+  if (key === 'service' && ((cfg.general?.serviceTypes?.length ?? 2) <= 1 || cfg.general?.serviceMode === 'none')) return 'off';
   if (key === 'tip' && !kioskTipAsked({ tipEnabled: !!pay.tipEnabled, tipPresets: pay.tipPresets ?? [], tipOther: pay.tipOther !== false })) return 'off';
   if (key === 'payMethod' && !kioskAsksPayMethod(pay.methods)) return 'off';
   if (key.startsWith('upsell') && cfg.general?.upsellEnabled === false) return 'off';
   return mode;
+}
+
+/**
+ * The designer's "סוג שירות" (4 choices): "שואלים" (both types — their order is the buttons'),
+ * "תמיד טייק אווי" / "תמיד ישיבה במקום" (one type: never asked, every order is it — and says it),
+ * "ללא" (serviceMode none: never asked, no service at all).
+ */
+export type ServiceChoice = 'ask' | 'take_away' | 'eat_in' | 'none';
+export const SERVICE_CHOICES: ServiceChoice[] = ['ask', 'take_away', 'eat_in', 'none'];
+
+/** The choice a config's `serviceTypes` / `serviceMode` make. */
+export function serviceChoiceOf(g: Partial<Pick<KioskGeneral, 'serviceTypes' | 'serviceMode'>> | null | undefined): ServiceChoice {
+  if (g?.serviceMode === 'none') return 'none';
+  const list = (Array.isArray(g?.serviceTypes) ? g.serviceTypes : []).filter((v) => SERVICE_TYPES.includes(v));
+  if (list.length > 1) return 'ask';
+  return list[0] === 'eat_in' ? 'eat_in' : 'take_away';
+}
+
+/**
+ * The fields a choice writes. "ללא" keeps `serviceTypes` as it was (back to "שואלים" finds the
+ * buttons' order again); "שואלים" keeps the order it had, else the one type first.
+ */
+export function serviceChoicePatch(
+  g: Partial<Pick<KioskGeneral, 'serviceTypes' | 'serviceMode'>> | null | undefined,
+  choice: ServiceChoice,
+): Pick<KioskGeneral, 'serviceTypes' | 'serviceMode'> {
+  const list = (Array.isArray(g?.serviceTypes) ? g.serviceTypes : []).filter((v) => SERVICE_TYPES.includes(v));
+  if (choice === 'none') return { serviceTypes: list.length > 0 ? list : ['take_away'], serviceMode: 'none' };
+  if (choice === 'ask') {
+    const first = list[0] ?? 'take_away';
+    return { serviceTypes: list.length > 1 ? list : [first, ...SERVICE_TYPES.filter((x) => x !== first)], serviceMode: 'types' };
+  }
+  return { serviceTypes: [choice], serviceMode: 'types' };
 }
 
 /** The step's default answer when it is passed ("optional") or off: the first service type, no tip, the first method that pays. */
@@ -2179,7 +2291,8 @@ export interface KioskServiceLook {
 /**
  * "איך תרצו לקבל את ההזמנה?": the two choices' colours by UI style (the till's KioskServiceLook):
  * ios a soft tint with the icon on a brand badge; wolt the brand-to-accent sweep; classic a flat
- * bold fill; minimal_dark its own surface ringed in the brand colour. The words always read (3:1).
+ * bold fill; minimal_dark its own surface ringed in the brand colour; tech its semi-tone panel
+ * outlined in the accent, the icon on a faint accent badge. The words always read (3:1).
  */
 export function kioskServiceLook(
   theme: Pick<KioskTheme, 'uiStyle' | 'primaryColor' | 'accentColor'>,
@@ -2204,6 +2317,8 @@ export function kioskServiceLook(
       return filled(p, p, false);
     case 'minimal_dark':
       return { from: surface, to: surface, diagonal: false, ink: text, badge: alpha(p, 0x2e), icon: contrastRatio(p, surface) >= REST_LARGE_TEXT_CONTRAST ? p : text, border: p };
+    case 'tech':
+      return { from: surface, to: surface, diagonal: false, ink: text, badge: alpha(p, 0x1f), icon: contrastRatio(p, surface) >= REST_LARGE_TEXT_CONTRAST ? p : text, border: p };
     default:
       return filled(p, mixHex(mixHex(p, theme.accentColor, 0.5), '#000000', 0.18), true);
   }
@@ -2489,14 +2604,17 @@ export interface MotionSpec {
 }
 
 /**
- * The add never takes longer (the till's KioskMotion.ADD_MAX_MS): ~700 ms at normal speed (the
- * owner, 07.10.2026: slow enough to see), under a second at "relaxed".
+ * The add never takes longer (the till's KioskMotion.ADD_MAX_MS): ~560 ms at normal speed (the
+ * owner, 07.10.2026: seen, but never slow), under a second at "relaxed".
  */
 export const ADD_MAX_MS = 1000;
 export const ADD_POP_LIFT_DP = 18;
 export const ADD_END_SCALE = 0.25;
 export const ADD_END_ALPHA = 0.15;
 const ADD_FADE_FROM = 0.55;
+/** The pop-and-fly at normal speed (the till's KioskMotion.of; kiosk_motion_timings.json "add"): ~560 ms, the total counting in 360. */
+export const ADD_LIVELY: MotionSpec = { popMs: 160, popScale: 1.45, flyMs: 400, arcDp: 170, fadeMs: 0, bounce: 1.25, countUpMs: 360 };
+export const ADD_SUBTLE: MotionSpec = { popMs: 150, popScale: 1.3, flyMs: 380, arcDp: 110, fadeMs: 0, bounce: 1.12, countUpMs: 300 };
 
 /**
  * The add-to-cart motion by `theme.animation` (the till's KioskMotion, docs/SPEC_KIOSK.md §18):
@@ -2515,9 +2633,7 @@ export function motionSpec(
   if (add === 'none') return { popMs: 0, popScale: 1, flyMs: 0, arcDp: 0, fadeMs: 0, bounce: 0, countUpMs: 0 };
   if (general.reduceMotion) return { popMs: 0, popScale: 1, flyMs: 0, arcDp: 0, fadeMs: 280, bounce: 0, countUpMs: 0 };
   const lively = theme.animation === 'lively';
-  const base: MotionSpec = lively
-    ? { popMs: 200, popScale: 1.45, flyMs: 500, arcDp: 170, fadeMs: 0, bounce: 1.25, countUpMs: 450 }
-    : { popMs: 180, popScale: 1.3, flyMs: 460, arcDp: 110, fadeMs: 0, bounce: 1.12, countUpMs: 360 };
+  const base: MotionSpec = lively ? { ...ADD_LIVELY } : { ...ADD_SUBTLE };
   const k = speedFactor(motion?.speed);
   // "קפיצה": no copy flies, the basket button bounces (harder) and the total counts up.
   const countUpMs = Math.round(base.countUpMs * k);
@@ -2530,13 +2646,12 @@ export function motionSpec(
 /* ------------------------------------------------- "הנפשות ומעברים" */
 
 /**
- * "מהירות": every transition's duration times this. Normal is slow enough to see the motion (the
- * owner, 07.10.2026: "צריך פחות מהיר שיוכלו לראות שזה מונפש"); fast is about the first, quicker
- * timing; relaxed 1.4× normal.
+ * "מהירות": every transition's duration times this — the till's KioskTransitions.speedFactor: fast
+ * three quarters of normal, relaxed a third longer (calm, never dragging).
  */
-export const MOTION_SPEED_FACTOR: Record<MotionSpeed, number> = { fast: 0.7, normal: 1, relaxed: 1.4 };
+export const MOTION_SPEED_FACTOR: Record<MotionSpeed, number> = { fast: 0.75, normal: 1, relaxed: 1.35 };
 /** The cascade at normal speed: the last visible card starts at most this long after the first (× the speed). */
-export const STAGGER_CAP_MS = 600;
+export const STAGGER_CAP_MS = 200;
 /** Only the first cards (about a screenful) are staggered; the rest come with the last of them. */
 export const STAGGER_MAX_CARDS = 12;
 
@@ -2545,25 +2660,104 @@ function speedFactor(speed: unknown): number {
 }
 
 /**
- * Each transition's own duration at normal speed (ms), the till's KioskTransitions key for key:
- * a screen ~480, a category ~450, each card's pop ~380 with ~70 between cards (a grid within ~1 s),
- * a window ~400.
+ * Each transition's own duration at normal speed (ms), the till's KioskTransitions key for key —
+ * snappy (the owner, 07.10.2026: "המעברים עוברים מאוד לאט, נותנים הרגשה של איטיות"): a screen
+ * ≤ 220, a category ~240 (a push 280: both screens as one strip), each card ~260 with 16–32 between
+ * cards and the last one starting by 200 ms, a window ~220. The shared golden is
+ * server/tests/fixtures/kiosk_motion_timings.json.
  */
 export const TRANSITION_BASE_MS = {
-  categorySwitch: { slide: 450, fade: 380, fade_scale: 420, push: 480, none: 0 },
-  itemsEnter: { pop: 380, cascade: 380, rise: 400, flip: 440, none: 0 },
+  categorySwitch: { slide: 240, fade: 200, fade_scale: 220, push: 280, none: 0 },
+  itemsEnter: { pop: 260, cascade: 260, rise: 280, flip: 300, none: 0 },
   /** The gap between one card's start and the next one's. */
-  stagger: { pop: 25, cascade: 70, rise: 50, flip: 60, none: 0 },
-  screenChange: { slide: 480, fade: 420, zoom: 460, none: 0 },
-  sheet: { slide_up: 420, scale: 400, fade: 360, none: 0 },
+  stagger: { pop: 16, cascade: 32, rise: 24, flip: 28, none: 0 },
+  screenChange: { slide: 220, fade: 180, zoom: 200, none: 0 },
+  sheet: { slide_up: 260, scale: 220, fade: 180, none: 0 },
 } as const;
 
 /**
- * The curves (CSS; the till's KioskEase): enter decelerates (Material's emphasized decelerate),
- * a leaving screen accelerates away — never linear.
+ * The curves (CSS; the till's KioskEase): arrivals decelerate — off the mark at once, a short soft
+ * landing (no long crawl at the end, which read as lag); leaving accelerates away and is gone by
+ * the end; a push moves both screens on one curve, as a strip. The pop's rise and settle are its
+ * own (kItemPop). Never linear.
  */
-export const EASE_ENTER = 'cubic-bezier(.05,.7,.1,1)';
-export const EASE_EXIT = 'cubic-bezier(.3,0,.8,.15)';
+export const EASE_ENTER = 'cubic-bezier(.2,.7,.2,1)';
+export const EASE_EXIT = 'cubic-bezier(.4,0,1,1)';
+export const EASE_STRIP = 'cubic-bezier(.3,0,.2,1)';
+export const EASE_POP_RISE = 'cubic-bezier(.22,1,.36,1)';
+export const EASE_POP_SETTLE = 'cubic-bezier(.45,0,.55,1)';
+
+/* -------------------------------------------- "אפקטים": the render profile */
+// The till's domain/KioskPerf.kt (KioskMotionConfig.lightened, KioskFrameVerdict), the same rules.
+
+export type KioskRenderProfile = 'full' | 'light';
+
+/**
+ * The light profile's transitions (the till's KioskMotionConfig.lightened): every screen, category
+ * and window fades ("none" stays none), no cascade of cards, at the fast pace. The add keeps its kind.
+ */
+export function lightenMotion<T extends Partial<KioskMotionSettings>>(motion: T): T {
+  const fade = <F extends string>(v: F | undefined): F | 'fade' | undefined => (v === 'none' ? v : 'fade');
+  return {
+    ...motion,
+    categorySwitch: fade(motion.categorySwitch),
+    itemsEnter: 'none',
+    screenChange: fade(motion.screenChange),
+    sheet: fade(motion.sheet),
+    speed: 'fast',
+  } as T;
+}
+
+/** A web kiosk's first frames, as measured (rAF intervals) — the till's KioskFrameVerdict. */
+export interface FrameVerdict {
+  frames: number;
+  p50Ms: number;
+  p90Ms: number;
+  /** The share of frames longer than FRAME_SLOW_FACTOR frame budgets. */
+  slowShare: number;
+  budgetMs: number;
+  /** Too slow for everything: enough frames, and a quarter of them late or the slowest tenth at two budgets. */
+  slow: boolean;
+}
+
+/** The probe: frames measured after a short warm-up; fewer than FRAME_MIN judge nothing. */
+export const FRAME_WARMUP = 20;
+export const FRAME_SAMPLE = 150;
+export const FRAME_MIN = 120;
+export const FRAME_SLOW_FACTOR = 1.25;
+export const FRAME_SLOW_SHARE = 0.25;
+export const FRAME_P90_BUDGETS = 2;
+
+export function frameVerdict(durationsMs: readonly number[], refreshHz = 60): FrameVerdict {
+  const budgetMs = 1000 / (refreshHz >= 20 && refreshHz <= 240 ? refreshHz : 60);
+  const sorted = durationsMs.filter((d) => Number.isFinite(d) && d >= 0).sort((a, b) => a - b);
+  const n = sorted.length;
+  if (n === 0) return { frames: 0, p50Ms: 0, p90Ms: 0, slowShare: 0, budgetMs, slow: false };
+  const p50Ms = sorted[Math.round((n - 1) * 0.5)];
+  const p90Ms = sorted[Math.min(n - 1, Math.max(0, Math.ceil(n * 0.9) - 1))];
+  const slowShare = sorted.filter((d) => d > budgetMs * FRAME_SLOW_FACTOR).length / n;
+  const slow = n >= FRAME_MIN && (slowShare >= FRAME_SLOW_SHARE || p90Ms >= budgetMs * FRAME_P90_BUDGETS);
+  return { frames: n, p50Ms, p90Ms, slowShare, budgetMs, slow };
+}
+
+/**
+ * How a web kiosk draws: the config's explicit choice first ("full" / "light"); with "auto" the
+ * device's prefers-reduced-motion or a slow first-frames probe make it light, else full. (The
+ * dashboard's preview passes no device: "auto" previews the full look.)
+ */
+export function kioskRenderProfile(
+  effects: unknown,
+  device: { reducedMotion?: boolean; slow?: boolean | null } = {},
+): KioskRenderProfile {
+  if (effects === 'full') return 'full';
+  if (effects === 'light') return 'light';
+  return device.reducedMotion || device.slow ? 'light' : 'full';
+}
+
+/** The transitions as a profile plays them: the light one's cheaper variants (lightenMotion). */
+export function profileMotion<T extends Partial<KioskMotionSettings>>(motion: T, profile: KioskRenderProfile): T {
+  return profile === 'light' ? lightenMotion(motion) : motion;
+}
 
 /** The transitions as the screens play them: each effect and its duration (ms, speed applied). */
 export interface TransitionSpec {
@@ -3011,7 +3205,8 @@ export interface KioskRestLook {
  * The closed screen's colours by UI style, as its attract screen colours it (the till's
  * KioskRestLook, the same numbers): ios a soft fall of the brand colour; wolt the
  * brand-to-accent sweep of its hero; classic a flat bold fill; minimal_dark its near-black with
- * the brand colour glowing, the title in it.
+ * the brand colour glowing, the title in it; tech its near-black with no glow (its grid shows
+ * through — kioskChrome), the title in the accent.
  */
 export function kioskRestLook(
   theme: Pick<KioskTheme, 'uiStyle' | 'primaryColor' | 'accentColor'>,
@@ -3033,9 +3228,154 @@ export function kioskRestLook(
       const text = mixHex(colors.text, colors.text, 0);
       return { from: bg, to: bg, diagonal: false, glow: p, ink: text, title: contrastRatio(p, bg) >= REST_LARGE_TEXT_CONTRAST ? p : text, spots: false };
     }
+    case 'tech': {
+      const bg = mixHex(colors.background, colors.background, 0);
+      const text = mixHex(colors.text, colors.text, 0);
+      return { from: bg, to: bg, diagonal: false, glow: null, ink: text, title: contrastRatio(p, bg) >= REST_LARGE_TEXT_CONTRAST ? p : text, spots: false };
+    }
     default:
       return fill(p, mixHex(mixHex(p, theme.accentColor, 0.5), '#000000', 0.18), true, true);
   }
+}
+
+/* ------------------------------------------------ "טכנולוגי": the chrome */
+// The till's domain/KioskChrome.kt — the same rules and numbers (both repos' tests pin them).
+
+/** The screens' backdrop pattern: none, thin grid lines, or a dot matrix. */
+export type KioskBackdrop = 'none' | 'grid' | 'dots';
+
+/**
+ * A style's chrome — what it draws around the content, the same on every screen and layout:
+ * the backdrop pattern, the outline that replaces shadows, the status line, the figures, the press,
+ * the add-to-cart glow and the attract screen's scan line. Only "tech" has any of it; the other
+ * styles draw exactly as before. Nothing here costs a frame while idle except the scan line, and
+ * `general.reduceMotion` turns the moving parts off (0 ms: not even mounted).
+ */
+export interface KioskChrome {
+  backdrop: KioskBackdrop;
+  /** The pattern's step (dp) and its ink ("#RRGGBBAA": the text colour, faint). */
+  backdropStep: number;
+  backdropInk: string;
+  /** Cards and panels: a 1 dp outline in this colour and no shadow; null — the card style's own. */
+  outline: string | null;
+  /** "שורת מצב": the time · the order's number · the kiosk's state, along the top of every screen. */
+  statusBar: boolean;
+  /** Prices, totals and counts in tabular figures (every digit as wide, columns that line up). */
+  tabularFigures: boolean;
+  /** The order's number and the status line's figures in a monospaced face. */
+  monoFigures: boolean;
+  /** The press: the element's scale while held; null — the style's own press. */
+  pressScale: number | null;
+  /** A short glow of the accent on the basket as a dish lands (ms; 0: none). */
+  addGlowMs: number;
+  /** The attract screen's idle scan line, one sweep top to bottom (ms; 0: none — nothing drawn). */
+  scanMs: number;
+  /** The accent the glow, the scan line and the status line's dot are drawn in. */
+  accent: string;
+}
+
+/** The chrome of a style that has none. */
+export const NO_CHROME: Omit<KioskChrome, 'accent'> = {
+  backdrop: 'none',
+  backdropStep: 0,
+  backdropInk: '#00000000',
+  outline: null,
+  statusBar: false,
+  tabularFigures: false,
+  monoFigures: false,
+  pressScale: null,
+  addGlowMs: 0,
+  scanMs: 0,
+};
+
+/** "טכנולוגי"'s numbers: a 32 dp grid at 6 % of the text, 0.98 on press, a 150 ms glow, a 7 s sweep. */
+export const TECH_GRID_STEP = 32;
+export const TECH_GRID_ALPHA = 0x0f;
+export const TECH_OUTLINE_MIX = 0.14;
+export const TECH_PRESS_SCALE = 0.98;
+export const TECH_ADD_GLOW_MS = 150;
+export const TECH_SCAN_MS = 7000;
+/** The status line's height (dp, at type scale 1) and its warning dot (paused, closed, no payment). */
+export const STATUS_LINE_DP = 28;
+export const STATUS_WARN = '#F5A524';
+/** The monospaced face of the figures (web; the till uses the device's monospace). */
+export const MONO_FIGURES_STACK = 'ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", "Roboto Mono", Consolas, "Droid Sans Mono", monospace';
+
+export function kioskChrome(
+  theme: Pick<KioskTheme, 'uiStyle' | 'primaryColor'>,
+  colors: Pick<ResolvedThemeColors, 'surface' | 'text'>,
+  general: Pick<KioskGeneral, 'reduceMotion'>,
+  profile: KioskRenderProfile = 'full',
+): KioskChrome {
+  const accent = mixHex(theme.primaryColor, theme.primaryColor, 0);
+  switch (theme.uiStyle) {
+    case 'tech': {
+      const text = mixHex(colors.text, colors.text, 0);
+      // Reduce motion and the light profile ("אפקטים"): no add glow, no scan line.
+      const still = !!general.reduceMotion || profile === 'light';
+      return {
+        backdrop: 'grid',
+        backdropStep: TECH_GRID_STEP,
+        backdropInk: text + TECH_GRID_ALPHA.toString(16).padStart(2, '0').toUpperCase(),
+        outline: mixHex(colors.surface, text, TECH_OUTLINE_MIX),
+        statusBar: true,
+        tabularFigures: true,
+        monoFigures: true,
+        pressScale: TECH_PRESS_SCALE,
+        addGlowMs: still ? 0 : TECH_ADD_GLOW_MS,
+        scanMs: still ? 0 : TECH_SCAN_MS,
+        accent,
+      };
+    }
+    default:
+      return { ...NO_CHROME, accent };
+  }
+}
+
+/** What the status line says: the state (its words: kiosks.preview.status.<key>), its tone, the order's number. */
+export type KioskStatusKey = 'ready' | 'ordering' | 'paying' | 'done' | 'paused' | 'closed' | 'noPayment' | 'offline' | 'setup';
+export interface KioskStatusLine {
+  key: KioskStatusKey;
+  /** ok: the accent dot; warn: the amber one (the kiosk does not take orders now). */
+  tone: 'ok' | 'warn';
+  /** The order's number (its pickup label) once it has one; null before. */
+  order: string | null;
+}
+
+const STATUS_OF: Record<string, KioskStatusKey> = {
+  attract: 'ready',
+  service: 'ordering',
+  catalog: 'ordering',
+  product: 'ordering',
+  confirm: 'ordering',
+  cart: 'ordering',
+  tip: 'ordering',
+  details: 'ordering',
+  pay: 'paying',
+  success: 'done',
+  paused: 'paused',
+  closed: 'closed',
+  no_payment: 'noPayment',
+  noPayment: 'noPayment',
+  offline: 'offline',
+  setup: 'setup',
+};
+const STATUS_WARN_KEYS: KioskStatusKey[] = ['paused', 'closed', 'noPayment', 'offline', 'setup'];
+
+/**
+ * The status line of `screen` (the screens' names, the till's KioskScreen wire names, and the rest
+ * screens' variants): "מוכן לקבל הזמנה" at rest, "הזמנה בתהליך" while ordering… — and the order's
+ * number once the payment gave it one (`pickup`).
+ */
+export function kioskStatusLine(screen: string, pickup?: string | null): KioskStatusLine {
+  const key = STATUS_OF[screen] ?? 'ready';
+  const order = (pickup ?? '').trim();
+  return { key, tone: STATUS_WARN_KEYS.includes(key) ? 'warn' : 'ok', order: order ? order : null };
+}
+
+/** The status line's clock: "HH:MM", 24 hours, the device's local time. */
+export function statusClock(at: Date): string {
+  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
 }
 
 /* -------------------------------------------------------------- "כיתוב רץ" */

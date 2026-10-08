@@ -31,9 +31,17 @@ class RemoteCreditMode:
     #: "להשלמה בקופה": the till holds it as a waiting refund; the cashier completes it with
     #: the till's own refund flow and any tender.
     PREPARED = "prepared"
+    #: "זוכה באשראי מהענן (Z-Credit)" (SPEC_REMOTE_CREDIT.md §11): the cloud already refunded
+    #: the card through Z-Credit's web API (`card_refund_id`); the till issues the credit note
+    #: at once, its tender the card leg the request carries — never a pinpad, never the drawer.
+    #: Only ever created by a cloud card refund, never asked for directly.
+    CARD_REFUNDED = "card_refunded"
 
 
+#: The modes a dashboard user picks for a remote credit.
 REMOTE_CREDIT_MODES = (RemoteCreditMode.NO_MONEY, RemoteCreditMode.PREPARED)
+#: Every mode a request may have.
+ALL_REMOTE_CREDIT_MODES = REMOTE_CREDIT_MODES + (RemoteCreditMode.CARD_REFUNDED,)
 
 
 class RemoteCreditStatus:
@@ -84,8 +92,11 @@ class RemoteCreditRequest(Base):
     original_document_type = Column(Integer, nullable=True)
     original_issued_at = Column(DateTime(timezone=True), nullable=True)
 
-    #: `no_money` | `prepared` (`RemoteCreditMode`).
+    #: `no_money` | `prepared` | `card_refunded` (`RemoteCreditMode`).
     mode = Column(String(16), nullable=False)
+    #: Mode `card_refunded`: the cloud card refund (`cloud_card_refunds.id`) whose credit
+    #: note this request asks for.
+    card_refund_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     #: Everything still creditable at the time of the request.
     full_credit = Column(Boolean, nullable=False, default=False, server_default="false")
     #: `[{"itemId", "productId", "productName", "quantity", "amount"}]` — the lines and the

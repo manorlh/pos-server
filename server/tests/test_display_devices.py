@@ -281,6 +281,7 @@ FISCAL_ROUTES = {
     ("POST", "/sync/{machine_id}/till-z/ack"),
     ("POST", "/sync/{machine_id}/offline-authorizations"),
     ("PUT", "/sync/{machine_id}/payment-terminal"),
+    ("PUT", "/sync/{machine_id}/pinpad-host"),
     ("POST", "/sync/{machine_id}/failed-payments"),
     ("POST", "/sync/{machine_id}/synqpay/pairing"),
     ("POST", "/sync/{machine_id}/synqpay/key-rejected"),

@@ -64,7 +64,7 @@ from shift_world import NOW, TODAY, accept_str_uuids, make_world
 
 FIXTURE = Path(__file__).parent / "fixtures" / "prepaid_voucher_rules.json"
 #: The fixture's SHA-256 with line endings as LF — the till's test pins the same value.
-FIXTURE_SHA256 = "044d6aa6b7c38823236c4cd066aa5af4e6f3967c1ba280233dd418dbe827f6cf"
+FIXTURE_SHA256 = "8952271a97ab116903d03981ebc6a91441edf52d4ab269ca96d6d1cb77f26c91"
 KINDS = ["items", "order_discount", "item_discount"]
 
 
@@ -198,6 +198,8 @@ def _lines(ls):
             id=l["id"], product_ids=tuple(l["productIds"]), category_ids=tuple(l["categoryIds"]),
             quantity=l["quantity"], gross=l["grossAgorot"], line_discount=l["lineDiscountAgorot"],
             promotion=l["promotionAgorot"], voucher=l["voucherAgorot"], discountable=l["discountable"],
+            # Every product type (§7.14): absent on the older cases — a line sold by the piece.
+            weighed=l.get("weighed", False), general=l.get("general", False),
         )
         for l in ls
     ]
@@ -318,9 +320,13 @@ class TestBatches:
         assert next(c for c in cats if c["name"] == "אספרסו")["parentId"] == str(w.drinks.id)
         products = R.list_prepaid_voucher_products(str(w.company.id), search=None, limit=50, **_ctx(w))["items"]
         assert "מוצר זר" not in {p["name"] for p in products}
-        # …and the save refuses exactly what the pickers leave out.
+        # Searched for, it is shown — marked as another company's (§7.14)…
+        found = R.list_prepaid_voucher_products(str(w.company.id), search="זר", limit=50, **_ctx(w))["items"]
+        assert [(p["name"], p["blocked"]["itemDiscount"]) for p in found] == [("מוצר זר", "other_company")]
+        # …and the save refuses exactly what the pickers leave out or mark.
         assert refused(make, w, kind="item_discount", targets={"categoryIds": [theirs.id]}).detail == PV.TARGET_INVALID
-        assert refused(make, w, kind="item_discount", targets={"productIds": [alien.id]}).detail == PV.PRODUCT_INVALID
+        assert refused(make, w, kind="item_discount", targets={"productIds": [alien.id]}).detail == \
+            PV.product_refusal(PV.BLOCK_OTHER_COMPANY)
 
     def test_the_rules_of_use_change_the_terms_do_not(self, w):
         b = make(w, usesPerVoucher=5)
@@ -756,11 +762,13 @@ def test_the_migration_is_the_single_head_on_the_till_design_merge():
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
-    root = pathlib.Path(__file__).resolve().parents[1]
+    # absolute(), not resolve(): a subst'ed drive resolves to a path past MAX_PATH on the dev box.
+    root = pathlib.Path(__file__).absolute().parents[1]
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "alembic"))
     script = ScriptDirectory.from_config(config)
+    # One head, with this migration on the line to it (later ones chain on top — e9a3c7f1b5d2).
     heads = script.get_heads()
     assert len(heads) == 1
-    assert "c7e2f4a9d1b6" in {r.revision for r in script.walk_revisions("base", heads[0])}
+    assert "c7e2f4a9d1b6" in {r.revision for r in script.iterate_revisions(heads[0], "base")}
     assert script.get_revision("c7e2f4a9d1b6").down_revision == "b4a16fe43e9d"

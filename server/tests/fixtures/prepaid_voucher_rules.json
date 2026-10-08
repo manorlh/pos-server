@@ -1214,7 +1214,7 @@
       }
     },
     {
-      "name": "item: a weighed fraction has no unit",
+      "name": "item: a fraction of a product sold by the piece has no unit",
       "benefit": {
         "kind": "item_discount",
         "discountType": "percent",
@@ -1368,6 +1368,488 @@
         "amountAgorot": 300,
         "shares": {
           "L1": 300
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: a weighed line is discounted per kg, pro rata",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "percent",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-olives"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-olives"
+          ],
+          "categoryIds": [],
+          "quantity": 0.75,
+          "grossAgorot": 3000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "weighed": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 300,
+        "shares": {
+          "L1": 300
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item fixed ₪5 a kg: 0.75 kg takes 0.75 of it",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 500,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-olives"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-olives"
+          ],
+          "categoryIds": [],
+          "quantity": 0.75,
+          "grossAgorot": 3000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "weighed": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 375,
+        "shares": {
+          "L1": 375
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: a weighed product's units are its kg — 2.5 kg, one unit a use",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 500,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-olives"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-olives"
+          ],
+          "categoryIds": [],
+          "quantity": 2.5,
+          "grossAgorot": 10000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "weighed": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 500,
+        "shares": {
+          "L1": 500
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: two units on 1.4 kg — a kg and 0.4 of one",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "percent",
+        "value": 2000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 2,
+        "productIds": [
+          "p-olives"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-olives"
+          ],
+          "categoryIds": [],
+          "quantity": 1.4,
+          "grossAgorot": 7000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "weighed": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 1400,
+        "shares": {
+          "L1": 1400
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: the most valuable first — a whole unit before a weighed fraction",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-olives",
+          "p-coffee"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-olives"
+          ],
+          "categoryIds": [],
+          "quantity": 0.4,
+          "grossAgorot": 2000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "weighed": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1200,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 1000,
+        "shares": {
+          "L2": 1000
+        },
+        "dropPromotion": [],
+        "skipped": [
+          {
+            "lineId": "L1",
+            "reason": "max_units"
+          }
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: a weighed slot takes what room is left, pro rata",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-olives",
+          "p-cheese"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-olives"
+          ],
+          "categoryIds": [],
+          "quantity": 0.6,
+          "grossAgorot": 3000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "weighed": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-cheese"
+          ],
+          "categoryIds": [],
+          "quantity": 0.7,
+          "grossAgorot": 2800,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "weighed": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 1000,
+        "shares": {
+          "L2": 700,
+          "L1": 300
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: the general item is never an item discount's, even by its category",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "percent",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": null,
+        "productIds": [],
+        "categoryIds": [
+          "c-misc"
+        ],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-general"
+          ],
+          "categoryIds": [
+            "c-misc"
+          ],
+          "quantity": 1,
+          "grossAgorot": 5000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "general": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-pen"
+          ],
+          "categoryIds": [
+            "c-misc"
+          ],
+          "quantity": 1,
+          "grossAgorot": 1000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 100,
+        "shares": {
+          "L2": 100
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "order: the general item is in the base like any line",
+      "benefit": {
+        "kind": "order_discount",
+        "discountType": "fixed",
+        "value": 1200,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": null,
+        "productIds": [],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-general"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 5000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "general": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-pen"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 1200,
+        "shares": {
+          "L1": 1000,
+          "L2": 200
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: an open-price line — a fixed discount never more than the line",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 2000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-open"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-open"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1500,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 1500,
+        "shares": {
+          "L1": 1500
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: a dish at its actual price — its paid options in",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "percent",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 2,
+        "productIds": [
+          "p-burger"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-burger"
+          ],
+          "categoryIds": [],
+          "quantity": 2,
+          "grossAgorot": 11400,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 1140,
+        "shares": {
+          "L1": 1140
         },
         "dropPromotion": [],
         "skipped": [],
@@ -1529,6 +2011,40 @@
         }
       ],
       "uses": 1
+    },
+    {
+      "name": "item weighed: a use a kg until the weight is covered",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 500,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-olives"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "allowed": 5,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-olives"
+          ],
+          "categoryIds": [],
+          "quantity": 2.5,
+          "grossAgorot": 10000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "weighed": true
+        }
+      ],
+      "uses": 3
     }
   ],
   "benefitText": [

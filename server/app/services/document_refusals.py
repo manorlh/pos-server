@@ -133,6 +133,25 @@ def record(
         },
     )
     db.execute(stmt)
+    _note_exception_log(db, machine.id, ref)
+
+
+def _note_exception_log(db: Session, machine_id: Any, ref: str) -> None:
+    """
+    "יומן חריגות": the upsert bypasses the ORM, so the refusal is named to the log by hand;
+    it is read back and logged once the push commits (app/services/exception_alerts/hooks.py).
+    """
+    try:
+        from app.services.exception_alerts import hooks
+
+        ident = (
+            db.query(DocumentRefusal.id)
+            .filter(DocumentRefusal.machine_id == machine_id, DocumentRefusal.document_ref == ref)
+            .scalar()
+        )
+        hooks.note(db, "document_refusal", ident)
+    except Exception:  # noqa: BLE001 - the refusal is recorded; only its log line is lost
+        logger.exception("could not note a document refusal for the exceptions log")
 
 
 def mark_landed(db: Session, machine: POSMachine, document_ids: Iterable[Any], now: Optional[datetime] = None) -> int:

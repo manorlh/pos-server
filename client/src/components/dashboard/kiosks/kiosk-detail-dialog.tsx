@@ -297,7 +297,7 @@ export function KioskDetailDialog({
                       </TableCell>
                       <TableCell className="tabular-nums">{timeIn(o.paidAt, timeZone)}</TableCell>
                       <TableCell className="text-sm">
-                        {to(`service.${o.serviceType}`)}
+                        {o.serviceType ? to(`service.${o.serviceType}`) : <span className="text-muted-foreground">—</span>}
                         {o.tableRef ? <span className="text-xs text-muted-foreground"> · {to('table', { ref: o.tableRef })}</span> : null}
                         {o.customerName ? <span className="block text-xs text-muted-foreground">{o.customerName}</span> : null}
                       </TableCell>

@@ -219,7 +219,8 @@ export interface KioskOrderOut {
   pickupNumber: number;
   pickupLabel: string;
   businessDate: string;
-  serviceType: 'take_away' | 'eat_in';
+  /** Null: "ללא סוג שירות". */
+  serviceType: 'take_away' | 'eat_in' | null;
   tableRef: string | null;
   fulfillmentMode: 'BON' | 'KDS';
   configVersion: string | null;

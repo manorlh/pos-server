@@ -205,6 +205,9 @@ LEGACY_MANAGER = "legacy_manager"
 LEGACY_FOR_ROLE = {"cashier": LEGACY_CASHIER, "shop_manager": LEGACY_MANAGER}
 #: "החל ברירות מחדל לפי האפיון": where the legacy roles' users go.
 SPEC_ROLE_FOR_LEGACY = {LEGACY_CASHIER: CASHIER, LEGACY_MANAGER: MANAGER}
+#: A NEW till user with no role chosen (the owner, 08.10.2026): the spec's "קופאי" — or its
+#: "מנהל" when created as a shop manager, so the form's role and the till role agree.
+SPEC_ROLE_FOR_NEW_USER = {"cashier": CASHIER, "shop_manager": MANAGER}
 
 
 @dataclass(frozen=True)

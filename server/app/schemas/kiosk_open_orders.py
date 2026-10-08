@@ -39,6 +39,9 @@ class OpenOrderVoucherIn(_In):
     amount_agorot: int = Field(..., alias="amountAgorot", ge=0, le=10**9)
     event_name: Optional[str] = Field(None, alias="eventName", max_length=200)
     redeemed: List[OpenOrderRedeemedIn] = Field(default_factory=list, max_length=MAX_LINES)
+    #: The batch's "כולל תוספות" (docs/SPEC_VOUCHER_PRODUCTION.md §7.14): the till that takes the
+    #: order covers its goods as the kiosk did — the whole line, or the dish's base price.
+    include_extras: bool = Field(False, alias="includeExtras")
 
 
 class KioskOpenOrderIn(_In):
@@ -52,7 +55,8 @@ class KioskOpenOrderIn(_In):
     pickup_number: int = Field(0, alias="pickupNumber", ge=0, le=99999)
     pickup_label: str = Field("", alias="pickupLabel", max_length=32)
     business_date: date = Field(..., alias="businessDate")
-    service_type: Literal["take_away", "eat_in"] = Field(..., alias="serviceType")
+    #: Null: "ללא סוג שירות" — the order has no service (nor a word for one on the till or the bon).
+    service_type: Optional[Literal["take_away", "eat_in"]] = Field(None, alias="serviceType")
     table_ref: Optional[str] = Field(None, alias="tableRef", max_length=64)
     fulfillment_mode: Literal["BON", "KDS"] = Field("BON", alias="fulfillmentMode")
     config_version: Optional[str] = Field(None, alias="configVersion", max_length=32)

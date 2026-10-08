@@ -9,7 +9,7 @@ import type { KioskBridge, KioskEvents, KioskView, PayProgress } from '../shared
 import { tipToCharge } from '../core/sale';
 import { demoLayoutLayer, demoRich, richCatalog } from './demoLayouts';
 
-/** `?style=ios|wolt|classic|minimal_dark` picks the demo's look, as a kiosk's `theme.uiStyle` would. */
+/** `?style=ios|wolt|classic|minimal_dark|tech` picks the demo's look, as a kiosk's `theme.uiStyle` would. */
 function demoStyle(): UiStyle {
   const s = new URLSearchParams(window.location.search).get('style') ?? '';
   return (UI_STYLES as string[]).includes(s) ? (s as UiStyle) : KIOSK_DEFAULTS.theme.uiStyle;
@@ -65,6 +65,9 @@ function demoCheckout(): Record<string, unknown> {
   const one = q.get('service');
   if (one === 'take_away' || one === 'eat_in') general.serviceTypes = [one];
   if (Object.keys(general).length > 0) out.general = general;
+  // `&effects=auto|full|light`: "אפקטים" (motion.effects) — the light profile's cheaper variants.
+  const effects = q.get('effects');
+  if (effects === 'auto' || effects === 'full' || effects === 'light') out.motion = { effects };
   // `&cta=hidden`: no start button, the whole screen starts (`&hint=0`: not even the line in its place).
   if (q.get('cta') === 'hidden') out.attract = { cta: { visible: false, tapAnywhere: true, touchHint: q.get('hint') !== '0' } };
   const ticker = q.get('ticker');
@@ -83,6 +86,7 @@ function demoCheckout(): Record<string, unknown> {
 function demoView(): KioskView {
   const rest = demoRest();
   const methods = kioskPayMethods(((demoCheckout().payment ?? {}) as { methods?: unknown[] }).methods);
+  const nopay = new URLSearchParams(window.location.search).get('nopay') === '1';
   const cats = [
     { id: 'c1', name: 'המבורגרים', imageUrl: null },
     { id: 'c2', name: 'שתייה', imageUrl: null },
@@ -150,9 +154,10 @@ function demoView(): KioskView {
       categoryImages: {},
       promotions: [],
     },
-    state: { ...rest.state, noPayment: false, terminal: 'ready', offline: false, offlineSince: null, cardBlocked: false },
+    // `?nopay=1`: "התשלום אינו זמין" — nothing to charge on.
+    state: { ...rest.state, noPayment: nopay, terminal: 'ready', offline: false, offlineSince: null, cardBlocked: false },
     staff: { unprintedBons: 0, printer: 'ok', pendingUploads: 0, mediaMissing: 0 },
-    pay: { methods, usable: methods, cardOff: null },
+    pay: { methods, usable: nopay ? [] : methods, cardOff: null },
   };
 }
 

@@ -67,7 +67,11 @@ TERMINAL_REASONS = {
     "not_configured": "המסופון לא מוגדר",
     "card_unknown": "תשלום באשראי לא הוכרע — נדרש צוות",
     "offline": "אין חיבור לאינטרנט",
+    # The kiosk found its own pinpad (the same terminal) at a new address and switched to it.
+    "moved": "המסופון עבר לכתובת חדשה",
 }
+#: Informational alerts: listed on the tills, never a wake-up of their own (nothing to do).
+QUIET_REASONS = ("moved",)
 #: The card lock (docs/SPEC_KIOSK.md §20): the pinpad connected is not the one set for the kiosk.
 IDENTITY_REASONS = ("terminal_mismatch", "terminal_not_configured", "terminal_unknown")
 
@@ -399,13 +403,14 @@ def reconcile(
                 ping_count=a["pings"], pinged_at=now if a["kind"] == "help" else None,
             )
             db.add(row)
-            to_wake[a["kind"]] = targets(db, kiosk, cfg, a["kind"])
+            if a["reason"] not in QUIET_REASONS:
+                to_wake[a["kind"]] = targets(db, kiosk, cfg, a["kind"])
             continue
         row.last_reported_at = now
         if row.reason != a["reason"] or row.text != text or row.detail != a["detail"]:
             changed_reason = row.reason != a["reason"]
             row.reason, row.text, row.detail = a["reason"], text, a["detail"]
-            if changed_reason:
+            if changed_reason and a["reason"] not in QUIET_REASONS:
                 to_wake[a["kind"]] = targets(db, kiosk, cfg, a["kind"])
         if a["kind"] == "help" and a["pings"] > (row.ping_count or 0):
             # "a second tap just re-pings": the same request, shown again on the tills.

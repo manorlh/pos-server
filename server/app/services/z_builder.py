@@ -201,6 +201,19 @@ def shift_order_key(shift: Shift):
     return (shift.sequence_number is not None, shift.sequence_number or 0, _aware(shift.opened_at))
 
 
+def _opening_shift(machine: POSMachine, shifts: Sequence[Shift]) -> Shift:
+    """
+    The shift that opened a till Z's business day: its first — never one of the empty shifts
+    the till carried over from before it made its own Z (`till_z.set_z_mode` records them as
+    `emptyShiftsCarried`): those had nothing, and the day is the one the till began working.
+    """
+    carried = set()
+    for entry in getattr(machine, "z_mode_history", None) or []:
+        if isinstance(entry, dict) and entry.get("to") == Z_MODE_TILL:
+            carried.update(str(i) for i in entry.get("emptyShiftsCarried") or [])
+    return next((s for s in shifts if str(s.id) not in carried), shifts[0])
+
+
 def unreported_shifts(
     db: Session,
     machine_id: uuid.UUID,
@@ -582,7 +595,8 @@ def build_z(
         # A cloud Z: its latest shift's day. A till Z closes the till's business day,
         # which its first shift opened (§5): the first shift's day.
         business_date = (
-            per_machine[0][1][0].business_date if till_z else max(s.business_date for s in all_shifts)
+            _opening_shift(per_machine[0][0], per_machine[0][1]).business_date
+            if till_z else max(s.business_date for s in all_shifts)
         )
     z = ZReport(
         id=z_id or uuid.uuid4(),

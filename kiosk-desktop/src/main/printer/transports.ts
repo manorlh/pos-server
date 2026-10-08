@@ -15,6 +15,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { parseStatus, STATUS_OFFLINE, STATUS_PAPER, STATUS_PRINTER, type PrinterStatusBits } from '../../core/escpos';
+import { scanOf, type UsbScan } from './usbPrinters';
 
 export interface PrinterTarget {
   transport: 'spooler' | 'tcp' | 'none';
@@ -31,6 +32,11 @@ export interface Transport {
   status(target: PrinterTarget): Promise<{ health: PrinterHealth; detail: string | null }>;
   /** Installed Windows printers (for the technician screen). */
   list(): Promise<Array<{ name: string; port: string | null; health: PrinterHealth }>>;
+  /**
+   * The queues, the USB printer devices present and the USB ports (usbPrinters.ts) — for finding
+   * the printer plugged in. Optional: without it the queue list stands in.
+   */
+  usbScan?(): Promise<UsbScan>;
   dispose(): void;
 }
 
@@ -172,6 +178,27 @@ while ($true) {
     } elseif ($cmd.op -eq 'list') {
       $ps = @(Get-CimInstance Win32_Printer | ForEach-Object { @{ name = $_.Name; port = $_.PortName; detected = $_.DetectedErrorState; offline = [bool]$_.WorkOffline; status = $_.PrinterStatus } })
       $out = @{ id = $cmd.id; ok = $true; printers = $ps }
+    } elseif ($cmd.op -eq 'usb') {
+      $qs = @(Get-CimInstance Win32_Printer | ForEach-Object { @{ name = $_.Name; port = $_.PortName; driver = $_.DriverName; detected = $_.DetectedErrorState; offline = [bool]$_.WorkOffline; status = $_.PrinterStatus } })
+      $ds = $null
+      try { $ds = @(Get-CimInstance Win32_PnPEntity -Filter "PNPDeviceID LIKE 'USB%'" | Where-Object { $_.Service -eq 'usbprint' -or $_.PNPDeviceID -like 'USBPRINT\*' -or $_.PNPDeviceID -match '^USB\\VID_(1504|04B8|0519|1D90|2730|0DD4|154F|0D3A|0619)&' } | ForEach-Object { @{ name = $_.Name; id = $_.PNPDeviceID; error = $_.ConfigManagerErrorCode; service = $_.Service; cls = $_.PNPClass } }) } catch { $ds = $null }
+      $pts = $null
+      try {
+        $base = 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceClasses\{28d78fad-5a12-11d1-ae5b-0000f803a8c2}'
+        $pts = @()
+        if (Test-Path -LiteralPath $base) {
+          foreach ($k in @(Get-ChildItem -LiteralPath $base -ErrorAction Stop)) {
+            $dp = Get-ItemProperty -LiteralPath (Join-Path $k.PSPath '#\Device Parameters') -ErrorAction SilentlyContinue
+            if ($dp -and $null -ne $dp.'Port Number') {
+              $bn = 'USB'
+              if ($dp.'Base Name') { $bn = [string]$dp.'Base Name' }
+              $cp = Get-ItemProperty -LiteralPath (Join-Path $k.PSPath '#\Control') -ErrorAction SilentlyContinue
+              $pts += @{ port = ('{0}{1:000}' -f $bn, [int]$dp.'Port Number'); linked = [bool]($cp -and $cp.Linked -eq 1); description = $dp.'Port Description' }
+            }
+          }
+        }
+      } catch { $pts = $null }
+      $out = @{ id = $cmd.id; ok = $true; queues = $qs; devices = $ds; ports = $pts }
     } else { $out = @{ id = $cmd.id; ok = $false; error = 'unknown op' } }
   } catch { $out = @{ id = $cmd.id; ok = $false; error = $_.Exception.Message } }
   [Console]::Out.WriteLine(($out | ConvertTo-Json -Compress -Depth 4))
@@ -310,12 +337,23 @@ export class DefaultTransport implements Transport {
     }));
   }
 
+  /** The queues, the USB printer devices present and the USB ports (the helper's `usb` op; usbPrinters.ts). */
+  async usbScan(): Promise<UsbScan> {
+    if (process.platform !== 'win32') return { queues: [], devices: null, ports: null, at: Date.now() };
+    const r = await this.helper.call({ op: 'usb' }, 15_000);
+    if (r.ok !== true) throw new Error(`spooler: ${String(r.error ?? 'usb scan failed')}`);
+    return scanOf(r, (q) => healthOfWin32(typeof q.detected === 'number' ? q.detected : null, q.offline === true, typeof q.status === 'number' ? q.status : null), Date.now());
+  }
+
   dispose() {
     this.helper.dispose();
   }
 }
 
-/** The BTP-880's queue among the installed printers: SNBC / BTP first, then a Generic / Text Only queue. */
+/**
+ * The BTP-880's queue among the installed printers by name: SNBC / BTP first, then a Generic / Text
+ * Only queue. "אוטומטי" asks for the USB printer plugged in first (usbPrinters.ts resolvePrinterTarget).
+ */
 export function guessQueue(names: readonly string[]): string | null {
   return names.find((n) => /btp|snbc/i.test(n)) ?? names.find((n) => /generic.*text only/i.test(n)) ?? null;
 }

@@ -24,6 +24,7 @@ import hashlib
 import json
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException, Response
@@ -199,11 +200,15 @@ def test_defaults_are_valid_and_complete():
         },
         # "תשלום בקופה" (§23): an open order expires after this long; the bon waits for the money.
         "cashAtTillExpiryMin": 30, "cashAtTillKitchenBeforePay": False,
+        # "לוגו במסך התשלום": its own upload; none by default — nothing shows.
+        "waitLogo": {"media": None, "style": "plain"},
     }
     assert cfg["printing"] == {
         "bonMode": "routing", "bonPrinterId": None, "bonCopies": 1, "receiptPrinterId": None, "pickupSlip": True,
         # An unprinted bon prints again by itself when the printer is back, within this many minutes (§16.8).
         "bonAutoRetryMin": 10,
+        # "בון מטבח במדפסת הקיוסק" (§5): off — the kiosk never prints the kitchen bon on its own printer.
+        "bonOnKiosk": False,
     }
     assert cfg["timers"] == {"inactivitySec": 60, "warningSec": 20, "successSec": 12, "attractSlideSec": 8}
     assert cfg["hours"]["ranges"] == [{"days": [0, 1, 2, 3, 4, 5, 6], "open": "08:00", "close": "23:00"}]
@@ -1031,6 +1036,33 @@ def test_new_keys_have_safe_defaults_and_validate():
     assert got["general.reduceMotion"] == "invalid_type"
 
 
+def test_bon_on_kiosk_is_off_for_every_kiosk_until_a_level_turns_it_on():
+    """"בון מטבח במדפסת הקיוסק" (docs/SPEC_KIOSK.md §5, the owner 07.10.2026): off by default — an
+    existing kiosk whose stored layers never had the key gets it off; any level may turn it on."""
+    assert C.DEFAULT_CONFIG["printing"]["bonOnKiosk"] is False
+    # An existing kiosk: its stored layers (the Royal kiosk's, single printer and all) say nothing of it.
+    existing = {"printing": {"bonMode": "single", "bonPrinterId": str(uuid.uuid4()), "receiptPrinterId": None, "bonAutoRetryMin": 0}}
+    cleaned, errors = C.validate_layer(existing)
+    assert errors == []
+    cfg = C.resolve({}, {}, cleaned)
+    assert cfg["printing"]["bonOnKiosk"] is False
+    assert C.validate_config(cfg) == []
+    # The key changes what every kiosk is sent: its version moves, so each kiosk takes the new config.
+    before = json.loads(json.dumps(cfg))
+    before["printing"].pop("bonOnKiosk")
+    assert C.config_version(before) != C.config_version(cfg)
+    # On at the shop, off again on one kiosk.
+    on, errors = C.validate_layer({"printing": {"bonOnKiosk": True}})
+    assert errors == []
+    assert C.resolve({}, on, {})["printing"]["bonOnKiosk"] is True
+    assert C.resolve({}, on, {"printing": {"bonOnKiosk": False}})["printing"]["bonOnKiosk"] is False
+    # null in a layer is "inherit".
+    inherit, errors = C.validate_layer({"printing": {"bonOnKiosk": None}})
+    assert errors == [] and C.resolve(on, inherit)["printing"]["bonOnKiosk"] is True
+    _c, errors = C.validate_layer({"printing": {"bonOnKiosk": "yes"}})
+    assert paths(errors) == {"printing.bonOnKiosk": "invalid_type"}
+
+
 def test_the_default_style_is_the_look_kiosks_had():
     cfg = C.resolve()
     before = {
@@ -1060,6 +1092,30 @@ def test_a_preset_sets_the_theme_and_explicit_settings_win_at_any_level():
     cfg = C.resolve(shop, {"theme": {"uiStyle": "classic"}})
     assert cfg["theme"]["cartStyle"] == "panel" and cfg["theme"]["buttonShape"] == "square"
     assert C.style_of(shop, {"theme": {"uiStyle": None}}) == "minimal_dark"
+
+
+def test_the_tech_style_is_one_pick_its_theme_cta_and_motion():
+    """"טכנולוגי": one tap in the designer — the theme, the attract button and the transitions."""
+    assert C.UI_STYLES[-1] == "tech" and set(C.UI_STYLES) == set(C.UI_PRESETS) == set(C.UI_PRESET_CTA) == set(C.UI_PRESET_MOTION)
+    cfg = C.resolve({"theme": {"uiStyle": "tech"}})
+    assert C.validate_config(cfg) == []
+    theme = cfg["theme"]
+    assert theme["mode"] == "dark" and theme["backgroundColor"] == "#0B0F14" and theme["surfaceColor"] == "#111821"
+    # One electric accent: the brand colour is the accent (dark words on it, as on the dashboard and the till).
+    assert theme["primaryColor"] == theme["accentColor"] == "#22E1FF"
+    assert theme["cardStyle"] == "outlined" and theme["cornerRadius"] == 10 and theme["buttonShape"] == "rounded"
+    assert cfg["attract"]["cta"]["animation"] == "none" and cfg["attract"]["cta"]["shadow"] is False
+    assert cfg["attract"]["cta"]["icon"] == "arrow" and cfg["attract"]["cta"]["position"] == "bottom_center"
+    assert cfg["motion"] == {
+        "categorySwitch": "fade", "itemsEnter": "cascade", "screenChange": "fade", "sheet": "scale",
+        "addToCart": "fly", "speed": "normal", "effects": "auto",
+    }
+    assert C.preset_layer("tech")["theme"] == C.UI_PRESETS["tech"]
+    # The brand colour stays configurable on top of the style.
+    cfg = C.resolve({"theme": {"uiStyle": "tech"}}, {"theme": {"primaryColor": "#3B82F6"}})
+    assert cfg["theme"]["primaryColor"] == "#3B82F6" and cfg["theme"]["backgroundColor"] == "#0B0F14"
+    # Offered to the designer.
+    assert C.limits()["enums"]["uiStyle"][-1] == "tech"
 
 
 def test_settings_answer_the_parents_explicit_layers(w):
@@ -1607,12 +1663,14 @@ def test_motion_defaults_follow_the_style_and_animate_in_every_style():
     d = C.default_config()
     assert d["motion"] == {
         "categorySwitch": "slide", "itemsEnter": "cascade", "screenChange": "slide",
-        "sheet": "scale", "addToCart": "fly", "speed": "normal",
+        "sheet": "scale", "addToCart": "fly", "speed": "normal", "effects": "auto",
     }
-    assert C.UI_PRESET_MOTION["wolt"] == d["motion"] and C.PRESET_MOTION_KEYS == MOTION_KEYS
+    # "אפקטים" is the device's (auto), never a style's: the presets decide the six transition keys.
+    assert {**C.UI_PRESET_MOTION["wolt"], "effects": "auto"} == d["motion"] and C.PRESET_MOTION_KEYS == MOTION_KEYS
     for style, preset in C.UI_PRESET_MOTION.items():
+        assert "effects" not in preset, style
         cfg = C.resolve({"theme": {"uiStyle": style}})
-        assert cfg["motion"] == preset, style
+        assert cfg["motion"] == {**preset, "effects": "auto"}, style
         assert C.validate_config(cfg) == [], style
         # The owner's request, in every style: the category's grid moves and its dishes pop in.
         assert preset["categorySwitch"] != "none" and preset["itemsEnter"] in ("pop", "cascade"), style
@@ -1632,6 +1690,7 @@ def test_motion_is_layered_company_shop_kiosk_and_explicit_beats_the_style():
         "itemsEnter": "flip",  # the shop's
         "screenChange": "fade", "sheet": "fade", "addToCart": "fly",  # the minimal_dark style's
         "speed": "fast",  # the company's, above the style's "relaxed"
+        "effects": "auto",  # the default: the device decides
     }
     assert C.explicit_layers(company, shop, kiosk)["motion"] == {"speed": "fast", "itemsEnter": "flip", "categorySwitch": "push"}
     # null inherits; an empty section overrides nothing.
@@ -1651,11 +1710,13 @@ def test_motion_validation():
         assert C.validate_layer({"motion": {"categorySwitch": fx}})[1] == [], fx
     _c, errors = C.validate_layer({"motion": {
         "categorySwitch": "spin", "itemsEnter": "explode", "screenChange": "push", "sheet": "zoom",
-        "addToCart": "teleport", "speed": "warp", "wobble": True,
+        "addToCart": "teleport", "speed": "warp", "effects": "turbo", "wobble": True,
     }})
     got = paths(errors)
-    for key in MOTION_KEYS:
+    for key in MOTION_KEYS + ("effects",):
         assert got[f"motion.{key}"] == "invalid_value", key
+    for effects in ("auto", "full", "light"):
+        assert C.validate_layer({"motion": {"effects": effects}}) == ({"motion": {"effects": effects}}, []), effects
     assert got["motion.wobble"] == "unknown_key"
     _c, errors = C.validate_layer({"motion": "lively"})
     assert paths(errors)["motion"] == "invalid_type"
@@ -1666,6 +1727,7 @@ def test_motion_validation():
     assert enums["motionSheet"] == ["slide_up", "scale", "fade", "none"]
     assert enums["motionAddToCart"] == ["fly", "bounce", "none"]
     assert enums["motionSpeed"] == ["fast", "normal", "relaxed"]
+    assert enums["motionEffects"] == ["auto", "full", "light"]
 
 
 def test_motion_is_saved_and_reaches_the_kiosk(w):
@@ -1675,7 +1737,7 @@ def test_motion_is_saved_and_reaches_the_kiosk(w):
     out = sync(w, w.kiosk)
     assert out["config"]["motion"] == {
         "categorySwitch": "push", "itemsEnter": "rise", "screenChange": "fade",
-        "sheet": "scale", "addToCart": "fly", "speed": "relaxed",
+        "sheet": "scale", "addToCart": "fly", "speed": "relaxed", "effects": "auto",
     }
     assert out["configVersion"] == C.config_version(out["config"])
     view = get_settings(w, "machine", w.kiosk.id)
@@ -1685,7 +1747,87 @@ def test_motion_is_saved_and_reaches_the_kiosk(w):
     before = out["configVersion"]
     put(w, "machine", w.kiosk.id, {"theme": {"uiStyle": "classic"}, "motion": {"itemsEnter": "flip"}})
     assert sync(w, w.kiosk)["configVersion"] != before
+    # "אפקטים: קל" for this kiosk reaches it (a new config version), the rest inherited.
+    before = sync(w, w.kiosk)["configVersion"]
+    put(w, "machine", w.kiosk.id, {"theme": {"uiStyle": "classic"}, "motion": {"itemsEnter": "flip", "effects": "light"}})
+    out = sync(w, w.kiosk)
+    assert out["config"]["motion"]["effects"] == "light" and out["configVersion"] != before
     # Refused with the contract's 422 shape.
     err = refused(put, w, "machine", w.kiosk.id, {"motion": {"sheet": "spin"}})
     assert err.status_code == 422
     assert {"path": "motion.sheet", "code": "invalid_value"}.items() <= err.detail["errors"][0].items()
+
+
+def test_the_shared_motion_golden_speaks_the_configs_vocabulary():
+    """tests/fixtures/kiosk_motion_timings.json — the one motion table of the till (KioskTransitions,
+    KioskMotion, KioskEase, KioskPerf), the dashboard and the web kiosks (kioskConfig.ts) — names
+    exactly the config's effects and every one of them, and its examples are valid motion configs."""
+    gold = json.loads((Path(__file__).parent / "fixtures" / "kiosk_motion_timings.json").read_text(encoding="utf-8"))
+    assert tuple(gold["screenChange"]) == C.MOTION_SCREEN_CHANGE
+    assert tuple(gold["categorySwitch"]) == C.MOTION_CATEGORY_SWITCH
+    assert tuple(gold["itemsEnter"]) == C.MOTION_ITEMS_ENTER
+    assert tuple(gold["stagger"]) == C.MOTION_ITEMS_ENTER
+    assert tuple(gold["sheet"]) == C.MOTION_SHEET
+    assert tuple(gold["speedFactor"]) == C.MOTION_SPEEDS
+    assert tuple(gold["effects"]) == C.MOTION_EFFECTS
+    for table in ("screenChange", "categorySwitch", "itemsEnter", "stagger", "sheet"):
+        assert gold[table]["none"] == 0 and all(v > 0 for k, v in gold[table].items() if k != "none"), table
+    # Snappy (the owner, 07.10.2026): a screen at most 220 ms, a window 260, the last card by 200 ms.
+    assert max(gold["screenChange"].values()) <= 220 and max(gold["sheet"].values()) <= 260 and gold["staggerCapMs"] == 200
+    assert gold["add"]["lively"]["popMs"] + gold["add"]["lively"]["flyMs"] == 560 and gold["add"]["lively"]["countUpMs"] == 360
+    assert gold["light"] == {"categorySwitch": "fade", "itemsEnter": "none", "screenChange": "fade", "sheet": "fade", "speed": "fast"}
+    for ex in gold["examples"]:
+        assert C.validate_layer({"motion": ex["motion"]})[1] == [], ex["motion"]
+        assert ex["animation"] in C.ANIMATIONS
+
+
+# ── "ללא סוג שירות" and "לוגו במסך התשלום" (the owner, 07.10.2026) ─────────────
+
+
+def test_service_mode_none_validates_and_turns_the_service_step_off():
+    d = C.default_config()
+    assert d["general"]["serviceMode"] == "types"
+    cleaned, errors = C.validate_layer({"general": {"serviceMode": "none"}})
+    assert errors == [] and cleaned == {"general": {"serviceMode": "none"}}
+    _c, errors = C.validate_layer({"general": {"serviceMode": "maybe"}})
+    assert paths(errors).get("general.serviceMode") == "invalid_value"
+    # Never asked: the step is off, whatever its own mode and however many types are kept.
+    none = C.resolve({"general": {"serviceMode": "none", "serviceTypes": ["take_away", "eat_in"]}})
+    assert C.step_mode(none, "service") == "off"
+    assert none["general"]["serviceTypes"] == ["take_away", "eat_in"], "kept for the day it is back"
+    # A config stored before it (no serviceMode) keeps asking as it did.
+    assert C.step_mode(C.resolve({"general": {"serviceTypes": ["take_away", "eat_in"]}}), "service") == "required"
+    assert C.limits()["enums"]["serviceMode"] == ["types", "none"]
+
+
+def test_an_order_with_no_service_is_kept_with_none(w):
+    convert(w)
+    out = post_orders(w, w.kiosk, order("n1", serviceType=None), order("n2"))
+    assert out == {"accepted": ["n1", "n2"], "rejected": []}
+    w.db.expire_all()
+    rows = {r.local_id: r for r in w.db.query(KioskOrder).all()}
+    assert rows["n1"].service_type is None and rows["n2"].service_type == "take_away"
+    assert S.order_out(rows["n1"], full_phone=False)["serviceType"] is None
+    # A word that is neither is still refused.
+    bad = post_orders(w, w.kiosk, order("n3", serviceType="drive_in"))
+    assert bad["rejected"] == [{"localId": "n3", "reason": "invalid:serviceType"}]
+
+
+def test_the_payment_wait_logo_is_validated_and_downloaded_with_the_media():
+    d = C.default_config()
+    assert d["payment"]["waitLogo"] == {"media": None, "style": "plain"}
+    ref = {"url": "https://cdn.example/wait-logo.png", "kind": "image", "sha256": SHA, "bytes": 120}
+    good = {"payment": {"waitLogo": {"media": ref, "style": "plate"}}}
+    cleaned, errors = C.validate_layer(good)
+    assert errors == [] and cleaned == good
+    eff = C.resolve(good)
+    assert eff["payment"]["waitLogo"] == {"media": ref, "style": "plate"}
+    assert ref in C.media_manifest(eff), "cached on the kiosk like the other pictures"
+    # A layer that changes only the style keeps the picture of the layer under it.
+    assert C.resolve(good, {"payment": {"waitLogo": {"style": "plain"}}})["payment"]["waitLogo"] == {"media": ref, "style": "plain"}
+    _c, errors = C.validate_layer({"payment": {"waitLogo": {"media": {"url": "ftp://x", "kind": "image"}, "style": "glow"}}})
+    got = paths(errors)
+    assert got.get("payment.waitLogo.style") == "invalid_value"
+    assert any(p.startswith("payment.waitLogo.media") for p in got), got
+    _c, errors = C.validate_layer({"payment": {"waitLogo": {"media": {"url": "https://cdn.example/v.mp4", "kind": "video"}}}})
+    assert any(p.startswith("payment.waitLogo.media") for p in paths(errors))

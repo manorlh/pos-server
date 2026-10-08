@@ -52,6 +52,13 @@ import {
   CTA_HINT_GAP,
   kioskRestLook,
   kioskRestText,
+  kioskChrome,
+  kioskStatusLine,
+  statusClock,
+  MONO_FIGURES_STACK,
+  STATUS_LINE_DP,
+  STATUS_WARN,
+  type KioskChrome,
   pickupLabel,
   addFrame,
   addMs,
@@ -63,6 +70,7 @@ import {
   TIP_OTHER_MAX_SHEKELS,
   tipOtherAgorot,
   tipPercentAgorot,
+  waitLogoOf,
   type AddPath,
   type CheckoutStep,
   type CtaBox,
@@ -324,6 +332,11 @@ export interface PreviewModel {
   mealOptions?: (p: PProduct) => PProduct[];
   /** "נגיש" (layout.reach / reachToggle): this customer's ♿, kept by the screens' owner (reset at rest). */
   reach?: { toggled: boolean; toggle: () => void };
+  /**
+   * "אפקטים" (`motion.effects`): the kiosk draws the light profile — no shadows, no cascade, fades at
+   * the fast pace (the roots pass profileMotion's transitions), no tech glow or scan line. Absent: full.
+   */
+  light?: boolean;
   /** The real kiosk: the basket with its promotions (absent: the lines' own sum, as the preview). */
   pricing?: CartPricing | null;
   /** The real kiosk: the meal's window for a product that is a meal, else null. */
@@ -361,14 +374,153 @@ const STYLE_COLORS: Record<KioskMessage['style'], { bg: string; fg: string }> = 
   success: { bg: '#DCFCE7', fg: '#166534' },
 };
 
+/* ---------------------------------------------------- the style's chrome */
+
+const CHROME_CACHE = new WeakMap<KioskConfig, KioskChrome>();
+const CHROME_CACHE_LIGHT = new WeakMap<KioskConfig, KioskChrome>();
+
+/** The style's chrome (lib/kioskConfig kioskChrome): the backdrop, the outline, the status line, the press… */
+export function chromeOf(m: Pick<PreviewModel, 'cfg' | 'c' | 'light'>): KioskChrome {
+  const cache = m.light ? CHROME_CACHE_LIGHT : CHROME_CACHE;
+  let ch = cache.get(m.cfg);
+  if (!ch) {
+    ch = kioskChrome(m.cfg.theme, m.c, m.cfg.general, m.light ? 'light' : 'full');
+    cache.set(m.cfg, ch);
+  }
+  return ch;
+}
+
+/** The status line's height on this kiosk (its type scale); 0 when the style has none. */
+export function statusLinePx(m: Pick<PreviewModel, 'cfg' | 'c'>): number {
+  return chromeOf(m).statusBar ? Math.round(STATUS_LINE_DP * typeScaleFactor(m.cfg.theme.typeScale)) : 0;
+}
+
+/**
+ * What the kiosk's root takes from the chrome: tabular figures for every price and count, and the
+ * press (`.k-press`: every button sinks to `--k-press` while held — PREVIEW_CSS).
+ */
+export function chromeRoot(m: Pick<PreviewModel, 'cfg' | 'c' | 'light'>): { className: string; style: CSSProperties } {
+  const ch = chromeOf(m);
+  const style: CSSProperties = {};
+  if (ch.tabularFigures) style.fontVariantNumeric = 'tabular-nums';
+  if (ch.pressScale !== null) (style as Record<string, string>)['--k-press'] = String(ch.pressScale);
+  // "אפקטים" light: `.k-light` drops every shadow and blur (PREVIEW_CSS).
+  const className = [ch.pressScale !== null ? 'k-press' : '', m.light ? 'k-light' : ''].filter(Boolean).join(' ');
+  return { className, style };
+}
+
+/**
+ * The backdrop pattern behind the screens (a grid of 1 px lines or a dot matrix, static — painted
+ * once, never animated). Nothing for a style without one.
+ */
+export function KioskBackdrop({ m }: { m: Pick<PreviewModel, 'cfg' | 'c'> }) {
+  const ch = chromeOf(m);
+  if (ch.backdrop === 'none') return null;
+  const ink = ch.backdropInk;
+  const image =
+    ch.backdrop === 'grid'
+      ? `linear-gradient(to right, ${ink} 1px, transparent 1px), linear-gradient(to bottom, ${ink} 1px, transparent 1px)`
+      : `radial-gradient(circle, ${ink} 1.2px, transparent 1.7px)`;
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute inset-0"
+      style={{ backgroundImage: image, backgroundSize: `${ch.backdropStep}px ${ch.backdropStep}px`, backgroundPosition: 'center center' }}
+    />
+  );
+}
+
+/**
+ * "שורת מצב" along the top of every screen (the style's chrome): the kiosk's state with its dot
+ * on the start side, the order's number (once it has one) and the time on the end side. `screen`:
+ * the screen's name, or a rest screen's variant (kioskStatusLine). Laid out by the kiosk's root,
+ * which gives the screens under it `statusLinePx` less height.
+ */
+export function KioskStatusBar({ m, screen, pickup, top = 0 }: { m: PreviewModel; screen: string; pickup?: string | null; top?: number }) {
+  const ch = chromeOf(m);
+  if (!ch.statusBar) return null;
+  const line = kioskStatusLine(screen, pickup);
+  const mono = ch.monoFigures ? MONO_FIGURES_STACK : undefined;
+  return (
+    <div
+      className="pointer-events-none absolute inset-x-0 flex items-center gap-2 px-3 kt-11"
+      style={{ top, height: statusLinePx(m), background: m.c.background, borderBottom: `1px solid ${ch.outline ?? m.c.border}`, color: m.c.mutedText }}
+      role="status"
+      data-status={line.key}
+    >
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: line.tone === 'warn' ? STATUS_WARN : ch.accent }} />
+      <span className="truncate font-medium" style={{ color: m.c.text }}>
+        {m.t(`status.${line.key}`)}
+      </span>
+      <span className="flex-1" />
+      {line.order ? (
+        <>
+          <span className="shrink-0">{m.t('status.order')}</span>
+          <span className="shrink-0 font-semibold tabular-nums" dir="ltr" style={{ fontFamily: mono, color: ch.accent }}>
+            {line.order}
+          </span>
+          <span className="shrink-0 opacity-50">·</span>
+        </>
+      ) : null}
+      <span className="shrink-0 tabular-nums" dir="ltr" style={{ fontFamily: mono }}>
+        {statusClock(new Date(m.nowMs))}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The attract screen's idle scan line: one thin line of the accent sweeping down the screen, a
+ * transform on the compositor (no layout, no paint per frame). Not mounted at all with reduce
+ * motion or a style without one.
+ */
+export function KioskScanLine({ m }: { m: PreviewModel }) {
+  const ch = chromeOf(m);
+  if (ch.scanMs <= 0) return null;
+  return (
+    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div
+        className="k-scan"
+        style={
+          {
+            '--k-scan-to': `${m.screen.h + 56}px`,
+            '--k-scan-ms': `${ch.scanMs}ms`,
+            background: `linear-gradient(to bottom, ${ch.accent}00, ${ch.accent}12)`,
+            borderBottom: `1px solid ${ch.accent}66`,
+          } as CSSProperties
+        }
+      />
+    </div>
+  );
+}
+
+/** The basket's accent glow as a dish lands (re-mounted, so replayed, on every landing). */
+export function AddGlow({ m, radius }: { m: PreviewModel; radius: number }) {
+  const ch = chromeOf(m);
+  if (ch.addGlowMs <= 0 || m.cartBump <= 0) return null;
+  return (
+    <span
+      key={m.cartBump}
+      aria-hidden
+      className="k-add-glow"
+      style={{ borderRadius: radius, '--k-glow': ch.accent, '--k-glow-ms': `${ch.addGlowMs}ms` } as CSSProperties}
+    />
+  );
+}
+
 export function cardStyle(m: PreviewModel): CSSProperties {
   const dark = m.cfg.theme.mode === 'dark';
+  // A style with an outline (tech) draws its cards with a 1 px line, never a shadow.
+  const outline = chromeOf(m).outline;
   switch (m.cfg.theme.cardStyle) {
     case 'outlined':
-      return { background: m.c.surface, border: `1px solid ${m.c.border}`, borderRadius: m.radius };
+      return { background: m.c.surface, border: `1px solid ${outline ?? m.c.border}`, borderRadius: m.radius };
     case 'flat':
       return { background: dark ? '#FFFFFF0D' : '#0000000A', borderRadius: m.radius };
     default:
+      if (outline) return { background: m.c.surface, border: `1px solid ${outline}`, borderRadius: m.radius };
+      // The light profile ("אפקטים"): a hairline edge instead of the shadow (the till's KioskEffects.shadows).
+      if (m.light) return { background: m.c.surface, border: `1px solid ${m.c.border}`, borderRadius: m.radius };
       return {
         background: m.c.surface,
         borderRadius: m.radius,
@@ -433,10 +585,18 @@ export function ProductImage({ m, p, className, style }: { m: PreviewModel; p: P
 export function CategoryImage({ m, cat, size, radius }: { m: PreviewModel; cat: PCategory; size: number; radius: number }) {
   const box: CSSProperties = { width: size, height: size, borderRadius: radius };
   if (cat.imageUrl) return <Img src={cat.imageUrl} className="shrink-0 object-cover" style={box} />;
+  // A style with an outline (tech): the initial in the accent on an outlined panel, not a block of it.
+  const outline = chromeOf(m).outline;
   return (
     <span
       className="flex shrink-0 items-center justify-center font-bold"
-      style={{ ...box, background: m.c.primary, color: m.c.buttonText, fontSize: size * 0.42 }}
+      style={{
+        ...box,
+        background: outline ? m.c.surface : m.c.primary,
+        color: outline ? m.c.primary : m.c.buttonText,
+        border: outline ? `1px solid ${outline}` : undefined,
+        fontSize: size * 0.42,
+      }}
     >
       {cat.name.trim().charAt(0)}
     </span>
@@ -464,6 +624,7 @@ function Logo({ m, size = 44 }: { m: PreviewModel; size?: number }) {
       />
     );
   }
+  const outline = chromeOf(m).outline;
   return (
     <div
       className="flex items-center justify-center font-bold"
@@ -471,8 +632,9 @@ function Logo({ m, size = 44 }: { m: PreviewModel; size?: number }) {
         height: size,
         width: size,
         borderRadius: Math.min(m.radius, size / 2),
-        background: m.c.primary,
-        color: m.c.buttonText,
+        background: outline ? m.c.surface : m.c.primary,
+        color: outline ? m.c.primary : m.c.buttonText,
+        border: outline ? `1px solid ${outline}` : undefined,
         fontSize: size * 0.42,
       }}
       aria-label={m.t('noLogo')}
@@ -691,6 +853,8 @@ function PlaylistHero({ m, fill = false }: { m: PreviewModel; fill?: boolean }) 
   }, [item, list.length]);
 
   const frame = fill ? 'absolute inset-0 overflow-hidden' : 'relative aspect-[4/3] w-full overflow-hidden';
+  // A style with a backdrop (tech) lets it show through the empty hero: no colour sweep, no spots.
+  if (!item && fill && chromeOf(m).backdrop !== 'none') return null;
   if (!item) {
     return (
       <div
@@ -729,12 +893,30 @@ function PlaylistHero({ m, fill = false }: { m: PreviewModel; fill?: boolean }) 
  * word (every order is that one — the bon and the receipt still say it).
  */
 export function serviceAsked(m: Pick<PreviewModel, 'cfg'>): boolean {
-  // "כבוי" (payment.stepModes.service): never asked — every order is the first type.
+  // "כבוי" (payment.stepModes.service): never asked — every order is the first type; "ללא סוג
+  // שירות" (general.serviceMode = none): never asked, and no service at all (stepMode says off).
   return m.cfg.general.serviceTypes.length > 1 && stepMode(m.cfg, 'service') !== 'off';
 }
 
-/** Where the attract screen starts an order (the service screen, or straight to the menu). */
+/** "ללא סוג שירות" (general.serviceMode = none): the order carries no service, and no word says one. */
+export function serviceNone(m: Pick<PreviewModel, 'cfg'>): boolean {
+  return m.cfg.general.serviceMode === 'none';
+}
+
+/**
+ * "לקחת / לשבת" are the attract screen's own two buttons (`general.servicePlacement` = attract, the
+ * flow's serviceOnAttract): only they start an order there, and the service is never a step too.
+ */
+export function serviceOnAttractOf(m: Pick<PreviewModel, 'cfg'>): boolean {
+  return serviceAsked(m) && m.cfg.general.servicePlacement === 'attract';
+}
+
+/**
+ * Where the attract screen starts an order (the service screen, or straight to the menu). With
+ * "לקחת / לשבת" on the attract screen nothing but those buttons starts: a tap elsewhere stays there.
+ */
 export function attractNext(m: PreviewModel): void {
+  if (serviceOnAttractOf(m)) return;
   if (!serviceAsked(m)) m.setService(stepDefaultService(m.cfg.general.serviceTypes));
   m.go(serviceAsked(m) ? 'service' : 'catalog');
 }
@@ -1030,6 +1212,8 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
   const cta = cfg.attract.cta;
   const sections = cfg.attract.sections;
   const next = () => attractNext(m);
+  // "לקחת / לשבת" here: only those buttons start — the screen itself takes no tap.
+  const tapStarts = attractTapAnywhere(cta) && !serviceOnAttractOf(m);
   // The phone frame's notch, a 16 px margin and the 44 px logo: where the header ends.
   const notch = m.wide ? 0 : 28;
   // "ברוכים הבאים" (attract.welcome, kiosk-shared/layouts/welcome.tsx): under the header it takes its room from the content.
@@ -1109,7 +1293,7 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
   }
 
   return (
-    <div className={cn('relative h-full overflow-hidden', attractTapAnywhere(cta) && 'cursor-pointer')} onClick={attractTapAnywhere(cta) ? next : undefined}>
+    <div className={cn('relative h-full overflow-hidden', tapStarts && 'cursor-pointer')} onClick={tapStarts ? next : undefined}>
       {/* The hero fills the screen behind everything, as on the till; a veil keeps the text readable. */}
       {sections.includes('hero') ? <PlaylistHero m={m} fill /> : null}
       <div
@@ -1117,6 +1301,8 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
         className="pointer-events-none absolute inset-0"
         style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.10), rgba(0,0,0,0) 45%, rgba(0,0,0,0.55))' }}
       />
+      {/* The style's idle scan line (tech), under the content. */}
+      <KioskScanLine m={m} />
       <div className="absolute inset-x-4 flex items-center justify-between gap-2" style={{ top: 16, height: 44 }}>
         <Logo m={m} />
         <div className="flex items-center gap-1.5">
@@ -1244,9 +1430,9 @@ export function ServiceScreen({ m }: { m: PreviewModel }) {
                 {m.txt('serviceSubtitle')}
               </p>
             </div>
-            {types.length < 2 ? (
+            {types.length < 2 || serviceNone(m) ? (
               <p className="rounded-xl px-3 py-2 text-center text-xs" style={{ background: `${m.c.accent}1F`, color: m.c.text }}>
-                {m.t('skippedService')}
+                {serviceNone(m) ? m.t('noService') : m.t('skippedService')}
               </p>
             ) : null}
             <div className={`grid ${types.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`} style={{ gap }}>
@@ -1522,7 +1708,8 @@ export function CartBar({ m }: { m: PreviewModel }) {
   // The basket button bounces as the dish lands (or at the tap, "קפיצת כפתור הסל"); the class alternates to replay it.
   const barBounce = m.transitions.addToCart !== 'none' && bounce && m.cartBump > 0 ? (m.cartBump % 2 ? 'kiosk-bar-bounce-a' : 'kiosk-bar-bounce-b') : '';
   return (
-    <div className={barBounce}>
+    <div className={cn('relative', barBounce)}>
+      <AddGlow m={m} radius={m.btnRadius} />
       <BigButton
         m={m}
         onClick={() => m.go(m.cfg.general.skipCart === 'off' ? 'cart' : 'pay')}
@@ -1553,9 +1740,10 @@ export function CartPanel({ m }: { m: PreviewModel }) {
     <div className="flex w-[132px] shrink-0 flex-col border-s" style={{ borderColor: m.c.border, background: m.c.surface }}>
       <CartTarget
         register={m.setCartTarget}
-        className="flex items-center justify-between gap-1 border-b px-2 py-2"
+        className="relative flex items-center justify-between gap-1 border-b px-2 py-2"
         style={{ borderColor: m.c.border }}
       >
+        <AddGlow m={m} radius={0} />
         <span className="truncate text-xs font-extrabold">{m.txt('cartTitle')}</span>
         <span
           key={m.cartBump}
@@ -2226,7 +2414,7 @@ export function Flyer({
     <div
       ref={ref}
       aria-hidden
-      className="pointer-events-none absolute z-50 flex flex-col overflow-hidden"
+      className="k-fly pointer-events-none absolute z-50 flex flex-col overflow-hidden"
       style={{ left: flight.x - w / 2, top: flight.y - h / 2, width: w, height: h, borderRadius: Math.round(18 * dp), background: surface, color: text, opacity: 0, willChange: 'transform, opacity' }}
     >
       <div className="w-full shrink-0 overflow-hidden" style={{ height: w, background: '#00000010' }}>
@@ -2765,6 +2953,28 @@ function PinpadScene({ m, muted = false }: { m: PreviewModel; muted?: boolean })
  * (checked with the terminal — never charged again, no button), or blocked before anything was
  * sent (no internet / no pinpad).
  */
+/**
+ * "לוגו במסך התשלום" (payment.waitLogo): the business's own picture at the top of the screens that
+ * wait for the payment — as it is (a transparent PNG), or on a rounded light plate. Modest: at most
+ * a third of the width and about an eighth of the height, so the amount and the instructions keep
+ * their place. Nothing uploaded — nothing at all.
+ */
+export function WaitLogo({ m }: { m: PreviewModel }) {
+  const logo = waitLogoOf(m.cfg.payment);
+  if (!logo) return null;
+  const height = Math.round(Math.max(48, Math.min(m.screen.h * 0.12, 180)));
+  const plate: CSSProperties = logo.plate
+    ? { background: '#FFFFFF', borderRadius: 18, padding: Math.round(height * 0.12), boxShadow: '0 4px 14px rgba(0,0,0,0.10)' }
+    : {};
+  return (
+    <div data-wait-logo className="flex w-full shrink-0 justify-center" style={{ height }}>
+      <div className="flex h-full items-center justify-center" style={{ maxWidth: '34%', ...plate }}>
+        <Img src={logo.url} className="h-full w-auto max-w-full object-contain" />
+      </div>
+    </div>
+  );
+}
+
 function LivePay({ m, live }: { m: PreviewModel; live: NonNullable<KioskLive['pay']> }) {
   const spinner = (
     <span
@@ -2776,6 +2986,7 @@ function LivePay({ m, live }: { m: PreviewModel; live: NonNullable<KioskLive['pa
   return (
     <ScreenBody m={m}>
       <div className="flex min-h-full flex-col items-center gap-4 p-4 text-center">
+        <WaitLogo m={m} />
         <ScreenImage m={m} k="pay" height={80} />
         <h2 className="text-xl font-extrabold">{m.txt('payTitle')}</h2>
         <div className="text-4xl font-black tabular-nums" style={{ color: m.c.text }}>
@@ -2852,6 +3063,7 @@ export function PayScreen({ m, tipAgorot = 0 }: { m: PreviewModel; tipAgorot?: n
   return (
     <ScreenBody m={m}>
       <div className="flex min-h-full flex-col items-center gap-4 p-4 text-center">
+        <WaitLogo m={m} />
         <ScreenImage m={m} k="pay" height={80} />
         <h2 className="text-xl font-extrabold">{m.txt('payTitle')}</h2>
         <div className="text-4xl font-black tabular-nums" style={{ color: m.c.text }}>
@@ -2880,11 +3092,16 @@ export function SuccessScreen({ m }: { m: PreviewModel }) {
   const messages = messagesFor(cfg, 'success', ['banner', 'notice'], m.nowMs);
   // The real kiosk: the question only while it is still asked; what happened to the receipt after.
   const receipt = live ? (live.receipt === 'ask' ? 'ask' : live.receipt === 'printing' || live.receipt === 'printed' ? 'always' : 'never') : cfg.payment.receiptPolicy;
+  const outlined = chromeOf(m).outline !== null;
   return (
     <ScreenBody m={m}>
       <div className="flex min-h-full flex-col items-center gap-3 p-5 text-center">
         <ScreenImage m={m} k="success" height={80} />
-        <span className="kiosk-pop mt-2 flex h-16 w-16 items-center justify-center rounded-full shadow-lg" style={{ background: m.c.accent, color: '#fff' }}>
+        <span
+          className={cn('kiosk-pop mt-2 flex h-16 w-16 items-center justify-center rounded-full', !outlined && 'shadow-lg')}
+          // A style with an outline (tech): the check in the accent, ringed — never a blob of it.
+          style={outlined ? { background: `${m.c.accent}1F`, color: m.c.accent, border: `1px solid ${m.c.accent}` } : { background: m.c.accent, color: '#fff' }}
+        >
           <Check className="h-9 w-9" strokeWidth={3} />
         </span>
         <h2 className="text-xl font-extrabold">{m.txt('successTitle')}</h2>
@@ -2892,7 +3109,7 @@ export function SuccessScreen({ m }: { m: PreviewModel }) {
           <div className="text-xs font-semibold" style={{ color: m.c.mutedText }}>
             {m.txt('pickupLabel')}
           </div>
-          <div className="text-6xl font-black tabular-nums" dir="ltr" style={{ color: m.c.primary }}>
+          <div className="text-6xl font-black tabular-nums" dir="ltr" style={{ color: m.c.primary, fontFamily: chromeOf(m).monoFigures ? MONO_FIGURES_STACK : undefined }}>
             {label}
           </div>
         </div>
@@ -3039,6 +3256,8 @@ function ClosedScreen({ m, reason, pause }: { m: PreviewModel; reason: KioskRest
           <div aria-hidden className="absolute inset-0" style={{ background: fill, opacity: 0.82 }} />
         </>
       ) : null}
+      {/* The style's backdrop pattern (tech), over its own colour. */}
+      <KioskBackdrop m={m} />
       {look.spots ? (
         <>
           <div aria-hidden className="pointer-events-none absolute -left-16 -top-16 h-72 w-72 rounded-full bg-white/15 blur-3xl" />
@@ -3123,4 +3342,14 @@ ${MOTION_CSS}
 .kiosk-steam { animation: kioskSteam 2.4s linear infinite; }
 .k-reduce *, .k-reduce *::before, .k-reduce *::after { animation: none !important; transition: none !important; }
 @media (prefers-reduced-motion: reduce) { .kiosk-card, .kiosk-ring, .kiosk-pulse, .kiosk-pop, .kiosk-nudge, .kiosk-bounce, .kiosk-rest-breathe, .kiosk-rest-ring, .kiosk-steam { animation: none; } }
+.k-root.k-press button:not(:disabled):active, .k-root.k-press [role="button"]:active { scale: var(--k-press, 0.98); transition: scale 90ms ease-out; }
+@keyframes kScan { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(0, var(--k-scan-to, 100vh), 0); } }
+.k-scan { position: absolute; left: 0; right: 0; top: -56px; height: 56px; will-change: transform; animation: kScan var(--k-scan-ms, 7000ms) linear infinite; }
+@keyframes kAddGlow { 0% { opacity: 0; } 30% { opacity: 1; } 100% { opacity: 0; } }
+.k-add-glow { position: absolute; inset: -1px; pointer-events: none; opacity: 0; box-shadow: 0 0 0 1px var(--k-glow), 0 0 16px 1px var(--k-glow); animation: kAddGlow var(--k-glow-ms, 150ms) ease-out; }
+.k-reduce .k-scan, .k-reduce .k-add-glow { display: none; }
+.k-light [class*="shadow"], .k-light .k-fly { box-shadow: none !important; }
+.k-light [class*="backdrop-blur"] { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+.k-light .blur-2xl, .k-light .blur-3xl, .k-light .k-scan, .k-light .k-add-glow { display: none; }
+@media (prefers-reduced-motion: reduce) { .k-scan, .k-add-glow { display: none; } }
 `;

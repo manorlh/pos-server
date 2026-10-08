@@ -180,8 +180,10 @@ def check_switch(db: Session, user: User, machine: POSMachine, independent: bool
     * the super admin alone (403 `super_admin_only`) — it decides how the shop reports;
     * no open shift (`independent_switch_open_shift`);
     * no closed shift waiting for a Z (`independent_switch_unreported_shifts`): each was
-      closed expecting a Z of the other kind. One exception, as for `z_mode` (dead-till
-      recovery): back into the shop Z with shifts the cloud closed administratively;
+      closed expecting a Z of the other kind. Two exceptions: as for `z_mode` (dead-till
+      recovery), back into the shop Z with shifts the cloud closed administratively; and
+      shifts that are all empty — nothing a Z could report, so none was made for them —
+      which the first Z of the new kind takes along (`till_z.waiting_shifts_all_empty`);
     * no Z under way for it (`independent_switch_z_in_progress`);
     * nothing it numbered that the cloud does not have yet: no till Z closed with no
       connection (`till_offline_zs_unsynced`, docs/SPEC_OFFLINE_TILL_Z.md §4.4) and no shop
@@ -221,7 +223,9 @@ def check_switch(db: Session, user: User, machine: POSMachine, independent: bool
         )
     waiting = till_z.unreported_closed_count(db, machine.id)
     recovering = not independent and till_z._has_reconstructed_unreported(db, machine.id)
-    if waiting and not recovering:
+    # Closed shifts with nothing in them need no Z of the old kind: carried into the first Z of
+    # the new one, adding nothing (till_z.waiting_shifts_all_empty) — never a block.
+    if waiting and not recovering and till_z.waiting_shifts_all_empty(db, machine) is None:
         which = "ה-Z של הקופה" if machine.z_mode == "till" else "ה-Z הסניפי"
         raise _refuse(
             "independent_switch_unreported_shifts", machine,

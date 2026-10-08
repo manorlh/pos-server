@@ -43,7 +43,8 @@ import { openDb, type Db } from '../db/sqlite';
 import { Kv, migrate } from '../db/schema';
 import type { ProviderFactory } from '../payment/provider';
 import { PrintQueue, type PageRenderer } from '../printer/printQueue';
-import { DefaultTransport, guessQueue, type PrinterTarget, type Transport } from '../printer/transports';
+import { DefaultTransport, type PrinterTarget, type Transport } from '../printer/transports';
+import { resolvePrinterTarget, targetText, usbStatusText, UsbPrinterWatch, type PrinterResolution } from '../printer/usbPrinters';
 import { KioskService, type PlatformHooks } from '../service';
 import { Api, apiBase, type FetchFn } from '../sync/api';
 import { PLAIN_BOX, type Credentials, type SecretBox } from '../sync/cloud';
@@ -169,7 +170,8 @@ export function startPaymentInput(raw: unknown): StartPaymentIn | null {
     const unit = Number(l.unitAgorot);
     lines.push({ key, productId, qty: Math.trunc(qty), options, notes, ...(Number.isFinite(unit) ? { unitAgorot: Math.round(unit) } : {}), ...(parts.length > 0 ? { meal: { components: parts } } : {}) });
   }
-  const service = b.service === 'eat_in' ? 'eat_in' : 'take_away';
+  // "ללא סוג שירות": an explicit null stays none; anything else unknown is take-away, as always.
+  const service = b.service === null ? null : b.service === 'eat_in' ? 'eat_in' : 'take_away';
   const tipPct = typeof b.tipPct === 'number' && Number.isFinite(b.tipPct) && b.tipPct >= 0 && b.tipPct <= 100 ? b.tipPct : null;
   const tipAgorot = typeof b.tipAgorot === 'number' && Number.isFinite(b.tipAgorot) && b.tipAgorot >= 0 ? Math.round(b.tipAgorot) : null;
   const expected = typeof b.expectedTotalAgorot === 'number' && Number.isFinite(b.expectedTotalAgorot) ? Math.round(b.expectedTotalAgorot) : undefined;
@@ -199,6 +201,8 @@ export class BridgeRuntime extends EventEmitter implements BridgeHost {
   private svc: KioskService | null = null;
   private readonly queue: PrintQueue;
   private readonly transport: Transport;
+  /** The USB printer plugged in ("אוטומטי"), looked at once for the bridge and its kiosk (printer/usbPrinters.ts). */
+  private readonly usbWatch: UsbPrinterWatch;
   private readonly box: SecretBox;
   private code: PairingCode | null = null;
   private codeAsked = false;
@@ -225,6 +229,11 @@ export class BridgeRuntime extends EventEmitter implements BridgeHost {
     // Pages a KDS prints, test pages before a kiosk is linked: the bridge's own queue.
     this.queue = new PrintQueue(this.db, this.transport, () => this.printerTarget(), d.renderer, this.log);
     this.queue.onChange(() => this.changed());
+    this.usbWatch = new UsbPrinterWatch(this.transport, this.log, () => this.queue.busy || (this.svc?.printQueue.busy ?? false));
+    this.usbWatch.onChange(() => {
+      this.queues = this.usbWatch.current()?.queues.map((q) => q.name) ?? this.queues;
+      this.changed();
+    });
     this.logDir = path.join(d.dataDir, 'logs');
     mkdirSync(this.logDir, { recursive: true });
   }
@@ -248,11 +257,13 @@ export class BridgeRuntime extends EventEmitter implements BridgeHost {
     const link = this.storedLink();
     if (link?.role === 'kiosk') await this.openService(link, false).catch((e) => this.log(`service: ${String(e)}`));
     this.ensureCode();
-    void this.refreshQueues();
+    // The printers now and every 15 s: "אוטומטי" takes the USB printer plugged in.
+    this.usbWatch.start();
   }
 
   stop() {
     this.stopped = true;
+    this.usbWatch.stop();
     if (this.emitTimer) clearTimeout(this.emitTimer);
     this.svc?.stop();
     this.svc = null;
@@ -327,13 +338,18 @@ export class BridgeRuntime extends EventEmitter implements BridgeHost {
     return launchable(l.url ?? this.storedPairing()?.url ?? null, this.allowedOrigins());
   }
 
+  /** Where a page goes: the printer set wins; "אוטומטי" — the USB printer plugged in, else a name guess. */
+  private printerResolution(): PrinterResolution {
+    return this.svc ? this.svc.printerResolution() : resolvePrinterTarget(this.settings().printer, this.usbWatch.current());
+  }
+
   private printerTarget(): PrinterTarget {
-    return this.settings().printer ?? { transport: 'spooler', queueName: guessQueue(this.queues) };
+    return this.printerResolution().target;
   }
 
   async refreshQueues(): Promise<string[]> {
-    const list = await this.transport.list().catch(() => []);
-    this.queues = list.map((p) => p.name);
+    const scan = await this.usbWatch.refresh();
+    this.queues = scan ? scan.queues.map((q) => q.name) : (await this.transport.list().catch(() => [])).map((p) => p.name);
     this.changed();
     return this.queues;
   }
@@ -469,6 +485,7 @@ export class BridgeRuntime extends EventEmitter implements BridgeHost {
       secretBox: this.d.secretBox,
       renderer: this.d.renderer,
       transport: this.transport,
+      usbWatch: this.usbWatch,
       providers: this.d.providers,
       fetch: this.d.fetch,
       platform: this.d.platform,
@@ -626,17 +643,21 @@ export class BridgeRuntime extends EventEmitter implements BridgeHost {
 
   private printerView() {
     const s = this.svc;
-    const target = s ? s.localSettings().printer : this.printerTarget();
+    const resolved = this.printerResolution();
+    // As set: an empty Windows queue is "אוטומטי" (the window's choice shows that, not the queue found).
+    const set = s ? s.localSettings().printer : (this.settings().printer ?? { transport: 'spooler' as const, queueName: null });
     const q = s ? s.printQueue : this.queue;
     return {
-      target: target.transport === 'tcp' ? `TCP ${target.host ?? '—'}:${target.port ?? 9100}` : target.transport === 'spooler' ? `Windows: ${target.queueName ?? '—'}` : '—',
-      transport: target.transport,
-      queueName: target.queueName ?? null,
-      host: target.host ?? null,
-      port: target.port ?? null,
+      target: targetText(resolved),
+      transport: set.transport,
+      queueName: set.queueName?.trim() || null,
+      host: set.host ?? null,
+      port: set.port ?? null,
       health: q.health(),
       lastError: q.lastFailure?.error ?? null,
       lastOkAt: q.lastOkAt,
+      auto: resolved.auto,
+      usb: usbStatusText(this.usbWatch.pick()),
     };
   }
 

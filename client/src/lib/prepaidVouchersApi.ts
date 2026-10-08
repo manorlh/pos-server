@@ -11,6 +11,13 @@ import type {
   PrepaidStacking,
   PrepaidVoucherKind,
 } from './prepaidVoucherBenefit';
+import {
+  prepaidProductOf,
+  type PrepaidProductBlock,
+  type PrepaidProductNote,
+  type PrepaidProductOption,
+  type PrepaidProductPurpose,
+} from './prepaidVoucherProducts';
 
 export type { PrepaidDiscountType, PrepaidPromotionPolicy, PrepaidStacking, PrepaidVoucherKind };
 
@@ -47,7 +54,13 @@ export interface PrepaidBatchTerms {
 export interface PrepaidBatchItem {
   productId: string;
   name: string;
+  /** Units; a product sold by weight in its unit ("0.5" ק״ג). */
   quantity: number;
+  /** Sold by weight when the batch was made (docs/SPEC_VOUCHER_PRODUCTION.md §7.14). */
+  weighed?: boolean;
+  unitLabel?: string | null;
+  /** "2× נקניקייה" / "0.5 ק״ג זיתים" — as printed. */
+  text?: string;
 }
 
 export interface PrepaidBatchStats {
@@ -85,6 +98,8 @@ export interface PrepaidVoucherBatch extends PrepaidBatchTerms {
   barcodeType?: PrepaidBarcodeType;
   customerName?: string | null;
   orderRef?: string | null;
+  /** Goods: "כולל תוספות" — paid options and a meal's upcharges are covered too (§7.14). */
+  includeExtras?: boolean;
 }
 
 /** QR (any camera / 2D imager) or a Code 128 line barcode (1D laser scanners). */
@@ -152,9 +167,11 @@ export interface PrepaidBatchCreate {
   validFrom: string | null;
   validUntil: string | null;
   splitAllowed: boolean;
-  /** Goods; empty for a discount kind. */
+  /** Goods; empty for a discount kind. A fraction only for a product sold by weight. */
   items: { productId: string; quantity: number }[];
   count: number;
+  /** Goods: "כולל תוספות". */
+  includeExtras?: boolean;
   groupSize?: number | null;
   showCode?: boolean;
   barcodeType?: PrepaidBarcodeType;
@@ -183,13 +200,8 @@ export interface PrepaidBatchRulesUpdate {
   maxUsesPerDay?: number | null;
 }
 
-/** A catalog product as the item picker needs it (`GET /products`, global level). */
-export interface PrepaidProductOption {
-  id: string;
-  name: string;
-  price: number;
-  sku?: string | null;
-}
+// Every product type (docs/SPEC_VOUCHER_PRODUCTION.md §7.14): the pickers' rows, and why not.
+export type { PrepaidProductBlock, PrepaidProductNote, PrepaidProductOption, PrepaidProductPurpose };
 
 export async function fetchPrepaidBatches(): Promise<PrepaidVoucherBatch[]> {
   const { data } = await api.get<{ items: PrepaidVoucherBatch[] }>('/prepaid-vouchers/batches');
@@ -350,6 +362,9 @@ export interface PrepaidReportCounts {
 export interface PrepaidReportProduct {
   productId: string;
   name: string | null;
+  /** Sold by weight: every figure of the row is in [unitLabel]. */
+  weighed?: boolean;
+  unitLabel?: string | null;
   perVoucher: number;
   /** perVoucher × vouchers issued; = taken + forfeited + outstanding + void. */
   issued: number;
@@ -409,21 +424,24 @@ export async function fetchPrepaidBatchReport(batchId: string): Promise<PrepaidB
   return data;
 }
 
-export async function searchPrepaidProducts(search: string, companyId: string): Promise<PrepaidProductOption[]> {
+export async function searchPrepaidProducts(
+  search: string,
+  companyId: string,
+  opts: { purpose?: PrepaidProductPurpose; shopIds?: string[] } = {},
+): Promise<PrepaidProductOption[]> {
   // The cloud's own rule for what a batch of this company may carry — the save checks the same.
+  // Every product comes back, each with whether it can go on and why not (§7.14).
   const { data } = await api.get<{ items: Record<string, unknown>[] }>('/prepaid-vouchers/products', {
     params: {
       companyId,
       ...(search.trim() ? { search: search.trim() } : {}),
+      ...(opts.purpose ? { purpose: opts.purpose } : {}),
+      ...(opts.shopIds?.length ? { shopIds: opts.shopIds } : {}),
     },
+    // `shopIds=a&shopIds=b`, as FastAPI reads a list.
+    paramsSerializer: { indexes: null },
   });
-  return (data.items ?? [])
-    .map((p) => ({
-      id: String(p.id),
-      name: String(p.name ?? ''),
-      price: Number(p.price ?? 0),
-      sku: (p.sku as string | null | undefined) ?? null,
-    }));
+  return (data.items ?? []).map(prepaidProductOf);
 }
 
 /** A category an item discount may name (`GET /prepaid-vouchers/categories`). */

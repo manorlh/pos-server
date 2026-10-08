@@ -36,6 +36,7 @@ import { formatCurrency, formatDateTime } from '@/lib/format';
 import {
   buildCreateBody,
   defaultTarget,
+  isCancellableRemoteCredit,
   isPendingRemoteCredit,
   newCommandId,
   remoteCreditStatusVariant,
@@ -535,9 +536,9 @@ export function RemoteCreditStatusView({
   }
 
   const pending = isPendingRemoteCredit(req.status);
+  const cancellable = isCancellableRemoteCredit(req);
   const failed = req.status === 'failed' || req.status === 'expired';
-  const hintKey =
-    req.status === 'received' ? (req.mode === 'no_money' ? 'received_no_money' : 'received_prepared') : req.status;
+  const hintKey = req.status === 'received' ? `received_${req.mode}` : req.status;
   const creditId = req.creditTransactionId;
 
   return (
@@ -640,8 +641,12 @@ export function RemoteCreditStatusView({
         </details>
       ) : null}
 
+      {pending && req.mode === 'card_refunded' ? (
+        <p className="text-xs text-muted-foreground">{t('cardRefundedNotCancellable')}</p>
+      ) : null}
+
       <DialogFooter>
-        {pending ? (
+        {cancellable ? (
           <Button
             variant="outline"
             disabled={cancel.isPending}
@@ -652,7 +657,7 @@ export function RemoteCreditStatusView({
             {cancel.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
             {t('cancelRequest')}
           </Button>
-        ) : onNew && req.status !== 'completed' ? (
+        ) : onNew && !pending && req.status !== 'completed' && req.mode !== 'card_refunded' ? (
           <Button variant="outline" onClick={onNew}>
             {t('newRequest')}
           </Button>

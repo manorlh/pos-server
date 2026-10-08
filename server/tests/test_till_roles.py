@@ -433,8 +433,28 @@ class TestPosUsersEndpoints:
             str(w.shop.id), PosUserCreate(username="avi", pin="2580", tillRoleId=waiter.id), **ctx(w),
         )
         assert made.till_role_id == waiter.id and made.till_role_name == "מלצר"
-        plain = PU.create_pos_user(str(w.shop.id), PosUserCreate(username="old", pin="2580"), **ctx(w))
-        assert plain.till_role_id == role_by(w, TP.LEGACY_CASHIER).id
+        # No role chosen: a NEW user starts on the spec's cashier (the owner, 08.10.2026).
+        plain = PU.create_pos_user(str(w.shop.id), PosUserCreate(username="new", pin="2580"), **ctx(w))
+        assert plain.till_role_id == role_by(w, TP.CASHIER).id and plain.till_role_name == "קופאי"
+        assert plain.role == PosUserRole.CASHIER
+        assert roster(w)["new"].permissions == TP.DEFAULTS[TP.CASHIER]
+
+    def test_a_new_user_on_an_untouched_company_gets_the_spec_role_and_nobody_else_moves(self, w):
+        # The company's roles do not exist yet: creating the user materialises them, the
+        # existing till users land on the legacy role they behave as, the new one on the spec's.
+        assert w.db.query(TillRole).count() == 0
+        made = PU.create_pos_user(str(w.shop.id), PosUserCreate(username="new", pin="2580"), **ctx(w))
+        assert made.till_role_id == role_by(w, TP.CASHIER).id
+        w.db.refresh(w.dana)
+        assert w.dana.till_role_id == role_by(w, TP.LEGACY_CASHIER).id
+        # One assignment recorded for the new user (spec cashier), no detour via a legacy role.
+        changes = w.db.query(TillRoleChange).filter(TillRoleChange.pos_user_id == made.id).all()
+        assert [(c.action, (c.old_value or {}).get("roleId")) for c in changes] == [("assign", None)]
+        # Created as a shop manager: the spec's manager, so the form's role holds.
+        chief = PU.create_pos_user(
+            str(w.shop.id), PosUserCreate(username="chief", pin="2580", role="shop_manager"), **ctx(w),
+        )
+        assert chief.till_role_id == role_by(w, TP.MANAGER).id and chief.role == PosUserRole.SHOP_MANAGER
 
     def test_an_older_dashboard_changing_role_moves_the_legacy_role(self, w):
         roles(w)

@@ -20,7 +20,18 @@ const demo: BridgeWindowView = {
   card: null,
   shift: null,
   outbox: 0,
-  printer: { target: 'Windows: SNBC BTP-880', transport: 'spooler', queueName: 'SNBC BTP-880', host: null, port: null, health: 'unknown', lastError: null, lastOkAt: null },
+  printer: {
+    target: 'Windows: SNBC BTP-880 (USB · אוטומטי)',
+    transport: 'spooler',
+    queueName: null,
+    host: null,
+    port: null,
+    health: 'unknown',
+    lastError: null,
+    lastOkAt: null,
+    auto: true,
+    usb: 'מדפסת USB: SNBC BTP-880 מחוברת',
+  },
   queues: ['SNBC BTP-880', 'Microsoft Print to PDF'],
   drawer: false,
   origins: { defaults: ['https://pos-cloud-app.vercel.app', 'http://localhost:3002'], extra: [] },
@@ -195,6 +206,7 @@ export function BridgeWindow() {
           </button>
         }
       >
+        <p className={`text-sm font-semibold ${/מחוברת$/.test(v.printer.usb) ? 'text-emerald-700' : /דרייבר/.test(v.printer.usb) ? 'text-amber-700' : 'text-neutral-600'}`}>{v.printer.usb}</p>
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
           <Row k="יעד" v={v.printer.target} />
           <Row k="מצב" v={v.printer.health} />
@@ -207,7 +219,7 @@ export function BridgeWindow() {
             value={v.printer.transport === 'spooler' ? (v.printer.queueName ?? '') : ''}
             onChange={(e) => void run({ type: 'setPrinter', transport: 'spooler', queueName: e.target.value })}
           >
-            <option value="">מדפסת Windows…</option>
+            <option value="">אוטומטי — מדפסת ה-USB המחוברת</option>
             {v.queues.map((q) => (
               <option key={q} value={q}>
                 {q}

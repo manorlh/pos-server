@@ -102,11 +102,33 @@ def _clean_text(value, limit: int, *, required: bool = False):
     return value or None
 
 
+def _quantity(value, *, most) -> Decimal:
+    """A goods quantity: above 0, at most [most], at most three decimals (a weight: "0.5" ק״ג).
+    Whether a fraction is allowed is the product's (sold by weight) — checked by the service."""
+    if isinstance(value, bool) or value is None or value == "":
+        raise ValueError("quantity must be a number")
+    try:
+        q = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        raise ValueError("quantity must be a number")
+    if not q.is_finite() or q <= 0 or q > most:
+        raise ValueError(f"quantity must be above 0 and at most {most}")
+    if q != q.quantize(Decimal("0.001")):
+        raise ValueError("quantity: at most three decimals")
+    return q.quantize(Decimal("0.001"))
+
+
 class PrepaidVoucherItemIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     product_id: uuid.UUID = Field(..., alias="productId")
-    quantity: int = Field(..., ge=1, le=MAX_ITEM_QUANTITY)
+    #: Units; for a product sold by weight a decimal of its unit ("0.5" ק״ג).
+    quantity: Decimal
+
+    @field_validator("quantity", mode="before")
+    @classmethod
+    def _qty(cls, value):
+        return _quantity(value, most=MAX_ITEM_QUANTITY)
 
 
 class PrepaidVoucherBatchCreate(BaseModel):
@@ -125,6 +147,9 @@ class PrepaidVoucherBatchCreate(BaseModel):
     #: Goods (`items`); empty for a discount kind.
     items: List[PrepaidVoucherItemIn] = Field(default_factory=list)
     count: int = Field(..., ge=1, le=MAX_VOUCHERS_PER_BATCH)
+    #: Goods: "כולל תוספות" — the voucher covers a dish's paid options and a meal's upcharges
+    #: too. Off (the default): its base price as listed; what the extras cost is paid.
+    include_extras: bool = Field(False, alias="includeExtras")
     # ── Kind and terms (docs/SPEC_VOUCHER_PRODUCTION.md §7) ──────────────────────
     #: "items" (goods, a tender — the default), "order_discount", "item_discount".
     kind: str = "items"
@@ -241,10 +266,11 @@ class PrepaidVoucherBatchCreate(BaseModel):
             self.targets = None
             self.max_units = None
             return self
-        # A discount voucher: no goods, no "in parts" (its uses say how often).
+        # A discount voucher: no goods, no "in parts" (its uses say how often), no extras.
         if self.items:
             raise ValueError("a discount voucher has no items")
         self.split_allowed = False
+        self.include_extras = False
         if self.discount_type is None or self.discount_value is None or self.discount_value <= 0:
             raise ValueError("discountType and a discountValue above 0 are required")
         if self.discount_type == "percent" and self.discount_value > 100:
@@ -407,7 +433,13 @@ class PrepaidVoucherRedeemItemIn(BaseModel):
 
     #: The till's product id or the global product id — either is understood.
     product_id: str = Field(..., alias="productId", min_length=1, max_length=100)
-    quantity: int = Field(..., ge=1, le=10_000)
+    #: Units; a weighed item's in its unit ("0.5" ק״ג) — a fraction only for such an item.
+    quantity: Decimal
+
+    @field_validator("quantity", mode="before")
+    @classmethod
+    def _qty(cls, value):
+        return _quantity(value, most=10_000)
 
 
 class PrepaidVoucherRedeemIn(BaseModel):
@@ -461,6 +493,10 @@ class PrepaidBasketLineIn(BaseModel):
     #: What vouchers applied before this one already took off the line.
     voucher_agorot: int = Field(0, alias="voucherAgorot", ge=0)
     discountable: bool = True
+    #: Sold by weight: an item discount takes it per kg, pro rata (§7.14). Absent from older tills.
+    weighed: bool = False
+    #: The general item ("פריט כללי"): never an item discount's.
+    general: bool = False
 
 
 class PrepaidVoucherInSaleIn(BaseModel):

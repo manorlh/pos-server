@@ -98,7 +98,8 @@ export interface OrderLineIn {
 
 export interface StartPaymentIn {
   lines: OrderLineIn[];
-  service: 'take_away' | 'eat_in';
+  /** Null: "ללא סוג שירות" — the order has none. */
+  service: 'take_away' | 'eat_in' | null;
   customerName: string | null;
   customerPhone: string | null;
   tableRef: string | null;
@@ -171,7 +172,16 @@ export interface AdminInfo {
     /** "עקיפת בדיקת מספר מסוף" is on for this kiosk: the card lock's number check is off. */
     numberCheckBypass?: boolean;
   };
-  printer: { target: string; health: string; lastError: string | null; queues: string[] };
+  printer: {
+    target: string;
+    health: string;
+    lastError: string | null;
+    queues: string[];
+    /** "מדפסת USB: <name> מחוברת / לא נמצאה / נמצא מכשיר בלי דרייבר — …" (main/printer/usbPrinters.ts). */
+    usb?: string | null;
+    /** The target is found by itself ("אוטומטי": no Windows queue set). */
+    auto?: boolean;
+  };
   sync: { lastBeatOkAt: number | null; lastKioskSyncAt: number | null; lastError: string | null; outbox: number; configVersion: string | null };
   media: { files: number; bytes: number; missing: number };
   orders: Array<{ localId: string; label: string | null; at: number; totalAgorot: number; bon: string; receipt: string; number: string | null }>;

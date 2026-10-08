@@ -13,6 +13,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { MobileNav } from '@/components/mobile-nav';
 import { useRoleAccess } from '@/lib/accessApi';
 import { findNavEntry } from '@/lib/navigation';
+import { canAccess, levelForPath, pageAccess, sectionForPath } from '@/lib/dashboardAccess';
+import { useDashboardAccess } from '@/lib/dashboardAccessApi';
+import { MyAccessCard, SectionDenied } from '@/components/dashboard/access/my-access-card';
 
 function ShellSkeleton() {
   return (
@@ -50,15 +53,27 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 /**
  * "הרשאות": a page the super admin hid from this role is not shown when reached by its
  * address either — not only left out of the menu.
+ *
+ * "הרשאות דשבורד": nor a page of a section this user was not given — "אין לך הרשאה" instead
+ * of a page whose every request the server refuses. The home page of a user without reports
+ * shows what they may open ("מה אני רשאי לראות").
  */
 function AccessGuard({ children }: { children: React.ReactNode }) {
   const t = useTranslations('dashboard.layout');
   const pathname = usePathname();
   const { hidden, loaded } = useRoleAccess();
+  const dashboardAccess = useDashboardAccess();
   const entry = findNavEntry(pathname);
   if (!loaded) return <ShellSkeleton />;
   if (entry && hidden.has(entry.href)) {
     return <div className="max-w-lg rounded-lg border bg-card p-6 text-sm text-muted-foreground">{t('hiddenPage')}</div>;
+  }
+  const verdict = pageAccess(dashboardAccess, pathname);
+  if (verdict === 'summary') return <MyAccessCard className="max-w-xl" />;
+  if (verdict === 'denied') {
+    const section = sectionForPath(pathname);
+    const needsEdit = section !== undefined && levelForPath(pathname) === 'edit' && canAccess(dashboardAccess, section, 'view');
+    return <SectionDenied section={section ?? ''} needsEdit={needsEdit} />;
   }
   return <>{children}</>;
 }

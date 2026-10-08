@@ -94,7 +94,17 @@ def expire_overdue(db: Session, *, now: Optional[datetime] = None) -> int:
         req.error_code = "expired"
         req.error_message = "The till did not close its shift in time"
         req.failed_at = now
+    if rows:
+        db.flush()
+        _settle_kiosk_commands(db, [r.id for r in rows])
     return len(rows)
+
+
+def _settle_kiosk_commands(db: Session, request_ids) -> None:
+    """A kiosk's "סגירת משמרת" command follows the request it made (kiosk_z.settle_commands)."""
+    from app.services import kiosk_z
+
+    kiosk_z.settle_commands(db, request_ids=request_ids)
 
 
 def reconcile(db: Session, req: ShiftCloseRequest, *, now: Optional[datetime] = None) -> bool:
@@ -218,6 +228,7 @@ def cancel(db: Session, req: ShiftCloseRequest) -> ShiftCloseRequest:
     req.status = S.CANCELLED
     req.error_code = "cancelled"
     db.flush()
+    _settle_kiosk_commands(db, [req.id])
     return req
 
 
@@ -292,6 +303,8 @@ def apply_ack(
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid phase")
     db.flush()
+    if req.status not in PENDING_CLOSE_REQUEST_STATUSES:
+        _settle_kiosk_commands(db, [req.id])
     return req
 
 
@@ -316,6 +329,7 @@ def on_shift_close_accepted(
             done.append(req)
     if done:
         db.flush()
+        _settle_kiosk_commands(db, [r.id for r in done])
     return done
 
 

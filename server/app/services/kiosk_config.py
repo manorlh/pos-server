@@ -143,8 +143,10 @@ CATEGORY_STYLES = ("chips", "tabs", "images")
 CATEGORY_LAYOUTS = ("side", "top")
 #: "סגנון ממשק": a coherent bundle of layout and shape choices (and a few colours) a business
 #: picks before styling anything itself — see UI_PRESETS. Its values sit between the defaults
-#: and the layers: whatever a layer sets explicitly wins over the preset.
-UI_STYLES = ("ios", "wolt", "classic", "minimal_dark")
+#: and the layers: whatever a layer sets explicitly wins over the preset. "tech" ("טכנולוגי")
+#: also draws a chrome the clients derive from the style (the dashboard's kioskChrome, the till's
+#: KioskChrome): a grid backdrop, 1 dp outlines, a status line, tabular / monospaced figures.
+UI_STYLES = ("ios", "wolt", "classic", "minimal_dark", "tech")
 TYPE_SCALES = ("normal", "large", "xlarge")
 TYPE_WEIGHTS = ("light", "regular", "bold")
 #: The basket while ordering: the floating bar, or a side panel on a wide screen.
@@ -176,6 +178,11 @@ MOTION_SCREEN_CHANGE = ("slide", "fade", "zoom", "none")
 MOTION_SHEET = ("slide_up", "scale", "fade", "none")
 MOTION_ADD_TO_CART = ("fly", "bounce", "none")
 MOTION_SPEEDS = ("fast", "normal", "relaxed")
+#: "אפקטים" (`motion.effects`, the till's domain/KioskPerf.kt KioskPerfRules.EFFECTS): "auto" — the
+#: device decides (its strength; on the web kiosks prefers-reduced-motion or a slow-frame probe),
+#: "full" — every effect, "light" — the cheaper variant of each (no shadows, no cascade of cards,
+#: fades at the fast pace, none of the tech style's glow and scan line). Not a style's choice.
+MOTION_EFFECTS = ("auto", "full", "light")
 #: "כיתוב רץ" (config `ticker`): a slim strip whose texts scroll without end on the chosen screens,
 #: under the header ("top") or above the basket / action bar ("bottom"). The dashboard's
 #: src/lib/kioskConfig.ts TICKER_* and the till's domain/KioskTicker.kt mirror this.
@@ -232,6 +239,10 @@ REMAINDER_METHODS = ("card", "cash_at_till")
 CASH_AT_TILL_EXPIRY_MIN = (5, 240)
 RECEIPT_POLICIES = ("always", "ask", "never")
 CUSTOMER_FIELD_MODES = ("off", "optional", "required")
+#: "סוג שירות": "types" — as `serviceTypes` says (asked with two, else every order is the one);
+#: "none" — "ללא סוג שירות": never asked, and the order carries no service at all (no word on
+#: the screens, the slip, the bon, the receipt or the KDS). `serviceTypes` is kept as it was.
+SERVICE_MODES = ("types", "none")
 #: "לקחת / לשבת": after "הזמינו כאן" (the current flow) or as two big buttons on the attract screen.
 SERVICE_PLACEMENTS = ("after_start", "attract")
 #: "לאכול כאן או לקחת?": a tap picks and "להמשך" goes on (default), or a tap goes on at once.
@@ -260,6 +271,9 @@ UPSELL_MAX_SHOWN = 5
 #: own upsell rules of 06.10.2026, replaced by the menu's rules).
 RETIRED_KEYS = (("upsell", "rules"), ("upsell", "when"))
 SUCCESS_MESSAGE_MAX = 300
+#: "לוגו במסך התשלום": the business's logo above the card step — as it is ("plain", for a
+#: transparent PNG) or on a rounded light plate ("plate", for a logo with its own background).
+WAIT_LOGO_STYLES = ("plain", "plate")
 BON_MODES = ("routing", "single")
 PICKUP_SCOPES = ("kiosk", "shop")
 MEDIA_KINDS = ("image", "video", "font")
@@ -292,6 +306,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "general": {
         "fulfillmentMode": "BON",
         "serviceTypes": ["take_away", "eat_in"],
+        # "ללא סוג שירות" is "none"; absent (every config stored before it) reads as "types".
+        "serviceMode": "types",
         "askTableNumber": False,
         "languages": ["he"],
         "skipCart": "off",
@@ -422,6 +438,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # "שלח למטבח לפני תשלום": the kiosk prints the bon of an order to pay at the till at once
         # (off: the till sends it when it takes the money).
         "cashAtTillKitchenBeforePay": False,
+        # "לוגו במסך התשלום": its own upload (POST /kiosks/media), shown at the top of the screens
+        # that wait for the payment; no picture — nothing shows.
+        "waitLogo": {"media": None, "style": "plain"},
     },
     # "הגדלת מכירה": the menu's rules for the kiosk (§21); at most `maxShown` windows in one order.
     "upsell": {"maxShown": 2},
@@ -432,6 +451,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "motion": {
         "categorySwitch": "slide", "itemsEnter": "cascade", "screenChange": "slide",
         "sheet": "scale", "addToCart": "fly", "speed": "normal",
+        # "אפקטים": the device decides (MOTION_EFFECTS); no style sets it.
+        "effects": "auto",
     },
     # "כיתוב רץ": off; once on, on the menu and the basket, under the header, slowly (readable),
     # in the theme's button colours (null), medium text; a finger on it does not stop it.
@@ -450,6 +471,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # An unprinted bon prints again by itself when the printer comes back — once, and only
         # when younger than this many minutes (docs/SPEC_KIOSK.md §16.8); 0: never by itself.
         "bonAutoRetryMin": 10,
+        # "בון מטבח במדפסת הקיוסק" (docs/SPEC_KIOSK.md §5, the owner 07.10.2026): may the kiosk's own
+        # printer take its kitchen bon — when it has no kitchen printer (its USB printer, §14), and the
+        # routing's share for "this till"? Off by default, so every kiosk — an existing one too — gets
+        # it off: the bon never prints on the kiosk; a kitchen printer that does not answer keeps it in
+        # its queue and the staff's alert. `bonMode: "single"` with a named printer is unchanged.
+        "bonOnKiosk": False,
     },
     "pickup": {"scope": "kiosk", "prefix": "", "start": 1, "max": 999},
     "timers": {"inactivitySec": 60, "warningSec": 20, "successSec": 12, "attractSlideSec": 8},
@@ -523,6 +550,18 @@ UI_PRESETS: Dict[str, Dict[str, Any]] = {
         "typeScale": "normal", "typeWeight": "light",
         "cartStyle": "bar", "animation": "subtle", "showDescriptions": True,
     },
+    # "טכנולוגי": near-black, one electric accent (the brand colour, dark words on it), a semi-tone
+    # surface for the panels, 1 dp outlines instead of shadows, sharp corners.
+    "tech": {
+        "mode": "dark", "font": "heebo",
+        "primaryColor": "#22E1FF", "accentColor": "#22E1FF",
+        "backgroundColor": "#0B0F14", "surfaceColor": "#111821", "textColor": "#E6EDF3",
+        "cornerRadius": 10, "cardStyle": "outlined", "buttonShape": "rounded",
+        "gridDensity": "comfortable", "imageRatio": "4:3",
+        "categoryStyle": "tabs", "categoryLayout": "side",
+        "typeScale": "normal", "typeWeight": "regular",
+        "cartStyle": "bar", "animation": "subtle", "showDescriptions": True,
+    },
 }
 
 #: The theme keys a preset decides (unless a layer sets them).
@@ -551,6 +590,12 @@ UI_PRESET_CTA: Dict[str, Dict[str, Any]] = {
         "shadow": False, "icon": "arrow", "iconPosition": "end", "animation": "glow",
         "borderColor": "#C9A227", "borderWidth": 1,
     },
+    # Crisp and still: the attract screen's idle motion is the style's scan line (the clients' chrome).
+    "tech": {
+        "size": "l", "position": "bottom_center", "fontSize": 22, "fontWeight": "bold",
+        "shadow": False, "icon": "arrow", "iconPosition": "end", "animation": "none",
+        "borderColor": None, "borderWidth": 0,
+    },
 }
 PRESET_CTA_KEYS = tuple(UI_PRESET_CTA["wolt"].keys())
 
@@ -563,6 +608,11 @@ UI_PRESET_MOTION: Dict[str, Dict[str, Any]] = {
     "classic": {"categorySwitch": "push", "itemsEnter": "pop", "screenChange": "fade", "sheet": "scale", "addToCart": "fly", "speed": "normal"},
     "minimal_dark": {
         "categorySwitch": "fade_scale", "itemsEnter": "cascade", "screenChange": "fade", "sheet": "fade",
+        "addToCart": "fly", "speed": "normal",
+    },
+    # Crisp and cheap: opacity for the screens and the category, the cards in one after another.
+    "tech": {
+        "categorySwitch": "fade", "itemsEnter": "cascade", "screenChange": "fade", "sheet": "scale",
         "addToCart": "fly", "speed": "normal",
     },
 }
@@ -1000,6 +1050,7 @@ SCHEMA = Obj({
     "general": Obj({
         "fulfillmentMode": Enum(FULFILLMENT_MODES),
         "serviceTypes": UList(Enum(SERVICE_TYPES), min_len=1, max_len=len(SERVICE_TYPES), unique=True),
+        "serviceMode": Enum(SERVICE_MODES),
         "askTableNumber": Bool(),
         "languages": UList(Enum(LANGUAGES), min_len=1, max_len=len(LANGUAGES), unique=True),
         "skipCart": Enum(SKIP_CART),
@@ -1122,6 +1173,10 @@ SCHEMA = Obj({
         "stepModes": Obj({key: Enum(CUSTOMER_FIELD_MODES) for key in STEP_MODE_KEYS}),
         "cashAtTillExpiryMin": Int(*CASH_AT_TILL_EXPIRY_MIN),
         "cashAtTillKitchenBeforePay": Bool(),
+        "waitLogo": Obj({
+            "media": Media(("image",), nullable=True),
+            "style": Enum(WAIT_LOGO_STYLES),
+        }),
     }),
     "upsell": Obj({
         "maxShown": Int(1, UPSELL_MAX_SHOWN),
@@ -1137,6 +1192,7 @@ SCHEMA = Obj({
         "sheet": Enum(MOTION_SHEET),
         "addToCart": Enum(MOTION_ADD_TO_CART),
         "speed": Enum(MOTION_SPEEDS),
+        "effects": Enum(MOTION_EFFECTS),
     }),
     "ticker": Obj({
         "enabled": Bool(),
@@ -1157,6 +1213,7 @@ SCHEMA = Obj({
         "receiptPrinterId": PRINTER_ID,
         "pickupSlip": Bool(),
         "bonAutoRetryMin": Int(0, 120),
+        "bonOnKiosk": Bool(),
     }),
     "pickup": Obj({
         "scope": Enum(PICKUP_SCOPES),
@@ -1196,6 +1253,7 @@ SCHEMA = Obj({
         "categoryIcons": Enum(layouts.LAYOUT_CATEGORY_ICONS, nullable=True),
         "railSize": Enum(layouts.LAYOUT_RAIL_SIZES),
         "landingColumns": Int(min(layouts.LAYOUT_LANDING_COLUMNS), max(layouts.LAYOUT_LANDING_COLUMNS)),
+        "productSize": Enum(layouts.LAYOUT_PRODUCT_SIZES),
         "landingShowCounts": Bool(),
         "hero": Enum(layouts.LAYOUT_HEROES),
         "magazineFeed": Bool(),
@@ -1260,6 +1318,7 @@ def limits() -> Dict[str, Any]:
         "enums": {
             "fulfillmentMode": list(FULFILLMENT_MODES),
             "serviceTypes": list(SERVICE_TYPES),
+            "serviceMode": list(SERVICE_MODES),
             "languages": list(LANGUAGES),
             "skipCart": list(SKIP_CART),
             "soldOutMode": list(SOLD_OUT_MODES),
@@ -1291,6 +1350,7 @@ def limits() -> Dict[str, Any]:
             "bonMode": list(BON_MODES),
             "pickupScope": list(PICKUP_SCOPES),
             "servicePlacement": list(SERVICE_PLACEMENTS),
+            "waitLogoStyle": list(WAIT_LOGO_STYLES),
             "serviceSelect": list(SERVICE_SELECTS),
             "detailsStep": list(DETAILS_STEPS),
             "checkoutSteps": list(CHECKOUT_STEPS),
@@ -1301,6 +1361,7 @@ def limits() -> Dict[str, Any]:
             "motionSheet": list(MOTION_SHEET),
             "motionAddToCart": list(MOTION_ADD_TO_CART),
             "motionSpeed": list(MOTION_SPEEDS),
+            "motionEffects": list(MOTION_EFFECTS),
             "fonts": [f.id for f in FONT_CATALOG],
         },
         "textKeys": list(TEXT_KEYS),
@@ -1580,7 +1641,7 @@ def step_mode(cfg: Dict[str, Any], key: str) -> str:
         return mode if mode in CUSTOMER_FIELD_MODES else "off"
     mode = (payment.get("stepModes") or {}).get(key)
     mode = mode if mode in CUSTOMER_FIELD_MODES else DEFAULT_CONFIG["payment"]["stepModes"].get(key, "optional")
-    if key == "service" and len(general.get("serviceTypes") or []) <= 1:
+    if key == "service" and (len(general.get("serviceTypes") or []) <= 1 or general.get("serviceMode") == "none"):
         return "off"
     if key == "tip" and not (payment.get("tipEnabled") and (payment.get("tipPresets") or payment.get("tipOther", True))):
         return "off"
@@ -1674,6 +1735,7 @@ def _media_refs(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     refs += [category_images[key] for key in sorted(category_images) if key not in hidden]
     refs += [m.get("image") for m in (_get(cfg, "messages") or []) if isinstance(m, dict)]
     refs.append(_get(cfg, "success", "image"))
+    refs.append(_get(cfg, "payment", "waitLogo", "media"))
     return [r for r in refs if isinstance(r, dict) and r.get("url")]
 
 

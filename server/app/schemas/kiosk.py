@@ -32,7 +32,8 @@ class KioskOrderIn(_Camel):
     pickup_number: int = Field(..., alias="pickupNumber", ge=0, le=99999)
     pickup_label: str = Field(..., alias="pickupLabel", max_length=32)
     business_date: date = Field(..., alias="businessDate")
-    service_type: Literal["take_away", "eat_in"] = Field(..., alias="serviceType")
+    #: Null: "ללא סוג שירות" (the kiosk's general.serviceMode = none) — the order has no service.
+    service_type: Optional[Literal["take_away", "eat_in"]] = Field(None, alias="serviceType")
     table_ref: Optional[str] = Field(None, alias="tableRef", max_length=64)
     fulfillment_mode: Literal["BON", "KDS"] = Field(..., alias="fulfillmentMode")
     config_version: Optional[str] = Field(None, alias="configVersion", max_length=32)

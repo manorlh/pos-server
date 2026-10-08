@@ -51,6 +51,8 @@ import {
   type PrepaidVoucherStatus,
 } from '@/lib/prepaidVouchersApi';
 import { groupPlan, groupSizeOf, serialRange, type GroupMode } from '@/lib/prepaidVoucherGroups';
+import { clampQuantity, DEFAULT_WEIGHT_UNIT, itemText, quantityNumberText, quantityStep } from '@/lib/prepaidVoucherProducts';
+import { PrepaidProductPickList } from '@/components/dashboard/prepaid-vouchers/product-pick-list';
 import { discountDraftErrors, isDiscountKind, type PrepaidVoucherKind } from '@/lib/prepaidVoucherBenefit';
 import {
   BatchRulesCard,
@@ -130,6 +132,7 @@ function useErrorText() {
 function useCardLabels(): VoucherLabels {
   const t = useTranslations('prepaidVouchers.card');
   const tk = useTranslations('prepaidVouchers.kinds');
+  const tcr = useTranslations('prepaidVouchers.create');
   return useMemo(
     () => ({
       serial: (n: string) => t('serial', { n }),
@@ -141,8 +144,9 @@ function useCardLabels(): VoucherLabels {
       validBetween: (since: string, until: string) => t('validBetween', { since, until }),
       usesOne: tk('usesOne'),
       usesMany: (n: number) => tk('usesMany', { n }),
+      includeExtras: tcr('includeExtras'),
     }),
-    [t, tk],
+    [t, tk, tcr],
   );
 }
 
@@ -220,6 +224,24 @@ function BarcodeTypePicker({ value, onChange, disabled }: {
 
 // ── Create ────────────────────────────────────────────────────────────────────
 
+/**
+ * A weight typed as text ("0.5"), taken when the field is left or Enter is pressed — so "0." can be
+ * typed. Keyed by its value where it is used: a +/- or a commit starts it afresh.
+ */
+function WeightInput({ value, label, onCommit }: { value: number; label: string; onCommit: (q: number) => void }) {
+  const [text, setText] = useState(String(value));
+  const commit = () => {
+    const q = Number(text.replace(',', '.'));
+    if (Number.isFinite(q) && q > 0) onCommit(q);
+    else setText(String(value));
+  };
+  return (
+    <Input inputMode="decimal" aria-label={label} className="h-8 w-20 text-center tabular-nums" value={text}
+      onChange={(e) => setText(e.target.value)} onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } }} />
+  );
+}
+
 interface DraftItem {
   product: PrepaidProductOption;
   quantity: number;
@@ -231,6 +253,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   onCreated: (b: PrepaidVoucherBatch) => void;
 }) {
   const t = useTranslations('prepaidVouchers.create');
+  const te = useTranslations('prepaidVouchers.eligibility');
   const tc = useTranslations('common');
   const errorText = useErrorText();
   const qc = useQueryClient();
@@ -261,6 +284,8 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   const [kind, setKind] = useState<PrepaidVoucherKind>('items');
   const [terms, setTerms] = useState<DiscountTermsState>(EMPTY_DISCOUNT_TERMS);
   const [rules, setRules] = useState<RulesState>(DEFAULT_RULES);
+  // Goods: "כולל תוספות" — paid options and a meal's upcharges covered too (§7.14). Off by default.
+  const [includeExtras, setIncludeExtras] = useState(false);
   const discount = isDiscountKind(kind);
   const termErrors = discountDraftErrors({
     kind,
@@ -286,9 +311,10 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
     if (!companyId && companies.data?.length === 1) setCompanyId(companies.data[0].id);
   }, [companies.data, companyId]);
   const shops = useQuery({ queryKey: ['shops', companyId], queryFn: () => fetchShops(companyId), enabled: open && !!companyId });
+  // Every product, each with whether it can go on and why not; a till's own product depends on the shops.
   const products = useQuery({
-    queryKey: ['prepaid-voucher-products', companyId, debounced],
-    queryFn: () => searchPrepaidProducts(debounced, companyId),
+    queryKey: ['prepaid-voucher-products', companyId, debounced, 'items', shopIds],
+    queryFn: () => searchPrepaidProducts(debounced, companyId, { purpose: 'items', shopIds }),
     enabled: open && !!companyId,
   });
 
@@ -313,6 +339,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
     setKind('items');
     setTerms(EMPTY_DISCOUNT_TERMS);
     setRules(DEFAULT_RULES);
+    setIncludeExtras(false);
   };
 
   const n = parseInt(count, 10);
@@ -336,6 +363,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
         validUntil: dayBoundIso(validUntil, true),
         splitAllowed: discount ? false : splitAllowed,
         items: discount ? [] : items.map((i) => ({ productId: i.product.id, quantity: i.quantity })),
+        includeExtras: discount ? false : includeExtras,
         count: n,
         groupSize,
         showCode,
@@ -371,8 +399,9 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
 
   const addItem = (p: PrepaidProductOption) =>
     setItems((cur) => (cur.some((i) => i.product.id === p.id) ? cur : [...cur, { product: p, quantity: 1 }]));
+  // By weight to the gram ("0.5 ק״ג"), by the piece a whole unit (the cloud checks the same).
   const setQty = (id: string, q: number) =>
-    setItems((cur) => cur.map((i) => (i.product.id === id ? { ...i, quantity: Math.max(1, Math.min(100, q)) } : i)));
+    setItems((cur) => cur.map((i) => (i.product.id === id ? { ...i, quantity: clampQuantity(q, i.product.isWeighed) } : i)));
 
   const uploadLogo = async (file: File | undefined) => {
     if (!file) return;
@@ -406,7 +435,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
           </div>
 
           <KindPicker value={kind} onChange={setKind} />
-          {discount ? <DiscountTermsFields kind={kind} companyId={companyId} value={terms} onChange={setTerms} errors={termErrors} /> : null}
+          {discount ? <DiscountTermsFields kind={kind} companyId={companyId} shopIds={shopIds} value={terms} onChange={setTerms} errors={termErrors} /> : null}
 
           {!discount ? (
             <div className="space-y-2">
@@ -416,11 +445,22 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
                   {items.map((i) => (
                     <li key={i.product.id} className="flex items-center gap-2 px-3 py-2 text-sm">
                       <span className="min-w-0 flex-1 truncate">{i.product.name}</span>
-                      <Button type="button" size="icon-sm" variant="outline" aria-label={t('less')} onClick={() => setQty(i.product.id, i.quantity - 1)}>
+                      <Button type="button" size="icon-sm" variant="outline" aria-label={t('less')}
+                        onClick={() => setQty(i.product.id, i.quantity - quantityStep(i.product.isWeighed))}>
                         <Minus className="h-3.5 w-3.5" />
                       </Button>
-                      <span className="w-6 text-center tabular-nums">{i.quantity}</span>
-                      <Button type="button" size="icon-sm" variant="outline" aria-label={t('more')} onClick={() => setQty(i.product.id, i.quantity + 1)}>
+                      {i.product.isWeighed ? (
+                        // Sold by weight: a decimal of its unit ("0.5 ק״ג").
+                        <span className="flex items-center gap-1" title={t('weightHint')}>
+                          <WeightInput key={i.quantity} value={i.quantity} label={t('weightQty', { unit: i.product.unitLabel || DEFAULT_WEIGHT_UNIT })}
+                            onCommit={(q) => setQty(i.product.id, q)} />
+                          <span className="text-xs text-muted-foreground">{i.product.unitLabel || DEFAULT_WEIGHT_UNIT}</span>
+                        </span>
+                      ) : (
+                        <span className="w-6 text-center tabular-nums">{i.quantity}</span>
+                      )}
+                      <Button type="button" size="icon-sm" variant="outline" aria-label={t('more')}
+                        onClick={() => setQty(i.product.id, i.quantity + quantityStep(i.product.isWeighed))}>
                         <Plus className="h-3.5 w-3.5" />
                       </Button>
                       <Button type="button" size="icon-sm" variant="ghost" aria-label={t('remove')}
@@ -437,33 +477,28 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
                 <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground ltr:left-2.5 rtl:right-2.5" aria-hidden />
                 <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('searchProducts')} className="ps-8" />
               </div>
-              <div className="max-h-40 overflow-y-auto rounded-lg border">
-                {products.isPending ? (
-                  <p className="p-2 text-xs text-muted-foreground">{tc('loading')}</p>
-                ) : (products.data ?? []).length === 0 ? (
-                  <p className="p-2 text-xs text-muted-foreground">{t('noProducts')}</p>
-                ) : (
-                  <ul>
-                    {products.data!.map((p) => {
-                      const added = items.some((i) => i.product.id === p.id);
-                      return (
-                        <li key={p.id}>
-                          <button
-                            type="button"
-                            disabled={added}
-                            onClick={() => addItem(p)}
-                            className="flex w-full items-center gap-2 px-3 py-1.5 text-start text-sm hover:bg-muted disabled:opacity-50"
-                          >
-                            <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                            <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                            <span className="text-xs tabular-nums text-muted-foreground">₪{p.price.toFixed(2)}</span>
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
+              <div className="max-h-48 overflow-y-auto rounded-lg border">
+                <PrepaidProductPickList
+                  products={products.data}
+                  purpose="items"
+                  chosen={new Set(items.map((i) => i.product.id))}
+                  onPick={addItem}
+                  pending={!!companyId && products.isPending}
+                  pendingText={tc('loading')}
+                  emptyText={companyId ? t('noProducts') : t('pickCompany')}
+                />
               </div>
+              <p className="text-xs text-muted-foreground">{te('searchHint')}</p>
+            </div>
+          ) : null}
+
+          {!discount ? (
+            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{t('includeExtras')}</p>
+                <p className="text-xs text-muted-foreground">{includeExtras ? t('includeExtrasOn') : t('includeExtrasOff')}</p>
+              </div>
+              <Switch checked={includeExtras} onCheckedChange={(v) => setIncludeExtras(!!v)} aria-label={t('includeExtras')} />
             </div>
           ) : null}
 
@@ -636,7 +671,8 @@ function StatsBar({ b }: { b: PrepaidVoucherBatch }) {
 
 /** What a batch is worth, in a line: its goods, or what its discount gives. */
 function contentsText(b: PrepaidVoucherBatch, benefit: string | null): string {
-  return benefit ?? b.items.map((i) => `${i.quantity}× ${i.name}`).join(' + ');
+  // "2× נקניקייה + 0.5 ק״ג זיתים" — a weight by its unit (§7.14).
+  return benefit ?? b.items.map((i) => itemText(i)).join(' + ');
 }
 
 function BatchCard({ b, onOpen }: { b: PrepaidVoucherBatch; onOpen: () => void }) {
@@ -665,6 +701,7 @@ function BatchCard({ b, onOpen }: { b: PrepaidVoucherBatch; onOpen: () => void }
         <StatsBar b={b} />
         <p className="text-xs text-muted-foreground">
           {termsText.uses ?? (b.splitAllowed ? t('card.splitAllowed') : t('card.oneTime'))}
+          {!discount && b.includeExtras ? ` · ${t('create.includeExtras')}` : ''}
           {b.validUntil ? ` · ${t('validUntil', { date: day(b.validUntil) })}` : ''}
           {' · '}
           {b.shops.length ? b.shops.map((s) => s.name).join(', ') : t('allShopsOf', { company: b.companyName ?? '' })}
@@ -737,6 +774,12 @@ function RedemptionHistory({ voucherId }: { voucherId: string }) {
   if (q.isPending) return <Skeleton className="h-10 w-full" />;
   const rows = q.data?.redemptions ?? [];
   if (!rows.length) return <p className="text-xs text-muted-foreground">{t('empty')}</p>;
+  // A weighed item reads by its unit ("0.3 ק״ג זיתים"), as the voucher's own items say.
+  const byProduct = new Map((q.data?.items ?? []).map((i) => [i.productId, i]));
+  const lineText = (i: { productId: string; name: string | null; quantity: number }) => {
+    const item = byProduct.get(i.productId);
+    return itemText({ name: i.name ?? '', quantity: i.quantity, weighed: item?.weighed, unitLabel: item?.unitLabel });
+  };
   return (
     <ul className="space-y-1 text-xs">
       {rows.map((r) => (
@@ -749,7 +792,7 @@ function RedemptionHistory({ voucherId }: { voucherId: string }) {
           {r.machineName ?? t('unknownTill')}
           {r.posUserName ? ` · ${r.posUserName}` : ''}
           {' — '}
-          {r.uses ? discountUseText(r) : r.items.map((i) => `${i.quantity}× ${i.name ?? ''}`).join(', ')}
+          {r.uses ? discountUseText(r) : r.items.map(lineText).join(', ')}
           {(r.flags ?? []).map((f) => (
             <span key={f} className="ms-1 rounded bg-amber-100 px-1 text-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
               {tk.has(`flag.${f}`) ? tk(`flag.${f}`) : f}
@@ -757,7 +800,7 @@ function RedemptionHistory({ voucherId }: { voucherId: string }) {
           ))}
           {r.forfeited.length ? (
             <span className="text-destructive">
-              {' '}({t('forfeited', { items: r.forfeited.map((i) => `${i.quantity}× ${i.name ?? ''}`).join(', ') })})
+              {' '}({t('forfeited', { items: r.forfeited.map(lineText).join(', ') })})
             </span>
           ) : null}
         </li>
@@ -1146,7 +1189,12 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
                   <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                     {v.usesLeft != null
                       ? tk('usesLeft', { left: v.usesLeft, total: v.usesPerVoucher ?? batch.usesPerVoucher ?? 1 })
-                      : v.items.map((i) => t('remainingOf', { name: i.name, left: i.remaining, total: i.quantity })).join(' · ')}
+                      : v.items.map((i) => t('remainingOf', {
+                        name: i.name,
+                        left: quantityNumberText(i.remaining),
+                        // By weight: "0.2/0.5 ק״ג".
+                        total: i.weighed ? `${quantityNumberText(i.quantity)} ${i.unitLabel || DEFAULT_WEIGHT_UNIT}` : quantityNumberText(i.quantity),
+                      })).join(' · ')}
                   </span>
                   <div className="flex gap-1">
                     <VoucherNoteButton voucher={v} onEdit={() => setEditingNote(editingNote === v.id ? null : v.id)} />

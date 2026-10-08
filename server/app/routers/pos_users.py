@@ -20,7 +20,7 @@ from app.schemas.pos_user import (
     PosUserCreate, PosUserUpdate, PosUserResetPin, PosUserResponse,
 )
 from app.services.auth import get_password_hash
-from app.services.company_hierarchy import user_covers_company
+from app.services.company_hierarchy import user_covers_shop
 from app.services.pos_user_notify import notify_machines_for_shop_pos_users
 from app.services.permission_matrix import SHOP_SCOPED_ROLES, Action, Resource, may
 
@@ -46,7 +46,7 @@ def _check_read(user: User, shop: Shop, db: Session) -> None:
         return
     if user.role == UserRole.DISTRIBUTOR:
         return
-    if user.role == UserRole.COMPANY_MANAGER and user_covers_company(db, user, shop.company_id):
+    if user.role == UserRole.COMPANY_MANAGER and user_covers_shop(db, user, shop):
         return
     if user.role in SHOP_SCOPED_ROLES and shop.id == user.shop_id:
         return
@@ -99,10 +99,13 @@ def _with_role_names(db: Session, users: List[PosUser]) -> List[PosUser]:
     return users
 
 
-def _apply_till_role(db: Session, shop: Shop, pu: PosUser, role_id, user: User, *, legacy_role=None) -> None:
+def _apply_till_role(
+    db: Session, shop: Shop, pu: PosUser, role_id, user: User, *, legacy_role=None, new_user: bool = False
+) -> None:
     """
     Put `pu` on the till role `role_id` (must be of the shop's company), or — none given —
-    on the company's legacy role for `legacy_role` when the company's roles exist.
+    a NEW user on the spec's "קופאי" ("מנהל" for a shop manager), an existing one whose
+    legacy `role` changed on the company's legacy role for it when the company's roles exist.
     """
     from app.models.company import Company
     from app.services import till_roles as TR
@@ -110,13 +113,15 @@ def _apply_till_role(db: Session, shop: Shop, pu: PosUser, role_id, user: User, 
     company = db.get(Company, shop.company_id) if shop.company_id else None
     if company is None:
         return
-    if role_id is None:
-        role = TR.default_role_for_new_user(db, company.id, legacy_role or pu.role)
+    if role_id is None and new_user:
+        role = TR.default_role_for_new_user(db, company, legacy_role or pu.role, pu)
+    elif role_id is None:
+        role = TR.legacy_role_for_user(db, company.id, legacy_role or pu.role)
         if role is None:
             pu.till_role_id = None
             return
     else:
-        TR.ensure_company_roles(db, company)
+        TR.ensure_company_roles(db, company, leave=[pu.id] if new_user else [])
         from app.models.till_role import TillRole
 
         role = db.get(TillRole, role_id)
@@ -177,7 +182,7 @@ def create_pos_user(
     )
     db.add(user)
     db.flush()
-    _apply_till_role(db, shop, user, data.till_role_id, current_user, legacy_role=data.role)
+    _apply_till_role(db, shop, user, data.till_role_id, current_user, legacy_role=data.role, new_user=True)
     db.commit()
     db.refresh(user)
 

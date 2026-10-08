@@ -14,7 +14,7 @@ import type { Db } from '../db/sqlite';
 import type { PrinterHealth, PrinterTarget, Transport } from './transports';
 
 export type JobStatus = 'queued' | 'sending' | 'sent' | 'failed';
-export type JobKind = 'receipt' | 'bon' | 'slip' | 'z' | 'test';
+export type JobKind = 'receipt' | 'bon' | 'slip' | 'z' | 'test' | 'ticket';
 
 export interface PrintJob {
   id: string;
@@ -54,6 +54,11 @@ export class PrintQueue {
     private renderer: PageRenderer | null,
     private readonly log: (m: string) => void = () => undefined,
   ) {}
+
+  /** A page is on its way (the USB look waits: both go through the one spooler helper). */
+  get busy(): boolean {
+    return this.working;
+  }
 
   setRenderer(r: PageRenderer | null) {
     this.renderer = r;

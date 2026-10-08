@@ -297,6 +297,10 @@ export function LayoutSection() {
           <LayoutChoice name="reach" hint={t('reachHint')} />
           <SwitchField path="layout.reachToggle" label={t('keys.reachToggle')} hint={t('reachToggleHint')} />
         </div>
+        {/* "גודל מוצרים": the dishes' cards in every catalog (lib/kioskLayout productColumns), the preview beside. */}
+        <div className="space-y-3 rounded-2xl border bg-muted/30 p-3">
+          <LayoutChoice name="productSize" hint={t('productSizeHint')} />
+        </div>
         <div className="rounded-2xl border">
           <button
             type="button"

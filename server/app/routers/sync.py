@@ -1153,6 +1153,59 @@ def machine_set_payment_terminal(
     return {"nayaxEnabled": True, "host": host, "port": port, "path": path}
 
 
+class PinpadHostIn(BaseModel):
+    """The till's own pinpad at a new address on its LAN (app/services/payment_terminal.py `relink_pinpad`)."""
+
+    model_config = {"populate_by_name": True}
+
+    host: str = Field(..., max_length=300)
+    #: SPICy's port; absent = unchanged.
+    port: Optional[int] = Field(None, ge=1, le=65535)
+    #: "technician" (picked on the technician screen) | "relocated" (found by the till itself).
+    reason: str = Field(..., max_length=16)
+    #: The terminal number the pinpad at [host] said it is (`getRetailerInfo`).
+    terminal_number: Optional[str] = Field(None, alias="terminalNumber", max_length=20)
+    serial: Optional[str] = Field(None, max_length=60)
+    #: The address the till charged on before, as it held it.
+    previous_host: Optional[str] = Field(None, alias="previousHost", max_length=300)
+    #: The pinpad's MAC when Android let the till read it (a hint only).
+    mac: Optional[str] = Field(None, max_length=32)
+
+
+@router.put("/{machine_id}/pinpad-host", dependencies=FISCAL_MACHINE_TOKEN)
+def machine_set_pinpad_host(
+    machine_id: str,
+    body: PinpadHostIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    "קישור מסופון מחדש" / a pinpad that moved (DHCP): the till writes its own pinpad's new
+    address — `nayaxDeviceHost` (and `nayaxDevicePort`) on its own settings layer and nothing
+    else, with its machine token alone (nobody at a kiosk is a manager). Only for a till that
+    already charges on a network Nayax pinpad, only a private IPv4 address, and a move the
+    till made by itself only to the same terminal (`terminal_mismatch`). Audited as the till
+    event `pinpad_host_set`. `422 host_invalid | host_not_private | port_invalid |
+    reason_invalid | terminal_number_required` · `409 pinpad_not_in_use | terminal_mismatch`.
+    """
+    from app.services import payment_terminal, settings_notify
+
+    _require_assigned_machine(machine)
+    try:
+        out = payment_terminal.relink_pinpad(
+            db, machine,
+            host=body.host, port=body.port, reason=body.reason, terminal_number=body.terminal_number,
+            serial=body.serial, previous_host=body.previous_host, mac=body.mac,
+        )
+    except payment_terminal.PinpadRelinkRefused as refused:
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content={"detail": refused.code, "message": refused.message})
+    db.commit()
+    if not out["unchanged"]:
+        settings_notify.notify_machine_settings(db, machine, reason="pinpad_host")
+    return out
+
+
 @router.post("/{machine_id}/products/{product_id}/image")
 async def machine_upload_product_image(
     machine_id: str,

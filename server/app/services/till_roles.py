@@ -8,7 +8,8 @@ roles (`ensure_company_roles`); until then every till user resolves from code �
 assigned role, or (no role yet) the legacy role matching `pos_users.role`, which is
 exactly today's behaviour. Materialising creates the six built-ins and points every
 unassigned till user of the company's shops at the legacy role they already behave as,
-so nothing anyone can do changes on that day.
+so nothing anyone can do changes on that day. A till user created after that with no role
+chosen starts on the spec's "קופאי" ("מנהל" when created as a shop manager).
 
 **`pos_users.role` stays true for older tills.** Assigning a role, editing one, or
 overriding a user writes the user's `role` from what they may now do
@@ -157,10 +158,11 @@ def roles_of(db: Session, company_id: Any, *, include_deleted: bool = False) -> 
     return sorted(q.all(), key=lambda r: (r.sort_order or 0, r.name or ""))
 
 
-def ensure_company_roles(db: Session, company: Company) -> List[TillRole]:
+def ensure_company_roles(db: Session, company: Company, *, leave: Iterable[Any] = ()) -> List[TillRole]:
     """
     Create the built-ins this company lacks and point its unassigned till users at the
-    legacy role they already behave as. Idempotent; the caller commits.
+    legacy role they already behave as — except `leave` (a user being created now, whose
+    role is decided by the caller). Idempotent; the caller commits.
     """
     existing = {r.builtin_key: r for r in roles_of(db, company.id, include_deleted=True) if r.builtin_key}
     for spec in TP.BUILTIN_ROLES:
@@ -176,11 +178,14 @@ def ensure_company_roles(db: Session, company: Company) -> List[TillRole]:
     db.flush()
     shop_ids = company_shop_ids(db, company.id)
     if shop_ids:
-        unassigned = (
-            db.query(PosUser)
+        left = {_uuid(i) for i in leave if i is not None}
+        unassigned = [
+            pu
+            for pu in db.query(PosUser)
             .filter(PosUser.shop_id.in_(shop_ids), PosUser.till_role_id.is_(None))
             .all()
-        )
+            if pu.id not in left
+        ]
         for pu in unassigned:
             key = TP.LEGACY_FOR_ROLE.get(TP._role_value(pu.role), TP.LEGACY_CASHIER)
             pu.till_role_id = existing[key].id
@@ -495,8 +500,20 @@ def apply_spec_defaults(
     return {"resetRoles": reset, "movedUsers": moved, "shops": shops}
 
 
-def default_role_for_new_user(db: Session, company_id: Any, legacy_role: Any) -> Optional[TillRole]:
-    """A new till user with no role chosen: the company's legacy role for `role`, if materialised."""
+def default_role_for_new_user(db: Session, company: Company, legacy_role: Any, pos_user: Any = None) -> TillRole:
+    """
+    A NEW till user with no role chosen: the spec's "קופאי" ("מנהל" when created as a shop
+    manager). The company's roles are materialised first — its existing users keep the
+    legacy role they behave as; only `pos_user` is left for this one.
+    """
+    key = TP.SPEC_ROLE_FOR_NEW_USER.get(TP._role_value(legacy_role), TP.CASHIER)
+    leave = [pos_user.id] if pos_user is not None and getattr(pos_user, "id", None) is not None else []
+    roles = {r.builtin_key: r for r in ensure_company_roles(db, company, leave=leave) if r.builtin_key}
+    return roles.get(key) or roles[TP.CASHIER]
+
+
+def legacy_role_for_user(db: Session, company_id: Any, legacy_role: Any) -> Optional[TillRole]:
+    """A legacy `role` change (an older dashboard): the company's legacy role for it, if materialised."""
     key = TP.LEGACY_FOR_ROLE.get(TP._role_value(legacy_role), TP.LEGACY_CASHIER)
     return (
         db.query(TillRole)

@@ -9,14 +9,14 @@
 import { useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { basketKindOf, layoutOf, landingColumnsFor } from '@/lib/kioskLayout';
+import { basketKindOf, layoutOf, landingColumnsFor, productColumns } from '@/lib/kioskLayout';
 import { checkoutStepsNow } from '@/lib/kioskConfig';
 import { KioskSwap, itemEnter } from '@/components/dashboard/kiosks/preview-motion';
-import { CartBar, CartPanel, CatalogHeader, cardStyle, type PCategory, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
+import { CartBar, CartPanel, CatalogHeader, cardStyle, serviceAsked, serviceOnAttractOf, type PCategory, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { detailsFields } from '@/components/dashboard/kiosks/preview-entry';
 import { TickerSlot, PREVIEW_FOOTER_PX } from '@/components/dashboard/kiosks/preview-ticker';
 import { CategoryVisual } from './icons';
-import { Empty, GuidedBar, GuidedBasketButton, LayoutDishCard, OrderSummaryBar, cartCounts, itemsCount, kt, unitOf, widthDpOf } from './parts';
+import { DP_PER_PX, Empty, GuidedBar, GuidedBasketButton, LayoutDishCard, OrderSummaryBar, cartCounts, itemsCount, kt, unitOf, widthDpOf } from './parts';
 
 const HOME = '\u0000home';
 
@@ -25,9 +25,9 @@ export function guidedCheckout(m: PreviewModel): Array<'tip' | 'details' | 'payM
   return checkoutStepsNow(m.cfg.payment, detailsFields(m.cfg, m.service).length > 0, false) as Array<'tip' | 'details' | 'payMethod'>;
 }
 
-/** The service is its own screen (and so a step of the guided bar). */
+/** The service is its own screen (and so a step of the guided bar): asked, and not on the attract screen's two buttons. */
 export function serviceStepOf(m: PreviewModel): boolean {
-  return m.cfg.general.serviceTypes.length > 1 && m.cfg.general.servicePlacement !== 'attract';
+  return serviceAsked(m) && !serviceOnAttractOf(m);
 }
 
 export function LandingCatalog({ m, onCategory }: { m: PreviewModel; onCategory?: (id: string) => void }) {
@@ -133,7 +133,8 @@ function CategoryPage({ m, cat, onEnter }: { m: PreviewModel; cat: PCategory; on
   const layout = layoutOf(m.cfg);
   const counts = cartCounts(m);
   const rows = layout.card === 'row';
-  const cols = rows ? 1 : Math.max(2, Math.floor((m.screen.w - (m.panel ? 132 : 0)) / 210));
+  const gridPx = m.screen.w - (m.panel ? 132 : 0);
+  const cols = rows ? 1 : productColumns(Math.max(2, Math.floor(gridPx / 210)), layout.productSize, gridPx * DP_PER_PX);
   const u = unitOf(m);
   return (
     <section data-section={cat.id} className="space-y-3 px-3 pb-4 pt-2">

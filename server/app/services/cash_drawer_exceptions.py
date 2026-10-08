@@ -8,19 +8,15 @@ so it is reviewed on "חריגות", switched on / off per level on "הגדרו�
 `RuleSpec` is generated below from this table), and idempotent per source event.
 The thresholds are the drawer's till parameters (§17, the roles page's "פרמטרי מגירה").
 
-**Hook for the shared exceptions log** ("יומן חריגות", branch feat/exception-alerts): that
-log captures every `audit_exceptions` row already (its `audit_exception` source). To name
-these kinds there, add each of `DRAWER_EXCEPTION_KINDS` to its
-`app/services/exception_alerts/catalog.py` `KINDS` at merge:
-
-    Kind(k.key, k.label, k.severity, "audit_exception", amount=k.amount, link=k.link)
-
-(`alert_kinds()` below returns exactly those tuples' fields.)
+**The exceptions log** ("יומן חריגות", app/services/exception_alerts): its catalogue
+(`catalog.KINDS`) appends every kind below, so each one is named there, logged from its
+`audit_exceptions` row (the `audit_exception` source) and can be chosen in an SMS alert rule
+("התראות SMS על חריגות").
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 
 
 @dataclass(frozen=True)
@@ -72,8 +68,3 @@ DRAWER_EXCEPTION_KINDS: Tuple[DrawerExceptionKind, ...] = (
 
 KINDS_BY_KEY: Dict[str, DrawerExceptionKind] = {k.key: k for k in DRAWER_EXCEPTION_KINDS}
 SOURCE = "cash_drawer"
-
-
-def alert_kinds() -> List[Tuple[str, str, str, str, bool, str]]:
-    """(key, label, severity, source, amount, link) — the exceptions log's `Kind` fields."""
-    return [(k.key, k.label, k.severity, "audit_exception", k.amount, k.link) for k in DRAWER_EXCEPTION_KINDS]

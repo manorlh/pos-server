@@ -41,6 +41,7 @@ import {
   useShiftLabel,
 } from '@/components/dashboard/shifts/shift-parts';
 import { useShiftExportSheets } from '@/components/dashboard/shifts/shift-export-sheets';
+import { ShiftCloseAction, useShiftCloseDialogs } from '@/components/dashboard/shifts/shift-close';
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -80,7 +81,9 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
   const shiftLabel = useShiftLabel();
   const shiftSheets = useShiftExportSheets();
   const canProduceZ = useCanProduceZ();
-  usePageScope({ maxLevel: 'machine', silent: true });
+  const { scope } = usePageScope({ maxLevel: 'machine', silent: true });
+  // "סגור משמרת" for an open shift: as on the list (the remote close, or a dead till's administrative one).
+  const closer = useShiftCloseDialogs(scope.machines);
   const tz = useTenantTimeZone();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -189,11 +192,13 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
           >
             {t('detail.drawerTimeline')}
           </Link>
+          <ShiftCloseAction shift={shift} canClose={canProduceZ} closer={closer} size="sm" />
           <Link href={backHref} onClick={goBack} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
             {t('detail.backToList')}
           </Link>
         </div>
       </div>
+      {closer.dialogs}
 
       {open ? (
         <div className="rounded-md border bg-muted/40 p-3 text-sm">{t('detail.openNotice')}</div>

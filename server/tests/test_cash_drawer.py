@@ -204,6 +204,75 @@ class TestExceptions:
         assert len(found(w, "drawer_after_close")) == 1
 
 
+class TestExceptionsLog:
+    """"יומן חריגות" and its SMS rules (app/services/exception_alerts): the drawer's kinds are
+    kinds of the log, each exception is logged once from its audit row, and a rule can name one."""
+
+    @pytest.fixture(autouse=True)
+    def no_network(self, monkeypatch):
+        import httpx
+
+        from app.services.exception_alerts import engine as E
+        from app.services.exception_alerts import sms as SMS
+
+        def boom(*_a, **_k):
+            raise AssertionError("a real SMS provider / HTTP endpoint was called")
+
+        monkeypatch.setattr(httpx, "post", boom)
+        monkeypatch.setattr(httpx.Client, "send", boom)
+        monkeypatch.setattr(E, "now_fn", lambda: NOW + timedelta(minutes=1))
+        SMS.DRY_RUN.clear()
+        SMS.set_provider_override(None)
+        yield
+        SMS.DRY_RUN.clear()
+
+    @staticmethod
+    def entries(w, kind):
+        from app.models.exception_alerts import ExceptionLogEntry
+
+        w.db.expire_all()
+        return w.db.query(ExceptionLogEntry).filter(ExceptionLogEntry.kind == kind).all()
+
+    def test_every_drawer_kind_is_a_kind_of_the_log(self):
+        from app.services.exception_alerts import catalog as CAT
+
+        for k in DRAWER_EXCEPTION_KINDS:
+            spec = CAT.KINDS_BY_KEY[k.key]
+            assert (spec.label, spec.severity, spec.source, spec.amount, spec.link) == (
+                k.label, k.severity, "audit_exception", k.amount, k.link,
+            )
+
+    def test_an_opening_after_the_close_is_logged_once(self, w):
+        ident = uuid.uuid4()
+        event(w, "AFTER_CLOSE", id=ident, reason="OTHER", reasonNote="שכחתי עודף")
+        event(w, "AFTER_CLOSE", id=ident, reason="OTHER", reasonNote="שכחתי עודף")  # the till's retry
+        (entry,) = self.entries(w, "drawer_after_close")
+        assert (entry.source, entry.severity) == ("audit_exception", "high")
+        assert entry.shop_id == w.shop.id and entry.machine_id == w.till.id and entry.company_id == w.company.id
+        assert entry.audit_exception_id == found(w, "drawer_after_close")[0].id
+
+    def test_an_sms_rule_names_a_drawer_kind_with_its_amount(self, w):
+        from app.models.exception_alerts import ExceptionAlertDispatch
+        from app.routers import exception_alerts as AR
+
+        AR.create_rule(
+            {
+                "companyId": str(w.company.id), "shopId": None, "name": "הוצאות מזומן",
+                "kinds": ["cash_out_over_threshold"], "minAmount": 700,
+                "recipients": [{"phone": "050-123-4567", "label": "דנה"}], "rateLimitMinutes": 0,
+            },
+            **ctx(w),
+        )
+        movement(w, "cash_out", "600")  # an exception (over ₪500), under the rule's ₪700
+        assert len(self.entries(w, "cash_out_over_threshold")) == 1
+        w.db.expire_all()
+        assert w.db.query(ExceptionAlertDispatch).count() == 0
+        movement(w, "cash_out", "750")
+        w.db.expire_all()
+        (d,) = w.db.query(ExceptionAlertDispatch).all()
+        assert d.status == "dry_run" and d.kind == "alert" and "₪750" in (d.text or "")
+
+
 class TestReports:
     def _seed(self, w):
         sale = uuid.uuid4()
@@ -316,8 +385,11 @@ class TestMigration:
         script = ScriptDirectory.from_config(config)
         heads = script.get_heads()
         assert len(heads) == 1
-        assert "f7c3a9d1b5e8" in {r.revision for r in script.walk_revisions("base", heads[0])}
+        on_line = {r.revision for r in script.walk_revisions("base", heads[0])}
+        assert {"f7c3a9d1b5e8", "a6d2f8c4e0b7", "41b02fa61731"} <= on_line
         assert script.get_revision("f7c3a9d1b5e8").down_revision == "e5b1c3d7f9a2"
+        # The merge onto main's head (later ones chain on top).
+        assert set(script.get_revision("a6d2f8c4e0b7").down_revision) == {"41b02fa61731", "f7c3a9d1b5e8"}
 
     def test_upgrade_and_downgrade(self):
         sql = _render("e5b1c3d7f9a2:f7c3a9d1b5e8")

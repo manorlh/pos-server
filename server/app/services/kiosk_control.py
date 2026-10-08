@@ -45,7 +45,7 @@ from app.schemas.kiosk import KioskOrderIn
 from app.services import kiosk_config as cfgsvc
 from app.services import kiosk_identity
 from app.services import kiosk_schedule
-from app.services.company_hierarchy import user_covers_company, user_may_use_machine, visible_shop_ids
+from app.services.company_hierarchy import user_covers_company, user_covers_shop, user_may_use_machine, visible_shop_ids
 from app.services.machine_status import is_online, local_today
 
 logger = logging.getLogger(__name__)
@@ -126,7 +126,7 @@ def check_shop_scope(db: Session, user: User, shop: Shop, tenant_id) -> None:
     _same_tenant(shop.tenant_id, tenant_id)
     if user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
         return
-    if user.role == UserRole.COMPANY_MANAGER and user_covers_company(db, user, shop.company_id):
+    if user.role == UserRole.COMPANY_MANAGER and user_covers_shop(db, user, shop):
         return
     if user.role == UserRole.SHOP_MANAGER and str(shop.id) == str(user.shop_id):
         return
@@ -1180,6 +1180,14 @@ def command_out(row: KioskCommand) -> Dict[str, Any]:
 
 
 def list_commands(db: Session, kiosk_machine_id, limit: int = 20) -> List[Dict[str, Any]]:
+    """
+    The last commands, newest first. A "הפקת Z" / "סגירת משמרת" whose request has ended since
+    is settled first (kiosk_z.settle_commands): the list says what the kiosk did, never
+    "requested" for a request long answered. The caller commits (a read path may not).
+    """
+    from app.services import kiosk_z
+
+    kiosk_z.settle_commands(db, kiosk_machine_id=kiosk_machine_id)
     rows = (
         db.query(KioskCommand)
         .filter(KioskCommand.kiosk_machine_id == kiosk_machine_id)

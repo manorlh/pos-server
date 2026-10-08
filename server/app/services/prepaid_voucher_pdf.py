@@ -43,7 +43,14 @@ from PIL import Image, ImageDraw, ImageFont
 from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherBatch
 from app.services import barcode128, local_media
 from app.services import prepaid_voucher_rules as RULES
-from app.services.prepaid_vouchers import format_code, qr_payload
+from app.services.prepaid_vouchers import (
+    DEFAULT_WEIGHT_UNIT,
+    format_code,
+    item_text,
+    qr_payload,
+    qty,
+    qty_text,
+)
 
 DPI = 300
 
@@ -231,6 +238,8 @@ class Labels:
     uses_one: str = "שימוש אחד"
     uses_many: str = "{n} שימושים"
     cover_vouchers: str = "{n} שוברי הנחה"
+    #: Goods that cover a dish's paid options / a meal's upcharges too (§7.14).
+    include_extras: str = "כולל תוספות"
 
 
 @dataclass(frozen=True)
@@ -279,7 +288,24 @@ def terms_line(batch: PrepaidVoucherBatch, labels: Labels = Labels()) -> str:
     if RULES.batch_benefit_text(batch):
         uses = int(getattr(batch, "uses_per_voucher", 1) or 1)
         return labels.uses_one if uses == 1 else labels.uses_many.format(n=uses)
-    return labels.split_allowed if batch.split_allowed else labels.one_time
+    terms = labels.split_allowed if batch.split_allowed else labels.one_time
+    if getattr(batch, "include_extras", False):
+        terms += f" · {labels.include_extras}"
+    return terms
+
+
+def _item_text(i, times: int = 1) -> str:
+    """"2× נקניקייה", or by weight "0.5 ק״ג זיתים" — [times] vouchers' worth."""
+    return item_text(
+        qty(i.quantity) * times, i.product_name, getattr(i, "unit_label", None), bool(getattr(i, "weighed", False)),
+    )
+
+
+def _qty_label(i) -> str:
+    """The quantity column of a voucher's goods: "2×", or by weight "0.5 ק״ג"."""
+    if bool(getattr(i, "weighed", False)):
+        return f"{qty_text(i.quantity)} {getattr(i, 'unit_label', None) or DEFAULT_WEIGHT_UNIT}"
+    return f"{qty_text(i.quantity)}×"
 
 
 def cover_contents(batch: PrepaidVoucherBatch, count: int, labels: Labels = Labels()) -> Tuple[str, str]:
@@ -287,8 +313,8 @@ def cover_contents(batch: PrepaidVoucherBatch, count: int, labels: Labels = Labe
     benefit = RULES.batch_benefit_text(batch)
     if benefit:
         return benefit, labels.cover_vouchers.format(n=count)
-    per = " + ".join(f"{int(i.quantity)}× {i.product_name}" for i in batch.items)
-    total = ", ".join(f"{int(i.quantity) * count}× {i.product_name}" for i in batch.items)
+    per = " + ".join(_item_text(i) for i in batch.items)
+    total = ", ".join(_item_text(i, count) for i in batch.items)
     return per, total
 
 
@@ -442,8 +468,8 @@ def _draw_card(
     for it in items:
         if y + item_font.size > text_bottom:
             break
-        qty = f"{int(it.quantity)}×"
-        qty_w = int(d.textlength(qty, font=qty_font))
+        amount = _qty_label(it)
+        qty_w = int(d.textlength(amount, font=qty_font))
         name = _fit(d, it.product_name, item_font, text_w - qty_w - _px(1.2 * s))
         if center:
             name_w = int(d.textlength(name, font=item_font))
@@ -451,7 +477,7 @@ def _draw_card(
             right = text_left + (text_w + total) // 2
         else:
             right = text_right
-        d.text((right, y), qty, font=qty_font, fill="black", anchor="ra")
+        d.text((right, y), amount, font=qty_font, fill="black", anchor="ra")
         d.text((right - qty_w - _px(1.2 * s), y), name, font=item_font, fill="black", anchor="ra")
         y += int(item_font.size * 1.25)
     y += _px(0.6 * s)
@@ -720,7 +746,7 @@ def manifest_csv(batch: PrepaidVoucherBatch, vouchers: Sequence[PrepaidVoucher])
     printed), what the barcode carries, status and what is left. UTF-8 with a BOM, so
     Excel shows the Hebrew. It holds every code of the run: keep it like the vouchers.
     """
-    names = {str(i.product_id): i.product_name for i in batch.items}
+    by_id = {str(i.product_id): i for i in batch.items}
     order = [str(i.product_id) for i in batch.items]
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\r\n")
@@ -729,7 +755,11 @@ def manifest_csv(batch: PrepaidVoucherBatch, vouchers: Sequence[PrepaidVoucher])
     uses = int(getattr(batch, "uses_per_voucher", 1) or 1)
     for v in sorted(vouchers, key=lambda v: v.serial):
         rem = v.remaining or {}
-        left = "; ".join(f"{int(rem.get(pid, 0))}× {names[pid]}" for pid in order)
+        left = "; ".join(
+            item_text(rem.get(pid, 0), by_id[pid].product_name, getattr(by_id[pid], "unit_label", None),
+                      bool(getattr(by_id[pid], "weighed", False)))
+            for pid in order
+        )
         if discount:
             left = f"{int(getattr(v, 'uses_left', 0) or 0)}/{uses} שימושים"
         w.writerow([

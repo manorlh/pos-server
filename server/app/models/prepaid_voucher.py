@@ -125,6 +125,10 @@ class PrepaidVoucherBatch(Base):
     uses_per_voucher = Column(Integer, nullable=False, default=1, server_default="1")
     max_uses_per_sale = Column(Integer, nullable=False, default=1, server_default="1")
     max_uses_per_day = Column(Integer, nullable=True)
+    #: Goods: "כולל תוספות" — a dish's paid options and a meal's upcharges are covered too.
+    #: False (the default, and every batch before it): the base price as listed is covered,
+    #: the extras are paid at the till (docs/SPEC_VOUCHER_PRODUCTION.md §7.14).
+    include_extras = Column(Boolean, nullable=False, default=False, server_default="false")
 
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -158,7 +162,12 @@ class PrepaidVoucherBatchItem(Base):
     product_id = Column(UUID(as_uuid=True), ForeignKey("products.id"), nullable=False)
     #: The product's name when the batch was made — what the voucher prints.
     product_name = Column(String(255), nullable=False)
-    quantity = Column(Integer, nullable=False)
+    #: Units; a product sold by weight in its unit, to the gram ("0.5" ק״ג). Whole for any
+    #: other product (the form refuses a fraction of one sold by the piece).
+    quantity = Column(Numeric(10, 3), nullable=False)
+    #: Sold by weight when the batch was made, and its unit as printed ("ק״ג").
+    weighed = Column(Boolean, nullable=False, default=False, server_default="false")
+    unit_label = Column(String(16), nullable=True)
     sort_order = Column(Integer, nullable=False, default=0)
 
     batch = relationship("PrepaidVoucherBatch", back_populates="items")
@@ -189,7 +198,8 @@ class PrepaidVoucher(Base):
     group_no = Column(Integer, nullable=True)
     #: Random, unguessable, unique everywhere; the QR carries "PV:" + this.
     code = Column(String(32), nullable=False, unique=True, index=True)
-    #: {global product id: quantity still to be taken}. Empty for a discount voucher.
+    #: {global product id: quantity still to be taken} — an int, or a weight to the gram (0.25).
+    #: Empty for a discount voucher.
     remaining = Column(JSON, nullable=False)
     #: A discount voucher's uses not yet taken (held reservations still count as left:
     #: a use is taken when the sale is confirmed). Null for `items`.

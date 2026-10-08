@@ -174,13 +174,17 @@ class TestBatches:
         assert PV.normalize_code(" pv:abcd-efgh 2345-6789 ") == "ABCDEFGH23456789"
         assert PV.format_code("ABCDEFGH23456789") == "ABCD-EFGH-2345-6789"
 
-    def test_only_global_products_of_the_tenant(self, w):
-        assert refused(make_batch, w, items=[{"productId": w.general.id, "quantity": 1}]).detail == PV.PRODUCT_INVALID
+    def test_only_products_of_the_tenant_and_never_the_general_item(self, w):
+        # The general item has no identity: refused with why (docs/SPEC_VOUCHER_PRODUCTION.md §7.14).
+        assert refused(make_batch, w, items=[{"productId": w.general.id, "quantity": 1}]).detail == \
+            PV.product_refusal(PV.BLOCK_GENERAL) == "prepaid_voucher_product_general"
         assert refused(make_batch, w, items=[{"productId": uuid.uuid4(), "quantity": 1}]).detail == PV.PRODUCT_INVALID
 
-    def test_the_picker_offers_exactly_what_a_batch_may_carry(self, w):
+    def test_the_picker_shows_what_a_batch_may_carry_and_why_not(self, w):
         # 07.10.2026: the picker listed every company's products and the save refused one of
-        # another company as "אינו מתאים". Now it asks the cloud, which applies the save's rule.
+        # another company as "אינו מתאים"; then it hid what it could not take. Now (the owner,
+        # "תוודא ששוברי הפקה תומכים בכל סוגי המוצרים") it shows each with whether it can go on
+        # and why not — the save's own rule.
         other = Company(id=uuid.uuid4(), tenant_id=w.tenant.id, name="חברה אחרת")
         w.db.add(other)
         w.db.flush()
@@ -193,13 +197,15 @@ class TestBatches:
 
         def offered(search=None):
             out = R.list_prepaid_voucher_products(company_id=str(w.company.id), search=search, limit=50, **_ctx(w))
-            return [p["name"] for p in out["items"]]
+            return [(p["name"], p["blocked"]["goods"]) for p in out["items"]]
 
-        # Neither the general item nor the other company's product is offered…
-        assert sorted(offered()) == sorted(["נקניקייה", "שתייה"])
-        assert offered("שתי") == ["שתייה"]
-        # …and what is not offered is what the save refuses; what is offered, it takes.
-        assert refused(make_batch, w, items=[{"productId": foreign.id, "quantity": 1}]).detail == PV.PRODUCT_INVALID
+        # The usable ones first; the general item with its reason; another company's only when searched for.
+        assert offered() == [("נקניקייה", None), ("שתייה", None), ("כללי", "general")]
+        assert offered("שתי") == [("שתייה", None)]
+        assert offered("חברה") == [("של חברה אחרת", "other_company")]
+        # …and what the picker marks is what the save refuses; what it does not, it takes.
+        assert refused(make_batch, w, items=[{"productId": foreign.id, "quantity": 1}]).detail == \
+            PV.product_refusal(PV.BLOCK_OTHER_COMPANY)
         assert make_batch(w, items=[{"productId": w.drink.id, "quantity": 1}])["items"][0]["name"] == "שתייה"
 
     def test_the_form_is_validated(self, w):

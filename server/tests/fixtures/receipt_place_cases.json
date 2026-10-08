@@ -1,0 +1,13 @@
+{
+  "about": "The place line under the business header of every printed document: the shop (סניף), the till's number and the till's name (the owner, 07.10.2026). The same bytes in pos-android app/src/test/resources, pos-server kiosk-desktop/test/fixtures and server/tests/fixtures; Android domain/Receipt.kt ReceiptPlace.line, kiosk-desktop core/printDocs.ts placeLine, server app/services/print_documents.py place_line.",
+  "cases": [
+    { "name": "all three", "shopName": "הרצליה", "posNumber": "3", "deviceName": "קיוסק רויאל", "line": "סניף הרצליה · קופה 3 · קיוסק רויאל" },
+    { "name": "a shop already named סניף is not prefixed again", "shopName": "סניף 2", "posNumber": "4", "deviceName": "קיוסק Windows", "line": "סניף 2 · קופה 4 · קיוסק Windows" },
+    { "name": "spaces trimmed", "shopName": "  הרצליה ", "posNumber": " 12 ", "deviceName": " קופה ראשית ", "line": "סניף הרצליה · קופה 12 · קופה ראשית" },
+    { "name": "a till named as its number says it once", "shopName": "הרצליה", "posNumber": "2", "deviceName": "קופה 2", "line": "סניף הרצליה · קופה 2" },
+    { "name": "a till named as the shop says it once", "shopName": "הרצליה", "posNumber": "1", "deviceName": "הרצליה", "line": "סניף הרצליה · קופה 1" },
+    { "name": "no number", "shopName": "הרצליה", "posNumber": null, "deviceName": "קיוסק רויאל", "line": "סניף הרצליה · קיוסק רויאל" },
+    { "name": "no shop", "shopName": "", "posNumber": "3", "deviceName": "קיוסק רויאל", "line": "קופה 3 · קיוסק רויאל" },
+    { "name": "nothing known: no line", "shopName": null, "posNumber": " ", "deviceName": null, "line": null }
+  ]
+}

@@ -7,6 +7,7 @@
  * add-to-cart motion), pay on the pinpad beside the screen.
  */
 
+import { layoutOf, productColumns } from '@/lib/kioskLayout';
 import { useCallback, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type Ref } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
@@ -28,6 +29,9 @@ import {
   messagePlacement,
   addMs,
   motionSpec,
+  kioskRenderProfile,
+  profileMotion,
+  pickupLabel,
   resolveThemeColors,
   stepMode,
   tickerBandPx,
@@ -50,14 +54,20 @@ import {
   CartScreen,
   ConfirmSheet,
   Flyer,
+  KioskBackdrop,
+  KioskStatusBar,
   MessageOverlay,
   UpsellWindow,
   PausedScreen,
   PayScreen,
   PREVIEW_CSS,
   ServiceScreen,
+  serviceAsked,
+  serviceOnAttractOf,
   SuccessScreen,
   TipScreen,
+  chromeRoot,
+  statusLinePx,
   type Flight,
   type PausedVariant,
   type PCategory,
@@ -361,10 +371,14 @@ export function KioskPreview({
   const wide = frame === 'tablet';
   const panel = cartPanelShown(config.theme, FRAME_DEVICE_DP[frame]);
   const side = config.theme.categoryLayout !== 'top';
-  const motion = motionSpec(config.theme, config.general, config.motion);
-  const transitions = transitionSpec(config.motion, config.general);
+  // "אפקטים": the preview draws the configured profile ("auto" — the device's choice — previews the full look).
+  const profile = kioskRenderProfile(config.motion.effects);
+  const played = profileMotion(config.motion, profile);
+  const motion = motionSpec(config.theme, config.general, played);
+  const transitions = transitionSpec(played, config.general);
   const colors = resolveThemeColors(config.theme);
-  const cols = catalogColumns(config.theme.gridDensity, wide, panel, side);
+  // "גודל מוצרים" (layout.productSize) moves the density's columns.
+  const cols = productColumns(catalogColumns(config.theme.gridDensity, wide, panel, side), layoutOf(config).productSize, FRAME_DEVICE_DP[frame]);
 
   /** The window for [moment], if a rule for the kiosk asks one (true: shown). */
   const offerUpsell = (moment: UpsellMoment, then: PreviewScreen | null): boolean => {
@@ -425,7 +439,10 @@ export function KioskPreview({
   };
 
   // "כיתוב רץ" on the attract screen: its start button and the rest are laid out on what the strip leaves.
-  const band = screen === 'attract' ? tickerBandPx(config, 'attract', new Date(nowMs), PREVIEW_FOOTER_PX) : { top: 0, bottom: 0 };
+  // The style's status line (tech) takes its height off the top of every screen.
+  const statusPx = statusLinePx({ cfg: config, c: colors });
+  const ticker = screen === 'attract' ? tickerBandPx(config, 'attract', new Date(nowMs), PREVIEW_FOOTER_PX) : { top: 0, bottom: 0 };
+  const band = { top: ticker.top + statusPx, bottom: ticker.bottom };
   const attractH = FRAME_SIZE[frame].h - band.top - band.bottom;
   const attractBox = ctaBox(config.attract.cta, FRAME_SIZE[frame].w, attractH);
   /** The start button's box over the whole frame (below a strip at the top). */
@@ -481,6 +498,7 @@ export function KioskPreview({
     panel,
     screen: { w: FRAME_SIZE[frame].w, h: attractH },
     ctaBox: attractBox,
+    light: profile === 'light',
   };
 
   // A flight that lands bounces the badge then; a reduce-motion fade already did at the tap.
@@ -554,7 +572,8 @@ export function KioskPreview({
     if (card && p) model.quickAdd?.(p, card.getBoundingClientRect());
   };
   const nextScreen = (s: PreviewScreen): PreviewScreen => {
-    const service = config.general.serviceTypes.length > 1 && config.general.servicePlacement !== 'attract';
+    // The service screen only when it is a step: asked, and not on the attract screen's buttons ("ללא" never).
+    const service = serviceAsked(model) && !serviceOnAttractOf(model);
     if (s === 'attract') return service ? 'service' : 'catalog';
     if (s === 'service') return 'catalog';
     if (s === 'catalog' || s === 'product') return 'cart';
@@ -591,6 +610,7 @@ export function KioskPreview({
   const messageScreen = (screen === 'product' ? 'catalog' : screen) as MessageScreen;
   const overlay = messagePlacement(messageScreen) === 'overlay-center';
   const weights = typeWeights(config.theme.typeWeight);
+  const chrome = chromeRoot(model);
   const rootVars = {
     '--k-scale': String(typeScaleFactor(config.theme.typeScale)),
     '--k-w-body': String(weights.body),
@@ -670,9 +690,10 @@ export function KioskPreview({
           <div
             ref={screenRef}
             dir={previewLang === 'he' || previewLang === 'ar' ? 'rtl' : 'ltr'}
-            className={cn('k-root relative overflow-hidden', config.general.reduceMotion && 'k-reduce')}
+            className={cn('k-root relative overflow-hidden', config.general.reduceMotion && 'k-reduce', chrome.className)}
             style={{
               ...rootVars,
+              ...chrome.style,
               width: size.w,
               height: size.h,
               borderRadius: frame === 'phone' ? 34 : 18,
@@ -691,7 +712,16 @@ export function KioskPreview({
                 />
               </>
             ) : null}
-            <div className={cn('relative h-full', frame === 'phone' && 'pt-7')}>
+            {/* The style's backdrop pattern (tech): behind every screen. */}
+            <KioskBackdrop m={model} />
+            <div className={cn('relative h-full', frame === 'phone' && 'pt-7')} style={statusPx > 0 ? { paddingTop: (frame === 'phone' ? 28 : 0) + statusPx } : undefined}>
+              {/* "שורת מצב" (tech): the state, the order's number and the time, over the screens. */}
+              <KioskStatusBar
+                m={model}
+                screen={screen === 'paused' ? pausedVariant : screen}
+                pickup={screen === 'success' ? pickupLabel(config.pickup.prefix, Number.isFinite(config.pickup.start) ? config.pickup.start : 1) : null}
+                top={frame === 'phone' ? 28 : 0}
+              />
               {/* "מעבר בין מסכים": the screen swaps with the chosen transition (the product sheet belongs to the catalog). */}
               {/* "נגיש" (layout.reach): the screens in the bottom half under a display (kiosk-shared/layouts). */}
               <ReachFrame m={model} screen={screen === 'product' ? 'catalog' : screen} dish={screen === 'product' ? product : null} category={activeCategory}>
@@ -772,7 +802,7 @@ export function KioskPreview({
               ) : null}
               <ReachToggle m={model} bottom={PREVIEW_FOOTER_PX + 6} />
               {screen === 'attract' ? (
-                config.general.servicePlacement === 'attract' && config.general.serviceTypes.length > 1 ? (
+                serviceOnAttractOf(model) ? (
                   <AttractServiceButtons m={model} box={ctaOnFrame} onPick={(t) => {
                     setService(t);
                     navigate('catalog');

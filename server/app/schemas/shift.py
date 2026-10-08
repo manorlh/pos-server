@@ -184,6 +184,8 @@ class ShiftOut(BaseModel):
     # Filled on dashboard reads.
     machine_name: Optional[str] = Field(None, alias="machineName")
     shop_name: Optional[str] = Field(None, alias="shopName")
+    #: The till's register number in the shift's shop ("קופה 2"); null once it moved shops.
+    pos_number: Optional[str] = Field(None, alias="posNumber")
     #: The till's area when the cloud created the shift (stamped, never updated).
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
     area_name: Optional[str] = Field(None, alias="areaName")

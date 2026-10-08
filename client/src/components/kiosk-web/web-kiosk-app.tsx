@@ -16,6 +16,7 @@
  * can). The card's tile is shown greyed ("לא זמין בקיוסק בדפדפן") when the business offers it.
  */
 
+import { layoutOf, productColumns } from '@/lib/kioskLayout';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { Pencil } from 'lucide-react';
 import {
@@ -33,6 +34,7 @@ import {
   kioskOpenAt,
   messagePlacement,
   motionSpec,
+  profileMotion,
   resolveThemeColors,
   transitionSpec,
   stepMode,
@@ -50,11 +52,14 @@ import {
   AttractCta,
   AttractScreen,
   AttractServiceButtons,
+  WaitLogo,
   CartScreen,
   CashAtTillDone,
   ConfirmSheet,
   EntryWindow,
   Flyer,
+  KioskBackdrop,
+  KioskStatusBar,
   KioskSwap,
   MessageOverlay,
   PausedScreen,
@@ -63,6 +68,8 @@ import {
   ServiceScreen,
   TickerFrame,
   cardStyle,
+  chromeRoot,
+  statusLinePx,
   basketPricing,
   lineUnitAgorot,
   orderMealOf,
@@ -87,6 +94,7 @@ import {
   ReachToggle,
   REACH_STRIP_PX,
   SuccessScreen,
+  useKioskRenderProfile,
 } from '@/kiosk-shared';
 import { configuredText, kioskTextOf, webTextOverride } from '@/lib/kioskTexts';
 import { localDateTimeOf, promotionsOf } from '@/lib/kioskMoney';
@@ -101,6 +109,7 @@ import {
   reduce,
   rulesOf,
   serviceOnAttract,
+  orderServiceOf,
   successDone,
   wire,
   type FlowConfigIn,
@@ -455,7 +464,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       const r = await bridge.startPayment({
         expectedTotalAgorot: shownAgorot,
         lines: lines.map((l) => ({ key: l.key, productId: l.product.id, qty: l.qty, unitAgorot: lineUnitAgorot(l), options: orderOptionsOf(l), meal: orderMealOf(l), notes: l.note ? [l.note] : [] })),
-        service: flowRef.current.service ?? 'take_away',
+        service: orderServiceOf(flowRef.current.service, cfgIn),
         customerName: d.name.trim() || null,
         customerPhone: d.phone.trim() || null,
         tableRef: d.table.trim() || null,
@@ -527,7 +536,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     const r = await svc
       .placeOpenOrder({
         lines,
-        service: flowRef.current.service ?? 'take_away',
+        service: orderServiceOf(flowRef.current.service, cfgIn),
         tableRef: details.table.trim() || null,
         customerName: details.name.trim() || null,
         customerPhone: details.phone.trim() || null,
@@ -548,7 +557,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     setPay((p) => ({ ...p, placed: { order: r.order, dueAgorot: r.dueAgorot, pending: r.pending } }));
     dispatch({ type: 'paymentApproved' });
     setSuccessAt(Date.now());
-  }, [details, dispatch, orderLines, svc, words, fallbackMethod]);
+  }, [details, dispatch, orderLines, svc, words, fallbackMethod, cfgIn]);
 
   // Into the pay screen: the order goes to the tills at once.
   useEffect(() => {
@@ -614,10 +623,14 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   const wide = size.w >= 600;
   const panel = cartPanelShown(cfg.theme, size.w);
   const side = cfg.theme.categoryLayout !== 'top';
-  const motion = motionSpec(cfg.theme, cfg.general, cfg.motion);
-  const transitions = transitionSpec(cfg.motion, cfg.general);
+  // "אפקטים": the config's profile, or this device's (prefers-reduced-motion, a slow first-frames probe).
+  const profile = useKioskRenderProfile(cfg.motion.effects);
+  const played = profileMotion(cfg.motion, profile);
+  const motion = motionSpec(cfg.theme, cfg.general, played);
+  const transitions = transitionSpec(played, cfg.general);
   const colors = resolveThemeColors(cfg.theme);
-  const cols = catalogColumns(cfg.theme.gridDensity, wide, panel, side);
+  // "גודל מוצרים" (layout.productSize) moves the density's columns.
+  const cols = productColumns(catalogColumns(cfg.theme.gridDensity, wide, panel, side), layoutOf(cfg).productSize, size.w);
   const rules = rulesFor(cart.length === 0);
   const back = () => {
     const a = backAction(flow, rules);
@@ -697,7 +710,10 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
         : undefined,
   };
 
-  const band = flow.screen === 'attract' ? tickerBandPx(cfg, 'attract', new Date(nowMs), FOOTER_PX) : { top: 0, bottom: 0 };
+  // The style's status line (tech) takes its height off the top of every screen.
+  const statusPx = statusLinePx({ cfg, c: colors });
+  const ticker = flow.screen === 'attract' ? tickerBandPx(cfg, 'attract', new Date(nowMs), FOOTER_PX) : { top: 0, bottom: 0 };
+  const band = { top: ticker.top + statusPx, bottom: ticker.bottom };
   const attractSize = { w: size.w, h: size.h - band.top - band.bottom };
   const attractBox = ctaBox(cfg.attract.cta, attractSize.w, attractSize.h);
   const ctaOnScreen = band.top > 0 ? { ...attractBox, y: attractBox.y + band.top } : attractBox;
@@ -742,6 +758,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     panel,
     screen: band.top + band.bottom > 0 ? attractSize : size,
     ctaBox: attractBox,
+    light: profile === 'light',
     live,
     quickAdd: (p, from) => {
       const plain = (l: PLine) => l.product.id === p.id && l.extras.length === 0 && !l.note && (l.options?.length ?? 0) === 0;
@@ -862,6 +879,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       setProductId(p.id);
     },
     start: () => dispatch({ type: 'start' }),
+    serviceOnAttract: serviceOnAttract(cfgIn),
     touch: () => setLastTouch(Date.now()),
     onVoucher: atPayMethod && voucherOffered && !pay.busy ? (code) => void redeem(code) : null,
   });
@@ -885,6 +903,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     '--font-weight-black': String(weights.black),
   } as CSSProperties;
   const bgImage = cfg.theme.backgroundImage?.url;
+  const light = profile === 'light';
+  const chrome = useMemo(() => chromeRoot({ cfg, c: colors, light }), [cfg, colors, light]);
   const onAttractService = serviceOnAttract(cfgIn);
   const placed = pay.placed;
 
@@ -892,8 +912,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     <div
       ref={screenRef}
       dir="rtl"
-      className={`k-root relative h-dvh w-screen overflow-hidden select-none ${cfg.general.reduceMotion ? 'k-reduce' : ''}`}
-      style={{ ...rootVars, background: colors.background, color: colors.text, fontFamily: m.font, touchAction: 'manipulation' }}
+      className={`k-root relative h-dvh w-screen overflow-hidden select-none ${cfg.general.reduceMotion ? 'k-reduce' : ''} ${chrome.className}`}
+      style={{ ...rootVars, ...chrome.style, background: colors.background, color: colors.text, fontFamily: m.font, touchAction: 'manipulation' }}
       onPointerDownCapture={(e) => {
         setLastTouch(Date.now());
         // "ניהול הקיוסק": a 2 s press in the physical top-right corner.
@@ -932,7 +952,17 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
           <div className="absolute inset-0" style={{ background: screen === 'attract' ? `${colors.background}66` : `${colors.background}D9` }} />
         </>
       ) : null}
-      <div className="relative h-full" style={resting ? undefined : { paddingBottom: FOOTER_PX + (cfg.layout?.reachToggle ? REACH_STRIP_PX : 0) }}>
+      {/* The style's backdrop pattern (tech): behind every screen. */}
+      <KioskBackdrop m={m} />
+      <div
+        className="relative h-full"
+        style={{
+          ...(resting ? {} : { paddingBottom: FOOTER_PX + (cfg.layout?.reachToggle ? REACH_STRIP_PX : 0) }),
+          ...(statusPx > 0 ? { paddingTop: statusPx } : {}),
+        }}
+      >
+        {/* "שורת מצב" (tech): the state, the order's number and the time, over the screens. */}
+        <KioskStatusBar m={m} screen={flow.screen} pickup={flow.screen === 'success' ? (cardPay?.pickupLabel ?? placed?.order.pickupLabel ?? null) : null} />
         <ReachFrame m={m} screen={screen === 'confirm' ? 'catalog' : screen} dish={product} category={activeCategory}>
           <KioskSwap
             id={screen === 'confirm' ? 'catalog' : screen}
@@ -1231,7 +1261,11 @@ function RestNote({ m, title, body }: { m: PreviewModel; title: string; body: st
 /** The order on its way to the tills (a second, or the time the cloud takes to answer). */
 function Placing({ m, text }: { m: PreviewModel; text: string }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
+    <div className="relative flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
+      {/* "לוגו במסך התשלום": in the free band above, never moving the spinner. */}
+      <div className="absolute inset-x-0 top-6">
+        <WaitLogo m={m} />
+      </div>
       <span className="h-14 w-14 animate-spin rounded-full border-4" style={{ borderColor: `${m.c.button}33`, borderTopColor: m.c.button }} />
       <p className="text-lg font-bold">{text}</p>
     </div>
