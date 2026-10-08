@@ -39,6 +39,10 @@ ALERT_OPENS_MINUTES_KEY = "cashDrawer.alertOpensWithinMinutes"
 CASH_OUT_ALERT_AMOUNT_KEY = "cashDrawer.cashOutAlertAmount"
 VARIANCE_ALERT_AMOUNT_KEY = "cashDrawer.varianceAlertAmount"
 NEAR_VARIANCE_MINUTES_KEY = "cashDrawer.nearVarianceMinutes"
+#: "טיפ באשראי משולם מהמזומן": card tips are handed to staff in cash from the drawer. The
+#: till freezes the amount on each shift's close (`till.cardTipsFromDrawer`); the cloud's
+#: drawer maths read that frozen amount, never this parameter (app/services/z_builder.py).
+CARD_TIPS_FROM_DRAWER_KEY = "cashDrawer.cardTipsFromDrawer"
 #: Not the drawer's only: how the till shows an action the user's role denies.
 DENIED_UI_KEY = "permissionsDeniedUi"
 DENIED_UI_HIDE = "הסתר"
@@ -126,6 +130,15 @@ CASH_DRAWER_PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
         key=NEAR_VARIANCE_MINUTES_KEY, label="מגירה — \"בסמוך לפער\" (דקות)", value_type="integer",
         default_value=60,
         description="פתיחות ידניות בתוך מספר הדקות שלפני ספירה עם פער מעל הסף נרשמות כחריגה \"פתיחה בסמוך לפער\".",
+    ),
+    dict(
+        key=CARD_TIPS_FROM_DRAWER_KEY, label="טיפ באשראי משולם מהמזומן", value_type="boolean", default_value=False,
+        description=(
+            "טיפים שהתקבלו באשראי משולמים לעובדים במזומן מהמגירה. ב-X וב-Z מופיעות למטה השורות "
+            "\"טיפים באשראי ששולמו מהמגירה\" ו\"מזומן במגירה\", והמזומן הצפוי במגירה (בספירה, ב-Blind Count "
+            "ובסגירת משמרת) מופחת בהם. הטיפים אינם הכנסה — המכירות, המע״מ וה-Z הפיסקלי לא משתנים. "
+            "לא חל על קיוסקים."
+        ),
     ),
     dict(
         key=DENIED_UI_KEY, label="פעולה אסורה לעובד — הסתר או הצג מושבת", value_type="enum",

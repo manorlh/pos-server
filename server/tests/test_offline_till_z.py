@@ -624,3 +624,85 @@ class TestForce:
         assert row.details["forcedBy"] == w.admin.username or row.details["forcedBy"] == w.admin.email
         assert row.details["requestKind"] == "till_z"
         assert row.details["parked"]["lines"] == 2
+
+
+# ── "טיפ באשראי משולם מהמזומן": the drawer of an offline Z with card tips paid from it ─────
+
+
+def _closed_paying_tips(w, *, counted, till_figures):
+    """50 in cash and 50 on a card with a 10 card tip, closed with the till's frozen figure."""
+    from app.schemas.shift import ShiftCloseIn
+    from app.services.shifts import apply_shift_close
+
+    shift = w.shift(w.till, 1, status=ShiftStatus.OPEN, opening_cash="100.00")
+    made = [
+        w.doc(w.till, shift, total="50.00", number="11"),
+        w.doc(w.till, shift, total="50.00", method="card", tip="10.00", tip_method="card", number="12"),
+    ]
+    body = ShiftCloseIn.model_validate({
+        "closedAt": (shift.opened_at + timedelta(hours=4)).isoformat(),
+        "countedCash": counted,
+        "transactionIds": [str(d.id) for d in made],
+        "till": till_figures,
+    })
+    shift, outcome = apply_shift_close(w.db, w.till, shift.id, body)
+    assert outcome == "accepted"
+    return shift
+
+
+#: What the till printed: float 100 + cash 50 − card tips 10 = 140; the drawer's own cash 40.
+DRAWER_PRINTED = {
+    "openingCash": 100.0, "expectedCash": 140.0, "countedCash": 140.0, "overShort": 0.0,
+    "cardTipsFromDrawer": 10.0, "drawerCash": 40.0,
+}
+
+
+class TestCardTipsPaidFromTheDrawer:
+    def test_the_till_and_the_cloud_agree_nothing_is_flagged(self, w):
+        s = _closed_paying_tips(w, counted=140, till_figures={"cardTipsFromDrawer": 10})
+
+        code, body = upload(w, offline_body(s, 1, report=DRAWER_PRINTED, first="11", last="12"))
+
+        assert code == 201, body
+        z = w.db.query(ZReport).filter(ZReport.machine_id == w.till.id).one()
+        assert z.offline_discrepancies is None
+        assert (z.expected_cash, z.discrepancy) == (Decimal("140.00"), Decimal("0.00"))
+        assert (z.per_machine[0]["cardTipsFromDrawer"], z.per_machine[0]["drawerCash"]) == ("10.00", "40.00")
+        assert exceptions_of(w, "offline_z_gap") == []
+
+    def test_a_drawer_that_differs_is_still_flagged(self, w):
+        s = _closed_paying_tips(w, counted=140, till_figures={"cardTipsFromDrawer": 10})
+        printed = {**DRAWER_PRINTED, "cardTipsFromDrawer": 15.0, "drawerCash": 35.0, "expectedCash": 135.0}
+
+        code, _ = upload(w, offline_body(s, 1, report=printed, first="11", last="12"))
+
+        assert code == 201
+        z = w.db.query(ZReport).filter(ZReport.machine_id == w.till.id).one()
+        keys = {d["key"]: d for d in z.offline_discrepancies}
+        assert set(keys) == {"expectedCash", "cardTipsFromDrawer", "drawerCash"}
+        assert keys["drawerCash"]["cloud"] == "40.00"
+
+    def test_without_the_figure_the_drawer_is_as_before(self, w):
+        s = _closed_paying_tips(w, counted=150, till_figures=None)
+        printed = {"openingCash": 100.0, "expectedCash": 150.0, "countedCash": 150.0, "overShort": 0.0}
+
+        code, _ = upload(w, offline_body(s, 1, report=printed, first="11", last="12"))
+
+        assert code == 201
+        z = w.db.query(ZReport).filter(ZReport.machine_id == w.till.id).one()
+        assert z.offline_discrepancies is None
+        assert "cardTipsFromDrawer" not in z.per_machine[0]
+
+    def test_the_pure_comparison_takes_the_two_figures(self):
+        section = {"expectedCash": "140.00", "cardTipsFromDrawer": "10.00", "drawerCash": "40.00"}
+        common = dict(
+            number=1, counter_before=0, till_totals=None, till_shift_ids=["a"], cloud_shift_ids=["a"],
+            till_first_document=None, till_last_document=None, section=section,
+        )
+        same = {"expectedCash": 140, "cardTipsFromDrawer": 10, "drawerCash": 40}
+        assert TZ.offline_discrepancies(till_report=same, **common) == []
+        assert TZ.offline_discrepancies(till_report={**same, "drawerCash": 50}, **common) == [
+            {"key": "drawerCash", "till": 50, "cloud": "40.00"},
+        ]
+        # What the till did not send is not compared.
+        assert TZ.offline_discrepancies(till_report={"expectedCash": 140}, **common) == []

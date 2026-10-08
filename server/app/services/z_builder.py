@@ -278,9 +278,44 @@ def _dec(value) -> Decimal:
     return ZERO if value is None else Decimal(value)
 
 
+#: The till's key on a shift close (`till`, docs/SHIFTS_API.md §1.3) for the card tips it
+#: paid staff in cash from the drawer ("טיפ באשראי משולם מהמזומן", till parameter
+#: `cashDrawer.cardTipsFromDrawer`). Present only when the parameter was on at the close.
+CARD_TIPS_FROM_DRAWER = "cardTipsFromDrawer"
+
+
+def card_tips_from_drawer(shift: Shift) -> Optional[Decimal]:
+    """
+    The card tips a shift's till paid out of the drawer, as frozen on its close; None when
+    the close did not carry the figure (the parameter was off, a kiosk, an older till, a
+    reconstructed shift) — and for anything that is not a non-negative amount, which is
+    no claim the drawer maths can take. Never the live parameter: a Z of old shifts reads
+    what their tills did then.
+    """
+    till = getattr(shift, "till_totals", None)
+    if not isinstance(till, dict):
+        return None
+    value = till.get(CARD_TIPS_FROM_DRAWER)
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        amount = Decimal(str(value))
+    except ArithmeticError:
+        return None
+    if not amount.is_finite() or amount < 0:
+        return None
+    return amount.quantize(CENT)
+
+
 def _shift_expected(shift: Shift) -> Decimal:
-    """The server's own expected drawer at a shift's close: its float + cash takings + cash tips."""
-    return _dec(shift.opening_cash) + _dec(shift.total_cash) + _dec(shift.total_cash_tips)
+    """
+    The server's own expected drawer at a shift's close: its float + cash takings + cash
+    tips, less the card tips paid out of the drawer when its till froze them on the close.
+    """
+    return (
+        _dec(shift.opening_cash) + _dec(shift.total_cash) + _dec(shift.total_cash_tips)
+        - (card_tips_from_drawer(shift) or ZERO)
+    )
 
 
 def _shift_closing(shift: Shift) -> Decimal:
@@ -298,25 +333,30 @@ def till_cash_summary(shifts: Sequence[Shift]) -> Dict[str, Optional[Decimal]]:
     instead did not add up either once a surplus or shortfall was carried into the next
     float (E2E Z #3: expected 190, counted 189, over/short +1). So
     (docs/SHIFTS_API.md §3.6), with shifts 1..n, float_i their opening float, cash_i
-    their cash takings net of cash refunds, tips_i their cash tips, expected_i =
-    float_i + cash_i + tips_i (the server's own) and closing_i = the count if counted,
-    else expected_i:
+    their cash takings net of cash refunds, tips_i their cash tips, out_i the card tips
+    their till paid out of the drawer (`card_tips_from_drawer`, 0 when the close did not
+    carry it), expected_i = float_i + cash_i + tips_i − out_i (the server's own) and
+    closing_i = the count if counted, else expected_i:
 
     * opening  — float_1: the drawer at the start of the period;
     * between-shift adjustments — Σ_{i<n} (float_{i+1} − closing_i): cash put into or
       taken out of the drawer between shifts (usually 0, or a carried surplus);
-    * expected — opening + Σ cash_i + Σ tips_i + adjustments;
+    * expected — opening + Σ cash_i + Σ tips_i − Σ out_i + adjustments;
     * counted  — the **last** shift's count, NULL if that shift was not counted;
     * over/short — Σ (count_i − expected_i), NULL if **any** shift was not counted: a
       partial count presented as the drawer's would hide exactly the shortfall a count
       exists to find;
-    * cash sales — Σ cash_i.
+    * cash sales — Σ cash_i; cash tips — Σ tips_i;
+    * card tips from the drawer — Σ out_i over the shifts whose close carried it, NULL
+      if none did ("טיפ באשראי משולם מהמזומן" was off throughout: nothing new to show);
+    * drawer cash ("מזומן במגירה") — cash sales + cash tips − card tips from the drawer,
+      NULL with it. Tips are no revenue: the sales and the tips totals are untouched.
 
     Why this reconciles. With d_i = closing_i − expected_i (the over/short of a counted
     shift, 0 for an uncounted one), float_{i+1} = closing_i + adj_i
-    = float_i + cash_i + tips_i + d_i + adj_i, so telescoping from float_1:
+    = float_i + cash_i + tips_i − out_i + d_i + adj_i, so telescoping from float_1:
 
-        expected_n = float_1 + Σ_{i≤n} (cash_i + tips_i) + Σ_{i<n} adj_i + Σ_{i<n} d_i
+        expected_n = float_1 + Σ_{i≤n} (cash_i + tips_i − out_i) + Σ_{i<n} adj_i + Σ_{i<n} d_i
                    = expected + Σ_{i<n} d_i
 
     i.e. the period's expected is the last shift's expected **less** the earlier shifts'
@@ -328,7 +368,8 @@ def till_cash_summary(shifts: Sequence[Shift]) -> Dict[str, Optional[Decimal]]:
     if not shifts:
         return {
             "opening": ZERO, "expected": ZERO, "counted": None, "over_short": None,
-            "uncounted": 0, "cash_sales": ZERO, "between_shifts": ZERO,
+            "uncounted": 0, "cash_sales": ZERO, "cash_tips": ZERO, "between_shifts": ZERO,
+            "card_tips_from_drawer": None, "drawer_cash": None,
         }
     first, last = shifts[0], shifts[-1]
     uncounted = sum(1 for s in shifts if s.counted_cash is None)
@@ -338,6 +379,8 @@ def till_cash_summary(shifts: Sequence[Shift]) -> Dict[str, Optional[Decimal]]:
     )
     cash_sales = sum((_dec(s.total_cash) for s in shifts), ZERO)
     cash_tips = sum((_dec(s.total_cash_tips) for s in shifts), ZERO)
+    paid_out = [amount for amount in (card_tips_from_drawer(s) for s in shifts) if amount is not None]
+    tips_from_drawer = sum(paid_out, ZERO) if paid_out else None
     between_shifts = sum(
         (_dec(after.opening_cash) - _shift_closing(before) for before, after in zip(shifts, shifts[1:])),
         ZERO,
@@ -345,12 +388,15 @@ def till_cash_summary(shifts: Sequence[Shift]) -> Dict[str, Optional[Decimal]]:
     opening = _dec(first.opening_cash)
     return {
         "opening": opening,
-        "expected": opening + cash_sales + cash_tips + between_shifts,
+        "expected": opening + cash_sales + cash_tips - (tips_from_drawer or ZERO) + between_shifts,
         "counted": None if last.counted_cash is None else _dec(last.counted_cash),
         "over_short": over_short,
         "uncounted": uncounted,
         "cash_sales": cash_sales,
+        "cash_tips": cash_tips,
         "between_shifts": between_shifts,
+        "card_tips_from_drawer": tips_from_drawer,
+        "drawer_cash": None if tips_from_drawer is None else cash_sales + cash_tips - tips_from_drawer,
     }
 
 
@@ -363,17 +409,26 @@ def z_cash_summary(per_till: Sequence[Sequence[Shift]]) -> Dict[str, Optional[De
     The Z's drawer figures: each till's (`till_cash_summary`) summed over the tills.
 
     Tills have a drawer each, so here summing is right. Counted and over/short are NULL
-    if they are NULL for any till.
+    if they are NULL for any till. Card tips paid from the drawers are the sum over the
+    tills that froze any, NULL if none did; the drawer cash is then every till's cash
+    sales + cash tips less them (a till without the figure paid nothing out).
     """
     tills = [till_cash_summary(shifts) for shifts in per_till]
+    paid_out = [t["card_tips_from_drawer"] for t in tills if t["card_tips_from_drawer"] is not None]
+    tips_from_drawer = sum(paid_out, ZERO) if paid_out else None
+    cash_sales = sum((t["cash_sales"] for t in tills), ZERO)
+    cash_tips = sum((t["cash_tips"] for t in tills), ZERO)
     return {
         "opening": sum((t["opening"] for t in tills), ZERO),
         "expected": sum((t["expected"] for t in tills), ZERO),
         "counted": _sum_or_none([t["counted"] for t in tills]) if tills else None,
         "over_short": _sum_or_none([t["over_short"] for t in tills]) if tills else None,
         "uncounted": sum(t["uncounted"] for t in tills),
-        "cash_sales": sum((t["cash_sales"] for t in tills), ZERO),
+        "cash_sales": cash_sales,
+        "cash_tips": cash_tips,
         "between_shifts": sum((t["between_shifts"] for t in tills), ZERO),
+        "card_tips_from_drawer": tips_from_drawer,
+        "drawer_cash": None if tips_from_drawer is None else cash_sales + cash_tips - tips_from_drawer,
     }
 
 
@@ -432,6 +487,18 @@ def machine_section(machine: POSMachine, shifts: Sequence[Shift], totals: Docume
         # Cash put into or taken out of the drawer between its shifts (the next float
         # less what the last shift left); part of expectedCash. Usually 0.
         "betweenShiftAdjustments": _money(cash["between_shifts"]),
+        # "טיפ באשראי משולם מהמזומן": the card tips this till paid staff out of the drawer
+        # (Σ of what its closes froze; already out of expectedCash) and the cash the
+        # drawer holds from the period ("מזומן במגירה" = cashSalesNet + cash tips − them).
+        # Only when a close carried the figure: a section without it reads as before.
+        **(
+            {
+                "cardTipsFromDrawer": _money(cash["card_tips_from_drawer"]),
+                "drawerCash": _money(cash["drawer_cash"]),
+            }
+            if cash["card_tips_from_drawer"] is not None
+            else {}
+        ),
         "uncountedShiftCount": cash["uncounted"],
         "reconstructedShiftCount": sum(1 for s in shifts if s.reconstructed),
         "unattendedShiftCount": sum(1 for s in shifts if s.unattended),
@@ -668,6 +735,14 @@ def build_z(
         z.header = {**z.header, "byWaiter": waiter_breakdown(db, [s.id for s in all_shifts], shop_id)}
         # What this Z includes, in words (docs/SPEC_INDEPENDENT_TILL.md §7).
         z.header = {**z.header, "scope": z_scope(db, shop_id, [m for m, _s in per_machine], till_z, area_id)}
+        # "טיפ באשראי משולם מהמזומן": the card tips the tills paid out of their drawers (already
+        # out of `expected_cash`) and the drawer cash — only when a close froze the figure.
+        if cash["card_tips_from_drawer"] is not None:
+            z.header = {
+                **z.header,
+                "cardTipsFromDrawer": _money(cash["card_tips_from_drawer"]),
+                "drawerCash": _money(cash["drawer_cash"]),
+            }
     if till_z:
         # The till's run (an independent till starts again at 1, SPEC_INDEPENDENT_TILL §3.1):
         # its epoch on the row, and when it began on the header — printed and shown so two

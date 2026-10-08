@@ -1937,6 +1937,14 @@ export interface ZReport {
    */
   betweenShiftAdjustments?: Money | null;
   /**
+   * "טיפ באשראי משולם מהמזומן" (till parameter `cashDrawer.cardTipsFromDrawer`): the card
+   * tips the tills paid staff in cash out of their drawers, as frozen at each close —
+   * already out of expectedCash. Null/absent when no included close carried the figure.
+   */
+  cardTipsFromDrawer?: Money | null;
+  /** "מזומן במגירה": cash sales net + cash tips − cardTipsFromDrawer. Null/absent with it. */
+  drawerCash?: Money | null;
+  /**
    * Σ of the tills' `offline` blocks. Null on a Z built before the block was stored (and
    * on a legacy Z): shown as nothing, never as zero.
    */
@@ -2141,6 +2149,10 @@ export interface ZReportMachineSection {
   overShort?: Money | null;
   /** Cash put into (+) / taken out of (−) the drawer between its shifts; part of expectedCash. */
   betweenShiftAdjustments?: Money | null;
+  /** Card tips this till paid out of the drawer (Σ of its closes'); absent without the parameter. */
+  cardTipsFromDrawer?: Money | null;
+  /** "מזומן במגירה" = cashSalesNet + cash tips − cardTipsFromDrawer; absent with it. */
+  drawerCash?: Money | null;
   uncountedShiftCount?: number | null;
   reconstructedShiftCount?: number | null;
   unattendedShiftCount?: number | null;

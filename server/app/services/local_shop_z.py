@@ -1171,7 +1171,8 @@ def apply_printed(z: ZReport, body: LocalShopZIn, producer: POSMachine) -> None:
     # A till's regular and late parts are one till.
     z.machine_count = len({str(s.get("machineId")) for s in sections})
     z.shift_count = sum(len(t.shift_ids) for t in _taken(body))
-    if any("openingCash" in s for s in sections):
+    printed_drawer = any("openingCash" in s for s in sections)
+    if printed_drawer:
         z.opening_cash = _sum_sections(sections, "openingCash")
         z.expected_cash = _sum_sections(sections, "expectedCash")
         z.actual_cash = _sum_sections(sections, "countedCash", all_or_none=True)
@@ -1182,6 +1183,11 @@ def apply_printed(z: ZReport, body: LocalShopZIn, producer: POSMachine) -> None:
     header = dict(z.header or {})
     for key in ("lineDiscountsTotal", "promotionDiscountsTotal", "voucherDiscountsTotal", "byWaiter"):
         header.pop(key, None)
+    if printed_drawer:
+        # The drawer as printed: card tips paid out of it ("cardTipsFromDrawer") and its cash
+        # ("drawerCash") are then read from the printed sections, never the cloud's build.
+        for key in ("cardTipsFromDrawer", "drawerCash"):
+            header.pop(key, None)
     header["asPrinted"] = {"producedBy": _ref(producer), "note": "נשמר כפי שהודפס בקופה הראשית"}
     z.header = header
 

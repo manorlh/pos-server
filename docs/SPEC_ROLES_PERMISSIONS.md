@@ -252,8 +252,15 @@ Offline" שמדלג על בדיקה.
 
 * `cash_movements`: `cash_in` / `cash_out` / `deposit` / `count` — עם `expectedBefore` / `expectedAfter`
   (snapshot, §8), מי, מי אישר, ופתיחת המגירה המקושרת (שתי ישויות, §7).
-* **יתרה צפויה** (§8): קרן פתיחה + מכירות מזומן (נטו מהחזרים) + טיפים במזומן + Cash In − Cash Out − הפקדות.
+* **יתרה צפויה** (§8): קרן פתיחה + מכירות מזומן (נטו מהחזרים) + טיפים במזומן + Cash In − Cash Out − הפקדות
+  − טיפים באשראי ששולמו מהמגירה (כשהפרמטר "טיפ באשראי משולם מהמזומן" מופעל).
   ה-X של הקופה כולל את התנועות ב"מזומן צפוי" (ולכן גם הפער בסגירה), בלי לגעת במחזור.
+* **טיפ באשראי משולם מהמזומן** (`cashDrawer.cardTipsFromDrawer`, כבוי כברירת מחדל): במסעדות וברים שבהם
+  הטיפ שניתן באשראי משולם לעובד במזומן מהמגירה. הספירה, ה-Blind Count והסגירה מצפים למזומן פחות הטיפים האלה;
+  בתחתית ה-X וה-Z: "טיפים באשראי ששולמו מהמגירה" ו"מזומן במגירה" (מכירות מזומן + טיפ במזומן − טיפים באשראי
+  מהמגירה; לדוגמה 50 במזומן ו-50 באשראי עם טיפ 10 ⇒ 40). הקופה מקפיאה את הסכום בסגירת המשמרת
+  (`till.cardTipsFromDrawer`, ‏docs/SHIFTS_API.md §1.3) והענן מחשב ממנו בלבד — לא מהפרמטר החי. הטיפים אינם
+  הכנסה: המכירות, המע״מ, ה-Z הפיסקלי, תקבולי מזומן/אשראי וסיכומי הטיפים לא משתנים. לא חל על קיוסקים.
 * **ספירה**: "ספירת מגירה" פותחת את המגירה (COUNT / BLIND_COUNT), מקבלת את הסכום, מציגה צפוי / נספר / פער.
   **Blind Count** (פרמטר): היתרה הצפויה לא מוצגת לפני הזנת הסכום — במסך הספירה, ב-X הביניים (במסך
   ובנייר), בכרטיס סגירת המשמרת ובשלב הספירה של "הפק Z"; כל ספירה בסגירת משמרת / Z נרשמת כתנועת `count`
@@ -287,7 +294,7 @@ Offline" שמדלג על בדיקה.
 הפרמטר הקיים `cashDrawer` (כבוי / בתשלום מזומן / + כפתור פתיחה). השאר: `cashDrawer.requireReason`,
 `requireNoteForOther`, `requireManagerApproval`, `cashMovementsEnabled`, `cashOutApprovalAmount`,
 `allowOpenAfterClose`, `blindCount`, `maxManualOpensPerShift`, `alertOpensCount`, `alertOpensWithinMinutes`,
-`cashOutAlertAmount`, `varianceAlertAmount`, `nearVarianceMinutes`, ו-`permissionsDeniedUi`.
+`cashOutAlertAmount`, `varianceAlertAmount`, `nearVarianceMinutes`, `cardTipsFromDrawer` (§6.5), ו-`permissionsDeniedUi`.
 
 ## 7. מיפוי לאפיון המגירה, סעיף אחר סעיף
 

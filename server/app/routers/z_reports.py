@@ -104,6 +104,11 @@ def z_to_out(z: ZReport, cls=ZReportOut, tzinfo=None):
         if z.discounts_total is not None:
             item.gross_sales = Decimal(z.total_sales) + Decimal(z.discounts_total)
     item.between_shift_adjustments = _between_shift_adjustments(z.per_machine)
+    # Card tips paid to staff out of the drawers, and the drawer cash — only when frozen.
+    drawer_tips = z_print.drawer_tips_of(z)
+    if drawer_tips is not None:
+        item.card_tips_from_drawer = drawer_tips["cardTipsFromDrawer"]
+        item.drawer_cash = drawer_tips["drawerCash"]
     item.produced_by_support = (z.header or {}).get("producedBySupport")
     item.late_from_earlier = (z.header or {}).get("lateFromEarlier")
     item.late_carried_out = (z.header or {}).get("lateCarriedOut")

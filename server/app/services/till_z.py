@@ -436,8 +436,13 @@ OFFLINE_COMPARED = (
     ("transactionsCount", "transactionsCount"),
 )
 
-#: Drawer figures compared from the section the till printed, when it sent them.
-OFFLINE_COMPARED_DRAWER = ("openingCash", "expectedCash", "countedCash", "overShort")
+#: Drawer figures compared from the section the till printed, when it sent them. With
+#: "טיפ באשראי משולם מהמזומן" both sides take the card tips paid out of the drawer from the
+#: shifts' closes (`z_builder.card_tips_from_drawer`), so `expectedCash` agrees and the
+#: two figures the till prints for it are compared too.
+OFFLINE_COMPARED_DRAWER = (
+    "openingCash", "expectedCash", "countedCash", "overShort", "cardTipsFromDrawer", "drawerCash",
+)
 
 _CENT = Decimal("0.01")
 

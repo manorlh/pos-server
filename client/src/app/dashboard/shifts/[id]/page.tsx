@@ -22,6 +22,7 @@ import { formatCurrency, formatDate, formatDateTimeInZone, moneyValue } from '@/
 import { useTenantTimeZone } from '@/lib/auth';
 import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
 import type { Shift } from '@/lib/types';
+import { cardTipsFromDrawerOf, shiftDrawerCash } from '@/lib/drawerTips';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import { PeriodTransmissionSummary } from '@/components/dashboard/machines/card-transmission';
 import {
@@ -125,6 +126,8 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
   const late = shift.lateDocuments ?? 0;
   const basis = shift.reconstructionBasis ?? null;
   const till = shift.tillTotals ?? null;
+  // "טיפ באשראי משולם מהמזומן": what the till froze on the close (null when the parameter was off).
+  const tipsFromDrawer = open ? null : cardTipsFromDrawerOf(till);
   const offline = offlineOf(shift.offline);
 
   return (
@@ -275,6 +278,16 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
             <MoneyRow label={t('detail.overShort')}>
               {open ? '—' : <OverShort value={shift.discrepancy} />}
             </MoneyRow>
+            {tipsFromDrawer !== null ? (
+              <>
+                <MoneyRow label={t('detail.cardTipsFromDrawer')} value={tipsFromDrawer} />
+                <MoneyRow
+                  label={t('detail.drawerCash')}
+                  value={shiftDrawerCash(totals?.totalCash, totals?.totalCashTips, tipsFromDrawer)}
+                  strong
+                />
+              </>
+            ) : null}
             {!open && shift.countedCash == null ? (
               <p className="text-muted-foreground pt-1 text-xs">
                 {shift.unattended ? t('detail.uncountedUnattended') : t('detail.uncounted')}
