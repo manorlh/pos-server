@@ -266,6 +266,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/products*", S("products")),
     (_GET, "/vouchers*", S("vouchers", "products", level=VIEW)),
     (_ALL, "/vouchers*", S("vouchers")),
+    # "הפצה בוואטסאפ": recipients' phone numbers — managing the batch (edit), reading included.
+    (_ALL, "/prepaid-vouchers/*distribution*", S("prepaid_vouchers", level=EDIT)),
     (_ALL, "/prepaid-vouchers/*", S("prepaid_vouchers")),
     (_ALL, "/promotions*", S("promotions")),
     # ── Z and shifts ──
