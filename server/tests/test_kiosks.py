@@ -1140,7 +1140,7 @@ def test_the_tech_style_is_one_pick_its_theme_cta_and_motion():
     assert cfg["attract"]["cta"]["icon"] == "arrow" and cfg["attract"]["cta"]["position"] == "bottom_center"
     assert cfg["motion"] == {
         "categorySwitch": "fade", "itemsEnter": "cascade", "screenChange": "fade", "sheet": "scale",
-        "addToCart": "fly", "speed": "normal", "effects": "auto",
+        "addToCart": "fly", "speed": "normal", "effects": "auto", **MOTION_ENGINE_DEFAULTS,
     }
     assert C.preset_layer("tech")["theme"] == C.UI_PRESETS["tech"]
     # The brand colour stays configurable on top of the style.
@@ -1689,20 +1689,22 @@ def test_the_kiosk_menu_version_check_and_validation(w, monkeypatch):
 # ── "הנפשות ומעברים": the transitions, per style, layered and validated ───────
 
 MOTION_KEYS = ("categorySwitch", "itemsEnter", "screenChange", "sheet", "addToCart", "speed")
+#: "מנוע הנפשות" (kiosk_motion.py; tests/test_kiosk_motion.py): a new kiosk's engine keys.
+MOTION_ENGINE_DEFAULTS = {"preset": "standard", "globalSpeed": None, "speedMultiplier": 1.0, "events": {}}
 
 
 def test_motion_defaults_follow_the_style_and_animate_in_every_style():
     d = C.default_config()
     assert d["motion"] == {
         "categorySwitch": "slide", "itemsEnter": "cascade", "screenChange": "slide",
-        "sheet": "scale", "addToCart": "fly", "speed": "normal", "effects": "auto",
+        "sheet": "scale", "addToCart": "fly", "speed": "normal", "effects": "auto", **MOTION_ENGINE_DEFAULTS,
     }
     # "אפקטים" is the device's (auto), never a style's: the presets decide the six transition keys.
-    assert {**C.UI_PRESET_MOTION["wolt"], "effects": "auto"} == d["motion"] and C.PRESET_MOTION_KEYS == MOTION_KEYS
+    assert {**C.UI_PRESET_MOTION["wolt"], "effects": "auto", **MOTION_ENGINE_DEFAULTS} == d["motion"] and C.PRESET_MOTION_KEYS == MOTION_KEYS
     for style, preset in C.UI_PRESET_MOTION.items():
         assert "effects" not in preset, style
         cfg = C.resolve({"theme": {"uiStyle": style}})
-        assert cfg["motion"] == {**preset, "effects": "auto"}, style
+        assert cfg["motion"] == {**preset, "effects": "auto", **MOTION_ENGINE_DEFAULTS}, style
         assert C.validate_config(cfg) == [], style
         # The owner's request, in every style: the category's grid moves and its dishes pop in.
         assert preset["categorySwitch"] != "none" and preset["itemsEnter"] in ("pop", "cascade"), style
@@ -1723,6 +1725,7 @@ def test_motion_is_layered_company_shop_kiosk_and_explicit_beats_the_style():
         "screenChange": "fade", "sheet": "fade", "addToCart": "fly",  # the minimal_dark style's
         "speed": "fast",  # the company's, above the style's "relaxed"
         "effects": "auto",  # the default: the device decides
+        **MOTION_ENGINE_DEFAULTS,  # Runner Standard, the speed by `speed`
     }
     assert C.explicit_layers(company, shop, kiosk)["motion"] == {"speed": "fast", "itemsEnter": "flip", "categorySwitch": "push"}
     # null inherits; an empty section overrides nothing.
@@ -1769,7 +1772,7 @@ def test_motion_is_saved_and_reaches_the_kiosk(w):
     out = sync(w, w.kiosk)
     assert out["config"]["motion"] == {
         "categorySwitch": "push", "itemsEnter": "rise", "screenChange": "fade",
-        "sheet": "scale", "addToCart": "fly", "speed": "relaxed", "effects": "auto",
+        "sheet": "scale", "addToCart": "fly", "speed": "relaxed", "effects": "auto", **MOTION_ENGINE_DEFAULTS,
     }
     assert out["configVersion"] == C.config_version(out["config"])
     view = get_settings(w, "machine", w.kiosk.id)

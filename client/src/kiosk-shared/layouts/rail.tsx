@@ -118,6 +118,7 @@ export function RailCatalog({ m, onCategory }: { m: PreviewModel; onCategory?: (
                 id={current ?? ''}
                 fx={m.transitions.categorySwitch}
                 ms={m.transitions.categoryMs}
+                ease={m.transitions.categoryEase}
                 order={(id) => m.categories.findIndex((c) => c.id === id)}
                 className="overflow-x-clip [overflow-clip-margin:12px]"
                 render={(id) => {

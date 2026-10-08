@@ -23,10 +23,10 @@ import {
   kioskCatalogView,
   kioskOpenAt,
   messagePlacement,
-  motionSpec,
-  profileMotion,
+  engineMotionSpec,
+  engineTransitionSpec,
+  kioskMotionEngine,
   resolveThemeColors,
-  transitionSpec,
   stepMode,
   payMethodAsk,
   tickerBandPx,
@@ -39,6 +39,7 @@ import {
   type MessageScreen,
 } from '@dash-lib/kioskConfig';
 import {
+  AddedToast,
   AttractCta,
   AttractScreen,
   AttractServiceButtons,
@@ -66,6 +67,7 @@ import {
   orderMealOf,
   orderOptionsOf,
   screenOrder,
+  screenSwap,
   type Flight,
   type KioskLivePayMethod,
   type PGroup,
@@ -502,10 +504,13 @@ export function KioskApp({ view }: { view: KioskView }) {
   const side = cfg.theme.categoryLayout !== 'top';
   // "אפקטים": the config's profile, or this device's (prefers-reduced-motion, a slow first-frames probe).
   const profile = useKioskRenderProfile(cfg.motion.effects);
-  const played = profileMotion(cfg.motion, profile);
-  const motion = motionSpec(cfg.theme, cfg.general, played);
-  // "הנפשות ומעברים": the dashboard's choices (the light profile's cheaper ones), all off with reduce motion.
-  const transitions = transitionSpec(played, cfg.general);
+  // "מנוע הנפשות": every event resolved once — the preset, the speed, the events' own values, this profile
+  // (the light one's cheaper kinds, reduced motion's fallbacks), as the Android kiosk resolves them.
+  const engine = useMemo(() => kioskMotionEngine(cfg.motion, cfg.general, profile), [cfg.motion, cfg.general, profile]);
+  const motion = engineMotionSpec(engine, cfg.theme);
+  const transitions = engineTransitionSpec(engine);
+  // The screen change towards this screen: back home by homeReturn, into the basket by cartOpen, else pageTransition.
+  const swap = screenSwap(transitions, engine, flow.screen === 'confirm' ? 'catalog' : flow.screen);
   const colors = resolveThemeColors(cfg.theme);
   // "גודל מוצרים" (layout.productSize) moves the density's columns.
   const cols = productColumns(catalogColumns(cfg.theme.gridDensity, wide, panel, side), layoutOf(cfg).productSize, size.w);
@@ -620,6 +625,7 @@ export function KioskApp({ view }: { view: KioskView }) {
     },
     motion,
     transitions,
+    engine,
     justAddedId: justAdded,
     cartBump,
     setCartTarget,
@@ -847,11 +853,11 @@ export function KioskApp({ view }: { view: KioskView }) {
         <KioskStatusBar m={m} screen={screen} pickup={live.success?.pickupLabel ?? till.placed?.pickupLabel ?? null} />
         {/* "נגיש" (layout.reach): the screens in the bottom half under a display (kiosk-shared/layouts). */}
         <ReachFrame m={m} screen={screen === 'confirm' ? 'catalog' : screen} dish={product} category={activeCategory}>
-        {/* "מעבר בין מסכים": the dashboard's transition; the leaving screen is frozen and takes no taps. */}
+        {/* "מעבר בין מסכים": the dashboard's transition; the leaving screen is frozen and takes no taps.
+            "מנוע הנפשות": back home by homeReturn (a fade, never a sharp reset), into the basket by cartOpen. */}
         <KioskSwap
           id={screen === 'confirm' ? 'catalog' : screen}
-          fx={transitions.screenChange}
-          ms={transitions.screenMs}
+          {...swap}
           order={screenOrder}
           className="h-full"
           slotClassName="h-full"
@@ -955,6 +961,8 @@ export function KioskApp({ view }: { view: KioskView }) {
       {flights.map((f) => (
         <Flyer key={f.id} flight={f} motion={motion} dp={1} surface={colors.surface} text={colors.text} containerRef={screenRef} targetRef={cartTargetRef} onDone={removeFlight} />
       ))}
+      {/* "נוסף להזמנה" as the badge pops (the engine's toast); the add itself is in the basket already. */}
+      {screen === 'catalog' || screen === 'cart' ? <AddedToast m={m} bottom={FOOTER_PX + 88} /> : null}
       <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0.5 z-10 text-center text-[10px] font-medium tracking-[0.12em]" style={{ color: colors.mutedText, opacity: 0.55 }}>
         {t('poweredBy')}
       </div>

@@ -93,6 +93,7 @@ export function TabsCatalog({ m, activeCategory, onCategory }: { m: PreviewModel
               id={current.id}
               fx={m.transitions.categorySwitch}
               ms={m.transitions.categoryMs}
+              ease={m.transitions.categoryEase}
               order={(id) => m.categories.findIndex((c) => c.id === id)}
               className="overflow-x-clip [overflow-clip-margin:12px]"
               render={(id) => {

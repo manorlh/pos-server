@@ -38,9 +38,16 @@ const HEX = /^#[0-9A-Fa-f]{6}$/;
 /** A readable label for a config path ("theme.primaryColor" → "צבע ראשי"). */
 export function usePathLabel(names: Record<string, string> = {}) {
   const tf = useTranslations('kiosks.fields');
+  const tm = useTranslations('kiosks.motion');
   return (path: string): string => {
     const parts = path.split('.');
     if (parts[0] === 'messages') return tf('messages');
+    // "הנפשות": an event's values by the event's and the parameter's names.
+    if (parts[0] === 'motion' && parts[1] === 'events' && parts.length >= 3) {
+      const event = tm.has(`events.${parts[2]}.name`) ? tm(`events.${parts[2]}.name`) : parts[2];
+      const param = parts[3] ? (tm.has(`params.${parts[3]}`) ? tm(`params.${parts[3]}`) : parts[3]) : '';
+      return [tf('motion.events'), event, param].filter(Boolean).join(' · ');
+    }
     // The attract button's keys and "גודל טקסט"'s sit one level deeper (attract.cta.<key>, theme.textSizes.<key>).
     const deeper = (parts[0] === 'attract' && parts[1] === 'cta') || (parts[0] === 'theme' && parts[1] === 'textSizes');
     const depth = deeper && parts.length >= 3 ? 3 : 2;

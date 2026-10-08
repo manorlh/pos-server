@@ -122,7 +122,7 @@ function ListLine({ m, p, inCart }: { m: PreviewModel; p: PProduct; inCart: numb
       data-dish={p.id}
       disabled={p.soldOut}
       onClick={(e) => tap(p, false, pic(e))}
-      className="flex w-full items-center gap-2.5 px-2.5 text-start transition-transform duration-150 active:scale-[0.99] disabled:opacity-50"
+      className="k-tap relative flex w-full items-center gap-2.5 px-2.5 text-start transition-transform duration-150 active:scale-[0.99] disabled:opacity-50"
       style={{ ...cardStyle(m), minHeight: 58 * u, background: inCart > 0 ? `${m.c.primary}0F` : cardStyle(m).background }}
     >
       {p.imageUrl ? (
