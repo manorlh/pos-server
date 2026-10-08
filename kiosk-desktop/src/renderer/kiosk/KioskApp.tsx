@@ -48,6 +48,7 @@ import {
   EntryWindow,
   Flyer,
   KioskBackdrop,
+  KioskWallpaper,
   KioskStatusBar,
   KioskSwap,
   MessageOverlay,
@@ -779,7 +780,6 @@ export function KioskApp({ view }: { view: KioskView }) {
     '--font-weight-extrabold': String(weights.extrabold),
     '--font-weight-black': String(weights.black),
   } as CSSProperties;
-  const bgImage = cfg.theme.backgroundImage?.url;
   const onAttractService = serviceOnAttract(cfgIn);
   const chrome = chromeRoot(m);
 
@@ -823,12 +823,8 @@ export function KioskApp({ view }: { view: KioskView }) {
     >
       <style>{PREVIEW_CSS}</style>
       {view.fontFace ? <style>{view.fontFace}</style> : null}
-      {bgImage ? (
-        <>
-          <img src={bgImage} alt="" className="absolute inset-0 h-full w-full object-cover" draggable={false} />
-          <div className="absolute inset-0" style={{ background: screen === 'attract' ? `${colors.background}66` : `${colors.background}D9` }} />
-        </>
-      ) : null}
+      {/* "תמונת רקע": once, behind every screen (or only the rest screens), under its veil. */}
+      <KioskWallpaper m={m} screen={screen} />
       {/* The style's backdrop pattern (tech): behind every screen. */}
       <KioskBackdrop m={m} />
       {/* The ordering screens end above "POWERED BY R2M POS", so their bottom buttons never sit under it. */}

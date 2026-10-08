@@ -6,9 +6,12 @@ import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   KIOSK_LIMITS,
+  TEXT_SIZE_KEYS,
   fontStack,
   resolveThemeColors,
   type AnimationLevel,
+  type BackgroundScope,
+  type TextSizeKey,
   type CardStyle,
   type CartStyle,
   type CategoryLayout,
@@ -17,6 +20,7 @@ import {
   type ButtonShape,
   type ImageRatio,
   type KioskTextKey,
+  type MediaRef,
   type ScreenImageKey,
   type ThemeMode,
   type TypeScale,
@@ -125,6 +129,124 @@ export const TEXT_GROUPS: { screen: TextScreen; keys: KioskTextKey[]; image: Scr
   },
 ];
 
+/** Where each "גודל טקסט" element shows, so the preview goes there while it is moved. */
+const TEXT_SIZE_SCREEN: Record<TextSizeKey, PreviewScreen> = {
+  productName: 'catalog',
+  productDescription: 'catalog',
+  productPrice: 'catalog',
+  categoryName: 'catalog',
+  itemName: 'product',
+  itemDescription: 'product',
+  itemOptions: 'product',
+  cartLines: 'cart',
+  buttons: 'cart',
+};
+
+/** One element's size: 80–150 % in steps of 10, over the kiosk's own size ("גודל טקסט" above). */
+function TextSizeField({ k }: { k: TextSizeKey }) {
+  const t = useTranslations('kiosks.appearance');
+  const tf = useTranslations('kiosks.fields');
+  const ed = useKioskEditor();
+  const path = `theme.textSizes.${k}`;
+  const f = useKioskField<number>(path);
+  const { min, max, step } = KIOSK_LIMITS.textSize;
+  const value = Number.isFinite(f.value) ? f.value : 100;
+  return (
+    <FieldShell path={path} label={tf(`theme.textSizes.${k}`)}>
+      <div className="flex items-center gap-3">
+        <input
+          type="range"
+          className="h-2 min-w-40 flex-1 cursor-pointer accent-primary"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          disabled={f.disabled}
+          aria-label={tf(`theme.textSizes.${k}`)}
+          onPointerDown={() => ed.showScreen(TEXT_SIZE_SCREEN[k])}
+          onFocus={() => ed.showScreen(TEXT_SIZE_SCREEN[k])}
+          onChange={(e) => f.set(Number(e.target.value))}
+        />
+        <span className="w-12 shrink-0 text-end text-sm tabular-nums" dir="ltr">
+          {t('textSizeValue', { n: value })}
+        </span>
+      </div>
+    </FieldShell>
+  );
+}
+
+/** "גודל טקסט": the kiosk's own size, and over it each element's (the dish's name, its price, the basket…). */
+function TextSizesCard() {
+  const t = useTranslations('kiosks.appearance');
+  const tf = useTranslations('kiosks.fields');
+  return (
+    <SectionCard
+      title={t('textSizesTitle')}
+      description={t('textSizesHint')}
+      paths={['theme.typeScale', ...TEXT_SIZE_KEYS.map((k) => `theme.textSizes.${k}`)]}
+    >
+      <SegmentField<TypeScale>
+        path="theme.typeScale"
+        label={tf('theme.typeScale')}
+        options={(['normal', 'large', 'xlarge'] as const).map((v) => ({ value: v, label: t(`typeScale.${v}`) }))}
+      />
+      <div className="grid gap-4 sm:grid-cols-2">
+        {TEXT_SIZE_KEYS.map((k) => (
+          <TextSizeField key={k} k={k} />
+        ))}
+      </div>
+    </SectionCard>
+  );
+}
+
+/**
+ * "רקע הקיוסק" (the owner: "שבאמת יהיה בכל המסכים — תמונה או צבע"): the colour, the picture, how
+ * strongly the colour veils it and where it shows. Every screen of the kiosk; the words and the cards
+ * keep reading on it by themselves (kioskThemeColors).
+ */
+function BackgroundCard({ fallback }: { fallback: string }) {
+  const t = useTranslations('kiosks.appearance');
+  const tf = useTranslations('kiosks.fields');
+  const image = useKioskField<MediaRef | null>('theme.backgroundImage');
+  const overlay = useKioskField<number>('theme.backgroundOverlay');
+  return (
+    <SectionCard
+      title={t('backgroundTitle')}
+      description={t('backgroundCardHint')}
+      paths={['theme.backgroundColor', 'theme.backgroundImage', 'theme.backgroundOverlay', 'theme.backgroundScope']}
+    >
+      <ColorField
+        path="theme.backgroundColor"
+        label={tf('theme.backgroundColor')}
+        hint={t('backgroundColorHint')}
+        nullable
+        nullLabel={t('colorDefault')}
+        fallback={fallback}
+      />
+      <MediaField path="theme.backgroundImage" label={tf('theme.backgroundImage')} hint={t('backgroundHint')} />
+      {image.value ? (
+        <>
+          <NumberField
+            path="theme.backgroundOverlay"
+            label={tf('theme.backgroundOverlay')}
+            hint={t('backgroundOverlayHint', { n: Number.isFinite(overlay.value) ? overlay.value : 0 })}
+            min={KIOSK_LIMITS.backgroundOverlay.min}
+            max={KIOSK_LIMITS.backgroundOverlay.max}
+            suffix="%"
+            slider
+          />
+          <SegmentField<BackgroundScope>
+            path="theme.backgroundScope"
+            label={tf('theme.backgroundScope')}
+            hint={t('backgroundScopeHint')}
+            options={(['all', 'rest'] as const).map((v) => ({ value: v, label: t(`backgroundScope.${v}`) }))}
+          />
+        </>
+      ) : null}
+    </SectionCard>
+  );
+}
+
 function FontPicker() {
   const t = useTranslations('kiosks.appearance');
   const tf = useTranslations('kiosks.fields');
@@ -225,12 +347,14 @@ export function AppearanceSection() {
         <FontPicker />
       </SectionCard>
 
+      {/* "רקע הקיוסק": the colour or the picture behind every screen, first among the colours. */}
+      <BackgroundCard fallback={colors.background} />
+
       <SectionCard
         title={t('colorsTitle')}
         paths={[
           'theme.primaryColor',
           'theme.accentColor',
-          'theme.backgroundColor',
           'theme.surfaceColor',
           'theme.textColor',
           'theme.buttonColor',
@@ -239,14 +363,6 @@ export function AppearanceSection() {
       >
         <ColorField path="theme.primaryColor" label={tf('theme.primaryColor')} fallback="#1F6FEB" />
         <ColorField path="theme.accentColor" label={tf('theme.accentColor')} fallback="#16A34A" />
-        <ColorField
-          path="theme.backgroundColor"
-          label={tf('theme.backgroundColor')}
-          hint={t('colorNullHint')}
-          nullable
-          nullLabel={t('colorDefault')}
-          fallback={colors.background}
-        />
         <ColorField
           path="theme.surfaceColor"
           label={tf('theme.surfaceColor')}
@@ -281,10 +397,12 @@ export function AppearanceSection() {
         />
       </SectionCard>
 
-      <SectionCard title={t('imagesTitle')} paths={['theme.logo', 'theme.backgroundImage']}>
+      <SectionCard title={t('logoTitle')} paths={['theme.logo']}>
         <MediaField path="theme.logo" label={tf('theme.logo')} hint={t('logoHint')} />
-        <MediaField path="theme.backgroundImage" label={tf('theme.backgroundImage')} hint={t('backgroundHint')} />
       </SectionCard>
+
+      {/* "גודל טקסט": the kiosk's size and each element's over it. */}
+      <TextSizesCard />
 
       <SectionCard
         title={t('shapeTitle')}
@@ -296,7 +414,6 @@ export function AppearanceSection() {
           'theme.imageRatio',
           'theme.categoryStyle',
           'theme.categoryLayout',
-          'theme.typeScale',
           'theme.typeWeight',
           'theme.cartStyle',
           'theme.animation',
@@ -342,11 +459,6 @@ export function AppearanceSection() {
           label={tf('theme.categoryStyle')}
           hint={t('categoryStyleHint')}
           options={(['chips', 'tabs', 'images'] as const).map((v) => ({ value: v, label: t(`category.${v}`) }))}
-        />
-        <SegmentField<TypeScale>
-          path="theme.typeScale"
-          label={tf('theme.typeScale')}
-          options={(['normal', 'large', 'xlarge'] as const).map((v) => ({ value: v, label: t(`typeScale.${v}`) }))}
         />
         <SegmentField<TypeWeight>
           path="theme.typeWeight"

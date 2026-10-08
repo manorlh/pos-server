@@ -2316,3 +2316,179 @@ describe('"בון מטבח במדפסת הקיוסק" — printing.bonOnKiosk (t
     assert.ok(codes(cfg({ printing: { bonOnKiosk: 'yes' } })).includes('printing.bonOnKiosk:enum'));
   });
 });
+
+import {
+  BACKGROUND_SCOPES as bgScopes,
+  KIOSK_DEFAULTS as bgDefaults,
+  KIOSK_LIMITS as bgLimits,
+  KIOSK_UI_PRESETS as bgPresets,
+  TEXT_SIZE_KEYS as bgTextSizeKeys,
+  THEME_MIN_CONTRAST as bgMinContrast,
+  UI_STYLES as bgStyles,
+  cleanTextSize as bgCleanTextSize,
+  contrastRatio as bgContrast,
+  deepMergeKiosk as bgMerge,
+  kioskChrome as bgChrome,
+  kioskRestLook as bgRestLook,
+  kioskRestLookOverBackdrop as bgOverBackdrop,
+  kioskServiceLook as bgServiceLook,
+  kioskThemeColors as bgThemeColors,
+  mixHex as bgMix,
+  resolveKioskConfig as bgResolve,
+  resolveThemeColors as bgColors,
+  textSizeFactor as bgTextSizeFactor,
+  validateKioskConfig as bgValidate,
+  wallpaperEverywhere as bgEverywhere,
+  wallpaperOn as bgOn,
+  wallpaperScrim as bgScrim,
+  type KioskConfig as BgConfig,
+  type KioskTheme as BgTheme,
+} from './kioskConfig';
+
+/**
+ * "רקע הקיוסק" (the owner: the kiosk's background — a picture or a colour — on every screen) and
+ * "גודל טקסט" per element. The colours, the veil and the sizes are pinned by the shared golden
+ * server/tests/fixtures/kiosk_theme_colors_golden.json, which the till's KioskBackgroundTest reads too.
+ */
+describe('"רקע הקיוסק" and "גודל טקסט" — the shared golden (kiosk_theme_colors_golden.json, the till\'s KioskThemeColors)', () => {
+  const gold = JSON.parse(readFileSync(join(process.cwd(), '..', 'server', 'tests', 'fixtures', 'kiosk_theme_colors_golden.json'), 'utf8'));
+  const theme = (patch: Partial<BgTheme>): BgTheme => ({ ...cloneJson(bgDefaults.theme), ...patch });
+  const image = { url: 'https://cdn.example/bg.jpg', kind: 'image' as const, sha256: null, bytes: null };
+
+  it('the colours a kiosk paints with, case by case', () => {
+    assert.equal(gold.minContrast, bgMinContrast);
+    assert.ok(gold.colors.length >= 10);
+    for (const c of gold.colors) {
+      const t = { mode: c.mode, backgroundColor: c.backgroundColor, surfaceColor: c.surfaceColor, textColor: c.textColor };
+      assert.deepEqual(bgThemeColors(t), c.expect, c.name);
+      const r = bgColors(theme(t));
+      assert.deepEqual({ dark: r.dark, background: r.background, surface: r.surface, text: r.text }, c.expect, c.name);
+      // The words always read on the background and on the cards.
+      assert.ok(bgContrast(r.text, r.background) >= bgMinContrast, c.name);
+      assert.ok(bgContrast(r.text, r.surface) >= bgMinContrast, c.name);
+    }
+  });
+
+  it('every preset as it is keeps exactly its colours', () => {
+    for (const style of bgStyles) {
+      const p = bgPresets[style];
+      const r = bgColors(theme({ ...p, uiStyle: style }));
+      const dark = p.mode === 'dark';
+      assert.equal(r.dark, dark, style);
+      assert.equal(r.background, p.backgroundColor ?? (dark ? '#0E1116' : '#F5F6F8'), style);
+      assert.equal(r.surface, p.surfaceColor ?? (dark ? '#1A1E26' : '#FFFFFF'), style);
+      assert.equal(r.text, p.textColor ?? (dark ? '#F3F4F6' : '#111827'), style);
+    }
+  });
+
+  it('a light background on the tech style: dark words, white cards, its grid and outline drawn from them', () => {
+    const t = theme({ ...bgPresets.tech, uiStyle: 'tech', backgroundColor: '#F5F0E6' });
+    const c = bgColors(t);
+    assert.equal(c.dark, false);
+    assert.equal(c.text, '#111827');
+    assert.equal(c.surface, '#FFFFFF');
+    assert.equal(c.mutedText, '#6B7280');
+    const ch = bgChrome(t, c, { reduceMotion: false });
+    assert.equal(ch.backdropInk, '#1118270F');
+    assert.equal(ch.outline, bgMix('#FFFFFF', '#111827', 0.14));
+    // The tech preset itself: the grid as it always was.
+    const tech = theme({ ...bgPresets.tech, uiStyle: 'tech' });
+    assert.equal(bgChrome(tech, bgColors(tech), { reduceMotion: false }).backdropInk, '#E6EDF30F');
+    // The closed and the service looks follow the words.
+    assert.equal(bgRestLook(t, c).ink, '#111827');
+    assert.equal(bgServiceLook(t, c).ink, '#111827');
+  });
+
+  it('the closed screen over the picture: no fill of its own, the kiosk\'s words; tech\'s look is this one', () => {
+    const t = theme({ uiStyle: 'wolt', backgroundColor: '#1F2937', primaryColor: '#22E1FF' });
+    const look = bgOverBackdrop(t, bgColors(t));
+    assert.deepEqual(look, { from: '#1F2937', to: '#1F2937', diagonal: false, glow: null, ink: '#F3F4F6', title: '#22E1FF', spots: false });
+    const tech = theme({ ...bgPresets.tech, uiStyle: 'tech' });
+    assert.deepEqual(bgRestLook(tech, bgColors(tech)), bgOverBackdrop(tech, bgColors(tech)));
+  });
+
+  it('the veil over the picture: the owner\'s strength, the attract screen at half', () => {
+    assert.deepEqual(gold.overlay, { min: bgLimits.backgroundOverlay.min, max: bgLimits.backgroundOverlay.max, default: bgDefaults.theme.backgroundOverlay });
+    assert.deepEqual(gold.scopes, bgScopes);
+    assert.equal(bgDefaults.theme.backgroundScope, 'all');
+    for (const s of gold.scrim) assert.ok(Math.abs(bgScrim(s.overlay, s.attract) - s.alpha) < 1e-9, JSON.stringify(s));
+  });
+
+  it('where the picture shows: behind every screen, or only the rest screens; never without one', () => {
+    const all = theme({ backgroundImage: image });
+    const rest = theme({ backgroundImage: image, backgroundScope: 'rest' });
+    assert.equal(bgEverywhere(all), true);
+    assert.equal(bgEverywhere(rest), false);
+    assert.equal(bgEverywhere(theme({})), false);
+    for (const screen of ['attract', 'service', 'catalog', 'product', 'cart', 'tip', 'details', 'pay', 'success', 'paused', 'closed']) {
+      assert.equal(bgOn(all, screen), true, screen);
+      assert.equal(bgOn(theme({}), screen), false, screen);
+    }
+    assert.equal(bgOn(rest, 'attract'), true);
+    assert.equal(bgOn(rest, 'paused'), true);
+    assert.equal(bgOn(rest, 'catalog'), false);
+    assert.equal(bgOn(rest, 'cart'), false);
+  });
+
+  it('text sizes: the keys, the range and the step the till and the server know', () => {
+    const ts = gold.textSizes;
+    assert.deepEqual(ts.keys, [...bgTextSizeKeys]);
+    assert.deepEqual([ts.min, ts.max, ts.step, ts.default], [bgLimits.textSize.min, bgLimits.textSize.max, bgLimits.textSize.step, 100]);
+    for (const [v, want] of ts.clean) assert.equal(bgCleanTextSize(v), want, `clean(${JSON.stringify(v)})`);
+    for (const k of bgTextSizeKeys) {
+      assert.equal(bgDefaults.theme.textSizes[k], 100, k);
+      assert.equal(bgTextSizeFactor(bgDefaults.theme, k), 1, k);
+    }
+    assert.equal(bgTextSizeFactor(theme({ textSizes: { ...bgDefaults.theme.textSizes, productName: 130 } }), 'productName'), 1.3);
+  });
+
+  it('a level sets one size and inherits the others; another level overrides it', () => {
+    const cfg = bgResolve({ theme: { textSizes: { productName: 120 } } }, { theme: { textSizes: { cartLines: 90 } } });
+    assert.equal(cfg.theme.textSizes.productName, 120);
+    assert.equal(cfg.theme.textSizes.cartLines, 90);
+    assert.equal(cfg.theme.textSizes.buttons, 100);
+    const merged = bgMerge(bgDefaults, { theme: { textSizes: { productName: 120 } } }, { theme: { textSizes: { productName: 80 } } }) as BgConfig;
+    assert.equal(merged.theme.textSizes.productName, 80);
+    // Choosing a style never resets them (they are not a style's).
+    assert.equal(bgResolve({ theme: { uiStyle: 'tech', textSizes: { itemName: 140 }, backgroundOverlay: 40 } }).theme.textSizes.itemName, 140);
+    assert.equal(bgResolve({ theme: { uiStyle: 'tech', backgroundOverlay: 40 } }).theme.backgroundOverlay, 40);
+  });
+
+  it('validation: the veil 0–90, the scope, each size 80–150 by 10 and only known keys', () => {
+    const codes = (patch: Partial<BgTheme>) => {
+      const c = cloneJson(bgDefaults);
+      c.theme = { ...c.theme, ...patch };
+      return bgValidate(c).map((e) => `${e.path}:${e.code}`);
+    };
+    assert.deepEqual(codes({}), []);
+    assert.deepEqual(codes({ backgroundImage: image, backgroundOverlay: 0, backgroundScope: 'rest' }), []);
+    assert.deepEqual(codes({ backgroundOverlay: 95 }), ['theme.backgroundOverlay:range']);
+    assert.deepEqual(codes({ backgroundOverlay: 50.5 }), ['theme.backgroundOverlay:range']);
+    assert.deepEqual(codes({ backgroundScope: 'sometimes' as never }), ['theme.backgroundScope:enum']);
+    const sizes = (patch: Record<string, unknown>) => codes({ textSizes: { ...bgDefaults.theme.textSizes, ...patch } as never });
+    assert.deepEqual(sizes({ productName: 150, buttons: 80 }), []);
+    assert.deepEqual(sizes({ productName: 160 }), ['theme.textSizes.productName:range']);
+    assert.deepEqual(sizes({ productName: 70 }), ['theme.textSizes.productName:range']);
+    assert.deepEqual(sizes({ cartLines: 115 }), ['theme.textSizes.cartLines:enum']);
+    assert.deepEqual(sizes({ headline: 100 }), ['theme.textSizes.headline:unknownKey']);
+  });
+
+  it('the dashboard says it: every element and scope has its words in he.json', () => {
+    const he = JSON.parse(readFileSync(join(process.cwd(), 'src', 'messages', 'he.json'), 'utf8'));
+    for (const k of bgTextSizeKeys) assert.ok(he.kiosks.fields.theme.textSizes[k], k);
+    for (const s of bgScopes) assert.ok(he.kiosks.appearance.backgroundScope[s], s);
+    for (const k of ['backgroundOverlay', 'backgroundScope']) assert.ok(he.kiosks.fields.theme[k], k);
+  });
+
+  it('the roots draw the picture once, behind every screen — no screen paints its own', () => {
+    const src = (...p: string[]) => readFileSync(join(process.cwd(), ...p), 'utf8');
+    for (const root of [
+      src('src', 'components', 'dashboard', 'kiosks', 'kiosk-preview.tsx'),
+      src('src', 'components', 'kiosk-web', 'web-kiosk-app.tsx'),
+      src('..', 'kiosk-desktop', 'src', 'renderer', 'kiosk', 'KioskApp.tsx'),
+    ]) {
+      assert.ok(root.includes('<KioskWallpaper '));
+      assert.ok(!root.includes('backgroundImage?.url'));
+    }
+  });
+});

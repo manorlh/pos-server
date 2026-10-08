@@ -15,6 +15,30 @@ function demoStyle(): UiStyle {
   return (UI_STYLES as string[]).includes(s) ? (s as UiStyle) : KIOSK_DEFAULTS.theme.uiStyle;
 }
 
+/**
+ * "רקע הקיוסק" and "גודל טקסט" in the demo: `&bg=F5F0E6` (the background colour, without "#"),
+ * `&bgimg=<url>` (the picture), `&overlay=0-90`, `&scope=all|rest`, `&ts=productName:130,cartLines:90`.
+ */
+function demoTheme(): Record<string, unknown> {
+  const q = new URLSearchParams(window.location.search);
+  const theme: Record<string, unknown> = { uiStyle: demoStyle() };
+  const bg = q.get('bg');
+  if (bg && /^[0-9A-Fa-f]{6}$/.test(bg)) theme.backgroundColor = `#${bg.toUpperCase()}`;
+  const img = q.get('bgimg');
+  if (img) theme.backgroundImage = { url: img, kind: 'image', sha256: null, bytes: null };
+  const overlay = Number(q.get('overlay'));
+  if (q.has('overlay') && Number.isInteger(overlay)) theme.backgroundOverlay = overlay;
+  const scope = q.get('scope');
+  if (scope === 'all' || scope === 'rest') theme.backgroundScope = scope;
+  const sizes: Record<string, number> = {};
+  for (const pair of (q.get('ts') ?? '').split(',')) {
+    const [k, v] = pair.split(':');
+    if (k && Number.isInteger(Number(v))) sizes[k] = Number(v);
+  }
+  if (Object.keys(sizes).length > 0) theme.textSizes = sizes;
+  return theme;
+}
+
 /** "HH:MM" today, local time, as ISO; null when it is not one. */
 function todayAt(hhmm: string | null): string | null {
   const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm ?? '');
@@ -115,7 +139,7 @@ function demoView(): KioskView {
     appVersion: 'dev',
     machine: { machineId: 'demo', name: 'קיוסק הדגמה', shopName: 'סניף הדגמה', companyName: 'עסק הדגמה', posNumber: '9', serverUrl: null },
     // `?layout=` (demoLayouts.ts): the layout's template, the accessible mode, "ברוכים הבאים".
-    config: JSON.parse(JSON.stringify(resolveKioskConfig({ theme: { uiStyle: demoStyle() }, ...(rest.hours ? { hours: rest.hours } : {}), ...demoCheckout(), ...demoLayoutLayer(new URLSearchParams(window.location.search)) }))) as Record<string, unknown>,
+    config: JSON.parse(JSON.stringify(resolveKioskConfig({ theme: demoTheme(), ...(rest.hours ? { hours: rest.hours } : {}), ...demoCheckout(), ...demoLayoutLayer(new URLSearchParams(window.location.search)) }))) as Record<string, unknown>,
     configVersion: 'demo',
     fontFace: null,
     fontFamily: null,

@@ -55,6 +55,7 @@ import {
   ConfirmSheet,
   Flyer,
   KioskBackdrop,
+  KioskWallpaper,
   KioskStatusBar,
   MessageOverlay,
   UpsellWindow,
@@ -607,7 +608,6 @@ export function KioskPreview({
   useImperativeHandle(controls, () => ({ play }));
 
   const size = FRAME_SIZE[frame];
-  const bgImage = config.theme.backgroundImage?.url;
   const upsell = allProducts.filter((p) => !p.soldOut && !effectiveCart.some((l) => l.product.id === p.id)).slice(0, 4);
   // The ordering screens' message: one overlay per visit (the product sheet belongs to the catalog visit).
   const messageScreen = (screen === 'product' ? 'catalog' : screen) as MessageScreen;
@@ -705,16 +705,8 @@ export function KioskPreview({
               fontFamily: model.font,
             }}
           >
-            {bgImage ? (
-              <>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={bgImage} alt="" className="absolute inset-0 h-full w-full object-cover" />
-                <div
-                  className="absolute inset-0"
-                  style={{ background: screen === 'attract' ? `${colors.background}66` : `${colors.background}D9` }}
-                />
-              </>
-            ) : null}
+            {/* "תמונת רקע": once, behind every screen (or only the rest screens), under its veil. */}
+            <KioskWallpaper m={model} screen={screen} />
             {/* The style's backdrop pattern (tech): behind every screen. */}
             <KioskBackdrop m={model} />
             <div className={cn('relative h-full', frame === 'phone' && 'pt-7')} style={statusPx > 0 ? { paddingTop: (frame === 'phone' ? 28 : 0) + statusPx } : undefined}>

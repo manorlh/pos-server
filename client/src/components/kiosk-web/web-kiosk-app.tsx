@@ -59,6 +59,7 @@ import {
   EntryWindow,
   Flyer,
   KioskBackdrop,
+  KioskWallpaper,
   KioskStatusBar,
   KioskSwap,
   MessageOverlay,
@@ -908,7 +909,6 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     '--font-weight-extrabold': String(weights.extrabold),
     '--font-weight-black': String(weights.black),
   } as CSSProperties;
-  const bgImage = cfg.theme.backgroundImage?.url;
   const light = profile === 'light';
   // The style's chrome, and the motion engine's press and badge (CSS custom properties on the root).
   const chrome = useMemo(() => chromeRoot({ cfg, c: colors, light, engine }), [cfg, colors, light, engine]);
@@ -952,13 +952,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     >
       <style>{PREVIEW_CSS}</style>
       {view.fontFace ? <style>{view.fontFace}</style> : null}
-      {bgImage ? (
-        <>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={bgImage} alt="" className="absolute inset-0 h-full w-full object-cover" draggable={false} />
-          <div className="absolute inset-0" style={{ background: screen === 'attract' ? `${colors.background}66` : `${colors.background}D9` }} />
-        </>
-      ) : null}
+      {/* "תמונת רקע": once, behind every screen (or only the rest screens), under its veil. */}
+      <KioskWallpaper m={m} screen={screen} />
       {/* The style's backdrop pattern (tech): behind every screen. */}
       <KioskBackdrop m={m} />
       <div

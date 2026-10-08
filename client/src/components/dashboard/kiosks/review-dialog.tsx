@@ -48,8 +48,9 @@ export function usePathLabel(names: Record<string, string> = {}) {
       const param = parts[3] ? (tm.has(`params.${parts[3]}`) ? tm(`params.${parts[3]}`) : parts[3]) : '';
       return [tf('motion.events'), event, param].filter(Boolean).join(' · ');
     }
-    // The attract button's keys sit one level deeper (attract.cta.<key>).
-    const depth = parts[0] === 'attract' && parts[1] === 'cta' && parts.length >= 3 ? 3 : 2;
+    // The attract button's keys and "גודל טקסט"'s sit one level deeper (attract.cta.<key>, theme.textSizes.<key>).
+    const deeper = (parts[0] === 'attract' && parts[1] === 'cta') || (parts[0] === 'theme' && parts[1] === 'textSizes');
+    const depth = deeper && parts.length >= 3 ? 3 : 2;
     const head = parts.slice(0, depth).join('.');
     const label = parts.length >= depth && tf.has(head) ? tf(head) : parts[0];
     const rest = parts.slice(depth).filter((p) => !/^\d+$/.test(p));
