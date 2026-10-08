@@ -7,7 +7,9 @@
  *    "בדיקות ומידע קיוסק": assignment, network, printer test and choice, a read-only pinpad check,
  *    updates, remote support (TeamViewer QuickSupport when installed);
  *  - a small red label in the corner when something needs staff (no internet, the pinpad, a bon
- *    that did not print, a payment to check) — no internet never blocks a sale.
+ *    that did not print, a payment to check) — no internet never blocks a sale;
+ *  - "יציאה לשולחן העבודה" (desktop/DesktopExit.tsx): a quiet icon in the bottom-right corner of the
+ *    resting screens (`home`), and a button in both menus → a manager's code (DESKTOP_EXIT).
  */
 
 import { useEffect, useState } from 'react';
@@ -18,9 +20,24 @@ import { TERMINAL_CHECK_BYPASS_WARNING } from '../../core/terminalCheckBypass';
 import { kiosk } from '../bridge';
 import { t } from '../i18n';
 import { updateLine } from '../roles/updateText';
+import { DesktopExitButton, DesktopExitMenuButton, DesktopExitPad } from '../desktop/DesktopExit';
 
-export function StaffLayer({ m, view, open, onClose }: { m: PreviewModel; view: KioskView; open: 'none' | 'admin' | 'technician'; onClose: () => void }) {
+export function StaffLayer({
+  m,
+  view,
+  open,
+  onClose,
+  home = false,
+}: {
+  m: PreviewModel;
+  view: KioskView;
+  open: 'none' | 'admin' | 'technician';
+  onClose: () => void;
+  /** A resting screen (attract, closed, paused…) with nothing in flight: the desktop-exit icon shows. */
+  home?: boolean;
+}) {
   const [unlocked, setUnlocked] = useState(false);
+  const [exitOpen, setExitOpen] = useState(false);
   useEffect(() => {
     if (open === 'none') setUnlocked(false);
   }, [open]);
@@ -59,8 +76,16 @@ export function StaffLayer({ m, view, open, onClose }: { m: PreviewModel; view: 
           }}
         />
       ) : null}
-      {open === 'admin' && unlocked ? <AdminScreen m={m} onClose={onClose} /> : null}
-      {open === 'technician' && unlocked ? <TechnicianScreen m={m} onClose={onClose} /> : null}
+      {open === 'admin' && unlocked ? <AdminScreen m={m} onClose={onClose} onDesktopExit={() => setExitOpen(true)} /> : null}
+      {open === 'technician' && unlocked ? <TechnicianScreen m={m} onClose={onClose} onDesktopExit={() => setExitOpen(true)} /> : null}
+      {home && open === 'none' && !exitOpen ? <DesktopExitButton onOpen={() => setExitOpen(true)} /> : null}
+      {exitOpen ? (
+        <DesktopExitPad
+          onClose={() => setExitOpen(false)}
+          // Out: the menu that opened it is closed too, so the way back lands on the kiosk.
+          onExited={() => onClose()}
+        />
+      ) : null}
     </>
   );
 }
@@ -160,7 +185,7 @@ function useNote(): [string | null, (r: { ok: boolean; message?: string }) => vo
   return [note, (r) => setNote(r.message ?? (r.ok ? 'בוצע' : 'לא בוצע'))];
 }
 
-function AdminScreen({ m, onClose }: { m: PreviewModel; onClose: () => void }) {
+function AdminScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onClose: () => void; onDesktopExit: () => void }) {
   const [info, setInfo] = useState<AdminInfo | null>(null);
   const [note, show] = useNote();
   const refresh = () => void kiosk.adminInfo().then(setInfo).catch(() => undefined);
@@ -275,9 +300,12 @@ function AdminScreen({ m, onClose }: { m: PreviewModel; onClose: () => void }) {
           </div>
         ))}
       </Panel>
-      <Btn m={m} danger onClick={() => act({ type: 'exitKiosk' })}>
-        יציאה מהקיוסק (סגירת התוכנה)
-      </Btn>
+      <div className="flex flex-wrap gap-2">
+        <DesktopExitMenuButton onOpen={onDesktopExit} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold" style={{ background: `${m.c.button}1A`, color: m.c.button, borderRadius: 8 }} />
+        <Btn m={m} danger onClick={() => act({ type: 'exitKiosk' })}>
+          יציאה מהקיוסק (סגירת התוכנה)
+        </Btn>
+      </div>
     </Shell>
   );
 }
@@ -432,7 +460,7 @@ function SynqpayPairing({ m, info, onDone }: { m: PreviewModel; info: SynqpayAdm
   );
 }
 
-function TechnicianScreen({ m, onClose }: { m: PreviewModel; onClose: () => void }) {
+function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onClose: () => void; onDesktopExit: () => void }) {
   const [info, setInfo] = useState<TechnicianInfo | null>(null);
   const [note, show] = useNote();
   const [queue, setQueue] = useState('');
@@ -541,6 +569,7 @@ function TechnicianScreen({ m, onClose }: { m: PreviewModel; onClose: () => void
               ))}
             </div>
           </Panel>
+          <DesktopExitMenuButton onOpen={onDesktopExit} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold" style={{ background: `${m.c.button}1A`, color: m.c.button, borderRadius: 8 }} />
           <Btn m={m} danger onClick={() => act({ type: 'unpair' })}>
             ניתוק הקיוסק מהענן
           </Btn>

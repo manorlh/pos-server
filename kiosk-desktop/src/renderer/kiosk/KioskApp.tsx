@@ -1023,7 +1023,7 @@ export function KioskApp({ view }: { view: KioskView }) {
       {/* "סוללה חלשה": the strip and the alarm — never over a payment (BatteryAlerts.tsx). */}
       <BatteryAlerts busy={flowBusy(flow) || flow.screen === 'pay'} />
       {scanNote}
-      <StaffLayer m={m} view={view} open={staffOpen} onClose={() => setStaffOpen('none')} />
+      <StaffLayer m={m} view={view} open={staffOpen} onClose={() => setStaffOpen('none')} home={resting && !flowBusy(flow)} />
     </div>
   );
 }

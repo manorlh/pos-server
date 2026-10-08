@@ -13,16 +13,18 @@
 
 import type { Db } from '../db/sqlite';
 
-export type OutboxKind = 'transaction' | 'shift_open' | 'shift_close' | 'transmission' | 'shift_close_ack' | 'till_z_ack' | 'kds_release';
+export type OutboxKind = 'transaction' | 'shift_open' | 'shift_close' | 'transmission' | 'shift_close_ack' | 'till_z_ack' | 'kds_release' | 'till_event';
 
-export const SIDE_KINDS: ReadonlySet<OutboxKind> = new Set(['transmission', 'shift_close_ack', 'till_z_ack', 'kds_release']);
+/** `till_event`: a till event for the cloud's record (`POST /sync/{m}/events` — "יציאה לשולחן העבודה"). */
+export const SIDE_KINDS: ReadonlySet<OutboxKind> = new Set(['transmission', 'shift_close_ack', 'till_z_ack', 'kds_release', 'till_event']);
 
 /**
  * A refusal the cloud gives these for good (a 4xx): dropped and logged, never parked for ever —
  * a KDS release the kitchen engine refuses (`release_requires_payment`, `order_of_another_shop`…)
- * is not made acceptable by sending it again (pos-android KdsOutbox: "a 4xx refusal is final").
+ * is not made acceptable by sending it again (pos-android KdsOutbox: "a 4xx refusal is final");
+ * nor is a till event an older server does not know (422) — it stays in the device's own log.
  */
-export const FINAL_ON_REFUSAL: ReadonlySet<OutboxKind> = new Set(['kds_release']);
+export const FINAL_ON_REFUSAL: ReadonlySet<OutboxKind> = new Set(['kds_release', 'till_event']);
 
 export interface OutboxRow {
   seq: number;

@@ -49,6 +49,7 @@ const shellApi: ShellBridge = {
   kdsAction: (a) => ipcRenderer.invoke('shell:kdsAction', a),
   activity: () => ipcRenderer.send('shell:activity'),
   becomeBridge: () => ipcRenderer.invoke('shell:becomeBridge'),
+  desktopExit: (pin) => ipcRenderer.invoke('shell:desktopExit', pin),
   on: (event, fn) => {
     const channel = shellChannels[event];
     const listener = (_e: unknown, payload: unknown) => (fn as (p: unknown) => void)(payload);

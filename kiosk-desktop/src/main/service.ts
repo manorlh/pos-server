@@ -24,10 +24,11 @@ import { DRAWER_KICK } from '../core/escpos';
 import { kitchenOptions, kitchenOptionText, MAX_LINE_QTY, optionCharged, saleDocumentType, saleTotals, tipToCharge, unitAgorot, vatRateOf, type SaleLine, type SaleOption } from '../core/sale';
 import { autoCloseMayRun, zModeOf } from '../core/tillZ';
 import { attempt as techAttempt, codeMatches, NO_LOCK, type TechLock } from '../core/technician';
+import { decideExit, displayName, exitEvent, NO_LOCK as NO_EXIT_LOCK, returnEvent, type DesktopExitEvent, type DesktopExitState, type ExitLock, type ReturnVia } from '../core/desktopExit';
 import { pickVariant, type MediaRefIn } from '../core/mediaPlan';
 import { paymentGuard, type Activity } from '../core/updatePolicy';
 import { TERMINAL_CHECK_BYPASS_KEY } from '../core/terminalCheckBypass';
-import type { UpdateView } from '../shared/roles';
+import type { DesktopExitResult, UpdateView } from '../shared/roles';
 import { openDb, type Db } from './db/sqlite';
 import { Kv, migrate } from './db/schema';
 import { Api, type FetchFn } from './sync/api';
@@ -96,6 +97,8 @@ export interface PlatformHooks {
   installUpdate?(): Promise<{ ok: boolean; message?: string }>;
   /** The updater's state, without asking the network (main/update/updater.ts). */
   updateStatus?(): UpdateView;
+  /** "יציאה לשולחן העבודה": out of kiosk / full screen, minimised, the way back offered (main/index.ts). */
+  exitToDesktop?(): Promise<{ ok: boolean; message?: string }>;
 }
 
 export interface ServiceOptions {
@@ -143,6 +146,10 @@ const SHOP_Z_PART = 'shopZPart.answer';
 /** "סגירה יחד עם ה-Z הסניפי" (kiosk/sync `closeRequest`): the request to carry out, and its result until the cloud takes it. */
 const SHOP_Z_CLOSE_REQUEST = 'shopZClose.request';
 const SHOP_Z_CLOSE_RESULT = 'shopZClose.result';
+/** "יציאה לשולחן העבודה" (core/desktopExit.ts): the pad's lock, the exit in progress, the device's own log. */
+const DESKTOP_LOCK = 'desktopExit.lock';
+const DESKTOP_STATE = 'desktopExit.state';
+const DESKTOP_LOG = 'desktopExit.log';
 
 export class KioskService extends EventEmitter {
   readonly db: Db;
@@ -835,6 +842,10 @@ export class KioskService extends EventEmitter {
     if (row.kind === 'kds_release') {
       const r = this.kv.getJson<Record<string, unknown>>(`kds:${row.ref_id}`);
       return r ? { path: 'kds/release', body: r } : null;
+    }
+    if (row.kind === 'till_event') {
+      const e = this.kv.getJson<DesktopExitEvent>(`tillEvent:${row.ref_id}`);
+      return e ? { path: 'events', body: e } : null;
     }
     return null;
   }
@@ -2195,6 +2206,77 @@ export class KioskService extends EventEmitter {
         return { ok: outcome === 'uploaded', pairing: this.synqPairing.status };
       }
     }
+  }
+
+  /* ---------------------------------------------------- the Windows desktop */
+
+  /**
+   * "יציאה לשולחן העבודה" (core/desktopExit.ts): a manager's PIN, checked here and offline against the
+   * synced roster (active, this shop, `DESKTOP_EXIT` allowed, bcrypt); never during an order or a
+   * payment (`activity`: the shell's, main/roles/manager.ts — the kiosk's flow, or a screen's); five
+   * wrong codes lock the pad for a minute. Granted: the window leaves full screen
+   * (`platform.exitToDesktop`) and the exit is recorded — on the device and to the cloud.
+   */
+  async desktopExit(pin: string, activity: Activity = this.activity()): Promise<DesktopExitResult> {
+    const nowMs = Date.now();
+    const shopId = this.cloud.credentials()?.shopId ?? (typeof this.cloud.machine()?.shopId === 'string' ? (this.cloud.machine()!.shopId as string) : null);
+    const d = await decideExit({
+      users: this.cloud.posUsers(),
+      shopId,
+      pin: typeof pin === 'string' ? pin : '',
+      lock: this.kv.getJson<ExitLock>(DESKTOP_LOCK) ?? NO_EXIT_LOCK,
+      nowMs,
+      activity,
+      // Asynchronous: bcrypt at the cloud's cost 12 takes a while in JS — the main process keeps going.
+      compare: (p, h) => bcrypt.compare(p, h),
+    });
+    this.kv.setJson(DESKTOP_LOCK, d.lock);
+    if (d.outcome !== 'granted' || !d.user) {
+      if (d.outcome === 'locked_out') this.log('desktop exit: five wrong codes — the pad is locked for a minute');
+      return { ok: false, outcome: d.outcome, message: d.message, triesLeft: d.triesLeft, lockedForMs: d.lockedForMs };
+    }
+    const out = this.platform.exitToDesktop ? await this.platform.exitToDesktop().catch((e: unknown) => ({ ok: false, message: String(e) })) : { ok: false, message: 'לא נתמך במכשיר הזה' };
+    if (!out.ok) return { ok: false, outcome: 'failed', message: out.message ?? 'היציאה לשולחן העבודה נכשלה' };
+    const event = exitEvent({
+      id: randomUUID(),
+      atMs: Date.now(),
+      user: d.user,
+      shiftId: this.ledger.currentShift()?.id ?? null,
+      screen: activity.screen || (activity.role ?? ''),
+      deviceRole: activity.role ?? this.cloud.machine()?.deviceRole ?? null,
+      appVersion: this.opts.appVersion,
+    });
+    const name = displayName(d.user);
+    this.kv.setJson(DESKTOP_STATE, { eventId: event.id, userId: d.user.id, userName: name, atMs: nowMs } satisfies DesktopExitState);
+    this.recordTillEvent(event);
+    this.log(`desktop exit by ${name} (${d.user.id})`);
+    return { ok: true, outcome: 'granted', message: null, name };
+  }
+
+  /** The exit in progress (null: in full screen). */
+  desktopExitState(): DesktopExitState | null {
+    return this.kv.getJson<DesktopExitState>(DESKTOP_STATE);
+  }
+
+  /** Back in full screen (the tray, the shortcut, the taskbar, idle, a restart): recorded once per exit. */
+  desktopReturned(via: ReturnVia): void {
+    const exit = this.desktopExitState();
+    if (!exit) return;
+    this.kv.delete(DESKTOP_STATE);
+    this.recordTillEvent(returnEvent({ id: randomUUID(), atMs: Date.now(), exit, via, shiftId: this.ledger.currentShift()?.id ?? null }));
+    this.log(`back from the desktop (${via})`);
+  }
+
+  /** The device's own log of the last exits and returns (also kept when the cloud is out of reach or refuses). */
+  desktopExitLog(): DesktopExitEvent[] {
+    return this.kv.getJson<DesktopExitEvent[]>(DESKTOP_LOG) ?? [];
+  }
+
+  /** A till event: kept here, and to the cloud through the outbox (`POST /sync/{m}/events`). */
+  private recordTillEvent(e: DesktopExitEvent) {
+    this.kv.setJson(`tillEvent:${e.id}`, e);
+    this.kv.setJson(DESKTOP_LOG, [...this.desktopExitLog(), e].slice(-100));
+    if (this.paired) this.outbox.enqueue('till_event', e.id);
   }
 
   /* ------------------------------------------------------------ technician */
