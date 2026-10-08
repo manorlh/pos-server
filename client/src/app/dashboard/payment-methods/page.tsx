@@ -17,6 +17,9 @@
  * Saving PATCHes that level's settings with only what changed, under the same server
  * rules as the settings dialogs: company managers and up for a company, shop managers
  * for their shop, its points of sale and tills; never every method blocked.
+ *
+ * With a shop in scope, "מכשירי תשלום" (PaymentDevicesCard) follows: the shop's payment
+ * devices for tills without built-in clearing, its switch and default device — saved at once.
  */
 
 import { useMemo, useState } from 'react';
@@ -68,6 +71,7 @@ import {
   deepestOrgScope,
   type OrgScope,
 } from '@/components/dashboard/org-scope-cascade';
+import { PaymentDevicesCard } from '@/components/dashboard/payment-devices/payment-devices-card';
 import { cn } from '@/lib/utils';
 
 type EditLevel = Exclude<SettingsLevel, 'tenant'>;
@@ -186,6 +190,9 @@ export default function PaymentMethodsPage() {
           canWrite={canWrite}
         />
       )}
+
+      {/* "מכשירי תשלום": the shop's devices and its switch, whatever level below it is edited. */}
+      {scope.shopId ? <PaymentDevicesCard shopId={scope.shopId} /> : null}
     </div>
   );
 }
