@@ -339,11 +339,13 @@ export function transmissionsSheets(report: TransmissionsReport, t: Tr): ExcelSh
 type MoneyLike = {
   documents: number; salesCount: number; refundsCount: number; gross: number; discounts: number; refunds: number;
   net: number; cash: number; card: number; productionVoucher?: number; other: number; tips: number;
+  productionVoucherDeductions?: number;
 };
 
 const MONEY_KEYS: [keyof MoneyLike, ExcelColumn['kind']][] = [
   ['documents', 'number'], ['salesCount', 'number'], ['refundsCount', 'number'], ['gross', 'money'],
-  ['discounts', 'money'], ['refunds', 'money'], ['net', 'money'], ['cash', 'money'], ['card', 'money'],
+  ['discounts', 'money'], ['productionVoucherDeductions', 'money'], ['refunds', 'money'], ['net', 'money'],
+  ['cash', 'money'], ['card', 'money'],
   ['productionVoucher', 'money'], ['other', 'money'], ['tips', 'money'],
 ];
 
@@ -366,7 +368,8 @@ export function allInOneSheets(r: AllInOneReport, t: Tr, method: (m: string) => 
       columns: [col(t, 'item', 'text', 30), col(t, 'value', 'money', 16)],
       rows: [
         [t('documents'), s.documents], [t('salesCount'), s.salesCount], [t('refundsCount'), s.refundsCount],
-        [t('gross'), s.gross], [t('discounts'), s.discounts], [t('refunds'), s.refunds], [t('net'), s.net],
+        [t('gross'), s.gross], [t('discounts'), s.discounts], [t('productionVoucherDeductions'), s.productionVoucherDeductions ?? 0],
+        [t('refunds'), s.refunds], [t('net'), s.net],
         [t('vat'), s.vat], [t('netOfVat'), s.netOfVat], [t('averageBasket'), s.averageBasket],
         [t('cash'), s.cash], [t('card'), s.card], [t('productionVoucher'), s.productionVoucher ?? 0], [t('other'), s.other],
         [t('tips'), s.tips],

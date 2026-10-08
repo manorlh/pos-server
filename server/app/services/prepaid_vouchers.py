@@ -2095,6 +2095,24 @@ def reverse_redemption(db: Session, machine: POSMachine, redemption_id: str) -> 
     return {"ok": True, "redemptionId": str(redemption.id), "reversedAt": _iso(redemption.reversed_at)}
 
 
+def link_deductions(db: Session, machine, transaction_id: str, rows) -> None:
+    """
+    The production-voucher deductions of a document (`kind` production_voucher with a
+    `redemptionId`): each redemption of this till learns the document it was booked on (set once).
+    """
+    from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION
+
+    ids = [r.redemption_id for r in rows if r.kind == PRODUCTION_VOUCHER_DEDUCTION and r.redemption_id is not None]
+    if not ids or machine is None:
+        return
+    for redemption in db.query(PrepaidVoucherRedemption).filter(
+        PrepaidVoucherRedemption.id.in_(ids), PrepaidVoucherRedemption.machine_id == machine.id,
+    ):
+        if not redemption.transaction_id:
+            redemption.transaction_id = str(transaction_id)[:100]
+    db.flush()
+
+
 def attach_transaction(db: Session, machine: POSMachine, redemption_id: str, transaction_id: str) -> None:
     """Name the sale document a redemption paid towards (set once). The caller commits."""
     rid = _as_uuid(redemption_id)

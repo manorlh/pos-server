@@ -4046,6 +4046,7 @@
       "net": "נטו",
       "cashNet": "מזומן נטו",
       "cardNet": "אשראי נטו",
+      "productionVoucherDeductions": "שוברי הפקה (קיזוז)",
       "productionVoucherNet": "שוברי הפקה נטו",
       "otherNet": "אחר נטו",
       "tips": "טיפים"
@@ -4759,6 +4760,7 @@
       "cash": "מזומן",
       "card": "אשראי",
       "productionVoucher": "שוברי הפקה",
+      "productionVoucherDeductions": "שוברי הפקה (קיזוז)",
       "other": "אחר",
       "tips": "טיפים"
     }
@@ -5670,11 +5672,11 @@
     }
   },
   "prepaidVouchers": {
-    "tabs": {"label": "תצוגה", "batches": "סדרות שוברים", "vouchers": "כל השוברים", "tills": "מימושים לפי קופה", "types": "סוגי שוברים"},
+    "tabs": {"label": "תצוגה", "batches": "אצוות", "vouchers": "כל השוברים", "tills": "דוח לפי קופות", "types": "סוגי שוברים"},
     "scope": {"forWhom": "עבור מי", "forWhomAll": "כל הלקוחות וההפקות", "event": "אירוע", "eventAll": "כל האירועים", "type": "סוג שובר", "typeAll": "כל הסוגים", "shop": "סניף", "shopAll": "כל הסניפים", "batch": "סדרה", "batchAll": "כל הסדרות", "till": "מומש בקופה", "tillAll": "כל הקופות", "employee": "עובד", "employeeAll": "כל העובדים", "batchesN": "{n, plural, one {סדרה אחת} other {# סדרות}}", "pickerSearch": "חיפוש ברשימה…", "noMatch": "אין תוצאות", "clear": "ניקוי הבחירה", "batchStatus": "סטטוס", "batchStatusAll": "כל הסטטוסים", "batchStatuses": {"active": "פעילה", "not_started": "טרם התחילה", "expired": "פג תוקף", "cancelled": "בוטלה", "fully_redeemed": "מומשה במלואה", "has_open": "יש שוברים פתוחים"}, "state": "מצב השובר", "stateAll": "כל המצבים", "states": {"open": "פתוח", "partial": "מומש חלקית", "redeemed": "מומש", "cancelled": "בוטל", "expired": "פג תוקף"}, "issued": "תאריך הנפקה", "redeemed": "תאריך מימוש", "validOn": "בתוקף ביום", "fromLabel": "מתאריך", "toLabel": "עד תאריך", "accounting": "רישום המימוש", "accountingAll": "כל אופני הרישום", "accountingOptions": {"discount": "קיזוז מהחשבונית", "payment": "אמצעי תשלום", "zero": "₪0 עם הצגת שווי"}, "pricing": "תמחור", "pricingAll": "כל התמחורים", "pricingOptions": {"fixed": "שווי קבוע", "cover": "כיסוי עד סכום"}, "override": "כפיית הנחה", "overrideOptions": {"yes": "עם כפייה", "no": "בלי כפייה"}, "any": "הכול", "offline": "מימוש ללא אינטרנט", "offlineOptions": {"yes": "מותר", "no": "לא מותר"}, "kind": "סוג", "kindOptions": {"items": "שובר מוצרים", "discount": "שובר הנחה"}, "value": "שווי השובר (₪)", "price": "מחיר להפקה (₪)", "min": "מ-", "max": "עד", "createdBy": "נוצר על ידי", "createdByAll": "כל המשתמשים", "group": "קבוצה", "qBatches": "חיפוש בשם, לקוח, אירוע, הזמנה או טקסט", "qVouchers": "מס׳ שירות, קוד או הערה", "more": "סינונים נוספים", "less": "פחות סינונים", "clearAll": "ניקוי כל הסינונים", "active": "{n, plural, one {סינון פעיל} other {# סינונים פעילים}}", "sort": "מיון", "sorts": {"newest": "החדשות ראשונות", "customer": "לפי עבור מי", "event": "לפי אירוע", "redeemed": "הכי ממומשות"}, "count": "{shown} מתוך {total} סדרות"},
     "row": {"forWhom": "עבור: {name}", "noCustomer": "ללא לקוח", "issued": "{n} הונפקו", "redeemed": "{n} מומשו", "rate": "({rate})", "open": "{n} פתוחים", "validity": "בתוקף {from} – {to}", "validFrom": "בתוקף מ-{date}", "validUntil": "בתוקף עד {date}", "noValidity": "ללא הגבלת תוקף"},
     "allVouchers": {"count": "{n, plural, one {שובר אחד} other {# שוברים}}", "empty": "אין שוברים לסינון הזה", "serial": "מס׳", "code": "קוד", "batch": "סדרה", "forWhom": "עבור מי", "state": "מצב", "remaining": "נותר", "lastRedeemed": "מימוש אחרון", "history": "היסטוריית מימושים", "export": "ייצוא לאקסל", "sheet": "שוברים", "previous": "הקודם", "next": "הבא", "exportFailed": "הייצוא נכשל"},
-    "tills": {"title": "מימושים לפי קופה", "till": "קופה", "shop": "סניף", "redemptions": "מימושים", "vouchers": "שוברים", "items": "פריטים", "value": {"discount": "קיזוז", "payment": "שווי (אמצעי תשלום)", "zero": "שווי (₪0)", "total": "סה״כ שווי"}, "topUp": "השלמות", "refusals": "סירובים", "overrides": "כפיות ואישורים", "offlinePending": "ממתינים לסנכרון", "notRecorded": "עדיין לא נרשם", "flagged": "חריגות", "unknownTill": "קופה לא ידועה", "empty": "אין מימושים לסינון הזה", "chart": "מימושים לאורך הזמן", "byDay": "לפי יום", "byHour": "לפי שעה", "total": "סה״כ", "details": "מימושים בקופה {name}", "close": "סגירה", "time": "זמן", "voucher": "שובר", "batch": "סדרה", "employee": "עובד", "itemsCol": "פריטים", "valueCol": "שווי", "basis": {"fixed": "שווי קבוע", "list": "לפי מחירון", "discount": "סכום ההנחה"}, "valueNote": "שווי: שובר בשווי קבוע — לפי היחידות שנלקחו; שובר כיסוי — לפי המחירון; שובר הנחה — סכום ההנחה. כל סכום מוצג לפי אופן רישום המימוש, ולעולם לא כהנחה.", "notRecordedNote": "השלמות, סירובים, כפיות ומימושים ללא אינטרנט יירשמו עם השלבים הבאים — עד אז הם מסומנים „עדיין לא נרשם”.", "sheetTills": "לפי קופה", "sheetRedemptions": "מימושים", "hour": "שעה", "day": "יום"},
+    "tills": {"title": "דוח לפי קופות", "till": "קופה", "shop": "סניף", "redemptions": "מימושים", "vouchers": "שוברים", "items": "פריטים", "value": {"discount": "קיזוז", "payment": "שווי (אמצעי תשלום)", "zero": "שווי (₪0)", "total": "סה״כ שווי"}, "topUp": "השלמות", "refusals": "סירובים", "overrides": "כפיות ואישורים", "offlinePending": "ממתינים לסנכרון", "notRecorded": "עדיין לא נרשם", "flagged": "חריגות", "unknownTill": "קופה לא ידועה", "empty": "אין מימושים לסינון הזה", "chart": "מימושים לאורך הזמן", "byDay": "לפי יום", "byHour": "לפי שעה", "total": "סה״כ", "details": "מימושים בקופה {name}", "close": "סגירה", "time": "זמן", "voucher": "שובר", "batch": "סדרה", "employee": "עובד", "itemsCol": "פריטים", "valueCol": "שווי", "basis": {"fixed": "שווי קבוע", "list": "לפי מחירון", "discount": "סכום ההנחה"}, "valueNote": "שווי: שובר בשווי קבוע — לפי היחידות שנלקחו; שובר כיסוי — לפי המחירון; שובר הנחה — סכום ההנחה. כל סכום מוצג לפי אופן רישום המימוש, ולעולם לא כהנחה.", "notRecordedNote": "השלמות, סירובים, כפיות ומימושים ללא אינטרנט יירשמו עם השלבים הבאים — עד אז הם מסומנים „עדיין לא נרשם”.", "sheetTills": "לפי קופה", "sheetRedemptions": "מימושים", "hour": "שעה", "day": "יום"},
     "search": {"placeholder": "חיפוש: סדרה, עבור מי, אירוע, הזמנה, קוד שובר, מס׳ שירות, קופה או עובד…", "batches": "סדרות", "vouchers": "שוברים", "tills": "קופות", "employees": "עובדים", "none": "לא נמצא דבר", "redemptions": "{n, plural, one {מימוש אחד} other {# מימושים}}", "loading": "מחפש…", "label": "חיפוש בשוברי ההפקה"},
     "typeLine": "סוג: {name} {code} · גרסה {version}",
     "typeOwn": "סוג: של הסדרה עצמה",
@@ -6922,6 +6924,7 @@
       "cash": "מזומן",
       "card": "אשראי",
       "productionVoucher": "שוברי הפקה",
+      "productionVoucherDeductions": "שוברי הפקה (קיזוז)",
       "other": "אחר",
       "cardBrands": "מותג כרטיס",
       "cardLast4": "4 ספרות אחרונות",
@@ -8391,6 +8394,7 @@
     }
   },
   "othClubReport": {
+    "productionVouchers": "שוברי הפקה שנרשמו כקיזוז מהחשבונית ({amount}, {documents} מכירות) אינם הנחה — הם מחוץ לסכומי ההנחות כאן, ומוצגים בדוחות המכירות תחת „שוברי הפקה (קיזוז)”.",
     "vouchers": {
       "title": "שוברי הנחה",
       "subtitle": "שוברי הפקה מסוג הנחה (על כל העסקה או על פריט): הנחה על המסמך, לא אמצעי תשלום — לפי סדרה, קופה ויום.",

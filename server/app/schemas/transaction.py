@@ -270,11 +270,18 @@ class TransactionVoucherDiscountIn(BaseModel):
     batch_id: Optional[str] = Field(None, alias="batchId")
     serial: Optional[int] = None
     batch_name: Optional[str] = Field(None, alias="batchName")
+    #: `order_discount` / `item_discount`, or `production_voucher` — a production voucher booked
+    #: as a document deduction (the production vouchers contract §4.1).
     kind: Optional[str] = None
     uses: int = Field(1, ge=1, le=1000)
     amount: Decimal = Decimal("0")
     #: [{"itemId", "amount"}] — the lines it took its discount from.
     lines: Optional[List[Any]] = None
+    #: A production voucher's: its redemption, its type's name, the units it covered
+    #: ([{"productName", "groupName", "quantity"}], as the receipt lists them).
+    redemption_id: Optional[str] = Field(None, alias="redemptionId")
+    type_name: Optional[str] = Field(None, alias="typeName")
+    units: Optional[List[Any]] = None
 
     class Config:
         populate_by_name = True
@@ -287,7 +294,19 @@ class TransactionVoucherDiscountIn(BaseModel):
     @field_validator("kind", mode="before")
     @classmethod
     def _cut_kind(cls, value):
-        return cut_text(value, 16)
+        return cut_text(value, 32)
+
+    @field_validator("type_name", mode="before")
+    @classmethod
+    def _cut_type(cls, value):
+        return cut_text(value, 200)
+
+    @field_validator("units", mode="before")
+    @classmethod
+    def _units(cls, value):
+        if not isinstance(value, list):
+            return None
+        return [v for v in value if isinstance(v, dict)][:200]
 
     @field_validator("lines", mode="before")
     @classmethod

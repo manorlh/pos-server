@@ -105,9 +105,12 @@ class CashierSalesRow(BaseModel):
     refunds_count: int = Field(..., alias="refundsCount")
 
     gross: float
+    #: The documents' discounts — without production vouchers' deductions (apart, below).
     discounts: float
+    #: "שוברי הפקה": what production vouchers booked as a document deduction took off.
+    production_voucher_deductions: float = Field(0.0, alias="productionVoucherDeductions")
     refunds: float
-    #: gross - discounts - refunds
+    #: gross - discounts - productionVoucherDeductions - refunds
     net: float
     average_basket: float = Field(..., alias="averageBasket")
 
@@ -156,6 +159,8 @@ class SalesByAreaRow(BaseModel):
     transactions_count: int = Field(0, alias="transactionsCount")
     gross: float = 0.0
     discounts: float = 0.0
+    #: "שוברי הפקה": production vouchers' deductions (not in `discounts`).
+    production_voucher_deductions: float = Field(0.0, alias="productionVoucherDeductions")
     net: float = 0.0
     refunds: float = 0.0
     cash: float = 0.0

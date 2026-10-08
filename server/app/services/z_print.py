@@ -170,7 +170,12 @@ def _sales_rows(z: ZReport) -> List[Optional[dict]]:
     rows: List[Optional[dict]] = []
     if sales is not None and discounts is not None:
         rows.append(row("מכירות ברוטו", money(sales + discounts)))
-        rows.append(row("הנחות", credit(discounts)))
+        # A production voucher's deduction is inside the documents' discount, but it is no
+        # discount: "קיזוז שוברי הפקה", apart (the production vouchers contract §4.1).
+        deductions = _dec((z.header or {}).get("productionVoucherDeductionsTotal")) or ZERO
+        rows.append(row("הנחות", credit(discounts - deductions)))
+        if deductions:
+            rows.append(row("קיזוז שוברי הפקה", credit(deductions)))
         # Item discounts are already inside the lines (and so inside the gross above):
         # shown for information, not taken off again.
         line_discounts = _dec((z.header or {}).get("lineDiscountsTotal"))
@@ -819,6 +824,7 @@ class _TillAsZ:
             "lineDiscountsTotal": s.get("lineDiscountsTotal"),
             "promotionDiscountsTotal": s.get("promotionDiscountsTotal"),
             "voucherDiscountsTotal": s.get("voucherDiscountsTotal"),
+            "productionVoucherDeductionsTotal": s.get("productionVoucherDeductionsTotal"),
         }
         self.total_sales = _dec(s.get("totalSales"))
         self.total_refunds = _dec(s.get("totalRefunds"))

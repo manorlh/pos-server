@@ -173,6 +173,7 @@ export default function CashierSalesReportPage() {
                   { header: t('col.documents'), kind: 'number' },
                   { header: t('col.gross'), kind: 'money' },
                   { header: t('col.discounts'), kind: 'money' },
+                  { header: t('col.productionVoucherDeductions'), kind: 'money' },
                   { header: t('col.refunds'), kind: 'money' },
                   { header: t('col.net'), kind: 'money' },
                   { header: t('col.cashNet'), kind: 'money' },
@@ -183,11 +184,11 @@ export default function CashierSalesReportPage() {
                 ],
                 rows: data.rows.map((r) => [
                   cashierLabel(r, t('unknownCashier')), r.workerNumber ?? null, r.documentCount,
-                  r.gross, r.discounts, r.refunds, r.net, r.cashNet, r.cardNet, r.productionVoucherNet ?? 0, r.otherNet, r.tips,
+                  r.gross, r.discounts, r.productionVoucherDeductions ?? 0, r.refunds, r.net, r.cashNet, r.cardNet, r.productionVoucherNet ?? 0, r.otherNet, r.tips,
                 ]),
                 totals: [
                   t('footerTotals'), null, data.totals.documentCount, data.totals.gross,
-                  data.totals.discounts, data.totals.refunds, data.totals.net, data.totals.cashNet,
+                  data.totals.discounts, data.totals.productionVoucherDeductions ?? 0, data.totals.refunds, data.totals.net, data.totals.cashNet,
                   data.totals.cardNet, data.totals.productionVoucherNet ?? 0, data.totals.otherNet, data.totals.tips,
                 ],
               })}
@@ -290,6 +291,7 @@ export default function CashierSalesReportPage() {
                     <TableHead className="text-end">{t('col.documents')}</TableHead>
                     <TableHead className="text-end">{t('col.gross')}</TableHead>
                     <TableHead className="text-end">{t('col.discounts')}</TableHead>
+                    <TableHead className="text-end">{t('col.productionVoucherDeductions')}</TableHead>
                     <TableHead className="text-end">{t('col.refunds')}</TableHead>
                     <TableHead className="text-end">{t('col.net')}</TableHead>
                     <TableHead className="text-end bg-muted/40">{t('col.cashNet')}</TableHead>
@@ -328,6 +330,9 @@ export default function CashierSalesReportPage() {
                           {row.discounts ? formatCurrency(row.discounts) : '—'}
                         </TableCell>
                         <TableCell className="text-end tabular-nums">
+                          {row.productionVoucherDeductions ? formatCurrency(row.productionVoucherDeductions) : '—'}
+                        </TableCell>
+                        <TableCell className="text-end tabular-nums">
                           {row.refunds ? formatCurrency(row.refunds) : '—'}
                         </TableCell>
                         <TableCell className="text-end font-semibold tabular-nums">
@@ -357,6 +362,9 @@ export default function CashierSalesReportPage() {
                       </TableCell>
                       <TableCell className="text-end tabular-nums">
                         {formatCurrency(data.totals.discounts)}
+                      </TableCell>
+                      <TableCell className="text-end tabular-nums">
+                        {formatCurrency(data.totals.productionVoucherDeductions ?? 0)}
                       </TableCell>
                       <TableCell className="text-end tabular-nums">
                         {formatCurrency(data.totals.refunds)}

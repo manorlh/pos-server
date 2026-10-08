@@ -530,12 +530,23 @@ class PrepaidVoucherReservation(Base):
     voucher = relationship("PrepaidVoucher")
 
 
+#: `transaction_voucher_discounts.kind` of a production voucher booked as a document deduction
+#: ("קיזוז מהחשבונית", `redemption_accounting` discount): inside `document_discount` like a
+#: discount, but never "a discount" in a management report — its own category, "שוברי הפקה".
+PRODUCTION_VOUCHER_DEDUCTION = "production_voucher"
+
+
 class TransactionVoucherDiscount(Base):
     """
     One discount voucher on one sale document, as the till printed it ("שובר #12 — פסטיבל
     הקיץ"): what it took off, inside the document's `document_discount` (each line's share
     is `transaction_items.voucher_discount`). A discount, never a tender. Replaced with
     the document on a re-push, like its promotions.
+
+    `kind` `production_voucher`: a production voucher's deduction ("קיזוז שוברי הפקה", the
+    contract's §4.1) — inside `document_discount` too (the uniform file files the document as
+    issued), never in the lines' `voucher_discount`, and reported as "שוברי הפקה", not as a
+    discount. It names its redemption, its type and the units it covered (the receipt's lines).
     """
 
     __tablename__ = "transaction_voucher_discounts"
@@ -554,11 +565,16 @@ class TransactionVoucherDiscount(Base):
     batch_id = Column(UUID(as_uuid=True), nullable=True)
     serial = Column(Integer, nullable=True)
     batch_name = Column(String(200), nullable=True)
-    kind = Column(String(16), nullable=True)
+    kind = Column(String(32), nullable=True)
     uses = Column(Integer, nullable=False, default=1, server_default="1")
     discount_amount = Column(Numeric(12, 2), nullable=False, default=0, server_default="0")
     #: [{"itemId", "amount"}] — the lines it took its discount from (shekels).
     lines = Column(JSON, nullable=True)
+    #: A production voucher's deduction: its redemption, its type's name, and the units it
+    #: covered — [{"productName", "groupName", "quantity"}], as the receipt lists them.
+    redemption_id = Column(UUID(as_uuid=True), nullable=True)
+    type_name = Column(String(200), nullable=True)
+    units = Column(JSON, nullable=True)
 
 
 #: `prepaid_voucher_events.action`.

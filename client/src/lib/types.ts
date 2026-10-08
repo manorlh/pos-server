@@ -2528,9 +2528,12 @@ export interface CashierSalesRow {
   salesCount: number;
   refundsCount: number;
   gross: number;
+  /** Without production vouchers' deductions (`productionVoucherDeductions`). */
   discounts: number;
+  /** "שוברי הפקה": what production vouchers booked as a document deduction took off — not a discount. */
+  productionVoucherDeductions?: number;
   refunds: number;
-  /** gross - discounts - refunds */
+  /** gross - discounts - productionVoucherDeductions - refunds */
   net: number;
   averageBasket: number;
   /** cashNet + cardNet + productionVoucherNet + otherNet === net. */
@@ -2813,6 +2816,8 @@ export interface SalesByAreaRow {
   transactionsCount: number;
   gross: Money;
   discounts: Money;
+  /** "שוברי הפקה": production vouchers' deductions (not in `discounts`). */
+  productionVoucherDeductions?: Money;
   net: Money;
   refunds: Money;
   cash: Money;

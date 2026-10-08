@@ -82,6 +82,11 @@ class DocumentTotals:
     #: off the sale lines: a discount like the promotions, inside `discounts_total`,
     #: reported beside it — never a tender.
     voucher_discounts_total: Decimal = ZERO
+    #: Σ what production vouchers booked as a document deduction took off the sales ("קיזוז
+    #: שוברי הפקה", `transaction_voucher_discounts.kind` production_voucher): inside
+    #: `discounts_total` (the documents' discount, filed as issued), but never "a discount" —
+    #: a management view shows `discounts_total` less it, and it as "שוברי הפקה".
+    production_voucher_deductions_total: Decimal = ZERO
     payment_breakdown: Dict[str, Decimal] = field(default_factory=dict)
     total_tips: Decimal = ZERO
     total_cash_tips: Decimal = ZERO
@@ -163,7 +168,8 @@ class DocumentTotals:
     _COUNTS = ("transactions_count", "sales_count", "credit_notes_count", "non_sale_count", "vat_missing_count")
     _MONEY = (
         "total_sales", "total_refunds", "discounts_total", "line_discounts_total",
-        "promotion_discounts_total", "voucher_discounts_total", "total_tips", "total_cash_tips",
+        "promotion_discounts_total", "voucher_discounts_total", "production_voucher_deductions_total",
+        "total_tips", "total_cash_tips",
         "total_card_tips", "vat_declared",
     )
 
@@ -370,6 +376,17 @@ def _totals_of(db: Session, documents: List[Transaction]) -> DocumentTotals:
             .scalar()
         )
         totals.voucher_discounts_total = _dec(voucher_sum)
+        from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION, TransactionVoucherDiscount
+
+        deduction_sum = (
+            db.query(_func.coalesce(_func.sum(_func.abs(TransactionVoucherDiscount.discount_amount)), 0))
+            .filter(
+                TransactionVoucherDiscount.transaction_id.in_(sale_ids),
+                TransactionVoucherDiscount.kind == PRODUCTION_VOUCHER_DEDUCTION,
+            )
+            .scalar()
+        )
+        totals.production_voucher_deductions_total = _dec(deduction_sum)
     for doc in counted:
         totals.transactions_count += 1
         refund = is_refund_document(

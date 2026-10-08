@@ -86,7 +86,9 @@ def _money_row(bucket: Dict[str, float]) -> Dict[str, Any]:
         "salesCount": sales,
         "refundsCount": refunds,
         "gross": _r(bucket["gross"]),
-        "discounts": _r(bucket["discounts"]),
+        # Without production vouchers' deductions ("שוברי הפקה", apart).
+        "discounts": _r(bucket["discounts"] - bucket["voucher_deductions"]),
+        "productionVoucherDeductions": _r(bucket["voucher_deductions"]),
         "refunds": _r(bucket["refunds"]),
         "net": _r(net),
         "averageBasket": _r((bucket["gross"] - bucket["discounts"]) / sales) if sales else 0.0,
@@ -108,7 +110,7 @@ def _sum_rows(rows: Iterable[Dict[str, Any]], fields: Sequence[str]) -> Dict[str
 
 
 MONEY_FIELDS = (
-    "documents", "salesCount", "refundsCount", "gross", "discounts", "refunds", "net",
+    "documents", "salesCount", "refundsCount", "gross", "discounts", "productionVoucherDeductions", "refunds", "net",
     "cash", "card", "other", "exchange", "productionVoucher", "tips",
 )
 
@@ -374,7 +376,9 @@ def discounts_section(tx_q, till_rows: Sequence[Dict[str, Any]], employee_rows: 
     )
     document_total = sum(r["discounts"] for r in till_rows)
     return {
+        # Without production vouchers' deductions — those are "שוברי הפקה", not discounts.
         "documentDiscounts": round(document_total, 2),
+        "productionVoucherDeductions": round(sum(r.get("productionVoucherDeductions", 0.0) for r in till_rows), 2),
         "lineDiscounts": _r(line),
         "promotionDiscounts": _r(promo),
         "byKind": sorted(

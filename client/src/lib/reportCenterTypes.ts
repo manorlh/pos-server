@@ -175,6 +175,8 @@ export interface MoneyRow {
   refundsCount: number;
   gross: number;
   discounts: number;
+  /** "שוברי הפקה": production vouchers' deductions (not in `discounts`; absent from an older server). */
+  productionVoucherDeductions?: number;
   refunds: number;
   net: number;
   averageBasket: number;

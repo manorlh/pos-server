@@ -322,6 +322,7 @@ def z_row(z: ZReport, z_type: str, out_item) -> Dict[str, Any]:
     line_discounts = header.get("lineDiscountsTotal")
     promo_discounts = header.get("promotionDiscountsTotal")
     voucher_discounts = header.get("voucherDiscountsTotal")
+    deductions = header.get("productionVoucherDeductionsTotal")
     return {
         "id": str(z.id),
         "zNumber": z.z_number,
@@ -356,7 +357,11 @@ def z_row(z: ZReport, z_type: str, out_item) -> Dict[str, Any]:
         "shiftCount": z.shift_count,
         "machineCount": z.machine_count,
         "grossSales": _money(out_item.gross_sales),
-        "discountsTotal": _money(z.discounts_total),
+        # Discounts without the production vouchers' deductions ("שוברי הפקה", apart).
+        "discountsTotal": _money(
+            (_dec(z.discounts_total) - _dec(deductions)) if z.discounts_total is not None and deductions else z.discounts_total
+        ),
+        "productionVoucherDeductionsTotal": _money(deductions),
         "lineDiscountsTotal": _money(line_discounts),
         "promotionDiscountsTotal": _money(promo_discounts),
         "voucherDiscountsTotal": _money(voucher_discounts),

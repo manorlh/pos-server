@@ -131,6 +131,9 @@ def _voucher_discounts(db: Session, issuer, tx, refund_of) -> List[str]:
                 uses=int(e.uses or 1),
                 discount_amount=amount,
                 lines=e.lines,
+                redemption_id=_promotion_uuid(getattr(e, "redemption_id", None)),
+                type_name=getattr(e, "type_name", None),
+                units=getattr(e, "units", None),
             )
         )
     db.bulk_save_objects(rows)
@@ -143,11 +146,21 @@ def _voucher_discounts(db: Session, issuer, tx, refund_of) -> List[str]:
         # Not a sale (yet): a card still waiting, or declined. Its re-push as completed
         # confirms; a declined one never does — the till releases the voucher.
         return []
+    # A production voucher's deduction names the redemption it books: the redemption learns
+    # its document (set once, as `…/redemptions/{id}/transaction` does).
+    _PV.link_deductions(db, issuer, str(tx.id), rows)
     warnings: List[str] = []
     for n, e in enumerate(entries):
         if e.reservation_id and _promotion_uuid(e.reservation_id) is None:
             warnings.append(f"voucherDiscounts[{n}].reservationId: unreadable, not confirmed")
-    readable = [e for e in entries if _promotion_uuid(e.reservation_id) is not None]
+    from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION
+
+    # A production voucher's deduction books a redemption already made (its reservation, with
+    # reserve → confirm for goods, confirms through its own call); the rest are discount vouchers.
+    readable = [
+        e for e in entries
+        if _promotion_uuid(e.reservation_id) is not None and e.kind != PRODUCTION_VOUCHER_DEDUCTION
+    ]
     try:
         with db.begin_nested():
             warnings += _PV.confirm_from_document(db, issuer, str(tx.id), readable, tx.items)
